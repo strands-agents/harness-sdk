@@ -95,6 +95,20 @@ class ToolWatcher:
                         except Exception as e:
                             logger.error("exception=<%s> | handler error", str(e))
 
+        def on_created(self, event: Any) -> None:
+            """Reload tools when a new file appears in a watched directory.
+
+            This master handler is the only one scheduled with the Observer, so it must handle on_created too. A file
+            written in place usually raises on_modified as well, which the handler above already catches, but a file
+            moved or renamed into the directory raises on_created alone and would otherwise be dropped - for example
+            the first tool copied into an empty tools directory. reload_tool loads a new file the same as a changed
+            one and is safe to call again for a follow-up on_modified, so route creations through on_modified.
+
+            Args:
+                event: The file system event that triggered this handler.
+            """
+            self.on_modified(event)
+
     def start(self) -> None:
         """Start watching all tools directories for changes."""
         # Initialize shared observer if not already done
