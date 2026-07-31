@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { A2AExecutor } from '../executor.js'
 import type { AgentExecutionEvent, ExecutionEventBus, RequestContext } from '@a2a-js/sdk/server'
 import type { TaskArtifactUpdateEvent, TaskStatusUpdateEvent } from '@a2a-js/sdk'
@@ -6,10 +6,12 @@ import { Agent } from '../../agent/agent.js'
 import type { InvokableAgent } from '../../types/agent.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { createMockAgent } from '../../__fixtures__/agent-helpers.js'
+import { createMockTool } from '../../__fixtures__/tool-helpers.js'
 import { TextBlock } from '../../types/messages.js'
 import { ImageBlock, encodeBase64 } from '../../types/media.js'
 import { ContentBlockEvent, ModelStreamUpdateEvent } from '../../hooks/events.js'
 import { AgentResult } from '../../types/agent.js'
+import { Interrupt } from '../../interrupt.js'
 import { Message } from '../../types/messages.js'
 import type { ModelStreamEvent } from '../../models/streaming.js'
 
@@ -413,6 +415,248 @@ describe('A2AExecutor context isolation', () => {
       const agent = makeEchoAgent()
       ;(agent as unknown as { sessionManager: unknown }).sessionManager = {}
       expect(() => new A2AExecutor({ agent })).toThrow('sessionManager is not supported')
+    })
+  })
+
+  describe('interrupts', () => {
+    function interruptingAgent(interrupts: Interrupt[]): InvokableAgent {
+      return {
+        id: 'test-agent',
+        name: 'Test Agent',
+        invoke: vi.fn(),
+        // An agent that stops on an interrupt emits no stream events, only the result.
+        // eslint-disable-next-line require-yield
+        async *stream() {
+          return new AgentResult({
+            stopReason: 'interrupt',
+            lastMessage: new Message({ role: 'assistant', content: [new TextBlock('')] }),
+            invocationState: {},
+            interrupts,
+          })
+        },
+      }
+    }
+
+    async function runInterrupting(interrupts: Interrupt[]) {
+      const executor = new A2AExecutor({ agentFactory: () => interruptingAgent(interrupts) })
+      const eventBus = createMockEventBus()
+      await executor.execute(createRequestContext('create the spring campaign'), eventBus)
+      return eventBus.events.filter((e): e is TaskStatusUpdateEvent => e.kind === 'status-update')
+    }
+
+    it('parks the task instead of reporting it completed', async () => {
+      const statuses = await runInterrupting([new Interrupt({ id: 'int-1', name: 'approve', source: 'tool' })])
+
+      expect(statuses.map((e) => e.status.state)).toEqual(['input-required'])
+    })
+
+    it('advertises each interrupt id so a client can answer it', async () => {
+      const statuses = await runInterrupting([
+        new Interrupt({ id: 'int-1', name: 'approve', reason: { campaign: 'spring' }, source: 'tool' }),
+        new Interrupt({ id: 'int-2', name: 'confirm', source: 'tool' }),
+      ])
+
+      const dataParts = (statuses[0]!.status.message?.parts ?? []).filter((p) => p.kind === 'data')
+      expect(dataParts).toHaveLength(1)
+      expect(dataParts[0]).toEqual({
+        kind: 'data',
+        data: {
+          interrupts: [
+            { interruptId: 'int-1', name: 'approve', reason: { campaign: 'spring' } },
+            { interruptId: 'int-2', name: 'confirm' },
+          ],
+        },
+      })
+    })
+
+    it('keeps the human-readable text part first', async () => {
+      const statuses = await runInterrupting([
+        new Interrupt({ id: 'int-1', name: 'approve', reason: 'needs sign-off', source: 'tool' }),
+      ])
+
+      const parts = statuses[0]!.status.message?.parts ?? []
+      expect(parts[0]!.kind).toBe('text')
+      expect(parts[0]).toMatchObject({ text: expect.stringContaining('approve') })
+      expect(parts[0]).toMatchObject({ text: expect.stringContaining('needs sign-off') })
+    })
+
+    it('still parks the task when no interrupt details are given', async () => {
+      const statuses = await runInterrupting([])
+
+      expect(statuses.map((e) => e.status.state)).toEqual(['input-required'])
+      const parts = statuses[0]!.status.message?.parts ?? []
+      expect(parts.filter((p) => p.kind === 'data')).toHaveLength(0)
+      expect(parts[0]!.kind).toBe('text')
+    })
+
+    it('reports a normal completion as completed', async () => {
+      const executor = new A2AExecutor({ agentFactory: () => makeEchoAgent() })
+      const eventBus = createMockEventBus()
+
+      await executor.execute(createRequestContext('hello'), eventBus)
+
+      const statuses = eventBus.events.filter((e): e is TaskStatusUpdateEvent => e.kind === 'status-update')
+      expect(statuses.map((e) => e.status.state)).toEqual(['completed'])
+    })
+
+    it('advertises the id a real agent is actually waiting on', async () => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'createCampaign', toolUseId: 'tool-1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'Campaign is live.' })
+      const tool = createMockTool('createCampaign', (context) => {
+        context.interrupt({ name: 'approveCampaign', reason: { campaign: 'spring-launch' } })
+      })
+      const agent = new Agent({ model, tools: [tool], printer: false })
+
+      const executor = new A2AExecutor({ agentFactory: () => agent })
+      const eventBus = createMockEventBus()
+      await executor.execute(createRequestContext('create the spring-launch campaign'), eventBus)
+
+      const statuses = eventBus.events.filter((e): e is TaskStatusUpdateEvent => e.kind === 'status-update')
+      expect(statuses.map((e) => e.status.state)).toEqual(['input-required'])
+
+      // Read the advertised interrupts the way a client would, with no access to server internals.
+      const dataParts = (statuses[0]!.status.message?.parts ?? []).filter((p) => p.kind === 'data')
+      const advertised = (dataParts[0] as unknown as { data: { interrupts: { interruptId: string }[] } }).data
+        .interrupts
+
+      // The advertised id must be the one the agent parked, or the client cannot answer it.
+      const parked = (agent as unknown as { _interruptState: { interrupts: Record<string, unknown> } })._interruptState
+      expect(Object.keys(parked.interrupts)).toEqual([advertised[0]!.interruptId])
+    })
+
+    beforeEach(() => {
+      resumedWith.length = 0
+    })
+
+    function resumeContext(interruptId: string, response: unknown): RequestContext {
+      return {
+        taskId: 'task-1',
+        contextId: 'ctx-1',
+        userMessage: {
+          kind: 'message',
+          messageId: 'msg-2',
+          role: 'user',
+          parts: [{ kind: 'data', data: { interruptResponse: { interruptId, response } } }],
+        },
+      }
+    }
+
+    /** Records what the paused tool receives when it resumes, so the payload can be asserted. */
+    const resumedWith: unknown[] = []
+
+    function campaignAgent(): Agent {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'createCampaign', toolUseId: 'tool-1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'Campaign is live.' })
+      const tool = createMockTool('createCampaign', (context) => {
+        const approval = context.interrupt({ name: 'approveCampaign', reason: { campaign: 'spring-launch' } })
+        resumedWith.push(approval)
+      })
+      return new Agent({ model, tools: [tool], printer: false })
+    }
+
+    /** Runs the first turn and returns the interrupt id a client would read off the wire. */
+    async function parkAndReadId(executor: A2AExecutor): Promise<string> {
+      const eventBus = createMockEventBus()
+      await executor.execute(createRequestContext('create the spring-launch campaign'), eventBus)
+      const statuses = eventBus.events.filter((e): e is TaskStatusUpdateEvent => e.kind === 'status-update')
+      const dataParts = (statuses[0]!.status.message?.parts ?? []).filter((p) => p.kind === 'data')
+      return (dataParts[0] as unknown as { data: { interrupts: { interruptId: string }[] } }).data.interrupts[0]!
+        .interruptId
+    }
+
+    it('completes the round trip when the advertised id is answered', async () => {
+      const executor = new A2AExecutor({ agentFactory: () => campaignAgent() })
+      const interruptId = await parkAndReadId(executor)
+
+      const eventBus = createMockEventBus()
+      await executor.execute(resumeContext(interruptId, { approved: true }), eventBus)
+
+      const statuses = eventBus.events.filter((e): e is TaskStatusUpdateEvent => e.kind === 'status-update')
+      expect(statuses.map((e) => e.status.state)).toEqual(['completed'])
+
+      // The paused tool resumed with the client's answer, not merely with the task marked done.
+      expect(resumedWith).toEqual([{ approved: true }])
+    })
+
+    it('refuses an id the task is not waiting on and leaves it answerable', async () => {
+      const executor = new A2AExecutor({ agentFactory: () => campaignAgent() })
+      const interruptId = await parkAndReadId(executor)
+
+      await expect(
+        executor.execute(resumeContext('guessed-id', { approved: true }), createMockEventBus())
+      ).rejects.toThrow(/No pending interrupt matches/)
+
+      // The refused answer must not have consumed the interrupt.
+      const eventBus = createMockEventBus()
+      await executor.execute(resumeContext(interruptId, { approved: true }), eventBus)
+      const statuses = eventBus.events.filter((e): e is TaskStatusUpdateEvent => e.kind === 'status-update')
+      expect(statuses.map((e) => e.status.state)).toEqual(['completed'])
+    })
+
+    it('publishes nothing when an answer is refused, so the task stays parked for the client', async () => {
+      const executor = new A2AExecutor({ agentFactory: () => campaignAgent() })
+      await parkAndReadId(executor)
+
+      const eventBus = createMockEventBus()
+      await expect(executor.execute(resumeContext('guessed-id', { approved: true }), eventBus)).rejects.toThrow()
+
+      // Registering the task would move it out of input-required, hiding from the client that it is
+      // still waiting on them.
+      expect(eventBus.events).toEqual([])
+    })
+
+    it('refuses a null response rather than silently re-firing the interrupt', async () => {
+      const executor = new A2AExecutor({ agentFactory: () => campaignAgent() })
+      const interruptId = await parkAndReadId(executor)
+
+      await expect(executor.execute(resumeContext(interruptId, null), createMockEventBus())).rejects.toThrow(
+        /non-null 'response'/
+      )
+    })
+
+    it('refuses a fresh conversational turn while the task is parked', async () => {
+      const executor = new A2AExecutor({ agentFactory: () => campaignAgent() })
+      await parkAndReadId(executor)
+
+      await expect(executor.execute(createRequestContext('never mind'), createMockEventBus())).rejects.toThrow(
+        /awaiting an interrupt response/
+      )
+    })
+
+    it('refuses interrupt responses when nothing is pending', async () => {
+      const executor = new A2AExecutor({ agentFactory: () => campaignAgent() })
+
+      await expect(executor.execute(resumeContext('int-1', { approved: true }), createMockEventBus())).rejects.toThrow(
+        /no interrupt is pending/
+      )
+    })
+
+    it('leaves an ordinary data part on the generic content path', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+      const agent = new Agent({ model, printer: false })
+      vi.spyOn(agent, 'stream')
+      const executor = new A2AExecutor({ agent })
+
+      await executor.execute(
+        {
+          taskId: 'task-1',
+          contextId: 'ctx-1',
+          userMessage: {
+            kind: 'message',
+            messageId: 'msg-1',
+            role: 'user',
+            parts: [{ kind: 'data', data: { campaign: 'spring', budget: 100 } }],
+          },
+        },
+        createMockEventBus()
+      )
+
+      expect(agent.stream).toHaveBeenCalledWith(
+        [new TextBlock('[Structured Data]\n' + JSON.stringify({ campaign: 'spring', budget: 100 }, null, 2))],
+        expect.anything()
+      )
     })
   })
 })

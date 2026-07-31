@@ -8,11 +8,15 @@
 import type { ExecutionEventBus, RequestContext } from '@a2a-js/sdk/server'
 import type { AgentExecutor } from '@a2a-js/sdk/server'
 import { A2AError } from '@a2a-js/sdk/server'
+import type { Part } from '@a2a-js/sdk'
 import type { InvokableAgent, LocalAgent } from '../types/agent.js'
 import type { Snapshot } from '../types/snapshot.js'
 import type { ContentBlock } from '../types/messages.js'
+import type { Interrupt, InterruptState } from '../interrupt.js'
+import type { InterruptResponseContent } from '../types/interrupt.js'
+import { isInterruptResponseContent } from '../types/interrupt.js'
 import { ModelStreamUpdateEvent, ContentBlockEvent } from '../hooks/events.js'
-import { contentBlocksToParts, partsToContentBlocks } from './adapters.js'
+import { INTERRUPTS_KEY, contentBlocksToParts, extractInterruptResponses, partsToContentBlocks } from './adapters.js'
 import { normalizeError } from '../errors.js'
 import { logger } from '../logging/logger.js'
 import { AsyncLock } from './async-lock.js'
@@ -41,6 +45,23 @@ export interface A2AExecutorOptions {
   agentFactory?: AgentFactory
   /** Maximum contexts to retain; the least-recently-used is evicted beyond it. Must be at least 1. */
   maxContexts?: number
+}
+
+/**
+ * What this executor invokes the agent with: fresh conversational content, or interrupt responses
+ * resuming a task parked in `input-required`. Each arm stays homogeneous because the agent rejects
+ * a prompt whose contents are not all interrupt responses.
+ */
+type AgentPrompt = ContentBlock[] | InterruptResponseContent[]
+
+/** Whether a prompt carries interrupt responses rather than conversational content. */
+function isInterruptResume(prompt: AgentPrompt): prompt is InterruptResponseContent[] {
+  return prompt.length > 0 && isInterruptResponseContent(prompt[0])
+}
+
+/** Reads the agent's interrupt state, a field not declared on {@link InvokableAgent}. */
+function interruptStateOf(agent: InvokableAgent): InterruptState | undefined {
+  return (agent as { _interruptState?: InterruptState })._interruptState
 }
 
 /** A full Strands `Agent` that can be both invoked and snapshotted. */
@@ -192,44 +213,44 @@ export class A2AExecutor implements AgentExecutor {
    * @param eventBus - The event bus for publishing A2A artifact and status events
    */
   async execute(context: RequestContext, eventBus: ExecutionEventBus): Promise<void> {
-    const { taskId, contextId, userMessage } = context
-    const contentBlocks = partsToContentBlocks(userMessage.parts)
-    if (contentBlocks.length === 0) {
+    const { userMessage } = context
+
+    // Interrupt responses resume a parked task, so they are recognised before the generic
+    // conversion below would flatten them into text.
+    const prompt: AgentPrompt = extractInterruptResponses(userMessage.parts) ?? partsToContentBlocks(userMessage.parts)
+    if (prompt.length === 0) {
       throw A2AError.invalidRequest('No content blocks available')
     }
 
-    // Register the task with the ResultManager; without this, later events are ignored as "unknown task".
-    eventBus.publish({ kind: 'task', id: taskId, contextId, status: { state: 'working' } })
-
     if (this._agentFactory !== undefined) {
-      await this._runWithContextAgent(context, contentBlocks, eventBus)
+      await this._runWithContextAgent(context, prompt, eventBus)
     } else {
-      await this._runWithSharedAgent(context, contentBlocks, eventBus)
+      await this._runWithSharedAgent(context, prompt, eventBus)
     }
   }
 
   /** Factory mode: run against this context's dedicated agent, serialized only per context. */
   private async _runWithContextAgent(
     context: RequestContext,
-    contentBlocks: ContentBlock[],
+    prompt: AgentPrompt,
     eventBus: ExecutionEventBus
   ): Promise<void> {
     const { agent, lock } = this._acquireContextAgent(context.contextId)
     using _release = await lock.acquire()
-    await this._streamAgent(agent, context, contentBlocks, eventBus)
+    await this._streamAgent(agent, context, prompt, eventBus)
   }
 
   /** Single-agent mode: swap this context's snapshot on/off the shared agent under a lock. */
   private async _runWithSharedAgent(
     context: RequestContext,
-    contentBlocks: ContentBlock[],
+    prompt: AgentPrompt,
     eventBus: ExecutionEventBus
   ): Promise<void> {
     const agent = this._agent!
     using _release = await this._sharedAgentLock.acquire()
     this._restoreState(agent, this._snapshots.get(context.contextId) ?? this._templateSnapshot!)
     try {
-      await this._streamAgent(agent, context, contentBlocks, eventBus)
+      await this._streamAgent(agent, context, prompt, eventBus)
     } finally {
       // Persist updated history (even on error), evict, then reset the agent for the next caller.
       this._snapshots.delete(context.contextId)
@@ -243,15 +264,27 @@ export class A2AExecutor implements AgentExecutor {
   private async _streamAgent(
     agent: InvokableAgent,
     context: RequestContext,
-    contentBlocks: ContentBlock[],
+    prompt: AgentPrompt,
     eventBus: ExecutionEventBus
   ): Promise<void> {
     const { taskId, contextId } = context
     const artifactId = globalThis.crypto.randomUUID()
     let isFirstChunk = true
 
+    // Checked before the agent runs, so a refused answer leaves the interrupt parked and retryable.
+    if (isInterruptResume(prompt)) {
+      this._validateInterruptResume(agent, prompt)
+    } else if (interruptStateOf(agent)?.activated === true) {
+      throw A2AError.invalidParams('Task is awaiting an interrupt response and cannot accept a new message')
+    }
+
+    // Registered only once the request is known to be servable. Registering earlier would move a
+    // task parked in `input-required` to `working` before a refused answer threw, leaving the client
+    // unable to see that the task is still waiting on them.
+    eventBus.publish({ kind: 'task', id: taskId, contextId, status: { state: 'working' } })
+
     try {
-      const stream = agent.stream(contentBlocks, {
+      const stream = agent.stream(prompt, {
         invocationState: { a2aRequestContext: context },
       })
       let next = await stream.next()
@@ -310,11 +343,104 @@ export class A2AExecutor implements AgentExecutor {
         lastChunk: true,
       })
 
+      // An agent that stopped on an interrupt has not finished its work, so the task waits for the
+      // client to answer rather than reporting success.
+      const result = next.value
+      if (result?.stopReason === 'interrupt') {
+        this._publishInputRequired(result.interrupts ?? [], taskId, contextId, eventBus)
+        return
+      }
+
       eventBus.publish({ kind: 'status-update', taskId, contextId, status: { state: 'completed' }, final: true })
     } catch (error) {
       logger.error(`task_id=<${taskId}> | error in streaming execution`, normalizeError(error))
       throw error
     }
+  }
+
+  /**
+   * Verifies interrupt responses bind to interrupts actually parked on this context's agent.
+   *
+   * @param agent - The agent serving this context, with its interrupt state already restored
+   * @param responses - Interrupt responses extracted from the inbound message
+   * @throws A2AError when the agent holds no parked interrupts, or a response names an interrupt
+   *   the agent is not waiting on
+   */
+  private _validateInterruptResume(agent: InvokableAgent, responses: InterruptResponseContent[]): void {
+    const state = interruptStateOf(agent)
+    if (state?.activated !== true) {
+      throw A2AError.invalidParams('Received interrupt responses but no interrupt is pending')
+    }
+
+    const unknownIds = responses
+      .map((content) => content.interruptResponse.interruptId)
+      .filter((id) => !(id in state.interrupts))
+      .sort()
+    if (unknownIds.length > 0) {
+      throw A2AError.invalidParams(`No pending interrupt matches id(s): ${unknownIds.join(', ')}`)
+    }
+  }
+
+  /**
+   * Moves the task to `input-required` and tells the client which interrupts are waiting.
+   *
+   * The interrupts are published twice: a text part describing what is needed, and a data part
+   * carrying each `interruptId`. Only the id lets a client address its answer back to the interrupt
+   * that raised it, and ids are generated server-side so they cannot be inferred from the prose.
+   *
+   * @param interrupts - The unanswered interrupts that stopped the agent
+   * @param taskId - The A2A task being paused
+   * @param contextId - The A2A context the task belongs to
+   * @param eventBus - The event bus for publishing status events
+   */
+  private _publishInputRequired(
+    interrupts: Interrupt[],
+    taskId: string,
+    contextId: string,
+    eventBus: ExecutionEventBus
+  ): void {
+    const descriptions = interrupts.map((interrupt) =>
+      interrupt.reason === undefined
+        ? `- ${interrupt.name}`
+        : `- ${interrupt.name}: ${JSON.stringify(interrupt.reason)}`
+    )
+    const text =
+      descriptions.length > 0
+        ? `Agent requires input:\n${descriptions.join('\n')}`
+        : 'Agent requires additional input to continue'
+
+    // The text part stays first so clients that only read prose are unaffected.
+    const parts: Part[] = [{ kind: 'text', text }]
+    if (interrupts.length > 0) {
+      parts.push({
+        kind: 'data',
+        data: {
+          [INTERRUPTS_KEY]: interrupts.map((interrupt) => ({
+            interruptId: interrupt.id,
+            name: interrupt.name,
+            ...(interrupt.reason === undefined ? {} : { reason: interrupt.reason }),
+          })),
+        },
+      })
+    }
+
+    eventBus.publish({
+      kind: 'status-update',
+      taskId,
+      contextId,
+      status: {
+        state: 'input-required',
+        message: {
+          kind: 'message',
+          role: 'agent',
+          messageId: globalThis.crypto.randomUUID(),
+          taskId,
+          contextId,
+          parts,
+        },
+      },
+      final: true,
+    })
   }
 
   /**
