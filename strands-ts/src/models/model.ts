@@ -439,7 +439,17 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
               } else if (accumulatedCitations.hasData()) {
                 block = new CitationsBlock({
                   citations: accumulatedCitations.citations,
-                  content: accumulatedCitations.content,
+                  // Providers that stream citations interleaved with the text they ground (Anthropic,
+                  // Bedrock) send the generated text as textDeltas and leave the citations delta's
+                  // content empty. Without this fallback the citations block wins and the text is
+                  // dropped. Mirrors event_loop/streaming.py, which builds content from the
+                  // accumulated text.
+                  content:
+                    accumulatedCitations.content.length > 0
+                      ? accumulatedCitations.content
+                      : accumulatedText
+                        ? [{ text: accumulatedText }]
+                        : [],
                 })
                 accumulatedCitations.reset()
               } else {

@@ -4,7 +4,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk'
-import { Agent } from '@strands-agents/sdk'
+import { Agent, tool } from '@strands-agents/sdk'
 import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
 import { z } from 'zod'
 
@@ -76,4 +76,32 @@ async function structuredOutputExample() {
   // --8<-- [end:structured_output]
 }
 
+// Server-side tools
+async function serverSideTools() {
+  // --8<-- [start:server_side_tools]
+  const recordFinding = tool({
+    name: 'record_finding',
+    description: 'Record a finding for later review.',
+    inputSchema: z.object({ summary: z.string() }),
+    callback: ({ summary }) => `recorded: ${summary}`,
+  })
+
+  const model = new AnthropicModel({
+    apiKey: '<KEY>',
+    modelId: 'claude-sonnet-4-6',
+    maxTokens: 1028,
+    anthropicTools: [{ type: 'web_search_20260318', name: 'web_search', max_uses: 5 }],
+  })
+
+  // `recordFinding` still reaches the model: `anthropicTools` is appended to the agent's
+  // function tools rather than replacing them.
+  const agent = new Agent({ model, tools: [recordFinding] })
+  const response = await agent.invoke(
+    'Search for what Anthropic announced this week, then record your finding.'
+  )
+  console.log(response)
+  // --8<-- [end:server_side_tools]
+}
+
 void structuredOutputExample
+void serverSideTools

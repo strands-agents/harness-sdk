@@ -95,6 +95,9 @@ The `model_config` configures the underlying model selected for inference. The s
 | `max_tokens` | Maximum number of tokens to generate before stopping | `1028` | [reference](https://platform.claude.com/docs/en/api/messages/create#create.max_tokens)
 | `model_id` | ID of a model to use | `claude-sonnet-4-6` | [reference](https://platform.claude.com/docs/en/api/messages/create#create.model)
 | `params` | Additional pass-through parameters | `{"metadata": {"user_id": "u1"}}` | [reference](https://platform.claude.com/docs/en/api/messages/create)
+| `anthropic_tools` | Anthropic server-side tools, appended to the agent's function tools | `[{"type": "web_search_20260318", "name": "web_search"}]` | [reference](https://platform.claude.com/docs/en/docs/agents-and-tools/tool-use/overview)
+
+Do not pass `tools` through `params`. `params` is merged into the request, so a `tools` key there used to overwrite every function tool definition. Use `anthropic_tools` instead; passing `tools` via `params` now warns and is merged additively.
 </Tab>
 <Tab label="TypeScript">
 
@@ -104,6 +107,10 @@ The `model_config` configures the underlying model selected for inference. The s
 | `maxTokens` | Maximum tokens to generate | `1028` | [reference](https://platform.claude.com/docs/en/api/messages/create#create.max_tokens) |
 | `stopSequences` | Sequences that stop generation | `['END']` | [reference](https://platform.claude.com/docs/en/api/messages/create#create.stop_sequences) |
 | `params` | Additional pass-through parameters | `{ metadata: { user_id: 'u1' } }` | [reference](https://platform.claude.com/docs/en/api/messages/create) |
+| `anthropicTools` | Anthropic server-side tools, appended to the agent's function tools | `[{ type: 'web_search_20260318', name: 'web_search' }]` | [reference](https://platform.claude.com/docs/en/docs/agents-and-tools/tool-use/overview) |
+| `betas` | Beta identifiers sent in the `anthropic-beta` header | `['web-fetch-2025-09-10']` | [reference](https://platform.claude.com/docs/en/api/beta-headers) |
+
+Do not pass `tools` through `params`. `params` is merged into the request, so a `tools` key there used to overwrite every function tool definition. Use `anthropicTools` instead; passing `tools` via `params` now warns and is merged additively.
 </Tab>
 </Tabs>
 
@@ -203,6 +210,59 @@ Define a Zod schema and pass it as `structuredOutputSchema`. Validated output is
 </Tabs>
 
 For schema patterns, error handling, and per-invocation overrides, see [Structured Output](../agents/structured-output/).
+
+### Server-Side Tools
+
+Anthropic runs some tools itself (web search, web fetch, code execution, memory, text editor, bash) instead of
+handing them back to the agent to execute. These are configured with <Syntax py="anthropic_tools" ts="anthropicTools" />
+and are **appended alongside** any function tools registered on the agent, so enabling web search never disables
+the agent's own tools.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent, tool
+from strands.models.anthropic import AnthropicModel
+
+
+@tool
+def record_finding(summary: str) -> str:
+    """Record a finding for later review."""
+    return f"recorded: {summary}"
+
+
+model = AnthropicModel(
+    client_args={"api_key": "<KEY>"},
+    model_id="claude-sonnet-4-6",
+    max_tokens=1028,
+    anthropic_tools=[{"type": "web_search_20260318", "name": "web_search", "max_uses": 5}],
+)
+
+# `record_finding` still reaches the model: anthropic_tools is appended to the agent's
+# function tools rather than replacing them.
+agent = Agent(model=model, tools=[record_finding])
+response = agent("Search for what Anthropic announced this week, then record your finding.")
+print(response)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/concepts/model-providers/anthropic.ts:server_side_tools"
+```
+</Tab>
+</Tabs>
+
+The versioned `type` string comes from the Anthropic tool catalog (e.g. `web_search_20260318`), and tools that
+require a beta header are opted into separately. Web search results are grounded with citations, which surface as
+`citationsContent` content blocks carrying the source url, domain, title, and cited text. The `server_tool_use`
+and `*_tool_result` blocks themselves are not surfaced as tool use/result content blocks — Anthropic already ran
+them — but a result error is logged as a warning so a failed search is never silent.
+
+For the full list of server-side tools and their current versioned type strings, see the
+[Anthropic tool use overview](https://platform.claude.com/docs/en/docs/agents-and-tools/tool-use/overview) and the
+[web search tool reference](https://platform.claude.com/docs/en/docs/agents-and-tools/tool-use/web-search-tool).
 
 ### Token Counting
 
