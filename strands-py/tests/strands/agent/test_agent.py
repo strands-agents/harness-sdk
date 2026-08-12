@@ -1166,6 +1166,48 @@ async def test_agent_structured_output_async(agent, system_prompt, user, agenera
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "system_prompt",
+    [[{"text": "You are a helpful assistant."}, {"cachePoint": {"type": "default"}}]],
+    indirect=True,
+)
+async def test_agent_structured_output_async_warns_on_dropped_system_prompt_blocks(agent, user, agenerator):
+    """Non-text system prompt blocks are dropped on this path, so the caller is told instead of failing silently."""
+    agent.model.structured_output = unittest.mock.Mock(return_value=agenerator([{"output": user}]))
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        await agent.structured_output_async(type(user), "Jane Doe is 30 years old")
+
+    dropped_warnings = [
+        warning
+        for warning in caught
+        if issubclass(warning.category, UserWarning) and "cachePoint" in str(warning.message)
+    ]
+    assert len(dropped_warnings) == 1
+
+    # The provider still only receives the flattened string; this path is deprecated and is not being widened.
+    agent.model.structured_output.assert_called_once_with(
+        type(user),
+        [{"role": "user", "content": [{"text": "Jane Doe is 30 years old"}]}],
+        system_prompt="You are a helpful assistant.",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("system_prompt", ["You are a helpful assistant."], indirect=True)
+async def test_agent_structured_output_async_does_not_warn_for_plain_system_prompt(agent, user, agenerator):
+    """A plain string system prompt loses nothing, so it must stay quiet."""
+    agent.model.structured_output = unittest.mock.Mock(return_value=agenerator([{"output": user}]))
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        await agent.structured_output_async(type(user), "Jane Doe is 30 years old")
+
+    assert [warning for warning in caught if issubclass(warning.category, UserWarning)] == []
+
+
+@pytest.mark.asyncio
 async def test_stream_async_returns_all_events(mock_event_loop_cycle, alist):
     agent = Agent()
 

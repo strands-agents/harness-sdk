@@ -945,6 +945,7 @@ class Agent(AgentBase):
             category=DeprecationWarning,
             stacklevel=2,
         )
+        self._warn_on_dropped_system_prompt_blocks()
         await self.hooks.invoke_callbacks_async(BeforeInvocationEvent(agent=self, invocation_state={}))
         with self.tracer.tracer.start_as_current_span(
             "execute_structured_output", kind=trace_api.SpanKind.CLIENT
@@ -1547,6 +1548,28 @@ class Agent(AgentBase):
 
         self._checkpoint = Checkpoint.from_dict(payload["checkpoint"])
         return True
+
+    def _warn_on_dropped_system_prompt_blocks(self) -> None:
+        """Warn that non-text system prompt blocks do not reach the model on the structured output path.
+
+        `Model.structured_output` only accepts the flattened `system_prompt` string, so blocks such as
+        `cachePoint` are discarded. The loss is otherwise invisible: nothing errors, prompt caching simply
+        never happens.
+        """
+        if not self._system_prompt_content:
+            return
+
+        dropped = sorted({key for block in self._system_prompt_content for key in block if key != "text"})
+        if not dropped:
+            return
+
+        warnings.warn(
+            f"System prompt blocks {dropped} are dropped by Agent.structured_output_async and never reach the"
+            " model, because model providers accept only the flattened system prompt string on this path."
+            " Pass `structured_output_model` into the agent invocation instead to keep them.",
+            category=UserWarning,
+            stacklevel=2,
+        )
 
     async def _convert_prompt_to_messages(self, prompt: AgentInput) -> Messages:
         if self._interrupt_state.activated:
