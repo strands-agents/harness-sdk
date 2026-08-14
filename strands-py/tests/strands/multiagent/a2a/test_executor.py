@@ -2694,16 +2694,30 @@ async def test_interrupt_advertises_every_pending_id(mock_strands_agent, mock_re
     assert tru_ids == exp_ids
 
 
+class _UnserializableReason:
+    """A reason no JSON encoder accepts."""
+
+    def __str__(self):
+        return "<custom reason>"
+
+
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reason", "exp_reason"),
+    [
+        (_UnserializableReason(), "<custom reason>"),
+        # json.dumps emits NaN and Infinity as bare literals that a strict JSON-RPC client refuses.
+        (float("nan"), "nan"),
+        (float("inf"), "inf"),
+        # The whole reason degrades together, so one bad leaf collapses the dict around it.
+        ({"limit": float("inf"), "note": "cap"}, "{'limit': inf, 'note': 'cap'}"),
+    ],
+)
 async def test_interrupt_reason_that_is_not_json_falls_back_to_text(
-    mock_strands_agent, mock_request_context, mock_event_queue
+    reason, exp_reason, mock_strands_agent, mock_request_context, mock_event_queue
 ):
     """A reason the transport cannot encode degrades to its string form rather than failing late."""
     from strands.interrupt import Interrupt
-
-    class Unserializable:
-        def __str__(self):
-            return "<custom reason>"
 
     executor = StrandsA2AExecutor(mock_strands_agent)
     await _run_until_interrupt(
@@ -2711,12 +2725,11 @@ async def test_interrupt_reason_that_is_not_json_falls_back_to_text(
         mock_strands_agent,
         mock_request_context,
         mock_event_queue,
-        [Interrupt(id="int-1", name="approval", reason=Unserializable())],
+        [Interrupt(id="int-1", name="approval", reason=reason)],
     )
 
     data_parts = [p.root.data for p in _input_required_message(mock_event_queue).parts if isinstance(p.root, DataPart)]
     tru_reason = data_parts[0]["interrupts"][0]["reason"]
-    exp_reason = "<custom reason>"
     assert tru_reason == exp_reason
 
 

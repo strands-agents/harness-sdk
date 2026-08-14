@@ -84,7 +84,9 @@ def _jsonable(value: Any) -> Any:
     surface only while serializing the response, long after the interrupt details are assembled.
     """
     try:
-        json.dumps(value)
+        # allow_nan=False rejects NaN and Infinity, which json.dumps otherwise emits as bare
+        # literals that a strict JSON-RPC client refuses to parse.
+        json.dumps(value, allow_nan=False)
     except (TypeError, ValueError):
         return str(value)
     return value
