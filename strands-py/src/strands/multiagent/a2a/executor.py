@@ -12,6 +12,7 @@ import asyncio
 import base64
 import json
 import logging
+import math
 import mimetypes
 import uuid
 import warnings
@@ -83,10 +84,13 @@ def _jsonable(value: Any) -> Any:
     An interrupt reason is arbitrary user data. A value the transport cannot encode would otherwise
     surface only while serializing the response, long after the interrupt details are assembled.
     """
+    if isinstance(value, float) and not math.isfinite(value):
+        # A non-finite float is not valid JSON. pydantic's response serialization silently turns it
+        # into null, so the reason vanishes with no error; degrade just this scalar to a string and
+        # leave a structured reason's shape intact.
+        return str(value)
     try:
-        # allow_nan=False rejects NaN and Infinity, which json.dumps otherwise emits as bare
-        # literals that a strict JSON-RPC client refuses to parse.
-        json.dumps(value, allow_nan=False)
+        json.dumps(value)
     except (TypeError, ValueError):
         return str(value)
     return value
