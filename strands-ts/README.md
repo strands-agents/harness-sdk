@@ -216,7 +216,7 @@ Seamlessly integrate Model Context Protocol (MCP) servers:
 
 ```typescript
 import { Agent, McpClient } from "@strands-agents/sdk";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 // Create a client for a local MCP server
 const documentationTools = new McpClient({
