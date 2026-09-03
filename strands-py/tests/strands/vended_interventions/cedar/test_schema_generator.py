@@ -72,3 +72,19 @@ class TestSchemaGeneration:
         ]
         schema = generate_cedar_schema(tools)
         assert "Agent::" not in schema
+
+    def test_namespace_wrapper_preserved(self):
+        tools = [
+            {
+                "name": "test_tool",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                },
+            }
+        ]
+
+        schema = generate_cedar_schema(tools, namespace="MyApp")
+
+        assert "namespace MyApp" in schema
+        assert "namespace Agent" not in schema
