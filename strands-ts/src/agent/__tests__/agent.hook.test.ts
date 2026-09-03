@@ -1625,6 +1625,42 @@ describe('Agent Hooks Integration', () => {
       )
       expect(block!.content).toEqual([new TextBlock('[REDACTED]')])
     })
+
+    it.each([
+      ['object', { temperature: 72 }],
+      ['zero', 0],
+      ['empty string', ''],
+      ['false', false],
+      ['null', null],
+    ])('preserves %s structuredContent when normalizing a mismatched toolUseId', async (_label, structuredContent) => {
+      const tool = createMockTool('tool', () => 'done')
+
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'tool', toolUseId: 'tool-1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'Done' })
+
+      const agent = new Agent({ model, tools: [tool] })
+      agent.addHook(AfterToolCallEvent, (event: AfterToolCallEvent) => {
+        // A mismatched toolUseId forces the executor to rebuild the block.
+        event.result = new ToolResultBlock({
+          toolUseId: 'hook-issued-id',
+          status: 'success',
+          content: [new TextBlock('replaced')],
+          structuredContent,
+        })
+      })
+
+      await agent.invoke('Test')
+
+      const toolResultMessage = agent.messages.find((m) =>
+        m.content.some((b) => b.type === 'toolResultBlock' && b.toolUseId === 'tool-1')
+      )
+      expect(toolResultMessage).toBeDefined()
+      const block = toolResultMessage!.content.find(
+        (b): b is ToolResultBlock => b.type === 'toolResultBlock' && b.toolUseId === 'tool-1'
+      )
+      expect(block!.structuredContent).toEqual(structuredContent)
+    })
   })
 
   describe('AfterInvocationEvent resume', () => {

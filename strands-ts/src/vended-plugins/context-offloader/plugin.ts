@@ -508,10 +508,14 @@ export class ContextOffloader implements Plugin {
       }
     }
 
+    // structuredContent and error are application-side data, never model context,
+    // so offloading the content blocks preserves them.
     event.result = new ToolResultBlock({
       toolUseId: event.result.toolUseId,
       status: event.result.status,
       content: newContent,
+      ...(event.result.structuredContent !== undefined ? { structuredContent: event.result.structuredContent } : {}),
+      ...(event.result.error !== undefined ? { error: event.result.error } : {}),
     })
   }
 }

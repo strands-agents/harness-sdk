@@ -433,10 +433,14 @@ export class SlidingWindowConversationManager extends ConversationManager {
       }
 
       changesMade = true
+      // structuredContent is never sent to the model, so truncation preserves it.
       return new ToolResultBlock({
         toolUseId: toolResultBlock.toolUseId,
         status: toolResultBlock.status,
         content: newItems,
+        ...(toolResultBlock.structuredContent !== undefined
+          ? { structuredContent: toolResultBlock.structuredContent }
+          : {}),
         ...(toolResultBlock.error !== undefined ? { error: toolResultBlock.error } : {}),
       })
     })
