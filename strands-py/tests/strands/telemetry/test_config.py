@@ -163,6 +163,25 @@ def test_setup_meter_with_console_and_otlp_exporter(
     mock_metrics_api.set_meter_provider.assert_called_once()
 
 
+def test_setup_meter_forwards_provider_kwargs(
+    mock_resource,
+    mock_reader,
+    mock_metrics_api,
+    mock_meter_provider,
+):
+    """Test that arbitrary kwargs are forwarded to MeterProvider."""
+    sentinel_views = [mock.MagicMock()]
+
+    telemetry = StrandsTelemetry()
+    telemetry.setup_meter(views=sentinel_views)
+
+    mock_meter_provider.assert_called_once_with(
+        resource=mock_resource.return_value,
+        metric_readers=[],
+        views=sentinel_views,
+    )
+
+
 def test_setup_console_exporter(mock_resource, mock_tracer_provider, mock_console_exporter, mock_simple_processor):
     """Test add console exporter"""
 
