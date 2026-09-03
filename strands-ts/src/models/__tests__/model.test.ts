@@ -406,6 +406,67 @@ describe('Model', () => {
       })
     })
 
+    describe('when the provider omits the message start event', () => {
+      it('completes the message by assuming the assistant role', async () => {
+        // ai-sdk-ollama streams content without a Vercel `stream-start` part, so VercelModel
+        // never emits modelMessageStartEvent. See #3190.
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelContentBlockStartEvent' }
+          yield {
+            type: 'modelContentBlockDeltaEvent',
+            delta: { type: 'textDelta', text: 'Hello' },
+          }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+        })
+
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+        const { result } = await collectGenerator(provider.streamAggregated(messages))
+
+        expect(result.message.role).toBe('assistant')
+        expect(result.message.content).toEqual([{ type: 'textBlock', text: 'Hello' }])
+        expect(result.stopReason).toBe('endTurn')
+      })
+
+      it('preserves tool use blocks so the agent loop still executes tools', async () => {
+        const provider = new TestModelProvider(async function* () {
+          yield {
+            type: 'modelContentBlockStartEvent',
+            start: { type: 'toolUseStart', toolUseId: 't1', name: 'get_weather' },
+          }
+          yield {
+            type: 'modelContentBlockDeltaEvent',
+            delta: { type: 'toolUseInputDelta', input: '{"city":"Berlin"}' },
+          }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' }
+        })
+
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+        const { result } = await collectGenerator(provider.streamAggregated(messages))
+
+        expect(result.message.role).toBe('assistant')
+        expect(result.message.content).toEqual([
+          { type: 'toolUseBlock', name: 'get_weather', toolUseId: 't1', input: { city: 'Berlin' } },
+        ])
+        expect(result.stopReason).toBe('toolUse')
+      })
+
+      it('still throws when the stream produced no content at all', async () => {
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+        })
+
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+        await expect(async () => await collectGenerator(provider.streamAggregated(messages))).rejects.toThrow(
+          'Stream ended without completing a message'
+        )
+      })
+    })
+
     describe('when streaming reasoning content', () => {
       it('yields complete reasoning block', async () => {
         const provider = new TestModelProvider(async function* () {

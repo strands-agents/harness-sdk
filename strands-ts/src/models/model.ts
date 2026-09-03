@@ -548,19 +548,33 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
             break
           }
 
-          case 'modelMessageStopEvent':
-            // Store message and stop reason
-            if (messageRole) {
+          case 'modelMessageStopEvent': {
+            // Store message and stop reason.
+            // Some providers (e.g. ai-sdk-ollama) stream content but never emit a message start
+            // event. Without a role we would discard a perfectly good response and throw
+            // "Stream ended without completing a message" below. Model output is always the
+            // assistant turn, so synthesize the role rather than lose the message. A stream that
+            // produced no content at all is still a genuinely broken stream and keeps throwing.
+            // See #3190.
+            let role = messageRole
+            if (!role && contentBlocks.length > 0) {
+              logger.warn(
+                'model stream completed without a message start event; assuming role "assistant"'
+              )
+              role = 'assistant'
+            }
+            if (role) {
               const filtered = contentBlocks.filter(
                 (block) => !(block instanceof TextBlock && block.text.trim() === '')
               )
               stoppedMessage = new Message({
-                role: messageRole,
+                role,
                 content: filtered,
               })
               finalStopReason = event.stopReason!
             }
             break
+          }
 
           case 'modelMetadataEvent':
             // Store metadata, keeping the last one if multiple events occur
