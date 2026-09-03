@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import re
 
+from .media_types import _LEGACY_TEXT_DOCUMENT_TYPES
+
 _MAX_PATTERN_LENGTH = 200
 
 _TEXT_APPLICATION_TYPES = frozenset(
@@ -27,8 +29,18 @@ _TEXT_APPLICATION_TYPES = frozenset(
 
 
 def _is_searchable_content(content_type: str) -> bool:
-    """Return whether the given MIME content type can be searched as text."""
-    return content_type.startswith("text/") or content_type in _TEXT_APPLICATION_TYPES
+    """Return whether the given MIME content type can be searched as text.
+
+    Text-based document formats stored under the canonical ``text/*`` types
+    (csv, html, md, txt) are covered by the prefix check; the legacy
+    ``application/{format}`` aliases written by earlier releases are included
+    explicitly so existing artifacts stay searchable.
+    """
+    return (
+        content_type.startswith("text/")
+        or content_type in _TEXT_APPLICATION_TYPES
+        or content_type in _LEGACY_TEXT_DOCUMENT_TYPES
+    )
 
 
 def _search_content(

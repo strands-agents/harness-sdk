@@ -269,6 +269,21 @@ class TestFileStorage:
         assert (await storage.store("k", b"pdf", "application/pdf")).endswith(".pdf")
 
     @pytest.mark.asyncio
+    async def test_extension_for_document_content_types(self, tmp_path):
+        """Canonical document MIME types map to shell-friendly extensions."""
+        storage = FileStorage(artifact_dir=str(tmp_path))
+        assert (await storage.store("k", b"a,b", "text/csv")).endswith(".csv")
+        assert (await storage.store("k", b"# hi", "text/markdown")).endswith(".md")
+        assert (await storage.store("k", b"<p/>", "text/html")).endswith(".html")
+        assert (await storage.store("k", b"doc", "application/msword")).endswith(".doc")
+        docx_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        assert (await storage.store("k", b"docx", docx_type)).endswith(".docx")
+        assert (await storage.store("k", b"xls", "application/vnd.ms-excel")).endswith(".xls")
+        xlsx_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        assert (await storage.store("k", b"xlsx", xlsx_type)).endswith(".xlsx")
+        assert (await storage.store("k", b"\x00\x01", "application/octet-stream")).endswith(".bin")
+
+    @pytest.mark.asyncio
     async def test_auto_creates_directory(self, tmp_path):
         artifact_dir = tmp_path / "nested" / "dir" / "artifacts"
         assert not artifact_dir.exists()

@@ -18,6 +18,23 @@ class TestIsSearchableContent:
         assert _is_searchable_content("video/mp4") is False
         assert _is_searchable_content("application/pdf") is False
 
+    def test_canonical_text_document_types(self):
+        """Text-based document formats stored under canonical text/* types are searchable."""
+        assert _is_searchable_content("text/csv") is True
+        assert _is_searchable_content("text/markdown") is True
+
+    def test_legacy_text_document_types(self):
+        """Legacy application/{format} aliases for text-based documents stay searchable."""
+        assert _is_searchable_content("application/csv") is True
+        assert _is_searchable_content("application/txt") is True
+        assert _is_searchable_content("application/md") is True
+        assert _is_searchable_content("application/html") is True
+
+    def test_legacy_binary_document_types_not_searchable(self):
+        assert _is_searchable_content("application/docx") is False
+        assert _is_searchable_content("application/xlsx") is False
+        assert _is_searchable_content("application/octet-stream") is False
+
 
 class TestSearchContentEmpty:
     def test_empty_string(self):

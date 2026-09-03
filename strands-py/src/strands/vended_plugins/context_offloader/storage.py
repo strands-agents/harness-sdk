@@ -30,6 +30,8 @@ import boto3
 from botocore.config import Config as BotocoreConfig
 from botocore.exceptions import ClientError
 
+from .media_types import _extension_for_content_type
+
 if TYPE_CHECKING:
     from ...sandbox.base import Sandbox
 
@@ -163,9 +165,7 @@ class FileStorage:
     @staticmethod
     def _extension_for(content_type: str) -> str:
         """Return a file extension for the given content type."""
-        if content_type == "text/plain":
-            return ".txt"
-        return f".{content_type.split('/')[-1]}"
+        return _extension_for_content_type(content_type)
 
     def _artifact_path(self, filename: str) -> str:
         """Join a filename onto the artifact dir, preserving its string form."""

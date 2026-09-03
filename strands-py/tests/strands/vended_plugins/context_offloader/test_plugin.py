@@ -530,6 +530,154 @@ class TestRetrievalTool:
         assert result["content"][0]["document"]["format"] == "pdf"
         assert result["content"][0]["document"]["source"]["bytes"] == doc_bytes
 
+    @pytest.mark.asyncio
+    async def test_retrieve_octet_stream_returns_text_not_invalid_document(self, plugin, storage, tool_context):
+        """Regression for #3019: octet-stream must not emit an invalid document.format.
+
+        Bedrock Converse only accepts document.format in
+        [docx, csv, html, txt, pdf, md, doc, xlsx, xls]. The catch-all
+        "application/octet-stream" (the default for unknown/binary bytes from
+        FileStorage/S3Storage) previously produced format="octet-stream", which
+        makes the next ConverseStream call raise a ValidationException and kill
+        the turn. Such content must be returned as text instead.
+        """
+        content = b"plain text bytes that were stored as octet-stream\nline2\n"
+        ref = await storage.store("key_1", content, "application/octet-stream")
+        result = await plugin.retrieve_offloaded_content(reference=ref, tool_context=tool_context)
+        assert isinstance(result, str)
+        assert result == content.decode("utf-8")
+
+    @pytest.mark.asyncio
+    async def test_retrieve_unknown_application_subtype_returns_text(self, plugin, storage, tool_context):
+        """Any application/* subtype outside the Converse enum is returned as text."""
+        content = b"some bytes"
+        for content_type in ("application/unknown", "application/x-tar", "application/zip"):
+            ref = await storage.store(f"key_{content_type}", content, content_type)
+            result = await plugin.retrieve_offloaded_content(reference=ref, tool_context=tool_context)
+            assert isinstance(result, str), f"{content_type} should decode to text"
+            assert result == content.decode("utf-8")
+
+    @pytest.mark.asyncio
+    async def test_retrieve_non_utf8_octet_stream_does_not_raise(self, plugin, storage, tool_context):
+        """Non-UTF8 binary stored as octet-stream is decoded leniently, never raising."""
+        content = b"\xff\xfe\x00\x01binary\x80"
+        ref = await storage.store("key_1", content, "application/octet-stream")
+        result = await plugin.retrieve_offloaded_content(reference=ref, tool_context=tool_context)
+        assert isinstance(result, str)
+        assert result == content.decode("utf-8", errors="replace")
+
+    @pytest.mark.asyncio
+    async def test_retrieve_legacy_document_content_types_still_emit_document_block(
+        self, plugin, storage, tool_context
+    ):
+        """Artifacts stored by earlier releases used ``application/{format}``; they must keep reconstructing."""
+        for fmt in ("docx", "csv", "html", "txt", "pdf", "md", "doc", "xlsx", "xls"):
+            doc_bytes = b"content for " + fmt.encode()
+            ref = await storage.store(f"key_{fmt}", doc_bytes, f"application/{fmt}")
+            result = await plugin.retrieve_offloaded_content(reference=ref, tool_context=tool_context)
+            exp_block = {"format": fmt, "name": ref, "source": {"bytes": doc_bytes}}
+            assert result == {"status": "success", "content": [{"document": exp_block}]}
+
+
+class TestFaithfulRoundTrip:
+    """Offload -> retrieve must reproduce the original content block (kind + format).
+
+    Regression tests for #3019: the offloader must never fabricate a content
+    type. The stored MIME is the canonical projection of the original block's
+    kind + format, and full retrieval reconstructs the block verbatim through
+    the inverse mapping.
+    """
+
+    @pytest.fixture
+    def storage(self):
+        return InMemoryStorage()
+
+    @pytest.fixture
+    def plugin(self, storage):
+        return ContextOffloader(storage=storage, max_result_tokens=25, preview_tokens=10, include_retrieval_tool=True)
+
+    @pytest.fixture
+    def mock_agent(self):
+        agent = MagicMock()
+        agent.model.count_tokens = AsyncMock(side_effect=_heuristic_count_tokens)
+        return agent
+
+    @pytest.fixture
+    def tool_context(self, mock_agent):
+        tool_use = ToolUse(toolUseId="retrieve_1", name="retrieve_offloaded_content", input={})
+        return ToolContext(tool_use=tool_use, agent=mock_agent, invocation_state={})
+
+    async def _offload_document(self, plugin, mock_agent, doc_format, doc_bytes):
+        """Run a document block through the offload pipeline and return its reference."""
+        content = [
+            {"text": "x" * 200},
+            {"document": {"format": doc_format, "name": f"file.{doc_format}", "source": {"bytes": doc_bytes}}},
+        ]
+        event = _make_event(mock_agent, content)
+        await plugin._handle_tool_result(event)
+        placeholder = event.result["content"][1]["text"]
+        return placeholder.split("ref: ")[1].rstrip("]")
+
+    @pytest.mark.asyncio
+    async def test_document_formats_round_trip_verbatim(self, plugin, mock_agent, tool_context):
+        """Offload + full retrieve preserves the original document format for every format."""
+        for fmt in ("pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "md"):
+            doc_bytes = b"content for " + fmt.encode()
+            ref = await self._offload_document(plugin, mock_agent, fmt, doc_bytes)
+            result = await plugin.retrieve_offloaded_content(reference=ref, tool_context=tool_context)
+            exp_block = {"format": fmt, "name": ref, "source": {"bytes": doc_bytes}}
+            assert result == {"status": "success", "content": [{"document": exp_block}]}
+
+    @pytest.mark.asyncio
+    async def test_txt_document_round_trips_as_text(self, plugin, mock_agent, tool_context):
+        """format='txt' is stored as text/plain and retrieved as text: content-identical and searchable."""
+        doc_bytes = b"plain text document body\nsecond line\n"
+        ref = await self._offload_document(plugin, mock_agent, "txt", doc_bytes)
+        result = await plugin.retrieve_offloaded_content(reference=ref, tool_context=tool_context)
+        assert result == doc_bytes.decode("utf-8")
+
+    @pytest.mark.asyncio
+    async def test_text_based_documents_are_searchable(self, plugin, mock_agent, tool_context):
+        """Regression: an offloaded CSV was rejected as 'binary content' for pattern search."""
+        csv_bytes = b"name,score\nalice,10\nbob,7\ncarol,9\n"
+        ref = await self._offload_document(plugin, mock_agent, "csv", csv_bytes)
+        result = await plugin.retrieve_offloaded_content(reference=ref, pattern="bob", tool_context=tool_context)
+        assert "cannot search binary content" not in result
+        assert "bob,7" in result
+
+    @pytest.mark.asyncio
+    async def test_stored_content_type_is_canonical_iana(self, plugin, storage, mock_agent):
+        """Documents are stored under real IANA types (e.g. text/csv), not fabricated ones."""
+        ref = await self._offload_document(plugin, mock_agent, "csv", b"a,b\n1,2\n")
+        _, content_type = await storage.retrieve(ref)
+        assert content_type == "text/csv"
+
+    @pytest.mark.asyncio
+    async def test_unknown_document_format_degrades_to_text(self, plugin, mock_agent, tool_context):
+        """A runtime-only unknown format must never produce an invalid document block."""
+        ref = await self._offload_document(plugin, mock_agent, "weirdfmt", b"strange bytes")
+        result = await plugin.retrieve_offloaded_content(reference=ref, tool_context=tool_context)
+        assert isinstance(result, str)
+        assert result == "strange bytes"
+
+    @pytest.mark.asyncio
+    async def test_non_utf8_txt_document_retrieves_without_raising(self, plugin, mock_agent, tool_context):
+        """Regression: a non-UTF-8 txt document (e.g. Windows-1252) must degrade, not raise."""
+        doc_bytes = "caf\u00e9,r\u00e9sum\u00e9\n".encode("cp1252")  # é = 0xe9, invalid UTF-8
+        ref = await self._offload_document(plugin, mock_agent, "txt", doc_bytes)
+        result = await plugin.retrieve_offloaded_content(reference=ref, tool_context=tool_context)
+        assert isinstance(result, str)
+        assert result == doc_bytes.decode("utf-8", errors="replace")
+
+    @pytest.mark.asyncio
+    async def test_non_utf8_csv_document_pattern_search_does_not_raise(self, plugin, mock_agent, tool_context):
+        """Regression: pattern search on a non-UTF-8 CSV document must degrade, not raise."""
+        doc_bytes = "name,city\nbob,Z\u00fcrich\nalice,Madrid\n".encode("cp1252")  # ü = 0xfc, invalid UTF-8
+        ref = await self._offload_document(plugin, mock_agent, "csv", doc_bytes)
+        result = await plugin.retrieve_offloaded_content(reference=ref, pattern="bob", tool_context=tool_context)
+        assert isinstance(result, str)
+        assert "bob" in result
+
 
 class TestRetrievalToolSearch:
     """Tests for the search/grep functionality of the retrieval tool."""

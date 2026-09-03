@@ -59,6 +59,7 @@ from ...storage.storage import _NAMESPACED, _NamespacedStorage
 from ...tools.decorator import tool
 from ...types.content import Message
 from ...types.tools import ToolContext, ToolResult, ToolResultContent
+from .media_types import _document_format_for_mime, _mime_for_document_format
 from .search import _is_searchable_content, _search_content
 from .storage import InMemoryStorage
 from .storage import Storage as _LegacyStorage
@@ -182,8 +183,9 @@ class ContextOffloader(Plugin):
     - **JSON**: stored as ``application/json``, replaced with a preview
     - **Image**: stored in its native format (e.g., ``image/png``), replaced with a
       placeholder showing format and size
-    - **Document**: stored in its native format (e.g., ``application/pdf``), replaced
-      with a placeholder showing format, name, and size
+    - **Document**: stored under the canonical MIME type for its format (e.g.,
+      ``application/pdf``, ``text/csv``), replaced with a placeholder showing format,
+      name, and size; text-based formats (csv, txt, md, html) stay pattern-searchable
     - **Unknown types**: passed through unchanged
 
     This operates proactively at tool execution time via ``AfterToolCallEvent``,
@@ -430,7 +432,7 @@ class ContextOffloader(Plugin):
                 "Omit pattern/line_range/context_lines to retrieve the full content."
             )
 
-        text = content_bytes.decode("utf-8")
+        text = content_bytes.decode("utf-8", errors="replace")
         ctx_lines = context_lines if context_lines is not None else 5
         max_chars = self._max_result_tokens * _CHARS_PER_TOKEN
 
@@ -444,10 +446,16 @@ class ContextOffloader(Plugin):
 
     @staticmethod
     def _decode_full_content(content_bytes: bytes, content_type: str, reference: str) -> dict | str:
-        """Decode stored content into its native format for full retrieval."""
-        if content_type.startswith("text/"):
-            return content_bytes.decode("utf-8")
+        """Reconstruct stored content into its original block shape for full retrieval.
 
+        The stored content type is the canonical projection of the original
+        block's kind and format (see ``media_types``), so reconstructing through
+        the inverse mapping re-enters context exactly as the tool emitted it.
+        Content types the offloader never produces -- notably the storage
+        backends' ``application/octet-stream`` fallback when content-type
+        metadata was lost -- decode as text rather than fabricating a document
+        format the model would reject (#3019).
+        """
         if content_type == "application/json":
             return {"status": "success", "content": [{"json": json.loads(content_bytes)}]}
 
@@ -458,11 +466,18 @@ class ContextOffloader(Plugin):
                 "content": [{"image": {"format": img_format, "source": {"bytes": content_bytes}}}],
             }
 
-        if content_type.startswith("application/"):
-            doc_format = content_type.split("/")[-1]
+        doc_format = _document_format_for_mime(content_type)
+        if doc_format is not None:
             doc_block = {"format": doc_format, "name": reference, "source": {"bytes": content_bytes}}
             return {"status": "success", "content": [{"document": doc_block}]}
 
+        if content_type.startswith("text/"):
+            # errors="replace": text-based documents (csv/txt/md/html) carry
+            # arbitrary bytes -- a non-UTF-8 file must degrade, not raise.
+            return content_bytes.decode("utf-8", errors="replace")
+
+        # Unknown/foreign content (e.g. octet-stream from lost metadata):
+        # return as text -- never an invalid document block that kills the turn.
         return content_bytes.decode("utf-8", errors="replace")
 
     @hook
@@ -546,12 +561,13 @@ class ContextOffloader(Plugin):
                     doc_format = doc.get("format", "unknown")
                     doc_name = doc.get("name", "unknown")
                     doc_bytes = doc.get("source", {}).get("bytes", b"")
+                    doc_type = _mime_for_document_format(doc_format)
                     if doc_bytes:
-                        ref = await _store_content(storage, key, doc_bytes, f"application/{doc_format}")
-                        references.append((ref, f"application/{doc_format}", f"{doc_name}, {len(doc_bytes):,} bytes"))
+                        ref = await _store_content(storage, key, doc_bytes, doc_type)
+                        references.append((ref, doc_type, f"{doc_name}, {len(doc_bytes):,} bytes"))
                         self._track_stored_cycle(event.agent, ref, cycle)
                     else:
-                        references.append(("", f"application/{doc_format}", f"{doc_name}, 0 bytes"))
+                        references.append(("", doc_type, f"{doc_name}, 0 bytes"))
         except Exception:
             logger.warning(
                 "tool_use_id=<%s> | failed to offload tool result, keeping original",
