@@ -296,6 +296,25 @@ def test_list_messages_all(file_manager, sample_session, sample_agent):
     assert len(result) == 5
 
 
+def test_list_messages_ignores_malformed_message_filename(file_manager, sample_session, sample_agent, sample_message):
+    """Test listing messages skips files without a numeric message id."""
+    file_manager.create_session(sample_session)
+    file_manager.create_agent(sample_session.session_id, sample_agent)
+    file_manager.create_message(sample_session.session_id, sample_agent.agent_id, sample_message)
+
+    messages_dir = os.path.join(
+        file_manager._get_agent_path(sample_session.session_id, sample_agent.agent_id),
+        "messages",
+    )
+    with open(os.path.join(messages_dir, "message_backup.json"), "w", encoding="utf-8") as f:
+        json.dump({"message_id": "backup"}, f)
+
+    result = file_manager.list_messages(sample_session.session_id, sample_agent.agent_id)
+
+    assert len(result) == 1
+    assert result[0].message_id == sample_message.message_id
+
+
 def test_list_messages_with_limit(file_manager, sample_session, sample_agent):
     """Test listing messages with limit."""
     # Create session and agent
