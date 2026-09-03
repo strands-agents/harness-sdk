@@ -2208,7 +2208,7 @@ export class Agent implements LocalAgent, InvokableAgent {
         })
 
         if (result.redaction?.userMessage) {
-          this._redactLastMessage(result.redaction.userMessage)
+          this._redactMessage(result.redaction.userMessage, this._findUserInputIndexToRedact())
         }
 
         const stopData: ModelStopData = {
@@ -2534,7 +2534,34 @@ export class Agent implements LocalAgent, InvokableAgent {
   }
 
   /**
-   * Redacts the last message in the conversation history.
+   * Finds the index of the message that should be redacted when a guardrail
+   * blocks user input.
+   *
+   * The event loop appends the assistant message and the tool-result message at the
+   * end of each cycle, and tool-result messages also carry role 'user'. When a
+   * guardrail intervenes on a later model call, the most recent message is therefore
+   * the tool result rather than the input that originated the turn. This scans
+   * backward for the most recent user message that carries real input (a block other
+   * than a tool result) so the redaction targets the originating message.
+   *
+   * @returns The index to redact, or the last index when no real user input is found
+   */
+  private _findUserInputIndexToRedact(): number {
+    for (let index = this.messages.length - 1; index >= 0; index--) {
+      const message = this.messages[index]!
+      if (message.role !== 'user') {
+        continue
+      }
+      const hasRealUserInput = message.content.some((block) => block.type !== 'toolResultBlock')
+      if (hasRealUserInput) {
+        return index
+      }
+    }
+    return this.messages.length - 1
+  }
+
+  /**
+   * Redacts a message in the conversation history.
    * Called when guardrails block user input and redaction is enabled.
    *
    * Follows the redaction strategy:
@@ -2544,16 +2571,17 @@ export class Agent implements LocalAgent, InvokableAgent {
    *   the redaction message.
    *
    * @param redactMessage - The redaction message to replace the content with
+   * @param targetIndex - The message index to redact; defaults to the last message
    */
-  private _redactLastMessage(redactMessage: string): void {
-    // Find and redact the last message
-    const lastIndex = this.messages.length - 1
-    if (lastIndex >= 0) {
-      const lastMessage = this.messages[lastIndex]
-      if (lastMessage && lastMessage.role === 'user') {
+  private _redactMessage(redactMessage: string, targetIndex?: number): void {
+    // Find and redact the target message
+    const resolvedIndex = targetIndex ?? this.messages.length - 1
+    if (resolvedIndex >= 0) {
+      const targetMessage = this.messages[resolvedIndex]
+      if (targetMessage && targetMessage.role === 'user') {
         // Collect only tool result blocks with redacted content
         const redactedContent: ContentBlock[] = []
-        for (const block of lastMessage.content) {
+        for (const block of targetMessage.content) {
           if (block.type === 'toolResultBlock') {
             // Preserve tool result block structure, only redact its content
             redactedContent.push(
@@ -2571,16 +2599,16 @@ export class Agent implements LocalAgent, InvokableAgent {
           redactedContent.push(new TextBlock(redactMessage))
         }
 
-        this.messages[lastIndex] = new Message({
+        this.messages[resolvedIndex] = new Message({
           role: 'user',
           content: redactedContent,
           // Redaction rewrites content but it's the same logical message, so keep its tracking id.
-          trackingId: lastMessage.trackingId,
+          trackingId: targetMessage.trackingId,
         })
-      } else if (lastMessage) {
+      } else if (targetMessage) {
         // Unexpected state: redaction requested but last message is not from user
         logger.warn(
-          `role=<${lastMessage.role}> | received input redaction but last message is not from user | redaction skipped`
+          `role=<${targetMessage.role}> | received input redaction but last message is not from user | redaction skipped`
         )
       }
     }

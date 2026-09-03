@@ -32,6 +32,9 @@ import {
   BeforeToolsEvent,
 } from '../../hooks/events.js'
 import { BedrockModel } from '../../models/bedrock.js'
+import { Model } from '../../models/model.js'
+import type { BaseModelConfig, StreamOptions } from '../../models/model.js'
+import type { ModelStreamEvent } from '../../models/streaming.js'
 import { StructuredOutputError } from '../../errors.js'
 import { expectLoopMetrics } from '../../__fixtures__/metrics-helpers.js'
 import { expectAgentResult } from '../../__fixtures__/agent-helpers.js'
@@ -1685,7 +1688,7 @@ describe('Agent', () => {
   })
 })
 
-describe('Agent._redactLastMessage', () => {
+describe('Agent._redactMessage', () => {
   const redactMessage = '[REDACTED]'
 
   it('redacts last user message with only text blocks', () => {
@@ -1700,7 +1703,7 @@ describe('Agent._redactLastMessage', () => {
       })
     )
 
-    agent['_redactLastMessage'](redactMessage)
+    agent['_redactMessage'](redactMessage)
 
     const lastMessage = agent['messages'][agent['messages'].length - 1]!
     expect(lastMessage.role).toBe('user')
@@ -1723,7 +1726,7 @@ describe('Agent._redactLastMessage', () => {
       })
     )
 
-    agent['_redactLastMessage'](redactMessage)
+    agent['_redactMessage'](redactMessage)
 
     expect(agent['messages'][agent['messages'].length - 1]!.trackingId).toBe('durable-1')
   })
@@ -1753,7 +1756,7 @@ describe('Agent._redactLastMessage', () => {
       })
     )
 
-    agent['_redactLastMessage'](redactMessage)
+    agent['_redactMessage'](redactMessage)
 
     const lastMessage = agent['messages'][agent['messages'].length - 1]!
     expect(lastMessage.role).toBe('user')
@@ -1789,7 +1792,7 @@ describe('Agent._redactLastMessage', () => {
     agent['messages'].push(assistantMessage)
 
     const originalContent = assistantMessage.content
-    agent['_redactLastMessage'](redactMessage)
+    agent['_redactMessage'](redactMessage)
 
     const lastMessage = agent['messages'][agent['messages'].length - 1]!
     expect(lastMessage.role).toBe('assistant')
@@ -1800,8 +1803,82 @@ describe('Agent._redactLastMessage', () => {
     const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Response' })
     const agent = new Agent({ model })
 
-    expect(() => agent['_redactLastMessage'](redactMessage)).not.toThrow()
+    expect(() => agent['_redactMessage'](redactMessage)).not.toThrow()
     expect(agent['messages']).toHaveLength(0)
+  })
+})
+
+describe('Agent guardrail input redaction across a tool cycle', () => {
+  /**
+   * Model that requests a tool on the first call, then triggers input redaction on
+   * the second call (after the tool-result message has been appended). Used to verify
+   * the redaction targets the originating user message rather than the tool result.
+   */
+  class RedactOnSecondCallModel extends Model<BaseModelConfig> {
+    private _config: BaseModelConfig = { modelId: 'test-model' }
+    private _callCount = 0
+
+    updateConfig(modelConfig: BaseModelConfig): void {
+      this._config = { ...this._config, ...modelConfig }
+    }
+
+    getConfig(): BaseModelConfig {
+      return this._config
+    }
+
+    async *stream(_messages: Message[], _options?: StreamOptions): AsyncGenerator<ModelStreamEvent> {
+      this._callCount++
+      if (this._callCount === 1) {
+        yield { type: 'modelMessageStartEvent', role: 'assistant' }
+        yield {
+          type: 'modelContentBlockStartEvent',
+          start: { type: 'toolUseStart', name: 'lookup', toolUseId: 'tool-1' },
+        }
+        yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'toolUseInputDelta', input: '{}' } }
+        yield { type: 'modelContentBlockStopEvent' }
+        yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' }
+        return
+      }
+
+      yield { type: 'modelMessageStartEvent', role: 'assistant' }
+      yield { type: 'modelContentBlockStartEvent' }
+      yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'Done' } }
+      yield { type: 'modelContentBlockStopEvent' }
+      yield { type: 'modelMessageStopEvent', stopReason: 'guardrailIntervened' }
+      yield { type: 'modelRedactionEvent', inputRedaction: { replaceContent: '[User input redacted.]' } }
+    }
+  }
+
+  it('redacts the originating user message, not the tool-result message', async () => {
+    const model = new RedactOnSecondCallModel()
+    const tool = createMockTool(
+      'lookup',
+      () =>
+        new ToolResultBlock({
+          toolUseId: 'tool-1',
+          status: 'success' as const,
+          content: [new TextBlock('tool output')],
+        })
+    )
+    const agent = new Agent({ model, tools: [tool] })
+
+    await collectGenerator(agent.stream('harmful input'))
+
+    const userMessages = agent.messages.filter((message) => message.role === 'user')
+    const originatingMessage = userMessages[0]!
+    const toolResultMessage = userMessages[userMessages.length - 1]!
+
+    // The originating user input is redacted to a single text block.
+    expect(originatingMessage.content).toEqual([new TextBlock('[User input redacted.]')])
+
+    // The tool-result message keeps its tool result intact and is not redacted.
+    expect(toolResultMessage.content).toEqual([
+      new ToolResultBlock({
+        toolUseId: 'tool-1',
+        status: 'success',
+        content: [new TextBlock('tool output')],
+      }),
+    ])
   })
 })
 
