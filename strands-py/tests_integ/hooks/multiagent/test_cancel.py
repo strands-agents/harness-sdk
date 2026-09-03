@@ -4,7 +4,7 @@ from strands import Agent
 from strands.hooks import BeforeNodeCallEvent, HookProvider
 from strands.multiagent import GraphBuilder, Swarm
 from strands.multiagent.base import Status
-from strands.types._events import MultiAgentNodeCancelEvent
+from strands.types._events import MultiAgentNodeSkipEvent
 
 
 @pytest.fixture
@@ -49,15 +49,15 @@ def graph(cancel_hook, info_agent, weather_agent):
 
 @pytest.mark.asyncio
 async def test_swarm_cancel_node(swarm):
-    tru_cancel_event = None
+    tru_skip_event = None
     async for event in swarm.stream_async("What is the weather"):
-        if event.get("type") == "multiagent_node_cancel":
-            tru_cancel_event = event
+        if event.get("type") == "multiagent_node_skip":
+            tru_skip_event = event
 
     multiagent_result = event["result"]
 
-    exp_cancel_event = MultiAgentNodeCancelEvent(node_id="weather", message="test cancel")
-    assert tru_cancel_event == exp_cancel_event
+    exp_skip_event = MultiAgentNodeSkipEvent(node_id="weather", message="test cancel")
+    assert tru_skip_event == exp_skip_event
 
     tru_status = multiagent_result.status
     exp_status = Status.FAILED
@@ -71,17 +71,16 @@ async def test_swarm_cancel_node(swarm):
 
 @pytest.mark.asyncio
 async def test_graph_cancel_node(graph):
-    tru_cancel_event = None
-    with pytest.raises(RuntimeError, match="test cancel"):
-        async for event in graph.stream_async("What is the weather"):
-            if event.get("type") == "multiagent_node_cancel":
-                tru_cancel_event = event
+    tru_skip_event = None
+    async for event in graph.stream_async("What is the weather"):
+        if event.get("type") == "multiagent_node_skip":
+            tru_skip_event = event
 
-    exp_cancel_event = MultiAgentNodeCancelEvent(node_id="weather", message="test cancel")
-    assert tru_cancel_event == exp_cancel_event
+    exp_skip_event = MultiAgentNodeSkipEvent(node_id="weather", message="test cancel")
+    assert tru_skip_event == exp_skip_event
 
     state = graph.state
 
     tru_status = state.status
-    exp_status = Status.FAILED
+    exp_status = Status.COMPLETED
     assert tru_status == exp_status

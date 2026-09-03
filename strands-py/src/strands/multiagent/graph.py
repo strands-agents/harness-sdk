@@ -44,8 +44,8 @@ from ..session import SessionManager
 from ..telemetry import get_tracer
 from ..types._events import (
     MultiAgentHandoffEvent,
-    MultiAgentNodeCancelEvent,
     MultiAgentNodeInterruptEvent,
+    MultiAgentNodeSkipEvent,
     MultiAgentNodeStartEvent,
     MultiAgentNodeStopEvent,
     MultiAgentNodeStreamEvent,
@@ -118,7 +118,8 @@ class GraphState:
 
     Attributes:
         status: Current execution status of the graph.
-        completed_nodes: Set of nodes that have completed execution.
+        completed_nodes: Set of nodes whose execution is settled, either completed normally or skipped via skip_node.
+            Both statuses satisfy downstream readiness checks; inspect node.execution_status to distinguish them.
         failed_nodes: Set of nodes that failed during execution.
         interrupted_nodes: Set of nodes that user interrupted during execution.
         execution_order: List of nodes in the order they were executed.
@@ -165,7 +166,8 @@ class GraphState:
 
         Returns: (should_continue, reason)
         """
-        # Check node execution limit (only if set)
+        # Check node execution limit (only if set). A skipped node counts: the limit bounds graph traversal, and
+        # excluding skips lets a cycle whose nodes are all skipped loop forever.
         if max_node_executions is not None and len(self.execution_order) >= max_node_executions:
             return False, f"Max node executions reached: {max_node_executions}"
 
@@ -180,7 +182,11 @@ class GraphState:
 
 @dataclass
 class GraphResult(MultiAgentResult):
-    """Result from graph execution - extends MultiAgentResult with graph-specific details."""
+    """Result from graph execution - extends MultiAgentResult with graph-specific details.
+
+    ``completed_nodes`` counts only nodes that ran to completion. Nodes bypassed via ``skip_node``
+    are counted by ``skipped_nodes`` instead, and their downstream nodes still executed.
+    """
 
     total_nodes: int = 0
     completed_nodes: int = 0
@@ -189,6 +195,8 @@ class GraphResult(MultiAgentResult):
     execution_order: list["GraphNode"] = field(default_factory=list)
     edges: list[tuple["GraphNode", "GraphNode"]] = field(default_factory=list)
     entry_points: list["GraphNode"] = field(default_factory=list)
+    # Appended rather than grouped with the other counters so that no existing positional argument shifts.
+    skipped_nodes: int = 0
 
 
 @dataclass
@@ -351,6 +359,9 @@ class GraphBuilder:
         The condition can be either:
         - A legacy callable: Callable[[GraphState], bool] - receives only graph state
         - A new-style callable: EdgeConditionWithContext - receives graph state and invocation_state
+
+        A condition that reads an upstream node's output must handle a ``NodeResult.result`` of ``None``:
+        a node bypassed via ``skip_node`` produced no output and records ``None`` there.
         """
 
         def resolve_node(node: str | GraphNode, node_type: str) -> GraphNode:
@@ -798,7 +809,9 @@ class Graph(MultiAgentBase):
 
             if self.state.status == Status.INTERRUPTED:
                 self._interrupt_state.context["completed_nodes"] = [
-                    node.node_id for node in current_batch if node.execution_status == Status.COMPLETED
+                    node.node_id
+                    for node in current_batch
+                    if node.execution_status in (Status.COMPLETED, Status.SKIPPED)
                 ]
                 return
 
@@ -1007,13 +1020,29 @@ class Graph(MultiAgentBase):
                 yield self._activate_interrupt(node, interrupts, from_hook=True)
                 return
 
-            if before_event.cancel_node:
-                cancel_message = (
-                    before_event.cancel_node if isinstance(before_event.cancel_node, str) else "node cancelled by user"
+            skip_value = before_event.skip_node or before_event.cancel_node
+
+            if skip_value:
+                skip_message = skip_value if isinstance(skip_value, str) else "node skipped by user"
+                logger.debug("reason=<%s> | node skipped, graph continues", skip_message)
+                yield MultiAgentNodeSkipEvent(node.node_id, skip_message)
+                node_result = NodeResult(
+                    result=None,
+                    execution_time=0,
+                    status=Status.SKIPPED,
+                    accumulated_usage=Usage(inputTokens=0, outputTokens=0, totalTokens=0),
+                    accumulated_metrics=Metrics(latencyMs=0),
+                    execution_count=0,
                 )
-                logger.debug("reason=<%s> | cancelling execution", cancel_message)
-                yield MultiAgentNodeCancelEvent(node.node_id, cancel_message)
-                raise RuntimeError(cancel_message)
+                node.result = node_result
+                node.execution_time = 0
+                node.execution_status = Status.SKIPPED
+                self.state.completed_nodes.add(node)
+                self.state.results[node.node_id] = node_result
+                self.state.execution_order.append(node)
+                self._accumulate_metrics(node_result)
+                yield MultiAgentNodeStopEvent(node_id=node.node_id, node_result=node_result)
+                return
 
             # Build node input from satisfied dependencies
             node_input = self._build_node_input(node)
@@ -1213,8 +1242,23 @@ class Graph(MultiAgentBase):
                 if edge.should_traverse(self.state, invocation_state=self._current_invocation_state):
                     dependency_results[edge.from_node.node_id] = self.state.results[edge.from_node.node_id]
 
-        if not dependency_results:
-            # No dependencies - return task as ContentBlocks
+        # Render each dependency's output. A dependency that flattens to no agent results contributes nothing,
+        # so it must not leave an empty "From <node>:" header behind. That covers both a skipped node, whose
+        # result is None, and a nested graph whose own nodes were all skipped.
+        dependency_blocks: list[ContentBlock] = []
+        for dep_id, node_result in dependency_results.items():
+            agent_results = node_result.get_agent_results()
+            if not agent_results:
+                continue
+            dependency_blocks.append(ContentBlock(text=f"\nFrom {dep_id}:"))
+            for agent_result in agent_results:
+                agent_name = getattr(agent_result, "agent_name", "Agent")
+                dependency_blocks.append(ContentBlock(text=f"  - {agent_name}: {str(agent_result)}"))
+
+        if not dependency_blocks:
+            # Nothing upstream contributed content, so treat this like an entry node and hand it the bare task.
+            # The "Original Task:" prefix is dropped with it, since it only reads correctly against the
+            # "Inputs from previous nodes:" section that is no longer there.
             if isinstance(self.state.task, str):
                 return [ContentBlock(text=self.state.task)]
             else:
@@ -1233,15 +1277,7 @@ class Graph(MultiAgentBase):
 
         # Add dependency outputs
         node_input.append(ContentBlock(text="\nInputs from previous nodes:"))
-
-        for dep_id, node_result in dependency_results.items():
-            node_input.append(ContentBlock(text=f"\nFrom {dep_id}:"))
-            # Get all agent results from this node (flattened if nested)
-            agent_results = node_result.get_agent_results()
-            for result in agent_results:
-                agent_name = getattr(result, "agent_name", "Agent")
-                result_text = str(result)
-                node_input.append(ContentBlock(text=f"  - {agent_name}: {result_text}"))
+        node_input.extend(dependency_blocks)
 
         return node_input
 
@@ -1262,7 +1298,8 @@ class Graph(MultiAgentBase):
             execution_count=self.state.execution_count,
             execution_time=self._execution_time_with_active_interval(self.state.execution_time),
             total_nodes=self.state.total_nodes,
-            completed_nodes=len(self.state.completed_nodes),
+            completed_nodes=sum(1 for node in self.state.completed_nodes if node.execution_status == Status.COMPLETED),
+            skipped_nodes=sum(1 for node in self.state.completed_nodes if node.execution_status == Status.SKIPPED),
             failed_nodes=len(self.state.failed_nodes),
             interrupted_nodes=len(self.state.interrupted_nodes),
             execution_order=self.state.execution_order,
@@ -1489,7 +1526,10 @@ class Graph(MultiAgentBase):
             self.nodes[node_id] for node_id in (payload.get("completed_nodes") or []) if node_id in self.nodes
         )
         for node in self.state.completed_nodes:
-            node.execution_status = Status.COMPLETED
+            node_result = results.get(node.node_id)
+            node.execution_status = (
+                Status.SKIPPED if (node_result and node_result.status == Status.SKIPPED) else Status.COMPLETED
+            )
 
         # Execution order (only nodes that still exist)
         order_node_ids = payload.get("execution_order") or []

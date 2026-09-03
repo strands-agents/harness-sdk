@@ -54,7 +54,7 @@ A [`GraphNode`](@api/python/strands.multiagent.graph#GraphNode) represents a nod
 - **node_id**: Unique identifier for the node
 - **executor**: The Agent, A2AAgent, or MultiAgentBase instance to execute
 - **dependencies**: Set of nodes this node depends on
-- **execution_status**: Current status (PENDING, EXECUTING, COMPLETED, FAILED)
+- **execution_status**: Current status (PENDING, EXECUTING, COMPLETED, SKIPPED, FAILED, INTERRUPTED)
 - **result**: The NodeResult after execution
 - **execution_time**: Time taken to execute the node in milliseconds
 
@@ -600,6 +600,7 @@ print(f"Analysis: {analysis_result}")
 # Get performance metrics
 print(f"Total nodes: {result.total_nodes}")
 print(f"Completed nodes: {result.completed_nodes}")
+print(f"Skipped nodes: {result.skipped_nodes}")
 print(f"Failed nodes: {result.failed_nodes}")
 print(f"Execution time: {result.execution_time}ms")
 print(f"Token usage: {result.accumulated_usage}")
@@ -838,4 +839,4 @@ The Graph pattern is available in multiple SDKs. While the core concept is the s
 
 **Error handling**: Python node failures throw exceptions (fail-fast), while orchestrator-level limit violations return a FAILED result. TypeScript does the inverse: node failures produce a FAILED result, allowing parallel paths to continue, while orchestrator-level limits (`maxSteps`) throw exceptions to promote fail-fast behavior for global failures.
 
-**Node cancellation**: Both SDKs support cancelling a node before execution via hook callbacks. In TypeScript, a cancelled node produces a CANCELLED result status, allowing the orchestrator to distinguish cancellation from failure. In Python, a cancelled node results in a FAILED status.
+**Skipping a node**: Both SDKs support bypassing a node before execution via hook callbacks. In TypeScript, a cancelled node produces a CANCELLED result status, allowing the orchestrator to distinguish cancellation from failure. In Python, `skip_node` records a SKIPPED status with `result=None`, and downstream nodes still run.

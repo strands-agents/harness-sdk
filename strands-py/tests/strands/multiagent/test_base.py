@@ -261,6 +261,27 @@ def test_node_result_str_with_exception():
     assert str(node_result) == "something broke"
 
 
+def test_node_result_str_with_skipped_result():
+    """Test NodeResult.__str__ renders a skipped node as an empty string rather than "None"."""
+    node_result = NodeResult(result=None, status=Status.SKIPPED)
+    assert str(node_result) == ""
+
+
+def test_multi_agent_result_str_omits_skipped_node(agent_result):
+    """Test MultiAgentResult.__str__ omits skipped nodes instead of printing a literal "None"."""
+    result = MultiAgentResult(
+        status=Status.COMPLETED,
+        results={
+            "skipped": NodeResult(result=None, status=Status.SKIPPED),
+            "ran": NodeResult(result=agent_result),
+        },
+    )
+    output = str(result)
+    assert "None" not in output
+    assert "skipped" not in output
+    assert "ran: Test response" in output
+
+
 def test_multi_agent_result_str_single_node(agent_result):
     """Test MultiAgentResult.__str__ with a single node."""
     result = MultiAgentResult(
