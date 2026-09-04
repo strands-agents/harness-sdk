@@ -254,6 +254,13 @@ class OpenAIModel(Model):
                 else:
                     merged.append({"type": "text", "text": content_block["text"]})
             elif "image" in content_block or "document" in content_block:
+                if _has_location_source(content_block):
+                    # Mirror the message-path gate at openai.py:412 — location-source
+                    # documents/images cannot be inlined as base64 (no `bytes` key),
+                    # so warn and skip rather than crash with KeyError: 'bytes'.
+                    # See https://github.com/strands-agents/harness-sdk/issues/4018
+                    logger.warning("Location sources are not supported by OpenAI | skipping toolResult content block")
+                    continue
                 has_non_text = True
                 merged.append(cls.format_request_message_content(content_block))
 

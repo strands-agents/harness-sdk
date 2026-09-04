@@ -10,6 +10,7 @@ import pytest
 import strands
 from strands.models import CacheConfig
 from strands.models.openai import OpenAIModel
+from strands.types.content import Messages
 from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
 
 
@@ -390,6 +391,120 @@ def test_format_request_tool_message_empty_content():
     assert tru_result["content"] == ""
     assert tru_result["role"] == "tool"
     assert tru_result["tool_call_id"] == "c1"
+
+
+def test_format_request_tool_message_skips_location_source_document(caplog):
+    """Regression for https://github.com/strands-agents/harness-sdk/issues/4018.
+
+    A location-source document nested inside a toolResult must not crash with
+    KeyError: 'bytes'; it is warn-and-skipped instead (mirrors the message-
+    path gate at openai.py for user messages containing location-source docs).
+    """
+    caplog.set_level(logging.WARNING, logger="strands.models.openai")
+
+    tool_result = {
+        "content": [
+            {"text": "analyze this report"},
+            {
+                "document": {
+                    "format": "pdf",
+                    "name": "report.pdf",
+                    "source": {"location": {"type": "s3", "uri": "s3://bucket/report.pdf"}},
+                },
+            },
+        ],
+        "status": "success",
+        "toolUseId": "c1",
+    }
+
+    tru_result = OpenAIModel.format_request_tool_message(tool_result)
+    content = tru_result["content"]
+
+    # Location-source document skipped; surviving text returns as a joined string
+    # (no non-text content remains, so has_non_text is False — same path as the
+    # all-text case in format_request_tool_message).
+    assert content == "analyze this report"
+    assert "Location sources are not supported by OpenAI | skipping toolResult content block" in caplog.text
+
+
+def test_format_request_tool_message_skips_location_source_image(caplog):
+    """Regression for https://github.com/strands-agents/harness-sdk/issues/4018.
+
+    Same gate for image blocks whose source is a location rather than bytes.
+    """
+    caplog.set_level(logging.WARNING, logger="strands.models.openai")
+
+    tool_result = {
+        "content": [
+            {
+                "image": {
+                    "format": "png",
+                    "source": {"location": {"type": "s3", "uri": "s3://bucket/img.png"}},
+                },
+            },
+        ],
+        "status": "success",
+        "toolUseId": "c1",
+    }
+
+    tru_result = OpenAIModel.format_request_tool_message(tool_result)
+    # Image-only result becomes empty string (no surviving text or non-text).
+    assert tru_result["content"] == ""
+    assert "Location sources are not supported by OpenAI | skipping toolResult content block" in caplog.text
+
+
+def test_format_request_messages_tool_result_with_location_source_document(model, caplog):
+    """Regression for https://github.com/strands-agents/harness-sdk/issues/4018.
+
+    End-to-end: build an assistant→toolResult pair where the tool result carries
+    a location-source document and confirm model.format_request does not raise.
+    """
+    caplog.set_level(logging.WARNING, logger="strands.models.openai")
+
+    messages: Messages = [
+        {"role": "user", "content": [{"text": "fetch the report"}]},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "toolUse": {
+                        "input": {"path": "report.pdf"},
+                        "name": "fetch_doc",
+                        "toolUseId": "t1",
+                    },
+                },
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": "t1",
+                        "status": "success",
+                        "content": [
+                            {
+                                "document": {
+                                    "format": "pdf",
+                                    "name": "report.pdf",
+                                    "source": {
+                                        "location": {"type": "s3", "uri": "s3://bucket/report.pdf"},
+                                    },
+                                },
+                            },
+                        ],
+                    },
+                },
+            ],
+        },
+    ]
+
+    request = model.format_request(messages)
+    # No exception is the headline assertion; the document is dropped, the
+    # tool-message comes back with empty content.
+    assert request["messages"][-1]["role"] == "tool"
+    assert request["messages"][-1]["tool_call_id"] == "t1"
+    assert "skipping toolResult content block" in caplog.text
 
 
 def test_split_tool_message_images_with_image():
