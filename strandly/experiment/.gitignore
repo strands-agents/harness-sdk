@@ -1,0 +1,5 @@
+node_modules/
+runs/
+.venv-evals/
+__pycache__/
+benchmarks/tau-bench/.venv/
