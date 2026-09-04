@@ -308,6 +308,30 @@ def test_format_request_tool_message_with_document():
     assert tru_result["output"][1]["filename"] == "document.pdf"
 
 
+def test_format_request_tool_message_skips_location_source_document(caplog):
+    tool_result = {
+        "content": [
+            {"text": "see attached"},
+            {
+                "document": {
+                    "format": "pdf",
+                    "name": "report",
+                    "source": {"location": {"type": "s3", "s3Location": {"uri": "s3://bucket/report.pdf"}}},
+                },
+            },
+        ],
+        "status": "success",
+        "toolUseId": "c4",
+    }
+
+    with caplog.at_level(logging.WARNING, logger="strands.models.openai_responses"):
+        tru_result = OpenAIResponsesModel._format_request_tool_message(tool_result)
+
+    assert tru_result["call_id"] == "c4"
+    assert tru_result["output"] == "see attached"
+    assert "Location sources are not supported by OpenAI Responses" in caplog.text
+
+
 def test_format_request_messages(system_prompt):
     messages = [
         {
@@ -443,6 +467,30 @@ def test_format_request_messages_skips_message_cache_point(caplog):
 
     assert result == [{"role": "user", "content": [{"type": "input_text", "text": "durable prefix"}]}]
     assert "cachePoint content block is not supported by OpenAI Responses" in caplog.text
+
+
+def test_format_request_messages_skips_location_source_document(caplog):
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"text": "analyze this document"},
+                {
+                    "document": {
+                        "format": "pdf",
+                        "name": "report",
+                        "source": {"location": {"type": "s3", "s3Location": {"uri": "s3://bucket/report.pdf"}}},
+                    },
+                },
+            ],
+        },
+    ]
+
+    with caplog.at_level(logging.WARNING, logger="strands.models.openai_responses"):
+        result = OpenAIResponsesModel._format_request_messages(messages)
+
+    assert result == [{"role": "user", "content": [{"type": "input_text", "text": "analyze this document"}]}]
+    assert "Location sources are not supported by OpenAI Responses" in caplog.text
 
 
 def test_format_request_messages_assistant_only_non_text_content_dropped_entirely(caplog):

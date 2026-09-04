@@ -63,7 +63,7 @@ from ._defaults import resolve_config_metadata  # noqa: E402
 from ._openai_bedrock import BedrockMantleConfig, resolve_bedrock_client_args  # noqa: E402
 from ._openai_cache import apply_cache_config  # noqa: E402
 from ._openai_errors import classify_openai_error  # noqa: E402
-from ._validation import validate_config_keys  # noqa: E402
+from ._validation import _has_location_source, validate_config_keys  # noqa: E402
 from .model import BaseModelConfig, CacheConfig, Model  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -650,12 +650,16 @@ class OpenAIResponsesModel(Model):
             if any("cachePoint" in content for content in contents):
                 logger.warning("cachePoint content block is not supported by OpenAI Responses | skipping")
 
+            if any(_has_location_source(content) for content in contents):
+                logger.warning("Location sources are not supported by OpenAI Responses | skipping content block")
+
             formatted_contents = [
                 cls._format_request_message_content(content, role=role)
                 for content in contents
                 if not any(
                     block_type in content for block_type in ["toolResult", "toolUse", "reasoningContent", "cachePoint"]
                 )
+                and not _has_location_source(content)
             ]
 
             formatted_tool_calls = [
@@ -784,6 +788,9 @@ class OpenAIResponsesModel(Model):
         has_media = False
 
         for content in tool_result["content"]:
+            if _has_location_source(cast(ContentBlock, content)):
+                logger.warning("Location sources are not supported by OpenAI Responses | skipping content block")
+                continue
             if "json" in content:
                 output_parts.append({"type": "input_text", "text": json.dumps(content["json"], ensure_ascii=False)})
             elif "text" in content:
