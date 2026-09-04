@@ -113,6 +113,21 @@ export class ConcurrentInvocationError extends Error {
 }
 
 /**
+ * Error a queued invoke() or stream() call rejects with when it is removed from the
+ * agent's invocation queue before running.
+ */
+export class PendingInvocationCancelledError extends Error {
+  /** The queue id of the cancelled invocation. */
+  readonly pendingInvocationId: string
+
+  constructor(pendingInvocationId: string) {
+    super(`Queued invocation ${pendingInvocationId} was cancelled before it ran`)
+    this.name = 'PendingInvocationCancelledError'
+    this.pendingInvocationId = pendingInvocationId
+  }
+}
+
+/**
  * Error thrown when a model provider returns a throttling or rate limit error.
  *
  * This error indicates that the model API has rate limited the request. Users can

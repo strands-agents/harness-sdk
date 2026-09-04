@@ -10,4 +10,5 @@
 export * from './skills/index.js'
 export * from './context-offloader/index.js'
 export * from './context-injector/index.js'
+export * from './pending-invocations/index.js'
 export * from './goal/index.js'

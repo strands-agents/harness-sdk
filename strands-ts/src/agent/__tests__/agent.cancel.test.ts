@@ -5,6 +5,7 @@ import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { createMockTool } from '../../__fixtures__/tool-helpers.js'
 import { TextBlock, ToolResultBlock } from '../../types/messages.js'
 import { tool } from '../../tools/tool-factory.js'
+import { z } from 'zod'
 
 describe('Agent Cancellation', () => {
   describe('cancel() when idle', () => {
@@ -464,5 +465,88 @@ describe('Agent Cancellation', () => {
       expect(signalAborted).toBe(true)
       expect(result.stopReason).toBe('cancelled')
     })
+  })
+})
+
+describe('cancel during background-task settlement', () => {
+  it('returns the completed result instead of resurrecting the invocation for delivery', async () => {
+    const gate = (name: string) => {
+      let signalStarted!: () => void
+      const started = new Promise<void>((resolve) => (signalStarted = resolve))
+      let release!: () => void
+      const released = new Promise<void>((resolve) => (release = resolve))
+      const gateTool = tool({
+        name,
+        description: `Gated tool ${name}`,
+        inputSchema: z.object({}),
+        callback: async (_input, context) => {
+          signalStarted()
+          await new Promise<void>((resolve) => {
+            void released.then(resolve)
+            context?.cancelSignal.addEventListener('abort', () => resolve(), { once: true })
+          })
+          return `${name} done`
+        },
+      })
+      return { tool: gateTool, started, release }
+    }
+    const until = async (condition: () => boolean, label: string): Promise<void> => {
+      for (let i = 0; i < 2000 && !condition(); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      }
+      if (!condition()) throw new Error(`timed out waiting for: ${label}`)
+    }
+    const tasks = (agent: Agent) =>
+      agent.appState.get('strands.backgroundTasks') as unknown as { status: string }[] | undefined
+
+    const fast = gate('fast_work')
+    const slow = gate('slow_work')
+    const model = new MockMessageModel()
+      .addTurn([
+        { type: 'toolUseBlock', name: 'fast_work', toolUseId: 'fast-use', input: {} },
+        { type: 'toolUseBlock', name: 'slow_work', toolUseId: 'slow-use', input: {} },
+      ])
+      .addTurn({ type: 'textBlock', text: 'first done' })
+      .addTurn({ type: 'textBlock', text: 'next done' })
+    const agent = new Agent({
+      model,
+      tools: [fast.tool, slow.tool],
+      backgroundTasks: { always: [fast.tool, slow.tool] },
+      printer: false,
+    })
+
+    // The invocation completes its final model pass, then blocks in the settlement
+    // wait with one settled task (prepared delivery) and one still running.
+    const first = agent.invoke('first')
+    await fast.started
+    await slow.started
+    await until(
+      () => agent.messages.some((m) => m.content.some((b) => b instanceof TextBlock && b.text === 'first done')),
+      'first final turn'
+    )
+    fast.release()
+    await until(() => (tasks(agent) ?? []).some((task) => task.status === 'completed'), 'fast task settled')
+    expect(model.callCount).toBe(2)
+
+    // cancel() must end the invocation: the prepared delivery continuation must not
+    // wipe the abort and run further model passes.
+    agent.cancel()
+    const result = await first
+    expect(result.stopReason).toBe('endTurn')
+    expect(result.lastMessage.content[0]).toEqual(new TextBlock('first done'))
+    expect(model.callCount).toBe(2)
+
+    // Nothing is lost: the abandoned delivery is re-delivered in the next invocation.
+    slow.release()
+    await until(() => (tasks(agent) ?? []).every((task) => task.status === 'completed'), 'slow task settled')
+    const next = await agent.invoke('next')
+    expect(next.lastMessage.content[0]).toEqual(new TextBlock('next done'))
+    expect(model.callCount).toBe(3)
+    const deliveredTools = agent.messages
+      .flatMap((m) => m.content)
+      .filter((b) => b.type === 'toolUseBlock' && b.name === 'strands_background_task_result')
+      .map((b) => ((b as unknown as { input: { toolName: string } }).input ?? {}).toolName)
+    expect(deliveredTools.sort()).toEqual(['fast_work', 'slow_work'])
+    expect(tasks(agent)).toBeUndefined()
   })
 })

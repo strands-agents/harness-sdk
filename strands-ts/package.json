@@ -124,6 +124,10 @@
       "types": "./dist/src/vended-plugins/context-injector/index.d.ts",
       "default": "./dist/src/vended-plugins/context-injector/index.js"
     },
+    "./vended-plugins/pending-invocations": {
+      "types": "./dist/src/vended-plugins/pending-invocations/index.d.ts",
+      "default": "./dist/src/vended-plugins/pending-invocations/index.js"
+    },
     "./vended-plugins/goal": {
       "types": "./dist/src/vended-plugins/goal/index.d.ts",
       "default": "./dist/src/vended-plugins/goal/index.js"

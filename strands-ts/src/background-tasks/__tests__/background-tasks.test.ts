@@ -310,7 +310,9 @@ describe('BackgroundTasks', () => {
         type: 'toolUseBlock',
         name: 'strands_background_task_result',
         toolUseId: 'working',
-        input: { toolName: 'working-work' },
+        // Recovered from a snapshot: the delivering invocation is not the one that
+        // dispatched the task, so the delivery carries provenance.
+        input: { toolName: 'working-work', startedBy: 'an earlier request in this conversation' },
       },
     ])
   })
