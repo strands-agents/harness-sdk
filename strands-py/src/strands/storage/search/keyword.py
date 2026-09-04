@@ -59,6 +59,9 @@ class KeywordSearchStrategy:
         ```
     """
 
+    async def index(self, storage: Storage, key: str, data: bytes, **kwargs: Any) -> None:
+        """No-op — keyword search scans storage on the fly."""
+
     async def search(self, storage: Storage, query: str, **kwargs: Any) -> builtins.list[StorageSearchResult]:
         """Search content in storage by keyword token-overlap scoring.
 
