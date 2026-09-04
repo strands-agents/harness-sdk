@@ -35,6 +35,13 @@ const CONTEXT_WINDOW_OVERFLOW_ERRORS = [
  */
 const ANTHROPIC_CACHE_TYPE = 'ephemeral' as const
 
+/**
+ * The API rejects a request carrying more explicit block-level cache breakpoints than this, and rejects
+ * the top-level automatic-caching field once this many are already present.
+ * https://docs.claude.com/en/docs/build-with-claude/prompt-caching
+ */
+const MAX_CACHE_BREAKPOINTS = 4
+
 const TEXT_FILE_FORMATS = ['txt', 'md', 'markdown', 'csv', 'json', 'xml', 'html', 'yml', 'yaml', 'js', 'ts', 'py']
 
 export interface AnthropicModelConfig extends BaseModelConfig {
@@ -70,10 +77,10 @@ export interface AnthropicModelConfig extends BaseModelConfig {
   useNativeTokenCount?: boolean
 
   /**
-   * Prompt caching configuration. Setting it caches the tool definitions and adds a cache point
-   * to the last user message; caching is off when unset.
-   *
-   * `strategy` has no effect here, since prompt caching is supported on every active Claude model.
+   * Prompt caching configuration. `strategy: 'auto'` (the default) turns on the API's automatic
+   * caching, which places the cache breakpoint server-side and moves it forward as the conversation
+   * grows; `strategy: 'anthropic'` injects an explicit cache point on the last user message instead.
+   * Both cache the tool definitions and system prompt. Caching is off when unset.
    */
   cacheConfig?: CacheConfig
 }
@@ -415,6 +422,12 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     if (!this._config.modelId) throw new Error('Model ID is required')
 
     const messagesCache = this._cacheSection('messagesTTL')
+    const dynamicTrailingBlocks = options?.dynamicTrailingBlocks ?? 0
+    // Under 'auto' the API's automatic caching places the breakpoint server-side, so no managed
+    // block-level point is injected; hand-placed cache points are still honored. A per-call trailing
+    // tail falls back to explicit placement, which alone can keep the breakpoint ahead of it.
+    const nativeAuto =
+      messagesCache.enabled && (this._config.cacheConfig?.strategy ?? 'auto') === 'auto' && dynamicTrailingBlocks === 0
     // The cache point goes on the last user message with content, not counting cache point blocks.
     let cacheTargetMessage = -1
     if (messagesCache.enabled) {
@@ -429,7 +442,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     const request: Anthropic.MessageStreamParams = {
       model: this._config.modelId,
       max_tokens: this._config.maxTokens ?? MODEL_DEFAULTS.anthropic.maxTokens,
-      messages: this._formatMessages(messages, messagesCache, cacheTargetMessage, options?.dynamicTrailingBlocks ?? 0),
+      messages: this._formatMessages(messages, messagesCache, cacheTargetMessage, dynamicTrailingBlocks, nativeAuto),
       stream: true,
     }
 
@@ -470,14 +483,46 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     if (this._config.stopSequences !== undefined) request.stop_sequences = this._config.stopSequences
     if (this._config.params) Object.assign(request, this._config.params)
 
+    if (nativeAuto) this._applyAutomaticCache(request, messagesCache)
+
     return request
+  }
+
+  /**
+   * Applies the API's automatic caching: one top-level `cache_control`, placed server-side on the last
+   * cacheable block. Skipped when the caller supplied their own through `params` or when the request
+   * already carries the API's maximum of explicit breakpoints, which it would reject. Never reached
+   * with a per-call trailing tail: its breakpoint would land inside content rebuilt every call, so
+   * every request would write a cache entry that none ever reads.
+   */
+  private _applyAutomaticCache(request: Anthropic.MessageStreamParams, messagesCache: ResolvedCacheSection): void {
+    if (request.cache_control !== undefined) return
+    if (this._countCacheBreakpoints(request) >= MAX_CACHE_BREAKPOINTS) {
+      logger.warn(
+        `count=<${MAX_CACHE_BREAKPOINTS}> | explicit cache breakpoints at the API limit, skipped automatic caching`
+      )
+      return
+    }
+    request.cache_control = this._formatCacheControl(messagesCache.ttl)
+  }
+
+  /** Counts the explicit block-level cache breakpoints in a formatted request. */
+  private _countCacheBreakpoints(request: Anthropic.MessageStreamParams): number {
+    const blocks: { cache_control?: Anthropic.CacheControlEphemeral | null }[] = [...(request.tools ?? [])]
+    if (Array.isArray(request.system)) blocks.push(...request.system)
+    for (const message of request.messages) {
+      if (Array.isArray(message.content))
+        blocks.push(...(message.content as { cache_control?: Anthropic.CacheControlEphemeral | null }[]))
+    }
+    return blocks.filter((block) => block.cache_control != null).length
   }
 
   private _formatMessages(
     messages: Message[],
     messagesCache: ResolvedCacheSection = { enabled: false },
     cacheTargetMessage = -1,
-    dynamicTrailingBlocks = 0
+    dynamicTrailingBlocks = 0,
+    nativeAuto = false
   ): Anthropic.MessageParam[] {
     let strippedCachePoints = 0
     const cacheManaged = messagesCache.enabled
@@ -521,7 +566,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       // Placed after formatting so the cache point lands on a block that survived translation.
       // Per-call trailing blocks apply only to the cache-target message, where a producer appends
       // content rebuilt every call.
-      if (isCacheTarget && !marked) {
+      if (isCacheTarget && !marked && !nativeAuto) {
         if (this._attachCacheControl(content, messagesCache.ttl, dynamicTrailingBlocks)) {
           logger.debug(`msg_idx=<${messageIndex}> | added cache point to last user message`)
         } else {

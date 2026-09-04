@@ -139,7 +139,9 @@ class CacheConfig:
 
     Attributes:
         strategy: Caching strategy to use.
-            - "auto": Automatically detect model support and inject cachePoint to maximize cache coverage
+            - "auto": Automatically maximize cache coverage. Bedrock detects model support and injects a
+              cachePoint; Anthropic turns on the API's native automatic caching, which places the
+              breakpoint server-side.
             - "anthropic": Inject cachePoint in Anthropic-compatible format without model support check
         ttl: Optional TTL duration for cache entries (e.g. "5m", "1h").
             When specified, auto-injected cache points will include this TTL value. Bedrock requires

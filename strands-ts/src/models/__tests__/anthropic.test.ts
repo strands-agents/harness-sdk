@@ -1145,7 +1145,7 @@ describe('AnthropicModel', () => {
 
     it('adds a breakpoint to the last user message', async () => {
       const { captured, mockClient } = setupCapture()
-      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'anthropic' } })
 
       await collectIterator(provider.stream([userMessage('one'), userMessage('two')]))
 
@@ -1153,21 +1153,20 @@ describe('AnthropicModel', () => {
     })
 
     it('caches every section when no strategy is given', async () => {
-      // strategy defaults to 'auto', so a config that omits it still enables caching.
+      // strategy defaults to 'auto', so a config that omits it still enables caching: the tools keep
+      // their block-level point and the conversation is covered by the top-level automatic cache.
       const { captured, mockClient } = setupCapture()
       const provider = new AnthropicModel({ client: mockClient, cacheConfig: {} })
 
       await collectIterator(provider.stream([userMessage('Hi')], { toolSpecs }))
 
-      expect(breakpoints(captured.request)).toEqual([
-        ['tools', 't2', { type: 'ephemeral' }],
-        ['messages', 0, { type: 'ephemeral' }],
-      ])
+      expect(breakpoints(captured.request)).toEqual([['tools', 't2', { type: 'ephemeral' }]])
+      expect(captured.request.cache_control).toEqual({ type: 'ephemeral' })
     })
 
-    it('treats auto and anthropic strategies the same', async () => {
-      // The Anthropic API caches on every active Claude model, so auto has no model-support check to
-      // apply and the two strategies produce the same request.
+    it('treats auto and anthropic strategies differently', async () => {
+      // auto delegates breakpoint placement to the API's automatic caching; anthropic keeps the
+      // client-side injection on the last user message.
       const auto = setupCapture()
       await collectIterator(
         new AnthropicModel({ client: auto.mockClient, cacheConfig: { strategy: 'auto' } }).stream([userMessage('Hi')], {
@@ -1183,7 +1182,134 @@ describe('AnthropicModel', () => {
         )
       )
 
-      expect(auto.captured.request).toEqual(explicit.captured.request)
+      expect(auto.captured.request.cache_control).toEqual({ type: 'ephemeral' })
+      expect(breakpoints(auto.captured.request).filter((bp) => (bp as unknown[])[0] === 'messages')).toEqual([])
+      expect(explicit.captured.request.cache_control).toBeUndefined()
+      expect(breakpoints(explicit.captured.request).filter((bp) => (bp as unknown[])[0] === 'messages')).toEqual([
+        ['messages', 0, { type: 'ephemeral' }],
+      ])
+    })
+
+    it('turns on automatic caching for the auto strategy', async () => {
+      // Pins the automatic-caching value shared with strands-py, which sends the same top-level
+      // cache_control through extra_body since its pinned anthropic floor predates the native
+      // parameter. The mirror of this test is test_cross_sdk_automatic_caching_parity in
+      // strands-py/tests/strands/models/test_anthropic.py. Update both together or the SDKs drift.
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto', ttl: '1h' } })
+
+      await collectIterator(provider.stream([userMessage('Hi')]))
+
+      expect(captured.request.cache_control).toEqual({ type: 'ephemeral', ttl: '1h' })
+      expect(breakpoints(captured.request)).toEqual([])
+    })
+
+    it('carries a messagesTTL onto the automatic cache_control', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { ttl: '1h', messagesTTL: '5m' } })
+
+      await collectIterator(provider.stream([userMessage('Hi')]))
+
+      expect(captured.request.cache_control).toEqual({ type: 'ephemeral', ttl: '5m' })
+    })
+
+    it('does not emit automatic caching when messagesTTL is false', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { messagesTTL: false } })
+
+      await collectIterator(provider.stream([userMessage('Hi')]))
+
+      expect(captured.request.cache_control).toBeUndefined()
+    })
+
+    it('still strips accumulated cache points under automatic caching', async () => {
+      // The breakpoint-budget protection applies under both strategies; only the placement moved.
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('one'), new CachePointBlock({ cacheType: 'default' })],
+        }),
+        new Message({ role: 'assistant', content: [new TextBlock('two')] }),
+        userMessage('three'),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(breakpoints(captured.request)).toEqual([])
+      expect(captured.request.cache_control).toEqual({ type: 'ephemeral' })
+    })
+
+    it('keeps an honored cache point alongside automatic caching', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('stable'), new CachePointBlock({ cacheType: 'default' }), new TextBlock('volatile')],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(breakpoints(captured.request)).toEqual([['messages', 0, { type: 'ephemeral' }]])
+      expect(captured.request.cache_control).toEqual({ type: 'ephemeral' })
+    })
+
+    it('skips automatic caching at the explicit breakpoint limit', async () => {
+      // The API rejects the top-level field when the maximum of explicit breakpoints already exists.
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const { captured, mockClient } = setupCapture()
+      const system = Array.from({ length: 4 }, (_, i) => ({
+        type: 'text',
+        text: `chunk ${i}`,
+        cache_control: { type: 'ephemeral' },
+      }))
+      const provider = new AnthropicModel({
+        client: mockClient,
+        cacheConfig: { strategy: 'auto' },
+        params: { system },
+      })
+
+      await collectIterator(provider.stream([userMessage('Hi')]))
+
+      expect(captured.request.cache_control).toBeUndefined()
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('skipped automatic caching'))
+      warnSpy.mockRestore()
+    })
+
+    it('falls back to explicit placement for a per-call trailing tail under auto', async () => {
+      // Automatic caching cannot keep its breakpoint ahead of per-call content: it lands inside the
+      // rebuilt tail, and every request writes a cache entry that none ever reads (verified live).
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const message = new Message({
+        role: 'user',
+        content: [new TextBlock('durable ask'), new TextBlock('per-call')],
+      })
+
+      await collectIterator(provider.stream([message], { dynamicTrailingBlocks: 1 }))
+
+      expect(captured.request.cache_control).toBeUndefined()
+      expect(captured.request.messages[0].content).toEqual([
+        { type: 'text', text: 'durable ask', cache_control: { type: 'ephemeral' } },
+        { type: 'text', text: 'per-call' },
+      ])
+    })
+
+    it('defers to a caller-supplied top-level cache_control', async () => {
+      // A cache_control passed through params is the caller's own placement; auto does not override it.
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({
+        client: mockClient,
+        cacheConfig: { strategy: 'auto', ttl: '1h' },
+        params: { cache_control: { type: 'ephemeral', ttl: '5m' } },
+      })
+
+      await collectIterator(provider.stream([userMessage('Hi')]))
+
+      expect(captured.request.cache_control).toEqual({ type: 'ephemeral', ttl: '5m' })
     })
 
     it('ignores cacheKey: it does not change the request shape', async () => {
@@ -1208,7 +1334,7 @@ describe('AnthropicModel', () => {
 
     it('carries cacheConfig ttl onto cache_control', async () => {
       const { captured, mockClient } = setupCapture()
-      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto', ttl: '1h' } })
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'anthropic', ttl: '1h' } })
 
       await collectIterator(provider.stream([userMessage('Hi')]))
 
@@ -1241,7 +1367,7 @@ describe('AnthropicModel', () => {
       const { captured, mockClient } = setupCapture()
       const provider = new AnthropicModel({
         client: mockClient,
-        cacheConfig: { ttl: '5m', toolsTTL: '1h' },
+        cacheConfig: { strategy: 'anthropic', ttl: '5m', toolsTTL: '1h' },
       })
 
       await collectIterator(provider.stream([userMessage('Hi')], { toolSpecs }))
@@ -1283,14 +1409,15 @@ describe('AnthropicModel', () => {
 
       await collectIterator(provider.stream([userMessage('Hi')], { toolSpecs }))
 
-      expect(breakpoints(captured.request)).toEqual([['messages', 0, { type: 'ephemeral' }]])
+      expect(breakpoints(captured.request)).toEqual([])
+      expect(captured.request.cache_control).toEqual({ type: 'ephemeral' })
     })
 
     it('produces two breakpoints when both sections are on', async () => {
       const { captured, mockClient } = setupCapture()
       const provider = new AnthropicModel({
         client: mockClient,
-        cacheConfig: { strategy: 'auto' },
+        cacheConfig: { strategy: 'anthropic' },
       })
 
       await collectIterator(provider.stream([userMessage('Hi')], { toolSpecs }))
@@ -1357,7 +1484,7 @@ describe('AnthropicModel', () => {
 
     it('strips a cache point in an earlier message', async () => {
       const { captured, mockClient } = setupCapture()
-      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'anthropic' } })
       const messages = [
         new Message({
           role: 'user',
@@ -1377,7 +1504,7 @@ describe('AnthropicModel', () => {
     it('places the breakpoint after the last cacheable block', async () => {
       // Anthropic rejects cache_control on a reasoning block, so the cache point skips back past it.
       const { captured, mockClient } = setupCapture()
-      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'anthropic' } })
       const messages = [
         new Message({
           role: 'user',
@@ -1461,7 +1588,7 @@ describe('AnthropicModel', () => {
 
     it('auto-injects a system cache point on the last block of an array prompt', async () => {
       const { captured, mockClient } = setupCapture()
-      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'anthropic' } })
       const systemPrompt = [new TextBlock('Heavy context'), new TextBlock('More context')]
 
       await collectIterator(provider.stream([userMessage('Hi')], { systemPrompt }))
@@ -1501,7 +1628,7 @@ describe('AnthropicModel', () => {
 
     it('does not double a hand-placed system cache point', async () => {
       const { captured, mockClient } = setupCapture()
-      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'anthropic' } })
       const systemPrompt = [
         new TextBlock('Heavy context'),
         new CachePointBlock({ cacheType: 'default' }),
@@ -1525,7 +1652,7 @@ describe('AnthropicModel', () => {
       // the request is formatted. Choosing the target before formatting used to leave the request with
       // no cache_control at all, so enabling caching removed the caching that worked without it.
       const { captured, mockClient } = setupCapture()
-      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'anthropic' } })
       const messages = [
         new Message({
           role: 'user',
@@ -1582,7 +1709,7 @@ describe('AnthropicModel', () => {
 
     it('places the breakpoint on the last of several cacheable blocks', async () => {
       const { captured, mockClient } = setupCapture()
-      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'anthropic' } })
       const messages = [
         new Message({
           role: 'user',
@@ -1611,10 +1738,8 @@ describe('AnthropicModel', () => {
 
       await collectIterator(provider.stream([userMessage('Hi')], { toolSpecs }))
 
-      expect(breakpoints(captured.request)).toEqual([
-        ['tools', 't2', { type: 'ephemeral' }],
-        ['messages', 0, { type: 'ephemeral' }],
-      ])
+      expect(breakpoints(captured.request)).toEqual([['tools', 't2', { type: 'ephemeral' }]])
+      expect(captured.request.cache_control).toEqual({ type: 'ephemeral' })
     })
 
     it('treats an empty ttl on a hand-placed cache point as unset', async () => {
@@ -1813,7 +1938,7 @@ describe('AnthropicModel', () => {
       // strands-py/tests/strands/models/test_anthropic.py.
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
       const { captured, mockClient } = setupCapture()
-      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'anthropic' } })
       const messages = [
         new Message({
           role: 'user',
@@ -1831,7 +1956,7 @@ describe('AnthropicModel', () => {
     it('falls back to automatic placement when everything ahead is dropped in translation', async () => {
       // An image with a location source is an accepted carrier by block type but never reaches the API.
       const { captured, mockClient } = setupCapture()
-      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'anthropic' } })
       const messages = [
         new Message({
           role: 'user',
@@ -1853,7 +1978,7 @@ describe('AnthropicModel', () => {
     it('falls back to automatic placement when only a reasoning block is ahead of the point', async () => {
       // The API rejects cache_control on a thinking block, so it cannot carry an honored boundary.
       const { captured, mockClient } = setupCapture()
-      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'anthropic' } })
       const messages = [
         new Message({
           role: 'user',
@@ -1880,7 +2005,7 @@ describe('AnthropicModel', () => {
       // strands-py/tests/strands/models/test_anthropic.py.
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
       const { captured, mockClient } = setupCapture()
-      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'anthropic' } })
       const messages = [
         userMessage('stable'),
         new Message({ role: 'user', content: [new CachePointBlock({ cacheType: 'default' })] }),
@@ -1980,7 +2105,7 @@ describe('AnthropicModel', () => {
       // Text-only parity cannot catch a breakpoint lost while translating a media block, which is
       // exactly what regressed here.
       const { captured, mockClient } = setupCapture()
-      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'anthropic' } })
       const messages = [
         new Message({
           role: 'user',
@@ -2016,7 +2141,7 @@ describe('AnthropicModel', () => {
       const { captured, mockClient } = setupCapture()
       const provider = new AnthropicModel({
         client: mockClient,
-        cacheConfig: { strategy: 'auto', ttl: '1h' },
+        cacheConfig: { strategy: 'anthropic', ttl: '1h' },
       })
       const messages = [
         userMessage('hello'),
@@ -2048,7 +2173,7 @@ describe('AnthropicModel', () => {
     it('keeps the cache point ahead of per-call trailing content', async () => {
       // The reusable prefix ends where per-call content begins, so the cache point precedes it.
       const { captured, mockClient } = setupCapture()
-      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'anthropic' } })
       const message = new Message({
         role: 'user',
         content: [new TextBlock('durable ask'), new TextBlock('per-call')],
@@ -2064,7 +2189,7 @@ describe('AnthropicModel', () => {
 
     it('keeps the cache point ahead of a multi-block per-call tail', async () => {
       const { captured, mockClient } = setupCapture()
-      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto' } })
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'anthropic' } })
       const message = new Message({
         role: 'user',
         content: [new TextBlock('durable ask'), new TextBlock('injected'), new TextBlock('status')],
@@ -2089,7 +2214,7 @@ describe('AnthropicModel', () => {
 
     it('carries the configured ttl onto the per-call-tail cache point', async () => {
       const { captured, mockClient } = setupCapture()
-      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto', ttl: '1h' } })
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'anthropic', ttl: '1h' } })
       const message = new Message({
         role: 'user',
         content: [new TextBlock('durable ask'), new TextBlock('per-call')],

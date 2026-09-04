@@ -71,10 +71,12 @@ class CitationAccumulator {
  */
 export interface CacheConfig {
   /**
-   * Whether to skip caching for models that do not support it.
-   * - "auto": cache only when the model is known to support it
-   * - "anthropic": cache without that check, for model identifiers it cannot inspect
-   *   (an application inference profile, for example)
+   * Caching strategy to use.
+   * - "auto": automatically maximize cache coverage. Bedrock caches only when the model is known to
+   *   support it; Anthropic turns on the API's native automatic caching, which places the breakpoint
+   *   server-side.
+   * - "anthropic": inject explicit cache points without that check, for model identifiers Bedrock
+   *   cannot inspect (an application inference profile, for example)
    *
    * @defaultValue 'auto'
    */

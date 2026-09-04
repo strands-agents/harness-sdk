@@ -215,8 +215,10 @@ every call. The mechanism, the cost model, and the cache metrics match
 [Amazon Bedrock](./amazon-bedrock#caching); this section covers what differs here.
 
 Caching is off by default. Set <Syntax py="cache_config" ts="cacheConfig" /> to cache
-the system prompt and add a cache point to the last user message, which caches
-everything before it:
+the system prompt and the conversation. The conversation is cached with the API's
+[automatic caching](https://docs.claude.com/en/docs/build-with-claude/prompt-caching#automatic-caching):
+the API places the cache breakpoint on the last cacheable block itself and moves it
+forward as the conversation grows:
 
 <Tabs>
 <Tab label="Python">
@@ -266,7 +268,14 @@ definitions can be cached without caching the conversation. Passing a plain stri
 (`"default"`) only switches it on: the value is not a TTL. Use `CacheToolsConfig(ttl=...)`
 to set one.
 
-`strategy` is ignored by this provider.
+`strategy` selects how the conversation is cached: `"auto"` (the default) uses the API's
+automatic caching, a single request-level setting whose breakpoint the API places and
+advances itself; `"anthropic"` injects an explicit cache point on the last user message
+instead. Automatic caching is not offered on Amazon Bedrock, so `BedrockModel` injects
+an explicit cache point under both strategies. On a call that carries
+per-call content — a [context injector](../plugins/context-injector)'s block, the
+agentic status line — `"auto"` also places an explicit point, ahead
+of the content that changes every call; the automatic breakpoint would land inside it.
 </Tab>
 <Tab label="TypeScript">
 
@@ -276,15 +285,23 @@ to `false` to leave that part uncached). The shape and the per-field behavior ar
 same as on [Amazon Bedrock](./amazon-bedrock#tool-caching), so a configuration survives
 a provider switch unchanged.
 
-`strategy` is ignored by this provider.
+`strategy` selects how the conversation is cached: `'auto'` (the default) uses the API's
+automatic caching, a single request-level setting whose breakpoint the API places and
+advances itself; `'anthropic'` injects an explicit cache point on the last user message
+instead. Automatic caching is not offered on Amazon Bedrock, so `BedrockModel` injects
+an explicit cache point under both strategies. On a call that carries
+per-call content — a [context injector](../plugins/context-injector)'s block, the
+agentic status line — `'auto'` also places an explicit point, ahead
+of the content that changes every call; the automatic breakpoint would land inside it.
 </Tab>
 </Tabs>
 
 #### Placing cache points by hand
 
 Placement works as it does on [Amazon Bedrock](./amazon-bedrock#messages-caching): a
-cache point you put in the last user message is kept where you put it, automatic
-placement is suspended for that message, and points in earlier messages are removed.
+cache point you put in the last user message is kept where you put it (under the
+`anthropic` strategy it replaces the injected point for that message), and points in
+earlier messages are removed.
 Place your point *ahead* of content that is rebuilt on every call, otherwise it lands
 inside the cached prefix and every request writes an entry that none ever reads.
 
@@ -295,9 +312,11 @@ Two constraints are specific to this API:
   block, or a media block sourced by location, ahead of it cannot be honored, so
   automatic placement applies instead.
 - **Maximum of four cache points per request**, shared across the tool definitions, the
-  system prompt, and the messages. Automatic placement uses one per part it caches, so
-  hand-placing several of your own alongside it can exceed the limit, and the API rejects
-  the request.
+  system prompt, and the messages. Each managed part uses one (the automatic conversation
+  cache consumes a slot too), so hand-placing several of your own alongside them can
+  exceed the limit, and the API rejects the request. When four explicit points already
+  exist, Strands skips the automatic conversation cache rather than send a request the
+  API would reject.
 
 A prompt below the model's minimum cacheable length is not cached: if both cache metrics
 stay at zero, that is the likely cause. See
