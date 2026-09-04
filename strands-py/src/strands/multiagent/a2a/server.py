@@ -9,11 +9,11 @@ from typing import Any, Literal
 from urllib.parse import urlparse
 
 import uvicorn
-from a2a.server.apps import A2AFastAPIApplication, A2AStarletteApplication
 from a2a.server.events import QueueManager
 from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.routes import add_a2a_routes_to_fastapi, create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore, PushNotificationConfigStore, PushNotificationSender, TaskStore
-from a2a.types import AgentCapabilities, AgentCard, AgentSkill
+from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from fastapi import FastAPI
 from starlette.applications import Starlette
 
@@ -92,8 +92,9 @@ class A2AServer:
                 for backwards compatibility. Defaults to False.
 
         Raises:
-            ValueError: If neither or both of ``agent``/``agent_factory`` are provided, or if
-                ``max_contexts`` is less than 1.
+            ValueError: If neither or both of ``agent``/``agent_factory`` are provided, if
+                ``max_contexts`` is less than 1, or if the agent's ``name`` or ``description``
+                is None or empty (the AgentCard is validated at construction time).
         """
         if (agent is None) == (agent_factory is None):
             raise ValueError("Provide exactly one of 'agent' or 'agent_factory'.")
@@ -124,6 +125,8 @@ class A2AServer:
         self.name = self.strands_agent.name
         self.description = self.strands_agent.description
         self.capabilities = AgentCapabilities(streaming=True)
+        self._agent_skills = skills
+        self._agent_card_url: str | None = None
         self.request_handler = DefaultRequestHandler(
             agent_executor=StrandsA2AExecutor(
                 agent,
@@ -135,9 +138,8 @@ class A2AServer:
             queue_manager=queue_manager,
             push_config_store=push_config_store,
             push_sender=push_sender,
+            agent_card=self.public_agent_card,
         )
-        self._agent_skills = skills
-        self._agent_card_url: str | None = None
         logger.info("Strands' integration with A2A is experimental. Be aware of frequent breaking changes.")
 
     def _parse_public_url(self, url: str) -> tuple[str, str]:
@@ -181,7 +183,7 @@ class A2AServer:
         return AgentCard(
             name=self.name,
             description=self.description,
-            url=self.agent_card_url,
+            supported_interfaces=[AgentInterface(protocol_binding="JSONRPC", url=self.agent_card_url)],
             version=self.version,
             skills=self.agent_skills,
             default_input_modes=["text"],
@@ -216,6 +218,8 @@ class A2AServer:
     def agent_card_url(self, url: str) -> None:
         """Override the URL advertised in the AgentCard.
 
+        Set this before calling ``to_starlette_app``/``to_fastapi_app``.
+
         Args:
             url: The URL to advertise in the AgentCard.
         """
@@ -230,10 +234,26 @@ class A2AServer:
     def agent_skills(self, skills: list[AgentSkill]) -> None:
         """Set the list of skills this agent provides.
 
+        Set this before calling ``to_starlette_app``/``to_fastapi_app``.
+
         Args:
             skills: A list of AgentSkill objects to set for this agent.
         """
         self._agent_skills = skills
+
+    _V0_3_BUILD_KEYS = frozenset({"routes", "rpc_url", "agent_card_url", "extended_agent_card_url"})
+
+    def _validate_app_kwargs(self, app_kwargs: dict[str, Any] | None) -> None:
+        """Reject v0.3 ``build()`` keys that are now managed internally."""
+        if not app_kwargs:
+            return
+        invalid = self._V0_3_BUILD_KEYS & app_kwargs.keys()
+        if invalid:
+            raise ValueError(
+                f"app_kwargs contains keys no longer accepted: {sorted(invalid)}. "
+                f"Use 'http_url' for path mounting (replaces rpc_url), "
+                f"the 'agent_card_url' setter, or add custom routes to the returned app."
+            )
 
     def to_starlette_app(self, *, app_kwargs: dict[str, Any] | None = None) -> Starlette:
         """Create a Starlette application for serving this agent via HTTP.
@@ -243,13 +263,22 @@ class A2AServer:
 
         Args:
             app_kwargs: Additional keyword arguments to pass to the Starlette constructor.
+                Must not include ``routes`` (managed internally). Keys such as ``rpc_url``
+                or ``agent_card_url`` that were accepted by the v0.3 ``build()`` method are
+                no longer valid here — use the constructor parameters instead.
 
         Returns:
             Starlette: A Starlette application configured to serve this agent.
+
+        Raises:
+            ValueError: If ``app_kwargs`` contains keys that were valid in v0.3's ``build()``
+                but are now managed internally (``routes``, ``rpc_url``, ``agent_card_url``,
+                ``extended_agent_card_url``).
         """
-        a2a_app = A2AStarletteApplication(agent_card=self.public_agent_card, http_handler=self.request_handler).build(
-            **app_kwargs or {}
-        )
+        self._validate_app_kwargs(app_kwargs)
+        routes = create_agent_card_routes(self.public_agent_card)
+        routes.extend(create_jsonrpc_routes(self.request_handler, rpc_url="/", enable_v0_3_compat=True))
+        a2a_app = Starlette(routes=routes, **(app_kwargs or {}))
 
         if self.mount_path:
             # Create parent app and mount the A2A app at the specified path
@@ -268,12 +297,24 @@ class A2AServer:
 
         Args:
             app_kwargs: Additional keyword arguments to pass to the FastAPI constructor.
+                Must not include ``routes`` (managed internally). Keys such as ``rpc_url``
+                or ``agent_card_url`` that were accepted by the v0.3 ``build()`` method are
+                no longer valid here — use the constructor parameters instead.
 
         Returns:
             FastAPI: A FastAPI application configured to serve this agent.
+
+        Raises:
+            ValueError: If ``app_kwargs`` contains keys that were valid in v0.3's ``build()``
+                but are now managed internally (``routes``, ``rpc_url``, ``agent_card_url``,
+                ``extended_agent_card_url``).
         """
-        a2a_app = A2AFastAPIApplication(agent_card=self.public_agent_card, http_handler=self.request_handler).build(
-            **app_kwargs or {}
+        self._validate_app_kwargs(app_kwargs)
+        a2a_app = FastAPI(**(app_kwargs or {}))
+        add_a2a_routes_to_fastapi(
+            a2a_app,
+            agent_card_routes=create_agent_card_routes(self.public_agent_card),
+            jsonrpc_routes=create_jsonrpc_routes(self.request_handler, rpc_url="/", enable_v0_3_compat=True),
         )
 
         if self.mount_path:
