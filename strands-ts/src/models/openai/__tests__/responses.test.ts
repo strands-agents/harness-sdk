@@ -694,6 +694,32 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(metadata?.usage).toEqual({ inputTokens: 10, outputTokens: 5, totalTokens: 15 })
     })
 
+    it('keeps stopReason=maxTokens when a function call is cut off by max_output_tokens', async () => {
+      const client = createMockClient(async function* () {
+        yield { type: 'response.created', response: { id: 'r' } }
+        yield {
+          type: 'response.output_item.added',
+          item: { type: 'function_call', id: 'item_1', call_id: 'call_1', name: 'write_file' },
+        }
+        yield {
+          type: 'response.function_call_arguments.delta',
+          item_id: 'item_1',
+          delta: '{"path": "notes.md", "content": "Lorem ipsum dol',
+        }
+        yield {
+          type: 'response.incomplete',
+          response: {
+            incomplete_details: { reason: 'max_output_tokens' },
+            usage: { input_tokens: 10, output_tokens: 50, total_tokens: 60 },
+          },
+        }
+      })
+      const model = new OpenAIModel({ api: 'responses', client })
+      const events = await collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('x')] })]))
+      const stop = events.find((e: any) => e.type === 'modelMessageStopEvent') as any
+      expect(stop?.stopReason).toBe('maxTokens')
+    })
+
     it('plumbs prompt-cache reads (input_tokens_details.cached_tokens) into cacheReadInputTokens', async () => {
       const client = createMockClient(async function* () {
         yield { type: 'response.created', response: { id: 'r' } }

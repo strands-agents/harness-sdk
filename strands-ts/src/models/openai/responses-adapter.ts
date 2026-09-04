@@ -583,8 +583,10 @@ export function finalizeResponsesStream(state: ResponsesStreamState): ModelStrea
     events.push({ type: 'modelContentBlockStopEvent' })
   }
 
+  // maxTokens wins over toolUse: a function call that is still in flight when the
+  // response is cut off has truncated arguments, so it must not be executed.
   let stopReason = state.stopReason
-  if (state.toolCalls.size > 0) {
+  if (state.toolCalls.size > 0 && stopReason !== 'maxTokens') {
     stopReason = 'toolUse'
   }
 
