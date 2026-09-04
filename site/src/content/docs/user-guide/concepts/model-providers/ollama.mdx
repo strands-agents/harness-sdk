@@ -199,6 +199,31 @@ creative_agent = Agent(model=creative_model)
 factual_agent = Agent(model=factual_model)
 ```
 
+### Using with llmman
+
+[llmman](https://github.com/llmmanorg/llmman) is a local model runner that serves the Ollama API
+(alongside OpenAI- and Anthropic-compatible ones) on port 17434. Because `/api/chat` (including
+`tools`, `images`, and `format`) is served unchanged, `OllamaModel` works against it by pointing
+`host` at the llmman port:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/llmmanorg/llmman/main/install.sh | sh
+llmman pull gemma4
+llmman serve
+```
+
+```python
+from strands import Agent
+from strands.models.ollama import OllamaModel
+
+llmman_model = OllamaModel(
+    host="http://localhost:17434",  # llmman server address
+    model_id="gemma4",  # or e.g. "hf.co/unsloth/Qwen3.5-0.8B-GGUF"
+)
+
+agent = Agent(model=llmman_model)
+```
+
 ### Structured Output
 
 Ollama supports structured output for models that have tool calling capabilities. When you pass `structured_output_model` parameter to the [agent invocation](@api/python/strands.agent.agent#Agent.__call__), the Strands SDK converts your Pydantic models to tool specifications that compatible Ollama models can understand.
