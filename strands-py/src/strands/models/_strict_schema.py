@@ -34,9 +34,12 @@ def ensure_strict_json_schema(
 
     Returns:
         A new schema dict with strict-mode constraints applied.
+
+    Raises:
+        ValueError: If a circular ``$ref`` with sibling keys would require unbounded inlining.
     """
     schema_copy = copy.deepcopy(schema)
-    _apply_strict(schema_copy, root=schema_copy, require_all_properties=require_all_properties)
+    _apply_strict(schema_copy, root=schema_copy, require_all_properties=require_all_properties, ref_stack=())
     return schema_copy
 
 
@@ -45,6 +48,7 @@ def _apply_strict(
     *,
     root: dict[str, Any],
     require_all_properties: bool,
+    ref_stack: tuple[str, ...],
 ) -> None:
     """Recursively apply strict-mode constraints to a JSON schema in place.
 
@@ -52,6 +56,7 @@ def _apply_strict(
         schema: The schema node to process (modified in place).
         root: The root schema, used for resolving ``$ref`` pointers.
         require_all_properties: If True, add all properties to ``required``.
+        ref_stack: References inlined along the current traversal branch.
     """
     # Process $defs / definitions blocks
     for defs_key in ("$defs", "definitions"):
@@ -59,7 +64,12 @@ def _apply_strict(
         if isinstance(defs, dict):
             for def_schema in defs.values():
                 if isinstance(def_schema, dict):
-                    _apply_strict(def_schema, root=root, require_all_properties=require_all_properties)
+                    _apply_strict(
+                        def_schema,
+                        root=root,
+                        require_all_properties=require_all_properties,
+                        ref_stack=ref_stack,
+                    )
 
     # Add additionalProperties: false to object types that lack it
     if schema.get("type") == "object" and "additionalProperties" not in schema:
@@ -73,37 +83,47 @@ def _apply_strict(
 
         for prop_schema in properties.values():
             if isinstance(prop_schema, dict):
-                _apply_strict(prop_schema, root=root, require_all_properties=require_all_properties)
+                _apply_strict(
+                    prop_schema,
+                    root=root,
+                    require_all_properties=require_all_properties,
+                    ref_stack=ref_stack,
+                )
 
     # Process array items
     items = schema.get("items")
     if isinstance(items, dict):
-        _apply_strict(items, root=root, require_all_properties=require_all_properties)
+        _apply_strict(items, root=root, require_all_properties=require_all_properties, ref_stack=ref_stack)
 
     # Process anyOf variants
     any_of = schema.get("anyOf")
     if isinstance(any_of, list):
         for variant in any_of:
             if isinstance(variant, dict):
-                _apply_strict(variant, root=root, require_all_properties=require_all_properties)
+                _apply_strict(variant, root=root, require_all_properties=require_all_properties, ref_stack=ref_stack)
 
     # Process allOf variants
     all_of = schema.get("allOf")
     if isinstance(all_of, list):
         for entry in all_of:
             if isinstance(entry, dict):
-                _apply_strict(entry, root=root, require_all_properties=require_all_properties)
+                _apply_strict(entry, root=root, require_all_properties=require_all_properties, ref_stack=ref_stack)
 
     # Process oneOf variants
     one_of = schema.get("oneOf")
     if isinstance(one_of, list):
         for variant in one_of:
             if isinstance(variant, dict):
-                _apply_strict(variant, root=root, require_all_properties=require_all_properties)
+                _apply_strict(variant, root=root, require_all_properties=require_all_properties, ref_stack=ref_stack)
 
     # Resolve $ref combined with other keys by inlining the referenced schema
     ref = schema.get("$ref")
     if isinstance(ref, str) and len(schema) > 1:
+        if ref in ref_stack:
+            cycle_start = ref_stack.index(ref)
+            cycle = " -> ".join((*ref_stack[cycle_start:], ref))
+            raise ValueError(f"Circular JSON Schema reference with sibling keys cannot be inlined: {cycle}")
+
         resolved = _resolve_ref(root, ref)
         if isinstance(resolved, dict):
             # Inline the resolved schema, giving priority to existing keys
@@ -112,7 +132,12 @@ def _apply_strict(
             schema.clear()
             schema.update(merged)
             # Re-apply strict to the inlined schema
-            _apply_strict(schema, root=root, require_all_properties=require_all_properties)
+            _apply_strict(
+                schema,
+                root=root,
+                require_all_properties=require_all_properties,
+                ref_stack=(*ref_stack, ref),
+            )
 
 
 def _resolve_ref(root: dict[str, Any], ref: str) -> dict[str, Any] | None:
