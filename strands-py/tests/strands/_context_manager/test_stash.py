@@ -3,7 +3,6 @@
 import json
 
 import pytest
-
 from strands._context_manager.stash import Stash, _format_stash_refs
 from strands.storage.in_memory_storage import InMemoryStorage
 from strands.types.content import ContentBlock, Message
@@ -73,7 +72,7 @@ class TestListAndDelete:
         await stash.store("tool-1", 0, data)
         await stash.store("tool-2", 0, data)
         keys = await stash.list()
-        assert len(keys) == 2
+        assert sorted(keys) == ["tool-1_0", "tool-2_0"]
 
     @pytest.mark.asyncio
     async def test_delete_removes_entry(self, stash):
@@ -165,7 +164,7 @@ class TestNamespacing:
         stash = Stash(storage, "sess-1", "agent-1")
         await stash.store("tool-1", 0, json.dumps({"text": "test"}).encode("utf-8"))
         raw_keys = await storage.list("")
-        assert any("context/" in key for key in raw_keys)
+        assert raw_keys == ["context/sess-1/scopes/agent/agent-1/tool-1_0"]
 
     @pytest.mark.asyncio
     async def test_different_agents_dont_conflict(self):
@@ -177,8 +176,8 @@ class TestNamespacing:
         await stash_b.store("tool-1", 0, data)
         keys_a = await stash_a.list()
         keys_b = await stash_b.list()
-        assert len(keys_a) == 1
-        assert len(keys_b) == 1
+        assert keys_a == ["tool-1_0"]
+        assert keys_b == ["tool-1_0"]
 
 
 class TestFormatStashRefs:

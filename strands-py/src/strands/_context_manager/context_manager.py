@@ -82,6 +82,7 @@ class ContextManager(Plugin):
             storage = self._stash_explicit_storage or getattr(agent, "storage", None) or InMemoryStorage()
             self._stash = Stash(storage, agent.session_id, agent.agent_id)
 
+        # Stash hook must register before strategy init so it captures pre-offload content.
         if self._stash is not None:
             stash = self._stash
             skip_set = self._retrieval_tool_use_ids

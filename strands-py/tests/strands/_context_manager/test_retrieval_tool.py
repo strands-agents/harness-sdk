@@ -3,7 +3,6 @@
 import json
 
 import pytest
-
 from strands._context_manager.retrieval_tool import RETRIEVAL_TOOL_NAME, _create_retrieval_tool, _extract_text
 from strands._context_manager.stash import Stash
 from strands.storage.in_memory_storage import InMemoryStorage
@@ -74,6 +73,24 @@ class TestRetrievalTool:
         assert result["status"] == "success"
         parsed = json.loads(result["content"][0]["text"])
         assert parsed == {"json": {"key": "value"}}
+
+    @pytest.mark.asyncio
+    async def test_returns_error_for_non_text_content_with_pattern(self, stash):
+        data = json.dumps({"image": {"format": "png", "source": "bytes"}}).encode("utf-8")
+        ref = await stash.store("tool-1", 0, data)
+        tool = _create_retrieval_tool(stash)
+        result = await tool._tool_func({"toolUseId": "t1", "input": {"reference": ref, "pattern": "foo"}})
+        assert result["status"] == "error"
+        assert "cannot search non-text content" in result["content"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_returns_error_for_invalid_line_range(self, stash):
+        ref = await _store_text(stash, "line 1\nline 2\nline 3")
+        tool = _create_retrieval_tool(stash)
+        result = await tool._tool_func(
+            {"toolUseId": "t1", "input": {"reference": ref, "line_range": {"start": 100, "end": 5}}}
+        )
+        assert result["status"] == "error"
 
 
 class TestExtractText:
