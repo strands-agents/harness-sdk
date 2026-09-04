@@ -1,0 +1,85 @@
+---
+title: Custom Strategies
+description: "Build a custom context management pipeline with ContextManager and the Offload strategy builder."
+experimental: true
+tags: [conversation-management, token-management]
+sourceLinks:
+  - path: strands-ts/src/context-manager/context-manager.ts
+  - path: strands-ts/src/context-manager/strategies/offload/index.ts
+  - path: strands-ts/src/context-manager/types.ts
+addedDate: 2026-09-04
+---
+
+:::note
+Custom `ContextManager` instances are currently available in
+the TypeScript SDK only. Python support is planned.
+:::
+
+When the [built-in modes](../context-management) don't fit,
+pass a `ContextManager` instance directly. You define the
+strategy pipeline: what gets offloaded, when, and how.
+
+```typescript
+--8<-- "user-guide/concepts/context-management/custom-strategies_imports.ts:custom_strategies_imports"
+
+--8<-- "user-guide/concepts/context-management/custom-strategies.ts:custom_strategies"
+```
+
+Strategies run as an ordered pipeline. Each strategy sees
+the output of the previous one, so order matters: if an
+earlier strategy shrinks content below the next strategy's
+threshold, the later strategy skips it automatically.
+
+## The Offload builder
+
+`Offload` provides three methods, each targeting different
+content in the context window:
+
+| Method | What it does |
+|--------|-------------|
+| `Offload.truncate(target)` | Replaces content with a head/tail preview |
+| `Offload.summarize(target)` | Replaces content with a model-generated summary |
+| `Offload.drop(target)` | Removes content entirely |
+
+**Targets** control what content the strategy acts on:
+
+- `"toolResults"`: all successful tool result blocks
+- `"toolResultErrors"`: failed tool result blocks
+- `"assistantText"`: text blocks in assistant messages
+- `"*"`: all content in the context window
+- `string[]`: tool results from specific tools
+  (e.g. `["tool::bash", "tool::read_file"]`)
+
+Chain `.when()` to set conditions:
+
+- `threshold`: per-block token threshold (strategy fires
+  on each block above this size)
+- `utilization`: context window ratio (0 to 1+) above
+  which the strategy fires
+- `preserveRecent`: number of recent matching messages
+  to leave untouched
+
+Setting `threshold` alone makes the strategy act eagerly,
+on each message as it arrives. Setting `utilization` alone
+makes it act in batch when the window fills. Both together
+target oversized blocks, but only when the window is
+pressured.
+
+## Stash configuration
+
+When a strategy offloads content, it stores it in the
+stash so the agent can retrieve it later via a
+`retrieve_context` tool. By default, the stash uses
+in-memory storage. To persist across restarts, provide
+a durable storage backend:
+
+```typescript
+--8<-- "user-guide/concepts/context-management/custom-strategies_imports.ts:stash_imports"
+
+--8<-- "user-guide/concepts/context-management/custom-strategies.ts:stash"
+```
+
+Set `stash: false` to disable the stash entirely (no
+persistence, no retrieval tool). Set
+`stash: { retrievalTool: false }` to keep persistence but
+hide the retrieval tool from the agent.

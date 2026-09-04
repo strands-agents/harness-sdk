@@ -86,7 +86,11 @@ sidebar:
           - docs/user-guide/concepts/agents/prompts
           - docs/user-guide/concepts/agents/hooks
           - docs/user-guide/concepts/agents/conversation-management
-          - docs/user-guide/concepts/context-management
+          - label: Context Management
+            items:
+              - label: "Overview"
+                slug: docs/user-guide/concepts/context-management
+              - docs/user-guide/concepts/context-management/custom-strategies
           - label: Memory
             collapsed: true
             addedDate: 2026-06-17

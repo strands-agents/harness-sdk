@@ -1,0 +1,267 @@
+---
+title: Context Management
+description: "Manage your agent's context window as conversations grow and tool results accumulate."
+tags: [conversation-management, token-management]
+sourceLinks:
+  - path: strands-py/src/strands/_context_manager/modes/agentic/agentic_context.py
+  - path: strands-py/src/strands/agent/conversation_manager/conversation_manager.py
+  - path: strands-ts/src/context-manager/context-manager.ts
+  - path: strands-ts/src/conversation-manager/conversation-manager.ts
+addedDate: 2026-06-12
+---
+
+As conversations grow, your agent's context window fills
+with messages, tool results, and system prompts. Without
+management, this leads to token limit errors, degraded
+performance, and loss of relevant information.
+
+The SDK ships context management configurations that work
+out of the box, so you don't have to assemble conversation
+managers, offloaders, and thresholds by hand. Pick a mode
+and the SDK wires up the pieces with tuned defaults. For
+full control, see
+[Custom Strategies](./custom-strategies).
+
+## Automatic context management
+
+For most agents with multi-turn conversations, you don't
+need to configure conversation management and context
+offloading separately. Pass
+<Syntax
+  py='context_manager="auto"'
+  ts='contextManager: "auto"'
+/> and the SDK wires up both with tuned defaults:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+
+agent = Agent(context_manager="auto")
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/concepts/context-management/index_imports.ts:basic_imports"
+
+--8<-- "user-guide/concepts/context-management/index.ts:basic"
+```
+</Tab>
+</Tabs>
+
+### What it sets up
+
+This composes two components whose defaults scored highest
+across [ContextBench](https://arxiv.org/abs/2602.05892)
+evaluations relative to other Strands Agent configurations:
+
+- **SummarizingConversationManager** (summary ratio of 0.3,
+  compression threshold of 0.85): proactively summarizes
+  older messages before the context window fills, preserving
+  key information while freeing space for new turns.
+- **ContextOffloader plugin** (max result tokens of 1,500,
+  preview tokens of 750): intercepts large tool results at
+  execution time, stores them externally, and keeps a
+  truncated preview in context. Registers a
+  `retrieve_offloaded_content` tool so the agent can fetch
+  full content on demand.
+
+For full details on each component, see
+[Conversation Management](../agents/conversation-management#summarizingconversationmanager)
+and [Context Offloader](../plugins/context-offloader).
+
+### Combining with explicit configuration
+
+Your own settings take precedence when you need
+fine-grained control:
+
+- **Custom conversation manager**: If you also pass
+  <Syntax
+    py="conversation_manager"
+    ts="conversationManager"
+  />, your manager replaces the auto-composed
+  `SummarizingConversationManager`. The SDK still adds the
+  `ContextOffloader` plugin.
+- **Existing ContextOffloader**: If your `plugins` list
+  already contains a `ContextOffloader` instance, no
+  duplicate is added. Your configuration is preserved.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.agent.conversation_manager import (
+    SlidingWindowConversationManager,
+)
+
+# Your conversation manager is used;
+# ContextOffloader is still added automatically
+agent = Agent(
+    context_manager="auto",
+    conversation_manager=SlidingWindowConversationManager(
+        window_size=30,
+    ),
+)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/concepts/context-management/index_imports.ts:custom_conversation_manager_imports"
+
+--8<-- "user-guide/concepts/context-management/index.ts:custom_conversation_manager"
+```
+</Tab>
+</Tabs>
+
+## Agentic context management
+
+:::caution[Experimental]
+Agentic context management is experimental and may change
+in future versions. Use with caution in production
+environments.
+:::
+
+Auto mode compresses on a fixed threshold the SDK controls.
+Agentic mode hands that control to the model. Pass
+<Syntax
+  py='context_manager="agentic"'
+  ts='contextManager: "agentic"'
+/> and the model manages its own working memory: it sees how
+full the context window is and chooses when to compress,
+what to compress, and what to protect.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+
+agent = Agent(context_manager="agentic")
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/concepts/context-management/index_imports.ts:agentic_imports"
+
+--8<-- "user-guide/concepts/context-management/index.ts:agentic"
+```
+</Tab>
+</Tabs>
+
+The model is better positioned than a threshold to know
+which messages still matter. A coding agent can drop a stale
+file it already edited while pinning the failing test it is
+working toward. A threshold cannot tell the difference; it
+compresses by age. Agentic mode trades tokens for that
+judgment.
+
+### What it sets up
+
+Two things give the model the information and the levers to
+manage context.
+
+**Token-usage telemetry.** Before each model call, the SDK
+appends a status block to the latest message reporting how
+much of the window is in use:
+
+```
+<context-status>
+<used>50,000 / 200,000 tokens (25.0%)</used>
+<remaining>~150,000 tokens</remaining>
+</context-status>
+```
+
+This is the signal the model acts on. It decides whether the
+window is full enough to compress, instead of waiting for a
+fixed cutoff.
+
+**Three tools the model can call**, each a different lever
+with its own choices:
+
+- `summarize_context` folds older messages into a
+  model-written summary. The model chooses how many recent
+  messages to keep verbatim, how aggressively to summarize,
+  and whether to target tool results, discussion, or both.
+- `truncate_context` drops older messages outright when they
+  no longer need preserving. The model again chooses how
+  much recent history to keep and what kind of messages to
+  target.
+- `pin_context` marks messages that must survive
+  compression: a user constraint, a key fact, the current
+  task. Pinned messages are never evicted by either tool.
+  The model can pin the current exchange, the last few
+  messages, or specific ones.
+
+Recent messages stay verbatim regardless, and the first user
+message is always preserved so the conversation stays valid.
+New tools may be added to agentic mode in future releases.
+
+Behind the tools, agentic mode also composes a
+`SummarizingConversationManager` with no proactive
+compression and a `ContextOffloader`. The conversation
+manager is only a safety net: if the model lets the window
+overflow anyway, it compresses reactively. The offloader
+uses a higher inline threshold than auto mode (8,000 tokens
+versus 1,500), since the model is already managing context
+and benefits from seeing more tool output inline before it
+is offloaded.
+
+### Choosing between auto and agentic
+
+Use `"auto"` for most agents. It manages context in the
+background, with no model involvement and no extra tool
+calls. Reach for `"agentic"` when you want the model itself
+to decide what stays in context: it judges relevance per
+message rather than compressing on a fixed threshold. The
+tradeoff is the tokens the model spends reading telemetry
+and calling the tools.
+
+## Disabling context management
+
+To turn off all context management (no compression, no
+offloading), pass `false`:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+
+agent = Agent(context_manager=False)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/concepts/context-management/index_imports.ts:disabled_imports"
+
+--8<-- "user-guide/concepts/context-management/index.ts:disabled"
+```
+</Tab>
+</Tabs>
+
+The agent runs without any context reduction. Overflow
+errors propagate directly. This is useful for short
+conversations or when you handle context externally.
+
+## Limitations
+
+**Stateful models**: Stateful models manage conversation
+state server-side. Setting
+<Syntax py="context_manager" ts="contextManager" /> to any
+mode with a stateful model raises a
+<Syntax py="ValueError" ts="Error" />.
+
+The `"auto"` and `"agentic"` modes compose an offloader
+that uses in-memory storage, which does not persist across
+process restarts. If your agent uses session management and
+needs durable offloaded content, configure a
+[custom ContextManager with a durable stash](./custom-strategies#stash-configuration)
+(TypeScript), or an explicit `ContextOffloader` with file
+or S3 storage. See
+[Storage Backends](../plugins/context-offloader#storage-backends).

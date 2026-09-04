@@ -30,7 +30,6 @@ import { createRetrievalTool, trackRetrievalToolUseIds } from './retrieval-tool.
  * overflow recovery — no separate ConversationManager is needed.
  *
  * @experimental
- * @internal
  */
 export class ContextManager implements Plugin {
   readonly name = 'strands:context-manager'

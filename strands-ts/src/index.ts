@@ -276,7 +276,20 @@ export {
   type RetryDecision,
 } from './retry/index.js'
 
-// Conversation Manager
+// Context Manager (experimental)
+export { ContextManager } from './context-manager/context-manager.js'
+export type { ContextManagerStrategy } from './agent/agent.js'
+export type { ContextManagerConfig, ContextStrategy, ContextState, StashConfig } from './context-manager/types.js'
+export { Offload } from './context-manager/strategies/offload/index.js'
+export type {
+  OffloadTarget,
+  OffloadConditions,
+  OffloadStrategyBuilder,
+} from './context-manager/strategies/offload/index.js'
+export type { TruncateConfig } from './context-manager/methods/truncate.js'
+export type { SummarizeConfig } from './context-manager/methods/summarize.js'
+
+// Conversation Manager (deprecated — use ContextManager instead)
 export {
   ConversationManager,
   type ProactiveCompressionConfig,

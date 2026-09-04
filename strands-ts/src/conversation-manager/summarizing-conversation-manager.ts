@@ -73,6 +73,8 @@ export type SummarizingConversationManagerConfig = {
  * When a {@link ContextWindowOverflowError} occurs, this manager summarizes
  * the oldest messages using a model call and replaces them with a single
  * summary message, preserving context that would otherwise be lost.
+ *
+ * @deprecated Use {@link ContextManager} instead. ContextManager will become the default in v2; ConversationManager will be removed.
  */
 export class SummarizingConversationManager extends ConversationManager {
   readonly name = 'strands:summarizing-conversation-manager'

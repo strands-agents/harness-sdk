@@ -8,6 +8,14 @@ sourceLinks:
 addedDate: 2026-04-24
 ---
 
+:::caution[Deprecated]
+`ContextOffloader` is deprecated and will be removed in v2.
+Use [ContextManager](../context-management/custom-strategies)
+with `Offload` strategies instead, or pass
+<Syntax py='context_manager="auto"' ts='contextManager: "auto"' />
+for managed defaults.
+:::
+
 The `ContextOffloader` plugin prevents large tool results from consuming your agent's context window. When a tool returns a result that exceeds a configurable token threshold, the plugin stores each content block individually in an external storage backend and replaces it in the conversation with a truncated preview plus per-block references. Each offloaded result includes inline guidance telling the agent to use its available tools to selectively access the data it needs.
 
 ## The Problem

@@ -34,6 +34,14 @@ For most agents, you can skip manual configuration entirely.
 See [Context Management](../context-management).
 :::
 
+:::caution[Deprecated]
+`ConversationManager` is deprecated and will be removed in
+v2. Use [ContextManager](../context-management/custom-strategies)
+instead for strategy-driven context management, or pass
+<Syntax py='context_manager="auto"' ts='contextManager: "auto"' />
+for managed defaults.
+:::
+
 ## Built-in Conversation Managers
 
 The SDK provides a flexible system for context management through the ConversationManager interface. This allows you to implement different strategies for managing conversation history. You can either leverage one of Strands's provided managers:

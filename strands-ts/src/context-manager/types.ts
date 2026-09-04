@@ -1,5 +1,7 @@
 /**
  * Configuration types for the ContextManager.
+ *
+ * @experimental
  */
 
 import type { Storage } from '../storage/storage.js'
