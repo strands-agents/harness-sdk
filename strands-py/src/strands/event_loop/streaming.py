@@ -26,6 +26,7 @@ from ..types._events import (
 )
 from ..types.citations import CitationsContentBlock
 from ..types.content import ContentBlock, Message, Messages, SystemContentBlock
+from ..types.guardrails import Trace
 from ..types.streaming import (
     ContentBlockDeltaEvent,
     ContentBlockStart,
@@ -450,6 +451,7 @@ async def process_stream(
 
     usage: Usage = Usage(inputTokens=0, outputTokens=0, totalTokens=0)
     metrics: Metrics = Metrics(latencyMs=0, timeToFirstByteMs=0)
+    trace: Trace | None = None
 
     async for chunk in chunks:
         # Check for cancellation during stream processing
@@ -487,6 +489,9 @@ async def process_stream(
                 int(1000 * (first_byte_time - start_time)) if (start_time and first_byte_time) else None
             )
             usage, metrics = extract_usage_metrics(chunk["metadata"], time_to_first_byte_ms)
+            # Preserve the trace portion of the metadata (e.g. Bedrock guardrail assessments)
+            # so it reaches the assistant message metadata and downstream hooks (see #4015).
+            trace = chunk["metadata"].get("trace")
         elif "redactContent" in chunk:
             handle_redact_content(chunk["redactContent"], state)
 
@@ -500,6 +505,11 @@ async def process_stream(
             metrics=metrics,
         )
         return
+
+    # Carry the trace on the message so downstream consumers (event loop, hooks) can surface it
+    # without widening the ModelStopReason tuple, whose shape many callers depend on.
+    if trace is not None:
+        state["message"]["metadata"] = {"trace": trace}
 
     yield ModelStopReason(stop_reason=stop_reason, message=state["message"], usage=usage, metrics=metrics)
 

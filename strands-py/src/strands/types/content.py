@@ -13,6 +13,7 @@ from typing_extensions import NotRequired, TypedDict
 
 from .citations import CitationsContentBlock
 from .event_loop import Metrics, Usage
+from .guardrails import Trace
 from .media import AudioContent, DocumentContent, ImageContent, VideoContent
 from .tools import ToolResult, ToolUse
 
@@ -221,11 +222,14 @@ class MessageMetadata(TypedDict, total=False):
     Attributes:
         usage: Token usage information from the model response.
         metrics: Performance metrics from the model response.
+        trace: Provider trace information from the model response (e.g. Bedrock guardrail
+            assessments), preserved so hooks and downstream consumers can inspect it.
         custom: Arbitrary user/framework metadata (e.g. compression provenance).
     """
 
     usage: Usage
     metrics: Metrics
+    trace: Trace
     custom: dict[str, Any]
 
 
