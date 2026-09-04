@@ -562,11 +562,12 @@ def test_fix_broken_tool_use_does_not_change_valid_message(session_manager):
             ],
         },
     ]
+    expected = copy.deepcopy(messages)
 
     fixed_messages = session_manager._fix_broken_tool_use(messages)
 
     # Should remain unchanged since toolUse is in last message
-    assert fixed_messages == messages
+    assert fixed_messages == expected
 
 
 # ============================================================================
@@ -743,11 +744,12 @@ def test_fix_broken_tool_use_does_not_affect_normal_conversations(session_manage
         {"role": "assistant", "content": [{"text": "Hi there!"}]},
         {"role": "user", "content": [{"text": "How are you?"}]},
     ]
+    expected = copy.deepcopy(messages)
 
     fixed_messages = session_manager._fix_broken_tool_use(messages)
 
     # Should remain unchanged
-    assert fixed_messages == messages
+    assert fixed_messages == expected
 
 
 # ============================================================================
@@ -1198,3 +1200,104 @@ def test_initialize_multi_agent_calls_read_for_existing_session(mock_repository)
     # read_multi_agent should be called for existing session
     assert len(read_multi_agent_calls) == 1
     assert read_multi_agent_calls[0] == ("existing-session", "test-multi-agent")
+
+
+def test_fix_broken_tool_use_removes_orphaned_tool_result_mid_conversation(session_manager):
+    """Orphaned toolResult after a message that carries no toolUse is removed (issue #3651)."""
+    messages = [
+        {"role": "user", "content": [{"text": "Where do I live?"}]},
+        {"role": "assistant", "content": [{"text": "You live in Seattle, USA."}]},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": "orphaned-result-123",
+                        "status": "success",
+                        "content": [{"text": "Seattle, USA"}],
+                    }
+                }
+            ],
+        },
+        {"role": "assistant", "content": [{"text": "Anything else?"}]},
+    ]
+
+    fixed_messages = session_manager._fix_broken_tool_use(messages)
+
+    assert fixed_messages == [
+        {"role": "user", "content": [{"text": "Where do I live?"}]},
+        {"role": "assistant", "content": [{"text": "You live in Seattle, USA."}]},
+        {"role": "assistant", "content": [{"text": "Anything else?"}]},
+    ]
+
+
+def test_fix_broken_tool_use_keeps_non_tool_result_content_of_orphaned_message(session_manager):
+    """Only the orphaned toolResult blocks are dropped; other content in that message survives."""
+    messages = [
+        {"role": "assistant", "content": [{"text": "Summary of earlier conversation."}]},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": "orphaned-result-123",
+                        "status": "success",
+                        "content": [{"text": "Seattle, USA"}],
+                    }
+                },
+                {"text": "and what about Portland?"},
+            ],
+        },
+    ]
+
+    fixed_messages = session_manager._fix_broken_tool_use(messages)
+
+    assert fixed_messages == [
+        {"role": "assistant", "content": [{"text": "Summary of earlier conversation."}]},
+        {"role": "user", "content": [{"text": "and what about Portland?"}]},
+    ]
+
+
+def test_fix_broken_tool_use_removes_orphaned_tool_result_after_prepended_message(session_manager):
+    """A prepended summary message must not hide an orphaned toolResult at the window head."""
+    messages = [
+        {"role": "assistant", "content": [{"text": "Summary of earlier conversation."}]},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": "orphaned-result-123",
+                        "status": "success",
+                        "content": [{"text": "42"}],
+                    }
+                }
+            ],
+        },
+        {"role": "assistant", "content": [{"text": "done"}]},
+    ]
+
+    fixed_messages = session_manager._fix_broken_tool_use(messages)
+
+    assert fixed_messages == [
+        {"role": "assistant", "content": [{"text": "Summary of earlier conversation."}]},
+        {"role": "assistant", "content": [{"text": "done"}]},
+    ]
+
+
+def test_fix_broken_tool_use_keeps_paired_tool_result_after_a_text_turn(session_manager):
+    """A toolResult that does follow a toolUse is left alone."""
+    messages = [
+        {"role": "user", "content": [{"text": "What is the weather?"}]},
+        {"role": "assistant", "content": [{"toolUse": {"toolUseId": "abc", "name": "weather", "input": {}}}]},
+        {
+            "role": "user",
+            "content": [{"toolResult": {"toolUseId": "abc", "status": "success", "content": [{"text": "sunny"}]}}],
+        },
+        {"role": "assistant", "content": [{"text": "It is sunny."}]},
+    ]
+    expected = copy.deepcopy(messages)
+
+    fixed_messages = session_manager._fix_broken_tool_use(messages)
+
+    assert fixed_messages == expected

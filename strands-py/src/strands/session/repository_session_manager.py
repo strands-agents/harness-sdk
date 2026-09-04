@@ -262,7 +262,7 @@ class RepositorySessionManager(SessionManager):
         """Fix broken tool use/result pairs in message history.
 
         Handles orphaned toolUse (no corresponding toolResult), stale toolResult (IDs that don't match
-        the preceding toolUse), and orphaned toolResult at conversation start (no preceding toolUse).
+        the preceding toolUse), and orphaned toolResult at any index (no preceding toolUse).
 
         Uses a declarative rebuild: for each assistant message with toolUse, the next message's toolResult
         content is rebuilt to have exactly one result per toolUse ID, filling gaps with error results and
@@ -274,15 +274,26 @@ class RepositorySessionManager(SessionManager):
         Returns:
             Fixed list of messages with proper tool use/result pairs
         """
-        if messages:
-            first_message = messages[0]
-            if first_message["role"] == "user" and any("toolResult" in content for content in first_message["content"]):
-                logger.warning(
-                    "Session message history starts with orphaned toolResult with no preceding toolUse. "
-                    "This typically happens when messages are truncated due to pagination limits. "
-                    "Removing orphaned toolResult message to maintain valid conversation structure."
-                )
-                messages.pop(0)
+        # Reverse iteration keeps the lower indices valid after a removal.
+        for index in range(len(messages) - 1, -1, -1):
+            message = messages[index]
+            if message["role"] != "user" or not any("toolResult" in content for content in message["content"]):
+                continue
+            previous_message = messages[index - 1] if index > 0 else None
+            if previous_message is not None and any("toolUse" in content for content in previous_message["content"]):
+                continue
+
+            logger.warning(
+                "message_index=<%d> | orphaned toolResult with no preceding toolUse. "
+                "This typically happens when messages are truncated due to pagination limits. "
+                "Removing orphaned toolResult to maintain valid conversation structure.",
+                index,
+            )
+            remaining_content = [content for content in message["content"] if "toolResult" not in content]
+            if remaining_content:
+                message["content"] = remaining_content
+            else:
+                messages.pop(index)
 
         # Snapshot eligible indices before iterating. Trailing message excluded (handled by agent class
         # at prompt-arrival time). Reverse iteration keeps snapshotted indices valid after inserts.
