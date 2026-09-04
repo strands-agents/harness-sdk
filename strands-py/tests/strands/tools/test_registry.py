@@ -2,6 +2,7 @@
 Tests for the SDK tool registry module.
 """
 
+import copy
 import json
 import logging
 import sys
@@ -15,6 +16,7 @@ from strands.tools.decorator import DecoratedFunctionTool, tool
 from strands.tools.loader import _TOOL_MODULE_PREFIX
 from strands.tools.mcp import MCPClient
 from strands.tools.registry import ToolRegistry
+from strands.tools.tools import normalize_tool_spec
 
 
 @pytest.fixture(autouse=True)
@@ -80,6 +82,10 @@ def test_register_tool_with_similar_name_raises():
 def test_get_all_tool_specs_returns_right_tool_specs():
     tool_1 = strands.tool(lambda a: a, name="tool_1")
     tool_2 = strands.tool(lambda b: b, name="tool_2")
+    # Deep copy: tool_1.tool_spec is checked for mutation below, so the snapshot must not
+    # share any nested dict with it (a shallow .copy() would, and could hide a regression).
+    raw_tool_1_spec = copy.deepcopy(tool_1.tool_spec)
+    raw_tool_2_spec = copy.deepcopy(tool_2.tool_spec)
 
     tool_registry = ToolRegistry()
 
@@ -88,10 +94,14 @@ def test_get_all_tool_specs_returns_right_tool_specs():
 
     tool_specs = tool_registry.get_all_tool_specs()
 
+    # Compared against the normalized form (get_all_tool_specs fills in defaults); the
+    # tool's own tool_spec must stay untouched (#3910).
     assert tool_specs == [
-        tool_1.tool_spec,
-        tool_2.tool_spec,
+        normalize_tool_spec(raw_tool_1_spec),
+        normalize_tool_spec(raw_tool_2_spec),
     ]
+    assert tool_1.tool_spec == raw_tool_1_spec
+    assert tool_2.tool_spec == raw_tool_2_spec
 
 
 def test_scan_module_for_tools():
