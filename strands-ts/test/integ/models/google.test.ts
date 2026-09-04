@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '@strands-agents/sdk'
-import type { ModelStreamEvent } from '$/sdk/models/streaming.js'
+import type { ModelStreamEvent, Usage } from '$/sdk/models/streaming.js'
 
 import { collectIterator } from '$/sdk/__fixtures__/model-test-helpers.js'
 
@@ -188,6 +188,46 @@ describe.skipIf(gemini.skip)('GoogleModel Integration Tests', () => {
       const without = await model.countTokens(messages)
       const withTools = await model.countTokens(messages, { toolSpecs, systemPrompt: 'Be helpful.' })
       expect(withTools).toBeGreaterThan(without)
+    })
+  })
+
+  describe('Prompt Caching', () => {
+    // A system prompt large enough to clear Gemini's minimum cacheable-token threshold for explicit
+    // CachedContent; a shorter prefix is declined and silently falls back to implicit caching.
+    const cacheableSystemPrompt = [
+      'You are a meticulous assistant. Follow these standing guidelines on every turn.',
+      ...Array.from(
+        { length: 600 },
+        (_unused, index) => `Guideline ${index}: be accurate, state any assumptions you make, and keep answers concise.`
+      ),
+    ].join('\n')
+
+    function usageOf(events: ModelStreamEvent[]): Usage | undefined {
+      return events.find((event) => event.type === 'modelMetadataEvent')?.usage
+    }
+
+    it('creates a managed cache and reuses it across a fresh model with the same prefix', async () => {
+      // A unique cacheKey makes this run own its resource, so reuse is proven, not inherited.
+      const cacheConfig = { ttl: '5m', cacheKey: `strands-integ-${globalThis.crypto.randomUUID()}` }
+      const messages: Message[] = [
+        new Message({ role: 'user', content: [new TextBlock('In one sentence, what do your guidelines ask of you?')] }),
+      ]
+      // Disable thinking: gemini-2.5-flash is a thinking model, and a small output budget can be spent
+      // entirely on thinking, yielding an empty response with no usage to assert against.
+      const params = { maxOutputTokens: 50, thinkingConfig: { thinkingBudget: 0 } }
+
+      const creator = gemini.createModel({ cacheConfig, params })
+      const creatorEvents = await collectIterator<ModelStreamEvent>(
+        creator.stream(messages, { systemPrompt: cacheableSystemPrompt })
+      )
+      expect(usageOf(creatorEvents)?.cacheReadInputTokens ?? 0).toBeGreaterThan(0)
+
+      // A fresh model instance with the identical prefix reuses the resource created above.
+      const reuser = gemini.createModel({ cacheConfig, params })
+      const reuserEvents = await collectIterator<ModelStreamEvent>(
+        reuser.stream(messages, { systemPrompt: cacheableSystemPrompt })
+      )
+      expect(usageOf(reuserEvents)?.cacheReadInputTokens ?? 0).toBeGreaterThan(0)
     })
   })
 })

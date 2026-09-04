@@ -8,7 +8,7 @@ import json
 import logging
 import mimetypes
 import secrets
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterable
 from typing import Any, TypeVar, cast
 
 import pydantic
@@ -20,13 +20,18 @@ from ..types.event_loop import Usage
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException, ProviderTokenCountError
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceToolDict, ToolSpec
+from . import _gemini_cache
 from ._defaults import resolve_config_metadata
-from ._validation import _has_location_source, validate_config_keys
-from .model import BaseModelConfig, Model
+from ._validation import _has_location_source, validate_config_keys, warn_on_cache_config_not_supported
+from .model import BaseModelConfig, CacheConfig, Model
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=pydantic.BaseModel)
+
+
+class _MissingCacheContent(Exception):
+    """Internal signal: a managed cached_content 404'd before any content streamed, so a retry is safe."""
 
 
 class GeminiModel(Model):
@@ -53,12 +58,22 @@ class GeminiModel(Model):
             use_native_token_count: Whether to use the native Gemini count_tokens API.
                 When True, count_tokens() calls the Gemini API for accurate counts.
                 When False (default), skips the API call and uses the local estimator.
+            cache_config: Prompt-caching configuration. When set, Gemini manages a native
+                ``CachedContent`` resource holding the static prefix (system instruction + tools):
+                ``cache_key`` fixes its identity, ``system_prompt_ttl``/``ttl`` its lifetime; other
+                fields have no effect. Managed caching engages only when one of those honored fields is
+                set to a duration or key: a ``ttl``, a ``system_prompt_ttl`` duration string, or a
+                ``cache_key``. The default ``system_prompt_ttl=True`` alone does not engage - pass a
+                duration such as ``system_prompt_ttl="1h"`` to cache the system prompt. A bare
+                ``CacheConfig()`` and an explicit ``cached_content`` in ``params`` both leave the
+                request unchanged.
         """
 
         model_id: Required[str]
         params: dict[str, Any]
         gemini_tools: list[genai.types.Tool]
         use_native_token_count: bool
+        cache_config: CacheConfig | None
 
     def __init__(
         self,
@@ -325,6 +340,34 @@ class GeminiModel(Model):
             ),
         )
 
+    def _prefix_tool_config(
+        self,
+        params: dict[str, Any],
+        tool_specs: list[ToolSpec] | None,
+        tool_choice: ToolChoice | None,
+    ) -> "genai.types.ToolConfig | None":
+        """Resolve the tool config baked into the cached prefix.
+
+        A tool config set in ``params`` wins over the per-request ``tool_choice``, mirroring the
+        precedence ``_format_request_config`` applies to the request itself. Both must agree: a cached
+        resource omits the inline tool config, so if the baked one differs from what the request would
+        have sent, the caller's forced tool choice is silently dropped once managed caching engages.
+
+        Args:
+            params: Configured request params, which may carry an explicit ``tool_config``.
+            tool_specs: Tool specifications; a tool choice applies only when tools are present.
+            tool_choice: Selection strategy for tool invocation.
+
+        Returns:
+            The tool config to bake into the prefix, or None when neither source sets one.
+        """
+        if "tool_config" not in params:
+            return self._format_tool_choice(tool_choice) if tool_specs else None
+        params_tool_config = params["tool_config"]
+        if params_tool_config is None:
+            return None
+        return genai.types.ToolConfig.model_validate(params_tool_config)
+
     def _format_request_config(
         self,
         tool_specs: list[ToolSpec] | None,
@@ -346,6 +389,16 @@ class GeminiModel(Model):
             Gemini request config.
         """
         config_params = dict(params or {})
+
+        # A cached_content resource already holds the system instruction and tools; Gemini rejects a
+        # request that sends both a cached prefix and an inline one. Omit them so the cache is the sole
+        # source of the prefix. This covers a cached_content the caller set in params and one injected
+        # by managed caching alike.
+        if config_params.get("cached_content"):
+            config_params.pop("system_instruction", None)
+            config_params.pop("tools", None)
+            config_params.pop("tool_config", None)
+            return genai.types.GenerateContentConfig(**config_params)
 
         tool_config = self._format_tool_choice(tool_choice) if tool_specs else None
         if tool_config is not None:
@@ -604,22 +657,35 @@ class GeminiModel(Model):
         Raises:
             ModelThrottledException: If the request is throttled by Gemini.
         """
-        request = self._format_request(
-            messages, tool_specs, system_prompt, self.config.get("params"), tool_choice=tool_choice
-        )
+        cache_config = self.config.get("cache_config")
+        self._warn_unsupported_cache(cache_config)
 
         client = self._get_client().aio
 
         try:
+            # Resolving a managed cache lists/creates CachedContent, which can throttle; keep it inside
+            # the try so a cache-endpoint error maps to a typed exception rather than leaking raw.
+            params, managed_cache_config = await self._resolve_cache_params(
+                client, cache_config, tool_specs, system_prompt, tool_choice
+            )
+            request = self._format_request(messages, tool_specs, system_prompt, params, tool_choice=tool_choice)
             response = await client.models.generate_content_stream(**request)
-
             yield self._format_chunk({"chunk_type": "message_start"})
 
             data_type: str | None = None
             tool_used = False
             candidate = None
             event = None
-            async for event in response:
+            async for event in self._iter_with_cache_recovery(
+                response,
+                client,
+                messages,
+                tool_specs,
+                system_prompt,
+                params,
+                tool_choice,
+                managed_cache_config,
+            ):
                 candidates = event.candidates
                 candidate = candidates[0] if candidates else None
                 content = candidate.content if candidate else None
@@ -691,6 +757,182 @@ class GeminiModel(Model):
                 case _:
                     raise error
 
+    @staticmethod
+    def _warn_unsupported_cache(cache_config: CacheConfig | None) -> None:
+        """Warn once about configured cache_config fields Gemini's managed caching cannot honor."""
+        if cache_config is not None:
+            warn_on_cache_config_not_supported(cache_config, "Gemini", supported=_gemini_cache._SUPPORTED_FIELDS)
+
+    async def _resolve_cache_params(
+        self,
+        client: "genai.client.AsyncClient",
+        cache_config: CacheConfig | None,
+        tool_specs: list[ToolSpec] | None,
+        system_prompt: str | None,
+        tool_choice: ToolChoice | None,
+    ) -> tuple[dict[str, Any], CacheConfig | None]:
+        """Build the request params, injecting a managed cached_content when caching is engaged.
+
+        An explicit cached_content in the configured params always wins, so managed resolution runs
+        only when the caller left it unset.
+
+        Args:
+            client: The async Gemini client, reused for the cache lookup and the stream.
+            cache_config: The provider's configured cache settings, if any.
+            tool_specs: List of tool specifications making up the cached prefix.
+            system_prompt: System prompt making up the cached prefix.
+            tool_choice: Selection strategy cached alongside the tools.
+
+        Returns:
+            The params to send, and the cache_config that owns the injected cached_content (used to
+            recover from an expired cache), or None when nothing was injected.
+        """
+        params = dict(self.config.get("params") or {})
+        if cache_config is None or params.get("cached_content"):
+            return params, None
+
+        cached_content = await _gemini_cache.resolve_cached_content(
+            client.caches,
+            cache_config=cache_config,
+            model_id=self.config["model_id"],
+            system_prompt=system_prompt,
+            tools=self._format_request_tools(tool_specs),
+            tool_config=self._prefix_tool_config(params, tool_specs, tool_choice),
+        )
+        if cached_content is None:
+            return params, None
+
+        params["cached_content"] = cached_content
+        return params, cache_config
+
+    async def _iter_with_cache_recovery(
+        self,
+        response: AsyncIterable["genai.types.GenerateContentResponse"],
+        client: "genai.client.AsyncClient",
+        messages: Messages,
+        tool_specs: list[ToolSpec] | None,
+        system_prompt: str | None,
+        params: dict[str, Any],
+        tool_choice: ToolChoice | None,
+        cache_config: CacheConfig | None,
+    ) -> AsyncGenerator[genai.types.GenerateContentResponse, None]:
+        """Yield raw Gemini stream events, recovering once from a managed cached_content that 404s.
+
+        ``cache_config`` is set only when managed caching injected the cached_content, so recovery is
+        attempted only for a cache this provider owns. With no managed cache this is a pass-through.
+
+        Args:
+            response: The already-opened stream from the initial request.
+            client: The async Gemini client, reused across the initial attempt and any recovery.
+            messages: List of message objects to be processed by the model.
+            tool_specs: List of tool specifications making up the cached prefix.
+            system_prompt: System prompt making up the cached prefix.
+            params: Request params, already carrying the managed cached_content when engaged.
+            tool_choice: Selection strategy for tool invocation.
+            cache_config: The managed cache settings, or None when caching is not managed here.
+
+        Yields:
+            Raw Gemini response events.
+        """
+        try:
+            async for event in self._guarded_iter(response, recoverable=cache_config is not None):
+                yield event
+            return
+        except _MissingCacheContent:
+            pass
+
+        async for event in self._recover_content_stream(
+            client, messages, tool_specs, system_prompt, params, tool_choice, cast(CacheConfig, cache_config)
+        ):
+            yield event
+
+    async def _recover_content_stream(
+        self,
+        client: "genai.client.AsyncClient",
+        messages: Messages,
+        tool_specs: list[ToolSpec] | None,
+        system_prompt: str | None,
+        params: dict[str, Any],
+        tool_choice: ToolChoice | None,
+        cache_config: CacheConfig,
+    ) -> AsyncGenerator[genai.types.GenerateContentResponse, None]:
+        """Recover from a managed cached_content the server 404'd: recreate once, else drop the cache.
+
+        Reached only after the initial stream 404'd before producing content. Recreating restores the
+        caching benefit for this and later turns; dropping the cache re-attaches system/tools so the
+        turn still completes.
+
+        Args:
+            client: The async Gemini client, reused across the recovery attempts.
+            messages: List of message objects to be processed by the model.
+            tool_specs: List of tool specifications making up the cached prefix.
+            system_prompt: System prompt making up the cached prefix.
+            params: Request params carrying the expired cached_content.
+            tool_choice: Selection strategy for tool invocation.
+            cache_config: The managed cache settings guiding the recreate.
+
+        Yields:
+            Raw Gemini response events.
+        """
+        recreated = await _gemini_cache.resolve_cached_content(
+            client.caches,
+            cache_config=cache_config,
+            model_id=self.config["model_id"],
+            system_prompt=system_prompt,
+            tools=self._format_request_tools(tool_specs),
+            tool_config=self._prefix_tool_config(params, tool_specs, tool_choice),
+            force_create=True,
+        )
+        if recreated is not None:
+            retry_params = {**params, "cached_content": recreated}
+            retry_request = self._format_request(
+                messages, tool_specs, system_prompt, retry_params, tool_choice=tool_choice
+            )
+            try:
+                retry_response = await client.models.generate_content_stream(**retry_request)
+                async for event in self._guarded_iter(retry_response, recoverable=True):
+                    yield event
+                return
+            except _MissingCacheContent:
+                pass
+
+        implicit_params = {key: value for key, value in params.items() if key != "cached_content"}
+        implicit_request = self._format_request(
+            messages, tool_specs, system_prompt, implicit_params, tool_choice=tool_choice
+        )
+        implicit_response = await client.models.generate_content_stream(**implicit_request)
+        async for event in self._guarded_iter(implicit_response, recoverable=False):
+            yield event
+
+    @staticmethod
+    async def _guarded_iter(
+        response: AsyncIterable["genai.types.GenerateContentResponse"],
+        *,
+        recoverable: bool,
+    ) -> AsyncGenerator[genai.types.GenerateContentResponse, None]:
+        """Yield events from an opened stream, signaling a pre-content missing-cache 404 for retry.
+
+        Args:
+            response: The already-opened stream to iterate.
+            recoverable: Whether a pre-content missing-cache 404 should signal a retry.
+
+        Yields:
+            Raw Gemini response events.
+
+        Raises:
+            _MissingCacheContent: When a managed cached_content 404s before any event is produced and
+                ``recoverable`` is set. Any other error, and any error after the first event, propagates.
+        """
+        started = False
+        try:
+            async for event in response:
+                started = True
+                yield event
+        except genai.errors.ClientError as error:
+            if recoverable and not started and _gemini_cache._is_missing_cache(error):
+                raise _MissingCacheContent() from error
+            raise
+
     @override
     async def structured_output(
         self, output_model: type[T], prompt: Messages, system_prompt: str | None = None, **kwargs: Any
@@ -708,15 +950,48 @@ class GeminiModel(Model):
         Yields:
             Model events with the last being the structured output.
         """
-        params = {
-            **(self.config.get("params") or {}),
-            "response_mime_type": "application/json",
-            "response_schema": output_model.model_json_schema(),
-        }
-        request = self._format_request(prompt, None, system_prompt, params)
+        cache_config = self.config.get("cache_config")
+        self._warn_unsupported_cache(cache_config)
+
         client = self._get_client().aio
-        response = await client.models.generate_content(**request)
+        params, managed_cache_config = await self._resolve_cache_params(client, cache_config, None, system_prompt, None)
+        params["response_mime_type"] = "application/json"
+        params["response_schema"] = output_model.model_json_schema()
+
+        response = await self._generate_structured(client, prompt, system_prompt, params, managed_cache_config)
         yield {"output": output_model.model_validate(response.parsed)}
+
+    async def _generate_structured(
+        self,
+        client: "genai.client.AsyncClient",
+        prompt: Messages,
+        system_prompt: str | None,
+        params: dict[str, Any],
+        managed_cache_config: CacheConfig | None,
+    ) -> "genai.types.GenerateContentResponse":
+        """Run the non-streaming structured-output request, recovering once from an expired cache.
+
+        Args:
+            client: The async Gemini client, reused across the attempt and any recovery.
+            prompt: The prompt messages to send.
+            system_prompt: System prompt making up the cached prefix.
+            params: Request params, already carrying the managed cached_content when engaged.
+            managed_cache_config: The cache_config owning the injected cached_content, or None.
+
+        Returns:
+            The Gemini response.
+        """
+        request = self._format_request(prompt, None, system_prompt, params)
+        try:
+            return await client.models.generate_content(**request)
+        except genai.errors.ClientError as error:
+            if not (managed_cache_config and _gemini_cache._is_missing_cache(error)):
+                raise
+
+        # The managed cache 404'd; drop it so system/tools re-attach and retry implicitly.
+        implicit_params = {key: value for key, value in params.items() if key != "cached_content"}
+        implicit_request = self._format_request(prompt, None, system_prompt, implicit_params)
+        return await client.models.generate_content(**implicit_request)
 
     @staticmethod
     def _validate_gemini_tools(gemini_tools: list[genai.types.Tool]) -> None:

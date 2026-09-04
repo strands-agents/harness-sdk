@@ -1,7 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { GoogleGenAI, FunctionCallingConfigMode, type GenerateContentResponse } from '@google/genai'
+import { ApiError, GoogleGenAI, FunctionCallingConfigMode } from '@google/genai'
+import type { CachedContent, GenerateContentResponse } from '@google/genai'
 import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
 import { GoogleModel } from '../google/model.js'
+import {
+  findCachedContent,
+  isMissingCache,
+  isUncacheable,
+  resolveDisplayName,
+  resolveTtl,
+  shouldEngageManaged,
+} from '../google/cache.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
 import {
   Message,
@@ -1543,6 +1552,453 @@ describe('GoogleModel', () => {
 
       expect(mockCountTokens).not.toHaveBeenCalled()
       expect(result).toBe(2) // heuristic: Math.ceil('hello'.length / 4)
+    })
+  })
+
+  describe('prompt caching', () => {
+    const cachingMessages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+    const systemPrompt = 'You are a helpful assistant'
+    const toolSpecs = [
+      { name: 'get_weather', description: 'Get the weather', inputSchema: { type: 'object' as const } },
+    ]
+
+    function toAsyncIterable<T>(items: T[]): AsyncIterable<T> {
+      return {
+        async *[Symbol.asyncIterator]() {
+          for (const item of items) yield item
+        },
+      }
+    }
+
+    function streamText(): AsyncIterable<Record<string, unknown>> {
+      return toAsyncIterable([{ candidates: [{ finishReason: 'STOP' }] }])
+    }
+
+    // A stream that opens successfully but whose first iteration rejects, exercising the mid-open 404
+    // branch of _guardedStream. @google/genai instead rejects at the open await (see eagerNotFound).
+    function throwingStream(error: Error): AsyncIterable<Record<string, unknown>> {
+      return {
+        [Symbol.asyncIterator]() {
+          return { next: () => Promise.reject(error) }
+        },
+      }
+    }
+
+    // Models @google/genai's eager open: generateContentStream rejects at the await, before any
+    // content event. Throwing inside onStream rejects the mock's returned promise after params capture.
+    function eagerNotFound(): never {
+      throw notFoundError()
+    }
+
+    function notFoundError(): Error {
+      return new Error(JSON.stringify({ error: { status: 'NOT_FOUND', message: 'CachedContent not found' } }))
+    }
+
+    function makeCachedContent(name: string, displayName: string, createTime?: string): CachedContent {
+      return { name, displayName, ...(createTime !== undefined && { createTime }) }
+    }
+
+    type FakeCaches = { list: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> }
+
+    function createFakeCaches(options?: { existing?: CachedContent[]; createError?: Error }): FakeCaches {
+      const contents = options?.existing ? [...options.existing] : []
+      const list = vi.fn(async () => toAsyncIterable([...contents]))
+      const create = vi.fn(async (params: { model: string; config: { displayName: string } }) => {
+        if (options?.createError) throw options.createError
+        const created = makeCachedContent(`caches/${create.mock.calls.length}`, params.config.displayName)
+        contents.push(created)
+        return created
+      })
+      return { list, create }
+    }
+
+    function cachingClient(
+      caches: FakeCaches,
+      onStream?: (params: Record<string, unknown>, callIndex: number) => AsyncIterable<Record<string, unknown>>
+    ): { client: GoogleGenAI; captured: Record<string, unknown>[] } {
+      const captured: Record<string, unknown>[] = []
+      const generateContentStream = vi.fn(async (params: Record<string, unknown>) => {
+        captured.push(params)
+        return (onStream ?? (() => streamText()))(params, captured.length - 1)
+      })
+      const client = { models: { generateContentStream }, caches } as unknown as GoogleGenAI
+      return { client, captured }
+    }
+
+    function configOf(captured: Record<string, unknown>): {
+      cachedContent?: string
+      systemInstruction?: unknown
+      tools?: unknown
+      toolConfig?: unknown
+    } {
+      return captured.config as {
+        cachedContent?: string
+        systemInstruction?: unknown
+        tools?: unknown
+        toolConfig?: unknown
+      }
+    }
+
+    describe('cache helpers', () => {
+      it.each([
+        ['5m', '300s'],
+        ['1h', '3600s'],
+        ['300s', '300s'],
+        ['2d', '172800s'],
+      ])('resolves ttl %s to %s', (ttl, expected) => {
+        expect(resolveTtl({ ttl })).toBe(expected)
+      })
+
+      it('prefers a systemPromptTTL string over ttl', () => {
+        expect(resolveTtl({ ttl: '1h', systemPromptTTL: '30m' })).toBe('1800s')
+      })
+
+      it('defaults to one hour when no duration is named', () => {
+        expect(resolveTtl({ cacheKey: 'k' })).toBe('3600s')
+      })
+
+      it.each([['0s'], ['-5s'], ['nonsense']])('disables caching for a non-positive or bad ttl %s', (ttl) => {
+        expect(resolveTtl({ ttl })).toBeUndefined()
+      })
+
+      it('uses an explicit cacheKey verbatim as the display name', async () => {
+        expect(
+          await resolveDisplayName({ cacheKey: 'my-key' }, 'gemini-2.5-flash', systemPrompt, undefined, undefined)
+        ).toBe('my-key')
+      })
+
+      it('hashes a cacheKey that exceeds the display-name cap', async () => {
+        const displayName = await resolveDisplayName(
+          { cacheKey: 'x'.repeat(200) },
+          'gemini-2.5-flash',
+          undefined,
+          undefined,
+          undefined
+        )
+        expect(displayName).toHaveLength(64)
+      })
+
+      it('opts out of caching for an empty cacheKey', async () => {
+        expect(
+          await resolveDisplayName({ cacheKey: '' }, 'gemini-2.5-flash', systemPrompt, undefined, undefined)
+        ).toBeUndefined()
+      })
+
+      it('derives a deterministic content fingerprint that differs by model', async () => {
+        const flash = await resolveDisplayName({ ttl: '1h' }, 'gemini-2.5-flash', systemPrompt, undefined, undefined)
+        const flashAgain = await resolveDisplayName(
+          { ttl: '1h' },
+          'gemini-2.5-flash',
+          systemPrompt,
+          undefined,
+          undefined
+        )
+        const pro = await resolveDisplayName({ ttl: '1h' }, 'gemini-2.5-pro', systemPrompt, undefined, undefined)
+
+        expect(flash).toHaveLength(16)
+        expect(flashAgain).toBe(flash)
+        expect(pro).not.toBe(flash)
+      })
+
+      it('varies the fingerprint by tool config so forced choices do not share a resource', async () => {
+        const tools = [{ functionDeclarations: [{ name: 'get_weather' }] }]
+        const autoConfig = { functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO } }
+        const forcedConfig = { functionCallingConfig: { mode: FunctionCallingConfigMode.ANY } }
+
+        const auto = await resolveDisplayName({ ttl: '1h' }, 'gemini-2.5-flash', systemPrompt, tools, autoConfig)
+        const forced = await resolveDisplayName({ ttl: '1h' }, 'gemini-2.5-flash', systemPrompt, tools, forcedConfig)
+
+        expect(auto).not.toBe(forced)
+      })
+
+      it.each([
+        [{}, false],
+        [{ ttl: '1h' }, true],
+        [{ cacheKey: 'k' }, true],
+        [{ systemPromptTTL: '1h' }, true],
+        [{ strategy: 'auto' as const }, false],
+        // Unsupported-only fields warn and are ignored, so they must not engage a billed resource.
+        [{ strategy: 'anthropic' as const }, false],
+        [{ toolsTTL: '5m' }, false],
+        // The default systemPromptTTL: true is indistinguishable from a bare config, so it does not
+        // engage; a duration string is required to cache the system prompt.
+        [{ systemPromptTTL: true }, false],
+        [{ systemPromptTTL: false }, false],
+      ])('shouldEngageManaged(%o) is %s', (cacheConfig, expected) => {
+        expect(shouldEngageManaged(cacheConfig)).toBe(expected)
+      })
+
+      it('finds the newest matching cached content', async () => {
+        const caches = {
+          list: vi.fn(async () =>
+            toAsyncIterable([
+              makeCachedContent('caches/old', 'shared', '2026-01-01T00:00:00Z'),
+              makeCachedContent('caches/new', 'shared', '2026-02-01T00:00:00Z'),
+              makeCachedContent('caches/other', 'different', '2026-03-01T00:00:00Z'),
+            ])
+          ),
+        }
+        const name = await findCachedContent(caches as unknown as Parameters<typeof findCachedContent>[0], 'shared')
+        expect(name).toBe('caches/new')
+      })
+
+      it('returns undefined when no cached content matches', async () => {
+        const caches = { list: vi.fn(async () => toAsyncIterable<CachedContent>([])) }
+        const name = await findCachedContent(caches as unknown as Parameters<typeof findCachedContent>[0], 'missing')
+        expect(name).toBeUndefined()
+      })
+
+      it('treats an http 404 as a missing cache', () => {
+        expect(isMissingCache(new ApiError({ status: 404, message: 'gone' }))).toBe(true)
+      })
+
+      it('treats a token-size precondition failure as uncacheable', () => {
+        const error = new Error(
+          JSON.stringify({ error: { status: 'FAILED_PRECONDITION', message: 'Cached content is too small' } })
+        )
+        expect(isUncacheable(error)).toBe(true)
+      })
+    })
+
+    describe('managed lifecycle', () => {
+      it('strips system and tools when params carries a cachedContent', async () => {
+        const caches = createFakeCaches()
+        const { client, captured } = cachingClient(caches)
+        const provider = new GoogleModel({ client, params: { cachedContent: 'caches/user' } })
+
+        await collectIterator(provider.stream(cachingMessages, { systemPrompt, toolSpecs }))
+
+        const config = configOf(captured[0]!)
+        expect(config.cachedContent).toBe('caches/user')
+        expect(config.systemInstruction).toBeUndefined()
+        expect(config.tools).toBeUndefined()
+        expect(config.toolConfig).toBeUndefined()
+        expect(caches.create).not.toHaveBeenCalled()
+        expect(caches.list).not.toHaveBeenCalled()
+      })
+
+      it('leaves the request unchanged for a bare cacheConfig', async () => {
+        const bare = createFakeCaches()
+        const bareClient = cachingClient(bare)
+        const bareProvider = new GoogleModel({ client: bareClient.client, cacheConfig: {} })
+        await collectIterator(bareProvider.stream(cachingMessages, { systemPrompt, toolSpecs }))
+
+        const none = cachingClient(createFakeCaches())
+        const noneProvider = new GoogleModel({ client: none.client })
+        await collectIterator(noneProvider.stream(cachingMessages, { systemPrompt, toolSpecs }))
+
+        expect(bareClient.captured[0]).toStrictEqual(none.captured[0])
+        expect(bare.create).not.toHaveBeenCalled()
+        expect(bare.list).not.toHaveBeenCalled()
+      })
+
+      it('creates a cached content once then attaches it', async () => {
+        const caches = createFakeCaches()
+        const { client, captured } = cachingClient(caches)
+        const provider = new GoogleModel({ client, modelId: 'gemini-2.5-flash', cacheConfig: { ttl: '1h' } })
+
+        await collectIterator(provider.stream(cachingMessages, { systemPrompt, toolSpecs }))
+
+        expect(caches.create).toHaveBeenCalledTimes(1)
+        expect(caches.create.mock.calls[0]![0].config.ttl).toBe('3600s')
+        const config = configOf(captured[0]!)
+        expect(config.cachedContent).toBe('caches/1')
+        expect(config.systemInstruction).toBeUndefined()
+        expect(config.tools).toBeUndefined()
+      })
+
+      it('reuses an existing cached content rather than creating one', async () => {
+        const displayName = await resolveDisplayName(
+          { ttl: '1h' },
+          'gemini-2.5-flash',
+          systemPrompt,
+          undefined,
+          undefined
+        )
+        const caches = createFakeCaches({
+          existing: [makeCachedContent('caches/existing', displayName!, '2026-01-01T00:00:00Z')],
+        })
+        const { client, captured } = cachingClient(caches)
+        const provider = new GoogleModel({ client, modelId: 'gemini-2.5-flash', cacheConfig: { ttl: '1h' } })
+
+        await collectIterator(provider.stream(cachingMessages, { systemPrompt }))
+
+        expect(caches.create).not.toHaveBeenCalled()
+        expect(configOf(captured[0]!).cachedContent).toBe('caches/existing')
+      })
+
+      it('lets an explicit params cachedContent win over managed resolution', async () => {
+        const caches = createFakeCaches()
+        const { client, captured } = cachingClient(caches)
+        const provider = new GoogleModel({
+          client,
+          cacheConfig: { ttl: '1h' },
+          params: { cachedContent: 'caches/user' },
+        })
+
+        await collectIterator(provider.stream(cachingMessages, { systemPrompt }))
+
+        expect(caches.create).not.toHaveBeenCalled()
+        expect(configOf(captured[0]!).cachedContent).toBe('caches/user')
+      })
+
+      it('falls back to implicit caching when the prefix is too small to cache', async () => {
+        const caches = createFakeCaches({
+          createError: new Error(
+            JSON.stringify({ error: { status: 'FAILED_PRECONDITION', message: 'Cached content is too small' } })
+          ),
+        })
+        const { client, captured } = cachingClient(caches)
+        const provider = new GoogleModel({ client, modelId: 'gemini-2.5-flash', cacheConfig: { ttl: '1h' } })
+
+        await collectIterator(provider.stream(cachingMessages, { systemPrompt }))
+
+        const config = configOf(captured[0]!)
+        expect(config.cachedContent).toBeUndefined()
+        expect(config.systemInstruction).toBe(systemPrompt)
+        expect(warnOnce).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('declined to cache'))
+      })
+
+      it('recreates the cache once when the open await 404s before any content', async () => {
+        const caches = createFakeCaches()
+        // Eager vendor shape: only the first attempt's cache is stale; the recreated one streams.
+        const { client, captured } = cachingClient(caches, (_params, callIndex) =>
+          callIndex === 0 ? eagerNotFound() : streamText()
+        )
+        const provider = new GoogleModel({ client, modelId: 'gemini-2.5-flash', cacheConfig: { ttl: '1h' } })
+
+        const events = await collectIterator(provider.stream(cachingMessages, { systemPrompt }))
+
+        expect(caches.create).toHaveBeenCalledTimes(2)
+        expect(configOf(captured[1]!).cachedContent).toBe('caches/2')
+        expect(events.some((event) => event.type === 'modelMessageStopEvent')).toBe(true)
+      })
+
+      it('recovers when the cache 404s mid-open after the stream has opened', async () => {
+        const caches = createFakeCaches()
+        // Lazy shape: the open await resolves and the 404 surfaces on first iteration (_guardedStream).
+        const { client, captured } = cachingClient(caches, (_params, callIndex) =>
+          callIndex === 0 ? throwingStream(notFoundError()) : streamText()
+        )
+        const provider = new GoogleModel({ client, modelId: 'gemini-2.5-flash', cacheConfig: { ttl: '1h' } })
+
+        const events = await collectIterator(provider.stream(cachingMessages, { systemPrompt }))
+
+        expect(caches.create).toHaveBeenCalledTimes(2)
+        expect(configOf(captured[1]!).cachedContent).toBe('caches/2')
+        expect(events.some((event) => event.type === 'modelMessageStopEvent')).toBe(true)
+      })
+
+      it('drops the cache and streams implicitly when recreation also 404s', async () => {
+        const caches = createFakeCaches()
+        // Every cached attempt is stale at the open await; only the implicit request (none) streams.
+        const { client, captured } = cachingClient(caches, (params) =>
+          (params.config as { cachedContent?: string }).cachedContent ? eagerNotFound() : streamText()
+        )
+        const provider = new GoogleModel({ client, modelId: 'gemini-2.5-flash', cacheConfig: { ttl: '1h' } })
+
+        const events = await collectIterator(provider.stream(cachingMessages, { systemPrompt }))
+
+        expect(captured).toHaveLength(3)
+        const implicit = configOf(captured[2]!)
+        expect(implicit.cachedContent).toBeUndefined()
+        expect(implicit.systemInstruction).toBe(systemPrompt)
+        expect(events.some((event) => event.type === 'modelMessageStopEvent')).toBe(true)
+      })
+
+      it('shares one cached resource across models with an identical prefix', async () => {
+        const caches = createFakeCaches()
+        const first = cachingClient(caches)
+        const second = cachingClient(caches)
+        const config = { modelId: 'gemini-2.5-flash', cacheConfig: { ttl: '1h' } }
+
+        await collectIterator(
+          new GoogleModel({ client: first.client, ...config }).stream(cachingMessages, { systemPrompt })
+        )
+        await collectIterator(
+          new GoogleModel({ client: second.client, ...config }).stream(cachingMessages, { systemPrompt })
+        )
+
+        // Identity is content-derived, so the second model reuses the first model's resource.
+        expect(caches.create).toHaveBeenCalledTimes(1)
+        expect(configOf(second.captured[0]!).cachedContent).toBe('caches/1')
+      })
+
+      it('warns about cacheConfig fields it cannot honor', async () => {
+        const caches = createFakeCaches()
+        const { client } = cachingClient(caches)
+        const provider = new GoogleModel({
+          client,
+          modelId: 'gemini-2.5-flash',
+          cacheConfig: { ttl: '1h', strategy: 'anthropic', toolsTTL: '5m' },
+        })
+
+        await collectIterator(provider.stream(cachingMessages, { systemPrompt }))
+
+        expect(warnOnce).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('have no effect'))
+      })
+
+      it('warns and creates nothing for an unsupported-only field over a cacheable prefix', async () => {
+        const caches = createFakeCaches()
+        const { client, captured } = cachingClient(caches)
+        const provider = new GoogleModel({
+          client,
+          modelId: 'gemini-2.5-flash',
+          cacheConfig: { strategy: 'anthropic' },
+        })
+
+        await collectIterator(provider.stream(cachingMessages, { systemPrompt, toolSpecs }))
+
+        expect(warnOnce).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('have no effect'))
+        expect(caches.create).not.toHaveBeenCalled()
+        expect(caches.list).not.toHaveBeenCalled()
+        const config = configOf(captured[0]!)
+        expect(config.cachedContent).toBeUndefined()
+        expect(config.systemInstruction).toBe(systemPrompt)
+      })
+
+      it('creates a distinct resource per tool choice sharing the same prefix', async () => {
+        const caches = createFakeCaches()
+        const { client } = cachingClient(caches)
+        const config = { modelId: 'gemini-2.5-flash', cacheConfig: { ttl: '1h' } }
+
+        await collectIterator(
+          new GoogleModel({ client, ...config }).stream(cachingMessages, {
+            systemPrompt,
+            toolSpecs,
+            toolChoice: { auto: {} },
+          })
+        )
+        await collectIterator(
+          new GoogleModel({ client, ...config }).stream(cachingMessages, {
+            systemPrompt,
+            toolSpecs,
+            toolChoice: { any: {} },
+          })
+        )
+
+        // tool_config is baked into the resource, so differing tool choices must not share one cache.
+        expect(caches.create).toHaveBeenCalledTimes(2)
+      })
+
+      it('bakes an explicit params toolConfig into the resource, overriding the tool choice', async () => {
+        const caches = createFakeCaches()
+        const { client, captured } = cachingClient(caches)
+        const forced = { functionCallingConfig: { mode: FunctionCallingConfigMode.ANY } }
+        const provider = new GoogleModel({
+          client,
+          modelId: 'gemini-2.5-flash',
+          cacheConfig: { ttl: '1h' },
+          params: { toolConfig: forced },
+        })
+
+        // A cached prefix omits the inline tool config, so a params tool config reaches the model only
+        // if it is baked; a per-request auto choice must not win over it.
+        await collectIterator(provider.stream(cachingMessages, { systemPrompt, toolSpecs, toolChoice: { auto: {} } }))
+
+        expect(caches.create.mock.calls[0]![0].config.toolConfig).toEqual(forced)
+        expect(configOf(captured[0]!).toolConfig).toBeUndefined()
+      })
     })
   })
 })
