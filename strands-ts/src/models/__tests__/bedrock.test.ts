@@ -697,6 +697,133 @@ describe('BedrockModel', () => {
       ])
     })
 
+    // Parity mirror of the strict_tools cases in strands-py test_bedrock.py.
+    // Keep aligned with the Python file so the two SDKs stay in parity.
+    // Python's separate strict_tools_false / strict_tools_none cases are merged here into one
+    // false/unset case: same behavior, fewer tests.
+    describe('strictTools', () => {
+      const toolSpec = (inputSchema: object) => ({
+        name: 'calc',
+        description: 'Calculator',
+        inputSchema,
+      })
+      const lastTools = () => {
+        const call = vi.mocked(ConverseStreamCommand).mock.lastCall?.[0]
+        return (call?.toolConfig?.tools ?? []) as Array<{
+          toolSpec?: { strict?: boolean; inputSchema?: { json?: unknown } }
+        }>
+      }
+
+      it('injects strict: true and closes the schema when strictTools is true', () => {
+        const provider = new BedrockModel({ strictTools: true })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+        collectIterator(
+          provider.stream(messages, {
+            toolSpecs: [toolSpec({ type: 'object', properties: { a: { type: 'string' } } })],
+          })
+        )
+
+        const spec = lastTools()[0]!.toolSpec!
+        expect(spec.strict).toBe(true)
+        expect(spec.inputSchema!.json).toEqual({
+          type: 'object',
+          properties: { a: { type: 'string' } },
+          additionalProperties: false,
+        })
+      })
+
+      it('does not mutate the caller-provided input schema', () => {
+        const provider = new BedrockModel({ strictTools: true })
+        const inputSchema = { type: 'object', properties: { a: { type: 'string' } } }
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+        collectIterator(provider.stream(messages, { toolSpecs: [toolSpec(inputSchema)] }))
+
+        expect('additionalProperties' in inputSchema).toBe(false)
+      })
+
+      it('preserves an existing additionalProperties: true', () => {
+        const provider = new BedrockModel({ strictTools: true })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+        collectIterator(
+          provider.stream(messages, {
+            toolSpecs: [
+              toolSpec({ type: 'object', properties: { a: { type: 'string' } }, additionalProperties: true }),
+            ],
+          })
+        )
+
+        expect(lastTools()[0]!.toolSpec!.inputSchema!.json).toEqual({
+          type: 'object',
+          properties: { a: { type: 'string' } },
+          additionalProperties: true,
+        })
+      })
+
+      it('patches nested object schemas', () => {
+        const provider = new BedrockModel({ strictTools: true })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+        collectIterator(
+          provider.stream(messages, {
+            toolSpecs: [
+              toolSpec({
+                type: 'object',
+                properties: { outer: { type: 'object', properties: { inner: { type: 'string' } } } },
+              }),
+            ],
+          })
+        )
+
+        expect(lastTools()[0]!.toolSpec!.inputSchema!.json).toEqual({
+          type: 'object',
+          properties: {
+            outer: { type: 'object', properties: { inner: { type: 'string' } }, additionalProperties: false },
+          },
+          additionalProperties: false,
+        })
+      })
+
+      it('omits strict and leaves the schema unchanged by default', () => {
+        const provider = new BedrockModel()
+        const inputSchema = { type: 'object', properties: { a: { type: 'string' } } }
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+        collectIterator(provider.stream(messages, { toolSpecs: [toolSpec(inputSchema)] }))
+
+        const spec = lastTools()[0]!.toolSpec!
+        expect(spec.strict).toBeUndefined()
+        expect(spec.inputSchema!.json).toEqual(inputSchema)
+      })
+
+      it('omits strict when strictTools is false', () => {
+        const provider = new BedrockModel({ strictTools: false })
+        const inputSchema = { type: 'object', properties: { a: { type: 'string' } } }
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+        collectIterator(provider.stream(messages, { toolSpecs: [toolSpec(inputSchema)] }))
+
+        const spec = lastTools()[0]!.toolSpec!
+        expect(spec.strict).toBeUndefined()
+        expect(spec.inputSchema!.json).toEqual(inputSchema)
+      })
+
+      it('applies strict to every tool when multiple tool specs are given', () => {
+        const provider = new BedrockModel({ strictTools: true })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+        collectIterator(
+          provider.stream(messages, {
+            toolSpecs: [
+              toolSpec({ type: 'object', properties: { a: { type: 'string' } } }),
+              { name: 'other', description: 'Other', inputSchema: { type: 'object', properties: {} } },
+            ],
+          })
+        )
+
+        const tools = lastTools()
+        expect(tools).toHaveLength(2)
+        for (const tool of tools) {
+          expect(tool.toolSpec!.strict).toBe(true)
+        }
+      })
+    })
+
     it('formats reasoning messages properly', async () => {
       const provider = new BedrockModel()
       const messages = [
