@@ -1,7 +1,6 @@
 /**
  * Chat Completions API adapter for the OpenAI model provider.
  *
- * @internal
  */
 
 import OpenAI from 'openai'
@@ -52,7 +51,6 @@ type OpenAIChatChoice = {
 /**
  * Builds a Chat Completions streaming request body.
  *
- * @internal
  */
 export function formatChatRequest(
   config: OpenAIChatConfig,
@@ -368,7 +366,6 @@ function splitToolResultMedia(
  * Maps a Chat Completions streaming chunk to one or more SDK events. Mutates
  * `state` and `activeToolCalls` as a side effect.
  *
- * @internal
  */
 export function mapChatChunkToEvents(
   chunk: { choices: unknown[] },
