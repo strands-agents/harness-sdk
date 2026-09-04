@@ -1,0 +1,254 @@
+---
+title: Skill Selection Accuracy Evaluator
+description: 'Judge whether your agent loaded the right skill for a task with SkillSelectionAccuracyEvaluator, which scores every invoked skill against its catalog.'
+tags: [tool-evaluation]
+sidebar:
+  label: "Skill Selection Accuracy"
+---
+
+## Overview
+
+The `SkillSelectionAccuracyEvaluator` evaluates whether each skill an agent loaded was
+an appropriate choice for the task. A skill is a reusable instruction file, usually
+`SKILL.md`, that an agent loads at runtime from a catalog of available skills.
+
+This evaluator scores the routing decision. Given the task and the catalog the agent was
+shown, was loading this particular skill reasonable? How well the agent then carried out
+the skill is a separate question, answered by
+[`SkillInstructionFollowingEvaluator`](skill_instruction_following_evaluator.md).
+
+## Key Features
+
+- **Per-Skill Results**: Returns one `EvaluationOutput` per invoked skill
+- **Catalog-Aware**: Judges the choice against the skills the agent was offered
+- **Binary Scoring**: Yes or No, for clear pass and fail criteria
+- **Choice, Not Outcome**: A load the harness refused is still judged on whether asking
+  for that skill was right
+- **Cross-Harness**: Recognizes skill loads from reserved tool names and from plain
+  `SKILL.md` file reads
+- **Async Support**: Supports both synchronous and asynchronous evaluation
+
+## When to Use
+
+Use the `SkillSelectionAccuracyEvaluator` to:
+
+- Verify that agents load the right skill for a given request
+- Detect skills loaded for tasks they do not cover
+- Diagnose overlapping descriptions as a skill catalog grows
+- Separate a routing mistake from an execution mistake in a failing run
+
+## Scope
+
+This evaluator judges only the skills that were invoked. It accepts no expected or
+ground-truth skill, and it does not verify that a skill the agent should have loaded was
+loaded. On a task requiring several skills, invoking any one skill that genuinely fits is
+appropriate on its own merits.
+
+For a known routing requirement, assert it with the deterministic
+[`SkillInvoked`](deterministic_evaluators.md#skillinvoked) check instead. It calls no
+model, so it is faster, free, and not subject to judge drift.
+
+## Evaluation Level
+
+Unlike `ToolSelectionAccuracyEvaluator`, this evaluator declares no `evaluation_level`.
+It reads the trajectory directly and emits one result per invoked skill, folding repeat
+attempts on the same skill into a single row. An agent that loaded two skills produces
+two results.
+
+## Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `version` | `str` | `"v0"` | Prompt template version for the judge. |
+| `model` | `Model \| str \| None` | `None` | Judge model, as a model ID string or a `Model` instance. Defaults to the Amazon Bedrock model. |
+| `system_prompt` | `str \| None` | `None` | Overrides the built-in judge template. |
+| `name` | `str \| None` | `None` | Evaluator name. Defaults to the class name. |
+
+Evaluator names must be unique within an experiment. Pass `name` when constructing more
+than one instance of the same evaluator class.
+
+## Scoring System
+
+Binary:
+
+- **Yes (1.0)**: Loading this skill was appropriate for the task
+- **No (0.0)**: This skill does not fit the task
+
+## Basic Usage
+
+The `./skills` directory must hold at least one skill, each a subdirectory containing a
+`SKILL.md`. `AgentSkills` loads nothing and only logs a warning when the path is empty,
+which surfaces here as all-not-applicable rows. See
+[Skills](../../concepts/plugins/skills.md) for the layout.
+
+```python
+import asyncio
+
+from strands import Agent, AgentSkills
+from strands_evals import Case, Experiment
+from strands_evals.evaluators import SkillSelectionAccuracyEvaluator
+from strands_evals.mappers import StrandsInMemorySessionMapper
+from strands_evals.telemetry import StrandsEvalsTelemetry
+
+telemetry = StrandsEvalsTelemetry().setup_in_memory_exporter()
+memory_exporter = telemetry.in_memory_exporter
+
+def hr_task_function(case: Case) -> dict:
+    agent = Agent(
+        trace_attributes={
+            "gen_ai.conversation.id": case.session_id,
+            "session.id": case.session_id,
+        },
+        # The catalog the agent selects from.
+        plugins=[AgentSkills(skills=["./skills"])],
+        callback_handler=None,
+    )
+    agent_response = agent(case.input)
+
+    finished_spans = memory_exporter.get_finished_spans()
+    mapper = StrandsInMemorySessionMapper()
+    session = mapper.map_to_session(finished_spans, session_id=case.session_id)
+
+    return {"output": str(agent_response), "trajectory": session}
+
+test_cases = [
+    Case[str, str](
+        name="pto-balance",
+        input="What is the available PTO balance for employee EMP-001?",
+    ),
+    Case[str, str](
+        name="health-benefits",
+        input="What does our health insurance cover?",
+    ),
+]
+
+experiment = Experiment[str, str](
+    cases=test_cases,
+    evaluators=[SkillSelectionAccuracyEvaluator()],
+)
+
+async def main():
+    report = await experiment.run_evaluations_async(hr_task_function)
+    report.display()
+
+asyncio.run(main())
+```
+
+An agent holding `pto-planning` and `benefits-advisor` skills can load either one for
+either case. The evaluator reports which it chose and whether that choice fit.
+
+## Evaluation Output
+
+Each `EvaluationOutput` carries:
+
+- **score**: `1.0` (Yes) or `0.0` (No)
+- **test_pass**: `True` when the score is `1.0`
+- **reason**: The invoked skill's name, then the judge's reasoning
+- **label**: `"Yes"`, `"No"`, or `"not_applicable"`
+
+The label carries the verdict rather than the skill name, matching every other judge in
+the framework. Which skill a row describes is named in `reason`, since a run with several
+invoked skills produces several rows.
+
+## Skipping Behavior
+
+Some runs contain no selection decision. These produce a single not-applicable row, which
+is excluded from the aggregated mean rather than counted as `0.0`, so a run that had no
+decision to make is not reported as a failed one.
+
+| Situation | `reason` | `test_pass` |
+|-----------|----------|-------------|
+| No trajectory supplied | `no trajectory provided` | `False` |
+| A catalog was offered, no skill loaded | `no skill invoked; whether declining was correct is not judged here` | `True` |
+| No skills were available | `no skills were available to select from` | `True` |
+
+Whether declining to load a skill was correct depends on the whole offered set rather
+than on any one invocation. That is a session-level question, and out of scope here.
+
+## What the Judge Sees
+
+For each invoked skill: the task, the available skills with their descriptions, the one
+skill under evaluation, the serialized trajectory, and the agent's final response.
+
+A fresh judge is created per decision. Reusing one across the loop would carry earlier
+verdicts into later prompts as conversation history and resend the whole trajectory on
+top of them.
+
+When the harness refused a load, the prompt says so and directs the judge to assess
+whether asking for the skill was right, not whether the load worked. The refusal message
+is included, because a skill name the harness did not recognize is a worse pick than a
+good one the harness could not mount.
+
+### When the catalog was not recorded
+
+Not every harness records what it offered, and an empty list would invite the judge to
+conclude the invoked skill did not exist and mark a correct pick wrong. The prompt
+therefore distinguishes three cases:
+
+| Catalog state | Rendered as |
+|---------------|-------------|
+| Recorded | The skill names and descriptions |
+| Advertised as empty | `(none: this harness advertised no skills)` |
+| Never recorded | `(not recorded by this harness)` |
+
+## Recognized Harnesses
+
+A skill load is detected by a reserved tool name, or by a plain `SKILL.md` file read.
+The file-read path is what covers harnesses absent from this table, such as Codex:
+
+| Harness | Reserved skill-tool name |
+|---------|---------------|
+| Strands `AgentSkills` | `skills` |
+| Claude Code, Claude Agent SDK | `Skill` |
+| OpenAI Agents SDK, Google ADK | `load_skill` |
+| Gemini CLI | `activate_skill` |
+| OpenHands | `invoke_skill` |
+
+## Best Practices
+
+1. **Pair with instruction following.** Running both evaluators is what makes a low
+   aggregate score diagnosable: selection and execution fail for different reasons and
+   need different fixes.
+2. **Add deterministic assertions.** Use `SkillInvoked` for skills a regression case must
+   load.
+3. **Write discriminative descriptions.** Most inappropriate selections trace back to two
+   skills whose descriptions overlap.
+4. **Keep skills narrowly scoped.** A skill covering six unrelated functions has no single
+   definition of correct selection.
+5. **Read the reason, not just the score.** This evaluator is binary and exposes no
+   threshold, so the judge's reasoning is the only place a borderline call is visible.
+
+## Common Issues and Solutions
+
+### Every result is not applicable
+
+**Problem**: Every row reads either `no skill invoked` or `no skills were available to
+select from`. The second reason is the one to expect when no catalog reached the trace.
+
+**Solution**: Confirm the agent has a catalog mounted and that the trajectory captures the
+skill's tool calling. A harness whose loads are not recognized looks identical to an agent
+that loaded nothing.
+
+### A correct selection scored No
+
+**Problem**: The judge marked an appropriate skill as inappropriate.
+
+**Solution**: Check whether the catalog reached the trace. Without descriptions the judge
+has less to work from. Then review the skill's own description, since the verdict rests on
+the description and the task rather than on the outcome.
+
+### The aggregate looks low on multi-skill runs
+
+Working as intended. One inappropriate selection among several lowers the mean. Read the
+per-skill rows to find the row that scored `0.0`.
+
+## Related Evaluators
+
+- [**SkillInstructionFollowingEvaluator**](skill_instruction_following_evaluator.md):
+  Scores how fully the agent followed an invoked skill's steps
+- [**Deterministic Evaluators**](deterministic_evaluators.md#skillinvoked): The
+  `SkillInvoked` assertion
+- [**ToolSelectionAccuracyEvaluator**](tool_selection_evaluator.md): The equivalent check
+  for individual tool calling
+- [**GoalSuccessRateEvaluator**](goal_success_rate_evaluator.md): Whether the overall goal
+  was achieved

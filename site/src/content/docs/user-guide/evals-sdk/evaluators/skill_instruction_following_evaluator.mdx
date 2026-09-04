@@ -1,0 +1,240 @@
+---
+title: Skill Instruction Following Evaluator
+description: 'Measure how fully your agent followed an invoked skill with SkillInstructionFollowingEvaluator, a five-point judge that returns per-step evidence.'
+tags: [tool-evaluation]
+sidebar:
+  label: "Skill Instruction Following"
+---
+
+## Overview
+
+The `SkillInstructionFollowingEvaluator` evaluates how fully an agent followed the
+prescribed steps of each skill it loaded. A skill is a reusable instruction file, usually
+`SKILL.md`, that an agent loads at runtime; its body typically prescribes an ordered
+workflow.
+
+An agent can load exactly the right skill and still skip half of it. The response often
+still reads well, which is why the final answer alone does not establish that the
+prescribed process was followed. This evaluator reads the skill body, reads the run, and
+reports which steps were covered, partially covered, or skipped.
+
+Loading the wrong skill in the first place is a different failure, scored by
+[`SkillSelectionAccuracyEvaluator`](skill_selection_evaluator.md).
+
+## Key Features
+
+- **Per-Skill Results**: Returns one `EvaluationOutput` per invoked skill
+- **Five-Point Rating**: Graded adherence rather than pass or fail
+- **Per-Step Evidence**: Each prescribed step gets a status and the trajectory evidence
+  behind it
+- **Derived Coverage**: Coverage is computed from the per-step statuses, not taken from
+  the judge's arithmetic
+- **Prescriptive Bar**: Passes at Mostly Followed or better, stricter than the mid-scale
+  bar the open-ended quality judges use
+- **Async Support**: Supports both synchronous and asynchronous evaluation
+
+## When to Use
+
+Use the `SkillInstructionFollowingEvaluator` to:
+
+- Find which prescribed step an agent skipped
+- Catch fluent responses that bypassed a required check
+- Decide whether a skill needs clearer steps or a different structure
+- Gate a deployment on adherence to a compliance or escalation procedure
+
+## Evaluation Level
+
+This evaluator declares no `evaluation_level`. It reads the trajectory directly and emits
+one result per invoked skill, folding repeat attempts on the same skill into a single row.
+
+## Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `version` | `str` | `"v0"` | Prompt template version for the judge. |
+| `model` | `Model \| str \| None` | `None` | Judge model, as a model ID string or a `Model` instance. Defaults to the Amazon Bedrock model. |
+| `system_prompt` | `str \| None` | `None` | Overrides the built-in judge template. |
+| `name` | `str \| None` | `None` | Evaluator name. Defaults to the class name. |
+
+Evaluator names must be unique within an experiment. Pass `name` when constructing more
+than one instance of the same evaluator class.
+
+## Scoring System
+
+Five ratings, mirroring the scale used by the coherence, faithfulness, and response
+relevance evaluators:
+
+| Rating | Score | Passes |
+|--------|-------|--------|
+| Fully Followed | `1.0` | Yes |
+| Mostly Followed | `0.75` | Yes |
+| Partially Followed | `0.5` | No |
+| Minimally Followed | `0.25` | No |
+| Not Followed | `0.0` | No |
+
+`test_pass` is `True` at `0.75` and above. A skill's steps are prescriptive, so the bar
+sits at Mostly Followed rather than at the mid-scale `0.5` used for open-ended quality
+judgments.
+
+## Basic Usage
+
+The `./skills` directory must hold at least one skill, each a subdirectory containing a
+`SKILL.md` whose body prescribes a workflow. See
+[Skills](../../concepts/plugins/skills.md) for the layout.
+
+```python
+import asyncio
+
+from strands import Agent, AgentSkills
+from strands_evals import Case, Experiment
+from strands_evals.evaluators import SkillInstructionFollowingEvaluator
+from strands_evals.mappers import StrandsInMemorySessionMapper
+from strands_evals.telemetry import StrandsEvalsTelemetry
+
+telemetry = StrandsEvalsTelemetry().setup_in_memory_exporter()
+memory_exporter = telemetry.in_memory_exporter
+
+def hr_task_function(case: Case) -> dict:
+    agent = Agent(
+        trace_attributes={
+            "gen_ai.conversation.id": case.session_id,
+            "session.id": case.session_id,
+        },
+        plugins=[AgentSkills(skills=["./skills"])],
+        callback_handler=None,
+    )
+    agent_response = agent(case.input)
+
+    finished_spans = memory_exporter.get_finished_spans()
+    mapper = StrandsInMemorySessionMapper()
+    session = mapper.map_to_session(finished_spans, session_id=case.session_id)
+
+    return {"output": str(agent_response), "trajectory": session}
+
+test_cases = [
+    Case[str, str](
+        name="pto-balance",
+        input="What is the available PTO balance for employee EMP-001?",
+    ),
+]
+
+experiment = Experiment[str, str](
+    cases=test_cases,
+    evaluators=[SkillInstructionFollowingEvaluator()],
+)
+
+async def main():
+    report = await experiment.run_evaluations_async(hr_task_function)
+    report.display()
+
+asyncio.run(main())
+```
+
+Given a `pto-planning` skill whose workflow prescribes checking the balance, then looking
+up the notice and rollover policy, then returning a summary, an agent that checks the
+balance and answers immediately can rate Partially Followed. The skipped policy step is
+named in the result.
+
+## Evaluation Output
+
+Each `EvaluationOutput` carries:
+
+- **score**: `1.0`, `0.75`, `0.5`, `0.25`, or `0.0`
+- **test_pass**: `True` when the score is `0.75` or above
+- **reason**: The skill name and overall reasoning, then a derived coverage figure, then
+  one line per prescribed step
+- **label**: The rating name, such as `"Mostly Followed"`, or `"not_applicable"`
+
+Each step line carries a status of `covered`, `partial`, or `skipped`, plus the concrete
+trajectory evidence for that status. Read these rather than the aggregate: the aggregate
+tells you a skill was not followed, and the step lines tell you which step to fix.
+
+Coverage is derived from the statuses, weighting `covered` at 1.0, `partial` at 0.5, and
+`skipped` at 0.0, rather than trusting the judge to do the arithmetic.
+
+## Skipping Behavior
+
+Adherence is unscorable in several situations. Each produces a not-applicable row that is
+excluded from the aggregated mean rather than counted as `0.0`.
+
+| Situation | `reason` | `test_pass` |
+|-----------|----------|-------------|
+| No trajectory supplied | `no trajectory provided` | `False` |
+| No skill was loaded | `no skill invoked` | `True` |
+| The harness refused the load | `<skill>: the harness refused the load (<error>), so no instructions were received` | `True` |
+| The trajectory has no skill body | `<skill>: skill body unavailable` | `True` |
+| The body prescribes nothing | `<skill>: no prescribed steps found in the skill body` | `True` |
+
+A refused load is reported separately from a missing body on purpose. Both are
+not-applicable, but conflating them hides a broken harness behind what looks like a
+capture gap. When the harness supplies a refusal message, that message is included, since
+a misspelled skill name and a harness that mounted nothing call for different fixes.
+
+A skill body carrying only reference material is the last case. Nothing was prescribed, so
+there is nothing to have followed.
+
+## What the Judge Sees
+
+The skill name, the `SKILL.md` instructions, the serialized trajectory, and the agent's
+final response.
+
+Two things are stripped from the body before the judge reads it. A leading YAML
+frontmatter block, so the judge sees steps rather than metadata. And the runtime block
+some harnesses append after the skill's own text, listing fields such as `Location:` and
+`Allowed tools:`. Left in, a judge can read `Available resources: scripts/extract.py` as a
+prescribed step nobody wrote. Stripping is keyed on those field names rather than on the
+`---` alone, because a horizontal rule is legal Markdown inside real instructions and
+splitting on it would truncate them.
+
+Only the path the run actually took is evaluated. When a skill branches, untaken branches
+are not counted as skipped steps.
+
+## Best Practices
+
+1. **Pair with selection accuracy.** A high instruction-following score on the wrong skill
+   is still a failed run.
+2. **Read the step lines, not the score.** The score says a run failed. The steps say
+   which fix to make.
+3. **Number your steps.** A skill written as prose gives the judge less to segment, and
+   the per-step breakdown gets correspondingly vaguer.
+4. **Write conditional steps explicitly.** Mark a step as conditional in the skill body so
+   that a branch the run correctly skipped is not read as an omission.
+5. **Keep required and optional distinct.** A skill that mixes them has no single
+   definition of full adherence.
+
+## Common Issues and Solutions
+
+### Results are not applicable with a body-unavailable reason
+
+**Problem**: Rows read `skill body unavailable`.
+
+**Solution**: The trajectory recorded the load but not the instructions. Confirm the tool
+result carrying the `SKILL.md` body reached the trace. `SkillSelectionAccuracyEvaluator`
+still scores these runs, since it needs only the invocation, so seeing selection results
+without adherence results points here.
+
+### Steps look invented
+
+**Problem**: The breakdown lists steps that are not in the skill.
+
+**Solution**: Check whether harness metadata survived stripping. A body whose appended
+runtime block uses unrecognized field names can reach the judge intact, and its
+`Available resources:` list then reads as prescribed work.
+
+### Every run rates Partially Followed
+
+**Problem**: Scores cluster at `0.5` regardless of the agent.
+
+**Solution**: Usually the skill, not the agent. A body prescribing many steps for a task
+that needs a few will show most of them uncovered on every run. Split it or mark the
+conditional steps.
+
+## Related Evaluators
+
+- [**SkillSelectionAccuracyEvaluator**](skill_selection_evaluator.md): Whether loading a
+  skill was the right choice
+- [**Deterministic Evaluators**](deterministic_evaluators.md#skillinvoked): The
+  `SkillInvoked` assertion
+- [**InstructionFollowingEvaluator**](instruction_following_evaluator.md): Compliance with
+  instructions in the prompt rather than in a skill
+- [**TrajectoryEvaluator**](trajectory_evaluator.md): The overall sequence of actions

@@ -165,6 +165,25 @@ Evaluators operate at different levels of granularity:
 - **Purpose**: Evaluate accuracy of tool parameters
 - **Use Case**: Verify correct parameter values for tool calls
 
+### Skill Usage Evaluators
+
+These evaluate agents equipped with skills: reusable `SKILL.md` instruction files loaded
+at runtime. Routing and execution fail for different reasons, so they are scored
+separately.
+
+**[SkillSelectionAccuracyEvaluator](skill_selection_evaluator.md)**
+
+- **Level**: Per invoked skill
+- **Purpose**: Evaluate whether loading each skill was appropriate for the task
+- **Use Case**: Detect skills loaded for tasks they don't cover, and diagnose
+  overlapping skill descriptions
+
+**[SkillInstructionFollowingEvaluator](skill_instruction_following_evaluator.md)**
+
+- **Level**: Per invoked skill
+- **Purpose**: Measure how fully the agent followed an invoked skill's prescribed steps
+- **Use Case**: Find the step an agent skipped behind a fluent-looking response
+
 ### Conversation Flow Evaluators
 
 **[TrajectoryEvaluator](trajectory_evaluator.md)**
@@ -214,7 +233,7 @@ Evaluators operate at different levels of granularity:
 - **Level**: OUTPUT_LEVEL / SESSION_LEVEL
 - **Purpose**: Fast, code-based evaluation without LLM judges
 - **Use Case**: Regression testing, CI/CD pipelines, exact match checks
-- **Includes**: `Equals`, `Contains`, `StartsWith`, `ToolCalled`, `StateEquals`
+- **Includes**: `Equals`, `Contains`, `StartsWith`, `ToolCalled`, `SkillInvoked`, `StateEquals`
 
 ## Custom Evaluators
 
