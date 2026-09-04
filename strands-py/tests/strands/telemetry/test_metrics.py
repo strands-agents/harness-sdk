@@ -362,6 +362,64 @@ def test_event_loop_metrics_update_usage(usage, event_loop_metrics, mock_get_met
     metrics_client.event_loop_cache_write_input_tokens.record.assert_called()
 
 
+def test_event_loop_metrics_update_usage_default_source_is_main(usage, event_loop_metrics, mock_get_meter_provider):
+    event_loop_metrics.reset_usage_metrics()
+    event_loop_metrics.start_cycle(attributes={"event_loop_cycle_id": "test-cycle"})
+
+    event_loop_metrics.update_usage(usage)
+
+    exp_usage = Usage(inputTokens=1, outputTokens=2, totalTokens=3, cacheWriteInputTokens=2)
+    assert event_loop_metrics.accumulated_usage_by_source == {"main": exp_usage}
+
+    metrics_client = event_loop_metrics._metrics_client
+    metrics_client.event_loop_input_tokens.record.assert_called_with(1, {"source": "main"})
+    metrics_client.event_loop_output_tokens.record.assert_called_with(2, {"source": "main"})
+
+
+def test_event_loop_metrics_update_usage_aux_source(usage, event_loop_metrics, mock_get_meter_provider):
+    event_loop_metrics.reset_usage_metrics()
+    event_loop_metrics.start_cycle(attributes={"event_loop_cycle_id": "test-cycle"})
+
+    event_loop_metrics.update_usage(usage)
+    aux_usage = Usage(inputTokens=10, outputTokens=20, totalTokens=30)
+    event_loop_metrics.update_usage(aux_usage, source="summarization")
+
+    # Auxiliary usage rolls into the accumulated total and its per-source bucket.
+    exp_main_usage = Usage(inputTokens=1, outputTokens=2, totalTokens=3, cacheWriteInputTokens=2)
+    exp_accumulated_usage = Usage(inputTokens=11, outputTokens=22, totalTokens=33, cacheWriteInputTokens=2)
+    assert event_loop_metrics.accumulated_usage == exp_accumulated_usage
+    assert event_loop_metrics.accumulated_usage_by_source == {"main": exp_main_usage, "summarization": aux_usage}
+
+    # But not into per-invocation or per-cycle usage, which track the agent's own turns.
+    assert event_loop_metrics.latest_agent_invocation.usage == exp_main_usage
+    assert event_loop_metrics.agent_invocations[0].cycles[0].usage == exp_main_usage
+
+    # The exported OTel histograms carry the source dimension.
+    metrics_client = event_loop_metrics._metrics_client
+    metrics_client.event_loop_input_tokens.record.assert_called_with(10, {"source": "summarization"})
+    metrics_client.event_loop_output_tokens.record.assert_called_with(20, {"source": "summarization"})
+
+
+def test_event_loop_metrics_update_usage_aux_source_without_invocation(
+    usage, event_loop_metrics, mock_get_meter_provider
+):
+    # Auxiliary calls can happen before any invocation is tracked (no reset_usage_metrics).
+    event_loop_metrics.update_usage(usage, source="extraction")
+
+    exp_usage = Usage(inputTokens=1, outputTokens=2, totalTokens=3, cacheWriteInputTokens=2)
+    assert event_loop_metrics.accumulated_usage == exp_usage
+    assert event_loop_metrics.accumulated_usage_by_source == {"extraction": exp_usage}
+    assert event_loop_metrics.agent_invocations == []
+
+
+def test_event_loop_metrics_get_summary_includes_usage_by_source(usage, event_loop_metrics, mock_get_meter_provider):
+    event_loop_metrics.update_usage(usage, source="summarization")
+
+    summary = event_loop_metrics.get_summary()
+
+    assert summary["accumulated_usage_by_source"] == event_loop_metrics.accumulated_usage_by_source
+
+
 def test_event_loop_metrics_update_metrics(metrics_with_ttfb, event_loop_metrics, mock_get_meter_provider):
     for _ in range(3):
         event_loop_metrics.update_metrics(metrics_with_ttfb)
@@ -394,6 +452,7 @@ def test_event_loop_metrics_get_summary(trace, tool, event_loop_metrics, mock_ge
             "outputTokens": 0,
             "totalTokens": 0,
         },
+        "accumulated_usage_by_source": {},
         "agent_invocations": [],
         "average_cycle_time": 0,
         "tool_usage": {
@@ -473,6 +532,15 @@ def test_metrics_to_string(trace, child_trace, tool_metrics, exp_str, event_loop
     tru_str = strands.telemetry.metrics.metrics_to_string(event_loop_metrics)
 
     assert tru_str == exp_str
+
+
+def test_metrics_to_string_renders_auxiliary_token_breakdown(usage, event_loop_metrics, mock_get_meter_provider):
+    event_loop_metrics.update_usage(Usage(inputTokens=100, outputTokens=20, totalTokens=120), source="summarization")
+    event_loop_metrics.update_usage(Usage(inputTokens=3, outputTokens=1, totalTokens=4), source="routing")
+
+    tru_str = strands.telemetry.metrics.metrics_to_string(event_loop_metrics)
+
+    assert "├─ Auxiliary Tokens: summarization=120, routing=4" in tru_str
 
 
 def test_setup_meter_if_meter_provider_is_set(

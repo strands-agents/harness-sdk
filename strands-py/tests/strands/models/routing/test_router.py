@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import logging
 import types
+from dataclasses import replace
 
 import pytest
 
@@ -228,6 +229,30 @@ async def test_selection_recurses_into_nested_router_strategy():
     )
 
     assert await outer._select_model(_routing_context(outer.candidates)) is inner_smart
+
+
+@pytest.mark.asyncio
+async def test_nested_selection_carries_agent_handle():
+    """The replace() into a nested router's context must preserve the SDK-internal _agent."""
+    captured = []
+
+    class _Capture:
+        async def select(self, context):
+            captured.append(context._agent)
+            return None
+
+    inner = ModelRouter(
+        models=[RoutingCandidate(_model(), name="if"), RoutingCandidate(_model(), name="is")],
+        strategy=_Capture(),
+    )
+    outer = ModelRouter(
+        models=[_model(), RoutingCandidate(inner, name="inner")],
+        strategy=_PreferByName("inner"),
+    )
+
+    await outer._select_model(replace(_routing_context(outer.candidates), _agent=_TEST_AGENT))
+
+    assert captured == [_TEST_AGENT]
 
 
 class _SyncSelect:

@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from opentelemetry import trace as trace_api
 from opentelemetry.trace import SpanContext
@@ -23,6 +24,9 @@ from ...types.exceptions import AggregateMemoryError
 from ..types import AddMessagesContext, MemoryStore
 from .resolve_extraction_config import _ResolvedExtractionConfig
 from .types import Extractor, ExtractorContext, MemoryMessageFilter
+
+if TYPE_CHECKING:
+    from ...agent.agent import Agent
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +69,7 @@ class ExtractionCoordinator:
     for repeatedly failing stores.
     """
 
-    def __init__(self, bindings: list[_ExtractionBinding], default_model: Model) -> None:
+    def __init__(self, bindings: list[_ExtractionBinding], default_model: Model, *, agent: Agent | None = None) -> None:
         """Initialize the coordinator.
 
         Args:
@@ -73,6 +77,8 @@ class ExtractionCoordinator:
                 each paired with its fully-resolved config.
             default_model: The agent's model, passed to extractors that do not
                 configure their own.
+            agent: The agent this coordinator extracts for, passed to extractors
+                for hooks and metrics attribution.
         """
         self._stores = [binding.store for binding in bindings]
         # Per store: its resolved extraction config (triggers, extractor, filter).
@@ -80,6 +86,7 @@ class ExtractionCoordinator:
             id(binding.store): binding.config for binding in bindings
         }
         self._default_model = default_model
+        self._agent = agent
         # Messages waiting to be saved, oldest first.
         self._pending: list[_Buffered] = []
         # The ``seq`` to assign the next buffered message.
@@ -265,7 +272,9 @@ class ExtractionCoordinator:
         messages = [item.message for item in buffered]
 
         if extractor is not None:
-            entries = await extractor.extract(messages, ExtractorContext(default_model=self._default_model))
+            entries = await extractor.extract(
+                messages, ExtractorContext(default_model=self._default_model, agent=self._agent)
+            )
             results = await asyncio.gather(
                 *(store.add(entry.content, entry.metadata) for entry in entries),
                 return_exceptions=True,

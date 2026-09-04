@@ -10,6 +10,8 @@ from strands._context_manager.modes.agentic.agentic_context import (
     truncate_context,
 )
 from strands.agent.conversation_manager.compression.pin_message import pin_message
+from strands.hooks.registry import HookRegistry
+from strands.telemetry.metrics import EventLoopMetrics
 from strands.types.content import Message
 
 
@@ -55,6 +57,8 @@ def make_agent(messages, model=None):
     agent = Mock()
     agent.messages = messages
     agent.model = model if model is not None else Mock()
+    agent.hooks = HookRegistry()
+    agent.event_loop_metrics = EventLoopMetrics()
     return agent
 
 

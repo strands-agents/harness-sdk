@@ -483,3 +483,133 @@ def test__tag_attribute_joins_list_values():
     # BS4 returns ``class`` as a list; _tag_attribute must join it.
     tag = BeautifulSoup('<div class="foo bar">', "html.parser").div
     assert _tag_attribute(tag, "class") == "foo bar"
+
+
+class TestAgenticAuxiliaryInstrumentation:
+    """Agentic mode routes the analyst call through the auxiliary hook/metrics pair."""
+
+    def _page_client(self) -> httpx.AsyncClient:
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, headers={"content-type": "text/html"}, text="<p>page</p>")
+
+        return _client(handler)
+
+    def _fake_analyst(self, usage):
+        from strands.agent.agent_result import AgentResult
+        from strands.telemetry.metrics import EventLoopMetrics
+
+        class _FakeAgent:
+            def __init__(self, **kwargs):
+                pass
+
+            async def invoke_async(self, prompt: str, **kwargs):
+                metrics = EventLoopMetrics()
+                metrics.accumulated_usage = usage
+                return AgentResult(
+                    stop_reason="end_turn",
+                    message={"role": "assistant", "content": [{"text": "answer"}]},
+                    metrics=metrics,
+                    state={},
+                )
+
+        return _FakeAgent
+
+    @pytest.mark.asyncio
+    async def test_analyst_call_fires_host_hooks_and_records_usage(self, monkeypatch):
+        from strands import Agent
+        from strands.hooks import AfterAuxiliaryModelCallEvent, BeforeAuxiliaryModelCallEvent
+        from strands.types.event_loop import Usage
+        from strands.types.tools import ToolContext, ToolUse
+        from tests.fixtures.mocked_model_provider import MockedModelProvider
+
+        usage = Usage(inputTokens=7, outputTokens=3, totalTokens=10)
+        host_agent = Agent(model=MockedModelProvider([]), load_tools_from_directory=False)
+        monkeypatch.setattr(agent_module, "Agent", self._fake_analyst(usage))
+        events = []
+        host_agent.hooks.add_callback(BeforeAuxiliaryModelCallEvent, events.append)
+        host_agent.hooks.add_callback(AfterAuxiliaryModelCallEvent, events.append)
+
+        tool_use = ToolUse(toolUseId="wf_aux", name="web_fetch", input={})
+        ctx = ToolContext(tool_use=tool_use, agent=host_agent, invocation_state={"run": 1})
+
+        tool = make_web_fetch(client=self._page_client(), mode="agentic")
+        tru_result = await tool(url="https://example.com/", prompt="Summarize", tool_context=ctx)
+
+        assert tru_result == "answer\n"
+        before, after = events
+        assert before.source == "web_fetch"
+        assert "Summarize" in before.messages[0]["content"][0]["text"]
+        assert before.invocation_state == {"run": 1}
+        assert after.exception is None
+        assert after.stop_response.usage == usage
+        assert host_agent.event_loop_metrics.accumulated_usage_by_source == {"web_fetch": usage}
+
+    @pytest.mark.asyncio
+    async def test_analyst_failure_fires_after_event_and_wraps_error(self, monkeypatch):
+        from strands import Agent
+        from strands.hooks import AfterAuxiliaryModelCallEvent
+        from strands.types.tools import ToolContext, ToolUse
+        from tests.fixtures.mocked_model_provider import MockedModelProvider
+
+        class _FailingAgent:
+            def __init__(self, **kwargs):
+                pass
+
+            async def invoke_async(self, prompt: str, **kwargs):
+                raise RuntimeError("analyst exploded")
+
+        host_agent = Agent(model=MockedModelProvider([]), load_tools_from_directory=False)
+        monkeypatch.setattr(agent_module, "Agent", _FailingAgent)
+        after_events = []
+        host_agent.hooks.add_callback(AfterAuxiliaryModelCallEvent, after_events.append)
+
+        tool_use = ToolUse(toolUseId="wf_aux2", name="web_fetch", input={})
+        ctx = ToolContext(tool_use=tool_use, agent=host_agent, invocation_state={})
+
+        tool = make_web_fetch(client=self._page_client(), mode="agentic")
+        with pytest.raises(WebFetchError, match="analyst exploded"):
+            await tool(url="https://example.com/", prompt="Summarize", tool_context=ctx)
+
+        assert len(after_events) == 1
+        # The wrap happens inside the instrumented call, so the After event carries the
+        # WebFetchError with the analyst's original error as its cause.
+        assert isinstance(after_events[0].exception, WebFetchError)
+        assert isinstance(after_events[0].exception.__cause__, RuntimeError)
+        assert host_agent.event_loop_metrics.accumulated_usage_by_source == {}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failing_event", ["before", "after"])
+    async def test_hook_error_surfaces_as_itself_not_analyst_failure(self, monkeypatch, failing_event):
+        from strands import Agent
+        from strands.hooks import AfterAuxiliaryModelCallEvent, BeforeAuxiliaryModelCallEvent
+        from strands.types.event_loop import Usage
+        from strands.types.tools import ToolContext, ToolUse
+        from tests.fixtures.mocked_model_provider import MockedModelProvider
+
+        usage = Usage(inputTokens=1, outputTokens=1, totalTokens=2)
+        host_agent = Agent(model=MockedModelProvider([]), load_tools_from_directory=False)
+        monkeypatch.setattr(agent_module, "Agent", self._fake_analyst(usage))
+
+        def broken_hook(_event):
+            raise RuntimeError("telemetry exporter down")
+
+        event_type = BeforeAuxiliaryModelCallEvent if failing_event == "before" else AfterAuxiliaryModelCallEvent
+        host_agent.hooks.add_callback(event_type, broken_hook)
+
+        tool_use = ToolUse(toolUseId="wf_aux3", name="web_fetch", input={})
+        ctx = ToolContext(tool_use=tool_use, agent=host_agent, invocation_state={})
+
+        tool = make_web_fetch(client=self._page_client(), mode="agentic")
+        with pytest.raises(RuntimeError, match="telemetry exporter down"):
+            await tool(url="https://example.com/", prompt="Summarize", tool_context=ctx)
+
+    @pytest.mark.asyncio
+    async def test_no_tool_context_runs_uninstrumented(self, monkeypatch):
+        # No host agent to attribute to — the analyst call must still work.
+        usage = {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2}
+        monkeypatch.setattr(agent_module, "Agent", self._fake_analyst(usage))
+
+        tool = make_web_fetch(client=self._page_client(), model=SimpleNamespace(), mode="agentic")
+        tru_result = await tool(url="https://example.com/", prompt="Summarize")
+
+        assert tru_result == "answer\n"

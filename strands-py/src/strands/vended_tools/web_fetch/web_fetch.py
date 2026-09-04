@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 import httpx
 
@@ -34,6 +34,7 @@ class WebFetchError(ValueError):
 
 
 if TYPE_CHECKING:
+    from ...agent.agent_result import AgentResult
     from ...models.model import Model
     from ...tools.decorator import DecoratedFunctionTool
 
@@ -151,11 +152,13 @@ def make_web_fetch(
         """
         # Local import to avoid circular dependency
         from ...agent.agent import Agent
+        from ...event_loop._auxiliary_model_call import instrument_auxiliary_agent_call
 
         if not prompt.strip():
             raise WebFetchError("web_fetch: agentic mode requires a non-empty prompt.")
 
-        host_model = getattr(tool_context.agent, "model", None) if tool_context else None
+        host_agent = tool_context.agent if tool_context else None
+        host_model = getattr(host_agent, "model", None)
         effective_model = analyst_model or host_model
         if effective_model is None:
             raise WebFetchError(
@@ -182,10 +185,27 @@ def make_web_fetch(
         if len(content) > max_content_chars:
             content = content[:max_content_chars] + "\n\n[content truncated]"
         invoke_prompt = f"URL: {url}\n\nRequest: {prompt}\n\n--- Content ---\n{content}"
-        try:
-            result = await analyst.invoke_async(invoke_prompt, cancel_signal=cancel_signal)
-        except Exception as exc:
-            raise WebFetchError(f"Web fetch analyst failed for {url}: {exc}") from exc
+
+        async def _invoke_analyst() -> AgentResult:
+            # Wrap only the analyst call: a hook/metrics failure in the instrumentation
+            # must surface as itself, not be relabelled an analyst failure.
+            try:
+                return await analyst.invoke_async(invoke_prompt, cancel_signal=cancel_signal)
+            except Exception as exc:
+                raise WebFetchError(f"Web fetch analyst failed for {url}: {exc}") from exc
+
+        # Duck-typed: hooks and metrics attribute to the host agent. A host without both —
+        # notably BidiAgent, which has hooks but no event_loop_metrics — runs uninstrumented;
+        # auxiliary attribution for bidi agents is out of scope for now.
+        instrumentable = hasattr(host_agent, "hooks") and hasattr(host_agent, "event_loop_metrics")
+        result = await instrument_auxiliary_agent_call(
+            _invoke_analyst,
+            source="web_fetch",
+            agent=cast("Agent", host_agent) if instrumentable else None,
+            messages=[{"role": "user", "content": [{"text": invoke_prompt}]}],
+            system_prompt=_ANALYST_PROMPT,
+            invocation_state=tool_context.invocation_state if tool_context else None,
+        )
         return str(result)
 
     return web_fetch_tool_markdown if mode == "markdown" else web_fetch_tool_agentic

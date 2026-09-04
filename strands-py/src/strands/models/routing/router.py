@@ -298,6 +298,7 @@ class ModelRouter(Plugin):
                     context.system_prompt,
                     context.tool_specs,
                     context.invocation_state,
+                    agent=context.agent,
                 )
                 candidate, model = await self._open(routing_context)
                 # The opening candidate counts as used for this round.
@@ -430,6 +431,7 @@ class ModelRouter(Plugin):
             agent.tool_registry.get_all_tool_specs(),
             invocation_state,
             attempts,
+            agent=agent,
         )
 
     def _routing_context(
@@ -439,6 +441,8 @@ class ModelRouter(Plugin):
         tool_specs: Sequence[ToolSpec],
         invocation_state: Mapping[str, Any],
         attempts: Sequence[RoutingAttempt] = (),
+        *,
+        agent: Agent | None = None,
     ) -> RoutingContext:
         """Build a ``RoutingContext`` over this router's candidates.
 
@@ -453,6 +457,7 @@ class ModelRouter(Plugin):
             candidates=self._candidates,
             invocation_state=invocation_state,
             attempts=tuple(attempts),
+            _agent=agent,
         )
 
 
