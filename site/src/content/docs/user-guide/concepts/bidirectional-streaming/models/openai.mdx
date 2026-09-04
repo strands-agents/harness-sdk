@@ -50,12 +50,8 @@ from strands_tools import calculator
 async def main() -> None:
     model = OpenAIRealtimeModel(
         model_id="gpt-realtime",
-        provider_config={
-            "audio": {
-                "voice": "coral",
-            },
-        },
-        client_config={"api_key": "<OPENAI_API_KEY>"},
+        audio={"voice": "coral"},
+        api_key="<OPENAI_API_KEY>",
     )
     # stop tool allows user to verbally stop agent execution.
     agent = BidiAgent(model=model, tools=[calculator, stop])
@@ -71,7 +67,7 @@ if __name__ == "__main__":
 
 ## Configuration
 
-### Client Configs
+### Client Options
 
 | Parameter | Description | Example | Options |
 | --------- | ----------- | ------- | ------- |
@@ -80,12 +76,14 @@ if __name__ == "__main__":
 | `project` | Project associated with the connection. Used for authentication if required. | `myproj` | [reference](https://platform.openai.com/docs/api-reference/authentication)
 | `timeout_s` | OpenAI documents a 60 minute limit on realtime sessions ([docs](https://platform.openai.com/docs/guides/realtime-conversations#session-lifecycle-events)). However, OpenAI does not emit any warnings when approaching the limit. As a workaround, we allow users to configure a timeout (in seconds) on the client side to gracefully handle the connection closure. | `3000` | `[1, 3000]` (in seconds)
 
-### Provider Configs
+### Model Config
 
 | Parameter | Description | Example | Options |
 | --------- | ----------- | ------- | ------- |
-| `audio` | `AudioConfig` instance. | `{"voice": "coral"}` | [reference](@api/python/strands.experimental.bidi.types.model#AudioConfig) |
-| `inference` | Dict of inference fields supported in the OpenAI `session.update` event. | `{"max_output_tokens": 4096}` | [reference](https://platform.openai.com/docs/api-reference/realtime-client-events/session/update)
+| `model_id` | OpenAI Realtime model identifier. | `"gpt-realtime"` | [OpenAI models](https://platform.openai.com/docs/models) |
+| `audio` | Audio configuration. | `{"voice": "coral"}` | [reference](@api/python/strands.experimental.bidi.types.model#AudioConfig) |
+| `params` | OpenAI Realtime session parameters. | `{"max_output_tokens": 4096}` | [`session.update`](https://platform.openai.com/docs/api-reference/realtime-client-events/session/update) |
+| `connection` | Reconnect timing overrides. | `{"auto_reconnect": false}` | [reference](@api/python/strands.experimental.bidi.types.model#BidiConnectionConfig) |
 
 For the list of supported voices, see [here](https://platform.openai.com/docs/guides/realtime-conversations#voice-options).
 
@@ -97,7 +95,7 @@ If you encounter the error `ModuleNotFoundError: No module named 'websockets'`, 
 
 ### Authentication Errors
 
-Ensure your OpenAI API key is properly configured. Set the `OPENAI_API_KEY` environment variable or pass it via the `api_key` parameter in the `client_config`.
+Set the `OPENAI_API_KEY` environment variable or pass the key through `api_key`.
 
 ## References
 

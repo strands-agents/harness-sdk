@@ -321,12 +321,10 @@ from strands.experimental.bidi.models import GoogleGeminiLiveModel
 
 # Configure model audio settings
 model = GoogleGeminiLiveModel(
-    provider_config={
-        "audio": {
-            "input_rate": 48000,   # Higher quality input
-            "output_rate": 24000,  # Standard output
-            "voice": "Puck"
-        }
+    audio={
+        "input_rate": 48000,   # Higher quality input
+        "output_rate": 24000,  # Standard output
+        "voice": "Puck"
     }
 )
 

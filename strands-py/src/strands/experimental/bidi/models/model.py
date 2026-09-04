@@ -16,8 +16,11 @@ Features:
 import abc
 import logging
 from collections.abc import AsyncIterable
-from typing import Any, NoReturn, Protocol, TypedDict, cast, runtime_checkable
+from typing import Any, NoReturn, Protocol, TypedDict, runtime_checkable
 
+from typing_extensions import Unpack
+
+from ....models._validation import validate_config_keys
 from ....models.model import Model
 from ....types._events import ToolResultEvent
 from ....types.content import Messages
@@ -82,22 +85,23 @@ class BidiModel(Model, abc.ABC):
             reporting deltas may omit it.
     """
 
-    config: Any
+    config: BidiModelConfig
     model_id: str
     connection_config: BidiConnectionConfig
     usage_is_cumulative: bool
 
-    def update_config(self, **model_config: Any) -> None:
+    def update_config(self, **model_config: Unpack[BidiModelConfig]) -> None:  # type: ignore[override]
         """Update the model configuration with the provided arguments.
 
         Args:
             **model_config: Configuration overrides.
         """
+        validate_config_keys(model_config, BidiModelConfig)
         self.config.update(model_config)
 
-    def get_config(self) -> dict[str, Any]:
+    def get_config(self) -> BidiModelConfig:
         """Return a copy of the model configuration."""
-        return cast(dict[str, Any], self.config).copy()
+        return self.config.copy()
 
     def structured_output(self, *args: Any, **kwargs: Any) -> NoReturn:
         """Raise because bidirectional models do not support structured output."""

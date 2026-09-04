@@ -71,7 +71,7 @@ def api_key():
 @pytest.fixture
 def model(mock_websockets_connect, api_key, model_name):
     """Create an OpenAIRealtimeModel instance."""
-    return OpenAIRealtimeModel(model=model_name, client_config={"api_key": api_key})
+    return OpenAIRealtimeModel(model_id=model_name, api_key=api_key)
 
 
 @pytest.fixture
@@ -98,20 +98,24 @@ def messages():
 
 def test_model_initialization(api_key, model_name, monkeypatch):
     """Test model initialization with various configurations."""
-    # Test default config
-    model_default = OpenAIRealtimeModel(client_config={"api_key": "test-key"})
+    model_default = OpenAIRealtimeModel(api_key="test-key")
     assert model_default.model_id == "gpt-realtime"
     assert model_default.api_key == "test-key"
 
-    # Test with custom model
-    model_custom = OpenAIRealtimeModel(model_id=model_name, client_config={"api_key": api_key})
+    model_custom = OpenAIRealtimeModel(
+        model_id=model_name,
+        api_key=api_key,
+        organization="org-explicit",
+        project="proj-explicit",
+    )
     assert model_custom.model_id == model_name
     assert model_custom.api_key == api_key
+    assert model_custom.organization == "org-explicit"
+    assert model_custom.project == "proj-explicit"
 
-    # Test with organization and project via environment variables
     monkeypatch.setenv("OPENAI_ORGANIZATION", "org-123")
     monkeypatch.setenv("OPENAI_PROJECT", "proj-456")
-    model_env = OpenAIRealtimeModel(model_id=model_name, client_config={"api_key": api_key})
+    model_env = OpenAIRealtimeModel(model_id=model_name, api_key=api_key)
     assert model_env.organization == "org-123"
     assert model_env.project == "proj-456"
 
@@ -126,65 +130,62 @@ def test_model_initialization(api_key, model_name, monkeypatch):
 
 def test_audio_config_defaults(api_key, model_name):
     """Test default audio configuration."""
-    model = OpenAIRealtimeModel(model_id=model_name, client_config={"api_key": api_key})
+    model = OpenAIRealtimeModel(model_id=model_name, api_key=api_key)
 
-    assert model.config["audio"]["input_rate"] == 24000
-    assert model.config["audio"]["output_rate"] == 24000
-    assert model.config["audio"]["channels"] == 1
-    assert model.config["audio"]["format"] == "pcm"
-    assert model.config["audio"]["voice"] == "alloy"
-    assert model.audio_config == model.config["audio"]
+    assert model.audio_config == {
+        "input_rate": 24000,
+        "output_rate": 24000,
+        "channels": 1,
+        "format": "pcm",
+        "voice": "alloy",
+    }
 
 
 def test_audio_config_partial_override(api_key, model_name):
     """Test partial audio configuration override."""
-    provider_config = {"audio": {"output_rate": 48000, "voice": "echo"}}
     model = OpenAIRealtimeModel(
-        model_id=model_name, client_config={"api_key": api_key}, provider_config=provider_config
+        model_id=model_name,
+        api_key=api_key,
+        audio={"output_rate": 48000, "voice": "echo"},
     )
 
-    # Overridden values
-    assert model.config["audio"]["output_rate"] == 48000
-    assert model.config["audio"]["voice"] == "echo"
-
-    # Default values preserved
-    assert model.config["audio"]["input_rate"] == 24000
-    assert model.config["audio"]["channels"] == 1
-    assert model.config["audio"]["format"] == "pcm"
+    assert model.audio_config == {
+        "input_rate": 24000,
+        "output_rate": 48000,
+        "channels": 1,
+        "format": "pcm",
+        "voice": "echo",
+    }
 
 
 def test_audio_config_full_override(api_key, model_name):
     """Test full audio configuration override."""
-    provider_config = {
-        "audio": {
+    model = OpenAIRealtimeModel(
+        model_id=model_name,
+        api_key=api_key,
+        audio={
             "input_rate": 48000,
             "output_rate": 48000,
             "channels": 2,
             "format": "pcm",
             "voice": "shimmer",
-        }
+        },
+    )
+
+    assert model.audio_config == {
+        "input_rate": 48000,
+        "output_rate": 48000,
+        "channels": 2,
+        "format": "pcm",
+        "voice": "shimmer",
     }
-    model = OpenAIRealtimeModel(
-        model_id=model_name, client_config={"api_key": api_key}, provider_config=provider_config
-    )
-
-    assert model.config["audio"]["input_rate"] == 48000
-    assert model.config["audio"]["output_rate"] == 48000
-    assert model.config["audio"]["channels"] == 2
-    assert model.config["audio"]["format"] == "pcm"
-    assert model.config["audio"]["voice"] == "shimmer"
 
 
-def test_audio_config_extracts_voice_from_provider_config(api_key, model_name):
-    """Test that voice is extracted from provider_config when config audio not provided."""
-    provider_config = {"audio": {"voice": "fable"}}
+def test_audio_config_voice_override(api_key, model_name):
+    """Test that voice can be configured independently."""
+    model = OpenAIRealtimeModel(model_id=model_name, api_key=api_key, audio={"voice": "fable"})
 
-    model = OpenAIRealtimeModel(
-        model_id=model_name, client_config={"api_key": api_key}, provider_config=provider_config
-    )
-
-    # Should extract voice from provider_config
-    assert model.config["audio"]["voice"] == "fable"
+    assert model.audio_config["voice"] == "fable"
 
 
 def test_init_without_api_key_raises(monkeypatch):
@@ -255,7 +256,7 @@ async def test_connection_with_org_header(mock_websockets_connect, monkeypatch):
     mock_connect, mock_ws = mock_websockets_connect
 
     monkeypatch.setenv("OPENAI_ORGANIZATION", "org-123")
-    model_org = OpenAIRealtimeModel(client_config={"api_key": "test-key"})
+    model_org = OpenAIRealtimeModel(api_key="test-key")
     await model_org.start()
     call_kwargs = mock_connect.call_args.kwargs
     headers = call_kwargs.get("additional_headers", [])
@@ -335,7 +336,7 @@ async def test_connection_edge_cases(mock_websockets_connect, api_key, model_nam
     mock_connect, mock_ws = mock_websockets_connect
 
     # Test connection error
-    model1 = OpenAIRealtimeModel(model_id=model_name, client_config={"api_key": api_key})
+    model1 = OpenAIRealtimeModel(model_id=model_name, api_key=api_key)
     mock_connect.side_effect = Exception("Connection failed")
     with pytest.raises(Exception, match="Connection failed"):
         await model1.start()
@@ -347,18 +348,18 @@ async def test_connection_edge_cases(mock_websockets_connect, api_key, model_nam
     mock_connect.side_effect = async_connect
 
     # Test double connection
-    model2 = OpenAIRealtimeModel(model_id=model_name, client_config={"api_key": api_key})
+    model2 = OpenAIRealtimeModel(model_id=model_name, api_key=api_key)
     await model2.start()
     with pytest.raises(RuntimeError, match=r"call stop before starting again"):
         await model2.start()
     await model2.stop()
 
     # Test close when not connected
-    model3 = OpenAIRealtimeModel(model_id=model_name, client_config={"api_key": api_key})
+    model3 = OpenAIRealtimeModel(model_id=model_name, api_key=api_key)
     await model3.stop()  # Should not raise
 
     # Test close error
-    model4 = OpenAIRealtimeModel(model_id=model_name, client_config={"api_key": api_key})
+    model4 = OpenAIRealtimeModel(model_id=model_name, api_key=api_key)
     await model4.start()
     mock_ws.close.side_effect = Exception("Close failed")
     with pytest.raises(Exception, match=r"failed stop sequence"):
@@ -662,6 +663,44 @@ def test_config_building(model, system_prompt, tool_spec):
     assert len(config_tools["tools"]) > 0
 
 
+def test__build_session_config_passes_through_params(api_key):
+    """Test model params are passed through to the session."""
+    model = OpenAIRealtimeModel(
+        api_key=api_key,
+        params={"max_output_tokens": 2048, "tracing": "auto"},
+    )
+
+    config = model._build_session_config(None, None)
+
+    assert config["max_output_tokens"] == 2048
+    assert config["tracing"] == "auto"
+
+
+def test__build_session_config_merges_audio_params(api_key):
+    """Test nested audio params preserve unspecified defaults."""
+    model = OpenAIRealtimeModel(
+        api_key=api_key,
+        params={"audio": {"input": {"turn_detection": {"threshold": 0.3}}}},
+    )
+
+    config = model._build_session_config(None, None)
+
+    assert config["audio"]["input"] == {
+        "format": {"type": "audio/pcm", "rate": 24000},
+        "transcription": {"model": "gpt-4o-transcribe"},
+        "turn_detection": {
+            "type": "server_vad",
+            "threshold": 0.3,
+            "prefix_padding_ms": 300,
+            "silence_duration_ms": 500,
+        },
+    }
+    assert config["audio"]["output"] == {
+        "format": {"type": "audio/pcm", "rate": 24000},
+        "voice": "alloy",
+    }
+
+
 def test_tool_conversion(model, tool_spec):
     """Test tool conversion to OpenAI format."""
     # Test with tools
@@ -725,13 +764,11 @@ async def test_send_event_helper(mock_websockets_connect, model):
 
 @pytest.mark.asyncio
 async def test_custom_audio_sample_rate(mock_websockets_connect, api_key):
-    """Test that custom audio sample rate from provider_config is used in audio events."""
+    """Test that a custom audio sample rate is used in audio events."""
     _, mock_ws = mock_websockets_connect
 
-    # Create model with custom sample rate
     custom_sample_rate = 48000
-    provider_config = {"audio": {"output_rate": custom_sample_rate}}
-    model = OpenAIRealtimeModel(client_config={"api_key": api_key}, provider_config=provider_config)
+    model = OpenAIRealtimeModel(api_key=api_key, audio={"output_rate": custom_sample_rate})
 
     await model.start()
 
@@ -759,7 +796,7 @@ async def test_default_audio_sample_rate(mock_websockets_connect, api_key):
     _, mock_ws = mock_websockets_connect
 
     # Create model without custom audio config
-    model = OpenAIRealtimeModel(client_config={"api_key": api_key})
+    model = OpenAIRealtimeModel(api_key=api_key)
 
     await model.start()
 
@@ -786,9 +823,7 @@ async def test_partial_audio_config(mock_websockets_connect, api_key):
     """Test that partial audio config doesn't break and falls back to defaults."""
     _, mock_ws = mock_websockets_connect
 
-    # Create model with partial audio config (missing format.rate)
-    provider_config = {"audio": {"output": {"voice": "alloy"}}}
-    model = OpenAIRealtimeModel(client_config={"api_key": api_key}, provider_config=provider_config)
+    model = OpenAIRealtimeModel(api_key=api_key, audio={"voice": "alloy"})
 
     await model.start()
 
@@ -817,7 +852,7 @@ async def test_partial_audio_config(mock_websockets_connect, api_key):
 async def test_tool_result_single_text_content(mock_websockets_connect, api_key):
     """Test tool result with single text content block."""
     _, mock_ws = mock_websockets_connect
-    model = OpenAIRealtimeModel(client_config={"api_key": api_key})
+    model = OpenAIRealtimeModel(api_key=api_key)
     await model.start()
 
     tool_result: ToolResult = {
@@ -848,7 +883,7 @@ async def test_tool_result_single_text_content(mock_websockets_connect, api_key)
 async def test_tool_result_single_json_content(mock_websockets_connect, api_key):
     """Test tool result with single JSON content block."""
     _, mock_ws = mock_websockets_connect
-    model = OpenAIRealtimeModel(client_config={"api_key": api_key})
+    model = OpenAIRealtimeModel(api_key=api_key)
     await model.start()
 
     tool_result: ToolResult = {
@@ -878,7 +913,7 @@ async def test_tool_result_single_json_content(mock_websockets_connect, api_key)
 async def test_tool_result_multiple_content_blocks(mock_websockets_connect, api_key):
     """Test tool result with multiple content blocks (text and json)."""
     _, mock_ws = mock_websockets_connect
-    model = OpenAIRealtimeModel(client_config={"api_key": api_key})
+    model = OpenAIRealtimeModel(api_key=api_key)
     await model.start()
 
     tool_result: ToolResult = {
@@ -916,7 +951,7 @@ async def test_tool_result_multiple_content_blocks(mock_websockets_connect, api_
 async def test_tool_result_image_content_raises_error(mock_websockets_connect, api_key):
     """Test that tool result with image content raises ValueError."""
     _, mock_ws = mock_websockets_connect
-    model = OpenAIRealtimeModel(client_config={"api_key": api_key})
+    model = OpenAIRealtimeModel(api_key=api_key)
     await model.start()
 
     tool_result: ToolResult = {
@@ -935,7 +970,7 @@ async def test_tool_result_image_content_raises_error(mock_websockets_connect, a
 async def test_tool_result_document_content_raises_error(mock_websockets_connect, api_key):
     """Test that tool result with document content raises ValueError."""
     _, mock_ws = mock_websockets_connect
-    model = OpenAIRealtimeModel(client_config={"api_key": api_key})
+    model = OpenAIRealtimeModel(api_key=api_key)
     await model.start()
 
     tool_result: ToolResult = {
@@ -955,7 +990,7 @@ async def test_tool_result_document_content_raises_error(mock_websockets_connect
 
 def test_connection_config_defaults_and_override(api_key, mock_websockets_connect):
     """Proactive reconnect fires a margin below the reactive timeout, and is overridable."""
-    default_model = OpenAIRealtimeModel(client_config={"api_key": api_key})
+    default_model = OpenAIRealtimeModel(api_key=api_key)
     # Deadline sits below the reactive timeout so a mid-turn swap is not preempted by it.
     assert default_model.connection_config == {
         "restart_after_s": OPENAI_MAX_TIMEOUT_S - OPENAI_PROACTIVE_RECONNECT_MARGIN_S
@@ -965,13 +1000,10 @@ def test_connection_config_defaults_and_override(api_key, mock_websockets_connec
     assert default_model.usage_is_cumulative is False
 
     # Lowering timeout_s keeps the headroom rather than recreating the tie.
-    lowered_model = OpenAIRealtimeModel(client_config={"api_key": api_key, "timeout_s": 1000})
+    lowered_model = OpenAIRealtimeModel(api_key=api_key, timeout_s=1000)
     assert lowered_model.connection_config["restart_after_s"] == 1000 - OPENAI_PROACTIVE_RECONNECT_MARGIN_S
 
-    tuned_model = OpenAIRealtimeModel(
-        client_config={"api_key": api_key},
-        provider_config={"connection": {"restart_after_s": 25}},
-    )
+    tuned_model = OpenAIRealtimeModel(api_key=api_key, connection={"restart_after_s": 25})
     assert tuned_model.connection_config["restart_after_s"] == 25
 
 

@@ -147,7 +147,7 @@ def api_key():
 def model(mock_genai_client, model_id, api_key):
     """Create a GoogleGeminiLiveModel instance."""
     _ = mock_genai_client
-    return GoogleGeminiLiveModel(model_id=model_id, client_config={"api_key": api_key})
+    return GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key})
 
 
 @pytest.fixture
@@ -176,29 +176,19 @@ def test_model_initialization(mock_genai_client, model_id, api_key):
     """Test model initialization with various configurations."""
     _ = mock_genai_client
 
-    # Test default config
     model_default = GoogleGeminiLiveModel()
     assert model_default.model_id == "gemini-2.5-flash-native-audio-preview-09-2025"
-    assert model_default.api_key is None
+    assert model_default.client_args == {}
     assert model_default._live_session is None
-    # Check default config includes transcription
-    assert model_default.config["inference"]["response_modalities"] == ["AUDIO"]
-    assert "outputAudioTranscription" in model_default.config["inference"]
-    assert "inputAudioTranscription" in model_default.config["inference"]
+    assert model_default.config["params"] == {}
 
-    # Test with API key
-    model_with_key = GoogleGeminiLiveModel(model_id=model_id, client_config={"api_key": api_key})
+    model_with_key = GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key})
     assert model_with_key.model_id == model_id
-    assert model_with_key.api_key == api_key
+    assert model_with_key.client_args == {"api_key": api_key}
 
-    # Test with custom config (merges with defaults)
-    provider_config = {"inference": {"temperature": 0.7, "top_p": 0.9}}
-    model_custom = GoogleGeminiLiveModel(model_id=model_id, provider_config=provider_config)
-    # Custom config should be merged with defaults
-    assert model_custom.config["inference"]["temperature"] == 0.7
-    assert model_custom.config["inference"]["top_p"] == 0.9
-    # Defaults should still be present
-    assert "response_modalities" in model_custom.config["inference"]
+    model_custom = GoogleGeminiLiveModel(model_id=model_id, params={"temperature": 0.7, "top_p": 0.9})
+    assert model_custom.config["params"] == {"temperature": 0.7, "top_p": 0.9}
+    assert model_custom._build_live_config()["response_modalities"] == ["AUDIO"]
 
 
 # Connection Tests
@@ -246,7 +236,7 @@ async def test_connection_edge_cases(mock_genai_client, api_key, model_id):
     mock_client, _, mock_live_session_cm = mock_genai_client
 
     # Test connection error
-    model1 = GoogleGeminiLiveModel(model_id=model_id, client_config={"api_key": api_key})
+    model1 = GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key})
     mock_client.aio.live.connect.side_effect = Exception("Connection failed")
     with pytest.raises(Exception, match=r"Connection failed"):
         await model1.start()
@@ -255,18 +245,18 @@ async def test_connection_edge_cases(mock_genai_client, api_key, model_id):
     mock_client.aio.live.connect.side_effect = None
 
     # Test double connection
-    model2 = GoogleGeminiLiveModel(model_id=model_id, client_config={"api_key": api_key})
+    model2 = GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key})
     await model2.start()
     with pytest.raises(RuntimeError, match="call stop before starting again"):
         await model2.start()
     await model2.stop()
 
     # Test close when not connected
-    model3 = GoogleGeminiLiveModel(model_id=model_id, client_config={"api_key": api_key})
+    model3 = GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key})
     await model3.stop()  # Should not raise
 
     # Test close error handling
-    model4 = GoogleGeminiLiveModel(model_id=model_id, client_config={"api_key": api_key})
+    model4 = GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key})
     await model4.start()
     mock_live_session_cm.__aexit__.side_effect = Exception("Close failed")
     with pytest.raises(Exception, match=r"failed stop sequence"):
@@ -299,7 +289,7 @@ def test_connection_config_declared(model):
 
 def test_context_window_compression_enabled_by_default(model):
     """Sliding-window compression is on by default so a resumed session survives past the cap."""
-    compression = model.config["inference"]["context_window_compression"]
+    compression = model._build_live_config()["context_window_compression"]
     assert isinstance(compression, genai_types.ContextWindowCompressionConfig)
     assert isinstance(compression.sliding_window, genai_types.SlidingWindow)
     # It flows into the live connect config.
@@ -307,23 +297,23 @@ def test_context_window_compression_enabled_by_default(model):
 
 
 def test_context_window_compression_overridable(mock_genai_client, model_id, api_key):
-    """A caller can override the compression default via provider_config['inference']."""
+    """A caller can override the compression default through model params."""
     _ = mock_genai_client
     model = GoogleGeminiLiveModel(
         model_id=model_id,
-        client_config={"api_key": api_key},
-        provider_config={"inference": {"context_window_compression": None}},
+        client_args={"api_key": api_key},
+        params={"context_window_compression": None},
     )
-    assert model.config["inference"]["context_window_compression"] is None
+    assert model.config["params"]["context_window_compression"] is None
 
 
-def test_connection_config_override_via_provider_config(mock_genai_client, model_id, api_key):
-    """provider_config['connection'] tunes reconnect timing over the provider default."""
+def test_connection_config_override(mock_genai_client, model_id, api_key):
+    """Connection config tunes reconnect timing over the provider default."""
     _ = mock_genai_client
     model = GoogleGeminiLiveModel(
         model_id=model_id,
-        client_config={"api_key": api_key},
-        provider_config={"connection": {"restart_after_s": 30}},
+        client_args={"api_key": api_key},
+        connection={"restart_after_s": 30},
     )
     assert model.connection_config["restart_after_s"] == 30
 
@@ -485,7 +475,7 @@ async def test_proactive_reconnect_end_to_end_through_agent(mock_genai_client, m
     # Reap the parked superseded reader promptly instead of waiting the full backstop.
     monkeypatch.setattr(loop_module, "_MODEL_RESTART_STOP_TIMEOUT_S", 0.05)
 
-    model = GoogleGeminiLiveModel(model_id=model_id, client_config={"api_key": api_key})
+    model = GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key})
     # A small deadline; the injected clock below fires it without wall time.
     model.connection_config = {"restart_after_s": 1}
 
@@ -538,7 +528,7 @@ async def test_history_config_with_text_messages(mock_genai_client, api_key, mod
     mock_client, mock_live_session, _ = mock_genai_client
 
     messages = [{"role": "user", "content": [{"text": "Hello"}]}]
-    model = GoogleGeminiLiveModel(model_id=model_id, client_config={"api_key": api_key})
+    model = GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key})
     await model.start(messages=messages)
 
     # history_config should be in the connect config
@@ -563,7 +553,7 @@ async def test_history_config_skipped_for_tool_only_messages(mock_genai_client, 
         {"role": "assistant", "content": [{"toolUse": {"toolUseId": "t1", "name": "calc", "input": {}}}]},
         {"role": "user", "content": [{"toolResult": {"toolUseId": "t1", "status": "success", "content": []}}]},
     ]
-    model = GoogleGeminiLiveModel(model_id=model_id, client_config={"api_key": api_key})
+    model = GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key})
     await model.start(messages=messages)
 
     # history_config should NOT be in the connect config
@@ -583,7 +573,7 @@ async def test_history_skipped_when_session_handle_provided(mock_genai_client, a
     mock_client, mock_live_session, _ = mock_genai_client
 
     messages = [{"role": "user", "content": [{"text": "Hello"}]}]
-    model = GoogleGeminiLiveModel(model_id=model_id, client_config={"api_key": api_key})
+    model = GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key})
     await model.start(messages=messages, live_session_handle="existing-handle")
 
     # history_config should NOT be set (session resumption handles context)
@@ -1064,57 +1054,58 @@ def test_audio_config_defaults(mock_genai_client, model_id, api_key):
     """Test default audio configuration."""
     _ = mock_genai_client
 
-    model = GoogleGeminiLiveModel(model_id=model_id, client_config={"api_key": api_key})
+    model = GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key})
 
-    assert model.config["audio"]["input_rate"] == 16000
-    assert model.config["audio"]["output_rate"] == 24000
-    assert model.config["audio"]["channels"] == 1
-    assert model.config["audio"]["format"] == "pcm"
-    assert "voice" not in model.config["audio"]  # No default voice
-    assert model.audio_config == model.config["audio"]
+    assert model.audio_config == {
+        "input_rate": 16000,
+        "output_rate": 24000,
+        "channels": 1,
+        "format": "pcm",
+    }
 
 
 def test_audio_config_partial_override(mock_genai_client, model_id, api_key):
     """Test partial audio configuration override."""
     _ = mock_genai_client
 
-    provider_config = {"audio": {"output_rate": 48000, "voice": "Puck"}}
     model = GoogleGeminiLiveModel(
-        model_id=model_id, client_config={"api_key": api_key}, provider_config=provider_config
+        model_id=model_id,
+        client_args={"api_key": api_key},
+        audio={"output_rate": 48000, "voice": "Puck"},
     )
 
-    # Overridden values
-    assert model.config["audio"]["output_rate"] == 48000
-    assert model.config["audio"]["voice"] == "Puck"
-
-    # Default values preserved
-    assert model.config["audio"]["input_rate"] == 16000
-    assert model.config["audio"]["channels"] == 1
-    assert model.config["audio"]["format"] == "pcm"
+    assert model.audio_config == {
+        "input_rate": 16000,
+        "output_rate": 48000,
+        "channels": 1,
+        "format": "pcm",
+        "voice": "Puck",
+    }
 
 
 def test_audio_config_full_override(mock_genai_client, model_id, api_key):
     """Test full audio configuration override."""
     _ = mock_genai_client
 
-    provider_config = {
-        "audio": {
+    model = GoogleGeminiLiveModel(
+        model_id=model_id,
+        client_args={"api_key": api_key},
+        audio={
             "input_rate": 48000,
             "output_rate": 48000,
             "channels": 2,
             "format": "pcm",
             "voice": "Aoede",
-        }
-    }
-    model = GoogleGeminiLiveModel(
-        model_id=model_id, client_config={"api_key": api_key}, provider_config=provider_config
+        },
     )
 
-    assert model.config["audio"]["input_rate"] == 48000
-    assert model.config["audio"]["output_rate"] == 48000
-    assert model.config["audio"]["channels"] == 2
-    assert model.config["audio"]["format"] == "pcm"
-    assert model.config["audio"]["voice"] == "Aoede"
+    assert model.audio_config == {
+        "input_rate": 48000,
+        "output_rate": 48000,
+        "channels": 2,
+        "format": "pcm",
+        "voice": "Aoede",
+    }
 
 
 # Helper Method Tests
@@ -1153,6 +1144,20 @@ def test_config_building(model, system_prompt, tool_spec):
     assert config_with_messages["history_config"].initial_history_in_client_content is True
 
 
+def test__build_live_config_passes_through_params(mock_genai_client, api_key):
+    """Test model params are passed through to the live session."""
+    _ = mock_genai_client
+    model = GoogleGeminiLiveModel(
+        client_args={"api_key": api_key},
+        params={"temperature": 0.7, "proactivity": {"proactive_audio": True}},
+    )
+
+    config = model._build_live_config()
+
+    assert config["temperature"] == 0.7
+    assert config["proactivity"] == {"proactive_audio": True}
+
+
 def test_tool_formatting(model, tool_spec):
     """Test tool formatting for Gemini Live API."""
     # Test with tools
@@ -1173,10 +1178,10 @@ async def test_custom_audio_rates_in_events(mock_genai_client, model_id, api_key
     """Test that audio events use configured sample rates and channels."""
     _, _, _ = mock_genai_client
 
-    # Create model with custom audio configuration
-    provider_config = {"audio": {"output_rate": 48000, "channels": 2}}
     model = GoogleGeminiLiveModel(
-        model_id=model_id, client_config={"api_key": api_key}, provider_config=provider_config
+        model_id=model_id,
+        client_args={"api_key": api_key},
+        audio={"output_rate": 48000, "channels": 2},
     )
     await model.start()
     turn_state = _TurnState(response_open=True)  # mid-response, so no response-start is prepended
@@ -1202,7 +1207,7 @@ async def test_default_audio_rates_in_events(mock_genai_client, model_id, api_ke
     _, _, _ = mock_genai_client
 
     # Create model without custom audio configuration
-    model = GoogleGeminiLiveModel(model_id=model_id, client_config={"api_key": api_key})
+    model = GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key})
     await model.start()
     turn_state = _TurnState(response_open=True)  # mid-response, so no response-start is prepended
 
