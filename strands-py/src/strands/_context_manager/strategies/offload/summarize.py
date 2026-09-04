@@ -14,6 +14,7 @@ from ...methods.summarize import (
     _summarize_content,
     _tool_result_to_content_blocks,
 )
+from ...stash import _format_stash_refs
 from ...types import ContextState
 from .base import (
     BaseOffloadStrategy,
@@ -127,10 +128,13 @@ class SummarizeStrategy(BaseOffloadStrategy):
         tokens: int,
         message: Message,
         agent: Agent,
+        stash_refs: list[str],
     ) -> ContentBlock | None:
         model = self._resolve_model(agent)
         if not model:
             return None
+
+        refs = _format_stash_refs(stash_refs)
 
         if "toolResult" in block:
             tool_result = block["toolResult"]
@@ -140,7 +144,12 @@ class SummarizeStrategy(BaseOffloadStrategy):
                 return None
 
             logger.debug("tool_use_id=<%s>, tokens=<%s> | summarized tool result", tool_result["toolUseId"], tokens)
-            summarized_content: list[ToolResultContent] = [{"text": _format_summarized("tool result", tokens, summary)}]
+            marker = (
+                _format_summarized(f"tool result |{refs}", tokens, summary)
+                if refs
+                else _format_summarized("tool result", tokens, summary)
+            )
+            summarized_content: list[ToolResultContent] = [{"text": marker}]
             return ContentBlock(
                 toolResult=ToolResult(
                     toolUseId=tool_result["toolUseId"],
@@ -151,14 +160,19 @@ class SummarizeStrategy(BaseOffloadStrategy):
 
         if "text" not in block:
             logger.debug("tracking_id=<%s>, tokens=<%s> | offloaded media block", message.get("tracking_id"), tokens)
-            return ContentBlock(text=f"[Offloaded: ~{tokens} tokens]")
+            return ContentBlock(text=f"[Offloaded: ~{tokens} tokens{refs}]")
 
         summary = await _summarize_content([ContentBlock(text=block["text"])], model, self._config)
         if not summary:
             return None
 
         logger.debug("tracking_id=<%s>, tokens=<%s> | summarized text block", message.get("tracking_id"), tokens)
-        return ContentBlock(text=_format_summarized("text block", tokens, summary))
+        marker = (
+            _format_summarized(f"text block |{refs}", tokens, summary)
+            if refs
+            else _format_summarized("text block", tokens, summary)
+        )
+        return ContentBlock(text=marker)
 
     def _resolve_model(self, agent: Agent) -> Model | None:
         return self._config.get("model") or agent.model

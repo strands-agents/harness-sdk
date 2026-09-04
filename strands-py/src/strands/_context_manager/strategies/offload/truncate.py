@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from ....types.content import ContentBlock, Message
 from ...methods.truncate import TruncateConfig, _truncate_text_block, _truncate_tool_result
+from ...stash import Stash, _format_stash_refs
 from ...types import is_text_block
 from .base import (
     BaseOffloadStrategy,
@@ -24,6 +25,16 @@ if TYPE_CHECKING:
 from ...types import ContextState
 
 logger = logging.getLogger(__name__)
+
+
+def _append_stash_refs_to_tool_result(block: ContentBlock, refs: str) -> None:
+    """Append stash ref annotation to the first text entry of a tool result in place."""
+    if "toolResult" not in block:
+        return
+    for item in block["toolResult"]["content"]:
+        if "text" in item:
+            item["text"] += f"\n\n[Stashed:{refs}]"
+            return
 
 
 class TruncateStrategy(BaseOffloadStrategy):
@@ -117,16 +128,24 @@ class TruncateStrategy(BaseOffloadStrategy):
         tokens: int,
         message: Message,
         agent: Agent,
+        stash_refs: list[str],
     ) -> ContentBlock | None:
+        refs = _format_stash_refs(stash_refs)
         if "toolResult" in block:
             tool_use_id = block["toolResult"]["toolUseId"]
             logger.debug("tool_use_id=<%s>, tokens=<%s> | truncated tool result", tool_use_id, tokens)
-            return ContentBlock(toolResult=_truncate_tool_result(block["toolResult"], self._truncate_config))
+            truncated = ContentBlock(toolResult=_truncate_tool_result(block["toolResult"], self._truncate_config))
+            if truncated is not block and refs:
+                _append_stash_refs_to_tool_result(truncated, refs)
+            return truncated
         if is_text_block(block):
             logger.debug("tracking_id=<%s>, tokens=<%s> | truncated text block", message.get("tracking_id"), tokens)
-            return _truncate_text_block(block, self._truncate_config)
+            result = _truncate_text_block(block, self._truncate_config)
+            if result is not None and refs and "text" in result:
+                result = ContentBlock(text=result["text"] + f"\n\n[Stashed:{refs}]")
+            return result
         logger.debug("tracking_id=<%s>, tokens=<%s> | offloaded media block", message.get("tracking_id"), tokens)
-        return ContentBlock(text=f"[Offloaded: ~{tokens} tokens]")
+        return ContentBlock(text=f"[Offloaded: ~{tokens} tokens{refs}]")
 
 
 class EmergencyTruncateStrategy(TruncateStrategy):
@@ -142,8 +161,9 @@ class EmergencyTruncateStrategy(TruncateStrategy):
     def __init__(self) -> None:
         super().__init__("*", {"preview": "tail"})
 
-    def init(self, agent: Agent) -> None:
+    def init(self, agent: Agent, stash: Stash | None = None) -> None:
         """No eager hooks for emergency truncation."""
+        self._stash = stash
 
     def _make_removal_marker(self, count: int) -> str | None:
         return None

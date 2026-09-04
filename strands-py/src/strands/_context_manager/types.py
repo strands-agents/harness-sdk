@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from typing_extensions import TypedDict
@@ -11,6 +11,8 @@ from ..types.content import ContentBlock, Messages
 
 if TYPE_CHECKING:
     from ..agent.agent import Agent
+    from ..storage.storage import Storage
+    from .stash import Stash
 
 
 def is_tool_result_block(block: ContentBlock) -> bool:
@@ -36,11 +38,13 @@ class ContextState:
         messages: The agent's current message list (mutable in place).
         agent: The agent instance.
         utilization: Current context utilization ratio (0-1+). Above 1.0 means overflow.
+        stash: L1 stash for persisting offloaded content. Present when storage is configured.
     """
 
     messages: Messages
     agent: Agent
     utilization: float
+    stash: Stash | None = field(default=None)
 
 
 @runtime_checkable
@@ -61,11 +65,25 @@ class ContextStrategy(Protocol):
         ...
 
 
+class StashConfig(TypedDict, total=False):
+    """Configuration for the L1 stash.
+
+    Attributes:
+        storage: Storage backend. Defaults to InMemoryStorage when omitted.
+        retrieval_tool: Whether to register the retrieve_context tool. Defaults to True.
+    """
+
+    storage: Storage
+    retrieval_tool: bool
+
+
 class ContextManagerConfig(TypedDict, total=False):
     """Full configuration for a ContextManager instance.
 
     Attributes:
         strategies: Strategies for context reduction, applied as an ordered pipeline.
+        stash: L1 stash configuration. Omit or True for defaults; False to disable.
     """
 
     strategies: list[ContextStrategy]
+    stash: StashConfig | bool
