@@ -8,7 +8,7 @@
  * @internal
  */
 
-import type { CacheConfig } from '../model.js'
+import type { AgentMetadata, CacheConfig } from '../model.js'
 import { logger } from '../../logging/logger.js'
 import { warnOnce } from '../../logging/warn-once.js'
 
@@ -55,15 +55,34 @@ function hasPlacementConfig(cacheConfig: CacheConfig): boolean {
 }
 
 /**
- * Resolves a `CacheConfig` into OpenAI caching values.
+ * Resolves the prompt-cache routing key: the configured value wins, else derive from the session.
+ *
+ * Returns the configured `cacheKey` whenever it is set (including `''`, an explicit opt-out);
+ * otherwise `strands-<sessionId>` when the agent carries a session id, else undefined.
  *
  * @internal
  */
-export function resolveOpenAICache(cacheConfig: CacheConfig): ResolvedOpenAICache {
+function resolveCacheKey(cacheConfig: CacheConfig, agentMetadata: AgentMetadata | undefined): string | undefined {
+  if (cacheConfig.cacheKey !== undefined) return cacheConfig.cacheKey
+  if (agentMetadata?.sessionId !== undefined) return `strands-${agentMetadata.sessionId}`
+  return undefined
+}
+
+/**
+ * Resolves a `CacheConfig` into OpenAI caching values.
+ *
+ * The routing key is the configured `cacheKey`, or `strands-<sessionId>` derived from the agent's
+ * session when no `cacheKey` is set. An empty `cacheKey` is carried through here and treated as an
+ * opt-out where the key is written.
+ *
+ * @internal
+ */
+export function resolveOpenAICache(cacheConfig: CacheConfig, agentMetadata?: AgentMetadata): ResolvedOpenAICache {
   const openaiCache: ResolvedOpenAICache = {}
 
-  if (cacheConfig.cacheKey !== undefined) {
-    openaiCache.cacheKey = cacheConfig.cacheKey
+  const cacheKey = resolveCacheKey(cacheConfig, agentMetadata)
+  if (cacheKey !== undefined) {
+    openaiCache.cacheKey = cacheKey
   }
 
   if (cacheConfig.ttl !== undefined && (RETENTION_LITERALS as readonly string[]).includes(cacheConfig.ttl)) {
@@ -99,14 +118,23 @@ export function warnUnsupportedRetention(ttl: string): void {
  * ignored, and the placement fields (`strategy`, `toolsTTL`, `systemPromptTTL`, `messagesTTL`) have no
  * effect here.
  *
+ * The prompt-cache routing key resolves as: the configured `cacheKey` wins when set (including `''`
+ * as an explicit opt-out); otherwise it falls back to `strands-<sessionId>` when the agent carries a
+ * session id. A falsy result (`''` or undefined) emits no key.
+ *
  * @param request - The request being assembled; mutated in place.
  * @param cacheConfig - The provider's configured cache settings, if any.
+ * @param agentMetadata - The invoking agent's metadata, used to derive a routing key when one is unset.
  */
-export function applyCacheConfig(request: CacheableRequest, cacheConfig: CacheConfig | undefined): void {
+export function applyCacheConfig(
+  request: CacheableRequest,
+  cacheConfig: CacheConfig | undefined,
+  agentMetadata?: AgentMetadata
+): void {
   if (!cacheConfig) return
-  const openaiCache = resolveOpenAICache(cacheConfig)
+  const openaiCache = resolveOpenAICache(cacheConfig, agentMetadata)
 
-  if (openaiCache.cacheKey !== undefined && request.prompt_cache_key === undefined) {
+  if (openaiCache.cacheKey && request.prompt_cache_key === undefined) {
     request.prompt_cache_key = openaiCache.cacheKey
   }
 

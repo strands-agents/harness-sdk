@@ -11,17 +11,21 @@ import type { RoutingContext, RoutingStrategy } from '../../models/routing/strat
 import type { StreamOptions } from '../../models/model.js'
 import { ConstantBackoff } from '../../retry/backoff-strategy.js'
 import { DefaultModelRetryStrategy } from '../../retry/default-model-retry-strategy.js'
+import { SessionManager } from '../../session/session-manager.js'
+import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 import type { Message } from '../../types/messages.js'
 import { Agent } from '../agent.js'
 
 class RecordingModel extends MockMessageModel {
   calls = 0
+  readonly receivedOptions: StreamOptions[] = []
 
   override async *stream(
     messages: Message[],
     options?: StreamOptions
   ): AsyncGenerator<ModelStreamEvent, void, unknown> {
     this.calls += 1
+    this.receivedOptions.push(options ?? {})
     yield* super.stream(messages, options)
   }
 }
@@ -235,5 +239,22 @@ describe('Agent model routing', () => {
     expect(() => new Agent({ model: responseModel('default'), plugins: [router], printer: false })).toThrow(
       'ModelRouter must be passed through Agent({ model }), not plugins'
     )
+  })
+
+  it('forwards the agent metadata to the routed alternate', async () => {
+    // Request-time context reaches every candidate, not just the default model.
+    const primary = responseModel('primary')
+    const alternate = responseModel('alternate')
+    const agent = new Agent({
+      model: new ModelRouter([primary, alternate], { strategy: new IndexedStrategy(1) }),
+      sessionManager: new SessionManager({ sessionId: 'routed', storage: new InMemoryStorage() }),
+      retryStrategy: null,
+      printer: false,
+    })
+
+    await agent.invoke('hello')
+
+    expect(alternate.receivedOptions[0]?.agentMetadata).toEqual({ sessionId: 'routed' })
+    expect(primary.receivedOptions).toHaveLength(0)
   })
 })

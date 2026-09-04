@@ -18,30 +18,42 @@ from ..types.exceptions import ContextWindowOverflowException, ModelThrottledExc
 from ..types.streaming import StopReason, StreamEvent
 from ..types.tools import ToolChoice, ToolResult, ToolSpec, ToolUse
 from ._defaults import resolve_config_metadata
+from ._openai_cache import _resolve_cache_key
 from ._validation import (
     _has_location_source,
     validate_config_keys,
     warn_on_cache_config_not_supported,
     warn_on_tool_choice_not_supported,
 )
-from .model import BaseModelConfig, CacheConfig, Model
+from .model import AgentMetadata, BaseModelConfig, CacheConfig, Model
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
 
-def _apply_cache_config(request: dict[str, Any], cache_config: CacheConfig | None) -> None:
+def _apply_cache_config(
+    request: dict[str, Any],
+    cache_config: CacheConfig | None,
+    agent_metadata: AgentMetadata | None = None,
+) -> None:
     """Map a CacheConfig onto a Mistral request.
+
+    The prompt-cache routing key resolves as: the configured ``cache_key`` wins when set (including
+    ``""`` as an explicit opt-out); otherwise it falls back to ``strands-<session_id>`` when the agent
+    carries a session id. A falsy result (``""`` or None) emits no key. Mistral exposes no retention or
+    placement controls, so every other ``CacheConfig`` field is a no-op and warned.
 
     Args:
         request: The Mistral request dict to mutate.
         cache_config: The provider's configured cache settings, if any.
+        agent_metadata: The invoking agent's metadata, used to derive a routing key when one is unset.
     """
     if cache_config is None:
         return
-    if cache_config.cache_key is not None and "prompt_cache_key" not in request:
-        request["prompt_cache_key"] = cache_config.cache_key
+    cache_key = _resolve_cache_key(cache_config, agent_metadata)
+    if cache_key and "prompt_cache_key" not in request:
+        request["prompt_cache_key"] = cache_key
     warn_on_cache_config_not_supported(cache_config, "Mistral", supported={"cache_key"})
 
 
@@ -71,7 +83,8 @@ class MistralModel(Model):
             top_p: Controls diversity via nucleus sampling.
             stream: Whether to enable streaming responses.
             cache_config: Prompt-caching configuration. Mistral routes cache reads on
-                cache_config.cache_key (mapped to the request's prompt_cache_key); it exposes no
+                cache_config.cache_key (mapped to the request's prompt_cache_key), falling back to
+                ``strands-<session_id>`` when unset and a session manager is attached; it exposes no
                 retention or placement controls, so other fields are ignored.
         """
 
@@ -275,7 +288,11 @@ class MistralModel(Model):
         return formatted_messages
 
     def format_request(
-        self, messages: Messages, tool_specs: list[ToolSpec] | None = None, system_prompt: str | None = None
+        self,
+        messages: Messages,
+        tool_specs: list[ToolSpec] | None = None,
+        system_prompt: str | None = None,
+        agent_metadata: AgentMetadata | None = None,
     ) -> dict[str, Any]:
         """Format a Mistral chat streaming request.
 
@@ -283,6 +300,8 @@ class MistralModel(Model):
             messages: List of message objects to be processed by the model.
             tool_specs: List of tool specifications to make available to the model.
             system_prompt: System prompt to provide context to the model.
+            agent_metadata: Stable identity of the invoking agent, used to derive a prompt-cache
+                routing key when ``cache_config.cache_key`` is unset.
 
         Returns:
             A Mistral chat streaming request.
@@ -318,7 +337,7 @@ class MistralModel(Model):
                 for tool_spec in tool_specs
             ]
 
-        _apply_cache_config(request, self.config.get("cache_config"))
+        _apply_cache_config(request, self.config.get("cache_config"), agent_metadata)
 
         return request
 
@@ -440,6 +459,7 @@ class MistralModel(Model):
         system_prompt: str | None = None,
         *,
         tool_choice: ToolChoice | None = None,
+        agent_metadata: AgentMetadata | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamEvent, None]:
         """Stream conversation with the Mistral model.
@@ -450,6 +470,8 @@ class MistralModel(Model):
             system_prompt: System prompt to provide context to the model.
             tool_choice: Selection strategy for tool invocation. **Note: This parameter is accepted for
                 interface consistency but is currently ignored for this model provider.**
+            agent_metadata: Stable identity of the invoking agent, used to derive a prompt-cache
+                routing key when ``cache_config.cache_key`` is unset.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Yields:
@@ -462,7 +484,7 @@ class MistralModel(Model):
         warn_on_tool_choice_not_supported(tool_choice)
 
         logger.debug("formatting request")
-        request = self.format_request(messages, tool_specs, system_prompt)
+        request = self.format_request(messages, tool_specs, system_prompt, agent_metadata)
         logger.debug("request=<%s>", request)
 
         logger.debug("invoking model")

@@ -116,8 +116,27 @@ export interface CacheConfig {
    */
   messagesTTL?: boolean | CacheTTL
 
-  /** Stable identity a provider can use to route its cache. */
+  /**
+   * Stable identity a prompt-cache-routing provider (OpenAI, LiteLLM) uses as its cache key. Left
+   * unset, it is derived per request as `strands-<sessionId>` whenever the agent has a session
+   * manager, so repeat runs of a session share a cache prefix with no key management. Set it to pin
+   * your own key; set it to `''` to opt out of routing entirely. The resolved key (whether set or
+   * derived from the session id) is transmitted to the provider. Because the derived key is resolved
+   * per request, it is not reflected in `getConfig()`.
+   */
   cacheKey?: string
+}
+
+/**
+ * Read-only view of agent metadata passed to a model on `stream()`.
+ *
+ * Populated by the agent per request. Because it is rebuilt for every request, a single
+ * model instance shared across agents sees each agent's own identity rather than a value
+ * baked in at construction.
+ */
+export interface AgentMetadata {
+  /** The agent's persisted session id; present only when a session manager is attached. */
+  sessionId?: string
 }
 
 /**
@@ -244,6 +263,9 @@ export interface StreamOptions {
 
   /** How many trailing blocks of the last user message are rebuilt on every call. */
   dynamicTrailingBlocks?: number
+
+  /** Metadata of the invoking agent, supplied per request. */
+  agentMetadata?: AgentMetadata
 }
 
 /**

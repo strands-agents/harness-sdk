@@ -67,7 +67,7 @@ from ..interventions.handler import InterventionHandler
 from ..interventions.registry import InterventionRegistry
 from ..memory import MemoryManager, MemoryManagerConfig
 from ..models.bedrock import BedrockModel
-from ..models.model import Model, _ModelPlugin
+from ..models.model import AgentMetadata, Model, _ModelPlugin
 from ..models.routing import ModelRouter
 from ..plugins import Plugin
 from ..plugins.registry import _PluginRegistry
@@ -739,6 +739,11 @@ class Agent(AgentBase, LocalAgent):
         construction time (unique per agent instance but not persisted across restarts).
         """
         return self._session_id
+
+    def _get_agent_metadata(self) -> AgentMetadata:
+        """Build the agent metadata view passed to the model on stream()."""
+        session_id = getattr(self._session_manager, "session_id", None) or None
+        return AgentMetadata(session_id=session_id)
 
     @property
     def system_prompt(self) -> str | None:

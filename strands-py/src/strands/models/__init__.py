@@ -7,7 +7,7 @@ from typing import Any
 
 from . import bedrock, model, routing
 from .bedrock import BedrockModel
-from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model
+from .model import AgentMetadata, BaseModelConfig, CacheConfig, CacheToolsConfig, Model
 from .routing import (
     CandidateInput,
     ClassifierStrategy,
@@ -23,6 +23,7 @@ __all__ = [
     "bedrock",
     "model",
     "routing",
+    "AgentMetadata",
     "BaseModelConfig",
     "BedrockModel",
     "CacheConfig",
