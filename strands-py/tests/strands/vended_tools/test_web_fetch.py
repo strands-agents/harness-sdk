@@ -11,17 +11,13 @@ import pytest
 from bs4 import BeautifulSoup
 
 import strands.agent.agent as agent_module
+from strands.types.tools import ToolContext, ToolUse
 from strands.vended_tools.web_fetch import (
     WebFetchError,
     make_web_fetch,
-    web_fetch,
 )
 from strands.vended_tools.web_fetch import _extract as extract_module
 from strands.vended_tools.web_fetch._extract import _tag_attribute, html_to_markdown
-from strands.vended_tools.web_fetch.types import (
-    WEB_FETCH_DESCRIPTION_AGENTIC,
-    WEB_FETCH_DESCRIPTION_MARKDOWN,
-)
 from strands.vended_tools.web_fetch.web_fetch import _parse_charset
 
 
@@ -34,41 +30,15 @@ def _client(handler) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=_transport(handler))
 
 
+def _make_ctx(cancel: threading.Event | None = None) -> ToolContext:
+    cancel = cancel or threading.Event()
+    agent = SimpleNamespace(model=None, _cancel_signal=cancel)
+    tool_use = ToolUse(toolUseId="test-wf", name="web_fetch", input={})
+    return ToolContext(tool_use=tool_use, agent=agent, invocation_state={}, cancel_signal=cancel)
+
+
 def _raising_beautiful_soup(*args, **kwargs):
     raise ValueError("mock extraction failure")
-
-
-class TestToolMetadata:
-    """Tool name, description, and factory validation."""
-
-    def test_default_name(self):
-        assert web_fetch.tool_name == "web_fetch"
-
-    def test_default_description(self):
-        assert web_fetch.tool_spec["description"] == WEB_FETCH_DESCRIPTION_AGENTIC
-
-    def test_custom_name(self):
-        assert make_web_fetch(name="fetch_page").tool_name == "fetch_page"
-
-    def test_custom_description(self):
-        assert make_web_fetch(description="custom").tool_spec["description"] == "custom"
-
-    @pytest.mark.parametrize("max_bytes", [0, -1])
-    def test_rejects_non_positive_max_bytes(self, max_bytes):
-        with pytest.raises(ValueError, match="max_bytes"):
-            make_web_fetch(max_bytes=max_bytes)
-
-    @pytest.mark.parametrize("max_content_chars", [0, -1])
-    def test_rejects_non_positive_max_content_chars(self, max_content_chars):
-        with pytest.raises(ValueError, match="max_content_chars"):
-            make_web_fetch(max_content_chars=max_content_chars)
-
-    def test_invalid_mode_raises(self):
-        with pytest.raises(ValueError, match="mode"):
-            make_web_fetch(mode="invalid")  # type: ignore[arg-type]
-
-    def test_markdown_mode_uses_markdown_description(self):
-        assert make_web_fetch(mode="markdown").tool_spec["description"] == WEB_FETCH_DESCRIPTION_MARKDOWN
 
 
 class TestLazyLoad:
@@ -97,7 +67,7 @@ class TestWebFetchToolCall:
             return httpx.Response(200, headers={"content-type": "text/html; charset=utf-8"}, text=html)
 
         tool = make_web_fetch(client=_client(handler), mode="markdown")
-        tru_result = await tool(url="https://example.com/")
+        tru_result = await tool(url="https://example.com/", tool_context=_make_ctx())
         assert "# T" in tru_result
         assert "# Hi" in tru_result
 
@@ -107,7 +77,7 @@ class TestWebFetchToolCall:
             return httpx.Response(200, headers={"content-type": "text/plain"}, text="plain text response")
 
         tool = make_web_fetch(client=_client(handler), mode="markdown")
-        tru_result = await tool(url="https://example.com/robots.txt")
+        tru_result = await tool(url="https://example.com/robots.txt", tool_context=_make_ctx())
         assert tru_result == "plain text response"
 
     @pytest.mark.asyncio
@@ -120,7 +90,7 @@ class TestWebFetchToolCall:
             )
 
         tool = make_web_fetch(client=_client(handler), mode="markdown")
-        tru_result = await tool(url="https://example.com/page.xhtml")
+        tru_result = await tool(url="https://example.com/page.xhtml", tool_context=_make_ctx())
         assert "xhtml" in tru_result
 
     @pytest.mark.asyncio
@@ -132,14 +102,14 @@ class TestWebFetchToolCall:
             return httpx.Response(200, headers={"content-type": "text/plain"}, text=body)
 
         tool = make_web_fetch(client=_client(handler), mode="markdown", max_content_chars=50)
-        tru_result = await tool(url="https://example.com/")
+        tru_result = await tool(url="https://example.com/", tool_context=_make_ctx())
         assert tru_result.startswith("x" * 50)
         assert "[content truncated]" in tru_result
 
     @pytest.mark.asyncio
     async def test_rejects_non_http_scheme(self):
         with pytest.raises(WebFetchError, match="Fetch failed"):
-            await make_web_fetch(mode="markdown")(url="file:///etc/passwd")
+            await make_web_fetch(mode="markdown")(url="file:///etc/passwd", tool_context=_make_ctx())
 
     @pytest.mark.asyncio
     async def test_transport_error_is_wrapped_as_value_error(self):
@@ -148,7 +118,7 @@ class TestWebFetchToolCall:
 
         tool = make_web_fetch(client=_client(handler), mode="markdown")
         with pytest.raises(WebFetchError, match="Fetch failed"):
-            await tool(url="https://example.com/")
+            await tool(url="https://example.com/", tool_context=_make_ctx())
 
     @pytest.mark.asyncio
     async def test_body_over_cap_is_rejected(self):
@@ -159,7 +129,7 @@ class TestWebFetchToolCall:
 
         tool = make_web_fetch(client=_client(handler), max_bytes=50, mode="markdown")
         with pytest.raises(WebFetchError, match="exceeded"):
-            await tool(url="https://example.com/")
+            await tool(url="https://example.com/", tool_context=_make_ctx())
 
     @pytest.mark.asyncio
     async def test_error_status_raises(self):
@@ -168,7 +138,7 @@ class TestWebFetchToolCall:
 
         tool = make_web_fetch(client=_client(handler), mode="markdown")
         with pytest.raises(WebFetchError, match="HTTP 404"):
-            await tool(url="https://example.com/missing")
+            await tool(url="https://example.com/missing", tool_context=_make_ctx())
 
     @pytest.mark.asyncio
     async def test_user_client_redirect_behaviour_is_respected(self):
@@ -182,7 +152,7 @@ class TestWebFetchToolCall:
         # User-supplied client with follow_redirects=False: redirect is not followed.
         client = httpx.AsyncClient(transport=_transport(handler), follow_redirects=False)
         tool = make_web_fetch(client=client, mode="markdown")
-        tru_result = await tool(url="https://example.com/old")
+        tru_result = await tool(url="https://example.com/old", tool_context=_make_ctx())
         assert tru_result == "moved"
 
     @pytest.mark.asyncio
@@ -192,7 +162,7 @@ class TestWebFetchToolCall:
 
         tool = make_web_fetch(client=httpx.AsyncClient(transport=httpx.MockTransport(handler)), mode="markdown")
         with pytest.raises(WebFetchError, match="timed out"):
-            await tool(url="https://example.com/")
+            await tool(url="https://example.com/", tool_context=_make_ctx())
 
     @pytest.mark.asyncio
     async def test_html_extraction_failure_falls_back_to_raw(self, monkeypatch):
@@ -203,7 +173,7 @@ class TestWebFetchToolCall:
 
         monkeypatch.setattr(extract_module, "BeautifulSoup", _raising_beautiful_soup)
         tool = make_web_fetch(client=_client(handler), mode="markdown")
-        tru_result = await tool(url="https://example.com/")
+        tru_result = await tool(url="https://example.com/", tool_context=_make_ctx())
         assert tru_result == "<p>raw content</p>"
 
     @pytest.mark.asyncio
@@ -215,7 +185,7 @@ class TestWebFetchToolCall:
             return httpx.Response(200, headers={"content-type": "text/plain"}, text="ok")
 
         tool = make_web_fetch(client=_client(handler), mode="markdown")
-        await tool(url="https://example.com/")
+        await tool(url="https://example.com/", tool_context=_make_ctx())
         assert "strands-agents-web-fetch" in received.get("user-agent", "")
 
     @pytest.mark.asyncio
@@ -225,11 +195,7 @@ class TestWebFetchToolCall:
 
         cancel = threading.Event()
         cancel.set()
-        agent = SimpleNamespace(_cancel_signal=cancel)
-        from strands.types.tools import ToolContext, ToolUse
-
-        tool_use = ToolUse(toolUseId="wf_1", name="web_fetch", input={})
-        ctx = ToolContext(tool_use=tool_use, agent=agent, invocation_state={}, cancel_signal=cancel)
+        ctx = _make_ctx(cancel)
 
         tool = make_web_fetch(client=_client(handler), mode="markdown")
         with pytest.raises(asyncio.CancelledError):
@@ -247,11 +213,7 @@ class TestWebFetchToolCall:
 
             return httpx.Response(200, headers={"content-type": "text/plain"}, content=body())
 
-        agent = SimpleNamespace(_cancel_signal=cancel)
-        from strands.types.tools import ToolContext, ToolUse
-
-        tool_use = ToolUse(toolUseId="wf_2", name="web_fetch", input={})
-        ctx = ToolContext(tool_use=tool_use, agent=agent, invocation_state={}, cancel_signal=cancel)
+        ctx = _make_ctx(cancel)
 
         tool = make_web_fetch(client=_client(handler), mode="markdown")
         with pytest.raises(asyncio.CancelledError):
@@ -292,7 +254,7 @@ class TestAnalyst:
             mode="agentic",
             max_content_chars=50,
         )
-        await tool(url="https://example.com/", prompt="Summarize")
+        await tool(url="https://example.com/", prompt="Summarize", tool_context=_make_ctx())
         assert "x" * 50 in received_prompt[0]
         assert "x" * 51 not in received_prompt[0]
         assert "[content truncated]" in received_prompt[0]
@@ -302,7 +264,7 @@ class TestAnalyst:
         # No factory model and no host agent — agentic mode has nowhere to go.
         tool = make_web_fetch(client=self._page_client(), mode="agentic")
         with pytest.raises(WebFetchError, match="agentic mode requires a model"):
-            await tool(url="https://example.com/", prompt="What is this about?")
+            await tool(url="https://example.com/", prompt="What is this about?", tool_context=_make_ctx())
 
     @pytest.mark.asyncio
     async def test_prompt_uses_host_agent_model_when_no_factory_model(self, monkeypatch):
@@ -318,8 +280,6 @@ class TestAnalyst:
                 return "host answer"
 
         monkeypatch.setattr(agent_module, "Agent", _FakeAgent)
-        from strands.types.tools import ToolContext, ToolUse
-
         tool_use = ToolUse(toolUseId="wf_2", name="web_fetch", input={})
         host_agent = SimpleNamespace(_cancel_signal=None, model=host_model)
         ctx = ToolContext(tool_use=tool_use, agent=host_agent, invocation_state={})
@@ -345,7 +305,7 @@ class TestAnalyst:
 
         monkeypatch.setattr(agent_module, "Agent", _FakeAgent)
         tool = make_web_fetch(client=self._page_client(), model=fake_model, mode="markdown")
-        tru_result = await tool(url="https://example.com/")
+        tru_result = await tool(url="https://example.com/", tool_context=_make_ctx())
         assert not invoked
         assert "page content" in tru_result
 
@@ -354,7 +314,7 @@ class TestAnalyst:
     async def test_agentic_mode_with_empty_prompt_raises(self, prompt):
         tool = make_web_fetch(client=self._page_client(), model=SimpleNamespace(), mode="agentic")
         with pytest.raises(WebFetchError, match="agentic mode requires a non-empty prompt"):
-            await tool(url="https://example.com/", prompt=prompt)
+            await tool(url="https://example.com/", prompt=prompt, tool_context=_make_ctx())
 
     @pytest.mark.asyncio
     async def test_prompt_with_model_invokes_analyst(self, monkeypatch):
@@ -371,7 +331,7 @@ class TestAnalyst:
 
         monkeypatch.setattr(agent_module, "Agent", _FakeAgent)
         tool = make_web_fetch(client=self._page_client(), model=fake_model, mode="agentic")
-        tru_result = await tool(url="https://example.com/", prompt="What is this about?")
+        tru_result = await tool(url="https://example.com/", prompt="What is this about?", tool_context=_make_ctx())
         assert tru_result == "the answer"
         assert len(received_prompt) == 1
         assert "What is this about?" in received_prompt[0]

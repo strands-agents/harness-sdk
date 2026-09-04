@@ -84,6 +84,10 @@
       "types": "./dist/src/experimental/vended-tools/stop/index.d.ts",
       "default": "./dist/src/experimental/vended-tools/stop/index.js"
     },
+    "./vended-tools/web-fetch": {
+      "types": "./dist/src/vended-tools/web-fetch/index.d.ts",
+      "default": "./dist/src/vended-tools/web-fetch/index.js"
+    },
     "./a2a": {
       "types": "./dist/src/a2a/index.d.ts",
       "default": "./dist/src/a2a/index.js"
@@ -229,6 +233,7 @@
     "@cedar-policy/mcp-schema-generator-wasm": "^0.6.0",
     "@eslint/js": "^10.0.1",
     "@google/genai": "^2.6.0",
+    "@mixmark-io/domino": "^2.2.0",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.219.0",
@@ -239,6 +244,7 @@
     "@smithy/types": "^4.15.1",
     "@types/express": "^5.0.6",
     "@types/node": "^25.9.4",
+    "@types/turndown": "^5.0.6",
     "@typescript-eslint/eslint-plugin": "^8.62.1",
     "@typescript-eslint/parser": "^8.0.0",
     "@vitest/browser": "^4.1.10",
@@ -250,6 +256,7 @@
     "openai": "^6.45.0",
     "playwright": "^1.61.0",
     "tsx": "^4.22.5",
+    "turndown": "^7.2.4",
     "typescript": "^6.0.3",
     "vitest": "^4.1.10"
   },
@@ -297,6 +304,7 @@
     "@tobilu/qmd": "^2.8.0",
     "express": "^5.1.0",
     "openai": "^6.45.0",
+    "turndown": "^7.2.4",
     "zod": "^4.1.12"
   },
   "peerDependenciesMeta": {
@@ -358,6 +366,9 @@
       "optional": true
     },
     "@tobilu/qmd": {
+      "optional": true
+    },
+    "turndown": {
       "optional": true
     }
   },

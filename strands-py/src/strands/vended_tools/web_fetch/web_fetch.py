@@ -108,7 +108,7 @@ def make_web_fetch(
     @tool(name=name, description=resolved_description, context=True)
     async def web_fetch_tool_markdown(
         url: str,
-        tool_context: ToolContext | None = None,
+        tool_context: ToolContext,
     ) -> str:
         """Fetches an HTTP(S) URL and returns clean markdown.
 
@@ -119,7 +119,7 @@ def make_web_fetch(
             tool_context: Framework-injected. Not model-visible. Carries the
                 agent so the tool can read its cancel signal.
         """
-        cancel_signal = tool_context.cancel_signal if tool_context else None
+        cancel_signal = tool_context.cancel_signal
         content_type, raw = await _fetch_once(
             url=url,
             max_bytes=max_bytes,
@@ -137,7 +137,7 @@ def make_web_fetch(
     async def web_fetch_tool_agentic(
         url: str,
         prompt: str,
-        tool_context: ToolContext | None = None,
+        tool_context: ToolContext,
     ) -> str:
         """Fetches an HTTP(S) URL and returns an analyst's answer about it.
 
@@ -155,7 +155,7 @@ def make_web_fetch(
         if not prompt.strip():
             raise WebFetchError("web_fetch: agentic mode requires a non-empty prompt.")
 
-        host_model = getattr(tool_context.agent, "model", None) if tool_context else None
+        host_model = getattr(tool_context.agent, "model", None)
         effective_model = analyst_model or host_model
         if effective_model is None:
             raise WebFetchError(
@@ -163,7 +163,7 @@ def make_web_fetch(
                 "Pass model= to make_web_fetch or call the tool from an agent."
             )
 
-        cancel_signal = tool_context.cancel_signal if tool_context else None
+        cancel_signal = tool_context.cancel_signal
         content_type, raw = await _fetch_once(
             url=url,
             max_bytes=max_bytes,
@@ -203,7 +203,7 @@ async def _fetch_once(
     url: str,
     max_bytes: int,
     client: httpx.AsyncClient | None,
-    cancel_signal: threading.Event | None,
+    cancel_signal: threading.Event,
 ) -> tuple[str, str]:
     """Perform one HTTP GET, returning ``(content_type, body_text)``.
 
@@ -212,7 +212,8 @@ async def _fetch_once(
         WebFetchError: On timeout, transport failure, HTTP error status, or
             body exceeding ``max_bytes``.
     """
-    _check_cancelled(cancel_signal)
+    if cancel_signal.is_set():
+        raise asyncio.CancelledError("Web fetch tool request cancelled")
 
     owns_client = client is None
     active_client = client if client is not None else httpx.AsyncClient(follow_redirects=True)
@@ -231,7 +232,8 @@ async def _fetch_once(
             chunks: list[bytes] = []
             total = 0
             async for chunk in response.aiter_bytes():
-                _check_cancelled(cancel_signal)
+                if cancel_signal.is_set():
+                    raise asyncio.CancelledError("Web fetch tool request cancelled")
                 total += len(chunk)
                 if total > max_bytes:
                     raise WebFetchError(f"Response body exceeded {max_bytes} bytes. Refusing to buffer more.")
@@ -261,9 +263,3 @@ def _parse_charset(content_type: str) -> str:
             if value:
                 return value
     return "utf-8"
-
-
-def _check_cancelled(cancel_signal: threading.Event | None) -> None:
-    """Raise :class:`asyncio.CancelledError` if the agent's cancel signal has been set."""
-    if cancel_signal is not None and cancel_signal.is_set():
-        raise asyncio.CancelledError("Request cancelled")
