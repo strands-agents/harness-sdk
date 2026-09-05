@@ -147,7 +147,8 @@ def test_format_request_default(model, messages, model_id, max_tokens):
     assert tru_request == exp_request
 
 
-def test_format_request_with_params(model, messages, model_id, max_tokens):
+def test_format_request_with_params(model, messages, model_id, max_tokens, monkeypatch):
+    monkeypatch.setattr(strands.models.anthropic, "_ANTHROPIC_MAJOR_VERSION", 0)
     model.update_config(params={"temperature": 1})
 
     tru_request = model.format_request(messages)
@@ -160,6 +161,71 @@ def test_format_request_with_params(model, messages, model_id, max_tokens):
     }
 
     assert tru_request == exp_request
+
+
+def test_format_request_with_params_sdk_v1_routes_sampling_params_through_extra_body(
+    model, messages, model_id, max_tokens, monkeypatch
+):
+    monkeypatch.setattr(strands.models.anthropic, "_ANTHROPIC_MAJOR_VERSION", 1)
+    model.update_config(params={"temperature": 1, "top_k": 5, "top_p": 0.9, "stop_sequences": ["end"]})
+
+    tru_request = model.format_request(messages)
+    exp_request = {
+        "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "test"}]}],
+        "model": model_id,
+        "tools": [],
+        "stop_sequences": ["end"],
+        "extra_body": {"temperature": 1, "top_k": 5, "top_p": 0.9},
+    }
+
+    assert tru_request == exp_request
+    # Routing must not mutate the stored config params.
+    assert model.get_config()["params"] == {"temperature": 1, "top_k": 5, "top_p": 0.9, "stop_sequences": ["end"]}
+
+
+def test_format_request_with_params_sdk_v1_no_sampling_params_passes_through(
+    model, messages, model_id, max_tokens, monkeypatch
+):
+    monkeypatch.setattr(strands.models.anthropic, "_ANTHROPIC_MAJOR_VERSION", 1)
+    model.update_config(params={"stop_sequences": ["end"]})
+
+    tru_request = model.format_request(messages)
+    exp_request = {
+        "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "test"}]}],
+        "model": model_id,
+        "tools": [],
+        "stop_sequences": ["end"],
+    }
+
+    assert tru_request == exp_request
+
+
+def test_format_request_with_params_sdk_v1_merges_sampling_params_into_user_extra_body(
+    model, messages, model_id, max_tokens, monkeypatch
+):
+    monkeypatch.setattr(strands.models.anthropic, "_ANTHROPIC_MAJOR_VERSION", 1)
+    model.update_config(params={"temperature": 1, "extra_body": {"other": "value"}})
+
+    tru_request = model.format_request(messages)
+    exp_request = {
+        "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "test"}]}],
+        "model": model_id,
+        "tools": [],
+        "extra_body": {"temperature": 1, "other": "value"},
+    }
+
+    assert tru_request == exp_request
+
+
+def test_format_request_with_params_sdk_v1_conflicting_extra_body_raises(model, messages, monkeypatch):
+    monkeypatch.setattr(strands.models.anthropic, "_ANTHROPIC_MAJOR_VERSION", 1)
+    model.update_config(params={"temperature": 1, "extra_body": {"temperature": 0.5}})
+
+    with pytest.raises(ValueError, match=re.escape("params=<['temperature']> | set both in params")):
+        model.format_request(messages)
 
 
 def test_format_request_with_system_prompt(model, messages, model_id, max_tokens, system_prompt):
