@@ -292,6 +292,12 @@ class TestParseFrontmatterYamlFallback:
         assert "Use when" in frontmatter["description"]
         assert body == "Body."
 
+    def test_fallback_raises_value_error_on_unfixable_yaml(self):
+        """Test that unfixable YAML raises ValueError, not yaml.YAMLError."""
+        content = '---\nname: my-skill\ndescription: "unterminated quote\n---\nBody.'
+        with pytest.raises(ValueError, match="malformed YAML frontmatter"):
+            _parse_frontmatter(content)
+
     def test_fallback_preserves_valid_yaml(self):
         """Test that valid YAML is parsed normally without triggering fallback."""
         content = "---\nname: my-skill\ndescription: A simple description\n---\nBody."
@@ -464,6 +470,21 @@ class TestSkillFromDirectory:
         """Test FileNotFoundError for nonexistent directory."""
         with pytest.raises(FileNotFoundError):
             Skill.from_directory(tmp_path / "nonexistent")
+
+    def test_skips_unfixable_yaml_and_loads_siblings(self, tmp_path, caplog):
+        """Test that a skill with unfixable YAML is skipped without aborting sibling loading."""
+        _make_skill_dir(tmp_path, "good-skill")
+
+        bad_dir = tmp_path / "bad-yaml"
+        bad_dir.mkdir()
+        (bad_dir / "SKILL.md").write_text('---\nname: bad-yaml\ndescription: "unterminated\n---\nBody.')
+
+        with caplog.at_level(logging.WARNING):
+            skills = Skill.from_directory(tmp_path)
+
+        assert len(skills) == 1
+        assert skills[0].name == "good-skill"
+        assert "skipping skill due to error" in caplog.text
 
     def test_loads_mismatched_name_with_warning(self, tmp_path, caplog):
         """Test that skills with name/directory mismatch are loaded with a warning."""

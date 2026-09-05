@@ -80,7 +80,10 @@ def _parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
         # to improve cross-client compatibility. See: agentskills.io/client-implementation/adding-skills-support
         logger.warning("YAML parse failed, retrying with colon-quoting fallback")
         fixed = _fix_yaml_colons(frontmatter_str)
-        result = yaml.safe_load(fixed)
+        try:
+            result = yaml.safe_load(fixed)
+        except yaml.YAMLError as error:
+            raise ValueError(f"malformed YAML frontmatter: {error}") from error
 
     frontmatter: dict[str, Any] = result if isinstance(result, dict) else {}
     return frontmatter, body
