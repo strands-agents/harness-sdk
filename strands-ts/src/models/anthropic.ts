@@ -276,7 +276,11 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
               usage.outputTokens = event.usage.output_tokens
             }
             if (event.delta.stop_reason) {
-              stopReason = this._mapStopReason(event.delta.stop_reason)
+              const anthropicStopReason: string = event.delta.stop_reason
+              if (anthropicStopReason === 'model_context_window_exceeded') {
+                throw new ContextWindowOverflowError(anthropicStopReason, { cause: event })
+              }
+              stopReason = this._mapStopReason(anthropicStopReason)
             }
             break
 
@@ -298,7 +302,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
 
       const lowered = error.message.toLowerCase()
       if (CONTEXT_WINDOW_OVERFLOW_ERRORS.some((msg) => lowered.includes(msg))) {
-        throw new ContextWindowOverflowError(error.message)
+        throw new ContextWindowOverflowError(error.message, { cause: error })
       }
 
       const err = unknownError as Error & { status?: number }
