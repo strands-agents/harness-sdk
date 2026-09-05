@@ -12,6 +12,7 @@ sourceLinks:
   - path: strands-ts/src/vended-tools/sleep/sleep.ts
   - path: strands-ts/src/experimental/vended-tools/stop/stop.ts
   - path: strands-py/src/strands/vended_tools/http_request/http_request.py
+  - path: strands-py/src/strands/vended_tools/notebook/notebook.py
   - path: strands-py/src/strands/vended_tools/shell/shell.py
   - path: strands-py/src/strands/vended_tools/sleep/sleep.py
   - path: strands-py/src/strands/vended_tools/web_fetch/web_fetch.py
@@ -38,7 +39,7 @@ Each tool is imported from its own subpath under `@strands-agents/sdk/vended-too
 |------|-------------|--------------|
 | [File Editor](#file-editor) | View, create, and edit files | Python, TypeScript (Node.js) |
 | [HTTP Request](#http-request) | Make HTTP requests to external APIs | Python, TypeScript (Node.js 22+, browsers) |
-| [Notebook](#notebook) | Manage persistent text notebooks | TypeScript (Node.js, browsers) |
+| [Notebook](#notebook) | Manage persistent text notebooks | Python, TypeScript (Node.js, browsers) |
 | [Bash](#bash) | Execute shell commands with persistent sessions | Python, TypeScript (Node.js, Unix/Linux/macOS) |
 | [Sleep](#sleep) | Pause execution for a bounded, cancellable duration | Python, TypeScript (Node.js, browsers) |
 | [Stop](#stop-experimental) | Gracefully end the agent loop when the task is complete | Python, TypeScript (Node.js, browsers) |
@@ -144,21 +145,80 @@ agent = Agent(tools=[tool])
 
 A scratchpad the agent can read and write across invocations. The most effective use is giving the agent a notebook at the start of a task and instructing it to plan its work there — it can break the task into steps, check things off as it goes, and always have a clear picture of what's left. Notebook state is part of the agent's state, so it persists automatically with [Session Management](../agents/session-management.mdx).
 
-_Supported in: Node.js, browsers._
+_Supported in: Node.js, modern browsers (TypeScript); all platforms (Python)._
 
 **Example - Task Management:**
+
+<Tabs>
+<Tab label="TypeScript">
+
 ```typescript
 --8<-- "user-guide/concepts/tools/vended-tools-imports.ts:notebook_import"
 
 --8<-- "user-guide/concepts/tools/vended-tools.ts:notebook_example"
 ```
 
+</Tab>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.vended_tools import notebook
+
+agent = Agent(tools=[notebook])
+agent('Create a notebook called "tasks" with "# Daily Tasks" and add "- [ ] Review code" to it')
+```
+
+</Tab>
+</Tabs>
+
 **Example - State Persistence:**
+
+<Tabs>
+<Tab label="TypeScript">
+
 ```typescript
 --8<-- "user-guide/concepts/tools/vended-tools-imports.ts:notebook_persistence_import"
 
 --8<-- "user-guide/concepts/tools/vended-tools.ts:notebook_state_persistence"
 ```
+
+</Tab>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.vended_tools import notebook
+
+agent = Agent(tools=[notebook])
+agent('Create a notebook called "tasks" with "# Daily Tasks" and add "- [ ] Review code" to it')
+
+# Read the notebook contents directly off agent state.
+notebooks = agent.state.get("notebooks") or {}
+print(notebooks.get("tasks"))
+```
+
+</Tab>
+</Tabs>
+
+**Example - Custom configuration (Python):**
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.vended_tools import make_notebook
+
+notes = make_notebook(
+    name="notes",
+    max_notebook_size_bytes=64 * 1024,  # 64 KiB
+)
+agent = Agent(tools=[notes])
+```
+
+</Tab>
+</Tabs>
 
 📖 [Full API Reference](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/notebook/README.md)
 
