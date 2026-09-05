@@ -737,6 +737,78 @@ def test_format_chunk_metadata_with_cache_tokens(model):
     }
 
 
+def test_format_chunk_metadata_with_cache_write_tokens(model):
+    """cache_write_tokens maps to cacheWriteInputTokens.
+
+    GPT-5.6 reports cache writes alongside reads and bills them at 1.25x the uncached input
+    rate, so a dropped counter understates cost rather than merely losing detail.
+    """
+    mock_usage = unittest.mock.Mock()
+    mock_usage.input_tokens = 100
+    mock_usage.output_tokens = 50
+    mock_usage.total_tokens = 150
+
+    mock_tokens_details = unittest.mock.Mock()
+    mock_tokens_details.cached_tokens = 25
+    mock_tokens_details.cache_write_tokens = 40
+    mock_usage.input_tokens_details = mock_tokens_details
+
+    event = {"chunk_type": "metadata", "data": mock_usage}
+
+    assert model._format_chunk(event) == {
+        "metadata": {
+            "usage": {
+                "inputTokens": 100,
+                "outputTokens": 50,
+                "totalTokens": 150,
+                "cacheReadInputTokens": 25,
+                "cacheWriteInputTokens": 40,
+            },
+            "metrics": {"latencyMs": 0},
+        },
+    }
+
+
+def test_format_chunk_metadata_with_zero_cache_write_tokens(model):
+    """A zero write counter is omitted, matching how cached_tokens is handled."""
+    mock_usage = unittest.mock.Mock()
+    mock_usage.input_tokens = 100
+    mock_usage.output_tokens = 50
+    mock_usage.total_tokens = 150
+
+    mock_tokens_details = unittest.mock.Mock()
+    mock_tokens_details.cached_tokens = 25
+    mock_tokens_details.cache_write_tokens = 0
+    mock_usage.input_tokens_details = mock_tokens_details
+
+    event = {"chunk_type": "metadata", "data": mock_usage}
+
+    usage = model._format_chunk(event)["metadata"]["usage"]
+
+    assert usage["cacheReadInputTokens"] == 25
+    assert "cacheWriteInputTokens" not in usage
+
+
+def test_format_chunk_metadata_on_an_sdk_pin_without_cache_write_tokens(model):
+    """Pins predating the field report no write counter; the mapping stays silent."""
+
+    class _TokensDetails:
+        cached_tokens = 25
+
+    mock_usage = unittest.mock.Mock()
+    mock_usage.input_tokens = 100
+    mock_usage.output_tokens = 50
+    mock_usage.total_tokens = 150
+    mock_usage.input_tokens_details = _TokensDetails()
+
+    event = {"chunk_type": "metadata", "data": mock_usage}
+
+    usage = model._format_chunk(event)["metadata"]["usage"]
+
+    assert usage["cacheReadInputTokens"] == 25
+    assert "cacheWriteInputTokens" not in usage
+
+
 def test_format_chunk_metadata_with_zero_cached_tokens(model):
     """Test _format_chunk for metadata when cached_tokens is 0."""
     mock_usage = unittest.mock.Mock()
