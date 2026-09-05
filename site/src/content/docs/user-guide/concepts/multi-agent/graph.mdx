@@ -74,6 +74,7 @@ The [`GraphBuilder`](@api/python/strands.multiagent.graph#GraphBuilder) provides
 - **add_edge()**: Create a dependency between nodes
 - **set_entry_point()**: Define starting nodes for execution
 - **set_max_node_executions()**: Limit total node executions (useful for cyclic graphs)
+- **set_max_concurrency()**: Limit the number of nodes that execute concurrently
 - **set_execution_timeout()**: Set maximum execution time
 - **set_node_timeout()**: Set timeout for individual nodes
 - **reset_on_revisit()**: Control whether nodes reset state when revisited
@@ -169,6 +170,7 @@ builder.set_entry_point("research")
 
 # Optional: Configure execution limits for safety
 builder.set_execution_timeout(600)   # 10 minute timeout
+builder.set_max_concurrency(2)        # Run at most 2 nodes concurrently
 
 # Build the graph
 graph = builder.build()
@@ -812,6 +814,7 @@ builder.add_edge("reviewer", "publisher", condition=is_approved)
 
 # Set execution limits to prevent infinite loops
 builder.set_max_node_executions(10)  # Maximum 10 node executions total
+builder.set_max_concurrency(2)       # Maximum 2 concurrent node executions
 builder.set_execution_timeout(300)   # 5 minute timeout
 builder.reset_on_revisit(True)       # Reset node state when revisiting
 
@@ -832,7 +835,23 @@ The Graph pattern is available in multiple SDKs. While the core concept is the s
 
 **Dependency resolution**: Python uses OR semantics, where a node fires when any single incoming edge from the completed batch is satisfied. TypeScript uses AND semantics, where a node runs only when all incoming edge sources are completed. This is more intuitive for join/diamond patterns where you want to wait for all inputs before proceeding.
 
-**Scheduling**: Python executes in discrete batches, waiting for the entire batch to complete before scheduling the next set of nodes. TypeScript launches nodes individually as they become ready, up to `maxConcurrency`. This avoids artificial bottlenecks where a fast node waits for a slow sibling to finish before its dependents can start.
+**Scheduling**: Python executes in discrete batches, running up to `max_concurrency`
+nodes at once and waiting for the entire batch to complete before scheduling the next
+set of nodes. Lower limits increase batch wall-clock time. When combined with
+`execution_timeout`, this can make a graph fail at the next batch boundary even if the
+same graph would complete without the concurrency limit. TypeScript launches nodes
+individually as they become ready, up to `maxConcurrency`.
+
+**Node timeouts**: When `max_concurrency` is configured, `node_timeout` starts after
+a node acquires a concurrency slot. Time spent waiting for an available slot is not
+counted as node execution time.
+
+:::caution
+Session resume has a known fan-in issue where a node can execute twice after a restart.
+Limiting concurrency makes this existing behavior easier to encounter when a sibling is
+waiting for a slot. Track the separate fix in
+[#3633](https://github.com/strands-agents/harness-sdk/issues/3633).
+:::
 
 **Node state**: Python accumulates agent state across executions unless `reset_on_revisit` is explicitly enabled. TypeScript agent nodes are stateless by default, snapshotting and restoring the agent's messages and state on each execution. Set `preserveContext: true` on an individual `AgentNode` to opt into accumulation for revisited nodes.
 
