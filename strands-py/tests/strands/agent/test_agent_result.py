@@ -388,6 +388,42 @@ def test_context_size_none_when_no_data(mock_metrics, simple_message: Message):
     assert result.context_size is None
 
 
+def test_cost_captures_latest_invocation_cost(simple_message: Message):
+    """Test that cost captures metrics.latest_invocation_cost."""
+    metrics = EventLoopMetrics()
+    metrics.reset_usage_metrics()
+    metrics.latest_agent_invocation.usage["totalCostUsd"] = 0.0045
+
+    result = AgentResult(stop_reason="end_turn", message=simple_message, metrics=metrics, state={})
+    assert result.cost == 0.0045
+
+
+def test_cost_is_snapshot_of_invocation(simple_message: Message):
+    """Test that a later invocation does not change an existing result's cost."""
+    metrics = EventLoopMetrics()
+    metrics.reset_usage_metrics()
+    metrics.latest_agent_invocation.usage["totalCostUsd"] = 0.0045
+    result = AgentResult(stop_reason="end_turn", message=simple_message, metrics=metrics, state={})
+
+    metrics.reset_usage_metrics()
+    metrics.latest_agent_invocation.usage["totalCostUsd"] = 0.009
+
+    assert result.cost == 0.0045
+
+
+def test_cost_none_when_untracked(simple_message: Message):
+    """Test that cost returns None when the provider did not report cost."""
+    result = AgentResult(stop_reason="end_turn", message=simple_message, metrics=EventLoopMetrics(), state={})
+    assert result.cost is None
+
+
+@pytest.mark.parametrize("metrics", [{}, None, unittest.mock.ANY])
+def test_cost_none_for_legacy_metrics_placeholders(metrics, simple_message: Message):
+    """Test that legacy placeholder metrics leave cost untracked."""
+    result = AgentResult(stop_reason="end_turn", message=simple_message, metrics=metrics, state={})
+    assert result.cost is None
+
+
 def test_projected_context_size_delegates_to_metrics(mock_metrics, simple_message: Message):
     """Test that projected_context_size delegates to metrics.projected_context_size."""
     mock_metrics.projected_context_size = 15000

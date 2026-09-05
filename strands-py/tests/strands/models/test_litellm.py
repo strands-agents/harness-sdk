@@ -1,9 +1,12 @@
+import contextlib
+import io
 import unittest.mock
 from unittest.mock import call
 
 import pydantic
 import pytest
 from litellm.exceptions import ContextWindowExceededError
+from litellm.types.utils import PromptTokensDetailsWrapper
 
 import strands
 from strands.models import CacheConfig
@@ -686,6 +689,89 @@ def test_format_chunk_metadata_without_cache_tokens():
     assert result["metadata"]["usage"]["totalTokens"] == 150
     assert "cacheReadInputTokens" not in result["metadata"]["usage"]
     assert "cacheWriteInputTokens" not in result["metadata"]["usage"]
+
+
+def test_format_chunk_metadata_with_cost():
+    """format_chunk sets usage.totalCostUsd when the model can be priced."""
+    model = LiteLLMModel(model_id="openai/gpt-4o")
+
+    mock_usage = unittest.mock.Mock()
+    mock_usage.prompt_tokens = 100
+    mock_usage.completion_tokens = 50
+    mock_usage.total_tokens = 150
+    mock_usage.prompt_tokens_details = None
+    mock_usage.cache_creation_input_tokens = None
+
+    event = {"chunk_type": "metadata", "data": mock_usage}
+
+    with unittest.mock.patch.object(model, "_compute_cost", return_value=0.0045):
+        result = model.format_chunk(event)
+
+    assert result["metadata"]["usage"]["totalCostUsd"] == 0.0045
+
+
+def test_format_chunk_metadata_without_cost_when_unpriceable():
+    """format_chunk omits totalCostUsd when the model cannot be priced, so absence means untracked."""
+    model = LiteLLMModel(model_id="test")
+
+    mock_usage = unittest.mock.Mock()
+    mock_usage.prompt_tokens = 100
+    mock_usage.completion_tokens = 50
+    mock_usage.total_tokens = 150
+    mock_usage.prompt_tokens_details = None
+    mock_usage.cache_creation_input_tokens = None
+
+    event = {"chunk_type": "metadata", "data": mock_usage}
+
+    with unittest.mock.patch.object(model, "_compute_cost", return_value=None):
+        result = model.format_chunk(event)
+
+    assert "totalCostUsd" not in result["metadata"]["usage"]
+
+
+def test_compute_cost_forwards_cache_tokens():
+    """_compute_cost forwards cache token details so pricing reflects the cache split.
+
+    Guards https://github.com/strands-agents/harness-sdk/pull/3212 review: rebuilding usage from only
+    the three plain token counts drops the cache split, over/understating cost by up to ~7x.
+    """
+    model = LiteLLMModel(model_id="anthropic/claude-sonnet-4-20250514")
+
+    usage = unittest.mock.Mock()
+    usage.prompt_tokens = 10000
+    usage.completion_tokens = 100
+    usage.total_tokens = 10100
+    usage.prompt_tokens_details = PromptTokensDetailsWrapper(cached_tokens=9500)
+    usage.cache_creation_input_tokens = None
+
+    with unittest.mock.patch.object(strands.models.litellm.litellm, "completion_cost") as mock_cost:
+        model._compute_cost(usage)
+
+    forwarded = mock_cost.call_args.kwargs["completion_response"].usage
+    assert forwarded.prompt_tokens_details.cached_tokens == 9500
+
+
+def test_compute_cost_unpriceable_model_prints_nothing_to_stdout():
+    """_compute_cost stays silent when LiteLLM cannot price the model.
+
+    Guards https://github.com/strands-agents/harness-sdk/pull/3212 review: completion_cost prints a red
+    "Provider List" banner to stdout for unpriceable models, which callers cannot silence.
+    """
+    model = LiteLLMModel(model_id="some/unpriceable-model-xyz")
+
+    usage = unittest.mock.Mock()
+    usage.prompt_tokens = 10
+    usage.completion_tokens = 5
+    usage.total_tokens = 15
+    usage.prompt_tokens_details = None
+    usage.cache_creation_input_tokens = None
+
+    captured = io.StringIO()
+    with contextlib.redirect_stdout(captured):
+        cost = model._compute_cost(usage)
+
+    assert cost is None
+    assert captured.getvalue() == ""
 
 
 def test_stream_switch_content_same_type():

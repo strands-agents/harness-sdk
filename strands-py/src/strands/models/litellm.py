@@ -3,6 +3,8 @@
 - Docs: https://docs.litellm.ai/
 """
 
+import contextlib
+import io
 import json
 import logging
 import uuid
@@ -180,6 +182,35 @@ class LiteLLMModel(OpenAIModel):
 
         return None
 
+    def _compute_cost(self, usage: Any) -> float | None:
+        """Estimate the USD cost of a model call from its LiteLLM usage object.
+
+        LiteLLM prices a call from its internal pricing map, which does not cover every model
+        (proxy deployments and some provider-prefixed IDs raise). Any failure degrades to ``None``
+        so cost tracking never breaks the model call; a missing cost is treated as "not tracked".
+
+        Args:
+            usage: The LiteLLM usage object from the response metadata.
+
+        Returns:
+            The estimated total cost in USD, or ``None`` if the model could not be priced.
+        """
+        try:
+            response = litellm.ModelResponse(
+                usage=litellm.Usage(
+                    prompt_tokens=usage.prompt_tokens,
+                    completion_tokens=usage.completion_tokens,
+                    total_tokens=usage.total_tokens,
+                    prompt_tokens_details=getattr(usage, "prompt_tokens_details", None),
+                    cache_creation_input_tokens=getattr(usage, "cache_creation_input_tokens", None),
+                ),
+            )
+            with contextlib.redirect_stdout(io.StringIO()):
+                return litellm.completion_cost(completion_response=response, model=self.get_config()["model_id"])
+        except Exception as error:
+            logger.debug("model_id=<%s>, error=<%s> | could not estimate cost", self.get_config()["model_id"], error)
+            return None
+
     def _stream_switch_content(self, data_type: str, prev_data_type: str | None) -> tuple[list[StreamEvent], str]:
         """Handle switching to a new content stream.
 
@@ -298,6 +329,11 @@ class LiteLLMModel(OpenAIModel):
                     usage_data["cacheReadInputTokens"] = cached
             if creation := getattr(event["data"], "cache_creation_input_tokens", None):
                 usage_data["cacheWriteInputTokens"] = creation
+
+            # Cost is left unset when the model cannot be priced, so consumers can distinguish
+            # "not tracked" from a genuine zero.
+            if (cost := self._compute_cost(event["data"])) is not None:
+                usage_data["totalCostUsd"] = cost
 
             return StreamEvent(
                 metadata=MetadataEvent(

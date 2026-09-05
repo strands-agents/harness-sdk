@@ -362,6 +362,22 @@ def test_event_loop_metrics_update_usage(usage, event_loop_metrics, mock_get_met
     metrics_client.event_loop_cache_write_input_tokens.record.assert_called()
 
 
+@pytest.mark.parametrize("usage", [{"totalCostUsd": 0.0045}], indirect=True)
+def test_event_loop_metrics_accumulates_cost(usage, event_loop_metrics, mock_get_meter_provider):
+    event_loop_metrics.reset_usage_metrics()
+    event_loop_metrics.start_cycle(attributes={"event_loop_cycle_id": "test-cycle"})
+
+    for _ in range(3):
+        event_loop_metrics.update_usage(usage)
+
+    assert event_loop_metrics.accumulated_usage["totalCostUsd"] == pytest.approx(0.0135)
+    assert event_loop_metrics.latest_invocation_cost == pytest.approx(0.0135)
+
+
+def test_event_loop_metrics_latest_invocation_cost_none_when_untracked(event_loop_metrics):
+    assert event_loop_metrics.latest_invocation_cost is None
+
+
 def test_event_loop_metrics_update_metrics(metrics_with_ttfb, event_loop_metrics, mock_get_meter_provider):
     for _ in range(3):
         event_loop_metrics.update_metrics(metrics_with_ttfb)
