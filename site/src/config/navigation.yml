@@ -396,6 +396,7 @@ sidebar:
       - label: Session Managers
         items:
           - docs/integrations/session-managers/agentcore-memory
+          - docs/integrations/session-managers/strands-postgresql-session-manager
           - docs/integrations/session-managers/strands-valkey-session-manager
       - label: Tool Protocols
         items:

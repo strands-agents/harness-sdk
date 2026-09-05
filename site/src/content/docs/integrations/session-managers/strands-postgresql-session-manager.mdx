@@ -1,0 +1,90 @@
+---
+project:
+  pypi: https://pypi.org/project/strands-postgresql-session-manager/
+  github: https://github.com/macuartin/strands-postgresql-session-manager
+  maintainer: macuartin
+title: Strands PostgreSQL Session Manager
+community: true
+description: >-
+  Persist Strands agent sessions in PostgreSQL with JSONB storage, ACID transactions,
+  and shared state for distributed deployments.
+integrationType: session-manager
+languages: Python
+sidebar:
+  label: "PostgreSQL"
+---
+
+
+[Strands PostgreSQL Session
+Manager](https://github.com/macuartin/strands-postgresql-session-manager) stores
+agent sessions, state, and messages in PostgreSQL. Use it when multiple application
+instances need to resume the same session from shared storage.
+
+The package uses JSONB columns for agent state and messages. Foreign keys connect
+sessions, agents, and messages, with cascading deletion for related records.
+
+## Installation
+
+```bash
+pip install strands-postgresql-session-manager
+```
+
+The session manager requires PostgreSQL 14 or later and a synchronous SQLAlchemy
+engine.
+
+## Usage
+
+Create the package tables once, then pass a `PostgresSessionManager` to the agent:
+
+```python
+import os
+
+from sqlmodel import SQLModel, create_engine
+from strands import Agent
+from strands_postgresql_session_manager import PostgresSessionManager
+
+engine = create_engine(os.environ["DATABASE_URL"])
+
+# Create the tables once during application setup.
+SQLModel.metadata.create_all(engine)
+
+session_manager = PostgresSessionManager(
+    session_id="customer-123",
+    engine=engine,
+)
+agent = Agent(session_manager=session_manager)
+
+agent("Remember that I prefer weekly status summaries.")
+```
+
+Set `DATABASE_URL` to a PostgreSQL connection string, for example:
+
+```bash
+export DATABASE_URL="postgresql://agent_user:password@localhost:5432/agents"
+```
+
+To resume the conversation from another process, create a manager with the same
+session ID and database:
+
+```python
+import os
+
+from sqlmodel import create_engine
+from strands import Agent
+from strands_postgresql_session_manager import PostgresSessionManager
+
+engine = create_engine(os.environ["DATABASE_URL"])
+session_manager = PostgresSessionManager(
+    session_id="customer-123",
+    engine=engine,
+)
+agent = Agent(session_manager=session_manager)
+
+agent("What reporting cadence do I prefer?")
+```
+
+## References
+
+- [PyPI package](https://pypi.org/project/strands-postgresql-session-manager/)
+- [GitHub repository](https://github.com/macuartin/strands-postgresql-session-manager)
+- [Issue tracker](https://github.com/macuartin/strands-postgresql-session-manager/issues)
