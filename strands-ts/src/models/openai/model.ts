@@ -69,6 +69,22 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
   private readonly _api: OpenAIApi
   private _config: OpenAIModelConfig
   private _client: OpenAI
+  /**
+   * Base URL the current Mantle client points at, or `undefined` when the Mantle
+   * pathway is not in use. Mutable: `updateConfig` moves it when a new `modelId`
+   * resolves to the other base path.
+   */
+  private _mantleBaseUrl?: string
+  /**
+   * State retained so `updateConfig` can rebuild the Mantle client on a base-path
+   * change. `_mantleApiKey` is the setter built at construction and is deliberately
+   * reused rather than re-created: {@link createMantleApiKeySetter} memoizes its
+   * token provider in a closure, so a fresh setter would drop the warm provider and
+   * re-import `@aws/bedrock-token-generator` on the next request.
+   */
+  private _mantleRegion?: string
+  private _mantleClientConfig?: OpenAIModelOptions['clientConfig']
+  private _mantleApiKey?: () => Promise<string>
 
   constructor(options: OpenAIModelOptions) {
     super()
@@ -101,7 +117,12 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
       this._client = client
     } else if (bedrockMantleConfig) {
       const modelId = modelConfig.modelId ?? MODEL_DEFAULTS.openai.modelId
-      this._client = buildMantleClient(bedrockMantleConfig, apiKey, clientConfig, modelId)
+      const mantle = buildMantleClient(bedrockMantleConfig, apiKey, clientConfig, modelId)
+      this._client = mantle.client
+      this._mantleBaseUrl = mantle.baseURL
+      this._mantleRegion = mantle.region
+      this._mantleClientConfig = clientConfig
+      this._mantleApiKey = mantle.apiKey
     } else {
       const hasEnvKey =
         typeof process !== 'undefined' && typeof process.env !== 'undefined' && process.env.OPENAI_API_KEY
@@ -142,6 +163,11 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
    * they are stripped with a warning. Changing either at runtime would
    * invalidate the invariants the agent builds on top of `stateful` (message
    * history management, `previous_response_id` chaining).
+   *
+   * Under `bedrockMantleConfig`, a `modelId` that resolves to the other Mantle
+   * base path rebuilds the underlying client against the new base URL, so the
+   * next request is routed correctly instead of hitting the previous path.
+   * A swap within the same base path keeps the existing client.
    */
   updateConfig(modelConfig: OpenAIModelConfig & { api?: OpenAIApi }): void {
     const { api, stateful, ...rest } = modelConfig
@@ -152,6 +178,24 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
       logger.warn(
         `stateful=<${stateful}> | 'stateful' is construction-only and cannot be changed via updateConfig — ignoring`
       )
+    }
+
+    if (this._mantleBaseUrl !== undefined && rest.modelId !== undefined) {
+      const nextBaseUrl = bedrockMantleBaseUrl(this._mantleRegion!, rest.modelId)
+      // Only cross-boundary swaps need a new client; within one base path the
+      // existing connection is still correct and worth keeping alive.
+      if (nextBaseUrl !== this._mantleBaseUrl) {
+        logger.debug(
+          `modelId=<${rest.modelId}> | rerouting the Bedrock Mantle client from ` +
+            `<${this._mantleBaseUrl}> to <${nextBaseUrl}>`
+        )
+        this._client = new OpenAI({
+          ...this._mantleClientConfig,
+          baseURL: nextBaseUrl,
+          apiKey: this._mantleApiKey,
+        })
+        this._mantleBaseUrl = nextBaseUrl
+      }
     }
 
     if (this._api === 'responses') {
@@ -285,7 +329,7 @@ function buildMantleClient(
   apiKey: OpenAIModelOptions['apiKey'],
   clientConfig: OpenAIModelOptions['clientConfig'],
   modelId: string
-): OpenAI {
+): { client: OpenAI; baseURL: string; region: string; apiKey: () => Promise<string> } {
   if (apiKey !== undefined) {
     throw new Error(
       "'apiKey' cannot be combined with 'bedrockMantleConfig'; the API key is derived from the Mantle config automatically."
@@ -304,10 +348,20 @@ function buildMantleClient(
 
   // Resolve the region eagerly so missing-region configuration fails fast.
   const region = resolveMantleRegion(bedrockMantleConfig)
+  const baseURL = bedrockMantleBaseUrl(region, modelId)
+  // Built once and handed back so `updateConfig` can reuse it across reroutes:
+  // the setter memoizes its token provider, and it already mints a fresh bearer
+  // token per request, so there is nothing to refresh by rebuilding it.
+  const mantleApiKey = createMantleApiKeySetter(bedrockMantleConfig, region)
 
-  return new OpenAI({
-    ...clientConfig,
-    baseURL: bedrockMantleBaseUrl(region, modelId),
-    apiKey: createMantleApiKeySetter(bedrockMantleConfig, region),
-  })
+  return {
+    client: new OpenAI({
+      ...clientConfig,
+      baseURL,
+      apiKey: mantleApiKey,
+    }),
+    baseURL,
+    region,
+    apiKey: mantleApiKey,
+  }
 }
