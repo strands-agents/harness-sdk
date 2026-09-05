@@ -25,7 +25,7 @@ from .._exception_notes import add_exception_note
 from ..event_loop import streaming
 from ..tools import convert_pydantic_to_tool_spec
 from ..tools._tool_helpers import noop_tool
-from ..types.content import CachePoint, ContentBlock, Messages, SystemContentBlock
+from ..types.content import CachePoint, ContentBlock, GuardContent, Messages, SystemContentBlock
 from ..types.exceptions import (
     ContextWindowOverflowException,
     ModelThrottledException,
@@ -868,18 +868,24 @@ class BedrockModel(Model):
                     if "text" in formatted_content:
                         formatted_content = {"guardContent": {"text": {"text": formatted_content["text"]}}}
                     elif "image" in formatted_content:
-                        image_format = formatted_content["image"].get("format", "")
+                        guard_image = formatted_content["image"]
+                        image_format = guard_image.get("format", "")
                         supported_formats = self.client.meta.service_model.shape_for(
                             "GuardrailConverseImageFormat"
                         ).enum
-                        if image_format in supported_formats:
-                            formatted_content = {"guardContent": {"image": formatted_content["image"]}}
-                        else:
+                        if image_format not in supported_formats:
                             logger.warning(
                                 "image_format=<%s> | format not supported by bedrock guardrails | "
                                 "skipping guardContent wrap",
                                 image_format,
                             )
+                        elif "bytes" not in guard_image.get("source", {}):
+                            logger.warning(
+                                "source_type=<non-bytes> | image source must be bytes for bedrock guardrails | "
+                                "skipping guardContent wrap"
+                            )
+                        else:
+                            formatted_content = {"guardContent": {"image": guard_image}}
 
                 cleaned_content.append(formatted_content)
 
@@ -968,6 +974,31 @@ class BedrockModel(Model):
             logger.warning("Non s3 location sources are not supported by Bedrock | skipping content block")
             return None
 
+    def _format_guard_content(self, guard: GuardContent) -> dict[str, Any]:
+        """Convert a guard content block to Bedrock format.
+
+        Args:
+            guard: Guard content to format.
+
+        Returns:
+            Bedrock formatted guard content.
+
+        Raises:
+            ValueError: If the guard content carries neither text nor image.
+        """
+        if "text" in guard:
+            guard_text = guard["text"]
+            text_block: dict[str, Any] = {"text": guard_text["text"]}
+            if "qualifiers" in guard_text:
+                text_block["qualifiers"] = guard_text["qualifiers"]
+            return {"text": text_block}
+
+        if "image" in guard:
+            guard_image = guard["image"]
+            return {"image": {"format": guard_image["format"], "source": {"bytes": guard_image["source"]["bytes"]}}}
+
+        raise ValueError("content_type=<guardContent> | guard content must have either text or image")
+
     def _format_request_message_content(self, content: ContentBlock) -> dict[str, Any] | None:
         """Format a Bedrock content block.
 
@@ -982,6 +1013,7 @@ class BedrockModel(Model):
 
         Raises:
             TypeError: If the content block type is not supported by Bedrock.
+            ValueError: If a guard content block carries neither text nor image.
         """
         # https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_CachePointBlock.html
         if "cachePoint" in content:
@@ -1039,12 +1071,7 @@ class BedrockModel(Model):
 
         # https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_GuardrailConverseContentBlock.html
         if "guardContent" in content:
-            guard = content["guardContent"]
-            guard_text = guard["text"]
-            text_block: dict[str, Any] = {"text": guard_text["text"]}
-            if "qualifiers" in guard_text:
-                text_block["qualifiers"] = guard_text["qualifiers"]
-            return {"guardContent": {"text": text_block}}
+            return {"guardContent": self._format_guard_content(content["guardContent"])}
 
         # https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ImageBlock.html
         if "image" in content:

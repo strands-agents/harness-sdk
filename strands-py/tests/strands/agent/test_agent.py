@@ -2208,6 +2208,18 @@ def test_agent_multiple_blocks_system_prompt():
     assert agent._system_prompt_content == system_prompt_content
 
 
+def test_agent_guard_content_block_system_prompt():
+    """Test initialization with a guardContent SystemContentBlock."""
+    system_prompt_content = [
+        {"text": "You are a helpful assistant."},
+        {"guardContent": {"text": {"text": "Grounding document.", "qualifiers": ["grounding_source"]}}},
+    ]
+    agent = Agent(system_prompt=system_prompt_content)
+
+    assert agent.system_prompt == "You are a helpful assistant."
+    assert agent._system_prompt_content == system_prompt_content
+
+
 def test_agent_single_non_text_block_system_prompt():
     """Test initialization with single non-text SystemContentBlock."""
     system_prompt_content = [{"cachePoint": {"type": "default"}}]
