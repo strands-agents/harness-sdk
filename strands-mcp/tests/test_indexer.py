@@ -316,3 +316,56 @@ class TestEdgeCases:
         results_mixed = index.search("PyThOn")
 
         assert len(results_lower) == len(results_upper) == len(results_mixed) == 1
+
+
+class TestSourceWeighting:
+    def test_search_prioritizes_guides_and_examples_over_api_reference(self) -> None:
+        """User-facing documentation ranks above API reference pages."""
+        index = IndexSearch()
+        api_doc = Doc(
+            uri="https://strandsagents.com/docs/api/python/strands.agent/",
+            display_title="strands.agent.Agent",
+            content="",
+            index_title="strands agent agent",
+        )
+        example_doc = Doc(
+            uri="https://strandsagents.com/docs/examples/python/agent/",
+            display_title="Agent",
+            content="",
+            index_title="Agent",
+        )
+        user_guide_doc = Doc(
+            uri="https://strandsagents.com/docs/user-guide/concepts/agents/",
+            display_title="Agent",
+            content="",
+            index_title="Agent",
+        )
+        for doc in (api_doc, example_doc, user_guide_doc):
+            index.add(doc)
+
+        tru_docs = [doc for _, doc in index.search("agent")]
+
+        assert tru_docs == [user_guide_doc, example_doc, api_doc]
+
+    def test_search_preserves_explicit_api_intent(self) -> None:
+        """Explicit source terms disable the user-facing documentation prior."""
+        index = IndexSearch()
+        api_doc = Doc(
+            uri="https://strandsagents.com/docs/api/python/strands.hooks/",
+            display_title="strands.hooks",
+            content="",
+            index_title="hooks",
+        )
+        user_guide_doc = Doc(
+            uri="https://strandsagents.com/docs/user-guide/concepts/hooks/",
+            display_title="Hooks",
+            content="",
+            index_title="hooks",
+        )
+        for doc in (api_doc, user_guide_doc):
+            index.add(doc)
+
+        tru_results = index.search("hooks API")
+
+        assert sorted(doc.uri for _, doc in tru_results) == sorted([api_doc.uri, user_guide_doc.uri])
+        assert tru_results[0][0] == tru_results[1][0]

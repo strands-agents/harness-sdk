@@ -5,6 +5,7 @@ import re
 import threading
 from dataclasses import dataclass
 from typing import Dict, List, Set, Tuple
+from urllib.parse import urlparse
 
 # Enhanced tokenization patterns
 _TOKEN = re.compile(r"[A-Za-z0-9_]+")
@@ -36,6 +37,20 @@ _TITLE_BOOST_EMPTY = 8  # boost for unfetched content
 _TITLE_BOOST_SHORT = 5  # boost for short pages (<800 chars)
 _TITLE_BOOST_LONG = 3  # boost for longer pages
 _SHORT_PAGE_THRESHOLD = 800  # character threshold for short pages
+_SOURCE_WEIGHTS = {
+    "/docs/user-guide/": 1.2,
+    "/docs/examples/": 1.1,
+    "/docs/api/": 0.8,
+}
+_SOURCE_HINT_TOKENS = {"api", "reference"}
+
+
+def _source_weight(uri: str, query_tokens: set[str]) -> float:
+    """Return the search weight for a documentation source category."""
+    if query_tokens & _SOURCE_HINT_TOKENS:
+        return 1.0
+    path = urlparse(uri).path
+    return next((weight for prefix, weight in _SOURCE_WEIGHTS.items() if path.startswith(prefix)), 1.0)
 
 
 class IndexSearch:
@@ -191,7 +206,7 @@ class IndexSearch:
         """
         raw_content = content_override if content_override is not None else doc.content
         haystack_parts = [
-            doc.index_title.lower(),
+            " ".join(dict.fromkeys(_TOKEN.findall(doc.index_title.lower()))),
             " ".join(_MD_HEADER.findall(raw_content)).lower(),
             " ".join(_MD_LINK_TEXT.findall(raw_content)).lower(),
             " ".join(_MD_CODE_BLOCK.findall(raw_content)).lower(),
@@ -259,13 +274,12 @@ class IndexSearch:
                 - Body text: 1x weight (base)
             """
             content_lower = doc.content.lower()
-            title_lower = doc.index_title.lower()
 
             # Base content frequency
             content_tf = content_lower.count(token)
 
             # Title matches (highest weight)
-            title_tf = title_lower.count(token) * _title_boost_for(doc)
+            title_tf = int(token in set(_TOKEN.findall(doc.index_title.lower()))) * _title_boost_for(doc)
 
             # Header matches (high weight)
             header_tf = 0
@@ -307,5 +321,13 @@ class IndexSearch:
                     idf = math.log((N + 1) / (1 + doc_frequency_snapshot.get(qt, 0))) + 1.0
                     scores[idx] = scores.get(idx, 0.0) + tf * idf
 
-        ranked = sorted(((score, docs_snapshot[i]) for i, score in scores.items()), key=lambda x: x[0], reverse=True)
+        query_tokens = set(q_tokens)
+        ranked = sorted(
+            (
+                (score * _source_weight(docs_snapshot[i].uri, query_tokens), docs_snapshot[i])
+                for i, score in scores.items()
+            ),
+            key=lambda x: x[0],
+            reverse=True,
+        )
         return ranked[:k]
