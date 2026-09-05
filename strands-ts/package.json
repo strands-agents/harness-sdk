@@ -156,6 +156,10 @@
       "types": "./dist/src/storage/search/index.d.ts",
       "default": "./dist/src/storage/search/index.js"
     },
+    "./storage/embeddings": {
+      "types": "./dist/src/storage/embeddings/index.d.ts",
+      "default": "./dist/src/storage/embeddings/index.js"
+    },
     "./storage/search/qmd": {
       "node": {
         "types": "./dist/src/storage/search/qmd.d.ts",
@@ -220,6 +224,7 @@
     "@aws-sdk/client-bedrock-agent": "^3.1078.0",
     "@aws-sdk/client-bedrock-agent-runtime": "^3.1078.0",
     "@aws-sdk/client-s3": "^3.1078.0",
+    "@aws-sdk/client-s3vectors": "^3.1125.0",
     "@aws-sdk/client-secrets-manager": "^3.1078.0",
     "@aws-sdk/client-ssm": "^3.1078.0",
     "@aws-sdk/client-sts": "^3.1078.0",
@@ -265,8 +270,8 @@
   },
   "homepage": "https://github.com/strands-agents/harness-sdk#readme",
   "dependencies": {
-    "@smithy/fetch-http-handler": "^5.7.2",
     "@aws-sdk/client-bedrock-runtime": "^3.1112.0",
+    "@smithy/fetch-http-handler": "^5.7.2",
     "@types/json-schema": "^7.0.15",
     "uuid": "^14.0.2",
     "yaml": "^2.8.3"
@@ -278,6 +283,7 @@
     "@aws-sdk/client-bedrock-agent": "^3.1078.0",
     "@aws-sdk/client-bedrock-agent-runtime": "^3.1078.0",
     "@aws-sdk/client-s3": "^3.1078.0",
+    "@aws-sdk/client-s3vectors": "^3.1125.0",
     "@aws/bedrock-token-generator": "^1.1.0",
     "@cedar-policy/cedar-wasm": "^4.0.0",
     "@cedar-policy/mcp-schema-generator-wasm": "^0.6.0",
@@ -322,6 +328,9 @@
       "optional": true
     },
     "@aws-sdk/client-s3": {
+      "optional": true
+    },
+    "@aws-sdk/client-s3vectors": {
       "optional": true
     },
     "@google/genai": {
