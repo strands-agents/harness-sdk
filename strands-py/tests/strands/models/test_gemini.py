@@ -1,5 +1,6 @@
 import logging
 import unittest.mock
+import warnings
 
 import pydantic
 import pytest
@@ -1219,7 +1220,7 @@ async def test_structured_output(gemini_client, model, messages, model_id, weath
     gemini_client.aio.models.generate_content.assert_called_with(**exp_request)
 
 
-def test_gemini_tools_validation_rejects_function_declarations(model_id):
+def test_built_in_tools_validation_rejects_function_declarations(model_id):
     tool_with_function_declarations = genai.types.Tool(
         function_declarations=[
             genai.types.FunctionDeclaration(
@@ -1229,18 +1230,117 @@ def test_gemini_tools_validation_rejects_function_declarations(model_id):
         ]
     )
 
-    with pytest.raises(ValueError, match="gemini_tools should not contain FunctionDeclarations"):
-        GeminiModel(model_id=model_id, gemini_tools=[tool_with_function_declarations])
+    with pytest.raises(ValueError, match="built_in_tools should not contain FunctionDeclarations"):
+        GeminiModel(model_id=model_id, built_in_tools=[tool_with_function_declarations])
 
 
-def test_gemini_tools_validation_allows_non_function_tools(model_id):
+def test__init__gemini_tools_validation_rejects_function_declarations(model_id):
+    tool_with_function_declarations = genai.types.Tool(
+        function_declarations=[
+            genai.types.FunctionDeclaration(
+                name="test_function",
+                description="A test function",
+            )
+        ]
+    )
+
+    with pytest.warns(
+        DeprecationWarning,
+        match="gemini_tools is deprecated and will be removed in v2.0.0. Use built_in_tools instead.",
+    ):
+        with pytest.raises(ValueError, match="built_in_tools should not contain FunctionDeclarations"):
+            GeminiModel(model_id=model_id, gemini_tools=[tool_with_function_declarations])
+
+
+def test__init__built_in_tools(model_id):
     tool_with_google_search = genai.types.Tool(google_search=genai.types.GoogleSearch())
 
-    model = GeminiModel(model_id=model_id, gemini_tools=[tool_with_google_search])
-    assert "gemini_tools" in model.config
+    with warnings.catch_warnings(record=True) as captured_warnings:
+        warnings.simplefilter("always")
+        model = GeminiModel(model_id=model_id, built_in_tools=[tool_with_google_search])
+
+    assert captured_warnings == []
+    assert model.config["built_in_tools"] == [tool_with_google_search]
+    assert "gemini_tools" not in model.config
 
 
-def test_gemini_tools_validation_on_update_config(model):
+def test__init__gemini_tools_normalizes_to_built_in_tools(model_id):
+    tool_with_google_search = genai.types.Tool(google_search=genai.types.GoogleSearch())
+
+    with pytest.warns(
+        DeprecationWarning,
+        match="gemini_tools is deprecated and will be removed in v2.0.0. Use built_in_tools instead.",
+    ) as captured_warnings:
+        model = GeminiModel(model_id=model_id, gemini_tools=[tool_with_google_search])
+
+    assert captured_warnings[0].filename == __file__
+    assert model.config["built_in_tools"] == [tool_with_google_search]
+    assert "gemini_tools" not in model.config
+
+
+def test__init__built_in_tools_and_gemini_tools_raises(model_id):
+    built_in_tool = genai.types.Tool(google_search=genai.types.GoogleSearch())
+    deprecated_tool = genai.types.Tool(code_execution=genai.types.ToolCodeExecution())
+
+    with pytest.raises(ValueError) as error:
+        GeminiModel(
+            model_id=model_id,
+            built_in_tools=[built_in_tool],
+            gemini_tools=[deprecated_tool],
+        )
+
+    assert (
+        str(error.value)
+        == "built_in_tools and gemini_tools cannot be configured in tandem; gemini_tools is deprecated."
+    )
+
+
+def test_update_config_built_in_tools(model):
+    tool_with_google_search = genai.types.Tool(google_search=genai.types.GoogleSearch())
+
+    model.update_config(built_in_tools=[tool_with_google_search])
+
+    tru_tools = model._format_request_config(None, None, None).to_json_dict()["tools"]
+    exp_tools = [
+        {"function_declarations": []},
+        {"google_search": {}},
+    ]
+    assert tru_tools == exp_tools
+    assert model.config["built_in_tools"] == [tool_with_google_search]
+    assert "gemini_tools" not in model.config
+
+
+def test_update_config_gemini_tools_normalizes_to_built_in_tools(model):
+    tool_with_google_search = genai.types.Tool(google_search=genai.types.GoogleSearch())
+
+    with pytest.warns(
+        DeprecationWarning,
+        match="gemini_tools is deprecated and will be removed in v2.0.0. Use built_in_tools instead.",
+    ) as captured_warnings:
+        model.update_config(gemini_tools=[tool_with_google_search])
+
+    assert captured_warnings[0].filename == __file__
+    assert model.config["built_in_tools"] == [tool_with_google_search]
+    assert "gemini_tools" not in model.config
+
+
+def test_update_config_built_in_tools_and_gemini_tools_raises(model):
+    built_in_tool = genai.types.Tool(google_search=genai.types.GoogleSearch())
+    deprecated_tool = genai.types.Tool(code_execution=genai.types.ToolCodeExecution())
+
+    with pytest.raises(ValueError) as error:
+        model.update_config(
+            built_in_tools=[built_in_tool],
+            gemini_tools=[deprecated_tool],
+        )
+
+    assert (
+        str(error.value)
+        == "built_in_tools and gemini_tools cannot be configured in tandem; gemini_tools is deprecated."
+    )
+
+
+def test_update_config_built_in_tools_validation_rejects_function_declarations(model):
     tool_with_function_declarations = genai.types.Tool(
         function_declarations=[
             genai.types.FunctionDeclaration(
@@ -1250,14 +1350,32 @@ def test_gemini_tools_validation_on_update_config(model):
         ]
     )
 
-    with pytest.raises(ValueError, match="gemini_tools should not contain FunctionDeclarations"):
-        model.update_config(gemini_tools=[tool_with_function_declarations])
+    with pytest.raises(ValueError, match="built_in_tools should not contain FunctionDeclarations"):
+        model.update_config(built_in_tools=[tool_with_function_declarations])
+
+
+def test_update_config_gemini_tools_validation_rejects_function_declarations(model):
+    tool_with_function_declarations = genai.types.Tool(
+        function_declarations=[
+            genai.types.FunctionDeclaration(
+                name="test_function",
+                description="A test function",
+            )
+        ]
+    )
+
+    with pytest.warns(
+        DeprecationWarning,
+        match="gemini_tools is deprecated and will be removed in v2.0.0. Use built_in_tools instead.",
+    ):
+        with pytest.raises(ValueError, match="built_in_tools should not contain FunctionDeclarations"):
+            model.update_config(gemini_tools=[tool_with_function_declarations])
 
 
 @pytest.mark.asyncio
-async def test_stream_request_with_gemini_tools(gemini_client, messages, model_id):
+async def test_stream_request_with_built_in_tools(gemini_client, messages, model_id):
     google_search_tool = genai.types.Tool(google_search=genai.types.GoogleSearch())
-    model = GeminiModel(model_id=model_id, gemini_tools=[google_search_tool])
+    model = GeminiModel(model_id=model_id, built_in_tools=[google_search_tool])
 
     await anext(model.stream(messages))
 
@@ -1275,9 +1393,9 @@ async def test_stream_request_with_gemini_tools(gemini_client, messages, model_i
 
 
 @pytest.mark.asyncio
-async def test_stream_request_with_gemini_tools_and_function_tools(gemini_client, messages, tool_spec, model_id):
+async def test_stream_request_with_built_in_tools_and_function_tools(gemini_client, messages, tool_spec, model_id):
     code_execution_tool = genai.types.Tool(code_execution=genai.types.ToolCodeExecution())
-    model = GeminiModel(model_id=model_id, gemini_tools=[code_execution_tool])
+    model = GeminiModel(model_id=model_id, built_in_tools=[code_execution_tool])
 
     await anext(model.stream(messages, tool_specs=[tool_spec]))
 

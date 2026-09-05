@@ -28,7 +28,7 @@ def gemini_tool_model():
         client_args={"api_key": os.getenv("GOOGLE_API_KEY")},
         model_id="gemini-2.5-flash",
         params={"temperature": 0.15},  # Lower temperature for consistent test behavior
-        gemini_tools=[genai.types.Tool(code_execution=genai.types.ToolCodeExecution())],
+        built_in_tools=[genai.types.Tool(code_execution=genai.types.ToolCodeExecution())],
     )
 
 
