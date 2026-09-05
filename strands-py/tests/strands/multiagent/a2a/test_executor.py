@@ -1,6 +1,7 @@
 """Tests for the StrandsA2AExecutor class."""
 
 import base64
+import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -2639,7 +2640,7 @@ async def test_interrupt_advertises_ids_in_data_part(mock_strands_agent, mock_re
         mock_strands_agent,
         mock_request_context,
         mock_event_queue,
-        [Interrupt(id="v1:tool_call:tu-1:abc", name="approve_campaign", reason={"name": "spring"})],
+        [Interrupt(id="v1:tool_call:tu-1:abc", name="approve_campaign", reason={"name": "spring", "limit": 1.5})],
     )
 
     data_parts = [p.root.data for p in _input_required_message(mock_event_queue).parts if isinstance(p.root, DataPart)]
@@ -2647,7 +2648,11 @@ async def test_interrupt_advertises_ids_in_data_part(mock_strands_agent, mock_re
     exp_data = [
         {
             "interrupts": [
-                {"interruptId": "v1:tool_call:tu-1:abc", "name": "approve_campaign", "reason": {"name": "spring"}}
+                {
+                    "interruptId": "v1:tool_call:tu-1:abc",
+                    "name": "approve_campaign",
+                    "reason": {"name": "spring", "limit": 1.5},
+                }
             ]
         }
     ]
@@ -2694,16 +2699,30 @@ async def test_interrupt_advertises_every_pending_id(mock_strands_agent, mock_re
     assert tru_ids == exp_ids
 
 
-@pytest.mark.asyncio
-async def test_interrupt_reason_that_is_not_json_falls_back_to_text(
-    mock_strands_agent, mock_request_context, mock_event_queue
-):
-    """A reason the transport cannot encode degrades to its string form rather than failing late."""
-    from strands.interrupt import Interrupt
+class _UnserializableReason:
+    """A reason no JSON encoder accepts."""
 
-    class Unserializable:
-        def __str__(self):
-            return "<custom reason>"
+    def __str__(self):
+        return "<custom reason>"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reason", "exp_reason"),
+    [
+        (_UnserializableReason(), "<custom reason>"),
+        # pydantic serializes a non-finite float to null, so the reason would vanish with no error.
+        (float("nan"), "nan"),
+        (float("inf"), "inf"),
+        # Only the non-finite scalar degrades; a structured reason keeps its shape.
+        ({"limit": float("inf"), "note": "cap"}, {"limit": float("inf"), "note": "cap"}),
+    ],
+)
+async def test_interrupt_reason_that_is_not_json_falls_back_to_text(
+    reason, exp_reason, mock_strands_agent, mock_request_context, mock_event_queue
+):
+    """A reason the wire would drop or reject degrades to its string form rather than vanishing."""
+    from strands.interrupt import Interrupt
 
     executor = StrandsA2AExecutor(mock_strands_agent)
     await _run_until_interrupt(
@@ -2711,12 +2730,32 @@ async def test_interrupt_reason_that_is_not_json_falls_back_to_text(
         mock_strands_agent,
         mock_request_context,
         mock_event_queue,
-        [Interrupt(id="int-1", name="approval", reason=Unserializable())],
+        [Interrupt(id="int-1", name="approval", reason=reason)],
     )
 
     data_parts = [p.root.data for p in _input_required_message(mock_event_queue).parts if isinstance(p.root, DataPart)]
     tru_reason = data_parts[0]["interrupts"][0]["reason"]
-    exp_reason = "<custom reason>"
+    assert tru_reason == exp_reason
+
+
+@pytest.mark.asyncio
+async def test_interrupt_reason_survives_wire_serialization(mock_strands_agent, mock_request_context, mock_event_queue):
+    """The reason a client actually receives is the degraded text, not a silent null."""
+    from strands.interrupt import Interrupt
+
+    executor = StrandsA2AExecutor(mock_strands_agent)
+    await _run_until_interrupt(
+        executor,
+        mock_strands_agent,
+        mock_request_context,
+        mock_event_queue,
+        [Interrupt(id="int-1", name="approval", reason=float("nan"))],
+    )
+
+    wire = json.loads(_input_required_message(mock_event_queue).model_dump_json(exclude_none=True))
+    data_parts = [part for part in wire["parts"] if part["kind"] == "data"]
+    tru_reason = data_parts[0]["data"]["interrupts"][0]["reason"]
+    exp_reason = "nan"
     assert tru_reason == exp_reason
 
 
