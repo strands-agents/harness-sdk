@@ -334,7 +334,8 @@ class AgentAsToolStreamEvent(ToolStreamEvent):
 
     Extends ToolStreamEvent with a reference to the originating _AgentAsTool so callers
     can distinguish sub-agent stream events from regular tool stream events and access
-    the wrapped agent, tool name, description, etc.
+    the wrapped agent, tool name, description, etc. The payload additionally carries
+    ``sub_agent``, for a consumer that sees only the emitted dict.
     """
 
     def __init__(self, tool_use: ToolUse, tool_stream_data: Any, agent_as_tool: "_AgentAsTool") -> None:
@@ -346,6 +347,9 @@ class AgentAsToolStreamEvent(ToolStreamEvent):
             agent_as_tool: The _AgentAsTool instance that produced this event.
         """
         super().__init__(tool_use, tool_stream_data)
+        # A consumer of the emitted dict has no other way to tell a sub-agent's forwarded event
+        # from a chunk the tool yielded itself: without this key the two payloads are identical.
+        self["tool_stream_event"]["sub_agent"] = True
         self._agent_as_tool = agent_as_tool
 
     @property

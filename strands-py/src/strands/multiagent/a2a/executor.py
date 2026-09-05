@@ -64,6 +64,11 @@ INTERRUPT_RESPONSE_KEY = "interruptResponse"
 # Each entry carries the `interruptId` that the matching interrupt response must echo back.
 INTERRUPTS_KEY = "interrupts"
 
+# Key under which a `working` status message carries one chunk yielded by a streaming tool. The
+# chunk travels in a DataPart alone: clients that concatenate the text of every status update read
+# the agent's answer, and only a client that reads this key sees the tool progress.
+TOOL_STREAM_KEY = "toolStream"
+
 # What this executor invokes the agent with: fresh conversational content, or interrupt responses
 # resuming a task parked in `input_required`. Deliberately narrower than the public `AgentInput`,
 # which also admits `str`, `Messages`, and `None` — an A2A message only ever converts to these two.
@@ -80,14 +85,39 @@ def _is_interrupt_resume(prompt: _AgentPrompt) -> bool:
 def _jsonable(value: Any) -> Any:
     """Return a value unchanged when it can cross the JSON-RPC boundary, else its string form.
 
-    An interrupt reason is arbitrary user data. A value the transport cannot encode would otherwise
-    surface only while serializing the response, long after the interrupt details are assembled.
+    An interrupt reason and a tool yield are both arbitrary user data. A value the transport cannot
+    encode would otherwise surface only while serializing the response, long after it is assembled.
     """
     try:
         json.dumps(value)
     except (TypeError, ValueError):
         return str(value)
     return value
+
+
+def _sub_agent_progress(data: Any) -> list[dict[str, Any]] | None:
+    """A sub-agent's tool activity for one completed message, with every payload removed.
+
+    Returns None when the message carries no tool activity to report.
+
+    A sub-agent's messages are the SDK's to forward rather than the tool author's, so they are
+    reduced to which tool ran and how it ended. Tool inputs and results, text, reasoning, usage
+    metrics and tracking ids stay server-side: the parent agent decides what of a sub-agent's work
+    reaches the client, and its own answer is the vehicle for that.
+    """
+    message = data.get("message") if isinstance(data, dict) else None
+    if not isinstance(message, dict):
+        return None
+
+    activity: list[dict[str, Any]] = []
+    for block in message.get("content", []):
+        if tool_use := block.get("toolUse"):
+            activity.append({"toolUse": {"toolUseId": tool_use.get("toolUseId"), "name": tool_use.get("name")}})
+        elif tool_result := block.get("toolResult"):
+            activity.append(
+                {"toolResult": {"toolUseId": tool_result.get("toolUseId"), "status": tool_result.get("status")}}
+            )
+    return activity or None
 
 
 @dataclass
@@ -474,14 +504,17 @@ class StrandsA2AExecutor(AgentExecutor):
         task updates and handling the final result when streaming is complete.
 
         Args:
-            event: The streaming event from the agent, containing either 'data' for
-                incremental content or 'result' for the final response.
+            event: The streaming event from the agent, containing 'data' for incremental content,
+                'tool_stream_event' for a chunk yielded by a streaming tool, or 'result' for the
+                final response.
             updater: The task updater for managing task state and sending updates.
             stream_state: Per-invocation streaming state when A2A-compliant streaming is enabled,
                 else None.
         """
         logger.debug("Streaming event: %s", event)
-        if "data" in event:
+        if tool_stream_event := event.get("tool_stream_event"):
+            await self._handle_tool_stream_event(tool_stream_event, updater)
+        elif "data" in event:
             if text_content := event["data"]:
                 if stream_state is not None:
                     await updater.add_artifact(
@@ -501,6 +534,41 @@ class StrandsA2AExecutor(AgentExecutor):
                             updater.task_id,
                         ),
                     )
+
+    async def _handle_tool_stream_event(self, tool_stream_event: dict[str, Any], updater: TaskUpdater) -> None:
+        """Forward one chunk yielded by a streaming tool as a `working` status update.
+
+        Tool progress is progress, not output, so it travels as a status update and leaves the
+        `agent_response` artifact holding the answer alone. The update carries a DataPart and no
+        TextPart, which keeps clients that read only prose unaffected. Both streaming modes share
+        this path, since a status update needs no artifact bookkeeping.
+
+        A tool's own yields are forwarded whole, since the tool chose them. An ``Agent.as_tool()``
+        sub-agent yields nothing deliberately — the SDK forwards its entire stream, a delta per
+        generated token plus one completed message per turn — so those are reduced to the tool
+        activity of each completed message: which tool ran and how it ended, and no payload.
+
+        Args:
+            tool_stream_event: The agent's `tool_stream_event` payload, holding the `tool_use` that
+                produced the chunk and the `data` it yielded.
+            updater: The task updater for managing task state and sending updates.
+        """
+        data = tool_stream_event["data"]
+        if tool_stream_event.get("sub_agent"):
+            if (activity := _sub_agent_progress(data)) is None:
+                return
+            data = {"subAgent": activity}
+
+        tool_use = tool_stream_event["tool_use"]
+        payload = {
+            "toolUseId": tool_use["toolUseId"],
+            "name": tool_use["name"],
+            "data": _jsonable(data),
+        }
+        await updater.update_status(
+            TaskState.working,
+            updater.new_agent_message(parts=[Part(root=DataPart(data={TOOL_STREAM_KEY: payload}))]),
+        )
 
     async def _handle_agent_result(
         self, result: SAAgentResult | None, updater: TaskUpdater, stream_state: _StreamState | None
