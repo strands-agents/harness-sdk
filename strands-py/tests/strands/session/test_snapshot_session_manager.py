@@ -678,10 +678,14 @@ async def test_list_snapshot_ids_pagination(storage):
     agent("three")
 
     all_ids = await manager.list_snapshot_ids(agent)
+    history_prefix = "session/s1/scopes/agent/a1/snapshots/immutable_history/"
+    await storage.write(f"{history_prefix}snapshot_not-a-uuid.json", b"invalid")
+
     assert len(all_ids) == 3
     assert all_ids == sorted(all_ids)
 
     assert await manager.list_snapshot_ids(agent, limit=2) == all_ids[:2]
+    assert "not-a-uuid" not in await manager.list_snapshot_ids(agent)
     assert await manager.list_snapshot_ids(agent, limit=0) == []
     assert await manager.list_snapshot_ids(agent, start_after=all_ids[0]) == all_ids[1:]
 
