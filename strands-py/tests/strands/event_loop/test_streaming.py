@@ -418,6 +418,44 @@ def test_handle_content_block_delta(event: ContentBlockDeltaEvent, event_type, s
                 "redactedContent": b"",
             },
         ),
+        # Tool Use - Empty string input (zero-argument tool)
+        (
+            {
+                "content": [],
+                "current_tool_use": {"toolUseId": "456", "name": "no_arg_tool", "input": ""},
+                "text": "",
+                "reasoningText": "",
+                "citationsContent": [],
+                "redactedContent": b"",
+            },
+            {
+                "content": [{"toolUse": {"toolUseId": "456", "name": "no_arg_tool", "input": {}}}],
+                "current_tool_use": {},
+                "text": "",
+                "reasoningText": "",
+                "citationsContent": [],
+                "redactedContent": b"",
+            },
+        ),
+        # Tool Use - Whitespace-only input (zero-argument tool)
+        (
+            {
+                "content": [],
+                "current_tool_use": {"toolUseId": "789", "name": "whitespace_tool", "input": "   \n\t  "},
+                "text": "",
+                "reasoningText": "",
+                "citationsContent": [],
+                "redactedContent": b"",
+            },
+            {
+                "content": [{"toolUse": {"toolUseId": "789", "name": "whitespace_tool", "input": {}}}],
+                "current_tool_use": {},
+                "text": "",
+                "reasoningText": "",
+                "citationsContent": [],
+                "redactedContent": b"",
+            },
+        ),
         # Text
         (
             {
@@ -615,6 +653,40 @@ def test_handle_content_block_stop_logs_warning_on_malformed_json(mock_logger):
     call_args = mock_logger.warning.call_args
     assert "test_tool" in str(call_args)
     assert "{invalid json}" in str(call_args)
+
+
+@unittest.mock.patch("strands.event_loop.streaming.logger")
+def test_handle_content_block_stop_no_warning_for_empty_input(mock_logger):
+    """Zero-argument tools with empty input should not log a warning."""
+    state = {
+        "content": [],
+        "current_tool_use": {"toolUseId": "123", "name": "zero_arg_tool", "input": ""},
+        "text": "",
+        "reasoningText": "",
+        "citationsContent": [],
+        "redactedContent": b"",
+    }
+
+    strands.event_loop.streaming.handle_content_block_stop(state)
+
+    mock_logger.warning.assert_not_called()
+
+
+@unittest.mock.patch("strands.event_loop.streaming.logger")
+def test_handle_content_block_stop_no_warning_for_whitespace_input(mock_logger):
+    """Zero-argument tools with whitespace-only input should not log a warning."""
+    state = {
+        "content": [],
+        "current_tool_use": {"toolUseId": "456", "name": "another_zero_arg", "input": "   \n\t  "},
+        "text": "",
+        "reasoningText": "",
+        "citationsContent": [],
+        "redactedContent": b"",
+    }
+
+    strands.event_loop.streaming.handle_content_block_stop(state)
+
+    mock_logger.warning.assert_not_called()
 
 
 def test_handle_message_stop():
