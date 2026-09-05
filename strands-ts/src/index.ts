@@ -310,6 +310,7 @@ export {
   type McpCallToolOptions,
   type TasksConfig,
   type McpConnectionState,
+  type McpLoadServersOptions,
   type McpServerConfig,
   type SerializableMcpToolFilters,
   McpClient,
