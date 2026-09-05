@@ -181,3 +181,35 @@ class VideoContent(TypedDict):
 
     format: VideoFormat
     source: VideoSource
+
+
+AudioFormat = Literal["mp3", "wav", "flac", "ogg", "webm"]
+"""Supported audio formats."""
+
+
+class AudioSource(TypedDict, total=False):
+    """Contains the content of an audio file.
+
+    Only one of `bytes` or `s3Location` should be specified.
+
+    Attributes:
+        bytes: The binary content of the audio.
+        location: Location of the audio.
+    """
+
+    bytes: bytes
+    location: SourceLocation
+
+
+class AudioContent(TypedDict):
+    """An audio file to include in a message.
+
+    - Docs: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_AudioBlock.html
+
+    Attributes:
+        format: The format of the audio (e.g., "mp3", "wav").
+        source: The source containing the audio's binary content.
+    """
+
+    format: AudioFormat
+    source: AudioSource
