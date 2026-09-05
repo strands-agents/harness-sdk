@@ -28,6 +28,7 @@ class Status(Enum):
 
     Attributes:
         PENDING: Task has not started execution yet.
+        DISPATCHED: Node has been dispatched but execution has not started yet.
         EXECUTING: Task is currently running.
         COMPLETED: Task finished successfully.
         FAILED: Task encountered an error and could not complete.
@@ -35,6 +36,7 @@ class Status(Enum):
     """
 
     PENDING = "pending"
+    DISPATCHED = "dispatched"
     EXECUTING = "executing"
     COMPLETED = "completed"
     FAILED = "failed"
