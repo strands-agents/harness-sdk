@@ -728,9 +728,17 @@ class OpenAIModel(Model):
                 logger.debug("got response from model")
                 yield self.format_chunk({"chunk_type": "message_start"})
                 tool_calls: dict[int, list[Any]] = {}
-                data_type = None
+                data_type: str | None = None
                 finish_reason = None  # Store finish_reason for later use
                 event = None  # Initialize for scope safety
+
+                # Chat Completions interleaves fragments from parallel tool calls, distinguished only by index,
+                # while the event loop accumulates tool use deltas into a single slot. So only the first index
+                # streams its fragments inline; any other is buffered and replayed grouped once the turn ends.
+                inline_tool_index: int | None = None
+                inline_tool_blocked = False
+                # Text and reasoning held back while a tool block is open, flushed after that block closes.
+                deferred_content: list[tuple[str, str]] = []
 
                 async for event in response:
                     # Defensive: skip events with empty or missing choices
@@ -743,35 +751,44 @@ class OpenAIModel(Model):
                         reasoning_content = getattr(choice.delta, "reasoning", None)
 
                     if isinstance(reasoning_content, str) and reasoning_content:
-                        chunks, data_type = self._stream_switch_content("reasoning_content", data_type)
+                        chunks, data_type = self._stream_text_content(
+                            "reasoning_content", reasoning_content, data_type, deferred_content
+                        )
                         for chunk in chunks:
                             yield chunk
-                        yield self.format_chunk(
-                            {
-                                "chunk_type": "content_delta",
-                                "data_type": data_type,
-                                "data": reasoning_content,
-                            }
-                        )
 
                     if choice.delta.content:
-                        chunks, data_type = self._stream_switch_content("text", data_type)
+                        chunks, data_type = self._stream_text_content(
+                            "text", choice.delta.content, data_type, deferred_content
+                        )
                         for chunk in chunks:
                             yield chunk
-                        yield self.format_chunk(
-                            {"chunk_type": "content_delta", "data_type": data_type, "data": choice.delta.content}
-                        )
 
                     for tool_call in choice.delta.tool_calls or []:
+                        opens_tool_call = tool_call.index not in tool_calls
                         tool_calls.setdefault(tool_call.index, []).append(tool_call)
+
+                        chunks, data_type, inline_tool_index, inline_tool_blocked = self._stream_tool_fragment(
+                            tool_call, opens_tool_call, data_type, inline_tool_index, inline_tool_blocked
+                        )
+                        for chunk in chunks:
+                            yield chunk
 
                     if choice.finish_reason:
                         finish_reason = choice.finish_reason  # Store for use outside loop
-                        if data_type:
-                            yield self.format_chunk({"chunk_type": "content_stop", "data_type": data_type})
                         break
 
-                for tool_deltas in tool_calls.values():
+                if data_type:
+                    yield self.format_chunk({"chunk_type": "content_stop", "data_type": data_type})
+                    data_type = None
+
+                for chunk in self._stream_deferred_content(deferred_content):
+                    yield chunk
+
+                for tool_index, tool_deltas in tool_calls.items():
+                    if tool_index == inline_tool_index:
+                        continue  # Already streamed inline.
+
                     yield self.format_chunk(
                         {"chunk_type": "content_start", "data_type": "tool", "data": tool_deltas[0]}
                     )
@@ -821,6 +838,97 @@ class OpenAIModel(Model):
             chunks.append(self.format_chunk({"chunk_type": "content_start", "data_type": data_type}))
 
         return chunks, data_type
+
+    def _stream_text_content(
+        self, data_type: str, content: str, prev_data_type: str | None, deferred: list[tuple[str, str]]
+    ) -> tuple[list[StreamEvent], str | None]:
+        """Handle a text or reasoning delta, holding it back while a tool block is open.
+
+        Args:
+            data_type: The content data type, either "text" or "reasoning_content".
+            content: The streamed content.
+            prev_data_type: The currently open content data type.
+            deferred: Collector for content that cannot be emitted until the open tool block closes.
+
+        Returns:
+            Tuple containing:
+            - Events for this delta, empty when the content is deferred.
+            - The open content data type.
+        """
+        if prev_data_type == "tool":
+            deferred.append((data_type, content))
+            return [], prev_data_type
+
+        chunks, data_type = self._stream_switch_content(data_type, prev_data_type)
+        chunks.append(self.format_chunk({"chunk_type": "content_delta", "data_type": data_type, "data": content}))
+
+        return chunks, data_type
+
+    def _stream_deferred_content(self, deferred: list[tuple[str, str]]) -> list[StreamEvent]:
+        """Build the events for content that was held back while a tool block was open.
+
+        Args:
+            deferred: Text and reasoning collected while a tool block was open.
+
+        Returns:
+            Events for the deferred content, empty when nothing was held back.
+        """
+        chunks: list[StreamEvent] = []
+        data_type: str | None = None
+
+        for content_type, content in deferred:
+            switch_chunks, data_type = self._stream_switch_content(content_type, data_type)
+            chunks.extend(switch_chunks)
+            chunks.append(self.format_chunk({"chunk_type": "content_delta", "data_type": data_type, "data": content}))
+
+        if data_type:
+            chunks.append(self.format_chunk({"chunk_type": "content_stop", "data_type": data_type}))
+
+        return chunks
+
+    def _stream_tool_fragment(
+        self,
+        tool_call: Any,
+        opens_tool_call: bool,
+        prev_data_type: str | None,
+        inline_index: int | None,
+        blocked: bool,
+    ) -> tuple[list[StreamEvent], str | None, int | None, bool]:
+        """Handle one streamed tool call fragment.
+
+        Args:
+            tool_call: The streamed fragment.
+            opens_tool_call: Whether this is the first fragment for its index.
+            prev_data_type: The currently open content data type.
+            inline_index: Index of the tool call already streaming inline, if any.
+            blocked: Whether inline streaming is off for the rest of the turn.
+
+        Returns:
+            Tuple containing:
+            - Events for this fragment, empty when it is buffered for the grouped replay.
+            - The open content data type.
+            - Index of the tool call streaming inline.
+            - Whether inline streaming is off for the rest of the turn.
+        """
+        chunks: list[StreamEvent] = []
+
+        if opens_tool_call and inline_index is None and not blocked:
+            function = getattr(tool_call, "function", None)
+            if not tool_call.id or not getattr(function, "name", None):
+                # The opening fragment carries no tool identity, so no block can be started for it.
+                return chunks, prev_data_type, inline_index, True
+
+            if prev_data_type is not None:
+                chunks.append(self.format_chunk({"chunk_type": "content_stop", "data_type": prev_data_type}))
+
+            chunks.append(self.format_chunk({"chunk_type": "content_start", "data_type": "tool", "data": tool_call}))
+            prev_data_type = "tool"
+            inline_index = tool_call.index
+
+        if inline_index == tool_call.index:
+            chunks.append(self.format_chunk({"chunk_type": "content_delta", "data_type": "tool", "data": tool_call}))
+
+        return chunks, prev_data_type, inline_index, blocked
 
     @override
     async def structured_output(
