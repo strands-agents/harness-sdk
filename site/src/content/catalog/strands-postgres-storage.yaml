@@ -1,0 +1,8 @@
+name: strands-postgres-storage
+description: PostgreSQL Storage backend for Strands Agents — durable bytes-under-keys for session snapshots, context offloading, and memory stores.
+integrationType: storage
+languages:
+  python:
+    package: strands-postgres-storage
+github: https://github.com/skamalj/strands-agents-session
+addedDate: 2026-08-14
