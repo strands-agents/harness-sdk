@@ -158,6 +158,24 @@ def _apply_view_range(file_content: str, view_range: list[int] | None) -> tuple[
     return content, start
 
 
+def _find_occurrences(haystack: str, needle: str) -> list[tuple[int, int]]:
+    """Locate every non-overlapping occurrence of ``needle``.
+
+    Args:
+        haystack: The text to search.
+        needle: The substring to find.
+
+    Returns:
+        A list of (offset, 1-indexed line number) for each occurrence, in order.
+    """
+    results: list[tuple[int, int]] = []
+    position = haystack.find(needle)
+    while position != -1:
+        results.append((position, len(haystack[:position].split("\n"))))
+        position = haystack.find(needle, position + len(needle))
+    return results
+
+
 def _build_str_replace_result(
     original_content: str, old_str: str, new_str: str | None, file_path: str
 ) -> tuple[str, str, int]:
@@ -175,25 +193,29 @@ def _build_str_replace_result(
     Raises:
         ValueError: If ``old_str`` does not appear exactly once.
     """
-    file_content = original_content.replace("\t", "        ")
-    expanded_old = old_str.replace("\t", "        ")
-    expanded_new = new_str.replace("\t", "        ") if new_str else ""
+    if not old_str:
+        raise ValueError("No replacement was performed, old_str must not be empty.")
 
-    occurrences = file_content.count(expanded_old)
-    if occurrences == 0:
+    replacement = new_str or ""
+
+    # Matching and splicing both run against the raw content: this result is written back to the
+    # file, so any transform applied here would persist. Tab expansion belongs to _make_output,
+    # which formats the snippet for display only.
+    occurrences = _find_occurrences(original_content, old_str)
+    if not occurrences:
         raise ValueError(f"No replacement was performed, old_str `{old_str}` did not appear verbatim in {file_path}.")
-    if occurrences > 1:
-        lines = file_content.split("\n")
-        line_numbers = [i + 1 for i, line in enumerate(lines) if expanded_old in line]
+    if len(occurrences) > 1:
+        line_numbers = [line for _, line in occurrences]
         raise ValueError(
             f"No replacement was performed. Multiple occurrences of old_str `{old_str}` in lines "
             f"{line_numbers}. Please ensure it is unique"
         )
 
-    new_content = file_content.replace(expanded_old, expanded_new, 1)
-    replacement_line = len(file_content[: file_content.index(expanded_old)].split("\n")) - 1
-    inserted_lines = len(expanded_new.split("\n"))
-    original_lines = len(expanded_old.split("\n"))
+    match_index, _ = occurrences[0]
+    new_content = original_content[:match_index] + replacement + original_content[match_index + len(old_str) :]
+    replacement_line = len(original_content[:match_index].split("\n")) - 1
+    inserted_lines = len(replacement.split("\n"))
+    original_lines = len(old_str.split("\n"))
     line_difference = inserted_lines - original_lines
 
     new_lines = new_content.split("\n")
@@ -218,10 +240,8 @@ def _build_insert_result(original_content: str, insert_line: int, new_str: str) 
     Raises:
         ValueError: If ``insert_line`` is out of bounds.
     """
-    file_text = original_content.replace("\t", "        ")
-    expanded_new = new_str.replace("\t", "        ")
-
-    file_text_lines = file_text.split("\n")
+    # Raw content for the same reason as _build_str_replace_result: this is written back to disk.
+    file_text_lines = original_content.split("\n")
     n_lines = len(file_text_lines)
 
     if insert_line < 0 or insert_line > n_lines:
@@ -230,10 +250,10 @@ def _build_insert_result(original_content: str, insert_line: int, new_str: str) 
             f"of the file: [0, {n_lines}]"
         )
 
-    new_str_lines = expanded_new.split("\n")
+    new_str_lines = new_str.split("\n")
     new_file_text_lines = (
         new_str_lines
-        if file_text == ""
+        if original_content == ""
         else [*file_text_lines[:insert_line], *new_str_lines, *file_text_lines[insert_line:]]
     )
 

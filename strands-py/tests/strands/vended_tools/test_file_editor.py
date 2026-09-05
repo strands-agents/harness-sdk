@@ -281,6 +281,25 @@ class TestStrReplace:
             await editor(command="str_replace", path=file_path, tool_context=ctx, old_str="DUP", new_str="NEW")
 
     @pytest.mark.asyncio
+    async def test_multiple_occurrences_reports_the_lines(self, editor, ctx, tmp_path):
+        """The error names the lines the duplicates start on, so the caller can disambiguate."""
+        file_path = _write(tmp_path / "test.txt", "DUP Line 1\nLine 2\nDUP Line 3")
+        with pytest.raises(ValueError, match=r"in lines \[1, 3\]"):
+            await editor(command="str_replace", path=file_path, tool_context=ctx, old_str="DUP", new_str="NEW")
+
+    @pytest.mark.asyncio
+    async def test_multiple_occurrences_of_multiline_old_str_reports_the_lines(self, editor, ctx, tmp_path):
+        """A multi-line ``old_str`` reports its start lines rather than an empty list.
+
+        The occurrences used to be counted by testing ``old_str in line`` for each
+        line, which no single line of a multi-line ``old_str`` can satisfy, so the
+        message said ``in lines []`` and told the caller nothing.
+        """
+        file_path = _write(tmp_path / "test.txt", "A\nB\nX\nA\nB")
+        with pytest.raises(ValueError, match=r"in lines \[1, 4\]"):
+            await editor(command="str_replace", path=file_path, tool_context=ctx, old_str="A\nB", new_str="Z")
+
+    @pytest.mark.asyncio
     async def test_nonexistent_raises(self, editor, ctx, tmp_path):
         with pytest.raises(ValueError, match="does not exist"):
             await editor(
@@ -362,6 +381,56 @@ class TestInsert:
         d.mkdir()
         with pytest.raises(ValueError, match="directory"):
             await editor(command="insert", path=str(d), tool_context=ctx, insert_line=0, new_str="NEW")
+
+
+class TestPreservesUntouchedBytes:
+    """Guards #4049: an edit rewrites only the requested region.
+
+    Tabs are expanded for `cat -n` display, never in the content written back to the file. A
+    Makefile is the sharp case, since make requires recipe lines to begin with a tab.
+    """
+
+    MAKEFILE = "build:\n\tgcc -o app main.c\n\ntest:\n\tpytest tests/\n"
+
+    @pytest.mark.asyncio
+    async def test_str_replace_leaves_tabs_outside_the_match(self, editor, ctx, tmp_path):
+        file_path = _write(tmp_path / "Makefile", self.MAKEFILE)
+
+        await editor(command="str_replace", path=file_path, old_str="test:", new_str="check:", tool_context=ctx)
+
+        assert (tmp_path / "Makefile").read_text() == self.MAKEFILE.replace("test:", "check:")
+
+    @pytest.mark.asyncio
+    async def test_insert_leaves_tabs_intact(self, editor, ctx, tmp_path):
+        file_path = _write(tmp_path / "Makefile", self.MAKEFILE)
+
+        await editor(command="insert", path=file_path, insert_line=0, new_str=".PHONY: build test", tool_context=ctx)
+
+        assert (tmp_path / "Makefile").read_text() == ".PHONY: build test\n" + self.MAKEFILE
+
+    @pytest.mark.asyncio
+    async def test_str_replace_matches_tabs_verbatim(self, editor, ctx, tmp_path):
+        """A tab in old_str matches a tab in the file, not the spaces it displays as."""
+        file_path = _write(tmp_path / "Makefile", self.MAKEFILE)
+
+        await editor(
+            command="str_replace",
+            path=file_path,
+            old_str="\tpytest tests/",
+            new_str="\tpytest -q tests/",
+            tool_context=ctx,
+        )
+
+        assert (tmp_path / "Makefile").read_text() == self.MAKEFILE.replace("pytest tests/", "pytest -q tests/")
+
+    @pytest.mark.asyncio
+    async def test_empty_old_str_reports_the_empty_argument(self, editor, ctx, tmp_path):
+        file_path = _write(tmp_path / "notes.txt", "alpha\nbeta\n")
+
+        with pytest.raises(ValueError, match="old_str must not be empty"):
+            await editor(command="str_replace", path=file_path, old_str="", new_str="x", tool_context=ctx)
+
+        assert (tmp_path / "notes.txt").read_text() == "alpha\nbeta\n"
 
 
 class TestFileSizeLimit:
