@@ -236,7 +236,7 @@ class MistralModel(Model):
             role = message["role"]
             contents = message["content"]
 
-            text_contents: list[str] = []
+            message_contents: list[str | dict[str, Any]] = []
             tool_calls: list[dict[str, Any]] = []
             tool_messages: list[dict[str, Any]] = []
 
@@ -250,19 +250,25 @@ class MistralModel(Model):
                     logger.warning("cachePoint content block is not supported by Mistral | skipping")
                     continue
 
-                if "text" in content:
-                    formatted_content = self._format_request_message_content(content)
-                    if isinstance(formatted_content, str):
-                        text_contents.append(formatted_content)
+                if "text" in content or "image" in content:
+                    message_contents.append(self._format_request_message_content(content))
                 elif "toolUse" in content:
                     tool_calls.append(self._format_request_message_tool_call(content["toolUse"]))
                 elif "toolResult" in content:
                     tool_messages.append(self._format_request_tool_message(content["toolResult"]))
 
-            if text_contents or tool_calls:
+            if message_contents or tool_calls:
+                message_content: str | list[dict[str, Any]]
+                if any(isinstance(content, dict) for content in message_contents):
+                    message_content = [
+                        {"type": "text", "text": content} if isinstance(content, str) else content
+                        for content in message_contents
+                    ]
+                else:
+                    message_content = " ".join(content for content in message_contents if isinstance(content, str))
                 formatted_message: dict[str, Any] = {
                     "role": role,
-                    "content": " ".join(text_contents) if text_contents else "",
+                    "content": message_content,
                 }
 
                 if tool_calls:
