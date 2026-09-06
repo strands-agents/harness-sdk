@@ -1751,20 +1751,54 @@ def test_format_request_messages_with_none_system_prompt_content():
     assert result == expected
 
 
-def test_format_request_messages_drops_cache_points():
-    """Test that cache points are dropped in OpenAI format_request_messages."""
+def test_format_request_messages_with_system_prompt_cache_point():
+    """Test that a system prompt cache point is translated to cache_control."""
     messages = [{"role": "user", "content": [{"text": "Hello"}]}]
     system_prompt_content = [{"text": "You are a helpful assistant."}, {"cachePoint": {"type": "default"}}]
 
     result = OpenAIModel.format_request_messages(messages, system_prompt_content=system_prompt_content)
 
-    # Cache points should be dropped, only text content included
+    expected = [
+        {
+            "role": "system",
+            "content": [
+                {"type": "text", "text": "You are a helpful assistant.", "cache_control": {"type": "ephemeral"}}
+            ],
+        },
+        {"role": "user", "content": [{"text": "Hello", "type": "text"}]},
+    ]
+
+    assert result == expected
+
+
+def test_format_request_messages_with_system_prompt_cache_point_ttl():
+    """Test that a system prompt cache point's ttl carries through to cache_control."""
+    messages = [{"role": "user", "content": [{"text": "Hello"}]}]
+    system_prompt_content = [
+        {"text": "You are a helpful assistant."},
+        {"cachePoint": {"type": "default", "ttl": "1h"}},
+    ]
+
+    result = OpenAIModel.format_request_messages(messages, system_prompt_content=system_prompt_content)
+
+    assert result[0]["content"][0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+
+
+def test_format_request_messages_skips_leading_system_cache_point(caplog):
+    """A cache point with no preceding system text block is skipped and warned, not attached."""
+    caplog.set_level(logging.WARNING, logger="strands.models.openai")
+    messages = [{"role": "user", "content": [{"text": "Hello"}]}]
+    system_prompt_content = [{"cachePoint": {"type": "default"}}, {"text": "You are a helpful assistant."}]
+
+    result = OpenAIModel.format_request_messages(messages, system_prompt_content=system_prompt_content)
+
     expected = [
         {"role": "system", "content": "You are a helpful assistant."},
         {"role": "user", "content": [{"text": "Hello", "type": "text"}]},
     ]
 
     assert result == expected
+    assert "no preceding system text block accepts a cache point" in caplog.text
 
 
 @pytest.mark.asyncio

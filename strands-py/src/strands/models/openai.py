@@ -369,6 +369,12 @@ class OpenAIModel(Model):
     ) -> list[dict[str, Any]]:
         """Format system messages for OpenAI-compatible providers.
 
+        A caller-placed ``cachePoint`` block marks the preceding system text block as cacheable,
+        emitted as an Anthropic/Bedrock-compatible ``cache_control`` field on that block's content
+        part. Plain OpenAI has no such field and ignores it; gateways in front of Anthropic or
+        Bedrock (Portkey, LiteLLM, OpenRouter, ...) route it to the underlying provider's cache.
+        See https://github.com/strands-agents/harness-sdk/issues/1140.
+
         Args:
             system_prompt: System prompt to provide context to the model.
             system_prompt_content: System prompt content blocks to provide context to the model.
@@ -381,12 +387,39 @@ class OpenAIModel(Model):
         if system_prompt and system_prompt_content is None:
             system_prompt_content = [{"text": system_prompt}]
 
-        # TODO: Handle caching blocks https://github.com/strands-agents/harness-sdk/issues/1140
-        return [
-            {"role": "system", "content": content["text"]}
-            for content in system_prompt_content or []
-            if "text" in content
-        ]
+        formatted: list[dict[str, Any]] = []
+        for block in system_prompt_content or []:
+            if "cachePoint" in block:
+                if formatted and isinstance(formatted[-1]["content"], str):
+                    formatted[-1]["content"] = [
+                        {
+                            "type": "text",
+                            "text": formatted[-1]["content"],
+                            "cache_control": cls._format_cache_control(block["cachePoint"].get("ttl")),
+                        }
+                    ]
+                else:
+                    logger.warning("no preceding system text block accepts a cache point | skipped cache point")
+                continue
+            if "text" in block:
+                formatted.append({"role": "system", "content": block["text"]})
+
+        return formatted
+
+    @staticmethod
+    def _format_cache_control(ttl: str | None) -> dict[str, Any]:
+        """Build an Anthropic/Bedrock-compatible ``cache_control`` value for a system content part.
+
+        Args:
+            ttl: Optional TTL duration carried by the cache point.
+
+        Returns:
+            A cache_control dict.
+        """
+        cache_control: dict[str, Any] = {"type": "ephemeral"}
+        if ttl:
+            cache_control["ttl"] = ttl
+        return cache_control
 
     @classmethod
     def _format_regular_messages(cls, messages: Messages, **kwargs: Any) -> list[dict[str, Any]]:
