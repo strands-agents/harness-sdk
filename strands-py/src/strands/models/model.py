@@ -256,6 +256,8 @@ class Model(abc.ABC):
         tool_choice: ToolChoice | None = None,
         system_prompt_content: list[SystemContentBlock] | None = None,
         invocation_state: dict[str, Any] | None = None,
+        model_state: dict[str, Any] | None = None,
+        dynamic_trailing_blocks: int = 0,
         cancel_signal: threading.Event | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[StreamEvent]:
@@ -274,6 +276,9 @@ class Model(abc.ABC):
             tool_choice: Selection strategy for tool invocation.
             system_prompt_content: System prompt content blocks for advanced features like caching.
             invocation_state: Caller-provided state/context that was passed to the agent when it was invoked.
+            model_state: Runtime state for model providers (e.g., server-side response ids).
+            dynamic_trailing_blocks: How many trailing blocks of the last user message are rebuilt on every
+                call, so a provider placing cache points keeps its own ahead of them.
             cancel_signal: Event a provider can observe to abort an in-flight request. Support is
                 provider-dependent; a provider that ignores it still cancels at the SDK's
                 between-chunk checkpoint.

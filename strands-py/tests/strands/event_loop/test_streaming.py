@@ -1,3 +1,4 @@
+import inspect
 import threading
 import unittest.mock
 from typing import cast
@@ -6,6 +7,7 @@ import pytest
 
 import strands
 import strands.event_loop
+from strands.models import Model
 from strands.types._events import ModelStopReason, TypedEvent
 from strands.types.content import Message, Messages
 from strands.types.streaming import (
@@ -14,6 +16,7 @@ from strands.types.streaming import (
     MessageStartEvent,
     MessageStopEvent,
 )
+from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 
 @pytest.fixture(autouse=True)
@@ -1741,3 +1744,66 @@ async def test_stream_messages_forwards_cancel_signal_to_model(agenerator, alist
     await alist(stream)
 
     assert mock_model.stream.call_args.kwargs["cancel_signal"] is cancel_signal
+
+
+def _declared_stream_keywords() -> set[str]:
+    return {
+        name
+        for name, parameter in inspect.signature(Model.stream).parameters.items()
+        if parameter.kind is inspect.Parameter.KEYWORD_ONLY
+    }
+
+
+class _StreamKeywordSpy(MockedModelProvider):
+    """Records the keyword arguments the event loop hands to stream()."""
+
+    def __init__(self, agent_responses):
+        super().__init__(agent_responses)
+        self.seen_keywords: set[str] = set()
+
+    async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
+        self.seen_keywords |= set(kwargs)
+        async for event in super().stream(messages, tool_specs, system_prompt, **kwargs):
+            yield event
+
+
+@pytest.mark.asyncio
+async def test_stream_messages_sends_only_keywords_declared_on_the_model_abc():
+    """A provider that spells out the keyword-only parameters of Model.stream still receives every keyword.
+
+    Guards https://github.com/strands-agents/harness-sdk/issues/4206.
+    """
+    model = _StreamKeywordSpy([{"role": "assistant", "content": [{"text": "ok"}]}])
+
+    await strands.Agent(model=model, callback_handler=None).invoke_async("hello")
+
+    assert model.seen_keywords
+    tru_undeclared = model.seen_keywords - _declared_stream_keywords()
+    exp_undeclared: set[str] = set()
+    assert tru_undeclared == exp_undeclared
+
+
+@pytest.mark.asyncio
+async def test_stream_messages_sends_dynamic_trailing_blocks_as_a_declared_keyword(agenerator, alist):
+    """The cache-point hint reaches the model only when non-zero, so it needs the same declaration.
+
+    Guards https://github.com/strands-agents/harness-sdk/issues/4206.
+    """
+    mock_model = unittest.mock.MagicMock()
+    mock_model.stream.return_value = agenerator([{"contentBlockStop": {}}])
+
+    stream = strands.event_loop.streaming.stream_messages(
+        mock_model,
+        system_prompt=None,
+        messages=[{"role": "user", "content": [{"text": "Hello"}]}],
+        tool_specs=None,
+        system_prompt_content=None,
+        dynamic_trailing_blocks=2,
+    )
+
+    await alist(stream)
+
+    assert mock_model.stream.call_args.kwargs["dynamic_trailing_blocks"] == 2
+    tru_undeclared = set(mock_model.stream.call_args.kwargs) - _declared_stream_keywords()
+    exp_undeclared: set[str] = set()
+    assert tru_undeclared == exp_undeclared
