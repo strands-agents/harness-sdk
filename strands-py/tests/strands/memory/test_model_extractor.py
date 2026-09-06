@@ -160,6 +160,27 @@ async def test_wraps_the_model_call_in_a_model_invoke_span():
 
 
 @pytest.mark.asyncio
+async def test_model_invoke_span_carries_the_model_id_reported_by_get_config():
+    """The extraction span names the model even when the provider only implements the Model ABC.
+
+    Guards https://github.com/strands-agents/harness-sdk/issues/4205.
+    """
+
+    class _ByTheBookModel(MockedModelProvider):
+        def get_config(self) -> Any:
+            return {"model_id": "extraction.model-v1"}
+
+    model = _ByTheBookModel([_assistant_text('[{"content": "fact"}]')])
+    extractor = ModelExtractor(model=model)
+
+    tracer = MagicMock()
+    with patch("strands.memory.extraction.model_extractor.get_tracer", return_value=tracer):
+        await extractor.extract([_user_turn("x")])
+
+    assert tracer.start_model_invoke_span.call_args.kwargs["model_id"] == "extraction.model-v1"
+
+
+@pytest.mark.asyncio
 async def test_ends_model_invoke_span_with_error_on_failure():
     """A model failure ends the span via end_span_with_error and re-raises."""
 

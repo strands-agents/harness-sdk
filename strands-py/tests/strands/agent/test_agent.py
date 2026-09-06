@@ -3594,3 +3594,44 @@ async def test_agent_span_ends_on_generator_exit():
     assert len(agent_spans) == 1
     assert agent_spans[0].status.status_code == StatusCode.UNSET
     assert agent_spans[0].attributes["strands.cancellation.type"] == "GeneratorExit"
+
+
+@pytest.mark.asyncio
+async def test_agent_and_model_spans_carry_model_id_reported_only_by_get_config():
+    """Agent and model spans carry gen_ai.request.model for a provider written to the Model ABC.
+
+    Guards https://github.com/strands-agents/harness-sdk/issues/4205 — the id is read through
+    ``get_config()``, the accessor the interface declares, not an undeclared ``config`` attribute
+    that a custom provider need not expose.
+    """
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    tracer = Tracer()
+    tracer.tracer_provider = provider
+    tracer.tracer = provider.get_tracer(tracer.service_name)
+
+    class ByTheBookModel(MockedModelProvider):
+        def get_config(self):
+            return {"model_id": "my.custom.model-v1"}
+
+    model = ByTheBookModel([{"role": "assistant", "content": [{"text": "hi"}]}])
+
+    with (
+        unittest.mock.patch("strands.agent.agent.get_tracer", return_value=tracer),
+        unittest.mock.patch("strands.event_loop.event_loop.get_tracer", return_value=tracer),
+    ):
+        agent = Agent(model=model, callback_handler=None)
+        await agent.invoke_async("test")
+
+    provider.force_flush()
+    traced_model_ids = {
+        span.name: span.attributes.get("gen_ai.request.model")
+        for span in exporter.get_finished_spans()
+        if span.name == "chat" or span.name.startswith("invoke_agent")
+    }
+    assert traced_model_ids == {
+        "chat": "my.custom.model-v1",
+        "invoke_agent Strands Agents": "my.custom.model-v1",
+    }

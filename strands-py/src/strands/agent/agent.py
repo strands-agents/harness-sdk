@@ -68,7 +68,7 @@ from ..interventions.handler import InterventionHandler
 from ..interventions.registry import InterventionRegistry
 from ..memory import MemoryManager, MemoryManagerConfig
 from ..models.bedrock import BedrockModel
-from ..models.model import Model, _ModelPlugin
+from ..models.model import Model, _get_model_id, _ModelPlugin
 from ..models.routing import ModelRouter
 from ..plugins import Plugin
 from ..plugins.registry import _PluginRegistry
@@ -1874,7 +1874,7 @@ class Agent(AgentBase, LocalAgent):
         Args:
             messages: The input messages.
         """
-        model_id = self.model.config.get("model_id") if hasattr(self.model, "config") else None
+        model_id = _get_model_id(self.model)
         return self.tracer.start_agent_span(
             messages=messages,
             agent_name=self.name,

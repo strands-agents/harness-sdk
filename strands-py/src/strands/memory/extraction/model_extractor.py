@@ -13,7 +13,7 @@ from typing import Any
 
 from opentelemetry import trace as trace_api
 
-from ...models.model import Model
+from ...models.model import Model, _get_model_id
 from ...telemetry.tracer import get_tracer
 from ...types.content import Message
 from .types import ExtractionResult, ExtractorContext
@@ -83,7 +83,7 @@ class ModelExtractor:
         from ...event_loop.streaming import stream_messages
 
         tracer = get_tracer()
-        model_id = model.config.get("model_id") if hasattr(model, "config") else None
+        model_id = _get_model_id(model)
         span = tracer.start_model_invoke_span(messages=[prompt], model_id=model_id, system_prompt=self._system_prompt)
 
         final_message: Message | None = None

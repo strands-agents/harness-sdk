@@ -1,5 +1,6 @@
 import json
 import math
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -8,7 +9,7 @@ from pydantic import BaseModel
 from strands.hooks.events import AfterInvocationEvent
 from strands.models import CacheConfig
 from strands.models import Model as SAModel
-from strands.models.model import _ModelPlugin
+from strands.models.model import _get_model_id, _ModelPlugin
 
 
 class Person(BaseModel):
@@ -685,3 +686,81 @@ class TestCacheConfig:
     def test_cache_key_round_trips(self):
         """cache_key preserves the value it was constructed with."""
         assert CacheConfig(cache_key="tenant-42").cache_key == "tenant-42"
+
+
+class TestGetModelId:
+    """Tests for _get_model_id.
+
+    Guards https://github.com/strands-agents/harness-sdk/issues/4205 — the model id reaches
+    telemetry through ``get_config()``, the accessor the ``Model`` interface declares, so a
+    provider written to the interface alone is not left without one.
+    """
+
+    class ByTheBookModel(SAModel):
+        """A provider that implements the abstract surface only, holding its config privately."""
+
+        def __init__(self, config=None):
+            self._config = {} if config is None else config
+
+        def update_config(self, **model_config):
+            self._config.update(model_config)
+
+        def get_config(self):
+            return self._config
+
+        async def structured_output(self, output_model, prompt=None, system_prompt=None, **kwargs):
+            yield {}
+
+        async def stream(self, messages, tool_specs=None, system_prompt=None):
+            yield {}
+
+    def test_reads_the_id_from_get_config(self):
+        """A provider that reports its id only from get_config() still has one."""
+        model = self.ByTheBookModel({"model_id": "my.custom.model-v1"})
+
+        assert _get_model_id(model) == "my.custom.model-v1"
+
+    def test_reads_the_id_off_a_non_dict_config(self):
+        """A config object that carries model_id as an attribute reports it too."""
+        model = self.ByTheBookModel(SimpleNamespace(model_id="object-config-v1"))
+
+        assert _get_model_id(model) == "object-config-v1"
+
+    def test_reads_the_id_from_a_config_attribute(self):
+        """The built-in providers' public config attribute is still honored."""
+        model = self.ByTheBookModel()
+        model.config = {"model_id": "built.in-v1"}
+
+        assert _get_model_id(model) == "built.in-v1"
+
+    def test_prefers_get_config_over_the_config_attribute(self):
+        """get_config() is the declared accessor, so it wins when the two disagree."""
+        model = self.ByTheBookModel({"model_id": "declared-v1"})
+        model.config = {"model_id": "stale-v1"}
+
+        assert _get_model_id(model) == "declared-v1"
+
+    def test_returns_none_when_no_id_is_configured(self):
+        """A provider that reports no id yields None rather than raising."""
+        assert _get_model_id(self.ByTheBookModel()) is None
+
+    def test_returns_none_when_get_config_returns_nothing(self):
+        """A provider whose get_config() returns None yields None."""
+        assert _get_model_id(TestModel()) is None
+
+    def test_falls_back_to_the_config_attribute_when_get_config_raises(self):
+        """A raising get_config() never reaches the caller, whose span it was only labelling."""
+
+        class RaisingConfigModel(self.ByTheBookModel):
+            def get_config(self):
+                raise RuntimeError("config unavailable")
+
+        model = RaisingConfigModel()
+        model.config = {"model_id": "still.known-v1"}
+
+        assert _get_model_id(model) == "still.known-v1"
+        assert _get_model_id(RaisingConfigModel()) is None
+
+    def test_returns_none_for_a_model_without_get_config(self):
+        """A duck-typed stand-in that never declared get_config() yields None."""
+        assert _get_model_id(SimpleNamespace()) is None

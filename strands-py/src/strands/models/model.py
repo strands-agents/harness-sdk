@@ -341,6 +341,35 @@ class Model(abc.ABC):
         return input_tokens / context_window_limit
 
 
+def _config_model_id(config: Any) -> str | None:
+    """Read ``model_id`` off a model config, which may be a dict or an object with attributes."""
+    model_id = config.get("model_id") if isinstance(config, dict) else getattr(config, "model_id", None)
+    return model_id if isinstance(model_id, str) else None
+
+
+def _get_model_id(model: Model) -> str | None:
+    """Return the model id a provider reports, or None when it reports none.
+
+    ``get_config()`` is the accessor the :class:`Model` interface declares, so it is read first. The
+    public ``config`` attribute is a convention of the built-in providers rather than part of the
+    interface, so it only serves as a fallback.
+
+    Args:
+        model: The model to read the id from.
+
+    Returns:
+        The configured model id, or None when neither accessor reports one.
+    """
+    try:
+        declared = _config_model_id(model.get_config())
+    except Exception:
+        # The id only labels a span, so a provider that raises from get_config (or a router that
+        # forwards such a provider's error) must not fail the call being traced.
+        declared = None
+
+    return declared or _config_model_id(getattr(model, "config", None))
+
+
 class _ModelPlugin(Plugin):
     """Plugin that manages model-related lifecycle hooks."""
 
