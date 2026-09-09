@@ -6,11 +6,6 @@ inert or incoherent. Construction is pure bookkeeping: no network call, no model
 client, no async task — and a construction that raises has registered nothing on any agent, which is
 trivially true because at construction time there is no agent yet (Requirement 2.17).
 
-**The ``_UNSET`` sentinel.** Every graph parameter defaults to a sentinel rather than to its
-documented default, which is what tells "not supplied" apart from "supplied with the default value".
-``ContextOffloader`` already uses the same sentinel to separate the arguments of
-``preview_strategy="relevance"`` from those of ``"prefix"``, for the same reason.
-
 **Validation is of shape, never of merit.** A value is rejected for being the wrong kind of thing —
 a bool where a ratio was expected, a float where a count was expected, a range violation — never for
 being a poor choice. The one relational check, ``collapse_floor <= expand_threshold``, is shape too:
@@ -80,41 +75,17 @@ _DEFAULT_NAME = "strands:context-strategy"
 """Default plugin name; override to tell multiple instances apart in logs."""
 
 _DEFAULT_EXPAND_THRESHOLD = 0.55
-"""Note at or above which a Card is Full Content, budget permitting.
-
-Read the note on ``_DEFAULT_COLLAPSE_FLOOR``: both thresholds answer to the same distribution, and both
-were tried on a restated scale and put back.
-"""
+"""Note at or above which a Card is Full Content, budget permitting."""
 
 _DEFAULT_COLLAPSE_FLOOR = 0.45
 """Note below which a Card keeps only its Title.
 
-Calibrated against the default matcher. ``0.15`` was not: measured over an 18-turn session,
-``cohere.embed-multilingual-v3`` scored 133 Cards with a minimum note of 0.346 and a median of 0.563 —
-not one Card ever fell below ``0.15``, so the ladder had three rungs in the specification and two in
-practice. Cosine similarity between two texts of the same language does not approach zero, and that is
-the trap: a floor picked on the intuition that "irrelevant scores near nothing" is a floor outside the
-range the model answers in.
-
-**A rung firing is not a goal in itself, and that was measured the hard way.** Applying the structural
-weight once instead of twice roughly doubled what a propagation hop hands over, so every note rose:
-over the same 133 Cards the share below this floor fell from 19.5% to 3.8%, and the Title rung went
-back to almost never firing. Restating both thresholds at the position they used to occupy in the
-distribution — 0.52 and 0.64 — did restore the rung, reproducibly: all three in use on 9 to 11 turns of
-18 against 3 to 4, with 34 of 133 Cards at Title instead of 5.
-
-It bought nothing and it cost answers. Over three replays each, the restated pair measured 6,300 tokens
-of history per call against 6,844 — a difference inside spreads of 74.5% and 47.1%, so no saving at all
-— while weighted accuracy went from 92.0% to 85.0% and materially correct turns from 16.3 of 18 to 15.
-Neither gap clears its spread either, but the direction is consistent and there is no token gain to
-trade for it. Collapsing a Card to its Title takes its content out of the call, and at this note
-distribution the Cards that fall there are ones the conversation still needed.
-
-So the values stay where they were, and what the exercise produced is the reading rather than the
-number: **a threshold is only calibratable against the distribution of the pair it compares** — this
-one against question-against-Description, ``link_threshold`` against Description-against-Description,
-and propagation strength is part of both. The earlier conclusion that an unreachable rung is
-necessarily broken configuration was too quick.
+A threshold is only calibratable against the distribution of the pair it compares: this one against
+question-against-Description, ``link_threshold`` against Description-against-Description, with
+propagation strength part of both. Cosine similarity between two texts of the same language does not
+approach zero, so a floor chosen on the intuition that "irrelevant scores near nothing" sits outside
+the range the matcher actually answers in. Both values answer to the default matcher's distribution
+and do not carry over to another implementation.
 """
 
 _DEFAULT_DESCRIPTION_TOKENS = 100
@@ -141,16 +112,12 @@ _DEFAULT_REUSE_TTL_CYCLES = 5
 _DEFAULT_RECENT_CARDS: int | None = None
 """How many of the most recent Cards a call always addresses. ``None`` addresses every Card.
 
-``None`` is the default because selecting is a change of direction, not a tuning knob. Without it the
-resolution only ever steps down, so a Card the note scored wrong still travels with its Title and the
-model can name it: **context too much, never too little**. With it, a Card the selection missed is
-invisible, and the model cannot ask for what it does not know exists — the failure moves from "a
-poorer answer, recoverable" to "a wrong answer, with no symptom".
-
-What it buys is the reason to have a graph at all. Addressing every Card makes the whole call grow
-linearly with the conversation and bounds it by nothing, since ``body_budget`` only debits full
-content. And it leaves the links with no work: propagation cannot be the reason a Card is reached when
-no Card is ever excluded.
+``None`` by default because selection changes the failure mode rather than tuning it. Addressing every
+Card, Resolution only ever steps down, so a Card the note scored wrong still travels with its Title and
+the model can name it. Under selection a missed Card is invisible and cannot be asked for, which turns
+a recoverable poorer answer into a wrong one with no symptom. The trade is that addressing every Card
+grows the call linearly with the conversation and leaves the links with no work, since propagation
+cannot be why a Card is reached when none is ever excluded.
 """
 
 _DEFAULT_SELECT_TOP_K = 5
@@ -562,18 +529,6 @@ def _log_compaction_ratios(messages: Messages, state: _GraphState) -> None:
             description_tokens,
             full_tokens / description_tokens,
         )
-
-
-class _Unset:
-    """Sentinel type telling an omitted argument apart from one passed with its default."""
-
-    def __repr__(self) -> str:
-        """Return a readable placeholder for the sentinel."""
-        return "<unset>"
-
-
-_UNSET: Any = _Unset()
-"""Default of every strategy-exclusive argument, so an explicit pass is detectable."""
 
 
 def _validate_strategy(strategy: object) -> None:
@@ -1576,20 +1531,20 @@ class ContextStrategy(Plugin):
         self,
         *,
         strategy: Literal["graph"] = "graph",
-        expand_threshold: float = _UNSET,
-        collapse_floor: float = _UNSET,
-        description_tokens: int = _UNSET,
-        tags_per_card: int = _UNSET,
-        rarity_weight: float = _UNSET,
-        body_budget: int | None = _UNSET,
-        min_cards: int = _UNSET,
-        link_threshold: float = _UNSET,
-        reuse_ttl_cycles: int = _UNSET,
-        matcher: Any = _UNSET,
-        recent_cards: int | None = _UNSET,
-        select_top_k: int = _UNSET,
-        reranker: Any = _UNSET,
-        persist: bool = _UNSET,
+        expand_threshold: float = _DEFAULT_EXPAND_THRESHOLD,
+        collapse_floor: float = _DEFAULT_COLLAPSE_FLOOR,
+        description_tokens: int = _DEFAULT_DESCRIPTION_TOKENS,
+        tags_per_card: int = _DEFAULT_TAGS_PER_CARD,
+        rarity_weight: float = _DEFAULT_RARITY_WEIGHT,
+        body_budget: int | None = _DEFAULT_BODY_BUDGET,
+        min_cards: int = _DEFAULT_MIN_CARDS,
+        link_threshold: float = _DEFAULT_LINK_THRESHOLD,
+        reuse_ttl_cycles: int = _DEFAULT_REUSE_TTL_CYCLES,
+        matcher: Any = None,
+        recent_cards: int | None = _DEFAULT_RECENT_CARDS,
+        select_top_k: int = _DEFAULT_SELECT_TOP_K,
+        reranker: Any = None,
+        persist: bool = False,
         name: str | None = None,
     ) -> None:
         """Validate the configuration and fix it for the lifetime of the instance.
@@ -1601,35 +1556,6 @@ class ContextStrategy(Plugin):
         """
         _validate_strategy(strategy)
         _validate_name(name)
-
-        if expand_threshold is _UNSET:
-            expand_threshold = _DEFAULT_EXPAND_THRESHOLD
-        if collapse_floor is _UNSET:
-            collapse_floor = _DEFAULT_COLLAPSE_FLOOR
-        if description_tokens is _UNSET:
-            description_tokens = _DEFAULT_DESCRIPTION_TOKENS
-        if tags_per_card is _UNSET:
-            tags_per_card = _DEFAULT_TAGS_PER_CARD
-        if rarity_weight is _UNSET:
-            rarity_weight = _DEFAULT_RARITY_WEIGHT
-        if body_budget is _UNSET:
-            body_budget = _DEFAULT_BODY_BUDGET
-        if min_cards is _UNSET:
-            min_cards = _DEFAULT_MIN_CARDS
-        if link_threshold is _UNSET:
-            link_threshold = _DEFAULT_LINK_THRESHOLD
-        if reuse_ttl_cycles is _UNSET:
-            reuse_ttl_cycles = _DEFAULT_REUSE_TTL_CYCLES
-        if matcher is _UNSET:
-            matcher = None
-        if recent_cards is _UNSET:
-            recent_cards = _DEFAULT_RECENT_CARDS
-        if select_top_k is _UNSET:
-            select_top_k = _DEFAULT_SELECT_TOP_K
-        if reranker is _UNSET:
-            reranker = None
-        if persist is _UNSET:
-            persist = False
 
         _validate_ratio(expand_threshold, "expand_threshold")
         _validate_ratio(collapse_floor, "collapse_floor")
@@ -1656,20 +1582,23 @@ class ContextStrategy(Plugin):
         self.name = name or _DEFAULT_NAME
         # Fixed here and never revisited: every turn of this instance uses these values unchanged
         # (Requirement 2.18).
+        # ``float`` on the ratios is normalization, not ceremony: ``_validate_ratio`` admits any
+        # ``Real``, so an ``int`` or a ``Fraction`` reaches here and the rest of the package expects a
+        # float. The counts and the flag arrive already pinned to their type by their validators.
         self._expand_threshold = float(expand_threshold)
         self._collapse_floor = float(collapse_floor)
-        self._description_tokens = int(description_tokens)
-        self._tags_per_card = int(tags_per_card)
+        self._description_tokens = description_tokens
+        self._tags_per_card = tags_per_card
         self._rarity_weight = float(rarity_weight)
-        self._body_budget = None if body_budget is None else int(body_budget)
-        self._min_cards = int(min_cards)
+        self._body_budget = body_budget
+        self._min_cards = min_cards
         self._link_threshold = float(link_threshold)
-        self._reuse_ttl_cycles = int(reuse_ttl_cycles)
+        self._reuse_ttl_cycles = reuse_ttl_cycles
         self._matcher = matcher
-        self._recent_cards = None if recent_cards is None else int(recent_cards)
-        self._select_top_k = int(select_top_k)
+        self._recent_cards = recent_cards
+        self._select_top_k = select_top_k
         self._reranker = reranker
-        self._persist = bool(persist)
+        self._persist = persist
 
         # Always empty: the strategy registers what it needs in ``init_agent`` via ``agent.add_hook``,
         # which is what makes the per-agent handler count verifiable by inspection rather than by
