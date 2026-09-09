@@ -16,9 +16,8 @@ import logging
 from dataclasses import replace
 
 import pytest
-from hypothesis import assume, given
-from hypothesis import strategies as st
 
+from strands.agent.conversation_manager.compression.pin_message import pin_message
 from strands.injection._message_injection import _is_user_turn
 from strands.vended_plugins.context_graph.cards import (
     closed_turn_ranges,
@@ -38,16 +37,7 @@ from strands.vended_plugins.context_graph.cards import (
     turn_ranges,
 )
 from strands.vended_plugins.context_graph.describe import compose_description
-
-from .strategies import (
-    GraphState,
-    conversations,
-    conversations_with_open_turn,
-    conversations_with_tool_pairs,
-    is_turn_start,
-    property_settings,
-)
-from .strategies import is_evidence as generated_is_evidence
+from strands.vended_plugins.context_graph.state import _GraphState
 
 
 def _user(text="hello", tracking_id="u1"):
@@ -76,6 +66,71 @@ def _tool_result(tool_use_id="tu1", tracking_id="u2"):
     }
 
 
+# --- the conversation shapes every scan is ranged over -------------------------------------------
+
+
+def _pinned(conversation, *indices):
+    """Pin the messages at ``indices``, returning the conversation."""
+    for index in indices:
+        pin_message(conversation, index)
+    return conversation
+
+
+_TWO_TOOL_USE_IDS_IN_ONE_MESSAGE = [
+    _user(),
+    {
+        "role": "assistant",
+        "content": [
+            {"toolUse": {"toolUseId": "tu1", "name": "run_query", "input": {}}},
+            {"toolUse": {"toolUseId": "tu2", "name": "read_file", "input": {}}},
+        ],
+        "tracking_id": "a2",
+    },
+    _tool_result("tu1", tracking_id="u2"),
+    _tool_result("tu2", tracking_id="u3"),
+    _assistant_text(),
+]
+"""One message belonging to two pairs, which is the case a Card must address once and only once."""
+
+_CONSECUTIVE_TURNS = [
+    _user(text="first ask", tracking_id="u1"),
+    _assistant_text(tracking_id="a1"),
+    _user(text="second ask", tracking_id="u3"),
+    _tool_use(tracking_id="a3"),
+    _tool_result(tracking_id="u4"),
+    _assistant_text(tracking_id="a4"),
+    _user(text="third ask", tracking_id="u5"),
+    _assistant_text(tracking_id="a5"),
+]
+"""Three turns back to back, so the two closed ones are ordered and the third is in progress."""
+
+_CONVERSATION_SHAPES = [
+    pytest.param([_user()], id="minimal"),
+    pytest.param([_user(), _assistant_text(), _user(tracking_id="u3")], id="open-turn"),
+    pytest.param([_user(), _tool_use(), _tool_result(), _assistant_text()], id="matched-pair"),
+    pytest.param([_user(), _tool_use()], id="unmatched-tool-use"),
+    pytest.param(_TWO_TOOL_USE_IDS_IN_ONE_MESSAGE, id="two-tool-use-ids-in-one-message"),
+    pytest.param(_pinned([_user(), _tool_use(), _tool_result(), _assistant_text()], 1), id="pinned-half-of-a-pair"),
+    pytest.param(
+        [_user(), {"role": "assistant", "content": [{"text": "no address"}]}, _user(tracking_id="u3")],
+        id="message-without-tracking-id",
+    ),
+    pytest.param(
+        [_assistant_text(tracking_id="a0"), _user(), _assistant_text(), _user(tracking_id="u3")],
+        id="before-the-first-boundary",
+    ),
+    pytest.param(_CONSECUTIVE_TURNS, id="consecutive-turns"),
+]
+"""The adversarial shapes a live conversation takes, each with unique durable identities.
+
+Every scan in this file is ranged over the whole list rather than over a hand-picked subset, so a
+shape added here is immediately covered by all of them.
+"""
+
+_CLOSED_TURN_SHAPES = [shape for shape in _CONVERSATION_SHAPES if len(closed_turn_ranges(shape.values[0])) > 0]
+"""The subset carrying at least one closed turn, which is what a derived Card needs to exist."""
+
+
 # --- the boundary, in each shape ----------------------------------------------------------------
 
 
@@ -94,8 +149,11 @@ def test_is_turn_boundary_covers_each_shape(message, expected):
     assert is_turn_boundary(message) is expected
 
 
-@given(message=st.sampled_from([_user(), _tool_result(), _assistant_text(), _tool_use()]))
-@property_settings
+@pytest.mark.parametrize(
+    "message",
+    [_user(), _tool_result(), _assistant_text(), _tool_use()],
+    ids=["plain-user", "user-with-tool-result", "assistant-text", "assistant-tool-use"],
+)
 def test_is_turn_boundary_is_the_reused_rule(message):
     # The delegation is the point: one rule, one place. A local truth table would survive a drift.
     assert is_turn_boundary(message) == _is_user_turn([message])
@@ -125,19 +183,31 @@ def test_closed_turn_ranges_is_empty_without_a_closed_turn(conversation):
     assert closed_turn_ranges(conversation) == ()
 
 
-@given(conversation=conversations())
-@property_settings
+def _literal_turn_starts(conversation):
+    """Indices opening a turn, by the rule written literally: role ``user``, no ``toolResult`` block.
+
+    Written out here rather than read off the implementation, so a drift in ``is_turn_boundary`` cannot
+    make the expectation agree with it.
+    """
+    return tuple(
+        index
+        for index, message in enumerate(conversation)
+        if message.get("role") == "user"
+        and not any(isinstance(block, dict) and "toolResult" in block for block in message.get("content", []))
+    )
+
+
+@pytest.mark.parametrize("conversation", _CONVERSATION_SHAPES)
 def test_turn_ranges_agree_with_the_literal_boundary_rule(conversation):
-    starts = tuple(index for index in range(len(conversation)) if is_turn_start(conversation, index))
+    starts = _literal_turn_starts(conversation)
 
     assert tuple(start for start, _ in turn_ranges(conversation)) == starts
 
 
-@given(conversation=conversations_with_open_turn())
-@property_settings
+@pytest.mark.parametrize("conversation", _CONVERSATION_SHAPES)
 def test_closed_turn_ranges_never_reach_the_last_boundary(conversation):
     closed = closed_turn_ranges(conversation)
-    last_start = max(index for index in range(len(conversation)) if is_turn_start(conversation, index))
+    last_start = max(_literal_turn_starts(conversation))
 
     assert all(stop <= last_start for _, stop in closed)
 
@@ -170,8 +240,7 @@ def test_partition_places_a_message_carrying_text_and_tool_use_in_the_evidence()
     assert partition_turn(turn) == ((), ("a2",))
 
 
-@given(conversation=conversations_with_tool_pairs())
-@property_settings
+@pytest.mark.parametrize("conversation", _CONVERSATION_SHAPES)
 def test_partition_is_exhaustive_and_disjoint(conversation):
     addressed = {message["tracking_id"] for message in conversation if message.get("tracking_id")}
 
@@ -182,12 +251,15 @@ def test_partition_is_exhaustive_and_disjoint(conversation):
     assert len(dialogue) + len(evidence) == len(addressed)
 
 
-@given(conversation=conversations_with_tool_pairs())
-@property_settings
+@pytest.mark.parametrize("conversation", _CONVERSATION_SHAPES)
 def test_is_evidence_matches_the_literal_rule(conversation):
-    assert [is_evidence(message) for message in conversation] == [
-        generated_is_evidence(message) for message in conversation
+    # The rule written literally: a message carrying a tool block is evidence, anything else dialogue.
+    literal = [
+        any(isinstance(block, dict) and ("toolUse" in block or "toolResult" in block) for block in message["content"])
+        for message in conversation
     ]
+
+    assert [is_evidence(message) for message in conversation] == literal
 
 
 # --- consumption, from order alone --------------------------------------------------------------
@@ -278,8 +350,7 @@ def test_a_pair_consumed_earlier_stays_consumed_when_a_later_pair_is_not():
     assert second.consumed is False
 
 
-@given(conversation=conversations_with_tool_pairs())
-@property_settings
+@pytest.mark.parametrize("conversation", _CONVERSATION_SHAPES)
 def test_scanning_a_turn_never_mutates_it(conversation):
     snapshot = copy.deepcopy(conversation)
 
@@ -426,12 +497,9 @@ def test_derive_card_titles_a_turn_whose_boundary_carries_no_identity():
     assert card.dialogue_ids == ("a1",)
 
 
-@given(conversation=conversations())
-@property_settings
+@pytest.mark.parametrize("conversation", _CLOSED_TURN_SHAPES)
 def test_derive_card_partition_is_exhaustive_and_disjoint(conversation):
-    ranges = closed_turn_ranges(conversation)
-    assume(ranges)
-    start, stop = ranges[0]
+    start, stop = closed_turn_ranges(conversation)[0]
     turn_ids = _ids(conversation[start:stop])
 
     card = derive_card(conversation, turn_ids, 1, **_CONFIG)
@@ -445,7 +513,7 @@ def test_derive_card_partition_is_exhaustive_and_disjoint(conversation):
 
 def _state_with(*cards_):
     """A graph state holding ``cards_``, with no links yet."""
-    state = GraphState()
+    state = _GraphState()
     for card in cards_:
         state.cards[card.title] = card
     return state
@@ -467,7 +535,7 @@ def _register(state, card, conversation, *, link_threshold=0.5, similarity=None,
 def test_register_card_creates_one_tool_link_per_tool_name():
     conversation = _closed_turn()
     card = _derive(conversation)
-    state = GraphState()
+    state = _GraphState()
 
     _register(state, card, conversation)
 
@@ -478,7 +546,7 @@ def test_register_card_creates_one_tool_link_per_tool_name():
 def test_register_card_creates_one_artifact_link_per_reference():
     conversation = _closed_turn(result_text=_PREVIEW)
     card = _derive(conversation)
-    state = GraphState()
+    state = _GraphState()
 
     _register(state, card, conversation)
 
@@ -490,7 +558,7 @@ def test_register_card_creates_one_artifact_link_per_reference():
 def test_register_card_follows_the_previous_turn_and_the_first_card_follows_nothing():
     conversation = _closed_turn()
     first = _derive(conversation, turn=1)
-    state = GraphState()
+    state = _GraphState()
     _register(state, first, conversation)
 
     assert [link for link in state.links[first.title] if link.kind == "follows"] == []
@@ -563,7 +631,7 @@ def test_default_similarity_skips_a_description_the_cache_does_not_match():
 def test_registering_the_same_card_twice_does_not_duplicate_an_edge():
     conversation = _closed_turn(result_text=_PREVIEW)
     card = _derive(conversation)
-    state = GraphState()
+    state = _GraphState()
 
     _register(state, card, conversation)
     _register(state, card, conversation)
@@ -588,7 +656,7 @@ def test_gaining_a_card_retags_the_existing_ones():
         _user(text="next", tracking_id="u8"),
     ]
     conversation = first[:2] + second
-    state = GraphState()
+    state = _GraphState()
 
     early = derive_card(conversation, ("u1", "a1"), 1, **{**_CONFIG, "tags_per_card": 2})
     _register(state, early, conversation, tags_per_card=2)
@@ -606,7 +674,7 @@ def test_gaining_a_card_retags_the_existing_ones():
 def test_retag_leaves_descriptions_untouched():
     conversation = _closed_turn()
     card = _derive(conversation)
-    state = GraphState()
+    state = _GraphState()
     _register(state, card, conversation)
 
     retag(state, conversation, tags_per_card=5, rarity_weight=0.7)
@@ -617,7 +685,7 @@ def test_retag_leaves_descriptions_untouched():
 def test_retag_is_deterministic_over_the_same_graph():
     conversation = _closed_turn()
     card = _derive(conversation)
-    state = GraphState()
+    state = _GraphState()
     _register(state, card, conversation)
 
     first = state.cards[card.title].tags
@@ -629,7 +697,7 @@ def test_retag_is_deterministic_over_the_same_graph():
 def test_retag_survives_a_card_whose_messages_are_gone():
     conversation = _closed_turn()
     card = _derive(conversation)
-    state = GraphState()
+    state = _GraphState()
     _register(state, card, conversation)
 
     retag(state, [], tags_per_card=5, rarity_weight=0.7)
@@ -644,7 +712,7 @@ def test_retag_survives_a_card_whose_messages_are_gone():
 def test_derive_and_register_returns_the_card_on_the_happy_path():
     conversation = _closed_turn()
 
-    state = GraphState()
+    state = _GraphState()
     card = derive_and_register(state, conversation, _ids(conversation[:4]), 1, link_threshold=0.5, **_CONFIG)
 
     assert card is not None
@@ -657,7 +725,7 @@ def test_derive_and_register_logs_exactly_one_warning_and_registers_nothing(monk
         "strands.vended_plugins.context_graph.cards.compose_description",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("derivation exploded")),
     )
-    state = GraphState()
+    state = _GraphState()
 
     with caplog.at_level(logging.WARNING, logger="strands.vended_plugins.context_graph.cards"):
         card = derive_and_register(state, conversation, _ids(conversation[:4]), 1, link_threshold=0.5, **_CONFIG)
@@ -806,7 +874,7 @@ def test_derive_artifact_cards_is_deterministic_and_never_mutates_the_result():
 
 def test_register_artifact_cards_links_the_tool_and_nothing_else():
     conversation = _closed_turn()
-    state = GraphState()
+    state = _GraphState()
     cards_ = _artifacts(_offloaded_result())
     register_artifact_cards(state, cards_, conversation, tags_per_card=5, rarity_weight=0.7)
     edges = [link for card in cards_ for link in state.links[card.title]]
@@ -817,7 +885,7 @@ def test_register_artifact_cards_links_the_tool_and_nothing_else():
 def test_register_artifact_cards_keeps_the_subject_cards_and_their_ordering():
     conversation = _closed_turn()
     subject = _derive(conversation, turn=1)
-    state = GraphState()
+    state = _GraphState()
     _register(state, subject, conversation)
 
     register_artifact_cards(state, _artifacts(_offloaded_result()), conversation, tags_per_card=5, rarity_weight=0.7)
@@ -834,7 +902,7 @@ def test_the_subject_artifact_edge_resolves_onto_the_artifact_card():
     # The subject side derives the edge from the reference alone, so hook order cannot break it.
     conversation = _closed_turn(result_text=_OFFLOADED_PREVIEW)
     subject = _derive(conversation)
-    state = GraphState()
+    state = _GraphState()
     _register(state, subject, conversation)
     register_artifact_cards(state, _artifacts(_offloaded_result()), conversation, tags_per_card=5, rarity_weight=0.7)
 
@@ -845,7 +913,7 @@ def test_the_subject_artifact_edge_resolves_onto_the_artifact_card():
 
 def test_registering_the_same_artifact_twice_does_not_duplicate_an_edge():
     conversation = _closed_turn()
-    state = GraphState()
+    state = _GraphState()
     cards_ = _artifacts(_offloaded_result())
     for _ in range(2):
         register_artifact_cards(state, cards_, conversation, tags_per_card=5, rarity_weight=0.7)
@@ -856,7 +924,7 @@ def test_registering_the_same_artifact_twice_does_not_duplicate_an_edge():
 
 def test_derive_and_register_artifacts_registers_the_batch_on_the_happy_path():
     conversation = _closed_turn()
-    state = GraphState()
+    state = _GraphState()
     cards_ = derive_and_register_artifacts(state, conversation, _offloaded_result(), "run_query", 3, **_CONFIG)
     assert [card.title for card in cards_] == ["mem_1_tu1_0", "mem_1_tu1_1", "mem_1_tu1_2"]
     assert set(state.cards) == set(card.title for card in cards_)
@@ -865,7 +933,7 @@ def test_derive_and_register_artifacts_registers_the_batch_on_the_happy_path():
 def test_derive_and_register_artifacts_logs_nothing_without_an_offloader(caplog):
     conversation = _closed_turn()
     subject = _derive(conversation)
-    state = GraphState()
+    state = _GraphState()
     _register(state, subject, conversation)
     plain = {"toolUseId": "tu1", "status": "success", "content": [{"text": _RAW}]}
 
@@ -880,7 +948,7 @@ def test_derive_and_register_artifacts_logs_nothing_without_an_offloader(caplog)
 def test_derive_and_register_artifacts_logs_one_warning_and_registers_nothing(monkeypatch, caplog):
     conversation = _closed_turn()
     subject = _derive(conversation)
-    state = GraphState()
+    state = _GraphState()
     _register(state, subject, conversation)
     before = (dict(state.cards), {title: list(edges) for title, edges in state.links.items()})
     monkeypatch.setattr(
@@ -900,7 +968,7 @@ def test_derive_and_register_artifacts_logs_one_warning_and_registers_nothing(mo
 
 def test_derive_and_register_artifacts_restores_the_whole_batch_on_a_late_failure(monkeypatch, caplog):
     conversation = _closed_turn()
-    state = GraphState()
+    state = _GraphState()
     monkeypatch.setattr(
         "strands.vended_plugins.context_graph.cards.retag",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("retag exploded")),
@@ -969,7 +1037,7 @@ def _build_incrementally(conversation, *, link_threshold=0.5, similarity=None):
     sees, and is why the equality below is not an artifact of both constructions reading the same list.
     """
     ranges = closed_turn_ranges(conversation)
-    state = GraphState()
+    state = _GraphState()
 
     for turn, (start, stop) in enumerate(ranges):
         turn_ids = _ids(conversation[start:stop])
@@ -1151,7 +1219,7 @@ def test_rebuild_absorbs_a_turn_whose_derivation_fails(monkeypatch, caplog):
 
 def test_rebuild_into_writes_on_the_state_the_hook_holds_and_keeps_the_fed_back_note():
     conversation = _conversation(count=3)
-    state = GraphState()
+    state = _GraphState()
     state.reuse["earlier ask"] = (0.2, 7)
 
     rebuild_into(state, conversation, link_threshold=0.5, similarity=None, **_CONFIG)
@@ -1164,8 +1232,7 @@ def test_rebuild_into_writes_on_the_state_the_hook_holds_and_keeps_the_fed_back_
     assert state.reuse == {"earlier ask": (0.2, 7)}
 
 
-@given(conversation=conversations())
-@property_settings
+@pytest.mark.parametrize("conversation", _CONVERSATION_SHAPES)
 def test_rebuild_addresses_only_present_messages_over_any_conversation(conversation):
     state = _rebuild(conversation)
 
@@ -1175,8 +1242,7 @@ def test_rebuild_addresses_only_present_messages_over_any_conversation(conversat
     assert state.turn == len(closed_turn_ranges(conversation))
 
 
-@given(conversation=conversations_with_open_turn())
-@property_settings
+@pytest.mark.parametrize("conversation", _CONVERSATION_SHAPES)
 def test_rebuild_over_an_open_turn_never_covers_the_turn_in_progress(conversation):
     ranges = turn_ranges(conversation)
     in_progress = _ids(conversation[ranges[-1][0] :]) if ranges else []

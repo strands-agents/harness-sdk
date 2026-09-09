@@ -41,7 +41,7 @@ from strands.vended_plugins.progressive_tool_disclosure.plugin import (
     _project,
 )
 
-from .strategies import frozen_choice
+from .conftest import frozen_choice
 
 
 class FakeAgent:

@@ -24,7 +24,7 @@ from strands.vended_plugins.context_graph import compaction as compaction_module
 from strands.vended_plugins.context_graph.plugin import ContextStrategy, _GraphStrategy
 from strands.vended_plugins.context_graph.state import Card, CardChoice, _GraphState
 
-from .strategies import frozen_choice
+from .conftest import frozen_choice
 
 
 class FakeAgent:

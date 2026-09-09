@@ -1,4 +1,4 @@
-"""Fixtures for the context graph test suite.
+"""Fixtures and shared test data for the context graph test suite.
 
 The absence of network is a property of the suite, not the discipline of whoever writes a test. The
 guard below fails the test on the first outbound socket use, so a double that quietly grew a boto
@@ -10,12 +10,39 @@ local sockets.
 """
 
 import socket
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
+from types import MappingProxyType
 from typing import Any
 
 import pytest
 
+from strands.vended_plugins.context_graph.state import CardChoice, TurnChoice
+
 from .stubs import FakeBedrockEmbedder, StubMatcher
+
+NUMERIC_LINES = (
+    "R$ 1.200,00",
+    "1.200,00",
+    "1200",
+    "total: 3.451,90 BRL",
+    "| ativo | 12,50 | 3.400 |",
+    "saldo\u00a0em\u00a02024: 98,7%",
+    "-0.5e3",
+)
+"""Literal numeric, monetary and tabular lines, including a unicode separator."""
+
+
+def frozen_choice(by_title: Mapping[str, CardChoice], *, full_pass: bool = False) -> TurnChoice:
+    """Build a ``TurnChoice`` with a frozen mapping, the way the implementation must.
+
+    Args:
+        by_title: The per-Card choice, keyed by Title.
+        full_pass: Whether the choice is a full pass over the graph.
+
+    Returns:
+        The choice, carrying a mapping no caller can write through.
+    """
+    return TurnChoice(by_title=MappingProxyType(dict(by_title)), full_pass=full_pass)
 
 
 class NetworkUsedError(AssertionError):

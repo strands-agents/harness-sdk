@@ -24,7 +24,7 @@ from strands.vended_plugins.context_graph.compaction import (
 )
 from strands.vended_plugins.context_graph.state import Card, CardChoice, ToolPair, _GraphState
 
-from .strategies import frozen_choice
+from .conftest import frozen_choice
 
 _DESCRIPTION_TOKENS = 100
 """The plugin's own default, so the budgeting these tests see is the one production sees.

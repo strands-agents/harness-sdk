@@ -31,7 +31,7 @@ from strands.vended_plugins.context_graph.describe import (
 )
 from strands.vended_plugins.context_graph.state import Card, ToolPair
 
-from .strategies import NUMERIC_LINES
+from .conftest import NUMERIC_LINES
 
 MAX_TITLE_CHARS = _TITLE_TOKENS * _CHARS_PER_TOKEN
 

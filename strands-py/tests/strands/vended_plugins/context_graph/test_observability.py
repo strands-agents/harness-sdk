@@ -39,7 +39,7 @@ from strands.vended_plugins.context_graph.plugin import (
 )
 from strands.vended_plugins.context_graph.state import Card, CardChoice, _GraphState
 
-from .strategies import frozen_choice
+from .conftest import frozen_choice
 from .stubs import StubMatcher
 
 PLUGIN_LOGGER = "strands.vended_plugins.context_graph.plugin"

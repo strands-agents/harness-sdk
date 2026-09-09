@@ -19,7 +19,7 @@ from strands.agent.conversation_manager.compression.pin_message import pin_messa
 from strands.vended_plugins.context_graph.removal import apply_removal, removal_ids
 from strands.vended_plugins.context_graph.state import Card, CardChoice, TurnChoice, _GraphState
 
-from .strategies import frozen_choice
+from .conftest import frozen_choice
 
 
 def _card(title, turn, dialogue_ids, evidence_ids, kind="subject"):
