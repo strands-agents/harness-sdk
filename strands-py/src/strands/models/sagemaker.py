@@ -1,6 +1,7 @@
 """Amazon SageMaker model provider."""
 
 import asyncio
+import dataclasses
 import json
 import logging
 import os
@@ -44,6 +45,20 @@ class UsageMetadata:
     completion_tokens: int
     prompt_tokens: int
     prompt_tokens_details: int | None = 0
+
+    @classmethod
+    def from_usage(cls, usage: dict[str, Any]) -> "UsageMetadata":
+        """Build usage metadata from an OpenAI-compatible usage object.
+
+        Args:
+            usage: The usage object as the endpoint sent it.
+
+        Returns:
+            Usage metadata carrying the fields this class declares.
+        """
+        # The wire schema is the endpoint's, not ours, so keys we do not declare are dropped.
+        names = {field.name for field in dataclasses.fields(cls)}
+        return cls(**{key: value for key, value in usage.items() if key in names})
 
 
 @dataclass
@@ -463,7 +478,7 @@ class SageMakerAIModel(OpenAIModel):
                     choices = content.get("choices")
                     if not choices:
                         if usage := content.get("usage"):
-                            yield self.format_chunk({"chunk_type": "metadata", "data": UsageMetadata(**usage)})
+                            yield self.format_chunk({"chunk_type": "metadata", "data": UsageMetadata.from_usage(usage)})
                         continue
                     if finish_reason:
                         continue
@@ -509,7 +524,7 @@ class SageMakerAIModel(OpenAIModel):
 
                     usage = content.get("usage") or choice.get("usage")
                     if usage:
-                        yield self.format_chunk({"chunk_type": "metadata", "data": UsageMetadata(**usage)})
+                        yield self.format_chunk({"chunk_type": "metadata", "data": UsageMetadata.from_usage(usage)})
 
                     if choice["finish_reason"] is not None:
                         finish_reason = choice["finish_reason"]
@@ -599,7 +614,7 @@ class SageMakerAIModel(OpenAIModel):
                 yield self.format_chunk({"chunk_type": "message_stop", "data": message_stop_reason})
                 # Handle usage metadata
                 if usage := final_response_json.get("usage"):
-                    yield self.format_chunk({"chunk_type": "metadata", "data": UsageMetadata(**usage)})
+                    yield self.format_chunk({"chunk_type": "metadata", "data": UsageMetadata.from_usage(usage)})
         except (
             self.client.exceptions.InternalFailure,
             self.client.exceptions.ServiceUnavailable,
