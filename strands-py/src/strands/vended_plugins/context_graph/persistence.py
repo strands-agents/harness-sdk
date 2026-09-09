@@ -1,48 +1,30 @@
 """Keep the derived graph across processes, through whatever session manager the agent already has.
 
-The rebuild scan remains the fallback; this module only avoids paying for it. It matters most in an
-ephemeral runtime: a session restored into a fresh process populates ``agent.messages`` directly,
-which fires no ``MessageAddedEvent`` — so the scan, which runs on the writing half, has not run when
-the choice is computed, and every invocation decides a full pass.
+The rebuild scan remains the fallback; this module only avoids paying for it. It matters most in an ephemeral runtime: a
+session restored into a fresh process populates ``agent.messages`` directly, firing no ``MessageAddedEvent``, so the
+scan on the writing half has not run when the choice is computed and every invocation decides a full pass.
 
-**Storage is the session manager's, not ours.** Every session manager persists ``agent.state``:
-``SessionAgent.from_agent`` reads it, and file, S3 and any ``SessionRepository`` store it without
-knowing what is inside. So a namespaced key here is file, S3, AgentCore and custom storage at once,
-with no persistence interface to define and no session field to add.
+Storage is the session manager's, not ours. Every session manager persists ``agent.state``: ``SessionAgent.from_agent``
+reads it, and file, S3 and any ``SessionRepository`` store it without knowing what is inside. So a namespaced key here
+is file, S3, AgentCore and custom storage at once, with no persistence interface to define and no session field to add.
 
-**What is stored, and what deliberately is not.**
+Stored: ``cards`` and ``links`` (the scan this exists to avoid), ``turn`` (the ordinal both paths must agree on),
+``reuse`` (not derivable from the messages, and tiny). Not stored: ``choice`` (per turn; restoring it applies the last
+invocation's decision), ``referenced`` (per call), ``vectors`` (a cache — losing it costs one embedding round trip,
+carrying it sends bulk JSON through a sync that fires on every message).
 
-=================  =========  ==============================================================
-Field              Stored     Why
-=================  =========  ==============================================================
-``cards``          yes        the rebuild scan this exists to avoid
-``links``          yes        same scan derives them
-``turn``           yes        the ordinal the two paths have to agree on
-``reuse``          yes        not derivable from the messages, and tiny
-``choice``         **no**     per turn; restoring it applies the last invocation's decision
-``referenced``     **no**     per call
-``vectors``        **no**     a cache. Losing it costs one embedding round trip; carrying it
-                              sends bulk JSON through a sync that fires on **every message**
-=================  =========  ==============================================================
+Two guards, because a stored graph can be wrong in two ways a derived one cannot. A Card holds durable identities into
+``agent.messages`` and can outlive the message it addresses through a redaction, a trimmed session or a partial write,
+so on load a Card is kept only when every identity it addresses is still present (Requirement 14.9: a message that no
+longer exists is omitted from every decision, without raising). And Tags, Descriptions and rarity are functions of the
+configuration *and* of the graph's population, since ``retag`` recounts rarity whenever a Card is added, so a Card
+stored under one configuration is not the Card the current one would derive; the difference being silent, a fingerprint
+mismatch discards the payload and falls back to the scan.
 
-**Two guards, because a stored graph can be wrong in two ways a derived one cannot.**
-
-A Card holds durable identities into ``agent.messages``, and a stored Card can outlive the message it
-addresses — a redaction, a trimmed session, a partial write. So on load a Card is kept only when every
-identity it addresses is still present (Requirement 14.9: a message that no longer exists is omitted
-from every decision, without raising).
-
-And Tags, Descriptions and rarity are functions of the configuration *and* of the graph's population —
-``retag`` recounts rarity whenever a Card is added, because what defines a Card depends on what it is
-compared against. A Card stored under one configuration is not the Card the current one would derive,
-and the difference is silent. Hence the fingerprint: a mismatch discards the payload and falls back to
-the scan.
-
-**The security boundary moves, which is why this is opt-in.** A Description carries numeric lines
-copied literally — monetary values, account numbers. Persisting puts a second copy of that in the
-session store, in a place the operator audited for messages rather than for derived summaries. The
-strategy writes nothing durable unless asked (Requirement 14.2; this module is the documented
-exception to it, taken only under ``persist=True``).
+The security boundary moves, hence opt-in. A Description carries numeric lines copied literally, monetary values and
+account numbers among them, so persisting puts a second copy of that in a store the operator audited for messages rather
+than for derived summaries. The strategy writes nothing durable unless asked (Requirement 14.2; this module is the
+documented exception, taken only under ``persist=True``).
 """
 
 from __future__ import annotations
@@ -75,8 +57,8 @@ def fingerprint(**config: Any) -> str:
         **config: The values every Card was derived with. Must be JSON-serializable.
 
     Returns:
-        A short stable digest, compared instead of the values themselves so the payload never carries
-        a copy of the configuration.
+        A short stable digest, compared instead of the values themselves so the payload never carries a copy of the
+        configuration.
     """
     return hashlib.sha256(json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()[:16]
 
@@ -84,11 +66,9 @@ def fingerprint(**config: Any) -> str:
 def save(agent: Agent, state: _GraphState, **config: Any) -> None:
     """Write the derivable half of ``state`` into ``agent.state``.
 
-    Called from the writing half, where the session sync it feeds already runs on
-    ``MessageAddedEvent``, so writing here adds no round trip of its own.
-
-    Never raises: a store that cannot take the payload costs a rebuild scan on the next process, which
-    is the behavior without this module.
+    Called from the writing half, where the session sync it feeds already runs on ``MessageAddedEvent``, so this adds no
+    round trip of its own. Never raises: a store that cannot take the payload costs a rebuild scan on the next process,
+    the behavior without this module.
 
     Args:
         agent: The agent whose session carries the payload.
@@ -105,9 +85,8 @@ def save(agent: Agent, state: _GraphState, **config: Any) -> None:
             "reuse": {title: [bonus, cycle] for title, (bonus, cycle) in state.reuse.items()},
         }
         if agent.state.get(_STATE_KEY) == payload:
-            # An unchanged graph is not written. ``AgentState.set`` bumps its version on every call,
-            # and the session manager syncs on a version change — so an unconditional write turns
-            # every turn boundary into a full rewrite of the session's agent record.
+            # An unchanged graph is not written. ``AgentState.set`` bumps its version on every call and the session
+            # manager syncs on a version change, so an unconditional write rewrites the whole agent record every turn.
             return
         agent.state.set(_STATE_KEY, payload)
     except Exception:
@@ -123,9 +102,9 @@ def load(agent: Agent, state: _GraphState, **config: Any) -> bool:
         **config: The configuration this instance derives under, for the fingerprint.
 
     Returns:
-        Whether the graph was restored. ``False`` means the caller should run the rebuild scan, and it
-        covers every way the payload can be unusable: absent, written by another version, derived
-        under another configuration, or addressing messages that are gone.
+        Whether the graph was restored. ``False`` tells the caller to run the rebuild scan and covers every way the
+        payload can be unusable: absent, written by another version, derived under another configuration, or addressing
+        messages that are gone.
     """
     try:
         return _load(agent, state, **config)
@@ -148,8 +127,8 @@ def _load(agent: Agent, state: _GraphState, **config: Any) -> bool:
     for encoded in stored.get("cards") or ():
         card = _decode_card(encoded)
         addressed = set(card.dialogue_ids) | set(card.evidence_ids)
-        # An artifact Card addresses no message, so it is kept on its reference alone; a subject Card
-        # is kept only while every message it addresses is still there.
+        # An artifact Card addresses no message and is kept on its reference alone; a subject Card is kept only while
+        # every message it addresses is still there.
         if addressed and not addressed <= live:
             continue
         cards[card.title] = card
@@ -158,8 +137,7 @@ def _load(agent: Agent, state: _GraphState, **config: Any) -> bool:
         return False
 
     state.cards = cards
-    # An edge whose target did not survive is dropped, so the loaded graph and the derived one — the
-    # warm path and the cold path — decide alike.
+    # An edge whose target did not survive is dropped, so the warm path and the cold path decide alike.
     state.links = {
         title: [_decode_link(edge) for edge in edges if _resolves(edge, cards)]
         for title, edges in (stored.get("links") or {}).items()

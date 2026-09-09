@@ -1,7 +1,7 @@
 """Data model of the context graph: a Card holds an address, never content.
 
-The criterion is ownership of content: the graph stores what it can point at and derive, and nothing
-it would have to keep in sync.
+The criterion is ownership of content: the graph stores what it can point at and derive, and nothing it would have to
+keep in sync.
 
 | | Owner | Durable identity | In the Card? |
 |---|---|---|---|
@@ -11,13 +11,12 @@ it would have to keep in sync.
 
 Three absences are load-bearing:
 
-- **No message-text field.** ``Card.numeric_lines`` and ``Card.description`` are derived text, not
-  a copy of a message: they do not replace the message, they narrow it by literal line selection.
-  The content stays in ``agent.messages`` (Requirement 3.4).
-- **No persisted note.** The note dies at the end of the turn. What survives is the choice, which is
-  its result, plus the fed-back note in ``_GraphState.reuse`` — the only value that crosses turns.
-- **No message metadata.** The graph never writes to ``metadata.custom`` (Requirement 1.10): the
-  decision is per Card, and the Card is derivable.
+- No message-text field. ``Card.numeric_lines`` and ``Card.description`` are derived text, not a copy of a message: they
+  narrow it by literal line selection rather than replacing it. Content stays in ``agent.messages`` (Req. 3.4).
+- No persisted note. The note dies at the end of the turn; what survives is the choice, its result, and the fed-back
+  note in ``_GraphState.reuse``, the only value that crosses turns.
+- No message metadata. The graph never writes to ``metadata.custom`` (Req. 1.10): the decision is per Card, and the Card
+  is derivable.
 """
 
 from __future__ import annotations
@@ -45,9 +44,8 @@ LinkKind = Literal["tool", "artifact", "follows", "similar"]
 class ToolPair:
     """A tool pair of a Card, and whether it has already been consumed.
 
-    ``consumed`` is derived exclusively from the order of the turn's messages: true when there
-    exists, after this pair and within the same turn, an ``assistant`` message carrying a text block.
-    Requirement 6.4 — no model and no embedding takes part in the decision.
+    ``consumed`` comes from the order of the turn's messages alone: true when an ``assistant`` message carrying a text
+    block follows this pair within the same turn. No model, no embedding (Requirement 6.4).
 
     Attributes:
         tool_use_id: The ``toolUseId`` shared by both halves of the pair.
@@ -66,10 +64,9 @@ class ToolPair:
 class Card:
     """A graph node. Holds addresses and derived text, never message content.
 
-    ``dialogue_ids`` and ``evidence_ids`` partition the turn's messages: a message joins the evidence
-    when it carries a ``toolUse`` or ``toolResult`` block, and the dialogue otherwise. The partition
-    is exhaustive and disjoint, which is what lets the two parts hold independent resolutions without
-    leaving any message orphaned by both decisions.
+    ``dialogue_ids`` and ``evidence_ids`` partition the turn's messages: a message joins the evidence when it carries a
+    ``toolUse`` or ``toolResult`` block, the dialogue otherwise. The partition is exhaustive and disjoint, so the two
+    parts hold independent resolutions with no message orphaned by both decisions.
 
     Attributes:
         title: Literal prefix of the turn's user message. Identity of the Card in the graph.
@@ -108,9 +105,8 @@ class Card:
 class Link:
     """A directed, weighted edge. Four kinds, and only two carry note.
 
-    ``target`` is a Card title for ``follows``, ``similar`` and ``artifact``, and a tool name for
-    ``tool``. The tool edge is not a note destination: it is the index behind the supplemental
-    referenced source and the structural tags.
+    ``target`` is a Card title for ``follows``, ``similar`` and ``artifact``, a tool name for ``tool``. The tool edge is
+    no note destination: it indexes the supplemental referenced source and the structural tags.
 
     Attributes:
         kind: Which of the four kinds this edge is.
@@ -129,14 +125,11 @@ class CardChoice:
 
     Attributes:
         dialogue: Resolution of the dialogue part. Any of the three rungs.
-        evidence: Resolution of the evidence part. Two rungs while the call addresses the Card, and
-            never ``"title"`` there: a tool result with no content at all leaves the model without the
-            referent of the questions that follow.
-
-            ``"title"`` on this axis means one thing only — the selection did not address this Card,
-            so *nothing* of it reaches the call, evidence included. It is not a third rung of the
-            ladder; it is the absence of the Card, and the supplemental referenced source withholds
-            its tool names accordingly (Requirement 10.8).
+        evidence: Resolution of the evidence part. Two rungs while the call addresses the Card, never ``"title"`` there:
+            a tool result with no content leaves the model without the referent of the questions that follow.
+            ``"title"`` on this axis means the selection did not address this Card, so nothing of it reaches the call,
+            evidence included. It is the absence of the Card, not a third rung, and the supplemental referenced source
+            withholds its tool names accordingly (Requirement 10.8).
     """
 
     dialogue: Resolution
@@ -147,18 +140,16 @@ class CardChoice:
 class TurnChoice:
     """The turn choice: immutable, computed once, read by every call of the turn.
 
-    ``full_pass`` is the short circuit: true on the first turn, below ``min_cards``, when
-    ``expand_threshold`` is ``0.0``, and whenever any step of the choice failed. In that state the
-    handler returns the received context by object identity, which makes the assembled context
-    identical field by field to the one produced without the feature.
+    ``full_pass`` is the short circuit: true on the first turn, below ``min_cards``, when ``expand_threshold`` is
+    ``0.0``, and whenever any step of the choice failed. The handler then returns the received context by object
+    identity, making the assembled context identical field by field to the one produced without the feature.
 
     Attributes:
-        by_title: Title to the resolution of its two parts. A ``MappingProxyType``, never a live
-            dict: the choice is frozen for the whole turn, so the context cannot shift mid-reasoning.
-        full_pass: Whether every Card keeps full content, which is the regression short circuit.
-        selected: Titles the call addresses — the ones whose Title reaches the model. ``None`` means
-            every Card is addressed, which is the behavior when selection is off. An empty set is not
-            the same thing: it means the selection ran and chose nothing.
+        by_title: Title to the resolution of its two parts. A ``MappingProxyType``, never a live dict: the choice is
+            frozen for the whole turn, so the context cannot shift mid-reasoning.
+        full_pass: Whether every Card keeps full content, the regression short circuit.
+        selected: Titles the call addresses, whose Title reaches the model. ``None`` addresses every Card, the behavior
+            when selection is off. An empty set differs: the selection ran and chose nothing.
     """
 
     by_title: Mapping[str, CardChoice]
@@ -170,23 +161,21 @@ class TurnChoice:
 class _GraphState:
     """Per-agent state. Derived: rebuildable by a scan over ``agent.messages``.
 
-    Losing this state on a restart costs one rebuild scan, free in I/O and in model calls
-    (Requirement 14.2, 14.5).
+    Losing this state on a restart costs one rebuild scan, free in I/O and in model calls (Requirements 14.2, 14.5).
 
-    It never reaches message metadata, and it reaches no store of its own. Under ``persist=True``
-    *part* of it reaches ``agent.state``: ``cards``, ``links``, ``turn`` and ``reuse`` travel, while
-    ``choice``, ``referenced`` and ``vectors`` do not. See :mod:`.persistence`.
+    It reaches neither message metadata nor a store of its own. Under ``persist=True`` part of it reaches
+    ``agent.state``: ``cards``, ``links``, ``turn`` and ``reuse`` travel; ``choice``, ``referenced`` and ``vectors`` do
+    not. See :mod:`.persistence`.
 
     Attributes:
         cards: Title to Card, in turn order.
         links: Title to its outgoing edges.
-        choice: The frozen choice of the current turn. A fresh state is a full pass, which is what
-            makes an agent with no messages behave exactly as it does without the feature.
-        reuse: Title to ``(bonus, expiry cycle)`` of the fed-back note — the only value that crosses
-            turns.
+        choice: The frozen choice of the current turn. A fresh state is a full pass, so an agent with no messages
+            behaves as it does without the feature.
+        reuse: Title to ``(bonus, expiry cycle)`` of the fed-back note, the only value that crosses turns.
         turn: Turn ordinal. ``0`` on a state with no closed turn boundary (Requirement 14.11).
-        vectors: Title to ``(description, vector)``. A per-process cache, so a missing entry costs
-            one embedding call and never a lost value.
+        vectors: Title to ``(description, vector)``. A per-process cache, so a missing entry costs one embedding call
+            rather than a lost value.
         retrieval_cycles: Retrieval cycles spent in the current turn (Requirement 17.8).
         referenced: Supplemental referenced source published on this call.
     """
@@ -202,5 +191,5 @@ class _GraphState:
 
 
 _GraphStates: TypeAlias = "weakref.WeakKeyDictionary[Agent, _GraphState]"
-"""Per-agent state map, keyed weakly: the state is dropped along with the agent it belongs to. Exact
-mold of ``_DisclosureStates`` in ``progressive_tool_disclosure/plugin.py`` (Requirement 14.1)."""
+"""Per-agent state map, keyed weakly so the state is dropped with its agent. Exact mold of ``_DisclosureStates`` in
+``progressive_tool_disclosure/plugin.py`` (Requirement 14.1)."""

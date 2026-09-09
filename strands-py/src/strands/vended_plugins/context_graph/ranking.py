@@ -1,13 +1,11 @@
 """The optional second stage of the selection: reorder the candidates with a rerank model.
 
-A cascade over the embedding pass — embedding scores every Card in one round trip, the reranker
-scores only the candidates it selected — because a rerank call costs roughly ten times the latency of
-the embedding path.
+A cascade over the embedding pass, because a rerank call costs roughly ten times the latency of the embedding path:
+embedding scores every Card in one round trip, the reranker scores only the candidates it selected.
 
-**Failure is a skipped step, never a failed call.** The ``Reranker`` protocol of this package raises
-by contract, and on the critical path of a model call that contract cannot be honoured upward: the
-agent must answer. So anything this module is handed may raise, and the answer is then the order the
-embedding already produced, plus one debug log.
+Failure is a skipped step, never a failed call. The package's ``Reranker`` protocol raises by contract, and on the
+critical path of a model call that contract cannot be honoured upward, since the agent must answer. So anything handed
+to this module may raise, and the answer is then the order the embedding already produced plus one debug log.
 """
 
 from __future__ import annotations
@@ -34,8 +32,8 @@ def rerank(question: str, titles: Sequence[str], documents: Sequence[str], reran
         reranker: Object exposing ``score(query, chunks)``, sync or async. May raise.
 
     Returns:
-        The titles in descending relevance, or ``titles`` unchanged when the reranker was unusable —
-        which covers raising, timing out, answering the wrong length, and answering non-numerically.
+        The titles in descending relevance, or ``titles`` unchanged when the reranker was unusable: raising, timing out,
+        answering the wrong length, or answering non-numerically.
     """
     if len(titles) < 2 or len(titles) != len(documents):
         # Nothing to reorder, or a caller that mispaired the two: the embedding order is the answer.
@@ -47,8 +45,8 @@ def rerank(question: str, titles: Sequence[str], documents: Sequence[str], reran
             raise ValueError(f"rerank score count=<{len(scores)}> | expected=<{len(titles)}>")
         ranked = sorted(
             range(len(titles)),
-            # The embedding position breaks ties, so an indifferent reranker leaves the order it was
-            # given rather than permuting it arbitrarily.
+            # The embedding position breaks ties, so an indifferent reranker leaves the order it was given rather than
+            # permuting it arbitrarily.
             key=lambda index: (-float(scores[index]), index),
         )
         return tuple(titles[index] for index in ranked)
@@ -64,8 +62,8 @@ def rerank(question: str, titles: Sequence[str], documents: Sequence[str], reran
 def _score(question: str, documents: list[str], reranker: Any) -> Sequence[float]:
     """Call ``reranker.score``, awaiting it on a worker thread when it is a coroutine.
 
-    The turn choice runs in a **synchronous** hook inside the agent's own running loop, so neither
-    ``await`` nor ``asyncio.run`` is available here. A worker thread with a loop of its own is.
+    The turn choice runs in a synchronous hook inside the agent's own running loop, so neither ``await`` nor
+    ``asyncio.run`` is available here. A worker thread with a loop of its own is.
 
     Args:
         question: The turn's question.

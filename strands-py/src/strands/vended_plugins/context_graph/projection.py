@@ -1,11 +1,11 @@
 """Project the turn's message list, dropping the durable identities the removal requested.
 
-This is step 5 of the event loop, and it runs on ``context.messages`` — the deep defensive copy
-built when the model call is assembled — never on ``agent.messages``.
+Step 5 of the event loop. It runs on ``context.messages``, the deep defensive copy built when the model call is
+assembled, never on ``agent.messages``.
 
-``project_messages`` is a pure function of ``(messages, drop_ids)``. It derives nothing about the
-graph: the request arrives already computed as a frozen set of durable identities, so a derivation
-finishing mid-turn cannot change the selection under the projection's feet.
+``project_messages`` is a pure function of ``(messages, drop_ids)`` and derives nothing about the graph: the request
+arrives as an already-computed frozen set of durable identities, so a derivation finishing mid-turn cannot change the
+selection under the projection's feet.
 """
 
 from collections import deque
@@ -17,26 +17,24 @@ from ...types.content import Messages
 def project_messages(messages: Messages, drop_ids: frozenset[str]) -> Messages:
     """Return the subsequence of messages to send to the provider.
 
-    Never mutates ``messages`` nor the message dicts inside it. Returns the same list object when
-    the request is empty.
+    Never mutates ``messages`` nor the message dicts inside it. Returns the same list object when the request is empty.
 
-    A message is dropped only when its durable identity is in the request. A message without a
-    ``tracking_id``, or with one absent from the request, always stays — that is the structural
-    fail-safe for derivation lag: a late derivation sends more context, never less.
+    A message is dropped only when its durable identity is in the request. A message without a ``tracking_id``, or with
+    one absent from the request, always stays: the structural fail-safe for derivation lag, where a late derivation
+    sends more context, never less.
 
-    Two guards override the drop decision. An explicit ``is_pinned`` from the main agent wins over
-    any request, and the first ``role == "user"`` message is never dropped because providers reject
-    a conversation that does not open with a user turn. A third guard reconciles tool pairs: a
-    ``toolUse`` and its ``toolResult`` always travel together, so dropping one drops the other —
-    unless one end is protected, in which case both ends stay.
+    Three guards override the drop decision. An explicit ``is_pinned`` from the main agent wins over any request. The
+    first ``role == "user"`` message is never dropped, since providers reject a conversation that does not open with a
+    user turn. And tool pairs are reconciled: a ``toolUse`` and its ``toolResult`` always travel together, so dropping
+    one drops the other, unless one end is protected, in which case both ends stay.
 
     Args:
         messages: The turn's message list. Read only.
         drop_ids: Durable identities requested for removal, frozen for the whole turn.
 
     Returns:
-        A subsequence of ``messages``, made of the same message objects in the same relative order.
-        The same list object when ``drop_ids`` is empty. Never empty for a non-empty input.
+        A subsequence of ``messages`` holding the same message objects in the same relative order; the same list object
+        when ``drop_ids`` is empty; never empty for a non-empty input.
     """
     if not drop_ids:
         return messages
@@ -46,9 +44,8 @@ def project_messages(messages: Messages, drop_ids: frozenset[str]) -> Messages:
     per_index, groups = _tool_pair_groups(messages)
     _reconcile_tool_pairs(keep, per_index, groups, protected)
     if messages and not any(keep):
-        # A non-empty history always projects at least one message: providers reject an empty one.
-        # Reachable only with nothing protected — no pin and no user turn at all — and the pair
-        # reconciliation dropping whatever pass 1 had kept.
+        # A non-empty history always projects at least one message: providers reject an empty one. Reachable only with
+        # nothing protected (no pin, no user turn) and pair reconciliation dropping whatever pass 1 had kept.
         protected = protected | {0}
         keep[0] = True
         _reconcile_tool_pairs(keep, per_index, groups, protected)
@@ -82,8 +79,7 @@ def _protected_indices(messages: Messages, first_user_index: int) -> set[int]:
 def _provisional_keep(messages: Messages, drop_ids: frozenset[str], protected: set[int]) -> list[bool]:
     """Decide keep or drop per index, before tool pairs are reconciled.
 
-    Provisional because a kept message may still be dropped, and a dropped one promoted back, once
-    the tool-pair guard runs over the result.
+    Provisional: the tool-pair guard may still drop a kept message or promote a dropped one back.
 
     Args:
         messages: The turn's message list. Read only.
@@ -111,8 +107,8 @@ def _tool_pair_groups(messages: Messages) -> tuple[list[set[str]], dict[str, lis
         messages: The turn's message list. Read only.
 
     Returns:
-        A tuple of the ``toolUseId`` set carried by each index, and the map from ``toolUseId`` to
-        every index carrying it — the messages that form that pair.
+        The ``toolUseId`` set carried by each index, and the map from ``toolUseId`` to every index carrying it, i.e. the
+        messages forming that pair.
     """
     per_index: list[set[str]] = []
     groups: dict[str, list[int]] = {}
@@ -132,14 +128,14 @@ def _reconcile_tool_pairs(
 ) -> None:
     """Rewrite ``keep`` in place so no tool pair is ever split.
 
-    Sending a ``toolUse`` without its ``toolResult`` is a protocol error, so a pair is reconciled
-    toward DROP: dropping one end drops the other. When one end is protected the reconciliation goes
-    the other way and both ends stay — a request never causes a protected message to leave.
+    Sending a ``toolUse`` without its ``toolResult`` is a protocol error, so a pair is reconciled toward DROP: dropping
+    one end drops the other. When one end is protected the reconciliation goes the other way and both ends stay; a
+    request never causes a protected message to leave.
 
-    Growth in one direction only is what makes termination structural: KEEP promotion starts from a
-    fixed set of protected positions and only adds, DROP propagation only removes and never touches a
-    promoted position. A message carrying two ``toolUseId``s — one paired with a protected end, one
-    with a dropped end — would otherwise flip forever between the two rules.
+    Growth in one direction only makes termination structural: KEEP promotion starts from a fixed set of protected
+    positions and only adds, DROP propagation only removes and never touches a promoted position. A message carrying two
+    ``toolUseId``s, one paired with a protected end and one with a dropped end, would otherwise flip forever between the
+    two rules.
 
     Args:
         keep: Per-index flags from pass 1. Mutated in place.

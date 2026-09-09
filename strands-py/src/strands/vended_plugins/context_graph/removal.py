@@ -1,22 +1,18 @@
 """The durable identities the removal asks to drop, derived from the (Card, part) pair.
 
-**It asks, it does not decide.** The returned set is a request: ``project_messages`` may preserve any
-identity in it — by pin, by the first user message, or by tool-pair reconciliation. What actually left
-is computed by the compaction, comparing this request against the list the projection returned. Hence
-``ids`` and not ``dropped``.
+It asks, it does not decide. ``project_messages`` may preserve any requested identity by pin, by the first user message,
+or by tool-pair reconciliation; the compaction computes what actually left by comparing the request against the returned
+list. Hence ``ids`` and not ``dropped``.
 
-**Absence carries the lag between the two halves.** The graph is derived on ``MessageAddedEvent`` and
-read on ``InvokeModelStage.Input``, so a call can land before the previous turn's Card exists or while
-the current turn is still open. Neither needs a check: an undermined Card has no key in
-``state.cards``, and the turn in progress is subtracted via ``current_turn_ids``. A failed derivation
-therefore costs full content for that turn without a conditional that could be written wrong.
+Absence carries the lag between the two halves: the graph is derived on ``MessageAddedEvent`` and read on
+``InvokeModelStage.Input``, so a call can land before the previous turn's Card exists or while the current turn is still
+open. Neither needs a check, since an underived Card has no key in ``state.cards`` and the turn in progress is
+subtracted via ``current_turn_ids``. A failed derivation costs full content for that turn with no conditional to get
+wrong. A title missing from the choice reads as full, the same fail-safe direction. An artifact Card gets no special
+case; keeping raw tool returns out of full content is upheld upstream in the scoring.
 
-**A title missing from the choice is read as full**, in the same fail-safe direction as the rest of the
-module. An artifact Card gets no special case here; keeping raw tool returns out of full content is
-upheld upstream in the scoring.
-
-**The removal itself is ``project_messages``**, which owns the four guards and the monotone closures
-that make the fixed point structural. ``apply_removal`` is wiring over it.
+``project_messages`` is the removal itself and owns the four guards and the monotone closures that make the fixed point
+structural. ``apply_removal`` is wiring over it.
 """
 
 from __future__ import annotations
@@ -33,18 +29,18 @@ def removal_ids(
 ) -> frozenset[str]:
     """Durable identities the removal should attempt to drop.
 
-    Derives from the (Card, part) pair and from nothing else. Completes without mutating the graph
-    state and without touching ``agent.messages`` (Requirement 11.9).
+    Derives from the (Card, part) pair and nothing else, mutating neither the graph state nor ``agent.messages`` (Req.
+    11.9).
 
     Args:
-        state: The graph state. Read only; never mutated.
-        choice: The turn choice, frozen at ``BeforeInvocationEvent``. A title absent from
-            ``choice.by_title`` is read as full content.
+        state: The graph state. Read only.
+        choice: The turn choice, frozen at ``BeforeInvocationEvent``. A title absent from ``choice.by_title`` reads as
+            full content.
         current_turn_ids: Durable identities of the turn in progress. Never in the return.
 
     Returns:
-        The requested identities. Empty when the choice keeps every part in full content, which makes
-        the assembled context identical, field by field, to the one produced without the feature.
+        The requested identities. Empty when the choice keeps every part in full content, making the assembled context
+        identical field by field to the one produced without the feature.
     """
     requested: set[str] = set()
 
@@ -72,23 +68,20 @@ def apply_removal(
 ) -> tuple[Messages, frozenset[str]]:
     """Derive the request and apply it, returning the removal and the request that produced it.
 
-    The request comes back alongside the removal because the compaction needs both: what actually left
-    is ``requested`` minus the identities still present in the returned list, and that subtraction is
-    what keeps a pinned message from paying for its content twice.
-
-    Nothing is mutated — not ``messages``, not any dict inside it, not ``agent.messages``, not the graph
-    state. When the request is empty the **same list object** comes back, so the assembled context is
-    what it would be without the feature.
+    The compaction needs both: what actually left is ``requested`` minus the identities still present in the returned
+    list, and that subtraction keeps a pinned message from paying for its content twice. Mutates nothing — not
+    ``messages``, not a dict inside it, not ``agent.messages``, not the graph state — and returns the same list object
+    when the request is empty.
 
     Args:
         messages: The call's message list. Read only.
-        state: The graph state. Read only; never mutated.
+        state: The graph state. Read only.
         choice: The turn choice, frozen at ``BeforeInvocationEvent``.
         current_turn_ids: Durable identities of the turn in progress. Never removed.
 
     Returns:
-        The removal — a subsequence of ``messages``, made of the same message objects in the same
-        relative order, with no duplication and no insertion — and the request it was derived from.
+        The removal, a subsequence of ``messages`` holding the same message objects in the same relative order with no
+        duplication and no insertion, and the request it was derived from.
     """
     requested = removal_ids(state, choice, current_turn_ids)
     return project_messages(messages, requested), requested

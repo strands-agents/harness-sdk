@@ -1,36 +1,25 @@
 """The three retrieval tools: what makes a wrong automatic choice cost a cycle instead of an answer.
 
-The graph decides a Resolution per Card from a note, and the note is a guess. When the guess is wrong
-the model is not left with a worse answer — it is left with a Title, which is an explicit invitation to
-ask. These three are what the invitation leads to:
+The graph decides a Resolution per Card from a note, and the note is a guess. A wrong guess leaves the model not with a
+worse answer but with a Title, an explicit invitation to ask. These three are what the invitation leads to:
 
-| Tool | Asks by | Reads | Raises a Resolution? |
-|---|---|---|---|
-| ``expand_card`` | Title | the graph | yes, both axes, for the rest of the turn |
-| ``expand_artifact`` | reference | the offloader's ``Storage`` | no — the content comes back inline |
-| ``find_context`` | Description, in the model's words | the same vector index the turn choice scores against | no |
+- ``expand_card`` asks by Title, reads the graph, and raises both axes for the rest of the turn.
+- ``expand_artifact`` asks by reference, reads the offloader's ``Storage``, and raises nothing: the content comes back
+  inline.
+- ``find_context`` asks by Description in the model's own words, reads the same vector index the turn choice scores
+  against, and raises nothing.
 
-Four properties are shared by all three:
-
-**Nothing here calls a language model, and nothing here touches ``agent.messages``.** None of the three
-has a handle on the model, and none holds a mutable reference to the history (Requirement 12.13).
-
-**Every failure is a return value, never an exception.** An unknown Title, an unknown reference,
-non-textual content and a missing ``ContextOffloader`` all come back as prose naming what was missing
-(Requirements 12.3, 12.6, 12.7, 15.6, 16.8). A raise would tell the model the *tool* is broken rather
-than that the *request* was.
-
-**Success records the fed-back note; an error records nothing** — by not calling
-:func:`~.scoring.record_reuse` on the error paths rather than by a branch inside it (Requirement 13.8).
-The elevation ``expand_card`` performs lasts the remainder of the turn, while the fed-back note is what
-carries the request into the turn *after* it (Requirement 12.14).
-
-**The retrieval cycle counter is incremented on invocation, not on success** (Requirement 17.8): a
-cycle spent on a request that came back empty was still spent.
-
-**No index is built here.** ``find_context`` scores through the matcher the turn choice uses
-(Requirement 12.10), whose vectors are served from the per-process cache keyed by ``(purpose, text)``,
-so an unchanged Description costs nothing on this path.
+Five properties are shared by all three. Nothing here calls a language model or touches ``agent.messages``: none has a
+handle on the model, none holds a mutable reference to the history (Requirement 12.13). Every failure is a return value,
+never an exception — an unknown Title, an unknown reference, non-textual content and a missing ``ContextOffloader`` all
+come back as prose naming what was missing (Requirements 12.3, 12.6, 12.7, 15.6, 16.8), because a raise would report the
+*tool* broken rather than the *request*. Success records the fed-back note and an error records nothing, by not calling
+:func:`~.scoring.record_reuse` on the error paths rather than by a branch inside it (Requirement 13.8); the elevation
+``expand_card`` performs lasts the rest of the turn, while the fed-back note carries the request into the turn *after*
+it (Requirement 12.14). The retrieval cycle counter is incremented on invocation, not on success (Requirement 17.8): a
+cycle spent on a request that came back empty was still spent. And no index is built here — ``find_context`` scores
+through the matcher the turn choice uses (Requirement 12.10), whose vectors come from the per-process cache keyed by
+``(purpose, text)``, so an unchanged Description costs nothing on this path.
 """
 
 from __future__ import annotations
@@ -52,20 +41,15 @@ __all__ = ["expand_artifact", "expand_card", "find_context"]
 logger = logging.getLogger(__name__)
 
 _MAX_CANDIDATES = 5
-"""Candidates ``find_context`` returns at most (Requirement 12.11).
-
-Capped rather than "as many as clear the floor": a search that answers with the whole graph has
-re-injected the very thing the graph collapsed.
-"""
+"""Candidates ``find_context`` returns at most (Requirement 12.11). Capped rather than "as many as clear the floor": a
+search that answers with the whole graph has re-injected the very thing the graph collapsed."""
 
 _CONTEXT_LINES = 5
 """Lines around each pattern match, the default ``retrieve_offloaded_content`` already applies."""
 
 _CHARS_PER_TOKEN = 4
-"""Characters per token, the same coarse estimate ``describe.py`` and the offloader use.
-
-Only ever used to *report* a cost back to the model, never to decide what is returned.
-"""
+"""Characters per token, the same coarse estimate ``describe.py`` and the offloader use. Only ever used to *report* a
+cost back to the model, never to decide what is returned."""
 
 
 # ---- expand_card ------------------------------------------------------------------------------
@@ -80,25 +64,22 @@ def expand_card(
 ) -> str:
     """Raise the Subject Card titled ``title`` to Full Content for the remainder of the turn.
 
-    Both axes, dialogue *and* evidence (Requirement 12.2). The elevation is a rewrite of the frozen
-    choice rather than a new field on the state, so it ends with the turn: the next
-    ``BeforeInvocationEvent`` recomputes the choice from the graph, and the fed-back note is what
-    carries the request across that boundary (Requirement 12.14).
-
-    A full pass is left exactly as it is: every Card is already at Full Content, and writing a
-    ``by_title`` entry would flip ``full_pass`` to false and cost the delivery its identity short
-    circuit.
+    Both axes, dialogue *and* evidence (Requirement 12.2). The elevation rewrites the frozen choice rather than adding a
+    field to the state, so it ends with the turn: the next ``BeforeInvocationEvent`` recomputes the choice from the
+    graph, and the fed-back note carries the request across that boundary (Requirement 12.14). A full pass is left as
+    is, since every Card is already at Full Content and a ``by_title`` entry would flip ``full_pass`` to false and cost
+    the delivery its identity short circuit.
 
     Args:
-        state: Graph state of the agent. Its ``choice``, ``reuse`` and ``retrieval_cycles`` are
-            mutated; ``cards`` and ``links`` are only read.
+        state: Graph state of the agent. ``choice``, ``reuse`` and ``retrieval_cycles`` are mutated; ``cards`` and
+            ``links`` read only.
         title: Title of the Card the model asked for, as it was shown to it.
         cycle: Current cycle counter, ``agent.event_loop_metrics.cycle_count``.
         reuse_ttl_cycles: Cycles the fed-back note survives.
 
     Returns:
-        Confirmation that the turn will arrive whole, or an error naming the Title asked for — in which
-        case no Resolution changed and no fed-back note was recorded (Requirement 12.3).
+        Confirmation that the turn will arrive whole, or an error naming the Title asked for, in which case no
+        Resolution changed and no fed-back note was recorded (Requirement 12.3).
     """
     state.retrieval_cycles += 1
 
@@ -137,13 +118,11 @@ async def expand_artifact(
 ) -> str:
     """Read the artifact behind ``reference``, whole or in part, from the offloader's storage.
 
-    The read is delegated and never reimplemented: ``ContextOffloader``'s ``Storage`` carries the
-    path-traversal and bucket-prefix guards, so the graph passes the reference along and opens no file,
-    resolves no path and builds no URI.
+    The read is delegated and never reimplemented: ``ContextOffloader``'s ``Storage`` carries the path-traversal and
+    bucket-prefix guards, so the graph passes the reference along and opens no file, resolves no path and builds no URI.
 
-    No Resolution changes on any path, success included (Requirement 11.8). The content the model asked
-    for is in this very answer, and what crosses into the next turn is the fed-back note on the
-    artifact's Card.
+    No Resolution changes on any path, success included (Requirement 11.8). The content asked for is in this answer, and
+    what crosses into the next turn is the fed-back note on the artifact's Card.
 
     Args:
         state: Graph state of the agent. Its ``reuse`` and ``retrieval_cycles`` are mutated.
@@ -155,14 +134,13 @@ async def expand_artifact(
         reuse_ttl_cycles: Cycles the fed-back note survives.
 
     Returns:
-        The requested part of the artifact, or — for a missing ``ContextOffloader``, an unknown
-        reference, non-textual content, or a line range outside the content — an error naming what was
-        missing, with nothing recorded and no Resolution changed (Requirements 12.6, 12.7, 15.6).
+        The requested part of the artifact, or an error naming what was missing — a missing ``ContextOffloader``, an
+        unknown reference, non-textual content, or a line range outside the content — with nothing recorded and no
+        Resolution changed (Requirements 12.6, 12.7, 15.6).
     """
     state.retrieval_cycles += 1
 
-    # Imported at call time rather than at module scope, so a graph running without an offloader does
-    # not pay for importing one.
+    # Imported at call time, so a graph running without an offloader does not pay for importing one.
     from ..context_offloader.search import _is_searchable_content, _search_content
 
     offloader = _offloader_of(agent)
@@ -221,8 +199,8 @@ async def expand_artifact(
 def _whole_artifact(reference: str, text: str) -> str:
     """The whole artifact, with the cost of having asked for it whole stated in the answer.
 
-    The notice is part of the contract (Requirement 12.5): without it the cheapest request to write is
-    also the most expensive one to serve, and the model has no way to know.
+    The notice is part of the contract (Requirement 12.5): without it the cheapest request to write is also the most
+    expensive to serve, and the model has no way to know.
 
     Args:
         reference: The reference read.
@@ -243,12 +221,12 @@ def _whole_artifact(reference: str, text: str) -> str:
 def _offloader_of(agent: Agent) -> Any | None:
     """The ``ContextOffloader`` registered on ``agent``, or ``None`` when there is none.
 
-    Found by type over the agent's plugin registry rather than held as a constructor argument, so the
-    graph works next to an offloader it was not told about — including the one ``Agent`` appends on its
-    own under ``context_manager="auto"`` (Requirement 15.5).
+    Found by type over the agent's plugin registry rather than held as a constructor argument, so the graph works next
+    to an offloader it was not told about, including the one ``Agent`` appends under ``context_manager="auto"`` (Req.
+    15.5).
 
     Args:
-        agent: The agent of the call. Only read.
+        agent: The agent of the call. Read only.
 
     Returns:
         The offloader, or ``None`` when it is absent or the registry cannot be read at all.
@@ -269,9 +247,9 @@ def _offloader_of(agent: Agent) -> Any | None:
 async def _retrieve(offloader: Any, agent: Agent, reference: str) -> tuple[bytes, str] | None:
     """Read ``reference`` through the offloader's storage, or answer ``None``.
 
-    Every failure collapses onto ``None`` — an unknown reference, storage that was never initialized, a
-    backend that could not be reached — because from the model's side they are one situation: the
-    reference did not resolve. The distinction is kept in the debug log, where it belongs.
+    Every failure collapses onto ``None`` — an unknown reference, uninitialized storage, an unreachable backend —
+    because from the model's side they are one situation: the reference did not resolve. The distinction stays in the
+    debug log.
 
     Args:
         offloader: The agent's ``ContextOffloader``.
@@ -296,8 +274,8 @@ async def _retrieve(offloader: Any, agent: Agent, reference: str) -> tuple[bytes
 def _max_chars_of(offloader: Any) -> int:
     """Output ceiling of a targeted read, in characters, taken from the offloader's own budget.
 
-    Reusing ``max_result_tokens`` keeps a retrieval from re-offloading itself: the offloader replaces a
-    result larger than that budget, so an answer built to the same ceiling is left alone.
+    Reusing ``max_result_tokens`` keeps a retrieval from re-offloading itself: the offloader replaces a result larger
+    than that budget, so an answer built to the same ceiling is left alone.
 
     Args:
         offloader: The agent's ``ContextOffloader``.
@@ -318,8 +296,8 @@ def _span_of(line_range: dict[str, int] | None) -> tuple[int, int] | None:
         line_range: The mapping the model supplied, or ``None``.
 
     Returns:
-        ``(start, end)``, or ``None`` for an absent or malformed range. The two cases are told apart by
-        the caller, which already knows whether a range was supplied.
+        ``(start, end)``, or ``None`` for an absent or malformed range. The caller tells the two apart, since it already
+        knows whether a range was supplied.
     """
     if line_range is None:
         return None
@@ -332,12 +310,11 @@ def _span_of(line_range: dict[str, int] | None) -> tuple[int, int] | None:
 def _artifact_title(state: _GraphState, reference: str) -> str | None:
     """Title of the artifact Card addressing ``reference``, or ``None`` when the graph holds none.
 
-    A reference the graph never carded is still a reference storage can read — the fast path of
-    ``AfterToolCallEvent`` may have missed it, or the rebuild scan may not have run yet — so the read
-    succeeds and there is simply no Card for the fed-back note to land on.
+    A reference the graph never carded is still a reference storage can read — the ``AfterToolCallEvent`` fast path may
+    have missed it, or the rebuild scan may not have run — so the read succeeds with no Card for the note to land on.
 
     Args:
-        state: The graph state. Only read.
+        state: The graph state. Read only.
         reference: The reference that was read.
 
     Returns:
@@ -365,29 +342,24 @@ def find_context(
 ) -> str:
     """Score every candidate Card's Description against ``need`` and answer with the best five.
 
-    Scored over the index the turn choice already uses, and no other: one ``score`` call against the
-    matcher the strategy resolved, whose vectors come from the per-process cache keyed by
-    ``(purpose, text)``. No index is built here (Requirement 12.10).
-
-    ``collapse_floor`` is the bar rather than ``expand_threshold``: the floor is the note below which
-    the graph decided a Card was not worth a Description, so a candidate that clears it is a candidate
-    the graph did not dismiss.
+    Scored over the index the turn choice already uses and no other: one ``score`` call against the matcher the strategy
+    resolved, whose vectors come from the per-process cache keyed by ``(purpose, text)``. No index is built here (Req.
+    12.10). ``collapse_floor`` is the bar rather than ``expand_threshold``, being the note below which the graph decided
+    a Card was not worth a Description, so a candidate clearing it is one the graph did not dismiss.
 
     Args:
-        state: Graph state of the agent. Its ``reuse`` and ``retrieval_cycles`` are mutated; ``cards``
-            is only read.
+        state: Graph state of the agent. ``reuse`` and ``retrieval_cycles`` are mutated; ``cards`` read only.
         need: What the model is looking for, in its own words.
-        tag: Restrict candidates to Cards carrying this Tag, compared in normalized form
-            (Requirement 12.9). ``None`` leaves every Card a candidate.
+        tag: Restrict candidates to Cards carrying this Tag, compared in normalized form (Requirement 12.9). ``None``
+            leaves every Card a candidate.
         matcher: The similarity matcher the turn choice uses.
         collapse_floor: Similarity below which a candidate is not returned at all.
         cycle: Current cycle counter, ``agent.event_loop_metrics.cycle_count``.
         reuse_ttl_cycles: Cycles the fed-back note survives.
 
     Returns:
-        At most five candidates with their Title, Tags and Description, or an empty result naming the
-        ``need`` received — in which case no fed-back note was recorded and no Resolution changed
-        (Requirement 12.12).
+        At most five candidates with their Title, Tags and Description, or an empty result naming the ``need`` received,
+        in which case no fed-back note was recorded and no Resolution changed (Requirement 12.12).
     """
     state.retrieval_cycles += 1
 
@@ -421,11 +393,11 @@ def _similarities(
 ) -> dict[str, float] | None:
     """One similarity per candidate, or ``None`` when the matcher was unusable.
 
-    Same failure rule as :func:`~.scoring._score`: the matcher is contractually non-raising, so anything
-    it does raise reads here as "no candidate", never as an exception the model has to interpret.
+    Same failure rule as :func:`~.scoring._score`: the matcher is contractually non-raising, so anything it does raise
+    reads here as "no candidate", never as an exception the model must interpret.
 
     Args:
-        state: The graph state. Only read.
+        state: The graph state. Read only.
         titles: Candidate titles, already in fixed turn order.
         need: The text to score against.
         matcher: The similarity matcher. Invoked at most once.
@@ -451,8 +423,8 @@ def _similarities(
 def _nothing_found(need: str, tag: str | None) -> str:
     """The empty result, naming the ``need`` received and the Tag it was narrowed by.
 
-    Naming both lets the model tell "nothing in this conversation is about that" from "nothing carrying
-    that tag is about that", and only the second has an obvious next move.
+    Naming both lets the model tell "nothing in this conversation is about that" from "nothing carrying that tag is
+    about that", and only the second has an obvious next move.
 
     Args:
         need: The need as received.
@@ -472,11 +444,11 @@ def _nothing_found(need: str, tag: str | None) -> str:
 def _render_candidates(state: _GraphState, need: str, chosen: list[str]) -> str:
     """Render the chosen candidates: Title, Tags and Description each (Requirement 12.11).
 
-    The Description is rendered in full rather than trimmed: it is already bounded by
-    ``description_tokens`` at derivation.
+    The Description is rendered in full rather than trimmed, being already bounded by ``description_tokens`` at
+    derivation.
 
     Args:
-        state: The graph state. Only read.
+        state: The graph state. Read only.
         need: The need as received, quoted back so the answer stands on its own.
         chosen: Titles to render, already ordered and already capped.
 
