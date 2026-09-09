@@ -10,36 +10,27 @@ ask. These three are what the invitation leads to:
 | ``expand_artifact`` | reference | the offloader's ``Storage`` | no — the content comes back inline |
 | ``find_context`` | Description, in the model's words | the same vector index the turn choice scores against | no |
 
-Four properties are shared by all three, and each is satisfied by shape rather than by care at every
-return site.
+Four properties are shared by all three:
 
-**Nothing here calls a language model, and nothing here touches ``agent.messages``.** ``expand_card``
-rewrites the frozen turn choice, ``find_context`` scores over the matcher the turn choice already uses,
-and ``expand_artifact`` hands a reference to storage that already exists. None of the three has a
-handle on the model, and none of them holds a mutable reference to the history (Requirement 12.13).
+**Nothing here calls a language model, and nothing here touches ``agent.messages``.** None of the three
+has a handle on the model, and none holds a mutable reference to the history (Requirement 12.13).
 
-**Every failure is a return value, never an exception.** Each body has exactly one shape of answer —
-a string — so an unknown Title, an unknown reference, non-textual content and a missing
-``ContextOffloader`` all come back as prose the model can read and act on, naming what was missing
-(Requirements 12.3, 12.6, 12.7, 15.6, 16.8). A tool that raises would surface to the model as a tool
-error, which tells it that the *tool* is broken rather than that the *request* was.
+**Every failure is a return value, never an exception.** An unknown Title, an unknown reference,
+non-textual content and a missing ``ContextOffloader`` all come back as prose naming what was missing
+(Requirements 12.3, 12.6, 12.7, 15.6, 16.8). A raise would tell the model the *tool* is broken rather
+than that the *request* was.
 
-**Success records the fed-back note; an error records nothing.** That is Requirement 13.8 satisfied by
-not calling :func:`~.scoring.record_reuse` on the error paths rather than by a branch inside it. The
-elevation ``expand_card`` performs lasts the remainder of the turn; the fed-back note is what carries
-the request into the turn *after* it, and the next turn's Choice is recomputed from the graph state
-either way (Requirement 12.14).
+**Success records the fed-back note; an error records nothing** — by not calling
+:func:`~.scoring.record_reuse` on the error paths rather than by a branch inside it (Requirement 13.8).
+The elevation ``expand_card`` performs lasts the remainder of the turn, while the fed-back note is what
+carries the request into the turn *after* it (Requirement 12.14).
 
-**The retrieval cycle counter is incremented on invocation, not on success.** Requirement 17.8 counts
-what the model spent, and a cycle spent on a request that came back empty was still spent — that is
-precisely the number the design says decides whether the graph works: a descending curve means the note
-learned from the request, a flat one means the graph traded tokens for latency.
+**The retrieval cycle counter is incremented on invocation, not on success** (Requirement 17.8): a
+cycle spent on a request that came back empty was still spent.
 
-**On the vector index.** ``find_context`` scores through the matcher the turn choice uses, which is how
-Requirement 12.10 is met: :class:`~.matcher.SimilarityMatcher` exposes ``score`` and nothing else, and
-the vectors behind it are served from the per-process cache keyed by ``(purpose, text)`` — the same
-cache ``_GraphState.vectors`` mirrors for the similarity links. So an unchanged Description costs
-nothing on this path, and no second index is built anywhere.
+**No index is built here.** ``find_context`` scores through the matcher the turn choice uses
+(Requirement 12.10), whose vectors are served from the per-process cache keyed by ``(purpose, text)``,
+so an unchanged Description costs nothing on this path.
 """
 
 from __future__ import annotations
@@ -63,8 +54,8 @@ logger = logging.getLogger(__name__)
 _MAX_CANDIDATES = 5
 """Candidates ``find_context`` returns at most (Requirement 12.11).
 
-Five and not "as many as clear the floor", because the tool exists to repair one wrong decision. A
-search that answers with the whole graph has re-injected the very thing the graph collapsed.
+Capped rather than "as many as clear the floor": a search that answers with the whole graph has
+re-injected the very thing the graph collapsed.
 """
 
 _CONTEXT_LINES = 5
@@ -73,8 +64,7 @@ _CONTEXT_LINES = 5
 _CHARS_PER_TOKEN = 4
 """Characters per token, the same coarse estimate ``describe.py`` and the offloader use.
 
-Only ever used to *report* a cost back to the model, so a wrong estimate misinforms one sentence of
-prose and never changes what is returned.
+Only ever used to *report* a cost back to the model, never to decide what is returned.
 """
 
 
@@ -90,16 +80,14 @@ def expand_card(
 ) -> str:
     """Raise the Subject Card titled ``title`` to Full Content for the remainder of the turn.
 
-    Both axes, not one: the design records that ``expand_card`` elevates dialogue *and* evidence
-    (Requirement 12.2), because a turn whose tool results stayed collapsed is not the turn the model
-    asked to see. The elevation is a rewrite of the frozen choice rather than a new field on the state,
-    which is what makes it end with the turn — the next ``BeforeInvocationEvent`` recomputes the choice
-    from the graph, and the fed-back note is what carries the request across that boundary
-    (Requirement 12.14).
+    Both axes, dialogue *and* evidence (Requirement 12.2). The elevation is a rewrite of the frozen
+    choice rather than a new field on the state, so it ends with the turn: the next
+    ``BeforeInvocationEvent`` recomputes the choice from the graph, and the fed-back note is what
+    carries the request across that boundary (Requirement 12.14).
 
-    A full pass is left exactly as it is. Under a full pass every Card is already at Full Content, so
-    there is nothing to raise, and writing a ``by_title`` entry would flip ``full_pass`` to false and
-    cost the delivery its identity short circuit for no gain at all.
+    A full pass is left exactly as it is: every Card is already at Full Content, and writing a
+    ``by_title`` entry would flip ``full_pass`` to false and cost the delivery its identity short
+    circuit.
 
     Args:
         state: Graph state of the agent. Its ``choice``, ``reuse`` and ``retrieval_cycles`` are
@@ -149,13 +137,13 @@ async def expand_artifact(
 ) -> str:
     """Read the artifact behind ``reference``, whole or in part, from the offloader's storage.
 
-    The read is delegated and never reimplemented: ``ContextOffloader``'s ``Storage`` already carries
-    the path-traversal and bucket-prefix guards, so the graph passes the reference along and opens no
-    file, resolves no path and builds no URI. That is why this tool widens no read surface.
+    The read is delegated and never reimplemented: ``ContextOffloader``'s ``Storage`` carries the
+    path-traversal and bucket-prefix guards, so the graph passes the reference along and opens no file,
+    resolves no path and builds no URI.
 
-    No Resolution changes on any path, success included. An artifact Card never reaches Full Content by
-    choice (Requirement 11.8) and it does not need to here: the content the model asked for is in this
-    very answer, and what crosses into the next turn is the fed-back note on the artifact's Card.
+    No Resolution changes on any path, success included (Requirement 11.8). The content the model asked
+    for is in this very answer, and what crosses into the next turn is the fed-back note on the
+    artifact's Card.
 
     Args:
         state: Graph state of the agent. Its ``reuse`` and ``retrieval_cycles`` are mutated.
@@ -173,8 +161,7 @@ async def expand_artifact(
     """
     state.retrieval_cycles += 1
 
-    # Imported at call time rather than at module scope: this module is imported by ``plugin.py``, which
-    # every ``ContextStrategy`` construction reaches, and a graph running without an offloader should
+    # Imported at call time rather than at module scope, so a graph running without an offloader does
     # not pay for importing one.
     from ..context_offloader.search import _is_searchable_content, _search_content
 
@@ -234,9 +221,8 @@ async def expand_artifact(
 def _whole_artifact(reference: str, text: str) -> str:
     """The whole artifact, with the cost of having asked for it whole stated in the answer.
 
-    Requirement 12.5 asks for the notice, not merely for the content. Without it the cheapest request to
-    write is also the most expensive one to serve, and the model has no way to know: a targeted read
-    costs a few hundred tokens and this one costs everything the artifact was offloaded to save.
+    The notice is part of the contract (Requirement 12.5): without it the cheapest request to write is
+    also the most expensive one to serve, and the model has no way to know.
 
     Args:
         reference: The reference read.
@@ -257,9 +243,9 @@ def _whole_artifact(reference: str, text: str) -> str:
 def _offloader_of(agent: Agent) -> Any | None:
     """The ``ContextOffloader`` registered on ``agent``, or ``None`` when there is none.
 
-    Found by type over the agent's plugin registry rather than held as a constructor argument, because
-    the graph must work next to an offloader it was not told about — including the one ``Agent`` appends
-    on its own under ``context_manager="auto"`` (Requirement 15.5).
+    Found by type over the agent's plugin registry rather than held as a constructor argument, so the
+    graph works next to an offloader it was not told about — including the one ``Agent`` appends on its
+    own under ``context_manager="auto"`` (Requirement 15.5).
 
     Args:
         agent: The agent of the call. Only read.
@@ -310,9 +296,8 @@ async def _retrieve(offloader: Any, agent: Agent, reference: str) -> tuple[bytes
 def _max_chars_of(offloader: Any) -> int:
     """Output ceiling of a targeted read, in characters, taken from the offloader's own budget.
 
-    Reusing ``max_result_tokens`` is what keeps a retrieval from re-offloading itself: the offloader
-    replaces a result larger than that budget, so an answer built to the same ceiling is one the
-    offloader will leave alone.
+    Reusing ``max_result_tokens`` keeps a retrieval from re-offloading itself: the offloader replaces a
+    result larger than that budget, so an answer built to the same ceiling is left alone.
 
     Args:
         offloader: The agent's ``ContextOffloader``.
@@ -382,13 +367,11 @@ def find_context(
 
     Scored over the index the turn choice already uses, and no other: one ``score`` call against the
     matcher the strategy resolved, whose vectors come from the per-process cache keyed by
-    ``(purpose, text)``. No index is built here, which is Requirement 12.10 and the reason this tool
-    comes after ``scoring.py`` rather than before it.
+    ``(purpose, text)``. No index is built here (Requirement 12.10).
 
-    ``collapse_floor`` is the bar rather than ``expand_threshold``, and the asymmetry is deliberate: the
-    floor is the note below which the graph decided a Card was not worth a Description, so a candidate
-    that clears it is a candidate the graph did not dismiss. Answering with less than that would be
-    answering with noise.
+    ``collapse_floor`` is the bar rather than ``expand_threshold``: the floor is the note below which
+    the graph decided a Card was not worth a Description, so a candidate that clears it is a candidate
+    the graph did not dismiss.
 
     Args:
         state: Graph state of the agent. Its ``reuse`` and ``retrieval_cycles`` are mutated; ``cards``
@@ -438,9 +421,8 @@ def _similarities(
 ) -> dict[str, float] | None:
     """One similarity per candidate, or ``None`` when the matcher was unusable.
 
-    Same failure rule as :func:`~.scoring._score`, for the same reason: the matcher is contractually
-    non-raising, so anything it does raise is a bug on the other side of a protocol boundary and reads
-    here as "no candidate", never as an exception the model has to interpret.
+    Same failure rule as :func:`~.scoring._score`: the matcher is contractually non-raising, so anything
+    it does raise reads here as "no candidate", never as an exception the model has to interpret.
 
     Args:
         state: The graph state. Only read.
@@ -469,9 +451,8 @@ def _similarities(
 def _nothing_found(need: str, tag: str | None) -> str:
     """The empty result, naming the ``need`` received and the Tag it was narrowed by.
 
-    Naming both is what makes the answer actionable: the model can tell "nothing in this conversation
-    is about that" from "nothing carrying that tag is about that", and only the second has an obvious
-    next move.
+    Naming both lets the model tell "nothing in this conversation is about that" from "nothing carrying
+    that tag is about that", and only the second has an obvious next move.
 
     Args:
         need: The need as received.
@@ -491,9 +472,8 @@ def _nothing_found(need: str, tag: str | None) -> str:
 def _render_candidates(state: _GraphState, need: str, chosen: list[str]) -> str:
     """Render the chosen candidates: Title, Tags and Description each (Requirement 12.11).
 
-    The Description is rendered in full rather than trimmed. It is already bounded by
-    ``description_tokens`` at derivation, so a second budget here would be a second place to get the
-    same number wrong.
+    The Description is rendered in full rather than trimmed: it is already bounded by
+    ``description_tokens`` at derivation.
 
     Args:
         state: The graph state. Only read.

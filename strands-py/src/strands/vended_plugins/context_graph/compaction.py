@@ -5,27 +5,22 @@ The module is one public function, and the whole point of it is a single subtrac
 **Why the choice is not enough.** The removal asks to drop a set of durable identities, and the guards
 may refuse: ``is_pinned`` wins over any resolution, the first user message never leaves, and a tool
 pair whose other half is protected travels back in whole. So a Card the choice put in description can
-still have one of its messages in the retained list. Folding that Card's description anyway would put
-the same content in the call twice — once whole, once collapsed — and the model would read one thing at
-two resolutions while the tokens were paid for both.
+still have one of its messages in the retained list, and folding that Card's description anyway would
+put the same content in the call twice, at two resolutions, paying for both.
 
-The fix is not a second pass of deciding. It is reading the result instead of the request::
+Hence the block reads the result instead of the request::
 
     a part contributes a fragment  <=>  ALL of its durable identities left the removal
 
-A part that survived — whole or in pieces — is effectively full content and contributes nothing. That
-is how Requirement 11.7, the elevation to full content by protection, is realized as a **derivation**
-rather than as a second decision: no other Card is demoted to pay for it, and the choice frozen at
+A part that survived — whole or in pieces — is effectively full content and contributes nothing
+(Requirement 11.7). No other Card is demoted to pay for it, and the choice frozen at
 ``BeforeInvocationEvent`` is never rewritten.
 
-**The plumbing was already there.** ``_create_injection_middleware`` builds
-``InjectionContext(messages=list(context.messages), ...)`` *after* the removal replaced
-``context.messages``, so the list this render sees is the removed one, by construction. Nothing new had
-to be wired to make the subtraction possible — which is the reason the removal and the compaction are
-one handler and not two.
+``InjectionContext.messages`` is built *after* the removal replaced ``context.messages``, so the list
+this render sees is the removed one by construction, which is why removal and compaction are one
+handler and not two.
 
-**What each axis contributes** follows the design's table, and the two axes never contribute the same
-thing twice:
+**What each axis contributes**, and the two axes never contribute the same thing twice:
 
 ===========  =====================  ==============================================================
 Part         Resolution             Contribution
@@ -41,8 +36,7 @@ pays twice for the same content.
 
 A line contributes once per Card. The description already carries the tools, the references and as many
 numeric lines as ``description_tokens`` allowed, so when both parts of a Card left, the evidence path
-adds only what the description had to leave out. That keeps the entry free of internal repetition
-without either axis having to know what the other did.
+adds only what the description had to leave out.
 """
 
 from __future__ import annotations
@@ -64,15 +58,14 @@ _FULL: CardChoice = CardChoice(dialogue="full", evidence="full")
 """How a Card absent from the choice is read.
 
 The choice is frozen at ``BeforeInvocationEvent``, so a Card derived after that instant has no entry in
-it. Absent means keep, in the same direction as every other fail-safe of the two modules — and a Card
-kept whole contributes no fragment, which is exactly what an absent entry should produce here.
+it. Absent means keep, and a Card kept whole contributes no fragment.
 """
 
 _HEADER = "<collapsed_turns>"
 """Opening marker of the block.
 
-A marker and not a sentence, because the block is appended to the user's own words: the model has to be
-able to tell where its message ends and the graph's summary begins, and a tag does that in three tokens.
+A marker and not a sentence: the block is appended to the user's own words, and the model has to be
+able to tell where its message ends and the graph's summary begins.
 """
 
 _FOOTER = "</collapsed_turns>"
@@ -86,8 +79,7 @@ _GUIDANCE = (
 """What the model can do about a collapsed turn.
 
 The three retrieval tools are named because the block is the only place the model learns that the gap
-is closable — a summary with no way back reads as all there is, and the model answers from it instead
-of asking for the rest.
+is closable: a summary with no way back reads as all there is.
 """
 
 _SEARCHABLE = (
@@ -96,14 +88,9 @@ _SEARCHABLE = (
 )
 """What replaces the Titles of the turns the selection did not address.
 
-Without selection every Card's Title is in every call, which is Requirement 4.2 and which costs one
-line per Card forever — linear in the length of the conversation, and bounded by nothing, since the
-body budget only debits the parts travelling at full content. With selection the addressing is
-bounded, and this line is what keeps the property the requirement was protecting: the model still
-learns that more exists, and still learns how to reach it.
-
-The count is the whole of the line. A gap the model can see is a gap it can close; a gap it cannot see
-reads as "that is all there was", and the model answers from what it has.
+With the addressing bounded, this line carries what a per-Card Title line otherwise would
+(Requirement 4.2): the model still learns that more exists, and how to reach it. A gap the model can
+see is a gap it can close; a gap it cannot see reads as "that is all there was".
 """
 
 _ENTRY_PREFIX = "- "
@@ -133,8 +120,8 @@ def render_final_block(
 
     Cards come out in ascending turn order, so the block changes only where the resolution changed and
     a provider's cached prefix survives the parts that did not (Requirement 9.5). Every Card that lost a
-    part has its title in the return, which is how the Title of every Card stays present in every call
-    — in the retained messages when the part is whole, in this block when it is not (Requirement 4.2).
+    part has its title in the return: the Title of a Card is in the retained messages when its part is
+    whole, and in this block when it is not (Requirement 4.2).
 
     Mutates nothing: neither the list, nor the dicts inside it, nor ``state``.
 
@@ -237,9 +224,8 @@ def _entry(
 def _part_left(part_ids: tuple[str, ...], dropped: frozenset[str] | set[str]) -> bool:
     """Whether every durable identity of a part left the removal.
 
-    An empty part never left: it had nothing to lose, so it has nothing to say. Writing it as "non-empty
-    and a subset" rather than as a bare subset is what keeps a Card with no tool call from claiming its
-    evidence was collapsed.
+    An empty part never left: "non-empty and a subset", rather than a bare subset, is what keeps a Card
+    with no tool call from claiming its evidence was collapsed.
 
     Args:
         part_ids: Durable identities of one part of a Card.
@@ -260,13 +246,10 @@ def _evidence_fragments(card: Card, budget: int) -> list[str]:
 
     **The budget is not an optimization, it is the correctness of the block.** ``Card.numeric_lines``
     holds every line of the turn that carried a number, and a turn whose tool returned a table carries
-    hundreds. Emitting them all put the whole preview back into every call for the rest of the session
-    — measured at roughly a thousand tokens per call on an 18-turn session — and, worse, it read as
-    complete: the lines are drawn from the offloader's *preview*, so the largest value among them is
-    the largest of a subset, and a question asking for the largest value of the whole table was
-    answered from them and answered wrong. The same ceiling the Description answers to, and the same
-    omission count, is what turns that silent subset into a visible gap the model can close with
-    ``expand_artifact`` (Requirement 4.6, applied to the block rather than only to the Description).
+    hundreds. Emitted whole they read as complete, while being drawn from the offloader's *preview*:
+    the largest value among them is the largest of a subset, not of the table. The ceiling plus the
+    omission count is what turns that silent subset into a visible gap the model can close with
+    ``expand_artifact`` (Requirement 4.6).
 
     Args:
         card: The Card whose evidence left the call. Only read.
@@ -289,9 +272,7 @@ def _evidence_fragments(card: Card, budget: int) -> list[str]:
 
     remaining = budget - sum(len(fragment) + 1 for fragment in fragments)
     # Room for the omission line is reserved before the lines are chosen rather than added after, so
-    # the ceiling holds whether or not anything ends up omitted. Reserving unconditionally costs one
-    # line of budget in the case where everything fits, which is cheaper than a ceiling that is only
-    # approximately a ceiling.
+    # the ceiling holds whether or not anything ends up omitted.
     omission = _OMISSION.format(count=len(card.numeric_lines))
     kept = _lines_that_fit(card.numeric_lines, remaining - len(omission) - 1)
     fragments.extend(kept)
@@ -306,9 +287,8 @@ def _evidence_fragments(card: Card, budget: int) -> list[str]:
 def _take(candidates: list[str] | tuple[str, ...], seen: set[str]) -> list[str]:
     """Keep the candidates not yet used in this entry, recording them as used.
 
-    A line contributes once per Card. The two axes derive from overlapping fields — the description
-    already carries the tools, the references and the numeric lines that fit its budget — and this is
-    what keeps an entry whose both parts left from repeating them.
+    A line contributes once per Card: the two axes derive from overlapping fields, since the description
+    already carries the tools, the references and the numeric lines that fit its budget.
 
     Args:
         candidates: Lines offered by one axis, in order. Not mutated.

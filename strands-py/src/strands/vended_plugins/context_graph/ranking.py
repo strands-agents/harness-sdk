@@ -1,25 +1,13 @@
 """The optional second stage of the selection: reorder the candidates with a rerank model.
 
-**Why a second stage rather than a replacement.** Embedding cosine scores every Card for the price of
-one round trip, which is what makes scoring the whole graph affordable. A rerank model scores far
-better and costs about ten times as much — measured in this package at ~2.6s per call against the
-embedding path's ~262ms. So the shape is the standard cascade: embed everything to get candidates,
-rerank only the candidates.
-
-**Why it is worth the round trip at all, and only once selection exists.** Measured over 133 scored
-Cards, the default matcher answered with a minimum note of 0.346 and a median of 0.563 — the whole
-conversation inside a band about 0.4 wide. That is the signature of a score that ranks but does not
-discriminate, and it is why ``collapse_floor`` had to move from 0.15 to 0.45 before the bottom rung
-was reachable at all. While the note only decided *size*, being wrong cost tokens and a sharper score
-was not worth ten times the latency. Once the note decides *which Cards the call addresses*, being
-wrong costs the answer.
+A cascade over the embedding pass — embedding scores every Card in one round trip, the reranker
+scores only the candidates it selected — because a rerank call costs roughly ten times the latency of
+the embedding path.
 
 **Failure is a skipped step, never a failed call.** The ``Reranker`` protocol of this package raises
-by contract — deliberately, because in the offloader a partial relevance list would be worse than an
-error. On the critical path of a model call that contract cannot be honoured upward: the agent must
-answer. So anything this module is handed may raise, and the answer is always the order the embedding
-already produced, plus one debug log. The reranking is an improvement to the ranking, so the absence
-of it is the ranking.
+by contract, and on the critical path of a model call that contract cannot be honoured upward: the
+agent must answer. So anything this module is handed may raise, and the answer is then the order the
+embedding already produced, plus one debug log.
 """
 
 from __future__ import annotations
@@ -50,8 +38,7 @@ def rerank(question: str, titles: Sequence[str], documents: Sequence[str], reran
         which covers raising, timing out, answering the wrong length, and answering non-numerically.
     """
     if len(titles) < 2 or len(titles) != len(documents):
-        # Nothing to reorder, or a caller that mispaired the two. Either way the embedding order is
-        # already the answer, and reranking one candidate would spend 2.6s to confirm it.
+        # Nothing to reorder, or a caller that mispaired the two: the embedding order is the answer.
         return tuple(titles)
 
     try:
@@ -77,10 +64,8 @@ def rerank(question: str, titles: Sequence[str], documents: Sequence[str], reran
 def _score(question: str, documents: list[str], reranker: Any) -> Sequence[float]:
     """Call ``reranker.score``, awaiting it on a worker thread when it is a coroutine.
 
-    The reranker this package ships is async, and the turn choice runs in a **synchronous** hook on
-    the critical path — inside the agent's own running loop, so neither ``await`` nor ``asyncio.run``
-    is available here. A worker thread with a loop of its own is, and the call it wraps is a network
-    round trip measured in seconds, so the handoff is not the cost.
+    The turn choice runs in a **synchronous** hook inside the agent's own running loop, so neither
+    ``await`` nor ``asyncio.run`` is available here. A worker thread with a loop of its own is.
 
     Args:
         question: The turn's question.

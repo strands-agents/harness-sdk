@@ -6,51 +6,42 @@ a function of ``agent.messages``, and this is the half that reads them.
 Three decisions carry the module:
 
 **The boundary is reused, never restated.** ``is_turn_boundary`` delegates to ``_is_user_turn`` from
-``injection/_message_injection.py`` by handing it a one-message list. That function is the
-``"userTurn"`` policy the injection primitive already applies, and Requirement 3.1 names it as *the*
-rule: a ``user`` message carrying no ``toolResult`` block. Re-spelling the predicate here would create
-a second place that can drift, and the drift would be silent — a turn boundary the injection primitive
-sees and the graph does not means the graph derives Cards over spans no other component agrees with.
+``injection/_message_injection.py``, the ``"userTurn"`` policy the injection primitive already applies
+and the rule Requirement 3.1 names: a ``user`` message carrying no ``toolResult`` block. A turn
+boundary the injection primitive sees and the graph does not would put the graph's Cards over spans no
+other component agrees with.
 
 **The partition is by content block, and it is total.** A message joins the evidence when it carries a
 ``toolUse`` or a ``toolResult`` block, and the dialogue otherwise. Exhaustive and disjoint by
-construction: one predicate, one branch, no third bucket. That is what lets the two parts hold
-independent resolutions without leaving a message orphaned by both decisions.
+construction, which lets the two parts hold independent resolutions without leaving a message orphaned
+by both decisions.
 
 Only messages carrying a ``tracking_id`` are addressed. A message without one is a message without a
 Card (Requirement 3.5) — it appears in neither tuple, so nothing can request its removal, and it
 projects whole.
 
 **Consumption comes from order alone.** ``ToolPair.consumed`` is true when an ``assistant`` message
-carrying a text block appears after the pair, within the same turn (Requirements 6.4, 6.5). No model
-and no embedding takes part in the decision, and there is nothing to configure: the model answering in
-prose *is* the evidence of consumption, and a turn that ends in a ``toolResult`` has no answer yet, so
-its pair stays unconsumed and its evidence stays whole.
+carrying a text block appears after the pair, within the same turn (Requirements 6.4, 6.5). Nothing to
+configure: a turn that ends in a ``toolResult`` has no answer yet, so its pair stays unconsumed and its
+evidence stays whole.
 
-Both halves of that rule are treated symmetrically for an incomplete pair: a ``toolUse`` still waiting
-for its result, and a ``toolResult`` whose ``toolUse`` sits in an earlier turn, each yield a pair
-holding the half it has. That keeps the evidence axis on the conservative side — an incomplete pair is
-never consumed, so it never drops below full content.
+An incomplete pair — a ``toolUse`` still waiting for its result, or a ``toolResult`` whose ``toolUse``
+sits in an earlier turn — yields a pair holding the half it has, and is never consumed, so it never
+drops below full content.
 
-``derive_card`` and the four links follow the same rule, and add one of their own: **the write half
-reaches nothing remote.** Requirement 3.2 has the ``MessageAddedEvent`` hook return without a model
-call, without disk and without network, and an embedding is network. So the similarity link is derived
-from vectors the reading half already paid for — a pair whose vectors are not cached yet simply gets no
-edge this turn, and gets one on the next turn the choice runs. Being late costs one hop of propagation;
-being remote here would cost the contract.
+**The write half reaches nothing remote.** Requirement 3.2 has the ``MessageAddedEvent`` hook return
+without a model call, without disk and without network, and an embedding is network. So the similarity
+link is derived from vectors the reading half already paid for: a pair whose vectors are not cached yet
+gets no edge this turn, and gets one on the next turn the choice runs.
 
-The artifact Card adds one rule of its own: **it holds the address and never the content.** The raw
-tool return belongs to the offloader's ``Storage``, which owns it and can read it back, so what the
-Card keeps is the reference plus the two facts the placeholder states about it. And it keeps them by
-scanning the preview text, which is what makes hook order against the offloader irrelevant — the
-reference is in the text either way, so ``AfterToolCallEvent`` is a shortcut and never a dependency.
-With no offloader registered nothing is replaced, the scan finds no reference, and there is no artifact
-Card at all: the absence needs no branch because it is not observable, only its effect is.
+**An artifact Card holds the address and never the content.** The raw tool return belongs to the
+offloader's ``Storage``, so what the Card keeps is the reference plus the two facts the placeholder
+states about it — read by scanning the preview text, which makes hook order against the offloader
+irrelevant: ``AfterToolCallEvent`` is a shortcut and never a dependency. With no offloader registered
+nothing is replaced, the scan finds no reference, and there is no artifact Card at all.
 
-``rebuild`` closes the module by composing those same helpers over a whole conversation, and it is the
-reason none of them is nested: **the graph is a function of the messages, so losing it costs a scan and
-never a value.** That is what removes persistence from the design — there is no serialized format, so
-there is no schema to version and no reconciliation failure to handle. It runs on the writing half
+``rebuild`` closes the module by composing those same helpers over a whole conversation: **the graph is
+a function of the messages, so losing it costs a scan and never a value.** It runs on the writing half
 only, because "free in I/O" is not "instantaneous" over ninety-nine messages.
 """
 
@@ -74,12 +65,10 @@ logger = logging.getLogger(__name__)
 _STRUCTURAL_WEIGHT = 1.0
 """``Link.weight`` of the three structural kinds: tool, artifact and follows.
 
-One, because the weight of a *kind* is not a property of an edge. It lives in
-``scoring._STRUCTURAL_WEIGHTS`` and is applied where the note inherits, so storing it here too
-multiplied it in twice: the one-hop factor landed at 0.18 for tool and artifact and 0.08 for
-``follows`` where the design says 0.30 and 0.20, and propagation ran at about half its intended
-strength. ``Link.weight`` carries a measurement or nothing, and the similarity link is the only kind
-with one to carry.
+One, because the weight of a *kind* is not a property of an edge: it lives in
+``scoring._STRUCTURAL_WEIGHTS`` and is applied where the note inherits, so carrying it here as well
+would multiply it in twice. ``Link.weight`` carries a measurement or nothing, and the similarity link
+is the only kind with one to carry.
 """
 
 _STORED_REFERENCES = "[Stored references:]"
@@ -106,10 +95,10 @@ that happens to carry a parenthesis.
 _LISTED_ENTRY = re.compile(r"^[ \t]+(\S+)[ \t]*\((.*)\)[ \t]*$")
 """The same listing line as ``_LISTED_REFERENCE``, with its parenthesized descriptor captured too.
 
-Stricter than that one on purpose — the closing parenthesis is required — because this match is what a
-``content_type`` is read from, and a half-line descriptor would produce a media type that was never
-written. The reference it yields is only trusted when the reference scan already found it, so the two
-patterns cannot disagree about what a reference is.
+Stricter than that one — the closing parenthesis is required — because a ``content_type`` is read from
+this match, and a half-line descriptor would produce a media type that was never written. The reference
+it yields is only trusted when the reference scan already found it, so the two patterns cannot disagree
+about what a reference is.
 """
 
 _PLACEHOLDER = re.compile(r"\[(image|document):([^\]]*)\]")
@@ -344,9 +333,8 @@ def derive_card(
     ``tracking_id`` is a message without a Card: it is not in ``turn_ids``, so it takes part in no
     field of the result and its content projects whole (Requirement 3.5).
 
-    The Tags computed here rank rarity as if this Card were the only one in the graph, which is the
-    only thing true at this point. :func:`retag` recounts rarity over the whole graph right after the
-    Card is registered, and that is where Requirement 5.5 is satisfied.
+    The Tags computed here rank rarity as if this Card were the only one in the graph. :func:`retag`
+    recounts rarity over the whole graph right after the Card is registered (Requirement 5.5).
 
     Args:
         messages: The conversation, as data. Only read, never mutated.
@@ -382,7 +370,7 @@ def derive_card(
     )
 
     # Two rewrites and not one: the Description reads the fields above, and the Tags read the
-    # Description. Assembling them in one call would mean passing the same Card twice anyway.
+    # Description.
     card = replace(card, description=compose_description(card, description_tokens))
     structural, textual = tag_candidates(card, texts)
 
@@ -421,18 +409,16 @@ def register_card(
       exists yet — which is what makes hook order against the offloader irrelevant.
     - **follows**, one, to the Card of the immediately preceding turn.
     - **similar**, bidirectional, whenever the similarity between two Descriptions reaches
-      ``link_threshold``. Its weight **is** the measured similarity, the only one of the four that is
-      not arbitrary: "these two pull each other" is a different question from "this Card answers the
-      question", so the useful value is not the same either.
+      ``link_threshold``. Its weight **is** the measured similarity, the only one of the four carrying
+      a measurement.
 
     Similarity is read from the vector cache the reading half filled, never measured remotely: this
     runs on ``MessageAddedEvent``, which Requirement 3.2 keeps free of network. An unmeasurable pair
     gets no edge and is reconsidered on the next turn.
 
-    Tool names are iterated in sorted order rather than in ``frozenset`` order. String hashing is
+    Tool names are iterated in sorted order rather than in ``frozenset`` order: string hashing is
     seeded per process, so a set-ordered edge list would differ between two runs over the same
-    conversation and would break the equality between the rebuild scan and the incremental
-    construction.
+    conversation and break the equality between the rebuild scan and the incremental construction.
 
     Args:
         state: The graph state. Mutated: this is the writing half.
@@ -489,14 +475,11 @@ def derive_and_register(
     the Description, the Tags, the links — completes the hook without registering the Card, emits
     exactly one warning-level log carrying ``exc_info``, and does not propagate (Requirements 16.4,
     16.8). The turn's messages then have no Card, and a message without a Card projects whole
-    (Requirement 16.5): the degraded behavior is today's behavior, reached without a branch anywhere
-    downstream.
+    (Requirement 16.5).
 
-    Registration is inside the guarded block, and a failure restores the state it started from. A Card
-    written with its links half-derived would be worse than no Card, because every later decision would
-    read it as complete — so "without registering the Card" is enforced by restoring, not by hoping the
-    failure happened early. The snapshot is shallow and costs one copy of the two indexes per turn,
-    which is the price of the guarantee.
+    Registration is inside the guarded block, and a failure restores the state it started from: a Card
+    written with its links half-derived would be read as complete by every later decision. The snapshot
+    is shallow, one copy of the two indexes per turn.
 
     Args:
         state: The graph state. Mutated only on success.
@@ -556,17 +539,12 @@ def rebuild(
 ) -> _GraphState:
     """Derive the whole graph from ``messages`` in one scan — the rebuild scan (Requirement 14.5).
 
-    This is the function that lets the graph be ephemeral. Every Card, every link and the turn ordinal
-    are derivable from ``agent.messages``, so a state lost to a restart is rebuilt from the
-    conversation itself: no I/O, no model call, no embedding call, no serialized format — and therefore
-    no schema version, because there is no format to version. Losing the graph never loses a value, and
-    the reconciliation failure a persisted graph would have simply has nowhere to occur.
+    Every Card, every link and the turn ordinal are derivable from ``agent.messages``, so a state lost
+    to a restart is rebuilt from the conversation itself: no I/O, no model call, no embedding call.
 
     **Where it may run.** The ``MessageAddedEvent`` hook, and nowhere else — never
-    ``BeforeInvocationEvent`` (Requirement 14.6). The scan reaches nothing remote, but a linear pass
-    over ninety-nine messages that derives a Description and re-tags the graph once per turn is not
-    free in time, and ``BeforeInvocationEvent`` is on the critical path of the model call. The contract
-    protects that path; "free in I/O" is not "instantaneous".
+    ``BeforeInvocationEvent`` (Requirement 14.6), which is on the critical path of the model call. The
+    scan reaches nothing remote, but it is not free in time: "free in I/O" is not "instantaneous".
 
     **What comes out.** One subject Card per closed turn, in turn order, with the ordinal of a Card
     equal to the position of its boundary among the closed ones. Artifact Cards are deliberately not
@@ -575,12 +553,10 @@ def rebuild(
     the offloader's ``Storage`` by reference either way. So its absence costs a listing in
     ``find_context`` until the next offloaded result registers it, and never a value.
 
-    A turn whose messages all lack a ``tracking_id`` yields no Card — they are messages without a Card
-    (Requirement 3.5) — but it still consumes its ordinal, so a gap never shifts the ordinals of the
-    turns after it, and the ``follows`` chain stays the chain the incremental construction built. An
-    empty conversation, one that has not closed a turn yet, and one with such a gap all complete
-    without raising (Requirement 14.9); a turn whose derivation raises is absorbed by
-    :func:`derive_and_register`, which logs once and leaves that turn's messages projecting whole.
+    A turn whose messages all lack a ``tracking_id`` yields no Card (Requirement 3.5) but still consumes
+    its ordinal, so a gap never shifts the ordinals of the turns after it. An empty conversation, one
+    that has not closed a turn yet, and one with such a gap all complete without raising
+    (Requirement 14.9); a turn whose derivation raises is absorbed by :func:`derive_and_register`.
 
     Similarity is measured through the same cache-only default the incremental path uses, so a fresh
     state produces no ``similar`` edge at all: the vector cache comes out empty, and a missing entry
@@ -631,12 +607,11 @@ def rebuild_into(
     the hook reads its state out of the per-agent map, so handing it back a different object would
     detach it from the agent it belongs to.
 
-    ``cards`` and ``links`` are cleared before the scan, which makes the write idempotent — running it
-    twice over the same conversation leaves the same graph, since a graph derived from the messages
-    cannot be a function of what was there before. ``reuse`` and ``vectors`` are left alone: the
-    fed-back note is the one value that crosses turns and is not derivable from the messages, and the
-    vector cache is a per-process cache whose entries cost an embedding to lose and are still valid,
-    being keyed by Title and checked against the Description they were computed from.
+    ``cards`` and ``links`` are cleared before the scan, which makes the write idempotent: running it
+    twice over the same conversation leaves the same graph. ``reuse`` and ``vectors`` are left alone —
+    the fed-back note is the one value that crosses turns and is not derivable from the messages, and
+    the vector cache entries stay valid, being keyed by Title and checked against the Description they
+    were computed from.
 
     Args:
         state: The graph state to write. Its ``cards``, ``links`` and ``turn`` are replaced.
@@ -697,8 +672,7 @@ def _identities_of(turn_messages: Sequence[Message]) -> tuple[str, ...]:
 def retag(state: _GraphState, messages: Messages, *, tags_per_card: int, rarity_weight: float) -> None:
     """Recount rarity over the Cards of ``state`` and re-tag every one of them (Requirement 5.5).
 
-    A Tag present in every Card distinguishes nothing, so what defines a Card depends on what it is
-    being compared against — which is why gaining a Card is enough to change the Tags of the ones
+    A Tag present in every Card distinguishes nothing, so gaining a Card changes the Tags of the ones
     already there. ``document_frequency`` and ``total_cards`` are counted over the graph's Cards and
     over nothing else.
 
@@ -759,19 +733,17 @@ def derive_artifact_cards(
     text under the same rule a subject Card follows: literal line selection, never a copy of the
     return.
 
-    Non-textual content gets no lines at all. Bytes that were never text have no lines to select, and a
-    Description assembled from them would be an invention (Requirement 4.8) — so the field is left
-    empty rather than filled from the preview of a sibling block.
+    Non-textual content gets no lines at all: bytes that were never text have no lines to select, so
+    the field is left empty rather than filled from the preview of a sibling block (Requirement 4.8).
 
     **A result carrying no reference yields no Card.** That is the whole of the no-offloader path
     (Requirement 15.5): with no ``ContextOffloader`` registered nothing replaces the tool return, so
     the scan finds no reference, this returns an empty tuple, and the subject Cards are untouched. No
-    branch anywhere asks whether the offloader is present, because the absence is not observable from
-    here — only its effect is.
+    branch anywhere asks whether the offloader is present.
 
-    The reference is read out of the preview text, which is the fast path *and* the reason hook order
-    against the offloader does not matter: the same scan reaches the same references later from
-    ``agent.messages``, so running before the offloader costs nothing but a turn of latency.
+    The reference is read out of the preview text, which is why hook order against the offloader does
+    not matter: the same scan reaches the same references later from ``agent.messages``, so running
+    before the offloader costs nothing but a turn of latency.
 
     Args:
         result: The tool result as the hook sees it, after any replacement. Only read.
@@ -824,7 +796,7 @@ def register_artifact_cards(
 
     The three remaining kinds are deliberately absent. ``follows`` orders turns, and an artifact is not
     a turn. ``similar`` would propagate note into a Card that Requirement 11.8 keeps out of full
-    content by automatic choice, so the edge would cost an embedding to change nothing.
+    content by automatic choice.
 
     Re-tagging runs once for the whole batch rather than once per Card: rarity is counted over the
     graph's Cards, and the count is only correct after every Card of the batch is in.
@@ -861,11 +833,10 @@ def derive_and_register_artifacts(
 ) -> tuple[Card, ...]:
     """Derive the artifact Cards of one tool result and register them, degrading to none on failure.
 
-    Same failure contract as :func:`derive_and_register`, and for the same reason: an exception
-    anywhere completes the hook without registering anything, emits exactly one warning-level log
-    carrying ``exc_info``, and does not propagate (Requirements 16.4, 16.8). A batch is restored whole
-    — half a batch would leave a reference with a Card and its sibling without one, which reads as a
-    graph that saw one block of a two-block result.
+    Same failure contract as :func:`derive_and_register`: an exception anywhere completes the hook
+    without registering anything, emits exactly one warning-level log carrying ``exc_info``, and does
+    not propagate (Requirements 16.4, 16.8). A batch is restored whole — half a batch would leave a
+    reference with a Card and its sibling without one.
 
     A tool result that names no reference is not a failure and logs nothing: it is the ordinary shape
     of a result no offloader replaced (Requirement 15.5).
@@ -932,8 +903,7 @@ def _artifact_card(
 
     ``dialogue_ids`` and ``evidence_ids`` are empty, and that is not an omission: an artifact addresses
     the offloader's ``Storage``, not messages, so it owns no durable identity and no resolution of its
-    parts can drop a message. ``references`` is empty for the same reason ``reference`` exists — the
-    address lives in exactly one field, so there is no second place to keep in sync.
+    parts can drop a message. ``references`` is empty because the address lives in ``reference`` alone.
 
     Args:
         reference: The artifact reference, as the preview stated it.
@@ -993,9 +963,7 @@ def _artifact_metadata(texts: Sequence[str], references: Collection[str]) -> dic
     format: the listing describes a document by file name, which is not a media type.
 
     Only references the reference scan already found are recorded, so a parenthesized line of preview
-    prose cannot invent an entry. A fact neither source states stays ``None`` rather than being guessed
-    — an unrecognized ``content_type`` falls to the non-textual branch of the Description, which is the
-    conservative side of the mistake.
+    prose cannot invent an entry. A fact neither source states stays ``None`` rather than being guessed.
 
     Args:
         texts: Texts of the tool result, in block order. Not mutated.
@@ -1232,9 +1200,9 @@ def _references_of(texts: Sequence[str]) -> tuple[str, ...]:
     reference inline — ``[image: png, 900 bytes | ref: mem_1_tu-3_0]`` — and every stored block is
     listed under a ``[Stored references:]`` header, one indented line each.
 
-    Reading the reference off the preview text is the fast path, and it is what makes the graph
-    independent of hook order against the offloader: by the time a ``toolResult`` is a message, its
-    preview already names every reference it produced.
+    Reading the reference off the preview text is what makes the graph independent of hook order against
+    the offloader: by the time a ``toolResult`` is a message, its preview already names every reference
+    it produced.
 
     Args:
         texts: Texts of the Card's messages, in message order. Not mutated.

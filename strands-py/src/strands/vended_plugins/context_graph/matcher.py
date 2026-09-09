@@ -1,27 +1,17 @@
 """The fourth scoring protocol: question against N Cards descriptions.
 
-This module is wiring, not machinery. The embedding round trip and the cache that makes it
-affordable already exist in :mod:`strands.vended_plugins._embedding` and are reused verbatim,
-without a single line changed. What is new here is the protocol and the adapter.
+The embedding round trip and the cache that makes it affordable live in
+:mod:`strands.vended_plugins._embedding` and are reused verbatim. What is new here is the protocol
+and the adapter.
 
-**Asymmetric by construction.** Here the short side is a question and the long side is a
-description of up to ``description_tokens``, which asks for ``"query"`` against ``"document"``.
-Passing ``"clustering"`` where ``"query"`` was right does not fail: it silently returns a worse
-vector. That is exactly why the purpose is a parameter and why the cache is keyed by the
-``(purpose, text)`` pair rather than by text alone.
+**Asymmetric by construction.** The short side is a question and the long side is a description of
+up to ``description_tokens``, which asks for ``"query"`` against ``"document"``. Passing
+``"clustering"`` where ``"query"`` was right does not fail: it silently returns a worse vector. That
+is why the purpose is a parameter and why the cache is keyed by the ``(purpose, text)`` pair rather
+than by text alone.
 
-**Separate from the other scoring protocols on purpose.** :class:`SimilarityMatcher` does not
-reuse the tool index or the reranker: the score scale, the failure rule and the call shape differ
-per site.
-
-| Protocol | Shape | Score scale | On failure |
-|---|---|---|---|
-| ``ToolIndex`` | ``build`` once, ``search`` many | no absolute meaning, ``top_k`` selects | passthrough |
-| ``Reranker`` | stateless, one call | ``[0,1]``, read by ``relevance_threshold`` | **raises** |
-| ``SimilarityMatcher`` | question against N descriptions, asymmetric | ``[0,1]``, two thresholds | returns empty |
-
-The graph returns empty rather than raising, because here being wrong costs tokens, not a wrong
-answer.
+Unlike the ``Reranker`` protocol, which raises by contract, :class:`SimilarityMatcher` reports
+unavailability by returning an empty sequence.
 """
 
 from __future__ import annotations
@@ -41,11 +31,7 @@ __all__ = ["EmbeddingSimilarityMatcher", "SimilarityMatcher"]
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MODEL_ID = "cohere.embed-multilingual-v3"
-"""Multilingual by default.
-
-The failures this exists for include an English and a Portuguese rendering of the same subject,
-and an English-only model scores those two as unrelated.
-"""
+"""Multilingual by default: an English-only model scores two renderings of one subject as unrelated."""
 
 
 @runtime_checkable
@@ -63,8 +49,7 @@ class SimilarityMatcher(Protocol):
         Returns:
             Exactly ``len(descriptions)`` values, each in ``[0.0, 1.0]``. An empty sequence
             signals unavailability, and the caller degrades to full content everywhere.
-            Implementations must not raise: the cost of being wrong here is tokens, not a wrong
-            answer, which is the same argument ``TopicMatcher`` makes.
+            Implementations must not raise.
         """
         ...
 
@@ -73,10 +58,8 @@ class EmbeddingSimilarityMatcher:
     """Default implementation: ``BedrockEmbedder`` with asymmetric purpose and a vector cache.
 
     One embedding round per turn — the question under ``"query"``, the descriptions under
-    ``"document"`` — and within it only the texts not already cached reach Bedrock. The cache in
-    :mod:`strands.vended_plugins._embedding` is keyed by the ``(purpose, text)`` pair, which is
-    exactly what makes an unchanged description cost nothing on the next turn: the vector is
-    served from memory and the call is never made.
+    ``"document"`` — and within it only the texts not already cached reach Bedrock. The cache is
+    keyed by the ``(purpose, text)`` pair, so an unchanged description costs nothing next turn.
 
     Never raises. :class:`~strands.vended_plugins._embedding.EmbeddingError` becomes an empty
     sequence plus one debug-level log carrying ``exc_info``. A caller whose correctness depends on
@@ -110,8 +93,7 @@ class EmbeddingSimilarityMatcher:
             region_name: Region, used only when no session is supplied.
             embedder: Pre-built embedder, which takes precedence over the other arguments.
         """
-        # "document" as the construction default because the descriptions are the bulk of the
-        # traffic; the question overrides it per call, which is the whole point of the parameter.
+        # "document" as the construction default; the question overrides it per call.
         self._embedder = embedder or BedrockEmbedder(
             model_id,
             purpose="document",
@@ -144,21 +126,16 @@ class EmbeddingSimilarityMatcher:
             logger.debug("graph similarity embedding failed for %d description(s)", len(texts), exc_info=True)
             return []
 
-        # cosine_similarity already clamps to [0.0, 1.0], so the scale of the return is the
-        # scale the two thresholds read.
+        # cosine_similarity already clamps to [0.0, 1.0], the scale the two thresholds read.
         return [cosine_similarity(question_vector, vector) for vector in description_vectors]
 
     def vectors(self, descriptions: Sequence[str]) -> Sequence[Sequence[float]]:
         """Return the document vector of each description, for the caller's own cache.
 
         Free after :meth:`score`: the embedder caches by ``(purpose, text)``, so the vectors this
-        returns are the ones already computed for the note and no call goes out.
-
-        This exists because the vectors were being thrown away. The similarity link between two Cards
-        is measured from the cache and never from a remote call, so with nothing filling that cache no
-        ``similar`` edge was ever created and ``link_threshold`` compared against a value that never
-        arrived. ``score`` cannot hand them over — it answers with numbers — so the cache needs its own
-        way in.
+        returns are the ones already computed for the note and no call goes out. The ``similar`` edge
+        between two Cards is measured from that cache and never from a remote call, so a caller that
+        never fills it can create no such edge.
 
         Args:
             descriptions: The Cards' descriptions. Read only.
@@ -178,19 +155,14 @@ class EmbeddingSimilarityMatcher:
     def _embed_both(self, question: str, texts: list[str]) -> tuple[list[float], list[list[float]]]:
         """Embed the question and the descriptions, overlapping the two round trips.
 
-        Two calls and not one, and the asymmetry is the reason: the question goes under ``"query"``
+        Two calls and not one, because the asymmetry forces it: the question goes under ``"query"``
         and the descriptions under ``"document"``, and one Cohere call carries one ``input_type``.
-        So the floor is two round trips — but nothing says they have to be *sequential*. Measured on
-        an 18-turn session, sequential put the turn choice at ~500ms against a ~150ms budget that
-        had been sized for one round trip; overlapping them puts it back near the cost of one.
+        The two are overlapped rather than sequential.
 
         Threads rather than the event loop, because :meth:`score` is called from a synchronous hook
         on the critical path and cannot await. The client is materialized first, on this thread: a
         botocore client is safe to *call* from several threads but is built lazily, and two threads
         racing to build it is the one hazard here.
-
-        A batch of all cache hits performs no I/O, so the pool is not entered at all — which keeps
-        the warm path free of the two-thread handoff it would gain nothing from.
 
         Args:
             question: The turn's question.

@@ -80,12 +80,10 @@ _DEFAULT_EXPAND_THRESHOLD = 0.55
 _DEFAULT_COLLAPSE_FLOOR = 0.45
 """Note below which a Card keeps only its Title.
 
-A threshold is only calibratable against the distribution of the pair it compares: this one against
-question-against-Description, ``link_threshold`` against Description-against-Description, with
-propagation strength part of both. Cosine similarity between two texts of the same language does not
-approach zero, so a floor chosen on the intuition that "irrelevant scores near nothing" sits outside
-the range the matcher actually answers in. Both values answer to the default matcher's distribution
-and do not carry over to another implementation.
+Cosine similarity between two texts of the same language does not approach zero, so a floor chosen on
+the intuition that "irrelevant scores near nothing" sits outside the range the matcher answers in.
+This value and ``link_threshold`` both answer to the default matcher's distribution and do not carry
+over to another implementation.
 """
 
 _DEFAULT_DESCRIPTION_TOKENS = 100
@@ -112,12 +110,10 @@ _DEFAULT_REUSE_TTL_CYCLES = 5
 _DEFAULT_RECENT_CARDS: int | None = None
 """How many of the most recent Cards a call always addresses. ``None`` addresses every Card.
 
-``None`` by default because selection changes the failure mode rather than tuning it. Addressing every
-Card, Resolution only ever steps down, so a Card the note scored wrong still travels with its Title and
-the model can name it. Under selection a missed Card is invisible and cannot be asked for, which turns
-a recoverable poorer answer into a wrong one with no symptom. The trade is that addressing every Card
-grows the call linearly with the conversation and leaves the links with no work, since propagation
-cannot be why a Card is reached when none is ever excluded.
+``None`` by default because selection changes the failure mode. Addressing every Card, Resolution only
+ever steps down, so a Card the note scored wrong still travels with its Title and the model can name
+it. Under selection a missed Card is invisible and cannot be asked for. The trade is that addressing
+every Card grows the call linearly with the conversation.
 """
 
 _DEFAULT_SELECT_TOP_K = 5
@@ -160,8 +156,7 @@ def _current_turn_ids(messages: Messages) -> frozenset[str]:
 
     ``turn_ranges``' last range is the open turn by definition — a turn is closed by what comes after
     it — so this is the same slice ``closed_turn_ranges`` excludes, read from the other side. The
-    removal subtracts it, which is how Requirements 3.6 and 6.2 hold by one set difference rather
-    than by a check at every resolution site.
+    removal subtracts it (Requirements 3.6, 6.2).
 
     Args:
         messages: The call's message list. Only read.
@@ -260,19 +255,12 @@ def _derive_referenced(state: _GraphState, choice: TurnChoice) -> frozenset[str]
     final block renders ``tools: run_query (2)``, which is a mention by the very criterion B already
     applies to the history (Requirement 10.7). Either way the name is genuinely referenced.
 
-    **Requirement 10.8's omission is vacuous by construction, and that is correct.** The evidence axis
-    has two rungs and two only — :func:`~.scoring.distribute` never yields ``"title"`` for it, on
-    purpose: a tool result with no content at all leaves the model without the referent of the
-    questions that follow. So no Card can reach the state this criterion omits, and every tool name is
-    always published. Nothing is being withheld because there is nothing to withhold: a Card whose
-    dialogue collapsed to its title line still carries its tool result at one of the two evidence
-    rungs, and therefore still mentions the tool. The criterion is kept as written so the direction is
-    pinned should the axis ever gain the third rung.
+    The ``"title"`` case (Requirement 10.8) is unreachable while the evidence axis has two rungs:
+    :func:`~.scoring.distribute` never yields it, so every tool name is published in practice. The
+    branch is kept so the direction is pinned should the axis ever gain the third rung.
 
     A title absent from the choice is read as full content, the same way :func:`~.removal.removal_ids`
-    and the compaction read it: absent means keep, in the direction of every other fail-safe here. That
-    is also what makes a full pass publish every name — under a full pass the whole history travels
-    whole, so every name is referenced anyway.
+    and the compaction read it: absent means keep. A full pass therefore publishes every name.
 
     Args:
         state: The graph state. Read only.
@@ -293,9 +281,7 @@ def _derive_referenced(state: _GraphState, choice: TurnChoice) -> frozenset[str]
         # The retrieval tools the final block names, by the same criterion every other name here
         # answers to: the call mentions them, so they are referenced. Without this they arrive as a
         # pre-specification — a name with an empty ``inputSchema`` — and the block invites the model
-        # to call a tool it has no way to call. Measured across every run of the strategy, the
-        # retrieval cycle count was zero in all of them, and this is why: the escape hatch the design
-        # relies on has never once been reachable when disclosure was installed.
+        # to call a tool it has no way to call.
         #
         # The decision stays with ``ProgressiveToolDisclosure``: this publishes names, and which names
         # carry a full specification is still its call (Requirements 10.6, 12.15).
@@ -318,12 +304,9 @@ def _card_resolution(choice: CardChoice) -> str:
 
     Full content only when *nothing* collapsed, title only when nothing but the title line is left,
     and description for everything in between. The fold is the right question for exactly one reader,
-    :func:`_log_compaction_ratios`, and that is the only caller left: a Card whose Description was
-    folded into the call is precisely what the ratio of Requirement 17.10 measures, and a Card whose
-    dialogue collapsed while its evidence still travels whole *did* have its Description folded in.
-
-    It is deliberately **not** what the choice record counts. A Card holds one Resolution per axis, so
-    folding them there made the record report the fold instead of the ladder — see :func:`_log_choice`.
+    :func:`_log_compaction_ratios`, whose ratio measures a Card whose Description was folded into the
+    call (Requirement 17.10). It is deliberately **not** what the choice record counts, which reports
+    the two axes apart — see :func:`_log_choice`.
 
     Args:
         choice: The resolution of both parts of one Card.
@@ -341,26 +324,16 @@ def _card_resolution(choice: CardChoice) -> str:
 def _log_choice(state: _GraphState, elapsed_ns: int) -> None:
     """Log one info record per turn choice: the counts per axis, and what the choice itself cost.
 
-    A Card does not hold one Resolution — it holds one per axis, and the two are decided
-    independently: the dialogue by the note, over three rungs, and the evidence by the order of the
-    messages, over two. So the counts are reported per axis (Requirement 17.6). Folding them into one
-    bucket makes the record report the fold rather than the ladder: every Card whose dialogue
-    collapsed lands in ``description`` whenever its evidence did not collapse with it, and no Card
-    ever lands in ``title`` at all, because :func:`~.scoring.distribute` never yields ``"title"`` for
-    evidence. Read that way an 18-turn session shows one rung where the dialogue ladder in fact used
-    all three.
-
-    The evidence axis has two rungs and therefore two counts. There is no ``evidence_title`` to
-    report, and a zero there would read as an empty rung rather than as an absent one.
+    A Card does not hold one Resolution — it holds one per axis, decided independently: the dialogue by
+    the note over three rungs, the evidence by the order of the messages over two. So the counts are
+    reported per axis (Requirement 17.6), and there is no ``evidence_title`` to report, since a zero
+    there would read as an empty rung rather than as an absent one.
 
     ``choice_micros`` spans the choice and nothing else — the model call is not inside the measured
-    region and no total is ever accumulated across the two — so the overhead of the choice is readable
-    on its own, which is what Requirement 17.12 asks for.
+    region and no total is ever accumulated across the two (Requirement 17.12).
 
-    A Card absent from the choice is counted at full content on both axes, the same way the removal,
-    the compaction and the supplemental referenced source all read an absent entry: absent means keep.
-    A full pass is every Card at full content on both axes by definition, so it needs no per-Card
-    lookup.
+    A Card absent from the choice is counted at full content on both axes: absent means keep. A full
+    pass is every Card at full content on both axes by definition, so it needs no per-Card lookup.
 
     Args:
         state: The graph state, for its Cards and its frozen choice. Only read.
@@ -397,15 +370,10 @@ def _log_choice(state: _GraphState, elapsed_ns: int) -> None:
 def _log_notes(notes: Mapping[str, float], expand_threshold: float, collapse_floor: float) -> None:
     """Log the spread of the turn's notes against the two thresholds that read them.
 
-    The choice record counts which rungs were used; this one says *why*, and the difference matters
-    because a rung nobody reaches has two causes that the counts alone cannot tell apart. Either no
-    Card was that irrelevant, or the threshold sits outside the range the matcher actually answers in
-    — and the second is the case measured against ``cohere.embed-multilingual-v3``, whose similarity
-    between two same-language texts has a floor well above ``collapse_floor``'s default. Without the
-    spread, calibrating a threshold means guessing at the scale of the very numbers it compares.
-
-    The thresholds travel in the record next to the spread so a reader does not have to hold the
-    configuration in their head to see which side of them the distribution fell on.
+    The choice record counts which rungs were used; this one says *why*. A rung nobody reaches has two
+    causes the counts alone cannot tell apart: either no Card was that irrelevant, or the threshold
+    sits outside the range the matcher answers in. The thresholds travel in the record next to the
+    spread so a reader can see which side of them the distribution fell on.
 
     Args:
         notes: The turn's note per Card. Only read.
@@ -431,10 +399,8 @@ def _log_notes(notes: Mapping[str, float], expand_threshold: float, collapse_flo
 def _log_retrieval_cycles(turn: int, cycles: int) -> None:
     """Log the retrieval cycles the turn that just ended spent (Requirement 17.8).
 
-    The counter is incremented inside the three retrieval tools, because that is where the invocation
-    is, and read here exactly once per turn — immediately before it is reset for the turn now opening.
-    Its curve across turns is the measurement that says whether the note learned from the model's
-    requests or merely traded tokens for latency.
+    The counter is incremented inside the three retrieval tools, where the invocation is, and read here
+    exactly once per turn — immediately before it is reset for the turn now opening.
 
     Args:
         turn: Ordinal of the turn that just ended.
@@ -456,14 +422,12 @@ def _log_delivery(context: InvokeModelContext, delivered: InvokeModelContext, st
     """Log one debug record per delivery, plus one compaction ratio per Card at description.
 
     A full pass is a delivery too — the delivery that changed nothing — so it is recorded like any
-    other, with ``projected`` equal to ``received`` and no final block. That is what keeps two calls'
-    records comparable to each other, and to the same call without the feature.
+    other, with ``projected`` equal to ``received`` and no final block.
 
     Guarded by the level check before anything is measured, so the estimate is never paid for by a
-    caller who would not see it. The
-    estimate reuses the SDK's own character heuristic rather than ``context.projected_input_tokens``,
-    which the event loop computed over the full live history, before this delivery existed
-    (Requirement 17.7).
+    caller who would not see it. The estimate reuses the SDK's own character heuristic rather than
+    ``context.projected_input_tokens``, which the event loop computed over the full live history,
+    before this delivery existed (Requirement 17.7).
 
     Args:
         context: The context as received. Only read.
@@ -493,9 +457,9 @@ def _log_compaction_ratios(messages: Messages, state: _GraphState) -> None:
     """Log, per Card projected at description, what the Description saved over Full Content.
 
     Estimated Full Content tokens over estimated Description tokens, both by the same character
-    heuristic — neither is what the provider will bill, but the two are comparable to each other,
-    which is the whole reading (Requirement 17.10). Full Content is measured over the Card's own
-    messages as the call received them, serialized, because a tool pair is structure and not prose.
+    heuristic: neither is what the provider will bill, but the two are comparable to each other
+    (Requirement 17.10). Full Content is measured over the Card's own messages as the call received
+    them, serialized, because a tool pair is structure and not prose.
 
     A Card whose Description came out empty is skipped rather than reported as an infinite ratio, and
     a full pass reports nothing at all: no Card is at description under it.
@@ -534,8 +498,7 @@ def _log_compaction_ratios(messages: Messages, state: _GraphState) -> None:
 def _validate_strategy(strategy: object) -> None:
     """Reject anything that is not exactly ``"graph"``.
 
-    Case-sensitive on purpose: ``"Graph"`` is a typo, and silently accepting it would make the
-    accepted set unknowable from the error message it never produced.
+    Case-sensitive on purpose: ``"Graph"`` is a typo, not an alias.
 
     Args:
         strategy: Value received by the constructor.
@@ -554,8 +517,7 @@ def _validate_ratio(value: object, parameter: str) -> None:
     "1.0" is the kind of configuration that looks like it works. ``nan`` falls out of the range
     comparison on its own, which is why no separate check for it exists.
 
-    The parameter is typed ``object`` so the checks run on what the caller actually passed rather
-    than on what the annotation promised — a wrong type is exactly the case this exists to catch.
+    The parameter is typed ``object`` so the checks run on what the caller actually passed.
 
     Args:
         value: Value received by the constructor.
@@ -614,7 +576,7 @@ def _validate_reuse_ttl_cycles(value: object, *, parameter: str = "reuse_ttl_cyc
 
     ``0`` is accepted and meaningful on both parameters that use this check: a Fed-Back Note discarded
     at the end of the turn that created it, and a selection that adds nothing beyond its recency
-    window. That is why neither shares ``_validate_count``'s floor of one.
+    window. Hence the floor of zero rather than ``_validate_count``'s floor of one.
 
     Args:
         value: Value received by the constructor.
@@ -680,9 +642,8 @@ def _validate_flag(value: object, parameter: str) -> None:
 def _validate_matcher(matcher: object) -> None:
     """Reject anything that is neither ``None`` nor an object exposing a callable ``score``.
 
-    Checked by member rather than by ``isinstance``: the matcher contract is structural, so any
-    object carrying the operation is a valid implementation, and a double used in tests never has to
-    inherit from anything.
+    Checked by member rather than by ``isinstance``: the matcher contract is structural, so any object
+    carrying the operation is a valid implementation.
 
     Args:
         matcher: Value received by the constructor.
@@ -798,8 +759,7 @@ class _GraphStrategy:
 
         A full pass, or a request that comes out empty, returns the received object itself: no new
         list, no final block, and messages identical field by field to those produced without the
-        feature. One check covers both halves of Requirement 9.9, and with it Requirements 1.11 and
-        2.20 — ``expand_threshold=0.0`` reaches here as a full pass.
+        feature (Requirements 9.9, 1.11, 2.20). ``expand_threshold=0.0`` reaches here as a full pass.
 
         Args:
             context: The per-call invocation context. Read only.
@@ -981,8 +941,8 @@ class _GraphStrategy:
         memory injection of the same stage, which must not have its text folded into a message the
         removal then drops (Requirement 9.7).
 
-        The insert-at-zero is unambiguous rather than merely first-come: the graph is the only
-        strategy this class installs, so no second handler competes for index zero.
+        The graph is the only strategy this class installs, so no second handler competes for index
+        zero.
 
         Args:
             agent: The agent whose middleware registry to register on.
@@ -1028,9 +988,8 @@ class _GraphStrategy:
         state = self._state_for(event.agent)
         # A state with no Card in front of a conversation that has some is a fresh process holding a
         # restored history. Restore populates ``agent.messages`` directly and fires no
-        # ``MessageAddedEvent``, so the writing half has not run — and without this the choice of every
-        # invocation of an ephemeral runtime would be a full pass, which is the strategy never
-        # engaging at all. Done before the ordinal is advanced, so the two paths land on the same turn.
+        # ``MessageAddedEvent``, so the writing half has not run. Done before the ordinal is advanced,
+        # so the two paths land on the same turn.
         if not state.cards:
             self._recover(event.agent, state)
         # The counter of the turn that just ended, read once and immediately before the reset below —
@@ -1039,11 +998,11 @@ class _GraphStrategy:
         # Aged immediately before it is read, and nowhere else. The choice is the only place the
         # fed-back note is ever summed (Requirement 13.2), and ``expire_reuse`` recomputes the decay
         # from the stored expiry rather than compounding it, so ageing at the read is the per-cycle
-        # decrement of Requirement 13.3 without a fourth hook competing for the count of Requirement 1.2.
+        # decrement of Requirement 13.3 without a fourth hook.
         expire_reuse(state, _cycle_of(event.agent), reuse_ttl_cycles=self._reuse_ttl_cycles)
         # Measured around the choice and around nothing else: the model call happens after this hook
         # returns and is timed by the event loop's own metrics, so the two durations are never summed
-        # and the overhead of the choice stays measurable in isolation (Requirement 17.12).
+        # (Requirement 17.12).
         started = time.perf_counter_ns()
         state.choice = self._compute_choice(state, event)
         elapsed_ns = time.perf_counter_ns() - started
@@ -1060,10 +1019,8 @@ class _GraphStrategy:
     def _recover(self, agent: Agent, state: _GraphState) -> None:
         """Bring the graph back for a process that inherited a conversation: load it, or scan for it.
 
-        The store first, because the scan is what it exists to avoid: measured, the scan costs ~30ms
-        over an 18-turn conversation and ~2.9s over a 200-turn one, and this runs on the critical path.
-        Without ``persist=True`` there is nothing to load and the scan is the only route, which is the
-        behavior this method had before persistence existed.
+        The store first, because the scan is what it exists to avoid and this runs on the critical path.
+        Without ``persist=True`` there is nothing to load and the scan is the only route.
 
         Failures do not propagate. A graph that could not be recovered is a graph with no Card, and a
         message without a Card travels at full content — the same degradation every other failure of
@@ -1093,11 +1050,10 @@ class _GraphStrategy:
     def _card_config(self) -> dict[str, Any]:
         """The values the graph is derived under, shared by the scan and by the fingerprint.
 
-        One source for both, because a fingerprint computed over a different set of values than the
-        derivation uses is a fingerprint that accepts a payload it should have discarded.
-        ``link_threshold`` belongs here for exactly that reason: it decides which edges the scan
-        creates, so a payload stored under one value and loaded under another carries a link set the
-        scan would never have produced — and the guards that drop a stale Card cannot see it.
+        One source for both: a fingerprint computed over a different set of values than the derivation
+        uses would accept a payload it should have discarded. ``link_threshold`` belongs here because it
+        decides which edges the scan creates, and the guards that drop a stale Card cannot see a link
+        set the scan would never have produced.
         """
         return {
             "description_tokens": self._description_tokens,
@@ -1160,16 +1116,14 @@ class _GraphStrategy:
 
         The writing half cannot embed — it runs on ``MessageAddedEvent`` and must not reach the
         network — so it measures a ``similar`` edge from this cache and answers "unmeasurable" when the
-        cache is empty. Nothing was filling it: ``compute_notes`` asks the matcher for *numbers*, and
-        the vectors behind them stayed inside the embedder. So no ``similar`` edge was ever created,
-        and ``link_threshold`` compared against a value that never arrived.
+        cache is empty. ``compute_notes`` asks the matcher for *numbers*, so the vectors need their own
+        way into the cache.
 
-        Free where it now sits: the vectors were computed moments ago for the note, and the embedder
-        caches by ``(purpose, text)``, so reading them back costs no call.
+        Free where it sits: the vectors were computed moments ago for the note, and the embedder caches
+        by ``(purpose, text)``, so reading them back costs no call.
 
         Optional by member and not by type, the same way the matcher itself is validated: a matcher
-        without ``vectors`` leaves the cache empty and the edge unmeasurable, which is exactly the
-        behavior before this method existed.
+        without ``vectors`` leaves the cache empty and the edge unmeasurable.
 
         Args:
             state: The graph state. Its ``vectors`` cache is written; nothing else is touched.
@@ -1205,7 +1159,7 @@ class _GraphStrategy:
 
         Returns:
             The addressed titles, or ``None`` when selection is off — in which case every Card is
-            addressed and the resolution ladder alone decides, which is the behavior before selection.
+            addressed and the resolution ladder alone decides.
         """
         if self._recent_cards is None:
             return None
@@ -1489,9 +1443,8 @@ class ContextStrategy(Plugin):
         link_threshold: Similarity at or above which two Cards link. Defaults to ``0.50``.
         reuse_ttl_cycles: Model cycles a Fed-Back Note survives. Defaults to ``5``.
         matcher: Similarity matcher, or ``None`` for the default asymmetric multilingual embedding.
-            Checked by member, so an implementation need not inherit from anything.
-            Resolved on first need rather than at construction, so ``matcher=None`` stays observable
-            as the configuration it was and construction opens no client.
+            Checked by member, so an implementation need not inherit from anything. Resolved on first
+            need rather than at construction, so construction opens no client.
         recent_cards: How many of the most recent Cards a call always addresses, or ``None`` to
             address every Card and leave selection off. Defaults to ``None``. ``0`` is
             not the same as ``None``: it selects by note alone, with no recency window.
@@ -1499,13 +1452,13 @@ class ContextStrategy(Plugin):
             selection is on. Defaults to ``5``.
         reranker: Optional second stage of the selection, reordering the candidates the embedding
             already ranked, or ``None`` to skip it. Defaults to ``None``. Checked by
-            member, like ``matcher``. About ten times the latency of the embedding path, so it is
-            worth the round trip only once selection decides *which* Cards a call addresses. A
-            failure is a skipped step, never a failed call.
+            member, like ``matcher``. Roughly ten times the latency of the embedding path, so it is
+            worth the round trip only once selection decides *which* Cards a call addresses. A failure
+            is a skipped step, never a failed call.
         persist: Whether to keep the derived graph in ``agent.state``, which every session manager
-            already persists. Defaults to ``False``. Avoids the rebuild scan — ~30ms
-            over 18 turns, ~2.9s over 200 — at the cost of a second copy of the Descriptions, which
-            carry literal numeric lines, in the store.
+            already persists. Defaults to ``False``. Avoids the rebuild scan, which grows with the
+            length of the conversation, at the cost of a second copy of the Descriptions — and those
+            carry literal numeric lines — in the store.
         name: Plugin name, for logging and duplicate detection. Defaults to
             ``"strands:context-strategy"``.
 
@@ -1582,9 +1535,9 @@ class ContextStrategy(Plugin):
         self.name = name or _DEFAULT_NAME
         # Fixed here and never revisited: every turn of this instance uses these values unchanged
         # (Requirement 2.18).
-        # ``float`` on the ratios is normalization, not ceremony: ``_validate_ratio`` admits any
-        # ``Real``, so an ``int`` or a ``Fraction`` reaches here and the rest of the package expects a
-        # float. The counts and the flag arrive already pinned to their type by their validators.
+        # ``float`` on the ratios normalizes them: ``_validate_ratio`` admits any ``Real``, so an
+        # ``int`` or a ``Fraction`` reaches here and the rest of the package expects a float. The
+        # counts and the flag arrive already pinned to their type by their validators.
         self._expand_threshold = float(expand_threshold)
         self._collapse_floor = float(collapse_floor)
         self._description_tokens = description_tokens
@@ -1601,13 +1554,11 @@ class ContextStrategy(Plugin):
         self._persist = persist
 
         # Always empty: the strategy registers what it needs in ``init_agent`` via ``agent.add_hook``,
-        # which is what makes the per-agent handler count verifiable by inspection rather than by
-        # trust in discovery.
+        # so the per-agent handler count is verifiable by inspection rather than through discovery.
         self._hooks: list[Any] = []
 
-        # One strategy object, chosen here and never revisited. This is where Requirement 1.1 stops
-        # being a rule to enforce and becomes a shape: there is one slot, so a second strategy on the
-        # same agent is inexpressible rather than detectable.
+        # One slot, chosen here and never revisited, so a second strategy on the same agent is
+        # inexpressible rather than detectable (Requirement 1.1).
         self._impl: _GraphStrategy = self._build_strategy()
         super().__init__()
 

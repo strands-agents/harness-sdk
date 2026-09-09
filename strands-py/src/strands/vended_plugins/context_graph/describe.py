@@ -1,29 +1,25 @@
 """Title, Description and Tags derived by rule — no model call, ever.
 
-The whole module rests on one decision: the Description is a *selection of lines*, never a summary.
-A small model asked to summarize a table of balances paraphrases numbers, and a paraphrased number
-is wrong in silence — the answer reads well and the value is off. So the graph never rewrites text.
-It copies the lines where being wrong is expensive, and cuts the rest at a boundary.
+The whole module rests on one decision: the Description is a *selection of lines*, never a summary. A
+paraphrased number is wrong in silence, so the graph never rewrites text. It copies the lines where
+being wrong is expensive, and cuts the rest at a boundary.
 
 That gives every function here the same shape of contract, verifiable by substring:
 
-- ``title_for`` returns a literal prefix: ``user_text.startswith(title_for(user_text))``. It is the
-  same contract as ``_truncate_description`` in ``progressive_tool_disclosure``, minus the ellipse —
-  an ellipse would read better and break the prefix property, and the prefix property is what makes
-  the Title checkable against the message it came from.
+- ``title_for`` returns a literal prefix: ``user_text.startswith(title_for(user_text))``. Same
+  contract as ``_truncate_description`` in ``progressive_tool_disclosure``, minus the ellipse, which
+  would break the prefix property.
 - ``numeric_lines`` returns lines copied character for character, so every selected line appears as
   an exact substring of the text it was drawn from.
 - ``compose_description`` assembles a header out of addresses and appends the selected lines
   verbatim, so the Description minus its last line is a literal prefix of the complete Description.
 
 Selection is deliberately generous. A line that carries a number joins the selection even when the
-number turns out to be incidental, because the cost of keeping a line is tokens and the cost of
-dropping one is a wrong answer nobody notices.
+number turns out to be incidental: the cost of keeping a line is tokens, the cost of dropping one is a
+wrong answer nobody notices.
 
-``select_tags`` and ``normalize`` sit here for the same reason: they share the module's patterns and
-its cutting helpers, and a tag is derived from the same scan that derives the Description. They add one
-promise of their own — no embedding call either (Requirement 5.8) — because a tag exists precisely to
-catch the identifier an embedding confuses, and deriving it from an embedding would defeat the purpose.
+``select_tags`` and ``normalize`` sit here because a tag is derived from the same scan, and they add
+one promise of their own: no embedding call either (Requirement 5.8).
 """
 
 from __future__ import annotations
@@ -37,16 +33,14 @@ from .state import Card
 _CHARS_PER_TOKEN = 4
 """Characters per token, the same coarse estimate ``progressive_tool_disclosure`` uses.
 
-Deliberately provider-agnostic: the budget exists to bound growth, and a tokenizer per provider would
-buy precision the decision does not need.
+Deliberately provider-agnostic: the budget exists to bound growth, not to be exact.
 """
 
 _TITLE_TOKENS = 12
 """Token ceiling of a Title.
 
-A Title is an address, not content: it has to be long enough for the model to tell two turns apart
-and to name in ``expand_card``, and short enough that every Card's Title fits in every call
-(Requirement 4.2). Twelve tokens is roughly a clause.
+A Title is an address, not content: long enough for the model to tell two turns apart and to name in
+``expand_card``, short enough that every Card's Title fits in every call (Requirement 4.2).
 """
 
 _DIGIT_SEPARATORS = ".,\u00a0\u202f\u2009"
@@ -87,9 +81,8 @@ code and carrying a suffix, ``BRL1.2mi``, is a number to every reader and to no 
 _CURRENCY_MARKER = re.compile(_CURRENCY)
 """The currency markers again, on their own, for stripping them off a candidate before normalizing it.
 
-Shares its alternation with ``_MONETARY`` rather than restating it: a marker that one pattern knows and
-the other does not is a line selected as monetary whose amount then fails to collapse onto the bare
-number, and the two would drift apart silently.
+Shares its alternation with ``_MONETARY`` rather than restating it: a marker one pattern knows and the
+other does not is a line selected as monetary whose amount then fails to collapse onto the bare number.
 """
 
 _NUMERIC_VALUE = re.compile(
@@ -112,11 +105,9 @@ _TAG_TOKEN = re.compile(
 )
 """A textual tag candidate: a word of at least three characters starting with a letter, or a number.
 
-The three-character floor is the only filter, and it is about noise rather than about meaning: ``at``
-and ``of`` are too short to identify anything, while a two-letter ticket prefix would be recognized
-through the structural path anyway. Everything longer is a candidate, including the words that appear in
-every turn — those lose to the rarity term in :func:`select_tags`, which is the mechanism that replaces
-a stopword list.
+The three-character floor is the only filter. Everything longer is a candidate, including the words
+that appear in every turn — those lose to the rarity term in :func:`select_tags`, which is what
+replaces a stopword list.
 
 ``[^\\W\\d_]`` is "a letter in any script": accented and non-Latin words are candidates on the same
 footing, because a conversation held in Portuguese has its identifiers in Portuguese.
@@ -139,10 +130,8 @@ _SENTENCE_ENDINGS = ".!?"
 _OMISSION = "(+{count} numeric lines omitted)"
 """What the Description records when the selected lines do not fit the budget (Requirement 4.6).
 
-The count is the point of the line. A Description that silently keeps the first three of eleven
-balances reads complete and is not, which is the same failure mode a paraphrased number has; stating
-the number of lines left out is what turns that into a visible gap the model can close with
-``expand_artifact``.
+The count is the point of the line: a Description keeping the first three of eleven balances reads
+complete and is not, and the count turns that into a gap the model can close with ``expand_artifact``.
 """
 
 _TEXTUAL_CONTENT_TYPES = frozenset(
@@ -158,9 +147,8 @@ _TEXTUAL_CONTENT_TYPES = frozenset(
 )
 """Content types that are text without saying ``text/``.
 
-Not exhaustive, and it does not need to be: an unrecognized type falls to the non-textual branch,
-which is the conservative side of the mistake — the Description then carries the artifact's address
-and size instead of lines drawn from bytes that were never text.
+Not exhaustive: an unrecognized type falls to the non-textual branch, so the Description carries the
+artifact's address and size rather than lines drawn from bytes that were never text.
 """
 
 _TEXTUAL_SUFFIXES = ("+json", "+xml", "+yaml")
@@ -173,7 +161,7 @@ def title_for(user_text: str) -> str:
     The cut lands at the last word boundary that fits the budget, and by character count only when no
     word boundary fits — a single token longer than the whole budget, where a boundary-based cut would
     return nothing at all. There is no ellipse: ``user_text.startswith(title_for(user_text))`` is the
-    contract, and an ellipse would break it for cosmetics.
+    contract.
 
     Args:
         user_text: The turn's user message, as written. Left unmodified.
@@ -197,9 +185,8 @@ def numeric_lines(texts: Sequence[str]) -> tuple[str, ...]:
     """Select every line of ``texts`` matching a numeric, monetary or tabular pattern, copied literally.
 
     No paraphrase and no character reordering: each selected line is an exact substring of the text it
-    came from, leading whitespace included. Indentation is part of the line because a stripped row no
-    longer lines up with the row above it, and a table that no longer lines up is a table the model
-    reads wrong.
+    came from, leading whitespace included. Indentation is part of the line, since a stripped row no
+    longer lines up with the row above it.
 
     A line is selected when it carries a standalone number, a digit next to a currency marker, or at
     least two cell separators alongside a digit. The three patterns overlap on purpose — a tabular row
@@ -207,8 +194,7 @@ def numeric_lines(texts: Sequence[str]) -> tuple[str, ...]:
 
     Order follows the order of ``texts`` and, within each text, the order of its lines, so two runs
     over the same messages produce the same tuple character for character (Requirement 4.10). Exact
-    duplicates are dropped: the same balance repeated across three tool results is one line of signal
-    and two lines of budget.
+    duplicates are dropped.
 
     Args:
         texts: Texts of the Card's messages, in message order. Not mutated.
@@ -247,11 +233,11 @@ def compose_description(card: Card, description_tokens: int) -> str:
       size, the tool, the turn ordinal and the reference. No lines: bytes that were never text have no
       lines to copy, and a Description assembled from them would be an invention.
 
-    The budget is spent at line granularity first, because a line is the unit of meaning here: the
-    first lines that fit get in, and a final ``(+N numeric lines omitted)`` records the rest. Only
-    when the header alone overruns the budget does the cut fall back to the ``_truncate_description``
-    mold — sentence boundary first, word boundary second, character count only when neither fits — and
-    there is no ellipse, because the ellipse would cost the prefix property for cosmetics.
+    The budget is spent at line granularity first: the first lines that fit get in, and a final
+    ``(+N numeric lines omitted)`` records the rest. Only when the header alone overruns the budget
+    does the cut fall back to the ``_truncate_description`` mold — sentence boundary first, word
+    boundary second, character count only when neither fits — and there is no ellipse, which would
+    cost the prefix property.
 
     So the contract, verifiable by ``startswith``: strip the trailing omission line and what remains
     is a literal prefix of the Description this same Card yields with an unbounded budget
@@ -277,7 +263,7 @@ def compose_description(card: Card, description_tokens: int) -> str:
 
     if lines:
         # Reserved against the worst case: the omission count can only be smaller than the total, and a
-        # smaller count is never a longer line, so the reservation can over-reserve but never under.
+        # smaller count is never a longer line, so the reservation never under-reserves.
         reserved = max_chars - len(_OMISSION.format(count=len(lines))) - 1
         if reserved >= len(header):
             kept = _lines_that_fit(lines, reserved - len(header))
@@ -341,9 +327,8 @@ def _subject_header(card: Card) -> str:
 def _artifact_header(card: Card, textual: bool) -> str:
     """Assemble the address part of an artifact Card's Description (Requirements 4.7, 4.8).
 
-    The two field orders are the ones the requirements list, and they differ because the emphasis
-    differs: textual content leads with the reference because the lines that follow came from it,
-    while non-textual content leads with the file name because the name is the only part of a binary
+    The two field orders differ: textual content leads with the reference, since the lines that follow
+    came from it, while non-textual content leads with the file name, the only part of a binary
     artifact a reader can reason about.
 
     Args:
@@ -510,8 +495,7 @@ def _carries_numbers(line: str) -> bool:
 def _is_tabular(line: str) -> bool:
     """Report whether ``line`` reads as a table row carrying at least one digit.
 
-    Counted in Python rather than matched by regex: the rule is "enough separators, and a digit
-    somewhere", and spelling that as a single expression buys nothing but a pattern nobody can read.
+    The rule is "enough separators, and a digit somewhere".
 
     Args:
         line: A single line, without its terminator.
@@ -556,16 +540,13 @@ def tag_candidates(card: Card, texts: Sequence[str] = ()) -> tuple[tuple[str, ..
     """Extract the tag candidates of ``card``, split into structural and textual.
 
     Three sources and nothing else (Requirement 5.2): the name of a ``toolUse`` block, an artifact
-    reference, and a regex over the Card's text. No declared list and no type schema — the vocabulary
-    of a conversation is not known in advance, and a curated list would only ever recognize the words
-    someone thought of before the conversation happened.
+    reference, and a regex over the Card's text. No declared list and no type schema, since the
+    vocabulary of a conversation is not known in advance.
 
-    The absence of a stopword list is the same decision seen from the other side. ``the`` and
-    ``please`` are candidates here, and they lose in :func:`select_tags` because they appear in every
-    Card, which is exactly what the rarity term measures. A hand-kept list would do the same job for
-    the words it happens to contain, and nothing for the ones specific to a deployment — ``ticket``,
-    ``sprint``, ``connector`` — that distinguish nothing in that deployment and are in no dictionary
-    of stopwords.
+    There is no stopword list either. ``the`` and ``please`` are candidates here, and they lose in
+    :func:`select_tags` because they appear in every Card, which is what the rarity term measures —
+    including the words specific to one deployment, ``ticket`` or ``sprint``, that no dictionary of
+    stopwords carries.
 
     Args:
         card: The Card whose candidates to extract. Only read, never mutated.
@@ -605,20 +586,15 @@ def select_tags(
     """Choose at most ``tags_per_card`` tags for one Card, deterministically.
 
     Structural candidates come first, and no textual candidate enters while a structural one still
-    lacks a slot (Requirement 5.3). A tool name and an artifact reference *define* the Card: they are
-    what the turn did, not what the turn talked about. A textual candidate is a guess about salience
-    drawn from a frequency count, and a guess never outranks a fact — which also means that a Card
-    with five tool calls gets five structural tags and no textual ones, and that is the right answer
-    rather than a degenerate one.
+    lacks a slot (Requirement 5.3): a tool name and an artifact reference are what the turn did, not
+    what it talked about. So a Card with five tool calls gets five structural tags and no textual ones.
 
     Textual candidates are then ordered by
-    ``(1 - rarity_weight) * normalized_repetition + rarity_weight * rarity`` (Requirement 5.4). The two
-    terms measure different things and neither works alone. Repetition alone promotes whatever the
-    conversation says often, which across a session is the vocabulary of the domain itself and
-    distinguishes no two turns. Rarity alone promotes the typo that occurred once. The rarity term is
-    inverse frequency counted over the graph's Cards, so what defines a Card depends on what it is
-    being compared against — which is why Requirement 5.5 has the graph re-tag existing Cards when it
-    gains one.
+    ``(1 - rarity_weight) * normalized_repetition + rarity_weight * rarity`` (Requirement 5.4).
+    Repetition alone promotes the vocabulary of the domain, which distinguishes no two turns; rarity
+    alone promotes the typo that occurred once. The rarity term is inverse frequency counted over the
+    graph's Cards, so what defines a Card depends on what it is being compared against — hence the
+    graph re-tags existing Cards when it gains one (Requirement 5.5).
 
     Ties break by order of first appearance in ``candidates``, so two runs over the same graph with the
     same configuration produce the same tags, Card by Card (Requirement 5.9). No model call and no
@@ -641,9 +617,8 @@ def select_tags(
         At most ``tags_per_card`` tags: the structural ones in the order received, then the textual
         ones by descending score.
     """
-    # ``value.strip()`` and not ``value``: a reference that normalizes to whitespace is truthy and is
-    # still nothing to match a question against, and letting it through would spend a slot on a tag no
-    # question can ever mention.
+    # ``value.strip()`` and not ``value``: a reference that normalizes to whitespace is truthy, and it
+    # would spend a slot on a tag no question can ever mention.
     tags = list(_unique(value for value in structural if value.strip()))[:tags_per_card]
 
     slots = tags_per_card - len(tags)
@@ -677,9 +652,7 @@ def normalize(token: str) -> str:
     """Reduce ``token`` to the canonical form used to compare a tag against the turn's question.
 
     A monetary amount and a separator-bearing number collapse onto the same form (Requirement 5.6):
-    ``R$ 1.200,00``, ``1.200,00``, ``1,200.00`` and ``1200`` all normalize to ``"1200"``. That single
-    collapse covers the case that matters, because an amount is what the model asks about again — "and
-    the 1200 one?" — and it is the case where the literal strings agree on none of their characters.
+    ``R$ 1.200,00``, ``1.200,00``, ``1,200.00`` and ``1200`` all normalize to ``"1200"``.
 
     Which separator is the decimal one is decided by shape, not by locale. When both marks appear, the
     last one is the decimal separator. When only one appears, it is a thousands separator if it repeats
@@ -687,9 +660,8 @@ def normalize(token: str) -> str:
     exception of a leading ``0``, where ``0.500`` is a fraction and not a group of thousands.
 
     Anything that is not a number is casefolded and stripped of surrounding punctuation, and nothing
-    more. The cases left over — a plural, a hyphenation, a synonym — fall to the similarity comparison,
-    and that is the correct behavior rather than a gap: the tag is a shortcut for the identifier an
-    embedding confuses, not the only route to a Card.
+    more. The cases left over — a plural, a hyphenation, a synonym — fall to the similarity comparison:
+    the tag is a shortcut for the identifier an embedding confuses, not the only route to a Card.
 
     Args:
         token: A candidate, tag, or word drawn from the question. Left unmodified.
@@ -723,10 +695,9 @@ def _artifact_reference(card: Card) -> tuple[str, ...]:
 def _rarity(document_frequency: int, total_cards: int) -> float:
     """Score how rare a candidate is across the graph, in ``(0.0, 1.0]``.
 
-    Strictly decreasing in ``document_frequency``, which is the property Requirement 5.4 rests on and
-    the one the metamorphic test checks: making a candidate rarer can never lower its position in the
-    ranking. A frequency of one — the candidate belongs to this Card alone — scores exactly ``1.0``,
-    and a candidate present in every Card scores the floor.
+    Strictly decreasing in ``document_frequency`` (Requirement 5.4): making a candidate rarer can never
+    lower its position in the ranking. A frequency of one — the candidate belongs to this Card alone —
+    scores exactly ``1.0``, and a candidate present in every Card scores the floor.
 
     Args:
         document_frequency: How many Cards carry the candidate. Clamped to at least ``1``.

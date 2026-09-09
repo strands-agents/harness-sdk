@@ -1,9 +1,7 @@
 """Data model of the context graph: a Card holds an address, never content.
 
-The criterion is ownership of content: an outdated pointer is an outdated decision, while an outdated
-copy is outdated content, which is far worse. So the graph stores what it can point at and derive,
-and nothing it would have to keep in
-sync:
+The criterion is ownership of content: the graph stores what it can point at and derive, and nothing
+it would have to keep in sync.
 
 | | Owner | Durable identity | In the Card? |
 |---|---|---|---|
@@ -11,13 +9,11 @@ sync:
 | Raw tool return | the offloader's ``Storage`` | ``reference`` | yes, the number |
 | Retrieved memory | the store, or the runtime | none — folded per call | no |
 
-Three absences are load-bearing, and each is a requirement satisfied by shape rather than by
-discipline:
+Three absences are load-bearing:
 
 - **No message-text field.** ``Card.numeric_lines`` and ``Card.description`` are derived text, not
   a copy of a message: they do not replace the message, they narrow it by literal line selection.
-  The content stays in ``agent.messages``, which is what makes Requirement 3.4 hold by absence of a
-  field instead of by care at every write site.
+  The content stays in ``agent.messages`` (Requirement 3.4).
 - **No persisted note.** The note dies at the end of the turn. What survives is the choice, which is
   its result, plus the fed-back note in ``_GraphState.reuse`` — the only value that crosses turns.
 - **No message metadata.** The graph never writes to ``metadata.custom`` (Requirement 1.10): the
@@ -113,9 +109,8 @@ class Link:
     """A directed, weighted edge. Four kinds, and only two carry note.
 
     ``target`` is a Card title for ``follows``, ``similar`` and ``artifact``, and a tool name for
-    ``tool``. The tool edge is not a note destination: it is the index that produces the supplemental
-    referenced source and the structural tags, and the axis along which two Cards that used the same
-    tool reach each other in a single hop.
+    ``tool``. The tool edge is not a note destination: it is the index behind the supplemental
+    referenced source and the structural tags.
 
     Attributes:
         kind: Which of the four kinds this edge is.
@@ -140,10 +135,8 @@ class CardChoice:
 
             ``"title"`` on this axis means one thing only — the selection did not address this Card,
             so *nothing* of it reaches the call, evidence included. It is not a third rung of the
-            ladder; it is the absence of the Card. Requirement 10.8 has a consumer because of it: the
-            supplemental referenced source withholds the tool names of a Card the call does not
-            address, which is the state the criterion was written for and which nothing could reach
-            before selection existed.
+            ladder; it is the absence of the Card, and the supplemental referenced source withholds
+            its tool names accordingly (Requirement 10.8).
     """
 
     dialogue: Resolution
@@ -166,11 +159,6 @@ class TurnChoice:
         selected: Titles the call addresses — the ones whose Title reaches the model. ``None`` means
             every Card is addressed, which is the behavior when selection is off. An empty set is not
             the same thing: it means the selection ran and chose nothing.
-
-            Selection is what gives the links a job. With every Card addressed, propagation only
-            breaks ties in a ranking nobody is excluded from, so a link can never be the reason a
-            Card is reached. With a bounded selection, one hop from a selected Card is the only route
-            to a Card the question does not resemble — which is the case the graph exists for.
     """
 
     by_title: Mapping[str, CardChoice]
@@ -182,15 +170,12 @@ class TurnChoice:
 class _GraphState:
     """Per-agent state. Derived: rebuildable by a scan over ``agent.messages``.
 
-    Losing this state on a restart costs one rebuild scan, which is free in I/O and in model calls,
-    and the worst case is today's behavior without the feature (Requirement 14.2, 14.5).
+    Losing this state on a restart costs one rebuild scan, free in I/O and in model calls
+    (Requirement 14.2, 14.5).
 
     It never reaches message metadata, and it reaches no store of its own. Under ``persist=True``
-    *part* of it reaches ``agent.state``, and with it whatever the session manager writes to:
-    ``cards``, ``links``, ``turn`` and ``reuse`` travel; ``choice`` does not (it is per turn, so
-    restoring it would apply the previous invocation's decision), ``referenced`` does not (per call),
-    and ``vectors`` does not (a cache, and ~369KB of JSON per 18 Cards through a sync that fires on
-    every message). See :mod:`.persistence`.
+    *part* of it reaches ``agent.state``: ``cards``, ``links``, ``turn`` and ``reuse`` travel, while
+    ``choice``, ``referenced`` and ``vectors`` do not. See :mod:`.persistence`.
 
     Attributes:
         cards: Title to Card, in turn order.
