@@ -1,6 +1,6 @@
 """Unit tests of the three retrieval tools: every success path and every error mode.
 
-Driven through ``_GraphStrategy`` rather than through ``tools.py`` directly, because the claims are
+Driven through ``ContextStrategy`` rather than through ``tools.py`` directly, because the claims are
 about the tool as the model reaches it: the state it is handed, the cycle counter it ages notes by, and
 the configuration it reads thresholds from all arrive through the strategy. Calling the module functions
 would test the same arithmetic with the wiring assumed.
@@ -30,7 +30,7 @@ from typing import Any
 
 import pytest
 
-from strands.vended_plugins.context_graph.plugin import _GraphStrategy
+from strands.vended_plugins.context_graph.plugin import ContextStrategy
 from strands.vended_plugins.context_graph.scoring import _REUSE_BONUS
 from strands.vended_plugins.context_graph.state import Card, CardChoice, TurnChoice, _GraphState
 from strands.vended_plugins.context_offloader import ContextOffloader
@@ -133,9 +133,9 @@ def state_with(*cards: Card, full_pass: bool = False) -> _GraphState:
     return state
 
 
-def strategy_over(state: _GraphState, agent: Any, matcher: Any = None, **overrides: Any) -> _GraphStrategy:
+def strategy_over(state: _GraphState, agent: Any, matcher: Any = None, **overrides: Any) -> ContextStrategy:
     """A graph strategy whose state for ``agent`` is ``state``, with a doubled matcher."""
-    strategy = _GraphStrategy(**{**CONFIG, **overrides, "matcher": matcher or StubMatcher()})
+    strategy = ContextStrategy(**{**CONFIG, **overrides, "matcher": matcher or StubMatcher()})
     strategy._states[agent] = state
     return strategy
 

@@ -1,4 +1,4 @@
-"""Unit tests of ``_GraphStrategy.init_agent`` and the three hooks it registers.
+"""Unit tests of ``ContextStrategy.init_agent`` and the three hooks it registers.
 
 Wiring, so almost every test here is about a count, a position or a boundary rather than about a
 value. Four claims carry the design.
@@ -37,7 +37,7 @@ from strands.agent.conversation_manager import (
 from strands.hooks.events import AfterToolCallEvent, BeforeInvocationEvent, MessageAddedEvent
 from strands.vended_plugins.context_graph.cards import rebuild
 from strands.vended_plugins.context_graph.matcher import EmbeddingSimilarityMatcher
-from strands.vended_plugins.context_graph.plugin import ContextStrategy, _GraphStrategy
+from strands.vended_plugins.context_graph.plugin import ContextStrategy
 
 from .stubs import StubMatcher
 
@@ -129,34 +129,29 @@ def conversation(turns: int) -> list[dict[str, Any]]:
     return messages
 
 
-def graph_of(plugin: ContextStrategy) -> _GraphStrategy:
-    """The graph strategy behind a ``ContextStrategy(strategy="graph")``."""
-    return plugin._impl
-
-
-def wired(matcher: Any = None, **overrides: Any) -> tuple[_GraphStrategy, FakeAgent]:
+def wired(matcher: Any = None, **overrides: Any) -> tuple[ContextStrategy, FakeAgent]:
     """Build a graph strategy and an agent, wired together."""
     plugin = ContextStrategy(strategy="graph", matcher=matcher or StubMatcher(), **overrides)
     agent = FakeAgent()
-    graph = graph_of(plugin)
+    graph = plugin
     graph.init_agent(agent)  # type: ignore[arg-type]
     return graph, agent
 
 
-def start_turn(graph: _GraphStrategy, agent: FakeAgent, messages: list[dict[str, Any]] | None = None) -> None:
+def start_turn(graph: ContextStrategy, agent: FakeAgent, messages: list[dict[str, Any]] | None = None) -> None:
     """Fire the single registered ``BeforeInvocationEvent`` hook."""
     (hook,) = agent.hooks_for(BeforeInvocationEvent)
     hook(BeforeInvocationEvent(agent=agent, messages=messages))  # type: ignore[arg-type]
 
 
-def add_message(graph: _GraphStrategy, agent: FakeAgent, message: dict[str, Any]) -> None:
+def add_message(graph: ContextStrategy, agent: FakeAgent, message: dict[str, Any]) -> None:
     """Append ``message`` to the history and fire the single ``MessageAddedEvent`` hook."""
     agent.messages.append(message)
     (hook,) = agent.hooks_for(MessageAddedEvent)
     hook(MessageAddedEvent(agent=agent, message=message))  # type: ignore[arg-type]
 
 
-def finish_tool(graph: _GraphStrategy, agent: FakeAgent, result: Any, tool_name: str = "run_query") -> None:
+def finish_tool(graph: ContextStrategy, agent: FakeAgent, result: Any, tool_name: str = "run_query") -> None:
     """Fire the single ``AfterToolCallEvent`` hook with ``result``."""
     (hook,) = agent.hooks_for(AfterToolCallEvent)
     hook(
@@ -210,7 +205,7 @@ class TestInitAgentWiring:
         agent = FakeAgent(conversation(2))
         before = copy.deepcopy(agent.messages)
 
-        graph_of(ContextStrategy(strategy="graph")).init_agent(agent)  # type: ignore[arg-type]
+        ContextStrategy(strategy="graph").init_agent(agent)  # type: ignore[arg-type]
 
         assert agent.system_prompt == "you answer questions"
         assert agent.messages == before
@@ -235,9 +230,9 @@ class TestInitAgentWiring:
 class TestDestructiveWindowManagement:
     """Requirements 15.1 to 15.4: one warning, then wired anyway. Degraded, never blocked."""
 
-    def _init_with(self, manager: Any, caplog: Any) -> tuple[_GraphStrategy, FakeAgent, list[Any]]:
+    def _init_with(self, manager: Any, caplog: Any) -> tuple[ContextStrategy, FakeAgent, list[Any]]:
         agent = FakeAgent(conversation_manager=manager)
-        graph = graph_of(ContextStrategy(strategy="graph"))
+        graph = ContextStrategy(strategy="graph")
         with caplog.at_level(logging.WARNING, logger=PLUGIN_LOGGER):
             graph.init_agent(agent)  # type: ignore[arg-type]
         return graph, agent, [record for record in caplog.records if record.name == PLUGIN_LOGGER]
@@ -315,7 +310,7 @@ class TestLivingWithTheOtherTwoPlugins:
         before = dict(vars(offloader))
         agent = FakeAgent()
 
-        graph_of(ContextStrategy(strategy="graph")).init_agent(agent)  # type: ignore[arg-type]
+        ContextStrategy(strategy="graph").init_agent(agent)  # type: ignore[arg-type]
 
         assert offloader._preview_strategy == before["_preview_strategy"]
         assert offloader._preview_tokens == 123
@@ -331,7 +326,7 @@ class TestLivingWithTheOtherTwoPlugins:
         before = dict(vars(disclosure))
         agent = FakeAgent()
 
-        graph_of(ContextStrategy(strategy="graph")).init_agent(agent)  # type: ignore[arg-type]
+        ContextStrategy(strategy="graph").init_agent(agent)  # type: ignore[arg-type]
 
         assert (disclosure._catalog_tokens, disclosure._ttl_cycles) == (40, 7)
         assert (disclosure._always_available, disclosure._top_k) == (("run_query",), 2)
@@ -340,7 +335,7 @@ class TestLivingWithTheOtherTwoPlugins:
     def test_the_graph_configuration_comes_out_as_it_went_in(self):
         """Requirement 2.18: the values fixed at construction survive the wiring unchanged."""
         plugin = ContextStrategy(strategy="graph", expand_threshold=0.8, collapse_floor=0.2, body_budget=500)
-        graph = graph_of(plugin)
+        graph = plugin
         before = dict(vars(graph))
 
         graph.init_agent(FakeAgent())  # type: ignore[arg-type]
@@ -374,7 +369,7 @@ class TestTheHandlerGoesToIndexZero:
 
         agent = FakeAgent()
         agent._middleware_registry.add_middleware(InvokeModelStage.Input, other)
-        graph = graph_of(ContextStrategy(strategy="graph"))
+        graph = ContextStrategy(strategy="graph")
         graph.init_agent(agent)  # type: ignore[arg-type]
 
         assert agent.input_handlers() == [graph._delivery_handler, other]
@@ -396,8 +391,8 @@ class TestOneInstanceOnTwoAgents:
         plugin = ContextStrategy(strategy="graph")
         first, second = FakeAgent(), FakeAgent()
 
-        graph_of(plugin).init_agent(first)  # type: ignore[arg-type]
-        graph_of(plugin).init_agent(second)  # type: ignore[arg-type]
+        plugin.init_agent(first)  # type: ignore[arg-type]
+        plugin.init_agent(second)  # type: ignore[arg-type]
 
         for agent in (first, second):
             assert len(agent.hooks_for(MessageAddedEvent)) == 1
@@ -407,7 +402,7 @@ class TestOneInstanceOnTwoAgents:
 
     def test_each_agent_gets_its_own_state(self):
         plugin = ContextStrategy(strategy="graph")
-        graph = graph_of(plugin)
+        graph = plugin
         first, second = FakeAgent(), FakeAgent()
 
         graph.init_agent(first)  # type: ignore[arg-type]
@@ -417,7 +412,7 @@ class TestOneInstanceOnTwoAgents:
 
     def test_the_turn_ordinal_advances_independently(self):
         plugin = ContextStrategy(strategy="graph", matcher=StubMatcher())
-        graph = graph_of(plugin)
+        graph = plugin
         first, second = FakeAgent(), FakeAgent()
         graph.init_agent(first)  # type: ignore[arg-type]
         graph.init_agent(second)  # type: ignore[arg-type]
@@ -431,7 +426,7 @@ class TestOneInstanceOnTwoAgents:
 
     def test_a_card_derived_for_one_agent_says_nothing_about_the_other(self):
         plugin = ContextStrategy(strategy="graph", matcher=StubMatcher())
-        graph = graph_of(plugin)
+        graph = plugin
         first, second = FakeAgent(), FakeAgent()
         graph.init_agent(first)  # type: ignore[arg-type]
         graph.init_agent(second)  # type: ignore[arg-type]
@@ -650,7 +645,7 @@ class TestTheDefaultMatcherIsResolvedLazily:
         assert graph._matcher_for() is matcher
 
     def test_the_default_is_built_on_first_need_and_only_once(self):
-        graph = graph_of(ContextStrategy(strategy="graph"))
+        graph = ContextStrategy(strategy="graph")
 
         assert graph._resolved_matcher is None
 

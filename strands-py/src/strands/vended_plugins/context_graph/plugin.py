@@ -624,76 +624,147 @@ def _validate_name(name: object) -> None:
         raise ValueError(f"name=<{name!r}> | must be None or a non-empty string")
 
 
-class _GraphStrategy:
-    """The graph strategy: one Card per turn, three Resolutions, no language model call.
+class ContextStrategy(Plugin):
+    """The single Context Strategy of an agent. Exactly one, by construction.
+
+    The graph derives a Card per turn by scan and decides a Resolution per Card. It is chosen at construction via
+    ``strategy="graph"`` and never revisited, so there is one slot and a second strategy on the same agent is
+    inexpressible rather than merely detectable.
 
     Wired at all four engagement points: the three hooks of :meth:`init_agent`, plus the delivery handler, which is the
-    one place the set of messages sent to the provider changes. The three retrieval tools delegate to :mod:`.tools`. Not
-    a ``Plugin``: ``ContextStrategy`` is the only plugin the agent ever sees, and this object is reached only through
-    it.
+    one place the set of messages sent to the provider changes. The three retrieval tools delegate to :mod:`.tools`.
 
     Args:
-        expand_threshold: Note at or above which a Card is Full Content, budget permitting.
-        collapse_floor: Note below which a Card keeps only its Title.
-        description_tokens: Token ceiling of a Description.
-        tags_per_card: How many identifiers define a Card.
-        rarity_weight: Weight of rarity against repetition when ranking textual Tags.
-        body_budget: Token ceiling across Cards in Full Content, or ``None`` for no ceiling.
-        min_cards: Below this many Cards the choice is skipped entirely.
-        link_threshold: Similarity at or above which two Cards link.
-        reuse_ttl_cycles: Model cycles a Fed-Back Note survives.
-        matcher: Similarity matcher, or ``None`` for the default asymmetric multilingual embedding.
+        strategy: ``"graph"``, case-sensitive.
+        expand_threshold: Note at or above which a Card is Full Content, budget permitting. Defaults to ``0.55``.
+        collapse_floor: Note below which a Card keeps only its Title. Defaults to ``0.45``.
+        description_tokens: Token ceiling of a Description. Defaults to ``100``.
+        tags_per_card: How many identifiers define a Card. Defaults to ``5``.
+        rarity_weight: Weight of rarity against repetition when ranking textual Tags. Defaults to ``0.70``.
+        body_budget: Token ceiling across Cards in Full Content, or ``None`` for no ceiling. Defaults to ``None``.
+        min_cards: Below this many Cards the choice is skipped entirely. Defaults to ``3``.
+        link_threshold: Similarity at or above which two Cards link. Defaults to ``0.50``.
+        reuse_ttl_cycles: Model cycles a Fed-Back Note survives. Defaults to ``5``.
+        matcher: Similarity matcher, or ``None`` for the default asymmetric multilingual embedding. Checked by member,
+            so an implementation inherits from nothing. Resolved on first need, so construction opens no client.
         recent_cards: How many of the most recent Cards a call always addresses, or ``None`` to address every Card and
-            leave selection off.
-        select_top_k: How many Cards the note adds beyond the recency window.
-        reranker: Optional second stage of the selection, or ``None`` to skip it.
-        persist: Whether to keep the derived graph in ``agent.state``.
+            leave selection off. Defaults to ``None``. ``0`` differs from ``None``: it selects by note alone, with no
+            recency window.
+        select_top_k: How many Cards the note adds beyond the recency window. Read only when selection is on. Defaults
+            to ``5``.
+        reranker: Optional second stage of the selection, reordering the candidates the embedding already ranked, or
+            ``None`` to skip it. Defaults to ``None``. Checked by member, like ``matcher``. Roughly ten times the
+            latency of the embedding path, so it is worth the round trip only once selection decides which Cards a call
+            addresses. A failure is a skipped step, never a failed call.
+        persist: Whether to keep the derived graph in ``agent.state``, which every session manager already persists.
+            Defaults to ``False``. Avoids the rebuild scan, which grows with the conversation, at the cost of a second
+            copy of the Descriptions, literal numeric lines included, in the store.
+        name: Plugin name, for logging and duplicate detection. Defaults to ``"strands:context-strategy"``.
+
+    Raises:
+        ValueError: On any invalid argument, naming the parameter and what it accepts.
+
+    Example:
+        ```python
+        from strands import Agent
+        from strands.agent.conversation_manager import NullConversationManager
+        from strands.vended_plugins.context_graph import ContextStrategy
+
+        agent = Agent(
+            conversation_manager=NullConversationManager(),
+            plugins=[ContextStrategy(strategy="graph")],
+        )
+        ```
     """
+
+    name = _DEFAULT_NAME
 
     def __init__(
         self,
         *,
-        expand_threshold: float,
-        collapse_floor: float,
-        description_tokens: int,
-        tags_per_card: int,
-        rarity_weight: float,
-        body_budget: int | None,
-        min_cards: int,
-        link_threshold: float,
-        reuse_ttl_cycles: int,
-        matcher: Any,
-        recent_cards: int | None,
-        select_top_k: int,
-        reranker: Any,
-        persist: bool,
+        strategy: Literal["graph"] = "graph",
+        expand_threshold: float = _DEFAULT_EXPAND_THRESHOLD,
+        collapse_floor: float = _DEFAULT_COLLAPSE_FLOOR,
+        description_tokens: int = _DEFAULT_DESCRIPTION_TOKENS,
+        tags_per_card: int = _DEFAULT_TAGS_PER_CARD,
+        rarity_weight: float = _DEFAULT_RARITY_WEIGHT,
+        body_budget: int | None = _DEFAULT_BODY_BUDGET,
+        min_cards: int = _DEFAULT_MIN_CARDS,
+        link_threshold: float = _DEFAULT_LINK_THRESHOLD,
+        reuse_ttl_cycles: int = _DEFAULT_REUSE_TTL_CYCLES,
+        matcher: Any = None,
+        recent_cards: int | None = _DEFAULT_RECENT_CARDS,
+        select_top_k: int = _DEFAULT_SELECT_TOP_K,
+        reranker: Any = None,
+        persist: bool = False,
+        name: str | None = None,
     ) -> None:
-        """Store the already-validated configuration. Nothing else is built here."""
+        """Validate the configuration and fix it for the lifetime of the instance.
+
+        ``strategy`` is validated first, since it decides that the graph surface is in play. Nothing is built here
+        beyond plain attributes: no network call, no model client, no AWS client, no async task (Requirement 2.16).
+        """
+        _validate_strategy(strategy)
+        _validate_name(name)
+
+        _validate_ratio(expand_threshold, "expand_threshold")
+        _validate_ratio(collapse_floor, "collapse_floor")
+        _validate_ratio(link_threshold, "link_threshold")
+        _validate_ratio(rarity_weight, "rarity_weight")
+        # Checked after both are known to be ratios: a floor above the ceiling leaves the middle resolution unreachable,
+        # so the ladder would have two steps while the configuration says three.
+        if float(collapse_floor) > float(expand_threshold):
+            raise ValueError(
+                f"collapse_floor=<{collapse_floor!r}> | must be less than or equal to "
+                f"expand_threshold=<{expand_threshold!r}>"
+            )
+        _validate_count(description_tokens, "description_tokens")
+        _validate_count(tags_per_card, "tags_per_card")
+        _validate_count(min_cards, "min_cards")
+        _validate_body_budget(body_budget)
+        _validate_reuse_ttl_cycles(reuse_ttl_cycles)
+        _validate_matcher(matcher)
+        _validate_recent_cards(recent_cards)
+        _validate_reuse_ttl_cycles(select_top_k, parameter="select_top_k")
+        _validate_reranker(reranker)
+        _validate_flag(persist, "persist")
+
+        self.name = name or _DEFAULT_NAME
+        # Fixed here and never revisited: every turn of this instance uses these values unchanged (Requirement 2.18).
+        # ``float`` on the ratios normalizes them, since ``_validate_ratio`` admits any ``Real`` and the rest of the
+        # package expects a float. The counts and the flag arrive already pinned to their type by their validators.
+        self._expand_threshold = float(expand_threshold)
+        self._collapse_floor = float(collapse_floor)
+        self._description_tokens = description_tokens
+        self._tags_per_card = tags_per_card
+        self._rarity_weight = float(rarity_weight)
+        self._body_budget = body_budget
+        self._min_cards = min_cards
+        self._link_threshold = float(link_threshold)
+        self._reuse_ttl_cycles = reuse_ttl_cycles
+        self._matcher = matcher
         self._recent_cards = recent_cards
         self._select_top_k = select_top_k
         self._reranker = reranker
         self._persist = persist
-        self._expand_threshold = expand_threshold
-        self._collapse_floor = collapse_floor
-        self._description_tokens = description_tokens
-        self._tags_per_card = tags_per_card
-        self._rarity_weight = rarity_weight
-        self._body_budget = body_budget
-        self._min_cards = min_cards
-        self._link_threshold = link_threshold
-        self._reuse_ttl_cycles = reuse_ttl_cycles
-        self._matcher = matcher
+
         # The default matcher, once something has needed it. Kept apart from ``_matcher`` so ``matcher=None`` stays
         # observable as the configuration it was, and resolved on first need: construction opens no client and reaches
         # no network (Requirement 2.16).
         self._resolved_matcher: Any = None
         # Per agent, weakly keyed: the graph is dropped along with the agent it belongs to.
         self._states: _GraphStates = weakref.WeakKeyDictionary()
+
+        # Always empty: the strategy registers what it needs in ``init_agent`` via ``agent.add_hook``, so the per-agent
+        # handler count is verifiable by inspection rather than through discovery.
+        self._hooks: list[Any] = []
+
         # Built once, and called from inside ``_delivery_handler`` rather than registered on the stage.
         # ``trigger="everyTurn"`` is a requirement, not a preference: the default ``"userTurn"`` would fire only on the
         # turn's first call, so the autonomous tool loop's calls would go out with the removal applied and no final
         # block (Requirement 9.6).
         self._fold = _create_injection_middleware(self._render, trigger="everyTurn")
+        super().__init__()
 
     async def _delivery_handler(self, context: InvokeModelContext) -> InvokeModelContext:
         """Apply the removal and the compaction, as one step that either happens or does not.
@@ -855,19 +926,17 @@ class _GraphStrategy:
         )
 
     def referenced_tool_names(self, agent: Agent) -> frozenset[str]:
-        """The supplemental referenced source of ``agent``, as published by the last delivery.
+        """Tool names this call still mentions, for ``ProgressiveToolDisclosure(referenced_source=...)``.
 
-        The reading half of the channel, and the callable handed to
-        ``ProgressiveToolDisclosure(referenced_source=...)``. It reads per-agent state and nothing else: nothing is
-        written to ``agent.state``, no field is added to ``InvokeModelContext``, and no entry of ``tool_specs`` is
-        assembled anywhere (Requirements 10.10, 10.11).
+        Hand this bound method over as the supplemental referenced source. It receives the agent of the call, so one
+        instance serves as many agents as it is wired to, and it only reads: which names carry a full specification and
+        which a pre-specification stays with ``ProgressiveToolDisclosure`` (Requirements 10.6, 12.15).
 
         Args:
-            agent: The agent of the call, passed in by ``ProgressiveToolDisclosure``.
+            agent: The agent of the call.
 
         Returns:
-            The published names. Empty for an agent this strategy never wired, and empty before the first delivery; in
-            both cases ``referenced`` comes out as the retained history alone.
+            The names of the tools mentioned by Cards above title. Empty when there is nothing to add.
         """
         state = self._states.get(agent)
         return frozenset() if state is None else state.referenced
@@ -1258,257 +1327,6 @@ class _GraphStrategy:
 
     # ---- the three retrieval tools: bodies in ``tools.py``, configuration and state here ------
 
-    async def expand_card(self, title: str, tool_context: ToolContext) -> str:
-        """Raise Resolution of the Subject Card titled ``title`` to Full Content for this turn.
-
-        Args:
-            title: Title of the Card the model asked for.
-            tool_context: The framework's tool context, for the agent of the call.
-
-        Returns:
-            Confirmation, or an error naming the Title asked for.
-        """
-        agent = tool_context.agent
-        return tools.expand_card(
-            self._state_for(agent),
-            title,
-            cycle=_cycle_of(agent),
-            reuse_ttl_cycles=self._reuse_ttl_cycles,
-        )
-
-    async def expand_artifact(
-        self,
-        reference: str,
-        tool_context: ToolContext,
-        line_range: dict[str, int] | None = None,
-        pattern: str | None = None,
-    ) -> str:
-        """Read the artifact behind ``reference`` from the offloader's storage.
-
-        Args:
-            reference: The artifact reference.
-            tool_context: The framework's tool context, for the agent of the call.
-            line_range: ``{"start": int, "end": int}``, or ``None`` for the whole artifact.
-            pattern: Keep only matching lines, or ``None``.
-
-        Returns:
-            The requested part, or an error naming what was missing.
-        """
-        agent = tool_context.agent
-        return await tools.expand_artifact(
-            self._state_for(agent),
-            agent,
-            reference,
-            line_range,
-            pattern,
-            cycle=_cycle_of(agent),
-            reuse_ttl_cycles=self._reuse_ttl_cycles,
-        )
-
-    async def find_context(self, need: str, tool_context: ToolContext, tag: str | None = None) -> str:
-        """Score the Cards' Descriptions against ``need`` over the existing vector index.
-
-        Args:
-            need: What the model is looking for, in its own words.
-            tool_context: The framework's tool context, for the agent of the call.
-            tag: Restrict candidates to Cards carrying this Tag, normalized.
-
-        Returns:
-            Up to five candidates, or an empty result naming the ``need`` received.
-        """
-        agent = tool_context.agent
-        return tools.find_context(
-            self._state_for(agent),
-            need,
-            tag,
-            matcher=self._matcher_for(),
-            collapse_floor=self._collapse_floor,
-            cycle=_cycle_of(agent),
-            reuse_ttl_cycles=self._reuse_ttl_cycles,
-        )
-
-
-class ContextStrategy(Plugin):
-    """The single Context Strategy of an agent. Exactly one, by construction.
-
-    The graph derives a Card per turn by scan and decides a Resolution per Card. It is chosen at construction via
-    ``strategy="graph"`` and never revisited, so there is one slot and a second strategy on the same agent is
-    inexpressible rather than merely detectable.
-
-    Args:
-        strategy: ``"graph"``, case-sensitive.
-        expand_threshold: Note at or above which a Card is Full Content, budget permitting. Defaults to ``0.55``.
-        collapse_floor: Note below which a Card keeps only its Title. Defaults to ``0.45``.
-        description_tokens: Token ceiling of a Description. Defaults to ``100``.
-        tags_per_card: How many identifiers define a Card. Defaults to ``5``.
-        rarity_weight: Weight of rarity against repetition when ranking textual Tags. Defaults to ``0.70``.
-        body_budget: Token ceiling across Cards in Full Content, or ``None`` for no ceiling. Defaults to ``None``.
-        min_cards: Below this many Cards the choice is skipped entirely. Defaults to ``3``.
-        link_threshold: Similarity at or above which two Cards link. Defaults to ``0.50``.
-        reuse_ttl_cycles: Model cycles a Fed-Back Note survives. Defaults to ``5``.
-        matcher: Similarity matcher, or ``None`` for the default asymmetric multilingual embedding. Checked by member,
-            so an implementation inherits from nothing. Resolved on first need, so construction opens no client.
-        recent_cards: How many of the most recent Cards a call always addresses, or ``None`` to address every Card and
-            leave selection off. Defaults to ``None``. ``0`` differs from ``None``: it selects by note alone, with no
-            recency window.
-        select_top_k: How many Cards the note adds beyond the recency window. Read only when selection is on. Defaults
-            to ``5``.
-        reranker: Optional second stage of the selection, reordering the candidates the embedding already ranked, or
-            ``None`` to skip it. Defaults to ``None``. Checked by member, like ``matcher``. Roughly ten times the
-            latency of the embedding path, so it is worth the round trip only once selection decides which Cards a call
-            addresses. A failure is a skipped step, never a failed call.
-        persist: Whether to keep the derived graph in ``agent.state``, which every session manager already persists.
-            Defaults to ``False``. Avoids the rebuild scan, which grows with the conversation, at the cost of a second
-            copy of the Descriptions, literal numeric lines included, in the store.
-        name: Plugin name, for logging and duplicate detection. Defaults to ``"strands:context-strategy"``.
-
-    Raises:
-        ValueError: On any invalid argument, naming the parameter and what it accepts.
-
-    Example:
-        ```python
-        from strands import Agent
-        from strands.agent.conversation_manager import NullConversationManager
-        from strands.vended_plugins.context_graph import ContextStrategy
-
-        agent = Agent(
-            conversation_manager=NullConversationManager(),
-            plugins=[ContextStrategy(strategy="graph")],
-        )
-        ```
-    """
-
-    name = _DEFAULT_NAME
-
-    def __init__(
-        self,
-        *,
-        strategy: Literal["graph"] = "graph",
-        expand_threshold: float = _DEFAULT_EXPAND_THRESHOLD,
-        collapse_floor: float = _DEFAULT_COLLAPSE_FLOOR,
-        description_tokens: int = _DEFAULT_DESCRIPTION_TOKENS,
-        tags_per_card: int = _DEFAULT_TAGS_PER_CARD,
-        rarity_weight: float = _DEFAULT_RARITY_WEIGHT,
-        body_budget: int | None = _DEFAULT_BODY_BUDGET,
-        min_cards: int = _DEFAULT_MIN_CARDS,
-        link_threshold: float = _DEFAULT_LINK_THRESHOLD,
-        reuse_ttl_cycles: int = _DEFAULT_REUSE_TTL_CYCLES,
-        matcher: Any = None,
-        recent_cards: int | None = _DEFAULT_RECENT_CARDS,
-        select_top_k: int = _DEFAULT_SELECT_TOP_K,
-        reranker: Any = None,
-        persist: bool = False,
-        name: str | None = None,
-    ) -> None:
-        """Validate the configuration and fix it for the lifetime of the instance.
-
-        ``strategy`` is validated first, since it decides that the graph surface is in play. Nothing is built here
-        beyond plain attributes: no network call, no model client, no AWS client, no async task (Requirement 2.16).
-        """
-        _validate_strategy(strategy)
-        _validate_name(name)
-
-        _validate_ratio(expand_threshold, "expand_threshold")
-        _validate_ratio(collapse_floor, "collapse_floor")
-        _validate_ratio(link_threshold, "link_threshold")
-        _validate_ratio(rarity_weight, "rarity_weight")
-        # Checked after both are known to be ratios: a floor above the ceiling leaves the middle resolution unreachable,
-        # so the ladder would have two steps while the configuration says three.
-        if float(collapse_floor) > float(expand_threshold):
-            raise ValueError(
-                f"collapse_floor=<{collapse_floor!r}> | must be less than or equal to "
-                f"expand_threshold=<{expand_threshold!r}>"
-            )
-        _validate_count(description_tokens, "description_tokens")
-        _validate_count(tags_per_card, "tags_per_card")
-        _validate_count(min_cards, "min_cards")
-        _validate_body_budget(body_budget)
-        _validate_reuse_ttl_cycles(reuse_ttl_cycles)
-        _validate_matcher(matcher)
-        _validate_recent_cards(recent_cards)
-        _validate_reuse_ttl_cycles(select_top_k, parameter="select_top_k")
-        _validate_reranker(reranker)
-        _validate_flag(persist, "persist")
-
-        self.name = name or _DEFAULT_NAME
-        # Fixed here and never revisited: every turn of this instance uses these values unchanged (Requirement 2.18).
-        # ``float`` on the ratios normalizes them, since ``_validate_ratio`` admits any ``Real`` and the rest of the
-        # package expects a float. The counts and the flag arrive already pinned to their type by their validators.
-        self._expand_threshold = float(expand_threshold)
-        self._collapse_floor = float(collapse_floor)
-        self._description_tokens = description_tokens
-        self._tags_per_card = tags_per_card
-        self._rarity_weight = float(rarity_weight)
-        self._body_budget = body_budget
-        self._min_cards = min_cards
-        self._link_threshold = float(link_threshold)
-        self._reuse_ttl_cycles = reuse_ttl_cycles
-        self._matcher = matcher
-        self._recent_cards = recent_cards
-        self._select_top_k = select_top_k
-        self._reranker = reranker
-        self._persist = persist
-
-        # Always empty: the strategy registers what it needs in ``init_agent`` via ``agent.add_hook``, so the per-agent
-        # handler count is verifiable by inspection rather than through discovery.
-        self._hooks: list[Any] = []
-
-        # One slot, chosen here and never revisited, so a second strategy on the same agent is inexpressible rather than
-        # merely detectable (Requirement 1.1).
-        self._impl: _GraphStrategy = self._build_strategy()
-        super().__init__()
-
-    def _build_strategy(self) -> _GraphStrategy:
-        """Construct the graph strategy object this instance delegates to.
-
-        Returns:
-            The ``_GraphStrategy`` configured from this instance's validated parameters.
-        """
-        return _GraphStrategy(
-            recent_cards=self._recent_cards,
-            select_top_k=self._select_top_k,
-            reranker=self._reranker,
-            persist=self._persist,
-            expand_threshold=self._expand_threshold,
-            collapse_floor=self._collapse_floor,
-            description_tokens=self._description_tokens,
-            tags_per_card=self._tags_per_card,
-            rarity_weight=self._rarity_weight,
-            body_budget=self._body_budget,
-            min_cards=self._min_cards,
-            link_threshold=self._link_threshold,
-            reuse_ttl_cycles=self._reuse_ttl_cycles,
-            matcher=self._matcher,
-        )
-
-    def init_agent(self, agent: Agent) -> None:
-        """Delegate wiring to the graph strategy chosen at construction.
-
-        Args:
-            agent: The agent to wire up.
-        """
-        self._impl.init_agent(agent)
-
-    def referenced_tool_names(self, agent: Agent) -> frozenset[str]:
-        """Tool names this call still mentions, for ``ProgressiveToolDisclosure(referenced_source=...)``.
-
-        Hand this bound method over as the supplemental referenced source. It receives the agent of the call, so one
-        instance serves as many agents as it is wired to, and it only reads: which names carry a full specification and
-        which a pre-specification stays with ``ProgressiveToolDisclosure`` (Requirements 10.6, 12.15).
-
-        Args:
-            agent: The agent of the call.
-
-        Returns:
-            The names of the tools mentioned by Cards above title. Empty when there is nothing to add.
-        """
-        return self._graph.referenced_tool_names(agent)
-
-    @property
-    def _graph(self) -> _GraphStrategy:
-        """The graph strategy this instance delegates to."""
-        return self._impl
-
     @tool(context=True)
     async def expand_card(self, title: str, tool_context: ToolContext) -> str:
         """Bring back the full content of an earlier turn, by its title.
@@ -1524,7 +1342,13 @@ class ContextStrategy(Plugin):
         Returns:
             Confirmation that the turn will arrive in full, or an error naming the title asked for.
         """
-        return await self._graph.expand_card(title, tool_context)
+        agent = tool_context.agent
+        return tools.expand_card(
+            self._state_for(agent),
+            title,
+            cycle=_cycle_of(agent),
+            reuse_ttl_cycles=self._reuse_ttl_cycles,
+        )
 
     @tool(context=True)
     async def expand_artifact(
@@ -1548,7 +1372,16 @@ class ContextStrategy(Plugin):
         Returns:
             The requested part of the artifact, or an error naming what was missing.
         """
-        return await self._graph.expand_artifact(reference, tool_context, line_range, pattern)
+        agent = tool_context.agent
+        return await tools.expand_artifact(
+            self._state_for(agent),
+            agent,
+            reference,
+            line_range,
+            pattern,
+            cycle=_cycle_of(agent),
+            reuse_ttl_cycles=self._reuse_ttl_cycles,
+        )
 
     @tool(context=True)
     async def find_context(self, need: str, tool_context: ToolContext, tag: str | None = None) -> str:
@@ -1566,4 +1399,13 @@ class ContextStrategy(Plugin):
             Up to five candidate turns with their title, tags and description, or an empty result
             naming the need received.
         """
-        return await self._graph.find_context(need, tool_context, tag)
+        agent = tool_context.agent
+        return tools.find_context(
+            self._state_for(agent),
+            need,
+            tag,
+            matcher=self._matcher_for(),
+            collapse_floor=self._collapse_floor,
+            cycle=_cycle_of(agent),
+            reuse_ttl_cycles=self._reuse_ttl_cycles,
+        )

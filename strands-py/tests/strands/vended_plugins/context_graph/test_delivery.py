@@ -1,4 +1,4 @@
-"""Unit tests of ``_GraphStrategy._delivery_handler``: one step, or none of it.
+"""Unit tests of ``ContextStrategy._delivery_handler``: one step, or none of it.
 
 The handler is wiring, so almost every test here is about a boundary rather than about a value. Two
 boundaries carry the design:
@@ -21,7 +21,7 @@ import pytest
 
 from strands._middleware.stages import InvokeModelContext
 from strands.vended_plugins.context_graph import compaction as compaction_module
-from strands.vended_plugins.context_graph.plugin import ContextStrategy, _GraphStrategy
+from strands.vended_plugins.context_graph.plugin import ContextStrategy
 from strands.vended_plugins.context_graph.state import Card, CardChoice, _GraphState
 
 from .conftest import frozen_choice
@@ -107,8 +107,8 @@ def _full_pass_state():
 
 
 def _graph(**overrides):
-    """A ``_GraphStrategy`` reached the way production reaches it: through the dispatch."""
-    return ContextStrategy(strategy="graph", **overrides)._impl
+    """The strategy, built the way production builds it."""
+    return ContextStrategy(strategy="graph", **overrides)
 
 
 def _context(agent, messages=None):
@@ -437,6 +437,6 @@ def test_the_fold_is_built_once_per_strategy():
     """Requirement 9.6: one fold, constructed with the strategy and never rebuilt per call."""
     graph = _graph()
 
-    assert isinstance(graph, _GraphStrategy)
+    assert isinstance(graph, ContextStrategy)
     assert graph._fold is graph._fold
     assert callable(graph._fold)

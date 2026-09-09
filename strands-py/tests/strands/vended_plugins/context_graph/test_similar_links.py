@@ -15,7 +15,7 @@ from types import SimpleNamespace
 import pytest
 
 from strands.vended_plugins.context_graph.cards import register_card
-from strands.vended_plugins.context_graph.plugin import _GraphStrategy
+from strands.vended_plugins.context_graph.plugin import ContextStrategy
 from strands.vended_plugins.context_graph.state import Card, _GraphState
 
 CONFIG = {
@@ -83,7 +83,7 @@ def _state(*cards):
 
 
 def _strategy(matcher):
-    return _GraphStrategy(**{**CONFIG, "matcher": matcher})
+    return ContextStrategy(**{**CONFIG, "matcher": matcher})
 
 
 def test_the_reading_half_deposits_a_vector_per_description():

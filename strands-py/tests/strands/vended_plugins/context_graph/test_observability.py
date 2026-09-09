@@ -32,11 +32,7 @@ import pytest
 
 from strands._middleware.stages import InvokeModelContext
 from strands.hooks.events import BeforeInvocationEvent
-from strands.vended_plugins.context_graph.plugin import (
-    RETRIEVAL_TOOL_NAMES,
-    ContextStrategy,
-    _GraphStrategy,
-)
+from strands.vended_plugins.context_graph.plugin import RETRIEVAL_TOOL_NAMES, ContextStrategy
 from strands.vended_plugins.context_graph.state import Card, CardChoice, _GraphState
 
 from .conftest import frozen_choice
@@ -93,9 +89,9 @@ def _card(title: str, turn: int, dialogue_ids: tuple[str, ...], description: str
     )
 
 
-def _graph(**overrides: Any) -> _GraphStrategy:
-    """A ``_GraphStrategy`` reached the way production reaches it: through the dispatch."""
-    return ContextStrategy(strategy="graph", matcher=StubMatcher(), **overrides)._impl
+def _graph(**overrides: Any) -> ContextStrategy:
+    """The strategy, built the way production builds it."""
+    return ContextStrategy(strategy="graph", matcher=StubMatcher(), **overrides)
 
 
 def _context(agent: FakeAgent, messages: list[dict[str, Any]] | None = None) -> InvokeModelContext:
@@ -152,7 +148,7 @@ class TestChoiceRecord:
     the dialogue and two for the evidence — the evidence axis has two rungs and no ``title``.
     """
 
-    def _start_turn(self, graph: _GraphStrategy, agent: FakeAgent, state: _GraphState) -> None:
+    def _start_turn(self, graph: ContextStrategy, agent: FakeAgent, state: _GraphState) -> None:
         """Fire the hook with the choice the state already carries.
 
         The choice is pinned rather than computed: what is under test is the record, and a scored
@@ -303,7 +299,7 @@ class TestChoiceRecord:
 class TestRetrievalCycleRecord:
     """Requirement 17.8: incremented per tool invocation, recorded once per turn."""
 
-    def _start_turn(self, graph: _GraphStrategy, agent: FakeAgent, state: _GraphState) -> None:
+    def _start_turn(self, graph: ContextStrategy, agent: FakeAgent, state: _GraphState) -> None:
         graph._states[agent] = state  # type: ignore[index]
         graph._on_before_invocation(BeforeInvocationEvent(agent=agent, messages=agent.messages))  # type: ignore[arg-type]
 

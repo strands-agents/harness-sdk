@@ -60,7 +60,7 @@ from strands.hooks.events import AfterToolCallEvent, BeforeInvocationEvent, Mess
 from strands.models.model import _estimate_tokens_with_heuristic
 from strands.vended_plugins.context_graph import scoring
 from strands.vended_plugins.context_graph.cards import rebuild
-from strands.vended_plugins.context_graph.plugin import ContextStrategy, _GraphStrategy
+from strands.vended_plugins.context_graph.plugin import ContextStrategy
 
 PLUGIN_LOGGER = "strands.vended_plugins.context_graph.plugin"
 """The only logger the harness reads, so an unrelated record never lands in a row."""
@@ -439,10 +439,10 @@ class Session:
         self.fast_path = fast_path
         self.agent = HarnessAgent()
         self.matcher = OverlapMatcher()
-        self.graph: _GraphStrategy | None = None
+        self.graph: ContextStrategy | None = None
         if wire_graph:
             strategy = ContextStrategy(strategy="graph", matcher=self.matcher, **{**CONFIG, **(config or {})})
-            self.graph = strategy._impl
+            self.graph = strategy
             self.graph.init_agent(self.agent)  # type: ignore[arg-type]
         self._turn_micros = 0
 

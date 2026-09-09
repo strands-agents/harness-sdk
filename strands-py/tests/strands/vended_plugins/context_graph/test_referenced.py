@@ -129,14 +129,14 @@ def _state(*, shared: bool = False) -> _GraphState:
 
 
 def _graph(**overrides: Any) -> Any:
-    """The graph strategy, reached the way production reaches it: through the dispatch."""
-    return ContextStrategy(strategy="graph", **overrides)._impl
+    """The strategy, built the way production builds it."""
+    return ContextStrategy(strategy="graph", **overrides)
 
 
 def _wired(state: _GraphState | None = None) -> tuple[ContextStrategy, Any, FakeAgent]:
     """A plugin, its graph and an agent carrying ``state``."""
     plugin = ContextStrategy(strategy="graph")
-    graph = plugin._impl
+    graph = plugin
     agent = FakeAgent()
     graph._states[agent] = _state() if state is None else state
     return plugin, graph, agent
