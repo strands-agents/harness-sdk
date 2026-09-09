@@ -14,6 +14,8 @@ from strands.vended_plugins.context_offloader import (
     FileStorage,
     InMemoryStorage,
 )
+from strands.vended_plugins.context_offloader.plugin import _MAX_TRACKED_REFERENCES
+from strands.vended_plugins.context_offloader.reranker import BedrockReranker, RerankerError
 from tests.fixtures.sandbox import TestSandbox
 
 
@@ -438,7 +440,7 @@ class TestContextOffloader:
         assert len(storage._store) == 4
 
     @pytest.mark.asyncio
-    async def test_image_without_bytes_kept_in_place(self, plugin, storage, mock_agent):
+    async def test_image_without_bytes_not_stored(self, plugin, storage, mock_agent):
         content = [
             {"text": "x" * 200},
             {"image": {"format": "png", "source": {}}},
@@ -447,77 +449,11 @@ class TestContextOffloader:
 
         await plugin._handle_tool_result(event)
 
-        # Only text stored; the image had no bytes to offload so it is left
-        # in place rather than replaced with a misleading ``0 bytes`` placeholder.
-        # See https://github.com/strands-agents/harness-sdk/issues/4017
+        # Only text stored, not the empty image
         assert len(storage._store) == 1
-        result_content = event.result["content"]
-        # [0] = preview text, [1] = the original image block (kept as-is)
-        assert "image" in result_content[1]
-        assert result_content[1]["image"] == {"format": "png", "source": {}}
-        assert not any("0 bytes" in (b.get("text", "")) for b in result_content)
-
-    @pytest.mark.asyncio
-    async def test_document_without_bytes_kept_in_place(self, plugin, storage, mock_agent):
-        # Non-bytes document source (location/text/content) — mirrors issue #4017
-        # where the offloader would replace a 5,200-char document with a
-        # ``[document: txt, contract, 0 bytes]`` placeholder.
-        doc_block = {
-            "document": {
-                "format": "txt",
-                "name": "contract",
-                "source": {"location": {"uri": "s3://bucket/contract.txt"}},
-            }
-        }
-        content = [
-            {"text": "x" * 200},
-            doc_block,
-        ]
-        event = _make_event(mock_agent, content)
-
-        await plugin._handle_tool_result(event)
-
-        # Only text stored; the document is preserved verbatim.
-        assert len(storage._store) == 1
-        result_content = event.result["content"]
-        assert "document" in result_content[1]
-        assert result_content[1]["document"] == doc_block["document"]
-        assert not any("[document:" in (b.get("text", "")) for b in result_content)
-
-    @pytest.mark.asyncio
-    async def test_mixed_bytes_and_non_bytes_blocks(self, plugin, storage, mock_agent):
-        # Bytes document gets stored + ref emitted; non-bytes document is
-        # preserved; image without bytes is preserved. Verify the three paths
-        # coexist in a single tool result.
-        img_bytes = b"\x89PNG" + b"\x00" * 100
-        doc_bytes = b"%PDF-1.4" + b"\x00" * 100
-        doc_location = {
-            "document": {
-                "format": "txt",
-                "name": "contract",
-                "source": {"location": {"uri": "s3://bucket/contract.txt"}},
-            }
-        }
-        content = [
-            {"text": "a" * 400},  # 100 tokens > 25 max_result_tokens threshold
-            {"image": {"format": "png", "source": {"bytes": img_bytes}}},
-            {"document": {"format": "pdf", "name": "report.pdf", "source": {"bytes": doc_bytes}}},
-            doc_location,
-        ]
-        event = _make_event(mock_agent, content)
-
-        await plugin._handle_tool_result(event)
-
-        # text + image + document (bytes) stored; the non-bytes document is preserved.
-        assert len(storage._store) == 3
-
-        result_content = event.result["content"]
-        # [0] = preview, [1] = image placeholder, [2] = document placeholder,
-        # [3] = the original non-bytes document block (kept as-is)
-        assert "[Offloaded:" in result_content[0]["text"]
-        assert "[image: png" in result_content[1]["text"]
-        assert "[document: pdf, report.pdf" in result_content[2]["text"]
-        assert result_content[3] == doc_location
+        placeholder = event.result["content"][1]["text"]
+        assert "0 bytes" in placeholder
+        assert "ref:" not in placeholder
 
 
 class TestRetrievalTool:
@@ -1494,3 +1430,607 @@ class TestShouldOffloadCallback:
         await plugin._handle_tool_result(event)
 
         assert "[Offloaded:" in event.result["content"][0]["text"]
+
+
+class _FakeReranker:
+    """Minimal Reranker honoring the contract, so no AWS client is ever needed."""
+
+    max_sources_per_query = 100
+
+    async def score(self, query, chunks):
+        return [1.0 for _ in chunks]
+
+
+class TestPreviewStrategyValidation:
+    """Construction-time validation of the relevance strategy arguments."""
+
+    def test_defaults_to_prefix(self, storage):
+        plugin = ContextOffloader(storage=storage)
+        assert plugin._preview_strategy == "prefix"
+        assert plugin._relevance is None
+
+    def test_explicit_prefix_matches_default(self, storage):
+        plugin = ContextOffloader(storage=storage, preview_strategy="prefix")
+        assert plugin._preview_strategy == "prefix"
+        assert plugin._relevance is None
+
+    @pytest.mark.parametrize("value", ["Relevance", "PREFIX", "", "other", None, 1, ["relevance"]])
+    def test_raises_on_invalid_preview_strategy(self, storage, value):
+        with pytest.raises(ValueError, match="preview_strategy must be 'prefix' or 'relevance'"):
+            ContextOffloader(storage=storage, preview_strategy=value)
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"relevance_threshold": 0.5},
+            {"chunk_tokens": 2_500},
+            {"reranker": None},
+            {"summarize_overflow": False},
+        ],
+    )
+    def test_raises_on_relevance_argument_with_prefix_strategy(self, storage, kwargs):
+        name = next(iter(kwargs))
+        with pytest.raises(ValueError, match=f"{name}.*require preview_strategy='relevance'"):
+            ContextOffloader(storage=storage, **kwargs)
+
+    def test_prefix_error_names_every_incompatible_argument(self, storage):
+        with pytest.raises(ValueError) as error:
+            ContextOffloader(storage=storage, relevance_threshold=0.2, chunk_tokens=10)
+        assert "relevance_threshold" in str(error.value)
+        assert "chunk_tokens" in str(error.value)
+
+    @pytest.mark.parametrize("value", [-0.1, 1.1, float("nan"), float("inf"), True, False, "0.5", None])
+    def test_raises_on_invalid_relevance_threshold(self, storage, value):
+        with pytest.raises(ValueError, match=r"relevance_threshold must be a finite number in \[0.0, 1.0\]"):
+            ContextOffloader(
+                storage=storage,
+                preview_strategy="relevance",
+                relevance_threshold=value,
+                reranker=_FakeReranker(),
+            )
+
+    @pytest.mark.parametrize("value", [0.0, 0.5, 1.0, 1])
+    def test_accepts_relevance_threshold_bounds(self, storage, value):
+        plugin = ContextOffloader(
+            storage=storage,
+            preview_strategy="relevance",
+            relevance_threshold=value,
+            reranker=_FakeReranker(),
+        )
+        assert plugin._relevance is not None
+
+    @pytest.mark.parametrize("value", [0, -1, True, 2.5, "10", None])
+    def test_raises_on_invalid_chunk_tokens(self, storage, value):
+        with pytest.raises(ValueError, match="chunk_tokens must be an integer >= 1"):
+            ContextOffloader(
+                storage=storage,
+                preview_strategy="relevance",
+                chunk_tokens=value,
+                reranker=_FakeReranker(),
+            )
+
+    def test_raises_on_reranker_without_score(self, storage):
+        class NoScore:
+            max_sources_per_query = 100
+
+        with pytest.raises(ValueError, match="reranker must expose a callable score"):
+            ContextOffloader(storage=storage, preview_strategy="relevance", reranker=NoScore())
+
+    def test_raises_on_non_callable_score(self, storage):
+        class ScoreAttribute:
+            max_sources_per_query = 100
+            score = "not callable"
+
+        with pytest.raises(ValueError, match="reranker must expose a callable score"):
+            ContextOffloader(storage=storage, preview_strategy="relevance", reranker=ScoreAttribute())
+
+    def test_raises_on_score_with_wrong_signature(self, storage):
+        class WrongSignature:
+            max_sources_per_query = 100
+
+            async def score(self, query):
+                return []
+
+        with pytest.raises(ValueError, match=r"reranker.score must accept \(query, chunks\)"):
+            ContextOffloader(storage=storage, preview_strategy="relevance", reranker=WrongSignature())
+
+    @pytest.mark.parametrize("value", [0, -1, True, 1.5, "100", None])
+    def test_raises_on_invalid_max_sources_per_query(self, storage, value):
+        class BadLimit:
+            max_sources_per_query = value
+
+            async def score(self, query, chunks):
+                return []
+
+        with pytest.raises(ValueError, match="reranker.max_sources_per_query must be an integer >= 1"):
+            ContextOffloader(storage=storage, preview_strategy="relevance", reranker=BadLimit())
+
+    def test_relevance_builds_single_preview_with_given_reranker(self, storage):
+        reranker = _FakeReranker()
+        plugin = ContextOffloader(
+            storage=storage,
+            preview_strategy="relevance",
+            relevance_threshold=0.4,
+            chunk_tokens=1_500,
+            reranker=reranker,
+            summarize_overflow=True,
+        )
+        relevance = plugin._relevance
+        assert relevance is not None
+        assert relevance._reranker is reranker
+        assert relevance._relevance_threshold == 0.4
+        assert relevance._chunk_tokens == 1_500
+        assert relevance._preview_tokens == plugin._preview_tokens
+        assert relevance._summarize_overflow is True
+        # Same instance reused across tool results: the strategy is fixed at construction.
+        assert plugin._relevance is relevance
+
+    def test_relevance_without_reranker_defaults_to_bedrock(self, storage, monkeypatch):
+        created = []
+
+        class FakeClient:
+            meta = MagicMock(region_name="us-west-2")
+
+        class FakeSession:
+            def __init__(self, region_name=None):
+                created.append(region_name)
+
+            def client(self, service_name, config=None):
+                assert service_name == "bedrock-agent-runtime"
+                return FakeClient()
+
+        monkeypatch.setattr("boto3.Session", FakeSession)
+
+        plugin = ContextOffloader(storage=storage, preview_strategy="relevance")
+
+        assert isinstance(plugin._relevance._reranker, BedrockReranker)
+        assert plugin._relevance._reranker.max_sources_per_query == 100
+        assert len(created) == 1  # exactly one session, no network call
+
+    def test_prefix_creates_no_aws_client(self, storage, monkeypatch):
+        def fail(*args, **kwargs):
+            raise AssertionError("prefix strategy must not create an AWS client")
+
+        monkeypatch.setattr("boto3.Session", fail)
+
+        plugin = ContextOffloader(storage=storage, preview_strategy="prefix")
+        assert plugin._relevance is None
+
+    def test_failed_construction_leaves_nothing_behind(self, storage, monkeypatch):
+        def fail(*args, **kwargs):
+            raise AssertionError("no AWS client before validation passes")
+
+        monkeypatch.setattr("boto3.Session", fail)
+
+        with pytest.raises(ValueError):
+            ContextOffloader(storage=storage, preview_strategy="relevance", chunk_tokens=0)
+        with pytest.raises(ValueError):
+            ContextOffloader(storage=storage, preview_strategy="relevance", relevance_threshold=2.0)
+
+
+class _RecordingReranker:
+    """Reranker double that records its calls and replays canned scores or a failure."""
+
+    max_sources_per_query = 100
+
+    def __init__(self, scores=None, error=None, errors=None):
+        self.calls = []
+        self._scores = scores
+        self._error = error
+        self._errors = list(errors) if errors is not None else None
+
+    async def score(self, query, chunks):
+        self.calls.append((query, list(chunks)))
+        error = self._error
+        if self._errors is not None:
+            error = self._errors.pop(0) if self._errors else None
+        if error is not None:
+            raise error
+        if self._scores is not None:
+            return list(self._scores)
+        return [1.0 for _ in chunks]
+
+
+# Ten 20-character lines: with chunk_tokens=6 (24 chars) each line becomes one chunk.
+_LINES = [f"line{i}-" + "y" * 13 for i in range(10)]
+_RELEVANCE_TEXT = "\n".join(_LINES)
+_ONLY_LINE_7 = [1.0 if i == 7 else 0.0 for i in range(10)]
+
+
+class TestPreviewDispatch:
+    """Dispatch of `_build_preview` and its degradation to the positional preview."""
+
+    @pytest.fixture
+    def agent(self, mock_agent):
+        mock_agent.messages = [{"role": "user", "content": [{"text": "which line mentions 7?"}]}]
+        return mock_agent
+
+    def _plugin(self, storage, reranker):
+        return ContextOffloader(
+            storage=storage,
+            max_result_tokens=25,
+            preview_tokens=10,
+            include_retrieval_tool=False,
+            preview_strategy="relevance",
+            relevance_threshold=0.5,
+            chunk_tokens=6,
+            reranker=reranker,
+        )
+
+    @pytest.mark.asyncio
+    async def test_empty_text_returns_empty_without_scoring(self, storage, agent):
+        reranker = _RecordingReranker()
+        plugin = self._plugin(storage, reranker)
+        event = _make_event(agent, "x" * 200)
+
+        assert await plugin._build_preview("", event) == ("", False)
+        assert reranker.calls == []
+
+    @pytest.mark.asyncio
+    async def test_prefix_returns_positional_slice(self, storage, agent, monkeypatch):
+        monkeypatch.setattr(
+            "boto3.Session",
+            lambda *args, **kwargs: pytest.fail("prefix strategy must not create an AWS client"),
+        )
+        plugin = ContextOffloader(
+            storage=storage, max_result_tokens=25, preview_tokens=10, include_retrieval_tool=False
+        )
+        event = _make_event(agent, _RELEVANCE_TEXT)
+
+        preview, relevance_applied = await plugin._build_preview(_RELEVANCE_TEXT, event)
+
+        assert preview == _RELEVANCE_TEXT[:40]
+        assert relevance_applied is False
+
+    @pytest.mark.asyncio
+    async def test_relevance_scores_once_per_offloaded_result(self, storage, agent):
+        reranker = _RecordingReranker(scores=_ONLY_LINE_7)
+        plugin = self._plugin(storage, reranker)
+        event = _make_event(agent, _RELEVANCE_TEXT)
+
+        await plugin._handle_tool_result(event)
+
+        assert len(reranker.calls) == 1
+        query = reranker.calls[0][0]
+        assert "which line mentions 7?" in query
+        preview_text = event.result["content"][0]["text"]
+        assert "line7-" in preview_text
+        assert "line0-" not in preview_text
+
+    @pytest.mark.asyncio
+    async def test_two_offloaded_results_score_once_each(self, storage, agent):
+        reranker = _RecordingReranker(scores=_ONLY_LINE_7)
+        plugin = self._plugin(storage, reranker)
+
+        await plugin._handle_tool_result(_make_event(agent, _RELEVANCE_TEXT, tool_use_id="t1"))
+        await plugin._handle_tool_result(_make_event(agent, _RELEVANCE_TEXT, tool_use_id="t2"))
+
+        assert len(reranker.calls) == 2
+
+    @pytest.mark.asyncio
+    async def test_reranker_error_falls_back_to_positional_preview(self, storage, agent, caplog):
+        reranker = _RecordingReranker(error=RerankerError("bedrock unavailable"))
+        plugin = self._plugin(storage, reranker)
+        event = _make_event(agent, _RELEVANCE_TEXT, tool_name="big_tool")
+
+        with caplog.at_level(logging.WARNING):
+            await plugin._handle_tool_result(event)
+
+        assert _RELEVANCE_TEXT[:40] in event.result["content"][0]["text"]
+        warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "big_tool" in warnings[0].getMessage()
+        assert warnings[0].exc_info is not None
+        # Scored once: the failed call is not retried for the same tool result.
+        assert len(reranker.calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_scores_of_wrong_length_fall_back(self, storage, agent, caplog):
+        reranker = _RecordingReranker(scores=[1.0])
+        plugin = self._plugin(storage, reranker)
+        event = _make_event(agent, _RELEVANCE_TEXT)
+
+        with caplog.at_level(logging.WARNING):
+            await plugin._handle_tool_result(event)
+
+        assert _RELEVANCE_TEXT[:40] in event.result["content"][0]["text"]
+        assert len(reranker.calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_out_of_range_score_falls_back(self, storage, agent, caplog):
+        reranker = _RecordingReranker(scores=[7.0] * 10)
+        plugin = self._plugin(storage, reranker)
+        event = _make_event(agent, _RELEVANCE_TEXT)
+
+        with caplog.at_level(logging.WARNING):
+            await plugin._handle_tool_result(event)
+
+        assert _RELEVANCE_TEXT[:40] in event.result["content"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_unexpected_exception_does_not_escape(self, storage, agent, caplog):
+        reranker = _RecordingReranker(error=RuntimeError("boom"))
+        plugin = self._plugin(storage, reranker)
+        event = _make_event(agent, _RELEVANCE_TEXT)
+
+        with caplog.at_level(logging.WARNING):
+            await plugin._handle_tool_result(event)
+
+        assert _RELEVANCE_TEXT[:40] in event.result["content"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_failure_state_is_not_kept_between_results(self, storage, agent):
+        reranker = _RecordingReranker(scores=_ONLY_LINE_7, errors=[RerankerError("transient"), None])
+        plugin = self._plugin(storage, reranker)
+
+        first = _make_event(agent, _RELEVANCE_TEXT, tool_use_id="t1")
+        await plugin._handle_tool_result(first)
+        second = _make_event(agent, _RELEVANCE_TEXT, tool_use_id="t2")
+        await plugin._handle_tool_result(second)
+
+        assert plugin._preview_strategy == "relevance"
+        assert len(reranker.calls) == 2
+        assert _RELEVANCE_TEXT[:40] in first.result["content"][0]["text"]
+        assert "line7-" in second.result["content"][0]["text"]
+        assert "line0-" not in second.result["content"][0]["text"]
+
+
+def _guidance_lines(result):
+    """Return the guidance lines of an offloaded preview, without the header line."""
+    header_and_guidance = result["content"][0]["text"].split("\n\n")[0]
+    return header_and_guidance.split("\n")[1:]
+
+
+_GAP_GUIDANCE_MARK = "lines omitted ...] marks"
+
+
+class TestRelevanceGuidance:
+    """The extra guidance line that explains the gap markers of the relevance preview."""
+
+    @pytest.fixture
+    def agent(self, mock_agent):
+        mock_agent.messages = [{"role": "user", "content": [{"text": "which line mentions 7?"}]}]
+        return mock_agent
+
+    def _plugin(self, storage, reranker=None, strategy="relevance"):
+        common = {
+            "storage": storage,
+            "max_result_tokens": 25,
+            "preview_tokens": 10,
+            "include_retrieval_tool": True,
+        }
+        if strategy == "prefix":
+            return ContextOffloader(**common)
+        return ContextOffloader(
+            **common,
+            preview_strategy="relevance",
+            relevance_threshold=0.5,
+            chunk_tokens=6,
+            reranker=reranker,
+        )
+
+    @pytest.mark.asyncio
+    async def test_relevance_adds_exactly_one_guidance_line_about_gap_markers(self, storage, agent):
+        plugin = self._plugin(storage, _RecordingReranker(scores=_ONLY_LINE_7))
+        event = _make_event(agent, _RELEVANCE_TEXT)
+
+        await plugin._handle_tool_result(event)
+
+        lines = _guidance_lines(event.result)
+        extra = [line for line in lines if _GAP_GUIDANCE_MARK in line]
+        assert len(extra) == 1
+        # The line ties the marker to omitted raw lines and to the way back.
+        assert "raw content" in extra[0]
+        assert "line_range" in extra[0]
+        # Exactly one line more than the positional guidance for the same configuration.
+        prefix_event = _make_event(agent, _RELEVANCE_TEXT, tool_use_id="t_prefix")
+        await self._plugin(storage, strategy="prefix")._handle_tool_result(prefix_event)
+        assert len(lines) == len(_guidance_lines(prefix_event.result)) + 1
+
+    @pytest.mark.asyncio
+    async def test_prefix_strategy_omits_the_gap_marker_guidance(self, storage, agent):
+        plugin = self._plugin(storage, strategy="prefix")
+        event = _make_event(agent, _RELEVANCE_TEXT)
+
+        await plugin._handle_tool_result(event)
+
+        assert all(_GAP_GUIDANCE_MARK not in line for line in _guidance_lines(event.result))
+
+    @pytest.mark.asyncio
+    async def test_degradation_omits_the_gap_marker_guidance(self, storage, agent):
+        plugin = self._plugin(storage, _RecordingReranker(error=RerankerError("scoring down")))
+        event = _make_event(agent, _RELEVANCE_TEXT)
+
+        await plugin._handle_tool_result(event)
+
+        preview_text = event.result["content"][0]["text"]
+        assert all(_GAP_GUIDANCE_MARK not in line for line in _guidance_lines(event.result))
+        assert "lines omitted" not in preview_text
+        assert _RELEVANCE_TEXT[:40] in preview_text
+
+    @pytest.mark.asyncio
+    async def test_both_paths_keep_storage_references_and_line_numbers(self, storage, agent):
+        scored = _make_event(agent, _RELEVANCE_TEXT, tool_use_id="scored")
+        await self._plugin(storage, _RecordingReranker(scores=_ONLY_LINE_7))._handle_tool_result(scored)
+        degraded = _make_event(agent, _RELEVANCE_TEXT, tool_use_id="degraded")
+        await self._plugin(storage, _RecordingReranker(error=RerankerError("down")))._handle_tool_result(degraded)
+
+        for event, tool_use_id in ((scored, "scored"), (degraded, "degraded")):
+            preview_text = event.result["content"][0]["text"]
+            assert "[Stored references:]" in preview_text
+            assert f"{tool_use_id}_0" in preview_text
+            # 1-indexed line numbers reachable through the retrieval tool.
+            assert "line_range: { start, end }" in preview_text
+
+
+class TestMetricLogs:
+    """Info-level metric logs of the offload path, the retrieval tool and search units."""
+
+    _LOGGER = "strands.vended_plugins.context_offloader.plugin"
+
+    @pytest.fixture
+    def agent(self, mock_agent):
+        mock_agent.messages = [{"role": "user", "content": [{"text": "which line mentions 7?"}]}]
+        return mock_agent
+
+    def _relevance_plugin(self, storage, reranker, *, include_retrieval_tool=False):
+        return ContextOffloader(
+            storage=storage,
+            max_result_tokens=25,
+            preview_tokens=10,
+            include_retrieval_tool=include_retrieval_tool,
+            preview_strategy="relevance",
+            relevance_threshold=0.5,
+            chunk_tokens=6,
+            reranker=reranker,
+        )
+
+    def _infos(self, caplog):
+        return [record.getMessage() for record in caplog.records if record.levelno == logging.INFO]
+
+    @pytest.mark.asyncio
+    async def test_offload_logs_tool_name_and_char_counts(self, plugin, mock_agent, caplog):
+        large_text = "a" * 4_000
+        event = _make_event(mock_agent, large_text, tool_name="big_tool")
+
+        with caplog.at_level(logging.INFO, logger=self._LOGGER):
+            await plugin._handle_tool_result(event)
+
+        offload_logs = [message for message in self._infos(caplog) if "tool result offloaded" in message]
+        assert len(offload_logs) == 1
+        assert "tool_name=<big_tool>" in offload_logs[0]
+        assert "chars_before=<4000>" in offload_logs[0]
+        after = len(event.result["content"][0]["text"])
+        assert f"chars_after=<{after}>" in offload_logs[0]
+        # The count reflects what really entered the conversation: preview plus guidance.
+        assert after < 4_000
+
+    @pytest.mark.asyncio
+    async def test_result_kept_in_context_logs_no_metric(self, plugin, mock_agent, caplog):
+        event = _make_event(mock_agent, "small", tool_name="tiny_tool")
+
+        with caplog.at_level(logging.INFO, logger=self._LOGGER):
+            await plugin._handle_tool_result(event)
+
+        assert self._infos(caplog) == []
+
+    @pytest.mark.asyncio
+    async def test_retrieval_logs_tool_name_and_reference(self, storage, mock_agent, caplog):
+        plugin = ContextOffloader(storage=storage, max_result_tokens=25, preview_tokens=10, include_retrieval_tool=True)
+        event = _make_event(mock_agent, "a" * 200, tool_use_id="use_1", tool_name="ledger_tool")
+        await plugin._handle_tool_result(event)
+        (reference,) = plugin._tool_name_by_reference
+        tool_use = ToolUse(toolUseId="retrieve_1", name="retrieve_offloaded_content", input={})
+        tool_context = ToolContext(tool_use=tool_use, agent=mock_agent, invocation_state={})
+
+        with caplog.at_level(logging.INFO, logger=self._LOGGER):
+            await plugin.retrieve_offloaded_content(reference=reference, tool_context=tool_context)
+
+        retrieval_logs = [message for message in self._infos(caplog) if "content retrieved" in message]
+        assert len(retrieval_logs) == 1
+        assert "tool_name=<ledger_tool>" in retrieval_logs[0]
+        assert f"reference=<{reference}>" in retrieval_logs[0]
+
+    @pytest.mark.asyncio
+    async def test_retrieval_of_untracked_reference_logs_unknown_tool(self, plugin, storage, mock_agent, caplog):
+        ref = await storage.store("orphan", b"hello world", "text/plain")
+        tool_use = ToolUse(toolUseId="retrieve_1", name="retrieve_offloaded_content", input={})
+        tool_context = ToolContext(tool_use=tool_use, agent=mock_agent, invocation_state={})
+
+        with caplog.at_level(logging.INFO, logger=self._LOGGER):
+            result = await plugin.retrieve_offloaded_content(reference=ref, tool_context=tool_context)
+
+        assert result == "hello world"
+        retrieval_logs = [message for message in self._infos(caplog) if "content retrieved" in message]
+        assert "tool_name=<unknown>" in retrieval_logs[0]
+
+    @pytest.mark.asyncio
+    async def test_search_units_accumulate_across_offloads(self, storage, agent, caplog):
+        reranker = _RecordingReranker(scores=_ONLY_LINE_7)
+        plugin = self._relevance_plugin(storage, reranker)
+
+        with caplog.at_level(logging.INFO, logger=self._LOGGER):
+            await plugin._handle_tool_result(_make_event(agent, _RELEVANCE_TEXT, tool_use_id="t1"))
+            await plugin._handle_tool_result(_make_event(agent, _RELEVANCE_TEXT, tool_use_id="t2"))
+
+        unit_logs = [message for message in self._infos(caplog) if "search units consumed" in message]
+        # Ten chunks fit a single batch of 100, so one unit per offloaded result.
+        assert unit_logs == [
+            "search_units=<1> | session search units consumed",
+            "search_units=<2> | session search units consumed",
+        ]
+        assert plugin._search_units == 2
+
+    @pytest.mark.asyncio
+    async def test_batch_size_drives_the_unit_count(self, storage, agent, caplog):
+        reranker = _RecordingReranker(scores=_ONLY_LINE_7)
+        reranker.max_sources_per_query = 4
+        plugin = self._relevance_plugin(storage, reranker)
+
+        with caplog.at_level(logging.INFO, logger=self._LOGGER):
+            await plugin._handle_tool_result(_make_event(agent, _RELEVANCE_TEXT))
+
+        # Ten chunks in batches of four: three batches, three units.
+        assert plugin._search_units == 3
+        assert "search_units=<3>" in "\n".join(self._infos(caplog))
+
+    @pytest.mark.asyncio
+    async def test_prefix_strategy_reports_zero_search_units(self, plugin, mock_agent, caplog):
+        with caplog.at_level(logging.INFO, logger=self._LOGGER):
+            await plugin._handle_tool_result(_make_event(mock_agent, "a" * 200))
+
+        assert plugin._search_units == 0
+        assert "search_units=<0>" in "\n".join(self._infos(caplog))
+
+    @pytest.mark.asyncio
+    async def test_degraded_scoring_still_logs_the_consumed_unit(self, storage, agent, caplog):
+        plugin = self._relevance_plugin(storage, _RecordingReranker(error=RerankerError("down")))
+
+        with caplog.at_level(logging.INFO, logger=self._LOGGER):
+            await plugin._handle_tool_result(_make_event(agent, _RELEVANCE_TEXT))
+
+        assert "search_units=<1>" in "\n".join(self._infos(caplog))
+
+    @pytest.mark.asyncio
+    async def test_offload_log_failure_leaves_the_result_untouched(self, storage, mock_agent, monkeypatch):
+        reference_plugin = ContextOffloader(
+            storage=InMemoryStorage(), max_result_tokens=25, preview_tokens=10, include_retrieval_tool=False
+        )
+        expected = _make_event(mock_agent, "a" * 200)
+        await reference_plugin._handle_tool_result(expected)
+
+        plugin = ContextOffloader(
+            storage=storage, max_result_tokens=25, preview_tokens=10, include_retrieval_tool=False
+        )
+        monkeypatch.setattr(
+            "strands.vended_plugins.context_offloader.plugin.logger.info",
+            lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("handler exploded")),
+        )
+        event = _make_event(mock_agent, "a" * 200)
+
+        await plugin._handle_tool_result(event)
+
+        assert event.result == expected.result
+
+    @pytest.mark.asyncio
+    async def test_retrieval_log_failure_leaves_the_content_untouched(self, plugin, storage, mock_agent, monkeypatch):
+        ref = await storage.store("k1", b"hello world", "text/plain")
+        tool_use = ToolUse(toolUseId="retrieve_1", name="retrieve_offloaded_content", input={})
+        tool_context = ToolContext(tool_use=tool_use, agent=mock_agent, invocation_state={})
+        monkeypatch.setattr(
+            "strands.vended_plugins.context_offloader.plugin.logger.info",
+            lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("handler exploded")),
+        )
+
+        assert await plugin.retrieve_offloaded_content(reference=ref, tool_context=tool_context) == "hello world"
+
+    def test_reference_map_is_bounded(self, plugin):
+        for i in range(_MAX_TRACKED_REFERENCES + 5):
+            plugin._remember_tool_name([(f"ref_{i}", "text/plain", "")], f"tool_{i}")
+
+        assert len(plugin._tool_name_by_reference) == _MAX_TRACKED_REFERENCES
+        # The oldest references were dropped first, the newest are still there.
+        assert "ref_0" not in plugin._tool_name_by_reference
+        assert plugin._tool_name_by_reference[f"ref_{_MAX_TRACKED_REFERENCES + 4}"] == (
+            f"tool_{_MAX_TRACKED_REFERENCES + 4}"
+        )
