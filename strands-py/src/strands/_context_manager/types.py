@@ -38,12 +38,15 @@ class ContextState:
         messages: The agent's current message list (mutable in place).
         agent: The agent instance.
         utilization: Current context utilization ratio (0-1+). Above 1.0 means overflow.
+        overflow: Set when running in response to a ContextWindowOverflowException.
+            Strategies should bypass utilization gates when True.
         stash: L1 stash for persisting offloaded content. Present when storage is configured.
     """
 
     messages: Messages
     agent: Agent
     utilization: float
+    overflow: bool = field(default=False)
     stash: Stash | None = field(default=None)
 
 

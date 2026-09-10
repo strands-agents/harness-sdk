@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Literal
 
 from typing_extensions import TypedDict
 
+from ....agent.conversation_manager.compression.pin_message import is_pinned
 from ....types.content import ContentBlock, Message, Messages
 from ....types.tools import ToolUse
 from ...retrieval_tool import RETRIEVAL_TOOL_NAME
@@ -211,12 +212,16 @@ def _repair_alternation(messages: Messages) -> None:
         current = messages[read_index]
         if write_index > 0 and messages[write_index - 1]["role"] == current["role"]:
             prev = messages[write_index - 1]
+            prev_pinned = prev.get("metadata", {}).get("custom", {}).get("pinned") is True
+            current_pinned = current.get("metadata", {}).get("custom", {}).get("pinned") is True
             merged = Message(
                 role=prev["role"],
                 content=[*prev["content"], *current["content"]],
             )
             if "tracking_id" in prev:
                 merged["tracking_id"] = prev["tracking_id"]
+            if prev_pinned or current_pinned:
+                merged["metadata"] = {"custom": {"pinned": True}}
             messages[write_index - 1] = merged
         else:
             messages[write_index] = current
@@ -304,6 +309,9 @@ class BaseOffloadStrategy(ABC):
         async def _eager_hook(event: MessageAddedEvent) -> None:
             try:
                 messages = event.agent.messages
+                index = next((i for i, msg in enumerate(messages) if msg is event.message), -1)
+                if index >= 0 and is_pinned(messages, index):
+                    return
                 tool_name_map = _build_tool_name_map(messages)
                 await self._transform_blocks(event.message, messages, tool_name_map, event.agent)
             except Exception:
@@ -315,7 +323,7 @@ class BaseOffloadStrategy(ABC):
         """Apply the strategy to the context."""
         self._stash = context.stash
         if self._is_message_level:
-            if context.utilization < self._utilization_threshold:  # type: ignore[operator]
+            if not context.overflow and context.utilization < self._utilization_threshold:  # type: ignore[operator]
                 return False
             return await self._apply_per_message(context)
 
@@ -326,12 +334,19 @@ class BaseOffloadStrategy(ABC):
         messages = context.messages
         agent = context.agent
         tool_name_map = _build_tool_name_map(messages)
-        eligible = _get_oldest_matches(
-            messages, self._target, self._preserve_recent, tool_name_map, self._include_filter, self._exclude_filter
+        eligible = (
+            _get_oldest_matches(
+                messages, self._target, self._preserve_recent, tool_name_map, self._include_filter, self._exclude_filter
+            )
+            if self._preserve_recent > 0
+            else list(messages)
         )
 
         acted = False
         for message in eligible:
+            index = next((i for i, msg in enumerate(messages) if msg is message), -1)
+            if index >= 0 and is_pinned(messages, index):
+                continue
             if await self._transform_blocks(message, messages, tool_name_map, agent):
                 acted = True
 
@@ -416,11 +431,31 @@ class BaseOffloadStrategy(ABC):
         messages = context.messages
         tool_name_map = _build_tool_name_map(messages)
 
-        oldest = _get_oldest_matches(
-            messages, self._target, self._preserve_recent, tool_name_map, self._include_filter, self._exclude_filter
-        )
-        head_id = id(messages[0])
-        candidates = [msg for msg in oldest if id(msg) != head_id]
+        if self._preserve_recent > 0:
+            oldest = _get_oldest_matches(
+                messages,
+                self._target,
+                self._preserve_recent,
+                tool_name_map,
+                self._include_filter,
+                self._exclude_filter,
+            )
+            candidates = [
+                msg
+                for msg in oldest
+                if msg is not messages[0]
+                and not is_pinned(messages, next(i for i, m in enumerate(messages) if m is msg))
+            ]
+        else:
+            candidates = [
+                msg
+                for idx, msg in enumerate(messages)
+                if idx > 0
+                and not is_pinned(messages, idx)
+                and _message_matches_target(
+                    msg, self._target, tool_name_map, self._include_filter, self._exclude_filter
+                )
+            ]
 
         if self._threshold is None:
             return candidates

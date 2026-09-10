@@ -786,9 +786,7 @@ async def test_stream_derives_prompt_cache_key_from_agent_session(openai_client,
         return_value=agenerator([mock_event_1, mock_event_2, mock_event_3]),
     )
 
-    await alist(
-        model.stream([{"role": "user", "content": []}], agent_metadata=AgentMetadata(session_id="s1"))
-    )
+    await alist(model.stream([{"role": "user", "content": []}], agent_metadata=AgentMetadata(session_id="s1")))
 
     _, call_kwargs = openai_client.chat.completions.create.call_args
     assert call_kwargs["prompt_cache_key"] == "strands-s1"

@@ -174,14 +174,21 @@ class EmergencyTruncateStrategy(TruncateStrategy):
         return None
 
     async def apply(self, context: ContextState) -> bool:
-        """Fire only when utilization >= 1.0 and messages > 3."""
+        """Fire when overflow is set, or when recomputed utilization >= 1.0."""
         if len(context.messages) <= 3:
             return False
-        tokens = await context.agent.model.count_tokens(context.messages)
-        utilization = context.agent.model.estimate_utilization(tokens)
-        if utilization < 1.0:
-            return False
+        if not context.overflow:
+            tokens = await context.agent.model.count_tokens(context.messages)
+            utilization = context.agent.model.estimate_utilization(tokens)
+            if utilization < 1.0:
+                return False
+        else:
+            utilization = context.utilization
         state = ContextState(
-            messages=context.messages, agent=context.agent, utilization=utilization, stash=context.stash
+            messages=context.messages,
+            agent=context.agent,
+            utilization=utilization,
+            overflow=context.overflow,
+            stash=context.stash,
         )
         return await self._apply_per_message(state)

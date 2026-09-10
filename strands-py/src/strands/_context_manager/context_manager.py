@@ -6,28 +6,44 @@ On overflow, runs the strategy pipeline (including an emergency truncation as th
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+import warnings
+from typing import TYPE_CHECKING, Literal
 
 from ..hooks.events import AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
 from ..plugins.plugin import Plugin
 from ..storage.in_memory_storage import InMemoryStorage
 from ..types.exceptions import ContextWindowOverflowException
+from .presets import resolve_strategies
 from .retrieval_tool import _create_retrieval_tool, _track_retrieval_tool_use_ids
 from .stash import Stash
 from .strategies.offload import Offload
 from .strategies.offload.truncate import EmergencyTruncateStrategy
-from .types import ContextState, ContextStrategy, StashConfig
+from .types import ContextManagerConfig, ContextState, ContextStrategy, StashConfig
 
 if TYPE_CHECKING:
     from ..agent.agent import Agent
+    from ..agent.conversation_manager import ConversationManager
     from ..storage.storage import Storage
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_STRATEGIES: list[ContextStrategy] = [
-    Offload.truncate("tool_results").when(threshold=2500),
-    Offload.summarize("*").when(threshold=1000, utilization=0.85),
-]
+_AUTO_TRUNCATE_THRESHOLD = 1_500
+_AGENTIC_TRUNCATE_THRESHOLD = 8_000
+_TRUNCATE_PREVIEW_TOKENS = 750
+_AUTO_SUMMARIZE_UTILIZATION = 0.85
+
+CONTEXT_MANAGER_PRESETS: tuple[str, ...] = ("auto", "agentic")
+
+ContextManagerStrategy = Literal["auto", "agentic"]
+"""Supported preset strings for the ``context_manager`` parameter.
+
+- ``"auto"``: Proactive truncation of tool results + summarization at 85% utilization.
+- ``"agentic"``: Model-driven context management via injected tools, with a higher
+  truncation threshold and summarization only on overflow.
+"""
+
+ContextManagerStrategyValue = "ContextManagerStrategy | ContextManagerConfig | ContextManager | Literal[False] | None"
+"""Full type accepted by the Agent's ``context_manager`` parameter."""
 
 
 class ContextManager(Plugin):
@@ -37,8 +53,10 @@ class ContextManager(Plugin):
     The emergency truncation is always appended as the final strategy — it recomputes
     utilization and only fires if the window is still overflowing after user strategies.
 
-    Pass via the ``context_manager`` parameter on the Agent constructor. When present,
-    it owns overflow recovery — no separate ConversationManager is needed.
+    Configured through the Agent's ``context_manager`` parameter — pass a preset
+    string (``'auto'``, ``'agentic'``) or a :class:`ContextManagerConfig`; the Agent
+    constructs and registers the manager. When present, it owns overflow
+    recovery and proactive compression — no separate ConversationManager is needed.
     """
 
     @property
@@ -49,20 +67,28 @@ class ContextManager(Plugin):
     def __init__(
         self,
         *,
-        strategies: list[ContextStrategy] | None = None,
+        strategies: list[ContextStrategy | str] | None = None,
         stash: StashConfig | bool | None = None,
     ) -> None:
         """Initialize with an optional ordered list of strategies (defaults provided).
 
         Args:
             strategies: Ordered pipeline of context reduction strategies.
+                Accepts concrete strategies and/or preset name strings.
             stash: L1 stash configuration. Omit or True for defaults (InMemoryStorage);
                 False to disable; dict for custom storage/options.
         """
-        self._strategies: list[ContextStrategy] = [
-            *(strategies if strategies is not None else DEFAULT_STRATEGIES),
-            EmergencyTruncateStrategy(),
-        ]
+        user_strategies: list[ContextStrategy]
+        if strategies is not None:
+            user_strategies = resolve_strategies(strategies)
+        else:
+            user_strategies = [
+                Offload.truncate("tool_results", {"preview_tokens": _TRUNCATE_PREVIEW_TOKENS}).when(
+                    threshold=_AUTO_TRUNCATE_THRESHOLD,
+                ),
+                Offload.summarize("*").when(utilization=_AUTO_SUMMARIZE_UTILIZATION, preserve_recent=4),
+            ]
+        self._strategies: list[ContextStrategy] = [*user_strategies, EmergencyTruncateStrategy()]
 
         stash_obj: StashConfig | None = stash if isinstance(stash, dict) else None
         self._stash_disabled = stash is False
@@ -77,13 +103,85 @@ class ContextManager(Plugin):
 
         super().__init__()
 
+    @staticmethod
+    def from_strategy(
+        strategy: ContextManagerStrategy | ContextManagerConfig | ContextManager | Literal[False] | None,
+    ) -> ContextManager | None:
+        """Resolve a ``context_manager`` parameter value into a ContextManager instance.
+
+        Args:
+            strategy: A preset string, config dict, ContextManager instance, False, or None.
+
+        Returns:
+            A ContextManager for preset strings and configs; the instance itself if already
+            a ContextManager; None for False/None.
+
+        Raises:
+            ValueError: If strategy is an unknown string.
+        """
+        if strategy is False or strategy is None:
+            return None
+        if isinstance(strategy, ContextManager):
+            return strategy
+        if strategy == "auto":
+            return ContextManager()
+        if strategy == "agentic":
+            return ContextManager(
+                strategies=[
+                    Offload.truncate("tool_results", {"preview_tokens": _TRUNCATE_PREVIEW_TOKENS}).when(
+                        threshold=_AGENTIC_TRUNCATE_THRESHOLD,
+                    ),
+                    Offload.summarize("*").when(utilization=1, preserve_recent=4),
+                ],
+            )
+        if isinstance(strategy, str):
+            raise ValueError(
+                f'Unknown context_manager preset: "{strategy}". '
+                f"Valid presets: {', '.join(f'{p!r}' for p in CONTEXT_MANAGER_PRESETS)}"
+            )
+        if isinstance(strategy, dict):
+            return ContextManager(**strategy)
+        raise ValueError(
+            f"Unsupported context_manager value: {strategy!r}. "
+            "Supported: 'auto', 'agentic', ContextManagerConfig dict, ContextManager instance, or False"
+        )
+
+    @staticmethod
+    def resolve_conversation_manager(
+        context_manager: ContextManagerStrategy | ContextManagerConfig | ContextManager | Literal[False] | None,
+        conversation_manager: ConversationManager | None,
+    ) -> ConversationManager:
+        """Resolve the conversation manager given the context_manager facade value.
+
+        When context_manager is None, falls back to the default SlidingWindowConversationManager.
+        When a preset, config, or instance, uses NullConversationManager.
+
+        Args:
+            context_manager: The facade value.
+            conversation_manager: User-provided conversation manager.
+
+        Returns:
+            The resolved conversation manager.
+        """
+        from ..agent.conversation_manager import NullConversationManager, SlidingWindowConversationManager
+
+        if context_manager is None:
+            return conversation_manager if conversation_manager is not None else SlidingWindowConversationManager()
+        if context_manager is False:
+            return conversation_manager if conversation_manager is not None else NullConversationManager()
+        if conversation_manager is not None:
+            warnings.warn(
+                "context_manager is set, ignoring co-provided conversation_manager",
+                stacklevel=4,
+            )
+        return NullConversationManager()
+
     def init_agent(self, agent: Agent) -> None:
         """Register strategy hooks for proactive compression and overflow recovery."""
         if not self._stash_disabled:
             storage = self._stash_explicit_storage or getattr(agent, "storage", None) or InMemoryStorage()
             self._stash = Stash(storage, agent.session_id, agent.agent_id)
 
-        # Stash hook must register before strategy init so it captures pre-offload content.
         if self._stash is not None:
             stash = self._stash
             skip_set = self._retrieval_tool_use_ids
@@ -125,7 +223,7 @@ class ContextManager(Plugin):
                 overflow_retries = 0
                 return
 
-            acted = await self._run_strategies(event.agent)
+            acted = await self._run_strategies(event.agent, overflow=True)
             if not acted:
                 logger.warning("agent_id=<%s> | no strategy made progress, skipping retry", event.agent.agent_id)
                 return
@@ -150,7 +248,13 @@ class ContextManager(Plugin):
             except Exception:
                 logger.warning("agent_id=<%s> | failed to backfill stash", agent.agent_id, exc_info=True)
 
-    async def _run_strategies(self, agent: Agent, precomputed_input_tokens: int | None = None) -> bool:
+    async def _run_strategies(
+        self,
+        agent: Agent,
+        precomputed_input_tokens: int | None = None,
+        *,
+        overflow: bool = False,
+    ) -> bool:
         """Run the strategy pipeline, recomputing utilization after each acting strategy."""
         await self._backfill_stash(agent)
         messages = agent.messages
@@ -167,6 +271,7 @@ class ContextManager(Plugin):
             messages=messages,
             agent=agent,
             utilization=agent.model.estimate_utilization(input_tokens),
+            overflow=overflow,
             stash=self._stash,
         )
 

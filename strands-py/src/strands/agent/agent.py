@@ -25,7 +25,6 @@ from typing import (
     TypeVar,
     Union,
     cast,
-    get_args,
 )
 
 from opentelemetry import trace as trace_api
@@ -108,7 +107,6 @@ from .base import AgentBase
 from .conversation_manager import (
     ConversationManager,
     NullConversationManager,
-    SlidingWindowConversationManager,
 )
 from .state import AgentState
 
@@ -157,30 +155,16 @@ _DEFAULT_AGENT_NAME = "Strands Agents"
 _DEFAULT_AGENT_ID = "default"
 
 ContextManagerStrategy = Literal["auto", "agentic"]
-"""Supported values for the ``context_manager`` parameter.
+"""Supported preset strings for the ``context_manager`` parameter.
 
-- ``"auto"``: SummarizingConversationManager with proactive compression + ContextOffloader.
-- ``"agentic"``: (Experimental) Lets the model drive context management via injected tools.
-  This mode may change in future versions.
-- ``ContextManager`` instance: Strategy-driven offloading with overflow recovery.
+- ``"auto"``: Proactive truncation of tool results + summarization at 85% utilization.
+- ``"agentic"``: (Experimental) Model-driven context management via injected tools,
+  with a higher truncation threshold and summarization only on overflow.
+- ``ContextManagerConfig`` dict: Custom strategy pipeline and stash configuration.
+- ``ContextManager`` instance: Direct instance for full control.
 - ``False``: Explicitly disable all context management.
-- ``None``: Uses the default (same as ``"auto"``).
+- ``None``: Uses the default (SlidingWindowConversationManager, no offloader).
 """
-
-_CONTEXT_MANAGER_MAX_RESULT_TOKENS = 1_500
-"""Benchmark-validated token threshold for offloading tool results."""
-
-_AGENTIC_CONTEXT_MANAGER_MAX_RESULT_TOKENS = 8_000
-"""Higher offload threshold for agentic mode - the model manages its own context, so we preserve more inline."""
-
-_CONTEXT_MANAGER_PREVIEW_TOKENS = 750
-"""Benchmark-validated preview token count for offloaded results."""
-
-_CONTEXT_MANAGER_SUMMARY_RATIO = 0.3
-"""Benchmark-validated ratio of messages to summarize on overflow."""
-
-_CONTEXT_MANAGER_COMPRESSION_THRESHOLD = 0.85
-"""Benchmark-validated context window ratio that triggers proactive compression."""
 
 
 @dataclass
@@ -290,16 +274,16 @@ class Agent(AgentBase, LocalAgent):
                 Defaults to None.
             state: stateful information for the agent. Can be either an AgentState object, or a json serializable dict.
                 Defaults to an empty AgentState object.
-            context_manager: Context management strategy. When set to ``"auto"``, composes
-                a ContextOffloader plugin (max_result_tokens=1500, preview_tokens=750) with a
-                SummarizingConversationManager (summary_ratio=0.3, compression_threshold=0.85)
-                using benchmark-validated defaults. If ``conversation_manager`` is also provided,
-                the user's conversation manager is used instead. Defaults to None (no context management).
-
-                Note: The offloader uses in-memory storage by default. When an agent-level
-                ``storage`` is provided, the offloader uses that instead. Alternatively,
-                provide an explicit ``ContextOffloader`` with its own storage via the
-                ``plugins`` parameter.
+            context_manager: Context management strategy.
+                ``"auto"``: Proactive truncation of tool results + summarization at 85% utilization.
+                ``"agentic"``: Model-driven context management via injected tools.
+                A :class:`~strands._context_manager.types.ContextManagerConfig` dict for custom
+                strategy pipelines.
+                A :class:`~strands._context_manager.context_manager.ContextManager` instance
+                for full control.
+                ``False``: Disable all context management.
+                When set (except ``False``), any co-provided ``conversation_manager`` is ignored.
+                Defaults to None (SlidingWindowConversationManager, no offloader).
             plugins: List of Plugin instances to extend agent functionality.
                 Plugins are initialized with the agent instance after construction and can register hooks,
                 modify agent attributes, or perform other setup tasks.
@@ -348,10 +332,10 @@ class Agent(AgentBase, LocalAgent):
                 with no isolation.
             storage: Default storage backend for agent subsystems.
                 When provided, subsystems that do not have their own explicit storage
-                (e.g., ContextOffloader) resolve from this value. Each subsystem
-                auto-namespaces under its own prefix (e.g., ``offloader/``) to avoid key
-                collisions. Storage specified directly on a subsystem always takes
-                precedence over this agent-level default. Defaults to None.
+                (e.g., SessionManager, ContextManager) resolve from this value. Each
+                subsystem auto-namespaces under its own prefix to avoid key collisions.
+                Storage specified directly on a subsystem always takes precedence over
+                this agent-level default. Defaults to None.
             background_tasks: Background tool execution configuration. Pass ``True`` or a
                 :class:`~strands.background_tasks.BackgroundTasksConfig` to let the model run
                 tools in the background and receive their results when they finish. Defaults to
@@ -401,19 +385,23 @@ class Agent(AgentBase, LocalAgent):
                 "The model manages conversation state server-side."
             )
 
-        resolved_conversation_manager, resolved_plugins = self._resolve_context_manager(
-            context_manager, conversation_manager, plugins
+        from .._context_manager.context_manager import ContextManager as _ContextManager
+
+        self._context_manager_instance = _ContextManager.from_strategy(context_manager)
+        resolved_conversation_manager = _ContextManager.resolve_conversation_manager(
+            context_manager, conversation_manager
         )
+
+        # Build plugin list: replace old offloader/CM plugin injection with direct CM plugin
+        resolved_plugins = list(plugins) if plugins else []
+        if self._context_manager_instance is not None:
+            resolved_plugins.append(self._context_manager_instance)
 
         self.conversation_manager: ConversationManager
         if self.model.stateful:
             self.conversation_manager = NullConversationManager()
-        elif resolved_conversation_manager:
-            self.conversation_manager = resolved_conversation_manager
-        elif conversation_manager:
-            self.conversation_manager = conversation_manager
         else:
-            self.conversation_manager = SlidingWindowConversationManager()
+            self.conversation_manager = resolved_conversation_manager
 
         # Process trace attributes to ensure they're of compatible types
         self.trace_attributes: dict[str, AttributeValue] = {}
@@ -597,87 +585,6 @@ class Agent(AgentBase, LocalAgent):
             self._plugin_registry.add_and_init(self.memory_manager)
 
         self.hooks.invoke_callbacks(AgentInitializedEvent(agent=self))
-
-    @staticmethod
-    def _resolve_context_manager(
-        context_manager: "ContextManagerStrategy | ContextManager | Literal[False] | None",
-        conversation_manager: ConversationManager | None,
-        plugins: list[Plugin] | None,
-    ) -> tuple[ConversationManager | None, list[Plugin] | None]:
-        """Resolve context_manager facade into concrete conversation_manager and plugins.
-
-        When context_manager is None, returns (None, None) and no resolution occurs.
-        When False, uses NullConversationManager (or user-provided).
-        When a ContextManager instance, uses NullConversationManager and registers the plugin.
-        When "auto", constructs a SummarizingConversationManager with proactive compression
-        plus a ContextOffloader, using benchmark-validated defaults.
-        When "agentic", constructs a SummarizingConversationManager *without* proactive
-        compression (the model drives context management via injected tools; the conversation
-        manager is only a reactive overflow safety net) plus a ContextOffloader with a higher
-        offload threshold. In both cases a user-provided conversation_manager / offloader wins.
-
-        Args:
-            context_manager: The facade value ("auto", "agentic", ContextManager, False, or None).
-            conversation_manager: User-provided conversation manager, takes precedence if set.
-            plugins: User-provided plugin list; offloader is appended if not already present.
-
-        Returns:
-            Tuple of (resolved conversation manager, resolved plugins list).
-            Both are None when context_manager is None.
-
-        Raises:
-            ValueError: If context_manager is not a supported value.
-        """
-        if context_manager is None:
-            return None, None
-
-        from .._context_manager.context_manager import ContextManager as _ContextManager
-        from ..vended_plugins.context_offloader import ContextOffloader
-        from .conversation_manager import NullConversationManager, SummarizingConversationManager
-
-        if context_manager is False:
-            resolved_cm = conversation_manager if conversation_manager is not None else NullConversationManager()
-            return resolved_cm, list(plugins) if plugins else None
-
-        if isinstance(context_manager, _ContextManager):
-            resolved_plugins = list(plugins) if plugins else []
-            resolved_plugins.append(context_manager)
-            return NullConversationManager(), resolved_plugins
-
-        if context_manager == "auto":
-            offloader_max_result_tokens = _CONTEXT_MANAGER_MAX_RESULT_TOKENS
-            default_conversation_manager = SummarizingConversationManager(
-                summary_ratio=_CONTEXT_MANAGER_SUMMARY_RATIO,
-                proactive_compression={"compression_threshold": _CONTEXT_MANAGER_COMPRESSION_THRESHOLD},
-            )
-        elif context_manager == "agentic":
-            # No proactive compression: the model manages context via injected tools.
-            offloader_max_result_tokens = _AGENTIC_CONTEXT_MANAGER_MAX_RESULT_TOKENS
-            default_conversation_manager = SummarizingConversationManager(
-                summary_ratio=_CONTEXT_MANAGER_SUMMARY_RATIO,
-            )
-        else:
-            raise ValueError(
-                f"Unsupported context_manager value: {context_manager!r}. "
-                f"Supported values: {get_args(ContextManagerStrategy)}, ContextManager instance, or False"
-            )
-
-        resolved_plugins = list(plugins) if plugins else []
-
-        has_offloader = any(isinstance(p, ContextOffloader) for p in resolved_plugins)
-        if not has_offloader:
-            resolved_plugins.append(
-                ContextOffloader(
-                    max_result_tokens=offloader_max_result_tokens,
-                    preview_tokens=_CONTEXT_MANAGER_PREVIEW_TOKENS,
-                )
-            )
-
-        resolved_conversation_manager = (
-            conversation_manager if conversation_manager is not None else default_conversation_manager
-        )
-
-        return resolved_conversation_manager, resolved_plugins
 
     @staticmethod
     def _resolve_memory_manager(
