@@ -14,7 +14,9 @@ import pytest
 
 from strands import tool
 from strands.experimental.bidi.agent.agent import BidiAgent
+from strands.experimental.bidi.hooks import BidiResponseCompleteEvent
 from strands.experimental.bidi.models import GoogleGeminiLiveModel, OpenAIRealtimeModel
+from strands.experimental.bidi.types.events import BidiResponseCompleteEvent as BidiResponseCompleteStreamEvent
 
 from .context import BidirectionalTestContext
 from .hook_utils import HookEventCollector
@@ -224,6 +226,17 @@ async def test_bidirectional_agent(agent_with_calculator, audio_generator, provi
         audio_outputs = ctx.get_audio_outputs()
         assert len(audio_outputs) > 0, f"[{provider_name}] No audio output received"
         total_audio_bytes = sum(len(audio) for audio in audio_outputs)
+
+        response_events = [event for event in ctx.get_events() if isinstance(event, BidiResponseCompleteStreamEvent)]
+        assert response_events, f"[{provider_name}] No response completion received"
+        tru_events = hook_collector.get_events_by_type("response_complete")
+        exp_events = [
+            BidiResponseCompleteEvent(
+                agent=agent_with_calculator, response_id=event.response_id, stop_reason=event.stop_reason
+            )
+            for event in response_events
+        ]
+        assert tru_events == exp_events
 
         # Verify tool execution hooks if tools were called
         tool_calls = hook_collector.get_tool_calls()

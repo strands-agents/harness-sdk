@@ -232,24 +232,29 @@ async for event in agent.receive():
 
 ## Integration with Hooks
 
-Session management works seamlessly with hooks:
+Register a message hook after constructing the agent to run it after the session
+manager's persistence hooks at the default hook order:
 
 ```python
-from strands.experimental.bidi.hooks.events import BidiMessageAddedEvent
+from strands import LocalAgent
+from strands.experimental.bidi import BidiAgent
+from strands.hooks import MessageAddedEvent
+from strands.session import FileSessionManager
 
-class SessionLogger:
-    async def on_message_added(self, event: BidiMessageAddedEvent):
-        # Message already persisted by session manager
-        print(f"Message persisted: {event.message['role']}")
 
 agent = BidiAgent(
-    model=model,
-    session_manager=session_manager,
-    hooks=[SessionLogger()]
+    session_manager=FileSessionManager(session_id="user_123", storage_dir="./sessions/")
 )
+
+
+async def log_message(event: MessageAddedEvent[LocalAgent]) -> None:
+    print(f"Message persisted: {event.message['role']}")
+
+
+agent.add_hook(log_message)
 ```
 
-The `BidiMessageAddedEvent` is emitted after the message is persisted, ensuring hooks see the saved state.
+The session manager also syncs state when `BidiAgentStopEvent` fires during shutdown.
 
 For best practices on session ID management, session cleanup, error handling, storage considerations, and troubleshooting, see the [Session Management documentation](../agents/session-management.md).
 

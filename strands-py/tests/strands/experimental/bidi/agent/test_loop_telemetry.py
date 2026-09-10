@@ -20,6 +20,10 @@ from opentelemetry.trace import StatusCode
 
 from strands import tool
 from strands.experimental.bidi import BidiAgent, _telemetry
+from strands.experimental.bidi.hooks.events import (
+    BidiAfterConnectionRestartEvent,
+    BidiBeforeConnectionRestartEvent,
+)
 from strands.experimental.bidi.models import BidiModel, BidiModelTimeoutError
 from strands.experimental.bidi.types.events import (
     BidiAudioStreamEvent,
@@ -28,10 +32,6 @@ from strands.experimental.bidi.types.events import (
     BidiResponseStartEvent,
     BidiTextInputEvent,
     BidiUsageEvent,
-)
-from strands.experimental.hooks.events import (
-    BidiAfterConnectionRestartEvent,
-    BidiBeforeConnectionRestartEvent,
 )
 from strands.telemetry.tracer import Tracer
 from strands.types._events import ToolResultMessageEvent, ToolUseStreamEvent

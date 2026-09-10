@@ -9,8 +9,8 @@ import pytest
 
 from strands.agent.agent import Agent
 from strands.agent.conversation_manager.sliding_window_conversation_manager import SlidingWindowConversationManager
-from strands.experimental.hooks.events import BidiAgentInitializedEvent
-from strands.hooks.registry import HookRegistry
+from strands.experimental.bidi import BidiAgent
+from strands.experimental.bidi.models import BidiModel
 from strands.multiagent import GraphBuilder, Swarm
 from strands.session.snapshot_session_manager import (
     SnapshotSessionManager,
@@ -105,11 +105,8 @@ def test_bidi_agent_is_rejected_rather_than_silently_not_persisted(storage):
     nothing was ever written.
     """
     manager = SnapshotSessionManager("b1", storage=storage)
-    registry = HookRegistry()
-    manager.register_hooks(registry)
-
     with pytest.raises(NotImplementedError, match="does not support BidiAgent"):
-        registry.invoke_callbacks(BidiAgentInitializedEvent(agent=Mock()))
+        BidiAgent(model=Mock(spec=BidiModel), session_manager=manager)
 
 
 def test_child_agent_session_manager_still_blocked(storage):

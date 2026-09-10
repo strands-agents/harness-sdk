@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from .... import _identifier
 from ...._middleware import MiddlewareRegistry
 from ....agent.state import AgentState
-from ....hooks import HookCallback, HookOrder, HookProvider, HookRegistry
+from ....hooks import AgentInitializedEvent, HookCallback, HookOrder, HookProvider, HookRegistry, MessageAddedEvent
 from ....hooks.registry import TEvent
 from ....interrupt import _InterruptState
 from ....tools._caller import _ToolCaller
@@ -34,7 +34,6 @@ from ....tools.watcher import ToolWatcher
 from ....types.agent import LocalAgent
 from ....types.content import Message, Messages, SystemContentBlock, _ensure_tracking_id, split_system_prompt
 from ....types.tools import AgentTool
-from ...hooks.events import BidiAgentInitializedEvent, BidiMessageAddedEvent
 from .._async import _TaskGroup, stop_all
 from ..models.model import BidiModel
 from ..types.agent import BidiAgentInput
@@ -177,9 +176,6 @@ class BidiAgent(LocalAgent):
 
         self._loop = _BidiAgentLoop(self)
 
-        # Emit initialization event
-        self.hooks.invoke_callbacks(BidiAgentInitializedEvent(agent=self))
-
         # TODO: Determine if full support is required
         self._interrupt_state = _InterruptState()
 
@@ -192,6 +188,8 @@ class BidiAgent(LocalAgent):
         self._message_lock = asyncio.Lock()
 
         self._started = False
+
+        self.hooks.invoke_callbacks(AgentInitializedEvent[LocalAgent](agent=self))
 
     @property
     def tool(self) -> _ToolCaller:
@@ -492,4 +490,4 @@ class BidiAgent(LocalAgent):
             for message in messages:
                 _ensure_tracking_id(message)
                 self.messages.append(message)
-                await self.hooks.invoke_callbacks_async(BidiMessageAddedEvent(agent=self, message=message))
+                await self.hooks.invoke_callbacks_async(MessageAddedEvent[LocalAgent](agent=self, message=message))

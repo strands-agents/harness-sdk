@@ -6,11 +6,7 @@ from typing import TYPE_CHECKING, Any, Generic
 
 from typing_extensions import TypeVar
 
-from ..experimental.hooks.events import (
-    BidiAfterInvocationEvent,
-    BidiAgentInitializedEvent,
-    BidiMessageAddedEvent,
-)
+from ..experimental.bidi.hooks import BidiAgentStopEvent
 from ..hooks.events import (
     AfterInvocationEvent,
     AfterMultiAgentInvocationEvent,
@@ -66,11 +62,7 @@ class SessionManager(HookProvider, ABC, Generic[_SessionAgentT]):
         registry.add_callback(AfterNodeCallEvent, lambda event: self.sync_multi_agent(event.source))
         registry.add_callback(AfterMultiAgentInvocationEvent, lambda event: self.sync_multi_agent(event.source))
 
-        # Register BidiAgent hooks
-        registry.add_callback(BidiAgentInitializedEvent, lambda event: self.initialize(event.agent))
-        registry.add_callback(BidiMessageAddedEvent, lambda event: self.append_message(event.message, event.agent))
-        registry.add_callback(BidiMessageAddedEvent, lambda event: self.sync_agent(event.agent))
-        registry.add_callback(BidiAfterInvocationEvent, lambda event: self.sync_agent(event.agent))
+        registry.add_callback(BidiAgentStopEvent, lambda event: self.sync_agent(event.agent))
 
     @abstractmethod
     def redact_latest_message(self, redact_message: Message, agent: _SessionAgentT, **kwargs: Any) -> None:
