@@ -88,5 +88,5 @@ class ContextManagerConfig(TypedDict, total=False):
         stash: L1 stash configuration. Omit or True for defaults; False to disable.
     """
 
-    strategies: list[ContextStrategy]
+    strategies: list[ContextStrategy | str]
     stash: StashConfig | bool

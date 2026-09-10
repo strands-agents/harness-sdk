@@ -412,6 +412,27 @@ class TestGetOldestMatches:
         ]
         assert _get_oldest_matches(messages, "*", 1, {}, None, None) == []
 
+    def test_ratio_preserves_fraction_of_matches(self):
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="msg1")]),
+            Message(role="assistant", content=[ContentBlock(text="msg2")]),
+            Message(role="user", content=[ContentBlock(text="msg3")]),
+            Message(role="assistant", content=[ContentBlock(text="msg4")]),
+            Message(role="user", content=[ContentBlock(text="msg5")]),
+        ]
+        # 0.7 ratio of 5 matching → ceil(5 * 0.7) = 4 preserved → 1 oldest returned
+        tru_result = _get_oldest_matches(messages, "*", 0.7, {}, None, None)
+        assert len(tru_result) == 1
+        assert tru_result[0] is messages[0]
+
+    def test_ratio_zero_preserves_nothing(self):
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="msg1")]),
+            Message(role="assistant", content=[ContentBlock(text="msg2")]),
+        ]
+        tru_result = _get_oldest_matches(messages, "*", 0, {}, None, None)
+        assert len(tru_result) == 2
+
 
 class TestDropStrategy:
     """Tests for DropStrategy per-block execution."""

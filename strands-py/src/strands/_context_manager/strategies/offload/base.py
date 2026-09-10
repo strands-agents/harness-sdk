@@ -31,12 +31,14 @@ class OffloadConditions(TypedDict, total=False):
     Attributes:
         threshold: Token threshold above which individual blocks are offloaded.
         utilization: Context utilization ratio (0-1+) above which the strategy fires.
-        preserve_recent: Number of most recent matching messages to leave untouched.
+        preserve_recent: Messages to preserve. An integer keeps that many most-recent
+            matches; a float between 0 and 1 (exclusive) is treated as a ratio of
+            the matching messages.
     """
 
     threshold: int
     utilization: float
-    preserve_recent: int
+    preserve_recent: int | float
 
 
 def _finite_or_none(value: int | float | None) -> int | float | None:
@@ -49,7 +51,7 @@ def _build_conditions(
     *,
     threshold: int | None = None,
     utilization: float | None = None,
-    preserve_recent: int = 0,
+    preserve_recent: int | float = 0,
 ) -> OffloadConditions:
     """Build an OffloadConditions dict from explicit kwargs."""
     conditions = OffloadConditions()
@@ -139,22 +141,26 @@ def _message_matches_target(
 def _get_oldest_matches(
     messages: Messages,
     target: OffloadTarget | None,
-    count: int,
+    count: int | float,
     tool_name_map: dict[str, str],
     tool_include_filter: set[str] | None,
     tool_exclude_filter: set[str] | None,
 ) -> list[Message]:
-    """Return target-matching messages excluding the ``count`` most recent matches."""
+    """Return target-matching messages excluding the ``count`` most recent matches.
+
+    When ``0 < count < 1`` it is treated as a ratio of the matching messages to preserve.
+    """
     matching = [
         msg
         for msg in messages
         if _message_matches_target(msg, target, tool_name_map, tool_include_filter, tool_exclude_filter)
     ]
-    if count <= 0:
+    resolved = math.ceil(len(matching) * count) if 0 < count < 1 else int(count)
+    if resolved <= 0:
         return matching
-    if count >= len(matching):
+    if resolved >= len(matching):
         return []
-    return matching[:-count]
+    return matching[:-resolved]
 
 
 def _collect_removable_with_pair(messages: Messages, index: int) -> list[Message]:
@@ -270,7 +276,7 @@ class BaseOffloadStrategy(ABC):
     _target: OffloadTarget | None
     _threshold: int | None
     _utilization_threshold: float | None
-    _preserve_recent: int
+    _preserve_recent: float
     _removal_ratio: float = 0.3
     _include_filter: set[str] | None
     _exclude_filter: set[str] | None
@@ -288,7 +294,7 @@ class BaseOffloadStrategy(ABC):
         util = _finite_or_none(conditions.get("utilization"))
         self._utilization_threshold = float(util) if util is not None else None
         preserve = _finite_or_none(conditions.get("preserve_recent"))
-        self._preserve_recent = int(preserve) if preserve is not None else 0
+        self._preserve_recent = float(preserve) if preserve is not None else 0
 
         self._include_filter, self._exclude_filter = _resolve_tool_filter(target)
 

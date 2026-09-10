@@ -68,3 +68,11 @@ class TestPresetNames:
         for name in STRATEGY_PRESET_NAMES:
             strategies = resolve_preset(name)
             assert len(strategies) >= 1
+
+    def test_proactive_summarization_preserve_recent_is_ratio(self):
+        strategies = resolve_preset("proactive_summarization")
+        assert strategies[0]._preserve_recent == 0.7
+
+    def test_overflow_protection_preserve_recent_is_integer(self):
+        strategies = resolve_preset("overflow_protection")
+        assert strategies[0]._preserve_recent == 4

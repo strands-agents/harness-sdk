@@ -46,7 +46,8 @@ from ..types._snapshot import (
 )
 
 if TYPE_CHECKING:
-    from .._context_manager.context_manager import ContextManager
+    from .._context_manager.context_manager import ContextManager, ContextManagerStrategy
+    from .._context_manager.types import ContextManagerConfig
     from ..background_tasks._background_tasks import _BackgroundTasks
     from ..tools import ToolProvider
 from .._middleware import MiddlewareRegistry
@@ -154,18 +155,6 @@ _DEFAULT_RETRY_STRATEGY = _DefaultRetryStrategySentinel()
 _DEFAULT_AGENT_NAME = "Strands Agents"
 _DEFAULT_AGENT_ID = "default"
 
-ContextManagerStrategy = Literal["auto", "agentic"]
-"""Supported preset strings for the ``context_manager`` parameter.
-
-- ``"auto"``: Proactive truncation of tool results + summarization at 85% utilization.
-- ``"agentic"``: (Experimental) Model-driven context management via injected tools,
-  with a higher truncation threshold and summarization only on overflow.
-- ``ContextManagerConfig`` dict: Custom strategy pipeline and stash configuration.
-- ``ContextManager`` instance: Direct instance for full control.
-- ``False``: Explicitly disable all context management.
-- ``None``: Uses the default (SlidingWindowConversationManager, no offloader).
-"""
-
 
 @dataclass
 class _PassProgress:
@@ -214,7 +203,9 @@ class Agent(AgentBase, LocalAgent):
         name: str | None = None,
         description: str | None = None,
         state: AgentState | dict | None = None,
-        context_manager: "ContextManagerStrategy | ContextManager | Literal[False] | None" = None,
+        context_manager: (
+            "ContextManagerStrategy | ContextManagerConfig | ContextManager | Literal[False] | None"
+        ) = None,
         plugins: list[Plugin] | None = None,
         hooks: list[HookProvider | HookCallback] | None = None,
         interventions: list[InterventionHandler] | None = None,

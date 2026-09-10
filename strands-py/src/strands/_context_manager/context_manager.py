@@ -42,9 +42,6 @@ ContextManagerStrategy = Literal["auto", "agentic"]
   truncation threshold and summarization only on overflow.
 """
 
-ContextManagerStrategyValue = "ContextManagerStrategy | ContextManagerConfig | ContextManager | Literal[False] | None"
-"""Full type accepted by the Agent's ``context_manager`` parameter."""
-
 
 class ContextManager(Plugin):
     """Manages context reduction for an agent's conversation.
@@ -172,7 +169,7 @@ class ContextManager(Plugin):
         if conversation_manager is not None:
             warnings.warn(
                 "context_manager is set, ignoring co-provided conversation_manager",
-                stacklevel=4,
+                stacklevel=3,
             )
         return NullConversationManager()
 
