@@ -3,7 +3,7 @@
 Reads user audio from input device and sends agent audio to output device using PyAudio. If a user interrupts the agent,
 the output buffer is cleared to stop playback.
 
-Audio configuration is provided by the model via agent.model.config["audio"].
+Audio configuration is provided by models that implement ``AudioCapable``.
 
 Optional microphone audio processing (acoustic echo cancellation, noise suppression, and automatic gain
 control) is enabled by passing ``audio_processor=True`` or a ``BidiAudioProcessorConfig`` to ``BidiAudioIO``. It
@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, TypedDict
 import pyaudio
 from typing_extensions import Unpack
 
+from ..models.model import AudioCapable
 from ..types.events import (
     BidiAudioInputEvent,
     BidiAudioStreamEvent,
@@ -194,14 +195,18 @@ class _BidiAudioInput(BidiInput):
         """
         logger.debug("starting audio input stream")
 
-        self._channels = agent.model.config["audio"]["channels"]
-        self._format = agent.model.config["audio"]["format"]
-        self._rate = agent.model.config["audio"]["input_rate"]
+        if not isinstance(agent.model, AudioCapable):
+            raise TypeError("BidiAudioIO requires a model that implements AudioCapable")
+
+        audio_config = agent.model.get_audio_config()
+        self._channels = audio_config["channels"]
+        self._format = audio_config["format"]
+        self._rate = audio_config["input_rate"]
 
         if self._audio_processor is not None:
             self._audio_processor.start(
                 input_rate=self._rate,
-                output_rate=agent.model.config["audio"]["output_rate"],
+                output_rate=audio_config["output_rate"],
                 num_channels=self._channels,
             )
             if self._audio_processor.echo_cancellation_enabled:
@@ -301,8 +306,12 @@ class _BidiAudioOutput(BidiOutput):
         """
         logger.debug("starting audio output stream")
 
-        self._channels = agent.model.config["audio"]["channels"]
-        self._rate = agent.model.config["audio"]["output_rate"]
+        if not isinstance(agent.model, AudioCapable):
+            raise TypeError("BidiAudioIO requires a model that implements AudioCapable")
+
+        audio_config = agent.model.get_audio_config()
+        self._channels = audio_config["channels"]
+        self._rate = audio_config["output_rate"]
 
         if self._audio_processor is not None:
             self._frames_per_buffer = self._audio_processor.frames_per_buffer(self._rate)

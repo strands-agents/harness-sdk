@@ -28,7 +28,6 @@ from .._async import run_async
 from .._identifier import Identifier, is_uuid7
 from .._identifier import new_uuid7 as _new_snapshot_id
 from .._identifier import validate as validate_identifier
-from ..experimental.hooks.events import BidiAgentInitializedEvent
 from ..hooks.events import (
     AfterInvocationEvent,
     AgentInitializedEvent,
@@ -46,6 +45,7 @@ from .session_manager import SessionManager
 
 if TYPE_CHECKING:
     from ..agent.agent import Agent
+    from ..experimental.bidi.agent.agent import BidiAgent
 
 logger = logging.getLogger(__name__)
 
@@ -269,11 +269,8 @@ class SnapshotSessionManager(SessionManager):
             registry.add_callback(MessageAddedEvent, self._on_message_added)
         registry.add_callback(AfterInvocationEvent, self._on_after_invocation)
 
-        # Fail loudly rather than silently persisting nothing: this manager handles single agents
-        # only, so an orchestrator or BidiAgent must not be able to attach it and appear to be
-        # persisted. Both are rejected at their initialization event, before any turn runs.
+        # Reject orchestrators before any turn runs; multi-agent snapshots are not supported.
         registry.add_callback(MultiAgentInitializedEvent, self._reject_multi_agent)
-        registry.add_callback(BidiAgentInitializedEvent, self._reject_bidi_agent)
 
     def _reject_multi_agent(self, event: MultiAgentInitializedEvent) -> None:
         """Raise on orchestrator init; multi-agent snapshot persistence is not supported yet."""
@@ -283,17 +280,9 @@ class SnapshotSessionManager(SessionManager):
             "orchestrators."
         )
 
-    def _reject_bidi_agent(self, event: BidiAgentInitializedEvent) -> None:
-        """Raise on BidiAgent init; bidirectional-streaming snapshot persistence is not supported yet."""
-        raise NotImplementedError(
-            f"{type(self).__name__} does not support BidiAgent persistence. "
-            "Use a message-log session manager (FileSessionManager, S3SessionManager) for "
-            "bidirectional-streaming agents."
-        )
-
     # -- ABC methods (invoked synchronously by the Agent; bridge to async storage) --
 
-    def initialize(self, agent: "Agent", **kwargs: Any) -> None:
+    def initialize(self, agent: "Agent | BidiAgent", **kwargs: Any) -> None:
         """Restore the agent from its latest snapshot, if one exists.
 
         Storage is resolved on the first call and cached; a single manager instance should not be
@@ -302,7 +291,18 @@ class SnapshotSessionManager(SessionManager):
         Args:
             agent: Agent to restore.
             **kwargs: Additional keyword arguments for future extensibility.
+
+        Raises:
+            NotImplementedError: If agent is a BidiAgent.
         """
+        from ..experimental.bidi.agent.agent import BidiAgent
+
+        if isinstance(agent, BidiAgent):
+            raise NotImplementedError(
+                f"{type(self).__name__} does not support BidiAgent persistence. "
+                "Use a message-log session manager (FileSessionManager, S3SessionManager) for "
+                "bidirectional-streaming agents."
+            )
         if self._storage is None:
             self._storage = _resolve_storage(agent.storage if agent.storage is not None else LocalFileStorage())
         run_async(lambda: self._initialize_async(agent))
@@ -371,7 +371,11 @@ class SnapshotSessionManager(SessionManager):
 
         history_prefix = f"{_snapshots_prefix(self.session_id, agent.agent_id)}{_IMMUTABLE_HISTORY}/"
         keys = await self._resolved_storage.list(history_prefix)
-        ids = sorted(match.group(1) for key in keys if (match := _SNAPSHOT_REGEX.search(key)))
+        ids = sorted(
+            snapshot_id
+            for key in keys
+            if (match := _SNAPSHOT_REGEX.search(key)) and is_uuid7(snapshot_id := match.group(1))
+        )
         if start_after is not None:
             ids = [snapshot_id for snapshot_id in ids if snapshot_id > start_after]
         if limit is not None:

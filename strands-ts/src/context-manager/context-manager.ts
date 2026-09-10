@@ -10,6 +10,7 @@ import type { LocalAgent } from '../types/agent.js'
 import { AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent } from '../hooks/events.js'
 import { ContextWindowOverflowError } from '../errors.js'
 import { InMemoryStorage } from '../storage/in-memory-storage.js'
+import { EPHEMERAL } from '../storage/storage.js'
 import type { Storage } from '../storage/storage.js'
 import { logger } from '../logging/logger.js'
 import type { ContextManagerConfig, ContextStrategy, ContextState } from './types.js'
@@ -29,16 +30,16 @@ import { createRetrievalTool, trackRetrievalToolUseIds } from './retrieval-tool.
  * overflow recovery — no separate ConversationManager is needed.
  *
  * @experimental
- * @internal
  */
 export class ContextManager implements Plugin {
   readonly name = 'strands:context-manager'
 
   private readonly _strategies: ContextStrategy[]
-  private readonly _stashStorage: Storage | false
+  private readonly _stashStorage: Storage | false | undefined
   private readonly _enableRetrievalTool: boolean
   private readonly _retrievalToolUseIds = new Set<string>()
   private _stash: Stash | undefined
+  private _stashIsDurable = false
   private _retrievalTool: Tool | undefined
 
   constructor(config?: ContextManagerConfig) {
@@ -51,7 +52,7 @@ export class ContextManager implements Plugin {
     ]
     const stashConfig = config?.stash
     const stashObj = typeof stashConfig === 'object' ? stashConfig : undefined
-    this._stashStorage = stashConfig === false ? false : (stashObj?.storage ?? new InMemoryStorage())
+    this._stashStorage = stashConfig === false ? false : stashObj?.storage
     this._enableRetrievalTool = stashConfig !== false && stashObj?.retrievalTool !== false
   }
 
@@ -64,14 +65,22 @@ export class ContextManager implements Plugin {
     return [this._retrievalTool]
   }
 
-  initAgent(agent: LocalAgent): void {
+  async initAgent(agent: LocalAgent): Promise<void> {
     if (this._stashStorage !== false) {
-      this._stash = new Stash(this._stashStorage, agent.sessionId, agent.id)
+      const storage = this._stashStorage ?? agent.storage ?? new InMemoryStorage()
+      this._stashIsDurable = !(EPHEMERAL in storage)
+      this._stash = new Stash(storage, agent.sessionId, agent.id)
     }
 
     if (this._stash) {
       const stash = this._stash
       const skipSet = this._retrievalToolUseIds
+
+      for (const message of agent.messages) {
+        trackRetrievalToolUseIds(message, skipSet)
+        await stash.storeMessage(message, skipSet)
+      }
+
       agent.addHook(MessageAddedEvent, async (event) => {
         trackRetrievalToolUseIds(event.message, skipSet)
         await stash.storeMessage(event.message, skipSet)
@@ -109,6 +118,25 @@ export class ContextManager implements Plugin {
       overflowRetries++
       event.retry = true
     })
+  }
+
+  /**
+   * The L1 stash instance, if stash is enabled and the agent has been initialized.
+   *
+   * @returns The stash, or undefined if stash is disabled or initAgent has not run
+   */
+  get stash(): Stash | undefined {
+    return this._stash
+  }
+
+  /**
+   * Whether the stash is backed by durable storage that survives process restarts.
+   * When true, stash data does not need to be embedded in session snapshots.
+   *
+   * @returns true if the stash storage is not ephemeral
+   */
+  get stashIsDurable(): boolean {
+    return this._stashIsDurable
   }
 
   private async _runStrategies(agent: LocalAgent, precomputedInputTokens?: number): Promise<boolean> {

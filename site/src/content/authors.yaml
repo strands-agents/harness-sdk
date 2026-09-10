@@ -65,8 +65,8 @@
 
 - id: albert-zhao
   name: Albert Zhao
-  role: "Developer Advocate, AWS"
-  bio: Albert Zhao is a Developer Advocate at AWS focused on agentic AI and developer experience.
+  role: "Developer Experience Engineer, AWS"
+  bio: Albert Zhao is a DX Engineer at AWS focused on agentic AI, robotics, and developer experience.
 
 - id: strands-team
   name: Strands Agents Team
@@ -192,3 +192,8 @@
   name: Tim Moreton
   role: "Sr. Technical Content Creator, AWS"
   bio: Tim Moreton is a Sr. Technical Content Creator at AWS working on Strands Agents and agentic AI.
+
+- id: chen-wu
+  name: Chen Wu
+  role: "Principal Applied Scientist, AWS"
+  bio: Chen Wu is a Principal Applied Scientist working on agent optimization.

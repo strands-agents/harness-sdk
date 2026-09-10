@@ -418,8 +418,11 @@ class TestMCPInstrumentation:
             assert mock_register.call_count == first_call_count
 
     def test_mcp_instrumentation_registers_server_side_hooks(self):
-        """Test that mcp_instrumentation registers the transport and session wrappers."""
-        with patch("strands.tools.mcp.mcp_instrumentation.register_post_import_hook") as mock_register:
+        """Test that mcp_instrumentation registers the transport and session wrappers on the 1.x line."""
+        with (
+            patch("strands.tools.mcp.mcp_instrumentation.MCP_V2", False),
+            patch("strands.tools.mcp.mcp_instrumentation.register_post_import_hook") as mock_register,
+        ):
             mcp_instrumentation()
 
             # Verify register_post_import_hook was called for transport and session wrappers

@@ -13,6 +13,8 @@ import type { Message } from '../types/messages.js'
  *
  * Strategies are applied in order during `apply()`. Each decides whether
  * to act based on the current context state (utilization, message count, etc.).
+ *
+ * @experimental
  */
 export interface ContextStrategy {
   /** Stable identifier for logging and observability. */
@@ -33,6 +35,8 @@ export interface ContextStrategy {
 
 /**
  * State passed to strategies during apply().
+ *
+ * @experimental
  */
 export interface ContextState {
   /** The agent's current message array (the context window). Strategies mutate this in place. */
@@ -50,6 +54,8 @@ export interface ContextState {
 
 /**
  * Configuration for the L1 stash (offloaded content persistence).
+ *
+ * @experimental
  */
 export interface StashConfig {
   /** Storage backend. Defaults to InMemoryStorage when omitted. */
@@ -65,6 +71,8 @@ export interface StashConfig {
 
 /**
  * Full configuration for a ContextManager instance.
+ *
+ * @experimental
  */
 export interface ContextManagerConfig {
   /**

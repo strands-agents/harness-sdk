@@ -4,7 +4,7 @@ Sample applications demonstrating Strands Agents TypeScript SDK features.
 
 ## Prerequisites
 
-- Node.js 20+
+- Node.js 22+
 - AWS credentials configured (for the default Bedrock model provider)
 
 ## Running an Example

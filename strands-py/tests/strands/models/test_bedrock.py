@@ -5258,6 +5258,54 @@ def test_format_request_tools_ttl_false_overrides_deprecated_cache_tools(bedrock
     assert not any("cachePoint" in tool for tool in tru_request["toolConfig"]["tools"])
 
 
+def test_format_request_auto_skips_tools_cache_point_for_a_model_without_caching(bedrock_client, messages, tool_spec):
+    """cache_tools follows the resolved strategy: auto on a non-Anthropic model emits no tools cache point.
+
+    Regression guard for https://github.com/strands-agents/harness-sdk/issues/4168.
+    """
+    _ = bedrock_client
+    with pytest.warns(DeprecationWarning, match="cache_tools is deprecated"):
+        model = BedrockModel(
+            model_id="amazon.nova-pro-v1:0",
+            cache_config=CacheConfig(strategy="auto"),
+            cache_tools=CacheToolsConfig(ttl="1h"),
+        )
+
+    tru_request = model.format_request(messages, tool_specs=[tool_spec])
+
+    assert not any("cachePoint" in tool for tool in tru_request["toolConfig"]["tools"])
+
+
+def test_format_request_auto_keeps_tools_cache_point_for_a_claude_model(bedrock_client, messages, tool_spec):
+    """cache_config resolving to anthropic leaves the deprecated cache_tools point in place."""
+    _ = bedrock_client
+    with pytest.warns(DeprecationWarning, match="cache_tools is deprecated"):
+        model = BedrockModel(
+            model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+            cache_config=CacheConfig(strategy="auto"),
+            cache_tools=CacheToolsConfig(ttl="1h"),
+        )
+
+    tru_point = model.format_request(messages, tool_specs=[tool_spec])["toolConfig"]["tools"][-1]
+
+    assert tru_point == {"cachePoint": {"type": "default", "ttl": "1h"}}
+
+
+def test_format_request_auto_cache_tools_inherits_shared_ttl_for_a_claude_model(bedrock_client, messages, tool_spec):
+    """A cache_tools point with no ttl of its own still inherits cache_config.ttl under an active strategy."""
+    _ = bedrock_client
+    with pytest.warns(DeprecationWarning, match="cache_tools is deprecated"):
+        model = BedrockModel(
+            model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+            cache_config=CacheConfig(strategy="auto", ttl="1h"),
+            cache_tools=CacheToolsConfig(),
+        )
+
+    tru_point = model.format_request(messages, tool_specs=[tool_spec])["toolConfig"]["tools"][-1]
+
+    assert tru_point == {"cachePoint": {"type": "default", "ttl": "1h"}}
+
+
 def test_format_request_applies_the_configured_ttl_to_a_system_cache_point(bedrock_client, messages):
     """Bedrock rejects a TTL that exceeds an earlier checkpoint's, so a configured ttl that reached the
     message cache point but not the system point ahead of it would emit an invalid request.
@@ -5405,9 +5453,9 @@ def test_format_request_leaves_a_tools_cache_point_alone_for_a_model_without_cac
         model_id="meta.llama3-70b-instruct-v1:0", cache_config=CacheConfig(ttl="1h"), cache_tools="default"
     )
 
-    tru_point = model.format_request(messages, tool_specs=[tool_spec])["toolConfig"]["tools"][-1]
+    tru_request = model.format_request(messages, tool_specs=[tool_spec])
 
-    assert tru_point == {"cachePoint": {"type": "default"}}
+    assert not any("cachePoint" in tool for tool in tru_request["toolConfig"]["tools"])
 
 
 def test_format_request_leaves_a_tools_cache_point_alone_for_an_empty_configured_ttl(

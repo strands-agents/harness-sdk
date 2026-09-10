@@ -34,7 +34,7 @@ concurrency:
 jobs:
   scan-commits:
     name: Resolve SHA and validate version
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     permissions:
       contents: read
     outputs:
@@ -164,7 +164,7 @@ jobs:
   inspect:
     name: Inspect MCP dists
     needs: package-build
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     permissions:
       contents: read
     steps:
@@ -254,7 +254,7 @@ jobs:
       needs.security-audit.result == 'success' &&
       needs.package-build.result == 'success' &&
       needs.inspect.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     permissions:
       contents: read
     steps:
@@ -316,7 +316,7 @@ jobs:
     name: Wait for reviewer approvals
     needs: [scan-commits, draft-notes]
     if: inputs.dry_run != true
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     environment:
       # Shared with release-python.yml and release-typescript.yml. Configure
       # reviewers + main-only deployment branches in repo settings.
@@ -341,7 +341,7 @@ jobs:
     name: Create GitHub release
     needs: [scan-commits, draft-notes, approve-release]
     if: inputs.dry_run != true
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     permissions:
       contents: write
       # discussions: write lets the announcement step below create the
@@ -436,7 +436,7 @@ jobs:
     name: Publish to PyPI
     needs: [inspect, approve-release, create-gh-release]
     if: inputs.dry_run != true
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     environment:
       name: pypi
       url: https://pypi.org/p/strands-agents-mcp-server

@@ -19,35 +19,35 @@ jobs:
       matrix:
        include:
         # Linux
-        - os: ubuntu-latest
+        - os: strands-agents_ubuntu-latest_4-core
           os-name: 'linux'
           python-version: "3.10"
-        - os: ubuntu-latest
+        - os: strands-agents_ubuntu-latest_4-core
           os-name: 'linux'
           python-version: "3.11"
-        - os: ubuntu-latest
+        - os: strands-agents_ubuntu-latest_4-core
           os-name: 'linux'
           python-version: "3.12"
-        - os: ubuntu-latest
+        - os: strands-agents_ubuntu-latest_4-core
           os-name: 'linux'
           python-version: "3.13"
-        - os: ubuntu-latest
+        - os: strands-agents_ubuntu-latest_4-core
           os-name: 'linux'
           python-version: "3.14"
         # Windows
-        - os: windows-latest
+        - os: strands-agents_windows-latest_4-core
           os-name: 'windows'
           python-version: "3.10"
-        - os: windows-latest
+        - os: strands-agents_windows-latest_4-core
           os-name: 'windows'
           python-version: "3.11"
-        - os: windows-latest
+        - os: strands-agents_windows-latest_4-core
           os-name: 'windows'
           python-version: "3.12"
-        - os: windows-latest
+        - os: strands-agents_windows-latest_4-core
           os-name: 'windows'
           python-version: "3.13"
-        - os: windows-latest
+        - os: strands-agents_windows-latest_4-core
           os-name: 'windows'
           python-version: "3.14"
         # MacOS - latest only; not enough runners for macOS
@@ -88,16 +88,14 @@ jobs:
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-  unit-test-mcp-v2:
-    name: MCP 2.x Compat
-    # The dependency pin is `mcp<2`, so the unit-test matrix only ever
-    # exercises the 1.x line and the 2.x branches of `_compat` run against
-    # mocks there. This job force-installs the 2.x line over the pin to verify
-    # against the real package that `import strands` succeeds and the compat
-    # layer resolves the 2.x names. Scoped to the compat tests; the full suite
-    # is not expected to pass on 2.x while the pin holds. Pinned to `2.0.*` so
-    # upstream 2.x releases cannot break unrelated PRs; bump deliberately.
-    runs-on: ubuntu-latest
+  unit-test-mcp-v1:
+    name: MCP 1.x Compat
+    # The dependency range spans both `mcp` major versions and fresh installs resolve mcp 2.x, so the unit-test matrix
+    # only ever exercises 2.x and the 1.x branches of `_compat` run against mocks there. This job force-installs mcp
+    # 1.x to verify against the real package that `import strands` succeeds and the MCP client suite passes, including
+    # the legacy 2025-11-25 task workflow, which is 1.x-only. The modern-protocol integ tests
+    # (tests_integ/mcp/test_mcp_client_v2.py) require 2.x, so they run in the integration-test workflow's main scope.
+    runs-on: strands-agents_ubuntu-latest_4-core
     timeout-minutes: 10
     permissions:
       contents: read
@@ -116,7 +114,7 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install package, then force mcp 2.x over the pin
+      - name: Install package, then force mcp 1.x
         run: |
           pip install --no-cache-dir -e . \
             "pytest>=9.0.0,<10.0.0" \
@@ -124,17 +122,16 @@ jobs:
             "pytest-timeout>=2.0.0,<3.0.0" \
             "pytest-cov>=6.0.0,<8.0.0" \
             "moto>=5.1.0,<6.0.0"
-          pip install --no-cache-dir "mcp==2.0.*"
+          pip install --no-cache-dir "mcp>=1.23.0,<2.0.0"
 
       - name: Verify import and version flag
-        run: python -c "import strands; from strands.tools.mcp import _compat; assert _compat.MCP_V2"
+        run: python -c "import strands; from strands.tools.mcp import _compat; assert not _compat.MCP_V2"
 
-      # With coverage: the 2.x branches of `_compat` execute only in this job,
+      # With coverage: the 1.x branches of `_compat` execute only in this job,
       # so without this upload they always show as uncovered on the patch.
-      - name: Run compat tests
+      - name: Run MCP tests
         run: |
-          pytest tests/strands/tools/mcp/test__compat.py -vv --cov=src/strands --cov-report=xml
-          pytest tests/strands/tools/mcp/test_mcp_client.py -k 'tools_changed or session_message' -vv --cov=src/strands --cov-append --cov-report=xml
+          pytest tests/strands/tools/mcp -vv --cov=src/strands --cov-report=xml
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
@@ -143,7 +140,7 @@ jobs:
 
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     # Lint typically runs in ~2 min; 20 min caps a hung step instead of
     # letting it run to the 6-hour default.
     timeout-minutes: 20

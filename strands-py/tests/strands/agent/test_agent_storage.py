@@ -210,10 +210,7 @@ class TestRepositorySessionManagerWarnOnce:
         repository.create_session = MagicMock()
         session_mgr = RepositorySessionManager("test-session", session_repository=repository)
 
-        agent = MagicMock()
-        agent.storage = UnifiedInMemoryStorage()
-        agent.agent_id = "agent-1"
-        agent.messages = []
+        agent = Agent(model=MockedModelProvider(SIMPLE_RESPONSE), agent_id="agent-1", storage=UnifiedInMemoryStorage())
 
         with caplog.at_level(logging.WARNING):
             session_mgr.initialize(agent)
@@ -226,21 +223,16 @@ class TestRepositorySessionManagerWarnOnce:
         repository.create_session = MagicMock()
         session_mgr = RepositorySessionManager("test-session", session_repository=repository)
 
-        agent = MagicMock()
-        agent.storage = UnifiedInMemoryStorage()
-        agent.agent_id = "agent-1"
-        agent.messages = []
+        agent = Agent(model=MockedModelProvider(SIMPLE_RESPONSE), agent_id="agent-1", storage=UnifiedInMemoryStorage())
 
         with caplog.at_level(logging.WARNING):
             session_mgr.initialize(agent)
 
+        assert "agent-level storage is set but RepositorySessionManager does not use it" in caplog.text
         caplog.clear()
 
         session_mgr2 = RepositorySessionManager("test-session-2", session_repository=repository)
-        agent2 = MagicMock()
-        agent2.storage = UnifiedInMemoryStorage()
-        agent2.agent_id = "agent-2"
-        agent2.messages = []
+        agent2 = Agent(model=MockedModelProvider(SIMPLE_RESPONSE), agent_id="agent-2", storage=UnifiedInMemoryStorage())
 
         with caplog.at_level(logging.WARNING):
             session_mgr2.initialize(agent2)

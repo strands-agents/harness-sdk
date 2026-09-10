@@ -52,12 +52,8 @@ from strands_tools import calculator
 async def main() -> None:
     model = GoogleGeminiLiveModel(
         model_id="gemini-2.5-flash-native-audio-preview-09-2025",
-        provider_config={
-            "audio": {
-                "voice": "Kore",
-            },
-        },
-        client_config={"api_key": "<GOOGLE_API_KEY>"},
+        audio={"voice": "Kore"},
+        client_args={"api_key": "<GOOGLE_API_KEY>"},
     )
     # stop tool allows user to verbally stop agent execution.
     agent = BidiAgent(model=model, tools=[calculator, stop])
@@ -73,18 +69,43 @@ if __name__ == "__main__":
 
 ## Configuration
 
-### Client Configs
+### Client Options
 
-For details on the supported client configs, see [here](https://googleapis.github.io/python-genai/genai.html#genai.client.Client).
+Pass Google GenAI client options through `client_args`. For the supported fields, see
+the [Google GenAI client reference](https://googleapis.github.io/python-genai/genai.html#genai.client.Client).
 
-### Provider Configs
+### Model Config
 
 | Parameter | Description | Example | Options |
 | --------- | ----------- | ------- | ------- |
-| `audio` | `AudioConfig` instance. | `{"voice": "Kore"}` | [reference](@api/python/strands.experimental.bidi.types.model#AudioConfig) |
-| `inference` | Dict of inference fields specified in the Gemini `LiveConnectConfig`. | `{"temperature": 0.7}` | [reference](https://googleapis.github.io/python-genai/genai.html#genai.types.LiveConnectConfig)
+| `model_id` | Gemini Live model identifier. | `"gemini-2.5-flash-native-audio-preview-09-2025"` | [Gemini models](https://ai.google.dev/gemini-api/docs/models) |
+| `audio` | Audio configuration. | `{"voice": "Kore"}` | [reference](@api/python/strands.experimental.bidi.models.configs#AudioConfig) |
+| `params` | Gemini Live session parameters. | `{"temperature": 0.7}` | [`LiveConnectConfig`](https://googleapis.github.io/python-genai/genai.html#genai.types.LiveConnectConfig) |
+| `connection` | Reconnect timing overrides. | `{"auto_reconnect": false}` | [reference](@api/python/strands.experimental.bidi.models.configs#BidiConnectionConfig) |
 
 For the list of supported voices and languages, see [here](https://docs.cloud.google.com/text-to-speech/docs/list-voices-and-types).
+
+### Additional Provider Options
+
+Use direct options such as `audio` for common settings. For additional Google GenAI
+options, pass `params` using snake_case field names.
+
+```python
+from strands.experimental.bidi.models import GoogleGeminiLiveModel
+
+model = GoogleGeminiLiveModel(
+    client_args={"api_key": "<GOOGLE_API_KEY>"},
+    audio={"voice": "Kore"},
+    params={"temperature": 0.7, "speech_config": {"language_code": "en-US"}},
+)
+```
+
+Nested dictionaries in `params` merge with the existing configuration, preserving
+unspecified fields. If a setting overlaps with a default or direct option, `params`
+takes precedence.
+
+Calling `update_config(params=...)` replaces the entire `params` dictionary. The new
+values take effect on the next `start()` or `restart()`.
 
 ## Session Management
 
@@ -100,7 +121,9 @@ The error `ModuleNotFoundError: No module named 'google.genai'` means the
 
 ### API Key Issues
 
-Make sure your Google AI API key is properly set in `client_config` or as the `GOOGLE_API_KEY` environment variable. You can obtain an API key from the [Google AI Studio](https://aistudio.google.com/app/apikey).
+Set your Google AI API key through `client_args` or the `GOOGLE_API_KEY`
+environment variable. You can obtain an API key from
+[Google AI Studio](https://aistudio.google.com/app/apikey).
 
 ## References
 

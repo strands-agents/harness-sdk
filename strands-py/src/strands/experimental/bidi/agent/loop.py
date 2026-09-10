@@ -17,18 +17,20 @@ from ....telemetry.tracer import get_tracer
 from ....types._events import ToolInterruptEvent, ToolResultEvent, ToolResultMessageEvent, ToolUseStreamEvent
 from ....types.content import Message
 from ....types.tools import ToolResult, ToolUse
-from ...hooks.events import (
-    BidiAfterConnectionRestartEvent,
-    BidiAfterInvocationEvent,
-    BidiBeforeConnectionRestartEvent,
-    BidiBeforeInvocationEvent,
-)
-from ...hooks.events import (
-    BidiInterruptionEvent as BidiInterruptionHookEvent,
-)
 from .. import _telemetry
 from .._async import _TaskPool, stop_all
-from ..models import BidiModel, BidiModelTimeoutError
+from ..hooks.events import (
+    BidiAfterConnectionRestartEvent,
+    BidiAgentStopEvent,
+    BidiBeforeConnectionRestartEvent,
+)
+from ..hooks.events import (
+    BidiInterruptionEvent as BidiInterruptionHookEvent,
+)
+from ..hooks.events import (
+    BidiResponseCompleteEvent as BidiResponseCompleteHookEvent,
+)
+from ..models import BidiModelTimeoutError, Restartable
 from ..types.events import (
     BidiAudioStreamEvent,
     BidiConnectionCloseEvent,
@@ -40,11 +42,11 @@ from ..types.events import (
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
     BidiTextInputEvent,
+    BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
 )
-from ..types.model import BidiConnectionConfig
-from ._reconnect_timer import _BidiReconnectTimer, resolve_deadline_s
+from ._reconnect_timer import BidiReconnectTimer, resolve_deadline_s
 
 if TYPE_CHECKING:
     from .agent import BidiAgent
@@ -52,13 +54,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Bound on awaiting a superseded reader after its stream is closed before cancelling it.
-_READER_REAP_TIMEOUT_S = 2.0
+_MODEL_RESTART_STOP_TIMEOUT_S = 2
 
 # Fixed advance notice, in seconds before a scheduled reconnect, for the warning event.
-_WARNING_LEAD_S = 10.0
+_MODEL_RESTART_WARNING_S = 10
 
 # Max seconds a proactive reconnect waits for a turn boundary before forcing the swap.
-_TURN_ALIGN_WAIT_S = 10.0
+_MODEL_RESTART_TURN_TIMEOUT_S = 10
 
 
 @dataclass(frozen=True)
@@ -80,7 +82,7 @@ class _BidiAgentLoop:
         _agent: BidiAgent instance to loop.
         _started: Flag if agent loop has started.
         _task_pool: Track active async tasks created in loop.
-        _event_queue: Queue model and tool call events for receiver.
+        _event_queue: Queue output and connection lifecycle events for receiver.
         _invocation_state: Optional context to pass to tools during execution.
             This allows passing custom data (user_id, session_id, database connections, etc.)
             that tools can access via their invocation_state parameter.
@@ -100,11 +102,6 @@ class _BidiAgentLoop:
         self._started = False
         self._task_pool = _TaskPool()
         self._event_queue: asyncio.Queue
-        # Connection-lifecycle events (warning, restart); unbounded and drained by receive() with
-        # priority over the data queue, so a busy consumer neither drops them nor stalls the timer.
-        self._lifecycle_queue: asyncio.Queue
-        # Holds a data event pulled alongside a lifecycle event, for the next receive() iteration.
-        self._pending_data: BidiOutputEvent | Exception | None = None
         self._invocation_state: dict[str, Any]
         self._model_task: asyncio.Task | None = None
 
@@ -123,7 +120,7 @@ class _BidiAgentLoop:
         self._baseline_total_tokens = 0
         self._baseline_cache_read_tokens = 0
 
-        self._reconnect_timer = _BidiReconnectTimer(
+        self._reconnect_timer = BidiReconnectTimer(
             on_warning=self._on_reconnect_warning,
             on_deadline=self._on_reconnect_deadline,
         )
@@ -159,8 +156,6 @@ class _BidiAgentLoop:
             raise RuntimeError("loop already started | call stop before starting again")
 
         logger.debug("agent loop starting")
-        await self._agent.hooks.invoke_callbacks_async(BidiBeforeInvocationEvent(agent=self._agent))
-
         model_id = getattr(self._agent.model, "model_id", None)
 
         self._session_span = _telemetry.start_session_span(
@@ -190,8 +185,6 @@ class _BidiAgentLoop:
         self._reset_turn_state()
 
         self._event_queue = asyncio.Queue(maxsize=1)
-        self._lifecycle_queue = asyncio.Queue()
-        self._pending_data = None
 
         self._task_pool = _TaskPool()
         self._model_task = self._task_pool.create(self._run_model(self._generation))
@@ -234,7 +227,7 @@ class _BidiAgentLoop:
                 )
                 self._session_span = None
 
-            await self._agent.hooks.invoke_callbacks_async(BidiAfterInvocationEvent(agent=self._agent))
+            await self._agent.hooks.invoke_callbacks_async(BidiAgentStopEvent(agent=self._agent))
 
     async def send(self, event: BidiInputEvent | ToolResultEvent) -> None:
         """Send model event.
@@ -279,7 +272,7 @@ class _BidiAgentLoop:
             raise RuntimeError("loop not started | call start before receiving")
 
         while True:
-            event = await self._next_event()
+            event = await self._event_queue.get()
             if isinstance(event, _ReaderError):
                 if event.generation != self._generation:
                     # Superseded reader: its connection was already replaced, so drop the error
@@ -292,14 +285,22 @@ class _BidiAgentLoop:
                     if not self._auto_reconnect_enabled():
                         logger.debug("auto_reconnect disabled | surfacing timeout to caller")
                         raise error
-                    yield BidiConnectionRestartEvent(
+                    restart_event = BidiConnectionRestartEvent(
                         reason="timeout",
                         timeout_error=error,
                         turn_interrupted=not self._turn_complete.is_set(),
                     )
-                    # Raise-time generation: a swap during the yield makes _restart_connection
-                    # decline this now-stale trigger.
-                    await self._restart_connection(error, event.generation)
+                    try:
+                        await self._restart_connection(
+                            error,
+                            event.generation,
+                            restart_event=restart_event,
+                        )
+                    except Exception:
+                        # The restart event was queued before the failing swap. Surface it before
+                        # preserving the existing behavior of raising the restart failure.
+                        yield self._event_queue.get_nowait()
+                        raise
                     continue
                 raise error
 
@@ -313,48 +314,13 @@ class _BidiAgentLoop:
 
             yield event
 
-    async def _next_event(self) -> Any:
-        """Return the next event, draining the lifecycle queue with priority over data events.
-
-        When both queues are idle, waits on whichever produces first; a data event pulled
-        alongside a lifecycle event is held in ``_pending_data`` for the next call.
-        """
-        if not self._lifecycle_queue.empty():
-            return self._lifecycle_queue.get_nowait()
-        if self._pending_data is not None:
-            event, self._pending_data = self._pending_data, None
-            return event
-        if not self._event_queue.empty():
-            return self._event_queue.get_nowait()
-
-        get_lifecycle = asyncio.ensure_future(self._lifecycle_queue.get())
-        get_data = asyncio.ensure_future(self._event_queue.get())
-        done, pending = await asyncio.wait({get_lifecycle, get_data}, return_when=asyncio.FIRST_COMPLETED)
-        for task in pending:
-            task.cancel()
-        if get_lifecycle in done:
-            if get_data in done:
-                self._pending_data = get_data.result()
-            return get_lifecycle.result()
-        return get_data.result()
-
-    def _connection_config(self) -> BidiConnectionConfig:
-        """Return the model's declared connection config, or an empty config if none.
-
-        Providers are not required to declare ``connection_config``; a missing or empty
-        config means reactive-only reconnect with no proactive timer.
-        """
-        connection_config = getattr(self._agent.model, "connection_config", None)
-        return cast(BidiConnectionConfig, connection_config) if connection_config else {}
-
     def _auto_reconnect_enabled(self) -> bool:
         """Whether the agent reconnects automatically.
 
         Automatic reconnect is the default: a provider is opted in unless it explicitly
-        declares ``auto_reconnect: False`` in its ``connection_config``. A provider that
-        declares no ``connection_config`` at all is treated as opted in.
+        declares ``auto_reconnect: False`` in its connection config.
         """
-        return self._connection_config().get("auto_reconnect", True)
+        return self._agent.model.get_connection_config().get("auto_reconnect", True)
 
     def _arm_reconnect_timer(self) -> None:
         """Arm the proactive reconnect timer when the model opts in with a declared deadline.
@@ -364,19 +330,15 @@ class _BidiAgentLoop:
         """
         if not self._auto_reconnect_enabled():
             return
-        deadline_s = resolve_deadline_s(self._connection_config())
+        deadline_s = resolve_deadline_s(self._agent.model.get_connection_config())
         if deadline_s is None:
             return
-        self._reconnect_timer.arm(deadline_s, _WARNING_LEAD_S)
+        self._reconnect_timer.arm(deadline_s, _MODEL_RESTART_WARNING_S)
 
-    async def _on_reconnect_warning(self, time_left_s: float) -> None:
-        """Timer callback: surface an approaching-reconnect warning to the receiver.
-
-        Emitted on the lifecycle queue: non-blocking (so it never stalls the timer's run to the
-        deadline) and unbounded (so a busy consumer never drops it).
-        """
+    async def _on_reconnect_warning(self, time_left_s: int) -> None:
+        """Timer callback: surface an approaching-reconnect warning to the receiver."""
         logger.debug("time_left_s=<%.1f> | emitting connection warning", time_left_s)
-        self._lifecycle_queue.put_nowait(BidiConnectionWarningEvent(time_left_s=time_left_s))
+        await self._event_queue.put(BidiConnectionWarningEvent(time_left_s=time_left_s))
 
     async def _on_reconnect_deadline(self) -> None:
         """Timer callback: align to a turn boundary, then reconnect proactively.
@@ -392,31 +354,28 @@ class _BidiAgentLoop:
         # A forced swap (the wait timed out) leaves _turn_complete clear: an in-progress or owed
         # turn is being cut and won't be answered on replay. Capture before the swap resets it.
         turn_interrupted = not self._turn_complete.is_set()
+        restart_event = BidiConnectionRestartEvent(reason="scheduled", turn_interrupted=turn_interrupted)
         try:
-            reconnected = await self._restart_connection(None, generation)
+            await self._restart_connection(None, generation, restart_event=restart_event)
         except Exception as error:
             await self._event_queue.put(error)
-            return
-        # Announce an actual swap on the lifecycle queue: non-blocking, and priority-drained by
-        # receive() so it precedes any output from the new connection.
-        if reconnected:
-            self._lifecycle_queue.put_nowait(
-                BidiConnectionRestartEvent(reason="scheduled", turn_interrupted=turn_interrupted)
-            )
 
     async def _await_turn_boundary(self) -> None:
         """Wait for the current turn to finish, bounded so the reconnect beats the limit.
 
         Returns immediately at a turn boundary (including for a provider that emits no turn
-        events). Otherwise waits up to ``_TURN_ALIGN_WAIT_S`` for the turn to complete, then
+        events). Otherwise waits up to ``_MODEL_RESTART_TURN_TIMEOUT_S`` for the turn to complete, then
         proceeds so the swap does not overrun the headroom below the provider limit.
         """
         if self._turn_complete.is_set():
             return
         try:
-            await asyncio.wait_for(self._turn_complete.wait(), timeout=_TURN_ALIGN_WAIT_S)
+            await asyncio.wait_for(self._turn_complete.wait(), timeout=_MODEL_RESTART_TURN_TIMEOUT_S)
         except asyncio.TimeoutError:
-            logger.debug("no turn boundary within %.1fs | forcing reconnect", _TURN_ALIGN_WAIT_S)
+            logger.debug(
+                "no turn boundary within %.1fs | forcing reconnect",
+                _MODEL_RESTART_TURN_TIMEOUT_S,
+            )
 
     def _reset_turn_state(self) -> None:
         """Reset turn tracking to the idle boundary state."""
@@ -431,16 +390,24 @@ class _BidiAgentLoop:
         else:
             self._turn_complete.set()
 
-    async def _restart_connection(self, timeout_error: BidiModelTimeoutError | None, generation: int) -> bool:
+    async def _restart_connection(
+        self,
+        timeout_error: BidiModelTimeoutError | None,
+        generation: int,
+        *,
+        restart_event: BidiConnectionRestartEvent | None = None,
+    ) -> bool:
         """Restart the model connection, reactively (after timeout) or proactively (timer).
 
         The single guard point for both paths: declines when the loop has stopped, when the
-        connection was already swapped since the trigger, or when a restart is in flight.
+        connection was already swapped since the trigger, or when a restart is in flight. A
+        supplied restart event is emitted after these checks and before the connection is swapped.
 
         Args:
             timeout_error: Timeout error on the reactive path, or ``None`` when proactive.
             generation: Connection generation the trigger was raised for; the restart is declined
                 as stale if the connection has since been swapped.
+            restart_event: Restart event to emit before an accepted swap.
 
         Returns:
             ``True`` if this call performed the swap, ``False`` if it declined. Raises if the
@@ -467,6 +434,14 @@ class _BidiAgentLoop:
 
         try:
             self._send_gate.clear()
+            if restart_event is not None:
+                await self._event_queue.put(restart_event)
+                if not self._started:
+                    # stop() can run while the bounded queue put is suspended.
+                    logger.debug(  # type: ignore[unreachable]
+                        "loop stopped while emitting restart event | ignoring restart trigger"
+                    )
+                    return False
             self._fold_token_baseline()
 
             # A raising before-restart hook propagates out with the send gate left closed.
@@ -504,8 +479,8 @@ class _BidiAgentLoop:
         try:
             previous_reader = self._model_task
             self._generation += 1
-            await self._reconnect_model(restart_kwargs)
-            await self._await_superseded_reader(previous_reader)
+            await self._restart_model(restart_kwargs)
+            await self._wait_for_model_task(previous_reader)
             self._model_task = self._task_pool.create(self._run_model(self._generation))
         except Exception as exception:
             restart_exception = exception
@@ -518,28 +493,21 @@ class _BidiAgentLoop:
         if restart_exception is not None:
             raise restart_exception
 
-    async def _reconnect_model(self, restart_kwargs: dict[str, Any]) -> None:
-        """Reconnect via the provider's ``reconnect()``, or ``stop()`` then ``start()``.
-
-        The fallback is transitional: providers that have not implemented ``reconnect()``
-        inherit the protocol no-op, so route them through stop/start until they adopt it.
-        """
+    async def _restart_model(self, restart_kwargs: dict[str, Any]) -> None:
+        """Restart through the provider when supported, otherwise use ``stop()`` then ``start()``."""
         model = self._agent.model
         system_prompt = self._agent.system_prompt
         tools = self._agent.tool_registry.get_all_tool_specs()
         messages = self._agent.messages
 
-        # "Provider didn't override reconnect()" — it still resolves to the protocol's no-op
-        # default, so fall back to stop/start. getattr on the type (not the instance) tolerates
-        # a model whose class does not expose reconnect at all (e.g. a mock).
-        if getattr(type(model), "reconnect", None) is BidiModel.reconnect:
-            await model.stop()
-            await model.start(system_prompt, tools, messages, **restart_kwargs)
+        if isinstance(model, Restartable):
+            await model.restart(system_prompt, tools, messages, **restart_kwargs)
             return
 
-        await model.reconnect(system_prompt, tools, messages, **restart_kwargs)
+        await model.stop()
+        await model.start(system_prompt, tools, messages, **restart_kwargs)
 
-    async def _await_superseded_reader(self, task: asyncio.Task | None) -> None:
+    async def _wait_for_model_task(self, task: asyncio.Task | None) -> None:
         """Await a superseded reader after its stream is closed; cancel only as a backstop.
 
         The reader is expected to fall out of receive() when its connection is closed. It is
@@ -549,7 +517,7 @@ class _BidiAgentLoop:
         if task is None or task.done():
             return
         try:
-            await asyncio.wait_for(task, timeout=_READER_REAP_TIMEOUT_S)
+            await asyncio.wait_for(task, timeout=_MODEL_RESTART_STOP_TIMEOUT_S)
         except Exception as error:
             # Expected: the reader's stream-close error, or the reap timeout. Logged, not
             # forwarded — the current reader is the only one that surfaces errors to the consumer.
@@ -630,11 +598,6 @@ class _BidiAgentLoop:
             async for event in self._agent.model.receive():
                 if generation != self._generation:
                     return
-                await self._event_queue.put(event)
-                # The put can suspend on the full queue across a reconnect; re-check so a stale
-                # event from the closed connection is not applied to the new connection's state.
-                if generation != self._generation:
-                    return
 
                 if isinstance(event, BidiResponseStartEvent):
                     if response_span:
@@ -671,6 +634,13 @@ class _BidiAgentLoop:
                     # transcript arriving after completion does not re-open the turn.
                     self._awaiting_response = False
                     self._update_turn_state()
+                    await self._agent.hooks.invoke_callbacks_async(
+                        BidiResponseCompleteHookEvent(
+                            agent=self._agent, response_id=event.response_id, stop_reason=event.stop_reason
+                        )
+                    )
+                    if generation != self._generation:
+                        return
 
                 elif isinstance(event, BidiTranscriptStreamEvent):
                     if event["role"] == "user":
@@ -681,18 +651,20 @@ class _BidiAgentLoop:
                         # the final user transcript, and the reply is what clears this state.
                         self._awaiting_response = True
                         self._update_turn_state()
-                    if event["is_final"]:
-                        message: Message = {"role": event["role"], "content": [{"text": event["text"]}]}
-                        await self._agent._append_messages(message)
 
-                elif isinstance(event, ToolUseStreamEvent):
-                    tool_use = event["current_tool_use"]
-                    self._task_pool.create(self._run_tool(tool_use, generation))
+                elif isinstance(event, BidiTranscriptCompleteEvent):
+                    message: Message = {"role": event.role, "content": [{"text": event.transcript}]}
+                    await self._agent._append_messages(message)
+                    if generation != self._generation:
+                        return
 
                 elif isinstance(event, BidiInterruptionEvent):
                     if self._session_span:
                         _telemetry.add_interruption_event(self._session_span, event["reason"])
 
+                    # A barge-in ends the current response; the user's next turn owes a reply.
+                    self._response_active = False
+                    self._update_turn_state()
                     await self._agent.hooks.invoke_callbacks_async(
                         BidiInterruptionHookEvent(
                             agent=self._agent,
@@ -700,12 +672,19 @@ class _BidiAgentLoop:
                             interrupted_response_id=event.get("interrupted_response_id"),
                         )
                     )
-                    # A barge-in ends the current response; the user's next turn owes a reply.
-                    self._response_active = False
-                    self._update_turn_state()
+                    if generation != self._generation:
+                        return
 
                 elif isinstance(event, BidiUsageEvent):
                     self._record_usage(event)
+
+                await self._event_queue.put(event)
+                if generation != self._generation:
+                    return
+
+                if isinstance(event, ToolUseStreamEvent):
+                    tool_use = event["current_tool_use"]
+                    self._task_pool.create(self._run_tool(tool_use, generation))
 
         except Exception as error:
             model_error = error

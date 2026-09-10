@@ -70,7 +70,6 @@ class _BidiAudioProcessor:
         Raises:
             ValueError: If the audio format is invalid.
         """
-        self._validate_input_rate(input_rate)
         self._input_rate = input_rate
         self._output_rate = output_rate
         self._processor = AudioProcessor(
@@ -88,15 +87,6 @@ class _BidiAudioProcessor:
             output_rate,
             num_channels,
         )
-
-    def _validate_input_rate(self, input_rate: int) -> None:
-        """Validate that the input rate is supported."""
-        supported_rates = (16000, 32000, 48000)
-        if input_rate not in supported_rates:
-            raise ValueError(
-                f"input_rate=<{input_rate}> | audio processing supports sample rates "
-                f"{supported_rates}. Configure the model's audio input_rate accordingly."
-            )
 
     def add_far_data(self, data: bytes) -> None:
         """Add a played audio frame for echo cancellation."""

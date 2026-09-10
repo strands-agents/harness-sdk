@@ -37,7 +37,7 @@ on:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     permissions: {}
     steps:
       - name: Validate confirmation
@@ -52,7 +52,7 @@ jobs:
 
   package-and-upload:
     needs: validate
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     strategy:
       matrix:
         python-version: ${{ inputs.python_version == 'ALL' && fromJson('["3.10", "3.11", "3.12", "3.13"]') || fromJson(format('["{0}"]', inputs.python_version)) }}
@@ -106,7 +106,7 @@ jobs:
 
   publish-layer:
     needs: package-and-upload
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     strategy:
       matrix:
         python-version: ${{ inputs.python_version == 'ALL' && fromJson('["3.10", "3.11", "3.12", "3.13"]') || fromJson(format('["{0}"]', inputs.python_version)) }}

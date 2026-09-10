@@ -406,6 +406,46 @@ async def test_full_delegation_routes_to_specialist():
 
 
 @pytest.mark.asyncio
+async def test_full_delegation_delegate_tool_stays_foreground_with_background_tasks():
+    tech_support = Agent(
+        model=MockedModelProvider([{"role": "assistant", "content": [{"text": "Try rebooting your router."}]}]),
+        name="TechSupport",
+        callback_handler=None,
+    )
+    orchestrator = Agent(
+        model=MockedModelProvider(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "toolUse": {
+                                "toolUseId": "call-1",
+                                "name": "TechSupport",
+                                "input": {"input": "My wifi does not work", "_background_execution": True},
+                            }
+                        }
+                    ],
+                }
+            ]
+        ),
+        name="Orchestrator",
+        tools=[tech_support.as_tool(delegate=True)],
+        background_tasks={},
+        callback_handler=None,
+    )
+
+    result = await orchestrator.invoke_async("My wifi does not work")
+
+    tru_stop_reason = result.stop_reason
+    exp_stop_reason = "end_turn"
+    assert tru_stop_reason == exp_stop_reason
+    tru_text = [block["text"] for block in result.message["content"] if "text" in block]
+    exp_text = ["Try rebooting your router."]
+    assert tru_text == exp_text
+
+
+@pytest.mark.asyncio
 async def test_full_delegation_error_recovery():
     err = _mock_sub_agent("failing")
 

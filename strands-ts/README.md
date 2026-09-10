@@ -55,7 +55,7 @@ Strands Agents is a simple yet powerful SDK that takes a model-driven approach t
 
 ### Installation
 
-Ensure you have **[Node.js 20+](https://nodejs.org/)** installed, then:
+Ensure you have **[Node.js 22+](https://nodejs.org/)** installed, then:
 
 ```bash
 npm install @strands-agents/sdk

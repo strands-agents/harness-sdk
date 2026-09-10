@@ -9,6 +9,7 @@ import pytest_asyncio
 
 from strands.experimental.bidi._audio import _BidiAudioProcessor
 from strands.experimental.bidi.io.audio import BidiAudioIO, BidiAudioProcessorConfig, _BidiAudioBuffer
+from strands.experimental.bidi.models import AudioCapable
 from strands.experimental.bidi.types.events import BidiAudioInputEvent, BidiAudioStreamEvent, BidiInterruptionEvent
 
 
@@ -54,30 +55,25 @@ def audio_buffer():
 @pytest.fixture
 def agent():
     mock = unittest.mock.MagicMock()
-    mock.model.config = {
-        "audio": {
-            "input_rate": 24000,
-            "output_rate": 16000,
-            "channels": 2,
-            "format": "test-format",
-            "voice": "test-voice",
-        },
+    mock.model = unittest.mock.MagicMock(spec=AudioCapable)
+    mock.model.get_audio_config.return_value = {
+        "input_rate": 24000,
+        "output_rate": 16000,
+        "channels": 2,
+        "format": "test-format",
     }
     return mock
 
 
 @pytest.fixture
 def aec_agent():
-    # Audio processing requires a supported input rate (16k/32k/48k) and mono.
     mock = unittest.mock.MagicMock()
-    mock.model.config = {
-        "audio": {
-            "input_rate": 16000,
-            "output_rate": 16000,
-            "channels": 1,
-            "format": "pcm",
-            "voice": "test-voice",
-        },
+    mock.model = unittest.mock.MagicMock(spec=AudioCapable)
+    mock.model.get_audio_config.return_value = {
+        "input_rate": 16000,
+        "output_rate": 16000,
+        "channels": 1,
+        "format": "pcm",
     }
     return mock
 
@@ -85,14 +81,12 @@ def aec_agent():
 @pytest.fixture
 def agent_mixed_rates():
     mock = unittest.mock.MagicMock()
-    mock.model.config = {
-        "audio": {
-            "input_rate": 16000,
-            "output_rate": 24000,
-            "channels": 1,
-            "format": "pcm",
-            "voice": "test-voice",
-        },
+    mock.model = unittest.mock.MagicMock(spec=AudioCapable)
+    mock.model.get_audio_config.return_value = {
+        "input_rate": 16000,
+        "output_rate": 24000,
+        "channels": 1,
+        "format": "pcm",
     }
     return mock
 
@@ -270,6 +264,20 @@ def test_bidi_audio_io_output_configs(pyaudio_module, py_audio, audio_output):
     )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("direction", ["input", "output"])
+async def test_bidi_audio_io_start_rejects_model_without_audio_capability(pyaudio_module, direction):
+    agent = unittest.mock.MagicMock()
+    agent.model = object()
+    audio_io = BidiAudioIO()
+    io = audio_io.input() if direction == "input" else audio_io.output()
+
+    with pytest.raises(TypeError, match="BidiAudioIO requires a model that implements AudioCapable"):
+        await io.start(agent)
+
+    pyaudio_module.PyAudio.assert_not_called()
+
+
 # ===========================================================================
 # Audio processing (echo cancellation, noise suppression, AGC)
 # ===========================================================================
@@ -422,7 +430,7 @@ def test_audio_config_is_keyword_only():
 
 
 # ---------------------------------------------------------------------------
-# _BidiAudioProcessor startup — sample rate gate and native processor construction
+# _BidiAudioProcessor startup and native processor construction
 # ---------------------------------------------------------------------------
 
 
@@ -446,17 +454,13 @@ def test_processor_construction_builds_audio_processor_with_config():
     )
 
 
-@pytest.mark.parametrize("rate", [16000, 32000, 48000])
-def test_processor_construction_accepts_supported_rates(rate):
-    processor_patch, _, _ = _fake_audio_processor()
+@pytest.mark.parametrize("rate", [8000, 16000, 24000, 44100, 48000, 96000, 384000])
+def test_processor_construction_passes_input_rate_to_audio_processor(rate):
+    processor_patch, processor_class, _ = _fake_audio_processor()
     with processor_patch:
         _create_processor(input_rate=rate, output_rate=rate)
 
-
-@pytest.mark.parametrize("rate", [8000, 24000, 44100])
-def test_processor_construction_rejects_unsupported_rates(rate):
-    with pytest.raises(ValueError, match="audio processing supports sample rates"):
-        _create_processor(input_rate=rate, output_rate=rate)
+    assert processor_class.call_args.kwargs["sample_rate"] == rate
 
 
 # ---------------------------------------------------------------------------

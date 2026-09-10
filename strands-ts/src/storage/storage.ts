@@ -9,6 +9,15 @@ import { StorageError } from '../errors.js'
 export const NAMESPACED: unique symbol = Symbol.for('strands.storage.namespaced')
 
 /**
+ * Symbol marking storage backends whose data does not survive process restarts.
+ * Propagated through {@link "namespace"} so namespaced views of ephemeral storage
+ * remain detectable.
+ *
+ * @internal
+ */
+export const EPHEMERAL: unique symbol = Symbol.for('strands.storage.ephemeral')
+
+/**
  * Validates and normalizes a storage key for path-based backends: collapses
  * runs of `/`, strips leading and trailing `/`, and rejects empty keys and
  * any `..` segment.
@@ -191,6 +200,9 @@ export function namespace(storage: Storage, prefix: string): Storage {
     list: (query) => storage.list(`${p}${query}`).then((keys) => keys.map((key) => key.slice(p.length))),
     namespace: (sub) => namespace(storage, `${p}${sub}`),
     [NAMESPACED]: true,
+  }
+  if (EPHEMERAL in storage) {
+    ;(view as unknown as Record<symbol, boolean>)[EPHEMERAL] = true
   }
   if (storage.search) {
     view.search = (query: string): Promise<StorageSearchResult[]> =>

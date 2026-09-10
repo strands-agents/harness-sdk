@@ -26,7 +26,7 @@ permissions:
 jobs:
   flag-editorial-fields:
     name: Flag editorial catalog fields
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     steps:
       # The review script parses entry YAML with js-yaml, which github-script
       # doesn't bundle. Installed from the registry into the (empty) workspace

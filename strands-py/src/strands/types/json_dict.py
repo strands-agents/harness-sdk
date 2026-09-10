@@ -2,6 +2,7 @@
 
 import copy
 import json
+import threading
 from typing import Any
 
 
@@ -14,6 +15,8 @@ class JSONSerializableDict:
 
     def __init__(self, initial_state: dict[str, Any] | None = None):
         """Initialize JSONSerializableDict."""
+        # Background tasks persist snapshots from another thread while the agent loop reads.
+        self._lock = threading.RLock()
         self._data: dict[str, Any]
         self._version: int = 0
         if initial_state:
@@ -34,8 +37,10 @@ class JSONSerializableDict:
         """
         self._validate_key(key)
         self._validate_json_serializable(value)
-        self._data[key] = copy.deepcopy(value)
-        self._version += 1
+        stored = copy.deepcopy(value)
+        with self._lock:
+            self._data[key] = stored
+            self._version += 1
 
     def get(self, key: str | None = None) -> Any:
         """Get a value or entire data.
@@ -46,9 +51,9 @@ class JSONSerializableDict:
         Returns:
             The stored value, entire data dict, or None if not found
         """
-        if key is None:
-            return copy.deepcopy(self._data)
-        else:
+        with self._lock:
+            if key is None:
+                return copy.deepcopy(self._data)
             return copy.deepcopy(self._data.get(key))
 
     def delete(self, key: str) -> None:
@@ -58,8 +63,9 @@ class JSONSerializableDict:
             key: The key to delete
         """
         self._validate_key(key)
-        self._data.pop(key, None)
-        self._version += 1
+        with self._lock:
+            self._data.pop(key, None)
+            self._version += 1
 
     def _get_version(self) -> int:
         """Get the current version number of the store.
@@ -71,7 +77,18 @@ class JSONSerializableDict:
         Returns:
             The current version number.
         """
-        return self._version
+        with self._lock:
+            return self._version
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Exclude the lock so the store stays picklable and deep-copyable."""
+        with self._lock:
+            return {name: value for name, value in self.__dict__.items() if name != "_lock"}
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore the store with a fresh lock."""
+        self.__dict__.update(state)
+        self._lock = threading.RLock()
 
     def _validate_key(self, key: str) -> None:
         """Validate that a key is valid.

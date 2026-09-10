@@ -33,6 +33,7 @@ from pydantic import BaseModel
 
 from .. import _identifier
 from .._async import run_async
+from ..background_tasks import BackgroundTasksConfig
 from ..event_loop._retry import ModelRetryStrategy
 from ..event_loop.event_loop import INITIAL_DELAY, MAX_ATTEMPTS, MAX_DELAY, event_loop_cycle
 from ..experimental.checkpoint import Checkpoint, CheckpointPosition
@@ -46,6 +47,8 @@ from ..types._snapshot import (
 )
 
 if TYPE_CHECKING:
+    from .._context_manager.context_manager import ContextManager
+    from ..background_tasks._background_tasks import _BackgroundTasks
     from ..tools import ToolProvider
 from .._middleware import MiddlewareRegistry
 from .._middleware.stages import AgentStreamContext, AgentStreamStage
@@ -99,6 +102,7 @@ from ..types.traces import AttributeValue
 from . import _continuation
 from ._agent_as_tool import _AgentAsTool
 from ._concurrency import _ConcurrencyController
+from .agent_metadata import AgentMetadata
 from .agent_result import AgentResult
 from .base import AgentBase
 from .conversation_manager import (
@@ -158,6 +162,9 @@ ContextManagerStrategy = Literal["auto", "agentic"]
 - ``"auto"``: SummarizingConversationManager with proactive compression + ContextOffloader.
 - ``"agentic"``: (Experimental) Lets the model drive context management via injected tools.
   This mode may change in future versions.
+- ``ContextManager`` instance: Strategy-driven offloading with overflow recovery.
+- ``False``: Explicitly disable all context management.
+- ``None``: Uses the default (same as ``"auto"``).
 """
 
 _CONTEXT_MANAGER_MAX_RESULT_TOKENS = 1_500
@@ -223,7 +230,7 @@ class Agent(AgentBase, LocalAgent):
         name: str | None = None,
         description: str | None = None,
         state: AgentState | dict | None = None,
-        context_manager: ContextManagerStrategy | None = None,
+        context_manager: "ContextManagerStrategy | ContextManager | Literal[False] | None" = None,
         plugins: list[Plugin] | None = None,
         hooks: list[HookProvider | HookCallback] | None = None,
         interventions: list[InterventionHandler] | None = None,
@@ -236,6 +243,7 @@ class Agent(AgentBase, LocalAgent):
         checkpointing: bool = False,
         sandbox: Sandbox | None = None,
         storage: Storage | None = None,
+        background_tasks: bool | BackgroundTasksConfig | None = None,
     ):
         """Initialize the Agent with the specified configuration.
 
@@ -344,6 +352,10 @@ class Agent(AgentBase, LocalAgent):
                 auto-namespaces under its own prefix (e.g., ``offloader/``) to avoid key
                 collisions. Storage specified directly on a subsystem always takes
                 precedence over this agent-level default. Defaults to None.
+            background_tasks: Background tool execution configuration. Pass ``True`` or a
+                :class:`~strands.background_tasks.BackgroundTasksConfig` to let the model run
+                tools in the background and receive their results when they finish. Defaults to
+                None (disabled).
 
         Raises:
             ValueError: If agent id contains path separators.
@@ -383,7 +395,7 @@ class Agent(AgentBase, LocalAgent):
         else:
             self.callback_handler = callback_handler
 
-        if self.model.stateful and (conversation_manager is not None or context_manager is not None):
+        if self.model.stateful and (conversation_manager is not None or context_manager not in (None, False)):
             raise ValueError(
                 "context_manager and conversation_manager cannot be used with a stateful model. "
                 "The model manages conversation state server-side."
@@ -536,6 +548,12 @@ class Agent(AgentBase, LocalAgent):
 
         self.tool_executor = tool_executor or ConcurrentToolExecutor()
 
+        self._background_tasks: _BackgroundTasks | None = None
+        if background_tasks is not None and background_tasks is not False:
+            from ..background_tasks._background_tasks import _BackgroundTasks as _BackgroundTasksPlugin
+
+            self._background_tasks = _BackgroundTasksPlugin({} if background_tasks is True else background_tasks)
+
         if hooks:
             for hook in hooks:
                 if isinstance(hook, HookProvider):
@@ -558,6 +576,9 @@ class Agent(AgentBase, LocalAgent):
             for plugin in plugins_to_register:
                 self._plugin_registry.add_and_init(plugin)
 
+        if self._background_tasks is not None:
+            self._plugin_registry.add_and_init(self._background_tasks)
+
         has_agent_delegation = any(plugin.name == "strands:agent-delegation" for plugin in (plugins_to_register or []))
         if not has_agent_delegation:
             from ._agent_delegation import AgentDelegation
@@ -579,13 +600,15 @@ class Agent(AgentBase, LocalAgent):
 
     @staticmethod
     def _resolve_context_manager(
-        context_manager: "ContextManagerStrategy | None",
+        context_manager: "ContextManagerStrategy | ContextManager | Literal[False] | None",
         conversation_manager: ConversationManager | None,
         plugins: list[Plugin] | None,
     ) -> tuple[ConversationManager | None, list[Plugin] | None]:
         """Resolve context_manager facade into concrete conversation_manager and plugins.
 
         When context_manager is None, returns (None, None) and no resolution occurs.
+        When False, uses NullConversationManager (or user-provided).
+        When a ContextManager instance, uses NullConversationManager and registers the plugin.
         When "auto", constructs a SummarizingConversationManager with proactive compression
         plus a ContextOffloader, using benchmark-validated defaults.
         When "agentic", constructs a SummarizingConversationManager *without* proactive
@@ -594,7 +617,7 @@ class Agent(AgentBase, LocalAgent):
         offload threshold. In both cases a user-provided conversation_manager / offloader wins.
 
         Args:
-            context_manager: The facade value ("auto", "agentic", or None).
+            context_manager: The facade value ("auto", "agentic", ContextManager, False, or None).
             conversation_manager: User-provided conversation manager, takes precedence if set.
             plugins: User-provided plugin list; offloader is appended if not already present.
 
@@ -608,8 +631,18 @@ class Agent(AgentBase, LocalAgent):
         if context_manager is None:
             return None, None
 
+        from .._context_manager.context_manager import ContextManager as _ContextManager
         from ..vended_plugins.context_offloader import ContextOffloader
-        from .conversation_manager import SummarizingConversationManager
+        from .conversation_manager import NullConversationManager, SummarizingConversationManager
+
+        if context_manager is False:
+            resolved_cm = conversation_manager if conversation_manager is not None else NullConversationManager()
+            return resolved_cm, list(plugins) if plugins else None
+
+        if isinstance(context_manager, _ContextManager):
+            resolved_plugins = list(plugins) if plugins else []
+            resolved_plugins.append(context_manager)
+            return NullConversationManager(), resolved_plugins
 
         if context_manager == "auto":
             offloader_max_result_tokens = _CONTEXT_MANAGER_MAX_RESULT_TOKENS
@@ -626,7 +659,7 @@ class Agent(AgentBase, LocalAgent):
         else:
             raise ValueError(
                 f"Unsupported context_manager value: {context_manager!r}. "
-                f"Supported values: {get_args(ContextManagerStrategy)}"
+                f"Supported values: {get_args(ContextManagerStrategy)}, ContextManager instance, or False"
             )
 
         resolved_plugins = list(plugins) if plugins else []
@@ -739,6 +772,12 @@ class Agent(AgentBase, LocalAgent):
         construction time (unique per agent instance but not persisted across restarts).
         """
         return self._session_id
+
+    @property
+    def _metadata(self) -> AgentMetadata:
+        """Build the agent metadata view passed to the model on stream()."""
+        session_id = getattr(self._session_manager, "session_id", None) or None
+        return AgentMetadata(session_id=session_id)
 
     @property
     def system_prompt(self) -> str | None:
@@ -1865,6 +1904,7 @@ class Agent(AgentBase, LocalAgent):
             model_id=model_id,
             tools=self.tool_names,
             system_prompt=self.system_prompt,
+            system_prompt_content=self.system_prompt_content,
             custom_trace_attributes=self.trace_attributes,
             tools_config=self.tool_registry.get_all_tools_config(),
         )
@@ -2018,7 +2058,10 @@ class Agent(AgentBase, LocalAgent):
 
         Raises:
             SnapshotException: If snapshot.schema_version is not "1.0".
+            RuntimeError: If background tasks are still tracked.
         """
+        if self._background_tasks is not None:
+            self._background_tasks.assert_can_load_snapshot()
         snapshot.validate()
 
         data = snapshot.data
@@ -2035,6 +2078,8 @@ class Agent(AgentBase, LocalAgent):
             self.system_prompt = copy.deepcopy(data["system_prompt"])
         if "model_state" in data:
             self._model_state = copy.deepcopy(data["model_state"])
+        if self._background_tasks is not None and "state" in data:
+            self._background_tasks.load_state()
 
     def _redact_user_content(self, content: list[ContentBlock], redact_message: str) -> list[ContentBlock]:
         """Redact user content preserving toolResult blocks.

@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   validate-pr-title:
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     permissions:
       pull-requests: read
     steps:

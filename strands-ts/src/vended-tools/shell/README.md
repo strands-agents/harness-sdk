@@ -53,6 +53,7 @@ Without a bound sandbox, the tool reads `context.agent.sandbox` at call time.
 interface ShellOutput {
   output: string // Standard output (stdout)
   error: string // Standard error (stderr) - empty string if no errors
+  exit_code: number // Exit code of the command - non-zero means it failed
 }
 ```
 

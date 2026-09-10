@@ -395,7 +395,11 @@ class FunctionToolMetadata:
             raise ValueError(f"Validation failed for input parameters: {error_msg}") from e
 
     def inject_special_parameters(
-        self, validated_input: dict[str, Any], tool_use: ToolUse, invocation_state: dict[str, Any]
+        self,
+        validated_input: dict[str, Any],
+        tool_use: ToolUse,
+        invocation_state: dict[str, Any],
+        tool_context: ToolContext | None = None,
     ) -> None:
         """Inject special framework-provided parameters into the validated input.
 
@@ -407,17 +411,20 @@ class FunctionToolMetadata:
             tool_use: The tool use request containing tool invocation details.
             invocation_state: Caller-provided kwargs that were passed to the agent when it was invoked (agent(),
                               agent.invoke_async(), etc.).
+            tool_context: Framework-supplied context to inject as-is (e.g. a background task's context);
+                          when omitted, one is derived from ``invocation_state``.
         """
         if self._context_param and self._context_param in self.signature.parameters:
-            agent = invocation_state["agent"]
-            tool_context = ToolContext(
-                tool_use=tool_use,
-                agent=agent,
-                invocation_state=invocation_state,
-                # A BidiAgent has no cancellation signal; fall back to an inert event so tool
-                # authors never have to guard the field.
-                cancel_signal=getattr(agent, "cancel_signal", threading.Event()),
-            )
+            if tool_context is None:
+                agent = invocation_state["agent"]
+                tool_context = ToolContext(
+                    tool_use=tool_use,
+                    agent=agent,
+                    invocation_state=invocation_state,
+                    # A BidiAgent has no cancellation signal; fall back to an inert event so tool
+                    # authors never have to guard the field.
+                    cancel_signal=getattr(agent, "cancel_signal", threading.Event()),
+                )
             validated_input[self._context_param] = tool_context
 
         # Inject agent if requested (backward compatibility)
@@ -617,13 +624,14 @@ class DecoratedFunctionTool(AgentTool, Generic[P, R]):
         # This is a tool use call - process accordingly
         tool_use_id = tool_use.get("toolUseId", "unknown")
         tool_input: dict[str, Any] = tool_use.get("input", {})
+        tool_context = cast(ToolContext | None, kwargs.get("_tool_context"))
 
         try:
             # Validate input against the Pydantic model
             validated_input = self._metadata.validate_input(tool_input)
 
             # Inject special framework-provided parameters
-            self._metadata.inject_special_parameters(validated_input, tool_use, invocation_state)
+            self._metadata.inject_special_parameters(validated_input, tool_use, invocation_state, tool_context)
 
             # Note: "Too few arguments" expected for the _tool_func calls, hence the type ignore
 

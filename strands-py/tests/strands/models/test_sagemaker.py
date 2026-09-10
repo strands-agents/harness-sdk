@@ -9,6 +9,7 @@ import boto3
 import pytest
 from botocore.config import Config as BotocoreConfig
 
+from strands.models.model import CacheConfig
 from strands.models.sagemaker import (
     FunctionCall,
     SageMakerAIModel,
@@ -1016,3 +1017,65 @@ class TestSageMakerReasoningContent:
         ]
         assert len(reasoning_deltas) == 1
         assert reasoning_deltas[0]["contentBlockDelta"]["delta"]["reasoningContent"]["text"] == "Thinking..."
+
+
+def test_cache_config_round_trips(boto_session, endpoint_config, payload_config, captured_warnings):
+    """cache_config is a valid endpoint_config field and survives get_config/update_config unchanged."""
+    cache_config = CacheConfig()
+    model = SageMakerAIModel(
+        boto_session=boto_session,
+        endpoint_config={**endpoint_config, "cache_config": cache_config},
+        payload_config=payload_config,
+    )
+
+    assert model.get_config()["cache_config"] is cache_config
+
+    updated = CacheConfig()
+    model.update_config(cache_config=updated)
+    assert model.get_config()["cache_config"] is updated
+
+    assert not any("Invalid configuration parameters" in str(warning.message) for warning in captured_warnings)
+
+
+def test_cache_config_default_is_silent_and_not_routed(
+    boto_session, endpoint_config, payload_config, messages, captured_warnings
+):
+    """A CacheConfig whose fields are all default warns about nothing and never reaches the request."""
+    model = SageMakerAIModel(
+        boto_session=boto_session,
+        endpoint_config={**endpoint_config, "cache_config": CacheConfig(strategy="auto")},
+        payload_config=payload_config,
+    )
+
+    request = model.format_request(messages)
+
+    assert "cache_config" not in request
+    assert "cache_config" not in json.loads(request["Body"])
+    assert not any("have no effect" in str(warning.message) for warning in captured_warnings)
+
+
+@pytest.mark.parametrize(
+    ("cache_config", "field"),
+    [
+        (CacheConfig(strategy="anthropic"), "strategy"),
+        (CacheConfig(ttl="1h"), "ttl"),
+        (CacheConfig(system_prompt_ttl="1h"), "system_prompt_ttl"),
+        (CacheConfig(cache_key="tenant-42"), "cache_key"),
+        (CacheConfig(tools_ttl=True), "tools_ttl"),
+    ],
+)
+def test_cache_config_unsupported_field_warns_and_is_not_routed(
+    boto_session, endpoint_config, payload_config, messages, cache_config, field
+):
+    """SageMaker honors no cache field: a non-default field warns (naming the provider) and never reaches request."""
+    model = SageMakerAIModel(
+        boto_session=boto_session,
+        endpoint_config={**endpoint_config, "cache_config": cache_config},
+        payload_config=payload_config,
+    )
+
+    with pytest.warns(UserWarning, match=rf"fields \['{field}'\] have no effect on SageMaker"):
+        request = model.format_request(messages)
+
+    assert "cache_config" not in request
+    assert "cache_config" not in json.loads(request["Body"])

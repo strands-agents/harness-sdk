@@ -216,14 +216,10 @@ class XModel(Model):
 
 ## MCP Tasks (Experimental)
 
-The SDK supports MCP task-augmented execution for long-running tools. This feature is experimental and aligns with the MCP specification 2025-11-25.
+The SDK supports MCP task-augmented execution for long-running tools. This feature is experimental and subject to change. Which task protocol runs depends on the installed `mcp` line:
 
-### Overview
-
-Task-augmented execution allows tools to run asynchronously with a workflow:
-1. Create task via `call_tool_as_task`
-2. Poll for completion via `poll_task`
-3. Get result via `get_task_result`
+- **mcp 2.x**: finalized SEP-2663 Tasks (protocol `2026-07-28`) — `tools/call` returns a direct result or a task handle, followed by `tasks/get` / `tasks/update` / `tasks/cancel`.
+- **mcp 1.x**: the legacy 2025-11-25 flow — `call_tool_as_task`, `poll_task`, `get_task_result`.
 
 ### Configuration
 
@@ -233,38 +229,34 @@ Enable tasks by passing a `TasksConfig` to `MCPClient`:
 from datetime import timedelta
 from strands.tools.mcp import MCPClient, TasksConfig
 
-# Enable with defaults (ttl=1min, poll_timeout=5min)
+# Enable with defaults
 client = MCPClient(transport, tasks_config={})
 
 # Or configure explicitly
 client = MCPClient(
     transport,
     tasks_config=TasksConfig(
-        ttl=timedelta(minutes=2),           # Task time-to-live
-        poll_timeout=timedelta(minutes=10),  # Polling timeout
+        poll_timeout=timedelta(minutes=10),      # Overall task deadline (default 5min)
+        request_timeout=timedelta(minutes=1),    # Per lifecycle request (default 1min)
+        poll_interval=timedelta(seconds=1),      # Fallback when the server omits pollIntervalMs
+        ttl=timedelta(minutes=2),                # Legacy 1.x task time-to-live (default 1min)
     ),
 )
 ```
-
-### Tool Support Levels
-
-MCP tools declare their task support via `execution.taskSupport`:
-- `TASK_REQUIRED`: Tool must use task-augmented execution
-- `TASK_OPTIONAL`: Tool can use tasks if client opts in
-- `TASK_FORBIDDEN`: Tool does not support tasks (default)
 
 ### Decision Logic
 
 Task-augmented execution is used when ALL conditions are met:
 1. Client opts in via `tasks_config` (not None)
-2. Server advertises task capability (`tasks.requests.tools.call`)
-3. Tool's `taskSupport` is `required` or `optional`
+2. Server advertises task capability (on 1.x, `tasks.requests.tools.call`; on 2.x, the `io.modelcontextprotocol/tasks` extension)
+3. On the mcp 1.x line only: tool's `execution.taskSupport` is `required` or `optional` (the finalized extension has no tool-level setting)
 
 ### Key Files
 
-- `src/strands/tools/mcp/mcp_tasks.py` - `TasksConfig` and defaults
-- `src/strands/tools/mcp/mcp_client.py` - Task execution logic (`_call_tool_as_task_and_poll_async`)
-- `tests/strands/tools/mcp/test_mcp_client_tasks.py` - Unit tests
+- `src/strands/tools/mcp/mcp_tasks.py` - `TasksConfig`, task result models, and defaults
+- `src/strands/tools/mcp/mcp_client.py` - Task execution logic (2.x: `_call_tool_with_task_and_poll_async`; 1.x: `_call_tool_as_task_and_poll_async`) and the public task lifecycle methods (`submit_tool_*`, `get_task_*`, `update_task_*`, `cancel_task_*`)
+- `tests/strands/tools/mcp/test_mcp_client_tasks.py` - Unit tests (1.x flow; runs in the MCP 1.x Compat CI job)
+- `tests/strands/tools/mcp/test_mcp_client_tasks_v2.py` - Unit tests (2.x flow)
 - `tests_integ/mcp/test_mcp_client_tasks.py` - Integration tests
 - `tests_integ/mcp/task_echo_server.py` - Test server with task support
 
@@ -355,4 +347,5 @@ Comments are to-the-point, state only what cannot be inferred from the code, and
   - [TESTING.md](./docs/TESTING.md) - Testing reference
   - [HOOKS.md](./docs/HOOKS.md) - Hooks system guide
   - [MCP_CLIENT_ARCHITECTURE.md](./docs/MCP_CLIENT_ARCHITECTURE.md) - MCP threading design
+  - [MCP_VERSIONS.md](./docs/MCP_VERSIONS.md) - MCP 1.x/2.x support and migration
 - [PR.md](../team/PR.md) - PR description guidelines

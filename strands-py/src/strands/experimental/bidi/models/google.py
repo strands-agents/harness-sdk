@@ -23,14 +23,13 @@ from typing import Any, cast
 from google import genai
 from google.genai import types as genai_types
 from google.genai.types import LiveConnectConfigOrDict, LiveServerContent, LiveServerMessage, UsageMetadata
+from typing_extensions import Unpack, override
 
 from ....types._events import ToolResultEvent, ToolUseStreamEvent
 from ....types.content import Messages
 from ....types.tools import ToolResult, ToolSpec, ToolUse
 from .._async import stop_all
 from ..types.events import (
-    AudioChannel,
-    AudioSampleRate,
     BidiAudioInputEvent,
     BidiAudioStreamEvent,
     BidiConnectionStartEvent,
@@ -41,19 +40,22 @@ from ..types.events import (
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
     BidiTextInputEvent,
+    BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
     ModalityUsage,
 )
-from ..types.model import AudioConfig, BidiConnectionConfig
-from .model import BidiModel, BidiModelTimeoutError
+from .configs import (
+    AudioConfig,
+    BidiConnectionConfig,
+    BidiModelConfig,
+    _merge_config,
+    _validate_audio_config,
+    _validate_bidi_config,
+)
+from .model import AudioCapable, BidiModel, BidiModelTimeoutError
 
 logger = logging.getLogger(__name__)
-
-# Audio format constants
-GEMINI_INPUT_SAMPLE_RATE: AudioSampleRate = 16000
-GEMINI_OUTPUT_SAMPLE_RATE: AudioSampleRate = 24000
-GEMINI_CHANNELS: AudioChannel = 1
 
 
 @dataclass
@@ -67,9 +69,11 @@ class _TurnState:
 
     response_open: bool = False
     response_id: str | None = None
+    input_transcript: str = ""
+    output_transcript: str = ""
 
 
-class GoogleGeminiLiveModel(BidiModel):
+class GoogleGeminiLiveModel(BidiModel, AudioCapable):
     """Google Gemini Live implementation using the official Google GenAI SDK.
 
     Combines model configuration and connection state in a single class.
@@ -79,44 +83,45 @@ class GoogleGeminiLiveModel(BidiModel):
 
     def __init__(
         self,
-        model_id: str = "gemini-2.5-flash-native-audio-preview-09-2025",
-        provider_config: dict[str, Any] | None = None,
-        client_config: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ):
+        *,
+        client_args: dict[str, Any] | None = None,
+        audio: AudioConfig | None = None,
+        **model_config: Unpack[BidiModelConfig],
+    ) -> None:
         """Initialize the Google Gemini Live bidirectional model.
 
         Args:
-            model_id: Model identifier (default: gemini-2.5-flash-native-audio-preview-09-2025)
-            provider_config: Model behavior (audio, inference)
-            client_config: Authentication (api_key, http_options)
-            **kwargs: Reserved for future parameters.
-
+            client_args: Arguments for the underlying Google GenAI client.
+            audio: Audio configuration.
+            **model_config: Model configuration.
         """
-        # Store model ID
-        self.model_id = model_id
+        _validate_bidi_config(model_config)
+        _validate_audio_config(audio)
+        self._config = BidiModelConfig(**model_config)
+        self._config.setdefault("model_id", "gemini-2.5-flash-native-audio-preview-09-2025")
 
         # Gemini caps a single connection at ~10 min; reconnect before that, resuming the same
-        # session via its handle. The GoAway message remains the reactive backstop. Tunable via
-        # provider_config["connection"], e.g. to lower restart_after_s for tests.
-        default_connection: BidiConnectionConfig = {"restart_after_s": 540}
-        self.connection_config = cast(
-            BidiConnectionConfig, {**default_connection, **(provider_config or {}).get("connection", {})}
+        # session via its handle. The GoAway message remains the reactive backstop.
+        self._config["connection"] = BidiConnectionConfig(
+            **{"restart_after_s": 540, **self._config.get("connection", {})}
         )
         # Gemini reports per-response token deltas, not cumulative session totals.
         self.usage_is_cumulative = False
 
-        # Resolve client config with defaults
-        self._client_config = self._resolve_client_config(client_config or {})
+        self._audio_config = AudioConfig(
+            **{
+                "input_rate": 16000,
+                "output_rate": 24000,
+                "channels": 1,
+                "format": "pcm",
+                **(audio or {}),
+            }
+        )
 
-        # Resolve provider config with defaults
-        self.config = self._resolve_provider_config(provider_config or {})
+        self._config["params"] = dict(self._config.get("params") or {})
 
-        # Store API key for later use
-        self.api_key = self._client_config.get("api_key")
-
-        # Create Gemini client
-        self._client = genai.Client(**self._client_config)
+        self.client_args = dict(client_args or {})
+        self._client = genai.Client(**self.client_args)
 
         # Connection state (initialized in start())
         self._live_session: Any = None
@@ -124,46 +129,25 @@ class GoogleGeminiLiveModel(BidiModel):
         self._live_session_handle: str | None = None
         self._connection_id: str | None = None
 
-    def _resolve_client_config(self, config: dict[str, Any]) -> dict[str, Any]:
-        """Resolve client config.
+    @override
+    def update_config(self, **model_config: Unpack[BidiModelConfig]) -> None:  # type: ignore[override]
+        """Update the model configuration with the provided arguments.
 
-        The google-genai SDK uses the correct default API version.
-        Users requiring v1alpha for 2.5-specific features (affective dialog,
-        proactive audio) can pass client_config={"http_options": {"api_version": "v1alpha"}}.
+        Args:
+            **model_config: Configuration overrides.
         """
-        return config.copy()
+        _validate_bidi_config(model_config)
+        self._config.update(model_config)
 
-    def _resolve_provider_config(self, config: dict[str, Any]) -> dict[str, Any]:
-        """Merge user config with defaults (user takes precedence)."""
-        default_audio: AudioConfig = {
-            "input_rate": GEMINI_INPUT_SAMPLE_RATE,
-            "output_rate": GEMINI_OUTPUT_SAMPLE_RATE,
-            "channels": GEMINI_CHANNELS,
-            "format": "pcm",
-        }
-        default_inference = {
-            "response_modalities": ["AUDIO"],
-            "outputAudioTranscription": {},
-            "inputAudioTranscription": {},
-            # Sliding-window context compression removes the ~15-min audio-only session cap, so a
-            # session resumed across proactive reconnects can continue indefinitely rather than
-            # dying at the cap (gemini_session.md). Override via provider_config["inference"].
-            "context_window_compression": genai_types.ContextWindowCompressionConfig(
-                sliding_window=genai_types.SlidingWindow()
-            ),
-        }
+    @override
+    def get_config(self) -> BidiModelConfig:
+        """Return a copy of the model configuration."""
+        return self._config.copy()
 
-        resolved = {
-            "audio": {
-                **default_audio,
-                **config.get("audio", {}),
-            },
-            "inference": {
-                **default_inference,
-                **config.get("inference", {}),
-            },
-        }
-        return resolved
+    @override
+    def get_audio_config(self) -> AudioConfig:
+        """Get the resolved audio configuration."""
+        return self._audio_config
 
     async def start(
         self,
@@ -203,7 +187,7 @@ class GoogleGeminiLiveModel(BidiModel):
 
         # Create the context manager and session
         self._live_session_context_manager = self._client.aio.live.connect(
-            model=self.model_id, config=cast(LiveConnectConfigOrDict, live_config)
+            model=self._config["model_id"], config=cast(LiveConnectConfigOrDict, live_config)
         )
         self._live_session = await self._live_session_context_manager.__aenter__()
 
@@ -241,7 +225,7 @@ class GoogleGeminiLiveModel(BidiModel):
         if not self._connection_id:
             raise RuntimeError("model not started | call start before receiving")
 
-        yield BidiConnectionStartEvent(connection_id=self._connection_id, model=self.model_id)
+        yield BidiConnectionStartEvent(connection_id=self._connection_id, model=self._config["model_id"])
 
         # Bind session and turn state to this reader so that after a reconnect swaps
         # self._live_session, a still-draining reader keeps its own closing session and turn state
@@ -291,19 +275,26 @@ class GoogleGeminiLiveModel(BidiModel):
                 self._live_session_handle = resumption_update.new_handle
                 logger.debug("session_handle=<%s> | updating gemini session handle", self._live_session_handle)
 
-        if message.server_content:
-            events.extend(self._convert_server_content(message.server_content, has_audio=bool(message.data)))
+        audio_data = message.data
 
-        # Handle audio output using SDK's built-in data property
-        if message.data:
+        if message.server_content:
+            events.extend(
+                self._convert_server_content(
+                    message.server_content,
+                    has_audio=bool(audio_data),
+                    turn_state=turn_state,
+                )
+            )
+
+        if audio_data:
             # Convert bytes to base64 string for JSON serializability
-            audio_b64 = base64.b64encode(message.data).decode("utf-8")
+            audio_b64 = base64.b64encode(audio_data).decode("utf-8")
             events.append(
                 BidiAudioStreamEvent(
                     audio=audio_b64,
                     format="pcm",
-                    sample_rate=cast(AudioSampleRate, self.config["audio"]["output_rate"]),
-                    channels=cast(AudioChannel, self.config["audio"]["channels"]),
+                    sample_rate=self._audio_config["output_rate"],
+                    channels=self._audio_config["channels"],
                 )
             )
 
@@ -371,7 +362,13 @@ class GoogleGeminiLiveModel(BidiModel):
 
         if interrupted:
             turn_state.response_open = False
-        elif turn_complete and turn_state.response_open:
+            turn_state.output_transcript = ""
+        if turn_complete and turn_state.input_transcript:
+            wrapped.append(BidiTranscriptCompleteEvent(turn_state.input_transcript, "user"))
+            turn_state.input_transcript = ""
+        if turn_complete and turn_state.response_open:
+            if turn_state.output_transcript:
+                wrapped.append(BidiTranscriptCompleteEvent(turn_state.output_transcript, "assistant"))
             wrapped.append(
                 BidiResponseCompleteEvent(
                     response_id=turn_state.response_id or str(uuid.uuid4()), stop_reason="complete"
@@ -379,16 +376,22 @@ class GoogleGeminiLiveModel(BidiModel):
             )
             turn_state.response_open = False
             turn_state.response_id = None
+            turn_state.output_transcript = ""
 
         return wrapped
 
-    def _convert_server_content(self, server_content: LiveServerContent, has_audio: bool) -> list[BidiOutputEvent]:
+    def _convert_server_content(
+        self,
+        server_content: LiveServerContent,
+        has_audio: bool,
+        turn_state: _TurnState,
+    ) -> list[BidiOutputEvent]:
         """Convert the server content of a Gemini Live message.
 
         Args:
             server_content: Server content to convert.
-            has_audio: Whether the enclosing message carries audio output. Text from `model_turn` is
-                skipped when it does, since the two represent the same response in different modalities.
+            has_audio: Whether the enclosing message carries audio output.
+            turn_state: Per-reader transcript and response state.
 
         Returns:
             List of events derived from the server content.
@@ -398,48 +401,30 @@ class GoogleGeminiLiveModel(BidiModel):
         if server_content.interrupted:
             events.append(BidiInterruptionEvent(reason="user_speech"))
 
-        # Transcriptions arrive independently of other fields and of each other
         input_transcript = server_content.input_transcription
         if input_transcript and input_transcript.text:
-            logger.debug("text_length=<%d> | gemini input transcription detected", len(input_transcript.text))
-            events.append(
-                BidiTranscriptStreamEvent(
-                    delta={"text": input_transcript.text},
-                    text=input_transcript.text,
-                    role="user",
-                    # TODO: https://github.com/googleapis/python-genai/issues/1504
-                    is_final=bool(input_transcript.finished),
-                    current_transcript=input_transcript.text,
-                )
-            )
+            text = input_transcript.text
+            turn_state.input_transcript += text
+            logger.debug("text_length=<%d> | gemini input transcription detected", len(text))
+            events.append(BidiTranscriptStreamEvent(delta=text, role="user"))
 
         output_transcript = server_content.output_transcription
         if output_transcript and output_transcript.text:
-            logger.debug("text_length=<%d> | gemini output transcription detected", len(output_transcript.text))
-            events.append(
-                BidiTranscriptStreamEvent(
-                    delta={"text": output_transcript.text},
-                    text=output_transcript.text,
-                    role="assistant",
-                    # TODO: https://github.com/googleapis/python-genai/issues/1504
-                    is_final=bool(output_transcript.finished),
-                    current_transcript=output_transcript.text,
-                )
-            )
+            text = output_transcript.text
+            turn_state.output_transcript += text
+            logger.debug("text_length=<%d> | gemini output transcription detected", len(text))
+            events.append(BidiTranscriptStreamEvent(delta=text, role="assistant"))
 
-        # Reading model_turn parts directly avoids the mixed-content warning raised by message.data
         if not has_audio and server_content.model_turn and server_content.model_turn.parts:
             # Concatenate all text parts (Gemini may send multiple parts)
             text_parts = [part.text for part in server_content.model_turn.parts if part.text]
             if text_parts:
                 full_text = " ".join(text_parts)
+                turn_state.output_transcript += full_text
                 events.append(
                     BidiTranscriptStreamEvent(
-                        delta={"text": full_text},
-                        text=full_text,
+                        delta=full_text,
                         role="assistant",
-                        is_final=True,
-                        current_transcript=full_text,
                     )
                 )
 
@@ -528,7 +513,7 @@ class GoogleGeminiLiveModel(BidiModel):
         audio_bytes = base64.b64decode(audio_input.audio)
 
         # Create audio blob for the SDK
-        mime_type = f"audio/pcm;rate={self.config['audio']['input_rate']}"
+        mime_type = f"audio/pcm;rate={self._audio_config['input_rate']}"
         audio_blob = genai_types.Blob(data=audio_bytes, mime_type=mime_type)
 
         # Send real-time audio input - this automatically handles VAD and interruption
@@ -597,7 +582,7 @@ class GoogleGeminiLiveModel(BidiModel):
             try:
                 await self._live_session_context_manager.__aexit__(None, None, None)
             finally:
-                # Clear so a second stop() (e.g. reconnect's routine teardown) does not
+                # Clear so a second stop() during restart does not
                 # re-exit an already-exited context manager.
                 self._live_session_context_manager = None
                 self._live_session = None
@@ -607,14 +592,14 @@ class GoogleGeminiLiveModel(BidiModel):
 
         await stop_all(stop_session, stop_connection)
 
-    async def reconnect(
+    async def restart(
         self,
         system_prompt: str | None = None,
         tools: list[ToolSpec] | None = None,
         messages: Messages | None = None,
         **restart_kwargs: Any,
     ) -> None:
-        """Reconnect by closing the connection and resuming the same session via its handle.
+        """Restart by closing the connection and resuming the same session via its handle.
 
         Resumes the Gemini session using the last resumption handle so server-side context
         carries across the swap without replaying history. The handle is supplied by the reactive
@@ -628,17 +613,17 @@ class GoogleGeminiLiveModel(BidiModel):
             **restart_kwargs: Provider restart options; ``live_session_handle`` resumes the session.
         """
         handle = restart_kwargs.pop("live_session_handle", None) or self._live_session_handle
-        logger.debug("session_handle=<%s> | gemini reconnect starting", handle)
+        logger.debug("session_handle=<%s> | gemini restart starting", handle)
         await self.stop()
 
         if handle is not None and await self._try_resume(system_prompt, tools, handle, **restart_kwargs):
-            logger.debug("connection_id=<%s> | gemini reconnect complete via resume", self._connection_id)
+            logger.debug("connection_id=<%s> | gemini restart complete via resume", self._connection_id)
             return
 
         # No handle, or the server refused it: start fresh and replay history so the conversation
         # continues rather than going silent.
         await self.start(system_prompt, tools, messages, **restart_kwargs)
-        logger.debug("connection_id=<%s> | gemini reconnect complete via fresh session", self._connection_id)
+        logger.debug("connection_id=<%s> | gemini restart complete via fresh session", self._connection_id)
 
     async def _try_resume(
         self, system_prompt: str | None, tools: list[ToolSpec] | None, handle: str, **restart_kwargs: Any
@@ -682,19 +667,26 @@ class GoogleGeminiLiveModel(BidiModel):
     ) -> dict[str, Any]:
         """Build LiveConnectConfig for the official SDK.
 
-        Simply passes through all config parameters from provider_config, allowing users
-        to configure any Gemini Live API parameter directly.
+        Model params recursively override defaults and directly supplied options.
         """
-        config_dict: dict[str, Any] = self.config["inference"].copy()
+        config_dict: dict[str, Any] = {
+            "response_modalities": ["AUDIO"],
+            "output_audio_transcription": {},
+            "input_audio_transcription": {},
+            # Sliding-window context compression removes the ~15-min audio-only session cap, so a
+            # session resumed across proactive reconnects can continue indefinitely rather than
+            # dying at the cap (gemini_session.md).
+            "context_window_compression": {"sliding_window": {}},
+        }
 
         live_session_handle = kwargs.get("live_session_handle")
-        config_dict["session_resumption"] = genai_types.SessionResumptionConfig(handle=live_session_handle)
+        config_dict["session_resumption"] = {"handle": live_session_handle}
 
         # Enables send_client_content for initial history seeding before realtime mode.
         # Not supported on Vertex AI; HistoryConfig requires google-genai>=1.67 (floor bump tracked separately).
         has_messages = kwargs.get("has_messages", False)
         if has_messages and getattr(self._client, "vertexai", False) is not True:
-            config_dict["history_config"] = genai_types.HistoryConfig(initial_history_in_client_content=True)
+            config_dict["history_config"] = {"initial_history_in_client_content": True}
 
         # Add system instruction if provided
         if system_prompt:
@@ -704,12 +696,12 @@ class GoogleGeminiLiveModel(BidiModel):
         if tools:
             config_dict["tools"] = self._format_tools_for_live_api(tools)
 
-        if "voice" in self.config["audio"]:
+        if "voice" in self._audio_config:
             config_dict.setdefault("speech_config", {}).setdefault("voice_config", {}).setdefault(
                 "prebuilt_voice_config", {}
-            )["voice_name"] = self.config["audio"]["voice"]
+            )["voice_name"] = self._audio_config["voice"]
 
-        return config_dict
+        return _merge_config(config_dict, self._config.get("params") or {})
 
     def _format_tools_for_live_api(self, tool_specs: list[ToolSpec]) -> list[genai_types.Tool]:
         """Format tool specs for Gemini Live API."""

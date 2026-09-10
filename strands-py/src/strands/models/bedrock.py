@@ -598,6 +598,9 @@ class BedrockModel(Model):
         if not cache_tools:
             return []
 
+        if cache_config is not None and self._cache_strategy != "anthropic":
+            return []
+
         if isinstance(cache_tools, CacheToolsConfig):
             cache_type, ttl = cache_tools.type, cache_tools.ttl
         else:

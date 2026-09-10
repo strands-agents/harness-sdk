@@ -253,11 +253,8 @@
     "typescript": "^6.0.3",
     "vitest": "^4.1.10"
   },
-  "optionalDependencies": {
-    "@tobilu/qmd": "^2.8.0"
-  },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "repository": {
     "type": "git",

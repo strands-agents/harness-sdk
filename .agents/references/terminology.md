@@ -26,6 +26,7 @@ One concept, one term. Never vary for stylistic reasons. This file is the canoni
 | Pausing agent execution for human input | interrupts | human-in-the-loop, breakpoints, pause points |
 | Agent output with enforced schema | structured output | typed output, schema-validated output, Pydantic output |
 | Watching agent execution | observability | monitoring, telemetry, instrumentation |
+| Durable storage for offloaded context content | stash | L1 stash, L1, stash layer, context cache |
 | Checking agent quality | evaluation | testing, benchmarking, assessment |
 | Running agents in production | deployment | hosting, serving, shipping |
 | The decorator for making Python functions into tools | @tool decorator | tool annotation, tool wrapper |

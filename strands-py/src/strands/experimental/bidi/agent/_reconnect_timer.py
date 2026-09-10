@@ -1,6 +1,6 @@
 """Proactive reconnect timer for bidirectional streaming.
 
-``_BidiReconnectTimer`` fires a warning then a deadline callback at caller-supplied offsets;
+``BidiReconnectTimer`` fires a warning then a deadline callback at caller-supplied offsets;
 it holds no reconnect policy. ``resolve_deadline_s`` reads the deadline from a provider's
 declared ``BidiConnectionConfig``.
 """
@@ -9,12 +9,12 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 
-from ..types.model import BidiConnectionConfig
+from ..models.configs import BidiConnectionConfig
 
 logger = logging.getLogger(__name__)
 
 
-def resolve_deadline_s(connection_config: BidiConnectionConfig) -> float | None:
+def resolve_deadline_s(connection_config: BidiConnectionConfig) -> int | None:
     """Resolve the proactive reconnect deadline in seconds from a connection config.
 
     Args:
@@ -29,20 +29,17 @@ def resolve_deadline_s(connection_config: BidiConnectionConfig) -> float | None:
     return restart_after_s
 
 
-class _BidiReconnectTimer:
+class BidiReconnectTimer:
     """Fire a warning then a deadline callback ahead of a provider's connection limit.
 
     The clock is injectable so tests can drive timing without wall time.
-
-    Attributes:
-        _sleep: Injectable async sleep, defaults to ``asyncio.sleep``.
     """
 
     def __init__(
         self,
-        on_warning: Callable[[float], Awaitable[None]],
+        on_warning: Callable[[int], Awaitable[None]],
         on_deadline: Callable[[], Awaitable[None]],
-        sleep: Callable[[float], Awaitable[None]] | None = None,
+        sleep: Callable[[int], Awaitable[None]] | None = None,
     ) -> None:
         """Initialize the timer.
 
@@ -56,7 +53,7 @@ class _BidiReconnectTimer:
         self._sleep = sleep or asyncio.sleep
         self._task: asyncio.Task | None = None
 
-    def arm(self, deadline_s: float, warning_lead_s: float) -> None:
+    def arm(self, deadline_s: int, warning_lead_s: int) -> None:
         """Arm the warning and deadline timers, cancelling any previously armed cycle.
 
         Args:
@@ -77,20 +74,27 @@ class _BidiReconnectTimer:
             self._task.cancel()
             self._task = None
 
-    async def _run(self, deadline_s: float, warning_lead_s: float) -> None:
+    async def _run(self, deadline_s: int, warning_lead_s: int) -> None:
         """Sleep until the warning lead, fire the warning, then fire the deadline.
 
         The warning fires ``warning_lead_s`` before the deadline. When the lead is zero
         or exceeds the deadline, the warning is emitted immediately and the remaining
-        wait runs down to the deadline.
+        wait runs down to the deadline. The deadline countdown continues while warning
+        delivery is backpressured, but the deadline callback still follows the warning.
         """
-        warning_at_s = max(deadline_s - warning_lead_s, 0.0)
+        warning_at_s = max(deadline_s - warning_lead_s, 0)
 
         await self._sleep(warning_at_s)
         time_left_s = deadline_s - warning_at_s
-        await self._on_warning(time_left_s)
+        deadline_sleep: asyncio.Future[None] = asyncio.ensure_future(self._sleep(deadline_s - warning_at_s))
+        try:
+            await self._on_warning(time_left_s)
+            await deadline_sleep
+        finally:
+            if not deadline_sleep.done():
+                deadline_sleep.cancel()
+            await asyncio.gather(deadline_sleep, return_exceptions=True)
 
-        await self._sleep(deadline_s - warning_at_s)
         # Detach before the callback re-arms this timer; cancelling a live self-reference
         # would abort the reconnect the callback runs.
         self._task = None

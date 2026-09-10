@@ -438,7 +438,7 @@ class TestContextOffloader:
         assert len(storage._store) == 4
 
     @pytest.mark.asyncio
-    async def test_image_without_bytes_not_stored(self, plugin, storage, mock_agent):
+    async def test_image_without_bytes_kept_in_place(self, plugin, storage, mock_agent):
         content = [
             {"text": "x" * 200},
             {"image": {"format": "png", "source": {}}},
@@ -447,11 +447,77 @@ class TestContextOffloader:
 
         await plugin._handle_tool_result(event)
 
-        # Only text stored, not the empty image
+        # Only text stored; the image had no bytes to offload so it is left
+        # in place rather than replaced with a misleading ``0 bytes`` placeholder.
+        # See https://github.com/strands-agents/harness-sdk/issues/4017
         assert len(storage._store) == 1
-        placeholder = event.result["content"][1]["text"]
-        assert "0 bytes" in placeholder
-        assert "ref:" not in placeholder
+        result_content = event.result["content"]
+        # [0] = preview text, [1] = the original image block (kept as-is)
+        assert "image" in result_content[1]
+        assert result_content[1]["image"] == {"format": "png", "source": {}}
+        assert not any("0 bytes" in (b.get("text", "")) for b in result_content)
+
+    @pytest.mark.asyncio
+    async def test_document_without_bytes_kept_in_place(self, plugin, storage, mock_agent):
+        # Non-bytes document source (location/text/content) — mirrors issue #4017
+        # where the offloader would replace a 5,200-char document with a
+        # ``[document: txt, contract, 0 bytes]`` placeholder.
+        doc_block = {
+            "document": {
+                "format": "txt",
+                "name": "contract",
+                "source": {"location": {"uri": "s3://bucket/contract.txt"}},
+            }
+        }
+        content = [
+            {"text": "x" * 200},
+            doc_block,
+        ]
+        event = _make_event(mock_agent, content)
+
+        await plugin._handle_tool_result(event)
+
+        # Only text stored; the document is preserved verbatim.
+        assert len(storage._store) == 1
+        result_content = event.result["content"]
+        assert "document" in result_content[1]
+        assert result_content[1]["document"] == doc_block["document"]
+        assert not any("[document:" in (b.get("text", "")) for b in result_content)
+
+    @pytest.mark.asyncio
+    async def test_mixed_bytes_and_non_bytes_blocks(self, plugin, storage, mock_agent):
+        # Bytes document gets stored + ref emitted; non-bytes document is
+        # preserved; image without bytes is preserved. Verify the three paths
+        # coexist in a single tool result.
+        img_bytes = b"\x89PNG" + b"\x00" * 100
+        doc_bytes = b"%PDF-1.4" + b"\x00" * 100
+        doc_location = {
+            "document": {
+                "format": "txt",
+                "name": "contract",
+                "source": {"location": {"uri": "s3://bucket/contract.txt"}},
+            }
+        }
+        content = [
+            {"text": "a" * 400},  # 100 tokens > 25 max_result_tokens threshold
+            {"image": {"format": "png", "source": {"bytes": img_bytes}}},
+            {"document": {"format": "pdf", "name": "report.pdf", "source": {"bytes": doc_bytes}}},
+            doc_location,
+        ]
+        event = _make_event(mock_agent, content)
+
+        await plugin._handle_tool_result(event)
+
+        # text + image + document (bytes) stored; the non-bytes document is preserved.
+        assert len(storage._store) == 3
+
+        result_content = event.result["content"]
+        # [0] = preview, [1] = image placeholder, [2] = document placeholder,
+        # [3] = the original non-bytes document block (kept as-is)
+        assert "[Offloaded:" in result_content[0]["text"]
+        assert "[image: png" in result_content[1]["text"]
+        assert "[document: pdf, report.pdf" in result_content[2]["text"]
+        assert result_content[3] == doc_location
 
 
 class TestRetrievalTool:

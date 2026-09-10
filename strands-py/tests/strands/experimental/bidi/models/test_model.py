@@ -6,7 +6,9 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from strands.experimental.bidi.models.model import BidiModel
+from strands.experimental.bidi import Restartable
+from strands.experimental.bidi.models.configs import AudioConfig
+from strands.experimental.bidi.models.model import AudioCapable, BidiModel
 from strands.experimental.bidi.types.events import BidiInputEvent, BidiOutputEvent
 from strands.models import Model
 from strands.types._events import ToolResultEvent
@@ -20,9 +22,14 @@ class _Output(BaseModel):
 
 class _TestBidiModel(BidiModel):
     def __init__(self) -> None:
-        self.config = {"model_id": "test-model"}
-        self.connection_config = {}
+        self._model_id = "test-model"
         self.usage_is_cumulative = False
+
+    def update_config(self, **model_config: Any) -> None:
+        self._model_id = model_config.get("model_id", self._model_id)
+
+    def get_config(self) -> dict[str, Any]:
+        return {"model_id": self._model_id}
 
     async def start(
         self,
@@ -47,33 +54,42 @@ class _TestBidiModel(BidiModel):
         pass
 
 
+class _AudioBidiModel(_TestBidiModel):
+    def get_audio_config(self) -> AudioConfig:
+        return {
+            "input_rate": 16000,
+            "output_rate": 24000,
+            "channels": 1,
+            "format": "pcm",
+        }
+
+
+class _TestRestartableBidiModel(_TestBidiModel):
+    async def restart(
+        self,
+        system_prompt: str | None = None,
+        tools: list[ToolSpec] | None = None,
+        messages: Messages | None = None,
+        **restart_kwargs: Any,
+    ) -> None:
+        pass
+
+
 def test_model_is_model():
     assert isinstance(_TestBidiModel(), Model)
 
 
-def test_update_config():
-    model = _TestBidiModel()
-
-    model.update_config(model_id="updated-model")
-
-    assert model.get_config() == {"model_id": "updated-model"}
+def test_audio_capable_identifies_audio_models():
+    assert isinstance(_AudioBidiModel(), AudioCapable)
+    assert not isinstance(_TestBidiModel(), AudioCapable)
 
 
-def test_get_config_returns_copy():
-    model = _TestBidiModel()
-
-    config = model.get_config()
-    config["model_id"] = "updated-model"
-
-    assert model.config == {"model_id": "test-model"}
+def test_model_without_restart_is_not_restartable():
+    assert not isinstance(_TestBidiModel(), Restartable)
 
 
-@pytest.mark.asyncio
-async def test_reconnect_raises_not_implemented():
-    model = _TestBidiModel()
-
-    with pytest.raises(NotImplementedError, match="reconnect is not implemented"):
-        await model.reconnect()
+def test_model_with_restart_is_restartable():
+    assert isinstance(_TestRestartableBidiModel(), Restartable)
 
 
 def test_stream_raises_not_implemented():

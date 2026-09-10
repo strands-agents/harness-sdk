@@ -21,7 +21,7 @@ permissions:
 jobs:
   check-bot-reviews:
     name: 2 Approvers for Bots
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     steps:
       - name: Enforce maintainer reviews for bot/agent PRs
         uses: actions/github-script@v9

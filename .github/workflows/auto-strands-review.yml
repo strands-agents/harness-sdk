@@ -17,7 +17,7 @@ jobs:
     name: Check access
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     outputs:
       approval-env: ${{ steps.auth.outputs.approval-env }}
     steps:
@@ -38,7 +38,7 @@ jobs:
     permissions:
       actions: write
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     steps:
       - name: Trigger Strands Command Workflow
         uses: actions/github-script@v9

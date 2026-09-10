@@ -47,24 +47,16 @@ import asyncio
 from strands.experimental.bidi import BidiAgent
 from strands.experimental.bidi.io import BidiAudioIO, BidiTextIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
-from strands_tools import stop
-
-from strands_tools import calculator
+from strands_tools import calculator, stop
 
 
 async def main() -> None:
     model = BedrockNovaSonicModel(
         model_id="amazon.nova-2-sonic-v1:0",
-        provider_config={
-            "audio": {
-                "voice": "tiffany",
-            },
-        },
-        client_config={"region": "us-east-1"},  # available in us-east-1, us-west-2, eu-north-1, and ap-northeast-1
+        region="us-east-1",
+        audio={"voice": "tiffany"},
     )
-    # stop tool allows user to verbally stop agent execution.
     agent = BidiAgent(model=model, tools=[calculator, stop])
-
     audio_io = BidiAudioIO()
     text_io = BidiTextIO()
     await agent.run(inputs=[audio_io.input()], outputs=[audio_io.output(), text_io.output()])
@@ -116,27 +108,28 @@ boto_session = boto3.Session(
     region_name="your_region_name",
     profile_name="your_profile"  # Optional: Use a specific profile
 )
-model = BedrockNovaSonicModel(client_config={"boto_session": boto_session})
+model = BedrockNovaSonicModel(boto_session=boto_session)
 ```
 
 For more details on this approach, please refer to the [boto3 session docs](https://boto3.amazonaws.com/v1/documentation/api/latest/reference/core/session.html).
 
 ## Configuration
 
-### Client Configs
+### Client Options
 
 | Parameter | Description | Default |
 | --------- | ----------- | ------- |
 | `boto_session` | A `boto3.Session` instance under which AWS credentials are configured. | `None` |
 | `region` | Region under which credentials are configured. Cannot use if providing `boto_session`. | `us-east-1` |
 
-### Provider Configs
+### Model Config
 
 | Parameter | Description | Example | Options |
 | --------- | ----------- | ------- | ------- |
-| `audio` | `AudioConfig` instance. | `{"voice": "tiffany", "output_rate": 24000}` | [reference](@api/python/strands.experimental.bidi.types.model#AudioConfig); see [supported voices](https://docs.aws.amazon.com/nova/latest/nova2-userguide/sonic-language-support.html) for valid `voice` values |
-| `inference` | Session start `inferenceConfiguration`'s (as snake_case). | `{"top_p": 0.9, "max_tokens": 2048, "temperature": 0.7}` | [reference](https://docs.aws.amazon.com/nova/latest/nova2-userguide/sonic-input-events.html) |
-| `turn_detection` | Turn detection sensitivity. Nova Sonic v2 only; raises `ValueError` on v1. | `{"endpointingSensitivity": "MEDIUM"}` | `HIGH`, `MEDIUM`, `LOW` |
+| `model_id` | Nova Sonic model identifier. | `"amazon.nova-2-sonic-v1:0"` | Nova Sonic model IDs |
+| `audio` | Audio configuration. | `{"output_rate": 24000, "voice": "tiffany"}` | [reference](@api/python/strands.experimental.bidi.models.configs#AudioConfig) |
+| `params` | Provider-specific session parameters, such as inference and turn detection configuration. | `{"inferenceConfiguration": {"temperature": 0.7}}` | [`sessionStart` fields](https://docs.aws.amazon.com/nova/latest/nova2-userguide/sonic-input-events.html) |
+| `connection` | Reconnect timing overrides. | `{"auto_reconnect": false}` | [reference](@api/python/strands.experimental.bidi.models.configs#BidiConnectionConfig) |
 
 :::note
 The `audio` config accepts any sample rate supported by the underlying model API. Refer to the [Nova Sonic documentation](https://docs.aws.amazon.com/nova/latest/nova2-userguide/using-conversational-speech.html) for the full list of supported rates.

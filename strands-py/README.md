@@ -103,7 +103,7 @@ response = agent("Use any tools you find in the tools directory")
 
 ### MCP Support
 
-Seamlessly integrate Model Context Protocol (MCP) servers:
+Connect to Model Context Protocol (MCP) servers:
 
 ```python
 from strands import Agent
@@ -118,6 +118,8 @@ with aws_docs_client:
    agent = Agent(tools=aws_docs_client.list_tools_sync())
    response = agent("Tell me about Amazon Bedrock and how to use it with Python")
 ```
+
+The SDK works with both major versions of the `mcp` package through a built-in compatibility layer, so most code that uses `MCPClient` runs unchanged on either version. A fresh install resolves to mcp 2.x, and pinning `mcp<2` keeps you on 1.x. See [docs/MCP_VERSIONS.md](./docs/MCP_VERSIONS.md) for support status, the behavior differences on 2.x, and migration notes.
 
 ### Multiple Model Providers
 
@@ -262,22 +264,22 @@ if __name__ == "__main__":
 ```python
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
-# Configure audio settings and turn detection (v2 only)
+# Configure audio streams and Nova Sonic session parameters.
 model = BedrockNovaSonicModel(
-    provider_config={
-        "audio": {
-            "input_rate": 16000,
-            "output_rate": 16000,
-            "voice": "matthew"
+    audio={
+        "input_rate": 16000,
+        "output_rate": 16000,
+        "voice": "matthew",
+    },
+    params={
+        "turnDetectionConfiguration": {
+            "endpointingSensitivity": "MEDIUM"
         },
-        "turn_detection": {
-            "endpointingSensitivity": "MEDIUM"  # HIGH, MEDIUM, or LOW
-        },
-        "inference": {
-            "max_tokens": 2048,
+        "inferenceConfiguration": {
+            "maxTokens": 2048,
             "temperature": 0.7
-        }
-    }
+        },
+    },
 )
 
 # Configure I/O devices

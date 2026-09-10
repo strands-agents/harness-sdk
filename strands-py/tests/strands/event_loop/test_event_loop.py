@@ -161,6 +161,7 @@ def agent(model, system_prompt, messages, tool_registry, thread_pool, hook_regis
     mock.tool_executor = tool_executor
     mock._interrupt_state = _InterruptState()
     mock._cancel_signal = threading.Event()
+    mock._background_tasks = None
     mock._observe_cancellation = mock._cancel_signal.is_set
     mock._model_state = {}
     mock._system_prompt_content = None
@@ -412,6 +413,7 @@ async def test_event_loop_cycle_tool_result(
         invocation_state=unittest.mock.ANY,
         model_state=unittest.mock.ANY,
         cancel_signal=unittest.mock.ANY,
+        agent_metadata=unittest.mock.ANY,
     )
 
 
@@ -936,7 +938,7 @@ async def test_request_state_initialization(alist):
     mock_agent.messages = []
     mock_agent.tool_registry.get_all_tool_specs.return_value = []
     mock_agent.event_loop_metrics.start_cycle.return_value = (0, MagicMock())
-    mock_agent.hooks.invoke_callbacks_async = AsyncMock()
+    mock_agent.hooks.invoke_callbacks_async = AsyncMock(side_effect=lambda event: (event, []))
     mock_agent._append_messages = Agent._append_messages.__get__(mock_agent, Agent)
 
     # Call without providing request_state
