@@ -17,6 +17,7 @@ import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
 import type { Stash } from '../../stash.js'
 import { RETRIEVAL_TOOL_NAME } from '../../retrieval-tool.js'
+import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
 
 /**
  * Target for offload operations. This union is intentionally extensible — new
@@ -356,6 +357,8 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     let acted = false
 
     for (const message of eligible) {
+      const index = messages.indexOf(message)
+      if (isPinned(messages, index)) continue
       if (await this._transformBlocks(message, messages, toolNameMap, agent)) {
         acted = true
       }
@@ -447,11 +450,15 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
         toolNameMap,
         this._includeFilter,
         this._excludeFilter
-      ).filter((message) => messages.indexOf(message) > 0)
+      ).filter((message) => {
+        const index = messages.indexOf(message)
+        return index > 0 && !isPinned(messages, index)
+      })
     } else {
       candidates = messages.filter(
         (message, index) =>
           index > 0 &&
+          !isPinned(messages, index) &&
           messageMatchesTarget(message, this._target, toolNameMap, this._includeFilter, this._excludeFilter)
       )
     }

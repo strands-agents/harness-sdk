@@ -604,6 +604,59 @@ describe('Message-level drop vs truncate markers', () => {
   })
 })
 
+describe('pinned message protection', () => {
+  it('message-level drop skips pinned messages', async () => {
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('q1')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a1')] }),
+      new Message({
+        role: 'user',
+        content: [new TextBlock('pinned-msg')],
+        metadata: { custom: { pinned: true } },
+      }),
+      new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
+      new Message({ role: 'user', content: [new TextBlock('q3')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a3')] }),
+    ]
+    const strategy = Offload.drop('*').when({ utilization: 0.5 })
+    const context = makeContext(messages, 0.9)
+
+    await strategy.apply(context)
+
+    const allText = messages.flatMap((message) =>
+      message.content.filter((block) => block instanceof TextBlock).map((block) => (block as TextBlock).text)
+    )
+    expect(allText).toContain('pinned-msg')
+  })
+
+  it('message-level drop skips tool-pair partner of pinned message', async () => {
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('q1')] }),
+      new Message({
+        role: 'assistant',
+        content: [new ToolUseBlock({ toolUseId: 'tu-1', name: 'test', input: {} })],
+        metadata: { custom: { pinned: true } },
+      }),
+      new Message({
+        role: 'user',
+        content: [new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [new TextBlock('result')] })],
+      }),
+      new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
+      new Message({ role: 'user', content: [new TextBlock('q3')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a3')] }),
+    ]
+    const strategy = Offload.drop('*').when({ utilization: 0.5 })
+    const context = makeContext(messages, 0.9)
+
+    await strategy.apply(context)
+
+    const hasToolResult = messages.some((message) =>
+      message.content.some((block) => block instanceof ToolResultBlock && block.toolUseId === 'tu-1')
+    )
+    expect(hasToolResult).toBe(true)
+  })
+})
+
 describe('overflow bypass', () => {
   it('message-level strategy fires on low utilization when overflow is set', async () => {
     const messages = [
