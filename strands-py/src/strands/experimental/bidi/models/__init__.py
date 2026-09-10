@@ -33,4 +33,8 @@ def __getattr__(name: str) -> Any:
         from .openai import OpenAIRealtimeModel
 
         return OpenAIRealtimeModel
+    if name == "QwenRealtimeModel":
+        from .qwen import QwenRealtimeModel
+
+        return QwenRealtimeModel
     raise AttributeError(f"cannot import name '{name}' from '{__name__}' ({__file__})")
