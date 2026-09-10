@@ -10,6 +10,7 @@ import {
   type ServerCapabilities,
   type Implementation,
   type LoggingMessageNotificationParams,
+  type Progress,
 } from '@modelcontextprotocol/sdk/types.js'
 import { context, propagation, trace } from '@opentelemetry/api'
 import type { JSONSchema, JSONValue } from '../types/json.js'
@@ -65,6 +66,15 @@ export type McpConnectionState = 'disconnected' | 'connected' | 'failed'
 export interface McpCallToolOptions {
   /** AbortSignal to cancel the in-flight request. */
   signal?: AbortSignal
+
+  /** Called when the server reports progress for this tool invocation. */
+  onProgress?: (progress: Progress) => void
+
+  /** Request timeout in milliseconds. Progress notifications reset this timeout when a callback is configured. */
+  timeout?: number
+
+  /** Maximum total request duration in milliseconds, regardless of progress notifications. */
+  maxTotalTimeout?: number
 }
 
 /** OAuth client credentials for machine-to-machine authentication. */
@@ -130,6 +140,9 @@ export interface McpClientOptions extends RuntimeConfig {
 
   /** Called when the server emits a log message. Defaults to routing through the Strands logger. */
   logHandler?: (params: LoggingMessageNotificationParams) => void
+
+  /** Default callback for progress notifications from direct tool calls. */
+  onProgress?: (progress: Progress) => void
 }
 
 /** Arguments for configuring an MCP Client. */
@@ -188,6 +201,7 @@ export class McpClient {
   private _toolFilters: McpToolFilters | undefined
   /** Server-side name of each listed tool, which differs from `tool.name` when a prefix is set. */
   private _serverToolNames = new WeakMap<McpTool, string>()
+  private _onProgress: ((progress: Progress) => void) | undefined
   private _registeredToolNames = new Set<string>()
   private _onToolsChanged: ((oldTools: string[], newTools: McpTool[]) => void) | undefined
   private _refreshingTools = false
@@ -204,6 +218,7 @@ export class McpClient {
     this._elicitationCallback = args.elicitationCallback
     this._prefix = args.prefix
     this._toolFilters = args.toolFilters
+    this._onProgress = args.onProgress
     this._client = new Client(
       {
         name: this._clientName,
@@ -471,22 +486,52 @@ export class McpClient {
     // Inject OpenTelemetry trace context into tool arguments for distributed tracing
     const enhancedArgs = this._disableMcpInstrumentation ? args : injectTraceContext(args)
     const toolArgs = enhancedArgs as Record<string, unknown>
+    const rawOnProgress = options?.onProgress ?? this._onProgress
 
     // When tasksConfig is undefined, call tools directly without task management
     // Use the server-side name for server communication; tool.name may carry a prefix.
     const toolName = this._serverToolNames.get(tool) ?? tool.name
 
     if (this._tasksConfig === undefined) {
-      return (await this._client.callTool({ name: toolName, arguments: toolArgs }, undefined, options)) as JSONValue
+      const onProgress =
+        rawOnProgress === undefined
+          ? undefined
+          : (progress: Progress): void => {
+              void Promise.resolve()
+                .then(() => rawOnProgress(progress))
+                .catch((error: unknown) => {
+                  logger.warn(`tool=<${tool.name}>, error=<${error}> | progress callback failed`)
+                })
+            }
+      const requestOptions =
+        options?.signal !== undefined ||
+        onProgress !== undefined ||
+        options?.timeout !== undefined ||
+        options?.maxTotalTimeout !== undefined
+          ? {
+              ...(options?.signal !== undefined && { signal: options.signal }),
+              ...(options?.timeout !== undefined && { timeout: options.timeout }),
+              ...(onProgress !== undefined && { onprogress: onProgress, resetTimeoutOnProgress: true }),
+              ...(options?.maxTotalTimeout !== undefined && { maxTotalTimeout: options.maxTotalTimeout }),
+            }
+          : undefined
+      return (await this._client.callTool(
+        { name: toolName, arguments: toolArgs },
+        undefined,
+        requestOptions
+      )) as JSONValue
     }
 
     // When tasksConfig is defined (even as empty object), use task-based invocation
     // which supports long-running tools with progress tracking
+    if (rawOnProgress !== undefined) {
+      logger.warn(`tool=<${tool.name}> | progress callbacks are ignored when task-augmented execution is enabled`)
+    }
     const stream = this._client.experimental.tasks.callToolStream({ name: toolName, arguments: toolArgs }, undefined, {
       timeout: this._tasksConfig.ttl ?? McpClient.DEFAULT_TTL,
       maxTotalTimeout: this._tasksConfig.pollTimeout ?? McpClient.DEFAULT_POLL_TIMEOUT,
       resetTimeoutOnProgress: true,
-      ...options,
+      ...(options?.signal !== undefined && { signal: options.signal }),
     })
 
     const result = await takeResult(stream)
