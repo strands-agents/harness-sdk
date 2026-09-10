@@ -99,6 +99,74 @@ async def test_model_initialization(model_id, boto_session):
     assert model._connection_id is None
 
 
+def test_get_config_returns_copy(boto_session):
+    model = BedrockNovaSonicModel(boto_session=boto_session)
+
+    config = model.get_config()
+    exp_config = {
+        "model_id": NOVA_SONIC_V2_MODEL_ID,
+        "params": {},
+        "connection": {"restart_after_s": 420},
+    }
+    assert config == exp_config
+
+    config["model_id"] = NOVA_SONIC_V1_MODEL_ID
+    assert model.get_config() == exp_config
+
+
+@pytest.mark.parametrize(
+    ("model_config", "invalid_key"),
+    [
+        pytest.param({"model": "test-model"}, "model", id="model"),
+        pytest.param({"connection": {"restart_after": 30}}, "restart_after", id="connection"),
+    ],
+)
+def test_update_config_warns_invalid_keys(boto_session, model_config, invalid_key):
+    model = BedrockNovaSonicModel(boto_session=boto_session)
+
+    with pytest.warns(UserWarning, match=invalid_key):
+        model.update_config(**model_config)
+
+
+@pytest.mark.parametrize("connection", [{"restart_after_s": 30}, {"auto_reconnect": False}, {}])
+def test_update_config_replaces_connection(boto_session, connection):
+    model = BedrockNovaSonicModel(boto_session=boto_session)
+
+    model.update_config(connection=connection)
+
+    tru_config = model.get_config()
+    exp_config = {
+        "model_id": NOVA_SONIC_V2_MODEL_ID,
+        "params": {},
+        "connection": connection,
+    }
+    assert tru_config == exp_config
+    assert model.get_connection_config() == connection
+
+
+@pytest.mark.asyncio
+async def test_restart_uses_updated_config(nova_model, mock_client, mock_stream):
+    """Restart opens a new connection using the updated model ID and params."""
+    invoke = mock_client.invoke_model_with_bidirectional_stream
+    await nova_model.start()
+
+    updated_params = {"inferenceConfiguration": {"temperature": 0.8}}
+    nova_model.update_config(model_id=NOVA_SONIC_V2_MODEL_ID, params=updated_params)
+    invoke.assert_called_once()
+
+    await nova_model.restart()
+
+    assert invoke.call_count == 2
+    restarted_request = invoke.call_args.args[0]
+    assert restarted_request.model_id == NOVA_SONIC_V2_MODEL_ID
+
+    events = [json.loads(call.args[0].value.bytes_)["event"] for call in mock_stream.input_stream.send.call_args_list]
+    session_configs = [event["sessionStart"] for event in events if "sessionStart" in event]
+    assert session_configs == [{}, updated_params]
+
+    await nova_model.stop()
+
+
 @pytest.mark.asyncio
 async def test_start_sets_strands_user_agent_on_bedrock_runtime_client(model_id, boto_session, mock_stream):
     """Always set the Strands user agent marker on the generated Bedrock Runtime client."""
@@ -146,7 +214,7 @@ async def test_audio_config_defaults(model_id, boto_session):
     """Test default audio configuration."""
     model = BedrockNovaSonicModel(model_id=model_id, boto_session=boto_session)
 
-    assert model.audio_config == {
+    assert model.get_audio_config() == {
         "input_rate": 16000,
         "output_rate": 16000,
         "channels": 1,
@@ -163,7 +231,7 @@ async def test_audio_config_partial_override(model_id, boto_session):
         audio={"output_rate": 24000, "voice": "ruth"},
     )
 
-    assert model.audio_config == {
+    assert model.get_audio_config() == {
         "input_rate": 16000,
         "output_rate": 24000,
         "channels": 1,
@@ -188,7 +256,7 @@ async def test_audio_config_full_override(model_id, boto_session):
         audio=audio_config,
     )
 
-    assert model.audio_config == audio_config
+    assert model.get_audio_config() == audio_config
 
 
 @pytest.mark.parametrize(
@@ -546,7 +614,7 @@ async def test_completion_end_is_not_a_turn_boundary(nova_model):
 @pytest.mark.asyncio
 async def test_connection_config_declared(nova_model):
     """Nova declares its reconnect deadline and cumulative usage semantics."""
-    assert nova_model.connection_config["restart_after_s"] == 420
+    assert nova_model.get_connection_config()["restart_after_s"] == 420
     assert nova_model.usage_is_cumulative is True
 
 
@@ -560,9 +628,9 @@ async def test_connection_config_overrides_merge_over_defaults(model_id, boto_se
     )
 
     # Overridden field takes the caller's value.
-    assert model.connection_config["auto_reconnect"] is False
+    assert model.get_connection_config()["auto_reconnect"] is False
     # Untouched default is preserved.
-    assert model.connection_config["restart_after_s"] == 420
+    assert model.get_connection_config()["restart_after_s"] == 420
     # usage_is_cumulative is a separate provider trait, unaffected by connection overrides.
     assert model.usage_is_cumulative is True
 
@@ -619,7 +687,7 @@ async def test_proactive_reconnect_end_to_end_through_agent(model_id, boto_sessi
     """End-to-end: BidiAgent + real Nova model proactively reconnects before the deadline.
 
     Drives the full chain against the real BedrockNovaSonicModel (mocked Bedrock transport):
-    the loop reads Nova's connection_config, arms the proactive timer, emits a warning,
+    the loop reads Nova's connection config, arms the proactive timer, emits a warning,
     and restarts through Nova's own restart() before the session deadline, replaying
     history via Nova's initialization path. No live AWS calls are made.
     """
@@ -639,7 +707,8 @@ async def test_proactive_reconnect_end_to_end_through_agent(model_id, boto_sessi
 
     model = BedrockNovaSonicModel(model_id=model_id, boto_session=boto_session)
     # A small deadline; the injected clock below fires it without wall time.
-    model.connection_config = {"restart_after_s": 1}
+    model.update_config(connection={"restart_after_s": 1})
+    assert model.get_connection_config() == {"restart_after_s": 1}
 
     agent = BidiAgent(model=model, system_prompt="You are helpful")
 
@@ -1142,8 +1211,8 @@ async def test_nova_sonic_v1_instantiation(boto_session, mock_client):
     )
 
     assert model_custom.model_id == NOVA_SONIC_V1_MODEL_ID
-    assert model_custom.audio_config["output_rate"] == 24000
-    assert model_custom.audio_config["voice"] == "joanna"
+    assert model_custom.get_audio_config()["output_rate"] == 24000
+    assert model_custom.get_audio_config()["voice"] == "joanna"
 
 
 @pytest.mark.asyncio
@@ -1165,7 +1234,7 @@ async def test_nova_sonic_v2_instantiation(boto_session, mock_client):
     )
 
     assert model_custom.model_id == NOVA_SONIC_V2_MODEL_ID
-    assert model_custom.audio_config["input_rate"] == 48000
+    assert model_custom.get_audio_config()["input_rate"] == 48000
     assert (
         json.loads(model_custom._get_connection_start_event())["event"]["sessionStart"]["inferenceConfiguration"][
             "temperature"
@@ -1191,7 +1260,7 @@ async def test_nova_sonic_v1_v2_compatibility(boto_session, mock_client):
         audio={"voice": "matthew"},
     )
 
-    assert model_v1.audio_config == model_v2.audio_config
+    assert model_v1.get_audio_config() == model_v2.get_audio_config()
     assert model_v1.region == model_v2.region
 
     # Only model_id should differ
@@ -1235,6 +1304,20 @@ def test_params_passed_to_session_start(boto_session):
     assert session_start == params
 
 
+@pytest.mark.parametrize("params", [{"inferenceConfiguration": {"topP": 0.9}}, {}, None])
+def test_update_config_replaces_params(boto_session, params):
+    model = BedrockNovaSonicModel(
+        boto_session=boto_session,
+        params={"inferenceConfiguration": {"temperature": 0.8}},
+    )
+
+    model.update_config(params=params)
+
+    tru_event = json.loads(model._get_connection_start_event())
+    exp_event = {"event": {"sessionStart": params or {}}}
+    assert tru_event == exp_event
+
+
 # Error Handling Tests
 @pytest.mark.asyncio
 async def test_bidi_nova_sonic_model_receive_timeout(nova_model, mock_stream):
@@ -1263,7 +1346,7 @@ async def test_bidi_nova_sonic_model_receive_timeout_validation(nova_model, mock
 
 
 @pytest.mark.asyncio
-async def test_receive_ends_when_stream_closed(nova_model, mock_stream):
+async def test_receive_ends_when_stream_closed(nova_model, mock_stream, alist):
     """A None from the event receiver marks end-of-stream; the receive loop must terminate.
 
     Per the smithy EventReceiver contract, receive() returns None only at end-of-stream (e.g.
@@ -1275,16 +1358,16 @@ async def test_receive_ends_when_stream_closed(nova_model, mock_stream):
     mock_output.receive = AsyncMock(return_value=None)
     mock_stream.await_output.return_value = (None, mock_output)
 
+    nova_model.update_config(model_id=NOVA_SONIC_V2_MODEL_ID)
     await nova_model.start()
 
-    async def collect():
-        return [event async for event in nova_model.receive()]
-
     # Bounded so a regression (busy-loop) fails fast instead of hanging the suite.
-    events = await asyncio.wait_for(collect(), timeout=5.0)
+    events = await asyncio.wait_for(alist(nova_model.receive()), timeout=5.0)
 
     # Only the initial connection-start event precedes the end-of-stream.
     assert [type(event).__name__ for event in events] == ["BidiConnectionStartEvent"]
+    assert events[0].model == NOVA_SONIC_V2_MODEL_ID
+    await nova_model.stop()
 
 
 @pytest.mark.asyncio

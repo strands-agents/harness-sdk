@@ -76,6 +76,30 @@ async def test_executor_stream_yields_result(
 
 
 @pytest.mark.asyncio
+async def test_executor_stream_runs_tool_registered_under_hook_renamed_tool_use(
+    executor, agent, tool_results, invocation_state, hook_events, weather_tool, temperature_tool, alist
+):
+    def rename(event):
+        if isinstance(event, BeforeToolCallEvent):
+            event.tool_use["name"] = "temperature_tool"
+
+    agent.hooks.add_callback(BeforeToolCallEvent, rename)
+    tool_use: ToolUse = {"name": "weather_tool", "toolUseId": "1", "input": {}}
+
+    stream = executor._stream(agent, tool_use, tool_results, invocation_state)
+
+    tru_events = await alist(stream)
+    exp_events = [
+        ToolResultEvent({"toolUseId": "1", "status": "success", "content": [{"text": "75F"}]}),
+    ]
+    assert tru_events == exp_events
+
+    tru_after_tool = hook_events[-1].selected_tool
+    exp_after_tool = temperature_tool
+    assert tru_after_tool is exp_after_tool
+
+
+@pytest.mark.asyncio
 async def test_executor_stream_wraps_results(
     executor, agent, tool_results, invocation_state, hook_events, weather_tool, alist, agenerator
 ):
@@ -237,6 +261,25 @@ async def test_executor_stream_with_trace(
 
     cycle_trace.add_child.assert_called_once()
     assert isinstance(cycle_trace.add_child.call_args[0][0], Trace)
+
+
+@pytest.mark.asyncio
+async def test_executor_stream_with_trace_marks_backgrounded_without_metrics_or_trace(
+    executor, tracer, agent, tool_results, cycle_trace, cycle_span, invocation_state, alist, agenerator
+):
+    """A background dispatch acknowledgement marks its span but records no metrics and no cycle trace node."""
+    tool_use: ToolUse = {"name": "weather_tool", "toolUseId": "1", "input": {}}
+    result = {"toolUseId": "1", "status": "success", "content": [{"text": "queued"}]}
+    with unittest.mock.patch.object(
+        ToolExecutor, "_stream", return_value=agenerator([ToolResultEvent(result, backgrounded=True)])
+    ):
+        stream = executor._stream_with_trace(agent, tool_use, tool_results, cycle_trace, cycle_span, invocation_state)
+        await alist(stream)
+
+    agent.event_loop_metrics.add_tool_usage.assert_not_called()
+    cycle_trace.add_child.assert_not_called()
+    tracer.start_tool_call_span.return_value.set_attribute.assert_called_once_with("strands.tool.backgrounded", True)
+    tracer.end_tool_call_span.assert_called_once_with(tracer.start_tool_call_span.return_value, result, error=None)
 
 
 @pytest.mark.asyncio

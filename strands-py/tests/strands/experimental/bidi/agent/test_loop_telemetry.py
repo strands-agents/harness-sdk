@@ -86,6 +86,7 @@ def otel_setup():
 @pytest.fixture
 def agent():
     model = unittest.mock.AsyncMock(spec=BidiModel)
+    model.get_connection_config.return_value = {}
     model.restart = unittest.mock.AsyncMock()
     return BidiAgent(model=model, tools=[mock_tool_func])
 

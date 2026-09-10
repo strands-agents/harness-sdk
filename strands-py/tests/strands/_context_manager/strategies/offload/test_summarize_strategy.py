@@ -149,7 +149,23 @@ class TestSummarizeStrategyPerBlock:
         mock_agent.messages = messages
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
         assert await strategy.apply(context) is True
-        assert "[Offloaded: ~" in messages[1]["content"][0]["text"]
+        assert "[Summarized:" in messages[1]["content"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_offloaded_when_media_summary_empty(self, mock_agent):
+        mock_agent.model.stream = _make_empty_stream()
+        strategy = Offload.summarize("*").when(threshold=100)
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="pin")]),
+            Message(
+                role="user",
+                content=[ContentBlock(image={"format": "png", "source": {"bytes": b"img"}})],
+            ),
+        ]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
+        assert await strategy.apply(context) is True
+        assert "[Offloaded:" in messages[1]["content"][0]["text"]
 
 
 class TestSummarizeStrategyMessageLevel:

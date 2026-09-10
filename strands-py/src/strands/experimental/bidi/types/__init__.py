@@ -22,7 +22,6 @@ from .events import (
     ModalityUsage,
 )
 from .io import BidiInput, BidiOutput
-from .model import BidiConnectionConfig
 
 __all__ = [
     "BidiInput",
@@ -48,6 +47,4 @@ __all__ = [
     "ModalityUsage",
     "BidiErrorEvent",
     "BidiOutputEvent",
-    # Reconnect configuration
-    "BidiConnectionConfig",
 ]

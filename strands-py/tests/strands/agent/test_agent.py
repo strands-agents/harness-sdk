@@ -1420,6 +1420,28 @@ def test_agent_init_initializes_tracer(mock_get_tracer):
 
 
 @unittest.mock.patch("strands.agent.agent.get_tracer")
+def test_agent_trace_passes_structured_system_prompt(mock_get_tracer, mock_model):
+    """Test that structured system prompt content is passed to the agent span."""
+    mock_tracer = unittest.mock.MagicMock()
+    mock_get_tracer.return_value = mock_tracer
+    system_prompt_content = [{"text": "Be helpful"}, {"cachePoint": {"type": "default"}}]
+
+    agent = Agent(model=mock_model, system_prompt=system_prompt_content)
+    agent._start_agent_trace_span([])
+
+    mock_tracer.start_agent_span.assert_called_once_with(
+        messages=[],
+        agent_name="Strands Agents",
+        model_id=unittest.mock.ANY,
+        tools=agent.tool_names,
+        system_prompt="Be helpful",
+        system_prompt_content=system_prompt_content,
+        custom_trace_attributes=agent.trace_attributes,
+        tools_config=unittest.mock.ANY,
+    )
+
+
+@unittest.mock.patch("strands.agent.agent.get_tracer")
 def test_agent_call_creates_and_ends_span_on_success(mock_get_tracer, mock_model, agenerator):
     """Test that __call__ creates and ends a span when the call succeeds."""
     # Setup mock tracer and span
@@ -1449,6 +1471,7 @@ def test_agent_call_creates_and_ends_span_on_success(mock_get_tracer, mock_model
         model_id=unittest.mock.ANY,
         tools=agent.tool_names,
         system_prompt=agent.system_prompt,
+        system_prompt_content=agent.system_prompt_content,
         custom_trace_attributes=agent.trace_attributes,
         tools_config=unittest.mock.ANY,
     )
@@ -1486,6 +1509,7 @@ async def test_agent_stream_async_creates_and_ends_span_on_success(
         model_id=unittest.mock.ANY,
         tools=agent.tool_names,
         system_prompt=agent.system_prompt,
+        system_prompt_content=agent.system_prompt_content,
         custom_trace_attributes=agent.trace_attributes,
         tools_config=unittest.mock.ANY,
     )
@@ -1525,6 +1549,7 @@ def test_agent_call_creates_and_ends_span_on_exception(mock_get_tracer, mock_mod
         model_id=unittest.mock.ANY,
         tools=agent.tool_names,
         system_prompt=agent.system_prompt,
+        system_prompt_content=agent.system_prompt_content,
         custom_trace_attributes=agent.trace_attributes,
         tools_config=unittest.mock.ANY,
     )
@@ -1562,6 +1587,7 @@ async def test_agent_stream_async_creates_and_ends_span_on_exception(mock_get_tr
         model_id=unittest.mock.ANY,
         tools=agent.tool_names,
         system_prompt=agent.system_prompt,
+        system_prompt_content=agent.system_prompt_content,
         custom_trace_attributes=agent.trace_attributes,
         tools_config=unittest.mock.ANY,
     )

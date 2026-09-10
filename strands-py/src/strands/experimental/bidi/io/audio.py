@@ -198,7 +198,7 @@ class _BidiAudioInput(BidiInput):
         if not isinstance(agent.model, AudioCapable):
             raise TypeError("BidiAudioIO requires a model that implements AudioCapable")
 
-        audio_config = agent.model.audio_config
+        audio_config = agent.model.get_audio_config()
         self._channels = audio_config["channels"]
         self._format = audio_config["format"]
         self._rate = audio_config["input_rate"]
@@ -309,7 +309,7 @@ class _BidiAudioOutput(BidiOutput):
         if not isinstance(agent.model, AudioCapable):
             raise TypeError("BidiAudioIO requires a model that implements AudioCapable")
 
-        audio_config = agent.model.audio_config
+        audio_config = agent.model.get_audio_config()
         self._channels = audio_config["channels"]
         self._rate = audio_config["output_rate"]
 

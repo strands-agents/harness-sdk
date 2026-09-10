@@ -44,7 +44,6 @@ from ..types.events import (
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
 )
-from ..types.model import BidiConnectionConfig
 from ._reconnect_timer import BidiReconnectTimer, resolve_deadline_s
 
 if TYPE_CHECKING:
@@ -315,23 +314,13 @@ class _BidiAgentLoop:
 
             yield event
 
-    def _connection_config(self) -> BidiConnectionConfig:
-        """Return the model's declared connection config, or an empty config if none.
-
-        Providers are not required to declare ``connection_config``; a missing or empty
-        config means reactive-only reconnect with no proactive timer.
-        """
-        connection_config = getattr(self._agent.model, "connection_config", None)
-        return cast(BidiConnectionConfig, connection_config) if connection_config else {}
-
     def _auto_reconnect_enabled(self) -> bool:
         """Whether the agent reconnects automatically.
 
         Automatic reconnect is the default: a provider is opted in unless it explicitly
-        declares ``auto_reconnect: False`` in its ``connection_config``. A provider that
-        declares no ``connection_config`` at all is treated as opted in.
+        declares ``auto_reconnect: False`` in its connection config.
         """
-        return self._connection_config().get("auto_reconnect", True)
+        return self._agent.model.get_connection_config().get("auto_reconnect", True)
 
     def _arm_reconnect_timer(self) -> None:
         """Arm the proactive reconnect timer when the model opts in with a declared deadline.
@@ -341,7 +330,7 @@ class _BidiAgentLoop:
         """
         if not self._auto_reconnect_enabled():
             return
-        deadline_s = resolve_deadline_s(self._connection_config())
+        deadline_s = resolve_deadline_s(self._agent.model.get_connection_config())
         if deadline_s is None:
             return
         self._reconnect_timer.arm(deadline_s, _MODEL_RESTART_WARNING_S)

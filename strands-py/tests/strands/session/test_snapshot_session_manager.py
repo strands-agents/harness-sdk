@@ -681,6 +681,12 @@ async def test_list_snapshot_ids_pagination(storage):
     assert len(all_ids) == 3
     assert all_ids == sorted(all_ids)
 
+    # guards against a malformed key sorting ahead of valid ids and displacing them from a
+    # limited page (#4198); "000-bad" sorts before every real UUIDv7 id
+    history_prefix = "session/s1/scopes/agent/a1/snapshots/immutable_history/"
+    await storage.write(f"{history_prefix}snapshot_000-bad.json", b"invalid")
+    assert await manager.list_snapshot_ids(agent) == all_ids
+
     assert await manager.list_snapshot_ids(agent, limit=2) == all_ids[:2]
     assert await manager.list_snapshot_ids(agent, limit=0) == []
     assert await manager.list_snapshot_ids(agent, start_after=all_ids[0]) == all_ids[1:]

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from ....types.content import ContentBlock, Message
 from ....types.tools import ToolResult, ToolResultContent
+from ...stash import _format_stash_refs
 from .base import BaseOffloadStrategy, OffloadConditions, OffloadTarget, _build_conditions
 
 if TYPE_CHECKING:
@@ -51,11 +52,13 @@ class DropStrategy(BaseOffloadStrategy):
         tokens: int,
         message: Message,
         agent: Agent,
+        stash_refs: list[str],
     ) -> ContentBlock | None:
+        marker = f"{DROPPED_MARKER}{_format_stash_refs(stash_refs)}"
         if "toolResult" in block:
             tool_result = block["toolResult"]
             logger.debug("tool_use_id=<%s> | dropped tool result from context window", tool_result["toolUseId"])
-            dropped_content: list[ToolResultContent] = [{"text": DROPPED_MARKER}]
+            dropped_content: list[ToolResultContent] = [{"text": marker}]
             return ContentBlock(
                 toolResult=ToolResult(
                     toolUseId=tool_result["toolUseId"],
@@ -64,4 +67,4 @@ class DropStrategy(BaseOffloadStrategy):
                 )
             )
         logger.debug("tracking_id=<%s> | dropped block from context window", message.get("tracking_id"))
-        return ContentBlock(text=DROPPED_MARKER)
+        return ContentBlock(text=marker)

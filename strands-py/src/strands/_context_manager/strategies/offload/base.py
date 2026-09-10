@@ -11,6 +11,8 @@ from typing_extensions import TypedDict
 
 from ....types.content import ContentBlock, Message, Messages
 from ....types.tools import ToolUse
+from ...retrieval_tool import RETRIEVAL_TOOL_NAME
+from ...stash import Stash
 from ...types import ContextState, is_text_block, is_tool_result_block, is_tool_use_block
 
 if TYPE_CHECKING:
@@ -209,10 +211,13 @@ def _repair_alternation(messages: Messages) -> None:
         current = messages[read_index]
         if write_index > 0 and messages[write_index - 1]["role"] == current["role"]:
             prev = messages[write_index - 1]
-            messages[write_index - 1] = Message(
+            merged = Message(
                 role=prev["role"],
                 content=[*prev["content"], *current["content"]],
             )
+            if "tracking_id" in prev:
+                merged["tracking_id"] = prev["tracking_id"]
+            messages[write_index - 1] = merged
         else:
             messages[write_index] = current
             write_index += 1
@@ -264,12 +269,14 @@ class BaseOffloadStrategy(ABC):
     _removal_ratio: float = 0.3
     _include_filter: set[str] | None
     _exclude_filter: set[str] | None
+    _stash: Stash | None
 
     def __init__(self, target: OffloadTarget | None = None, conditions: OffloadConditions | None = None) -> None:
         if isinstance(target, list) and len(target) == 0:
             raise ValueError("Empty array target matches nothing — provide at least one target")
 
         self._target = target
+        self._stash = None
         conditions = conditions or {}
         threshold = _finite_or_none(conditions.get("threshold"))
         self._threshold = int(threshold) if threshold is not None else None
@@ -284,8 +291,9 @@ class BaseOffloadStrategy(ABC):
     def _is_message_level(self) -> bool:
         return self._utilization_threshold is not None
 
-    def init(self, agent: Agent) -> None:
+    def init(self, agent: Agent, stash: Stash | None = None) -> None:
         """Register eager hooks if this is a per-block strategy without preserveRecent."""
+        self._stash = stash
         from ....hooks.events import MessageAddedEvent
 
         if self._is_message_level:
@@ -305,6 +313,7 @@ class BaseOffloadStrategy(ABC):
 
     async def apply(self, context: ContextState) -> bool:
         """Apply the strategy to the context."""
+        self._stash = context.stash
         if self._is_message_level:
             if context.utilization < self._utilization_threshold:  # type: ignore[operator]
                 return False
@@ -367,6 +376,8 @@ class BaseOffloadStrategy(ABC):
         if is_text_block(block):
             return _target_matches_message(self._target, message)
         if is_tool_result_block(block):
+            if self._stash and tool_name_map.get(block["toolResult"]["toolUseId"]) == RETRIEVAL_TOOL_NAME:
+                return False
             return self._target is None or _tool_matches_target(
                 block, self._target, tool_name_map, self._include_filter, self._exclude_filter
             )
@@ -392,7 +403,8 @@ class BaseOffloadStrategy(ABC):
             if tokens <= effective_threshold:
                 continue
 
-            replacement = await self._replace_block(block, tokens, message, agent)
+            stash_refs = self._stash.refs_for(block, message, block_index) if self._stash else []
+            replacement = await self._replace_block(block, tokens, message, agent, stash_refs)
             if replacement is not None and replacement is not block:
                 content[block_index] = replacement
                 acted = True
@@ -431,6 +443,7 @@ class BaseOffloadStrategy(ABC):
         tokens: int,
         message: Message,
         agent: Agent,
+        stash_refs: list[str],
     ) -> ContentBlock | None:
         """Transform a block. Return the replacement, or None to skip."""
         ...

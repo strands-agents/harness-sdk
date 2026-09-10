@@ -29,7 +29,7 @@ DEFAULT_CONTEXT_WINDOW_LIMIT = 200_000
 # Users can always override with an explicit context_window_limit in their model config.
 #
 # For Bedrock models with cross-region prefixes (e.g. us., eu., global.),
-# get_context_window_limit strips the prefix before lookup so only the base model ID is needed here.
+# get_context_window_limit strips prefixes before lookup so only the base model ID is needed here.
 _CONTEXT_WINDOW_LIMITS: dict[str, int] = {
     # Anthropic (direct API)
     "claude-sonnet-4-6": 1_000_000,
@@ -89,6 +89,7 @@ _CONTEXT_WINDOW_LIMITS: dict[str, int] = {
     "amazon.nova-2-lite-v1:0": 1_000_000,
     "amazon.nova-2-pro-preview-20251202-v1:0": 1_000_000,
     # OpenAI
+    "gpt-6-astra": 1_050_000,
     "gpt-5.6": 1_050_000,
     "gpt-5.6-sol": 1_050_000,
     "gpt-5.6-terra": 1_050_000,
@@ -145,8 +146,8 @@ _CONTEXT_WINDOW_LIMITS: dict[str, int] = {
 def get_context_window_limit(model_id: str) -> int | None:
     """Look up the context window limit for a model ID.
 
-    For Bedrock cross-region model IDs (e.g. ``us.anthropic.claude-sonnet-4-6``),
-    the region prefix is stripped as a fallback if the direct lookup fails.
+    For Bedrock model IDs with prefixes (e.g. ``us.anthropic.claude-sonnet-4-6``),
+    prefixes are stripped as a fallback if the direct lookup fails.
 
     Args:
         model_id: The model ID to look up.
@@ -158,16 +159,16 @@ def get_context_window_limit(model_id: str) -> int | None:
     if direct is not None:
         return direct
 
-    # Fallback: strip prefix before first dot and retry (handles cross-region prefixes)
-    dot_index = model_id.find(".")
-    if dot_index != -1:
-        stripped = model_id[dot_index + 1 :]
+    # Fallback: strip prefixes before each dot and retry (handles nested cross-region prefixes and ARNs)
+    stripped = model_id
+    while (dot_index := stripped.find(".")) != -1:
+        stripped = stripped[dot_index + 1 :]
         result = _CONTEXT_WINDOW_LIMITS.get(stripped)
         if result is not None:
             logger.debug(
                 "model_id=<%s>, stripped_id=<%s> | resolved context window limit via prefix strip", model_id, stripped
             )
-        return result
+            return result
 
     return None
 

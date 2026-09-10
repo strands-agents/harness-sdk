@@ -75,8 +75,7 @@ PROVIDER_CONFIGS = {
     "openai_realtime": {
         "model_factory": OpenAIRealtimeModel,
         "model_kwargs": {
-            "model": "gpt-4o-realtime-preview-2024-12-17",
-            "session": {
+            "params": {
                 "output_modalities": ["audio"],  # OpenAI only supports audio OR text, not both
                 "audio": {
                     "input": {

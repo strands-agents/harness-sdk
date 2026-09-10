@@ -202,7 +202,7 @@ app = FastAPI()
 
 @app.websocket("/text-chat")
 async def text_chat(websocket: WebSocket) -> None:
-    model = OpenAIRealtimeModel(client_config={"api_key": "<OPENAI_API_KEY>"})
+    model = OpenAIRealtimeModel(api_key="<OPENAI_API_KEY>")
     agent = BidiAgent(model=model)
 
     try:

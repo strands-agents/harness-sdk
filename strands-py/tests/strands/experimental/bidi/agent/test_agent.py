@@ -26,13 +26,18 @@ class MockBidiModel(BidiModel):
     """Mock bidirectional model for testing."""
 
     def __init__(self, config=None, model_id="mock-model"):
-        self.config = config or {"audio": {"input_rate": 16000, "output_rate": 24000, "channels": 1}}
-        self.connection_config = {}
+        self._config = config or {"audio": {"input_rate": 16000, "output_rate": 24000, "channels": 1}}
         self.usage_is_cumulative = False
-        self.model_id = model_id
+        self._config["model_id"] = model_id
         self._connection_id = None
         self._started = False
         self._events_to_yield = []
+
+    def update_config(self, **model_config):
+        self._config.update(model_config)
+
+    def get_config(self):
+        return self._config.copy()
 
     async def start(self, system_prompt=None, tools=None, messages=None, **kwargs):
         if self._started:
@@ -138,7 +143,7 @@ def test_bidi_agent_init_with_various_configurations():
     assert agent_with_config.agent_id == "test_agent"
 
     # Test model config access
-    config = agent.model.config
+    config = agent.model.get_config()
     assert config["audio"]["input_rate"] == 16000
     assert config["audio"]["output_rate"] == 24000
     assert config["audio"]["channels"] == 1

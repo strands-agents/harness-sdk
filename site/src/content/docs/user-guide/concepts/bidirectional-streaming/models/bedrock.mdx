@@ -127,9 +127,9 @@ For more details on this approach, please refer to the [boto3 session docs](http
 | Parameter | Description | Example | Options |
 | --------- | ----------- | ------- | ------- |
 | `model_id` | Nova Sonic model identifier. | `"amazon.nova-2-sonic-v1:0"` | Nova Sonic model IDs |
-| `audio` | Audio configuration. | `{"output_rate": 24000, "voice": "tiffany"}` | [reference](@api/python/strands.experimental.bidi.types.model#AudioConfig) |
+| `audio` | Audio configuration. | `{"output_rate": 24000, "voice": "tiffany"}` | [reference](@api/python/strands.experimental.bidi.models.configs#AudioConfig) |
 | `params` | Provider-specific session parameters, such as inference and turn detection configuration. | `{"inferenceConfiguration": {"temperature": 0.7}}` | [`sessionStart` fields](https://docs.aws.amazon.com/nova/latest/nova2-userguide/sonic-input-events.html) |
-| `connection` | Reconnect timing overrides. | `{"auto_reconnect": false}` | [reference](@api/python/strands.experimental.bidi.types.model#BidiConnectionConfig) |
+| `connection` | Reconnect timing overrides. | `{"auto_reconnect": false}` | [reference](@api/python/strands.experimental.bidi.models.configs#BidiConnectionConfig) |
 
 :::note
 The `audio` config accepts any sample rate supported by the underlying model API. Refer to the [Nova Sonic documentation](https://docs.aws.amazon.com/nova/latest/nova2-userguide/using-conversational-speech.html) for the full list of supported rates.

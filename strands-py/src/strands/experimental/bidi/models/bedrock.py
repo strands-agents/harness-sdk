@@ -44,9 +44,9 @@ from smithy_aws_core.identity.static import StaticCredentialsResolver
 from smithy_core.aio.eventstream import DuplexEventStream
 from smithy_core.shapes import ShapeID
 from smithy_http.aio.crt import AWSCRTHTTPClient
-from typing_extensions import Unpack
+from typing_extensions import Unpack, override
 
-from ....models._validation import validate_config_keys, validate_region
+from ....models._validation import validate_region
 from ....types._events import ToolResultEvent, ToolUseStreamEvent
 from ....types.content import Messages
 from ....types.tools import ToolResult, ToolSpec, ToolUse
@@ -65,13 +65,14 @@ from ..types.events import (
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
 )
-from ..types.model import AudioConfig, BidiConnectionConfig
-from .model import (
-    AudioCapable,
-    BidiModel,
+from .configs import (
+    AudioConfig,
+    BidiConnectionConfig,
     BidiModelConfig,
-    BidiModelTimeoutError,
+    _validate_audio_config,
+    _validate_bidi_config,
 )
+from .model import AudioCapable, BidiModel, BidiModelTimeoutError
 
 logger = logging.getLogger(__name__)
 
@@ -153,13 +154,16 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         if boto_session is not None and region is not None:
             raise ValueError("Cannot specify both 'boto_session' and 'region'")
 
-        validate_config_keys(model_config, BidiModelConfig)
-        self.config = BidiModelConfig(**model_config)
-        self.model_id = self.config.setdefault("model_id", NOVA_SONIC_V2_MODEL_ID)
+        _validate_bidi_config(model_config)
+        _validate_audio_config(audio)
+        self._config = BidiModelConfig(**model_config)
+        self._config.setdefault("model_id", NOVA_SONIC_V2_MODEL_ID)
 
         # Nova caps a connection at ~8 min; reconnect at 7 min, leaving headroom below the cap.
         # It also reports cumulative usage totals.
-        self.connection_config = BidiConnectionConfig(**{"restart_after_s": 420, **self.config.get("connection", {})})
+        self._config["connection"] = BidiConnectionConfig(
+            **{"restart_after_s": 420, **self._config.get("connection", {})}
+        )
         self.usage_is_cumulative = True
 
         default_audio: AudioConfig = {
@@ -169,8 +173,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             "format": "pcm",
         }
         self._audio_config = AudioConfig(**{**default_audio, **(audio or {})})
-        self.config["params"] = dict(self.config.get("params") or {})
-        self.config["connection"] = self.connection_config
+        self._config["params"] = dict(self._config.get("params") or {})
 
         self._session = boto_session or boto3.Session()
         resolved_region = region if region is not None else self._session.region_name or "us-east-1"
@@ -184,10 +187,25 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         # Ensure certain events are sent in sequence when required
         self._send_lock = asyncio.Lock()
 
-        logger.debug("model_id=<%s> | nova sonic model initialized", self.model_id)
+        logger.debug("model_id=<%s> | nova sonic model initialized", self._config["model_id"])
 
-    @property
-    def audio_config(self) -> AudioConfig:
+    @override
+    def update_config(self, **model_config: Unpack[BidiModelConfig]) -> None:  # type: ignore[override]
+        """Update the model configuration with the provided arguments.
+
+        Args:
+            **model_config: Configuration overrides.
+        """
+        _validate_bidi_config(model_config)
+        self._config.update(model_config)
+
+    @override
+    def get_config(self) -> BidiModelConfig:
+        """Return a copy of the model configuration."""
+        return self._config.copy()
+
+    @override
+    def get_audio_config(self) -> AudioConfig:
         """Get the resolved audio configuration."""
         return self._audio_config
 
@@ -246,7 +264,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         logger.debug("region=<%s> | nova sonic client initialized", self.region)
 
         self._stream = await self._client.invoke_model_with_bidirectional_stream(
-            InvokeModelWithBidirectionalStreamOperationInput(model_id=self.model_id)
+            InvokeModelWithBidirectionalStreamOperationInput(model_id=self._config["model_id"])
         )
         logger.debug("region=<%s> | nova sonic bidirectional stream established", self.region)
 
@@ -338,7 +356,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             raise RuntimeError("model not started | call start before receiving")
 
         logger.debug("nova event stream starting")
-        yield BidiConnectionStartEvent(connection_id=self._connection_id, model=self.model_id)
+        yield BidiConnectionStartEvent(connection_id=self._connection_id, model=self._config["model_id"])
 
         _, output = await self._stream.await_output()
         response_state = _ResponseState()
@@ -420,9 +438,9 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         # Build audio input configuration from config
         audio_input_config = {
             "mediaType": "audio/lpcm",
-            "sampleRateHertz": self.audio_config["input_rate"],
+            "sampleRateHertz": self._audio_config["input_rate"],
             "sampleSizeBits": 16,
-            "channelCount": self.audio_config["channels"],
+            "channelCount": self._audio_config["channels"],
             "audioType": "SPEECH",
             "encoding": "base64",
         }
@@ -609,8 +627,8 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
                 BidiAudioStreamEvent(
                     audio=audio_content,
                     format="pcm",
-                    sample_rate=self.audio_config["output_rate"],
-                    channels=self.audio_config["channels"],
+                    sample_rate=self._audio_config["output_rate"],
+                    channels=self._audio_config["channels"],
                 )
             ]
 
@@ -723,7 +741,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
 
     def _get_connection_start_event(self) -> str:
         """Generate Nova Sonic connection start event."""
-        session_start_event: dict[str, Any] = {"event": {"sessionStart": {**(self.config["params"] or {})}}}
+        session_start_event: dict[str, Any] = {"event": {"sessionStart": {**(self._config.get("params") or {})}}}
 
         return json.dumps(session_start_event)
 
@@ -731,10 +749,10 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         """Generate Nova Sonic prompt start event with tool configuration."""
         audio_output_config = {
             "mediaType": "audio/lpcm",
-            "sampleRateHertz": self.audio_config["output_rate"],
+            "sampleRateHertz": self._audio_config["output_rate"],
             "sampleSizeBits": 16,
-            "channelCount": self.audio_config["channels"],
-            "voiceId": self.audio_config.get("voice", "matthew"),
+            "channelCount": self._audio_config["channels"],
+            "voiceId": self._audio_config.get("voice", "matthew"),
             "encoding": "base64",
             "audioType": "SPEECH",
         }

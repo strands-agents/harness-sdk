@@ -936,6 +936,7 @@ def test_start_agent_span(mock_tracer):
         model_id = "test-model"
         tools = [{"name": "weather_tool"}]
         custom_attrs = {"custom_attr": "value"}
+        system_prompt = "You are a helpful assistant"
 
         span = tracer.start_agent_span(
             custom_trace_attributes=custom_attrs,
@@ -943,6 +944,7 @@ def test_start_agent_span(mock_tracer):
             messages=[{"content": content, "role": "user"}],
             model_id=model_id,
             tools=tools,
+            system_prompt=system_prompt,
         )
 
         mock_tracer.start_span.assert_called_once()
@@ -958,6 +960,9 @@ def test_start_agent_span(mock_tracer):
                 "gen_ai.agent.tools": json.dumps(tools),
                 "custom_attr": "value",
             }
+        )
+        mock_span.add_event.assert_any_call(
+            "gen_ai.system.message", attributes={"content": serialize([{"text": system_prompt}])}
         )
         mock_span.add_event.assert_any_call("gen_ai.user.message", attributes={"content": json.dumps(content)})
         assert span is not None
@@ -977,6 +982,7 @@ def test_start_agent_span_latest_conventions(mock_tracer, monkeypatch):
         model_id = "test-model"
         tools = [{"name": "weather_tool"}]
         custom_attrs = {"custom_attr": "value"}
+        system_prompt = "You are a helpful assistant"
 
         span = tracer.start_agent_span(
             custom_trace_attributes=custom_attrs,
@@ -984,6 +990,7 @@ def test_start_agent_span_latest_conventions(mock_tracer, monkeypatch):
             messages=[{"content": content, "role": "user"}],
             model_id=model_id,
             tools=tools,
+            system_prompt=system_prompt,
         )
 
         mock_tracer.start_span.assert_called_once()
@@ -997,6 +1004,7 @@ def test_start_agent_span_latest_conventions(mock_tracer, monkeypatch):
                 "gen_ai.request.model": model_id,
                 "gen_ai.agent.tools": json.dumps(tools),
                 "custom_attr": "value",
+                "gen_ai.system_instructions": serialize([{"type": "text", "content": system_prompt}]),
             }
         )
         mock_span.add_event.assert_any_call(
@@ -1008,6 +1016,34 @@ def test_start_agent_span_latest_conventions(mock_tracer, monkeypatch):
             },
         )
         assert span is not None
+
+
+def test_start_agent_span_records_system_instructions(mock_tracer, monkeypatch):
+    """Test that agent system prompts use the semantic-convention attribute."""
+    with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+        monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_latest_experimental")
+        tracer = Tracer()
+        tracer.tracer = mock_tracer
+
+        mock_span = mock.MagicMock()
+        mock_tracer.start_span.return_value = mock_span
+
+        system_prompt_content = [{"text": "Be helpful"}, {"cachePoint": {"type": "default"}}]
+        tracer.start_agent_span(
+            messages=[],
+            agent_name="TestAgent",
+            system_prompt="ignored string",
+            system_prompt_content=system_prompt_content,
+        )
+
+        set_attrs_call = mock_span.set_attributes.call_args_list[0][0][0]
+        assert set_attrs_call["gen_ai.system_instructions"] == serialize(
+            [
+                {"type": "text", "content": "Be helpful"},
+                {"type": "cachePoint", "content": {"type": "default"}},
+            ]
+        )
+        assert "system_prompt" not in set_attrs_call
 
 
 def test_end_agent_span(mock_span):
@@ -2505,6 +2541,28 @@ class TestSpanAttributeRedaction:
                 "gen_ai.client.inference.operation.details",
                 attributes={"gen_ai.system_instructions": "[REDACTED]"},
             )
+
+    def test_agent_system_instructions_redacted(self, mock_tracer, monkeypatch):
+        """Agent system instructions follow the configured redaction policy."""
+        monkeypatch.setenv(
+            "OTEL_SEMCONV_STABILITY_OPT_IN",
+            "gen_ai_latest_experimental,gen_ai_unredacted_attributes=",
+        )
+        with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+            tracer = Tracer()
+            tracer.tracer = mock_tracer
+            mock_span = mock.MagicMock()
+            mock_tracer.start_span.return_value = mock_span
+
+            tracer.start_agent_span(
+                messages=[],
+                agent_name="TestAgent",
+                system_prompt="confidential system prompt",
+            )
+
+            set_attrs_call = mock_span.set_attributes.call_args_list[0][0][0]
+            assert set_attrs_call["gen_ai.system_instructions"] == "[REDACTED]"
+            assert "system_prompt" not in set_attrs_call
 
     def test_model_id_and_operation_never_redacted(self, mock_tracer, monkeypatch):
         """Structural span attributes (model id, tool name, operation) are never replaced."""

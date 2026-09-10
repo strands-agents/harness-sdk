@@ -143,11 +143,15 @@ from strands.experimental.bidi.models import OpenAIRealtimeModel
 
 # Check VAD configuration (OpenAI)
 model = OpenAIRealtimeModel(
-    provider_config={
-        "turn_detection": {
-            "type": "server_vad",
-            "threshold": 0.3,  # Lower = more sensitive
-            "silence_duration_ms": 300  # Shorter = faster detection
+    params={
+        "audio": {
+            "input": {
+                "turn_detection": {
+                    "type": "server_vad",
+                    "threshold": 0.3,  # Lower = more sensitive
+                    "silence_duration_ms": 300  # Shorter = faster detection
+                }
+            }
         }
     }
 )
@@ -180,11 +184,16 @@ from strands.experimental.bidi.models import OpenAIRealtimeModel
 
 # Increase VAD threshold (OpenAI)
 model = OpenAIRealtimeModel(
-    provider_config={
-        "turn_detection": {
-            "threshold": 0.7,  # Higher = less sensitive
-            "prefix_padding_ms": 500,  # More context
-            "silence_duration_ms": 700  # Longer silence required
+    params={
+        "audio": {
+            "input": {
+                "turn_detection": {
+                    "type": "server_vad",
+                    "threshold": 0.7,  # Higher = less sensitive
+                    "prefix_padding_ms": 500,  # More context
+                    "silence_duration_ms": 700  # Longer silence required
+                }
+            }
         }
     }
 )

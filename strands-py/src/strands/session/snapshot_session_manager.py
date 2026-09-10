@@ -371,7 +371,11 @@ class SnapshotSessionManager(SessionManager):
 
         history_prefix = f"{_snapshots_prefix(self.session_id, agent.agent_id)}{_IMMUTABLE_HISTORY}/"
         keys = await self._resolved_storage.list(history_prefix)
-        ids = sorted(match.group(1) for key in keys if (match := _SNAPSHOT_REGEX.search(key)))
+        ids = sorted(
+            snapshot_id
+            for key in keys
+            if (match := _SNAPSHOT_REGEX.search(key)) and is_uuid7(snapshot_id := match.group(1))
+        )
         if start_after is not None:
             ids = [snapshot_id for snapshot_id in ids if snapshot_id > start_after]
         if limit is not None:

@@ -1,4 +1,4 @@
-"""Experimental and internal. Offload strategies — reduce content in the context window."""
+"""Offload strategies — reduce content in the context window."""
 
 from __future__ import annotations
 

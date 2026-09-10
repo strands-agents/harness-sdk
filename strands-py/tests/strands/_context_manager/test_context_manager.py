@@ -8,9 +8,10 @@ from strands._context_manager.context_manager import ContextManager
 from strands._context_manager.strategies.offload import Offload
 from strands._context_manager.strategies.offload.truncate import EmergencyTruncateStrategy
 from strands.hooks import HookRegistry
-from strands.hooks.events import AfterModelCallEvent, BeforeModelCallEvent
+from strands.hooks.events import AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
 from strands.types.content import ContentBlock, Message
 from strands.types.exceptions import ContextWindowOverflowException
+from strands.types.tools import ToolResult, ToolUse
 
 
 @pytest.fixture
@@ -235,3 +236,149 @@ class TestAgentIntegration:
         resolved_cm, resolved_plugins = Agent._resolve_context_manager(None, None, None)
         assert resolved_cm is None
         assert resolved_plugins is None
+
+
+class TestContextManagerStashHook:
+    """Tests for the stash MessageAddedEvent hook."""
+
+    @pytest.mark.asyncio
+    async def test_stash_hook_persists_tool_result(self, mock_agent):
+        mock_agent.session_id = "test-session"
+        mock_agent.storage = None
+        cm = ContextManager(stash=True)
+        cm.init_agent(mock_agent)
+
+        block = ContentBlock(
+            toolResult=ToolResult(toolUseId="tu-1", status="success", content=[{"text": "data"}])
+        )
+        message = Message(role="user", content=[block])
+        event = MessageAddedEvent(agent=mock_agent, message=message)
+        await mock_agent.hooks.invoke_callbacks_async(event)
+
+        result = await cm._stash.retrieve("tu-1_0")
+        assert result is not None
+        assert result["text"] == "data"
+
+    @pytest.mark.asyncio
+    async def test_stash_hook_tracks_retrieval_tool_use_ids(self, mock_agent):
+        mock_agent.session_id = "test-session"
+        mock_agent.storage = None
+        cm = ContextManager(stash=True)
+        cm.init_agent(mock_agent)
+
+        message = Message(
+            role="assistant",
+            content=[ContentBlock(toolUse=ToolUse(toolUseId="tu-ret", name="retrieve_context", input={}))],
+        )
+        event = MessageAddedEvent(agent=mock_agent, message=message)
+        await mock_agent.hooks.invoke_callbacks_async(event)
+
+        assert "tu-ret" in cm._retrieval_tool_use_ids
+
+
+class TestStashBackfill:
+    """Tests for backfilling the stash from pre-existing agent messages."""
+
+    @pytest.mark.asyncio
+    async def test_backfills_pre_existing_messages_on_first_strategy_run(self):
+        agent = unittest.mock.MagicMock()
+        agent.agent_id = "test-agent"
+        agent.session_id = "test-session"
+        agent.storage = None
+        agent.model = unittest.mock.AsyncMock()
+        agent.model.count_tokens = unittest.mock.AsyncMock(return_value=100)
+        agent.model.estimate_utilization = unittest.mock.MagicMock(return_value=0.1)
+        agent.hooks = HookRegistry()
+        agent.messages = [
+            Message(role="user", content=[ContentBlock(text="seed message")]),
+            Message(
+                role="user",
+                content=[
+                    ContentBlock(
+                        toolResult=ToolResult(
+                            toolUseId="pre-tu-1",
+                            status="success",
+                            content=[{"text": "pre-existing result"}],
+                        )
+                    )
+                ],
+            ),
+        ]
+
+        cm = ContextManager(strategies=[], stash=True)
+        cm.init_agent(agent)
+
+        event = BeforeModelCallEvent(agent=agent, projected_input_tokens=100)
+        await agent.hooks.invoke_callbacks_async(event)
+
+        result = await cm._stash.retrieve("pre-tu-1_0")
+        assert result is not None
+        assert result["text"] == "pre-existing result"
+
+    @pytest.mark.asyncio
+    async def test_backfill_runs_only_once(self):
+        agent = unittest.mock.MagicMock()
+        agent.agent_id = "test-agent"
+        agent.session_id = "test-session"
+        agent.storage = None
+        agent.model = unittest.mock.AsyncMock()
+        agent.model.count_tokens = unittest.mock.AsyncMock(return_value=100)
+        agent.model.estimate_utilization = unittest.mock.MagicMock(return_value=0.1)
+        agent.hooks = HookRegistry()
+        agent.messages = [
+            Message(role="user", content=[ContentBlock(text="hello")]),
+        ]
+
+        cm = ContextManager(strategies=[], stash=True)
+        cm.init_agent(agent)
+
+        event = BeforeModelCallEvent(agent=agent, projected_input_tokens=100)
+        await agent.hooks.invoke_callbacks_async(event)
+        assert cm._backfill_done is True
+
+        with unittest.mock.patch.object(cm._stash, "store_message") as mock_store:
+            event = BeforeModelCallEvent(agent=agent, projected_input_tokens=100)
+            await agent.hooks.invoke_callbacks_async(event)
+            mock_store.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_backfill_when_stash_disabled(self):
+        agent = unittest.mock.MagicMock()
+        agent.agent_id = "test-agent"
+        agent.session_id = "test-session"
+        agent.storage = None
+        agent.model = unittest.mock.AsyncMock()
+        agent.model.count_tokens = unittest.mock.AsyncMock(return_value=100)
+        agent.model.estimate_utilization = unittest.mock.MagicMock(return_value=0.1)
+        agent.hooks = HookRegistry()
+        agent.messages = [
+            Message(role="user", content=[ContentBlock(text="hello")]),
+        ]
+
+        cm = ContextManager(strategies=[], stash=False)
+        cm.init_agent(agent)
+
+        event = BeforeModelCallEvent(agent=agent, projected_input_tokens=100)
+        await agent.hooks.invoke_callbacks_async(event)
+        assert cm._stash is None
+
+
+class TestStrategyInitFallback:
+    """Tests for strategy init() TypeError fallback."""
+
+    def test_strategy_without_stash_kwarg_still_inits(self, mock_agent):
+        class CustomStrategy:
+            @property
+            def name(self):
+                return "custom"
+
+            def init(self, agent):
+                self.initialized = True
+
+            async def apply(self, context):
+                return False
+
+        strategy = CustomStrategy()
+        cm = ContextManager(strategies=[strategy])
+        cm.init_agent(mock_agent)
+        assert strategy.initialized is True

@@ -33,6 +33,7 @@ from pydantic import BaseModel
 
 from .. import _identifier
 from .._async import run_async
+from ..background_tasks import BackgroundTasksConfig
 from ..event_loop._retry import ModelRetryStrategy
 from ..event_loop.event_loop import INITIAL_DELAY, MAX_ATTEMPTS, MAX_DELAY, event_loop_cycle
 from ..experimental.checkpoint import Checkpoint, CheckpointPosition
@@ -47,6 +48,7 @@ from ..types._snapshot import (
 
 if TYPE_CHECKING:
     from .._context_manager.context_manager import ContextManager
+    from ..background_tasks._background_tasks import _BackgroundTasks
     from ..tools import ToolProvider
 from .._middleware import MiddlewareRegistry
 from .._middleware.stages import AgentStreamContext, AgentStreamStage
@@ -240,6 +242,7 @@ class Agent(AgentBase, LocalAgent):
         checkpointing: bool = False,
         sandbox: Sandbox | None = None,
         storage: Storage | None = None,
+        background_tasks: bool | BackgroundTasksConfig | None = None,
     ):
         """Initialize the Agent with the specified configuration.
 
@@ -348,6 +351,10 @@ class Agent(AgentBase, LocalAgent):
                 auto-namespaces under its own prefix (e.g., ``offloader/``) to avoid key
                 collisions. Storage specified directly on a subsystem always takes
                 precedence over this agent-level default. Defaults to None.
+            background_tasks: Background tool execution configuration. Pass ``True`` or a
+                :class:`~strands.background_tasks.BackgroundTasksConfig` to let the model run
+                tools in the background and receive their results when they finish. Defaults to
+                None (disabled).
 
         Raises:
             ValueError: If agent id contains path separators.
@@ -540,6 +547,12 @@ class Agent(AgentBase, LocalAgent):
 
         self.tool_executor = tool_executor or ConcurrentToolExecutor()
 
+        self._background_tasks: _BackgroundTasks | None = None
+        if background_tasks is not None and background_tasks is not False:
+            from ..background_tasks._background_tasks import _BackgroundTasks as _BackgroundTasksPlugin
+
+            self._background_tasks = _BackgroundTasksPlugin({} if background_tasks is True else background_tasks)
+
         if hooks:
             for hook in hooks:
                 if isinstance(hook, HookProvider):
@@ -561,6 +574,9 @@ class Agent(AgentBase, LocalAgent):
         if plugins_to_register:
             for plugin in plugins_to_register:
                 self._plugin_registry.add_and_init(plugin)
+
+        if self._background_tasks is not None:
+            self._plugin_registry.add_and_init(self._background_tasks)
 
         has_agent_delegation = any(plugin.name == "strands:agent-delegation" for plugin in (plugins_to_register or []))
         if not has_agent_delegation:
@@ -1881,6 +1897,7 @@ class Agent(AgentBase, LocalAgent):
             model_id=model_id,
             tools=self.tool_names,
             system_prompt=self.system_prompt,
+            system_prompt_content=self.system_prompt_content,
             custom_trace_attributes=self.trace_attributes,
             tools_config=self.tool_registry.get_all_tools_config(),
         )
@@ -2034,7 +2051,10 @@ class Agent(AgentBase, LocalAgent):
 
         Raises:
             SnapshotException: If snapshot.schema_version is not "1.0".
+            RuntimeError: If background tasks are still tracked.
         """
+        if self._background_tasks is not None:
+            self._background_tasks.assert_can_load_snapshot()
         snapshot.validate()
 
         data = snapshot.data
@@ -2051,6 +2071,8 @@ class Agent(AgentBase, LocalAgent):
             self.system_prompt = copy.deepcopy(data["system_prompt"])
         if "model_state" in data:
             self._model_state = copy.deepcopy(data["model_state"])
+        if self._background_tasks is not None and "state" in data:
+            self._background_tasks.load_state()
 
     def _redact_user_content(self, content: list[ContentBlock], redact_message: str) -> list[ContentBlock]:
         """Redact user content preserving toolResult blocks.

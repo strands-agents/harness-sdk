@@ -1857,6 +1857,81 @@ describe('OpenAIModel', () => {
     })
   })
 
+  describe('tool result and text ordering', () => {
+    // Regression: an everyTurn context injector folds rendered text onto a tool-result turn, producing a
+    // mixed [toolResult, text] user message. Tool results must be emitted before that text so each `tool`
+    // message immediately follows the assistant `tool_calls` it answers — OpenAI rejects a request where a
+    // non-tool message wedges between them.
+    it.each([
+      { name: 'tool result then text', order: ['tu1', 'text'], roles: ['user', 'assistant', 'tool', 'user'] },
+      { name: 'text then tool result', order: ['text', 'tu1'], roles: ['user', 'assistant', 'tool', 'user'] },
+      {
+        name: 'text between parallel tool results',
+        order: ['tu1', 'text', 'tu2'],
+        roles: ['user', 'assistant', 'tool', 'tool', 'user'],
+      },
+    ])('keeps tool results adjacent to the assistant tool_calls for $name', async ({ order, roles }) => {
+      const toolUseIds = order.filter((entry) => entry !== 'text')
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({ api: 'chat', client: createMockClientWithCapture(captured) })
+
+      await collectIterator(
+        provider.stream([
+          new Message({ role: 'user', content: [new TextBlock('task')] }),
+          new Message({
+            role: 'assistant',
+            content: toolUseIds.map((toolUseId) => new ToolUseBlock({ name: 'calc', toolUseId, input: {} })),
+          }),
+          new Message({
+            role: 'user',
+            content: order.map((entry) =>
+              entry === 'text'
+                ? new TextBlock('\n\nNOTE')
+                : new ToolResultBlock({ toolUseId: entry, status: 'success', content: [new TextBlock('42')] })
+            ),
+          }),
+        ])
+      )
+
+      const requestMessages = captured.request.messages
+      expect(requestMessages.map((message: any) => message.role)).toEqual(roles)
+      // The message immediately after the assistant tool_calls must be the first tool response.
+      expect(requestMessages[2]).toEqual({ role: 'tool', tool_call_id: 'tu1', content: '42' })
+      // The injected text trails the tool responses as its own user message.
+      expect(requestMessages.at(-1)).toEqual({ role: 'user', content: [{ type: 'text', text: '\n\nNOTE' }] })
+    })
+
+    it('keeps media hoisted out of a tool result ahead of the injected text', async () => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({ api: 'chat', client: createMockClientWithCapture(captured) })
+
+      await collectIterator(
+        provider.stream([
+          new Message({
+            role: 'user',
+            content: [
+              new ToolResultBlock({
+                toolUseId: 'tu1',
+                status: 'success',
+                content: [
+                  new TextBlock('42'),
+                  new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1]) } }),
+                ],
+              }),
+              new TextBlock('\n\nNOTE'),
+            ],
+          }),
+        ])
+      )
+
+      expect(captured.request.messages).toEqual([
+        { role: 'tool', tool_call_id: 'tu1', content: '42' },
+        { role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,AQ==' } }] },
+        { role: 'user', content: [{ type: 'text', text: '\n\nNOTE' }] },
+      ])
+    })
+  })
+
   describe('error handling', () => {
     it('throws ContextWindowOverflowError for structured error with code', async () => {
       const mockClient = {

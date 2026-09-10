@@ -62,14 +62,14 @@ describe('ContextManager', () => {
   })
 
   describe('initAgent', () => {
-    it('registers AfterModelCallEvent hook', () => {
+    it('registers AfterModelCallEvent hook', async () => {
       const cm = new ContextManager()
       const agent = makeMockAgent()
-      cm.initAgent(agent)
+      await cm.initAgent(agent)
       expect(agent.trackedHooks.length).toBeGreaterThan(0)
     })
 
-    it('initializes strategies with init context', () => {
+    it('initializes strategies with init context', async () => {
       let initCalled = false
       const strategy = {
         name: 'test',
@@ -80,7 +80,7 @@ describe('ContextManager', () => {
       }
       const cm = new ContextManager({ strategies: [strategy] })
       const agent = makeMockAgent()
-      cm.initAgent(agent)
+      await cm.initAgent(agent)
       expect(initCalled).toBe(true)
     })
   })
@@ -97,7 +97,7 @@ describe('ContextManager', () => {
       }
       const cm = new ContextManager({ strategies: [strategy] })
       const agent = makeMockAgent()
-      cm.initAgent(agent)
+      await cm.initAgent(agent)
 
       const event = makeOverflowEvent(agent)
       await invokeTrackedHook(agent, event)
@@ -117,7 +117,7 @@ describe('ContextManager', () => {
       }
       const cm = new ContextManager({ strategies: [strategy] })
       const agent = makeMockAgent()
-      cm.initAgent(agent)
+      await cm.initAgent(agent)
 
       const event = new AfterModelCallEvent({
         agent,
@@ -153,7 +153,7 @@ describe('ContextManager', () => {
         countTokens: async () => 10000,
         estimateUtilization: () => 1.5,
       })
-      cm.initAgent(agent)
+      await cm.initAgent(agent)
 
       const originalLength = messages.length
       const event = makeOverflowEvent(agent)
@@ -180,7 +180,7 @@ describe('ContextManager', () => {
         countTokens: async () => 100,
         estimateUtilization: () => 0.5,
       })
-      cm.initAgent(agent)
+      await cm.initAgent(agent)
 
       const originalLength = messages.length
       const event = makeOverflowEvent(agent)
@@ -208,7 +208,7 @@ describe('ContextManager', () => {
         countTokens: async () => 10000,
         estimateUtilization: () => 1.5,
       })
-      cm.initAgent(agent)
+      await cm.initAgent(agent)
 
       // First 3 overflows should retry
       for (let attempt = 0; attempt < 3; attempt++) {
@@ -236,7 +236,7 @@ describe('ContextManager', () => {
         countTokens: async () => 10000,
         estimateUtilization: () => 1.5,
       })
-      cm.initAgent(agent)
+      await cm.initAgent(agent)
 
       // Use 2 retries
       for (let attempt = 0; attempt < 2; attempt++) {
@@ -285,7 +285,7 @@ describe('ContextManager', () => {
         countTokens: async () => 10000,
         estimateUtilization: () => 1.5,
       })
-      cm.initAgent(agent)
+      await cm.initAgent(agent)
 
       const event = makeOverflowEvent(agent)
       await invokeTrackedHook(agent, event)
@@ -323,7 +323,7 @@ describe('ContextManager', () => {
         countTokens: async () => 10000,
         estimateUtilization: () => 1.5,
       })
-      cm.initAgent(agent)
+      await cm.initAgent(agent)
 
       const event = makeOverflowEvent(agent)
       await invokeTrackedHook(agent, event)
@@ -357,7 +357,7 @@ describe('ContextManager', () => {
         countTokens: async () => 10000,
         estimateUtilization: () => 1.5,
       })
-      cm.initAgent(agent)
+      await cm.initAgent(agent)
 
       const event = makeOverflowEvent(agent)
       await invokeTrackedHook(agent, event)
@@ -380,7 +380,7 @@ describe('ContextManager', () => {
       const agent = makeMockAgent({
         estimateUtilization: (tokens: number) => tokens / 10000,
       })
-      cm.initAgent(agent)
+      await cm.initAgent(agent)
 
       const event = makeBeforeEvent(agent, 5000)
       await invokeTrackedHook(agent, event)
