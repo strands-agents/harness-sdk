@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Literal
 
 from typing_extensions import TypedDict
 
-from ....agent.conversation_manager.compression.pin_message import is_pinned
+from ....agent.conversation_manager.compression.pin_message import _has_pinned_flag, is_pinned
 from ....types.content import ContentBlock, Message, Messages
 from ....types.tools import ToolUse
 from ...retrieval_tool import RETRIEVAL_TOOL_NAME
@@ -218,8 +218,8 @@ def _repair_alternation(messages: Messages) -> None:
         current = messages[read_index]
         if write_index > 0 and messages[write_index - 1]["role"] == current["role"]:
             prev = messages[write_index - 1]
-            prev_pinned = prev.get("metadata", {}).get("custom", {}).get("pinned") is True
-            current_pinned = current.get("metadata", {}).get("custom", {}).get("pinned") is True
+            prev_pinned = _has_pinned_flag(prev)
+            current_pinned = _has_pinned_flag(current)
             merged = Message(
                 role=prev["role"],
                 content=[*prev["content"], *current["content"]],
@@ -315,7 +315,8 @@ class BaseOffloadStrategy(ABC):
         async def _eager_hook(event: MessageAddedEvent) -> None:
             try:
                 messages = event.agent.messages
-                index = next((i for i, msg in enumerate(messages) if msg is event.message), -1)
+                index_map = {id(msg): i for i, msg in enumerate(messages)}
+                index = index_map.get(id(event.message), -1)
                 if index >= 0 and is_pinned(messages, index):
                     return
                 tool_name_map = _build_tool_name_map(messages)
@@ -349,8 +350,9 @@ class BaseOffloadStrategy(ABC):
         )
 
         acted = False
+        index_map = {id(msg): i for i, msg in enumerate(messages)}
         for message in eligible:
-            index = next((i for i, msg in enumerate(messages) if msg is message), -1)
+            index = index_map.get(id(message), -1)
             if index >= 0 and is_pinned(messages, index):
                 continue
             if await self._transform_blocks(message, messages, tool_name_map, agent):
@@ -446,11 +448,11 @@ class BaseOffloadStrategy(ABC):
                 self._include_filter,
                 self._exclude_filter,
             )
+            index_map = {id(msg): i for i, msg in enumerate(messages)}
             candidates = [
                 msg
                 for msg in oldest
-                if msg is not messages[0]
-                and not is_pinned(messages, next(i for i, m in enumerate(messages) if m is msg))
+                if msg is not messages[0] and not is_pinned(messages, index_map[id(msg)])
             ]
         else:
             candidates = [

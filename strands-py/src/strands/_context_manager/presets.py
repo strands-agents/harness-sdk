@@ -63,10 +63,6 @@ def resolve_strategies(entries: list[ContextStrategy | str]) -> list[ContextStra
     strategies: list[ContextStrategy] = []
     for entry in entries:
         if isinstance(entry, str):
-            if entry not in STRATEGY_PRESET_NAMES:
-                raise ValueError(
-                    f'Unknown strategy preset: "{entry}". Valid presets: {", ".join(STRATEGY_PRESET_NAMES)}'
-                )
             strategies.extend(resolve_preset(entry))
         else:
             strategies.append(entry)

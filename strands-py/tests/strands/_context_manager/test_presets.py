@@ -70,9 +70,21 @@ class TestPresetNames:
             assert len(strategies) >= 1
 
     def test_proactive_summarization_preserve_recent_is_ratio(self):
+        """Ratio preserve_recent (0.7) keeps 70% of matches — 5 messages → 4 preserved, 1 returned."""
+        from strands._context_manager.strategies.offload.base import _get_oldest_matches
+        from strands.types.content import ContentBlock, Message
+
         strategies = resolve_preset("proactive_summarization")
-        assert strategies[0]._preserve_recent == 0.7
+        messages = [Message(role="user", content=[ContentBlock(text=f"m{i}")]) for i in range(5)]
+        oldest = _get_oldest_matches(messages, "*", strategies[0]._preserve_recent, {}, None, None)
+        assert len(oldest) == 1
 
     def test_overflow_protection_preserve_recent_is_integer(self):
+        """Integer preserve_recent (4) keeps exactly 4 most-recent matches."""
+        from strands._context_manager.strategies.offload.base import _get_oldest_matches
+        from strands.types.content import ContentBlock, Message
+
         strategies = resolve_preset("overflow_protection")
-        assert strategies[0]._preserve_recent == 4
+        messages = [Message(role="user", content=[ContentBlock(text=f"m{i}")]) for i in range(10)]
+        oldest = _get_oldest_matches(messages, "*", strategies[0]._preserve_recent, {}, None, None)
+        assert len(oldest) == 6

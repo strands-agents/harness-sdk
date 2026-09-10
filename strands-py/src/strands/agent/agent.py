@@ -383,7 +383,6 @@ class Agent(AgentBase, LocalAgent):
             context_manager, conversation_manager
         )
 
-        # Build plugin list: replace old offloader/CM plugin injection with direct CM plugin
         resolved_plugins = list(plugins) if plugins else []
         if self._context_manager_instance is not None:
             resolved_plugins.append(self._context_manager_instance)
