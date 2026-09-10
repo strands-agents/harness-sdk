@@ -123,14 +123,13 @@ class ContextManager(Plugin):
         if strategy == "auto":
             return ContextManager()
         if strategy == "agentic":
-            return ContextManager(
-                strategies=[
-                    Offload.truncate("tool_results", {"preview_tokens": _TRUNCATE_PREVIEW_TOKENS}).when(
-                        threshold=_AGENTIC_TRUNCATE_THRESHOLD,
-                    ),
-                    Offload.summarize("*").when(utilization=1, preserve_recent=4),
-                ],
-            )
+            agentic_strategies: list[ContextStrategy | str] = [
+                Offload.truncate("tool_results", {"preview_tokens": _TRUNCATE_PREVIEW_TOKENS}).when(
+                    threshold=_AGENTIC_TRUNCATE_THRESHOLD,
+                ),
+                Offload.summarize("*").when(utilization=1, preserve_recent=4),
+            ]
+            return ContextManager(strategies=agentic_strategies)
         if isinstance(strategy, str):
             raise ValueError(
                 f'Unknown context_manager preset: "{strategy}". '
