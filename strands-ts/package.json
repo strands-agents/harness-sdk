@@ -229,6 +229,7 @@
     "@cedar-policy/mcp-schema-generator-wasm": "^0.6.0",
     "@eslint/js": "^10.0.1",
     "@google/genai": "^2.6.0",
+    "@modelcontextprotocol/node": "^2.0.0",
     "@modelcontextprotocol/sdk": "^1.25.2",
     "@modelcontextprotocol/server": "^2.0.0",
     "@opentelemetry/api": "^1.9.0",
