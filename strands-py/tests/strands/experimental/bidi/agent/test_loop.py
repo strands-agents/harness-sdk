@@ -5,7 +5,7 @@ import warnings
 import pytest
 import pytest_asyncio
 
-from strands import tool
+from strands import ToolContext, tool
 from strands.experimental.bidi import BidiAgent
 from strands.experimental.bidi.agent.loop import _ReaderError
 from strands.experimental.bidi.hooks.events import BidiAgentStopEvent, BidiBeforeConnectionRestartEvent
@@ -24,7 +24,7 @@ from strands.experimental.bidi.types.events import (
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
 )
-from strands.hooks import MessageAddedEvent
+from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent, MessageAddedEvent
 from strands.types._events import ToolResultEvent, ToolResultMessageEvent, ToolUseStreamEvent
 from tests.fixtures.mock_hook_provider import MockHookProvider
 
@@ -181,7 +181,8 @@ async def test_bidi_agent_loop_receive_restart_connection(loop, agent, agenerato
 
     agent.model.receive = unittest.mock.Mock(side_effect=[timeout_error, agenerator([text_event])])
 
-    await loop.start()
+    invocation_state = {"custom_data": "preserved"}
+    await loop.start(invocation_state=invocation_state)
 
     tru_events = []
     async for event in loop.receive():
@@ -194,6 +195,7 @@ async def test_bidi_agent_loop_receive_restart_connection(loop, agent, agenerato
         text_event,
     ]
     assert tru_events == exp_events
+    assert loop._invocation_state is invocation_state
 
     # The reactive path restarts through the provider method and forwards the timeout config.
     assert agent.model.start.call_count == 1
@@ -1272,38 +1274,48 @@ async def test_bidi_agent_loop_stop_conversation_deprecated_but_works(loop, agen
 
 
 @pytest.mark.asyncio
-async def test_bidi_agent_loop_request_state_preserved_with_invocation_state(agent, agenerator):
-    """Test that existing invocation_state is preserved when request_state is initialized."""
+@pytest.mark.parametrize("invocation_state", [{}, {"custom_data": "preserved"}])
+async def test_tools_share_invocation_state(agent, agenerator, invocation_state):
+    """Tools, hooks, and the caller share state throughout the invocation."""
+    exp_state = {**invocation_state, "call_count": 2, "request_state": {}}
+    tool_states = []
 
-    @tool(name="check_invocation_state")
-    async def check_invocation_state(custom_key: str) -> str:
-        return f"custom_key: {custom_key}"
+    @tool(context=True)
+    async def count_calls(tool_context: ToolContext) -> str:
+        """Count calls in the shared invocation state."""
+        state = tool_context.invocation_state
+        tool_states.append(state)
+        state["call_count"] = state.get("call_count", 0) + 1
+        return str(state["call_count"])
 
-    agent.tool_registry.register_tool(check_invocation_state)
+    agent.tool_registry.register_tool(count_calls)
+    hooks = MockHookProvider([BeforeToolCallEvent, AfterToolCallEvent])
+    agent.hooks.add_hook(hooks)
+    tool_uses = [{"toolUseId": f"call-{number}", "name": count_calls.tool_name, "input": {}} for number in (1, 2)]
+    agent.model.receive = unittest.mock.Mock(
+        return_value=agenerator([ToolUseStreamEvent(current_tool_use=tool_use, delta="") for tool_use in tool_uses])
+    )
 
-    tool_use = {"toolUseId": "t4", "name": "check_invocation_state", "input": {"custom_key": "from_state"}}
-    tool_use_event = ToolUseStreamEvent(current_tool_use=tool_use, delta="")
+    await agent.start(invocation_state=invocation_state)
+    tru_results = []
+    try:
+        async for event in agent.receive():
+            if isinstance(event, ToolResultMessageEvent):
+                tru_results.append(event["message"]["content"][0]["toolResult"])
+                if len(tru_results) == len(tool_uses):
+                    break
+    finally:
+        await agent.stop()
 
-    agent.model.receive = unittest.mock.Mock(return_value=agenerator([tool_use_event]))
-
-    loop = agent._loop
-    # Start with custom invocation_state but no request_state
-    await loop.start(invocation_state={"custom_data": "preserved"})
-
-    tru_events = []
-    async for event in loop.receive():
-        tru_events.append(event)
-        if len(tru_events) >= 3:
-            break
-
-    # Verify tool executed successfully
-    tool_result_event = tru_events[1]
-    assert isinstance(tool_result_event, ToolResultEvent)
-    assert tool_result_event.tool_result["status"] == "success"
-
-    # Verify request_state was added without removing custom_data
-    assert "request_state" in loop._invocation_state
-    assert loop._invocation_state.get("custom_data") == "preserved"
+    exp_results = [
+        {"toolUseId": f"call-{number}", "status": "success", "content": [{"text": str(number)}]} for number in (1, 2)
+    ]
+    assert tru_results == exp_results
+    assert all(state is invocation_state for state in tool_states)
+    assert len(hooks.events_received) == 2 * len(tool_uses)
+    assert all(event.invocation_state is invocation_state for event in hooks.events_received)
+    tru_state = {key: invocation_state[key] for key in exp_state}
+    assert tru_state == exp_state
 
 
 @pytest.mark.asyncio

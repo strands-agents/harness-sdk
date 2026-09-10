@@ -287,7 +287,9 @@ for the final sync. See [Session Management](session-management.md).
 
 ## Accessing Invocation State
 
-Pass context through `start(invocation_state=...)` and read it in shared tool hooks:
+Pass context through `start(invocation_state=...)` or `run(..., invocation_state=...)`.
+Tools and their hooks share the caller's dictionary until the agent stops, including
+across connection restarts. Changes made by any of them are visible to the others.
 
 ```python
 from strands import LocalAgent, tool

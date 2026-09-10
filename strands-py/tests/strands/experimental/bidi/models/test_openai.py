@@ -110,7 +110,9 @@ def test_model_initialization(api_key, model_name, monkeypatch):
     }
     assert tru_config == exp_config
     tru_config["model_id"] = "updated-model"
+    exp_config["model_id"] = "updated-model"
     assert model_default.get_config() == exp_config
+    assert model_default.get_config() is tru_config
 
     model_custom = OpenAIRealtimeModel(
         model_id=model_name,

@@ -190,7 +190,9 @@ def test_model_initialization(mock_genai_client, model_id, api_key):
     }
     assert tru_config == exp_config
     tru_config["model_id"] = "updated-model"
+    exp_config["model_id"] = "updated-model"
     assert model_default.get_config() == exp_config
+    assert model_default.get_config() is tru_config
 
     model_with_key = GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key})
     assert model_with_key.model_id == model_id

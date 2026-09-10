@@ -376,8 +376,7 @@ class Agent(AgentBase, LocalAgent):
         # Resolve once: configured sandbox, or this agent's own host default (not shared across agents).
         self._sandbox: Sandbox = sandbox or NotASandboxLocalEnvironment()
         self._storage: Storage | None = storage
-        # initializing self._system_prompt for backwards compatibility
-        self._system_prompt, self._system_prompt_content = split_system_prompt(system_prompt)
+        _, self._system_prompt_content = split_system_prompt(system_prompt)
         self._default_structured_output_model = structured_output_model
         self._structured_output_prompt = structured_output_prompt
         self.agent_id = _identifier.validate(agent_id or _DEFAULT_AGENT_ID, _identifier.Identifier.AGENT)
@@ -790,15 +789,14 @@ class Agent(AgentBase, LocalAgent):
         Returns:
             The system prompt as a string, or None if no text content exists.
         """
-        return self._system_prompt
+        return split_system_prompt(self._system_prompt_content)[0]
 
     @system_prompt.setter
     def system_prompt(self, value: str | list[SystemContentBlock] | None) -> None:
         """Set the system prompt and update internal content representation.
 
         Accepts either a string or list of SystemContentBlock objects.
-        When set, both the backwards-compatible string representation and the internal
-        content block representation are updated to maintain consistency.
+        The string representation is derived from the stored content blocks.
 
         Args:
             value: System prompt as string, list of SystemContentBlock objects, or None.
@@ -806,7 +804,7 @@ class Agent(AgentBase, LocalAgent):
                   - list[SystemContentBlock]: Content blocks with features like caching
                   - None: Clear the system prompt
         """
-        self._system_prompt, self._system_prompt_content = split_system_prompt(value)
+        _, self._system_prompt_content = split_system_prompt(value)
 
     @property
     def system_prompt_content(self) -> list[SystemContentBlock] | None:

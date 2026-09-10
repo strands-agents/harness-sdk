@@ -141,8 +141,8 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
 
     @override
     def get_config(self) -> BidiModelConfig:
-        """Return a copy of the model configuration."""
-        return self._config.copy()
+        """Return the model configuration by reference."""
+        return self._config
 
     @override
     def get_audio_config(self) -> AudioConfig:

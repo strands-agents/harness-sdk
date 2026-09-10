@@ -164,6 +164,45 @@ def test_bidi_agent_system_prompt_setter(mock_model):
     assert agent.system_prompt_content == content_blocks
 
 
+@pytest.mark.parametrize("use_setter", [False, True])
+def test_system_prompt_tracks_content_changes(mock_model, use_setter):
+    """The string prompt reflects edits to shared content blocks."""
+    content_blocks = [{"text": "initial prompt"}, {"cachePoint": {"type": "default"}}]
+    agent = BidiAgent(model=mock_model, system_prompt=None if use_setter else content_blocks)
+    if use_setter:
+        agent.system_prompt = content_blocks
+
+    content_blocks[0]["text"] = "updated prompt"
+    assert agent.system_prompt == "updated prompt"
+
+    agent.system_prompt_content[0]["text"] = "another update"
+    assert agent.system_prompt == "another update"
+
+    content_blocks.pop(0)
+    assert agent.system_prompt is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("messages", [[], [{"role": "user", "content": [{"text": "Earlier message"}]}]])
+async def test_messages_preserve_caller_list(mock_model, messages):
+    """Messages sent by the agent are appended to the caller's history list."""
+    agent = BidiAgent(model=mock_model, messages=messages)
+    await agent.start()
+    try:
+        await agent.send("New message")
+    finally:
+        await agent.stop()
+
+    assert agent.messages is messages
+    tru_message = messages[-1]
+    exp_message = {
+        "role": "user",
+        "content": [{"text": "New message"}],
+        "tracking_id": unittest.mock.ANY,
+    }
+    assert tru_message == exp_message
+
+
 def test_bidi_agent_tool_emits_shared_hook_events_and_retries(mock_model):
     """Test BidiAgent emits shared tool hook events and honors retry requests."""
     call_count = 0

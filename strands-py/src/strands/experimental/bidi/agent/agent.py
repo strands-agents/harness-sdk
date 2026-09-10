@@ -119,8 +119,8 @@ class BidiAgent(LocalAgent):
         else:
             raise TypeError("model must be a BidiModel, string, or None")
 
-        self._system_prompt, self._system_prompt_content = split_system_prompt(system_prompt)
-        self.messages = messages or []
+        _, self._system_prompt_content = split_system_prompt(system_prompt)
+        self.messages = messages if messages is not None else []
 
         # Agent identification
         self.agent_id = _identifier.validate(agent_id or _DEFAULT_AGENT_ID, _identifier.Identifier.AGENT)
@@ -219,12 +219,12 @@ class BidiAgent(LocalAgent):
     @property
     def system_prompt(self) -> str | None:
         """Get the system prompt as a string."""
-        return self._system_prompt
+        return split_system_prompt(self._system_prompt_content)[0]
 
     @system_prompt.setter
     def system_prompt(self, value: str | list[SystemContentBlock] | None) -> None:
         """Set the system prompt and retain its structured content representation."""
-        self._system_prompt, self._system_prompt_content = split_system_prompt(value)
+        _, self._system_prompt_content = split_system_prompt(value)
 
     @property
     def system_prompt_content(self) -> list[SystemContentBlock] | None:
@@ -278,9 +278,9 @@ class BidiAgent(LocalAgent):
         model events, tool execution, and connection management.
 
         Args:
-            invocation_state: Optional context to pass to tools during execution.
-                This allows passing custom data (user_id, session_id, database connections, etc.)
-                that tools can access via their invocation_state parameter.
+            invocation_state: Optional context shared by reference with tools and hooks until stop(),
+                including across connection restarts. Tools access it through ToolContext.invocation_state.
+                Defaults to a new empty dictionary.
 
         Raises:
             RuntimeError:
@@ -412,9 +412,9 @@ class BidiAgent(LocalAgent):
         Args:
             inputs: Input callables to read data from a source
             outputs: Output callables to receive events from the agent
-            invocation_state: Optional context to pass to tools during execution.
-                This allows passing custom data (user_id, session_id, database connections, etc.)
-                that tools can access via their invocation_state parameter.
+            invocation_state: Optional context shared by reference with tools and hooks for the duration of run(),
+                including across connection restarts. Tools access it through ToolContext.invocation_state.
+                Defaults to a new empty dictionary.
 
         Example:
             ```python
