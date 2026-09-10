@@ -657,8 +657,8 @@ describe('pinned message protection', () => {
   })
 
   it('pinned message survives repairAlternation merge across two passes', async () => {
-    // After dropping q2, pinned-a3 becomes adjacent to a1 — repairAlternation
-    // must merge them and preserve the pinned metadata from pinned-a3.
+    // After pass 1 drops eligible messages, pinned-a3 becomes adjacent to a7 —
+    // repairAlternation must merge them and preserve the pinned metadata.
     const messages = [
       new Message({ role: 'user', content: [new TextBlock('q1')] }),
       new Message({ role: 'assistant', content: [new TextBlock('a1')] }),
@@ -675,7 +675,6 @@ describe('pinned message protection', () => {
       new Message({ role: 'user', content: [new TextBlock('q8')] }),
       new Message({ role: 'assistant', content: [new TextBlock('a9')] }),
       new Message({ role: 'user', content: [new TextBlock('q10')] }),
-      new Message({ role: 'assistant', content: [new TextBlock('a11')] }),
     ]
     const strategy = Offload.drop('*').when({ utilization: 0.5, preserveRecent: 4 })
     const context = makeContext(messages, 0.9)

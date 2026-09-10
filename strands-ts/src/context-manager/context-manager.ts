@@ -212,6 +212,7 @@ export class ContextManager implements Plugin {
     let anyActed = false
     for (const strategy of this._strategies) {
       try {
+        if (strategy instanceof EmergencyTruncateStrategy && anyActed) strategyContext.overflow = false
         const acted = await strategy.apply(strategyContext)
         if (acted) {
           anyActed = true
