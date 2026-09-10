@@ -363,9 +363,10 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         if interrupted:
             turn_state.response_open = False
             turn_state.output_transcript = ""
-        elif turn_complete and turn_state.response_open:
-            if turn_state.input_transcript:
-                wrapped.append(BidiTranscriptCompleteEvent(turn_state.input_transcript, "user"))
+        if turn_complete and turn_state.input_transcript:
+            wrapped.append(BidiTranscriptCompleteEvent(turn_state.input_transcript, "user"))
+            turn_state.input_transcript = ""
+        if turn_complete and turn_state.response_open:
             if turn_state.output_transcript:
                 wrapped.append(BidiTranscriptCompleteEvent(turn_state.output_transcript, "assistant"))
             wrapped.append(
@@ -375,7 +376,6 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
             )
             turn_state.response_open = False
             turn_state.response_id = None
-            turn_state.input_transcript = ""
             turn_state.output_transcript = ""
 
         return wrapped

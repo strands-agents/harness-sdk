@@ -1075,8 +1075,65 @@ async def test_transcription_fragments_complete_at_turn_boundary(
         BidiTranscriptCompleteEvent("I am doing well.", "assistant"),
         BidiResponseCompleteEvent(response_id=unittest.mock.ANY, stop_reason="complete"),
     ]
+    assert turn_state.input_transcript == ""
+    assert turn_state.output_transcript == ""
 
     await model.stop()
+
+
+@pytest.mark.parametrize(
+    ("response_open", "endings", "exp_events"),
+    [
+        pytest.param(
+            False,
+            [{"turn_complete": True}],
+            [BidiTranscriptCompleteEvent("Turn one.", "user")],
+            id="input-only",
+        ),
+        pytest.param(
+            True,
+            [{"interrupted": True}, {"turn_complete": True}],
+            [BidiInterruptionEvent(reason="user_speech"), BidiTranscriptCompleteEvent("Turn one.", "user")],
+            id="interrupted-then-complete",
+        ),
+        pytest.param(
+            True,
+            [{"interrupted": True, "turn_complete": True}],
+            [BidiInterruptionEvent(reason="user_speech"), BidiTranscriptCompleteEvent("Turn one.", "user")],
+            id="interrupted-and-complete",
+        ),
+    ],
+)
+def test_convert_gemini_live_event_completes_user_transcript_without_open_response(
+    model, response_open, endings, exp_events
+):
+    """Keep user transcripts separate across turns without assistant completion."""
+    turn_state = _TurnState(response_open=response_open)
+    model._convert_gemini_live_event(
+        genai_types.LiveServerMessage(server_content={"input_transcription": {"text": "Turn one."}}),
+        turn_state,
+    )
+
+    tru_events = []
+    for ending in endings:
+        tru_events.extend(
+            model._convert_gemini_live_event(genai_types.LiveServerMessage(server_content=ending), turn_state)
+        )
+    assert tru_events == exp_events
+    assert turn_state.input_transcript == ""
+
+    tru_events = model._convert_gemini_live_event(
+        genai_types.LiveServerMessage(
+            server_content={"input_transcription": {"text": "Turn two."}, "turn_complete": True}
+        ),
+        turn_state,
+    )
+    exp_events = [
+        BidiTranscriptStreamEvent(delta="Turn two.", role="user"),
+        BidiTranscriptCompleteEvent("Turn two.", "user"),
+    ]
+    assert tru_events == exp_events
+    assert turn_state.input_transcript == ""
 
 
 @pytest.mark.asyncio
