@@ -183,7 +183,12 @@ describe('ContextManager', () => {
       await cm.initAgent(agent)
 
       const originalLength = messages.length
-      const event = new BeforeModelCallEvent({ agent, model: agent.model, invocationState: {}, projectedInputTokens: 100 })
+      const event = new BeforeModelCallEvent({
+        agent,
+        model: agent.model,
+        invocationState: {},
+        projectedInputTokens: 100,
+      })
       await invokeTrackedHook(agent, event)
 
       expect(messages.length).toBe(originalLength)
