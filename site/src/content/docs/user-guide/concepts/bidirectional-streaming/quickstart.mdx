@@ -146,7 +146,7 @@ Now let's create a simple voice-enabled agent that can have real-time conversati
 
 ```python
 import asyncio
-from strands.experimental.bidi import BidiAgent, BidiAudioIO
+from strands.experimental.bidi import BidiAgent
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 # Create a bidirectional streaming model
@@ -158,15 +158,9 @@ agent = BidiAgent(
     system_prompt="You are a helpful voice assistant. Keep responses concise and natural."
 )
 
-# Setup audio I/O for microphone and speakers
-audio_io = BidiAudioIO()
-
 # Run the conversation
 async def main():
-    await agent.run(
-        inputs=[audio_io.input()],
-        outputs=[audio_io.output()]
-    )
+    await agent.run_audio()
 
 asyncio.run(main())
 ```
@@ -316,7 +310,7 @@ Customize audio configuration for both the model and I/O:
 ```python
 import asyncio
 
-from strands.experimental.bidi import BidiAgent, BidiAudioIO
+from strands.experimental.bidi import BidiAgent
 from strands.experimental.bidi.models import GoogleGeminiLiveModel
 
 # Configure model audio settings
@@ -328,20 +322,14 @@ model = GoogleGeminiLiveModel(
     }
 )
 
-# Configure I/O buffer settings
-audio_io = BidiAudioIO(
-    input_buffer_size=10,           # Max input queue size
-    output_buffer_size=20,          # Max output queue size
-    input_frames_per_buffer=512,   # Input chunk size
-    output_frames_per_buffer=512   # Output chunk size
-)
-
 agent = BidiAgent(model=model)
 
 async def main():
-    await agent.run(
-        inputs=[audio_io.input()],
-        outputs=[audio_io.output()]
+    await agent.run_audio(
+        input_buffer_size=10,           # Max input queue size
+        output_buffer_size=20,          # Max output queue size
+        input_frames_per_buffer=512,   # Input chunk size
+        output_frames_per_buffer=512,  # Output chunk size
     )
 
 asyncio.run(main())

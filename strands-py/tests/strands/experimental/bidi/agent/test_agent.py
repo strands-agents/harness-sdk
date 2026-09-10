@@ -3,6 +3,7 @@
 import asyncio
 import sys
 import unittest.mock
+from types import ModuleType
 from uuid import uuid4
 
 import pytest
@@ -454,3 +455,27 @@ async def test_bidi_agent_state_consistency(agent):
     await agent.stop()
     assert not agent._started
     assert agent.model._connection_id is None
+
+
+@pytest.mark.asyncio
+async def test_bidi_agent_run_audio_delegates_to_run(agent, monkeypatch):
+    audio_io = unittest.mock.Mock()
+    audio_io_class = unittest.mock.Mock(return_value=audio_io)
+    audio_module = ModuleType("strands.experimental.bidi.io.audio")
+    audio_module.BidiAudioIO = audio_io_class
+    monkeypatch.setitem(sys.modules, "strands.experimental.bidi.io.audio", audio_module)
+    agent.run = unittest.mock.AsyncMock()
+    invocation_state = {"user_id": "user_123"}
+
+    await agent.run_audio(
+        audio_processor=True,
+        input_device_index=1,
+        invocation_state=invocation_state,
+    )
+
+    audio_io_class.assert_called_once_with(audio_processor=True, input_device_index=1)
+    agent.run.assert_awaited_once_with(
+        inputs=[audio_io.input.return_value],
+        outputs=[audio_io.output.return_value],
+        invocation_state=invocation_state,
+    )

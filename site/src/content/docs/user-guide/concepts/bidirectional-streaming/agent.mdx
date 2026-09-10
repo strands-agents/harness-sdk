@@ -281,10 +281,13 @@ await agent.start(invocation_state={...})
 #### 3. Running
 
 ```python
-# Option A: Using run()
+# Option A: Using local microphone and speakers
+await agent.run_audio()
+
+# Option B: Using custom I/O
 await agent.run(inputs=[...], outputs=[...])
 
-# Option B: Manual send/receive
+# Option C: Manual send/receive
 await agent.send("Hello")
 async for event in agent.receive():
     # Process events - events streaming, tools executing, messages accumulating
@@ -300,6 +303,16 @@ await agent.stop()
 
 ### Lifecycle Patterns
 
+#### Using run_audio()
+
+```python
+agent = BidiAgent(model=model)
+
+await agent.run_audio(audio_processor=True)
+```
+
+Simplest for local voice conversations. Creates `BidiAudioIO` internally and handles start/stop automatically.
+
 #### Using run()
 
 ```python
@@ -312,7 +325,7 @@ await agent.run(
 )
 ```
 
-Simplest for I/O-based applications - handles start/stop automatically.
+Use for custom or additional I/O channels. Handles start/stop automatically.
 
 #### Context Manager
 

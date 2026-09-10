@@ -19,6 +19,8 @@ import uuid
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
+from typing_extensions import Unpack
+
 from .... import _identifier
 from ...._middleware import MiddlewareRegistry
 from ....agent.state import AgentState
@@ -49,6 +51,7 @@ from .loop import _BidiAgentLoop
 
 if TYPE_CHECKING:
     from ....session.session_manager import SessionManager
+    from ..io.audio import BidiAudioIOConfig
 
 logger = logging.getLogger(__name__)
 
@@ -288,11 +291,13 @@ class BidiAgent(LocalAgent):
 
         Example:
             ```python
-            await agent.start(invocation_state={
-                "user_id": "user_123",
-                "session_id": "session_456",
-                "database": db_connection,
-            })
+            await agent.start(
+                invocation_state={
+                    "user_id": "user_123",
+                    "session_id": "session_456",
+                    "database": db_connection,
+                }
+            )
             ```
         """
         if self._started:
@@ -426,7 +431,7 @@ class BidiAgent(LocalAgent):
             await agent.run(
                 inputs=[audio_io.input()],
                 outputs=[audio_io.output(), text_io.output()],
-                invocation_state={"user_id": "user_123"}
+                invocation_state={"user_id": "user_123"},
             )
 
             # Using custom audio config:
@@ -476,6 +481,36 @@ class BidiAgent(LocalAgent):
             output_stops = [output.stop for output in outputs if isinstance(output, BidiOutput)]
 
             await stop_all(*input_stops, *output_stops, self.stop)
+
+    async def run_audio(
+        self,
+        *,
+        invocation_state: dict[str, Any] | None = None,
+        **audio_config: Unpack["BidiAudioIOConfig"],
+    ) -> None:
+        """Run the agent using the local microphone and speakers.
+
+        Args:
+            invocation_state: Optional context to pass to tools during execution.
+            **audio_config: Configuration passed to ``BidiAudioIO``.
+
+        Example:
+            ```python
+            await agent.run_audio(
+                audio_processor=True,
+                input_device_index=1,
+                invocation_state={"user_id": "user_123"},
+            )
+            ```
+        """
+        from ..io.audio import BidiAudioIO
+
+        audio_io = BidiAudioIO(**audio_config)
+        await self.run(
+            inputs=[audio_io.input()],
+            outputs=[audio_io.output()],
+            invocation_state=invocation_state,
+        )
 
     async def _append_messages(self, *messages: Message) -> None:
         """Append messages to history in sequence without interference.
