@@ -237,10 +237,12 @@ class TestFromStrategy:
         assert isinstance(result, ContextManager)
 
     def test_unknown_string_raises(self):
-        import pytest
-
         with pytest.raises(ValueError, match="Unknown context_manager preset"):
             ContextManager.from_strategy("manual")
+
+    def test_unsupported_type_raises(self):
+        with pytest.raises(ValueError, match="Unsupported context_manager value"):
+            ContextManager.from_strategy(42)  # type: ignore[arg-type]
 
 
 class TestResolveConversationManager:
