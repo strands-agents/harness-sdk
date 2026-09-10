@@ -17,17 +17,19 @@ from ....telemetry.tracer import get_tracer
 from ....types._events import ToolInterruptEvent, ToolResultEvent, ToolResultMessageEvent, ToolUseStreamEvent
 from ....types.content import Message
 from ....types.tools import ToolResult, ToolUse
-from ...hooks.events import (
-    BidiAfterConnectionRestartEvent,
-    BidiAfterInvocationEvent,
-    BidiBeforeConnectionRestartEvent,
-    BidiBeforeInvocationEvent,
-)
-from ...hooks.events import (
-    BidiInterruptionEvent as BidiInterruptionHookEvent,
-)
 from .. import _telemetry
 from .._async import _TaskPool, stop_all
+from ..hooks.events import (
+    BidiAfterConnectionRestartEvent,
+    BidiAgentStopEvent,
+    BidiBeforeConnectionRestartEvent,
+)
+from ..hooks.events import (
+    BidiInterruptionEvent as BidiInterruptionHookEvent,
+)
+from ..hooks.events import (
+    BidiResponseCompleteEvent as BidiResponseCompleteHookEvent,
+)
 from ..models import BidiModelTimeoutError, Restartable
 from ..types.events import (
     BidiAudioStreamEvent,
@@ -154,8 +156,6 @@ class _BidiAgentLoop:
             raise RuntimeError("loop already started | call stop before starting again")
 
         logger.debug("agent loop starting")
-        await self._agent.hooks.invoke_callbacks_async(BidiBeforeInvocationEvent(agent=self._agent))
-
         model_id = getattr(self._agent.model, "model_id", None)
 
         self._session_span = _telemetry.start_session_span(
@@ -227,7 +227,7 @@ class _BidiAgentLoop:
                 )
                 self._session_span = None
 
-            await self._agent.hooks.invoke_callbacks_async(BidiAfterInvocationEvent(agent=self._agent))
+            await self._agent.hooks.invoke_callbacks_async(BidiAgentStopEvent(agent=self._agent))
 
     async def send(self, event: BidiInputEvent | ToolResultEvent) -> None:
         """Send model event.
@@ -598,11 +598,6 @@ class _BidiAgentLoop:
             async for event in self._agent.model.receive():
                 if generation != self._generation:
                     return
-                await self._event_queue.put(event)
-                # The put can suspend on the full queue across a reconnect; re-check so a stale
-                # event from the closed connection is not applied to the new connection's state.
-                if generation != self._generation:
-                    return
 
                 if isinstance(event, BidiResponseStartEvent):
                     if response_span:
@@ -639,6 +634,13 @@ class _BidiAgentLoop:
                     # transcript arriving after completion does not re-open the turn.
                     self._awaiting_response = False
                     self._update_turn_state()
+                    await self._agent.hooks.invoke_callbacks_async(
+                        BidiResponseCompleteHookEvent(
+                            agent=self._agent, response_id=event.response_id, stop_reason=event.stop_reason
+                        )
+                    )
+                    if generation != self._generation:
+                        return
 
                 elif isinstance(event, BidiTranscriptStreamEvent):
                     if event["role"] == "user":
@@ -653,15 +655,16 @@ class _BidiAgentLoop:
                 elif isinstance(event, BidiTranscriptCompleteEvent):
                     message: Message = {"role": event.role, "content": [{"text": event.transcript}]}
                     await self._agent._append_messages(message)
-
-                elif isinstance(event, ToolUseStreamEvent):
-                    tool_use = event["current_tool_use"]
-                    self._task_pool.create(self._run_tool(tool_use, generation))
+                    if generation != self._generation:
+                        return
 
                 elif isinstance(event, BidiInterruptionEvent):
                     if self._session_span:
                         _telemetry.add_interruption_event(self._session_span, event["reason"])
 
+                    # A barge-in ends the current response; the user's next turn owes a reply.
+                    self._response_active = False
+                    self._update_turn_state()
                     await self._agent.hooks.invoke_callbacks_async(
                         BidiInterruptionHookEvent(
                             agent=self._agent,
@@ -669,12 +672,19 @@ class _BidiAgentLoop:
                             interrupted_response_id=event.get("interrupted_response_id"),
                         )
                     )
-                    # A barge-in ends the current response; the user's next turn owes a reply.
-                    self._response_active = False
-                    self._update_turn_state()
+                    if generation != self._generation:
+                        return
 
                 elif isinstance(event, BidiUsageEvent):
                     self._record_usage(event)
+
+                await self._event_queue.put(event)
+                if generation != self._generation:
+                    return
+
+                if isinstance(event, ToolUseStreamEvent):
+                    tool_use = event["current_tool_use"]
+                    self._task_pool.create(self._run_tool(tool_use, generation))
 
         except Exception as error:
             model_error = error

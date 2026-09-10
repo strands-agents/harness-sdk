@@ -10,6 +10,7 @@ from openai.types.responses import Response, ResponseErrorEvent, ResponseFailedE
 from openai.types.responses.response_error import ResponseError
 
 import strands
+from strands.agent import AgentMetadata
 from strands.models import CacheConfig
 from strands.models.openai_responses import _MAX_MEDIA_SIZE_BYTES, OpenAIResponsesModel
 from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
@@ -537,6 +538,60 @@ def test_cache_key_absent_when_unset(openai_client, model_id, messages):
     model = OpenAIResponsesModel(model_id=model_id, cache_config=CacheConfig())
 
     assert "prompt_cache_key" not in model._format_request(messages)
+
+
+def test_cache_key_derived_from_agent_metadata_session(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIResponsesModel(model_id=model_id, cache_config=CacheConfig())
+
+    request = model._format_request(messages, agent_metadata=AgentMetadata(session_id="s1"))
+
+    assert request["prompt_cache_key"] == "strands-s1"
+
+
+def test_configured_cache_key_wins_over_agent_metadata(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIResponsesModel(model_id=model_id, cache_config=CacheConfig(cache_key="tenant-42"))
+
+    request = model._format_request(messages, agent_metadata=AgentMetadata(session_id="s1"))
+
+    assert request["prompt_cache_key"] == "tenant-42"
+
+
+def test_false_cache_key_opts_out_of_agent_metadata(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIResponsesModel(model_id=model_id, cache_config=CacheConfig(cache_key=False))
+
+    request = model._format_request(messages, agent_metadata=AgentMetadata(session_id="s1"))
+
+    assert "prompt_cache_key" not in request
+
+
+def test_agent_metadata_without_session_yields_no_cache_key(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIResponsesModel(model_id=model_id, cache_config=CacheConfig())
+
+    request = model._format_request(messages, agent_metadata=AgentMetadata(session_id=None))
+
+    assert "prompt_cache_key" not in request
+
+
+@pytest.mark.asyncio
+async def test_stream_derives_prompt_cache_key_from_agent_session(openai_client, model_id, agenerator, alist):
+    """stream threads agent_metadata so the outbound request carries the derived routing key."""
+    model = OpenAIResponsesModel(model_id=model_id, cache_config=CacheConfig())
+    mock_complete_event = unittest.mock.Mock(
+        type="response.completed",
+        response=unittest.mock.Mock(
+            usage=unittest.mock.Mock(input_tokens=1, output_tokens=1, total_tokens=2, input_tokens_details=None)
+        ),
+    )
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=agenerator([mock_complete_event]))
+
+    messages = [{"role": "user", "content": [{"text": "test"}]}]
+    await alist(model.stream(messages, agent_metadata=AgentMetadata(session_id="s1")))
+
+    assert openai_client.responses.create.call_args.kwargs["prompt_cache_key"] == "strands-s1"
 
 
 def test_explicit_prompt_cache_key_in_params_wins(openai_client, model_id, messages):

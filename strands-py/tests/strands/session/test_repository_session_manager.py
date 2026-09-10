@@ -11,8 +11,8 @@ from strands.agent.conversation_manager.sliding_window_conversation_manager impo
 from strands.agent.conversation_manager.summarizing_conversation_manager import SummarizingConversationManager
 from strands.agent.state import AgentState
 from strands.experimental.bidi import BidiAgent
+from strands.experimental.bidi.hooks.events import BidiAgentStopEvent
 from strands.experimental.bidi.models.model import BidiModel
-from strands.experimental.hooks.events import BidiAfterInvocationEvent
 from strands.hooks import AfterInvocationEvent
 from strands.interrupt import _InterruptState
 from strands.session.repository_session_manager import RepositorySessionManager
@@ -749,7 +749,7 @@ def test_bidi_session_shared_methods_round_trip(session_manager, mock_repository
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("agent_type", "after_event_type"), [(Agent, AfterInvocationEvent), (BidiAgent, BidiAfterInvocationEvent)]
+    ("agent_type", "after_event_type"), [(Agent, AfterInvocationEvent), (BidiAgent, BidiAgentStopEvent)]
 )
 async def test_register_hooks_persists_messages_and_state(session_manager, agent_type, after_event_type):
     model_kwargs = {"model": Mock(spec=BidiModel)} if agent_type is BidiAgent else {}

@@ -102,6 +102,7 @@ from ..types.traces import AttributeValue
 from . import _continuation
 from ._agent_as_tool import _AgentAsTool
 from ._concurrency import _ConcurrencyController
+from .agent_metadata import AgentMetadata
 from .agent_result import AgentResult
 from .base import AgentBase
 from .conversation_manager import (
@@ -771,6 +772,12 @@ class Agent(AgentBase, LocalAgent):
         construction time (unique per agent instance but not persisted across restarts).
         """
         return self._session_id
+
+    @property
+    def _metadata(self) -> AgentMetadata:
+        """Build the agent metadata view passed to the model on stream()."""
+        session_id = getattr(self._session_manager, "session_id", None) or None
+        return AgentMetadata(session_id=session_id)
 
     @property
     def system_prompt(self) -> str | None:

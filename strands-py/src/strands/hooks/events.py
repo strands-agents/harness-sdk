@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class AgentInitializedEvent(HookEvent):
+class AgentInitializedEvent(HookEvent[_LocalAgentT]):
     """Event triggered when an agent has finished initialization.
 
     This event is fired after the agent has been fully constructed and all
@@ -115,7 +115,7 @@ class AfterInvocationEvent(HookEvent):
 
 
 @dataclass
-class MessageAddedEvent(HookEvent):
+class MessageAddedEvent(HookEvent[_LocalAgentT]):
     """Event triggered when a message is added to the agent's conversation.
 
     This event is fired whenever the agent adds a new message to its internal
