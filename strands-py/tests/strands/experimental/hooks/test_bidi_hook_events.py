@@ -1,5 +1,6 @@
 """Unit tests for BidiAgent hook events."""
 
+from dataclasses import fields
 from unittest.mock import Mock
 
 import pytest
@@ -70,8 +71,9 @@ def test_interruption_event_with_response_id(agent):
     """Verify BidiInterruptionEvent can include response ID."""
     event = BidiInterruptionEvent(agent=agent, reason="error", interrupted_response_id="resp_123")
 
-    assert event.reason == "error"
-    assert event.interrupted_response_id == "resp_123"
+    tru_event = {field.name: getattr(event, field.name) for field in fields(event)}
+    exp_event = {"agent": agent, "reason": "error", "interrupted_response_id": "resp_123"}
+    assert tru_event == exp_event
 
 
 def test_message_added_event_cannot_write_properties(message_added_event):
