@@ -44,7 +44,7 @@
     "markdown-it": "^15.0.1",
     "mdast-util-to-string": "^4.0.0",
     "node-fetch": "^3.3.2",
-    "node-html-parser": "^9.0.2",
+    "node-html-parser": "^9.0.4",
     "p-limit": "^7.3.2",
     "prettier": "^3.9.6",
     "reading-time": "^1.5.0",
