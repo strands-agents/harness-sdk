@@ -44,6 +44,11 @@ export class BackgroundTasks implements Plugin {
   private readonly _policy: ReturnType<typeof resolvePolicy>
   private readonly _manageTool: Tool
   private readonly _tasks = new Map<string, BackgroundTask>()
+  /**
+   * Dispatching invocation id by task id, used to mark results delivered in a later
+   * invocation with `startedBy`. Recovered tasks have no entry and count as earlier.
+   */
+  private readonly _taskDispatchInvocation = new Map<string, number>()
   private _agent!: Agent
   private _manager!: BackgroundTaskManager
 
@@ -185,6 +190,7 @@ export class BackgroundTasks implements Plugin {
 
     try {
       const task = await this._manager.submit(toolUse, invocationState, passId, tool)
+      this._taskDispatchInvocation.set(task.taskId, this._agent._invocationId)
       return new ToolResultBlock({
         toolUseId: toolUse.toolUseId,
         status: 'success',
@@ -255,21 +261,27 @@ export class BackgroundTasks implements Plugin {
     while (
       this._config.waitForCompletion !== false &&
       !agent.cancelSignal.aborted &&
+      agent.pendingInvocations.length === 0 &&
       !tasks.some((task) => task.status === 'input_required') &&
       tasks.some((task) => !isTaskStatusTerminal(task.status))
     ) {
-      await this._awaitNextSettlement(tasks, agent.cancelSignal)
+      await this._awaitNextSettlement(tasks, agent)
       tasks = [...this._tasks.values()]
     }
     if (tasks.some((task) => task.status === 'input_required')) {
       event.resume ??= []
       return
     }
+    // A queued caller takes priority over settlement and delivery: hand off instead
+    // of holding the turn. Task results stay persisted and are delivered in a later
+    // invocation's model passes.
+    if (agent.pendingInvocations.length > 0) return
     this._deliverReady(event, tasks)
   }
 
-  /** Races pending-task settlement against invocation cancellation. */
-  private async _awaitNextSettlement(tasks: readonly BackgroundTask[], cancelSignal: AbortSignal): Promise<void> {
+  /** Races pending-task settlement against invocation cancellation and queue arrivals. */
+  private async _awaitNextSettlement(tasks: readonly BackgroundTask[], agent: Agent): Promise<void> {
+    const cancelSignal = agent.cancelSignal
     let abort: () => void
     const cancelled = new Promise<void>((resolve) => {
       abort = resolve
@@ -279,13 +291,23 @@ export class BackgroundTasks implements Plugin {
         cancelSignal.addEventListener('abort', abort, { once: true })
       }
     })
+    let detachEnqueued = (): void => {}
+    const enqueued = new Promise<void>((resolve) => {
+      if (agent.pendingInvocations.length > 0) {
+        resolve()
+      } else {
+        detachEnqueued = agent._onInvocationEnqueued(resolve)
+      }
+    })
     try {
       await Promise.race([
         cancelled,
+        enqueued,
         ...tasks.filter((task) => !isTaskStatusTerminal(task.status)).map((task) => this._manager.wait(task.taskId)),
       ])
     } finally {
       cancelSignal.removeEventListener('abort', abort!)
+      detachEnqueued()
     }
   }
 
@@ -299,6 +321,9 @@ export class BackgroundTasks implements Plugin {
         const content = task.result?.content.map(toolResultContentFromData) ?? [
           new TextBlock(task.error?.message ?? 'Background task cancelled'),
         ]
+        // Results delivered in a later invocation carry provenance, so the model does
+        // not fold them into its answer to the current caller.
+        const dispatchedHere = this._taskDispatchInvocation.get(task.taskId) === this._agent._invocationId
         return [
           new Message({
             role: 'assistant',
@@ -306,7 +331,10 @@ export class BackgroundTasks implements Plugin {
               new ToolUseBlock({
                 name: 'strands_background_task_result',
                 toolUseId: task.taskId,
-                input: { toolName: task.toolName },
+                input: {
+                  toolName: task.toolName,
+                  ...(!dispatchedHere && { startedBy: 'an earlier request in this conversation' }),
+                },
               }),
             ],
           }),
@@ -326,7 +354,10 @@ export class BackgroundTasks implements Plugin {
         const liveTaskIds = new Set((await this._manager.list()).map((task) => task.taskId))
         const managerTaskIds = taskIds.filter((taskId) => liveTaskIds.has(taskId))
         await this._manager.remove(managerTaskIds)
-        for (const taskId of taskIds) this._tasks.delete(taskId)
+        for (const taskId of taskIds) {
+          this._tasks.delete(taskId)
+          this._taskDispatchInvocation.delete(taskId)
+        }
         this._persistTasks()
       },
     })
@@ -334,6 +365,7 @@ export class BackgroundTasks implements Plugin {
 
   _loadAppState(): void {
     this._tasks.clear()
+    this._taskDispatchInvocation.clear()
     const storedTasks =
       (this._agent.appState.get(BACKGROUND_TASKS_STATE_KEY) as unknown as BackgroundTask[] | undefined) ?? []
     const recoveredInterruptIds = new Set<string>()

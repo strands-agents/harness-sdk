@@ -15,6 +15,7 @@ export { StateStore } from './state-store.js'
 export { AgentResult } from './types/agent.js'
 export type { AgentMetadata } from './agent/agent-metadata.js'
 export type { AgentConfig, ToolList, ToolExecutorStrategy } from './agent/agent.js'
+export type { ConcurrentInvocationMode, PendingInvocation } from './agent/invocation-queue.js'
 export type { BackgroundTasksConfig } from './background-tasks/types.js'
 export type { AgentAsToolOptions } from './agent/agent-as-tool.js'
 export type { ToolCaller, ToolCallerProxy, ToolHandle, DirectToolCallOptions } from './agent/tool-caller.js'
@@ -35,6 +36,7 @@ export {
   MaxTokensError,
   JsonValidationError,
   ConcurrentInvocationError,
+  PendingInvocationCancelledError,
   ModelThrottledError,
   ToolValidationError,
   StructuredOutputError,
