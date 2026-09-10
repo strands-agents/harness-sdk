@@ -257,7 +257,7 @@
     "tsx": "^4.22.5",
     "turndown": "^7.2.4",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
   "engines": {
     "node": ">=22.0.0"
