@@ -163,7 +163,7 @@ describe('ContextManager', () => {
       expect(event.retry).toBe(true)
     })
 
-    it('does not truncate when strategies bring utilization below 1.0', async () => {
+    it('does not truncate on non-overflow when utilization is below 1.0', async () => {
       const messages = [
         new Message({ role: 'user', content: [new TextBlock('system')] }),
         new Message({ role: 'assistant', content: [new TextBlock('response 1')] }),
@@ -173,7 +173,7 @@ describe('ContextManager', () => {
         new Message({ role: 'assistant', content: [new TextBlock('response 3')] }),
       ]
 
-      const strategy = { name: 'noop', apply: async () => true }
+      const strategy = { name: 'test', apply: async () => false }
       const cm = new ContextManager({ strategies: [strategy] })
       const agent = makeMockAgent({
         messages,
@@ -183,7 +183,7 @@ describe('ContextManager', () => {
       await cm.initAgent(agent)
 
       const originalLength = messages.length
-      const event = makeOverflowEvent(agent)
+      const event = new BeforeModelCallEvent({ agent, model: agent.model, invocationState: {}, projectedInputTokens: 100 })
       await invokeTrackedHook(agent, event)
 
       expect(messages.length).toBe(originalLength)

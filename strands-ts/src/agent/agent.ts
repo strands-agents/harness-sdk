@@ -339,6 +339,9 @@ function resolveConversationManager(
   if (contextManager === false) {
     return conversationManager ?? new NullConversationManager()
   }
+  if (conversationManager) {
+    logger.warn('contextManager is set, ignoring co-provided conversationManager')
+  }
   return new NullConversationManager()
 }
 

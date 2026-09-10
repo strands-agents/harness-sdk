@@ -326,6 +326,8 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     if (this._preserveRecent > 0) return
     agent.addHook(MessageAddedEvent, async (event) => {
       const messages = event.agent.messages
+      const index = messages.indexOf(event.message)
+      if (index >= 0 && isPinned(messages, index)) return
       const toolNameMap = buildToolNameMap(messages)
       await this._transformBlocks(event.message, messages, toolNameMap, event.agent)
     })

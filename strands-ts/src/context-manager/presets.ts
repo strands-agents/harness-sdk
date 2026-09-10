@@ -21,7 +21,7 @@ import { Offload } from './strategies/offload/index.js'
  * - `'proactiveSummarization'` — batch summarize oldest messages at 70% utilization
  * - `'largeToolOffloading'` — truncate tool results over 2500 tokens to a 1000-token preview
  * - `'overflowProtection'` — truncate oldest messages when the context window is full
- * - `'staleToolCleanup'` — drop tool results older than 5 turns
+ * - `'staleToolCleanup'` — drop tool results older than 5 messages
  */
 export const STRATEGY_PRESET_NAMES = [
   'proactiveSummarization',

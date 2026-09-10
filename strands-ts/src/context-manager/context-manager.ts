@@ -35,7 +35,7 @@ export type ContextManagerPreset = (typeof CONTEXT_MANAGER_PRESETS)[number]
  *
  * - `"auto"`: Managed context with proactive compression + offloading.
  * - `"agentic"`: Model-driven context management via injected tools.
- * - `ContextManagerConfig`: Custom strategy pipeline and stash configuration.
+ * - {@link ContextManagerConfig}: Custom strategy pipeline and stash configuration.
  * - `false`: Explicitly disable all context management (no compression, no offloading).
  */
 export type ContextManagerStrategy = ContextManagerPreset | ContextManagerConfig | false
@@ -216,9 +216,6 @@ export class ContextManager implements Plugin {
         if (acted) {
           anyActed = true
           strategyContext.utilization = agent.model.estimateUtilization(await agent.model.countTokens(messages))
-          if (strategyContext.overflow && strategyContext.utilization < 1.0) {
-            strategyContext.overflow = false
-          }
           logger.debug(`strategy=<${strategy.name}>, agentId=<${agent.id}> | strategy applied`)
         }
       } catch (error) {
