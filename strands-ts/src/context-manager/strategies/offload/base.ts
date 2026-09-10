@@ -236,10 +236,12 @@ export function repairAlternation(messages: Message[]): void {
     const current = messages[readIndex]!
     if (writeIndex > 0 && messages[writeIndex - 1]!.role === current.role) {
       const prev = messages[writeIndex - 1]!
+      const pinned = prev.metadata?.custom?.pinned === true || current.metadata?.custom?.pinned === true
       messages[writeIndex - 1] = new Message({
         role: prev.role,
         content: [...prev.content, ...current.content],
         trackingId: prev.trackingId,
+        ...(pinned ? { metadata: { custom: { pinned: true } } } : {}),
       })
     } else {
       messages[writeIndex] = current

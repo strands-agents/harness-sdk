@@ -655,6 +655,35 @@ describe('pinned message protection', () => {
     )
     expect(hasToolResult).toBe(true)
   })
+
+  it('pinned message survives repairAlternation merge across two passes', async () => {
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('q1')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a1')] }),
+      new Message({ role: 'user', content: [new TextBlock('q2')] }),
+      new Message({
+        role: 'assistant',
+        content: [new TextBlock('pinned-a3')],
+        metadata: { custom: { pinned: true } },
+      }),
+      new Message({ role: 'user', content: [new TextBlock('q4')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a5')] }),
+      new Message({ role: 'user', content: [new TextBlock('q6')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a7')] }),
+      new Message({ role: 'user', content: [new TextBlock('q8')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a9')] }),
+    ]
+    const strategy = Offload.drop('*').when({ utilization: 0.5, preserveRecent: 4 })
+    const context = makeContext(messages, 0.9)
+
+    await strategy.apply(context)
+    await strategy.apply(context)
+
+    const allText = messages.flatMap((message) =>
+      message.content.filter((block) => block instanceof TextBlock).map((block) => (block as TextBlock).text)
+    )
+    expect(allText.some((text) => text.includes('pinned-a3'))).toBe(true)
+  })
 })
 
 describe('overflow bypass', () => {
