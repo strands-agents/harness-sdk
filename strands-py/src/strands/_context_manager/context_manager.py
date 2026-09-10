@@ -274,6 +274,8 @@ class ContextManager(Plugin):
         any_acted = False
         for strategy in self._strategies:
             try:
+                if isinstance(strategy, EmergencyTruncateStrategy) and any_acted:
+                    context.overflow = False
                 acted = await strategy.apply(context)
                 if acted:
                     any_acted = True
