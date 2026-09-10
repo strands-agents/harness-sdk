@@ -23,28 +23,26 @@ OpenAI Realtime is configured as an optional dependency in Strands Agents.
 To install it, run:
 
 ```bash
-pip install 'strands-agents[bidi-openai]'
+pip install 'strands-agents[bidi-io,bidi-openai,bidi-pyaudio]'
 ```
 
 Or to install all bidirectional streaming providers at once:
 
 ```bash
-pip install 'strands-agents[bidi-all]'
+pip install 'strands-agents[bidi-all,bidi-pyaudio]'
 ```
 
 ## Usage
 
-After installing `strands-agents[bidi-openai]`, you can import and initialize the Strands Agents' OpenAI Realtime provider as follows:
+After installing the OpenAI Realtime and local audio extras, create a voice agent:
 
 ```python
 import asyncio
 
 from strands.experimental.bidi import BidiAgent
-from strands.experimental.bidi.io import BidiAudioIO, BidiTextIO
+from strands.experimental.bidi.io import BidiAudioIO
 from strands.experimental.bidi.models import OpenAIRealtimeModel
-from strands_tools import stop
-
-from strands_tools import calculator
+from strands_tools import calculator, stop
 
 
 async def main() -> None:
@@ -57,8 +55,7 @@ async def main() -> None:
     agent = BidiAgent(model=model, tools=[calculator, stop])
 
     audio_io = BidiAudioIO()
-    text_io = BidiTextIO()
-    await agent.run(inputs=[audio_io.input()], outputs=[audio_io.output(), text_io.output()])
+    await agent.run(inputs=[audio_io.input()], outputs=[audio_io.output()])
 
 
 if __name__ == "__main__":

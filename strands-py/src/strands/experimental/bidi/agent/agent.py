@@ -421,11 +421,10 @@ class BidiAgent(LocalAgent):
             # Using model defaults:
             model = BedrockNovaSonicModel()
             audio_io = BidiAudioIO()
-            text_io = BidiTextIO()
             agent = BidiAgent(model=model, tools=[calculator])
             await agent.run(
                 inputs=[audio_io.input()],
-                outputs=[audio_io.output(), text_io.output()],
+                outputs=[audio_io.output()],
                 invocation_state={"user_id": "user_123"}
             )
 
