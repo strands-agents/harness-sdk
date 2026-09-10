@@ -14,6 +14,7 @@ from strands.hooks.registry import HookRegistry
 from strands.multiagent import GraphBuilder, Swarm
 from strands.session.snapshot_session_manager import (
     SnapshotSessionManager,
+    _deserialize_snapshot,
     _new_snapshot_id,
     _session_prefix,
     _snapshot_key,
@@ -793,6 +794,77 @@ async def test_corrupt_snapshot_raises_typed_error_on_restore(temp_dir):
 
     with pytest.raises(SnapshotException, match="Failed to deserialize snapshot"):
         Agent(model=_model("hi"), session_manager=SnapshotSessionManager("s1", storage=storage), agent_id="a1")
+
+
+@pytest.mark.asyncio
+async def test_default_captures_full_session_including_system_prompt(storage):
+    """Without capture_fields, the saved blob holds all six fields (guards the default scope)."""
+    manager = SnapshotSessionManager("s1", storage=storage)
+    Agent(model=_model("ok"), session_manager=manager, agent_id="a1", system_prompt="be helpful")("hi")
+
+    snapshot = _deserialize_snapshot(await storage.read(_on_disk_key("s1", "a1")))
+    assert set(snapshot.data) == {
+        "messages",
+        "state",
+        "conversation_manager_state",
+        "interrupt_state",
+        "system_prompt",
+        "model_state",
+    }
+
+
+@pytest.mark.asyncio
+async def test_capture_fields_narrows_saved_blob(storage):
+    """capture_fields persists exactly the requested fields and nothing else."""
+    manager = SnapshotSessionManager("s1", storage=storage, capture_fields=["messages", "state"])
+    Agent(model=_model("ok"), session_manager=manager, agent_id="a1", system_prompt="be helpful")("hi")
+
+    snapshot = _deserialize_snapshot(await storage.read(_on_disk_key("s1", "a1")))
+    assert set(snapshot.data) == {"messages", "state"}
+
+
+def test_capture_fields_restore_leaves_per_request_config(storage):
+    """A narrow scope restores history and state without overwriting the request's system prompt.
+
+    Mirrors a host (e.g. AgentCore Harness) that reconstructs the agent per invocation with a
+    fresh system prompt: the prior conversation and plugin state carry over, the new prompt stays.
+    """
+    manager = SnapshotSessionManager("s1", storage=storage, capture_fields=["messages", "state"])
+    agent = Agent(model=_model("stored"), session_manager=manager, agent_id="a1", system_prompt="prompt A")
+    agent.state.set("todos", ["ship it"])
+    agent("remember this")
+
+    manager_2 = SnapshotSessionManager("s1", storage=storage, capture_fields=["messages", "state"])
+    agent_2 = Agent(model=_model("x"), session_manager=manager_2, agent_id="a1", system_prompt="prompt B")
+
+    assert "remember this" in _texts(agent_2)  # history carried over
+    assert agent_2.state.get("todos") == ["ship it"]  # plugin state carried over
+    assert agent_2.system_prompt == "prompt B"  # the request's own prompt is untouched
+
+
+def test_restore_filters_out_of_scope_fields_from_stale_broad_snapshot(storage):
+    """A snapshot written under a broad scope cannot overwrite config once the scope is narrowed.
+
+    A snapshot_latest written by the default (full) manager still on disk must not push its
+    system_prompt/model_state onto an agent a later narrow-scoped manager restores into.
+    """
+    broad = SnapshotSessionManager("s1", storage=storage)
+    agent = Agent(model=_model("stored"), session_manager=broad, agent_id="a1", system_prompt="prompt A")
+    agent._model_state = {"response_id": "resp-A"}
+    agent("first turn")
+
+    narrow = SnapshotSessionManager("s1", storage=storage, capture_fields=["messages", "state"])
+    agent_2 = Agent(model=_model("x"), session_manager=narrow, agent_id="a1", system_prompt="prompt B")
+
+    assert "first turn" in _texts(agent_2)  # in-scope field still restored
+    assert agent_2.system_prompt == "prompt B"  # out-of-scope system_prompt filtered out
+    assert agent_2._model_state == {}  # out-of-scope model_state filtered out
+
+
+def test_capture_fields_rejects_unknown_field(storage):
+    """An unknown capture field fails fast at construction, not at the first save."""
+    with pytest.raises(SnapshotException, match="Invalid snapshot field"):
+        SnapshotSessionManager("s1", storage=storage, capture_fields=["messages", "bogus"])  # type: ignore[list-item]
 
 
 @pytest.mark.parametrize(

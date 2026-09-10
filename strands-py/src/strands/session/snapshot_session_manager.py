@@ -38,7 +38,7 @@ from ..hooks.events import (
 from ..hooks.registry import HookRegistry
 from ..storage.local_file_storage import LocalFileStorage
 from ..storage.storage import _NAMESPACED, Storage, _NamespacedStorage
-from ..types._snapshot import Snapshot
+from ..types._snapshot import Snapshot, SnapshotField, resolve_snapshot_fields
 from ..types.content import Message
 from ..types.exceptions import SnapshotException
 from ..types.session import decode_bytes_values, encode_bytes_values
@@ -200,6 +200,10 @@ class SnapshotSessionManager(SessionManager):
         session = SnapshotSessionManager("my-session", storage=LocalFileStorage())
         agent = Agent(session_manager=session)
         ```
+
+    Hosts that reconstruct the agent per invocation (e.g. AgentCore Harness) can narrow what is
+    persisted so restore never overwrites per-request configuration ussing ``capture_fields``.
+        ```
     """
 
     def __init__(
@@ -209,6 +213,7 @@ class SnapshotSessionManager(SessionManager):
         storage: Storage | None = None,
         save_latest_on: SaveLatestStrategy = "invocation",
         snapshot_trigger: SnapshotTrigger | None = None,
+        capture_fields: list[SnapshotField] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the snapshot session manager.
@@ -223,12 +228,16 @@ class SnapshotSessionManager(SessionManager):
             snapshot_trigger: Optional callback invoked after each invocation; when it
                 returns True an immutable snapshot is appended for checkpointing. An immutable
                 snapshot can also be forced at any point via :meth:`save_snapshot`.
+            capture_fields: Which agent fields to persist and restore. Defaults to the full
+                session plus the system prompt, so a rehydrated agent behaves identically to the
+                original. Pass an explicit list to persist only those fields. 
             **kwargs: Additional keyword arguments for future extensibility.
 
         Raises:
             ValueError: If ``session_id`` is empty, is a relative-path segment (``.`` or ``..``),
                 normalizes to empty, or contains a path separator; or if ``save_latest_on`` is
                 not a recognized strategy.
+            SnapshotException: If ``capture_fields`` contains an unknown field name or is empty.
         """
         self.session_id = validate_identifier(session_id, Identifier.SESSION)
         # validate_identifier permits "."/".."/whitespace, which either collapse the session
@@ -243,6 +252,11 @@ class SnapshotSessionManager(SessionManager):
         self._storage: Storage | None = _resolve_storage(storage) if storage is not None else None
         self._save_latest_on: SaveLatestStrategy = save_latest_on
         self._snapshot_trigger = snapshot_trigger
+
+        if capture_fields is None:
+            self._capture_fields = resolve_snapshot_fields(preset="session", include=["system_prompt"])
+        else:
+            self._capture_fields = resolve_snapshot_fields(include=capture_fields)
 
     @property
     def _resolved_storage(self) -> Storage:
@@ -462,7 +476,10 @@ class SnapshotSessionManager(SessionManager):
         data = await self._resolved_storage.read(key)
         if data is None:
             return False
-        agent.load_snapshot(_deserialize_snapshot(data))
+
+        snapshot = _deserialize_snapshot(data)
+        snapshot.data = {name: value for name, value in snapshot.data.items() if name in self._capture_fields}
+        agent.load_snapshot(snapshot)
         return True
 
     async def _save_latest(self, agent: "Agent") -> None:
@@ -516,10 +533,9 @@ class SnapshotSessionManager(SessionManager):
             await self._save_latest(event.agent)
 
     def _capture(self, agent: "Agent") -> Snapshot:
-        """Capture a full session snapshot including the system prompt.
+        """Capture a snapshot of the configured ``capture_fields``.
 
-        The shared ``"session"`` preset omits ``system_prompt`` (opt-in for callers like
-        the goal plugin); session persistence includes it so a rehydrated agent behaves
-        identically to the original, matching the TypeScript SDK's session preset.
+        Defaults to the full ``"session"`` preset plus ``system_prompt`` so a rehydrated agent
+        behaves identically to the original, matching the TypeScript SDK's session preset.
         """
-        return agent.take_snapshot(preset="session", include=["system_prompt"])
+        return agent.take_snapshot(include=list(self._capture_fields))
