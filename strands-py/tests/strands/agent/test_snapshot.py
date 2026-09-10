@@ -2,7 +2,7 @@
 
 import json
 import re
-from typing import Any
+from typing import Any, get_args
 from unittest.mock import MagicMock
 
 import pytest
@@ -13,6 +13,7 @@ from strands.types._snapshot import (
     SNAPSHOT_PRESETS,
     SNAPSHOT_SCHEMA_VERSION,
     VALID_SCOPES,
+    Scope,
     Snapshot,
     resolve_snapshot_fields,
 )
@@ -300,7 +301,7 @@ def test_take_snapshot_app_data_is_independent_copy():
 
 def test_valid_scopes_constant_matches_scope_type():
     """VALID_SCOPES contains exactly the values from the Scope Literal type."""
-    assert set(VALID_SCOPES) == {"agent"}
+    assert set(VALID_SCOPES) == set(get_args(Scope))
 
 
 def test_snapshot_validate_accepts_valid_scopes():
