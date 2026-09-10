@@ -99,13 +99,13 @@ def _create_llm_risk_classifier(config: LLMClassifierConfig | None = None) -> Hu
         config: Optional configuration for the classifier.
 
     Returns:
-        A classifier function that uses an inner LLM agent to evaluate risk.
+        A classifier function that asks a model to evaluate risk.
     """
     system_prompt = (config.system_prompt if config else None) or _DEFAULT_SYSTEM_PROMPT
     configured_model = config.model if config else None
 
     async def classifier(event: BeforeToolCallEvent, **kwargs: Any) -> ClassifierResult:
-        from ...agent import Agent
+        from ...event_loop._auxiliary_model_call import auxiliary_structured_output
 
         model = configured_model or event.agent.model
         if not model:
@@ -114,17 +114,22 @@ def _create_llm_risk_classifier(config: LLMClassifierConfig | None = None) -> Hu
                 "`LLMClassifierConfig(model=...)`, or ensure the parent agent has a model."
             )
 
-        inner = Agent(model=model, system_prompt=system_prompt, callback_handler=None)
         tool_use = event.tool_use
         prompt = (
             f"Should this tool call require human approval?\n\n"
             f"Tool: {tool_use['name']}\n"
             f"Input: {json.dumps(tool_use['input'], indent=2)}"
         )
-        result = await inner.invoke_async(prompt, structured_output_model=_RiskDecision)
-        decision = result.structured_output
-        if not isinstance(decision, _RiskDecision):
-            raise ValueError(f"LLM risk classifier produced no structured output (stop_reason={result.stop_reason!r})")
+        decision = await auxiliary_structured_output(
+            model,
+            _RiskDecision,
+            prompt,
+            source="hitl_classifier",
+            agent=event.agent,
+            system_prompt=system_prompt,
+            # A shallow copy, so hooks can't add or remove keys in the live invocation_state.
+            invocation_state=dict(event.invocation_state),
+        )
 
         return ClassifierResult(
             requires_human_in_the_loop=decision.requires_approval,

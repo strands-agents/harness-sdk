@@ -1,12 +1,22 @@
 """Unit tests for LLM steering handler."""
 
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
 from strands.vended_plugins.steering.core.action import Guide, Interrupt, Proceed
 from strands.vended_plugins.steering.handlers.llm.llm_handler import LLMSteeringHandler, _LLMSteering
 from strands.vended_plugins.steering.handlers.llm.mappers import DefaultPromptMapper
+from tests.fixtures.mocked_structured_output_model import MockedStructuredOutputModel
+
+
+def _mock_agent(model=None):
+    """Build an agent stand-in the auxiliary model call can fire hooks and metrics on."""
+    agent = Mock()
+    agent.model = model
+    agent.hooks.invoke_callbacks_async = AsyncMock()
+    agent.event_loop_metrics = MagicMock()
+    return agent
 
 
 def test_llm_steering_handler_initialization():
@@ -43,94 +53,32 @@ def test_llm_steering_handler_with_custom_context_providers():
 
 
 @pytest.mark.asyncio
-@patch("strands.agent.Agent")
-async def test_steer_proceed_decision(mock_agent_class):
-    """Test steer method with proceed decision."""
-    system_prompt = "Test prompt"
-    handler = LLMSteeringHandler(system_prompt)
-
-    mock_steering_agent = Mock()
-    mock_agent_class.return_value = mock_steering_agent
-
-    mock_result = Mock()
-    mock_result.structured_output = _LLMSteering(decision="proceed", reason="Tool call is safe")
-    mock_steering_agent.return_value = mock_result
-
-    agent = Mock()
+@pytest.mark.parametrize(
+    ("decision", "exp_action"),
+    [("proceed", Proceed), ("guide", Guide), ("interrupt", Interrupt)],
+)
+async def test_steer_maps_decision_to_action(decision, exp_action):
+    """Test steer method maps each LLM decision to its steering action."""
+    handler = LLMSteeringHandler("Test prompt")
+    model = MockedStructuredOutputModel(_LLMSteering(decision=decision, reason="Because"))
+    agent = _mock_agent(model)
     tool_use = {"name": "test_tool", "input": {"param": "value"}}
 
     result = await handler.steer_before_tool(agent=agent, tool_use=tool_use)
 
-    assert isinstance(result, Proceed)
-    assert result.reason == "Tool call is safe"
+    assert isinstance(result, exp_action)
+    assert result.reason == "Because"
+    assert model.system_prompts == ["Test prompt"]
+    assert "test_tool" in model.prompts[0][0]["content"][0]["text"]
 
 
 @pytest.mark.asyncio
-@patch("strands.agent.Agent")
-async def test_steer_guide_decision(mock_agent_class):
-    """Test steer method with guide decision."""
-    system_prompt = "Test prompt"
-    handler = LLMSteeringHandler(system_prompt)
-
-    mock_steering_agent = Mock()
-    mock_agent_class.return_value = mock_steering_agent
-
-    mock_result = Mock()
-    mock_result.structured_output = _LLMSteering(decision="guide", reason="Consider security implications")
-    mock_steering_agent.return_value = mock_result
-
-    agent = Mock()
-    tool_use = {"name": "test_tool", "input": {"param": "value"}}
-
-    result = await handler.steer_before_tool(agent=agent, tool_use=tool_use)
-
-    assert isinstance(result, Guide)
-    assert result.reason == "Consider security implications"
-
-
-@pytest.mark.asyncio
-@patch("strands.agent.Agent")
-async def test_steer_interrupt_decision(mock_agent_class):
-    """Test steer method with interrupt decision."""
-    system_prompt = "Test prompt"
-    handler = LLMSteeringHandler(system_prompt)
-
-    mock_steering_agent = Mock()
-    mock_agent_class.return_value = mock_steering_agent
-
-    mock_result = Mock()
-    mock_result.structured_output = _LLMSteering(decision="interrupt", reason="Human approval required")
-    mock_steering_agent.return_value = mock_result
-
-    agent = Mock()
-    tool_use = {"name": "test_tool", "input": {"param": "value"}}
-
-    result = await handler.steer_before_tool(agent=agent, tool_use=tool_use)
-
-    assert isinstance(result, Interrupt)
-    assert result.reason == "Human approval required"
-
-
-@pytest.mark.asyncio
-@patch("strands.agent.Agent")
-async def test_steer_unknown_decision(mock_agent_class):
+async def test_steer_unknown_decision():
     """Test steer method with unknown decision defaults to proceed."""
-    system_prompt = "Test prompt"
-    handler = LLMSteeringHandler(system_prompt)
-
-    mock_steering_agent = Mock()
-    mock_agent_class.return_value = mock_steering_agent
-
-    # Mock _LLMSteering with unknown decision (bypass validation)
-    mock_steering_decision = Mock()
-    mock_steering_decision.decision = "unknown"
-    mock_steering_decision.reason = "Invalid decision"
-
-    mock_result = Mock()
-    mock_result.structured_output = mock_steering_decision
-    mock_steering_agent.return_value = mock_result
-
-    agent = Mock()
+    handler = LLMSteeringHandler("Test prompt")
+    # model_construct bypasses the Literal validation an unknown decision would fail
+    unknown = _LLMSteering.model_construct(decision="unknown", reason="Invalid decision")
+    agent = _mock_agent(MockedStructuredOutputModel(unknown))
     tool_use = {"name": "test_tool", "input": {"param": "value"}}
 
     result = await handler.steer_before_tool(agent=agent, tool_use=tool_use)
@@ -140,50 +88,31 @@ async def test_steer_unknown_decision(mock_agent_class):
 
 
 @pytest.mark.asyncio
-@patch("strands.agent.Agent")
-async def test_steer_uses_custom_model(mock_agent_class):
+async def test_steer_uses_custom_model():
     """Test steer method uses custom model when provided."""
-    system_prompt = "Test prompt"
-    custom_model = Mock()
-    handler = LLMSteeringHandler(system_prompt, model=custom_model)
-
-    mock_steering_agent = Mock()
-    mock_agent_class.return_value = mock_steering_agent
-
-    mock_result = Mock()
-    mock_result.structured_output = _LLMSteering(decision="proceed", reason="OK")
-    mock_steering_agent.return_value = mock_result
-
-    agent = Mock()
-    agent.model = Mock()
+    custom_model = MockedStructuredOutputModel(_LLMSteering(decision="proceed", reason="OK"))
+    handler = LLMSteeringHandler("Test prompt", model=custom_model)
+    agent = _mock_agent(MockedStructuredOutputModel(_LLMSteering(decision="interrupt", reason="Agent model")))
     tool_use = {"name": "test_tool", "input": {"param": "value"}}
 
-    await handler.steer_before_tool(agent=agent, tool_use=tool_use)
+    result = await handler.steer_before_tool(agent=agent, tool_use=tool_use)
 
-    mock_agent_class.assert_called_once_with(system_prompt=system_prompt, model=custom_model, callback_handler=None)
+    assert isinstance(result, Proceed)
+    assert len(custom_model.prompts) == 1
+    assert agent.model.prompts == []
 
 
 @pytest.mark.asyncio
-@patch("strands.agent.Agent")
-async def test_steer_uses_agent_model_when_no_custom_model(mock_agent_class):
+async def test_steer_uses_agent_model_when_no_custom_model():
     """Test steer method uses agent's model when no custom model provided."""
-    system_prompt = "Test prompt"
-    handler = LLMSteeringHandler(system_prompt)
-
-    mock_steering_agent = Mock()
-    mock_agent_class.return_value = mock_steering_agent
-
-    mock_result = Mock()
-    mock_result.structured_output = _LLMSteering(decision="proceed", reason="OK")
-    mock_steering_agent.return_value = mock_result
-
-    agent = Mock()
-    agent.model = Mock()
+    handler = LLMSteeringHandler("Test prompt")
+    agent = _mock_agent(MockedStructuredOutputModel(_LLMSteering(decision="proceed", reason="OK")))
     tool_use = {"name": "test_tool", "input": {"param": "value"}}
 
-    await handler.steer_before_tool(agent=agent, tool_use=tool_use)
+    result = await handler.steer_before_tool(agent=agent, tool_use=tool_use)
 
-    mock_agent_class.assert_called_once_with(system_prompt=system_prompt, model=agent.model, callback_handler=None)
+    assert isinstance(result, Proceed)
+    assert len(agent.model.prompts) == 1
 
 
 def test_llm_steering_model():

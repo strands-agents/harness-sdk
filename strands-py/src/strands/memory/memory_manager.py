@@ -615,7 +615,7 @@ class MemoryManager(Plugin):
         if len(self._extraction_stores) == 0:
             return
 
-        coordinator = ExtractionCoordinator(self._extraction_stores, agent.model)
+        coordinator = ExtractionCoordinator(self._extraction_stores, agent.model, agent=agent)
         self._coordinator = coordinator
 
         # Buffer every message so extraction has its own copy to save from.

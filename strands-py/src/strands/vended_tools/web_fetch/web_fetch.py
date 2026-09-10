@@ -4,9 +4,9 @@ Provides :func:`make_web_fetch` and the default :data:`web_fetch` instance.
 The factory's ``mode`` parameter selects the extraction strategy at
 construction time:
 
-* ``agentic`` (default): HTML is converted to markdown and passed to an analyst
-  agent that answers ``prompt``; the full page never enters the main agent's
-  context.
+* ``agentic`` (default): HTML is converted to markdown and sent to the model in a
+  single auxiliary call that answers ``prompt``; the full page never enters the main
+  agent's context.
 * ``markdown``: HTML is converted to clean markdown with scripts, styles, and
   noise stripped. Use when the agent needs full pages for reasoning.
 
@@ -19,11 +19,13 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from typing import TYPE_CHECKING, Literal
+from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import httpx
 
 from ...tools.decorator import tool
+from ...types.content import Message, Messages
 from ...types.tools import ToolContext
 from ._extract import html_to_markdown
 from .types import WEB_FETCH_DESCRIPTION_AGENTIC, WEB_FETCH_DESCRIPTION_MARKDOWN
@@ -34,6 +36,7 @@ class WebFetchError(ValueError):
 
 
 if TYPE_CHECKING:
+    from ...agent import Agent
     from ...models.model import Model
     from ...tools.decorator import DecoratedFunctionTool
 
@@ -149,13 +152,11 @@ def make_web_fetch(
             tool_context: Framework-injected. Not model-visible. Carries the
                 agent so the tool can read its cancel signal.
         """
-        # Local import to avoid circular dependency
-        from ...agent.agent import Agent
-
         if not prompt.strip():
             raise WebFetchError("web_fetch: agentic mode requires a non-empty prompt.")
 
-        host_model = getattr(tool_context.agent, "model", None) if tool_context else None
+        host_agent = tool_context.agent if tool_context else None
+        host_model = getattr(host_agent, "model", None)
         effective_model = analyst_model or host_model
         if effective_model is None:
             raise WebFetchError(
@@ -171,22 +172,50 @@ def make_web_fetch(
             cancel_signal=cancel_signal,
         )
 
-        # Fresh agent per call — no history from one fetch bleeds into the next.
-        analyst = Agent(
-            model=effective_model,
-            system_prompt=_ANALYST_PROMPT,
-            callback_handler=None,
-        )
         is_markup = "html" in content_type.lower() or "xml" in content_type.lower()
         content = html_to_markdown(raw) if is_markup else raw
         if len(content) > max_content_chars:
             content = content[:max_content_chars] + "\n\n[content truncated]"
         invoke_prompt = f"URL: {url}\n\nRequest: {prompt}\n\n--- Content ---\n{content}"
-        try:
-            result = await analyst.invoke_async(invoke_prompt, cancel_signal=cancel_signal)
-        except Exception as exc:
-            raise WebFetchError(f"Web fetch analyst failed for {url}: {exc}") from exc
-        return str(result)
+
+        # Lazy import to avoid a circular import with ``event_loop.streaming``.
+        from ...event_loop._auxiliary_model_call import instrument_auxiliary_model_call
+        from ...event_loop.streaming import stream_messages
+
+        analyst_messages: Messages = [{"role": "user", "content": [{"text": invoke_prompt}]}]
+
+        async def _analyst_stream() -> AsyncGenerator[Any, None]:
+            # Wrap only the provider stream: a hook/metrics failure in the instrumentation
+            # must surface as itself, not be relabelled an analyst failure.
+            try:
+                async for event in stream_messages(
+                    effective_model, _ANALYST_PROMPT, analyst_messages, tool_specs=[], cancel_signal=cancel_signal
+                ):
+                    yield event
+            except Exception as exc:
+                raise WebFetchError(f"Web fetch analyst failed for {url}: {exc}") from exc
+
+        # A single direct model call: the analyst has no tools or history, so it is an
+        # auxiliary call on the host agent's behalf, not an agent of its own. A host without
+        # hooks and metrics (notably BidiAgent) runs uninstrumented.
+        instrumentable = hasattr(host_agent, "hooks") and hasattr(host_agent, "event_loop_metrics")
+        events = instrument_auxiliary_model_call(
+            _analyst_stream(),
+            source="web_fetch",
+            agent=cast("Agent | None", host_agent if instrumentable else None),
+            messages=analyst_messages,
+            invocation_state=tool_context.invocation_state if tool_context else None,
+            model_id=effective_model.config.get("model_id") if hasattr(effective_model, "config") else None,
+            system_prompt=_ANALYST_PROMPT,
+        )
+
+        answer: Message | None = None
+        async for event in events:
+            if "stop" in event:
+                _, answer, _, _ = event["stop"]
+        if answer is None:
+            raise WebFetchError(f"Web fetch analyst failed for {url}: no response from model")
+        return "\n".join(block["text"] for block in answer["content"] if "text" in block)
 
     return web_fetch_tool_markdown if mode == "markdown" else web_fetch_tool_agentic
 

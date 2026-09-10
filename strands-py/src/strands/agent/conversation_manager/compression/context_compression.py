@@ -10,11 +10,13 @@ messages by type.
 import logging
 from typing import TYPE_CHECKING, Literal, cast
 
+from ....event_loop._auxiliary_model_call import instrument_auxiliary_model_call
 from ....event_loop.streaming import process_stream
 from ....types.content import Message
 from ....types.exceptions import ContextWindowOverflowException
 
 if TYPE_CHECKING:
+    from ....agent import Agent
     from ....models.model import Model
 
 logger = logging.getLogger(__name__)
@@ -150,17 +152,23 @@ async def generate_summary(
     messages_to_summarize: list[Message],
     model: "Model",
     system_prompt: str | None = None,
+    *,
+    agent: "Agent | None" = None,
 ) -> Message:
     """Generate a summary of the provided messages by calling the model directly.
 
-    This bypasses the full agent pipeline (lock, metrics, traces, tool loop) and simply
-    asks the underlying model to summarize the conversation.
+    This bypasses the full agent pipeline (lock, traces, tool loop) and simply asks the
+    underlying model to summarize the conversation. When ``agent`` is provided, the call
+    fires the ``Before/AfterAuxiliaryModelCallEvent`` hook pair and its token usage rolls into
+    the agent's metrics under the ``"summarization"`` source.
 
     Args:
         messages_to_summarize: The messages to summarize.
         model: The model used to generate the summary.
         system_prompt: Optional system prompt override. Defaults to
             :data:`DEFAULT_SUMMARIZATION_PROMPT`.
+        agent: The agent this summarization runs on behalf of, used for hooks and
+            metrics attribution. None leaves the call uninstrumented.
 
     Returns:
         A user-role message containing the model-generated summary.
@@ -181,7 +189,15 @@ async def generate_summary(
     )
 
     result_message: Message | None = None
-    async for event in process_stream(chunks):
+    events = instrument_auxiliary_model_call(
+        process_stream(chunks),
+        source="summarization",
+        agent=agent,
+        messages=summarization_messages,
+        model_id=model.config.get("model_id") if hasattr(model, "config") else None,
+        system_prompt=resolved_system_prompt,
+    )
+    async for event in events:
         if "stop" in event:
             _, result_message, _, _ = event["stop"]
 

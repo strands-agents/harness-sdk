@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from ...agent.agent import Agent
     from ...types.content import Messages, SystemPrompt
     from ...types.tools import ToolSpec
     from .router import RoutingCandidate
@@ -60,6 +61,9 @@ class RoutingContext:
     candidates: Sequence[RoutingCandidate]
     invocation_state: Mapping[str, Any]
     attempts: Sequence[RoutingAttempt] = field(default_factory=tuple)
+    # SDK-internal owner handle for hook/metrics attribution; not part of the strategy
+    # contract (invocation_state["agent"] may name a sibling in multi-agent runs).
+    _agent: Agent | None = field(default=None, repr=False, compare=False)
 
 
 @runtime_checkable

@@ -11,6 +11,7 @@ from strands.agent.conversation_manager.summarizing_conversation_manager import 
 from strands.hooks.events import BeforeModelCallEvent
 from strands.hooks.registry import HookRegistry
 from strands.models.model import Model
+from strands.telemetry.metrics import EventLoopMetrics
 from strands.types.content import Messages
 from strands.types.exceptions import ContextWindowOverflowException
 from tests.fixtures.mocked_model_provider import MockedModelProvider
@@ -54,6 +55,8 @@ class MockAgent:
         self.tool_registry = Mock()
         self.tool_names = []
         self._default_structured_output_model = None
+        self.hooks = HookRegistry()
+        self.event_loop_metrics = EventLoopMetrics()
 
     def __call__(self, prompt):
         """Mock agent call that returns a summary."""
@@ -206,6 +209,8 @@ def test_reduce_context_raises_on_summarization_failure():
     failing_agent = Mock()
     failing_agent.model = Mock()
     failing_agent.model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream_error(Exception("Agent failed")))
+    failing_agent.hooks = HookRegistry()
+    failing_agent.event_loop_metrics = EventLoopMetrics()
     failing_agent_messages: Messages = [
         {"role": "user", "content": [{"text": "Message 1"}]},
         {"role": "assistant", "content": [{"text": "Response 1"}]},
@@ -265,6 +270,8 @@ def test_generate_summary_raises_on_model_failure():
     failing_agent = Mock()
     failing_agent.model = Mock()
     failing_agent.model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream_error(Exception("Agent failed")))
+    failing_agent.hooks = HookRegistry()
+    failing_agent.event_loop_metrics = EventLoopMetrics()
 
     manager = SummarizingConversationManager()
 
@@ -471,6 +478,8 @@ def test_default_path_does_not_modify_agent_state_on_exception():
     mock_agent.model.stream = Mock(
         side_effect=lambda *a, **kw: _mock_model_stream_error(Exception("Summarization failed"))
     )
+    mock_agent.hooks = HookRegistry()
+    mock_agent.event_loop_metrics = EventLoopMetrics()
 
     messages: Messages = [
         {"role": "user", "content": [{"text": "Hello"}]},
@@ -842,6 +851,8 @@ def _make_summarizing_threshold_agent(messages, summary_response="Summary of con
     agent.model._utilization_limit_warned = False
     agent.model.estimate_utilization = lambda input_tokens: Model.estimate_utilization(agent.model, input_tokens)
     agent.model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream(summary_response))
+    agent.hooks = HookRegistry()
+    agent.event_loop_metrics = EventLoopMetrics()
     return agent
 
 

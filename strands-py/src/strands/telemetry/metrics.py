@@ -13,7 +13,7 @@ from opentelemetry.metrics import Counter, Histogram, Meter
 
 from ..telemetry import metrics_constants as constants
 from ..types.content import Message
-from ..types.event_loop import Metrics, Usage
+from ..types.event_loop import Metrics, Usage, UsageSource
 from ..types.tools import ToolUse
 
 logger = logging.getLogger(__name__)
@@ -213,8 +213,17 @@ class EventLoopMetrics:
         cycle_durations: List of durations for each cycle in seconds.
         agent_invocations: Agent invocation metrics containing cycles and usage data.
         traces: List of execution traces.
-        accumulated_usage: Accumulated token usage across all model invocations (across all requests).
-        accumulated_metrics: Accumulated performance metrics across all model invocations.
+        accumulated_usage: Accumulated token usage across all model invocations (across all requests),
+            including auxiliary calls the SDK makes on the user's behalf (e.g. summarization). Invariant:
+            ``accumulated_usage`` covers every source, while per-invocation and per-cycle usage cover only
+            ``"main"`` — so it can exceed the sum of ``agent_invocations[*].usage``. The old main-loop-only
+            figure is ``accumulated_usage_by_source["main"]``.
+        accumulated_metrics: Accumulated performance metrics across main-event-loop model
+            invocations only — auxiliary calls contribute usage, not latency.
+        accumulated_usage_by_source: Accumulated token usage broken down by source — ``"main"`` for
+            main-event-loop model calls, or the auxiliary feature that made the call (e.g.
+            ``"summarization"``, ``"routing"``, ``"extraction"``, ``"web_fetch"``, ``"hitl_classifier"``,
+            ``"goal_judge"``, ``"steering"``).
     """
 
     cycle_count: int = 0
@@ -224,6 +233,7 @@ class EventLoopMetrics:
     traces: list[Trace] = field(default_factory=list)
     accumulated_usage: Usage = field(default_factory=lambda: Usage(inputTokens=0, outputTokens=0, totalTokens=0))
     accumulated_metrics: Metrics = field(default_factory=lambda: Metrics(latencyMs=0))
+    accumulated_usage_by_source: dict[str, Usage] = field(default_factory=dict)
 
     @property
     def latest_context_size(self) -> int | None:
@@ -377,23 +387,39 @@ class EventLoopMetrics:
         if "cacheWriteInputTokens" in source:
             target["cacheWriteInputTokens"] = target.get("cacheWriteInputTokens", 0) + source["cacheWriteInputTokens"]
 
-    def update_usage(self, usage: Usage) -> None:
+    def update_usage(self, usage: Usage, *, source: UsageSource = "main") -> None:
         """Update the accumulated token usage with new usage data.
 
         Args:
             usage: The usage data to add to the accumulated totals.
+            source: Where the model call originated — ``"main"`` for main-event-loop calls
+                (the default), or the auxiliary feature that made the call (e.g.
+                ``"summarization"``). Auxiliary usage accumulates into ``accumulated_usage``
+                and its per-source bucket, but not into per-invocation or per-cycle usage,
+                which track only the agent's own turns.
         """
-        # Record metrics to OpenTelemetry
-        self._metrics_client.event_loop_input_tokens.record(usage["inputTokens"])
-        self._metrics_client.event_loop_output_tokens.record(usage["outputTokens"])
+        # Record metrics to OpenTelemetry, dimensioned by source so exported histograms
+        # stay filterable now that auxiliary calls flow through here too.
+        attributes = {"source": source}
+        self._metrics_client.event_loop_input_tokens.record(usage["inputTokens"], attributes)
+        self._metrics_client.event_loop_output_tokens.record(usage["outputTokens"], attributes)
 
         # Handle optional cached token metrics for OpenTelemetry
         if "cacheReadInputTokens" in usage:
-            self._metrics_client.event_loop_cache_read_input_tokens.record(usage["cacheReadInputTokens"])
+            self._metrics_client.event_loop_cache_read_input_tokens.record(usage["cacheReadInputTokens"], attributes)
         if "cacheWriteInputTokens" in usage:
-            self._metrics_client.event_loop_cache_write_input_tokens.record(usage["cacheWriteInputTokens"])
+            self._metrics_client.event_loop_cache_write_input_tokens.record(usage["cacheWriteInputTokens"], attributes)
 
         self._accumulate_usage(self.accumulated_usage, usage)
+
+        source_usage = self.accumulated_usage_by_source.setdefault(
+            source, Usage(inputTokens=0, outputTokens=0, totalTokens=0)
+        )
+        self._accumulate_usage(source_usage, usage)
+
+        if source != "main":
+            return
+
         self._accumulate_usage(self.agent_invocations[-1].usage, usage)
 
         if self.agent_invocations[-1].cycles:
@@ -450,6 +476,7 @@ class EventLoopMetrics:
             },
             "traces": [trace.to_dict() for trace in self.traces],
             "accumulated_usage": self.accumulated_usage,
+            "accumulated_usage_by_source": self.accumulated_usage_by_source,
             "accumulated_metrics": self.accumulated_metrics,
             "agent_invocations": [
                 {
@@ -496,6 +523,15 @@ def _metrics_summary_to_lines(event_loop_metrics: EventLoopMetrics, allowed_name
         token_parts.append(f"cache_write_input_tokens={summary['accumulated_usage']['cacheWriteInputTokens']}")
 
     yield f"├─ Tokens: {', '.join(token_parts)}"
+
+    auxiliary_usage = {
+        usage_source: usage["totalTokens"]
+        for usage_source, usage in summary.get("accumulated_usage_by_source", {}).items()
+        if usage_source != "main"
+    }
+    if auxiliary_usage:
+        by_source = ", ".join(f"{usage_source}={total}" for usage_source, total in auxiliary_usage.items())
+        yield f"├─ Auxiliary Tokens: {by_source}"
     yield f"├─ Bedrock Latency: {summary['accumulated_metrics']['latencyMs']}ms"
 
     yield "├─ Tool Usage:"

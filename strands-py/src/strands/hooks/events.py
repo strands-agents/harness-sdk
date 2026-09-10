@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 from ..types.agent import AgentInput
 from ..types.content import ContentBlock, Message, Messages
+from ..types.event_loop import AuxiliaryModelCallSource, Usage
 from ..types.interrupt import _Interruptible
 from ..types.streaming import StopReason
 from ..types.tools import AgentTool, ToolResult, ToolUse
@@ -386,6 +387,92 @@ class AfterModelCallEvent(HookEvent):
 
     def _can_write(self, name: str) -> bool:
         return name == "retry"
+
+    @property
+    def should_reverse_callbacks(self) -> bool:
+        """True to invoke callbacks in reverse order."""
+        return True
+
+
+@dataclass
+class BeforeAuxiliaryModelCallEvent(HookEvent):
+    """Event triggered before an SDK-internal (non-main-loop) model call.
+
+    Auxiliary model calls are calls the SDK makes on the user's behalf outside the
+    agent's main event loop — summarizing conversation history, classifying a request
+    to route between models, extracting memories, analyzing a fetched web page, or the
+    built-in classifiers and judges (HITL risk, goal, steering). They do not fire
+    :class:`BeforeModelCallEvent`, which keeps meaning "the agent's turn"; a consumer that
+    wants to observe auxiliary calls opts in by subscribing to this event.
+
+    Note: Only the SDK's built-in auxiliary features fire this event pair. A custom
+    component (e.g. a user-written conversation manager or extractor) that calls a
+    model directly is not covered, so subscribers must not assume the pair is an
+    exhaustive record of every non-main-loop model call.
+
+    Note: Depending on the auxiliary feature, this event may fire outside an active
+    agent invocation (e.g. background memory extraction), and possibly on a different
+    event loop than the agent's (e.g. summarization triggered from a synchronous
+    caller).
+
+    Attributes:
+        source: The auxiliary feature making the call. May gain values in minor
+            releases; treat unknown values as opaque rather than exhaustive-match on
+            them.
+        messages: The messages sent to the model.
+        system_prompt: The system prompt sent to the model, when the call site provides
+            one (e.g. the summarization or extraction instruction). None otherwise.
+        invocation_state: State and configuration passed through the agent invocation,
+            when the call site has access to it.
+    """
+
+    source: AuxiliaryModelCallSource
+    messages: Messages
+    system_prompt: str | None = None
+    invocation_state: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class AfterAuxiliaryModelCallEvent(HookEvent):
+    """Event triggered after an SDK-internal (non-main-loop) model call completes.
+
+    Fired after every :class:`BeforeAuxiliaryModelCallEvent`, whether the call succeeded
+    or raised. See :class:`BeforeAuxiliaryModelCallEvent` for what counts as an auxiliary
+    model call.
+
+    Note: This event uses reverse callback ordering, meaning callbacks registered
+    later will be invoked first during cleanup.
+
+    Attributes:
+        source: The auxiliary feature that made the call. See
+            :attr:`BeforeAuxiliaryModelCallEvent.source`.
+        invocation_state: State and configuration passed through the agent invocation,
+            when the call site has access to it.
+        stop_response: The model response data if the call succeeded and reported a
+            stop event, None otherwise.
+        exception: Exception if the call failed, None if it succeeded. This is a
+            ``BaseException`` because the event also fires when the call is cancelled
+            mid-stream (e.g. ``asyncio.CancelledError`` from a timeout).
+    """
+
+    @dataclass
+    class ModelStopResponse:
+        """Model response data from a successful auxiliary call.
+
+        Attributes:
+            message: The generated message from the model.
+            stop_reason: The reason the model stopped generating.
+            usage: Token usage reported for the call.
+        """
+
+        message: Message
+        stop_reason: StopReason
+        usage: Usage
+
+    source: AuxiliaryModelCallSource
+    invocation_state: dict[str, Any] = field(default_factory=dict)
+    stop_response: ModelStopResponse | None = None
+    exception: BaseException | None = None
 
     @property
     def should_reverse_callbacks(self) -> bool:

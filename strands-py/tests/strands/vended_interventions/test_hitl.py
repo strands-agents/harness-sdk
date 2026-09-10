@@ -1,11 +1,20 @@
 """Tests for the HumanInTheLoop vended intervention handler."""
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from strands import Agent
 from strands.tools import tool
 from strands.vended_interventions.hitl import HumanInTheLoop
+from strands.vended_interventions.hitl.classifier import (
+    ClassifierResult,
+    LLMClassifierConfig,
+    _create_llm_risk_classifier,
+    _RiskDecision,
+)
 from tests.fixtures.mocked_model_provider import MockedModelProvider
+from tests.fixtures.mocked_structured_output_model import MockedStructuredOutputModel
 
 
 def tool_use_message(name: str, tool_use_id: str = "tool-1", tool_input: dict | None = None) -> dict:
@@ -969,44 +978,42 @@ class TestClassifierMode:
 class TestBuiltInClassifier:
     """Tests for the _create_llm_risk_classifier function body."""
 
+    @staticmethod
+    def _tool_call_event(model, tool_use=None):
+        """Build a tool call event whose agent is hosted on the given model."""
+        event = MagicMock()
+        event.tool_use = tool_use or {"name": "delete_file", "input": {"path": "/data"}}
+        event.agent = Agent(model=model, load_tools_from_directory=False)
+        event.invocation_state = {}
+        return event
+
     @pytest.mark.asyncio
-    async def test_creates_inner_agent_and_returns_decision(self):
-        from unittest.mock import AsyncMock, MagicMock, patch
-
-        from strands.vended_interventions.hitl.classifier import (
-            ClassifierResult,
-            _create_llm_risk_classifier,
-            _RiskDecision,
-        )
-
+    async def test_asks_model_and_returns_decision(self):
+        model = MockedStructuredOutputModel(_RiskDecision(requires_approval=True, reason="destructive"))
         classifier = _create_llm_risk_classifier()
 
-        mock_result = MagicMock()
-        mock_result.structured_output = _RiskDecision(requires_approval=True, reason="destructive")
+        tru_result = await classifier(self._tool_call_event(model))
+        exp_result = ClassifierResult(requires_human_in_the_loop=True, reason="destructive")
 
-        event = MagicMock()
-        event.tool_use = {"name": "delete_file", "input": {"path": "/data"}}
-        event.agent.model = MagicMock()
-
-        with patch("strands.agent.Agent") as mock_agent_cls:
-            mock_agent = MagicMock()
-            mock_agent.invoke_async = AsyncMock(return_value=mock_result)
-            mock_agent_cls.return_value = mock_agent
-
-            result = await classifier(event)
-
-        assert isinstance(result, ClassifierResult)
-        assert result.requires_human_in_the_loop is True
-        assert result.reason == "destructive"
-        mock_agent_cls.assert_called_once()
-        mock_agent.invoke_async.assert_called_once()
+        assert tru_result == exp_result
+        assert model.prompts == [
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "text": (
+                                "Should this tool call require human approval?\n\n"
+                                'Tool: delete_file\nInput: {\n  "path": "/data"\n}'
+                            )
+                        }
+                    ],
+                }
+            ]
+        ]
 
     @pytest.mark.asyncio
     async def test_raises_when_no_model_available(self):
-        from unittest.mock import MagicMock
-
-        from strands.vended_interventions.hitl.classifier import _create_llm_risk_classifier
-
         classifier = _create_llm_risk_classifier()
 
         event = MagicMock()
@@ -1017,86 +1024,31 @@ class TestBuiltInClassifier:
             await classifier(event)
 
     @pytest.mark.asyncio
-    async def test_raises_when_structured_output_is_none(self):
-        from unittest.mock import AsyncMock, MagicMock, patch
-
-        from strands.vended_interventions.hitl.classifier import _create_llm_risk_classifier
-
+    async def test_raises_when_model_yields_no_risk_decision(self):
+        model = MockedStructuredOutputModel(output="not a risk decision")
         classifier = _create_llm_risk_classifier()
 
-        mock_result = MagicMock()
-        mock_result.structured_output = None
-        mock_result.stop_reason = "end_turn"
-
-        event = MagicMock()
-        event.tool_use = {"name": "tool", "input": {}}
-        event.agent.model = MagicMock()
-
-        with patch("strands.agent.Agent") as mock_agent_cls:
-            mock_agent = MagicMock()
-            mock_agent.invoke_async = AsyncMock(return_value=mock_result)
-            mock_agent_cls.return_value = mock_agent
-
-            with pytest.raises(ValueError, match="no structured output"):
-                await classifier(event)
+        with pytest.raises(ValueError, match="produced no _RiskDecision"):
+            await classifier(self._tool_call_event(model))
 
     @pytest.mark.asyncio
     async def test_uses_configured_model_over_agent_model(self):
-        from unittest.mock import AsyncMock, MagicMock, patch
-
-        from strands.vended_interventions.hitl.classifier import (
-            LLMClassifierConfig,
-            _create_llm_risk_classifier,
-            _RiskDecision,
-        )
-
-        configured_model = MagicMock(name="configured_model")
-        agent_model = MagicMock(name="agent_model")
+        configured_model = MockedStructuredOutputModel(_RiskDecision(requires_approval=False, reason="safe"))
+        agent_model = MockedStructuredOutputModel(_RiskDecision(requires_approval=True, reason="risky"))
         classifier = _create_llm_risk_classifier(LLMClassifierConfig(model=configured_model))
 
-        mock_result = MagicMock()
-        mock_result.structured_output = _RiskDecision(requires_approval=False, reason="safe")
+        tru_result = await classifier(self._tool_call_event(agent_model))
 
-        event = MagicMock()
-        event.tool_use = {"name": "read", "input": {}}
-        event.agent.model = agent_model
-
-        with patch("strands.agent.Agent") as mock_agent_cls:
-            mock_agent = MagicMock()
-            mock_agent.invoke_async = AsyncMock(return_value=mock_result)
-            mock_agent_cls.return_value = mock_agent
-
-            await classifier(event)
-
-        call_kwargs = mock_agent_cls.call_args[1]
-        assert call_kwargs["model"] is configured_model
+        assert tru_result == ClassifierResult(requires_human_in_the_loop=False, reason="safe")
+        assert len(configured_model.prompts) == 1
+        assert agent_model.prompts == []
 
     @pytest.mark.asyncio
     async def test_uses_custom_system_prompt(self):
-        from unittest.mock import AsyncMock, MagicMock, patch
-
-        from strands.vended_interventions.hitl.classifier import (
-            LLMClassifierConfig,
-            _create_llm_risk_classifier,
-            _RiskDecision,
-        )
-
         custom_prompt = "Only approve writes."
+        model = MockedStructuredOutputModel(_RiskDecision(requires_approval=False, reason="ok"))
         classifier = _create_llm_risk_classifier(LLMClassifierConfig(system_prompt=custom_prompt))
 
-        mock_result = MagicMock()
-        mock_result.structured_output = _RiskDecision(requires_approval=False, reason="ok")
+        await classifier(self._tool_call_event(model))
 
-        event = MagicMock()
-        event.tool_use = {"name": "read", "input": {}}
-        event.agent.model = MagicMock()
-
-        with patch("strands.agent.Agent") as mock_agent_cls:
-            mock_agent = MagicMock()
-            mock_agent.invoke_async = AsyncMock(return_value=mock_result)
-            mock_agent_cls.return_value = mock_agent
-
-            await classifier(event)
-
-        call_kwargs = mock_agent_cls.call_args[1]
-        assert call_kwargs["system_prompt"] == custom_prompt
+        assert model.system_prompts == [custom_prompt]

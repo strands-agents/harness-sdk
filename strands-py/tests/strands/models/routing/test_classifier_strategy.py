@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from strands import Agent
+from strands.hooks import AfterAuxiliaryModelCallEvent, BeforeAuxiliaryModelCallEvent
 from strands.models import ClassifierStrategy, ModelRouter, RoutingAttempt, RoutingCandidate
 from strands.models.routing.classifier_strategy import (
     _CLASSIFICATION_OMISSION_MARKER,
@@ -17,6 +18,7 @@ from strands.models.routing.classifier_strategy import (
     _latest_request_text,
 )
 from strands.models.routing.strategy import RoutingContext
+from tests.fixtures.mock_hook_provider import MockHookProvider
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 
@@ -56,7 +58,7 @@ class _ConfigGuardModel(MockedModelProvider):
         raise AssertionError("candidate configuration must not be read")
 
 
-def _context(router: ModelRouter, messages=None, attempts=()) -> RoutingContext:
+def _context(router: ModelRouter, messages=None, attempts=(), agent=None) -> RoutingContext:
     return RoutingContext(
         messages=messages or [{"role": "user", "content": [{"text": "Plan a safe migration"}]}],
         system_prompt="Be precise",
@@ -64,6 +66,7 @@ def _context(router: ModelRouter, messages=None, attempts=()) -> RoutingContext:
         candidates=router.candidates,
         invocation_state={},
         attempts=attempts,
+        _agent=agent,
     )
 
 
@@ -85,6 +88,70 @@ def _classification_context(system_prompt: str) -> dict[str, Any]:
         "\n</untrusted_classification_context>", 1
     )[0]
     return json.loads(serialized_context)
+
+
+class _StopEventClassifierModel(_ClassifierModel):
+    """A classifier model that also yields the ``stop`` event Bedrock passes through."""
+
+    async def structured_output(self, output_model, prompt, system_prompt=None, **kwargs: Any):
+        async for event in super().structured_output(output_model, prompt, system_prompt, **kwargs):
+            yield event
+        yield {
+            "stop": (
+                "tool_use",
+                {"role": "assistant", "content": []},
+                {"inputTokens": 30, "outputTokens": 3, "totalTokens": 33},
+                {"latencyMs": 2},
+            )
+        }
+
+
+@pytest.mark.asyncio
+async def test_select_fires_aux_hooks_and_records_usage_on_owning_agent():
+    classifier = _StopEventClassifierModel(selected_index=1)
+    strategy = ClassifierStrategy(classifier)
+    router = ModelRouter(models=[_candidate("simple"), _candidate("complex")], strategy=strategy)
+    hook_provider = MockHookProvider([BeforeAuxiliaryModelCallEvent, AfterAuxiliaryModelCallEvent])
+    agent = Agent(model=MockedModelProvider([]), hooks=[hook_provider])
+
+    tru_candidate = await strategy.select(_context(router, agent=agent))
+
+    assert tru_candidate is router.candidates[1]
+    before_event, after_event = hook_provider.events_received
+    assert before_event.source == "routing"
+    assert after_event.source == "routing"
+    assert after_event.stop_response.usage == {"inputTokens": 30, "outputTokens": 3, "totalTokens": 33}
+    assert agent.event_loop_metrics.accumulated_usage_by_source["routing"]["totalTokens"] == 33
+
+
+@pytest.mark.asyncio
+async def test_select_without_owning_agent_still_classifies():
+    classifier = _ClassifierModel(selected_index=1)
+    strategy = ClassifierStrategy(classifier)
+    router = ModelRouter(models=[_candidate("simple"), _candidate("complex")], strategy=strategy)
+
+    tru_candidate = await strategy.select(_context(router))
+
+    assert tru_candidate is router.candidates[1]
+
+
+@pytest.mark.asyncio
+async def test_select_declines_when_hook_cancels_classification(caplog):
+    classifier = _ClassifierModel(selected_index=1)
+    strategy = ClassifierStrategy(classifier)
+    router = ModelRouter(models=[_candidate("simple"), _candidate("complex")], strategy=strategy)
+    agent = Agent(model=MockedModelProvider([]))
+
+    def cancel(event: BeforeAuxiliaryModelCallEvent) -> None:
+        event.cancel = True
+
+    agent.hooks.add_callback(BeforeAuxiliaryModelCallEvent, cancel)
+
+    with caplog.at_level(logging.WARNING):
+        tru_candidate = await strategy.select(_context(router, agent=agent))
+
+    assert tru_candidate is None
+    assert "classification declined" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -363,7 +430,7 @@ async def test_select_custom_policy_preserves_mandatory_framing():
     ("classifier", "reason", "error_type"),
     [
         (_ClassifierModel(selected_index=2), "classifier_error", "ValueError"),
-        (_ClassifierModel(output={"selected_candidate_index": 1}), "classifier_error", "ValueError"),
+        (_ClassifierModel(output={"selected_candidate_index": 1}), "classifier_error", "NoStructuredOutputError"),
         (_ClassifierModel(error=RuntimeError("provider-secret")), "classifier_error", "RuntimeError"),
         (_ClassifierModel(delay=1), "classifier_timeout", "TimeoutError"),
     ],

@@ -10,7 +10,6 @@ import httpx
 import pytest
 from bs4 import BeautifulSoup
 
-import strands.agent.agent as agent_module
 from strands.vended_tools.web_fetch import (
     WebFetchError,
     make_web_fetch,
@@ -22,7 +21,8 @@ from strands.vended_tools.web_fetch.types import (
     WEB_FETCH_DESCRIPTION_AGENTIC,
     WEB_FETCH_DESCRIPTION_MARKDOWN,
 )
-from strands.vended_tools.web_fetch.web_fetch import _parse_charset
+from strands.vended_tools.web_fetch.web_fetch import _ANALYST_PROMPT, _parse_charset
+from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 
 def _transport(handler):
@@ -258,8 +258,27 @@ class TestWebFetchToolCall:
             await tool(url="https://example.com/", tool_context=ctx)
 
 
+class _AnalystModel(MockedModelProvider):
+    """Analyst model that records the messages and system prompt it was asked with."""
+
+    def __init__(self, answer: str = "answer", **kwargs):
+        super().__init__([{"role": "assistant", "content": [{"text": answer}]}], **kwargs)
+        self.messages: list = []
+        self.system_prompts: list = []
+
+    async def stream(self, messages, tool_specs=None, system_prompt=None, *args, **kwargs):
+        self.messages.append(messages)
+        self.system_prompts.append(system_prompt)
+        async for event in super().stream(messages, tool_specs, system_prompt, *args, **kwargs):
+            yield event
+
+
+def _prompt_text(model: _AnalystModel) -> str:
+    return model.messages[0][0]["content"][0]["text"]
+
+
 class TestAnalyst:
-    """Analyst agent is called when model + prompt are both provided."""
+    """The analyst model call is made when model + prompt are both provided."""
 
     def _page_client(self, body: str = "<p>page content</p>") -> httpx.AsyncClient:
         def handler(_request: httpx.Request) -> httpx.Response:
@@ -268,34 +287,21 @@ class TestAnalyst:
         return _client(handler)
 
     @pytest.mark.asyncio
-    async def test_agentic_content_is_truncated_before_analyst(self, monkeypatch):
+    async def test_agentic_content_is_truncated_before_analyst(self):
         # max_content_chars limits what the analyst receives.
         body = "x" * 200
 
         def page_handler(_request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, headers={"content-type": "text/plain"}, text=body)
 
-        received_prompt: list[str] = []
-
-        class _FakeAgent:
-            def __init__(self, **kwargs):
-                pass
-
-            async def invoke_async(self, prompt: str, **kwargs):
-                received_prompt.append(prompt)
-                return "answer"
-
-        monkeypatch.setattr(agent_module, "Agent", _FakeAgent)
-        tool = make_web_fetch(
-            client=_client(page_handler),
-            model=SimpleNamespace(),
-            mode="agentic",
-            max_content_chars=50,
-        )
+        model = _AnalystModel()
+        tool = make_web_fetch(client=_client(page_handler), model=model, mode="agentic", max_content_chars=50)
         await tool(url="https://example.com/", prompt="Summarize")
-        assert "x" * 50 in received_prompt[0]
-        assert "x" * 51 not in received_prompt[0]
-        assert "[content truncated]" in received_prompt[0]
+
+        prompt = _prompt_text(model)
+        assert "x" * 50 in prompt
+        assert "x" * 51 not in prompt
+        assert "[content truncated]" in prompt
 
     @pytest.mark.asyncio
     async def test_prompt_without_model_and_no_agent_raises(self):
@@ -305,21 +311,11 @@ class TestAnalyst:
             await tool(url="https://example.com/", prompt="What is this about?")
 
     @pytest.mark.asyncio
-    async def test_prompt_uses_host_agent_model_when_no_factory_model(self, monkeypatch):
+    async def test_prompt_uses_host_agent_model_when_no_factory_model(self):
         # When no factory model is set, the host agent's model is used.
-        host_model = SimpleNamespace()
-        received_model: list = []
-
-        class _FakeAgent:
-            def __init__(self, model=None, **kwargs):
-                received_model.append(model)
-
-            async def invoke_async(self, prompt: str, **kwargs):
-                return "host answer"
-
-        monkeypatch.setattr(agent_module, "Agent", _FakeAgent)
         from strands.types.tools import ToolContext, ToolUse
 
+        host_model = _AnalystModel("host answer")
         tool_use = ToolUse(toolUseId="wf_2", name="web_fetch", input={})
         host_agent = SimpleNamespace(_cancel_signal=None, model=host_model)
         ctx = ToolContext(tool_use=tool_use, agent=host_agent, invocation_state={})
@@ -327,26 +323,15 @@ class TestAnalyst:
         tool = make_web_fetch(client=self._page_client(), mode="agentic")
         tru_result = await tool(url="https://example.com/", prompt="Summarize", tool_context=ctx)
         assert tru_result == "host answer"
-        assert received_model[0] is host_model
+        assert len(host_model.messages) == 1
 
     @pytest.mark.asyncio
-    async def test_empty_prompt_with_model_returns_markdown(self, monkeypatch):
+    async def test_empty_prompt_with_model_returns_markdown(self):
         # markdown mode skips the analyst regardless of model configuration.
-        fake_model = SimpleNamespace()
-        invoked: list[bool] = []
-
-        class _FakeAgent:
-            def __init__(self, **kwargs):
-                pass
-
-            async def invoke_async(self, prompt: str, **kwargs):
-                invoked.append(True)
-                return "answer"
-
-        monkeypatch.setattr(agent_module, "Agent", _FakeAgent)
-        tool = make_web_fetch(client=self._page_client(), model=fake_model, mode="markdown")
+        model = _AnalystModel()
+        tool = make_web_fetch(client=self._page_client(), model=model, mode="markdown")
         tru_result = await tool(url="https://example.com/")
-        assert not invoked
+        assert model.messages == []
         assert "page content" in tru_result
 
     @pytest.mark.parametrize("prompt", ["", "   "])
@@ -357,25 +342,26 @@ class TestAnalyst:
             await tool(url="https://example.com/", prompt=prompt)
 
     @pytest.mark.asyncio
-    async def test_prompt_with_model_invokes_analyst(self, monkeypatch):
-        fake_model = SimpleNamespace()
-        received_prompt: list[str] = []
-
-        class _FakeAgent:
-            def __init__(self, **kwargs):
-                pass
-
-            async def invoke_async(self, prompt: str, **kwargs):
-                received_prompt.append(prompt)
-                return "the answer"
-
-        monkeypatch.setattr(agent_module, "Agent", _FakeAgent)
-        tool = make_web_fetch(client=self._page_client(), model=fake_model, mode="agentic")
+    async def test_prompt_with_model_invokes_analyst(self):
+        model = _AnalystModel("the answer")
+        tool = make_web_fetch(client=self._page_client(), model=model, mode="agentic")
         tru_result = await tool(url="https://example.com/", prompt="What is this about?")
         assert tru_result == "the answer"
-        assert len(received_prompt) == 1
-        assert "What is this about?" in received_prompt[0]
-        assert "page content" in received_prompt[0]
+        assert len(model.messages) == 1
+        assert "What is this about?" in _prompt_text(model)
+        assert "page content" in _prompt_text(model)
+        assert model.system_prompts == [_ANALYST_PROMPT]
+
+    @pytest.mark.asyncio
+    async def test_model_error_is_wrapped_as_web_fetch_error(self):
+        class _FailingModel(_AnalystModel):
+            async def stream(self, *args, **kwargs):
+                raise RuntimeError("provider down")
+                yield  # pragma: no cover
+
+        tool = make_web_fetch(client=self._page_client(), model=_FailingModel(), mode="agentic")
+        with pytest.raises(WebFetchError, match="provider down"):
+            await tool(url="https://example.com/", prompt="Summarize")
 
 
 class TestParseCharset:
@@ -483,3 +469,94 @@ def test__tag_attribute_joins_list_values():
     # BS4 returns ``class`` as a list; _tag_attribute must join it.
     tag = BeautifulSoup('<div class="foo bar">', "html.parser").div
     assert _tag_attribute(tag, "class") == "foo bar"
+
+
+class TestAgenticAuxiliaryInstrumentation:
+    """Agentic mode is an auxiliary model call on the host agent's behalf."""
+
+    def _page_client(self) -> httpx.AsyncClient:
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, headers={"content-type": "text/html"}, text="<p>page</p>")
+
+        return _client(handler)
+
+    def _host(self):
+        from strands import Agent
+        from strands.hooks import AfterAuxiliaryModelCallEvent, BeforeAuxiliaryModelCallEvent
+        from strands.types.tools import ToolContext, ToolUse
+
+        host_agent = Agent(model=MockedModelProvider([]), load_tools_from_directory=False)
+        events: list = []
+        host_agent.hooks.add_callback(BeforeAuxiliaryModelCallEvent, events.append)
+        host_agent.hooks.add_callback(AfterAuxiliaryModelCallEvent, events.append)
+        ctx = ToolContext(
+            tool_use=ToolUse(toolUseId="wf_aux", name="web_fetch", input={}),
+            agent=host_agent,
+            invocation_state={"run": 1},
+        )
+        return host_agent, ctx, events
+
+    @pytest.mark.asyncio
+    async def test_analyst_call_fires_host_hooks_and_records_usage(self):
+        from strands.types.event_loop import Usage
+
+        usage = Usage(inputTokens=7, outputTokens=3, totalTokens=10)
+        host_agent, ctx, events = self._host()
+        tool = make_web_fetch(client=self._page_client(), model=_AnalystModel(usages=[usage]), mode="agentic")
+
+        tru_result = await tool(url="https://example.com/", prompt="Summarize", tool_context=ctx)
+
+        assert tru_result == "answer"
+        before, after = events
+        assert before.source == "web_fetch"
+        assert before.system_prompt == _ANALYST_PROMPT
+        assert "Summarize" in before.messages[0]["content"][0]["text"]
+        assert before.invocation_state == {"run": 1}
+        assert after.exception is None
+        assert after.stop_response.usage == usage
+        assert host_agent.event_loop_metrics.accumulated_usage_by_source == {"web_fetch": usage}
+
+    @pytest.mark.asyncio
+    async def test_analyst_failure_fires_after_event_and_wraps_error(self):
+        class _FailingModel(_AnalystModel):
+            async def stream(self, *args, **kwargs):
+                raise RuntimeError("analyst exploded")
+                yield  # pragma: no cover
+
+        host_agent, ctx, events = self._host()
+        tool = make_web_fetch(client=self._page_client(), model=_FailingModel(), mode="agentic")
+
+        with pytest.raises(WebFetchError, match="analyst exploded"):
+            await tool(url="https://example.com/", prompt="Summarize", tool_context=ctx)
+
+        _, after = events
+        # The wrap happens inside the instrumented stream, so the After event carries the
+        # WebFetchError with the provider's original error as its cause.
+        assert isinstance(after.exception, WebFetchError)
+        assert isinstance(after.exception.__cause__, RuntimeError)
+        assert host_agent.event_loop_metrics.accumulated_usage_by_source == {}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failing_event", ["before", "after"])
+    async def test_hook_error_surfaces_as_itself_not_analyst_failure(self, failing_event):
+        from strands.hooks import AfterAuxiliaryModelCallEvent, BeforeAuxiliaryModelCallEvent
+
+        host_agent, ctx, _ = self._host()
+
+        def broken_hook(_event):
+            raise RuntimeError("telemetry exporter down")
+
+        event_type = BeforeAuxiliaryModelCallEvent if failing_event == "before" else AfterAuxiliaryModelCallEvent
+        host_agent.hooks.add_callback(event_type, broken_hook)
+
+        tool = make_web_fetch(client=self._page_client(), model=_AnalystModel(), mode="agentic")
+        with pytest.raises(RuntimeError, match="telemetry exporter down"):
+            await tool(url="https://example.com/", prompt="Summarize", tool_context=ctx)
+
+    @pytest.mark.asyncio
+    async def test_no_tool_context_runs_uninstrumented(self):
+        # No host agent to attribute to — the analyst call must still work.
+        tool = make_web_fetch(client=self._page_client(), model=_AnalystModel(), mode="agentic")
+        tru_result = await tool(url="https://example.com/", prompt="Summarize")
+
+        assert tru_result == "answer"

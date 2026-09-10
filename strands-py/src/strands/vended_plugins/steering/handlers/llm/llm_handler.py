@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -76,14 +76,15 @@ class LLMSteeringHandler(SteeringHandler):
         # Generate steering prompt
         prompt = self.prompt_mapper.create_steering_prompt(self.steering_context, tool_use=tool_use)
 
-        # Create isolated agent for steering evaluation (no shared conversation state)
-        from .....agent import Agent
+        from .....event_loop._auxiliary_model_call import auxiliary_structured_output
 
-        steering_agent = Agent(system_prompt=self.system_prompt, model=self.model or agent.model, callback_handler=None)
-
-        # Get LLM decision
-        llm_result: _LLMSteering = cast(
-            _LLMSteering, steering_agent(prompt, structured_output_model=_LLMSteering).structured_output
+        llm_result = await auxiliary_structured_output(
+            self.model or agent.model,
+            _LLMSteering,
+            prompt,
+            source="steering",
+            agent=agent,
+            system_prompt=self.system_prompt,
         )
 
         # Convert LLM decision to steering action
