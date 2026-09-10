@@ -81,9 +81,11 @@ cedar = ["cedarpy==4.8.7", "cedar-policy-mcp-schema-generator==0.6.0"]
 
 bidi = [
     "aws_sdk_bedrock_runtime[awscrt]>=0.11.0,<0.12.0; python_version>='3.12'",
+    "awscrt==0.32.2; python_version>='3.12'",
     "prompt_toolkit>=3.0.0,<4.0.0",
     "smithy-aws-core>=0.11.0,<0.12.0; python_version>='3.12'",
     "smithy-core>=0.8.0,<0.9.0; python_version>='3.12'",
+    "smithy-http[awscrt]==0.5.0; python_version>='3.12'",
 ]
 bidi-google = ["google-genai>=2.0.0,<3.0.0"]
 bidi-openai = ["websockets>=16.0.0,<17.0.0"]

@@ -88,3 +88,31 @@ class TestContextManagerErrors:
     def test_raises_with_unsupported_value(self, mock_model):
         with pytest.raises(ValueError, match="Unknown context_manager preset"):
             Agent(model=mock_model, context_manager="manual")
+
+
+class TestContextManagerProperty:
+    """Tests for the Agent.context_manager property."""
+
+    def test_returns_none_when_no_context_manager(self, mock_model):
+        agent = Agent(model=mock_model)
+        assert agent.context_manager is None
+
+    def test_returns_context_manager_instance(self, mock_model):
+        from strands._context_manager.context_manager import ContextManager
+
+        context_manager = ContextManager()
+        agent = Agent(model=mock_model, context_manager=context_manager)
+        assert agent.context_manager is context_manager
+
+    def test_returns_instance_for_auto_mode(self, mock_model):
+        from strands._context_manager.context_manager import ContextManager
+
+        agent = Agent(model=mock_model, context_manager="auto")
+        assert isinstance(agent.context_manager, ContextManager)
+
+    def test_rejects_context_manager_passed_via_plugins(self, mock_model):
+        from strands._context_manager.context_manager import ContextManager
+
+        context_manager = ContextManager()
+        with pytest.raises(ValueError, match="passed via plugins"):
+            Agent(model=mock_model, plugins=[context_manager])

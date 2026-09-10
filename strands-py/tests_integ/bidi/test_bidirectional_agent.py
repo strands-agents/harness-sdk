@@ -185,6 +185,7 @@ async def test_bidirectional_agent(agent_with_calculator, audio_generator, provi
     - Speech-to-text transcription
     - Tool execution (calculator) with hook verification
     - Multi-turn conversation flow
+    - Complete, correctly ordered conversation history
     - Text-to-speech audio output
     """
     provider_name = provider_config["name"]
@@ -222,6 +223,12 @@ async def test_bidirectional_agent(agent_with_calculator, audio_generator, provi
         logger.info("provider=<%s>, response_count=<%d> | total responses", provider_name, len(text_outputs_turn2))
 
         # Validate full conversation
+        messages = agent_with_calculator.messages
+        assert [message["role"] for message in messages] == ["user", "assistant", "user", "assistant"]
+        for message in messages:
+            assert len(message["content"]) == 1
+            assert message["content"][0]["text"].strip()
+
         # Validate audio outputs
         audio_outputs = ctx.get_audio_outputs()
         assert len(audio_outputs) > 0, f"[{provider_name}] No audio output received"

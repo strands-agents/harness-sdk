@@ -332,13 +332,7 @@ async def test_bidi_agent_receive_events_from_model(agent):
     # Configure mock model to yield events
     events = [
         BidiAudioStreamEvent(audio="dGVzdA==", format="pcm", sample_rate=24000, channels=1),
-        BidiTranscriptStreamEvent(
-            text="Hello world",
-            role="assistant",
-            is_final=True,
-            delta={"text": "Hello world"},
-            current_transcript="Hello world",
-        ),
+        BidiTranscriptStreamEvent(delta="Hello world", role="assistant"),
     ]
     agent.model.set_events(events)
 

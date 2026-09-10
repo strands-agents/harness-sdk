@@ -428,3 +428,57 @@ class TestStrategyInitFallback:
         cm = ContextManager(strategies=[strategy])
         cm.init_agent(mock_agent)
         assert strategy.initialized is True
+
+
+class TestStashProperty:
+    """Tests for the stash property."""
+
+    def test_stash_is_none_before_init(self):
+        context_manager = ContextManager()
+        assert context_manager.stash is None
+
+    def test_stash_is_set_after_init(self, mock_agent):
+        mock_agent.session_id = "test-session"
+        mock_agent.storage = None
+        context_manager = ContextManager()
+        context_manager.init_agent(mock_agent)
+        assert context_manager.stash is not None
+
+    def test_stash_is_none_when_disabled(self, mock_agent):
+        context_manager = ContextManager(stash=False)
+        context_manager.init_agent(mock_agent)
+        assert context_manager.stash is None
+
+
+class TestStashIsDurable:
+    """Tests for the stash_is_durable property."""
+
+    def test_false_with_in_memory_storage(self, mock_agent):
+        mock_agent.session_id = "test-session"
+        mock_agent.storage = None
+        context_manager = ContextManager()
+        context_manager.init_agent(mock_agent)
+        assert context_manager.stash_is_durable is False
+
+    def test_true_with_non_in_memory_storage(self, mock_agent):
+        from strands.storage.local_file_storage import LocalFileStorage
+
+        mock_agent.session_id = "test-session"
+        mock_agent.storage = LocalFileStorage(base_dir="/tmp/test-stash-durable")
+        context_manager = ContextManager(stash=True)
+        context_manager.init_agent(mock_agent)
+        assert context_manager.stash_is_durable is True
+
+    def test_false_with_namespaced_in_memory_storage(self, mock_agent):
+        from strands.storage.in_memory_storage import InMemoryStorage
+        from strands.storage.storage import _NamespacedStorage
+
+        mock_agent.session_id = "test-session"
+        mock_agent.storage = _NamespacedStorage(InMemoryStorage(), "tenant")
+        context_manager = ContextManager(stash=True)
+        context_manager.init_agent(mock_agent)
+        assert context_manager.stash_is_durable is False
+
+    def test_false_before_init(self):
+        context_manager = ContextManager()
+        assert context_manager.stash_is_durable is False

@@ -34,6 +34,7 @@ from ..types.events import (
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
     BidiTextInputEvent,
+    BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
     ModalityUsage,
@@ -250,20 +251,11 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         if messages:
             await self._add_conversation_history(messages)
 
-    def _create_text_event(self, text: str, role: str, is_final: bool = True) -> BidiTranscriptStreamEvent:
-        """Create standardized transcript event.
-
-        Args:
-            text: The transcript text
-            role: The raw provider role (normalized by the event constructor)
-            is_final: Whether this is the final transcript
-        """
+    def _create_text_event(self, text: str, role: str) -> BidiTranscriptStreamEvent:
+        """Create an incremental transcript event."""
         return BidiTranscriptStreamEvent(
-            delta={"text": text},
-            text=text,
+            delta=text,
             role=cast(Role, role),
-            is_final=is_final,
-            current_transcript=text if is_final else None,
         )
 
     def _create_voice_activity_event(self, activity_type: str) -> BidiInterruptionEvent | None:
@@ -488,35 +480,28 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
                 )
             ]
 
-        # Assistant text output events - combine multiple similar events
-        elif event_type in ["response.output_text.delta", "response.output_audio_transcript.delta"]:
-            role = openai_event.get("role", "assistant")
-            return [self._create_text_event(openai_event["delta"], role, is_final=False)]
+        # Assistant transcript
+        elif event_type in ("response.output_text.delta", "response.output_audio_transcript.delta"):
+            text = openai_event.get("delta", "")
+            return [self._create_text_event(text, "assistant")] if text else None
 
-        elif event_type in ["response.output_audio_transcript.done"]:
-            role = openai_event.get("role", "assistant")
-            return [self._create_text_event(openai_event["transcript"], role)]
+        elif event_type in ("response.output_text.done", "response.output_audio_transcript.done"):
+            text_key = "text" if event_type == "response.output_text.done" else "transcript"
+            return [BidiTranscriptCompleteEvent(openai_event[text_key], "assistant")]
 
-        elif event_type in ["response.output_text.done"]:
-            role = openai_event.get("role", "assistant")
-            return [self._create_text_event(openai_event["text"], role)]
+        # User transcript
+        elif event_type == "conversation.item.input_audio_transcription.delta":
+            text = openai_event.get("delta", "")
+            return [self._create_text_event(text, "user")] if text else None
 
-        # User transcription events - combine multiple similar events
-        elif event_type in [
-            "conversation.item.input_audio_transcription.delta",
-            "conversation.item.input_audio_transcription.completed",
-        ]:
-            text_key = "delta" if "delta" in event_type else "transcript"
-            text = openai_event.get(text_key, "")
-            role = openai_event.get("role", "user")
-            is_final = "completed" in event_type
-            return [self._create_text_event(text, role, is_final=is_final)] if text.strip() else None
+        elif event_type == "conversation.item.input_audio_transcription.completed":
+            return [BidiTranscriptCompleteEvent(openai_event["transcript"], "user")]
 
         elif event_type == "conversation.item.input_audio_transcription.segment":
             segment_data = openai_event.get("segment", {})
             text = segment_data.get("text", "")
             role = segment_data.get("role", "user")
-            return [self._create_text_event(text, role)] if text.strip() else None
+            return [self._create_text_event(text, role)] if text else None
 
         elif event_type == "conversation.item.input_audio_transcription.failed":
             error_info = openai_event.get("error", {})

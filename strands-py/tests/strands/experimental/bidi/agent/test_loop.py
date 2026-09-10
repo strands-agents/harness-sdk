@@ -20,6 +20,7 @@ from strands.experimental.bidi.types.events import (
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
     BidiTextInputEvent,
+    BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
 )
@@ -78,7 +79,7 @@ async def test_response_complete_hook(agent, agenerator, stop_reason):
     [
         (BidiResponseCompleteEvent(response_id="r1", stop_reason="complete"), BidiResponseCompleteHookEvent),
         (BidiInterruptionEvent(reason="user_speech"), BidiInterruptionHookEvent),
-        (BidiTranscriptStreamEvent(role="assistant", text="Hello", delta="Hello", is_final=True), MessageAddedEvent),
+        (BidiTranscriptCompleteEvent(transcript="Hello", role="assistant"), MessageAddedEvent),
     ],
 )
 async def test_model_event_waits_for_hook_and_checks_generation(
@@ -811,12 +812,9 @@ async def test_send_assistant_text_does_not_mark_awaiting_response(loop, agent, 
 
 
 @pytest.mark.asyncio
-async def test_user_transcript_marks_turn_awaiting_response_before_final(loop, agent, agenerator):
-    """A non-final user transcript owes a reply, so a proactive reconnect holds even when the
-    provider never flags is_final on user speech (the Gemini case). History is not appended yet."""
-    partial = BidiTranscriptStreamEvent(
-        delta={"text": "what's the"}, text="what's the", role="user", is_final=False, current_transcript="what's the"
-    )
+async def test_user_transcript_marks_turn_awaiting_response(loop, agent, agenerator):
+    """An incremental user transcript owes a reply but is not committed to history."""
+    partial = BidiTranscriptStreamEvent(delta="what's the", role="user")
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([partial]))
 
     await loop.start()
@@ -833,9 +831,7 @@ async def test_user_transcript_marks_turn_awaiting_response_before_final(loop, a
 @pytest.mark.asyncio
 async def test_assistant_transcript_does_not_mark_awaiting_response(loop, agent, agenerator):
     """A model (assistant) transcript is output, not an owed user turn, so it must not hold."""
-    partial = BidiTranscriptStreamEvent(
-        delta={"text": "hi there"}, text="hi there", role="assistant", is_final=False, current_transcript="hi there"
-    )
+    partial = BidiTranscriptStreamEvent(delta="hi there", role="assistant")
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([partial]))
 
     await loop.start()
@@ -856,11 +852,8 @@ async def test_response_complete_clears_awaiting_response(loop, agent, agenerato
         BidiResponseStartEvent(response_id="r1"),
         # A lagging user input transcript arrives during the reply and re-latches awaiting.
         BidiTranscriptStreamEvent(
-            delta={"text": "earlier question"},
-            text="earlier question",
+            delta="earlier question",
             role="user",
-            is_final=False,
-            current_transcript="earlier question",
         ),
         BidiResponseCompleteEvent(response_id="r1", stop_reason="complete"),
     ]
@@ -874,6 +867,26 @@ async def test_response_complete_clears_awaiting_response(loop, agent, agenerato
             break
     assert loop._awaiting_response is False
     assert loop._turn_complete.is_set()  # turn is idle, so a proactive reconnect fires immediately
+
+    await loop.stop()
+
+
+@pytest.mark.asyncio
+async def test_transcript_complete_appends_one_message(loop, agent, agenerator):
+    """A complete transcript is committed to history exactly once."""
+    complete = BidiTranscriptCompleteEvent(transcript="Hello there", role="assistant")
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([complete]))
+
+    await loop.start()
+    async for event in loop.receive():
+        if isinstance(event, BidiTranscriptCompleteEvent):
+            break
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+    assert len(agent.messages) == 1
+    assert agent.messages[0]["role"] == "assistant"
+    assert agent.messages[0]["content"] == [{"text": "Hello there"}]
 
     await loop.stop()
 

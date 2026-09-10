@@ -19,6 +19,7 @@ from strands.experimental.bidi.types.events import (
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
     BidiTextInputEvent,
+    BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
     _normalize_role,
@@ -65,13 +66,15 @@ from strands.experimental.bidi.types.events import (
         (
             BidiTranscriptStreamEvent,
             {
-                "delta": {"text": "Hello"},
-                "text": "Hello",
+                "delta": "Hello",
                 "role": "assistant",
-                "is_final": True,
-                "current_transcript": "Hello",
             },
             "bidi_transcript_stream",
+        ),
+        (
+            BidiTranscriptCompleteEvent,
+            {"transcript": "Hello", "role": "assistant"},
+            "bidi_transcript_complete",
         ),
         (BidiInterruptionEvent, {"reason": "user_speech"}, "bidi_interruption"),
         (
@@ -116,52 +119,23 @@ def test_event_json_serialization(event_class, kwargs, expected_type):
             assert key in data
 
 
-def test_transcript_stream_event_delta_pattern():
-    """Test that BidiTranscriptStreamEvent follows ModelStreamEvent delta pattern."""
-    # Test partial transcript (delta)
-    partial_event = BidiTranscriptStreamEvent(
-        delta={"text": "Hello"},
-        text="Hello",
-        role="user",
-        is_final=False,
-        current_transcript=None,
-    )
-
-    assert partial_event.text == "Hello"
-    assert partial_event.role == "user"
-    assert partial_event.is_final is False
-    assert partial_event.current_transcript is None
-    assert partial_event.delta == {"text": "Hello"}
-
-    # Test final transcript with accumulated text
-    final_event = BidiTranscriptStreamEvent(
-        delta={"text": " world"},
-        text=" world",
-        role="user",
-        is_final=True,
-        current_transcript="Hello world",
-    )
-
-    assert final_event.text == " world"
-    assert final_event.role == "user"
-    assert final_event.is_final is True
-    assert final_event.current_transcript == "Hello world"
-    assert final_event.delta == {"text": " world"}
-
-
-def test_transcript_stream_event_extends_model_stream_event():
-    """Test that BidiTranscriptStreamEvent is a ModelStreamEvent."""
-    from strands.types._events import ModelStreamEvent
-
+def test_transcript_stream_event_contains_text_delta():
+    """Test that a transcript stream event contains only the incremental text."""
     event = BidiTranscriptStreamEvent(
-        delta={"text": "test"},
-        text="test",
-        role="assistant",
-        is_final=True,
-        current_transcript="test",
+        delta="Hello",
+        role="user",
     )
 
-    assert isinstance(event, ModelStreamEvent)
+    assert event.role == "user"
+    assert event.delta == "Hello"
+
+
+def test_transcript_complete_event_contains_full_transcript():
+    """Test that a complete event carries one authoritative transcript."""
+    event = BidiTranscriptCompleteEvent(transcript="Hello world", role="assistant")
+
+    assert event.transcript == "Hello world"
+    assert event.role == "assistant"
 
 
 @pytest.mark.parametrize(
@@ -206,11 +180,8 @@ def test_normalize_role_strips_whitespace(raw_role, expected):
 def test_transcript_stream_event_coerces_out_of_range_role_to_user(raw_role):
     """An out-of-range transcript role is coerced to the lowest-trust role ("user")."""
     event = BidiTranscriptStreamEvent(
-        delta={"text": "hi"},
-        text="hi",
+        delta="hi",
         role=raw_role,
-        is_final=True,
-        current_transcript="hi",
     )
 
     # Attacker-controlled content is never attributed to the assistant.
@@ -221,11 +192,8 @@ def test_transcript_stream_event_coerces_out_of_range_role_to_user(raw_role):
 def test_transcript_stream_event_strips_whitespace_role():
     """A legitimately-spaced role is trimmed rather than mislabeled as the default."""
     event = BidiTranscriptStreamEvent(
-        delta={"text": "hi"},
-        text="hi",
+        delta="hi",
         role=" user ",
-        is_final=True,
-        current_transcript="hi",
     )
 
     assert event.role == "user"
@@ -234,11 +202,8 @@ def test_transcript_stream_event_strips_whitespace_role():
 def test_transcript_stream_event_normalizes_role_casing():
     """A supported role in mixed casing is normalized to lowercase."""
     event = BidiTranscriptStreamEvent(
-        delta={"text": "hi"},
-        text="hi",
+        delta="hi",
         role="USER",
-        is_final=True,
-        current_transcript="hi",
     )
 
     assert event.role == "user"

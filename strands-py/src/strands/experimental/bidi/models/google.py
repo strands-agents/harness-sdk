@@ -40,6 +40,7 @@ from ..types.events import (
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
     BidiTextInputEvent,
+    BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
     ModalityUsage,
@@ -68,6 +69,8 @@ class _TurnState:
 
     response_open: bool = False
     response_id: str | None = None
+    input_transcript: str = ""
+    output_transcript: str = ""
 
 
 class GoogleGeminiLiveModel(BidiModel, AudioCapable):
@@ -272,13 +275,20 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
                 self._live_session_handle = resumption_update.new_handle
                 logger.debug("session_handle=<%s> | updating gemini session handle", self._live_session_handle)
 
-        if message.server_content:
-            events.extend(self._convert_server_content(message.server_content, has_audio=bool(message.data)))
+        audio_data = message.data
 
-        # Handle audio output using SDK's built-in data property
-        if message.data:
+        if message.server_content:
+            events.extend(
+                self._convert_server_content(
+                    message.server_content,
+                    has_audio=bool(audio_data),
+                    turn_state=turn_state,
+                )
+            )
+
+        if audio_data:
             # Convert bytes to base64 string for JSON serializability
-            audio_b64 = base64.b64encode(message.data).decode("utf-8")
+            audio_b64 = base64.b64encode(audio_data).decode("utf-8")
             events.append(
                 BidiAudioStreamEvent(
                     audio=audio_b64,
@@ -352,7 +362,13 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
 
         if interrupted:
             turn_state.response_open = False
-        elif turn_complete and turn_state.response_open:
+            turn_state.output_transcript = ""
+        if turn_complete and turn_state.input_transcript:
+            wrapped.append(BidiTranscriptCompleteEvent(turn_state.input_transcript, "user"))
+            turn_state.input_transcript = ""
+        if turn_complete and turn_state.response_open:
+            if turn_state.output_transcript:
+                wrapped.append(BidiTranscriptCompleteEvent(turn_state.output_transcript, "assistant"))
             wrapped.append(
                 BidiResponseCompleteEvent(
                     response_id=turn_state.response_id or str(uuid.uuid4()), stop_reason="complete"
@@ -360,16 +376,22 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
             )
             turn_state.response_open = False
             turn_state.response_id = None
+            turn_state.output_transcript = ""
 
         return wrapped
 
-    def _convert_server_content(self, server_content: LiveServerContent, has_audio: bool) -> list[BidiOutputEvent]:
+    def _convert_server_content(
+        self,
+        server_content: LiveServerContent,
+        has_audio: bool,
+        turn_state: _TurnState,
+    ) -> list[BidiOutputEvent]:
         """Convert the server content of a Gemini Live message.
 
         Args:
             server_content: Server content to convert.
-            has_audio: Whether the enclosing message carries audio output. Text from `model_turn` is
-                skipped when it does, since the two represent the same response in different modalities.
+            has_audio: Whether the enclosing message carries audio output.
+            turn_state: Per-reader transcript and response state.
 
         Returns:
             List of events derived from the server content.
@@ -379,48 +401,30 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         if server_content.interrupted:
             events.append(BidiInterruptionEvent(reason="user_speech"))
 
-        # Transcriptions arrive independently of other fields and of each other
         input_transcript = server_content.input_transcription
         if input_transcript and input_transcript.text:
-            logger.debug("text_length=<%d> | gemini input transcription detected", len(input_transcript.text))
-            events.append(
-                BidiTranscriptStreamEvent(
-                    delta={"text": input_transcript.text},
-                    text=input_transcript.text,
-                    role="user",
-                    # TODO: https://github.com/googleapis/python-genai/issues/1504
-                    is_final=bool(input_transcript.finished),
-                    current_transcript=input_transcript.text,
-                )
-            )
+            text = input_transcript.text
+            turn_state.input_transcript += text
+            logger.debug("text_length=<%d> | gemini input transcription detected", len(text))
+            events.append(BidiTranscriptStreamEvent(delta=text, role="user"))
 
         output_transcript = server_content.output_transcription
         if output_transcript and output_transcript.text:
-            logger.debug("text_length=<%d> | gemini output transcription detected", len(output_transcript.text))
-            events.append(
-                BidiTranscriptStreamEvent(
-                    delta={"text": output_transcript.text},
-                    text=output_transcript.text,
-                    role="assistant",
-                    # TODO: https://github.com/googleapis/python-genai/issues/1504
-                    is_final=bool(output_transcript.finished),
-                    current_transcript=output_transcript.text,
-                )
-            )
+            text = output_transcript.text
+            turn_state.output_transcript += text
+            logger.debug("text_length=<%d> | gemini output transcription detected", len(text))
+            events.append(BidiTranscriptStreamEvent(delta=text, role="assistant"))
 
-        # Reading model_turn parts directly avoids the mixed-content warning raised by message.data
         if not has_audio and server_content.model_turn and server_content.model_turn.parts:
             # Concatenate all text parts (Gemini may send multiple parts)
             text_parts = [part.text for part in server_content.model_turn.parts if part.text]
             if text_parts:
                 full_text = " ".join(text_parts)
+                turn_state.output_transcript += full_text
                 events.append(
                     BidiTranscriptStreamEvent(
-                        delta={"text": full_text},
-                        text=full_text,
+                        delta=full_text,
                         role="assistant",
-                        is_final=True,
-                        current_transcript=full_text,
                     )
                 )
 

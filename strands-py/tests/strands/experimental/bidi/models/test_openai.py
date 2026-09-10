@@ -31,6 +31,7 @@ from strands.experimental.bidi.types.events import (
     BidiInterruptionEvent,
     BidiResponseCompleteEvent,
     BidiTextInputEvent,
+    BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
 )
 from strands.types._events import ToolResultEvent
@@ -562,18 +563,6 @@ async def test_event_conversion(model):
     assert converted[0].get("audio") == base64.b64encode(b"audio_data").decode()
     assert converted[0].get("format") == "pcm"
 
-    # Test text output (now returns list with BidiTranscriptStreamEvent)
-    text_event = {"type": "response.output_text.delta", "delta": "Hello from OpenAI"}
-    converted = model._convert_openai_event(text_event)
-    assert isinstance(converted, list)
-    assert len(converted) == 1
-    assert isinstance(converted[0], BidiTranscriptStreamEvent)
-    assert converted[0].get("type") == "bidi_transcript_stream"
-    assert converted[0].get("text") == "Hello from OpenAI"
-    assert converted[0].get("role") == "assistant"
-    assert converted[0].delta == {"text": "Hello from OpenAI"}
-    assert converted[0].is_final is False  # Delta events are not final
-
     # Test function call sequence
     item_added = {
         "type": "response.output_item.added",
@@ -635,6 +624,81 @@ async def test_event_conversion(model):
     assert converted is None
 
     await model.stop()
+
+
+@pytest.mark.parametrize(
+    ("event", "expected"),
+    [
+        pytest.param(
+            {"type": "response.output_text.delta", "delta": "Hello from OpenAI"},
+            BidiTranscriptStreamEvent("Hello from OpenAI", "assistant"),
+            id="output_text_delta",
+        ),
+        pytest.param(
+            {"type": "response.output_audio_transcript.delta", "delta": "Spoken response"},
+            BidiTranscriptStreamEvent("Spoken response", "assistant"),
+            id="output_audio_transcript_delta",
+        ),
+        pytest.param(
+            {"type": "response.output_text.delta", "delta": " "},
+            BidiTranscriptStreamEvent(" ", "assistant"),
+            id="whitespace_output_text_delta",
+        ),
+        pytest.param(
+            {"type": "response.output_audio_transcript.done", "transcript": "Spoken response"},
+            BidiTranscriptCompleteEvent("Spoken response", "assistant"),
+            id="output_audio_transcript_done",
+        ),
+        pytest.param(
+            {"type": "response.output_text.done", "text": "Hello from OpenAI"},
+            BidiTranscriptCompleteEvent("Hello from OpenAI", "assistant"),
+            id="output_text_done",
+        ),
+        pytest.param(
+            {"type": "response.output_text.done", "text": ""},
+            BidiTranscriptCompleteEvent("", "assistant"),
+            id="empty_output_text_done",
+        ),
+        pytest.param(
+            {"type": "conversation.item.input_audio_transcription.delta", "delta": "User question"},
+            BidiTranscriptStreamEvent("User question", "user"),
+            id="input_audio_transcription_delta",
+        ),
+        pytest.param(
+            {"type": "conversation.item.input_audio_transcription.delta", "delta": " "},
+            BidiTranscriptStreamEvent(" ", "user"),
+            id="whitespace_input_audio_transcription_delta",
+        ),
+        pytest.param(
+            {"type": "conversation.item.input_audio_transcription.completed", "transcript": "User question"},
+            BidiTranscriptCompleteEvent("User question", "user"),
+            id="input_audio_transcription_completed",
+        ),
+        pytest.param(
+            {"type": "conversation.item.input_audio_transcription.completed", "transcript": ""},
+            BidiTranscriptCompleteEvent("", "user"),
+            id="empty_input_audio_transcription_completed",
+        ),
+        pytest.param(
+            {
+                "type": "conversation.item.input_audio_transcription.segment",
+                "segment": {"text": "User question", "role": "user"},
+            },
+            BidiTranscriptStreamEvent("User question", "user"),
+            id="input_audio_transcription_segment",
+        ),
+        pytest.param(
+            {
+                "type": "conversation.item.input_audio_transcription.segment",
+                "segment": {"text": " ", "role": "user"},
+            },
+            BidiTranscriptStreamEvent(" ", "user"),
+            id="whitespace_input_audio_transcription_segment",
+        ),
+    ],
+)
+def test_convert_openai_event_transcript(model, event, expected):
+    assert model._convert_openai_event(event) == [expected]
 
 
 # Helper Method Tests
@@ -806,15 +870,13 @@ def test_tool_conversion(model, tool_spec):
 
 def test_helper_methods(model):
     """Test various helper methods."""
-    # Test _create_text_event (now returns BidiTranscriptStreamEvent)
+    # Test _create_text_event
     text_event = model._create_text_event("Hello", "user")
     assert isinstance(text_event, BidiTranscriptStreamEvent)
     assert text_event.get("type") == "bidi_transcript_stream"
-    assert text_event.get("text") == "Hello"
+    assert text_event.get("delta") == "Hello"
     assert text_event.get("role") == "user"
-    assert text_event.delta == {"text": "Hello"}
-    assert text_event.is_final is True  # Done events are final
-    assert text_event.current_transcript == "Hello"
+    assert text_event.delta == "Hello"
 
     # Test _create_voice_activity_event (now returns BidiInterruptionEvent for speech_started)
     voice_event = model._create_voice_activity_event("speech_started")

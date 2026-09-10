@@ -42,6 +42,7 @@ from ..types.events import (
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
     BidiTextInputEvent,
+    BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
 )
@@ -650,11 +651,12 @@ class _BidiAgentLoop:
                         # the final user transcript, and the reply is what clears this state.
                         self._awaiting_response = True
                         self._update_turn_state()
-                    if event["is_final"]:
-                        message: Message = {"role": event["role"], "content": [{"text": event["text"]}]}
-                        await self._agent._append_messages(message)
-                        if generation != self._generation:
-                            return
+
+                elif isinstance(event, BidiTranscriptCompleteEvent):
+                    message: Message = {"role": event.role, "content": [{"text": event.transcript}]}
+                    await self._agent._append_messages(message)
+                    if generation != self._generation:
+                        return
 
                 elif isinstance(event, BidiInterruptionEvent):
                     if self._session_span:
