@@ -68,10 +68,28 @@ export interface McpRequestTimeouts {
 /** Connection state of an MCP client. */
 export type McpConnectionState = 'disconnected' | 'connected' | 'failed'
 
+/** A progress update reported by an MCP server during a tool call. */
+export interface McpProgress {
+  /** Amount of work completed so far. Increases even when the total is unknown. */
+  progress: number
+
+  /** Total amount of work, when the server reports one. */
+  total?: number | undefined
+
+  /** Human-readable description of the current progress, when the server provides one. */
+  message?: string | undefined
+}
+
+/** Callback receiving progress notifications during a tool call. May be async. A throw or rejection is logged as a warning. */
+export type McpProgressCallback = (progress: McpProgress) => void
+
 /** Options for MCP tool invocation. */
 export interface McpCallToolOptions {
   /** AbortSignal to cancel the in-flight request. */
   signal?: AbortSignal
+
+  /** Callback for progress notifications during this call. Takes precedence over the client's callback. */
+  progressCallback?: McpProgressCallback
 }
 
 /** OAuth client credentials for machine-to-machine authentication. */
@@ -129,6 +147,14 @@ export interface McpClientOptions extends RuntimeConfig {
 
   /** Request timeouts applied to every tool call. Per-call options take precedence on overlap. */
   requestTimeouts?: McpRequestTimeouts
+
+  /**
+   * Callback for progress notifications during tool calls. Fires for every tool call this
+   * client runs, including calls an agent makes, not only direct `callTool` calls. The
+   * `total` and `message` fields may be absent when the server does not provide them. A
+   * per-call `progressCallback` takes precedence.
+   */
+  progressCallback?: McpProgressCallback
 
   /**
    * Callback to handle server-initiated elicitation requests.
@@ -204,6 +230,7 @@ export class McpClient {
   private _disableMcpInstrumentation: boolean
   private _tasksConfig: TasksConfig | undefined
   private _requestTimeouts: McpRequestTimeouts | undefined
+  private _progressCallback: McpProgressCallback | undefined
   private _elicitationCallback: ElicitationCallback | undefined
   private _prefix: string | undefined
   private _toolFilters: McpToolFilters | undefined
@@ -223,6 +250,7 @@ export class McpClient {
     this._logHandler = args.logHandler ?? defaultLogHandler
     this._tasksConfig = args.tasksConfig
     this._requestTimeouts = args.requestTimeouts
+    this._progressCallback = args.progressCallback
     this._elicitationCallback = args.elicitationCallback
     this._prefix = args.prefix
     this._toolFilters = args.toolFilters
@@ -524,17 +552,34 @@ export class McpClient {
 
   private _buildCallOptions(options?: McpCallToolOptions): CallToolRequestOptions | undefined {
     const timeouts = this._requestTimeouts
-    if (timeouts === undefined) return options
-    return {
-      ...(timeouts.timeout !== undefined && { timeout: timeouts.timeout }),
-      ...(timeouts.maxTotalTimeout !== undefined && { maxTotalTimeout: timeouts.maxTotalTimeout }),
-      ...(timeouts.resetTimeoutOnProgress !== undefined && {
+    const onprogress = this._buildProgressHandler(options)
+    const callOptions: CallToolRequestOptions = {
+      ...(timeouts?.timeout !== undefined && { timeout: timeouts.timeout }),
+      ...(timeouts?.maxTotalTimeout !== undefined && { maxTotalTimeout: timeouts.maxTotalTimeout }),
+      ...(timeouts?.resetTimeoutOnProgress !== undefined && {
         resetTimeoutOnProgress: timeouts.resetTimeoutOnProgress,
       }),
+      ...(onprogress && { onprogress }),
+      ...(options?.signal && { signal: options.signal }),
+    }
+    return Object.keys(callOptions).length > 0 ? callOptions : undefined
+  }
+
+  private _buildProgressHandler(options?: McpCallToolOptions): ((progress: McpProgress) => void) | undefined {
+    const progressCallback = options?.progressCallback ?? this._progressCallback
+    if (!progressCallback) {
       // A progress token only goes on the wire when a progress handler is registered, which is
-      // what makes resetTimeoutOnProgress take effect.
-      ...(timeouts.resetTimeoutOnProgress && { onprogress: (): void => {} }),
-      ...options,
+      // what makes resetTimeoutOnProgress take effect. Without a user callback a no-op stands in.
+      return this._requestTimeouts?.resetTimeoutOnProgress ? (): void => {} : undefined
+    }
+    // The vendor client discards handler failures (a sync throw goes to the unset onerror and a
+    // rejected promise becomes an unhandled rejection), so failures are logged here instead.
+    return (progress: McpProgress): void => {
+      void Promise.resolve()
+        .then(() => progressCallback(progress))
+        .catch((error: unknown) => {
+          logger.warn(`client=<${this._clientName}>, error=<${String(error)}> | progress callback failed`)
+        })
     }
   }
 }

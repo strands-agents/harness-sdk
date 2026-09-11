@@ -549,6 +549,111 @@ describe('MCP Integration', () => {
       )
     })
 
+    it('forwards the client progressCallback to SDK callTool and delivers progress updates', async () => {
+      const resultsLengthBefore = vi.mocked(Client).mock.results.length
+      const progressUpdates: unknown[] = []
+      const progressClient = new McpClient({
+        applicationName: 'TestApp',
+        transport: mockTransport,
+        progressCallback: (progress) => progressUpdates.push(progress),
+      })
+      const progressSdkClientMock = vi.mocked(Client).mock.results[resultsLengthBefore]!.value
+      const tool = new McpTool({ name: 'calc', description: '', inputSchema: {}, client: progressClient })
+      progressSdkClientMock.callTool.mockResolvedValue({ content: [] })
+
+      await progressClient.callTool(tool, { op: 'add' })
+
+      expect(progressSdkClientMock.callTool).toHaveBeenCalledWith(
+        { name: 'calc', arguments: { op: 'add' } },
+        { onprogress: expect.any(Function) }
+      )
+      progressSdkClientMock.callTool.mock.calls[0]![1].onprogress({ progress: 5, total: 10, message: 'halfway' })
+      await vi.waitFor(() => expect(progressUpdates).toEqual([{ progress: 5, total: 10, message: 'halfway' }]))
+    })
+
+    it('per-call progressCallback takes precedence over the client callback', async () => {
+      const resultsLengthBefore = vi.mocked(Client).mock.results.length
+      const clientCallback = vi.fn()
+      const perCallCallback = vi.fn()
+      const progressClient = new McpClient({
+        applicationName: 'TestApp',
+        transport: mockTransport,
+        progressCallback: clientCallback,
+      })
+      const progressSdkClientMock = vi.mocked(Client).mock.results[resultsLengthBefore]!.value
+      const tool = new McpTool({ name: 'calc', description: '', inputSchema: {}, client: progressClient })
+      progressSdkClientMock.callTool.mockResolvedValue({ content: [] })
+
+      await progressClient.callTool(tool, { op: 'add' }, { progressCallback: perCallCallback })
+
+      progressSdkClientMock.callTool.mock.calls[0]![1].onprogress({ progress: 1 })
+      await vi.waitFor(() => expect(perCallCallback).toHaveBeenCalledWith({ progress: 1 }))
+      expect(clientCallback).not.toHaveBeenCalled()
+    })
+
+    it('delivers progress to the user callback when resetTimeoutOnProgress is also set', async () => {
+      const resultsLengthBefore = vi.mocked(Client).mock.results.length
+      const progressUpdates: unknown[] = []
+      const progressClient = new McpClient({
+        applicationName: 'TestApp',
+        transport: mockTransport,
+        requestTimeouts: { resetTimeoutOnProgress: true },
+        progressCallback: (progress) => progressUpdates.push(progress),
+      })
+      const progressSdkClientMock = vi.mocked(Client).mock.results[resultsLengthBefore]!.value
+      const tool = new McpTool({ name: 'calc', description: '', inputSchema: {}, client: progressClient })
+      progressSdkClientMock.callTool.mockResolvedValue({ content: [] })
+
+      await progressClient.callTool(tool, { op: 'add' })
+
+      expect(progressSdkClientMock.callTool).toHaveBeenCalledWith(
+        { name: 'calc', arguments: { op: 'add' } },
+        { resetTimeoutOnProgress: true, onprogress: expect.any(Function) }
+      )
+      progressSdkClientMock.callTool.mock.calls[0]![1].onprogress({ progress: 2, total: 4 })
+      await vi.waitFor(() => expect(progressUpdates).toEqual([{ progress: 2, total: 4 }]))
+    })
+
+    it('logs a warning when the progressCallback throws', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const resultsLengthBefore = vi.mocked(Client).mock.results.length
+      const progressClient = new McpClient({
+        applicationName: 'TestApp',
+        transport: mockTransport,
+        progressCallback: () => {
+          throw new Error('boom')
+        },
+      })
+      const progressSdkClientMock = vi.mocked(Client).mock.results[resultsLengthBefore]!.value
+      const tool = new McpTool({ name: 'calc', description: '', inputSchema: {}, client: progressClient })
+      progressSdkClientMock.callTool.mockResolvedValue({ content: [] })
+
+      await progressClient.callTool(tool, { op: 'add' })
+
+      progressSdkClientMock.callTool.mock.calls[0]![1].onprogress({ progress: 1 })
+      await vi.waitFor(() => expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('progress callback failed')))
+    })
+
+    it('logs a warning when an async progressCallback rejects', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const resultsLengthBefore = vi.mocked(Client).mock.results.length
+      const progressClient = new McpClient({
+        applicationName: 'TestApp',
+        transport: mockTransport,
+        progressCallback: async () => {
+          throw new Error('socket closed')
+        },
+      })
+      const progressSdkClientMock = vi.mocked(Client).mock.results[resultsLengthBefore]!.value
+      const tool = new McpTool({ name: 'calc', description: '', inputSchema: {}, client: progressClient })
+      progressSdkClientMock.callTool.mockResolvedValue({ content: [] })
+
+      await progressClient.callTool(tool, { op: 'add' })
+
+      progressSdkClientMock.callTool.mock.calls[0]![1].onprogress({ progress: 1 })
+      await vi.waitFor(() => expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('progress callback failed')))
+    })
+
     it('throws on callTool when tasksConfig is set', async () => {
       const resultsLengthBefore = vi.mocked(Client).mock.results.length
       const taskClient = new McpClient({

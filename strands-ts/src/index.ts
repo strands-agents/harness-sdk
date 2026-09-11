@@ -302,6 +302,8 @@ export type { Logger } from './logging/types.js'
 export {
   type McpClientOptions,
   type McpListToolsOptions,
+  type McpProgress,
+  type McpProgressCallback,
   type McpToolFilterCallback,
   type McpToolFilters,
   type McpToolMatcher,
