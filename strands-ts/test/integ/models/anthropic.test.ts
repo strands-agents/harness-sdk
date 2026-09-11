@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { Message, ImageBlock, TextBlock, CachePointBlock } from '@strands-agents/sdk'
+import { z } from 'zod'
+import { Agent, Message, ImageBlock, TextBlock, CachePointBlock, tool } from '@strands-agents/sdk'
 import type { SystemContentBlock } from '@strands-agents/sdk'
 import { collectIterator } from '$/sdk/__fixtures__/model-test-helpers.js'
 import { loadFixture } from '../__fixtures__/test-helpers.js'
@@ -198,6 +199,36 @@ describe.skipIf(anthropic.skip)('AnthropicModel Integration Tests', () => {
         const firstThinking = thinkingEvents[0] as any
         expect(firstThinking.delta.text).toBeDefined()
       }
+    })
+  })
+
+  describe('Built-in Tools', () => {
+    it('web_search runs alongside function tools and its citations round-trip', async () => {
+      const weather = tool({
+        name: 'tool_weather',
+        description: 'Get the current weather.',
+        inputSchema: z.object({}),
+        callback: () => 'sunny',
+      })
+      const model = anthropic.createModel({
+        maxTokens: 1024,
+        // "direct" so citations are attached; the dynamic-filtering default runs the search inside code execution
+        anthropicTools: [{ type: 'web_search_20260318', name: 'web_search', max_uses: 2, allowed_callers: ['direct'] }],
+      })
+      const agent = new Agent({ model, tools: [weather], printer: false })
+
+      const first = await agent.invoke(
+        'Call tool_weather, then use web_search to find the current Python release. Answer in one sentence.'
+      )
+      expect(first.stopReason).toBe('endTurn')
+      const toolUses = agent.messages.flatMap((m) => m.content).filter((b) => b.type === 'toolUseBlock')
+      expect(toolUses.map((b) => b.name)).toContain('tool_weather')
+      const citationsBlock = first.lastMessage.content.find((b) => b.type === 'citationsBlock')
+      expect(citationsBlock).toBeDefined()
+      expect(citationsBlock?.citations[0]?.location).toMatchObject({ type: 'web', url: expect.stringMatching(/^http/) })
+
+      const second = await agent.invoke('Reply DONE.')
+      expect(String(second)).toContain('DONE')
     })
   })
 

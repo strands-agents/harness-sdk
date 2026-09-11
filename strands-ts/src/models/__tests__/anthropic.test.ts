@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import Anthropic from '@anthropic-ai/sdk'
 import { isNode } from '../../__fixtures__/environment.js'
 import { AnthropicModel } from '../anthropic.js'
-import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
-import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
+import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../../errors.js'
+import { collectGenerator, collectIterator } from '../../__fixtures__/model-test-helpers.js'
 import {
   Message,
   TextBlock,
@@ -15,6 +15,8 @@ import {
 } from '../../types/messages.js'
 import { ImageBlock, DocumentBlock, VideoBlock } from '../../types/media.js'
 import { warnOnce } from '../../logging/warn-once.js'
+import { logger } from '../../logging/logger.js'
+import { CitationsBlock } from '../../types/citations.js'
 
 /**
  * Helper to create a mock Anthropic client with streaming support
@@ -271,13 +273,10 @@ describe('AnthropicModel', () => {
       expect(events).toContainEqual({ type: 'modelMessageStopEvent', stopReason: 'toolUse' })
     })
 
-    it.each([
-      ['pause_turn', 'pauseTurn'],
-      ['refusal', 'refusal'],
-    ])('maps anthropic stop reason "%s" to "%s"', async (anthropicReason, expected) => {
+    it('maps anthropic stop reason "refusal" to "refusal"', async () => {
       const mockClient = createMockClient(async function* () {
         yield { type: 'message_start', message: { role: 'assistant', usage: { input_tokens: 1 } } }
-        yield { type: 'message_delta', delta: { stop_reason: anthropicReason }, usage: { output_tokens: 1 } }
+        yield { type: 'message_delta', delta: { stop_reason: 'refusal' }, usage: { output_tokens: 1 } }
         yield { type: 'message_stop' }
       })
 
@@ -286,7 +285,7 @@ describe('AnthropicModel', () => {
 
       const events = await collectIterator(provider.stream(messages))
 
-      expect(events).toContainEqual({ type: 'modelMessageStopEvent', stopReason: expected })
+      expect(events).toContainEqual({ type: 'modelMessageStopEvent', stopReason: 'refusal' })
     })
 
     it('handles thinking/reasoning events', async () => {
@@ -778,8 +777,7 @@ describe('AnthropicModel', () => {
 
         await collectIterator(provider.stream(messages))
 
-        // Should result in empty content if blocked
-        expect(captured.request.messages[0].content).toHaveLength(0)
+        expect(captured.request.messages).toHaveLength(0)
         warnSpy.mockRestore()
       })
     })
@@ -2112,6 +2110,434 @@ describe('AnthropicModel', () => {
       await collectIterator(provider.stream([message], { dynamicTrailingBlocks: 1 }))
 
       expect(breakpoints(captured.request)).toEqual([])
+    })
+  })
+
+  describe('anthropicTools', () => {
+    const WEB_SEARCH_TOOL = { type: 'web_search_20260318' as const, name: 'web_search' as const, max_uses: 3 }
+    const FUNCTION_TOOL_SPEC = {
+      name: 'calc',
+      description: 'calculate',
+      inputSchema: { type: 'object' as const, properties: {} },
+    }
+    const FUNCTION_TOOL = { name: 'calc', description: 'calculate', input_schema: { type: 'object', properties: {} } }
+
+    const setupCapture = () => {
+      const captured: { request: any } = { request: null }
+      const mockClient = {
+        messages: {
+          stream: vi.fn((req) => {
+            captured.request = req
+            return (async function* () {})()
+          }),
+        },
+      } as any
+      return { captured, mockClient }
+    }
+
+    async function* webSearchStream(): AsyncGenerator<unknown> {
+      yield { type: 'message_start', message: { role: 'assistant', usage: { input_tokens: 10 } } }
+      yield {
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'server_tool_use', id: 'srvtoolu_1', name: 'web_search', input: {} },
+      }
+      yield { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{' } }
+      yield { type: 'content_block_stop', index: 0 }
+      yield {
+        type: 'content_block_start',
+        index: 1,
+        content_block: { type: 'web_search_tool_result', tool_use_id: 'srvtoolu_1', content: [] },
+      }
+      yield { type: 'content_block_stop', index: 1 }
+      yield { type: 'content_block_start', index: 2, content_block: { type: 'text', text: '' } }
+      yield { type: 'content_block_delta', index: 2, delta: { type: 'text_delta', text: 'Agents are autonomous.' } }
+      yield {
+        type: 'content_block_delta',
+        index: 2,
+        delta: {
+          type: 'citations_delta',
+          citation: {
+            type: 'web_search_result_location',
+            url: 'https://docs.example.com/agents',
+            title: 'Agents guide',
+            cited_text: 'Agents are autonomous programs.',
+          },
+        },
+      }
+      yield { type: 'content_block_stop', index: 2 }
+      yield { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } }
+      yield { type: 'message_stop' }
+    }
+
+    it('appends anthropicTools alongside function tools', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, anthropicTools: [WEB_SEARCH_TOOL] })
+
+      await collectIterator(
+        provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })], {
+          toolSpecs: [FUNCTION_TOOL_SPEC],
+        })
+      )
+
+      expect(captured.request.tools).toEqual([FUNCTION_TOOL, WEB_SEARCH_TOOL])
+    })
+
+    it('appends params.tools alongside function tools', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, params: { tools: [WEB_SEARCH_TOOL] } })
+
+      await collectIterator(
+        provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })], {
+          toolSpecs: [FUNCTION_TOOL_SPEC],
+        })
+      )
+
+      expect(captured.request.tools).toEqual([FUNCTION_TOOL, WEB_SEARCH_TOOL])
+    })
+
+    it('caches on the last server tool without mutating the configured tools', async () => {
+      const { captured, mockClient } = setupCapture()
+      const anthropicTools = [{ ...WEB_SEARCH_TOOL }]
+      const provider = new AnthropicModel({ client: mockClient, anthropicTools, cacheConfig: { toolsTTL: true } })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      await collectIterator(provider.stream(messages, { toolSpecs: [FUNCTION_TOOL_SPEC] }))
+
+      expect(captured.request.tools).toEqual([
+        FUNCTION_TOOL,
+        { ...WEB_SEARCH_TOOL, cache_control: { type: 'ephemeral' } },
+      ])
+      expect(anthropicTools).toEqual([WEB_SEARCH_TOOL])
+
+      provider.updateConfig({ cacheConfig: { toolsTTL: false } })
+      await collectIterator(provider.stream(messages, { toolSpecs: [FUNCTION_TOOL_SPEC] }))
+
+      expect(captured.request.tools).toEqual([FUNCTION_TOOL, WEB_SEARCH_TOOL])
+    })
+
+    it.each([{ any: {} }, { tool: { name: 'calc' } }])(
+      'omits server tools when a tool is forced with %j',
+      async (toolChoice) => {
+        const { captured, mockClient } = setupCapture()
+        const provider = new AnthropicModel({
+          client: mockClient,
+          anthropicTools: [WEB_SEARCH_TOOL],
+          params: { tools: [WEB_SEARCH_TOOL] },
+        })
+
+        await collectIterator(
+          provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })], {
+            toolSpecs: [FUNCTION_TOOL_SPEC],
+            toolChoice,
+          })
+        )
+
+        expect(captured.request.tools).toEqual([FUNCTION_TOOL])
+        expect(captured.request.tool_choice.type).toBe(Object.keys(toolChoice)[0])
+      }
+    )
+
+    it('applies toolChoice when only server tools are configured', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, anthropicTools: [WEB_SEARCH_TOOL] })
+
+      await collectIterator(
+        provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })], { toolChoice: { auto: {} } })
+      )
+
+      expect(captured.request.tools).toEqual([WEB_SEARCH_TOOL])
+      expect(captured.request.tool_choice).toEqual({ type: 'auto' })
+    })
+
+    it('rejects function tool definitions in anthropicTools', () => {
+      const functionTool = { name: 'f', input_schema: { type: 'object' as const } }
+
+      expect(() => new AnthropicModel({ anthropicTools: [functionTool] })).toThrow(
+        'anthropicTools should not contain function tool definitions'
+      )
+      expect(() =>
+        new AnthropicModel({ apiKey: 'sk-ant-test' }).updateConfig({ anthropicTools: [functionTool] })
+      ).toThrow('anthropicTools should not contain function tool definitions')
+    })
+
+    it('skips server-side tool blocks and aggregates web search citations with their text', async () => {
+      const provider = new AnthropicModel({ client: createMockClient(webSearchStream) })
+
+      const { result, items: events } = await collectGenerator(
+        provider.streamAggregated([new Message({ role: 'user', content: [new TextBlock('Hi')] })])
+      )
+
+      expect(
+        events.map((event) => (event.type === 'modelContentBlockDeltaEvent' ? `delta:${event.delta.type}` : event.type))
+      ).toEqual([
+        'modelMessageStartEvent',
+        'modelContentBlockStartEvent',
+        'delta:textDelta',
+        'delta:citationsDelta',
+        'modelContentBlockStopEvent',
+        'citationsBlock',
+        'modelMetadataEvent',
+        'modelMessageStopEvent',
+      ])
+      expect(result.stopReason).toBe('endTurn')
+      expect(result.message.content).toEqual([
+        new CitationsBlock({
+          citations: [
+            {
+              location: { type: 'web', url: 'https://docs.example.com/agents', domain: 'docs.example.com' },
+              source: 'https://docs.example.com/agents',
+              sourceContent: [{ text: 'Agents are autonomous programs.' }],
+              title: 'Agents guide',
+            },
+          ],
+          content: [{ text: 'Agents are autonomous.' }],
+        }),
+      ])
+    })
+
+    const pausedContent = [{ type: 'server_tool_use', id: 'srvtoolu_1', name: 'web_search', input: {} }]
+
+    async function* pausedStream(): AsyncGenerator<unknown> {
+      yield { type: 'message_start', message: { role: 'assistant', usage: { input_tokens: 10 } } }
+      yield { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }
+      yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Searching. ' } }
+      yield { type: 'content_block_stop', index: 0 }
+      yield { type: 'content_block_start', index: 1, content_block: pausedContent[0] }
+      yield { type: 'content_block_stop', index: 1 }
+      yield { type: 'message_delta', delta: { stop_reason: 'pause_turn' }, usage: { output_tokens: 5 } }
+      yield { type: 'message_stop' }
+    }
+
+    const withFinalMessage = (events: AsyncGenerator<unknown>) =>
+      Object.assign(events, { finalMessage: async () => ({ content: pausedContent }) })
+
+    it('resumes a paused server-side tool turn and surfaces it as one stream', async () => {
+      const stream = vi
+        .fn()
+        .mockImplementationOnce(() => withFinalMessage(pausedStream()))
+        .mockImplementationOnce(() => webSearchStream())
+      const client = { messages: { stream } } as unknown as Anthropic
+      const provider = new AnthropicModel({ client, anthropicTools: [WEB_SEARCH_TOOL] })
+
+      const { result, items: events } = await collectGenerator(
+        provider.streamAggregated([new Message({ role: 'user', content: [new TextBlock('Hi')] })], {
+          toolSpecs: [FUNCTION_TOOL_SPEC],
+        })
+      )
+
+      expect(events.map((event) => event.type).filter((type) => !type.startsWith('modelContentBlock'))).toEqual([
+        'modelMessageStartEvent',
+        'textBlock',
+        'citationsBlock',
+        'modelMetadataEvent',
+        'modelMessageStopEvent',
+      ])
+      expect(result.stopReason).toBe('endTurn')
+      expect(result.message.content[0]).toEqual(new TextBlock('Searching. '))
+      expect(result.message.content[1]).toBeInstanceOf(CitationsBlock)
+      expect(result.metadata?.usage).toEqual({ inputTokens: 20, outputTokens: 10, totalTokens: 30 })
+
+      expect(stream).toHaveBeenCalledTimes(2)
+      const first = stream.mock.calls[0]?.[0]
+      const second = stream.mock.calls[1]?.[0]
+      expect(second.messages).toEqual([...first.messages, { role: 'assistant', content: pausedContent }])
+      expect(second.tools).toEqual(first.tools)
+      expect(first.tools).toEqual([FUNCTION_TOOL, WEB_SEARCH_TOOL])
+    })
+
+    it('throws once a paused turn exceeds the continuation limit', async () => {
+      const stream = vi.fn(() => withFinalMessage(pausedStream()))
+      const client = { messages: { stream } } as unknown as Anthropic
+
+      await expect(
+        collectIterator(
+          new AnthropicModel({ client }).stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })])
+        )
+      ).rejects.toThrow(new ModelError('server-side tool turn did not complete after 10 continuations'))
+
+      expect(stream).toHaveBeenCalledTimes(11)
+    })
+
+    it('treats message_delta usage as cumulative within a response and sums across continuations', async () => {
+      const paused = async function* (): AsyncGenerator<unknown> {
+        yield { type: 'message_start', message: { role: 'assistant', usage: { input_tokens: 10 } } }
+        yield { type: 'content_block_start', index: 0, content_block: pausedContent[0] }
+        yield { type: 'content_block_stop', index: 0 }
+        yield { type: 'message_delta', delta: {}, usage: { output_tokens: 3 } }
+        yield { type: 'message_delta', delta: { stop_reason: 'pause_turn' }, usage: { output_tokens: 5 } }
+        yield { type: 'message_stop' }
+      }
+      const resumed = async function* (): AsyncGenerator<unknown> {
+        yield { type: 'message_start', message: { role: 'assistant', usage: { input_tokens: 20 } } }
+        yield { type: 'message_delta', delta: {}, usage: { output_tokens: 4 } }
+        yield { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 7 } }
+        yield { type: 'message_stop' }
+      }
+      const stream = vi
+        .fn()
+        .mockImplementationOnce(() => withFinalMessage(paused()))
+        .mockImplementationOnce(() => resumed())
+      const client = { messages: { stream } } as unknown as Anthropic
+
+      const events = await collectIterator(
+        new AnthropicModel({ client }).stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })])
+      )
+
+      expect(events).toContainEqual({
+        type: 'modelMetadataEvent',
+        usage: { inputTokens: 30, outputTokens: 12, totalTokens: 42 },
+      })
+    })
+
+    it('reports the cumulative usage from message_delta and keeps message_start values it omits', async () => {
+      const client = createMockClient(async function* () {
+        yield {
+          type: 'message_start',
+          message: {
+            role: 'assistant',
+            usage: {
+              input_tokens: 2230,
+              output_tokens: 25,
+              cache_read_input_tokens: 100,
+              cache_creation_input_tokens: 7,
+            },
+          },
+        }
+        yield {
+          type: 'message_delta',
+          delta: { stop_reason: 'end_turn' },
+          usage: {
+            input_tokens: 11768,
+            output_tokens: 115,
+            cache_read_input_tokens: null,
+            cache_creation_input_tokens: null,
+          },
+        }
+        yield { type: 'message_stop' }
+      })
+
+      const events = await collectIterator(
+        new AnthropicModel({ client }).stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })])
+      )
+
+      expect(events).toContainEqual({
+        type: 'modelMetadataEvent',
+        usage: {
+          inputTokens: 11768,
+          outputTokens: 115,
+          totalTokens: 11883,
+          cacheReadInputTokens: 100,
+          cacheWriteInputTokens: 7,
+        },
+      })
+    })
+
+    it('does not synthesize a stop event when the stream ends without message_stop', async () => {
+      const client = createMockClient(async function* () {
+        yield { type: 'message_start', message: { role: 'assistant', usage: { input_tokens: 1 } } }
+        yield { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }
+        yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'half of the' } }
+      })
+      const provider = new AnthropicModel({ client })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      const events = await collectIterator(provider.stream(messages))
+
+      expect(events.map((event) => event.type)).toEqual([
+        'modelMessageStartEvent',
+        'modelContentBlockStartEvent',
+        'modelContentBlockDeltaEvent',
+      ])
+      await expect(collectGenerator(provider.streamAggregated(messages))).rejects.toThrow(
+        'Stream ended without completing a message'
+      )
+    })
+
+    it.each([
+      [
+        {
+          type: 'search_result_location',
+          search_result_index: 1,
+          start_block_index: 2,
+          end_block_index: 3,
+          source: 's',
+        },
+        { type: 'searchResult', searchResultIndex: 1, start: 2, end: 3 },
+      ],
+      [
+        { type: 'char_location', document_index: 0, start_char_index: 1, end_char_index: 2 },
+        { type: 'documentChar', documentIndex: 0, start: 1, end: 2 },
+      ],
+      [
+        { type: 'page_location', document_index: 0, start_page_number: 1, end_page_number: 2 },
+        { type: 'documentPage', documentIndex: 0, start: 1, end: 2 },
+      ],
+      [
+        { type: 'content_block_location', document_index: 0, start_block_index: 1, end_block_index: 2 },
+        { type: 'documentChunk', documentIndex: 0, start: 1, end: 2 },
+      ],
+    ])('maps %s citations', async (citation, location) => {
+      async function* citationStream(): AsyncGenerator<unknown> {
+        yield { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }
+        yield { type: 'content_block_delta', index: 0, delta: { type: 'citations_delta', citation } }
+        yield { type: 'content_block_stop', index: 0 }
+      }
+      const provider = new AnthropicModel({ client: createMockClient(citationStream) })
+
+      const events = await collectIterator(
+        provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })])
+      )
+
+      const deltas = events.filter((event) => event.type === 'modelContentBlockDeltaEvent')
+      expect(deltas).toHaveLength(1)
+      expect((deltas[0] as any).delta.citations[0].location).toEqual(location)
+    })
+
+    it('logs an error when a server-side tool fails', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn')
+      async function* errorStream(): AsyncGenerator<unknown> {
+        yield {
+          type: 'content_block_start',
+          index: 0,
+          content_block: {
+            type: 'web_search_tool_result',
+            tool_use_id: 'srvtoolu_1',
+            content: { type: 'web_search_tool_result_error', error_code: 'max_uses_exceeded' },
+          },
+        }
+        yield { type: 'content_block_stop', index: 0 }
+        yield { type: 'message_stop' }
+      }
+      const provider = new AnthropicModel({ client: createMockClient(errorStream) })
+
+      await collectIterator(provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })]))
+
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('error_code=<max_uses_exceeded>'))
+      warnSpy.mockRestore()
+    })
+
+    it('formats a citations block back into the request as text', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient })
+      const cited = new CitationsBlock({
+        citations: [
+          { location: { type: 'web', url: 'https://x' }, source: 'https://x', sourceContent: [], title: 'x' },
+        ],
+        content: [{ text: 'Agents are ' }, { text: 'autonomous.' }],
+      })
+
+      await collectIterator(
+        provider.stream([
+          new Message({ role: 'user', content: [new TextBlock('Hi')] }),
+          new Message({ role: 'assistant', content: [cited] }),
+        ])
+      )
+
+      expect(captured.request.messages[1]).toEqual({
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Agents are autonomous.' }],
+      })
     })
   })
 })

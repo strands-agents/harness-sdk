@@ -12,7 +12,8 @@ import {
 import type { Message, ContentBlock, SystemPrompt } from '../types/messages.js'
 import type { ModelStreamEvent } from '../models/streaming.js'
 import { createEmptyUsage } from '../models/streaming.js'
-import { ContextWindowOverflowError, ModelThrottledError, normalizeError } from '../errors.js'
+import { ContextWindowOverflowError, ModelError, ModelThrottledError, normalizeError } from '../errors.js'
+import type { Citation } from '../types/citations.js'
 import type { ImageBlock, DocumentBlock } from '../types/media.js'
 import { encodeBase64 } from '../types/media.js'
 import { logger } from '../logging/logger.js'
@@ -30,12 +31,58 @@ const CONTEXT_WINDOW_OVERFLOW_ERRORS = [
   'input length exceeds context window',
   'input and output tokens exceed your context limit',
 ]
+// Content blocks for tools Anthropic executes server side. They have no toolUse/toolResult equivalent
+// (the agent never runs them), so they are not streamed.
+const SERVER_TOOL_BLOCK_TYPES = new Set([
+  'bash_code_execution_tool_result',
+  'code_execution_tool_result',
+  'container_upload',
+  'mcp_tool_result',
+  'mcp_tool_use',
+  'server_tool_use',
+  'text_editor_code_execution_tool_result',
+  'tool_search_tool_result',
+  'web_fetch_tool_result',
+  'web_search_tool_result',
+])
+
 /**
  * `ephemeral` is the only cache type the Anthropic API supports.
  */
+// Anthropic pauses a long server-side tool turn with stop_reason=pause_turn and expects the paused
+// assistant message to be sent back as-is to resume it. Bounds how many times stream() does so.
+const MAX_PAUSE_TURN_CONTINUATIONS = 10
+
 const ANTHROPIC_CACHE_TYPE = 'ephemeral' as const
 
 const TEXT_FILE_FORMATS = ['txt', 'md', 'markdown', 'csv', 'json', 'xml', 'html', 'yml', 'yaml', 'js', 'ts', 'py']
+
+/**
+ * Validates that `anthropicTools` does not contain function tool definitions.
+ *
+ * @param anthropicTools - The configured server-side tools
+ * @throws Error - When an entry carries an `input_schema`
+ */
+function validateAnthropicTools(anthropicTools: Anthropic.ToolUnion[]): void {
+  for (const tool of anthropicTools) {
+    if ('input_schema' in tool) {
+      throw new Error(
+        'anthropicTools should not contain function tool definitions. Use the standard tools interface for ' +
+          'function calling tools. anthropicTools is reserved for Anthropic server-side tools like web_search, ' +
+          'web_fetch, and code_execution.'
+      )
+    }
+  }
+}
+
+/**
+ * Copies the numeric fields of an Anthropic usage object; `null` fields leave the existing value in place.
+ */
+function mergeUsage(target: Record<string, number>, source: object): void {
+  for (const [key, value] of Object.entries(source)) {
+    if (typeof value === 'number') target[key] = value
+  }
+}
 
 export interface AnthropicModelConfig extends BaseModelConfig {
   /**
@@ -47,6 +94,14 @@ export interface AnthropicModelConfig extends BaseModelConfig {
   maxTokens?: number
   stopSequences?: string[]
   params?: Record<string, unknown>
+
+  /**
+   * Built-in server-side tools (e.g. `web_search`, `web_fetch`, `code_execution`).
+   * These are appended alongside the agent's function tools.
+   *
+   * @see https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview
+   */
+  anthropicTools?: Anthropic.ToolUnion[]
 
   /**
    * Beta features to enable via the `anthropic-beta` header.
@@ -98,6 +153,8 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       ...modelConfig,
     }
 
+    if (modelConfig.anthropicTools) validateAnthropicTools(modelConfig.anthropicTools)
+
     if (modelConfig.modelId === undefined) {
       warnOnce(logger, defaultModelWarningMessage(MODEL_DEFAULTS.anthropic.modelId))
     }
@@ -126,6 +183,8 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   }
 
   updateConfig(modelConfig: AnthropicModelConfig): void {
+    if (modelConfig.anthropicTools) validateAnthropicTools(modelConfig.anthropicTools)
+
     this._config = { ...this._config, ...modelConfig }
   }
 
@@ -171,127 +230,175 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
 
   async *stream(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
     try {
-      const request = this._formatRequest(messages, options)
+      let request = this._formatRequest(messages, options)
       const requestOptions = this._buildRequestOptions()
-      const stream = requestOptions
-        ? this._client.messages.stream(request, requestOptions)
-        : this._client.messages.stream(request)
-
       const usage = createEmptyUsage()
+      let continuations = 0
 
-      let stopReason = 'endTurn'
+      while (true) {
+        const stream = requestOptions
+          ? this._client.messages.stream(request, requestOptions)
+          : this._client.messages.stream(request)
 
-      for await (const event of stream) {
-        switch (event.type) {
-          case 'message_start': {
-            usage.inputTokens = event.message.usage.input_tokens
+        let stopReason = 'endTurn'
+        let messageStopped = false
+        const responseUsage: Record<string, number> = {}
 
-            const rawUsage = event.message.usage as unknown as Record<string, number | undefined>
-            if (rawUsage.cache_creation_input_tokens !== undefined) {
-              usage.cacheWriteInputTokens = rawUsage.cache_creation_input_tokens
-            }
-            if (rawUsage.cache_read_input_tokens !== undefined) {
-              usage.cacheReadInputTokens = rawUsage.cache_read_input_tokens
-            }
+        const serverToolBlockIndexes = new Set<number>()
 
-            yield {
-              type: 'modelMessageStartEvent',
-              role: event.message.role,
-            }
-            break
-          }
+        for await (const event of stream) {
+          switch (event.type) {
+            case 'message_start': {
+              mergeUsage(responseUsage, event.message.usage)
 
-          case 'content_block_start':
-            if (event.content_block.type === 'tool_use') {
-              yield {
-                type: 'modelContentBlockStartEvent',
-                start: {
-                  type: 'toolUseStart',
-                  name: event.content_block.name,
-                  toolUseId: event.content_block.id,
-                },
+              if (continuations === 0) {
+                yield {
+                  type: 'modelMessageStartEvent',
+                  role: event.message.role,
+                }
               }
-            } else if (event.content_block.type === 'thinking') {
-              yield { type: 'modelContentBlockStartEvent' }
-              if (event.content_block.thinking) {
+              break
+            }
+
+            case 'content_block_start':
+              if (SERVER_TOOL_BLOCK_TYPES.has(event.content_block.type)) {
+                serverToolBlockIndexes.add(event.index)
+                this._logServerToolBlock(event.content_block)
+                break
+              }
+
+              if (event.content_block.type === 'tool_use') {
+                yield {
+                  type: 'modelContentBlockStartEvent',
+                  start: {
+                    type: 'toolUseStart',
+                    name: event.content_block.name,
+                    toolUseId: event.content_block.id,
+                  },
+                }
+              } else if (event.content_block.type === 'thinking') {
+                yield { type: 'modelContentBlockStartEvent' }
+                if (event.content_block.thinking) {
+                  yield {
+                    type: 'modelContentBlockDeltaEvent',
+                    delta: {
+                      type: 'reasoningContentDelta',
+                      text: event.content_block.thinking,
+                      signature: event.content_block.signature,
+                    },
+                  }
+                }
+              } else if (event.content_block.type === 'redacted_thinking') {
+                yield { type: 'modelContentBlockStartEvent' }
                 yield {
                   type: 'modelContentBlockDeltaEvent',
                   delta: {
                     type: 'reasoningContentDelta',
-                    text: event.content_block.thinking,
-                    signature: event.content_block.signature,
+                    redactedContent: event.content_block.data as unknown as Uint8Array,
                   },
                 }
-              }
-            } else if (event.content_block.type === 'redacted_thinking') {
-              yield { type: 'modelContentBlockStartEvent' }
-              yield {
-                type: 'modelContentBlockDeltaEvent',
-                delta: {
-                  type: 'reasoningContentDelta',
-                  redactedContent: event.content_block.data as unknown as Uint8Array,
-                },
-              }
-            } else {
-              yield { type: 'modelContentBlockStartEvent' }
-              if (event.content_block.type === 'text' && event.content_block.text) {
-                yield {
-                  type: 'modelContentBlockDeltaEvent',
-                  delta: { type: 'textDelta', text: event.content_block.text },
+              } else {
+                yield { type: 'modelContentBlockStartEvent' }
+                if (event.content_block.type === 'text' && event.content_block.text) {
+                  yield {
+                    type: 'modelContentBlockDeltaEvent',
+                    delta: { type: 'textDelta', text: event.content_block.text },
+                  }
                 }
               }
-            }
-            break
+              break
 
-          case 'content_block_delta':
-            if (event.delta.type === 'text_delta') {
-              yield {
-                type: 'modelContentBlockDeltaEvent',
-                delta: { type: 'textDelta', text: event.delta.text },
-              }
-            } else if (event.delta.type === 'input_json_delta') {
-              yield {
-                type: 'modelContentBlockDeltaEvent',
-                delta: { type: 'toolUseInputDelta', input: event.delta.partial_json },
-              }
-            } else if (event.delta.type === 'thinking_delta') {
-              yield {
-                type: 'modelContentBlockDeltaEvent',
-                delta: { type: 'reasoningContentDelta', text: event.delta.thinking },
-              }
-            } else if (event.delta.type === 'signature_delta') {
-              yield {
-                type: 'modelContentBlockDeltaEvent',
-                delta: { type: 'reasoningContentDelta', signature: event.delta.signature },
-              }
-            }
-            break
+            case 'content_block_delta':
+              if (serverToolBlockIndexes.has(event.index)) break
 
-          case 'content_block_stop':
-            yield { type: 'modelContentBlockStopEvent' }
-            break
+              if (event.delta.type === 'text_delta') {
+                yield {
+                  type: 'modelContentBlockDeltaEvent',
+                  delta: { type: 'textDelta', text: event.delta.text },
+                }
+              } else if (event.delta.type === 'citations_delta') {
+                const citation = this._formatCitation(event.delta.citation)
+                if (citation) {
+                  yield {
+                    type: 'modelContentBlockDeltaEvent',
+                    delta: { type: 'citationsDelta', citations: [citation], content: [] },
+                  }
+                }
+              } else if (event.delta.type === 'input_json_delta') {
+                yield {
+                  type: 'modelContentBlockDeltaEvent',
+                  delta: { type: 'toolUseInputDelta', input: event.delta.partial_json },
+                }
+              } else if (event.delta.type === 'thinking_delta') {
+                yield {
+                  type: 'modelContentBlockDeltaEvent',
+                  delta: { type: 'reasoningContentDelta', text: event.delta.thinking },
+                }
+              } else if (event.delta.type === 'signature_delta') {
+                yield {
+                  type: 'modelContentBlockDeltaEvent',
+                  delta: { type: 'reasoningContentDelta', signature: event.delta.signature },
+                }
+              }
+              break
 
-          case 'message_delta':
-            if (event.usage) {
-              usage.outputTokens = event.usage.output_tokens
-            }
-            if (event.delta.stop_reason) {
-              stopReason = this._mapStopReason(event.delta.stop_reason)
-            }
-            break
+            case 'content_block_stop':
+              if (serverToolBlockIndexes.delete(event.index)) break
 
-          case 'message_stop':
-            usage.totalTokens = usage.inputTokens + usage.outputTokens
-            yield {
-              type: 'modelMetadataEvent',
-              usage,
-            }
-            yield {
-              type: 'modelMessageStopEvent',
-              stopReason,
-            }
-            break
+              yield { type: 'modelContentBlockStopEvent' }
+              break
+
+            case 'message_delta':
+              if (event.usage) {
+                // Cumulative within one response; fields Anthropic omits keep their message_start value.
+                mergeUsage(responseUsage, event.usage)
+              }
+              if (event.delta.stop_reason) {
+                stopReason = this._mapStopReason(event.delta.stop_reason)
+              }
+              break
+
+            case 'message_stop':
+              messageStopped = true
+              break
+          }
         }
+
+        // A stream that ends without message_stop is incomplete; emit no stop event so the caller can tell.
+        if (!messageStopped) return
+        usage.inputTokens += responseUsage.input_tokens ?? 0
+        usage.outputTokens += responseUsage.output_tokens ?? 0
+        if (responseUsage.cache_creation_input_tokens !== undefined) {
+          usage.cacheWriteInputTokens = (usage.cacheWriteInputTokens ?? 0) + responseUsage.cache_creation_input_tokens
+        }
+        if (responseUsage.cache_read_input_tokens !== undefined) {
+          usage.cacheReadInputTokens = (usage.cacheReadInputTokens ?? 0) + responseUsage.cache_read_input_tokens
+        }
+
+        if (stopReason === 'pauseTurn') {
+          if (continuations >= MAX_PAUSE_TURN_CONTINUATIONS) {
+            throw new ModelError(`server-side tool turn did not complete after ${continuations} continuations`)
+          }
+          continuations++
+          const pausedMessage = await stream.finalMessage()
+          request = {
+            ...request,
+            messages: [...request.messages, { role: 'assistant', content: pausedMessage.content }],
+          }
+          logger.debug(`continuation=<${continuations}> | resuming paused server-side tool turn`)
+          continue
+        }
+
+        usage.totalTokens = usage.inputTokens + usage.outputTokens
+        yield {
+          type: 'modelMetadataEvent',
+          usage,
+        }
+        yield {
+          type: 'modelMessageStopEvent',
+          stopReason,
+        }
+        return
       }
     } catch (unknownError) {
       const error = normalizeError(unknownError)
@@ -438,30 +545,33 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       if (system !== undefined) request.system = system
     }
 
-    if (options?.toolSpecs?.length) {
-      const tools = options.toolSpecs.map((tool) => ({
-        name: tool.name,
-        description: tool.description,
-        input_schema: tool.inputSchema as Anthropic.Tool.InputSchema,
-      })) as Anthropic.Tool[]
+    const tools: Anthropic.ToolUnion[] = (options?.toolSpecs ?? []).map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      input_schema: tool.inputSchema as Anthropic.Tool.InputSchema,
+    }))
+    // Forcing a tool means this turn must call a function tool, so server tools are left out.
+    if (!options?.toolChoice || 'auto' in options.toolChoice) {
+      // Copied so the cache_control below never lands on the caller's config.
+      const paramsTools = (this._config.params?.tools as Anthropic.ToolUnion[] | undefined) ?? []
+      tools.push(...(this._config.anthropicTools ?? []).map((tool) => ({ ...tool })))
+      tools.push(...paramsTools.map((tool) => ({ ...tool })))
+    }
 
-      // A cache_control on the last tool caches all of them, so one cache point suffices.
-      const toolsCache = this._cacheSection('toolsTTL')
-      const lastTool = tools[tools.length - 1]
-      if (toolsCache.enabled && lastTool) {
-        lastTool.cache_control = this._formatCacheControl(toolsCache.ttl)
-      }
+    // A cache_control on the last tool caches all of them, so one cache point suffices.
+    const toolsCache = this._cacheSection('toolsTTL')
+    const lastTool = tools[tools.length - 1]
+    if (toolsCache.enabled && lastTool) {
+      lastTool.cache_control = this._formatCacheControl(toolsCache.ttl)
+    }
 
-      request.tools = tools
-
-      if (options.toolChoice) {
-        if ('auto' in options.toolChoice) {
-          request.tool_choice = { type: 'auto' }
-        } else if ('any' in options.toolChoice) {
-          request.tool_choice = { type: 'any' }
-        } else if ('tool' in options.toolChoice) {
-          request.tool_choice = { type: 'tool', name: options.toolChoice.tool.name }
-        }
+    if (tools.length > 0 && options?.toolChoice) {
+      if ('auto' in options.toolChoice) {
+        request.tool_choice = { type: 'auto' }
+      } else if ('any' in options.toolChoice) {
+        request.tool_choice = { type: 'any' }
+      } else if ('tool' in options.toolChoice) {
+        request.tool_choice = { type: 'tool', name: options.toolChoice.tool.name }
       }
     }
 
@@ -469,6 +579,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     if (this._config.topP !== undefined) request.top_p = this._config.topP
     if (this._config.stopSequences !== undefined) request.stop_sequences = this._config.stopSequences
     if (this._config.params) Object.assign(request, this._config.params)
+    if (tools.length > 0) request.tools = tools
 
     return request
   }
@@ -542,7 +653,8 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       )
     }
 
-    return formatted
+    // The API rejects an empty message anywhere but the trailing assistant turn.
+    return formatted.filter((msg) => msg.content.length > 0)
   }
 
   private _isCacheableBlock(
@@ -711,11 +823,114 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         }
         return undefined
 
+      case 'citationsBlock': {
+        const text = block.content.map((generated) => generated.text).join('')
+        return text ? { type: 'text', text } : undefined
+      }
+
       case 'cachePointBlock':
         return undefined
 
       default:
         return undefined
+    }
+  }
+
+  /**
+   * Maps an Anthropic citation onto a Strands citation.
+   *
+   * @param citation - Citation from a `citations_delta` event
+   * @returns The mapped citation, or `undefined` when the location type has no Strands equivalent
+   */
+  private _formatCitation(citation: Anthropic.TextCitation): Citation | undefined {
+    const citedText = 'cited_text' in citation && citation.cited_text ? [{ text: citation.cited_text }] : []
+
+    switch (citation.type) {
+      case 'web_search_result_location': {
+        const url = citation.url ?? ''
+        let domain: string | undefined
+        try {
+          domain = new URL(url).hostname
+        } catch {
+          domain = undefined
+        }
+        return {
+          location: { type: 'web', url, ...(domain ? { domain } : {}) },
+          source: url,
+          sourceContent: citedText,
+          title: citation.title ?? '',
+        }
+      }
+
+      case 'search_result_location':
+        return {
+          location: {
+            type: 'searchResult',
+            searchResultIndex: citation.search_result_index,
+            start: citation.start_block_index,
+            end: citation.end_block_index,
+          },
+          source: citation.source,
+          sourceContent: citedText,
+          title: citation.title ?? '',
+        }
+
+      case 'char_location':
+        return {
+          location: {
+            type: 'documentChar',
+            documentIndex: citation.document_index,
+            start: citation.start_char_index,
+            end: citation.end_char_index,
+          },
+          source: citation.file_id ?? '',
+          sourceContent: citedText,
+          title: citation.document_title ?? '',
+        }
+
+      case 'page_location':
+        return {
+          location: {
+            type: 'documentPage',
+            documentIndex: citation.document_index,
+            start: citation.start_page_number,
+            end: citation.end_page_number,
+          },
+          source: citation.file_id ?? '',
+          sourceContent: citedText,
+          title: citation.document_title ?? '',
+        }
+
+      case 'content_block_location':
+        return {
+          location: {
+            type: 'documentChunk',
+            documentIndex: citation.document_index,
+            start: citation.start_block_index,
+            end: citation.end_block_index,
+          },
+          source: citation.file_id ?? '',
+          sourceContent: citedText,
+          title: citation.document_title ?? '',
+        }
+
+      default:
+        logger.warn(`citation_type=<${(citation as { type: string }).type}> | unsupported citation location | skipping`)
+        return undefined
+    }
+  }
+
+  /**
+   * Logs a skipped server-side tool block, at warn level when the tool returned an error.
+   *
+   * @param contentBlock - The `content_block` of a `content_block_start` event
+   */
+  private _logServerToolBlock(contentBlock: { type: string; content?: unknown }): void {
+    const errorCode = (contentBlock.content as { error_code?: string } | undefined)?.error_code
+    if (errorCode !== undefined) {
+      logger.warn(`block_type=<${contentBlock.type}>, error_code=<${errorCode}> | server-side tool failed`)
+    } else {
+      logger.debug(`block_type=<${contentBlock.type}> | skipping server-side tool block`)
     }
   }
 

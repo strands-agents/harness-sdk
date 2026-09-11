@@ -2,6 +2,7 @@ import copy
 import logging
 import mimetypes
 import re
+import types
 import unittest.mock
 import warnings
 
@@ -1061,6 +1062,7 @@ async def test_structured_output(anthropic_client, model, test_output_model_cls,
         unittest.mock.Mock(type="message_start", model_dump=unittest.mock.Mock(return_value={"type": "message_start"})),
         unittest.mock.Mock(
             type="content_block_start",
+            index=0,
             model_dump=unittest.mock.Mock(
                 return_value={
                     "type": "content_block_start",
@@ -1071,6 +1073,7 @@ async def test_structured_output(anthropic_client, model, test_output_model_cls,
         ),
         unittest.mock.Mock(
             type="content_block_delta",
+            index=0,
             model_dump=unittest.mock.Mock(
                 return_value={
                     "type": "content_block_delta",
@@ -1081,6 +1084,7 @@ async def test_structured_output(anthropic_client, model, test_output_model_cls,
         ),
         unittest.mock.Mock(
             type="content_block_stop",
+            index=0,
             model_dump=unittest.mock.Mock(return_value={"type": "content_block_stop", "index": 0}),
         ),
         unittest.mock.Mock(
@@ -2410,3 +2414,415 @@ class TestPromptCaching:
         request = model.format_request(messages, system_prompt_content=[{}])
 
         assert "system" not in request
+
+
+WEB_SEARCH_TOOL = {"type": "web_search_20260318", "name": "web_search", "max_uses": 3}
+
+
+@pytest.fixture
+def tool_spec():
+    return {"description": "description", "name": "name", "inputSchema": {"json": {"key": "val"}}}
+
+
+def web_search_stream_events():
+    def event(payload, **attrs):
+        return unittest.mock.Mock(model_dump=lambda: payload, **attrs)
+
+    server_tool_use = types.SimpleNamespace(type="server_tool_use", id="srvtoolu_1", name="web_search", input={})
+    search_result = types.SimpleNamespace(type="web_search_tool_result", tool_use_id="srvtoolu_1", content=[])
+    citation = {
+        "type": "web_search_result_location",
+        "url": "https://docs.example.com/agents",
+        "title": "Agents guide",
+        "cited_text": "Agents are autonomous programs.",
+    }
+    return [
+        event({"type": "message_start"}, type="message_start"),
+        event(
+            {"type": "content_block_start", "index": 0},
+            type="content_block_start",
+            index=0,
+            content_block=server_tool_use,
+        ),
+        event(
+            {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "{"}},
+            type="content_block_delta",
+            index=0,
+        ),
+        event({"type": "content_block_stop", "index": 0}, type="content_block_stop", index=0),
+        event(
+            {"type": "content_block_start", "index": 1},
+            type="content_block_start",
+            index=1,
+            content_block=search_result,
+        ),
+        event({"type": "content_block_stop", "index": 1}, type="content_block_stop", index=1),
+        event(
+            {"type": "content_block_start", "index": 2, "content_block": {"type": "text", "text": ""}},
+            type="content_block_start",
+            index=2,
+            content_block=types.SimpleNamespace(type="text", text=""),
+        ),
+        event(
+            {
+                "type": "content_block_delta",
+                "index": 2,
+                "delta": {"type": "text_delta", "text": "Agents are autonomous."},
+            },
+            type="content_block_delta",
+            index=2,
+        ),
+        event(
+            {"type": "content_block_delta", "index": 2, "delta": {"type": "citations_delta", "citation": citation}},
+            type="content_block_delta",
+            index=2,
+        ),
+        event({"type": "content_block_stop", "index": 2}, type="content_block_stop", index=2),
+        event({"type": "message_stop"}, type="message_stop", message=unittest.mock.Mock(stop_reason="end_turn")),
+    ]
+
+
+def test_format_request_with_anthropic_tools(anthropic_client, model_id, max_tokens, messages, tool_spec):
+    _ = anthropic_client
+    model = AnthropicModel(model_id=model_id, max_tokens=max_tokens, anthropic_tools=[WEB_SEARCH_TOOL])
+
+    request = model.format_request(messages, [tool_spec])
+
+    assert request["tools"] == [
+        {"name": "name", "description": "description", "input_schema": {"key": "val"}},
+        WEB_SEARCH_TOOL,
+    ]
+
+
+def test_format_request_with_params_tools(anthropic_client, model_id, max_tokens, messages, tool_spec):
+    _ = anthropic_client
+    model = AnthropicModel(model_id=model_id, max_tokens=max_tokens, params={"tools": [WEB_SEARCH_TOOL]})
+
+    request = model.format_request(messages, [tool_spec])
+
+    assert request["tools"] == [
+        {"name": "name", "description": "description", "input_schema": {"key": "val"}},
+        WEB_SEARCH_TOOL,
+    ]
+
+
+@pytest.mark.parametrize("tool_choice", [{"any": {}}, {"tool": {"name": "test_tool"}}])
+def test_format_request_forced_tool_choice_omits_server_tools(
+    anthropic_client, model_id, max_tokens, messages, tool_choice
+):
+    tool_spec = {"description": "d", "name": "test_tool", "inputSchema": {"json": {}}}
+    model = AnthropicModel(
+        model_id=model_id, max_tokens=max_tokens, anthropic_tools=[WEB_SEARCH_TOOL], params={"tools": [WEB_SEARCH_TOOL]}
+    )
+
+    request = model.format_request(messages, [tool_spec], tool_choice=tool_choice)
+
+    assert request["tools"] == [{"name": "test_tool", "description": "d", "input_schema": {}}]
+    assert request["tool_choice"]["type"] == next(iter(tool_choice))
+
+
+def test_format_request_auto_tool_choice_keeps_server_tools(
+    anthropic_client, model_id, max_tokens, messages, tool_spec
+):
+    model = AnthropicModel(model_id=model_id, max_tokens=max_tokens, anthropic_tools=[WEB_SEARCH_TOOL])
+
+    request = model.format_request(messages, [tool_spec], tool_choice={"auto": {}})
+
+    assert request["tools"][-1] == WEB_SEARCH_TOOL
+    assert request["tool_choice"] == {"type": "auto"}
+
+
+def test_format_request_tools_cache_lands_on_server_tool_without_mutating_config(
+    anthropic_client, model_id, max_tokens, messages, tool_spec
+):
+    _ = anthropic_client
+    anthropic_tools = [dict(WEB_SEARCH_TOOL)]
+    model = AnthropicModel(
+        model_id=model_id,
+        max_tokens=max_tokens,
+        anthropic_tools=anthropic_tools,
+        cache_config=CacheConfig(tools_ttl=True),
+    )
+
+    request = model.format_request(messages, [tool_spec])
+
+    assert request["tools"] == [
+        {"name": "name", "description": "description", "input_schema": {"key": "val"}},
+        {**WEB_SEARCH_TOOL, "cache_control": {"type": "ephemeral"}},
+    ]
+    assert anthropic_tools == [WEB_SEARCH_TOOL]
+
+    model.update_config(cache_config=CacheConfig(tools_ttl=False))
+    request = model.format_request(messages, [tool_spec])
+
+    assert request["tools"][-1] == WEB_SEARCH_TOOL
+
+
+def test__init__rejects_function_tools_in_anthropic_tools(anthropic_client, model_id, max_tokens):
+    _ = anthropic_client
+    with pytest.raises(ValueError, match="anthropic_tools should not contain function tool definitions"):
+        AnthropicModel(model_id=model_id, max_tokens=max_tokens, anthropic_tools=[{"name": "f", "input_schema": {}}])
+
+
+def test_update_config_rejects_function_tools_in_anthropic_tools(model):
+    with pytest.raises(ValueError, match="anthropic_tools should not contain function tool definitions"):
+        model.update_config(anthropic_tools=[{"name": "f", "input_schema": {}}])
+
+
+@pytest.mark.parametrize(
+    ("citation", "exp_citation"),
+    [
+        (
+            {
+                "type": "web_search_result_location",
+                "url": "https://docs.example.com/agents",
+                "title": "Agents guide",
+                "cited_text": "Agents are autonomous programs.",
+            },
+            {
+                "title": "Agents guide",
+                "sourceContent": [{"text": "Agents are autonomous programs."}],
+                "location": {"web": {"url": "https://docs.example.com/agents", "domain": "docs.example.com"}},
+            },
+        ),
+        (
+            {"type": "search_result_location", "search_result_index": 1, "start_block_index": 2, "end_block_index": 3},
+            {"location": {"searchResultLocation": {"searchResultIndex": 1, "start": 2, "end": 3}}},
+        ),
+        (
+            {
+                "type": "char_location",
+                "document_index": 0,
+                "document_title": "D",
+                "start_char_index": 1,
+                "end_char_index": 2,
+            },
+            {"title": "D", "location": {"documentChar": {"documentIndex": 0, "start": 1, "end": 2}}},
+        ),
+        (
+            {"type": "page_location", "document_index": 0, "start_page_number": 1, "end_page_number": 2},
+            {"location": {"documentPage": {"documentIndex": 0, "start": 1, "end": 2}}},
+        ),
+        (
+            {"type": "content_block_location", "document_index": 0, "start_block_index": 1, "end_block_index": 2},
+            {"location": {"documentChunk": {"documentIndex": 0, "start": 1, "end": 2}}},
+        ),
+        ({"type": "unknown_location", "title": "T"}, {"title": "T"}),
+    ],
+)
+def test_format_chunk_citations_delta(model, citation, exp_citation):
+    event = {"type": "content_block_delta", "index": 0, "delta": {"type": "citations_delta", "citation": citation}}
+
+    chunk = model.format_chunk(event)
+
+    assert chunk == {"contentBlockDelta": {"contentBlockIndex": 0, "delta": {"citation": exp_citation}}}
+
+
+def paused_stream_events(text_index=1):
+    def event(payload, **attrs):
+        return unittest.mock.Mock(model_dump=lambda: payload, **attrs)
+
+    server_tool_use = types.SimpleNamespace(type="server_tool_use", id="srvtoolu_1", name="web_search", input={})
+    return [
+        event({"type": "message_start"}, type="message_start"),
+        event(
+            {"type": "content_block_start", "index": text_index - 1},
+            type="content_block_start",
+            index=text_index - 1,
+            content_block=server_tool_use,
+        ),
+        event({"type": "content_block_stop", "index": text_index - 1}, type="content_block_stop", index=text_index - 1),
+        event(
+            {"type": "content_block_start", "index": text_index, "content_block": {"type": "text", "text": ""}},
+            type="content_block_start",
+            index=text_index,
+            content_block=types.SimpleNamespace(type="text", text=""),
+        ),
+        event(
+            {
+                "type": "content_block_delta",
+                "index": text_index,
+                "delta": {"type": "text_delta", "text": "Searching. "},
+            },
+            type="content_block_delta",
+            index=text_index,
+        ),
+        event({"type": "content_block_stop", "index": text_index}, type="content_block_stop", index=text_index),
+        event({"type": "message_stop"}, type="message_stop", message=unittest.mock.Mock(stop_reason="pause_turn")),
+    ]
+
+
+def paused_final_message(content):
+    return unittest.mock.Mock(
+        content=content,
+        usage=unittest.mock.Mock(
+            model_dump=lambda: {"input_tokens": 10, "output_tokens": 5, "service_tier": "standard"}
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_stream_continues_paused_server_tool_turn(anthropic_client, model, agenerator, alist):
+    paused_content = [{"type": "server_tool_use", "id": "srvtoolu_1", "name": "web_search", "input": {}}]
+    anthropic_client.messages.stream.side_effect = [
+        generate_mock_stream_context(paused_stream_events(), final_message=paused_final_message(paused_content)),
+        generate_mock_stream_context(web_search_stream_events(), final_message=mock_final_message()),
+    ]
+    tool_spec = {"description": "d", "name": "calculator", "inputSchema": {"json": {}}}
+
+    chunks = await alist(model.stream([{"role": "user", "content": [{"text": "hi"}]}], [tool_spec]))
+    events = await alist(strands.event_loop.streaming.process_stream(agenerator(chunks)))
+    stop_reason, message, usage, _ = events[-1]["stop"]
+
+    assert [next(iter(chunk)) for chunk in chunks] == [
+        "messageStart",
+        "contentBlockStart",
+        "contentBlockDelta",
+        "contentBlockStop",
+        "contentBlockStart",
+        "contentBlockDelta",
+        "contentBlockDelta",
+        "contentBlockStop",
+        "messageStop",
+        "metadata",
+    ]
+    assert [chunk["contentBlockStart"]["contentBlockIndex"] for chunk in chunks if "contentBlockStart" in chunk] == [
+        1,
+        4,
+    ]
+    assert stop_reason == "end_turn"
+    assert message["content"][0] == {"text": "Searching. "}
+    assert message["content"][1]["citationsContent"]["content"] == [{"text": "Agents are autonomous."}]
+    assert usage == {"inputTokens": 11, "outputTokens": 7, "totalTokens": 18}
+
+    first_request = anthropic_client.messages.stream.call_args_list[0].kwargs
+    second_request = anthropic_client.messages.stream.call_args_list[1].kwargs
+    assert second_request["messages"] == [*first_request["messages"], {"role": "assistant", "content": paused_content}]
+    assert second_request["tools"] == first_request["tools"]
+    assert len(first_request["tools"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_pause_turn_continuation_limit(anthropic_client, model, alist):
+    limit = strands.models.anthropic._MAX_PAUSE_TURN_CONTINUATIONS
+    anthropic_client.messages.stream.side_effect = [
+        generate_mock_stream_context(paused_stream_events(), final_message=paused_final_message([]))
+        for _ in range(limit + 1)
+    ]
+
+    with pytest.raises(RuntimeError, match=f"did not complete after {limit} continuations"):
+        await alist(model.stream([{"role": "user", "content": [{"text": "hi"}]}]))
+
+    assert limit == 10
+    assert anthropic_client.messages.stream.call_count == limit + 1
+
+
+@pytest.mark.asyncio
+async def test_stream_pause_turn_without_snapshot_ends_turn(anthropic_client, model, alist, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.anthropic")
+    anthropic_client.messages.stream.return_value = generate_mock_stream_context(
+        paused_stream_events(), final_message=AssertionError("message snapshot is not available")
+    )
+
+    chunks = await alist(model.stream([{"role": "user", "content": [{"text": "hi"}]}]))
+
+    assert anthropic_client.messages.stream.call_count == 1
+    assert chunks[-1] == {"messageStop": {"stopReason": "end_turn"}}
+    assert "paused server-side tool turn not resumed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_stream_pause_turn_keeps_usage_when_last_snapshot_unavailable(anthropic_client, model, alist):
+    anthropic_client.messages.stream.side_effect = [
+        generate_mock_stream_context(paused_stream_events(), final_message=paused_final_message([])),
+        generate_mock_stream_context(
+            web_search_stream_events(), final_message=AssertionError("message snapshot is not available")
+        ),
+    ]
+
+    chunks = await alist(model.stream([{"role": "user", "content": [{"text": "hi"}]}]))
+
+    assert anthropic_client.messages.stream.call_count == 2
+    assert chunks[-2] == {"messageStop": {"stopReason": "end_turn"}}
+    assert chunks[-1]["metadata"]["usage"] == {"inputTokens": 10, "outputTokens": 5, "totalTokens": 15}
+
+
+def test_format_request_with_citations_content(model, model_id, max_tokens):
+    messages = [
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "citationsContent": {
+                        "citations": [{"title": "Agents guide"}],
+                        "content": [{"text": "Agents are "}, {"text": "autonomous."}],
+                    }
+                }
+            ],
+        }
+    ]
+
+    request = model.format_request(messages)
+
+    assert request["messages"] == [
+        {"role": "assistant", "content": [{"text": "Agents are autonomous.", "type": "text"}]}
+    ]
+
+
+def mock_final_message():
+    return unittest.mock.Mock(usage=unittest.mock.Mock(model_dump=lambda: {"input_tokens": 1, "output_tokens": 2}))
+
+
+@pytest.mark.asyncio
+async def test_stream_skips_server_tool_blocks(anthropic_client, model, agenerator, alist, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.event_loop.streaming")
+    anthropic_client.messages.stream.return_value = generate_mock_stream_context(
+        web_search_stream_events(), final_message=mock_final_message()
+    )
+
+    chunks = await alist(model.stream([{"role": "user", "content": [{"text": "hi"}]}]))
+    events = await alist(strands.event_loop.streaming.process_stream(agenerator(chunks)))
+    stop_reason, message, _, _ = events[-1]["stop"]
+
+    assert [next(iter(chunk)) for chunk in chunks] == [
+        "messageStart",
+        "contentBlockStart",
+        "contentBlockDelta",
+        "contentBlockDelta",
+        "contentBlockStop",
+        "messageStop",
+        "metadata",
+    ]
+    assert stop_reason == "end_turn"
+    assert message["content"] == [
+        {
+            "citationsContent": {
+                "citations": [
+                    {
+                        "title": "Agents guide",
+                        "sourceContent": [{"text": "Agents are autonomous programs."}],
+                        "location": {"web": {"url": "https://docs.example.com/agents", "domain": "docs.example.com"}},
+                    }
+                ],
+                "content": [{"text": "Agents are autonomous."}],
+            }
+        }
+    ]
+    assert "incomplete tool use block" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_stream_logs_server_tool_error(anthropic_client, model, alist, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.anthropic")
+    error_block = types.SimpleNamespace(
+        type="web_search_tool_result",
+        content=types.SimpleNamespace(type="web_search_tool_result_error", error_code="max_uses_exceeded"),
+    )
+    event = unittest.mock.Mock(type="content_block_start", index=0, content_block=error_block)
+    anthropic_client.messages.stream.return_value = generate_mock_stream_context(
+        [event], final_message=mock_final_message()
+    )
+
+    await alist(model.stream([{"role": "user", "content": [{"text": "hi"}]}]))
+
+    assert "error_code=<max_uses_exceeded>" in caplog.text

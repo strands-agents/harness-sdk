@@ -1,6 +1,7 @@
 """Anthropic Claude model provider.
 
 - Docs: https://docs.anthropic.com/claude/reference/getting-started-with-the-api
+- Server tools: https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview
 """
 
 import base64
@@ -8,6 +9,7 @@ import json
 import logging
 from collections.abc import AsyncGenerator
 from typing import Any, TypeVar, cast
+from urllib.parse import urlparse
 
 import anthropic
 from pydantic import BaseModel
@@ -15,10 +17,18 @@ from typing_extensions import Required, Unpack, override
 
 from ..event_loop.streaming import process_stream
 from ..tools.structured_output.structured_output_utils import convert_pydantic_to_tool_spec
+from ..types.citations import (
+    DocumentCharLocationDict,
+    DocumentChunkLocationDict,
+    DocumentPageLocationDict,
+    SearchResultLocationDict,
+    WebLocation,
+    WebLocationDict,
+)
 from ..types.content import ContentBlock, Message, Messages, SystemContentBlock
 from ..types.event_loop import Usage
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException
-from ..types.streaming import StreamEvent
+from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceToolDict, ToolSpec
 from ._defaults import resolve_config_metadata
 from ._validation import _has_location_source, _warn_on_deprecated_cache_tools, validate_config_keys
@@ -27,6 +37,27 @@ from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
+
+# Content blocks for tools Anthropic executes server side. They have no toolUse/toolResult equivalent
+# (the agent never runs them), so they are not streamed.
+_SERVER_TOOL_BLOCK_TYPES = frozenset(
+    {
+        "bash_code_execution_tool_result",
+        "code_execution_tool_result",
+        "container_upload",
+        "mcp_tool_result",
+        "mcp_tool_use",
+        "server_tool_use",
+        "text_editor_code_execution_tool_result",
+        "tool_search_tool_result",
+        "web_fetch_tool_result",
+        "web_search_tool_result",
+    }
+)
+
+# Anthropic pauses a long server-side tool turn with stop_reason=pause_turn and expects the paused
+# assistant message to be sent back as-is to resume it. Bounds how many times stream() does so.
+_MAX_PAUSE_TURN_CONTINUATIONS = 10
 
 _IMAGE_MEDIA_TYPES = {
     "gif": "image/gif",
@@ -79,6 +110,11 @@ class AnthropicModel(Model):
                 https://docs.anthropic.com/en/docs/about-claude/models/all-models.
             params: Additional model parameters (e.g., temperature).
                 For a complete list of supported parameters, see https://docs.anthropic.com/en/api/messages.
+            anthropic_tools: Anthropic-specific server-side tools that are not function tools
+                (e.g., web_search, web_fetch, code_execution). Appended alongside the agent's function tools.
+                Use the standard tools interface for function calling tools.
+                For a complete list of supported tools, see
+                https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview
             use_native_token_count: Whether to use the native Anthropic count_tokens API.
                 When True, count_tokens() calls the Anthropic API for accurate counts.
                 When False (default), skips the API call and uses the local estimator.
@@ -89,6 +125,7 @@ class AnthropicModel(Model):
         max_tokens: Required[int]
         model_id: Required[str]
         params: dict[str, Any] | None
+        anthropic_tools: list[dict[str, Any]]
         use_native_token_count: bool
 
     def __init__(self, *, client_args: dict[str, Any] | None = None, **model_config: Unpack[AnthropicConfig]):
@@ -103,6 +140,9 @@ class AnthropicModel(Model):
         _warn_on_deprecated_cache_tools(model_config, stacklevel=3)
         self.config = AnthropicModel.AnthropicConfig(**model_config)
 
+        if "anthropic_tools" in self.config:
+            self._validate_anthropic_tools(self.config["anthropic_tools"])
+
         logger.debug("config=<%s> | initializing", self.config)
 
         client_args = client_args or {}
@@ -116,6 +156,10 @@ class AnthropicModel(Model):
             **model_config: Configuration overrides.
         """
         validate_config_keys(model_config, self.AnthropicConfig)
+
+        if "anthropic_tools" in model_config:
+            self._validate_anthropic_tools(model_config["anthropic_tools"])
+
         _warn_on_deprecated_cache_tools(model_config, stacklevel=3)
         self.config.update(model_config)
 
@@ -193,6 +237,10 @@ class AnthropicModel(Model):
 
         if "text" in content:
             return {"text": content["text"], "type": "text"}
+
+        if "citationsContent" in content:
+            text = "".join(c["text"] for c in content["citationsContent"].get("content", []) if "text" in c)
+            return {"text": text, "type": "text"}
 
         if "toolUse" in content:
             return {
@@ -453,6 +501,13 @@ class AnthropicModel(Model):
             for tool_spec in tool_specs or []
         ]
 
+        params = self.config.get("params") or {}
+        # Forcing a tool means this turn must call a function tool, so server tools are left out.
+        if tool_choice is None or "auto" in tool_choice:
+            # Copied so the cache_control below never lands on the caller's config.
+            tools.extend(dict(tool) for tool in self.config.get("anthropic_tools") or [])
+            tools.extend(dict(tool) for tool in params.get("tools") or [])
+
         # A cache_control on the final tool caches all of them, so one cache point suffices.
         if tools and (cache_control := self._resolve_tools_cache()):
             tools[-1]["cache_control"] = cache_control
@@ -463,10 +518,10 @@ class AnthropicModel(Model):
             "max_tokens": self.config["max_tokens"],
             "messages": self._format_request_messages(messages, cache_target_idx, dynamic_trailing_blocks),
             "model": self.config["model_id"],
-            "tools": tools,
             **(self._format_tool_choice(tool_choice)),
             **({"system": system} if system else {}),
-            **(self.config.get("params") or {}),
+            **params,
+            "tools": tools,
         }
 
         return request
@@ -516,6 +571,110 @@ class AnthropicModel(Model):
         if auto_inject and not placed:
             formatted[-1]["cache_control"] = self._format_cache_control(managed_ttl)
         return formatted
+
+    @staticmethod
+    def _validate_anthropic_tools(anthropic_tools: list[dict[str, Any]]) -> None:
+        """Validate that anthropic_tools does not contain function tool definitions.
+
+        Args:
+            anthropic_tools: List of Anthropic tools to validate.
+
+        Raises:
+            ValueError: If any tool carries an input_schema.
+        """
+        for tool in anthropic_tools:
+            if "input_schema" in tool:
+                raise ValueError(
+                    "anthropic_tools should not contain function tool definitions. "
+                    "Use the standard tools interface for function calling tools. "
+                    "anthropic_tools is reserved for Anthropic server-side tools like "
+                    "web_search, web_fetch, and code_execution."
+                )
+
+    @staticmethod
+    def _format_citation(citation: dict[str, Any]) -> CitationsDelta:
+        """Format an Anthropic citation into a Strands citation delta.
+
+        Args:
+            citation: An Anthropic citation object from a `citations_delta` event.
+
+        Returns:
+            The formatted citation delta.
+        """
+        formatted: CitationsDelta = {}
+
+        if title := citation.get("title") or citation.get("document_title"):
+            formatted["title"] = title
+
+        if cited_text := citation.get("cited_text"):
+            formatted["sourceContent"] = [{"text": cited_text}]
+
+        match citation.get("type"):
+            case "web_search_result_location":
+                url = citation.get("url") or ""
+                web: WebLocation = {"url": url}
+                if domain := urlparse(url).hostname:
+                    web["domain"] = domain
+                web_location: WebLocationDict = {"web": web}
+                formatted["location"] = web_location
+
+            case "search_result_location":
+                search_location: SearchResultLocationDict = {
+                    "searchResultLocation": {
+                        "searchResultIndex": citation.get("search_result_index", 0),
+                        "start": citation.get("start_block_index", 0),
+                        "end": citation.get("end_block_index", 0),
+                    }
+                }
+                formatted["location"] = search_location
+
+            case "char_location":
+                char_location: DocumentCharLocationDict = {
+                    "documentChar": {
+                        "documentIndex": citation.get("document_index", 0),
+                        "start": citation.get("start_char_index", 0),
+                        "end": citation.get("end_char_index", 0),
+                    }
+                }
+                formatted["location"] = char_location
+
+            case "page_location":
+                page_location: DocumentPageLocationDict = {
+                    "documentPage": {
+                        "documentIndex": citation.get("document_index", 0),
+                        "start": citation.get("start_page_number", 0),
+                        "end": citation.get("end_page_number", 0),
+                    }
+                }
+                formatted["location"] = page_location
+
+            case "content_block_location":
+                chunk_location: DocumentChunkLocationDict = {
+                    "documentChunk": {
+                        "documentIndex": citation.get("document_index", 0),
+                        "start": citation.get("start_block_index", 0),
+                        "end": citation.get("end_block_index", 0),
+                    }
+                }
+                formatted["location"] = chunk_location
+
+            case unknown_type:
+                logger.warning("citation_type=<%s> | unsupported citation location | skipping", unknown_type)
+
+        return formatted
+
+    @staticmethod
+    def _log_server_tool_block(content_block: Any) -> None:
+        """Log a skipped server-side tool block, at warning level when the tool returned an error.
+
+        Args:
+            content_block: The `content_block` of a `content_block_start` event.
+        """
+        error_code = getattr(getattr(content_block, "content", None), "error_code", None)
+        if error_code is not None:
+            logger.warning("block_type=<%s>, error_code=<%s> | server-side tool failed", content_block.type, error_code)
+        else:
+            logger.debug("block_type=<%s> | skipping server-side tool block", content_block.type)
 
     @staticmethod
     def _format_tool_choice(tool_choice: ToolChoice | None) -> dict:
@@ -612,6 +771,16 @@ class AnthropicModel(Model):
                                 "contentBlockIndex": event["index"],
                                 "delta": {
                                     "text": delta["text"],
+                                },
+                            },
+                        }
+
+                    case "citations_delta":
+                        return {
+                            "contentBlockDelta": {
+                                "contentBlockIndex": event["index"],
+                                "delta": {
+                                    "citation": self._format_citation(delta["citation"]),
                                 },
                             },
                         }
@@ -734,6 +903,7 @@ class AnthropicModel(Model):
         Raises:
             ContextWindowOverflowException: If the input exceeds the model's context window.
             ModelThrottledException: If the request is throttled by Anthropic.
+            RuntimeError: If a paused server-side tool turn is still paused after the continuation limit.
         """
         logger.debug("formatting request")
         request = self.format_request(
@@ -747,31 +917,85 @@ class AnthropicModel(Model):
         logger.debug("request=<%s>", request)
 
         logger.debug("invoking model")
+        usage: dict[str, int] = {}
+        block_index_offset = 0
+        continuations = 0
         try:
-            async with self.client.messages.stream(**request) as stream:
-                logger.debug("got response from model")
-                async for event in stream:
-                    if event.type in AnthropicModel.EVENT_TYPES:
+            while True:
+                async with self.client.messages.stream(**request) as stream:
+                    logger.debug("got response from model")
+                    server_tool_block_indexes: set[int] = set()
+                    next_block_index = block_index_offset
+                    stop_reason: str | None = None
+                    async for event in stream:
+                        if event.type not in AnthropicModel.EVENT_TYPES:
+                            continue
+                        if event.type == "message_start":
+                            if continuations == 0:
+                                yield self.format_chunk(event.model_dump())
+                            continue
                         if event.type == "message_stop":
-                            # Build dict directly to avoid Pydantic serialization warnings
-                            # when the message contains ParsedTextBlock objects (issue #1746)
-                            yield self.format_chunk(
-                                {
-                                    "type": "message_stop",
-                                    "message": {"stop_reason": event.message.stop_reason},
-                                }
-                            )
-                        elif event.type == "content_block_stop":
-                            yield self.format_chunk({"type": "content_block_stop", "index": event.index})
+                            stop_reason = event.message.stop_reason
+                            continue
+                        if event.type == "content_block_start" and event.content_block.type in _SERVER_TOOL_BLOCK_TYPES:
+                            server_tool_block_indexes.add(event.index)
+                            self._log_server_tool_block(event.content_block)
+                            continue
+                        if event.type == "content_block_delta" and event.index in server_tool_block_indexes:
+                            continue
+                        if event.type == "content_block_stop":
+                            if event.index in server_tool_block_indexes:
+                                server_tool_block_indexes.discard(event.index)
+                                continue
+                            payload: dict[str, Any] = {"type": "content_block_stop", "index": event.index}
                         else:
-                            yield self.format_chunk(event.model_dump())
+                            payload = event.model_dump()
 
-                try:
-                    message_snapshot = await stream.get_final_message()
-                except AssertionError as e:
-                    logger.warning("error=<%s> | failed to retrieve message snapshot, usage metadata unavailable", e)
-                else:
-                    yield self.format_chunk({"type": "metadata", "usage": message_snapshot.usage.model_dump()})
+                        payload["index"] += block_index_offset
+                        next_block_index = max(next_block_index, payload["index"] + 1)
+                        yield self.format_chunk(payload)
+
+                    message_snapshot = None
+                    try:
+                        message_snapshot = await stream.get_final_message()
+                    except AssertionError as e:
+                        logger.warning(
+                            "error=<%s> | failed to retrieve message snapshot, usage metadata unavailable", e
+                        )
+                    else:
+                        for key, value in message_snapshot.usage.model_dump().items():
+                            if isinstance(value, int):
+                                usage[key] = usage.get(key, 0) + value
+
+                if stop_reason == "pause_turn":
+                    if continuations >= _MAX_PAUSE_TURN_CONTINUATIONS:
+                        raise RuntimeError(
+                            f"server-side tool turn did not complete after {continuations} continuations"
+                        )
+                    if message_snapshot is not None:
+                        continuations += 1
+                        block_index_offset = next_block_index
+                        request = {
+                            **request,
+                            "messages": [
+                                *request["messages"],
+                                {"role": "assistant", "content": message_snapshot.content},
+                            ],
+                        }
+                        logger.debug("continuation=<%d> | resuming paused server-side tool turn", continuations)
+                        continue
+                    logger.warning(
+                        "continuations=<%d> | paused server-side tool turn not resumed, ending turn", continuations
+                    )
+                    stop_reason = "end_turn"
+
+                if stop_reason is not None:
+                    # Build dict directly to avoid Pydantic serialization warnings
+                    # when the message contains ParsedTextBlock objects (issue #1746)
+                    yield self.format_chunk({"type": "message_stop", "message": {"stop_reason": stop_reason}})
+                if usage:
+                    yield self.format_chunk({"type": "metadata", "usage": usage})
+                break
 
         except anthropic.RateLimitError as error:
             raise ModelThrottledException(str(error)) from error
