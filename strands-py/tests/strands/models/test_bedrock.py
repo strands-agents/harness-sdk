@@ -1580,6 +1580,157 @@ async def test_stream_output_no_blocked_guardrails_doesnt_redact(
 
 
 @pytest.mark.asyncio
+async def test_stream_input_guardrail_blocks_without_detected_field(
+    bedrock_client, model, messages, tool_spec, model_id, additional_request_fields, alist
+):
+    """Real Bedrock traces omit the optional `detected` field on a BLOCKED policy.
+
+    Per the Bedrock Guardrail API reference (GuardrailTopic, GuardrailContentFilter,
+    GuardrailCustomWord, GuardrailManagedWord, GuardrailPiiEntityFilter, GuardrailRegexFilter,
+    GuardrailContextualGroundingFilter), `action` is Required: Yes and `detected` is Required: No.
+    A trace with `action == "BLOCKED"` and no `detected` key must still redact the input.
+
+    Guards against https://github.com/strands-agents/harness-sdk/issues/3617.
+    """
+    metadata_event = {
+        "metadata": {
+            "usage": {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0},
+            "metrics": {"latencyMs": 245},
+            "trace": {
+                "guardrail": {
+                    "inputAssessment": {
+                        "3e59qlue4hag": {
+                            "topicPolicy": {
+                                "topics": [
+                                    {
+                                        "name": "Heavy metal",
+                                        "type": "DENY",
+                                        # NOTE: no `detected` key at all
+                                        "action": "BLOCKED",
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                }
+            },
+        }
+    }
+    bedrock_client.converse_stream.return_value = {"stream": [metadata_event]}
+
+    model.update_config(additional_request_fields=additional_request_fields)
+    response = model.stream(messages, [tool_spec])
+
+    tru_chunks = await alist(response)
+    exp_chunks = [
+        {"redactContent": {"redactUserContentMessage": "[User input redacted.]"}},
+        metadata_event,
+    ]
+
+    assert tru_chunks == exp_chunks
+
+
+@pytest.mark.asyncio
+async def test_stream_output_guardrail_blocks_without_detected_field(
+    bedrock_client, model, messages, tool_spec, model_id, additional_request_fields, alist
+):
+    """Output assessment with BLOCKED + no `detected` field must redact both input and output.
+
+    Same AWS schema rule as test_stream_input_guardrail_blocks_without_detected_field, but on
+    the output side. Verifies the predicate treats action == "BLOCKED" as blocked regardless of
+    whether `detected` is present.
+
+    Guards against https://github.com/strands-agents/harness-sdk/issues/3617.
+    """
+    model.update_config(guardrail_redact_output=True)
+    metadata_event = {
+        "metadata": {
+            "usage": {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0},
+            "metrics": {"latencyMs": 245},
+            "trace": {
+                "guardrail": {
+                    "outputAssessments": {
+                        "3e59qlue4hag": [
+                            {
+                                "wordPolicy": {
+                                    "customWords": [
+                                        {
+                                            "match": "CACTUS",
+                                            # NOTE: no `detected` key at all
+                                            "action": "BLOCKED",
+                                        }
+                                    ]
+                                },
+                            }
+                        ]
+                    },
+                }
+            },
+        }
+    }
+    bedrock_client.converse_stream.return_value = {"stream": [metadata_event]}
+
+    model.update_config(additional_request_fields=additional_request_fields)
+    response = model.stream(messages, [tool_spec])
+
+    tru_chunks = await alist(response)
+    exp_chunks = [
+        {"redactContent": {"redactUserContentMessage": "[User input redacted.]"}},
+        {"redactContent": {"redactAssistantContentMessage": "[Assistant output redacted.]"}},
+        metadata_event,
+    ]
+
+    assert tru_chunks == exp_chunks
+
+
+@pytest.mark.asyncio
+async def test_stream_guardrail_detected_false_with_none_action_does_not_redact(
+    bedrock_client, model, messages, tool_spec, model_id, additional_request_fields, alist
+):
+    """An explicit `detected: False` must not be treated as blocked even when other fields vary.
+
+    The fix relaxed the predicate to `detected is not False` so that an explicit
+    `detected: False` keeps the documented NONE semantics (no redaction). A shape that has
+    `detected: False` and no other BLOCKED action in the tree must produce no redaction events.
+
+    Guards against https://github.com/strands-agents/harness-sdk/issues/3617.
+    """
+    metadata_event = {
+        "metadata": {
+            "usage": {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0},
+            "metrics": {"latencyMs": 245},
+            "trace": {
+                "guardrail": {
+                    "inputAssessment": {
+                        "3e59qlue4hag": {
+                            "contentPolicy": {
+                                "filters": [
+                                    {
+                                        "action": "NONE",
+                                        "confidence": "NONE",
+                                        "detected": False,
+                                        "filterStrength": "HIGH",
+                                        "type": "VIOLENCE",
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                }
+            },
+        }
+    }
+    bedrock_client.converse_stream.return_value = {"stream": [metadata_event]}
+
+    model.update_config(additional_request_fields=additional_request_fields)
+    response = model.stream(messages, [tool_spec])
+
+    tru_chunks = await alist(response)
+    assert tru_chunks == [metadata_event]
+    assert not any("redactContent" in chunk for chunk in tru_chunks)
+
+
+@pytest.mark.asyncio
 async def test_stream_stream_guardrails_redacts_without_trace(
     bedrock_client, model, messages, tool_spec, model_id, additional_request_fields, alist
 ):

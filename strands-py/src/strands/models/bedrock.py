@@ -1673,19 +1673,26 @@ class BedrockModel(Model):
             yield metadata
 
     def _find_detected_and_blocked_policy(self, input: Any) -> bool:
-        """Recursively checks if the assessment contains a detected and blocked guardrail.
+        """Recursively checks if the assessment contains a blocked guardrail.
 
         Args:
             input: The assessment to check.
 
         Returns:
-            True if the input contains a detected and blocked guardrail, False otherwise.
+            True if the input contains a blocked guardrail, False otherwise.
 
         """
         # Check if input is a dictionary
         if isinstance(input, dict):
-            # Check if current dictionary has action: BLOCKED and detected: true
-            if input.get("action") == "BLOCKED" and input.get("detected") and isinstance(input.get("detected"), bool):
+            # Per AWS Bedrock Guardrail APIs (e.g. GuardrailTopic, GuardrailContentFilter,
+            # GuardrailCustomWord, GuardrailManagedWord, GuardrailPiiEntityFilter,
+            # GuardrailRegexFilter, GuardrailContextualGroundingFilter), `action` is
+            # Required: Yes and `detected` is Required: No. Real Bedrock Converse traces
+            # for actually-blocked content omit the `detected` field entirely. Treat
+            # action == "BLOCKED" as blocked regardless of `detected`, while keeping
+            # an explicit `detected: False` as not blocked to match documented NONE
+            # semantics.
+            if input.get("action") == "BLOCKED" and input.get("detected") is not False:
                 return True
 
             # Otherwise, recursively check all values in the dictionary
