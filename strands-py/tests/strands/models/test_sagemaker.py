@@ -376,6 +376,41 @@ class TestSageMakerAIModel:
         payload = json.loads(request["Body"])
         assert payload.get("extra_payload_key") == "extra_payload_value"
 
+    def test_format_request_converts_tool_results_to_user_messages(
+        self, boto_session, endpoint_config, payload_config
+    ) -> None:
+        """Tool results configured as user messages must be converted in the request payload (#3299)."""
+        payload_config["tool_results_as_user_messages"] = True
+        model = SageMakerAIModel(
+            boto_session=boto_session,
+            endpoint_config=endpoint_config,
+            payload_config=payload_config,
+        )
+        messages: Messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "toolResult": {
+                            "toolUseId": "tool-call-id",
+                            "status": "success",
+                            "content": [{"text": "tool output"}],
+                        }
+                    }
+                ],
+            }
+        ]
+
+        request = model.format_request(messages)
+        tru_messages = json.loads(request["Body"])["messages"]
+        exp_messages = [
+            {
+                "role": "user",
+                "content": "Tool call ID 'tool-call-id' returned: tool output",
+            }
+        ]
+        assert tru_messages == exp_messages
+
     @pytest.mark.asyncio
     async def test_stream_with_streaming_enabled(self, sagemaker_client, model, messages):
         """Test streaming response with streaming enabled."""

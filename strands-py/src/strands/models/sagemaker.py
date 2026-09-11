@@ -341,7 +341,8 @@ class SageMakerAIModel(OpenAIModel):
                 # Convert tool message to user message
                 tool_call_id = message.get("tool_call_id", "ABCDEF")
                 content = message.get("content", "")
-                message = {"role": "user", "content": f"Tool call ID '{tool_call_id}' returned: {content}"}
+                message.clear()
+                message.update(role="user", content=f"Tool call ID '{tool_call_id}' returned: {content}")
             # Cannot have both reasoning_text and text - if "text", content becomes an array of content["text"]
             for c in message.get("content", []):
                 if "text" in c:
