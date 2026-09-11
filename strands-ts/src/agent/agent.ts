@@ -2120,6 +2120,8 @@ export class Agent implements LocalAgent, InvokableAgent {
 
     let attemptCount = 1
     while (true) {
+      // An abort during retry backoff must stop before another model attempt begins.
+      this._throwIfCancelled()
       const selectedModel = this._modelForAttempt(invocationState)
       let projectedInputTokens: number | undefined
       try {
