@@ -32,6 +32,33 @@ await agent.invoke('Add "- Create a CLI tool" to the ideas notebook')
 await agent.invoke('Read the ideas notebook')
 ```
 
+### Customising with `makeNotebook`
+
+Use `makeNotebook` to configure the tool's name, description, or per-notebook size cap before passing it to the agent.
+
+```typescript
+import { makeNotebook } from '@strands-agents/sdk/vended-tools/notebook'
+
+// Custom name and a 64 KiB cap per notebook
+const scratchpad = makeNotebook({
+  name: 'scratchpad',
+  description: 'A scratchpad for working notes.',
+  maxNotebookSizeBytes: 65_536,
+})
+
+const agent = new Agent({
+  model: new BedrockModel({
+    region: 'us-east-1',
+  }),
+  tools: [scratchpad],
+})
+```
+
+`makeNotebook` validates its arguments at call time:
+
+- `name` must be a non-empty string.
+- `maxNotebookSizeBytes` must be a positive integer. Defaults to 1 MiB (1,048,576 bytes).
+
 ### State Persistence
 
 The notebook tool automatically persists state within an agent session:
@@ -152,10 +179,27 @@ const content = await notebook.invoke(
 - **Automatic Persistence**: State persists within agent sessions automatically
 - **Natural Language**: Interact with notebooks using natural language through the agent
 - **State Management**: Save and restore notebook state across application restarts
+- **Size Limits**: Configurable per-notebook size cap (default 1 MiB) to prevent unbounded state growth
 - **Type Safety**: Full TypeScript support with runtime validation
 - **Universal**: Works in both browser and server environments
 
 ## API Reference
+
+### `makeNotebook(options?)`
+
+Creates a notebook tool instance.
+
+| Option                 | Type     | Default              | Description                                                                |
+| ---------------------- | -------- | -------------------- | -------------------------------------------------------------------------- |
+| `name`                 | `string` | `"notebook"`         | Tool name exposed to the model. Must be non-empty.                         |
+| `description`          | `string` | Built-in description | Tool description shown to the model.                                       |
+| `maxNotebookSizeBytes` | `number` | `1_048_576`          | Maximum UTF-8 byte size for a single notebook. Must be a positive integer. |
+
+The size cap is enforced after `create` and `write` operations (the only two that can grow a notebook). `clear` is never capped. If content would exceed the cap, the operation throws before persisting state.
+
+### `notebook`
+
+The default export — equivalent to `makeNotebook()` with all defaults.
 
 ### Input Schema
 
