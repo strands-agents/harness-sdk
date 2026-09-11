@@ -100,6 +100,67 @@ async def test_metadata_populated_on_assistant_message(agent, model, agenerator,
 
 
 @pytest.mark.asyncio
+async def test_trace_metadata_populated_on_assistant_message(agent, model, agenerator, alist):
+    """Trace metadata (e.g. guardrail assessments) should survive onto the assistant message.
+
+    Regression for #4015: the trace portion of the model metadata event was dropped so hooks
+    (via AfterModelCallEvent.ModelStopResponse.message) could not see guardrail results.
+    """
+    trace = {
+        "guardrail": {
+            "inputAssessment": {"gid": {"actionReason": "No action."}},
+        }
+    }
+    model.stream.return_value = agenerator(
+        [
+            {"contentBlockDelta": {"delta": {"text": "response"}}},
+            {"contentBlockStop": {}},
+            {
+                "metadata": {
+                    "usage": {"inputTokens": 42, "outputTokens": 10, "totalTokens": 52},
+                    "metrics": {"latencyMs": 200},
+                    "trace": trace,
+                }
+            },
+        ]
+    )
+
+    stream = strands.event_loop.event_loop.event_loop_cycle(agent=agent, invocation_state={})
+    await alist(stream)
+
+    assistant_msg = agent.messages[-1]
+    assert assistant_msg["role"] == "assistant"
+    meta = assistant_msg["metadata"]
+    # usage/metrics still populated as before
+    assert meta["usage"]["totalTokens"] == 52
+    assert meta["metrics"]["latencyMs"] == 200
+    # trace now preserved
+    assert meta["trace"] == trace
+
+
+@pytest.mark.asyncio
+async def test_metadata_has_no_trace_key_when_absent(agent, model, agenerator, alist):
+    """When the model emits no trace, the assistant message metadata must not gain a trace key."""
+    model.stream.return_value = agenerator(
+        [
+            {"contentBlockDelta": {"delta": {"text": "response"}}},
+            {"contentBlockStop": {}},
+            {
+                "metadata": {
+                    "usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2},
+                    "metrics": {"latencyMs": 10},
+                }
+            },
+        ]
+    )
+
+    stream = strands.event_loop.event_loop.event_loop_cycle(agent=agent, invocation_state={})
+    await alist(stream)
+
+    assert "trace" not in agent.messages[-1]["metadata"]
+
+
+@pytest.mark.asyncio
 async def test_metadata_has_default_usage_when_no_metadata_event(agent, model, agenerator, alist):
     """When no metadata event is in the stream, metadata should still be set with defaults."""
     model.stream.return_value = agenerator(

@@ -39,7 +39,7 @@ from ..types._events import (
     TypedEvent,
 )
 from ..types.agent import Limits
-from ..types.content import Message, Messages, split_system_prompt
+from ..types.content import Message, MessageMetadata, Messages, split_system_prompt
 from ..types.event_loop import Metrics, Usage
 from ..types.exceptions import (
     ContextWindowOverflowException,
@@ -629,10 +629,16 @@ async def _handle_model_execution(
 
             # Attach metadata to the assistant message immediately so it's
             # available to all downstream consumers (hooks, events, state).
-            message["metadata"] = {
+            metadata: MessageMetadata = {
                 "usage": usage,
                 "metrics": metrics,
             }
+            # Preserve any trace captured during streaming (e.g. Bedrock guardrail
+            # assessments) so hooks can inspect it via AfterModelCallEvent (#4015).
+            existing_metadata = message.get("metadata")
+            if existing_metadata and "trace" in existing_metadata:
+                metadata["trace"] = existing_metadata["trace"]
+            message["metadata"] = metadata
 
             after_model_call_event = AfterModelCallEvent(
                 agent=agent,
