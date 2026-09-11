@@ -132,19 +132,17 @@ def normalize_schema(schema: dict[str, Any], *, _depth: int = 0) -> dict[str, An
     if _depth > _MAX_SCHEMA_DEPTH:
         raise ValueError(f"tool inputSchema nesting exceeds {_MAX_SCHEMA_DEPTH} levels")
 
-    # Start with a complete copy to preserve all existing properties
+    # Copy "properties" too: dict.copy() is shallow, so it would otherwise still alias the caller's.
     normalized = schema.copy()
+    normalized["properties"] = dict(normalized.get("properties", {}))
 
     # Ensure essential structure exists
     normalized.setdefault("type", "object")
-    normalized.setdefault("properties", {})
     normalized.setdefault("required", [])
 
     # Process properties recursively
-    if "properties" in normalized:
-        properties = normalized["properties"]
-        for prop_name, prop_def in properties.items():
-            normalized["properties"][prop_name] = _normalize_property(prop_name, prop_def, _depth=_depth)
+    for prop_name, prop_def in normalized["properties"].items():
+        normalized["properties"][prop_name] = _normalize_property(prop_name, prop_def, _depth=_depth)
 
     return normalized
 
@@ -166,6 +164,8 @@ def normalize_tool_spec(tool_spec: ToolSpec) -> ToolSpec:
     # Handle inputSchema
     if "inputSchema" in normalized:
         if isinstance(normalized["inputSchema"], dict):
+            # Copy inputSchema too, for the same shallow-copy reason as above.
+            normalized["inputSchema"] = dict(normalized["inputSchema"])
             if "json" in normalized["inputSchema"]:
                 # Schema is already in correct format, just normalize inner schema
                 normalized["inputSchema"]["json"] = normalize_schema(normalized["inputSchema"]["json"])
