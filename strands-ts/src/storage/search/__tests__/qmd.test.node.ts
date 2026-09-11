@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import type { LocalFileStorage } from '../../local-file-storage.js'
 import { QmdSearchStrategy } from '../qmd.js'
 
 vi.mock('@tobilu/qmd', () => ({
@@ -24,7 +25,7 @@ describe('QmdSearchStrategy', () => {
     read: vi.fn(),
     delete: vi.fn(),
     list: vi.fn(),
-  }
+  } as unknown as LocalFileStorage
 
   beforeEach(async () => {
     vi.clearAllMocks()
@@ -99,15 +100,6 @@ describe('QmdSearchStrategy', () => {
 
       expect(results).toEqual([])
       expect(mockQmdStore.searchLex).not.toHaveBeenCalled()
-    })
-
-    it('throws when storage has no baseDir', async () => {
-      const strategy = new QmdSearchStrategy()
-      const storageWithoutPath = { write: vi.fn(), read: vi.fn(), delete: vi.fn(), list: vi.fn() }
-
-      await expect(strategy.search(storageWithoutPath, 'test')).rejects.toThrow(
-        'QmdSearchStrategy requires a storage backend with a baseDir property'
-      )
     })
   })
 

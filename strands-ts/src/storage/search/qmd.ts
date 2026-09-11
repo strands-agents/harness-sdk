@@ -1,4 +1,5 @@
-import type { Storage, StorageSearchResult } from '../storage.js'
+import type { LocalFileStorage } from '../local-file-storage.js'
+import type { StorageSearchResult } from '../storage.js'
 import type { SearchStrategy } from './types.js'
 
 import { STOP_WORDS, tokenize } from './keyword.js'
@@ -20,8 +21,7 @@ export interface QmdSearchStrategyConfig {
  * document frequency, and document length normalization.
  *
  * Works only with {@link LocalFileStorage} — reads `baseDir` from the storage
- * instance to know where files live on disk. Throws if passed a storage backend
- * without a `baseDir` property.
+ * instance to know where files live on disk.
  *
  * Requires `@tobilu/qmd` as a peer dependency.
  *
@@ -39,7 +39,7 @@ export interface QmdSearchStrategyConfig {
  * const results = await store.search('authentication flow')
  * ```
  */
-export class QmdSearchStrategy implements SearchStrategy {
+export class QmdSearchStrategy implements SearchStrategy<LocalFileStorage> {
   private _store: QmdStore | undefined
   private _storagePath: string | undefined
   private readonly _config: QmdSearchStrategyConfig
@@ -60,7 +60,7 @@ export class QmdSearchStrategy implements SearchStrategy {
    * @returns Matched keys with BM25 relevance scores, ranked best-first
    * @throws Error if storage is not a filesystem storage or `@tobilu/qmd` is not installed
    */
-  async search(storage: Storage, query: string): Promise<StorageSearchResult[]> {
+  async search(storage: LocalFileStorage, query: string): Promise<StorageSearchResult[]> {
     const store = await this._ensureStore(storage)
     await store.update()
     const ftsQuery = buildQuery(query)
@@ -77,7 +77,7 @@ export class QmdSearchStrategy implements SearchStrategy {
    *
    * @param storage - A LocalFileStorage instance
    */
-  async update(storage: Storage): Promise<void> {
+  async update(storage: LocalFileStorage): Promise<void> {
     const store = await this._ensureStore(storage)
     await store.update()
   }
@@ -93,7 +93,7 @@ export class QmdSearchStrategy implements SearchStrategy {
     }
   }
 
-  private async _ensureStore(storage: Storage): Promise<QmdStore> {
+  private async _ensureStore(storage: LocalFileStorage): Promise<QmdStore> {
     const storagePath = this._resolveStoragePath(storage)
     if (this._store && this._storagePath === storagePath) return this._store
     if (this._store) await this.close()
@@ -122,10 +122,8 @@ export class QmdSearchStrategy implements SearchStrategy {
     return this._store
   }
 
-  private _resolveStoragePath(storage: Storage): string {
-    const baseDir = (storage as Storage & { baseDir?: string }).baseDir
-    if (typeof baseDir === 'string') return baseDir
-    throw new Error('QmdSearchStrategy requires a storage backend with a baseDir property (e.g. LocalFileStorage)')
+  private _resolveStoragePath(storage: LocalFileStorage): string {
+    return storage.baseDir
   }
 }
 

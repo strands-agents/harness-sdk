@@ -1,3 +1,4 @@
+import type { SearchStrategy } from './search/types.js'
 import type { Storage, StorageSearchResult } from './storage.js'
 
 import { EPHEMERAL, namespace, normalizeKey, normalizePrefix } from './storage.js'
@@ -27,6 +28,15 @@ import { KeywordSearchStrategy } from './search/keyword.js'
 export class InMemoryStorage implements Storage {
   readonly [EPHEMERAL] = true as const
   private readonly _store = new Map<string, Uint8Array>()
+  private readonly _searchStrategy: SearchStrategy<InMemoryStorage> | undefined
+
+  /**
+   * @param searchStrategy - Optional search strategy. When set, `write()` indexes entries
+   *   and `search()` delegates to the strategy instead of the default keyword scan.
+   */
+  constructor(searchStrategy?: SearchStrategy<InMemoryStorage>) {
+    this._searchStrategy = searchStrategy
+  }
 
   /**
    * Stores `data` under `key`, overwriting any existing value.
@@ -37,7 +47,11 @@ export class InMemoryStorage implements Storage {
    * @throws {@link StorageError} if the key is empty or contains `..` segments
    */
   async write(key: string, data: Uint8Array): Promise<void> {
-    this._store.set(normalizeKey(key), data.slice())
+    const normalized = normalizeKey(key)
+    this._store.set(normalized, data.slice())
+    if (this._searchStrategy) {
+      await this._searchStrategy.index?.(this, normalized, data)
+    }
   }
 
   /**
@@ -92,6 +106,9 @@ export class InMemoryStorage implements Storage {
    * @returns All matches with relevance scores, ranked best-first
    */
   async search(query: string): Promise<StorageSearchResult[]> {
+    if (this._searchStrategy) {
+      return this._searchStrategy.search(this, query)
+    }
     return KeywordSearchStrategy.search(this, query)
   }
 

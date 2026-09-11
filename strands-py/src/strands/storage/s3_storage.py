@@ -10,6 +10,7 @@ from ..types.exceptions import StorageError
 from .storage import _NamespacedStorage, _normalize_key, _normalize_prefix
 
 if TYPE_CHECKING:
+    from .search.types import SearchStrategy
     from .storage import StorageSearchResult
 
 _S3_PAGE_SIZE = 1000
@@ -38,6 +39,7 @@ class S3Storage:
         region_name: str | None = None,
         boto_session: Any = None,
         boto_client_config: Any = None,
+        search_strategy: SearchStrategy[S3Storage] | None = None,
     ) -> None:
         """Initialize S3 storage.
 
@@ -47,6 +49,9 @@ class S3Storage:
             region_name: AWS region override.
             boto_session: Pre-configured boto3 session. Cannot combine with region_name.
             boto_client_config: Botocore Config object for the S3 client.
+            search_strategy: Optional search strategy. When set, ``write()``
+                automatically indexes entries and ``search()`` delegates to the
+                strategy instead of the default keyword scan.
 
         Raises:
             StorageError: If both region_name and boto_session are provided.
@@ -60,6 +65,7 @@ class S3Storage:
         self._region_name = region_name
         self._boto_session = boto_session
         self._boto_client_config = boto_client_config
+        self._search_strategy = search_strategy
         self._client: Any = None
 
     async def write(self, key: str, data: bytes) -> None:
@@ -80,6 +86,12 @@ class S3Storage:
             await asyncio.to_thread(client.put_object, Bucket=self._bucket, Key=object_key, Body=data)
         except Exception as error:
             raise StorageError(f"Failed to write '{key}' to S3") from error
+
+        if self._search_strategy is not None:
+            try:
+                await self._search_strategy.index(self, normalized, data)
+            except Exception as error:
+                raise StorageError(f"Wrote '{key}' but indexing failed") from error
 
     async def read(self, key: str) -> bytes | None:
         """Read an S3 object.
@@ -178,7 +190,10 @@ class S3Storage:
         return sorted(keys)
 
     async def search(self, query: str) -> builtins.list[StorageSearchResult]:
-        """Search stored content by keyword token-overlap scoring.
+        """Search stored content using the configured strategy.
+
+        Delegates to the search strategy when one is set, otherwise falls back
+        to keyword token-overlap scoring.
 
         Args:
             query: Natural-language search query.
@@ -186,6 +201,9 @@ class S3Storage:
         Returns:
             All matches with relevance scores, ranked best-first.
         """
+        if self._search_strategy is not None:
+            return await self._search_strategy.search(self, query)
+
         from .search.keyword import KeywordSearchStrategy
 
         return await KeywordSearchStrategy().search(self, query)

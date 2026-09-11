@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import builtins
 import re
-from typing import Any
+from typing import Any, Literal
 
 from ..storage import Storage, StorageSearchResult
 
@@ -58,6 +58,11 @@ class KeywordSearchStrategy:
         results = await strategy.search(storage, "dark mode toggle")
         ```
     """
+
+    requires_host_fs: Literal[False] = False
+
+    async def index(self, storage: Storage, key: str, data: bytes, **kwargs: Any) -> None:
+        """No-op — keyword search scans storage on the fly."""
 
     async def search(self, storage: Storage, query: str, **kwargs: Any) -> builtins.list[StorageSearchResult]:
         """Search content in storage by keyword token-overlap scoring.

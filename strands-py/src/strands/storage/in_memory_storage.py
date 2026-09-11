@@ -10,6 +10,7 @@ from .search.keyword import KeywordSearchStrategy
 from .storage import _EPHEMERAL, _NamespacedStorage, _normalize_key, _normalize_prefix
 
 if TYPE_CHECKING:
+    from .search.types import SearchStrategy
     from .storage import StorageSearchResult
 
 
@@ -31,10 +32,17 @@ class InMemoryStorage:
 
     _ephemeral = _EPHEMERAL
 
-    def __init__(self) -> None:
-        """Initialize an empty in-memory store."""
+    def __init__(self, *, search_strategy: SearchStrategy[InMemoryStorage] | None = None) -> None:
+        """Initialize an empty in-memory store.
+
+        Args:
+            search_strategy: Optional search strategy. When set, ``write()``
+                automatically indexes entries and ``search()`` delegates to the
+                strategy instead of the default keyword scan.
+        """
         self._store: dict[str, bytes] = {}
         self._lock = threading.Lock()
+        self._search_strategy = search_strategy
 
     async def write(self, key: str, data: bytes) -> None:
         """Store data under key, overwriting any existing value.
@@ -49,6 +57,14 @@ class InMemoryStorage:
         normalized = _normalize_key(key)
         with self._lock:
             self._store[normalized] = bytes(data)
+
+        if self._search_strategy is not None:
+            try:
+                await self._search_strategy.index(self, normalized, data)
+            except Exception as error:
+                from ..types.exceptions import StorageError
+
+                raise StorageError(f"Wrote '{key}' but indexing failed") from error
 
     async def read(self, key: str) -> bytes | None:
         """Retrieve the bytes previously stored under key.
@@ -98,7 +114,10 @@ class InMemoryStorage:
         return keys
 
     async def search(self, query: str) -> builtins.list[StorageSearchResult]:
-        """Search stored content by keyword token-overlap scoring.
+        """Search stored content using the configured strategy.
+
+        Delegates to the search strategy when one is set, otherwise falls back
+        to keyword token-overlap scoring.
 
         Args:
             query: Natural-language search query.
@@ -106,6 +125,8 @@ class InMemoryStorage:
         Returns:
             All matches with relevance scores, ranked best-first.
         """
+        if self._search_strategy is not None:
+            return await self._search_strategy.search(self, query)
         return await KeywordSearchStrategy().search(self, query)
 
     def namespace(self, prefix: str) -> _NamespacedStorage:
