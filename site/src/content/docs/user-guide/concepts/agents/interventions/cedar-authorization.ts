@@ -86,6 +86,67 @@ async function roleBasedExample() {
   // --8<-- [end:role_based]
 }
 
+async function roleEntitiesExample() {
+  // --8<-- [start:role_entities]
+  const searchTool = tool({
+    name: 'search',
+    description: 'Search for information',
+    inputSchema: z.object({ query: z.string() }),
+    callback: (input) => `Results for: ${input.query}`,
+  })
+
+  const deleteTool = tool({
+    name: 'delete_record',
+    description: 'Delete a record by ID',
+    inputSchema: z.object({ record_id: z.string() }),
+    callback: (input) => `Deleted ${input.record_id}`,
+  })
+
+  const cedar = new CedarAuthorization({
+    policies: `
+      permit(principal in Role::"admin", action, resource);
+
+      permit(principal in Role::"analyst", action == Action::"search", resource);
+    `,
+    // Role membership is fixed here, not read from the request
+    entities: [
+      { uid: { type: 'Role', id: 'admin' }, attrs: {}, parents: [] },
+      { uid: { type: 'Role', id: 'analyst' }, attrs: {}, parents: [] },
+      {
+        uid: { type: 'User', id: 'alice' },
+        attrs: {},
+        parents: [{ type: 'Role', id: 'admin' }],
+      },
+      {
+        uid: { type: 'User', id: 'bob' },
+        attrs: {},
+        parents: [{ type: 'Role', id: 'analyst' }],
+      },
+    ],
+    principalResolver: (state) => {
+      if (!state.user_id) return undefined
+      return { type: 'User', id: String(state.user_id) }
+    },
+  })
+
+  const agent = new Agent({
+    tools: [searchTool, deleteTool],
+    interventions: [cedar],
+  })
+
+  // alice is a member of Role::"admin", so any tool is permitted
+  await agent.invoke('Delete record 42', {
+    invocationState: { user_id: 'alice' },
+  })
+
+  // bob is a member of Role::"analyst", so delete_record is denied.
+  // The claimed role is ignored: no policy reads context.session.role
+  await agent.invoke('Delete record 42', {
+    invocationState: { user_id: 'bob', role: 'admin' },
+  })
+  // --8<-- [end:role_entities]
+}
+
 async function rateLimitExample() {
   // --8<-- [start:rate_limit]
   const sendEmailTool = tool({
@@ -269,6 +330,7 @@ async function hotReloadExample() {
 // suppress unused warnings
 void basicExample
 void roleBasedExample
+void roleEntitiesExample
 void rateLimitExample
 void schemaValidationExample
 void namespaceExample

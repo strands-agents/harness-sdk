@@ -70,6 +70,45 @@ For multi-tenant agents where each request carries user identity, use <Syntax py
 
 When <Syntax py="principal_resolver" ts="principalResolver" /> returns <Syntax py="None" ts="undefined" /> (no identity found), the handler denies all tool calls for that request.
 
+:::caution[Role data is only as trustworthy as its source]
+<Syntax py="invocation_state" ts="invocationState" /> is supplied by your application, and
+it is mutable — tools and hooks may write to it during an invocation, and
+<Syntax py="context_enricher" ts="contextEnricher" /> reads it again before every tool
+call.
+
+Set `role` from something you have already verified at the point you invoke the agent — a
+validated token claim, a directory lookup — and never forward a role supplied by the
+client. Where roles are stable rather than request-scoped, keep them out of the request
+entirely and put them in the entity store instead.
+:::
+
+### Roles as entities
+
+Cedar can resolve roles from the entity hierarchy rather than from context. Membership is
+fixed when you construct the handler, so nothing reachable from a request can change it:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+--8<-- "user-guide/concepts/agents/interventions/cedar-authorization.py:role_entities"
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/concepts/agents/interventions/cedar-authorization_imports.ts:role_entities_imports"
+
+--8<-- "user-guide/concepts/agents/interventions/cedar-authorization.ts:role_entities"
+```
+</Tab>
+</Tabs>
+
+Here `bob` is denied `delete_record` even though the request claims `role: "admin"`,
+because no policy reads `context.session.role`. Prefer this form when roles change rarely
+and are owned by your application; prefer the context form when they are genuinely
+per-request.
+
 ## Rate limiting
 
 Cedar policies can reference `context.session.call_count`, which tracks how many times each tool has been invoked successfully during the session:

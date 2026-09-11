@@ -130,6 +130,97 @@ def role_based_example():
     # --8<-- [end:role_based]
 
 
+def role_entities_example():
+    # --8<-- [start:role_entities]
+    from strands import Agent, tool
+    from strands.vended_interventions.cedar import (
+        CedarAuthorization,
+    )
+
+    @tool
+    def search(query: str) -> str:
+        """Search for information."""
+        return f"Results for: {query}"
+
+    @tool
+    def delete_record(record_id: str) -> str:
+        """Delete a record by ID."""
+        return f"Deleted {record_id}"
+
+    cedar = CedarAuthorization(
+        policies="""
+          permit(
+            principal in Role::"admin",
+            action,
+            resource
+          );
+
+          permit(
+            principal in Role::"analyst",
+            action == Action::"search",
+            resource
+          );
+        """,
+        # Role membership is fixed here, not read
+        # from the request
+        entities=[
+            {
+                "uid": {"type": "Role", "id": "admin"},
+                "attrs": {},
+                "parents": [],
+            },
+            {
+                "uid": {"type": "Role", "id": "analyst"},
+                "attrs": {},
+                "parents": [],
+            },
+            {
+                "uid": {"type": "User", "id": "alice"},
+                "attrs": {},
+                "parents": [
+                    {"type": "Role", "id": "admin"}
+                ],
+            },
+            {
+                "uid": {"type": "User", "id": "bob"},
+                "attrs": {},
+                "parents": [
+                    {"type": "Role", "id": "analyst"}
+                ],
+            },
+        ],
+        principal_resolver=lambda state: (
+            {"type": "User", "id": state["user_id"]}
+            if state.get("user_id")
+            else None
+        ),
+    )
+
+    agent = Agent(
+        tools=[search, delete_record],
+        interventions=[cedar],
+    )
+
+    # alice is a member of Role::"admin", so any tool
+    # is permitted
+    agent(
+        "Delete record 42",
+        invocation_state={"user_id": "alice"},
+    )
+
+    # bob is a member of Role::"analyst", so delete_record
+    # is denied. The claimed role is ignored: no policy
+    # reads context.session.role
+    agent(
+        "Delete record 42",
+        invocation_state={
+            "user_id": "bob",
+            "role": "admin",
+        },
+    )
+    # --8<-- [end:role_entities]
+
+
 def rate_limit_example():
     # --8<-- [start:rate_limit]
     from strands import Agent, tool
