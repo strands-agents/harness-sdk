@@ -13,7 +13,7 @@ import type { TasksConfig } from '@strands-agents/sdk'
  * Returns the client - caller is responsible for disconnecting.
  * @param serverUrl - The URL of the MCP server
  * @param appName - The application name for the client
- * @param tasksConfig - Optional tasks configuration. When provided, enables task-based tool invocation.
+ * @param tasksConfig - Optional tasks configuration. Currently makes tool calls throw (#1659).
  */
 function createClient(serverUrl: string, appName: string, tasksConfig?: TasksConfig): McpClient {
   return new McpClient({
@@ -37,7 +37,10 @@ describe('MCP Task Integration Tests', () => {
     await Promise.all([taskServerInfo?.close(), nonTaskServerInfo?.close()])
   }, 30000)
 
-  describe('McpClient.callTool() with Task-Enabled Server', () => {
+  // Task-augmented invocation returns with the redesigned MCP tasks extension
+  // (strands-agents/harness-sdk#1659); until then a client with tasksConfig throws on callTool,
+  // and the fixture's tools are registered task-only so plain calls would be rejected anyway.
+  describe.skip('McpClient.callTool() with Task-Enabled Server', () => {
     it('extracts result from task tool that completes immediately', async () => {
       if (!taskServerInfo) throw new Error('Task server not started')
 
@@ -147,7 +150,8 @@ describe('MCP Task Integration Tests', () => {
     }, 30000)
   })
 
-  describe('Agent Integration with Task Tools', () => {
+  // Skipped for the same reason as the task-enabled callTool suite above (#1659).
+  describe.skip('Agent Integration with Task Tools', () => {
     it('agent can use task tools in a conversation', async () => {
       if (!taskServerInfo) throw new Error('Task server not started')
 
