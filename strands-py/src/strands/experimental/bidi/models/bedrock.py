@@ -70,7 +70,7 @@ from .configs import (
     BidiConnectionConfig,
     BidiModelConfig,
     _validate_audio_config,
-    _validate_bidi_config,
+    _validate_model_config,
 )
 from .model import AudioCapable, BidiModel, BidiModelTimeoutError
 
@@ -228,7 +228,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         if boto_session is not None and region is not None:
             raise ValueError("Cannot specify both 'boto_session' and 'region'")
 
-        _validate_bidi_config(model_config)
+        _validate_model_config(model_config)
         _validate_audio_config(audio)
         self._config = BidiModelConfig(**model_config)
         self._config.setdefault("model_id", NOVA_SONIC_V2_MODEL_ID)
@@ -270,7 +270,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         Args:
             **model_config: Configuration overrides.
         """
-        _validate_bidi_config(model_config)
+        _validate_model_config(model_config)
         self._config.update(model_config)
 
     @override

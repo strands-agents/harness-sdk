@@ -51,7 +51,7 @@ from .configs import (
     BidiModelConfig,
     _merge_config,
     _validate_audio_config,
-    _validate_bidi_config,
+    _validate_model_config,
 )
 from .model import AudioCapable, BidiModel, BidiModelTimeoutError
 
@@ -95,7 +95,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
             audio: Audio configuration.
             **model_config: Model configuration.
         """
-        _validate_bidi_config(model_config)
+        _validate_model_config(model_config)
         _validate_audio_config(audio)
         self._config = BidiModelConfig(**model_config)
         self._config.setdefault("model_id", "gemini-2.5-flash-native-audio-preview-09-2025")
@@ -136,7 +136,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         Args:
             **model_config: Configuration overrides.
         """
-        _validate_bidi_config(model_config)
+        _validate_model_config(model_config)
         self._config.update(model_config)
 
     @override
