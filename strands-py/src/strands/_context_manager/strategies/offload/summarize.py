@@ -85,12 +85,9 @@ class SummarizeStrategy(BaseOffloadStrategy):
         if not eligible:
             return False
 
-        summarize_count = max(1, int(len(eligible) * self._removal_ratio))
-        to_summarize = eligible[:summarize_count]
-
         identity_map = {id(msg): index for index, msg in enumerate(messages)}
         safe_ids: set[int] = set()
-        for message in to_summarize:
+        for message in eligible:
             index = identity_map.get(id(message))
             if index is None:
                 continue

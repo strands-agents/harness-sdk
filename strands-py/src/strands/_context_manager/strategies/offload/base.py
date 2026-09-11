@@ -277,7 +277,6 @@ class BaseOffloadStrategy(ABC):
     _threshold: int | None
     _utilization_threshold: float | None
     _preserve_recent: float
-    _removal_ratio: float = 0.3
     _include_filter: set[str] | None
     _exclude_filter: set[str] | None
     _stash: Stash | None
@@ -361,7 +360,7 @@ class BaseOffloadStrategy(ABC):
         return acted
 
     async def _apply_per_message(self, context: ContextState) -> bool:
-        """Message-level execution: remove oldest 30% of eligible messages with pair safety."""
+        """Message-level execution: remove all eligible messages with pair safety."""
         messages = context.messages
         if len(messages) <= 1:
             return False
@@ -370,11 +369,7 @@ class BaseOffloadStrategy(ABC):
         if not eligible:
             return False
 
-        # TODO: consider computing removal count from target utilization instead of a fixed ratio
-        target_removal = max(1, int(len(eligible) * self._removal_ratio))
-        to_remove = eligible[:target_removal]
-
-        removed, lowest_index = _splice_with_pairs(messages, to_remove)
+        removed, lowest_index = _splice_with_pairs(messages, eligible)
         if removed == 0:
             return False
 

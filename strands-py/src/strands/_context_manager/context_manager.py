@@ -14,7 +14,7 @@ from ..plugins.plugin import Plugin
 from ..storage.in_memory_storage import InMemoryStorage
 from ..storage.storage import _EPHEMERAL
 from ..types.exceptions import ContextWindowOverflowException
-from .presets import resolve_strategies
+from .presets import _resolve_strategies
 from .retrieval_tool import _create_retrieval_tool, _track_retrieval_tool_use_ids
 from .stash import Stash
 from .strategies.offload import Offload
@@ -78,7 +78,7 @@ class ContextManager(Plugin):
         """
         user_strategies: list[ContextStrategy]
         if strategies is not None:
-            user_strategies = resolve_strategies(strategies)
+            user_strategies = _resolve_strategies(strategies)
         else:
             user_strategies = [
                 Offload.truncate("tool_results", {"preview_tokens": _TRUNCATE_PREVIEW_TOKENS}).when(
@@ -165,7 +165,8 @@ class ContextManager(Plugin):
         """Resolve the conversation manager given the context_manager facade value.
 
         When context_manager is None, falls back to the default SlidingWindowConversationManager.
-        When a preset, config, or instance, uses NullConversationManager.
+        When context_manager is set, the ContextManager owns all context reduction and the
+        conversation manager is set to a no-op internally.
 
         Args:
             context_manager: The facade value.

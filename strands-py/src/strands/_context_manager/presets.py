@@ -31,7 +31,7 @@ STRATEGY_PRESET_NAMES: tuple[str, ...] = (
 )
 
 
-def resolve_preset(name: str) -> list[ContextStrategy]:
+def _resolve_preset(name: str) -> list[ContextStrategy]:
     """Resolve a preset name to its default strategy array.
 
     Args:
@@ -51,7 +51,7 @@ def resolve_preset(name: str) -> list[ContextStrategy]:
     raise ValueError(f'Unknown strategy preset: "{name}". Valid presets: {", ".join(STRATEGY_PRESET_NAMES)}')
 
 
-def resolve_strategies(entries: list[ContextStrategy | str]) -> list[ContextStrategy]:
+def _resolve_strategies(entries: list[ContextStrategy | str]) -> list[ContextStrategy]:
     """Resolve a mixed list of strategies and preset names into a flat strategy list.
 
     Args:
@@ -63,7 +63,7 @@ def resolve_strategies(entries: list[ContextStrategy | str]) -> list[ContextStra
     strategies: list[ContextStrategy] = []
     for entry in entries:
         if isinstance(entry, str):
-            strategies.extend(resolve_preset(entry))
+            strategies.extend(_resolve_preset(entry))
         else:
             strategies.append(entry)
     return strategies

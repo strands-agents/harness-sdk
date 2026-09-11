@@ -874,7 +874,7 @@ class TestTruncateStrategyPerMessage:
 
     @pytest.mark.asyncio
     async def test_marker_uses_singular_for_one_message(self, mock_agent):
-        strategy = Offload.truncate("*").when(utilization=0.8)
+        strategy = Offload.truncate("*").when(utilization=0.8, preserve_recent=2)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="a1")]),

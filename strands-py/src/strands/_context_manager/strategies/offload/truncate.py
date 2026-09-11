@@ -87,40 +87,8 @@ class TruncateStrategy(BaseOffloadStrategy):
         return f"[... {count} {word} elided ...]"
 
     async def _apply_per_message(self, context: ContextState) -> bool:
-        """Message-level truncation: remove middle messages, keep head/tail."""
-        messages = context.messages
-        if len(messages) <= 1:
-            return False
-
-        eligible = await self._get_eligible_messages(context)
-        if not eligible:
-            return False
-
-        preview_mode = self._truncate_config.get("preview", "head_tail")
-        head_share = {"head": 1.0, "tail": 0.0, "head_tail": 0.3}.get(preview_mode, 0.3)
-        target_removal = max(1, int(len(eligible) * self._removal_ratio))
-        keep_count = len(eligible) - target_removal
-
-        head_keep = int(keep_count * head_share)
-        tail_keep = keep_count - head_keep
-
-        end_slice = len(eligible) - tail_keep if tail_keep > 0 else len(eligible)
-        middle_messages = eligible[head_keep:end_slice]
-
-        if not middle_messages:
-            return False
-
-        removed, lowest_index = _splice_with_pairs(messages, middle_messages)
-        if removed == 0:
-            return False
-
-        marker = self._make_removal_marker(removed)
-        if marker:
-            insert_index = max(1, min(lowest_index, len(messages)))
-            messages.insert(insert_index, Message(role="user", content=[ContentBlock(text=marker)]))
-
-        _repair_alternation(messages)
-        return True
+        """Message-level truncation: remove eligible messages."""
+        return await super()._apply_per_message(context)
 
     async def _replace_block(
         self,
@@ -153,10 +121,11 @@ class TruncateStrategy(BaseOffloadStrategy):
         return ContentBlock(text=f"[Offloaded: ~{tokens} tokens]{refs}")
 
 
+_EMERGENCY_REMOVAL_RATIO = 0.2
+
+
 class EmergencyTruncateStrategy(TruncateStrategy):
     """Last-resort strategy that drops the oldest 20% of messages when still overflowing."""
-
-    _removal_ratio: float = 0.2
 
     @property
     def name(self) -> str:
@@ -182,13 +151,21 @@ class EmergencyTruncateStrategy(TruncateStrategy):
             utilization = context.agent.model.estimate_utilization(tokens)
             if utilization < 1.0:
                 return False
-        else:
-            utilization = context.utilization
-        state = ContextState(
-            messages=context.messages,
-            agent=context.agent,
-            utilization=utilization,
-            overflow=context.overflow,
-            stash=context.stash,
-        )
-        return await self._apply_per_message(state)
+        return await self._apply_per_message(context)
+
+    async def _apply_per_message(self, context: ContextState) -> bool:
+        """Drop the oldest 20% of non-head messages each pass."""
+        messages = context.messages
+        if len(messages) <= 3:
+            return False
+
+        removable = [msg for index, msg in enumerate(messages) if index > 0]
+        remove_count = max(1, int(len(removable) * _EMERGENCY_REMOVAL_RATIO))
+        to_remove = removable[:remove_count]
+
+        removed, _ = _splice_with_pairs(messages, to_remove)
+        if removed == 0:
+            return False
+
+        _repair_alternation(messages)
+        return True
