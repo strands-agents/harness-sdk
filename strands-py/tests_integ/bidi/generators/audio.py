@@ -45,7 +45,7 @@ class AudioGenerator:
 
     def _get_cache_key(self, text: str, voice_id: str) -> str:
         """Generate cache key from text and voice."""
-        content = f"{text}:{voice_id}".encode("utf-8")
+        content = f"{text}:{voice_id}".encode()
         return hashlib.md5(content).hexdigest()
 
     def _get_cache_path(self, cache_key: str) -> Path:

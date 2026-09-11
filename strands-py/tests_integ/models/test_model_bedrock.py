@@ -860,6 +860,8 @@ def test_a_caller_ttl_does_not_conflict_with_the_tools_ttl(quiet_strands_logging
     assert result.metrics.latest_agent_invocation.usage.get("cacheWriteInputTokens", 0) > 0
 
 
+# A ~100 KB PDF plus the SDK's throttling backoff can outlast the global 90s timeout.
+@pytest.mark.timeout(300)
 @pytest.mark.parametrize("document_format", ["csv", "pdf"])
 def test_a_cache_point_after_a_document_is_accepted(quiet_strands_logging, letter_pdf, document_format):
     """Bedrock refuses a cache point directly after a non-PDF document but allows one after a PDF.
@@ -878,6 +880,6 @@ def test_a_cache_point_after_a_document_is_accepted(quiet_strands_logging, lette
     model = BedrockModel(model_id=_CACHE_TTL_MODEL_ID, cache_config=CacheConfig(strategy="auto"))
     agent = Agent(model=model, load_tools_from_directory=False, callback_handler=None)
 
-    result = agent([{"text": _durable_prefix()}, document, {"cachePoint": {"type": "default"}}, {"text": "Summarize."}])
+    result = agent([{"text": _durable_prefix()}, document, {"cachePoint": {"type": "default"}}, {"text": "Reply OK."}])
 
     assert result.stop_reason == "end_turn"

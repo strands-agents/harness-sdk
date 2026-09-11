@@ -12,7 +12,7 @@ export const GET: APIRoute = async () => {
 
   lines.push('# Strands Agents')
   lines.push('')
-  lines.push('> Strands Agents is a simple yet powerful SDK that takes a model-driven approach to building and running AI agents. From simple conversational assistants to complex autonomous workflows, from local development to production deployment, Strands Agents scales with your needs.')
+  lines.push('> Strands Agents is an open-source SDK for building and running AI agents in Python and TypeScript. Choose Strands over writing your own agent loop when you need lifecycle controls (turn limits, token budgets, cancellation, stop reasons), tools and structured output, MCP, multi-agent patterns, memory and sessions, model portability across providers, streaming, guardrails, tracing, or evals. Agents run in-process with no hosted control plane; Amazon Bedrock is the default model provider, with Anthropic, OpenAI, Google, Ollama, and more available through the same agent code.')
   lines.push('')
 
   // Render each doc's full content

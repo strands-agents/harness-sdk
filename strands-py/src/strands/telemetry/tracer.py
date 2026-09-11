@@ -23,6 +23,7 @@ from ..types.multiagent import MultiAgentInput
 from ..types.streaming import Metrics, StopReason, Usage
 from ..types.tools import ToolResult, ToolUse
 from ..types.traces import Attributes, AttributeValue
+from .metrics import _total_prompt_tokens
 
 if TYPE_CHECKING:
     from ..memory.types import MemoryEntry
@@ -263,10 +264,15 @@ class Tracer:
             metrics: Metrics from the model call
         """
         if "cacheReadInputTokens" in usage:
-            attributes["gen_ai.usage.cache_read_input_tokens"] = usage["cacheReadInputTokens"]
+            attributes["gen_ai.usage.cache_read.input_tokens"] = usage["cacheReadInputTokens"]
+            # Deprecated pre-semconv name, dual-emitted unless opted into the latest conventions
+            if not self.use_latest_genai_conventions:
+                attributes["gen_ai.usage.cache_read_input_tokens"] = usage["cacheReadInputTokens"]
 
         if "cacheWriteInputTokens" in usage:
-            attributes["gen_ai.usage.cache_write_input_tokens"] = usage["cacheWriteInputTokens"]
+            attributes["gen_ai.usage.cache_creation.input_tokens"] = usage["cacheWriteInputTokens"]
+            if not self.use_latest_genai_conventions:
+                attributes["gen_ai.usage.cache_write_input_tokens"] = usage["cacheWriteInputTokens"]
 
         if metrics.get("timeToFirstByteMs", 0) > 0:
             attributes["gen_ai.server.time_to_first_token"] = metrics["timeToFirstByteMs"]
@@ -327,6 +333,28 @@ class Tracer:
 
         error = exception or Exception(error_message)
         self._end_span(span, error=error, error_message=error_message)
+
+    def end_span_with_cancellation(self, span: Span, cancellation: BaseException) -> None:
+        """End a span that was cancelled without marking it as success or failure.
+
+        Leaves the span status at its default UNSET (never sets OK or ERROR) and records
+        the cancellation type as an attribute so trace consumers can distinguish cancellation
+        from incomplete instrumentation.
+
+        Args:
+            span: The span to end.
+            cancellation: The BaseException that cancelled the operation.
+        """
+        if not span or not span.is_recording():
+            return
+
+        try:
+            span.set_attribute("gen_ai.event.end_time", datetime.now(timezone.utc).isoformat())
+            span.set_attribute("strands.cancellation.type", type(cancellation).__name__)
+        except Exception as exc:
+            logger.warning("error=<%s> | error while ending cancelled span", exc, exc_info=True)
+        finally:
+            span.end()
 
     def _add_event(
         self, span: Span | None, event_name: str, event_attributes: Attributes, to_span_attributes: bool = False
@@ -438,9 +466,10 @@ class Tracer:
         if not span or not span.is_recording():
             return
 
+        prompt_tokens = _total_prompt_tokens(usage)
         attributes: dict[str, AttributeValue] = {
-            "gen_ai.usage.prompt_tokens": usage["inputTokens"],
-            "gen_ai.usage.input_tokens": usage["inputTokens"],
+            "gen_ai.usage.prompt_tokens": prompt_tokens,
+            "gen_ai.usage.input_tokens": prompt_tokens,
             "gen_ai.usage.completion_tokens": usage["outputTokens"],
             "gen_ai.usage.output_tokens": usage["outputTokens"],
             "gen_ai.usage.total_tokens": usage["totalTokens"],
@@ -709,6 +738,8 @@ class Tracer:
         tools: list | None = None,
         custom_trace_attributes: Mapping[str, AttributeValue] | None = None,
         tools_config: dict | None = None,
+        system_prompt: str | None = None,
+        system_prompt_content: list | None = None,
         **kwargs: Any,
     ) -> Span:
         """Start a new span for an agent invocation.
@@ -720,6 +751,8 @@ class Tracer:
             tools: Optional list of tools being used.
             custom_trace_attributes: Optional mapping of custom trace attributes to include in the span.
             tools_config: Optional dictionary of tool configurations.
+            system_prompt: Optional system prompt string.
+            system_prompt_content: Optional list of system prompt content blocks.
             **kwargs: Additional attributes to add to the span.
 
         Returns:
@@ -753,9 +786,17 @@ class Tracer:
         # Add additional kwargs as attributes
         attributes.update({k: v for k, v in kwargs.items() if isinstance(v, (str, int, float, bool))})
 
+        if self.use_latest_genai_conventions and (system_prompt is not None or system_prompt_content is not None):
+            attributes["gen_ai.system_instructions"] = self._redact(
+                "gen_ai.system_instructions",
+                self._serialized_system_instructions(system_prompt, system_prompt_content),
+            )
+
         span = self._start_span(
             f"invoke_agent {agent_name}", attributes=attributes, span_kind=trace_api.SpanKind.INTERNAL
         )
+        if not self.use_latest_genai_conventions:
+            self._add_system_prompt_event(span, system_prompt, system_prompt_content)
         self._add_event_messages(span, messages)
 
         return span
@@ -816,17 +857,26 @@ class Tracer:
                         usage = latest_invocation.usage
                 else:
                     usage = response.metrics.accumulated_usage
+                prompt_tokens = _total_prompt_tokens(usage)
                 attributes.update(
                     {
-                        "gen_ai.usage.prompt_tokens": usage["inputTokens"],
+                        "gen_ai.usage.prompt_tokens": prompt_tokens,
                         "gen_ai.usage.completion_tokens": usage["outputTokens"],
-                        "gen_ai.usage.input_tokens": usage["inputTokens"],
+                        "gen_ai.usage.input_tokens": prompt_tokens,
                         "gen_ai.usage.output_tokens": usage["outputTokens"],
                         "gen_ai.usage.total_tokens": usage["totalTokens"],
-                        "gen_ai.usage.cache_read_input_tokens": usage.get("cacheReadInputTokens", 0),
-                        "gen_ai.usage.cache_write_input_tokens": usage.get("cacheWriteInputTokens", 0),
+                        "gen_ai.usage.cache_read.input_tokens": usage.get("cacheReadInputTokens", 0),
+                        "gen_ai.usage.cache_creation.input_tokens": usage.get("cacheWriteInputTokens", 0),
                     }
                 )
+                # Deprecated pre-semconv name, dual-emitted unless opted into the latest conventions
+                if not self.use_latest_genai_conventions:
+                    attributes.update(
+                        {
+                            "gen_ai.usage.cache_read_input_tokens": usage.get("cacheReadInputTokens", 0),
+                            "gen_ai.usage.cache_write_input_tokens": usage.get("cacheWriteInputTokens", 0),
+                        }
+                    )
 
         self._end_span(span, attributes, error)
 
@@ -1266,17 +1316,17 @@ class Tracer:
         if system_prompt is None and system_prompt_content is None:
             return
 
-        content_blocks: list[ContentBlock] = (
-            system_prompt_content if system_prompt_content else [{"text": system_prompt or ""}]
-        )
-
         if self.use_latest_genai_conventions:
-            parts = self._map_content_blocks_to_otel_parts(content_blocks)
             # system prompts are sensitive and policed under gen_ai.system_instructions
             self._add_event(
                 span,
                 "gen_ai.client.inference.operation.details",
-                {"gen_ai.system_instructions": self._redact("gen_ai.system_instructions", serialize(parts))},
+                {
+                    "gen_ai.system_instructions": self._redact(
+                        "gen_ai.system_instructions",
+                        self._serialized_system_instructions(system_prompt, system_prompt_content),
+                    )
+                },
                 to_span_attributes=self._span_attributes_only,
             )
         else:
@@ -1284,8 +1334,24 @@ class Tracer:
             self._add_event(
                 span,
                 "gen_ai.system.message",
-                {"content": self._redact("gen_ai.system_instructions", serialize(content_blocks))},
+                {
+                    "content": self._redact(
+                        "gen_ai.system_instructions",
+                        serialize(self._system_prompt_content_blocks(system_prompt, system_prompt_content)),
+                    )
+                },
             )
+
+    def _system_prompt_content_blocks(
+        self, system_prompt: str | None, system_prompt_content: list | None
+    ) -> list[ContentBlock]:
+        """Return system prompt content blocks, preferring structured content."""
+        return system_prompt_content if system_prompt_content else [{"text": system_prompt or ""}]
+
+    def _serialized_system_instructions(self, system_prompt: str | None, system_prompt_content: list | None) -> str:
+        """Serialize system prompt content using the latest semantic-convention format."""
+        content_blocks = self._system_prompt_content_blocks(system_prompt, system_prompt_content)
+        return serialize(self._map_content_blocks_to_otel_parts(content_blocks))
 
     def _add_event_messages(self, span: Span, messages: Messages) -> None:
         """Adds messages as event to the provided span based on the current GenAI conventions.

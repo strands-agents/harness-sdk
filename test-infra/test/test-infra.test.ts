@@ -218,6 +218,31 @@ test('internal mode grants the Mantle actions the base-path drift tests need', (
   );
 });
 
+test('internal mode grants the permissions Bidi integration tests need', () => {
+  const template = synth({ internal: true });
+
+  const policies = template.findResources('AWS::IAM::Policy');
+  const statements = Object.values(policies).flatMap(
+    (p: any) => p.Properties?.PolicyDocument?.Statement ?? [],
+  );
+  const novaSonicStatement = statements.find((statement: any) => {
+    const actions = Array.isArray(statement.Action) ? statement.Action : [statement.Action];
+    const resources = Array.isArray(statement.Resource) ? statement.Resource : [statement.Resource];
+
+    return (
+      actions.includes('bedrock:InvokeModel') &&
+      resources.includes('arn:aws:bedrock:*::foundation-model/amazon.nova-sonic-v1:0') &&
+      resources.includes('arn:aws:bedrock:*::foundation-model/amazon.nova-2-sonic-v1:0')
+    );
+  });
+  const pollyStatement = statements.find(
+    (statement: any) => statement.Action === 'polly:SynthesizeSpeech',
+  );
+
+  expect(novaSonicStatement).toBeDefined();
+  expect(pollyStatement?.Resource).toBe('*');
+});
+
 test('community mode does not attach the legacy broad policy', () => {
   const template = synth({ internal: false });
 

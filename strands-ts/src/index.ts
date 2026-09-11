@@ -13,7 +13,9 @@ export { StateStore } from './state-store.js'
 
 // Agent types
 export { AgentResult } from './types/agent.js'
+export type { AgentMetadata } from './agent/agent-metadata.js'
 export type { AgentConfig, ToolList, ToolExecutorStrategy } from './agent/agent.js'
+export type { BackgroundTasksConfig } from './background-tasks/types.js'
 export type { AgentAsToolOptions } from './agent/agent-as-tool.js'
 export type { ToolCaller, ToolCallerProxy, ToolHandle, DirectToolCallOptions } from './agent/tool-caller.js'
 export type { InvocationState, InvokeArgs, InvokeOptions, LocalAgent } from './types/agent.js'
@@ -191,6 +193,18 @@ export type { BaseModelConfig, CountTokensOptions, StreamOptions, CacheConfig } 
 
 export { Model } from './models/model.js'
 
+// Model routing
+export { ClassifierStrategy, FallbackStrategy, ModelRouter, RoutingCandidate } from './models/routing/index.js'
+export type {
+  CandidateInput,
+  ClassifierStrategyOptions,
+  ModelRouterOptions,
+  RoutingAttempt,
+  RoutingCandidateOptions,
+  RoutingContext,
+  RoutingStrategy,
+} from './models/routing/index.js'
+
 // Bedrock model provider
 export { BedrockModel as BedrockModel } from './models/bedrock.js'
 export type {
@@ -297,6 +311,7 @@ export {
   type McpCallToolOptions,
   type TasksConfig,
   type McpConnectionState,
+  type McpLoadServersOptions,
   type McpServerConfig,
   type SerializableMcpToolFilters,
   McpClient,

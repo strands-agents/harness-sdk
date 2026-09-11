@@ -1,8 +1,8 @@
 ---
 title: Storage
-description: "Choose a storage backend and pass it to plugins
-  that need persistence: session managers, context offloaders,
-  and memory."
+description: "Choose a storage backend and pass it to the Agent
+  for automatic subsystem resolution, or to individual plugins
+  for fine-grained control."
 tags: [session-management]
 sourceLinks:
   - path: strands-py/src/strands/storage/storage.py
@@ -16,11 +16,11 @@ sourceLinks:
 addedDate: 2026-07-24
 ---
 
-To persist agent state between restarts, pass a Storage backend
-to the plugins that need it. You pick the backend once; plugins
-like [Context Offloader](./plugins/context-offloader.mdx),
-[Session Management](./agents/session-management.mdx), and
-[Memory](./memory/overview.mdx) handle the rest.
+Pass a Storage backend to the Agent and every subsystem that
+needs persistence resolves from it automatically. The SDK
+handles namespacing so sessions and offloaded content never
+collide. You can also pass storage directly to individual
+plugins when different subsystems need different backends.
 
 The SDK ships three backends. Pick one based on where you need
 your data to live:
@@ -31,28 +31,78 @@ your data to live:
 | `LocalFileStorage` | Local filesystem | Development, single-machine |
 | `S3Storage` | Amazon S3 | Production, multi-instance |
 
-## Usage
+## Agent-level storage
 
-Pass a storage instance to whichever plugin needs persistence:
+The simplest approach: pass a single storage backend to the
+Agent and let subsystems resolve from it.
 
 <Tabs>
 <Tab label="Python">
 
 ```python
---8<-- "user-guide/concepts/storage.py:basic_usage"
+--8<-- "user-guide/concepts/storage.py:agent_level"
 ```
 
 </Tab>
 <Tab label="TypeScript">
 
 ```typescript
---8<-- "user-guide/concepts/storage_imports.ts:basic_usage_imports"
+--8<-- "user-guide/concepts/storage_imports.ts:agent_level_imports"
 
---8<-- "user-guide/concepts/storage.ts:basic_usage"
+--8<-- "user-guide/concepts/storage.ts:agent_level"
 ```
 
 </Tab>
 </Tabs>
+
+Both the session manager and context offloader read from the
+same backend without extra wiring. Each subsystem
+auto-namespaces its keys (`session/` for sessions,
+`offloader/` for offloaded content), so data never collides.
+
+## Per-plugin storage
+
+When different subsystems need different backends, pass storage
+directly to the plugin. This overrides the agent-level default
+for that plugin only.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+--8<-- "user-guide/concepts/storage.py:per_plugin"
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/concepts/storage_imports.ts:per_plugin_imports"
+
+--8<-- "user-guide/concepts/storage.ts:per_plugin"
+```
+
+</Tab>
+</Tabs>
+
+## Precedence
+
+Storage resolves in this order for each subsystem:
+
+1. **Explicit**: storage passed directly to the plugin
+2. **Agent-level**: the agent's
+   <Syntax py="storage" ts="storage" /> parameter
+   (namespaced automatically)
+3. **Fallback**: `InMemoryStorage` for Context Offloader;
+   `LocalFileStorage` for Session Manager in Python, or an
+   error in TypeScript
+
+:::note
+Python `SessionManager` is deprecated, and does not use
+the provided `Storage` parameter. Use
+`SnapshotSessionManager` in Python or `SessionManager` in
+TypeScript to take advantage of agent-level storage.
+:::
 
 ## Built-in backends
 
@@ -144,6 +194,35 @@ so applications that never construct an `S3Storage` pay nothing.
 </Tab>
 </Tabs>
 
+#### Required S3 permissions
+
+The credentials used by `S3Storage` need these permissions:
+
+- `s3:PutObject` to create and update data
+- `s3:GetObject` to retrieve data
+- `s3:DeleteObject` to delete data
+- `s3:ListBucket` to list keys under the configured prefix
+
+This policy grants the required permissions for one bucket:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:PutObject", "s3:GetObject", "s3:DeleteObject"],
+      "Resource": "arn:aws:s3:::my-agent-sessions/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::my-agent-sessions"
+    }
+  ]
+}
+```
+
 You cannot pass both a region and a pre-configured client; pick
 one or the other.
 
@@ -159,12 +238,18 @@ TypeScript, implement the
 
 Community backends can add methods beyond the core four (e.g.
 `search` for vector similarity, or structured queries for
-databases like DynamoDB). Plugins that only need basic persistence
-use the four standard methods; plugins that need richer access
-can check for and use the extra surface your backend provides.
+databases like DynamoDB). Plugins that only need basic
+persistence use the four standard methods; plugins that need
+richer access can check for and use the extra surface your
+backend provides.
 
-Plugins scope their own keys automatically, so you don't need to
-worry about collisions between session data and offloaded content.
+When using agent-level storage, each subsystem scopes its keys
+under its own prefix automatically (`session/`, `offloader/`),
+so you never need to worry about collisions. If you write a
+custom plugin that consumes agent-level storage, call
+<Syntax py="storage.namespace('my-prefix/')" ts="storage.namespace('my-prefix/')" />
+to claim your own prefix and avoid overlapping with other
+subsystems.
 
 ## Next steps
 

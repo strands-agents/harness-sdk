@@ -142,9 +142,9 @@ sidebar:
               - docs/user-guide/concepts/bidirectional-streaming/agent
               - label: Models
                 items:
-                  - docs/user-guide/concepts/bidirectional-streaming/models/nova_sonic
-                  - docs/user-guide/concepts/bidirectional-streaming/models/gemini_live
-                  - docs/user-guide/concepts/bidirectional-streaming/models/openai_realtime
+                  - docs/user-guide/concepts/bidirectional-streaming/models/bedrock
+                  - docs/user-guide/concepts/bidirectional-streaming/models/google
+                  - docs/user-guide/concepts/bidirectional-streaming/models/openai
               - docs/user-guide/concepts/bidirectional-streaming/io
               - docs/user-guide/concepts/bidirectional-streaming/events
               - docs/user-guide/concepts/bidirectional-streaming/interruption
@@ -158,6 +158,7 @@ sidebar:
         collapsed: true
         items:
           - docs/user-guide/concepts/model-providers
+          - docs/user-guide/concepts/model-providers/model-routing
           - docs/user-guide/concepts/model-providers/amazon-bedrock
           - docs/user-guide/concepts/model-providers/amazon-nova
           - docs/user-guide/concepts/model-providers/anthropic

@@ -132,13 +132,18 @@ result = agent.tool.current_time(timezone="US/Pacific")
 </Tab>
 <Tab label="TypeScript">
 
-```ts
-// Not supported in TypeScript
+```typescript
+--8<-- "user-guide/concepts/agents/prompts_imports.ts:direct_tool_calls_imports"
+
+--8<-- "user-guide/concepts/agents/prompts.ts:direct_tool_calls"
 ```
 </Tab>
 </Tabs>
 
-Direct tool calls bypass the natural language interface and execute the tool using specified parameters. These calls are added to the conversation history by default. However, you can opt out of this behavior by setting <Syntax py="record_direct_tool_call=False" ts="recordDirectToolCall: false" />.
+Direct tool calls bypass the natural language interface and execute the tool using
+specified parameters. These calls are added to the conversation history by default.
+However, you can opt out of this behavior by setting
+<Syntax py="record_direct_tool_call=False" ts="{ recordDirectToolCall: false }" />.
 
 ## Prompt Engineering
 

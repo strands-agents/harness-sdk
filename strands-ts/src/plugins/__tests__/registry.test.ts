@@ -140,6 +140,33 @@ describe('PluginRegistry', () => {
       expect(mockAgent.toolRegistry.get(mockTool.name)).toBe(mockTool)
     })
 
+    it('calls getTools after initAgent so tools can depend on initialization state', async () => {
+      const mockTool = createRandomTool('deferred-tool')
+
+      class DeferredToolPlugin implements Plugin {
+        private _initialized = false
+
+        get name(): string {
+          return 'deferred-tool-plugin'
+        }
+
+        initAgent(_agent: LocalAgent): void {
+          this._initialized = true
+        }
+
+        getTools(): Tool[] {
+          return this._initialized ? [mockTool] : []
+        }
+      }
+
+      const plugin = new DeferredToolPlugin()
+      registry = new PluginRegistry([plugin])
+
+      await registry.initialize(mockAgent)
+
+      expect(mockAgent.toolRegistry.get(mockTool.name)).toBe(mockTool)
+    })
+
     it('handles async initAgent', async () => {
       class AsyncPlugin implements Plugin {
         public initialized = false

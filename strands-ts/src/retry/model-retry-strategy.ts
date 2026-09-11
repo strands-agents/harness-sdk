@@ -16,8 +16,8 @@ import type { RetryDecision } from './retry-strategy.js'
  *
  * 1. Short-circuits if another hook already set `event.retry` (no stacked delay).
  * 2. Short-circuits on success events (`event.error === undefined`).
- * 3. Calls {@link onFirstModelAttempt} on turn boundaries (`event.attemptCount === 1`),
- *    letting stateful subclasses clear per-turn state.
+ * 3. Calls {@link onFirstModelAttempt} when a fresh retry budget starts
+ *    (`event.attemptCount === 1`), letting stateful subclasses clear per-budget state.
  * 4. Invokes {@link computeRetryDecision}; on `retry: true`, sleeps for `waitMs` then
  *    sets `event.retry = true`.
  *
@@ -26,7 +26,7 @@ import type { RetryDecision } from './retry-strategy.js'
  * have different unit-of-work boundaries and don't share a single state
  * contract.
  *
- * Single-agent attachment: instances typically carry per-turn state, so
+ * Single-agent attachment: instances typically carry per-budget state, so
  * sharing one instance across agents would let their calls trample each
  * other. The base class throws on attempts to attach to a different agent.
  */
@@ -53,12 +53,9 @@ export abstract class ModelRetryStrategy implements Plugin {
   protected abstract computeRetryDecision(event: AfterModelCallEvent): RetryDecision | Promise<RetryDecision>
 
   /**
-   * Called when `event.attemptCount === 1`, i.e. at the start of a fresh
-   * turn. Subclasses with per-turn state override this to clear it; the
-   * default is a no-op.
-   *
-   * The agent loop guarantees `attemptCount === 1` on every new turn, so
-   * this is a reliable turn-boundary signal.
+   * Called when `event.attemptCount === 1`, at the start of a fresh retry budget. This occurs on a new
+   * turn and when model routing switches candidates. Subclasses with per-budget state override this to
+   * clear it; the default is a no-op.
    */
   protected onFirstModelAttempt(): void {}
 
@@ -69,9 +66,8 @@ export abstract class ModelRetryStrategy implements Plugin {
    * {@link onFirstModelAttempt} instead of this method.
    */
   async retryModel(event: AfterModelCallEvent): Promise<void> {
-    // Fire the turn-boundary signal before any short-circuit so per-turn state
-    // always clears at the start of a new turn, even if a user hook already
-    // set event.retry on attempt 1.
+    // Reset per-budget state before any short-circuit, including when another hook already requested
+    // retry on the first attempt.
     if (event.attemptCount === 1) this.onFirstModelAttempt()
 
     if (event.retry) return

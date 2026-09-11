@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -114,6 +115,10 @@ class ExecuteToolContext:
     hooks receive it). Middleware that needs a fully isolated ``tool_use`` should build a
     new one and pass a modified context via ``dataclasses.replace()``.
 
+    ``cancel_signal`` is the executor's own signal, passed on to the tool independently of this
+    context: middleware can observe it, but replacing it via ``dataclasses.replace()`` does not
+    change the signal the tool receives.
+
     Supports middleware-initiated interrupts via ``interrupt()`` for human-in-the-loop
     approval flows.
     """
@@ -122,6 +127,8 @@ class ExecuteToolContext:
     tool: AgentTool | None
     tool_use: ToolUse
     invocation_state: dict[str, Any]
+    # Excluded from repr: an Event carries no useful text.
+    cancel_signal: threading.Event = field(repr=False)
     # Interrupt state is threaded in from the agent so interrupt() can register/resolve
     # interrupts. Required (the executor is the sole constructor and always supplies it);
     # excluded from repr to avoid dumping unrelated interrupt bookkeeping.

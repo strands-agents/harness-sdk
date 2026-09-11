@@ -8,7 +8,7 @@
  * @see https://platform.openai.com/docs/api-reference/chat
  */
 
-import OpenAI from 'openai'
+import OpenAI, { APIUserAbortError } from 'openai'
 import type { ResponseStreamEvent } from 'openai/resources/responses/responses'
 import { Model, resolveConfigMetadata } from '../model.js'
 import type { StreamOptions } from '../model.js'
@@ -182,7 +182,7 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
   private async *_streamChat(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
     try {
       const request = formatChatRequest(this._config as OpenAIChatConfig, messages, options)
-      const stream = await this._client.chat.completions.create(request)
+      const stream = await this._client.chat.completions.create(request, { signal: options?.cancelSignal })
 
       const streamState: ChatStreamState = {
         messageStarted: false,
@@ -225,6 +225,10 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
         }
       }
 
+      if (options?.cancelSignal?.aborted) {
+        throw new APIUserAbortError()
+      }
+
       if (bufferedUsage) {
         yield bufferedUsage
       }
@@ -236,7 +240,7 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
   private async *_streamResponses(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
     try {
       const request = formatResponsesRequest(this._config as OpenAIResponsesConfig, messages, options, this.stateful)
-      const stream = await this._client.responses.create(request)
+      const stream = await this._client.responses.create(request, { signal: options?.cancelSignal })
 
       const state = createResponsesStreamState()
 
@@ -244,6 +248,10 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
         for (const sdkEvent of mapResponsesEventToSDK(event, state, this.stateful, options?.modelState)) {
           yield sdkEvent
         }
+      }
+
+      if (options?.cancelSignal?.aborted) {
+        throw new APIUserAbortError()
       }
 
       for (const sdkEvent of finalizeResponsesStream(state)) {

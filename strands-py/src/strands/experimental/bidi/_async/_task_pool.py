@@ -4,7 +4,8 @@ This is particularly useful for cancelling multiple tasks at once.
 """
 
 import asyncio
-from typing import Any, Coroutine
+from collections.abc import Coroutine
+from typing import Any
 
 
 class _TaskPool:

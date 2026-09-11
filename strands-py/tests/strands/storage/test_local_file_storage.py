@@ -96,6 +96,29 @@ class TestLocalFileStorage:
         assert await ns.read("key") == b"value"
         assert await storage.read("scope/key") == b"value"
 
+    def test_namespace_returns_local_file_storage(self, storage, tmp_path):
+        from strands.storage.storage import _NAMESPACED
+
+        ns = storage.namespace("scope")
+        assert isinstance(ns, LocalFileStorage)
+        assert ns.base_dir == os.path.join(str(tmp_path), "scope")
+        assert ns._namespaced is _NAMESPACED
+
+    def test_normpath_prevents_trailing_slash_in_namespace(self, tmp_path):
+        storage = LocalFileStorage(str(tmp_path) + "/")
+        ns = storage.namespace("scope")
+        assert not ns.base_dir.endswith("/")
+        assert os.sep + "scope" in ns.base_dir
+
+    @pytest.mark.asyncio
+    async def test_search_returns_matching_results(self, storage):
+        await storage.write("notes/dark-mode.md", b"enable dark mode in settings")
+        await storage.write("notes/deploy.md", b"deploy to production")
+        results = await storage.search("dark mode")
+        assert len(results) == 1
+        assert results[0].key == "notes/dark-mode.md"
+        assert results[0].score > 0
+
     @pytest.mark.asyncio
     async def test_key_normalization(self, storage):
         await storage.write("//foo///bar//", b"data")
@@ -210,12 +233,15 @@ class TestLocalFileStorage:
     def test_namespace_preserves_for_sandbox(self, tmp_path):
         from unittest.mock import MagicMock
 
+        from strands.storage.storage import _NAMESPACED
+
         sandbox = MagicMock()
         storage = LocalFileStorage(str(tmp_path))
         ns = storage.namespace("scope")
         assert hasattr(ns, "for_sandbox")
         bound = ns.for_sandbox(sandbox)
         assert bound is not ns
+        assert bound._namespaced is _NAMESPACED
 
     @pytest.mark.asyncio
     async def test_list_prefix_narrows_directory(self, storage, tmp_path):

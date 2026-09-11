@@ -5,7 +5,7 @@
 import type OpenAI from 'openai'
 import type { ApiKeySetter } from 'openai/client'
 import type { ClientOptions } from 'openai'
-import type { BaseModelConfig } from '../model.js'
+import type { BaseModelConfig, CacheConfig } from '../model.js'
 import type { BedrockMantleConfig } from './mantle.js'
 
 /**
@@ -52,6 +52,11 @@ interface OpenAIBaseConfig extends BaseModelConfig {
    * - Responses API: `model`, `input`, `stream`, `store`
    */
   params?: Record<string, unknown>
+
+  /**
+   * Prompt-caching configuration. OpenAI routes cache reads on `cacheKey` and honors `ttl` when it names an OpenAI retention literal. Any other `ttl` and the placement fields have no effect here. An explicit `prompt_cache_key` / `prompt_cache_retention` in `params` takes precedence.
+   */
+  cacheConfig?: CacheConfig
 }
 
 /**

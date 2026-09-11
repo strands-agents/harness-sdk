@@ -6,6 +6,7 @@ import pytest
 from pydantic import BaseModel
 
 from strands.hooks.events import AfterInvocationEvent
+from strands.models import CacheConfig
 from strands.models import Model as SAModel
 from strands.models.model import _ModelPlugin
 
@@ -672,3 +673,15 @@ class TestEstimateUtilization:
         model.estimate_utilization(2000)
 
         assert model._utilization_limit_warned is True
+
+
+class TestCacheConfig:
+    """Tests for the CacheConfig dataclass."""
+
+    def test_cache_key_defaults_to_none(self):
+        """cache_key defaults to None."""
+        assert CacheConfig().cache_key is None
+
+    def test_cache_key_round_trips(self):
+        """cache_key preserves the value it was constructed with."""
+        assert CacheConfig(cache_key="tenant-42").cache_key == "tenant-42"

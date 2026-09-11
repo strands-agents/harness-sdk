@@ -3,7 +3,7 @@ import sys
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from dataclasses import dataclass
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, Optional, TypedDict
 import os
 import boto3
 
@@ -32,15 +32,15 @@ class TestResult:
     outcome: Literal['failed', 'skipped', 'passed']
 
 
-def parse_junit_xml(xml_file_path: str) -> list[TestResult]:
+def parse_junit_xml(xml_file_path: str) -> Optional[list[TestResult]]:
     try:
         tree = ET.parse(xml_file_path)
     except FileNotFoundError:
         print(f"Warning: XML file not found: {xml_file_path}")
-        return []
+        return None
     except ET.ParseError as e:
         print(f"Warning: Failed to parse XML: {e}")
-        return []
+        return None
 
     results = []
     root = tree.getroot()
@@ -136,9 +136,11 @@ def main():
     region = os.environ.get('AWS_REGION', 'us-east-1')
 
     test_results = parse_junit_xml(xml_file)
-    if not test_results:
-        print("No test results found")
+    if test_results is None:
         sys.exit(1)
+    if not test_results:
+        print("No test results to publish")
+        return
 
     print(f"Found {len(test_results)} test results")
     metric_data = build_metric_data(test_results, repository, sdk)

@@ -5,8 +5,9 @@ from datetime import datetime
 from unittest.mock import MagicMock, PropertyMock
 
 import pytest
+from pydantic import BaseModel
 
-from strands._middleware.stages import AgentStreamContext, ExecuteToolContext
+from strands._middleware.stages import ExecuteToolContext
 from strands.agent._agent_as_tool import DELEGATION_DESCRIPTION_SUFFIX, _AgentAsTool
 from strands.agent._agent_delegation import AgentDelegation, _DelegationState, _to_content_blocks
 from strands.agent.agent import Agent
@@ -18,8 +19,12 @@ from strands.hooks import (
     MessageAddedEvent,
 )
 from strands.interrupt import _InterruptState
+from strands.session.repository_session_manager import RepositorySessionManager
 from strands.telemetry.metrics import EventLoopMetrics
-from strands.types._events import EventLoopStopEvent, ToolResultEvent, TypedEvent
+from strands.tools.structured_output.structured_output_tool import StructuredOutputTool
+from strands.types._events import ToolResultEvent
+from strands.vended_plugins.context_offloader import ContextOffloader, InMemoryStorage
+from tests.fixtures.mock_session_repository import MockedSessionRepository
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 # --- Helpers ---
@@ -72,11 +77,6 @@ def test_as_tool_delegate_true_adds_suffix():
     tool = Agent(name="sub", description="Billing", callback_handler=None).as_tool(delegate=True)
     assert tool.delegate is True
     assert tool._description == "Billing" + DELEGATION_DESCRIPTION_SUFFIX
-
-
-def test_as_tool_delegate_false_no_suffix():
-    tool = Agent(name="sub", description="Billing", callback_handler=None).as_tool()
-    assert DELEGATION_DESCRIPTION_SUFFIX not in tool._description
 
 
 def test_as_tool_custom_description_with_delegate():
@@ -217,25 +217,6 @@ def test_on_after_tool_call_retry_swap_preserves_different_id():
     assert plugin._state[parent].tool_use_id == "t1"
 
 
-def test_on_after_tool_call_foreign_stop_not_touched():
-    """Delegation never clears stop_event_loop it didn't set."""
-    tool = _make_delegation_tool()
-    parent = Agent(name="p", tools=[tool], callback_handler=None)
-    plugin = _get_plugin(parent)
-    plugin._state[parent] = _DelegationState(tool_use_id="other", tool_use_count=1)
-
-    invocation_state = {"request_state": {"stop_event_loop": True}}
-    event = AfterToolCallEvent(
-        agent=parent,
-        selected_tool=tool,
-        tool_use={"toolUseId": "t99", "name": "sub", "input": {}},
-        invocation_state=invocation_state,
-        result={"toolUseId": "t99", "status": "success", "content": [{"text": "ok"}]},
-    )
-    plugin._on_after_tool_call(event)
-    assert invocation_state["request_state"]["stop_event_loop"] is True
-
-
 # --- AfterToolsEvent end_turn ---
 
 
@@ -246,24 +227,11 @@ def test_on_after_tools_sets_end_turn_on_success():
     plugin._state[parent] = _DelegationState(tool_use_id="t1", tool_use_count=1)
 
     tru_event = _fire_after_tools(parent, plugin)
-    assert tru_event.end_turn is True
-
-
-def test_on_after_tools_skips_when_result_is_error():
-    tool = _make_delegation_tool()
-    parent = Agent(name="p", tools=[tool], callback_handler=None)
-    plugin = _get_plugin(parent)
-    plugin._state[parent] = _DelegationState(tool_use_id="t1", tool_use_count=1)
-
-    tru_event = _fire_after_tools(parent, plugin, status="error")
-    assert not tru_event.end_turn
-    assert plugin._state[parent].tool_use_id is None
+    assert isinstance(tru_event.end_turn, list)
+    assert tru_event.end_turn == [{"text": "x"}]
 
 
 def test_on_after_tools_suppressed_with_structured_output():
-    from pydantic import BaseModel
-
-    from strands.tools.structured_output.structured_output_tool import StructuredOutputTool
 
     class R(BaseModel):
         x: int
@@ -301,144 +269,6 @@ def test_on_after_tools_skips_when_result_absent(content):
     assert plugin._state[parent].tool_use_id is None
 
 
-# --- _handle_stream ordering ---
-
-
-@pytest.mark.asyncio
-async def test_handle_stream_non_delegation_preserves_trailing():
-    parent = Agent(name="p", callback_handler=None)
-    plugin = _get_plugin(parent)
-    ctx = AgentStreamContext(agent=parent, messages=[], invocation_state={"request_state": {}}, _interrupts={})
-
-    a = TypedEvent({"a": 1})
-    stop = EventLoopStopEvent("end_turn", {"role": "assistant", "content": []}, parent.event_loop_metrics, {})
-    b = TypedEvent({"b": 2})
-
-    async def inner(c):
-        yield a
-        yield stop
-        yield b
-
-    tru_events = [e async for e in plugin._handle_stream(ctx, inner)]
-    exp_events = [a, stop, b]
-    assert tru_events == exp_events
-
-
-@pytest.mark.asyncio
-async def test_handle_stream_non_delegation_multiple_stops_preserved():
-    parent = Agent(name="p", callback_handler=None)
-    plugin = _get_plugin(parent)
-    ctx = AgentStreamContext(agent=parent, messages=[], invocation_state={"request_state": {}}, _interrupts={})
-
-    s1 = EventLoopStopEvent("end_turn", {"role": "assistant", "content": []}, parent.event_loop_metrics, {})
-    mid = TypedEvent({"mid": 1})
-    s2 = EventLoopStopEvent("end_turn", {"role": "assistant", "content": []}, parent.event_loop_metrics, {})
-
-    async def inner(c):
-        yield s1
-        yield mid
-        yield s2
-
-    tru_events = [e async for e in plugin._handle_stream(ctx, inner)]
-    exp_events = [s1, mid, s2]
-    assert tru_events == exp_events
-
-
-@pytest.mark.asyncio
-async def test_handle_stream_delegation_replaces_stop_with_trailing():
-    """Delegation replaces stop; trailing events keep position; exactly one terminal."""
-    tool = _make_delegation_tool()
-    parent = Agent(name="p", tools=[tool], callback_handler=None)
-    plugin = _get_plugin(parent)
-
-    parent.messages.extend(
-        [
-            {"role": "assistant", "content": [{"toolUse": {"toolUseId": "t1", "name": "sub", "input": {}}}]},
-            {
-                "role": "user",
-                "content": [{"toolResult": {"toolUseId": "t1", "status": "success", "content": [{"text": "answer"}]}}],
-            },
-            {"role": "assistant", "content": [{"text": "placeholder"}]},
-        ]
-    )
-
-    ctx = AgentStreamContext(agent=parent, messages=[], invocation_state={"request_state": {}}, _interrupts={})
-    pre = TypedEvent({"pre": 1})
-    stop = EventLoopStopEvent("end_turn", parent.messages[-1], parent.event_loop_metrics, {})
-    trail = TypedEvent({"trail": 1})
-
-    async def inner(c):
-        plugin._state[parent] = _DelegationState(tool_use_id="t1", end_turn_via_delegation=True, tool_use_count=1)
-        yield pre
-        yield stop
-        yield trail
-
-    tru_events = [e async for e in plugin._handle_stream(ctx, inner)]
-
-    assert tru_events[0] is pre
-    tru_stops = [e for e in tru_events if isinstance(e, EventLoopStopEvent)]
-    assert len(tru_stops) == 1
-    assert tru_stops[0]["stop"][1]["content"][0]["text"] == "answer"
-    assert tru_events[-1] is trail
-    assert "tracking_id" in parent.messages[-1]
-
-
-@pytest.mark.asyncio
-async def test_handle_stream_reverify_failure_replays_original():
-    """If the tool result is mutated to error after _on_after_tools, original stop replays."""
-    tool = _make_delegation_tool()
-    parent = Agent(name="p", tools=[tool], callback_handler=None)
-    plugin = _get_plugin(parent)
-
-    parent.messages.extend(
-        [
-            {"role": "assistant", "content": [{"toolUse": {"toolUseId": "t1", "name": "sub", "input": {}}}]},
-            {
-                "role": "user",
-                "content": [{"toolResult": {"toolUseId": "t1", "status": "error", "content": [{"text": "failed"}]}}],
-            },
-            {"role": "assistant", "content": [{"text": "placeholder"}]},
-        ]
-    )
-
-    ctx = AgentStreamContext(agent=parent, messages=[], invocation_state={"request_state": {}}, _interrupts={})
-    original_stop = EventLoopStopEvent("end_turn", parent.messages[-1], parent.event_loop_metrics, {})
-
-    async def inner(c):
-        plugin._state[parent] = _DelegationState(tool_use_id="t1", end_turn_via_delegation=True, tool_use_count=1)
-        yield original_stop
-
-    tru_events = [e async for e in plugin._handle_stream(ctx, inner)]
-    assert len(tru_events) == 1
-    assert tru_events[0] is original_stop
-
-
-@pytest.mark.asyncio
-async def test_handle_stream_absent_tool_result_skips_delegation():
-    """When the tool result for the delegation toolUseId is absent from history, delegation is skipped."""
-    tool = _make_delegation_tool()
-    parent = Agent(name="p", tools=[tool], callback_handler=None)
-    plugin = _get_plugin(parent)
-
-    parent.messages.extend(
-        [
-            {"role": "assistant", "content": [{"toolUse": {"toolUseId": "t1", "name": "sub", "input": {}}}]},
-            {"role": "assistant", "content": [{"text": "placeholder"}]},
-        ]
-    )
-
-    ctx = AgentStreamContext(agent=parent, messages=[], invocation_state={"request_state": {}}, _interrupts={})
-    original_stop = EventLoopStopEvent("end_turn", parent.messages[-1], parent.event_loop_metrics, {})
-
-    async def inner(c):
-        plugin._state[parent] = _DelegationState(tool_use_id="t1", end_turn_via_delegation=True, tool_use_count=1)
-        yield original_stop
-
-    tru_events = [e async for e in plugin._handle_stream(ctx, inner)]
-    assert len(tru_events) == 1
-    assert tru_events[0] is original_stop
-
-
 # --- Stateful model rejection ---
 
 
@@ -449,12 +279,6 @@ def test_init_raises_with_delegation_on_stateful():
 
     with pytest.raises(ValueError, match="not supported with stateful models"):
         Agent(name="p", model=stateful, tools=[tool], callback_handler=None)
-
-
-def test_init_ok_without_delegation_on_stateful():
-    stateful = MagicMock()
-    type(stateful).stateful = PropertyMock(return_value=True)
-    Agent(name="p", model=stateful, callback_handler=None)
 
 
 @pytest.mark.asyncio
@@ -471,6 +295,7 @@ async def test_runtime_stateful_delegate_passes_through():
             tool=tool,
             tool_use={"toolUseId": "t1", "name": "sub", "input": {"input": "hi"}},
             invocation_state={"request_state": {}},
+            cancel_signal=parent.cancel_signal,
             _interrupt_state=parent._interrupt_state,
         )
 
@@ -521,8 +346,6 @@ def test_to_content_blocks_converts_text_json_and_passthrough():
 
 @pytest.mark.asyncio
 async def test_child_structured_output_datetime_serializes_cleanly():
-    from pydantic import BaseModel
-
     class S(BaseModel):
         at: datetime
 
@@ -535,7 +358,7 @@ async def test_child_structured_output_datetime_serializes_cleanly():
         structured_output=S(at=datetime(2025, 1, 15, 9, 0)),
     )
 
-    async def stream(prompt):
+    async def stream(prompt, cancel_signal=None):
         yield {"result": result}
 
     mock_agent.stream_async = stream
@@ -583,6 +406,46 @@ async def test_full_delegation_routes_to_specialist():
 
 
 @pytest.mark.asyncio
+async def test_full_delegation_delegate_tool_stays_foreground_with_background_tasks():
+    tech_support = Agent(
+        model=MockedModelProvider([{"role": "assistant", "content": [{"text": "Try rebooting your router."}]}]),
+        name="TechSupport",
+        callback_handler=None,
+    )
+    orchestrator = Agent(
+        model=MockedModelProvider(
+            [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "toolUse": {
+                                "toolUseId": "call-1",
+                                "name": "TechSupport",
+                                "input": {"input": "My wifi does not work", "_background_execution": True},
+                            }
+                        }
+                    ],
+                }
+            ]
+        ),
+        name="Orchestrator",
+        tools=[tech_support.as_tool(delegate=True)],
+        background_tasks={},
+        callback_handler=None,
+    )
+
+    result = await orchestrator.invoke_async("My wifi does not work")
+
+    tru_stop_reason = result.stop_reason
+    exp_stop_reason = "end_turn"
+    assert tru_stop_reason == exp_stop_reason
+    tru_text = [block["text"] for block in result.message["content"] if "text" in block]
+    exp_text = ["Try rebooting your router."]
+    assert tru_text == exp_text
+
+
+@pytest.mark.asyncio
 async def test_full_delegation_error_recovery():
     err = _mock_sub_agent("failing")
 
@@ -613,14 +476,100 @@ async def test_full_delegation_error_recovery():
     assert "recovered" in str(tru_result.message["content"]).lower()
 
 
+@pytest.mark.asyncio
+async def test_full_delegation_blank_content_skips_delegation():
+    """When a delegate returns empty content, delegation is skipped and the loop continues to the model."""
+    sub = Agent(
+        model=MockedModelProvider([{"role": "assistant", "content": []}]),
+        name="empty_sub",
+        callback_handler=None,
+    )
+    orch = Agent(
+        model=MockedModelProvider(
+            [
+                {
+                    "role": "assistant",
+                    "content": [{"toolUse": {"toolUseId": "c1", "name": "empty_sub", "input": {"input": "go"}}}],
+                },
+                # Delegation skipped — the loop continues and the model produces this response.
+                {"role": "assistant", "content": [{"text": "I continued."}]},
+            ]
+        ),
+        name="orch",
+        tools=[sub.as_tool(delegate=True)],
+        callback_handler=None,
+    )
+
+    tru_result = await orch.invoke_async("go")
+    assert tru_result.stop_reason == "end_turn"
+    assert "I continued." in str(tru_result.message["content"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_session_manager", [False, True])
+async def test_delegation_emits_correct_history_and_single_assistant_event(with_session_manager):
+    """A delegation turn produces a correct history and emits exactly one assistant MessageAddedEvent.
+
+    Subscribers must see the delegated content exactly once, whether or not a session manager is attached (#3808).
+    """
+    session_manager = (
+        RepositorySessionManager(session_id="s1", session_repository=MockedSessionRepository())
+        if with_session_manager
+        else None
+    )
+
+    sub = Agent(
+        model=MockedModelProvider([{"role": "assistant", "content": [{"text": "Balance: $42"}]}]),
+        name="billing",
+        callback_handler=None,
+    )
+    orch = Agent(
+        model=MockedModelProvider(
+            [
+                {
+                    "role": "assistant",
+                    "content": [{"toolUse": {"toolUseId": "c1", "name": "billing", "input": {"input": "check"}}}],
+                }
+            ]
+        ),
+        name="orch",
+        tools=[sub.as_tool(delegate=True)],
+        session_manager=session_manager,
+        callback_handler=None,
+    )
+
+    tru_assistant_messages: list = []
+    orch.add_hook(
+        lambda event: (
+            tru_assistant_messages.append(event.message)
+            if event.message["role"] == "assistant" and any("text" in b for b in event.message.get("content", []))
+            else None
+        ),
+        MessageAddedEvent,
+    )
+
+    await orch.invoke_async("Check balance")
+
+    exp_content = [{"text": "Balance: $42"}]
+    assert len(tru_assistant_messages) == 1
+    assert tru_assistant_messages[0]["content"] == exp_content
+
+    # Verify the full orchestrator history shape.
+    assert len(orch.messages) == 4
+    assert orch.messages[0]["role"] == "user"
+    assert orch.messages[1]["role"] == "assistant"
+    assert "toolUse" in orch.messages[1]["content"][0]
+    assert orch.messages[2]["role"] == "user"
+    assert "toolResult" in orch.messages[2]["content"][0]
+    assert orch.messages[3]["role"] == "assistant"
+    assert orch.messages[3]["content"] == exp_content
+
+
 # --- Session persistence ---
 
 
 @pytest.mark.asyncio
 async def test_persisted_matches_in_memory_after_delegation():
-    from strands.session.repository_session_manager import RepositorySessionManager
-    from tests.fixtures.mock_session_repository import MockedSessionRepository
-
     repo = MockedSessionRepository()
     session_mgr = RepositorySessionManager(session_id="s1", session_repository=repo)
 
@@ -663,8 +612,6 @@ async def test_persisted_matches_in_memory_after_delegation():
 @pytest.mark.asyncio
 async def test_large_delegation_result_not_offloaded():
     """A delegation result exceeding the offloader threshold stays in context."""
-    from strands.vended_plugins.context_offloader import ContextOffloader, InMemoryStorage
-
     storage = InMemoryStorage()
     offloader = ContextOffloader(storage=storage, max_result_tokens=25, preview_tokens=10)
 
@@ -707,8 +654,7 @@ async def test_ordering_guard_late_hook_flipping_result_prevents_end_turn():
     Order priority always wins: DEFAULT (0) runs before SDK_LAST (100). Reverse ordering only flips
     registration order *within* one order tier, so delegation's SDK_LAST hook runs last and reads the
     already-mutated committed message. Its own check in _on_after_tools is what declines to set
-    end_turn here; _handle_stream's re-verification is a second line of defence that does not fire in
-    this scenario.
+    end_turn here.
     """
     sub = Agent(
         model=MockedModelProvider([{"role": "assistant", "content": [{"text": "answer"}]}]),
@@ -744,110 +690,6 @@ async def test_ordering_guard_late_hook_flipping_result_prevents_end_turn():
     assert "continued" in str(tru_result.message["content"]).lower()
 
 
-# --- MessageAddedEvent during delegation ---
-
-
-@pytest.mark.asyncio
-async def test_message_added_event_fires_for_delegation_message():
-    """MessageAddedEvent fires for the placeholder and then the real delegation content."""
-    sub = Agent(
-        model=MockedModelProvider([{"role": "assistant", "content": [{"text": "Balance: $42"}]}]),
-        name="billing",
-        callback_handler=None,
-    )
-
-    orch = Agent(
-        model=MockedModelProvider(
-            [
-                {
-                    "role": "assistant",
-                    "content": [{"toolUse": {"toolUseId": "c1", "name": "billing", "input": {"input": "check"}}}],
-                }
-            ]
-        ),
-        name="orch",
-        tools=[sub.as_tool(delegate=True)],
-        callback_handler=None,
-    )
-
-    received_messages = []
-
-    def on_message_added(event: MessageAddedEvent):
-        received_messages.append(event.message)
-
-    orch.add_hook(on_message_added, MessageAddedEvent)
-    await orch.invoke_async("Check balance")
-
-    # Expected: user prompt, assistant tool_use, tool_result, end_turn placeholder, delegation content
-    assert len(received_messages) == 5
-
-    tru_placeholders = [
-        m
-        for m in received_messages
-        if m["role"] == "assistant" and any("Turn ended early" in str(b.get("text", "")) for b in m.get("content", []))
-    ]
-    assert len(tru_placeholders) == 1
-
-    tru_delegation = [
-        m
-        for m in received_messages
-        if m["role"] == "assistant" and any("$42" in str(b.get("text", "")) for b in m.get("content", []))
-    ]
-    assert len(tru_delegation) == 1
-
-    # Placeholder comes before delegation content
-    assert received_messages.index(tru_placeholders[0]) < received_messages.index(tru_delegation[0])
-
-
-@pytest.mark.asyncio
-async def test_session_manager_suppresses_delegation_message_added_event():
-    """With a session manager, subscribers see the placeholder but not the delegation content event."""
-    from strands.session.repository_session_manager import RepositorySessionManager
-    from tests.fixtures.mock_session_repository import MockedSessionRepository
-
-    repo = MockedSessionRepository()
-    session_mgr = RepositorySessionManager(session_id="s1", session_repository=repo)
-
-    sub = Agent(
-        model=MockedModelProvider([{"role": "assistant", "content": [{"text": "Balance: $42"}]}]),
-        name="billing",
-        callback_handler=None,
-    )
-
-    orch = Agent(
-        model=MockedModelProvider(
-            [
-                {
-                    "role": "assistant",
-                    "content": [{"toolUse": {"toolUseId": "c1", "name": "billing", "input": {"input": "check"}}}],
-                }
-            ]
-        ),
-        name="orch",
-        tools=[sub.as_tool(delegate=True)],
-        session_manager=session_mgr,
-        callback_handler=None,
-    )
-
-    received_messages = []
-
-    def on_message_added(event: MessageAddedEvent):
-        received_messages.append(event.message)
-
-    orch.add_hook(on_message_added, MessageAddedEvent)
-    await orch.invoke_async("Check balance")
-
-    tru_delegation = [
-        m
-        for m in received_messages
-        if m["role"] == "assistant" and any("$42" in str(b.get("text", "")) for b in m.get("content", []))
-    ]
-    assert len(tru_delegation) == 0
-
-    # But agent.messages still reflects the delegation content
-    assert any("$42" in str(b.get("text", "")) for b in orch.messages[-1].get("content", []))
-
-
 # --- Middleware single-call guard ---
 
 
@@ -863,6 +705,7 @@ async def test_middleware_rejects_delegation_when_batch_count_exceeds_one():
         tool=tool,
         tool_use={"toolUseId": "t1", "name": "sub", "input": {"input": "hi"}},
         invocation_state={"request_state": {}},
+        cancel_signal=parent.cancel_signal,
         _interrupt_state=parent._interrupt_state,
     )
 
@@ -915,10 +758,10 @@ async def test_delegation_preserves_content_verbatim_across_hops():
         callback_handler=None,
     )
 
-    result = await top.invoke_async("run")
+    tru_result = await top.invoke_async("run")
 
-    assert len(result.message["content"]) == 1
-    delivered_text = result.message["content"][0]["text"]
+    assert len(tru_result.message["content"]) == 1
+    delivered_text = tru_result.message["content"][0]["text"]
     assert delivered_text == exact_payload, f"Expected verbatim {exact_payload!r}, got {delivered_text!r}"
 
 
@@ -943,7 +786,7 @@ async def test_delegation_preserves_json_block_verbatim():
         state={},
     )
 
-    async def fake_stream(prompt):
+    async def fake_stream(prompt, cancel_signal=None):
         yield {"result": fake_result}
 
     tool._agent.stream_async = fake_stream
@@ -984,7 +827,7 @@ async def test_delegation_preserves_citations_alongside_text():
         state={},
     )
 
-    async def fake_stream(prompt):
+    async def fake_stream(prompt, cancel_signal=None):
         yield {"result": fake_result}
 
     tool._agent.stream_async = fake_stream
@@ -998,3 +841,52 @@ async def test_delegation_preserves_citations_alongside_text():
     assert len(content) == 2
     assert content[0]["text"] == plain_text
     assert content[1]["text"] == cited_text
+
+
+@pytest.mark.asyncio
+async def test_full_delegation_json_content_serialized_to_text():
+    """JSON content blocks from a delegate are serialized to text in the parent's final assistant message.
+
+    This guards the _to_content_blocks wiring at the _on_after_tools call site — without it a raw
+    {"json": ...} block would leak into the assistant message verbatim.
+    """
+    json_payload = {"status": "ok", "count": 3}
+
+    sub = Agent(
+        model=MockedModelProvider([{"role": "assistant", "content": [{"text": "unused"}]}]),
+        name="leaf",
+        callback_handler=None,
+    )
+    tool = sub.as_tool(delegate=True)
+
+    fake_result = AgentResult(
+        stop_reason="end_turn",
+        message={"role": "assistant", "content": [{"json": json_payload}]},
+        metrics=EventLoopMetrics(),
+        state={},
+    )
+
+    async def fake_stream(prompt, cancel_signal=None):
+        yield {"result": fake_result}
+
+    tool._agent.stream_async = fake_stream
+
+    orch = Agent(
+        model=MockedModelProvider(
+            [
+                {
+                    "role": "assistant",
+                    "content": [{"toolUse": {"toolUseId": "c1", "name": "leaf", "input": {"input": "go"}}}],
+                }
+            ]
+        ),
+        name="orch",
+        tools=[tool],
+        callback_handler=None,
+    )
+
+    tru_result = await orch.invoke_async("go")
+
+    exp_content = [{"text": json_module.dumps(json_payload)}]
+    assert tru_result.message["content"] == exp_content
+    assert orch.messages[-1]["content"] == exp_content

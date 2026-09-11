@@ -5,7 +5,9 @@ import weakref
 import pytest
 
 from strands import Agent, tool
+from strands.experimental.bidi import BidiAgent, BidiModel
 from strands.tools.tool_provider import ToolProvider
+from strands.types.exceptions import ConcurrencyException
 
 
 @pytest.fixture
@@ -31,6 +33,11 @@ def test_tool():
 @pytest.fixture
 def agent(model, test_tool):
     return Agent(model=model, tools=[test_tool])
+
+
+@pytest.fixture
+def bidi_agent(test_tool):
+    return BidiAgent(model=unittest.mock.AsyncMock(spec=BidiModel), tools=[test_tool])
 
 
 def test_agent_tool(randint, agent):
@@ -114,6 +121,24 @@ def test_agent_tool_do_not_record_tool_with_method_override(agent):
     exp_messages = []
 
     assert tru_messages == exp_messages
+
+
+def test_bidi_agent_tool_recording_raises_while_running(bidi_agent):
+    bidi_agent._started = True
+
+    with pytest.raises(ConcurrencyException, match="cannot be recorded while the bidirectional agent is running"):
+        bidi_agent.tool.test_tool(random_string="abcdEfghI123")
+
+    assert bidi_agent.messages == []
+
+
+def test_bidi_agent_tool_without_recording_succeeds_while_running(bidi_agent):
+    bidi_agent._started = True
+
+    result = bidi_agent.tool.test_tool(random_string="abcdEfghI123", record_direct_tool_call=False)
+
+    assert result["content"] == [{"text": "abcdEfghI123"}]
+    assert bidi_agent.messages == []
 
 
 def test_agent_tool_tool_does_not_exist(agent):

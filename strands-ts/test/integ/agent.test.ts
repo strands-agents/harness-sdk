@@ -189,7 +189,7 @@ describe.each(allProviders)('Agent with $name', ({ name, skip, createModel, mode
         const docBlock = new DocumentBlock({
           name: 'test-document',
           format: 'txt',
-          source: { text: 'The document contains the word ZEBRA.' },
+          source: { text: 'The animal described here is a ZEBRA.' },
         })
 
         // Create image block
@@ -210,7 +210,7 @@ describe.each(allProviders)('Agent with $name', ({ name, skip, createModel, mode
                 docBlock,
                 imageBlock,
                 new TextBlock(
-                  'I shared a document and an image. What animal is in the document and what color is the image? Answer briefly.'
+                  'What animal is named in the text I shared, and what color is the image? Answer briefly.'
                 ),
               ],
             }),
@@ -273,10 +273,7 @@ describe.each(allProviders)('Agent with $name', ({ name, skip, createModel, mode
         printer: false,
       })
 
-      const result = await agent.invoke([
-        new TextBlock('What is the secret code word in the document? Answer in one word.'),
-        docBlock,
-      ])
+      const result = await agent.invoke([new TextBlock('What is the secret code word? Answer in one word.'), docBlock])
 
       expect(result.stopReason).toBe('endTurn')
       const textContent = result.lastMessage.content.find((block) => block.type === 'textBlock')

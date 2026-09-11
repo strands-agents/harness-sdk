@@ -7,6 +7,7 @@ import { deepCopy } from '../../types/json.js'
 import { TextBlock, ToolResultBlock } from '../../types/messages.js'
 
 import type { Agent } from '../../agent/agent.js'
+import type { BackgroundTasks } from '../../background-tasks/background-tasks.js'
 import type { ToolUseData } from '../../hooks/events.js'
 import type { ExecuteToolContext, ExecuteToolResult, MiddlewareRegistry } from '../../middleware/index.js'
 import type { Meter } from '../../telemetry/meter.js'
@@ -33,6 +34,11 @@ export interface ToolExecutorOptions {
   readonly meter: Meter
   /** Cancellation signal scoped to this executor invocation. */
   readonly cancelSignal: AbortSignal
+  readonly toolInterrupt?: ToolContext['interrupt']
+  readonly middlewareInterrupt?: ExecuteToolContext['interrupt']
+  readonly toolGuard?: (tool: Tool | undefined) => void
+  readonly backgroundTasks?: BackgroundTasks
+  readonly backgroundTaskPassId?: string
 }
 
 /**
@@ -71,6 +77,30 @@ export abstract class ToolExecutor {
     options: ToolExecutorOptions,
     input: ToolExecutionInput
   ): AsyncGenerator<AgentStreamEvent, void, undefined>
+
+  async executeBackground(
+    options: ToolExecutorOptions,
+    toolUse: ToolUseData,
+    tool: Tool,
+    invocationState: InvocationState,
+    onEvent: (event: AgentStreamEvent) => Promise<unknown>
+  ): Promise<ToolResultBlock> {
+    while (true) {
+      const generator = this._executeToolAttempt(options, tool, toolUse, invocationState)
+      try {
+        let next = await generator.next()
+        while (!next.done) {
+          await onEvent(next.value)
+          next = await generator.next()
+        }
+        if (!this._shouldRetry(next.value, options.cancelSignal)) {
+          return this._normalizeToolResultId(next.value.result, toolUse.toolUseId)
+        }
+      } finally {
+        await generator.return(undefined as never)
+      }
+    }
+  }
 
   // Tool lookup and tool-body failures become ToolResultBlocks so the model can
   // respond to them; lifecycle and middleware failures may still propagate.
@@ -130,20 +160,28 @@ export abstract class ToolExecutor {
         return this._normalizeToolResultId(afterToolCallEvent.result, toolUseBlock.toolUseId)
       }
 
-      const toolResult = this._normalizeToolResultId(
-        yield* this._executeToolWithMiddleware(options, effectiveTool, toolUse, invocationState),
-        toolUseBlock.toolUseId
-      )
-      const error = toolResult.error
-      const afterToolCallEvent = new AfterToolCallEvent({
-        agent: options.agent,
+      const route = options.backgroundTasks?.routeToolCall(toolUse, registryTool, effectiveTool)
+      if (route === true) {
+        // No AfterToolCallEvent is emitted for the dispatch ack. BeforeToolCallEvent
+        // already fired above; the background run later emits the matching
+        // AfterToolCallEvent.
+        return this._normalizeToolResultId(
+          await options.backgroundTasks!.submitToolCall(
+            toolUse,
+            invocationState,
+            options.backgroundTaskPassId!,
+            effectiveTool!
+          ),
+          toolUseBlock.toolUseId
+        )
+      }
+      const afterToolCallEvent = yield* this._executeToolAttempt(
+        options,
+        effectiveTool,
         toolUse,
-        tool: effectiveTool,
-        result: toolResult,
         invocationState,
-        ...(error !== undefined && { error }),
-      })
-      yield afterToolCallEvent
+        route
+      )
 
       if (this._shouldRetry(afterToolCallEvent, options.cancelSignal)) {
         continue
@@ -153,6 +191,29 @@ export abstract class ToolExecutor {
       // observe the same value.
       return this._normalizeToolResultId(afterToolCallEvent.result, toolUseBlock.toolUseId)
     }
+  }
+
+  private async *_executeToolAttempt(
+    options: ToolExecutorOptions,
+    tool: Tool | undefined,
+    toolUse: ToolUseData,
+    invocationState: InvocationState,
+    result?: ToolResultBlock
+  ): AsyncGenerator<AgentStreamEvent, AfterToolCallEvent, undefined> {
+    const toolResult = this._normalizeToolResultId(
+      yield* this._executeToolWithMiddleware(options, tool, toolUse, invocationState, result),
+      toolUse.toolUseId
+    )
+    const event = new AfterToolCallEvent({
+      agent: options.agent,
+      toolUse,
+      tool,
+      result: toolResult,
+      invocationState,
+      ...(toolResult.error !== undefined && { error: toolResult.error }),
+    })
+    yield event
+    return event
   }
 
   private _shouldRetry(afterToolCallEvent: AfterToolCallEvent, cancelSignal: AbortSignal): boolean {
@@ -193,7 +254,8 @@ export abstract class ToolExecutor {
     options: ToolExecutorOptions,
     tool: Tool | undefined,
     toolUse: ToolUseData,
-    invocationState: InvocationState
+    invocationState: InvocationState,
+    result?: ToolResultBlock
   ): AsyncGenerator<AgentStreamEvent, ToolResultBlock, undefined> {
     const context: ExecuteToolContext = {
       agent: options.agent,
@@ -201,10 +263,9 @@ export abstract class ToolExecutor {
       toolUse: deepCopy(toolUse) as unknown as ToolUseData,
       invocationState,
       cancelSignal: options.cancelSignal,
-      interrupt: createMiddlewareInterrupt(
-        options.agent._interruptState,
-        `middleware:executeTool:${toolUse.toolUseId}`
-      ),
+      interrupt:
+        options.middlewareInterrupt ??
+        createMiddlewareInterrupt(options.agent._interruptState, `middleware:executeTool:${toolUse.toolUseId}`),
     }
 
     // async function* does not bind lexical `this`; capture the executor for the terminal callback.
@@ -216,13 +277,17 @@ export abstract class ToolExecutor {
       async function* (
         middlewareContext: ExecuteToolContext
       ): AsyncGenerator<AgentStreamEvent, ExecuteToolResult, undefined> {
-        const result = yield* executor._executeToolCore(
-          options,
-          middlewareContext.tool,
-          middlewareContext.toolUse,
-          middlewareContext.invocationState
-        )
-        return { result }
+        options.toolGuard?.(middlewareContext.tool)
+        return {
+          result:
+            result ??
+            (yield* executor._executeToolCore(
+              options,
+              middlewareContext.tool,
+              middlewareContext.toolUse,
+              middlewareContext.invocationState
+            )),
+        }
       }
     )
     return middlewareResult.result
@@ -258,7 +323,9 @@ export abstract class ToolExecutor {
           invocationState,
           cancelSignal: options.cancelSignal,
           interrupt: <T = JSONValue>(params: InterruptParams): T =>
-            interruptFromAgent<T>(options.agent, `tool:${toolUse.toolUseId}:${params.name}`, params, 'tool'),
+            options.toolInterrupt
+              ? options.toolInterrupt<T>(params)
+              : interruptFromAgent<T>(options.agent, `tool:${toolUse.toolUseId}:${params.name}`, params, 'tool'),
         }
 
         // Iterate manually to wrap raw tool events at the agent boundary and

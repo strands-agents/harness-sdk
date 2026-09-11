@@ -1066,6 +1066,57 @@ describe('Agent Hooks Integration', () => {
       expect(model.callCount).toBe(2)
     })
 
+    it('treats empty array endTurn as falsy (does not halt)', async () => {
+      const { tool, model } = makeSingleToolSetup()
+      const agent = new Agent({ model, tools: [tool] })
+      agent.addHook(AfterToolsEvent, (event: AfterToolsEvent) => {
+        event.endTurn = []
+      })
+
+      const result = await agent.invoke('Test')
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          type: 'agentResult',
+          stopReason: 'endTurn',
+          lastMessage: expect.objectContaining({ role: 'assistant' }),
+        })
+      )
+      expect(model.callCount).toBe(2)
+    })
+
+    it('halts with content blocks when endTurn is a ContentBlock array', async () => {
+      const { tool, model } = makeSingleToolSetup()
+      const agent = new Agent({ model, tools: [tool] })
+      agent.addHook(AfterToolsEvent, (event: AfterToolsEvent) => {
+        event.endTurn = [new TextBlock('delegated response')]
+      })
+
+      const result = await agent.invoke('Test')
+
+      expect(result.stopReason).toBe('endTurn')
+      expect(result.lastMessage.content).toEqual([new TextBlock('delegated response')])
+      expect(agent.messages.at(-1)!.content).toEqual([new TextBlock('delegated response')])
+      expect(model.callCount).toBe(1)
+    })
+
+    it('shallow-copies the endTurn array so later mutation does not affect history', async () => {
+      const { tool, model } = makeSingleToolSetup()
+      const agent = new Agent({ model, tools: [tool] })
+      const hookList = [new TextBlock('from hook')]
+      agent.addHook(AfterToolsEvent, (event: AfterToolsEvent) => {
+        event.endTurn = hookList
+      })
+
+      await agent.invoke('Test')
+
+      // Mutate the hook's list after the invocation returns
+      hookList.push(new TextBlock('MUTATED AFTER THE FACT'))
+
+      // The committed message must be unchanged — the event loop shallow-copied
+      expect(agent.messages.at(-1)!.content).toEqual([new TextBlock('from hook')])
+    })
+
     it('appends tool results and default endTurn message to conversation history', async () => {
       const { tool, model } = makeSingleToolSetup()
       const agent = new Agent({ model, tools: [tool] })

@@ -19,7 +19,9 @@ from strands.models.routing import (
 )
 from strands.models.routing.router import _candidate_label, _RoutingState
 from strands.multiagent import GraphBuilder
+from strands.session.repository_session_manager import RepositorySessionManager
 from strands.types.exceptions import ModelThrottledException
+from tests.fixtures.mock_session_repository import MockedSessionRepository
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 
@@ -88,7 +90,14 @@ def _invoke_context(invocation_state, model, agent=None):
 def test_routing_surface_is_re_exported_from_strands_models():
     import strands.models as models
 
-    for symbol in ("ModelRouter", "RoutingCandidate", "RoutingContext", "RoutingStrategy"):
+    for symbol in (
+        "FallbackStrategy",
+        "ClassifierStrategy",
+        "ModelRouter",
+        "RoutingCandidate",
+        "RoutingContext",
+        "RoutingStrategy",
+    ):
         assert getattr(models, symbol) is getattr(models.routing, symbol)
         assert symbol in models.__all__
 
@@ -137,14 +146,43 @@ def test_a_provider_whose_config_raises_neither_masks_a_guard_nor_breaks_routing
     assert _candidate_label(router.candidates[1]) == "_ThrowingConfigModel"
 
 
-def test_routing_candidate_metadata_is_preserved():
-    m = _model()
-    router = ModelRouter(models=[RoutingCandidate(model=m, name="routine", description="simple tasks")])
+def test_routing_candidate_metadata_is_preserved_without_changing_positional_construction():
+    model = _model()
+    metadata = {
+        "provider": "private",
+        "model_id": "reasoner-v2",
+        "input_modalities": ["text", "image"],
+        "context_window_limit": 200_000,
+        "supports_tool_use": True,
+        "supports_reasoning": True,
+    }
+    router = ModelRouter(models=[RoutingCandidate(model, "routine", "simple tasks", metadata=metadata)])
 
-    candidate = router.candidates[0]
-    tru_metadata = (candidate.model, candidate.name, candidate.description)
-    exp_metadata = (m, "routine", "simple tasks")
-    assert tru_metadata == exp_metadata
+    tru_candidate = router.candidates[0]
+    exp_candidate = RoutingCandidate(model, "routine", "simple tasks", metadata=metadata)
+    assert tru_candidate == exp_candidate
+
+
+def _circular_metadata():
+    metadata = {}
+    metadata["self"] = metadata
+    return metadata
+
+
+@pytest.mark.parametrize(
+    ("metadata", "error_type", "match"),
+    [
+        ("not-a-mapping", TypeError, "metadata must be a mapping"),
+        ({1: "one"}, TypeError, "metadata keys must be strings"),
+        ({"value": object()}, ValueError, "metadata must be JSON-serializable"),
+        ({"nested": {"value": float("nan")}}, ValueError, "metadata must be JSON-serializable"),
+        (_circular_metadata(), ValueError, "metadata must be JSON-serializable"),
+    ],
+    ids=["non-mapping", "non-string-key", "non-json-value", "non-finite-number", "circular-reference"],
+)
+def test_routing_candidate_rejects_non_json_metadata(metadata, error_type, match):
+    with pytest.raises(error_type, match=match):
+        RoutingCandidate(_model(), metadata=metadata)
 
 
 @pytest.mark.parametrize(
@@ -177,6 +215,36 @@ async def test_custom_strategy_prefers_named_candidate():
     )
 
     assert await router._select_model(_routing_context(router.candidates)) is smart
+
+
+class _RecordsAgentMetadata(MockedModelProvider):
+    """Records the agent_metadata forwarded to stream()."""
+
+    def __init__(self, agent_responses):
+        super().__init__(agent_responses)
+        self.agent_metadata = None
+
+    async def stream(self, *args, **kwargs):
+        self.agent_metadata = kwargs.get("agent_metadata")
+        async for event in super().stream(*args, **kwargs):
+            yield event
+
+
+@pytest.mark.asyncio
+async def test_routing_forwards_agent_metadata_to_the_selected_alternate():
+    """A routed alternate receives the invoking agent's metadata, so session-based cache routing
+    reaches every candidate rather than only the default model."""
+    alternate = _RecordsAgentMetadata([{"role": "assistant", "content": [{"text": "hi"}]}])
+    router = ModelRouter(
+        models=[RoutingCandidate(_model(), name="default"), RoutingCandidate(alternate, name="alternate")],
+        strategy=_PreferByName("alternate"),
+    )
+    session_manager = RepositorySessionManager(session_id="routed", session_repository=MockedSessionRepository())
+    agent = Agent(model=router, session_manager=session_manager, retry_strategy=None, callback_handler=None)
+
+    await agent.invoke_async("question")
+
+    assert alternate.agent_metadata.session_id == "routed"
 
 
 @pytest.mark.asyncio

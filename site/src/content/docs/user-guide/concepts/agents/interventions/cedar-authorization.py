@@ -255,7 +255,9 @@ def env_gating_example():
           )
           when {
             context.session has environment &&
-            context.session.environment != "production"
+            ["staging", "dev"].contains(
+              context.session.environment
+            )
           };
         """,
         context_enricher=lambda ctx: {
@@ -281,6 +283,10 @@ def env_gating_example():
         "Deploy the service",
         invocation_state={"environment": "production"},
     )
+
+    # denied when environment is absent: the enricher falls
+    # back to "unknown", which is outside the permitted set
+    agent("Deploy the service")
     # --8<-- [end:env_gating]
 
 

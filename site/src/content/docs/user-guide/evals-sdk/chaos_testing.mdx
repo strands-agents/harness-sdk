@@ -1,6 +1,6 @@
 ---
 title: Chaos Testing
-description: 'Test agent resilience by injecting controlled tool failures with ChaosPlugin: simulate timeouts, network errors, and corrupted responses safely.'
+description: 'Test agent resilience by injecting controlled tool and model-output failures with ChaosPlugin: simulate timeouts, network errors, corrupted responses, refusals, and malformed output safely.'
 tags: [error-handling, simulation]
 sidebar:
   label: "Chaos Testing"
@@ -8,7 +8,7 @@ sidebar:
 
 ## Overview
 
-Chaos testing systematically evaluates agent resilience by injecting controlled failures into tool execution. Using `ChaosPlugin`, `ChaosCase`, and `ChaosExperiment`, you can test how agents handle tool timeouts, network errors, and corrupted responses without modifying agent code. A complete example can be found [here](https://github.com/strands-agents/harness-sdk/blob/main/site/docs/examples/evals-sdk/chaos_testing.py).
+Chaos testing systematically evaluates agent resilience by injecting controlled failures into tool execution and model output. Using `ChaosPlugin`, `ChaosCase`, and `ChaosExperiment`, you can test how agents handle tool timeouts, network errors, and corrupted responses, and how downstream consumers handle refusals, empty responses, and malformed model output, all without modifying agent code. A complete tool-chaos example can be found [here](https://github.com/strands-agents/harness-sdk/blob/main/site/docs/examples/evals-sdk/chaos_tool_testing.py) and a model-output chaos example [here](https://github.com/strands-agents/harness-sdk/blob/main/site/docs/examples/evals-sdk/chaos_model_testing.py).
 
 This enables you to answer questions like:
 - Does the agent gracefully communicate failures to users?
@@ -44,12 +44,12 @@ Use chaos testing when you need to:
 
 ## How It Works
 
-Chaos testing integrates with Strands' plugin system via `BeforeToolCallEvent` and `AfterToolCallEvent` hooks:
+Chaos testing integrates with Strands' plugin system via four events: `BeforeToolCallEvent` and `AfterToolCallEvent` for tool chaos, plus `BeforeModelCallEvent` and `MessageAddedEvent` for model-output chaos.
 
-1. **ChaosCase**: Extends `Case` with an `effects` field mapping tool names to failure effects
+1. **ChaosCase**: Extends `Case` with an `effects` field holding two categories: `tool_effects` (mapping tool names to failure effects) and `model_effects` (mapping the `*` wildcard to model-output effects)
 2. **ChaosPlugin**: A Strands plugin that intercepts tool calls and applies effects transparently
 3. **ChaosExperiment**: Composes the base `Experiment` to manage chaos context per case
-4. **ChaosEffect**: A hierarchy of pre-hook effects (cancel tool calls) and post-hook effects (corrupt responses). Each tool can have only one effect per `ChaosCase`; use separate cases to test different failure modes for the same tool.
+4. **ChaosEffect**: A hierarchy of pre-call effects (cancel the tool or model call) and post-call effects (corrupt responses). Each tool can have only one effect per `ChaosCase`; use separate cases to test different failure modes for the same tool.
 
 The workflow:
 1. You define `ChaosCase` objects with effects specifying which tools should fail and how
@@ -130,7 +130,7 @@ asyncio.run(main())
 
 ## Effect Types
 
-### Pre-hook Effects (Tool Call Failures)
+### Pre-tool-call Effects (Tool Call Failures)
 
 These effects cancel the tool call entirely and return an error:
 
@@ -152,7 +152,7 @@ effect_maps = {
 }
 ```
 
-### Post-hook Effects (Response Corruption)
+### Post-tool-call Effects (Response Corruption)
 
 These effects let the tool execute but corrupt the response:
 
@@ -192,7 +192,86 @@ chaos_case = ChaosCase(
 )
 ```
 
-> **Note:** Each tool can only have **one effect** per `ChaosCase`. Passing multiple effects for the same tool (e.g., `"my_tool": [Timeout(), NetworkError()]`) raises a `ValueError`. To test multiple failure modes for a single tool, create separate `ChaosCase` instances — one per effect. Note that pre-hook effects are inherently mutually exclusive (only one can cancel a tool call), while the runtime supports composing multiple post-hook effects sequentially — this validator constraint may be relaxed in a future release.
+> **Note:** Each tool can only have **one effect** per `ChaosCase`. Passing multiple effects for the same tool (e.g., `"my_tool": [Timeout(), NetworkError()]`) raises a `ValueError`. To test multiple failure modes for a single tool, create separate `ChaosCase` instances — one per effect. Note that pre-tool-call effects are inherently mutually exclusive (only one can cancel a tool call), while the runtime supports composing multiple post-tool-call effects sequentially — this validator constraint may be relaxed in a future release.
+
+## Model Output Effects
+
+Beyond tool failures, `ChaosPlugin` can corrupt the model's own output. This tests the other side of resilience: how users, downstream services, and evaluation pipelines behave when the model refuses, returns nothing, or produces malformed output. A complete runnable example is [chaos_model_testing.py](https://github.com/strands-agents/harness-sdk/blob/main/site/docs/examples/evals-sdk/chaos_model_testing.py).
+
+Model effects live under the `model_effects` category, keyed by the `"*"` wildcard (applies to all models; per-model targeting is reserved for a future release):
+
+```python
+from strands_evals.chaos import ChaosCase, FullRefusal, MalformedJson
+
+chaos_cases = [
+    ChaosCase(
+        name="refusal",
+        input="Find me a flight from SFO to JFK on May 20.",
+        effects={"model_effects": {"*": [FullRefusal()]}},
+    ),
+    ChaosCase(
+        name="malformed_output",
+        input="Find me a flight from SFO to JFK on May 20.",
+        effects={"model_effects": {"*": [MalformedJson()]}},
+    ),
+]
+```
+
+### Pre-model-call Effects (Model Call Cancellation)
+
+Pre-model-call effects cancel the model call entirely via `BeforeModelCallEvent`. No model invocation happens, which also saves the API call:
+
+| Effect | Description |
+| :------- | :------------ |
+| `FullRefusal` | Replaces the turn with a refusal message ("I can't assist with that request...") |
+| `EmptyResponse` | Replaces the turn with a blank response, simulating "the model returned nothing" |
+
+> **Note:** At most one pre-model-call effect is allowed per `ChaosCase`. Pre-model-call effects cancel the model call, so only one can take effect; configuring two (e.g. `[FullRefusal(), EmptyResponse()]`) raises a `ValueError` at case construction. Use separate cases to test them independently.
+
+### Post-model-call Effects (Output Corruption)
+
+Post-model-call effects let the model run, then corrupt the final assistant response via `MessageAddedEvent`:
+
+| Effect | Description |
+| :------- | :------------ |
+| `MalformedJson` | Truncates JSON-like final-text responses; with `structured_output_model`, injects one failed attempt and allows the corrected retry through |
+| `Confabulation` | Injects fabricated citations into the response text |
+| `SuccessFraming` | Prepends a confident success prefix; always applied last, composable with other post-model-call effects |
+
+```python
+from strands_evals.chaos import ChaosCase, Confabulation, SuccessFraming
+
+# Composed: fabricated citations wrapped in confident framing
+chaos_case = ChaosCase(
+    name="confident_confabulation",
+    input="Summarize the search results.",
+    effects={"model_effects": {"*": [Confabulation(), SuccessFraming()]}},
+)
+```
+
+Post-model-call corruption applies only to the model's final response. Mid-turn tool dispatch messages are never corrupted, since mangling a live tool call would break the agent loop rather than test resilience. All toolUse messages remain unchanged; post-model-call effects never modify tool calls. `MalformedJson` truncates JSON-like final-text responses. When `structured_output_model` is used, it instead injects one failed structured-output attempt and allows the SDK's correction attempt through unchanged. A successful retry returns validated typed output.
+
+When a case mixes a pre-model-call and post-model-call effect (e.g. `[FullRefusal(), MalformedJson()]`), the pre-model-call effect wins: the model call is cancelled, and post-model-call effects are skipped rather than double-corrupting the injected turn.
+
+### Combining Tool and Model Effects
+
+Both categories can be set on the same `ChaosCase`, which is the most realistic scenario: infrastructure fails and the model misbehaves at the same time.
+
+```python
+from strands_evals.chaos import ChaosCase, SuccessFraming, Timeout
+
+# Combined: tool timeout + model wraps the failure in confident framing
+chaos_case = ChaosCase(
+    name="tool_fails_model_lies",
+    input="Book me a flight to Paris",
+    effects={
+        "tool_effects": {"search_flights": [Timeout()]},
+        "model_effects": {"*": [SuccessFraming()]},
+    },
+)
+```
+
+This tests the worst case: the tool fails, and the model confidently claims success anyway. Resilience evaluators can then measure whether the failure is surfaced to the user or papered over.
 
 ## Expanding Cases Across Multiple Effects
 

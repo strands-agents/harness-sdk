@@ -10,6 +10,7 @@ from .bedrock import BedrockModel
 from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model
 from .routing import (
     CandidateInput,
+    ClassifierStrategy,
     FallbackStrategy,
     ModelRouter,
     RoutingAttempt,
@@ -27,6 +28,7 @@ __all__ = [
     "CacheConfig",
     "CacheToolsConfig",
     "CandidateInput",
+    "ClassifierStrategy",
     "FallbackStrategy",
     "Model",
     "ModelRouter",

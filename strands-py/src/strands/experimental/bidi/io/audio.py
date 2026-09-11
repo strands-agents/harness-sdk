@@ -3,44 +3,63 @@
 Reads user audio from input device and sends agent audio to output device using PyAudio. If a user interrupts the agent,
 the output buffer is cleared to stop playback.
 
-Audio configuration is provided by the model via agent.model.config["audio"].
+Audio configuration is provided by models that implement ``AudioCapable``.
 
 Optional microphone audio processing (acoustic echo cancellation, noise suppression, and automatic gain
-control) is enabled by passing an ``AudioProcessorConfig`` (from ``strands.experimental.bidi.audio``) to
-``BidiAudioIO``. It requires pywebrtc-audio (pip install strands-agents[bidi-aec]); see that module for the
-processing implementation.
+control) is enabled by passing ``audio_processor=True`` or a ``BidiAudioProcessorConfig`` to ``BidiAudioIO``. It
+requires pywebrtc-audio (pip install strands-agents[bidi-aec]).
 """
 
 import asyncio
 import base64
 import logging
 import queue
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import pyaudio
+from typing_extensions import Unpack
 
-from ..types.events import BidiAudioInputEvent, BidiAudioStreamEvent, BidiInterruptionEvent, BidiOutputEvent
+from ..models.model import AudioCapable
+from ..types.events import (
+    BidiAudioInputEvent,
+    BidiAudioStreamEvent,
+    BidiInterruptionEvent,
+    BidiOutputEvent,
+)
 from ..types.io import BidiInput, BidiOutput
+from .transcript import _BidiTranscriptOutput
 
 if TYPE_CHECKING:
+    from .._audio import _BidiAudioProcessor
     from ..agent.agent import BidiAgent
-    from ..audio import AudioProcessorConfig, _AudioProcessor
 
 logger = logging.getLogger(__name__)
 
 
-def _check_pywebrtc_available() -> None:
-    """Verify pywebrtc-audio is importable.
+class BidiAudioProcessorConfig(TypedDict, total=False):
+    """Configure microphone audio processing.
 
-    Raises:
-        ImportError: If pywebrtc-audio is not installed.
+    Attributes:
+        echo_cancellation: Cancel the agent's own speaker audio from the mic input.
+        stream_delay_ms: Playback-to-capture delay hint in milliseconds for AEC.
+            A value of 0 lets AEC3 auto-estimate the delay. Only set a non-zero value if echo cancellation is
+            measurably failing on hardware with large or fixed playback-to-capture latency, such as Bluetooth.
     """
-    try:
-        import pywebrtc_audio  # noqa: F401
-    except ImportError as error:
-        raise ImportError(
-            "pywebrtc-audio is required for audio processing. Install it with: pip install strands-agents[bidi-aec]"
-        ) from error
+
+    echo_cancellation: bool
+    stream_delay_ms: int
+
+
+class BidiAudioIOConfig(TypedDict, total=False):
+    """Configure bidirectional audio input and output."""
+
+    audio_processor: BidiAudioProcessorConfig | bool | None
+    input_buffer_size: int | None
+    input_device_index: int | None
+    input_frames_per_buffer: int
+    output_buffer_size: int | None
+    output_device_index: int | None
+    output_frames_per_buffer: int
 
 
 class _BidiAudioBuffer:
@@ -69,15 +88,11 @@ class _BidiAudioBuffer:
         if hasattr(self, "_buffer"):
             # Unblock waited get calls by putting an empty chunk.
             # Note, Queue.shutdown exists but is a 3.13+ only feature; we simulate shutdown with the below
-            # logic. Drop the oldest chunk first when full (a bounded buffer can be full during teardown,
-            # e.g. after a stall) so the sentinel always lands and stop() never raises queue.Full over the
-            # real teardown error.
-            if self._buffer.full():
-                try:
-                    self._buffer.get_nowait()
-                except queue.Empty:
-                    pass
-            self._buffer.put_nowait(b"")
+            # logic. A full queue already has data available to unblock a consumer, so no sentinel is needed.
+            try:
+                self._buffer.put_nowait(b"")
+            except queue.Full:
+                pass
             self._buffer = queue.Queue(self._size)
 
     def put(self, chunk: bytes) -> None:
@@ -127,6 +142,7 @@ class _BidiAudioBuffer:
 
     def clear(self) -> None:
         """Clear the buffer."""
+        self._data.clear()
         while True:
             try:
                 self._buffer.get_nowait()
@@ -150,30 +166,24 @@ class _BidiAudioInput(BidiInput):
     _DEVICE_INDEX = None
     _FRAMES_PER_BUFFER = 512
 
-    def __init__(self, config: dict[str, Any], processor: "_AudioProcessor | None" = None) -> None:
-        """Extract configs.
+    def __init__(
+        self,
+        config: BidiAudioIOConfig,
+        *,
+        audio_processor: "_BidiAudioProcessor | None",
+    ) -> None:
+        """Initialize input settings.
 
         Args:
             config: Audio device configuration.
-            processor: Shared audio processor for echo cancellation, or None to disable processing.
+            audio_processor: Shared microphone audio processor.
         """
         self._buffer_size = config.get("input_buffer_size", _BidiAudioInput._BUFFER_SIZE)
         self._device_index = config.get("input_device_index", _BidiAudioInput._DEVICE_INDEX)
-        self._configured_frames_per_buffer = config.get("input_frames_per_buffer", _BidiAudioInput._FRAMES_PER_BUFFER)
-        self._processor = processor
+        self._frames_per_buffer = config.get("input_frames_per_buffer", _BidiAudioInput._FRAMES_PER_BUFFER)
 
-        # When echo cancellation is on, bound the mic buffer to the same frame horizon as the reference
-        # buffer so that under a sustained input stall both evict their oldest frames in lockstep, keeping
-        # the newest mic frame paired with the newest reference frame. An unbounded (or differently sized)
-        # mic buffer would let the reference saturate and drop frames first, inverting the pairing and
-        # collapsing echo cancellation. This overrides input_buffer_size while processing is on.
-        buffer_size: int | None
-        if processor is not None and processor._config.echo_cancellation:
-            buffer_size = processor._max_ref_frames
-        else:
-            buffer_size = self._buffer_size
-
-        self._buffer = _BidiAudioBuffer(buffer_size)
+        self._audio_processor = audio_processor
+        self._buffer = _BidiAudioBuffer(self._buffer_size)
 
     async def start(self, agent: "BidiAgent") -> None:
         """Start input stream.
@@ -186,32 +196,29 @@ class _BidiAudioInput(BidiInput):
         """
         logger.debug("starting audio input stream")
 
-        self._channels = agent.model.config["audio"]["channels"]
-        self._format = agent.model.config["audio"]["format"]
-        self._rate = agent.model.config["audio"]["input_rate"]
+        if not isinstance(agent.model, AudioCapable):
+            raise TypeError("BidiAudioIO requires a model that implements AudioCapable")
 
-        if self._processor is not None:
-            self._processor.configure(
+        audio_config = agent.model.get_audio_config()
+        self._channels = audio_config["channels"]
+        self._format = audio_config["format"]
+        self._rate = audio_config["input_rate"]
+
+        if self._audio_processor is not None:
+            self._audio_processor.start(
                 input_rate=self._rate,
-                output_rate=agent.model.config["audio"]["output_rate"],
+                output_rate=audio_config["output_rate"],
                 num_channels=self._channels,
             )
-            # WebRTC processes 10ms frames; align the device buffer so each callback delivers whole frames.
-            # NOTE (follow-up): this makes __call__ emit one BidiAudioInputEvent per 10ms frame = ~100
-            # events/s to the model, vs ~31/s at the non-processing default of 512 samples. Any multiple of
-            # 10ms preserves AEC quality (ERLE is unchanged at 20/30/40ms), so the wire cadence could be
-            # decoupled by batching several processed frames into one event (e.g. 20-30ms). Deferred until
-            # the cadence is measured against a live provider for throttling/cost impact.
-            frames_per_buffer = self._rate * self._processor._FRAME_DURATION_MS // 1000
-        else:
-            frames_per_buffer = self._configured_frames_per_buffer
+            if self._audio_processor.echo_cancellation_enabled:
+                self._frames_per_buffer = self._audio_processor.frames_per_buffer(self._rate)
 
         self._buffer.start()
         self._audio = pyaudio.PyAudio()
         self._stream = self._audio.open(
             channels=self._channels,
             format=pyaudio.paInt16,
-            frames_per_buffer=frames_per_buffer,
+            frames_per_buffer=self._frames_per_buffer,
             input=True,
             input_device_index=self._device_index,
             rate=self._rate,
@@ -237,8 +244,8 @@ class _BidiAudioInput(BidiInput):
         """Read audio from input stream, applying echo cancellation if enabled."""
         data = await asyncio.to_thread(self._buffer.get)
 
-        if self._processor is not None:
-            data = await asyncio.to_thread(self._processor.process_capture, data)
+        if self._audio_processor is not None:
+            data = await asyncio.to_thread(self._audio_processor.process, data)
 
         return BidiAudioInputEvent(
             audio=base64.b64encode(data).decode("utf-8"),
@@ -247,9 +254,13 @@ class _BidiAudioInput(BidiInput):
             sample_rate=self._rate,
         )
 
-    def _callback(self, in_data: bytes, *_: Any) -> tuple[None, Any]:
+    def _callback(
+        self,
+        in_data: bytes | None,
+        *_: Any,
+    ) -> tuple[None, int]:
         """Callback to receive audio data from PyAudio."""
-        self._buffer.put(in_data)
+        self._buffer.put(in_data or b"")
         return (None, pyaudio.paContinue)
 
 
@@ -269,19 +280,25 @@ class _BidiAudioOutput(BidiOutput):
     _DEVICE_INDEX = None
     _FRAMES_PER_BUFFER = 512
 
-    def __init__(self, config: dict[str, Any], processor: "_AudioProcessor | None" = None) -> None:
-        """Extract configs.
+    def __init__(
+        self,
+        config: BidiAudioIOConfig,
+        *,
+        audio_processor: "_BidiAudioProcessor | None",
+    ) -> None:
+        """Initialize output settings.
 
         Args:
             config: Audio device configuration.
-            processor: Shared audio processor — output records played frames as the AEC reference.
+            audio_processor: Shared audio processor that receives played audio for echo cancellation.
         """
         self._buffer_size = config.get("output_buffer_size", _BidiAudioOutput._BUFFER_SIZE)
         self._device_index = config.get("output_device_index", _BidiAudioOutput._DEVICE_INDEX)
-        self._configured_frames_per_buffer = config.get("output_frames_per_buffer", _BidiAudioOutput._FRAMES_PER_BUFFER)
+        self._frames_per_buffer = config.get("output_frames_per_buffer", _BidiAudioOutput._FRAMES_PER_BUFFER)
 
+        self._audio_processor = audio_processor
         self._buffer = _BidiAudioBuffer(self._buffer_size)
-        self._processor = processor
+        self._transcript_output = _BidiTranscriptOutput()
 
     async def start(self, agent: "BidiAgent") -> None:
         """Start output stream.
@@ -291,35 +308,36 @@ class _BidiAudioOutput(BidiOutput):
         """
         logger.debug("starting audio output stream")
 
-        self._channels = agent.model.config["audio"]["channels"]
-        self._rate = agent.model.config["audio"]["output_rate"]
+        if not isinstance(agent.model, AudioCapable):
+            raise TypeError("BidiAudioIO requires a model that implements AudioCapable")
 
-        if self._processor is not None:
-            # Align the output buffer to a 10ms frame at the OUTPUT rate. frame_count in the PyAudio callback
-            # is measured in samples at the stream's own (output) rate, so sizing off input_rate would open a
-            # buffer of the wrong duration when output_rate != input_rate (e.g. Gemini 16k in / 24k out),
-            # yielding short reference frames that get zero-padded and degrade echo cancellation.
-            frames_per_buffer = self._rate * self._processor._FRAME_DURATION_MS // 1000
-        else:
-            frames_per_buffer = self._configured_frames_per_buffer
+        audio_config = agent.model.get_audio_config()
+        self._channels = audio_config["channels"]
+        self._rate = audio_config["output_rate"]
+
+        if self._audio_processor is not None:
+            self._frames_per_buffer = self._audio_processor.frames_per_buffer(self._rate)
 
         self._buffer.start()
         self._audio = pyaudio.PyAudio()
         self._stream = self._audio.open(
             channels=self._channels,
             format=pyaudio.paInt16,
-            frames_per_buffer=frames_per_buffer,
+            frames_per_buffer=self._frames_per_buffer,
             output=True,
             output_device_index=self._device_index,
             rate=self._rate,
             stream_callback=self._callback,
         )
+        await self._transcript_output.start(agent)
 
         logger.debug("audio output stream started")
 
     async def stop(self) -> None:
         """Stop output stream."""
         logger.debug("stopping audio output stream")
+
+        await self._transcript_output.stop()
 
         if hasattr(self, "_stream"):
             self._stream.close()
@@ -332,6 +350,8 @@ class _BidiAudioOutput(BidiOutput):
 
     async def __call__(self, event: BidiOutputEvent) -> None:
         """Send audio to output stream."""
+        await self._transcript_output(event)
+
         if isinstance(event, BidiAudioStreamEvent):
             data = base64.b64decode(event["audio"])
             self._buffer.put(data)
@@ -340,20 +360,25 @@ class _BidiAudioOutput(BidiOutput):
         elif isinstance(event, BidiInterruptionEvent):
             logger.debug("reason=<%s> | clearing audio buffer due to interruption", event["reason"])
             self._buffer.clear()
-            if self._processor is not None:
-                self._processor.clear_reference()
+            if self._audio_processor is not None:
+                self._audio_processor.clear_far_data()
 
-    def _callback(self, _in_data: None, frame_count: int, *_: Any) -> tuple[bytes, Any]:
+    def _callback(
+        self,
+        _in_data: bytes | None,
+        frame_count: int,
+        *_: Any,
+    ) -> tuple[bytes, int]:
         """Callback to send audio data to PyAudio.
 
-        When processing is enabled, records the played audio as the echo reference at the moment it exits the
+        When echo cancellation is enabled, records played audio as the reference at the moment it exits the
         speaker — the correct temporal alignment point for echo cancellation.
         """
         byte_count = frame_count * pyaudio.get_sample_size(pyaudio.paInt16)
         data = self._buffer.get(byte_count)
 
-        if self._processor is not None:
-            self._processor.record_playback(data)
+        if self._audio_processor is not None:
+            self._audio_processor.add_far_data(data)
 
         return (data, pyaudio.paContinue)
 
@@ -361,78 +386,156 @@ class _BidiAudioOutput(BidiOutput):
 class BidiAudioIO:
     """Send and receive audio data from devices using PyAudio.
 
-    Reads microphone audio via ``input()`` and plays agent audio via ``output()``. On interruption, the
-    playback buffer is cleared to stop the agent mid-response.
+    Reads microphone audio via ``input()``, plays agent audio via ``output()``, and displays user and assistant
+    transcripts. Interruptions clear the playback buffer to stop the agent mid-response.
 
-    When an ``AudioProcessorConfig`` is passed as ``processor``, the microphone signal gets noise suppression
-    and automatic gain control, and (when echo cancellation is enabled) the agent's speaker output is used as a
-    reference to cancel echo from the mic input, preventing the model from hearing its own voice. The same
-    processor instance is shared between the input and output channels this factory produces, so echo
-    cancellation only works when both ``input()`` and ``output()`` come from the *same* ``BidiAudioIO``
-    instance.
+    When ``audio_processor=True`` or a ``BidiAudioProcessorConfig`` is passed, the microphone signal gets audio
+    processing and, when echo cancellation is enabled, the agent's speaker output is used as a reference to
+    cancel echo from the mic input. A shared processor coordinates the input and output channels, so echo
+    cancellation only works when both come from the *same* ``BidiAudioIO`` instance.
 
     Audio processing requires pywebrtc-audio (``pip install strands-agents[bidi-aec]``) and a microphone
     sample rate of 16000, 32000, or 48000 Hz (set via the model's audio config).
 
+    Device audio requires PyAudio. Install the PortAudio system library, then install
+    ``strands-agents[bidi-pyaudio]``.
+
     Example:
         ```python
-        from strands.experimental.bidi.audio import AudioProcessorConfig
+        from strands.experimental.bidi import BidiAudioProcessorConfig
         from strands.experimental.bidi.io import BidiAudioIO
 
         # Plain mic/speaker, no processing (a headset is recommended to avoid echo):
         audio_io = BidiAudioIO()
         await agent.run(inputs=[audio_io.input()], outputs=[audio_io.output()])
 
-        # Full processing: echo cancellation, noise suppression, and auto gain control:
-        audio_io = BidiAudioIO(processor=AudioProcessorConfig())
+        # Full processing with defaults: echo cancellation, noise suppression, and auto gain control:
+        audio_io = BidiAudioIO(audio_processor=True)
         await agent.run(inputs=[audio_io.input()], outputs=[audio_io.output()])
 
         # Noise suppression and auto gain control without echo cancellation (e.g. headset users):
-        audio_io = BidiAudioIO(processor=AudioProcessorConfig(echo_cancellation=False))
+        audio_io = BidiAudioIO(audio_processor=BidiAudioProcessorConfig(echo_cancellation=False))
         await agent.run(inputs=[audio_io.input()], outputs=[audio_io.output()])
 
         # Processing on a specific input device:
-        audio_io = BidiAudioIO(processor=AudioProcessorConfig(), input_device_index=1)
+        audio_io = BidiAudioIO(audio_processor=BidiAudioProcessorConfig(), input_device_index=1)
         await agent.run(inputs=[audio_io.input()], outputs=[audio_io.output()])
         ```
     """
 
-    def __init__(self, **config: Any) -> None:
+    _audio_processor: "_BidiAudioProcessor | None"
+    _audio_processor_config: BidiAudioProcessorConfig | None
+
+    def __init__(self, **config: Unpack[BidiAudioIOConfig]) -> None:
         """Initialize audio devices.
 
         Args:
             **config: Optional configuration:
 
-                - processor (AudioProcessorConfig): Enable microphone audio processing (noise suppression,
-                  automatic gain control, and optionally echo cancellation) by passing an
-                  ``AudioProcessorConfig`` (from ``strands.experimental.bidi.audio``). Requires pywebrtc-audio
-                  (pip install strands-agents[bidi-aec]). Defaults to None (processing disabled).
-                - input_buffer_size (int): Maximum input buffer size (default: None). Ignored when echo
-                  cancellation is on — the mic buffer is bound to the reference horizon so the two stay aligned.
+                - audio_processor (bool | BidiAudioProcessorConfig): Set to True to enable microphone audio processing
+                  with defaults, or supply a configuration for custom options. False and None disable processing.
+                - input_buffer_size (int): Maximum input buffer size (default: None). Must be between 1 and 100
+                  when echo cancellation is on; defaults to 100 so the mic and reference buffers remain aligned.
                 - input_device_index (int): Specific input device (default: None = system default)
-                - input_frames_per_buffer (int): Input buffer size (default: 512, ignored when processing is on)
+                - input_frames_per_buffer (int): Input buffer size (default: 512). Must not be provided when echo
+                  cancellation is on because it is calculated from the model's input rate.
                 - output_buffer_size (int): Maximum output buffer size (default: None)
                 - output_device_index (int): Specific output device (default: None = system default)
-                - output_frames_per_buffer (int): Output buffer size (default: 512, ignored when processing is on)
+                - output_frames_per_buffer (int): Output buffer size (default: 512). Must not be provided when
+                  echo cancellation is on because it is calculated from the model's output rate.
 
         Raises:
-            ImportError: If a processor config is set but pywebrtc-audio is not installed.
+            ImportError: If audio processing is configured but its optional dependencies are unavailable.
+            ValueError: If the configuration is invalid.
         """
-        processor_config: AudioProcessorConfig | None = config.pop("processor", None)
         self._config = config
-
-        if processor_config is not None:
-            _check_pywebrtc_available()
-            from ..audio import _AudioProcessor
-
-            self._processor: _AudioProcessor | None = _AudioProcessor(processor_config)
+        audio_processor_config = self._config.get("audio_processor")
+        if isinstance(audio_processor_config, dict):
+            self._audio_processor_config = BidiAudioProcessorConfig(**audio_processor_config)
         else:
-            self._processor = None
+            self._audio_processor_config = BidiAudioProcessorConfig() if audio_processor_config else None
+        self._config["audio_processor"] = self._audio_processor_config
+
+        self._validate_config_echo_cancellation()
+        self._validate_config_buffer_size()
+        self._validate_config_frames_per_buffer()
+
+        self._import_audio_processor()
+
+    def _import_audio_processor(self) -> None:
+        """Import and initialize the optional audio processor implementation."""
+        if self._audio_processor_config is None:
+            self._audio_processor = None
+            return
+
+        try:
+            from .._audio import _BidiAudioProcessor
+        except ImportError as error:
+            raise ImportError(
+                f"{error}. Audio processing requires this optional dependency. "
+                "Install it with: pip install 'strands-agents[bidi-aec]'."
+            ) from error
+
+        self._audio_processor = _BidiAudioProcessor(
+            echo_cancellation=self._audio_processor_config["echo_cancellation"],
+            stream_delay_ms=self._audio_processor_config["stream_delay_ms"],
+            far_buffer_size=self._config.get("input_buffer_size"),
+        )
+
+    def _validate_config_echo_cancellation(self) -> None:
+        """Validate and normalize echo cancellation configuration."""
+        if self._audio_processor_config is None:
+            return
+
+        echo_cancellation = self._audio_processor_config.get("echo_cancellation", True)
+        stream_delay_ms = self._audio_processor_config.get("stream_delay_ms", 0)
+        if not 0 <= stream_delay_ms <= 1000:
+            raise ValueError(f"stream_delay_ms=<{stream_delay_ms}> | must be between 0 and 1000")
+        if not echo_cancellation and stream_delay_ms:
+            raise ValueError("echo_cancellation=<False> | stream_delay_ms requires echo cancellation")
+
+        self._audio_processor_config["echo_cancellation"] = echo_cancellation
+        self._audio_processor_config["stream_delay_ms"] = stream_delay_ms
+
+    def _validate_config_buffer_size(self) -> None:
+        """Validate the configured input buffer size for echo cancellation."""
+        if self._audio_processor_config is None or not self._audio_processor_config["echo_cancellation"]:
+            return
+
+        size = self._config.get("input_buffer_size")
+        if size is not None and not 1 <= size <= 100:
+            raise ValueError(f"input_buffer_size=<{size}> | must be between 1 and 100")
+        self._config["input_buffer_size"] = size or 100
+
+    def _validate_config_frames_per_buffer(self) -> None:
+        """Reject frame sizes that are calculated automatically for echo cancellation."""
+        if self._audio_processor_config is None or not self._audio_processor_config["echo_cancellation"]:
+            return
+
+        configured_fields = [
+            field for field in ("input_frames_per_buffer", "output_frames_per_buffer") if field in self._config
+        ]
+        if configured_fields:
+            fields = ", ".join(configured_fields)
+            raise ValueError(
+                f"{fields} cannot be provided when echo cancellation is enabled; "
+                "frames per buffer are calculated automatically"
+            )
 
     def input(self) -> _BidiAudioInput:
         """Return audio processing BidiInput."""
-        return _BidiAudioInput(self._config, processor=self._processor)
+        return _BidiAudioInput(
+            self._config,
+            audio_processor=self._audio_processor,
+        )
 
     def output(self) -> _BidiAudioOutput:
         """Return audio processing BidiOutput."""
-        return _BidiAudioOutput(self._config, processor=self._processor)
+        return _BidiAudioOutput(
+            self._config,
+            audio_processor=(
+                self._audio_processor
+                if self._audio_processor and self._audio_processor.echo_cancellation_enabled
+                else None
+            ),
+        )

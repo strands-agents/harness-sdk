@@ -27,7 +27,7 @@ permissions: {}
 jobs:
   analyze:
     name: Analyze
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     timeout-minutes: 10
     steps:
       # The base revision supplies the analysis scripts and pinned tool

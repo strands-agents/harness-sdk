@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { Agent, type ToolList } from '../agent.js'
+import { SessionManager } from '../../session/session-manager.js'
 import { McpClient } from '../../mcp/index.js'
 import { McpTool } from '../../tools/mcp-tool.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
@@ -35,6 +36,9 @@ import { StructuredOutputError } from '../../errors.js'
 import { expectLoopMetrics } from '../../__fixtures__/metrics-helpers.js'
 import { expectAgentResult } from '../../__fixtures__/agent-helpers.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
+import type { StreamOptions } from '../../index.js'
+import type { ModelStreamEvent } from '../../models/streaming.js'
+import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 
 describe('Agent', () => {
   describe('stream', () => {
@@ -417,6 +421,72 @@ describe('Agent', () => {
         await agent.invoke('Test')
 
         expect(agent.metrics.cycleCount).toBe(1)
+      })
+
+      it('includes the completed cycle duration in the returned result metrics', async () => {
+        vi.useFakeTimers()
+        vi.setSystemTime(0)
+
+        try {
+          const model = new MockMessageModel().addTurn(
+            { type: 'toolUseBlock', name: 'slowTool', toolUseId: 'tool-1', input: {} },
+            { usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } }
+          )
+
+          const tool = createMockTool(
+            'slowTool',
+            (context) =>
+              new ToolResultBlock({
+                toolUseId: context.toolUse.toolUseId,
+                status: 'success' as const,
+                content: [new TextBlock('Done')],
+              })
+          )
+
+          const agent = new Agent({ model, tools: [tool] })
+          agent.addHook(BeforeToolsEvent, () => {
+            vi.setSystemTime(60)
+          })
+          agent.addHook(AfterToolsEvent, (event: AfterToolsEvent) => {
+            event.endTurn = true
+          })
+
+          const result = await agent.invoke('Test')
+
+          expect(result.stopReason).toBe('endTurn')
+          expect(result.metrics).toMatchObject({
+            cycleCount: 1,
+            totalDuration: 60,
+            averageCycleTime: 60,
+            latestAgentInvocation: { cycles: [{ duration: 60 }] },
+          })
+        } finally {
+          vi.useRealTimers()
+        }
+      })
+
+      it('includes the cycle duration when the model ends the turn without tools', async () => {
+        vi.useFakeTimers()
+        vi.setSystemTime(0)
+
+        try {
+          const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+          const agent = new Agent({ model })
+          agent.addHook(BeforeModelCallEvent, () => {
+            vi.setSystemTime(60)
+          })
+
+          const result = await agent.invoke('Test')
+
+          expect(result.metrics).toMatchObject({
+            cycleCount: 1,
+            totalDuration: 60,
+            averageCycleTime: 60,
+            latestAgentInvocation: { cycles: [{ duration: 60 }] },
+          })
+        } finally {
+          vi.useRealTimers()
+        }
       })
     })
 
@@ -1787,6 +1857,35 @@ describe('_estimateInputTokens', () => {
     expect(await tokenPromise).toBe(120)
   })
 
+  // Regression for #3546: on a disjoint provider (Bedrock/Anthropic) the cache read adds to inputTokens
+  // and must be counted in the baseline, or a large cached prompt reads as a handful of tokens and
+  // proactive compaction never fires.
+  it('counts disjoint-provider cache reads in the known baseline', async () => {
+    const model = new MockMessageModel()
+    model.addTurn({ type: 'textBlock', text: 'Hello' })
+
+    const agent = new Agent({
+      model,
+      printer: false,
+      messages: [
+        new Message({ role: 'user', content: [new TextBlock('Hi')] }),
+        new Message({
+          role: 'assistant',
+          content: [new TextBlock('Hello')],
+          metadata: {
+            usage: { inputTokens: 10, outputTokens: 4, totalTokens: 5862, cacheReadInputTokens: 5848 },
+          },
+        }),
+      ],
+    })
+
+    const tokenPromise = captureProjectedTokens(agent)
+    await agent.invoke([])
+
+    // baseline = total prompt (10 + 5848 cache read) + outputTokens(4) = 5862, not 14
+    expect(await tokenPromise).toBe(5862)
+  })
+
   it('returns undefined projectedInputTokens when estimation fails', async () => {
     const model = new MockMessageModel()
     model.addTurn({ type: 'textBlock', text: 'Hello' })
@@ -2282,6 +2381,84 @@ describe('normalizeToolUseNames', () => {
 
         expect(result).toEqual(expect.objectContaining({ type: 'agentResult', stopReason: 'limitTurns' }))
       })
+    })
+  })
+
+  describe('sessionId', () => {
+    it('returns a stable 8-character string when no session manager is attached', () => {
+      const agent = new Agent({ model: new MockMessageModel() })
+
+      const first = agent.sessionId
+      const second = agent.sessionId
+
+      expect(first).toBe(second)
+      expect(first).toHaveLength(8)
+    })
+
+    it('returns different IDs for different agent instances', () => {
+      const agent1 = new Agent({ model: new MockMessageModel() })
+      const agent2 = new Agent({ model: new MockMessageModel() })
+
+      expect(agent1.sessionId).not.toBe(agent2.sessionId)
+    })
+
+    it('delegates to sessionManager when attached', () => {
+      const sessionManager = new SessionManager({ sessionId: 'my-session' })
+      const agent = new Agent({ model: new MockMessageModel(), sessionManager })
+
+      expect(agent.sessionId).toBe('my-session')
+    })
+  })
+
+  describe('agentMetadata', () => {
+    class RecordingModel extends MockMessageModel {
+      readonly receivedOptions: StreamOptions[] = []
+
+      override async *stream(messages: Message[], options?: StreamOptions): AsyncGenerator<ModelStreamEvent> {
+        this.receivedOptions.push(options ?? {})
+        yield* super.stream(messages, options)
+      }
+    }
+
+    it('forwards the session id to the model when a session manager is attached', async () => {
+      const model = new RecordingModel().addTurn({ type: 'textBlock', text: 'ok' })
+      const sessionManager = new SessionManager({ sessionId: 'my-session', storage: new InMemoryStorage() })
+      const agent = new Agent({ model, sessionManager, printer: false })
+
+      await agent.invoke('hi')
+
+      expect(model.receivedOptions[0]?.agentMetadata).toEqual({ sessionId: 'my-session' })
+    })
+
+    it('sends no agent metadata when no session manager is attached', async () => {
+      const model = new RecordingModel().addTurn({ type: 'textBlock', text: 'ok' })
+      const agent = new Agent({ model, printer: false })
+
+      await agent.invoke('hi')
+
+      expect(model.receivedOptions).toHaveLength(1)
+      expect(model.receivedOptions[0]?.agentMetadata).toBeUndefined()
+    })
+
+    it('routes each agent on its own session when one model is shared across sessions', async () => {
+      // Guards against the cross-session cache bleed a construction-time key fill would introduce.
+      const model = new RecordingModel().addTurn({ type: 'textBlock', text: 'ok' })
+      const agentS1 = new Agent({
+        model,
+        sessionManager: new SessionManager({ sessionId: 's1', storage: new InMemoryStorage() }),
+        printer: false,
+      })
+      const agentS2 = new Agent({
+        model,
+        sessionManager: new SessionManager({ sessionId: 's2', storage: new InMemoryStorage() }),
+        printer: false,
+      })
+
+      await agentS1.invoke('hi')
+      await agentS2.invoke('hi')
+
+      const sessionIds = model.receivedOptions.map((options) => options.agentMetadata?.sessionId)
+      expect(sessionIds).toEqual(['s1', 's2'])
     })
   })
 })

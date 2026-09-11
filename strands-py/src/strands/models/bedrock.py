@@ -7,11 +7,13 @@ import asyncio
 import json
 import logging
 import os
+import threading
 import warnings
 from collections.abc import AsyncGenerator, Callable, Iterable, ValuesView
 from typing import Any, Literal, TypeVar, cast
 
 import boto3
+from botocore import UNSIGNED
 from botocore.config import Config as BotocoreConfig
 from botocore.exceptions import ClientError
 from pydantic import BaseModel
@@ -33,7 +35,7 @@ from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolSpec
 from ._defaults import resolve_config_metadata
 from ._strict_schema import ensure_strict_json_schema
-from ._validation import validate_config_keys
+from ._validation import _warn_on_deprecated_cache_tools, validate_config_keys
 from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model
 
 logger = logging.getLogger(__name__)
@@ -54,6 +56,7 @@ BEDROCK_CONTEXT_WINDOW_OVERFLOW_MESSAGES = [
     "input length and `max_tokens` exceed context limit",
     "too many total text bytes",
     "prompt is too long",
+    "This model's maximum context length is",
 ]
 
 # Bedrock reports this exact substring for the Converse incompatibility tracked in #1223.
@@ -62,6 +65,11 @@ _TOOL_RESULT_TURN_VALIDATION_MESSAGE = "Conversation blocks and tool result bloc
 # Models that should include tool result status (include_tool_result_status = True)
 _MODELS_INCLUDE_STATUS = [
     "anthropic.claude",
+]
+
+# Models that hallucinate when receiving JSON content blocks in tool results
+_MODELS_CONVERT_JSON_TO_TEXT = [
+    "amazon.nova",
 ]
 
 # Cache of model IDs for which CountTokens API calls should be skipped.
@@ -79,9 +87,58 @@ def _suppress_task_exception(task: "asyncio.Task[None]") -> None:
         task.exception()
 
 
+async def _poll_cancel_signal(cancel_signal: threading.Event) -> None:
+    """Complete once the cancellation signal is set."""
+    # threading.Event has no async notification hook. Poll on this loop rather than running
+    # Event.wait() in an executor: cancelling that await cannot stop a worker already blocked
+    # in Event.wait(), so completed streams could strand worker threads.
+    while not cancel_signal.is_set():
+        await asyncio.sleep(_CANCEL_POLL_INTERVAL)
+
+
+async def _next_stream_event(
+    queue: "asyncio.Queue[StreamEvent | None]", cancel_poll: "asyncio.Future[None] | None"
+) -> "StreamEvent | None":
+    """Wait for the worker thread's next event, giving up if cancellation gets there first.
+
+    Args:
+        queue: Queue the worker thread publishes events to.
+        cancel_poll: Future that completes on cancellation, or None when the caller supplied no
+            cancellation signal.
+
+    Returns:
+        The next event, or None when the worker is done or cancellation won the race.
+    """
+    if cancel_poll is None:
+        return await queue.get()
+
+    # Fast path: skip the race machinery whenever an event is already available.
+    try:
+        return queue.get_nowait()
+    except asyncio.QueueEmpty:
+        pass
+
+    get_event = asyncio.ensure_future(queue.get())
+    pending: set[asyncio.Future[Any]] = {get_event, cancel_poll}
+    try:
+        await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+    except BaseException:
+        get_event.cancel()
+        raise
+
+    if get_event.done():
+        return get_event.result()
+
+    get_event.cancel()
+    return None
+
+
 T = TypeVar("T", bound=BaseModel)
 
 DEFAULT_READ_TIMEOUT = 120
+
+# How often the consumer side checks a cancellation signal while waiting for the next event.
+_CANCEL_POLL_INTERVAL = 0.05
 
 
 class BedrockModel(Model):
@@ -105,9 +162,10 @@ class BedrockModel(Model):
             additional_response_field_paths: Additional response field paths to extract
             cache_prompt: Cache point type for the system prompt (deprecated, use cache_config)
             cache_config: Configuration for prompt caching. Use CacheConfig(strategy="auto") for automatic caching.
-            cache_tools: Cache point type for tools. Pass a string (e.g. "default") to cache the tools with
-                no explicit TTL, or a CacheToolsConfig instance to set both type and TTL (e.g. "1h"). Inherits
-                cache_config.ttl if specified, otherwise it takes the Bedrock default.
+            cache_tools: Cache point type for tools (deprecated, use CacheConfig(tools_ttl=...)). Pass a string
+                (e.g. "default") to cache the tools with no explicit TTL, or a CacheToolsConfig instance to set
+                both type and TTL (e.g. "1h"). Inherits cache_config.ttl if specified, otherwise it takes the
+                Bedrock default. Superseded by an explicitly set cache_config.tools_ttl.
             guardrail_id: ID of the guardrail to apply
             guardrail_trace: Guardrail trace mode. Defaults to enabled.
             guardrail_version: Version of the guardrail to apply
@@ -177,6 +235,7 @@ class BedrockModel(Model):
         boto_client_config: BotocoreConfig | None = None,
         region_name: str | None = None,
         endpoint_url: str | None = None,
+        api_key: str | None = None,
         **model_config: Unpack[BedrockConfig],
     ):
         """Initialize provider instance.
@@ -187,6 +246,8 @@ class BedrockModel(Model):
             region_name: AWS region to use for the Bedrock service.
                 Defaults to the AWS_REGION environment variable if set, or "us-west-2" if not set.
             endpoint_url: Custom endpoint URL for VPC endpoints (PrivateLink)
+            api_key: Amazon Bedrock API key for bearer token authentication.
+                When provided, requests use the API key instead of SigV4 signing.
             **model_config: Configuration options for the Bedrock model.
         """
         if region_name and boto_session:
@@ -213,9 +274,18 @@ class BedrockModel(Model):
             else:
                 new_user_agent = "strands-agents"
 
-            client_config = boto_client_config.merge(BotocoreConfig(user_agent_extra=new_user_agent))
+            client_config = boto_client_config.merge(
+                BotocoreConfig(
+                    user_agent_extra=new_user_agent,
+                    **({"signature_version": UNSIGNED} if api_key else {}),
+                )
+            )
         else:
-            client_config = BotocoreConfig(user_agent_extra="strands-agents", read_timeout=DEFAULT_READ_TIMEOUT)
+            client_config = BotocoreConfig(
+                user_agent_extra="strands-agents",
+                read_timeout=DEFAULT_READ_TIMEOUT,
+                **({"signature_version": UNSIGNED} if api_key else {}),
+            )
 
         self.client = session.client(
             service_name="bedrock-runtime",
@@ -223,6 +293,13 @@ class BedrockModel(Model):
             endpoint_url=endpoint_url,
             region_name=resolved_region,
         )
+
+        if api_key:
+
+            def set_bearer_auth(request: Any, **_: Any) -> None:
+                request.headers["Authorization"] = f"Bearer {api_key}"
+
+            self.client.meta.events.register("before-send.bedrock-runtime.*", set_bearer_auth)
 
         logger.debug("region=<%s> | bedrock client created", self.client.meta.region_name)
 
@@ -252,6 +329,8 @@ class BedrockModel(Model):
             **model_config: Configuration overrides.
         """
         validate_config_keys(model_config, self.BedrockConfig)
+        # __init__ delegates here, so the caller sits at stacklevel 4 on the constructor path.
+        _warn_on_deprecated_cache_tools(model_config, stacklevel=4)
         self.config.update(model_config)
 
     @override
@@ -481,15 +560,45 @@ class BedrockModel(Model):
         return not any("cachePoint" in block for block in system_blocks)
 
     def _build_tools_cache_point(self) -> list[dict[str, Any]]:
-        """Build the cache point block appended to ``toolConfig.tools`` if ``cache_tools`` is configured.
+        """Build the cache point block appended to ``toolConfig.tools`` when tool caching is configured.
 
-        A ``cache_tools`` that carries no TTL of its own inherits ``cache_config.ttl``
+        An explicitly set ``cache_config.tools_ttl`` drives the point, mirroring ``system_prompt_ttl`` - a TTL
+        string sets the tools section's own duration, True derives it from ``cache_config.ttl``, and False
+        disables it; a section that carries no TTL of its own inherits ``cache_config.ttl``. When ``tools_ttl``
+        is left unset (None), the deprecated model-level ``cache_tools`` drives the point instead so existing
+        configurations keep working unchanged.
 
         Returns:
-            A single-element list containing the cache point block, or an empty list if no cache_tools is set.
+            A single-element list containing the cache point block, or an empty list when tool caching is off.
+        """
+        cache_config = self.config.get("cache_config")
+        if cache_config is None or cache_config.tools_ttl is None:
+            return self._build_deprecated_cache_tools_point(cache_config)
+
+        tools_ttl = cache_config.tools_ttl
+        if tools_ttl is False or self._cache_strategy != "anthropic":
+            return []
+
+        ttl = tools_ttl if isinstance(tools_ttl, str) else cache_config.ttl
+        cache_point: dict[str, Any] = {"type": "default"}
+        if ttl:
+            cache_point["ttl"] = ttl
+
+        return [{"cachePoint": cache_point}]
+
+    def _build_deprecated_cache_tools_point(self, cache_config: CacheConfig | None) -> list[dict[str, Any]]:
+        """Build the tools cache point from the deprecated model-level ``cache_tools`` option.
+
+        Reached only when ``cache_config.tools_ttl`` is unset; an explicit ``tools_ttl`` supersedes this path.
+
+        Returns:
+            A single-element list containing the cache point block, or an empty list when ``cache_tools`` is off.
         """
         cache_tools = self.config.get("cache_tools")
         if not cache_tools:
+            return []
+
+        if cache_config is not None and self._cache_strategy != "anthropic":
             return []
 
         if isinstance(cache_tools, CacheToolsConfig):
@@ -497,10 +606,8 @@ class BedrockModel(Model):
         else:
             cache_type, ttl = cache_tools, None
 
-        if not ttl:
-            cache_config = self.config.get("cache_config")
-            if cache_config and cache_config.ttl and self._cache_strategy == "anthropic":
-                ttl = cache_config.ttl
+        if not ttl and cache_config and cache_config.ttl and self._cache_strategy == "anthropic":
+            ttl = cache_config.ttl
 
         cache_point: dict[str, Any] = {"type": cache_type}
         if ttl:
@@ -841,6 +948,14 @@ class BedrockModel(Model):
         else:  # "auto"
             return any(model in self.config["model_id"] for model in _MODELS_INCLUDE_STATUS)
 
+    def _should_convert_json_to_text(self) -> bool:
+        """Determine whether JSON content blocks in tool results should be converted to text.
+
+        Some models (e.g., Amazon Nova) hallucinate when tool results contain JSON content
+        blocks. Converting them to their text representation avoids this issue.
+        """
+        return any(model in self.config["model_id"] for model in _MODELS_CONVERT_JSON_TO_TEXT)
+
     def _handle_location(self, location: SourceLocation) -> dict[str, Any] | None:
         """Convert location content block to Bedrock format if its an S3Location."""
         if location["type"] == "s3":
@@ -981,8 +1096,11 @@ class BedrockModel(Model):
             formatted_content: list[dict[str, Any]] = []
             for tool_result_content in tool_result_content_list:
                 if "json" in tool_result_content:
-                    # Handle json field since not in ContentBlock but valid in ToolResultContent
-                    formatted_content.append({"json": tool_result_content["json"]})
+                    if self._should_convert_json_to_text():
+                        formatted_content.append({"text": json.dumps(tool_result_content["json"])})
+                    else:
+                        # Handle json field since not in ContentBlock but valid in ToolResultContent
+                        formatted_content.append({"json": tool_result_content["json"]})
                 else:
                     formatted_message_content = self._format_request_message_content(
                         cast(ContentBlock, tool_result_content)
@@ -1060,27 +1178,33 @@ class BedrockModel(Model):
         content_type = next(iter(content), None)
         raise TypeError(f"content_type=<{content_type}> | unsupported type")
 
-    def _has_blocked_guardrail(self, guardrail_data: dict[str, Any]) -> bool:
-        """Check if guardrail data contains any blocked policies.
+    def _should_redact_guardrail_content(self, guardrail_data: dict[str, Any] | None, stop_reason: str | None) -> bool:
+        """Check whether a guardrail blocked content and redaction should occur.
+
+        Bedrock reports stop_reason=guardrail_intervened for both blocked and masked content, so the
+        stop reason alone cannot distinguish the two. When Bedrock carries a trace we defer to it:
+        redact only when a policy's action is BLOCKED. ANONYMIZED (masked) spans are already
+        substituted in place server-side and the surrounding message must be preserved. When the
+        trace is absent (typically guardrail_trace='disabled'), we fall back to the stop reason.
 
         Args:
-            guardrail_data: Guardrail data from trace information.
+            guardrail_data: Guardrail assessment from trace information, if any.
+            stop_reason: The stop reason reported by Bedrock, if any.
 
         Returns:
-            True if any blocked guardrail is detected, False otherwise.
+            True if blocked content should be redacted, False otherwise.
         """
-        input_assessment = guardrail_data.get("inputAssessment", {})
-        output_assessments = guardrail_data.get("outputAssessments", {})
+        if guardrail_data is not None:
+            input_assessment = guardrail_data.get("inputAssessment", {})
+            output_assessments = guardrail_data.get("outputAssessments", {})
 
-        # Check input assessments
-        if any(self._find_detected_and_blocked_policy(assessment) for assessment in input_assessment.values()):
-            return True
+            if any(self._find_detected_and_blocked_policy(assessment) for assessment in input_assessment.values()):
+                return True
+            if any(self._find_detected_and_blocked_policy(assessment) for assessment in output_assessments.values()):
+                return True
+            return False
 
-        # Check output assessments
-        if any(self._find_detected_and_blocked_policy(assessment) for assessment in output_assessments.values()):
-            return True
-
-        return False
+        return stop_reason == "guardrail_intervened"
 
     def _generate_redaction_events(self) -> list[StreamEvent]:
         """Generate redaction events based on configuration.
@@ -1208,6 +1332,7 @@ class BedrockModel(Model):
         *,
         tool_choice: ToolChoice | None = None,
         system_prompt_content: list[SystemContentBlock] | None = None,
+        cancel_signal: threading.Event | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamEvent, None]:
         """Stream conversation with the Bedrock model.
@@ -1221,6 +1346,9 @@ class BedrockModel(Model):
             system_prompt: System prompt to provide context to the model.
             tool_choice: Selection strategy for tool invocation.
             system_prompt_content: System prompt content blocks to provide context to the model.
+            cancel_signal: Event that aborts an in-flight streaming request. The caller stops
+                receiving events as soon as it is set, and the HTTP response is closed at the next
+                chunk boundary. A non-streaming request (``streaming=False``) is not abortable.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Yields:
@@ -1251,20 +1379,32 @@ class BedrockModel(Model):
             system_prompt_content,
             tool_choice,
             kwargs.get("dynamic_trailing_blocks", 0),
+            cancel_signal,
         )
         task = asyncio.create_task(thread)
+        cancel_poll = asyncio.ensure_future(_poll_cancel_signal(cancel_signal)) if cancel_signal else None
 
         try:
             while True:
-                event = await queue.get()
+                event = await _next_stream_event(queue, cancel_poll)
                 if event is None:
                     break
 
                 yield event
+
+            if cancel_poll is not None and cancel_poll.done():
+                # The worker thread owns the event stream and closes it at its next chunk boundary.
+                # Detaching it rather than awaiting keeps a stalled read from delaying the caller.
+                task.add_done_callback(_suppress_task_exception)
+                return
+
             await task
         except BaseException:
             task.add_done_callback(_suppress_task_exception)
             raise
+        finally:
+            if cancel_poll is not None:
+                cancel_poll.cancel()
 
     def _stream(
         self,
@@ -1274,6 +1414,7 @@ class BedrockModel(Model):
         system_prompt_content: list[SystemContentBlock] | None = None,
         tool_choice: ToolChoice | None = None,
         dynamic_trailing_blocks: int = 0,
+        cancel_signal: threading.Event | None = None,
     ) -> None:
         """Stream conversation with the Bedrock model.
 
@@ -1288,6 +1429,7 @@ class BedrockModel(Model):
             tool_choice: Selection strategy for tool invocation.
             dynamic_trailing_blocks: How many trailing blocks of the last user message are rebuilt on every
                 call, so the cache point goes ahead of them.
+            cancel_signal: Event that stops the transfer at the next chunk boundary.
 
         Raises:
             ContextWindowOverflowException: If the input exceeds the model's context window.
@@ -1327,28 +1469,43 @@ class BedrockModel(Model):
 
             logger.debug("got response from model")
             if streaming:
+                redaction_emitted = False
+                saw_guardrail_trace = False
+                last_stop_reason: str | None = None
                 for chunk in response["stream"]:
-                    if (
-                        "metadata" in chunk
-                        and "trace" in chunk["metadata"]
-                        and "guardrail" in chunk["metadata"]["trace"]
-                    ):
-                        guardrail_data = chunk["metadata"]["trace"]["guardrail"]
-                        if self._has_blocked_guardrail(guardrail_data):
+                    if cancel_signal is not None and cancel_signal.is_set():
+                        # Closing from this thread only: botocore's teardown is not safe against a
+                        # read in flight, and this thread is the one reading.
+                        response["stream"].close()
+                        break
+
+                    if "messageStop" in chunk:
+                        last_stop_reason = chunk["messageStop"].get("stopReason")
+
+                    # Wait for a metadata chunk before deciding: the guardrail trace arrives there
+                    # and is authoritative for BLOCKED vs ANONYMIZED (masking).
+                    if not redaction_emitted and "metadata" in chunk:
+                        guardrail_data = chunk["metadata"].get("trace", {}).get("guardrail")
+                        if guardrail_data is not None:
+                            saw_guardrail_trace = True
+                        if self._should_redact_guardrail_content(guardrail_data, last_stop_reason):
                             for event in self._generate_redaction_events():
                                 callback(event)
+                            redaction_emitted = True
 
                     callback(chunk)
+
+                # Safety net: guardrail_intervened but no metadata chunk arrived.
+                if not redaction_emitted and not saw_guardrail_trace and last_stop_reason == "guardrail_intervened":
+                    for event in self._generate_redaction_events():
+                        callback(event)
 
             else:
                 for event in self.convert_non_streaming_to_streaming(response):
                     callback(event)
 
-                if (
-                    "trace" in response
-                    and "guardrail" in response["trace"]
-                    and self._has_blocked_guardrail(response["trace"]["guardrail"])
-                ):
+                guardrail_data = response.get("trace", {}).get("guardrail")
+                if self._should_redact_guardrail_content(guardrail_data, response.get("stopReason")):
                     for event in self._generate_redaction_events():
                         callback(event)
 
@@ -1447,21 +1604,29 @@ class BedrockModel(Model):
                     }
                 }
             elif "reasoningContent" in content:
-                # Then yield the reasoning content as a delta
-                yield {
-                    "contentBlockDelta": {
-                        "delta": {"reasoningContent": {"text": content["reasoningContent"]["reasoningText"]["text"]}}
-                    }
-                }
-
-                if "signature" in content["reasoningContent"]["reasoningText"]:
-                    yield {
-                        "contentBlockDelta": {
-                            "delta": {
-                                "reasoningContent": {
-                                    "signature": content["reasoningContent"]["reasoningText"]["signature"]
+                reasoning = content["reasoningContent"]
+                if "reasoningText" in reasoning:
+                    reasoning_text = reasoning["reasoningText"]
+                    if "text" in reasoning_text:
+                        yield {
+                            "contentBlockDelta": {
+                                "delta": {"reasoningContent": {"text": reasoning_text["text"]}}
+                            }
+                        }
+                    if reasoning_text.get("signature"):
+                        yield {
+                            "contentBlockDelta": {
+                                "delta": {
+                                    "reasoningContent": {
+                                        "signature": reasoning_text["signature"]
+                                    }
                                 }
                             }
+                        }
+                if "redactedContent" in reasoning:
+                    yield {
+                        "contentBlockDelta": {
+                            "delta": {"reasoningContent": {"redactedContent": reasoning["redactedContent"]}}
                         }
                     }
             elif "citationsContent" in content:

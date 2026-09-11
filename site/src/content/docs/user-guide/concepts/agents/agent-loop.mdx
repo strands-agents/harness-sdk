@@ -12,7 +12,17 @@ A language model can answer questions. An agent can *do things*. The agent loop 
 
 When a model receives a request it cannot fully address with its training alone, it needs to reach out into the world: read files, query databases, call APIs, execute code. The agent loop is the orchestration layer that enables this. It manages the cycle of reasoning and action that allows a model to tackle problems requiring multiple steps, external information, or real-world side effects.
 
-This is the foundational concept in Strands. Everything else builds on top of it.
+This is the foundational concept in the Strands Agents SDK, installed as
+`strands-agents` on PyPI and `@strands-agents/sdk` on npm. Everything else builds
+on top of it. The loop ships with the controls a production agent needs:
+
+- [Invocation limits](#invocation-limits) cap the turns and tokens one call may use
+- [Cancellation](#cancellation) stops a running agent mid-loop
+- [Stop reasons](#stop-reasons) report why the loop ended
+- [Concurrent invocations](#concurrent-invocations) guard against overlapping
+  calls on one agent instance
+- [Hooks](./hooks.mdx) intercept any step, and
+  [retry strategies](./retry-strategies.mdx) recover from model and tool errors
 
 ## How the Loop Works
 
@@ -149,6 +159,47 @@ The `agent.cancel()` method provides a way to stop the loop from outside, such a
 
   if result.stop_reason == "cancelled":
       print("Agent was cancelled due to timeout")
+  ```
+
+  #### External cancellation signals
+
+  You can also pass your own `threading.Event` into `__call__()`, `invoke_async()`, or `stream_async()` via the `cancel_signal` parameter. The agent observes both its internal signal and the external event, so `agent.cancel()` and the external signal can each trigger cancellation independently. The agent never sets or clears the caller's event, and an event that is already set cancels the invocation at its first checkpoint. This is useful for declarative timeouts, sharing one signal across agents, or framework-driven cancellation on client disconnect. Two costs to know about: the first checkpoint sits inside model streaming, so an event that is set before the call still records the user turn and may issue (then abort) one model request; and the agent observes the event by polling (up to ~50 ms latency, compounding per `as_tool()` nesting level), so a set-then-cleared event inside one poll window is missed — clear the event only between invocations.
+
+  ```python
+  import threading
+
+  from strands import Agent
+
+  agent = Agent()
+
+  cancel_signal = threading.Event()
+  threading.Timer(30.0, cancel_signal.set).start()  # declarative timeout
+
+  result = agent("Analyze this large dataset", cancel_signal=cancel_signal)
+
+  if result.stop_reason == "cancelled":
+      print("Agent was cancelled due to timeout")
+  ```
+
+  The signal is also forwarded to the model provider so it can abort the in-flight request instead of letting the response run on. Support is provider-dependent: Bedrock closes the streaming response at the next chunk boundary, but cannot abort a request that has not returned headers yet or a non-streaming (`streaming=False`) call. Providers that ignore the signal still cancel at the SDK's between-chunk checkpoint.
+
+  #### Cancellation within tool execution
+
+  The SDK automatically checks for cancellation before and between tool calls (see checkpoints above). Once a tool is running, cancellation is **cooperative**: only the tool itself can respond mid-execution. Tools can participate by polling `tool_context.cancel_signal.is_set()` between steps, or by forwarding `tool_context.cancel_signal` to APIs that accept one (e.g. `MCPClient.call_tool_async`). If a tool does neither, it runs to completion, and the agent resumes cancellation handling after the tool returns. An agent used as a tool via `as_tool()` receives the parent's signal automatically, so cancelling the parent also cancels the delegated agent.
+
+  ```python
+  from strands import tool
+  from strands.types.tools import ToolContext
+
+
+  @tool(context=True)
+  def long_job(tool_context: ToolContext) -> str:
+      """Do chunked work."""
+      for chunk in chunks:
+          if tool_context.cancel_signal.is_set():
+              return "cancelled"
+          process(chunk)
+      return "done"
   ```
 
   Cancellation differs from [interrupts](../interrupts.mdx) in that it stops the agent entirely rather than pausing for human input. Interrupts allow the agent to resume from where it left off; cancellation does not.

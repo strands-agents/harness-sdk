@@ -27,6 +27,17 @@ The Strands Agents SDK empowers developers to quickly build, manage, evaluate an
 </CardGrid>
 ---
 
+## A library, not a platform
+
+Strands runs inside your own process. Creating an agent is constructing an object
+in Python or Node.js: there is no hosted control plane, scheduler, or database to
+stand up first. Any [model provider](../concepts/model-providers/) works. Amazon
+Bedrock is the default; switching to Anthropic, OpenAI, Google, or Ollama means
+installing that provider's package and changing one line, so an AWS account is
+only required if you keep the default.
+Adding an agent to an existing FastAPI, Express, or Next.js app is a dependency
+and a few lines of code, not new infrastructure.
+
 ## Language support
 
 Strands Agents SDK is available in both Python and TypeScript.

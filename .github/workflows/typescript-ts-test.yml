@@ -16,8 +16,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: [20, 22, 24]
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        node-version: [22, 24]
+        os: [strands-agents_ubuntu-latest_4-core, strands-agents_windows-latest_4-core, macos-latest]
 
     steps:
       - name: Checkout code

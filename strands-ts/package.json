@@ -44,6 +44,10 @@
       "types": "./dist/src/models/vercel.d.ts",
       "default": "./dist/src/models/vercel.js"
     },
+    "./models/routing": {
+      "types": "./dist/src/models/routing/index.d.ts",
+      "default": "./dist/src/models/routing/index.js"
+    },
     "./multiagent": {
       "types": "./dist/src/multiagent/index.d.ts",
       "default": "./dist/src/multiagent/index.js"
@@ -79,6 +83,10 @@
     "./experimental/vended-tools/stop": {
       "types": "./dist/src/experimental/vended-tools/stop/index.d.ts",
       "default": "./dist/src/experimental/vended-tools/stop/index.js"
+    },
+    "./vended-tools/web-fetch": {
+      "types": "./dist/src/vended-tools/web-fetch/index.d.ts",
+      "default": "./dist/src/vended-tools/web-fetch/index.js"
     },
     "./a2a": {
       "types": "./dist/src/a2a/index.d.ts",
@@ -151,6 +159,12 @@
     "./storage/search": {
       "types": "./dist/src/storage/search/index.d.ts",
       "default": "./dist/src/storage/search/index.js"
+    },
+    "./storage/search/qmd": {
+      "node": {
+        "types": "./dist/src/storage/search/qmd.d.ts",
+        "default": "./dist/src/storage/search/qmd.js"
+      }
     },
     "./sandbox": {
       "types": "./dist/src/sandbox/index.d.ts",
@@ -229,6 +243,7 @@
     "@smithy/types": "^4.15.1",
     "@types/express": "^5.0.6",
     "@types/node": "^25.9.4",
+    "@types/turndown": "^5.0.6",
     "@typescript-eslint/eslint-plugin": "^8.62.1",
     "@typescript-eslint/parser": "^8.0.0",
     "@vitest/browser": "^4.1.10",
@@ -240,11 +255,12 @@
     "openai": "^6.45.0",
     "playwright": "^1.61.0",
     "tsx": "^4.22.5",
+    "turndown": "^7.2.4",
     "typescript": "^6.0.3",
     "vitest": "^4.1.10"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "repository": {
     "type": "git",
@@ -255,10 +271,10 @@
   },
   "homepage": "https://github.com/strands-agents/harness-sdk#readme",
   "dependencies": {
-    "@smithy/fetch-http-handler": "^5.7.0",
-    "@aws-sdk/client-bedrock-runtime": "^3.1110.0",
+    "@smithy/fetch-http-handler": "^5.7.2",
+    "@aws-sdk/client-bedrock-runtime": "^3.1112.0",
     "@types/json-schema": "^7.0.15",
-    "uuid": "^14.0.1",
+    "uuid": "^14.0.2",
     "yaml": "^2.8.3"
   },
   "peerDependencies": {
@@ -281,8 +297,10 @@
     "@opentelemetry/sdk-trace-base": "^2.6.1",
     "@opentelemetry/sdk-trace-node": "^2.6.1",
     "@smithy/types": "^4.15.1",
+    "@tobilu/qmd": "^2.8.0",
     "express": "^5.1.0",
     "openai": "^6.45.0",
+    "turndown": "^7.2.4",
     "zod": "^4.1.12"
   },
   "peerDependenciesMeta": {
@@ -341,6 +359,12 @@
       "optional": true
     },
     "@cedar-policy/mcp-schema-generator-wasm": {
+      "optional": true
+    },
+    "@tobilu/qmd": {
+      "optional": true
+    },
+    "turndown": {
       "optional": true
     }
   },

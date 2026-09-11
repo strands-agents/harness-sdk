@@ -12,7 +12,7 @@ jobs:
   refresh:
     # Upstream only: the bot fork mirrors main and lacks the bot token secret.
     if: github.repository == 'strands-agents/harness-sdk'
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     concurrency:
       group: catalog-stats
       cancel-in-progress: false

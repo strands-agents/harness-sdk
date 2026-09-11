@@ -34,7 +34,7 @@ dependencies = [
     "docstring_parser>=0.15,<1.0",
     "httpx>=0.28.1,<1.0.0",
     "jsonschema>=4.0.0,<5.0.0",
-    "mcp>=1.23.0,<2.0.0",
+    "mcp>=1.23.0,<2.2",
     "pydantic>=2.4.0,<3.0.0",
     "typing-extensions>=4.13.2,<5.0.0",
     "pyyaml>=6.0.0,<7.0.0",
@@ -54,6 +54,7 @@ litellm = ["litellm>=1.75.9,<=1.96.0", "openai>=1.68.0,<3.0.0"]
 llamaapi = ["llama-api-client>=0.1.0,<1.0.0"]
 mistral = ["mistralai>=2.0.0,<3.0.0"]
 ollama = ["ollama>=0.4.8,<1.0.0"]
+web-fetch = ["markdownify>=1.1.0,<2.0.0", "beautifulsoup4>=4.9.0,<5.0.0"]
 openai = ["openai>=1.68.0,<3.0.0", "aws-bedrock-token-generator>=1.1.0,<2.0.0"]
 writer = ["writer-sdk>=2.2.0,<4.0.0"]
 sagemaker = [
@@ -76,24 +77,26 @@ a2a = [
     "starlette>=1.0.0,<2.0.0",
 ]
 
-bidi = [
-    "aws_sdk_bedrock_runtime>=0.4.0,<1.0.0; python_version>='3.12'",
-    "smithy-aws-core>=0.4.0,<1.0.0; python_version>='3.12'",
-]
-bidi-io = [
-    "prompt_toolkit>=3.0.0,<4.0.0",
-    "pyaudio>=0.2.13,<1.0.0",
-]
-bidi-gemini = ["google-genai>=1.67.0,<3.0.0"]
-bidi-openai = ["websockets>=15.0.0,<17.0.0"]
-# bidi-aec depends on bidi-io: audio processing is wired in through BidiAudioIO (io/audio.py), which imports
-# pyaudio at module scope. Pulling in bidi-io makes `pip install strands-agents[bidi-aec]` usable on its own.
-bidi-aec = ["strands-agents[bidi-io]", "pywebrtc-audio>=0.1.0,<1.0.0", "numpy>=1.21.0,<3.0.0"]
-
 cedar = ["cedarpy==4.8.7", "cedar-policy-mcp-schema-generator==0.6.0"]
 
-all = ["strands-agents[a2a,anthropic,cedar,docs,gemini,litellm,llamaapi,mistral,ollama,openai,writer,sagemaker,otel]"]
-bidi-all = ["strands-agents[a2a,bidi,bidi-aec,bidi-io,bidi-gemini,bidi-openai,docs,otel]"]
+bidi = [
+    "aws_sdk_bedrock_runtime[awscrt]>=0.11.0,<0.12.0; python_version>='3.12'",
+    "awscrt==0.32.2; python_version>='3.12'",
+    "smithy-aws-core>=0.11.0,<0.12.0; python_version>='3.12'",
+    "smithy-core>=0.8.0,<0.9.0; python_version>='3.12'",
+    "smithy-http[awscrt]==0.5.0; python_version>='3.12'",
+]
+bidi-io = ["prompt_toolkit>=3.0.0,<4.0.0", "rich>=15.0.0,<16.0.0"]
+bidi-google = ["google-genai>=2.0.0,<3.0.0"]
+bidi-openai = ["websockets>=16.0.0,<17.0.0"]
+bidi-aec = ["pywebrtc-audio>=0.2.0,<0.3.0", "numpy>=2.0.0,<3.0.0"]
+# Excluded from aggregate extras because PyAudio requires PortAudio as a system level install.
+bidi-pyaudio = ["pyaudio>=0.2.0,<0.3.0"]
+bidi-all = ["strands-agents[a2a,bidi,bidi-aec,bidi-google,bidi-io,bidi-openai,docs,otel]"]
+
+all = [
+    "strands-agents[a2a,anthropic,bidi-all,cedar,docs,gemini,litellm,llamaapi,mistral,ollama,openai,writer,sagemaker,otel,web-fetch]"
+]
 
 dev = [
     "commitizen>=4.4.0,<5.0.0",
@@ -136,6 +139,7 @@ dependencies = [
   # Include required package dependencies for mypy
   "boto3-stubs[bedrock-agent,bedrock-agent-runtime,s3]>=1.26.0,<2.0.0",
   "strands-agents @ {root:uri}",
+  "types-pyaudio>=0.2.16,<0.3.0",
 ]
 python = "3.10"
 
@@ -149,7 +153,7 @@ format-fix = [
 ]
 lint-check = [
     "ruff check",
-    "mypy ./src"
+    "mypy ./src ./tests_typing"
 ]
 lint-fix = [
     "ruff check --fix"
@@ -172,6 +176,13 @@ dependencies = [
 
 [[tool.hatch.envs.hatch-test.matrix]]
 python = ["3.14", "3.13", "3.12", "3.11", "3.10"]
+
+# The dependency range spans both `mcp` majors and resolves to 2.x. Setting STRANDS_TEST_MCP_V1=1 caps the env at
+# 1.x so the 1.x-era MCP tests can run against the real package (the mcp-1x scope in python-integration-test.yml).
+[tool.hatch.envs.hatch-test.overrides]
+env.STRANDS_TEST_MCP_V1.dependencies = [
+    { value = "mcp>=1.23.0,<2.0.0", if = ["1"] },
+]
 
 [tool.hatch.envs.hatch-test.scripts]
 run = "pytest{env:HATCH_TEST_ARGS:} {args}" # Run with: hatch test
@@ -230,26 +241,32 @@ warn_no_return = true
 warn_unreachable = true
 follow_untyped_imports = true
 ignore_missing_imports = false
-exclude = ["src/strands/experimental/bidi"]
 
 [[tool.mypy.overrides]]
-module = ["cedarpy", "cedar_mcp_schema_generator"]
+module = [
+    "aws_sdk_bedrock_runtime.*",
+    "cedarpy",
+    "cedar_mcp_schema_generator",
+    "smithy_aws_core.*",
+    "smithy_core.*",
+    "smithy_http.*",
+]
 ignore_missing_imports = true
 
-# pywebrtc-audio is an optional dependency (bidi-aec extra). Ignore its missing stubs so type-checking
-# passes whether or not it is installed in the current environment.
 [[tool.mypy.overrides]]
-module = ["pywebrtc_audio", "pywebrtc_audio.*"]
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = ["strands.experimental.bidi.*"]
-follow_imports = "skip"
+# These modules branch on which mcp major line is installed; mypy only ever sees one line's types, so each branch's
+# per-line ignores are "unused" when checked against the other line.
+module = [
+    "strands.tools.mcp._compat",
+    "strands.tools.mcp.mcp_client",
+    "strands.tools.mcp.mcp_instrumentation",
+    "strands.tools.mcp.mcp_tasks",
+]
+warn_unused_ignores = false
 
 [tool.ruff]
 line-length = 120
-include = ["examples/**/*.py", "src/**/*.py", "tests/**/*.py", "tests_integ/**/*.py"]
-exclude = ["src/strands/experimental/bidi/**/*.py", "tests/strands/experimental/bidi/**/*.py", "tests_integ/bidi/**/*.py"]
+include = ["examples/**/*.py", "src/**/*.py", "tests/**/*.py", "tests_integ/**/*.py", "tests_typing/**/*.py"]
 
 [tool.ruff.lint]
 select = [
@@ -273,7 +290,7 @@ convention = "google"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_default_fixture_loop_scope = "function"
-addopts = "--ignore=tests/strands/experimental/bidi --ignore=tests_integ/bidi --junit-xml=build/test-results.xml"
+addopts = "--junit-xml=build/test-results.xml"
 timeout = 90
 
 
@@ -283,7 +300,6 @@ source = ["src"]
 context = "thread"
 parallel = true
 concurrency = ["thread", "multiprocessing"]
-omit = ["src/strands/experimental/bidi/*"]
 
 [tool.coverage.report]
 show_missing = true
@@ -313,50 +329,3 @@ style = [
     ["text", ""],
     ["disabled", "fg:#858585 italic"]
 ]
-
-# =========================
-# Bidi development configs
-# =========================
-
-[tool.hatch.envs.bidi]
-dev-mode = true
-features = ["dev", "bidi-all"]
-installer = "uv"
-
-[tool.hatch.envs.bidi.scripts]
-prepare = [
-    "hatch run bidi-lint:format-fix",
-    "hatch run bidi-lint:quality-fix",
-    "hatch run bidi-lint:type-check",
-    "hatch run bidi-test:test-cov",
-]
-
-[tool.hatch.envs.bidi-lint]
-template = "bidi"
-
-[tool.hatch.envs.bidi-lint.scripts]
-# Glob both the top level (*.py) and one directory down (**/*.py without globstar). This keeps top-level
-# modules like audio.py in the lint/type gate; a bare **/*.py silently skips them.
-format-check = "format-fix --check"
-format-fix = "ruff format {args} --target-version py312 ./src/strands/experimental/bidi/*.py ./src/strands/experimental/bidi/**/*.py"
-quality-check = "ruff check {args} --target-version py312 ./src/strands/experimental/bidi/*.py ./src/strands/experimental/bidi/**/*.py"
-quality-fix = "quality-check --fix"
-type-check = "mypy {args} --python-version 3.12 ./src/strands/experimental/bidi/*.py ./src/strands/experimental/bidi/**/*.py"
-
-[tool.hatch.envs.bidi-test]
-template = "bidi"
-
-[tool.hatch.envs.bidi-test.scripts]
-test = "pytest {args} tests/strands/experimental/bidi"
-test-cov = """
-test \
-    --cov=strands.experimental.bidi \
-    --cov-config= \
-    --cov-branch \
-    --cov-report=term-missing \
-    --cov-report=xml:build/coverage/bidi-coverage.xml \
-    --cov-report=html:build/coverage/bidi-html
-"""
-
-[[tool.hatch.envs.bidi-test.matrix]]
-python = ["3.13", "3.12"]

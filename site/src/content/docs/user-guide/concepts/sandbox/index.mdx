@@ -87,7 +87,7 @@ See [Available Sandboxes](./available-sandboxes.mdx) for Docker and SSH configur
 
 When a sandbox is configured, the agent automatically registers two tools so the model can operate in the sandboxed environment without additional setup:
 
-- **`sandbox_shell`** — Executes shell commands. Each call runs in a fresh shell; state such as variables and the working directory does not persist across calls.
+- **`sandbox_shell`** — Executes shell commands and returns output (stdout), error (stderr), and exit_code (non-zero means the command failed). Each call runs in a fresh shell; state such as variables and the working directory does not persist across calls.
 - **`sandbox_file_editor`** — Views, creates, and edits files using absolute paths. Supports view (with line ranges), create, string replace, and insert operations.
 
 If a tool with the same name is already registered on the agent, the sandbox-vended version is skipped. This lets you override a vended tool with a stricter variant:

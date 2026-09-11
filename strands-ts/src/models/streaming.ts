@@ -565,3 +565,21 @@ export function createEmptyUsage(): Usage {
     totalTokens: 0,
   }
 }
+
+/**
+ * Returns the total prompt the model processed, including cached tokens.
+ *
+ * Providers either fold cache tokens into `inputTokens` or report them separately; the totals tell us
+ * which. `inputTokens + outputTokens === totalTokens` means cache is already inside `inputTokens`;
+ * otherwise the cache counters are added on top. Uncached usage returns `inputTokens` either way.
+ *
+ * @param usage - Token usage from a model invocation
+ * @returns The total prompt token count
+ * @internal
+ */
+export function totalPromptTokens(usage: Usage): number {
+  if (usage.inputTokens + usage.outputTokens === usage.totalTokens) {
+    return usage.inputTokens
+  }
+  return usage.inputTokens + (usage.cacheReadInputTokens ?? 0) + (usage.cacheWriteInputTokens ?? 0)
+}

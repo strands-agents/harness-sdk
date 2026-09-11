@@ -1,15 +1,22 @@
 /**
  * Base offload strategy and shared infrastructure.
- *
- * @internal
  */
 
 import { logger } from '../../../logging/logger.js'
 import { MessageAddedEvent } from '../../../hooks/events.js'
-import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
+import {
+  Message,
+  TextBlock,
+  ToolResultBlock,
+  ToolUseBlock,
+  CachePointBlock,
+  ReasoningBlock,
+} from '../../../types/messages.js'
 import type { ContentBlock } from '../../../types/messages.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
+import type { Stash } from '../../stash.js'
+import { RETRIEVAL_TOOL_NAME } from '../../retrieval-tool.js'
 
 /**
  * Target for offload operations. This union is intentionally extensible — new
@@ -21,6 +28,8 @@ import type { ContextStrategy, ContextState } from '../../types.js'
  * - `"userText"` — text blocks in user messages (excluding tool results)
  * - `string[]` — tool results from specific tools, namespaced with `tool::` (e.g. `['tool::bash']`); prefix with `!` to exclude
  * - `"*"` — all content in the context window (tool results + text blocks)
+ *
+ * @experimental
  */
 export type OffloadTarget = '*' | 'toolResults' | 'toolResultErrors' | 'assistantText' | 'userText' | string[]
 
@@ -35,6 +44,8 @@ export type OffloadTarget = '*' | 'toolResults' | 'toolResultErrors' | 'assistan
  * When multiple strategies target the same content, they don't conflict — strategies
  * run as an ordered pipeline, and once an earlier strategy shrinks a block, it falls
  * below the next strategy's threshold and gets skipped automatically.
+ *
+ * @experimental
  */
 export interface OffloadConditions {
   /** Token threshold above which individual blocks are offloaded. */
@@ -219,6 +230,7 @@ export function repairAlternation(messages: Message[]): void {
       messages[writeIndex - 1] = new Message({
         role: prev.role,
         content: [...prev.content, ...current.content],
+        trackingId: prev.trackingId,
       })
     } else {
       messages[writeIndex] = current
@@ -276,6 +288,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
   protected readonly _removalRatio: number = 0.3
   protected readonly _includeFilter: Set<string> | undefined
   protected readonly _excludeFilter: Set<string> | undefined
+  protected _stash: Stash | undefined
 
   constructor(target?: OffloadTarget, conditions?: OffloadConditions) {
     if (Array.isArray(target) && target.length === 0) {
@@ -297,7 +310,8 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     return this._utilizationThreshold !== undefined
   }
 
-  init(agent: LocalAgent): void {
+  init(agent: LocalAgent, stash?: Stash): void {
+    this._stash = stash
     if (this._isMessageLevel) return
     if (this._preserveRecent > 0) return
     agent.addHook(MessageAddedEvent, async (event) => {
@@ -308,6 +322,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
   }
 
   async apply(context: ContextState): Promise<boolean> {
+    if (context.stash) this._stash = context.stash
     if (this._isMessageLevel) {
       if (context.utilization < this._utilizationThreshold!) return false
       return this._applyPerMessage(context)
@@ -373,13 +388,18 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
 
   /** Whether a block is eligible for offload given the current target and filters. */
   protected _blockMatchesTarget(block: ContentBlock, message: Message, toolNameMap: Map<string, string>): boolean {
+    if (block instanceof ToolUseBlock) return false
+    if (block instanceof CachePointBlock) return false
+    if (block instanceof ReasoningBlock) return false
     if (block instanceof TextBlock) return targetMatchesMessage(this._target, message)
     if (block instanceof ToolResultBlock) {
+      if (this._stash && toolNameMap.get(block.toolUseId) === RETRIEVAL_TOOL_NAME) return false
       return (
         this._target === undefined ||
         toolMatchesTarget(block, this._target, toolNameMap, this._includeFilter, this._excludeFilter)
       )
     }
+    if (this._target === '*' || this._target === undefined) return true
     return false
   }
 
@@ -399,10 +419,9 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
       const tokens = await agent.model.countTokens([new Message({ role: message.role, content: [block] })])
       if (tokens <= effectiveThreshold) continue
 
-      const replacement = await this._replaceBlock(block as TextBlock | ToolResultBlock, tokens, message, agent)
+      const stashRefs = this._stash?.refsFor(block, message, blockIndex) ?? []
+      const replacement = await this._replaceBlock(block, tokens, message, agent, stashRefs)
       if (replacement && replacement !== block) {
-        // Intentional in-place mutation: per-block replacement shrinks existing message content
-        // rather than constructing a new Message (unlike message-level removal which uses new objects).
         ;(message.content as unknown[])[blockIndex] = replacement
         acted = true
       }
@@ -454,10 +473,11 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
 
   /** Transform a block. Return the replacement, or null to skip. */
   protected abstract _replaceBlock(
-    block: TextBlock | ToolResultBlock,
+    block: ContentBlock,
     tokens: number,
     message: Message,
-    agent: LocalAgent
+    agent: LocalAgent,
+    stashRefs: string[]
   ): Promise<ContentBlock | null>
 }
 
@@ -480,8 +500,8 @@ export class EmergencyTruncateStrategy extends BaseOffloadStrategy {
     super('*')
   }
 
-  override init(): void {
-    // No eager hooks — this only fires on overflow
+  override init(_agent: LocalAgent, stash?: Stash): void {
+    this._stash = stash
   }
 
   override async apply(context: ContextState): Promise<boolean> {

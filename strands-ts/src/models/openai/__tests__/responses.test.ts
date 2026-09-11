@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import OpenAI from 'openai'
+import OpenAI, { APIUserAbortError } from 'openai'
 import { isNode } from '../../../__fixtures__/environment.js'
 import { OpenAIModel } from '../index.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../../errors.js'
@@ -26,11 +26,13 @@ function createMockClient(streamGenerator: () => AsyncGenerator<any>, capture: {
 }
 
 // Mock the OpenAI SDK
-vi.mock('openai', () => {
+vi.mock('openai', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('openai')>()
   const mockConstructor = vi.fn(function (this: any) {
     return {}
   })
   return {
+    ...actual,
     default: mockConstructor,
   }
 })
@@ -150,6 +152,53 @@ describe("OpenAIModel (api: 'responses')", () => {
     })
   })
 
+  describe('cancellation', () => {
+    // Guards against provider work continuing after agent cancellation (#3915).
+    it('stops an in-flight responses producer when the signal aborts', async () => {
+      let producedTokens = 0
+      let producerStopped = false
+      let resolveFirstToken!: () => void
+      const firstTokenProduced = new Promise<void>((resolve) => {
+        resolveFirstToken = resolve
+      })
+      const create = vi.fn(async (_request: unknown, requestOptions?: unknown): Promise<AsyncGenerator<unknown>> => {
+        const signal = (requestOptions as { signal?: AbortSignal } | undefined)?.signal
+        return (async function* (): AsyncGenerator<unknown> {
+          yield { type: 'response.created', response: { id: 'response-1' } }
+          while (producedTokens < 20) {
+            if (signal?.aborted) {
+              producerStopped = true
+              return
+            }
+            producedTokens += 1
+            if (producedTokens === 1) {
+              resolveFirstToken()
+            }
+            yield { type: 'response.output_text.delta', delta: 'token ' }
+            await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 1))
+          }
+          yield { type: 'response.completed', response: {} }
+        })()
+      })
+      const client = { responses: { create } } as unknown as OpenAI
+      const controller = new AbortController()
+      const model = new OpenAIModel({ api: 'responses', client })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      const streamResult = collectIterator(model.stream(messages, { cancelSignal: controller.signal }))
+      await firstTokenProduced
+      const tokensAtCancel = producedTokens
+      controller.abort()
+      await expect(streamResult).rejects.toBeInstanceOf(APIUserAbortError)
+
+      expect(create).toHaveBeenCalledWith(expect.anything(), { signal: controller.signal })
+      expect({ producedTokens, producerStopped }).toEqual({
+        producedTokens: tokensAtCancel,
+        producerStopped: true,
+      })
+    })
+  })
+
   describe('request formatting', () => {
     const mkUserMessage = () => new Message({ role: 'user', content: [new TextBlock('Hi')] })
 
@@ -240,6 +289,66 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(req.temperature).toBe(0.3)
       expect(req.max_output_tokens).toBe(512)
       expect(req.top_p).toBe(0.8)
+    })
+
+    it('maps cacheConfig.cacheKey to prompt_cache_key', async () => {
+      const req = await runOnce({ cacheConfig: { cacheKey: 'tenant-42' } })
+      expect(req.prompt_cache_key).toBe('tenant-42')
+    })
+
+    it('omits prompt_cache_key when cacheConfig is unset', async () => {
+      const req = await runOnce()
+      expect(req.prompt_cache_key).toBeUndefined()
+    })
+
+    it('lets an explicit prompt_cache_key in params win over cacheConfig', async () => {
+      const req = await runOnce({ params: { prompt_cache_key: 'explicit' }, cacheConfig: { cacheKey: 'from-config' } })
+      expect(req.prompt_cache_key).toBe('explicit')
+    })
+
+    it('derives prompt_cache_key from the agent metadata session when cacheKey is unset', async () => {
+      const req = await runOnce({ cacheConfig: {} }, [mkUserMessage()], { agentMetadata: { sessionId: 's1' } })
+      expect(req.prompt_cache_key).toBe('strands-s1')
+    })
+
+    it('lets a configured cacheKey win over the agent metadata session', async () => {
+      const req = await runOnce({ cacheConfig: { cacheKey: 'tenant-42' } }, [mkUserMessage()], {
+        agentMetadata: { sessionId: 's1' },
+      })
+      expect(req.prompt_cache_key).toBe('tenant-42')
+    })
+
+    it('treats a false cacheKey as an opt-out even with an agent metadata session', async () => {
+      const req = await runOnce({ cacheConfig: { cacheKey: false } }, [mkUserMessage()], {
+        agentMetadata: { sessionId: 's1' },
+      })
+      expect(req.prompt_cache_key).toBeUndefined()
+    })
+
+    it('omits prompt_cache_key when the agent metadata carries no session', async () => {
+      const req = await runOnce({ cacheConfig: {} }, [mkUserMessage()], { agentMetadata: {} })
+      expect(req.prompt_cache_key).toBeUndefined()
+    })
+
+    it.each(['24h', 'in_memory'])(
+      'maps retention-literal cacheConfig.ttl %s to prompt_cache_retention',
+      async (ttl) => {
+        const req = await runOnce({ cacheConfig: { ttl } })
+        expect(req.prompt_cache_retention).toBe(ttl)
+      }
+    )
+
+    it('ignores a non-retention cacheConfig.ttl and warns', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn')
+      const req = await runOnce({ cacheConfig: { ttl: '5m' } })
+      expect(req.prompt_cache_retention).toBeUndefined()
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('not an openai retention value'))
+      warnSpy.mockRestore()
+    })
+
+    it('lets an explicit prompt_cache_retention in params win over cacheConfig', async () => {
+      const req = await runOnce({ params: { prompt_cache_retention: '24h' }, cacheConfig: { ttl: 'in_memory' } })
+      expect(req.prompt_cache_retention).toBe('24h')
     })
 
     it('passes through extra params fields to the request', async () => {

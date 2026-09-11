@@ -1,0 +1,123 @@
+---
+title: OpenAI Realtime
+description: 'Build low-latency voice agents with the OpenAI Realtime API and Strands. Configure speech-to-speech streaming, interruptions, and tool calling.'
+experimental: true
+tags: [bidi-streaming]
+sourceLinks:
+  - path: strands-py/src/strands/experimental/bidi/models/openai.py
+---
+
+
+The [OpenAI Realtime API](https://platform.openai.com/docs/guides/realtime) is a speech-to-speech interface that enables low-latency, natural voice conversations with AI. Key features include:
+
+- **Bidirectional Interaction**: The user and the model can provide input and output at the same time.
+- **Interruptibility**: Allows users to interrupt the AI mid-response, like in human conversations.
+- **Multimodal Streaming**: The API supports streaming of text and audio data.
+- **Tool Use and Function Calling**: Can use external tools to perform actions and get context while maintaining a real-time connection.
+- **Secure Authentication**: Uses tokens for secure client-side authentication. 
+
+## Installation
+
+OpenAI Realtime is configured as an optional dependency in Strands Agents.
+
+To install it, run:
+
+```bash
+pip install 'strands-agents[bidi-io,bidi-openai,bidi-pyaudio]'
+```
+
+Or to install all bidirectional streaming providers at once:
+
+```bash
+pip install 'strands-agents[bidi-all,bidi-pyaudio]'
+```
+
+## Usage
+
+After installing the OpenAI Realtime and local audio extras, create a voice agent:
+
+```python
+import asyncio
+
+from strands.experimental.bidi import BidiAgent
+from strands.experimental.bidi.io import BidiAudioIO
+from strands.experimental.bidi.models import OpenAIRealtimeModel
+from strands_tools import calculator, stop
+
+
+async def main() -> None:
+    model = OpenAIRealtimeModel(
+        model_id="gpt-realtime",
+        audio={"voice": "coral"},
+        api_key="<OPENAI_API_KEY>",
+    )
+    # stop tool allows user to verbally stop agent execution.
+    agent = BidiAgent(model=model, tools=[calculator, stop])
+
+    audio_io = BidiAudioIO()
+    await agent.run(inputs=[audio_io.input()], outputs=[audio_io.output()])
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+## Configuration
+
+### Client Options
+
+| Parameter | Description | Example | Options |
+| --------- | ----------- | ------- | ------- |
+| `api_key` | OpenAI API key used for authentication | `sk-...` | [reference](https://platform.openai.com/docs/api-reference/authentication) |
+| `organization` | Organization associated with the connection. Used for authentication if required. | `myorg` | [reference](https://platform.openai.com/docs/api-reference/authentication)
+| `project` | Project associated with the connection. Used for authentication if required. | `myproj` | [reference](https://platform.openai.com/docs/api-reference/authentication)
+| `timeout_s` | OpenAI documents a 60 minute limit on realtime sessions ([docs](https://platform.openai.com/docs/guides/realtime-conversations#session-lifecycle-events)). However, OpenAI does not emit any warnings when approaching the limit. As a workaround, we allow users to configure a timeout (in seconds) on the client side to gracefully handle the connection closure. | `3000` | `[1, 3000]` (in seconds)
+
+### Model Config
+
+| Parameter | Description | Example | Options |
+| --------- | ----------- | ------- | ------- |
+| `model_id` | OpenAI Realtime model identifier. | `"gpt-realtime"` | [OpenAI models](https://platform.openai.com/docs/models) |
+| `audio` | Audio configuration. | `{"voice": "coral"}` | [reference](@api/python/strands.experimental.bidi.models.configs#AudioConfig) |
+| `params` | OpenAI Realtime session parameters. | `{"max_output_tokens": 4096}` | [`session.update`](https://platform.openai.com/docs/api-reference/realtime-client-events/session/update) |
+| `connection` | Reconnect timing overrides. | `{"auto_reconnect": false}` | [reference](@api/python/strands.experimental.bidi.models.configs#BidiConnectionConfig) |
+
+For the list of supported voices, see [here](https://platform.openai.com/docs/guides/realtime-conversations#voice-options).
+
+### Additional Provider Options
+
+Use direct options such as `audio` for common settings, and pass additional OpenAI
+Realtime options through `params`.
+
+```python
+from strands.experimental.bidi.models import OpenAIRealtimeModel
+
+model = OpenAIRealtimeModel(
+    api_key="<OPENAI_API_KEY>",
+    audio={"voice": "coral"},
+    params={"audio": {"input": {"turn_detection": {"threshold": 0.3}}}},
+)
+```
+
+Nested dictionaries in `params` merge with the existing configuration, preserving
+unspecified fields. If a setting overlaps with a default or direct option, `params`
+takes precedence.
+
+Calling `update_config(params=...)` replaces the entire `params` dictionary. The new
+values take effect on the next `start()` or `restart()`.
+
+## Troubleshooting
+
+### Module Not Found
+
+If you encounter the error `ModuleNotFoundError: No module named 'websockets'`, this means the WebSocket dependency hasn't been properly installed in your environment. To fix this, run `pip install 'strands-agents[bidi-openai]'`.
+
+### Authentication Errors
+
+Set the `OPENAI_API_KEY` environment variable or pass the key through `api_key`.
+
+## References
+
+- [OpenAI Realtime API](https://platform.openai.com/docs/guides/realtime)
+- [OpenAI API Reference](https://platform.openai.com/docs/api-reference/realtime)
+- [Python API Reference](@api/python/strands.experimental.bidi.models.openai#OpenAIRealtimeModel)

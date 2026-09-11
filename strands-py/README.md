@@ -103,7 +103,7 @@ response = agent("Use any tools you find in the tools directory")
 
 ### MCP Support
 
-Seamlessly integrate Model Context Protocol (MCP) servers:
+Connect to Model Context Protocol (MCP) servers:
 
 ```python
 from strands import Agent
@@ -118,6 +118,8 @@ with aws_docs_client:
    agent = Agent(tools=aws_docs_client.list_tools_sync())
    response = agent("Tell me about Amazon Bedrock and how to use it with Python")
 ```
+
+The SDK works with both major versions of the `mcp` package through a built-in compatibility layer, so most code that uses `MCPClient` runs unchanged on either version. A fresh install resolves to mcp 2.x, and pinning `mcp<2` keeps you on 1.x. See [docs/MCP_VERSIONS.md](./docs/MCP_VERSIONS.md) for support status, the behavior differences on 2.x, and migration notes.
 
 ### Multiple Model Providers
 
@@ -204,7 +206,7 @@ It's also available on GitHub via [strands-agents/tools](https://github.com/stra
 Build real-time voice and audio conversations with persistent streaming connections. Unlike traditional request-response patterns, bidirectional streaming maintains long-running conversations where users can interrupt, provide continuous input, and receive real-time audio responses. Get started with your first BidiAgent by following the [Quickstart](https://strandsagents.com/docs/user-guide/concepts/bidirectional-streaming/quickstart/) guide. 
 
 **Supported Model Providers:**
-- Amazon Nova Sonic (v1, v2)
+- Amazon Bedrock Nova Sonic (v1, v2)
 - Google Gemini Live
 - OpenAI Realtime API
 
@@ -214,64 +216,69 @@ Build real-time voice and audio conversations with persistent streaming connecti
 # Server-side only (no audio I/O dependencies)
 pip install strands-agents[bidi]
 
-# With audio I/O support (includes PyAudio dependency)
-pip install strands-agents[bidi,bidi-io]
+# With all portable Bidi providers, terminal I/O, and audio processing (no local audio devices)
+pip install strands-agents[bidi-all]
+
+# For local microphone/speaker access, install PortAudio for your OS first, then:
+pip install strands-agents[bidi,bidi-io,bidi-pyaudio]
 ```
 
-> **Note**: Amazon Nova Sonic requires Python 3.12+ due to its experimental AWS SDK dependency.
+> **Note**: Bedrock Nova Sonic requires Python 3.12+ due to its experimental AWS SDK dependency.
 
 **Quick Example:**
 
 ```python
 import asyncio
 from strands.experimental.bidi import BidiAgent
-from strands.experimental.bidi.models import BidiNovaSonicModel
-from strands.experimental.bidi.io import BidiAudioIO, BidiTextIO
+from strands.experimental.bidi.models import BedrockNovaSonicModel
+from strands.experimental.bidi.io import BidiAudioIO
 from strands_tools import calculator, stop
 
 async def main():
     # Create bidirectional agent with Nova Sonic v2
-    model = BidiNovaSonicModel()
+    model = BedrockNovaSonicModel()
     agent = BidiAgent(model=model, tools=[calculator, stop])
 
-    # Setup audio and text I/O (requires bidi-io extra)
+    # Setup audio I/O (local audio requires the bidi-pyaudio extra)
     audio_io = BidiAudioIO()
-    text_io = BidiTextIO()
 
-    # Run with real-time audio streaming
+    # Run with real-time audio streaming and terminal transcripts
     # stop tool allows user to verbally stop agent execution
     await agent.run(
         inputs=[audio_io.input()],
-        outputs=[audio_io.output(), text_io.output()]
+        outputs=[audio_io.output()]
     )
 
 if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-> **Note**: `BidiAudioIO` and `BidiTextIO` require the `bidi-io` extra. For server-side deployments where audio I/O is handled by clients (browsers, mobile apps), install only `strands-agents[bidi]` and implement custom input/output handlers using the `BidiInput` and `BidiOutput` protocols.
+> **Note**: `BidiTextIO` is included with the `bidi-io` extra. `BidiAudioIO` requires the `bidi-io` and
+> `bidi-pyaudio` extras plus the PortAudio system library. For server-side deployments where audio I/O is handled
+> by clients (browsers, mobile apps), install only `strands-agents[bidi]` and implement custom input/output handlers
+> using the `BidiInput` and `BidiOutput` protocols.
 
 **Configuration Options:**
 
 ```python
-from strands.experimental.bidi.models import BidiNovaSonicModel
+from strands.experimental.bidi.models import BedrockNovaSonicModel
 
-# Configure audio settings and turn detection (v2 only)
-model = BidiNovaSonicModel(
-    provider_config={
-        "audio": {
-            "input_rate": 16000,
-            "output_rate": 16000,
-            "voice": "matthew"
+# Configure audio streams and Nova Sonic session parameters.
+model = BedrockNovaSonicModel(
+    audio={
+        "input_rate": 16000,
+        "output_rate": 16000,
+        "voice": "matthew",
+    },
+    params={
+        "turnDetectionConfiguration": {
+            "endpointingSensitivity": "MEDIUM"
         },
-        "turn_detection": {
-            "endpointingSensitivity": "MEDIUM"  # HIGH, MEDIUM, or LOW
-        },
-        "inference": {
-            "max_tokens": 2048,
+        "inferenceConfiguration": {
+            "maxTokens": 2048,
             "temperature": 0.7
-        }
-    }
+        },
+    },
 )
 
 # Configure I/O devices
@@ -280,19 +287,6 @@ audio_io = BidiAudioIO(
     output_device_index=1,  # Specific speaker
     input_buffer_size=10,
     output_buffer_size=10
-)
-
-# Text input mode (type messages instead of speaking)
-text_io = BidiTextIO()
-await agent.run(
-    inputs=[text_io.input()],  # Use text input
-    outputs=[audio_io.output(), text_io.output()]
-)
-
-# Multi-modal: Both audio and text input
-await agent.run(
-    inputs=[audio_io.input(), text_io.input()],  # Speak OR type
-    outputs=[audio_io.output(), text_io.output()]
 )
 ```
 

@@ -9,10 +9,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..types.exceptions import StorageError
-from .storage import _NamespacedStorage, _normalize_key, _normalize_prefix
+from .search.keyword import KeywordSearchStrategy
+from .storage import _NAMESPACED, _normalize_key, _normalize_prefix
 
 if TYPE_CHECKING:
     from ..sandbox.base import Sandbox
+    from .storage import StorageSearchResult
 
 _TMP_MARKER = ".__strands_tmp"
 
@@ -39,8 +41,13 @@ class LocalFileStorage:
             base_dir: Root directory under which all keys are stored.
             sandbox: Optional sandbox to route I/O through.
         """
-        self._base_dir = base_dir
+        self._base_dir = os.path.normpath(base_dir)
         self._sandbox = sandbox
+
+    @property
+    def base_dir(self) -> str:
+        """The root directory under which all keys are stored."""
+        return self._base_dir
 
     def for_sandbox(self, sandbox: Sandbox) -> LocalFileStorage:
         """Return a copy bound to the given sandbox.
@@ -55,7 +62,10 @@ class LocalFileStorage:
         """
         if self._sandbox is sandbox:
             return self
-        return LocalFileStorage(self._base_dir, sandbox=sandbox)
+        bound = LocalFileStorage(self._base_dir, sandbox=sandbox)
+        if getattr(self, "_namespaced", None) is _NAMESPACED:
+            bound._namespaced = _NAMESPACED  # type: ignore[attr-defined]
+        return bound
 
     async def write(self, key: str, data: bytes) -> None:
         """Store data as a file, creating parent directories as needed.
@@ -178,20 +188,36 @@ class LocalFileStorage:
         except Exception as error:
             raise StorageError(f"Failed to list keys with prefix '{query}'") from error
 
-    def namespace(self, prefix: str) -> _NamespacedStorage:
-        """Return a view of this storage with all keys prefixed.
+    async def search(self, query: str) -> builtins.list[StorageSearchResult]:
+        """Search stored content by keyword token-overlap scoring.
 
-        The returned view preserves ``for_sandbox`` via delegation to the
-        underlying storage, so sandbox routing works even when storage is
-        pre-namespaced before being passed to a plugin.
+        Args:
+            query: Natural-language search query.
+
+        Returns:
+            All matches with relevance scores, ranked best-first.
+        """
+        return await KeywordSearchStrategy().search(self, query)
+
+    def namespace(self, prefix: str) -> LocalFileStorage:
+        """Return a new LocalFileStorage scoped to a subdirectory.
+
+        Unlike a generic ``_NamespacedStorage`` wrapper, this returns a real
+        ``LocalFileStorage`` whose ``base_dir`` incorporates the prefix. This
+        preserves access to ``base_dir`` for strategies that need the filesystem
+        path (e.g. index-based search), and ``for_sandbox`` continues to work.
 
         Args:
             prefix: Prefix to prepend to all keys.
 
         Returns:
-            A namespaced storage view.
+            A new LocalFileStorage rooted at the sub-path.
         """
-        return _NamespacedStorage(self, prefix)
+        normalized = _normalize_prefix(prefix).rstrip("/")
+        sub_dir = os.path.join(self._base_dir, *normalized.split("/")) if normalized else self._base_dir
+        scoped = LocalFileStorage(sub_dir, sandbox=self._sandbox)
+        scoped._namespaced = _NAMESPACED  # type: ignore[attr-defined]
+        return scoped
 
     def _path_for(self, key: str) -> str:
         """Map a normalized key to a filesystem path."""

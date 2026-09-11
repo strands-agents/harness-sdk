@@ -248,6 +248,9 @@ class GeminiModel(Model):
                 if _has_location_source(content):
                     logger.warning("Location sources are not supported by Gemini | skipping content block")
                     continue
+                if "cachePoint" in content:
+                    logger.warning("cachePoint content block is not supported by Gemini | skipping")
+                    continue
                 parts.append(self._format_request_content_part(content, tool_use_id_to_name))
 
             contents.append(

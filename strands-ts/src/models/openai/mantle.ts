@@ -22,7 +22,7 @@ const MANTLE_DOCS_URL = 'https://docs.aws.amazon.com/bedrock/latest/userguide/in
  * `/v1`). An unmatched new line falls through to `/v1`; the `mantle-routing`
  * integ test fails naming any id that routes wrong.
  */
-const OPENAI_PATH_MODEL_PREFIXES = ['openai.gpt-5.', 'xai.grok-4.', 'google.gemma-4-'] as const
+const OPENAI_PATH_MODEL_PREFIXES = ['openai.gpt-5.', 'openai.gpt-6-', 'xai.grok-4.', 'google.gemma-4-'] as const
 
 // Matches AWS region identifiers such as us-east-1, ap-southeast-1, and us-gov-east-1.
 // Anchored so a malformed region (e.g. one containing '@', ':', '/', '#') cannot re-point

@@ -1,0 +1,9 @@
+name: strands-xa11y
+description: Give agents computer use on macOS, Windows, and Linux. Control native desktop apps through the OS accessibility tree.
+integrationType: tool
+languages:
+  python:
+    package: strands-xa11y
+github: https://github.com/xa11y/xa11y
+docsUrl: https://xa11y.dev/guides/strands/
+addedDate: 2026-08-22

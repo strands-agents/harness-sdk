@@ -4,6 +4,7 @@ import abc
 import json
 import logging
 import math
+import threading
 from collections.abc import AsyncGenerator, AsyncIterable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, TypeVar
@@ -19,6 +20,7 @@ from ._defaults import DEFAULT_CONTEXT_WINDOW_LIMIT
 
 if TYPE_CHECKING:
     from ..agent.agent import Agent
+    from ..agent.agent_metadata import AgentMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +136,8 @@ class BaseModelConfig(TypedDict, total=False):
 class CacheConfig:
     """Configuration for prompt caching.
 
+    Providers consume only the fields they support.
+
     Attributes:
         strategy: Caching strategy to use.
             - "auto": Automatically detect model support and inject cachePoint to maximize cache coverage
@@ -147,11 +151,23 @@ class CacheConfig:
             the same static system prefix hit the cache. A TTL string (e.g. "1h") sets this section's own
             duration and is honored as written; True derives the duration from ``ttl``; False disables it.
             A hand-placed system cache point is honored rather than doubled.
+        cache_key: Stable identity a prompt-cache-routing provider (OpenAI, LiteLLM, Mistral) uses as its
+            cache key. Left unset, it is derived per request as ``strands-<session_id>`` if the agent has
+            a session manager, so repeat runs of a session share a cache prefix with no key management.
+            Set it to a string to pin your own key, or ``False`` to opt out of routing entirely. The
+            resolved key (whether set or derived from the session id) is transmitted to the provider.
+        tools_ttl: Cache the tool definitions, auto-injecting a cache point on the tool block so repeated calls
+            with the same tools hit the cache. A TTL string (e.g. "1h") sets this section's own
+            duration and is honored as written; True derives the duration from ``ttl``; False disables it.
+            None (the default) leaves it unset, deferring to the deprecated model-level ``cache_tools``;
+            any explicit value — including False — takes precedence over ``cache_tools``.
     """
 
     strategy: Literal["auto", "anthropic"] = "auto"
     ttl: str | None = None
     system_prompt_ttl: bool | str = True
+    cache_key: str | Literal[False] | None = None
+    tools_ttl: bool | str | None = None
 
 
 @dataclass
@@ -245,6 +261,8 @@ class Model(abc.ABC):
         tool_choice: ToolChoice | None = None,
         system_prompt_content: list[SystemContentBlock] | None = None,
         invocation_state: dict[str, Any] | None = None,
+        cancel_signal: threading.Event | None = None,
+        agent_metadata: "AgentMetadata | None" = None,
         **kwargs: Any,
     ) -> AsyncIterable[StreamEvent]:
         """Stream conversation with the model.
@@ -262,6 +280,12 @@ class Model(abc.ABC):
             tool_choice: Selection strategy for tool invocation.
             system_prompt_content: System prompt content blocks for advanced features like caching.
             invocation_state: Caller-provided state/context that was passed to the agent when it was invoked.
+            cancel_signal: Event a provider can observe to abort an in-flight request. Support is
+                provider-dependent; a provider that ignores it still cancels at the SDK's
+                between-chunk checkpoint.
+            agent_metadata: Stable identity of the invoking agent (e.g. its session id), supplied per
+                request. A provider may consult it to derive a prompt-cache routing key; None when the
+                model is streamed directly without an agent.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Yields:

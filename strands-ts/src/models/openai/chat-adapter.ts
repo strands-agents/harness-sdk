@@ -15,6 +15,7 @@ import type { StreamOptions } from '../model.js'
 import { logger } from '../../logging/logger.js'
 import { MODEL_DEFAULTS } from '../defaults.js'
 import { formatImageDataUrl, warnManagedParams as warnManagedParamsShared } from './formatting.js'
+import { applyCacheConfig } from './cache.js'
 import type { ChatStreamState, OpenAIChatConfig } from './types.js'
 
 export const DEFAULT_CHAT_MODEL_ID = MODEL_DEFAULTS.openai.modelId
@@ -138,6 +139,8 @@ export function formatChatRequest(
     }
   }
 
+  applyCacheConfig(request, config.cacheConfig, options?.agentMetadata)
+
   if ('n' in request && request.n !== undefined && request.n !== null && request.n > 1) {
     throw new Error('Streaming with n > 1 is not supported')
   }
@@ -147,8 +150,10 @@ export function formatChatRequest(
 
 /**
  * Converts SDK messages into Chat Completions message params. Tool result blocks
- * are split out into separate `tool`-role messages; media inside tool results is
- * hoisted into a following user-role message (OpenAI restricts media to user role).
+ * are split out into separate `tool`-role messages, emitted before any text/media
+ * `user` message from the same turn so the tool responses stay adjacent to the
+ * assistant `tool_calls` they answer; media inside tool results is hoisted into a
+ * following user-role message (OpenAI restricts media to user role).
  */
 function formatChatMessages(messages: Message[]): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
   const openAIMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = []
@@ -157,6 +162,10 @@ function formatChatMessages(messages: Message[]): OpenAI.Chat.Completions.ChatCo
     if (message.role === 'user') {
       const toolResults = message.content.filter((b) => b.type === 'toolResultBlock')
       const otherContent = message.content.filter((b) => b.type !== 'toolResultBlock')
+
+      // OpenAI requires the assistant `tool_calls` message to be followed immediately by the matching
+      // `tool` responses, with no other message interposed
+      const deferredUserMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = []
 
       if (otherContent.length > 0) {
         const contentParts: OpenAI.Chat.Completions.ChatCompletionContentPart[] = []
@@ -220,7 +229,7 @@ function formatChatMessages(messages: Message[]): OpenAI.Chat.Completions.ChatCo
         }
 
         if (contentParts.length > 0) {
-          openAIMessages.push({ role: 'user', content: contentParts })
+          deferredUserMessages.push({ role: 'user', content: contentParts })
         }
       }
 
@@ -261,6 +270,7 @@ function formatChatMessages(messages: Message[]): OpenAI.Chat.Completions.ChatCo
       }
 
       openAIMessages.push(...userMessagesWithMedia)
+      openAIMessages.push(...deferredUserMessages)
     } else {
       const toolUseCalls: OpenAI.Chat.Completions.ChatCompletionMessageToolCall[] = []
       const textParts: string[] = []

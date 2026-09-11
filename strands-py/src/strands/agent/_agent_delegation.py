@@ -4,13 +4,8 @@ When a tool is configured with ``delegate=True``, this plugin ensures:
 
 1. The delegation tool is the only tool called in the turn (single-call constraint)
 2. The agent loop exits immediately after a successful delegation (via end_turn)
-3. The AgentResult is transformed with the delegation tool's content as the last message
+3. The delegation tool's content blocks become the final assistant message
 4. Streaming events from the delegate agent are surfaced natively in the parent stream
-
-The final delegation message is produced in middleware after the core loop exits.
-``MessageAddedEvent`` subscribers will see the end_turn placeholder followed by a second
-event with the real delegation content (no session manager), or no event for the real
-content at all (session manager attached).
 """
 
 from __future__ import annotations
@@ -20,9 +15,9 @@ import logging
 import weakref
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
-from .._middleware.stages import AgentStreamContext, AgentStreamStage, ExecuteToolContext, ExecuteToolStage
+from .._middleware.stages import ExecuteToolContext, ExecuteToolStage
 from .._middleware.types import MiddlewareNext
 from ..hooks import (
     AfterToolCallEvent,
@@ -30,12 +25,11 @@ from ..hooks import (
     BeforeModelCallEvent,
     BeforeToolsEvent,
     HookOrder,
-    MessageAddedEvent,
 )
 from ..plugins import Plugin
-from ..types._events import AgentAsToolStreamEvent, EventLoopStopEvent, ToolResultEvent, TypedEvent
-from ..types.content import ContentBlock, _ensure_tracking_id
-from ..types.content import Message as MessageType
+from ..types._events import AgentAsToolStreamEvent, ToolResultEvent, TypedEvent
+from ..types.content import ContentBlock
+from ..types.tools import ToolResult
 from ._agent_as_tool import _AgentAsTool
 
 if TYPE_CHECKING:
@@ -54,9 +48,6 @@ class _DelegationState:
     tool_use_id: str | None = None
     """Tool use ID of the delegation tool that succeeded."""
 
-    end_turn_via_delegation: bool = False
-    """Whether this plugin ended turn."""
-
 
 def _is_delegation_tool(agent: Agent, tool_name: str) -> bool:
     """Check whether a tool registered on the agent is a delegation AgentAsTool."""
@@ -64,7 +55,7 @@ def _is_delegation_tool(agent: Agent, tool_name: str) -> bool:
     return isinstance(tool, _AgentAsTool) and tool.delegate
 
 
-def _to_content_blocks(tool_result: dict) -> list[ContentBlock]:
+def _to_content_blocks(tool_result: ToolResult) -> list[ContentBlock]:
     """Convert ToolResult content into ContentBlocks for an assistant message.
 
     JSON blocks are serialized to text (matching TS's ``toContentBlocks``).
@@ -72,34 +63,11 @@ def _to_content_blocks(tool_result: dict) -> list[ContentBlock]:
     raw_content = tool_result.get("content", [])
     result: list[ContentBlock] = []
     for block in raw_content:
-        if "text" in block:
-            result.append({"text": block["text"]})
-        elif "json" in block:
+        if "json" in block:
             result.append({"text": json_module.dumps(block["json"])})
         else:
-            result.append(block)
+            result.append(cast(ContentBlock, block))
     return result
-
-
-def _find_delegation_result(messages: list, tool_use_id: str) -> dict | None:
-    """Find the delegation tool's successful result in the agent messages.
-
-    Searches backwards for the last user message containing a successful tool
-    result matching the given tool_use_id. Returns None if not found or errored.
-    """
-    for i in range(len(messages) - 1, -1, -1):
-        msg = messages[i]
-        if msg.get("role") != "user":
-            continue
-        for block in msg.get("content", []):
-            if not isinstance(block, dict) or "toolResult" not in block:
-                continue
-            tool_result = block["toolResult"]
-            if tool_result.get("toolUseId") == tool_use_id:
-                if tool_result.get("status") == "error":
-                    return None
-                return dict(tool_result)
-    return None
 
 
 class AgentDelegation(Plugin):
@@ -147,7 +115,6 @@ class AgentDelegation(Plugin):
         agent.add_hook(self._on_before_model_call, BeforeModelCallEvent)
 
         agent._middleware_registry.add_middleware(ExecuteToolStage, self._handle_tool_execution)
-        agent._middleware_registry.add_middleware(AgentStreamStage, self._handle_stream)
 
     # --- Hooks ---
 
@@ -197,13 +164,11 @@ class AgentDelegation(Plugin):
         state.tool_use_id = event.tool_use.get("toolUseId")
 
     def _on_after_tools(self, event: AfterToolsEvent) -> None:
-        """Set end_turn when delegation succeeded and the result is still valid.
+        """Set end_turn to delegation content blocks when delegation succeeded with meaningful content.
 
-        This hook runs at ``HookOrder.SDK_LAST`` (100). If a hook with a higher numeric order
-        mutates a tool result's status from success to error, the end_turn signal has already
-        been committed and the loop will still exit; ``_handle_stream`` re-verifies the result
-        as defence in depth. No SDK or vended plugin registers AfterToolsEvent hooks above
-        SDK_LAST, and mutating a committed tool result's status there is not a supported pattern.
+        This hook runs at ``HookOrder.SDK_LAST`` (100) so no hook can invalidate the tool
+        result after this hook commits end_turn; mutating a committed tool result's status
+        is not a supported pattern.
         """
         if event.agent.model.stateful:
             return
@@ -240,8 +205,16 @@ class AgentDelegation(Plugin):
             )
             return
 
-        event.end_turn = True
-        state.end_turn_via_delegation = True
+        # Skip delegation when the tool result has no content
+        end_turn_content = _to_content_blocks(result_block)
+        if not end_turn_content or all(block.get("text", None) == "" for block in end_turn_content):
+            logger.debug(
+                "tool_use_id=<%s> | delegation produced blank content, skipping end_turn",
+                state.tool_use_id,
+            )
+            return
+
+        event.end_turn = end_turn_content
 
     # --- Middleware ---
 
@@ -251,6 +224,8 @@ class AgentDelegation(Plugin):
         next_fn: MiddlewareNext,
     ) -> AsyncGenerator[TypedEvent, None]:
         """ExecuteToolStage middleware: enforce delegation constraints and unwrap events."""
+        agent = cast("Agent", context.agent)
+
         # Non-delegation tools pass through unchanged.
         if not isinstance(context.tool, _AgentAsTool) or not context.tool.delegate:
             async for event in next_fn(context):
@@ -258,7 +233,7 @@ class AgentDelegation(Plugin):
             return
 
         # Stateful model: skip delegation, execute as a normal tool.
-        if context.agent.model.stateful:
+        if agent.model.stateful:
             logger.debug(
                 "tool_use_id=<%s> | stateful model, skipping delegation and running as a normal tool",
                 context.tool_use["toolUseId"],
@@ -268,7 +243,7 @@ class AgentDelegation(Plugin):
             return
 
         # Enforce single-call constraint.
-        state = self._state.get(context.agent)
+        state = self._state.get(agent)
         if state and state.tool_use_count > 1:
             yield ToolResultEvent(
                 {
@@ -297,87 +272,5 @@ class AgentDelegation(Plugin):
                     yield TypedEvent(inner_data)
                 else:
                     yield event
-            else:
-                yield event
-
-    async def _handle_stream(
-        self,
-        context: AgentStreamContext,
-        next_fn: MiddlewareNext,
-    ) -> AsyncGenerator[TypedEvent, None]:
-        """AgentStreamStage middleware: replace the terminal stop with delegation content.
-
-        Events before the first stop are yielded immediately. Once a stop appears,
-        the tail is buffered and replayed with the stop replaced (or unchanged).
-        """
-        self._state.pop(context.agent, None)
-
-        tail_buffer: list[TypedEvent] = []
-        buffering = False
-
-        try:
-            async for event in next_fn(context):
-                if buffering:
-                    tail_buffer.append(event)
-                elif isinstance(event, EventLoopStopEvent):
-                    buffering = True
-                    tail_buffer.append(event)
-                else:
-                    yield event
-        except Exception:
-            self._state.pop(context.agent, None)
-            for event in tail_buffer:
-                yield event
-            raise
-
-        state = self._state.pop(context.agent, None)
-
-        if state is None or not state.tool_use_id or not state.end_turn_via_delegation:
-            for event in tail_buffer:
-                yield event
-            return
-
-        # Re-verify the delegation result is still successful in committed history.
-        messages = context.agent.messages
-        tool_result = _find_delegation_result(messages, state.tool_use_id)
-        if tool_result is None:
-            logger.debug(
-                "tool_use_id=<%s> | delegation result no longer successful in history, "
-                "skipping delegation transformation",
-                state.tool_use_id,
-            )
-            for event in tail_buffer:
-                yield event
-            return
-
-        delegation_content = _to_content_blocks(tool_result)
-        delegation_message: MessageType = {"role": "assistant", "content": delegation_content}
-        _ensure_tracking_id(delegation_message)
-
-        # Replace the placeholder message the event loop persisted.
-        session_manager = getattr(context.agent, "_session_manager", None)
-        if messages and messages[-1].get("role") == "assistant":
-            messages[-1] = delegation_message
-            if session_manager is not None:
-                session_manager.redact_latest_message(delegation_message, context.agent)
-            else:
-                await context.agent.hooks.invoke_callbacks_async(
-                    MessageAddedEvent(agent=context.agent, message=delegation_message)
-                )
-        else:
-            messages.append(delegation_message)
-            await context.agent.hooks.invoke_callbacks_async(
-                MessageAddedEvent(agent=context.agent, message=delegation_message)
-            )
-
-        # Replay tail with stop replaced by delegation terminal.
-        for event in tail_buffer:
-            if isinstance(event, EventLoopStopEvent):
-                yield EventLoopStopEvent(
-                    "end_turn",
-                    delegation_message,
-                    context.agent.event_loop_metrics,
-                    context.invocation_state.get("request_state", {}),
-                )
             else:
                 yield event

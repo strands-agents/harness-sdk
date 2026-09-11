@@ -682,13 +682,41 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         // Stream the response
         if (response.stream) {
           let lastStopReason: string | undefined
+          let redactionEmitted = false
+          let sawGuardrailTrace = false
           for await (const chunk of response.stream) {
-            // Map Bedrock events to SDK events
             const result = this._mapStreamedBedrockEventToSDKEvent(chunk, lastStopReason)
             lastStopReason = result.stopReason
+            // The guardrail trace arrives with the metadata event and is authoritative for
+            // BLOCKED vs ANONYMIZED (masking) — Bedrock reports guardrail_intervened for both
+            // but only BLOCKED content warrants SDK redaction. Wait for the metadata chunk to
+            // decide, and fall back to the stop reason only when no trace was carried.
+            if (!redactionEmitted && this._config.guardrailConfig && 'metadata' in chunk) {
+              const guardrailData = chunk.metadata?.trace?.guardrail
+              if (guardrailData !== undefined) {
+                sawGuardrailTrace = true
+                if (this._hasBlockedGuardrailPolicy(guardrailData)) {
+                  redactionEmitted = true
+                  yield* this._generateRedactionEvents(guardrailData)
+                }
+              } else if (lastStopReason === 'guardrail_intervened') {
+                redactionEmitted = true
+                yield* this._generateRedactionEvents({})
+              }
+            }
             for (const event of result.events) {
               yield event
             }
+          }
+
+          // Safety net: guardrail_intervened but no metadata event ever arrived.
+          if (
+            !redactionEmitted &&
+            !sawGuardrailTrace &&
+            lastStopReason === 'guardrail_intervened' &&
+            this._config.guardrailConfig
+          ) {
+            yield* this._generateRedactionEvents({})
           }
         }
       } else {
@@ -1590,10 +1618,16 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     // Handle trace and guardrail check for non-streaming responses
     if (event.trace) {
       metadataEvent.trace = event.trace
+    }
 
-      // Check for blocked guardrails and emit redaction events
-      if (this._config.guardrailConfig && event.trace.guardrail && stopReasonRaw === 'guardrail_intervened') {
-        for (const redactionEvent of this._generateRedactionEvents(event.trace.guardrail)) {
+    // Bedrock reports guardrail_intervened for both BLOCKED and ANONYMIZED (masking). When the
+    // trace is carried it is authoritative — only BLOCKED policies warrant redaction. When it
+    // isn't (typically guardrailConfig.trace='disabled'), fall back to the stop reason.
+    if (this._config.guardrailConfig && stopReasonRaw === 'guardrail_intervened') {
+      const guardrail = event.trace?.guardrail
+      const shouldRedact = guardrail !== undefined ? this._hasBlockedGuardrailPolicy(guardrail) : true
+      if (shouldRedact) {
+        for (const redactionEvent of this._generateRedactionEvents(guardrail ?? {})) {
           events.push(redactionEvent)
         }
       }
@@ -1777,13 +1811,6 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
         if (data.trace) {
           event.trace = data.trace
-
-          // Check for blocked guardrails in trace and emit redaction events
-          if (this._config.guardrailConfig && data.trace.guardrail && lastStopReason === 'guardrail_intervened') {
-            for (const redactionEvent of this._generateRedactionEvents(data.trace.guardrail)) {
-              events.push(redactionEvent)
-            }
-          }
         }
 
         events.push(event)
@@ -1949,6 +1976,28 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       default:
         return location as unknown as BedrockCitationLocation
     }
+  }
+
+  /**
+   * Recursively check a guardrail trace assessment for any detected-and-blocked policy.
+   *
+   * Bedrock reports guardrail_intervened for both BLOCKED and ANONYMIZED (masking) actions, so
+   * the trace is the only signal that distinguishes them: only BLOCKED entries warrant
+   * SDK-level redaction — masked spans have already been substituted in place server-side.
+   *
+   * @param guardrailData - The guardrail trace assessment
+   * @returns True if any assessment contains action='BLOCKED' with detected=true
+   */
+  private _hasBlockedGuardrailPolicy(guardrailData: GuardrailTraceAssessment): boolean {
+    const visit = (value: unknown): boolean => {
+      if (value === null || value === undefined) return false
+      if (Array.isArray(value)) return value.some(visit)
+      if (typeof value !== 'object') return false
+      const record = value as Record<string, unknown>
+      if (record.action === 'BLOCKED' && record.detected === true) return true
+      return Object.values(record).some(visit)
+    }
+    return visit(guardrailData)
   }
 
   /**

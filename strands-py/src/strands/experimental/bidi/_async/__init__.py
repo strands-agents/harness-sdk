@@ -1,6 +1,6 @@
 """Utilities for async operations."""
 
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 from ._task_group import _TaskGroup
 from ._task_pool import _TaskPool

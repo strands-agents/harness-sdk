@@ -76,6 +76,9 @@ export function createMockAgent(data?: MockAgentData): MockAgent {
     get sandbox(): Sandbox {
       return defaultSandbox.get()
     },
+    get sessionId(): string {
+      return 'test-ses'
+    },
     addHook: <T extends HookableEvent>(eventType: HookableEventConstructor<T>, callback: HookCallback<T>) => {
       trackedHooks.push({
         eventType: eventType as HookableEventConstructor<HookableEvent>,

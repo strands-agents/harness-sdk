@@ -1,3 +1,4 @@
+import asyncio
 import copy
 import importlib
 import json
@@ -11,6 +12,10 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import StatusCode
 from pydantic import BaseModel
 
 import strands
@@ -22,11 +27,11 @@ from strands.agent.conversation_manager.sliding_window_conversation_manager impo
 from strands.agent.state import AgentState
 from strands.handlers.callback_handler import PrintingCallbackHandler, null_callback_handler
 from strands.hooks import BeforeInvocationEvent, BeforeModelCallEvent, BeforeToolCallEvent
-from strands.interrupt import Interrupt
+from strands.interrupt import Interrupt, PendingToolExecution
 from strands.memory import MemoryManager, MemoryManagerConfig
 from strands.models.bedrock import DEFAULT_BEDROCK_MODEL_ID, BedrockModel
 from strands.session.repository_session_manager import RepositorySessionManager
-from strands.telemetry.tracer import serialize
+from strands.telemetry.tracer import Tracer, serialize
 from strands.types._events import EventLoopStopEvent, ModelStreamEvent
 from strands.types.agent import ConcurrentInvocationMode
 from strands.types.content import ContentBlock, Messages
@@ -47,9 +52,11 @@ FORMATTED_DEFAULT_MODEL_ID = DEFAULT_BEDROCK_MODEL_ID
 @pytest.fixture
 def mock_model(request):
     async def stream(*args, **kwargs):
-        # Skip deep copy of invocation_state which contains non-serializable objects (agent, spans, etc.)
+        # Skip deep copy of invocation_state (contains non-serializable objects: agent, spans, etc.)
+        # and cancel_signal (a threading.Event, shared by reference by design).
+        shared_by_reference = ("invocation_state", "cancel_signal")
         copied_kwargs = {
-            key: value if key == "invocation_state" else copy.deepcopy(value) for key, value in kwargs.items()
+            key: value if key in shared_by_reference else copy.deepcopy(value) for key, value in kwargs.items()
         }
         result = mock.mock_stream(*copy.deepcopy(args), **copied_kwargs)
         # If result is already an async generator, yield from it
@@ -412,6 +419,8 @@ def test_agent__call__(
                 system_prompt_content=[{"text": system_prompt}],
                 invocation_state=unittest.mock.ANY,
                 model_state=unittest.mock.ANY,
+                cancel_signal=unittest.mock.ANY,
+                agent_metadata=unittest.mock.ANY,
             ),
             unittest.mock.call(
                 [
@@ -452,6 +461,8 @@ def test_agent__call__(
                 system_prompt_content=[{"text": system_prompt}],
                 invocation_state=unittest.mock.ANY,
                 model_state=unittest.mock.ANY,
+                cancel_signal=unittest.mock.ANY,
+                agent_metadata=unittest.mock.ANY,
             ),
         ],
     )
@@ -575,6 +586,8 @@ def test_agent__call__retry_with_reduced_context(mock_model, agent, tool, agener
         system_prompt_content=unittest.mock.ANY,
         invocation_state=unittest.mock.ANY,
         model_state=unittest.mock.ANY,
+        cancel_signal=unittest.mock.ANY,
+        agent_metadata=unittest.mock.ANY,
     )
 
     conversation_manager_spy.reduce_context.assert_called_once()
@@ -728,6 +741,8 @@ def test_agent__call__retry_with_overwritten_tool(mock_model, agent, tool, agene
         system_prompt_content=unittest.mock.ANY,
         invocation_state=unittest.mock.ANY,
         model_state=unittest.mock.ANY,
+        cancel_signal=unittest.mock.ANY,
+        agent_metadata=unittest.mock.ANY,
     )
 
     assert conversation_manager_spy.reduce_context.call_count == 2
@@ -1243,7 +1258,7 @@ async def test_stream_async_multi_modal_input(mock_model, agent, agenerator, ali
 
 
 def test_system_prompt_setter_string():
-    """Test that setting system_prompt with string updates both internal fields."""
+    """Test that setting system_prompt with a string updates its content blocks."""
     agent = Agent(system_prompt="initial prompt")
 
     agent.system_prompt = "updated prompt"
@@ -1253,7 +1268,7 @@ def test_system_prompt_setter_string():
 
 
 def test_system_prompt_setter_list():
-    """Test that setting system_prompt with list updates both internal fields."""
+    """Test that setting system_prompt with a list updates its content blocks."""
     agent = Agent()
 
     content_blocks = [{"text": "You are helpful"}, {"cache_control": {"type": "ephemeral"}}]
@@ -1264,7 +1279,7 @@ def test_system_prompt_setter_list():
 
 
 def test_system_prompt_setter_none():
-    """Test that setting system_prompt to None clears both internal fields."""
+    """Test that setting system_prompt to None clears its content blocks."""
     agent = Agent(system_prompt="initial prompt")
 
     agent.system_prompt = None
@@ -1298,6 +1313,24 @@ def test_system_prompt_content_returns_copy():
     content = agent.system_prompt_content
     content.append({"text": "injected"})
     assert agent.system_prompt_content == [{"text": "hello"}]
+
+
+@pytest.mark.parametrize("use_setter", [False, True])
+def test_system_prompt_tracks_content_changes(use_setter):
+    """The string prompt reflects edits to shared content blocks."""
+    content_blocks = [{"text": "initial prompt"}, {"cachePoint": {"type": "default"}}]
+    agent = Agent(system_prompt=None if use_setter else content_blocks)
+    if use_setter:
+        agent.system_prompt = content_blocks
+
+    content_blocks[0]["text"] = "updated prompt"
+    assert agent.system_prompt == "updated prompt"
+
+    agent.system_prompt_content[0]["text"] = "another update"
+    assert agent.system_prompt == "another update"
+
+    content_blocks.pop(0)
+    assert agent.system_prompt is None
 
 
 @pytest.mark.asyncio
@@ -1409,6 +1442,28 @@ def test_agent_init_initializes_tracer(mock_get_tracer):
 
 
 @unittest.mock.patch("strands.agent.agent.get_tracer")
+def test_agent_trace_passes_structured_system_prompt(mock_get_tracer, mock_model):
+    """Test that structured system prompt content is passed to the agent span."""
+    mock_tracer = unittest.mock.MagicMock()
+    mock_get_tracer.return_value = mock_tracer
+    system_prompt_content = [{"text": "Be helpful"}, {"cachePoint": {"type": "default"}}]
+
+    agent = Agent(model=mock_model, system_prompt=system_prompt_content)
+    agent._start_agent_trace_span([])
+
+    mock_tracer.start_agent_span.assert_called_once_with(
+        messages=[],
+        agent_name="Strands Agents",
+        model_id=unittest.mock.ANY,
+        tools=agent.tool_names,
+        system_prompt="Be helpful",
+        system_prompt_content=system_prompt_content,
+        custom_trace_attributes=agent.trace_attributes,
+        tools_config=unittest.mock.ANY,
+    )
+
+
+@unittest.mock.patch("strands.agent.agent.get_tracer")
 def test_agent_call_creates_and_ends_span_on_success(mock_get_tracer, mock_model, agenerator):
     """Test that __call__ creates and ends a span when the call succeeds."""
     # Setup mock tracer and span
@@ -1438,6 +1493,7 @@ def test_agent_call_creates_and_ends_span_on_success(mock_get_tracer, mock_model
         model_id=unittest.mock.ANY,
         tools=agent.tool_names,
         system_prompt=agent.system_prompt,
+        system_prompt_content=agent.system_prompt_content,
         custom_trace_attributes=agent.trace_attributes,
         tools_config=unittest.mock.ANY,
     )
@@ -1475,6 +1531,7 @@ async def test_agent_stream_async_creates_and_ends_span_on_success(
         model_id=unittest.mock.ANY,
         tools=agent.tool_names,
         system_prompt=agent.system_prompt,
+        system_prompt_content=agent.system_prompt_content,
         custom_trace_attributes=agent.trace_attributes,
         tools_config=unittest.mock.ANY,
     )
@@ -1514,6 +1571,7 @@ def test_agent_call_creates_and_ends_span_on_exception(mock_get_tracer, mock_mod
         model_id=unittest.mock.ANY,
         tools=agent.tool_names,
         system_prompt=agent.system_prompt,
+        system_prompt_content=agent.system_prompt_content,
         custom_trace_attributes=agent.trace_attributes,
         tools_config=unittest.mock.ANY,
     )
@@ -1551,6 +1609,7 @@ async def test_agent_stream_async_creates_and_ends_span_on_exception(mock_get_tr
         model_id=unittest.mock.ANY,
         tools=agent.tool_names,
         system_prompt=agent.system_prompt,
+        system_prompt_content=agent.system_prompt_content,
         custom_trace_attributes=agent.trace_attributes,
         tools_config=unittest.mock.ANY,
     )
@@ -1617,6 +1676,109 @@ def test_agent_state_get_breaks_deep_dict_reference():
 
     # This will fail if AgentState reflects the updated reference
     json.dumps(agent.state.get())
+
+
+def test_session_id_without_session_manager():
+    agent = Agent(model=MockedModelProvider([]))
+
+    first = agent.session_id
+    second = agent.session_id
+
+    assert first == second
+    assert len(first) == 8
+
+
+def test_session_id_different_per_instance():
+    agent1 = Agent(model=MockedModelProvider([]))
+    agent2 = Agent(model=MockedModelProvider([]))
+
+    assert agent1.session_id != agent2.session_id
+
+
+def test_session_id_delegates_to_session_manager():
+    mock_session_repository = MockedSessionRepository()
+    session_manager = RepositorySessionManager(session_id="my-session", session_repository=mock_session_repository)
+    agent = Agent(model=MockedModelProvider([]), session_manager=session_manager)
+
+    assert agent.session_id == "my-session"
+
+
+def test_metadata_carries_session_id_with_manager():
+    session_manager = RepositorySessionManager(session_id="my-session", session_repository=MockedSessionRepository())
+    agent = Agent(model=MockedModelProvider([]), session_manager=session_manager)
+
+    assert agent._metadata.session_id == "my-session"
+
+
+def test_metadata_omits_session_id_without_manager():
+    agent = Agent(model=MockedModelProvider([]))
+
+    assert agent._metadata.session_id is None
+
+
+def test_metadata_shared_across_agents_on_same_session():
+    agent1 = Agent(
+        model=MockedModelProvider([]),
+        session_manager=RepositorySessionManager(session_id="shared", session_repository=MockedSessionRepository()),
+    )
+    agent2 = Agent(
+        model=MockedModelProvider([]),
+        session_manager=RepositorySessionManager(session_id="shared", session_repository=MockedSessionRepository()),
+    )
+
+    assert agent1._metadata.session_id == agent2._metadata.session_id == "shared"
+
+
+def _text_response(agenerator):
+    return agenerator(
+        [
+            {"contentBlockStart": {"start": {}}},
+            {"contentBlockDelta": {"delta": {"text": "ok"}}},
+            {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "end_turn"}},
+        ]
+    )
+
+
+def test_agent_metadata_reaches_model_stream_with_session_manager(mock_model, agenerator):
+    mock_model.mock_stream.return_value = _text_response(agenerator)
+    session_manager = RepositorySessionManager(session_id="my-session", session_repository=MockedSessionRepository())
+    agent = Agent(model=mock_model, session_manager=session_manager)
+
+    agent("hi")
+
+    assert mock_model.mock_stream.call_args.kwargs["agent_metadata"].session_id == "my-session"
+
+
+def test_agent_metadata_has_no_session_id_without_manager(mock_model, agenerator):
+    mock_model.mock_stream.return_value = _text_response(agenerator)
+    agent = Agent(model=mock_model)
+
+    agent("hi")
+
+    assert mock_model.mock_stream.call_args.kwargs["agent_metadata"].session_id is None
+
+
+def test_shared_model_carries_each_agents_own_session(mock_model, agenerator):
+    """One model instance shared by two agents on different sessions routes each on its own session.
+
+    Guards against the cross-session cache bleed a construction-time key fill would introduce.
+    """
+    mock_model.mock_stream.side_effect = [_text_response(agenerator), _text_response(agenerator)]
+    agent_s1 = Agent(
+        model=mock_model,
+        session_manager=RepositorySessionManager(session_id="s1", session_repository=MockedSessionRepository()),
+    )
+    agent_s2 = Agent(
+        model=mock_model,
+        session_manager=RepositorySessionManager(session_id="s2", session_repository=MockedSessionRepository()),
+    )
+
+    agent_s1("hi")
+    agent_s2("hi")
+
+    session_ids = [call.kwargs["agent_metadata"].session_id for call in mock_model.mock_stream.call_args_list]
+    assert session_ids == ["s1", "s2"]
 
 
 def test_agent_session_management():
@@ -1953,7 +2115,10 @@ def test_agent__call__resume_interrupt(mock_model, tool_decorated, agenerator):
         reason="test reason",
     )
 
-    agent._interrupt_state.context = {"tool_use_message": tool_use_message, "tool_results": []}
+    agent._interrupt_state.pending_tool_execution = PendingToolExecution(
+        assistant_message=tool_use_message,
+        completed_tool_results=[],
+    )
     agent._interrupt_state.interrupts[interrupt.id] = interrupt
     agent._interrupt_state.activate()
 
@@ -3489,3 +3654,69 @@ async def test_checkpoint_resume_schema_mismatch_raises_checkpoint_exception() -
     prompt = {"checkpointResume": {"checkpoint": {"schema_version": "0.1", "position": "after_model"}}}
     with pytest.raises(CheckpointException, match="schema version"):
         await agent.invoke_async(prompt)
+
+
+@pytest.mark.asyncio
+async def test_agent_span_ends_on_cancellation():
+    """Root agent span is exported when the invocation is cancelled via asyncio timeout."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    tracer = Tracer()
+    tracer.tracer_provider = provider
+    tracer.tracer = provider.get_tracer(tracer.service_name)
+
+    class SlowModel(MockedModelProvider):
+        async def stream(self, *args, **kwargs):
+            yield {"messageStart": {"role": "assistant"}}
+            yield {"contentBlockDelta": {"delta": {"text": "hi"}}}
+            await asyncio.sleep(10)
+
+    model = SlowModel([{"role": "assistant", "content": [{"text": "hi"}]}])
+
+    with unittest.mock.patch("strands.agent.agent.get_tracer", return_value=tracer):
+        agent = Agent(model=model, callback_handler=None)
+        with pytest.raises((asyncio.TimeoutError, asyncio.CancelledError)):
+            await asyncio.wait_for(agent.invoke_async("test"), timeout=0.1)
+
+    provider.force_flush()
+    spans = exporter.get_finished_spans()
+    agent_spans = [span for span in spans if span.name.startswith("invoke_agent")]
+    assert len(agent_spans) == 1
+    assert agent_spans[0].status.status_code == StatusCode.UNSET
+    assert agent_spans[0].attributes["strands.cancellation.type"] == "CancelledError"
+
+
+@pytest.mark.asyncio
+async def test_agent_span_ends_on_generator_exit():
+    """Root agent span is exported when consumer stops iterating (aclose/break)."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    tracer = Tracer()
+    tracer.tracer_provider = provider
+    tracer.tracer = provider.get_tracer(tracer.service_name)
+
+    class SlowModel(MockedModelProvider):
+        async def stream(self, *args, **kwargs):
+            yield {"messageStart": {"role": "assistant"}}
+            yield {"contentBlockDelta": {"delta": {"text": "hi"}}}
+            await asyncio.sleep(10)
+
+    model = SlowModel([{"role": "assistant", "content": [{"text": "hi"}]}])
+
+    with unittest.mock.patch("strands.agent.agent.get_tracer", return_value=tracer):
+        agent = Agent(model=model, callback_handler=None)
+        stream = agent.stream_async("test")
+        async for _event in stream:
+            break
+        await stream.aclose()
+
+    provider.force_flush()
+    spans = exporter.get_finished_spans()
+    agent_spans = [span for span in spans if span.name.startswith("invoke_agent")]
+    assert len(agent_spans) == 1
+    assert agent_spans[0].status.status_code == StatusCode.UNSET
+    assert agent_spans[0].attributes["strands.cancellation.type"] == "GeneratorExit"

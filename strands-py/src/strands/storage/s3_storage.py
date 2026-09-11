@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import builtins
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..types.exceptions import StorageError
 from .storage import _NamespacedStorage, _normalize_key, _normalize_prefix
+
+if TYPE_CHECKING:
+    from .storage import StorageSearchResult
 
 _S3_PAGE_SIZE = 1000
 
@@ -173,6 +176,19 @@ class S3Storage:
             continuation_token = response.get("NextContinuationToken")
 
         return sorted(keys)
+
+    async def search(self, query: str) -> builtins.list[StorageSearchResult]:
+        """Search stored content by keyword token-overlap scoring.
+
+        Args:
+            query: Natural-language search query.
+
+        Returns:
+            All matches with relevance scores, ranked best-first.
+        """
+        from .search.keyword import KeywordSearchStrategy
+
+        return await KeywordSearchStrategy().search(self, query)
 
     def namespace(self, prefix: str) -> _NamespacedStorage:
         """Return a view of this storage with all keys prefixed.

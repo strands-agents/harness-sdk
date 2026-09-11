@@ -241,6 +241,27 @@ describe('SnapshotStorageAdapter', () => {
     })
   })
 
+  describe('path traversal protection', () => {
+    it('rejects snapshotId with path traversal characters', async () => {
+      const location = createLocation()
+
+      await expect(
+        adapter.saveSnapshot({
+          location,
+          snapshotId: '..\\..\\other-session\\snapshots\\snapshot_latest',
+          isLatest: false,
+          snapshot: createTestSnapshot(),
+        })
+      ).rejects.toThrow()
+    })
+
+    it('rejects snapshotId with forward-slash traversal', async () => {
+      const location = createLocation()
+
+      await expect(adapter.loadSnapshot({ location, snapshotId: '../../other-session' })).rejects.toThrow()
+    })
+  })
+
   describe('custom namespace', () => {
     it('uses the namespace provided to the adapter', async () => {
       const customAdapter = new SnapshotStorageAdapter(namespace(backend, 'custom/prefix'))

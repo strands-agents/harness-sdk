@@ -528,7 +528,7 @@ describe.skipIf(bedrock.skip)('BedrockModel Integration Tests', () => {
     }, 60000)
 
     describe('Input Intervention', () => {
-      it.each(['enabled', 'enabled_full'] as const)(
+      it.each(['disabled', 'enabled', 'enabled_full'] as const)(
         'blocks input and redacts message with trace=%s',
         async (guardrailTrace) => {
           const model = bedrock.createModel({
@@ -561,6 +561,158 @@ describe.skipIf(bedrock.skip)('BedrockModel Integration Tests', () => {
           const firstBlock = agent.messages[0]?.content[0]
           if (firstBlock?.type === 'textBlock') {
             expect(firstBlock.text).toBe('Redacted.')
+          }
+        },
+        30000
+      )
+    })
+
+    describe('Masking (ANONYMIZE)', () => {
+      // Guards against a regression where the SDK treats stopReason=guardrailIntervened as proof of a
+      // block. Bedrock reports the same stop reason for masking, and the trace is the only signal
+      // that disambiguates the two (BLOCKED vs ANONYMIZED). When masking fires, the masked message
+      // must be preserved as-is; SDK-level redaction must not clobber it.
+      const MASK_GUARDRAIL_NAME = 'test-guardrail-mask-hello'
+      // Pattern and placeholder name share no substring, so a test can tell from the message text
+      // alone whether the original leaked through or Bedrock's mask ran.
+      const MASK_PATTERN = 'Hello'
+      const MASK_NAME = 'SECRETMARK'
+      let MASK_GUARDRAIL_ID: string | undefined
+
+      async function setupMaskGuardrail(): Promise<string> {
+        const credentials = inject('provider-bedrock')?.credentials
+        if (!credentials) throw new Error('No Bedrock credentials provided')
+        const client = new BedrockClient({ region: 'us-east-1', credentials })
+
+        let guardrailId = await getGuardrailId(client, MASK_GUARDRAIL_NAME)
+        if (!guardrailId) {
+          const response = await client.send(
+            new CreateGuardrailCommand({
+              name: MASK_GUARDRAIL_NAME,
+              description: 'Testing masking guardrail',
+              sensitiveInformationPolicyConfig: {
+                regexesConfig: [
+                  {
+                    name: MASK_NAME,
+                    pattern: MASK_PATTERN,
+                    action: 'ANONYMIZE',
+                    inputAction: 'ANONYMIZE',
+                    outputAction: 'ANONYMIZE',
+                    inputEnabled: true,
+                    outputEnabled: true,
+                  },
+                ],
+              },
+              blockedInputMessaging: BLOCKED_INPUT,
+              blockedOutputsMessaging: BLOCKED_OUTPUT,
+            })
+          )
+          guardrailId = response.guardrailId
+          if (!guardrailId) throw new Error('Failed to create masking guardrail: no ID returned')
+          await waitForGuardrailActive(client, guardrailId)
+        }
+        return guardrailId
+      }
+
+      beforeAll(async () => {
+        MASK_GUARDRAIL_ID = await setupMaskGuardrail()
+      }, 60000)
+
+      it.each([
+        ['enabled', true],
+        ['enabled_full', true],
+        ['enabled', false],
+        ['enabled_full', false],
+      ] as const)(
+        'preserves input-masked content with trace=%s streaming=%s',
+        async (guardrailTrace, streaming) => {
+          // Input masking alone doesn't stop generation, so Bedrock reports endTurn here — not
+          // guardrailIntervened. Bedrock also doesn't rewrite the client's local copy of the
+          // user message on input masking; the mask affects only what the model sees. This test
+          // is a smoke check: the SDK's redaction placeholder must never leak into any message.
+          const model = bedrock.createModel({
+            region: 'us-east-1',
+            stream: streaming,
+            guardrailConfig: {
+              guardrailIdentifier: MASK_GUARDRAIL_ID!,
+              guardrailVersion: 'DRAFT',
+              trace: guardrailTrace,
+              redaction: {
+                input: true,
+                inputMessage: 'SHOULD-NOT-APPEAR',
+              },
+            },
+          })
+
+          const agent = new Agent({
+            model,
+            systemPrompt: 'You are a helpful assistant.',
+            printer: false,
+          })
+
+          await agent.invoke(`${MASK_PATTERN} tell me a joke.`)
+
+          const firstBlock = agent.messages[0]?.content[0]
+          expect(firstBlock?.type).toBe('textBlock')
+          if (firstBlock?.type === 'textBlock') {
+            expect(firstBlock.text).not.toContain('SHOULD-NOT-APPEAR')
+            expect(firstBlock.text.includes(MASK_PATTERN) || firstBlock.text.includes(MASK_NAME)).toBe(true)
+          }
+        },
+        30000
+      )
+
+      it.each([
+        ['enabled', true],
+        ['enabled_full', true],
+        ['enabled', false],
+        ['enabled_full', false],
+      ] as const)(
+        'preserves output-masked content with trace=%s streaming=%s',
+        async (guardrailTrace, streaming) => {
+          // "Say Hel lo" carries a deliberate space so it doesn't match the input mask; the
+          // model's likely reply "Hello" then triggers the output mask instead. The SDK must
+          // persist that masked assistant text rather than clobbering it.
+          const model = bedrock.createModel({
+            region: 'us-east-1',
+            stream: streaming,
+            guardrailConfig: {
+              guardrailIdentifier: MASK_GUARDRAIL_ID!,
+              guardrailVersion: 'DRAFT',
+              trace: guardrailTrace,
+              redaction: {
+                input: true,
+                inputMessage: 'SHOULD-NOT-APPEAR-INPUT',
+                output: true,
+                outputMessage: 'SHOULD-NOT-APPEAR-OUTPUT',
+              },
+            },
+          })
+
+          const agent = new Agent({
+            model,
+            systemPrompt: 'When asked to say the word, reply with just that word.',
+            printer: false,
+          })
+
+          const result = await agent.invoke('Say Hel lo')
+
+          expect(result.stopReason).toBe('guardrailIntervened')
+          let assistantText = ''
+          for (const block of agent.messages[1]?.content ?? []) {
+            if (block?.type === 'textBlock') assistantText += block.text
+          }
+          expect(assistantText).not.toContain('SHOULD-NOT-APPEAR-INPUT')
+          expect(assistantText).not.toContain('SHOULD-NOT-APPEAR-OUTPUT')
+          expect(assistantText).toContain(MASK_NAME)
+          // No SDK redaction placeholder should appear anywhere across the conversation either.
+          for (const message of agent.messages) {
+            for (const block of message.content ?? []) {
+              if (block?.type === 'textBlock') {
+                expect(block.text).not.toContain('SHOULD-NOT-APPEAR-INPUT')
+                expect(block.text).not.toContain('SHOULD-NOT-APPEAR-OUTPUT')
+              }
+            }
           }
         },
         30000

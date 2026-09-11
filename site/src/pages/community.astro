@@ -58,6 +58,13 @@ const nextEvent = tickerEvents(events, today, 1)[0]
 const newestPost = posts[0]
 
 const bulletin: BulletinItem[] = [
+  {
+    type: 'hackathon' as const,
+    kicker: 'Strands Hackathon',
+    title: 'Compete for $40,000 in cash prizes',
+    href: 'https://agentsforhumans.devpost.com/',
+    expires: '2026-09-14',
+  },
   ...(nextEvent
     ? [
         {

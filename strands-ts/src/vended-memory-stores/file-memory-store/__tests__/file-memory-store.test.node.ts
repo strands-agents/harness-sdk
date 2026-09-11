@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest'
 import { FileMemoryStore } from '../store.js'
 import { InMemoryStorage } from '../../../storage/in-memory-storage.js'
+import { ModelExtractor } from '../../../memory/extraction/model-extractor.js'
 import type { Storage } from '../../../storage/storage.js'
 import type { ExtractionConfig } from '../../../memory/extraction/types.js'
 import type { MessageData } from '../../../types/messages.js'
@@ -263,6 +264,16 @@ describe('FileMemoryStore', () => {
   })
 
   describe('extraction (key-aware extractor)', () => {
+    const createMockModel = (modelId: string): { modelId: string; streamAggregated: Mock } => ({
+      modelId,
+      streamAggregated: vi.fn().mockReturnValue({
+        next: vi.fn().mockResolvedValue({
+          done: true,
+          value: { message: { content: [{ text: '[]' }] }, stopReason: 'end_turn', metadata: {} },
+        }),
+      }),
+    })
+
     it('includes existing topic headings in the system prompt', async () => {
       const extractionStore = new FileMemoryStore({ name: 'ext-test', storage, extraction: true })
       await extractionStore.add('User preferences\nPrefers dark mode\nUses vim')
@@ -322,6 +333,81 @@ describe('FileMemoryStore', () => {
       const callArgs = mockModel.streamAggregated.mock.calls[0]!
       const systemPrompt = callArgs[1].systemPrompt as string
       expect(systemPrompt).not.toContain('Existing topics:')
+    })
+
+    it('uses the configured model over the context default model', async () => {
+      const configuredModel = createMockModel('configured')
+      const contextDefaultModel = createMockModel('context-default')
+      const extractionStore = new FileMemoryStore({
+        name: 'ext-model',
+        storage,
+        extraction: { model: configuredModel as never },
+      })
+      const extractor = (extractionStore.extraction as ExtractionConfig).extractor!
+
+      const messages: MessageData[] = [{ role: 'user', content: [{ text: 'I prefer light themes' }] }]
+      await extractor.extract(messages, { defaultModel: contextDefaultModel as never })
+
+      expect(configuredModel.streamAggregated).toHaveBeenCalledTimes(1)
+      expect(contextDefaultModel.streamAggregated).not.toHaveBeenCalled()
+    })
+
+    it('falls back to the context default model when no model is configured', async () => {
+      const contextDefaultModel = createMockModel('context-default')
+      const extractionStore = new FileMemoryStore({ name: 'ext-fallback', storage, extraction: true })
+      const extractor = (extractionStore.extraction as ExtractionConfig).extractor!
+
+      const messages: MessageData[] = [{ role: 'user', content: [{ text: 'I prefer light themes' }] }]
+      await extractor.extract(messages, { defaultModel: contextDefaultModel as never })
+
+      expect(contextDefaultModel.streamAggregated).toHaveBeenCalledTimes(1)
+    })
+
+    it('builds the system prompt on the key-aware heading instruction', async () => {
+      const mockModel = createMockModel('mock')
+      const extractionStore = new FileMemoryStore({ name: 'ext-prompt', storage, extraction: true })
+      const extractor = (extractionStore.extraction as ExtractionConfig).extractor!
+
+      const messages: MessageData[] = [{ role: 'user', content: [{ text: 'Hello' }] }]
+      await extractor.extract(messages, { defaultModel: mockModel as never })
+
+      const systemPrompt = mockModel.streamAggregated.mock.calls[0]![1].systemPrompt as string
+      expect(systemPrompt).toContain('The first line is a markdown heading')
+    })
+
+    it('overrides the framing with a custom systemPrompt but keeps the output contract', async () => {
+      const mockModel = createMockModel('mock')
+      const extractionStore = new FileMemoryStore({
+        name: 'ext-guidance',
+        storage,
+        extraction: { systemPrompt: 'Extract only trading preferences and risk tolerance.' },
+      })
+      const extractor = (extractionStore.extraction as ExtractionConfig).extractor!
+
+      const messages: MessageData[] = [{ role: 'user', content: [{ text: 'I trade options' }] }]
+      await extractor.extract(messages, { defaultModel: mockModel as never })
+
+      const systemPrompt = mockModel.streamAggregated.mock.calls[0]![1].systemPrompt as string
+      expect(systemPrompt).toContain('Extract only trading preferences and risk tolerance.')
+      expect(systemPrompt).not.toContain('You extract durable facts worth remembering')
+      expect(systemPrompt).toContain('The first line is a markdown heading')
+      expect(systemPrompt).toContain('Return ONLY a JSON array')
+    })
+
+    it('uses a supplied extractor verbatim, ignoring model and systemPrompt', async () => {
+      const customModel = createMockModel('custom')
+      const customExtractor = new ModelExtractor({ model: customModel as never, systemPrompt: 'Custom prompt.' })
+      const extractionStore = new FileMemoryStore({
+        name: 'ext-custom',
+        storage,
+        extraction: { extractor: customExtractor, model: createMockModel('ignored') as never },
+      })
+
+      expect((extractionStore.extraction as ExtractionConfig).extractor).toBe(customExtractor)
+
+      const messages: MessageData[] = [{ role: 'user', content: [{ text: 'Hello' }] }]
+      await customExtractor.extract(messages, { defaultModel: createMockModel('default') as never })
+      expect(customModel.streamAggregated.mock.calls[0]![1].systemPrompt).toBe('Custom prompt.')
     })
   })
 })

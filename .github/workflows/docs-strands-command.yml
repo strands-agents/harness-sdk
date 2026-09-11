@@ -25,7 +25,7 @@ jobs:
     if: startsWith(github.event.comment.body, '/strands') || github.event_name == 'workflow_dispatch'
     name: Check access
     permissions: read-all
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     outputs:
       approval-env: ${{ steps.auth.outputs.approval-env }}
     steps:
@@ -46,7 +46,7 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     steps:
       - name: Parse input
         id: parse
@@ -63,7 +63,7 @@ jobs:
       issues: read
       pull-requests: read
       id-token: write # Required for OIDC
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     timeout-minutes: 60
     steps:
       - name: Setup Node.js
@@ -90,7 +90,7 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     timeout-minutes: 30
     steps:
       - name: Execute write operations

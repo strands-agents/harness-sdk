@@ -91,3 +91,12 @@ class TestInMemoryStorage:
         await storage.write("key", data)
         data[0] = 0xFF
         assert await storage.read("key") == b"mutable"
+
+    @pytest.mark.asyncio
+    async def test_search_returns_matching_results(self, storage):
+        await storage.write("dark-mode.md", b"enable dark mode in settings")
+        await storage.write("deploy.md", b"deploy to production")
+        results = await storage.search("dark mode")
+        assert len(results) == 1
+        assert results[0].key == "dark-mode.md"
+        assert results[0].score > 0

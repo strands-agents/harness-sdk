@@ -32,6 +32,7 @@ import type { StreamOptions } from '../model.js'
 import { logger } from '../../logging/logger.js'
 import { MODEL_DEFAULTS } from '../defaults.js'
 import { formatImageDataUrl, warnManagedParams as warnManagedParamsShared } from './formatting.js'
+import { applyCacheConfig } from './cache.js'
 import type { OpenAIResponsesConfig } from './types.js'
 
 export const DEFAULT_RESPONSES_MODEL_ID = MODEL_DEFAULTS.openai.modelId
@@ -124,6 +125,8 @@ export function formatResponsesRequest(
   if (config.temperature !== undefined) request.temperature = config.temperature
   if (config.maxTokens !== undefined) request.max_output_tokens = config.maxTokens
   if (config.topP !== undefined) request.top_p = config.topP
+
+  applyCacheConfig(request, config.cacheConfig, options?.agentMetadata)
 
   return request
 }
@@ -379,7 +382,7 @@ export function createResponsesStreamState(): ResponsesStreamState {
  * `usage.input_tokens_details.cached_tokens`; surfacing it as
  * `cacheReadInputTokens` keeps the Responses path consistent with the Bedrock,
  * Anthropic, and Vercel model adapters (and lets `telemetry/tracer.ts` emit
- * `gen_ai.usage.cache_read_input_tokens`).
+ * `gen_ai.usage.cache_read.input_tokens`).
  *
  * @internal
  */

@@ -5,7 +5,8 @@
  */
 
 async function main() {
-  const { Agent, BedrockModel, tool, Tool } = await import('@strands-agents/sdk')
+  const { Agent, BedrockModel, ModelRouter, tool, Tool } = await import('@strands-agents/sdk')
+  const { ModelRouter: ModelRouterFromSubpath } = await import('@strands-agents/sdk/models/routing')
 
   const { notebook } = await import('@strands-agents/sdk/vended-tools/notebook')
   const { fileEditor } = await import('@strands-agents/sdk/vended-tools/file-editor')
@@ -82,6 +83,9 @@ async function main() {
 
   if (BedrockFromSubpath !== BedrockModel) {
     throw new Error('BedrockModel from subpath should match main export')
+  }
+  if (ModelRouterFromSubpath !== ModelRouter) {
+    throw new Error('ModelRouter from subpath should match main export')
   }
   console.log('✓ Model subpath exports verified')
 

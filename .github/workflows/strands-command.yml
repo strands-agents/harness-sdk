@@ -26,7 +26,7 @@ jobs:
     name: Check access
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     outputs:
       approval-env: ${{ steps.auth.outputs.approval-env }}
     steps:
@@ -49,7 +49,7 @@ jobs:
       # These both are needed to add the `strands-running` label to issues and prs
       issues: write
       pull-requests: write
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     steps:
       - name: Parse input
         id: parse
@@ -66,7 +66,7 @@ jobs:
       issues: read
       pull-requests: read
       id-token: write # Required for OIDC
-    runs-on: ubuntu-latest 
+    runs-on: strands-agents_ubuntu-latest_4-core 
     timeout-minutes: 60
     steps:
       
@@ -88,7 +88,7 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
-    runs-on: ubuntu-latest 
+    runs-on: strands-agents_ubuntu-latest_4-core 
     timeout-minutes: 30
     steps:
       - name: Execute write operations

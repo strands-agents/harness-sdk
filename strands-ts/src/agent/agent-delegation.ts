@@ -4,18 +4,11 @@
  * When a tool is configured with `delegate: true`, this plugin ensures:
  * 1. The delegation tool is the only tool called in the turn (single-call constraint)
  * 2. The agent loop exits immediately after a successful delegation (via endTurn)
- * 3. The AgentResult is transformed with `stopReason: 'endTurn'` and the tool's content
+ * 3. The delegation tool's content blocks become the final assistant message
  * 4. Streaming events from the delegate agent are surfaced natively in the parent stream
- *
- * The final delegation message is produced in middleware after the core loop exits.
- * It is written to `agent.messages` and yielded to stream consumers, but does not
- * fire `MessageAddedEvent` hooks via `invokeCallbacks`. `SessionManager` with
- * `saveLatestOn: 'invocation'` (default) is unaffected; `saveLatestOn: 'message'`
- * may persist the endTurn placeholder instead of the delegation content.
  */
 
 import type { Plugin } from '../plugins/plugin.js'
-import { AgentResult } from '../types/agent.js'
 import type { LocalAgent, AgentStreamEvent } from '../types/agent.js'
 import type { ContentBlock } from '../types/messages.js'
 import {
@@ -23,21 +16,16 @@ import {
   AfterToolsEvent,
   BeforeModelCallEvent,
   BeforeToolsEvent,
-  MessageAddedEvent,
   StreamEvent,
   ToolStreamUpdateEvent,
 } from '../hooks/events.js'
 import { HookOrder } from '../hooks/types.js'
-import { AgentStreamStage, ExecuteToolStage } from '../middleware/index.js'
-import type {
-  AgentStreamContext,
-  AgentStreamResult,
-  ExecuteToolContext,
-  ExecuteToolResult,
-  MiddlewareNext,
-} from '../middleware/index.js'
-import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../types/messages.js'
+import { ExecuteToolStage } from '../middleware/index.js'
+import type { ExecuteToolContext, ExecuteToolResult, MiddlewareNext } from '../middleware/index.js'
+import { TextBlock, ToolResultBlock, ToolUseBlock } from '../types/messages.js'
 import { AgentAsTool } from './agent-as-tool.js'
+import { STRUCTURED_OUTPUT_TOOL_NAME } from '../tools/structured-output-tool.js'
+import { logger } from '../logging/logger.js'
 
 /**
  * Checks whether a tool registered on the agent is a delegation AgentAsTool.
@@ -68,8 +56,6 @@ interface DelegationState {
   toolUseCount: number
   /** Tool use ID of the delegation tool that succeeded (set by AfterToolCallEvent). */
   toolUseId?: string
-  /** Set by _onAfterTools when delegation triggers endTurn. Used by _handleStream to detect delegation. */
-  endTurnViaDelegation?: boolean
 }
 
 /**
@@ -92,7 +78,7 @@ interface DelegationState {
 export class AgentDelegation implements Plugin {
   readonly name = 'strands:agent-delegation'
 
-  /** Per-agent delegation state, created in _onBeforeTools and consumed in _handleStream. */
+  /** Per-agent delegation state, created in _onBeforeTools and consumed in _onAfterTools. */
   private readonly _state = new WeakMap<LocalAgent, DelegationState>()
 
   initAgent(agent: LocalAgent): void {
@@ -124,15 +110,6 @@ export class AgentDelegation implements Plugin {
     // async function* doesn't bind lexical `this`; capture for the terminal callback.
     // eslint-disable-next-line @typescript-eslint/no-this-alias
     const self = this
-    agent.addMiddleware(
-      AgentStreamStage,
-      async function* (
-        context: AgentStreamContext,
-        next: MiddlewareNext<AgentStreamContext, AgentStreamResult, AgentStreamEvent>
-      ): AsyncGenerator<AgentStreamEvent, AgentStreamResult, undefined> {
-        return yield* self._handleStream(context, next)
-      }
-    )
 
     // ExecuteToolStage middleware: unwraps inner agent streaming events for delegation tools
     // so they appear as native events in the parent agent's stream.
@@ -196,15 +173,14 @@ export class AgentDelegation implements Plugin {
   }
 
   /**
-   * AfterToolsEvent hook: signals the agent loop to stop via endTurn when
-   * delegation succeeded.
+   * AfterToolsEvent hook: sets endTurn to delegation content blocks when
+   * delegation succeeded with meaningful content.
    *
-   * This hook runs at `HookOrder.SDK_LAST` (100). If a hook with a higher
-   * numeric order mutates a ToolResultBlock's status from success to error,
-   * the endTurn signal has already been committed and the loop will still exit.
-   * In practice, no SDK or vended plugin registers AfterToolsEvent hooks above
-   * SDK_LAST, and mutating committed ToolResultBlock status in AfterToolsEvent
-   * is not a documented or supported pattern.
+   * This hook runs at `HookOrder.SDK_LAST` (100), after every SDK and vended-plugin
+   * hook. A hook registered above that order still runs afterwards and could flip
+   * a `ToolResultBlock` to error, but `endTurn` is already committed and the loop
+   * will exit anyway — mutating a committed `ToolResultBlock`'s status is not a
+   * supported pattern.
    */
   private _onAfterTools(event: AfterToolsEvent): void {
     if (event.agent.model.stateful) return
@@ -221,8 +197,20 @@ export class AgentDelegation implements Plugin {
       return
     }
 
-    event.endTurn = true
-    state.endTurnViaDelegation = true
+    // Skip delegation when the parent expects structured output.
+    if (event.agent.toolRegistry.get(STRUCTURED_OUTPUT_TOOL_NAME)) {
+      logger.debug(`tool_use_id=<${state.toolUseId}> | parent requires structured output, skipping delegation`)
+      return
+    }
+
+    // Skip delegation when the tool result has no meaningful content.
+    const endTurnContent = toContentBlocks(resultBlock)
+    if (endTurnContent.length === 0 || endTurnContent.every((block) => 'text' in block && block.text === '')) {
+      logger.debug(`tool_use_id=<${state.toolUseId}> | delegation produced blank content, skipping delegation`)
+      return
+    }
+
+    event.endTurn = endTurnContent
   }
 
   /**
@@ -232,11 +220,6 @@ export class AgentDelegation implements Plugin {
    * For delegation tools in a multi-tool batch, returns an error result without
    * executing the tool. For valid single-tool delegation, unwraps inner agent
    * streaming events so they appear as native events in the parent stream.
-   *
-   * A post-init middleware registered inside this one can still bypass the check
-   * by spreading a modified context with a different `tool` to `next()`. This is a
-   * framework-level trust boundary, not addressable at the plugin level.
-   * The sanctioned path for tool replacement is `BeforeToolCallEvent.selectedTool`.
    */
   private async *_handleToolExecution(
     context: ExecuteToolContext,
@@ -288,84 +271,5 @@ export class AgentDelegation implements Plugin {
       result = await gen.next()
     }
     return result.value
-  }
-
-  /**
-   * AgentStreamStage middleware: transforms the AgentResult on delegation.
-   *
-   * When the main loop exits via endTurn triggered by delegation (identified by
-   * the `endTurnViaDelegation` flag on DelegationState), this middleware replaces
-   * the default endTurn result with the proper delegation result: the sub-agent's
-   * content from the tool-result message.
-   */
-  private async *_handleStream(
-    context: AgentStreamContext,
-    next: MiddlewareNext<AgentStreamContext, AgentStreamResult, AgentStreamEvent>
-  ): AsyncGenerator<AgentStreamEvent, AgentStreamResult, undefined> {
-    // Clear any stale state from a prior failed invocation.
-    this._state.delete(context.agent)
-
-    let streamResult: AgentStreamResult
-    try {
-      streamResult = yield* next(context)
-    } catch (error) {
-      this._state.delete(context.agent)
-      throw error
-    }
-
-    const state = this._state.get(context.agent)
-    this._state.delete(context.agent)
-
-    if (!state?.toolUseId || !state.endTurnViaDelegation) return streamResult
-
-    // Only transform if the result stopped via endTurn.
-    // Other stop reasons pass through unchanged.
-    if (streamResult.result.stopReason !== 'endTurn') return streamResult
-
-    // Find the delegation tool's result in agent.messages. The tool-result
-    // message is the last user message before the endTurn assistant message.
-    const messages = context.agent.messages
-    let resultBlock: ToolResultBlock | undefined
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const msg = messages[i]
-      if (msg && msg.role === 'user') {
-        resultBlock = msg.content.find(
-          (block): block is ToolResultBlock => block instanceof ToolResultBlock && block.toolUseId === state.toolUseId
-        )
-        break
-      }
-    }
-
-    if (!resultBlock || resultBlock.status === 'error') return streamResult
-
-    const delegationMessage = new Message({
-      role: 'assistant',
-      content: toContentBlocks(resultBlock),
-    })
-
-    // Replace the endTurn message the main loop appended with the delegation content.
-    const lastMessage = messages[messages.length - 1]
-    if (lastMessage?.role === 'assistant') {
-      messages[messages.length - 1] = delegationMessage
-    } else {
-      messages.push(delegationMessage)
-    }
-
-    yield new MessageAddedEvent({
-      agent: context.agent,
-      message: delegationMessage,
-      invocationState: streamResult.result.invocationState,
-    })
-
-    // Replace AgentResult with the delegation tool's content
-    return {
-      result: new AgentResult({
-        stopReason: 'endTurn',
-        lastMessage: delegationMessage,
-        invocationState: streamResult.result.invocationState,
-        ...(streamResult.result.metrics !== undefined && { metrics: streamResult.result.metrics }),
-        ...(streamResult.result.traces !== undefined && { traces: streamResult.result.traces }),
-      }),
-    }
   }
 }

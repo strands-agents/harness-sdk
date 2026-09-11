@@ -33,7 +33,7 @@
 #
 # NOTE: a clean run here does NOT guarantee CI is green. This runs your current
 # OS + interpreter/node only — it does not reproduce CI's version/OS matrices
-# (Python 3.10–3.14 × linux/win/mac; Node 20/22/24 × 3 OS) or the npm-pack
+# (Python 3.10–3.14 × linux/win/mac; Node 22/24 × 3 OS) or the npm-pack
 # out-of-tree smoke test. It clears the deterministic, single-platform
 # failures (lint, format, types, build, unit tests) so CI rarely bounces.
 set -uo pipefail

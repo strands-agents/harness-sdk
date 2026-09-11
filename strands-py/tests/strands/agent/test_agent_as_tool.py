@@ -140,7 +140,7 @@ async def test_stream_passes_input_to_agent(tool, mock_agent, tool_use, agent_re
     async for _ in tool.stream(tool_use, {}):
         pass
 
-    mock_agent.stream_async.assert_called_once_with("hello")
+    mock_agent.stream_async.assert_called_once_with("hello", cancel_signal=None)
 
 
 @pytest.mark.asyncio
@@ -155,7 +155,7 @@ async def test_stream_empty_input(tool, mock_agent, agent_result):
     async for _ in tool.stream(empty_tool_use, {}):
         pass
 
-    mock_agent.stream_async.assert_called_once_with("")
+    mock_agent.stream_async.assert_called_once_with("", cancel_signal=None)
 
 
 @pytest.mark.asyncio
@@ -170,7 +170,7 @@ async def test_stream_string_input(tool, mock_agent, agent_result):
     async for _ in tool.stream(tool_use, {}):
         pass
 
-    mock_agent.stream_async.assert_called_once_with("direct string")
+    mock_agent.stream_async.assert_called_once_with("direct string", cancel_signal=None)
 
 
 @pytest.mark.asyncio
@@ -720,3 +720,89 @@ def test_agent_mixed_with_regular_tools_in_tools_list():
 
     assert "my_tool" in parent.tool_names
     assert "helper_agent" in parent.tool_names
+
+
+# --- cancellation ---
+
+
+@pytest.mark.asyncio
+async def test_stream_forwards_parent_cancel_signal_to_sub_agent(tool, mock_agent, tool_use, agent_result):
+    """The wrapped agent receives the parent's cancellation signal as its external signal."""
+    from strands.agent.agent import Agent
+
+    mock_agent.stream_async.return_value = _mock_stream_async(agent_result)
+    parent = Agent(name="parent", callback_handler=None)
+
+    async for _ in tool.stream(tool_use, {"agent": parent}):
+        pass
+
+    assert mock_agent.stream_async.call_args.kwargs["cancel_signal"] is parent.cancel_signal
+
+
+@pytest.mark.asyncio
+async def test_stream_cancelled_sub_agent_returns_error(tool, mock_agent, tool_use):
+    """A cancelled wrapped agent surfaces as an error tool result."""
+    cancelled_result = AgentResult(
+        stop_reason="cancelled",
+        message={"role": "assistant", "content": [{"text": "Cancelled by user"}]},
+        metrics=EventLoopMetrics(),
+        state={},
+    )
+    mock_agent.stream_async.return_value = _mock_stream_async(cancelled_result)
+
+    events = [event async for event in tool.stream(tool_use, {})]
+
+    assert events == [
+        ToolResultEvent(
+            {
+                "toolUseId": "tool-123",
+                "status": "error",
+                "content": [{"text": "Agent 'test_agent' cancelled"}],
+            }
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stream_pre_set_parent_cancel_signal_returns_error_without_model_response(tool_use):
+    """A parent signal that is already set cancels the wrapped agent before it produces a response."""
+    from strands.agent.agent import Agent
+    from tests.fixtures.mocked_model_provider import MockedModelProvider
+
+    model = MockedModelProvider([{"role": "assistant", "content": [{"text": "sub-agent response"}]}])
+    child = Agent(name="child", model=model, callback_handler=None)
+    tool = _AgentAsTool(child, name="child", preserve_context=True)
+
+    parent = Agent(name="parent", callback_handler=None)
+    parent.cancel()
+
+    events = [event async for event in tool.stream(tool_use, {"agent": parent})]
+
+    assert events[-1] == ToolResultEvent(
+        {
+            "toolUseId": "tool-123",
+            "status": "error",
+            "content": [{"text": "Agent 'child' cancelled"}],
+        }
+    )
+    assert not any("sub-agent response" in str(message) for message in child.messages)
+
+
+@pytest.mark.asyncio
+async def test_stream_sub_agent_cancel_does_not_clear_parent_signal(tool_use):
+    """The wrapped agent clears only its own signal on completion, never the parent's."""
+    from strands.agent.agent import Agent
+    from tests.fixtures.mocked_model_provider import MockedModelProvider
+
+    model = MockedModelProvider([{"role": "assistant", "content": [{"text": "sub-agent response"}]}])
+    child = Agent(name="child", model=model, callback_handler=None)
+    tool = _AgentAsTool(child, name="child", preserve_context=True)
+
+    parent = Agent(name="parent", callback_handler=None)
+    parent.cancel()
+
+    async for _ in tool.stream(tool_use, {"agent": parent}):
+        pass
+
+    assert parent.cancel_signal.is_set()
+    assert not child.cancel_signal.is_set()

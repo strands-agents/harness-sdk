@@ -2,7 +2,7 @@ import type { Sandbox } from '../sandbox/base.js'
 import type { Storage, StorageSearchResult } from './storage.js'
 
 import { StorageError } from '../errors.js'
-import { namespace, normalizeKey, normalizePrefix } from './storage.js'
+import { NAMESPACED, normalizeKey, normalizePrefix } from './storage.js'
 import { KeywordSearchStrategy } from './search/keyword.js'
 
 /**
@@ -38,12 +38,17 @@ export class LocalFileStorage implements Storage {
   private readonly _baseDir: string
   private readonly _sandbox: Sandbox | undefined
 
+  /** The resolved root directory for this storage instance. */
+  get baseDir(): string {
+    return this._baseDir
+  }
+
   /**
    * @param baseDir - Root directory under which keys are stored. Defaults to `./.strands/`.
    * @param sandbox - Optional sandbox to route I/O through. Usually set via {@link forSandbox}.
    */
   constructor(baseDir: string = './.strands/', sandbox?: Sandbox) {
-    this._baseDir = baseDir
+    this._baseDir = baseDir.replace(/\/{2,}/g, '/').replace(/(.)\/$/, '$1')
     this._sandbox = sandbox
   }
 
@@ -241,15 +246,13 @@ export class LocalFileStorage implements Storage {
   }
 
   /**
-   * Returns a prefixed view of this storage without mutating the original.
-   * The returned view preserves `forSandbox` for single-level namespacing;
-   * nested `.namespace()` calls on the view do not carry sandbox routing.
+   * Returns a namespaced `LocalFileStorage` rooted at the subdirectory.
    */
-  namespace(prefix: string): Storage & { forSandbox(sandbox: Sandbox): Storage } {
-    const view = namespace(this, prefix)
-    return {
-      ...view,
-      forSandbox: (sandbox: Sandbox): Storage => namespace(this.forSandbox(sandbox), prefix),
-    }
+  namespace(prefix: string): LocalFileStorage {
+    const normalized = normalizePrefix(prefix)
+    const subDir = normalized ? `${this._baseDir.replace(/\/$/, '')}/${normalized}` : this._baseDir
+    const scoped = new LocalFileStorage(subDir, this._sandbox)
+    Object.defineProperty(scoped, NAMESPACED, { value: true })
+    return scoped
   }
 }

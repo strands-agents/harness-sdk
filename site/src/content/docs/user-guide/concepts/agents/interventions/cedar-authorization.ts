@@ -205,7 +205,7 @@ async function envGatingExample() {
     policies: `
       permit(principal, action == Action::"deploy", resource)
       when { context.session has environment &&
-             context.session.environment != "production" };
+             ["staging", "dev"].contains(context.session.environment) };
     `,
     contextEnricher: ({ invocationState }) => ({
       environment: String(invocationState.environment ?? 'unknown'),
@@ -226,6 +226,10 @@ async function envGatingExample() {
   await agent.invoke('Deploy the service', {
     invocationState: { environment: 'production' },
   })
+
+  // denied when environment is absent: the enricher falls back to
+  // 'unknown', which is outside the permitted set
+  await agent.invoke('Deploy the service')
   // --8<-- [end:env_gating]
 }
 

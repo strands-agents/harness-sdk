@@ -12,9 +12,12 @@ from mcp.types import Tool as MCPTool
 from mcp.types import ToolExecution
 
 from strands.tools.mcp import MCPClient, TasksConfig
+from strands.tools.mcp._compat import MCP_V2
 from strands.tools.mcp.mcp_tasks import DEFAULT_TASK_POLL_TIMEOUT, DEFAULT_TASK_TTL
 
 from .conftest import create_server_capabilities
+
+pytestmark = pytest.mark.skipif(MCP_V2, reason="the legacy 2025-11-25 task workflow requires mcp 1.x")
 
 
 class TestTasksOptIn:
@@ -550,3 +553,28 @@ class TestTaskMetaForwarding:
             experimental.call_tool_as_task.assert_called_once()
             call_kwargs = experimental.call_tool_as_task.call_args
             assert call_kwargs.kwargs.get("meta") is None
+
+
+@pytest.mark.skipif(MCP_V2, reason="requires mcp 1.x")
+class TestFinalizedTaskLifecycleUnavailableOnV1:
+    """The finalized SEP-2663 lifecycle refuses to run against the mcp 1.x line."""
+
+    def test_submit_tool_sync_requires_mcp_v2(self, mock_transport, mock_session):
+        """Test the public task lifecycle rejects mcp 1.x before sending anything."""
+        with MCPClient(mock_transport["transport_callable"], tasks_config={}) as client:
+            with pytest.raises(RuntimeError, match="mcp 2.x"):
+                client.submit_tool_sync("tool")
+
+    @pytest.mark.asyncio
+    async def test_submit_tool_async_requires_mcp_v2(self, mock_transport, mock_session):
+        """Test the async task lifecycle rejects mcp 1.x before sending anything."""
+        with MCPClient(mock_transport["transport_callable"], tasks_config={}) as client:
+            with pytest.raises(RuntimeError, match="mcp 2.x"):
+                await client.submit_tool_async("tool")
+
+    @pytest.mark.asyncio
+    async def test_task_aware_call_requires_mcp_v2(self, mock_transport, mock_session):
+        """Test the task-aware tools/call round rejects mcp 1.x."""
+        with MCPClient(mock_transport["transport_callable"], tasks_config={}) as client:
+            with pytest.raises(RuntimeError, match="mcp 2.x"):
+                await client._call_tool_with_task_once_async("tool", None, timedelta(seconds=1), None, None)

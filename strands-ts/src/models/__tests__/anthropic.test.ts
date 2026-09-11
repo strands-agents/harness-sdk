@@ -1186,6 +1186,26 @@ describe('AnthropicModel', () => {
       expect(auto.captured.request).toEqual(explicit.captured.request)
     })
 
+    it('ignores cacheKey: it does not change the request shape', async () => {
+      // Anthropic does not consume cacheKey, so it must not reach the request.
+      const withoutKey = setupCapture()
+      await collectIterator(
+        new AnthropicModel({ client: withoutKey.mockClient, cacheConfig: {} }).stream([userMessage('Hi')], {
+          toolSpecs,
+        })
+      )
+
+      const withKey = setupCapture()
+      await collectIterator(
+        new AnthropicModel({ client: withKey.mockClient, cacheConfig: { cacheKey: 'tenant-42' } }).stream(
+          [userMessage('Hi')],
+          { toolSpecs }
+        )
+      )
+
+      expect(withKey.captured.request).toEqual(withoutKey.captured.request)
+    })
+
     it('carries cacheConfig ttl onto cache_control', async () => {
       const { captured, mockClient } = setupCapture()
       const provider = new AnthropicModel({ client: mockClient, cacheConfig: { strategy: 'auto', ttl: '1h' } })

@@ -7,13 +7,17 @@ import pytest
 from mcp.client.auth.extensions.client_credentials import ClientCredentialsOAuthProvider
 
 from strands.tools.mcp import MCPClient, MCPClientCredentials
+from strands.tools.mcp._compat import MCP_V2
 from strands.tools.mcp.mcp_client import _InMemoryTokenStorage
+
+# mcp 2.x renamed the provider's `scopes` keyword to `scope`.
+SCOPE_KWARG = "scope" if MCP_V2 else "scopes"
 
 
 @pytest.fixture
 def streamablehttp_transport():
-    """Patch streamablehttp_client as imported into mcp_client."""
-    with patch("strands.tools.mcp.mcp_client.streamablehttp_client") as http:
+    """Patch streamable_http_transport as imported into mcp_client."""
+    with patch("strands.tools.mcp.mcp_client.streamable_http_transport") as http:
         yield http
 
 
@@ -52,7 +56,7 @@ def test_headers_passed_to_transport(streamablehttp_transport):
 
 
 def test_auth_builds_client_credentials_provider(streamablehttp_transport):
-    with patch("strands.tools.mcp.mcp_client.ClientCredentialsOAuthProvider") as provider_cls:
+    with patch("mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider") as provider_cls:
         client = MCPClient(
             url="https://mcp.example.com",
             auth=MCPClientCredentials(client_id="id", client_secret="secret"),
@@ -65,20 +69,20 @@ def test_auth_builds_client_credentials_provider(streamablehttp_transport):
         storage=ANY,
         client_id="id",
         client_secret="secret",
-        scopes=None,
+        **{SCOPE_KWARG: None},
     )
     assert isinstance(provider_cls.call_args.kwargs["storage"], _InMemoryTokenStorage)
     assert streamablehttp_transport.call_args.kwargs["auth"] is provider_cls.return_value
 
 
 def test_auth_scopes_joined_with_spaces():
-    with patch("strands.tools.mcp.mcp_client.ClientCredentialsOAuthProvider") as provider_cls:
+    with patch("mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider") as provider_cls:
         MCPClient(
             url="https://mcp.example.com",
             auth=MCPClientCredentials(client_id="id", client_secret="secret", scopes=["read", "write"]),
         )
 
-    assert provider_cls.call_args.kwargs["scopes"] == "read write"
+    assert provider_cls.call_args.kwargs[SCOPE_KWARG] == "read write"
 
 
 def test_auth_provider_passed_through(streamablehttp_transport):

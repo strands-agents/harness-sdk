@@ -20,8 +20,6 @@ import threading
 from collections.abc import AsyncGenerator, Callable
 from contextlib import _AsyncGeneratorContextManager, asynccontextmanager
 from dataclasses import dataclass
-from importlib.metadata import PackageNotFoundError
-from importlib.metadata import version as _package_version
 from typing import Any
 
 from mcp.shared.message import SessionMessage
@@ -29,11 +27,13 @@ from mcp.types import JSONRPCMessage, JSONRPCRequest
 from opentelemetry import context, propagate
 from wrapt import ObjectProxy, register_post_import_hook, wrap_function_wrapper
 
+from ._compat import MCP_V2
+
 logger = logging.getLogger(__name__)
 
 # Module-level flag to ensure instrumentation is applied only once. The lock
-# makes the check-and-set atomic: `_is_mcp_v1` performs GIL-releasing I/O, so
-# without it concurrent MCPClient construction could stack duplicate wrappers.
+# makes the check-and-set atomic so concurrent MCPClient construction cannot
+# stack duplicate wrappers.
 _instrumentation_applied = False
 _instrumentation_lock = threading.Lock()
 
@@ -62,20 +62,6 @@ def inject_trace_context(meta: dict[str, Any] | None) -> dict[str, Any] | None:
     except Exception:
         logger.warning("failed to inject trace context into mcp request meta", exc_info=True)
     return carrier or None
-
-
-def _is_mcp_v1() -> bool:
-    """Report whether the installed `mcp` package is on the 1.x line.
-
-    The server-side patches wrap private `mcp` internals that are only stable
-    within 1.x. When the version cannot be determined, the patches are skipped
-    rather than applied to an unknown internal surface.
-    """
-    try:
-        major_version = int(_package_version("mcp").split(".")[0])
-    except (PackageNotFoundError, ValueError):
-        return False
-    return major_version == 1
 
 
 @dataclass(slots=True, frozen=True)
@@ -120,11 +106,9 @@ def mcp_instrumentation() -> None:
         # Return early if instrumentation has already been applied
         if _instrumentation_applied:
             return
-        # Set before the version probe: it leaves the GIL, and a concurrent
-        # caller checking under the lock must see the flag.
         _instrumentation_applied = True
 
-        if not _is_mcp_v1():
+        if MCP_V2:
             return
 
     def transport_wrapper() -> Callable[
@@ -233,9 +217,9 @@ class TransportContextExtractingReader(ObjectProxy):
         """
         async for item in self.__wrapped__:
             if isinstance(item, SessionMessage):
-                request = item.message.root
+                request = item.message.root  # type: ignore[union-attr]
             elif type(item) is JSONRPCMessage:
-                request = item.root
+                request = item.root  # type: ignore[unreachable]
             else:
                 yield item
                 continue

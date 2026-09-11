@@ -29,7 +29,7 @@ By default all features deploy. Use `-c testFeatures=bedrock-knowledge-base` to 
 
 ### Prerequisites
 
-- Node.js 20+
+- Node.js 22+
 - AWS CLI configured with credentials for the target account
 - CDK bootstrapped in the target account/region (`npx cdk bootstrap`)
 

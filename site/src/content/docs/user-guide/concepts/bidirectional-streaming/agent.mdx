@@ -69,9 +69,9 @@ print(result.message)  # "The result is 1200"
 ```python
 import asyncio
 from strands.experimental.bidi import BidiAgent, BidiAudioIO
-from strands.experimental.bidi.models import BidiNovaSonicModel
+from strands.experimental.bidi.models import BedrockNovaSonicModel
 
-model = BidiNovaSonicModel()
+model = BedrockNovaSonicModel()
 agent = BidiAgent(model=model, tools=[calculator])
 audio_io = BidiAudioIO()
 
@@ -196,9 +196,9 @@ User → send() → Model → receive() → Model Task → Event Queue → recei
 
 ```python
 from strands.experimental.bidi import BidiAgent
-from strands.experimental.bidi.models import BidiNovaSonicModel
+from strands.experimental.bidi.models import BedrockNovaSonicModel
 
-model = BidiNovaSonicModel()
+model = BedrockNovaSonicModel()
 
 agent = BidiAgent(
     model=model,
@@ -216,26 +216,22 @@ agent = BidiAgent(
 Each model provider has specific configuration options:
 
 ```python
-from strands.experimental.bidi.models import BidiNovaSonicModel
+from strands.experimental.bidi.models import BedrockNovaSonicModel
 
-model = BidiNovaSonicModel(
+model = BedrockNovaSonicModel(
     model_id="amazon.nova-2-sonic-v1:0",
-    provider_config={
-        "audio": {
-            "input_rate": 16000,
-            "output_rate": 16000,
-            "voice": "matthew",  # or "tiffany"
-            "channels": 1,
-            "format": "pcm"
-        }
+    region="us-east-1",
+    audio={
+        "input_rate": 16000,
+        "output_rate": 16000,
+        "channels": 1,
+        "format": "pcm",
+        "voice": "matthew",
     },
-    client_config={
-        "region": "us-east-1"
-    }
 )
 ```
 
-See [Model Providers](models/nova_sonic.md) for provider-specific options.
+See [Model Providers](models/bedrock.md) for provider-specific options.
 
 `BidiAgent` supports many of the same constructs as `Agent`:
 
@@ -447,7 +443,7 @@ The agent automatically cleans up background tasks, model connections, I/O chann
 
 - [Events](events.md) - Complete guide to bidirectional streaming events
 - [I/O Channels](io.md) - Building custom input/output channels
-- [Model Providers](models/nova_sonic.md) - Provider-specific configuration
+- [Model Providers](models/bedrock.md) - Provider-specific configuration
 - [Observability](observability.md) - Trace sessions, responses, and interruptions
 - [Quickstart](quickstart.md) - Getting started guide
 - [Python API Reference](@api/python/strands.experimental.bidi.agent.agent) - Complete API documentation

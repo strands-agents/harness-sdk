@@ -15,12 +15,15 @@ Key capabilities:
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any, AsyncGenerator
+import uuid
+from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from .... import _identifier
 from ...._middleware import MiddlewareRegistry
 from ....agent.state import AgentState
-from ....hooks import HookProvider, HookRegistry
+from ....hooks import AgentInitializedEvent, HookCallback, HookOrder, HookProvider, HookRegistry, MessageAddedEvent
+from ....hooks.registry import TEvent
 from ....interrupt import _InterruptState
 from ....tools._caller import _ToolCaller
 from ....tools.executors import ConcurrentToolExecutor
@@ -28,9 +31,9 @@ from ....tools.executors._executor import ToolExecutor
 from ....tools.registry import ToolRegistry
 from ....tools.tool_provider import ToolProvider
 from ....tools.watcher import ToolWatcher
-from ....types.content import Message, Messages, _ensure_tracking_id
+from ....types.agent import LocalAgent
+from ....types.content import Message, Messages, SystemContentBlock, _ensure_tracking_id, split_system_prompt
 from ....types.tools import AgentTool
-from ...hooks.events import BidiAgentInitializedEvent, BidiMessageAddedEvent
 from .._async import _TaskGroup, stop_all
 from ..models.model import BidiModel
 from ..types.agent import BidiAgentInput
@@ -53,18 +56,20 @@ _DEFAULT_AGENT_NAME = "Strands Agents"
 _DEFAULT_AGENT_ID = "default"
 
 
-class BidiAgent:
+class BidiAgent(LocalAgent):
     """Agent for bidirectional streaming conversations.
 
     Enables real-time audio and text interaction with AI models through persistent
     connections. Supports concurrent tool execution and interruption handling.
     """
 
+    _is_strands_local_agent: ClassVar[Literal[True]] = True
+
     def __init__(
         self,
         model: BidiModel | str | None = None,
         tools: list[str | AgentTool | ToolProvider] | None = None,
-        system_prompt: str | None = None,
+        system_prompt: str | list[SystemContentBlock] | None = None,
         messages: Messages | None = None,
         record_direct_tool_call: bool = True,
         load_tools_from_directory: bool = False,
@@ -73,7 +78,7 @@ class BidiAgent:
         description: str | None = None,
         hooks: list[HookProvider] | None = None,
         state: AgentState | dict | None = None,
-        session_manager: "SessionManager | None" = None,
+        session_manager: "SessionManager[LocalAgent] | None" = None,
         tool_executor: ToolExecutor | None = None,
         **kwargs: Any,
     ):
@@ -82,7 +87,8 @@ class BidiAgent:
         Args:
             model: BidiModel instance, string model_id, or None for default detection.
             tools: Optional list of tools with flexible format support.
-            system_prompt: Optional system prompt for conversations.
+            system_prompt: System prompt for conversations as a string or structured content blocks.
+                Structured blocks are retained, while their text is passed to Bidi models as a string.
             messages: Optional conversation history to initialize with.
             record_direct_tool_call: Whether to record direct tool calls in message history.
             load_tools_from_directory: Whether to load and automatically reload tools in the `./tools/` directory.
@@ -102,13 +108,19 @@ class BidiAgent:
         """
         if isinstance(model, BidiModel):
             self.model = model
+        elif isinstance(model, str):
+            from ..models.bedrock import BedrockNovaSonicModel
+
+            self.model = BedrockNovaSonicModel(model_id=model)
+        elif model is None:
+            from ..models.bedrock import BedrockNovaSonicModel
+
+            self.model = BedrockNovaSonicModel()
         else:
-            from ..models.nova_sonic import BidiNovaSonicModel
+            raise TypeError("model must be a BidiModel, string, or None")
 
-            self.model = BidiNovaSonicModel(model_id=model) if isinstance(model, str) else BidiNovaSonicModel()
-
-        self.system_prompt = system_prompt
-        self.messages = messages or []
+        _, self._system_prompt_content = split_system_prompt(system_prompt)
+        self.messages = messages if messages is not None else []
 
         # Agent identification
         self.agent_id = _identifier.validate(agent_id or _DEFAULT_AGENT_ID, _identifier.Identifier.AGENT)
@@ -157,12 +169,12 @@ class BidiAgent:
         # Initialize session management functionality
         self._session_manager = session_manager
         if self._session_manager:
+            self._session_id: str = getattr(self._session_manager, "session_id", None) or uuid.uuid4().hex[:8]
             self.hooks.add_hook(self._session_manager)
+        else:
+            self._session_id = uuid.uuid4().hex[:8]
 
         self._loop = _BidiAgentLoop(self)
-
-        # Emit initialization event
-        self.hooks.invoke_callbacks(BidiAgentInitializedEvent(agent=self))
 
         # TODO: Determine if full support is required
         self._interrupt_state = _InterruptState()
@@ -176,6 +188,8 @@ class BidiAgent:
         self._message_lock = asyncio.Lock()
 
         self._started = False
+
+        self.hooks.invoke_callbacks(AgentInitializedEvent[LocalAgent](agent=self))
 
     @property
     def tool(self) -> _ToolCaller:
@@ -202,6 +216,61 @@ class BidiAgent:
         all_tools = self.tool_registry.get_all_tools_config()
         return list(all_tools.keys())
 
+    @property
+    def system_prompt(self) -> str | None:
+        """Get the system prompt as a string."""
+        return split_system_prompt(self._system_prompt_content)[0]
+
+    @system_prompt.setter
+    def system_prompt(self, value: str | list[SystemContentBlock] | None) -> None:
+        """Set the system prompt and retain its structured content representation."""
+        _, self._system_prompt_content = split_system_prompt(value)
+
+    @property
+    def system_prompt_content(self) -> list[SystemContentBlock] | None:
+        """Get the system prompt as structured content blocks."""
+        return list(self._system_prompt_content) if self._system_prompt_content is not None else None
+
+    @property
+    def session_id(self) -> str:
+        """Get the conversation session identifier."""
+        return self._session_id
+
+    def add_hook(
+        self,
+        callback: HookCallback[TEvent],
+        event_type: type[TEvent] | list[type[TEvent]] | None = None,
+        *,
+        order: float = HookOrder.DEFAULT,
+    ) -> None:
+        """Register a callback function for a specific event type.
+
+        This method supports multiple call patterns:
+        1. ``add_hook(callback)`` - Event type inferred from callback's type hint
+        2. ``add_hook(callback, event_type)`` - Event type specified explicitly
+        3. ``add_hook(callback, [TypeA, TypeB])`` - Register for multiple event types
+
+        When the callback's type hint is a union type (``A | B`` or ``Union[A, B]``),
+        the callback is automatically registered for each event type in the union.
+
+        Callbacks can be either synchronous or asynchronous functions.
+
+        Args:
+            callback: The callback function to invoke when events of this type occur.
+            event_type: The class type(s) of events this callback should handle.
+                Can be a single type, a list of types, or None to infer from
+                the callback's first parameter type hint. If a list is provided,
+                the callback is registered for each type in the list.
+            order: Execution priority. Lower values execute first.
+                Use a HookOrder constant such as SDK_FIRST (-100), DEFAULT (0),
+                MODEL_ROUTING (50), or SDK_LAST (100).
+
+        Raises:
+            ValueError: If event_type is not provided and cannot be inferred from
+                the callback's type hints, or if the event_type list is empty.
+        """
+        self.hooks.add_callback(event_type, callback, order=order)
+
     async def start(self, invocation_state: dict[str, Any] | None = None) -> None:
         """Start a persistent bidirectional conversation connection.
 
@@ -209,9 +278,9 @@ class BidiAgent:
         model events, tool execution, and connection management.
 
         Args:
-            invocation_state: Optional context to pass to tools during execution.
-                This allows passing custom data (user_id, session_id, database connections, etc.)
-                that tools can access via their invocation_state parameter.
+            invocation_state: Optional context shared by reference with tools and hooks until stop(),
+                including across connection restarts. Tools access it through ToolContext.invocation_state.
+                Defaults to a new empty dictionary.
 
         Raises:
             RuntimeError:
@@ -343,26 +412,28 @@ class BidiAgent:
         Args:
             inputs: Input callables to read data from a source
             outputs: Output callables to receive events from the agent
-            invocation_state: Optional context to pass to tools during execution.
-                This allows passing custom data (user_id, session_id, database connections, etc.)
-                that tools can access via their invocation_state parameter.
+            invocation_state: Optional context shared by reference with tools and hooks for the duration of run(),
+                including across connection restarts. Tools access it through ToolContext.invocation_state.
+                Defaults to a new empty dictionary.
 
         Example:
             ```python
             # Using model defaults:
-            model = BidiNovaSonicModel()
+            model = BedrockNovaSonicModel()
             audio_io = BidiAudioIO()
-            text_io = BidiTextIO()
             agent = BidiAgent(model=model, tools=[calculator])
             await agent.run(
                 inputs=[audio_io.input()],
-                outputs=[audio_io.output(), text_io.output()],
+                outputs=[audio_io.output()],
                 invocation_state={"user_id": "user_123"}
             )
 
             # Using custom audio config:
-            model = BidiNovaSonicModel(
-                provider_config={"audio": {"input_rate": 48000, "output_rate": 24000}}
+            model = BedrockNovaSonicModel(
+                audio={
+                    "input_rate": 48000,
+                    "output_rate": 24000,
+                }
             )
             audio_io = BidiAudioIO()
             agent = BidiAgent(model=model, tools=[calculator])
@@ -418,4 +489,4 @@ class BidiAgent:
             for message in messages:
                 _ensure_tracking_id(message)
                 self.messages.append(message)
-                await self.hooks.invoke_callbacks_async(BidiMessageAddedEvent(agent=self, message=message))
+                await self.hooks.invoke_callbacks_async(MessageAddedEvent[LocalAgent](agent=self, message=message))

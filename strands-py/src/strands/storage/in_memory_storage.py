@@ -4,8 +4,13 @@ from __future__ import annotations
 
 import builtins
 import threading
+from typing import TYPE_CHECKING
 
-from .storage import _NamespacedStorage, _normalize_key, _normalize_prefix
+from .search.keyword import KeywordSearchStrategy
+from .storage import _EPHEMERAL, _NamespacedStorage, _normalize_key, _normalize_prefix
+
+if TYPE_CHECKING:
+    from .storage import StorageSearchResult
 
 
 class InMemoryStorage:
@@ -23,6 +28,8 @@ class InMemoryStorage:
         data = await storage.read("sessions/abc/state.json")
         ```
     """
+
+    _ephemeral = _EPHEMERAL
 
     def __init__(self) -> None:
         """Initialize an empty in-memory store."""
@@ -89,6 +96,17 @@ class InMemoryStorage:
         with self._lock:
             keys = sorted(k for k in self._store if k.startswith(prefix))
         return keys
+
+    async def search(self, query: str) -> builtins.list[StorageSearchResult]:
+        """Search stored content by keyword token-overlap scoring.
+
+        Args:
+            query: Natural-language search query.
+
+        Returns:
+            All matches with relevance scores, ranked best-first.
+        """
+        return await KeywordSearchStrategy().search(self, query)
 
     def namespace(self, prefix: str) -> _NamespacedStorage:
         """Return a view of this storage with all keys prefixed.

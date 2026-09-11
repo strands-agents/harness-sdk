@@ -7,6 +7,10 @@ on:
   pull_request_review:
     types: [submitted, dismissed]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' || github.event_name == 'pull_request_review' }}
+
 # pull_request_target runs in the base-repo context. This job only reads PR
 # metadata and reviews and sets the check status — it never checks out or
 # executes PR head code, and needs no write scope.
@@ -17,7 +21,7 @@ permissions:
 jobs:
   check-bot-reviews:
     name: 2 Approvers for Bots
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     steps:
       - name: Enforce maintainer reviews for bot/agent PRs
         uses: actions/github-script@v9

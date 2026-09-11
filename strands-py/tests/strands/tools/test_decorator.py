@@ -12,7 +12,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 import strands
-from strands import Agent
+from strands import Agent, LocalAgent
 from strands.interrupt import Interrupt, _InterruptState
 from strands.types._events import ToolInterruptEvent, ToolResultEvent, ToolStreamEvent
 from strands.types.tools import AgentTool, ToolContext, ToolUse
@@ -1507,6 +1507,74 @@ async def test_tool_context_injection_default():
             "test_reference": value_to_pass,
         },
     )
+
+
+@pytest.mark.asyncio
+async def test_tool_context_injection_parameterized():
+    """Test that parameterized ToolContext annotations are injected."""
+
+    @strands.tool(context=True)
+    def context_tool(tool_context: ToolContext[LocalAgent]) -> str:
+        return tool_context.agent.name
+
+    agent = Agent(name="test_agent")
+    events = [
+        event
+        async for event in context_tool.stream(
+            tool_use={"toolUseId": "test-id", "name": "context_tool", "input": {}},
+            invocation_state={"agent": agent},
+        )
+    ]
+
+    assert events == [
+        ToolResultEvent({"toolUseId": "test-id", "status": "success", "content": [{"text": "test_agent"}]})
+    ]
+
+
+@pytest.mark.asyncio
+async def test_tool_context_cancel_signal_is_agent_signal(alist):
+    """The injected context carries the invoking agent's own cancellation signal."""
+    signals_seen = []
+
+    @strands.tool(context=True)
+    def signal_tool(tool_context: ToolContext) -> str:
+        """Record the cancellation signal handed to the tool."""
+        signals_seen.append(tool_context.cancel_signal)
+        return "done"
+
+    agent = Agent(name="test_agent")
+
+    await alist(
+        signal_tool.stream(
+            tool_use={"toolUseId": "test-id", "name": "signal_tool", "input": {}},
+            invocation_state={"agent": agent},
+        )
+    )
+
+    assert signals_seen[0] is agent.cancel_signal
+    assert not signals_seen[0].is_set()
+
+
+@pytest.mark.asyncio
+async def test_tool_context_cancel_signal_set_after_cancel(alist):
+    """A tool that cancels its agent reads the cancellation back off its own context."""
+    signal_states = []
+
+    @strands.tool(context=True)
+    def cancelling_tool(tool_context: ToolContext) -> str:
+        """Cancel the agent, then check the signal."""
+        tool_context.agent.cancel()
+        signal_states.append(tool_context.cancel_signal.is_set())
+        return "done"
+
+    await alist(
+        cancelling_tool.stream(
+            tool_use={"toolUseId": "test-id", "name": "cancelling_tool", "input": {}},
+            invocation_state={"agent": Agent(name="test_agent")},
+        )
+    )
+
+    assert signal_states == [True]
 
 
 @pytest.mark.asyncio

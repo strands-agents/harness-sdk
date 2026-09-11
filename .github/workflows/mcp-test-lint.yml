@@ -10,7 +10,7 @@ on:
 jobs:
   test-lint:
     name: Test and Lint
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     permissions:
       contents: read
     defaults:

@@ -19,7 +19,11 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter, Sp
 from opentelemetry.trace import StatusCode
 
 from strands import tool
-from strands.experimental.bidi import BidiAgent
+from strands.experimental.bidi import BidiAgent, _telemetry
+from strands.experimental.bidi.hooks.events import (
+    BidiAfterConnectionRestartEvent,
+    BidiBeforeConnectionRestartEvent,
+)
 from strands.experimental.bidi.models import BidiModel, BidiModelTimeoutError
 from strands.experimental.bidi.types.events import (
     BidiAudioStreamEvent,
@@ -29,10 +33,7 @@ from strands.experimental.bidi.types.events import (
     BidiTextInputEvent,
     BidiUsageEvent,
 )
-from strands.experimental.hooks.events import (
-    BidiAfterConnectionRestartEvent,
-    BidiBeforeConnectionRestartEvent,
-)
+from strands.telemetry.tracer import Tracer
 from strands.types._events import ToolResultMessageEvent, ToolUseStreamEvent
 
 
@@ -84,7 +85,10 @@ def otel_setup():
 
 @pytest.fixture
 def agent():
-    return BidiAgent(model=unittest.mock.AsyncMock(spec=BidiModel), tools=[mock_tool_func])
+    model = unittest.mock.AsyncMock(spec=BidiModel)
+    model.get_connection_config.return_value = {}
+    model.restart = unittest.mock.AsyncMock()
+    return BidiAgent(model=model, tools=[mock_tool_func])
 
 
 @pytest_asyncio.fixture
@@ -315,6 +319,8 @@ async def test_connection_restart_span(loop, agent, agenerator, otel_setup):
     spans = otel_setup.get_finished_spans()
     restart_spans = [s for s in spans if "bidi_connection_restart" in s.name]
     assert len(restart_spans) == 1
+    assert restart_spans[0].attributes["gen_ai.bidi.restart_reason"] == "timeout"
+    assert restart_spans[0].attributes["gen_ai.bidi.restart_error_message"] == "8 minute timeout"
 
 
 @pytest.mark.asyncio
@@ -344,7 +350,7 @@ async def test_restart_failure_propagates_and_reports(loop, agent, agenerator):
     """A failed restart surfaces to receive(), keeps the gate closed, and fires the after-restart hook."""
     timeout_error = BidiModelTimeoutError("8 minute timeout")
     agent.model.receive = unittest.mock.Mock(side_effect=[timeout_error, agenerator([])])
-    agent.model.start = unittest.mock.AsyncMock(side_effect=[None, ConnectionError("restart failed")])
+    agent.model.restart = unittest.mock.AsyncMock(side_effect=ConnectionError("restart failed"))
 
     after_errors = []
     agent.hooks.add_callback(BidiAfterConnectionRestartEvent, lambda event: after_errors.append(event.exception))
@@ -417,7 +423,12 @@ async def test_usage_accumulation(loop, agent, agenerator, otel_setup):
     assert session_spans[0].attributes["gen_ai.usage.input_tokens"] == 300
     assert session_spans[0].attributes["gen_ai.usage.output_tokens"] == 125
     assert session_spans[0].attributes["gen_ai.usage.total_tokens"] == 425
-    assert session_spans[0].attributes["gen_ai.usage.cache_read_input_tokens"] == 20
+    assert session_spans[0].attributes["gen_ai.usage.cache_read.input_tokens"] == 20
+    # deprecated alias kept so existing consumers keep resolving, value-identical to the semconv name
+    assert (
+        session_spans[0].attributes["gen_ai.usage.cache_read_input_tokens"]
+        == session_spans[0].attributes["gen_ai.usage.cache_read.input_tokens"]
+    )
 
 
 @pytest.mark.asyncio
@@ -461,3 +472,18 @@ async def test_no_crash_without_otel_configured(loop, agent, agenerator):
             break
 
     await loop.stop()
+
+
+def test_end_session_span_latest_conventions_suppresses_deprecated_cache_name(monkeypatch):
+    """Opting into the latest conventions emits the semconv cache name only, without the deprecated alias."""
+    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_latest_experimental")
+    tracer = Tracer()
+    span = unittest.mock.MagicMock()
+
+    _telemetry.end_session_span(
+        tracer, span, input_tokens=300, output_tokens=125, total_tokens=425, cache_read_input_tokens=20
+    )
+
+    emitted = span.set_attributes.call_args[0][0]
+    assert emitted["gen_ai.usage.cache_read.input_tokens"] == 20
+    assert "gen_ai.usage.cache_read_input_tokens" not in emitted

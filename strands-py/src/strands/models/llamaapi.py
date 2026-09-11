@@ -1,7 +1,9 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 """Llama API model provider.
 
-- Docs: https://llama.developer.meta.com/
+Deprecated: The Llama API service has been deprecated by Meta. This provider will be removed
+in v2.0.0. Migrate to another provider (BedrockModel, OllamaModel, or OpenAIModel) that hosts
+Llama or comparable models.
 """
 
 import base64
@@ -14,7 +16,7 @@ from typing import Any, TypeVar, cast
 import llama_api_client
 from llama_api_client import LlamaAPIClient
 from pydantic import BaseModel
-from typing_extensions import Unpack, override
+from typing_extensions import Unpack, deprecated, override
 
 from ..types.content import ContentBlock, Messages
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException
@@ -28,8 +30,17 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
 
 
+@deprecated(
+    "LlamaAPIModel is deprecated and will be removed in v2.0.0. "
+    "The underlying Llama API service has been deprecated by Meta. "
+    "Use BedrockModel, OllamaModel, or OpenAIModel instead."
+)
 class LlamaAPIModel(Model):
-    """Llama API model provider implementation."""
+    """Llama API model provider implementation.
+
+    Deprecated: The Llama API service has been deprecated by Meta. This class will be removed
+    in v2.0.0. Use BedrockModel, OllamaModel, or OpenAIModel instead.
+    """
 
     OVERFLOW_MESSAGES = {
         "this model's maximum context length is",

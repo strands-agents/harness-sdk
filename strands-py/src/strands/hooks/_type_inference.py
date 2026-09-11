@@ -11,10 +11,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _normalize_event_type(type_hint: object) -> type | None:
+    """Normalize a plain or parameterized annotation to its event type."""
+    origin = get_origin(type_hint)
+    candidate = origin or type_hint
+    return candidate if isinstance(candidate, type) else None
+
+
 def infer_event_types(callback: "HookCallback[TEvent]") -> "list[type[TEvent]]":
     """Infer the event type(s) from a callback's type hints.
 
-    Supports both single types and union types (A | B or Union[A, B]).
+    Supports plain or parameterized event types and unions (A | B or Union[A, B]).
 
     Args:
         callback: The callback function to inspect.
@@ -64,14 +71,16 @@ def infer_event_types(callback: "HookCallback[TEvent]") -> "list[type[TEvent]]":
         for arg in get_args(type_hint):
             if arg is type(None):
                 raise ValueError("None is not a valid event type in union")
-            if not (isinstance(arg, type) and issubclass(arg, BaseHookEvent)):
+            event_type = _normalize_event_type(arg)
+            if event_type is None or not issubclass(event_type, BaseHookEvent):
                 raise ValueError(f"Invalid type in union: {arg} | must be a subclass of BaseHookEvent")
-            event_types.append(cast("type[TEvent]", arg))
+            event_types.append(cast("type[TEvent]", event_type))
         return event_types
 
     # Handle single type
-    if isinstance(type_hint, type) and issubclass(type_hint, BaseHookEvent):
-        return [cast("type[TEvent]", type_hint)]
+    event_type = _normalize_event_type(type_hint)
+    if event_type is not None and issubclass(event_type, BaseHookEvent):
+        return [cast("type[TEvent]", event_type)]
 
     raise ValueError(
         f"parameter=<{first_param.name}>, type=<{type_hint}> | type hint must be a subclass of BaseHookEvent"

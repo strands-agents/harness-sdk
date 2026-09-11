@@ -9,6 +9,7 @@ This folder contains documentation for contributors and developers working on th
 - [HOOKS.md](./HOOKS.md) - Hooks system rules and usage guide
 - [PR.md](../../team/PR.md) - Pull request description guidelines
 - [MCP_CLIENT_ARCHITECTURE.md](./MCP_CLIENT_ARCHITECTURE.md) - MCP client threading architecture and design decisions
+- [MCP_VERSIONS.md](./MCP_VERSIONS.md) - MCP 1.x/2.x support status, install options, and migration notes
 
 ## Related Documentation
 

@@ -45,7 +45,8 @@ class AgentResult:
         """Most recent context size in tokens from the last LLM call.
 
         Returns:
-            The input token count from the most recent cycle, or None if no data is available.
+            The total prompt the model processed on the most recent cycle, including cached tokens, or
+            None if no data is available.
         """
         return self.metrics.latest_context_size
 
@@ -54,7 +55,8 @@ class AgentResult:
         """Projected context size for the next model call.
 
         Returns:
-            The projected token count (inputTokens + outputTokens), or None if no data is available.
+            The projected token count (total prompt including cached tokens plus generated output), or
+            None if no data is available.
         """
         return self.metrics.projected_context_size
 

@@ -1,3 +1,10 @@
+/**
+ * Internal continuation handling for agent invocations.
+ *
+ * Coordinates continuation inputs contributed by hooks, including preparation,
+ * interrupt deferral, input combination, and append or abandonment callbacks.
+ */
+
 import { AfterInvocationEvent, BeforeModelCallEvent } from '../hooks/events.js'
 import { logger } from '../logging/logger.js'
 
@@ -40,12 +47,26 @@ export const continuations = {
   prepare,
 }
 
+/**
+ * Adds an input contribution for an invocation event.
+ *
+ * @param event - Event that owns the continuation input.
+ * @param input - Input and optional settlement callbacks to register.
+ */
 function addInput(event: AfterInvocationEvent | BeforeModelCallEvent, input: ContinuationInput): void {
   const state = stateByEvent.get(event) ?? { inputs: [] }
   state.inputs.push(input)
   stateByEvent.set(event, state)
 }
 
+/**
+ * Normalizes the inputs registered for an event and prepares those that form complete message sequences.
+ *
+ * @param event - Event whose continuation inputs should be prepared.
+ * @param normalizeInput - Converts invocation input into messages.
+ * @param stopReason - Stop reason that determines whether inputs can continue now or must be deferred.
+ * @returns The prepared messages, or `undefined` when no continuation is ready.
+ */
 async function prepare(
   event: AfterInvocationEvent | BeforeModelCallEvent,
   normalizeInput: (args: InvokeArgs) => Message[],
@@ -88,6 +109,14 @@ async function prepare(
   return messages
 }
 
+/**
+ * Prepends prepared continuation messages to invocation input.
+ *
+ * @param event - Event whose prepared messages should be applied.
+ * @param args - Invocation input to combine with the prepared messages.
+ * @param normalizeInput - Converts invocation input into messages.
+ * @returns The combined input, or the original input when no prepared messages can be applied.
+ */
 function combine(
   event: AfterInvocationEvent | BeforeModelCallEvent | undefined,
   args: InvokeArgs,
@@ -105,6 +134,12 @@ function combine(
   return [...messages, ...publicMessages]
 }
 
+/**
+ * Marks prepared inputs as incorporated into agent history.
+ *
+ * @param event - Event whose prepared inputs were appended.
+ * @returns A promise that resolves after append callbacks finish.
+ */
 async function markAppended(event: AfterInvocationEvent | BeforeModelCallEvent | undefined): Promise<void> {
   if (!event || !stateByEvent.get(event)?.messages) return
   for (const input of consumeInputs(event)) {
@@ -116,6 +151,13 @@ async function markAppended(event: AfterInvocationEvent | BeforeModelCallEvent |
   }
 }
 
+/**
+ * Abandons the inputs registered for an event.
+ *
+ * @param event - Event whose inputs should be abandoned.
+ * @param reason - Reason the inputs could not be incorporated.
+ * @returns A promise that resolves after abandonment callbacks finish.
+ */
 async function abandon(event: AfterInvocationEvent | BeforeModelCallEvent | undefined, reason: unknown): Promise<void> {
   if (!event) return
   for (const input of consumeInputs(event)) {

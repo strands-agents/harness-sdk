@@ -135,6 +135,7 @@ describe('ClassName', () => {
 - Nested `describe` blocks group related test scenarios
 - Use descriptive test names without "should" prefix
 - Group tests by functionality or scenario
+- Prefer top-level `import` — only use dynamic `import()` when the module must load after `vi.mock()` or is platform-gated
 
 ## Writing Effective Tests
 

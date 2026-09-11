@@ -1,5 +1,6 @@
 import { Agent, tool } from '@strands-agents/sdk'
 import type { ToolContext } from '@strands-agents/sdk'
+import { notebook } from '@strands-agents/sdk/vended-tools/notebook'
 import { z } from 'zod'
 
 // --8<-- [start:conversation_manager_import]
@@ -36,6 +37,23 @@ async function messageInitializationExample() {
   // Continue the conversation
   await agent.invoke("What's my name?")
   // --8<-- [end:message_initialization]
+}
+
+async function directToolCallingExample() {
+  // --8<-- [start:direct_tool_calling]
+  const agent = new Agent({
+    tools: [notebook],
+  })
+
+  // notebook is registered when the agent is created, so the non-null assertion is safe.
+  await agent.tool.notebook!.invoke({ mode: 'list' })
+  const recordedMessageCount = agent.messages.length
+
+  await agent.tool.notebook!.invoke({ mode: 'list' }, { recordDirectToolCall: false })
+
+  console.log(recordedMessageCount > 0) // true
+  console.log(agent.messages.length === recordedMessageCount) // true
+  // --8<-- [end:direct_tool_calling]
 }
 
 // conversation_manager example

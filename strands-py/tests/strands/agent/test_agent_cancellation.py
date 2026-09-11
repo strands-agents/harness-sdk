@@ -2,12 +2,13 @@
 
 import asyncio
 import threading
+import time
 from unittest.mock import ANY
 
 import pytest
 
 from strands import Agent, tool
-from strands.hooks import AfterModelCallEvent, BeforeToolCallEvent, BeforeToolsEvent
+from strands.hooks import AfterModelCallEvent, BeforeModelCallEvent, BeforeToolCallEvent, BeforeToolsEvent
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 # Default agent response for simple tests
@@ -316,7 +317,7 @@ async def test_cancel_during_tool_interrupt_resume_preserves_interrupt_state():
     interrupt_result = await agent.invoke_async("go")
     assert interrupt_result.stop_reason == "interrupt"
     assert agent._interrupt_state.activated
-    assert "tool_use_message" in agent._interrupt_state.context
+    assert agent._interrupt_state.pending_tool_execution is not None
 
     # Cancel the resume before the tool runs.
     agent.cancel()
@@ -327,7 +328,195 @@ async def test_cancel_during_tool_interrupt_resume_preserves_interrupt_state():
     assert cancelled_result.stop_reason == "cancelled"
     # The pending tool interrupt state survives the cancelled pass.
     assert agent._interrupt_state.activated
-    assert "tool_use_message" in agent._interrupt_state.context
+    assert agent._interrupt_state.pending_tool_execution is not None
+
+
+@pytest.mark.asyncio
+async def test_stream_async_pre_set_cancel_signal_cancels_immediately(alist):
+    """An external signal that is already set cancels the invocation at the first checkpoint."""
+    agent = Agent(model=MockedModelProvider([DEFAULT_RESPONSE]))
+    cancel_signal = threading.Event()
+    cancel_signal.set()
+
+    events = await alist(agent.stream_async("Hello", cancel_signal=cancel_signal))
+
+    result = events[-1]["result"]
+    assert result.stop_reason == "cancelled"
+    assert result.message["content"] == [{"text": "Cancelled by user"}]
+    # The agent never touches the caller's event, and clears its own for reuse.
+    assert cancel_signal.is_set()
+    assert not agent.cancel_signal.is_set()
+
+
+@pytest.mark.asyncio
+async def test_invoke_async_cancel_signal_set_during_model_streaming():
+    """An external signal set while the model streams cancels at the next checkpoint."""
+    streaming_started = asyncio.Event()
+    cancel_ready = asyncio.Event()
+
+    class DelayedModelProvider(MockedModelProvider):
+        async def stream(self, *args, **kwargs):
+            streaming_started.set()
+            await cancel_ready.wait()
+            async for event in super().stream(*args, **kwargs):
+                yield event
+
+    agent = Agent(model=DelayedModelProvider([DEFAULT_RESPONSE]))
+    cancel_signal = threading.Event()
+
+    async def cancel_when_ready():
+        await streaming_started.wait()
+        cancel_signal.set()
+        deadline = asyncio.get_running_loop().time() + 5
+        while not agent.cancel_signal.is_set():
+            assert asyncio.get_running_loop().time() < deadline, "signal was not linked before the deadline"
+            await asyncio.sleep(0.01)
+        cancel_ready.set()
+
+    cancel_task = asyncio.create_task(cancel_when_ready())
+    result = await agent.invoke_async("Hello", cancel_signal=cancel_signal)
+    await cancel_task
+
+    assert result.stop_reason == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_stream_async_cancel_signal_cancels_mid_invocation(alist):
+    """A signal set from a hook mid-invocation reaches the agent's own cancellation signal."""
+    agent = Agent(model=MockedModelProvider([DEFAULT_RESPONSE]))
+    cancel_signal = threading.Event()
+
+    async def cancel_before_model(event: BeforeModelCallEvent):
+        cancel_signal.set()
+        deadline = asyncio.get_running_loop().time() + 5
+        while not event.agent.cancel_signal.is_set():
+            assert asyncio.get_running_loop().time() < deadline, "signal was not linked before the deadline"
+            await asyncio.sleep(0.01)
+
+    agent.add_hook(cancel_before_model, BeforeModelCallEvent)
+
+    events = await alist(agent.stream_async("Hello", cancel_signal=cancel_signal))
+
+    assert events[-1]["result"].stop_reason == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cancel_signal_observed_synchronously_at_checkpoints():
+    """An external signal set by a hook cancels at the next checkpoint, without waiting for the watcher poll."""
+    cancel_signal = threading.Event()
+
+    async def set_external_signal(event: BeforeModelCallEvent):
+        cancel_signal.set()
+
+    agent = Agent(model=MockedModelProvider([DEFAULT_RESPONSE]))
+    agent.add_hook(set_external_signal, BeforeModelCallEvent)
+
+    result = await agent.invoke_async("Hello", cancel_signal=cancel_signal)
+
+    assert result.stop_reason == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cancel_signal_aborts_in_flight_model_stream():
+    """The model receives the agent's composed signal, not the caller's event, and sees it set."""
+    signals_seen = []
+    stream_started = asyncio.Event()
+
+    class SignalCapturingModelProvider(MockedModelProvider):
+        async def stream(self, *args, cancel_signal=None, **kwargs):
+            signals_seen.append(cancel_signal)
+            yield {"messageStart": {"role": "assistant"}}
+            stream_started.set()
+
+            deadline = asyncio.get_running_loop().time() + 5
+            while not cancel_signal.is_set():
+                assert asyncio.get_running_loop().time() < deadline, "signal was not set before the deadline"
+                await asyncio.sleep(0.01)
+
+            yield {"contentBlockDelta": {"delta": {"text": "arrives after cancellation"}}}
+
+    agent = Agent(model=SignalCapturingModelProvider([DEFAULT_RESPONSE]))
+    cancel_signal = threading.Event()
+
+    async def cancel_once_streaming():
+        await stream_started.wait()
+        cancel_signal.set()
+
+    cancel_task = asyncio.create_task(cancel_once_streaming())
+    result = await agent.invoke_async("Hello", cancel_signal=cancel_signal)
+    await cancel_task
+
+    assert result.stop_reason == "cancelled"
+    assert signals_seen[0] is agent.cancel_signal
+    assert signals_seen[0] is not cancel_signal
+
+
+@pytest.mark.asyncio
+async def test_cancel_signal_truncated_stream_returns_cancelled():
+    """A provider that aborts mid-stream (no messageStop) surfaces cancellation, not a truncated end_turn."""
+
+    class TruncatingModelProvider(MockedModelProvider):
+        async def stream(self, *args, cancel_signal=None, **kwargs):
+            yield {"messageStart": {"role": "assistant"}}
+            yield {"contentBlockDelta": {"delta": {"text": "partial"}}}
+            cancel_signal.set()
+            # Abort: end the stream without contentBlockStop or messageStop, as a provider
+            # closing the HTTP response mid-body does.
+
+    agent = Agent(model=TruncatingModelProvider([DEFAULT_RESPONSE]))
+
+    result = await agent.invoke_async("Hello")
+
+    assert result.stop_reason == "cancelled"
+    assert result.message["content"] == [{"text": "Cancelled by user"}]
+    # The truncated assistant turn is discarded, not persisted.
+    assert not any("partial" in str(message) for message in agent.messages)
+
+
+@pytest.mark.asyncio
+async def test_agent_reuse_after_external_cancel_signal():
+    """A caller event that stays set re-cancels; a fresh event lets the agent run again."""
+    agent = Agent(model=MockedModelProvider([DEFAULT_RESPONSE, DEFAULT_RESPONSE]))
+    cancel_signal = threading.Event()
+    cancel_signal.set()
+
+    first = await agent.invoke_async("Hello", cancel_signal=cancel_signal)
+    assert first.stop_reason == "cancelled"
+
+    second = await agent.invoke_async("Hello again", cancel_signal=cancel_signal)
+    assert second.stop_reason == "cancelled"
+
+    third = await agent.invoke_async("Hello once more", cancel_signal=threading.Event())
+    assert third.stop_reason == "end_turn"
+
+
+@pytest.mark.asyncio
+async def test_tool_context_cancel_signal_set_by_external_signal():
+    """An external cancellation signal reaches a running tool through its context."""
+    signal_states = []
+    cancel_signal = threading.Event()
+
+    @tool(context=True)
+    def probe(tool_context) -> str:
+        """Set the caller's event, then read the context signal back."""
+        cancel_signal.set()
+        deadline = time.time() + 5
+        while not tool_context.cancel_signal.is_set() and time.time() < deadline:
+            time.sleep(0.01)
+
+        signal_states.append(tool_context.cancel_signal.is_set())
+        return "done"
+
+    tool_use_response = {
+        "role": "assistant",
+        "content": [{"toolUse": {"toolUseId": "tool_1", "name": "probe", "input": {}}}],
+    }
+    agent = Agent(model=MockedModelProvider([tool_use_response, DEFAULT_RESPONSE]), tools=[probe])
+
+    result = await agent.invoke_async("Use the tool", cancel_signal=cancel_signal)
+
+    assert signal_states == [True]
+    assert result.stop_reason == "cancelled"
 
 
 _CHARGE_TOOL_USE = {
@@ -381,6 +570,7 @@ async def test_hook_cancelled_tool_batch_does_not_replay_the_stored_tool_use():
     assert not agent._interrupt_state.activated
     assert not agent._interrupt_state.context
     assert not agent._interrupt_state.interrupts
+    assert agent._interrupt_state.pending_tool_execution is None
 
 
 def _approver_agent(ran, cancel_on_first_run=False):

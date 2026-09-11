@@ -1587,6 +1587,17 @@ def test_format_request_filters_s3_source_image(model, caplog):
     assert "Location sources are not supported by Gemini" in caplog.text
 
 
+def test_format_request_skips_message_cache_point(model, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.gemini")
+
+    messages = [{"role": "user", "content": [{"text": "durable prefix"}, {"cachePoint": {"type": "default"}}]}]
+
+    request = model._format_request(messages, None, None, None)
+
+    assert request["contents"][0]["parts"] == [{"text": "durable prefix"}]
+    assert "cachePoint content block is not supported by Gemini" in caplog.text
+
+
 def test_format_request_filters_location_source_document(model, caplog):
     """Test that documents with Location sources are filtered out with warning."""
     caplog.set_level(logging.WARNING, logger="strands.models.gemini")

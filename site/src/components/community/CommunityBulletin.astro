@@ -1,6 +1,6 @@
 ---
 export interface BulletinItem {
-  type: 'event' | 'post' | 'integration'
+  type: 'event' | 'post' | 'integration' | 'hackathon'
   kicker: string
   title: string
   href?: string
@@ -34,6 +34,11 @@ const { items } = Astro.props
                   <svg viewBox="0 0 16 16" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.3">
                     <path d="M2.5 13.5l.9-2.9 7.6-7.6a1.4 1.4 0 0 1 2 2l-7.6 7.6z" />
                     <path d="M9.8 4.2l2 2" />
+                  </svg>
+                ) : item.type === 'hackathon' ? (
+                  <svg viewBox="0 0 16 16" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round">
+                    <rect x="1.5" y="2.5" width="13" height="9" rx="1.5" />
+                    <path d="M5.5 14.5h5M8 11.5v3" stroke-linecap="round" />
                   </svg>
                 ) : (
                   <svg viewBox="0 0 16 16" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.3">
@@ -147,6 +152,12 @@ const { items } = Astro.props
     border-color: rgba(127, 184, 216, 0.25);
   }
 
+  .icon--hackathon {
+    color: #b79ce0;
+    background: rgba(183, 156, 224, 0.08);
+    border-color: rgba(183, 156, 224, 0.25);
+  }
+
   .text {
     display: flex;
     flex-direction: column;
@@ -169,6 +180,12 @@ const { items } = Astro.props
     color: #23648f;
     background: rgba(35, 100, 143, 0.06);
     border-color: rgba(35, 100, 143, 0.25);
+  }
+
+  :global([data-theme='light']) .icon--hackathon {
+    color: #6b4ea0;
+    background: rgba(107, 78, 160, 0.06);
+    border-color: rgba(107, 78, 160, 0.25);
   }
 
   .kicker {

@@ -1,6 +1,6 @@
 """Parameterized integration tests for bidirectional streaming.
 
-Tests fundamental functionality across multiple model providers (Nova Sonic, OpenAI, etc.)
+Tests fundamental functionality across multiple model providers (Bedrock, Google, and OpenAI),
 including multi-turn conversations, audio I/O, text transcription, and tool execution.
 
 This demonstrates the provider-agnostic design of the bidirectional streaming system.
@@ -14,14 +14,21 @@ import pytest
 
 from strands import tool
 from strands.experimental.bidi.agent.agent import BidiAgent
-from strands.experimental.bidi.models.gemini_live import BidiGeminiLiveModel
-from strands.experimental.bidi.models.nova_sonic import BidiNovaSonicModel
-from strands.experimental.bidi.models.openai_realtime import BidiOpenAIRealtimeModel
+from strands.experimental.bidi.hooks import BidiResponseCompleteEvent
+from strands.experimental.bidi.models import GoogleGeminiLiveModel, OpenAIRealtimeModel
+from strands.experimental.bidi.types.events import BidiResponseCompleteEvent as BidiResponseCompleteStreamEvent
 
 from .context import BidirectionalTestContext
 from .hook_utils import HookEventCollector
 
 logger = logging.getLogger(__name__)
+
+
+def create_bedrock_nova_sonic_model(**kwargs):
+    """Create a Nova Sonic model without importing its Python 3.12-only SDK during collection."""
+    from strands.experimental.bidi.models import BedrockNovaSonicModel
+
+    return BedrockNovaSonicModel(**kwargs)
 
 
 # Simple calculator tool for testing
@@ -53,25 +60,24 @@ def calculator(operation: str, x: float, y: float) -> float:
 
 # Provider configurations
 PROVIDER_CONFIGS = {
-    "nova_sonic": {
-        "model_class": BidiNovaSonicModel,
+    "bedrock_nova_sonic": {
+        "model_factory": create_bedrock_nova_sonic_model,
         "model_kwargs": {"region": "us-east-1"},  # Uses v2 by default
         "silence_duration": 2.5,  # Nova Sonic needs 2+ seconds of silence
         "env_vars": ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
         "skip_reason": "AWS credentials not available",
     },
-    "nova_sonic_v1": {
-        "model_class": BidiNovaSonicModel,
+    "bedrock_nova_sonic_v1": {
+        "model_factory": create_bedrock_nova_sonic_model,
         "model_kwargs": {"model_id": "amazon.nova-sonic-v1:0", "region": "us-east-1"},
         "silence_duration": 2.5,  # Nova Sonic v1 needs 2+ seconds of silence
         "env_vars": ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
         "skip_reason": "AWS credentials not available",
     },
-    "openai": {
-        "model_class": BidiOpenAIRealtimeModel,
+    "openai_realtime": {
+        "model_factory": OpenAIRealtimeModel,
         "model_kwargs": {
-            "model": "gpt-4o-realtime-preview-2024-12-17",
-            "session": {
+            "params": {
                 "output_modalities": ["audio"],  # OpenAI only supports audio OR text, not both
                 "audio": {
                     "input": {
@@ -90,14 +96,14 @@ PROVIDER_CONFIGS = {
         "env_vars": ["OPENAI_API_KEY"],
         "skip_reason": "OPENAI_API_KEY not available",
     },
-    "gemini_live": {
-        "model_class": BidiGeminiLiveModel,
+    "google_gemini_live": {
+        "model_factory": GoogleGeminiLiveModel,
         "model_kwargs": {
             # Uses default model and config (audio output + transcription enabled)
         },
-        "silence_duration": 1.5,  # Gemini has good VAD, similar to OpenAI
-        "env_vars": ["GOOGLE_AI_API_KEY"],
-        "skip_reason": "GOOGLE_AI_API_KEY not available",
+        "silence_duration": 1.5,  # Google Gemini Live has good VAD, similar to OpenAI
+        "env_vars": ["GOOGLE_API_KEY"],
+        "skip_reason": "GOOGLE_API_KEY not available",
     },
 }
 
@@ -154,10 +160,10 @@ def agent_with_calculator(provider_config, hook_collector):
 
     Note: Session lifecycle (start/end) is handled by BidirectionalTestContext.
     """
-    model_class = provider_config["model_class"]
+    model_factory = provider_config["model_factory"]
     model_kwargs = provider_config["model_kwargs"]
 
-    model = model_class(**model_kwargs)
+    model = model_factory(**model_kwargs)
     return BidiAgent(
         model=model,
         tools=[calculator],
@@ -170,7 +176,7 @@ def agent_with_calculator(provider_config, hook_collector):
 async def test_bidirectional_agent(agent_with_calculator, audio_generator, provider_config, hook_collector):
     """Test multi-turn conversation with follow-up questions across providers.
 
-    This test runs against all configured providers (Nova Sonic, OpenAI, etc.)
+    This test runs against all configured providers (Bedrock, Google, and OpenAI)
     to validate provider-agnostic functionality.
 
     Validates:
@@ -179,6 +185,7 @@ async def test_bidirectional_agent(agent_with_calculator, audio_generator, provi
     - Speech-to-text transcription
     - Tool execution (calculator) with hook verification
     - Multi-turn conversation flow
+    - Complete, correctly ordered conversation history
     - Text-to-speech audio output
     """
     provider_name = provider_config["name"]
@@ -216,10 +223,27 @@ async def test_bidirectional_agent(agent_with_calculator, audio_generator, provi
         logger.info("provider=<%s>, response_count=<%d> | total responses", provider_name, len(text_outputs_turn2))
 
         # Validate full conversation
+        messages = agent_with_calculator.messages
+        assert [message["role"] for message in messages] == ["user", "assistant", "user", "assistant"]
+        for message in messages:
+            assert len(message["content"]) == 1
+            assert message["content"][0]["text"].strip()
+
         # Validate audio outputs
         audio_outputs = ctx.get_audio_outputs()
         assert len(audio_outputs) > 0, f"[{provider_name}] No audio output received"
         total_audio_bytes = sum(len(audio) for audio in audio_outputs)
+
+        response_events = [event for event in ctx.get_events() if isinstance(event, BidiResponseCompleteStreamEvent)]
+        assert response_events, f"[{provider_name}] No response completion received"
+        tru_events = hook_collector.get_events_by_type("response_complete")
+        exp_events = [
+            BidiResponseCompleteEvent(
+                agent=agent_with_calculator, response_id=event.response_id, stop_reason=event.stop_reason
+            )
+            for event in response_events
+        ]
+        assert tru_events == exp_events
 
         # Verify tool execution hooks if tools were called
         tool_calls = hook_collector.get_tool_calls()

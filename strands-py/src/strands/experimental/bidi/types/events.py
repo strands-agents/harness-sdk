@@ -24,8 +24,7 @@ Audio format normalization:
 import logging
 from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
-from ....types._events import ModelStreamEvent, ToolUseStreamEvent, TypedEvent
-from ....types.streaming import ContentBlockDelta
+from ....types._events import ToolUseStreamEvent, TypedEvent
 
 if TYPE_CHECKING:
     from ..models.model import BidiModelTimeoutError
@@ -246,25 +245,74 @@ class BidiConnectionStartEvent(TypedEvent):
 
 
 class BidiConnectionRestartEvent(TypedEvent):
-    """Agent is restarting the model connection after timeout."""
+    """Agent is restarting the model connection.
 
-    def __init__(self, timeout_error: "BidiModelTimeoutError"):
-        """Initialize.
+    Emitted on both reconnect paths: reactively after the model reports a timeout, and
+    proactively when the reconnect timer fires ahead of the provider's limit.
 
-        Args:
-            timeout_error: Timeout error reported by the model.
-        """
+    Parameters:
+        reason: What triggered the restart ("timeout" reactively, "scheduled" proactively).
+        timeout_error: The model's timeout error on the reactive path; None when scheduled.
+        turn_interrupted: True if the restart cut an in-progress or owed turn (the alignment
+            wait could not complete it before the deadline, or a timeout struck mid-turn). The
+            provider replays history as context, so that turn will not be answered on its own —
+            an app can re-prompt or notify the user when this is set.
+    """
+
+    def __init__(
+        self,
+        reason: Literal["timeout", "scheduled"],
+        timeout_error: "BidiModelTimeoutError | None" = None,
+        turn_interrupted: bool = False,
+    ):
+        """Initialize connection restart event."""
         super().__init__(
             {
                 "type": "bidi_connection_restart",
+                "reason": reason,
                 "timeout_error": timeout_error,
+                "turn_interrupted": turn_interrupted,
             }
         )
 
     @property
-    def timeout_error(self) -> "BidiModelTimeoutError":
-        """Model timeout error."""
-        return cast("BidiModelTimeoutError", self["timeout_error"])
+    def reason(self) -> str:
+        """What triggered the restart ("timeout" or "scheduled")."""
+        return cast(str, self["reason"])
+
+    @property
+    def timeout_error(self) -> "BidiModelTimeoutError | None":
+        """Model timeout error on the reactive path; None when scheduled."""
+        return cast("BidiModelTimeoutError | None", self["timeout_error"])
+
+    @property
+    def turn_interrupted(self) -> bool:
+        """True if the restart cut an in-progress or owed turn that will not be answered."""
+        return cast(bool, self["turn_interrupted"])
+
+
+class BidiConnectionWarningEvent(TypedEvent):
+    """Agent is approaching a proactive reconnect.
+
+    Emitted by the proactive reconnect timer before a reconnect; informational only.
+
+    Parameters:
+        time_left_s: Approximate seconds until the scheduled reconnect.
+    """
+
+    def __init__(self, time_left_s: float):
+        """Initialize connection warning event."""
+        super().__init__(
+            {
+                "type": "bidi_connection_warning",
+                "time_left_s": time_left_s,
+            }
+        )
+
+    @property
+    def time_left_s(self) -> float:
+        """Approximate seconds until the scheduled reconnect."""
+        return cast(float, self["time_left_s"])
 
 
 class BidiResponseStartEvent(TypedEvent):
@@ -333,64 +381,62 @@ class BidiAudioStreamEvent(TypedEvent):
         return cast(AudioChannel, self["channels"])
 
 
-class BidiTranscriptStreamEvent(ModelStreamEvent):
-    """Audio transcription streaming (user or assistant speech).
-
-    Supports incremental transcript updates for providers that send partial
-    transcripts before the final version.
+class BidiTranscriptStreamEvent(TypedEvent):
+    """Incremental transcription of user or assistant speech.
 
     Parameters:
-        delta: The incremental transcript change (ContentBlockDelta).
-        text: The delta text (same as delta content for convenience).
+        delta: The incremental transcript text.
         role: Who is speaking ("user" or "assistant").
-        is_final: Whether this is the final/complete transcript.
-        current_transcript: The accumulated transcript text so far (None for first delta).
     """
 
-    def __init__(
-        self,
-        delta: ContentBlockDelta,
-        text: str,
-        role: Role,
-        is_final: bool,
-        current_transcript: str | None = None,
-    ):
+    def __init__(self, delta: str, role: Role):
         """Initialize transcript stream event."""
         super().__init__(
             {
                 "type": "bidi_transcript_stream",
                 "delta": delta,
-                "text": text,
                 "role": _normalize_role(role, default="user"),
-                "is_final": is_final,
-                "current_transcript": current_transcript,
             }
         )
 
     @property
-    def delta(self) -> ContentBlockDelta:
-        """The incremental transcript change."""
-        return cast(ContentBlockDelta, self["delta"])
-
-    @property
-    def text(self) -> str:
-        """The text content to send to the model."""
-        return cast(str, self["text"])
+    def delta(self) -> str:
+        """The incremental transcript text."""
+        return cast(str, self["delta"])
 
     @property
     def role(self) -> Role:
         """The role of the message sender."""
         return cast(Role, self["role"])
 
-    @property
-    def is_final(self) -> bool:
-        """Whether this is the final/complete transcript."""
-        return cast(bool, self["is_final"])
+
+class BidiTranscriptCompleteEvent(TypedEvent):
+    """Complete transcript for one user or assistant turn.
+
+    Parameters:
+        transcript: The complete transcript text.
+        role: Who spoke ("user" or "assistant").
+    """
+
+    def __init__(self, transcript: str, role: Role):
+        """Initialize transcript complete event."""
+        super().__init__(
+            {
+                "type": "bidi_transcript_complete",
+                "transcript": transcript,
+                "role": _normalize_role(role, default="user"),
+            }
+        )
 
     @property
-    def current_transcript(self) -> str | None:
-        """The accumulated transcript text so far."""
-        return cast(str | None, self.get("current_transcript"))
+    def transcript(self) -> str:
+        """The complete transcript text."""
+        return cast(str, self["transcript"])
+
+    @property
+    def role(self) -> Role:
+        """The role of the speaker."""
+        return cast(Role, self["role"])
 
 
 class BidiInterruptionEvent(TypedEvent):
@@ -632,9 +678,11 @@ BidiInputEvent = BidiTextInputEvent | BidiAudioInputEvent | BidiImageInputEvent
 BidiOutputEvent = (
     BidiConnectionStartEvent
     | BidiConnectionRestartEvent
+    | BidiConnectionWarningEvent
     | BidiResponseStartEvent
     | BidiAudioStreamEvent
     | BidiTranscriptStreamEvent
+    | BidiTranscriptCompleteEvent
     | BidiInterruptionEvent
     | BidiResponseCompleteEvent
     | BidiUsageEvent

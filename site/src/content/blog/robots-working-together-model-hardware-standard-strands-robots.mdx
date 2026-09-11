@@ -1,0 +1,109 @@
+---
+title: "Robots working together: connecting agents to the physical world with Strands Robots and the Model Hardware Standard"
+date: 2026-08-27
+description: "How Strands Robots lets agents read from and act on many robots and devices at once, across Zenoh, AWS IoT, and the new Model Hardware Standard (MHS), in simulation and the real world."
+authors:
+  - cagatay-cali
+  - arron-bailiss
+tags:
+  - Physical AI
+  - Robotics
+  - Edge Computing
+draft: false
+---
+
+Strands Agents is built on a simple developer experience. You describe what you want, hand the agent some tools, and run it, and the code you prototype with on your laptop is the code you take to production. That promise holds across the Strands portfolio, from the [Python and TypeScript SDKs](https://github.com/strands-agents/harness-sdk) to [evaluations](https://github.com/strands-agents/evals) and voice, and it holds for robots too.
+
+Here is a Strands agent driving a robot arm:
+
+```python
+from strands import Agent
+from strands_robots import Robot
+
+robot = Robot("ur10e")
+agent = Agent(tools=[robot])
+
+agent("load the bracket into the fixture")
+```
+
+That `Robot("ur10e")` call gives you a running [MuJoCo](https://mujoco.org/) simulation with a [Universal Robots UR10e](https://www.universal-robots.com/products/ur-series/) arm in it, no GPU and no hardware required. The agent can control that arm, and in this case it works out how to pick up the bracket and seat it in the fixture. When you are ready for the real arm, you change one argument to `mode="real"` and the same agent code drives the physical servos. A robot in Strands is a [Strands Agent tool](https://strandsagents.com/latest/documentation/docs/user-guide/concepts/tools/), so the agent reads the robot's camera and joint state and decides what to do next in natural language, the same way it would call any other tool.
+
+That is one robot. The more interesting question, and the one we hear most often from people building physical AI, is what happens when you have several. Two arms sharing an assembly cell, one holding a part while the other drives the screws. A mobile robot ferrying totes between a pick station and a packing line. A microscope handing a sample to a liquid handler for the next step of an assay. Once you have more than one device, the interesting work is in how they find each other and coordinate once they have. This post is about that layer in [Strands Robots](https://strands-labs.github.io/robots/): how agents read from and act on many devices at once, over the network, in simulation or the real world. It is also about a new way to do it, the [Model Hardware Standard](https://www.modelhardwarestandard.com/) (MHS), a new standard co-developed by Anthropic and HHMI Janelia Research Campus, now in a limited research preview. Strands Robots and AWS are participating in that preview, and we are building native MHS support into Strands Robots for other preview participants to test.
+
+## From one robot to a network of them
+
+An agent that controls a single robot is a closed loop of sense, reason, and act. An agent that coordinates several needs two more things. It needs to discover what is out there, and it needs a way to read state from and send commands to the other devices. Strands Robots handles both through a mesh network that lets robots and agents talk to one another, including robots running in simulation, so a mix of simulated and real machines can sit on the same mesh.
+
+The mesh is off by default. You opt in per robot, either with an argument or an environment variable, and from that point the robot announces itself and starts sharing presence, state, and camera streams with the other peers on the network.
+
+```python
+# Every robot on the network becomes a discoverable peer
+arm = Robot("ur10e", mode="real", mesh=True)
+mobile = Robot("tiago_dual", mode="real", mesh=True)
+```
+
+Once robots are on the mesh, an agent can talk to the whole set. It can ask a peer for its state, send a natural-language instruction to another robot, broadcast to everyone, or trigger a fleet-wide emergency stop. The `robot_mesh` tool exposes all of this to the agent, so a single orchestrator can hand work across the group:
+
+```python
+from strands import Agent
+from strands_robots import Robot, robot_mesh
+
+arm = Robot("ur10e", mode="real", mesh=True)
+agent = Agent(tools=[arm, robot_mesh])
+
+agent("ask the mobile robot to bring the next bin of parts to the cell, then have the arm load them into the fixture")
+```
+
+Discovery is automatic. New peers announce themselves and start heartbeating, so an agent that joins late still sees who is present and what they are doing without any central registry to configure.
+
+## Choosing how the network works
+
+The mesh is a transport abstraction, and you select the transport that matches where you are running, without touching your agent code.
+
+[**Zenoh**](https://zenoh.io/) is the default, a peer-to-peer protocol for robots on the same local network. Peers find each other directly and stream state and camera frames between them, fast enough to run teleoperation at control-loop rates.
+
+[**AWS IoT Core**](https://aws.amazon.com/iot-core/) takes over when the robots are not on the same network, or when you want to run the fleet from the cloud. Strands Robots provisions each robot as an IoT thing with its own certificate and mirrors presence through device shadows, so a cloud agent that joins later still sees the fleet, and the mesh API you used on Zenoh works unchanged.
+
+You point the mesh at a different backend, and your agent and its tools stay the same:
+
+```python
+import os
+from strands_robots import Robot
+
+# Same local network, direct peer-to-peer (Zenoh is the default)
+robot = Robot("ur10e", mesh=True)
+
+# Distributed deployment, operable and auditable from the cloud
+# (needs pip install "strands-robots[mesh-iot]")
+os.environ["STRANDS_MESH_BACKEND"] = "iot"
+robot = Robot("ur10e", mode="real", mesh=True)
+```
+
+The agent code sitting on top is identical in both cases. You develop against Zenoh on your bench, and you move to IoT for a distributed deployment by setting one environment variable, the same way you move a Strands agent between model providers without touching your tools.
+
+## Adding MHS support to Strands Robots
+
+The [Model Hardware Standard](https://www.anthropic.com/news/model-hardware-standard-research-preview) is a new standard for AI agents to safely operate physical equipment in scientific research and advanced manufacturing, co-developed by Anthropic and HHMI Janelia Research Campus and now in a limited research preview. A device exposes a standardized driver with two primitive commands, `read` and `write`, so an agent can discover it and operate it without a bespoke integration, whether it is a microscope, a plate reader, a laser, or a robotic arm.
+
+We are building native MHS support into Strands Robots as part of the research preview. It fits the same way the other transports do, as another mesh backend, so in the pre-release build switching to it looks like switching to Zenoh or IoT:
+
+```python
+import os
+from strands_robots import Robot
+
+# In the pre-release build, MHS is another mesh backend
+os.environ["STRANDS_MESH_BACKEND"] = "mhs"
+robot = Robot("ur10e", mesh=True)
+```
+
+In that pre-release build, a robot or simulation you drive with a Strands agent can present itself on an MHS network, so read and write, discovery, and shared state run through the same mesh abstraction you use for Zenoh and IoT, and your agent code stays the same. The `Robot()` you prototype with in simulation carries over to an MHS network of real instruments, keeping the sim-to-real parity that Strands Robots is built around.
+
+MHS is a limited research preview, with access by application, while Anthropic and HHMI Janelia validate the safety design for AI agents operating physical equipment. Safety is built into the standard itself. Devices declare their bounds, interlocks, and emergency stops, and agents inherit and operate within them by default. Preview participants can test the MHS support we are building into Strands Robots and put their own robots and devices on an MHS network. If that is something you want to try, you can apply [here](https://www.modelhardwarestandard.com/).
+
+## Getting started
+
+Strands Robots is open source, and it runs entirely in simulation on your laptop today, no robot required:
+
+- **Strands Robots**: [Documentation](https://strands-labs.github.io/robots/), [PyPI (`strands-robots`)](https://pypi.org/project/strands-robots/), and [GitHub](https://github.com/strands-labs/robots). Run `pip install strands-robots` and you have a robot in simulation to build against.
+- **Start a discussion** on the [Strands Discord](https://discord.gg/strands). If you are building multi-robot or multi-device workflows, we want to hear what you are working on and where the rough edges are.
+- **Apply to the Model Hardware Standard research preview** at [modelhardwarestandard.com](https://www.modelhardwarestandard.com/). Preview participants get the pre-release Strands Robots build with MHS support. You can read Anthropic's full announcement [here](https://www.anthropic.com/news/model-hardware-standard-research-preview).

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import OpenAI from 'openai'
+import OpenAI, { APIUserAbortError } from 'openai'
 import { isNode } from '../../../__fixtures__/environment.js'
 import { OpenAIModel } from '../index.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../../errors.js'
@@ -24,11 +24,13 @@ function createMockClient(streamGenerator: () => AsyncGenerator<any>): OpenAI {
 }
 
 // Mock the OpenAI SDK
-vi.mock('openai', () => {
+vi.mock('openai', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('openai')>()
   const mockConstructor = vi.fn(function (this: any) {
     return {}
   })
   return {
+    ...actual,
     default: mockConstructor,
   }
 })
@@ -389,6 +391,53 @@ describe('OpenAIModel', () => {
   })
 
   describe('stream', () => {
+    describe('cancellation', () => {
+      // Guards against provider work continuing after agent cancellation (#3915).
+      it('stops an in-flight chat completions producer when the signal aborts', async () => {
+        let producedTokens = 0
+        let producerStopped = false
+        let resolveFirstToken!: () => void
+        const firstTokenProduced = new Promise<void>((resolve) => {
+          resolveFirstToken = resolve
+        })
+        const create = vi.fn(async (_request: unknown, requestOptions?: unknown): Promise<AsyncGenerator<unknown>> => {
+          const signal = (requestOptions as { signal?: AbortSignal } | undefined)?.signal
+          return (async function* (): AsyncGenerator<unknown> {
+            yield { choices: [{ delta: { role: 'assistant' }, index: 0 }] }
+            while (producedTokens < 20) {
+              if (signal?.aborted) {
+                producerStopped = true
+                return
+              }
+              producedTokens += 1
+              if (producedTokens === 1) {
+                resolveFirstToken()
+              }
+              yield { choices: [{ delta: { content: 'token ' }, index: 0 }] }
+              await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 1))
+            }
+            yield { choices: [{ finish_reason: 'stop', delta: {}, index: 0 }] }
+          })()
+        })
+        const client = { chat: { completions: { create } } } as unknown as OpenAI
+        const controller = new AbortController()
+        const model = new OpenAIModel({ api: 'chat', client })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+        const streamResult = collectIterator(model.stream(messages, { cancelSignal: controller.signal }))
+        await firstTokenProduced
+        const tokensAtCancel = producedTokens
+        controller.abort()
+        await expect(streamResult).rejects.toBeInstanceOf(APIUserAbortError)
+
+        expect(create).toHaveBeenCalledWith(expect.anything(), { signal: controller.signal })
+        expect({ producedTokens, producerStopped }).toEqual({
+          producedTokens: tokensAtCancel,
+          producerStopped: true,
+        })
+      })
+    })
+
     describe('validation', () => {
       it('throws error when messages array is empty', async () => {
         const mockClient = createMockClient(async function* () {})
@@ -1184,6 +1233,182 @@ describe('OpenAIModel', () => {
         tool_choice: 'auto',
       })
     })
+
+    it('maps cacheConfig.cacheKey to prompt_cache_key', async () => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({
+        api: 'chat',
+        client: createMockClientWithCapture(captured),
+        cacheConfig: { cacheKey: 'tenant-42' },
+      })
+
+      await collectIterator(provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })]))
+
+      expect(captured.request.prompt_cache_key).toBe('tenant-42')
+    })
+
+    it('omits prompt_cache_key when cacheConfig is unset', async () => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({ api: 'chat', client: createMockClientWithCapture(captured) })
+
+      await collectIterator(provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })]))
+
+      expect(captured.request.prompt_cache_key).toBeUndefined()
+    })
+
+    it('lets an explicit prompt_cache_key in params win over cacheConfig', async () => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({
+        api: 'chat',
+        client: createMockClientWithCapture(captured),
+        params: { prompt_cache_key: 'explicit' },
+        cacheConfig: { cacheKey: 'from-config' },
+      })
+
+      await collectIterator(provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })]))
+
+      expect(captured.request.prompt_cache_key).toBe('explicit')
+    })
+
+    it('derives prompt_cache_key from the agent metadata session when cacheKey is unset', async () => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({ api: 'chat', client: createMockClientWithCapture(captured), cacheConfig: {} })
+
+      await collectIterator(
+        provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })], {
+          agentMetadata: { sessionId: 's1' },
+        })
+      )
+
+      expect(captured.request.prompt_cache_key).toBe('strands-s1')
+    })
+
+    it('lets a configured cacheKey win over the agent metadata session', async () => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({
+        api: 'chat',
+        client: createMockClientWithCapture(captured),
+        cacheConfig: { cacheKey: 'tenant-42' },
+      })
+
+      await collectIterator(
+        provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })], {
+          agentMetadata: { sessionId: 's1' },
+        })
+      )
+
+      expect(captured.request.prompt_cache_key).toBe('tenant-42')
+    })
+
+    it('treats a false cacheKey as an opt-out even with an agent metadata session', async () => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({
+        api: 'chat',
+        client: createMockClientWithCapture(captured),
+        cacheConfig: { cacheKey: false },
+      })
+
+      await collectIterator(
+        provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })], {
+          agentMetadata: { sessionId: 's1' },
+        })
+      )
+
+      expect(captured.request.prompt_cache_key).toBeUndefined()
+    })
+
+    it('omits prompt_cache_key when the agent metadata carries no session', async () => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({ api: 'chat', client: createMockClientWithCapture(captured), cacheConfig: {} })
+
+      await collectIterator(
+        provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })], { agentMetadata: {} })
+      )
+
+      expect(captured.request.prompt_cache_key).toBeUndefined()
+    })
+
+    it.each(['24h', 'in_memory'])(
+      'maps retention-literal cacheConfig.ttl %s to prompt_cache_retention',
+      async (ttl) => {
+        const captured: { request: any } = { request: null }
+        const provider = new OpenAIModel({
+          api: 'chat',
+          client: createMockClientWithCapture(captured),
+          cacheConfig: { ttl },
+        })
+
+        await collectIterator(provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })]))
+
+        expect(captured.request.prompt_cache_retention).toBe(ttl)
+      }
+    )
+
+    it('ignores a non-retention cacheConfig.ttl and warns once', async () => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({
+        api: 'chat',
+        client: createMockClientWithCapture(captured),
+        cacheConfig: { ttl: '5m' },
+      })
+
+      await collectIterator(provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })]))
+
+      expect(captured.request.prompt_cache_retention).toBeUndefined()
+      expect(warnOnce).toHaveBeenCalledWith(
+        expect.objectContaining({ warn: expect.any(Function) }),
+        expect.stringContaining('ttl=<5m> | cacheConfig.ttl is not an openai retention value')
+      )
+    })
+
+    it('lets an explicit prompt_cache_retention in params win over cacheConfig', async () => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({
+        api: 'chat',
+        client: createMockClientWithCapture(captured),
+        params: { prompt_cache_retention: '24h' },
+        cacheConfig: { ttl: 'in_memory' },
+      })
+
+      await collectIterator(provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })]))
+
+      expect(captured.request.prompt_cache_retention).toBe('24h')
+    })
+
+    it('does not warn about an unsupported ttl when an explicit prompt_cache_retention already wins', async () => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({
+        api: 'chat',
+        client: createMockClientWithCapture(captured),
+        params: { prompt_cache_retention: '24h' },
+        cacheConfig: { ttl: '5m' },
+      })
+
+      await collectIterator(provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })]))
+
+      expect(captured.request.prompt_cache_retention).toBe('24h')
+      expect(warnOnce).not.toHaveBeenCalledWith(
+        expect.objectContaining({ warn: expect.any(Function) }),
+        expect.stringContaining('not an openai retention value')
+      )
+    })
+
+    it('warns once that placement fields have no effect', async () => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({
+        api: 'chat',
+        client: createMockClientWithCapture(captured),
+        cacheConfig: { strategy: 'anthropic', systemPromptTTL: false, toolsTTL: '1h', cacheKey: 'k' },
+      })
+
+      await collectIterator(provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })]))
+      await collectIterator(provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })]))
+
+      expect(warnOnce).toHaveBeenCalledWith(
+        expect.objectContaining({ warn: expect.any(Function) }),
+        expect.stringContaining('have no effect')
+      )
+    })
   })
 
   describe('systemPrompt handling', () => {
@@ -1687,6 +1912,81 @@ describe('OpenAIModel', () => {
       expect(toolMsg.content).toBe('result')
       expect(warnSpy).toHaveBeenCalled()
       warnSpy.mockRestore()
+    })
+  })
+
+  describe('tool result and text ordering', () => {
+    // Regression: an everyTurn context injector folds rendered text onto a tool-result turn, producing a
+    // mixed [toolResult, text] user message. Tool results must be emitted before that text so each `tool`
+    // message immediately follows the assistant `tool_calls` it answers — OpenAI rejects a request where a
+    // non-tool message wedges between them.
+    it.each([
+      { name: 'tool result then text', order: ['tu1', 'text'], roles: ['user', 'assistant', 'tool', 'user'] },
+      { name: 'text then tool result', order: ['text', 'tu1'], roles: ['user', 'assistant', 'tool', 'user'] },
+      {
+        name: 'text between parallel tool results',
+        order: ['tu1', 'text', 'tu2'],
+        roles: ['user', 'assistant', 'tool', 'tool', 'user'],
+      },
+    ])('keeps tool results adjacent to the assistant tool_calls for $name', async ({ order, roles }) => {
+      const toolUseIds = order.filter((entry) => entry !== 'text')
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({ api: 'chat', client: createMockClientWithCapture(captured) })
+
+      await collectIterator(
+        provider.stream([
+          new Message({ role: 'user', content: [new TextBlock('task')] }),
+          new Message({
+            role: 'assistant',
+            content: toolUseIds.map((toolUseId) => new ToolUseBlock({ name: 'calc', toolUseId, input: {} })),
+          }),
+          new Message({
+            role: 'user',
+            content: order.map((entry) =>
+              entry === 'text'
+                ? new TextBlock('\n\nNOTE')
+                : new ToolResultBlock({ toolUseId: entry, status: 'success', content: [new TextBlock('42')] })
+            ),
+          }),
+        ])
+      )
+
+      const requestMessages = captured.request.messages
+      expect(requestMessages.map((message: any) => message.role)).toEqual(roles)
+      // The message immediately after the assistant tool_calls must be the first tool response.
+      expect(requestMessages[2]).toEqual({ role: 'tool', tool_call_id: 'tu1', content: '42' })
+      // The injected text trails the tool responses as its own user message.
+      expect(requestMessages.at(-1)).toEqual({ role: 'user', content: [{ type: 'text', text: '\n\nNOTE' }] })
+    })
+
+    it('keeps media hoisted out of a tool result ahead of the injected text', async () => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({ api: 'chat', client: createMockClientWithCapture(captured) })
+
+      await collectIterator(
+        provider.stream([
+          new Message({
+            role: 'user',
+            content: [
+              new ToolResultBlock({
+                toolUseId: 'tu1',
+                status: 'success',
+                content: [
+                  new TextBlock('42'),
+                  new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1]) } }),
+                ],
+              }),
+              new TextBlock('\n\nNOTE'),
+            ],
+          }),
+        ])
+      )
+
+      expect(captured.request.messages).toEqual([
+        { role: 'tool', tool_call_id: 'tu1', content: '42' },
+        { role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,AQ==' } }] },
+        { role: 'user', content: [{ type: 'text', text: '\n\nNOTE' }] },
+      ])
     })
   })
 

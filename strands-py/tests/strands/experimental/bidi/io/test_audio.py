@@ -1,22 +1,52 @@
 import base64
+import builtins
+import sys
 import unittest.mock
 
 import numpy as np
-import pyaudio
 import pytest
 import pytest_asyncio
 
-from strands.experimental.bidi.audio import AudioProcessorConfig, _AudioProcessor
-from strands.experimental.bidi.io.audio import BidiAudioIO, _BidiAudioBuffer
-from strands.experimental.bidi.types.events import BidiAudioInputEvent, BidiAudioStreamEvent, BidiInterruptionEvent
+from strands.experimental.bidi._audio import _BidiAudioProcessor
+from strands.experimental.bidi.io.audio import BidiAudioIO, BidiAudioProcessorConfig, _BidiAudioBuffer
+from strands.experimental.bidi.models import AudioCapable
+from strands.experimental.bidi.types.events import (
+    BidiAudioInputEvent,
+    BidiAudioStreamEvent,
+    BidiInterruptionEvent,
+    BidiResponseCompleteEvent,
+)
 
 
-def _fake_pywebrtc(processor=None):
-    """Build a fake pywebrtc_audio module for patching into sys.modules."""
+def _fake_audio_processor(processor=None):
+    """Patch the module-level AudioProcessor with a test double."""
     processor = processor or unittest.mock.MagicMock()
     processor_class = unittest.mock.MagicMock(return_value=processor)
-    module = unittest.mock.MagicMock(AudioProcessor=processor_class)
-    return module, processor_class, processor
+    processor_patch = unittest.mock.patch("strands.experimental.bidi._audio.AudioProcessor", processor_class)
+    return processor_patch, processor_class, processor
+
+
+def _create_processor(
+    *,
+    input_rate=16000,
+    output_rate=16000,
+    num_channels=1,
+    echo_cancellation=True,
+    stream_delay_ms=0,
+    far_buffer_size=100,
+):
+    """Create and start an audio processor."""
+    processor = _BidiAudioProcessor(
+        echo_cancellation=echo_cancellation,
+        stream_delay_ms=stream_delay_ms,
+        far_buffer_size=far_buffer_size if echo_cancellation else None,
+    )
+    processor.start(
+        input_rate=input_rate,
+        output_rate=output_rate,
+        num_channels=num_channels,
+    )
+    return processor
 
 
 @pytest.fixture
@@ -30,30 +60,25 @@ def audio_buffer():
 @pytest.fixture
 def agent():
     mock = unittest.mock.MagicMock()
-    mock.model.config = {
-        "audio": {
-            "input_rate": 24000,
-            "output_rate": 16000,
-            "channels": 2,
-            "format": "test-format",
-            "voice": "test-voice",
-        },
+    mock.model = unittest.mock.MagicMock(spec=AudioCapable)
+    mock.model.get_audio_config.return_value = {
+        "input_rate": 24000,
+        "output_rate": 16000,
+        "channels": 2,
+        "format": "test-format",
     }
     return mock
 
 
 @pytest.fixture
 def aec_agent():
-    # Audio processing requires a supported input rate (16k/32k/48k) and mono.
     mock = unittest.mock.MagicMock()
-    mock.model.config = {
-        "audio": {
-            "input_rate": 16000,
-            "output_rate": 16000,
-            "channels": 1,
-            "format": "pcm",
-            "voice": "test-voice",
-        },
+    mock.model = unittest.mock.MagicMock(spec=AudioCapable)
+    mock.model.get_audio_config.return_value = {
+        "input_rate": 16000,
+        "output_rate": 16000,
+        "channels": 1,
+        "format": "pcm",
     }
     return mock
 
@@ -61,22 +86,29 @@ def aec_agent():
 @pytest.fixture
 def agent_mixed_rates():
     mock = unittest.mock.MagicMock()
-    mock.model.config = {
-        "audio": {
-            "input_rate": 16000,
-            "output_rate": 24000,
-            "channels": 1,
-            "format": "pcm",
-            "voice": "test-voice",
-        },
+    mock.model = unittest.mock.MagicMock(spec=AudioCapable)
+    mock.model.get_audio_config.return_value = {
+        "input_rate": 16000,
+        "output_rate": 24000,
+        "channels": 1,
+        "format": "pcm",
     }
     return mock
 
 
 @pytest.fixture
-def py_audio():
-    with unittest.mock.patch("strands.experimental.bidi.io.audio.pyaudio.PyAudio") as mock:
-        yield mock.return_value
+def pyaudio_module():
+    module = unittest.mock.MagicMock()
+    module.paInt16 = 8
+    module.paContinue = 0
+    module.get_sample_size.return_value = 2
+    with unittest.mock.patch("strands.experimental.bidi.io.audio.pyaudio", module):
+        yield module
+
+
+@pytest.fixture
+def py_audio(pyaudio_module):
+    return pyaudio_module.PyAudio.return_value
 
 
 @pytest.fixture
@@ -147,10 +179,18 @@ def test_bidi_audio_buffer_clear(audio_buffer):
     assert tru_byte == exp_byte
 
 
+def test_bidi_audio_buffer_clear_discards_partial_data(audio_buffer):
+    audio_buffer.put(b"ab")
+    assert audio_buffer.get(1) == b"a"
+
+    audio_buffer.clear()
+
+    assert audio_buffer.get(1) == b"\x00"
+
+
 def test_bidi_audio_buffer_stop_when_full():
     # A bounded buffer can be full at teardown (e.g. after a stall while the consumer is paused). stop()
-    # must drop the oldest chunk to make room for the shutdown sentinel rather than raising queue.Full,
-    # which would otherwise mask the real teardown error in agent.run()'s finally block.
+    # can skip the shutdown sentinel because queued data is already available to unblock a consumer.
     buffer = _BidiAudioBuffer(size=2)
     buffer.start()
     buffer.put(b"a")
@@ -173,10 +213,10 @@ async def test_bidi_audio_io_input(audio_input):
     assert tru_event == exp_event
 
 
-def test_bidi_audio_io_input_configs(py_audio, audio_input):
+def test_bidi_audio_io_input_configs(pyaudio_module, py_audio, audio_input):
     py_audio.open.assert_called_once_with(
         channels=2,
-        format=pyaudio.paInt16,
+        format=pyaudio_module.paInt16,
         frames_per_buffer=1024,
         input=True,
         input_device_index=1,
@@ -202,6 +242,8 @@ async def test_bidi_audio_io_output(audio_output):
 
 @pytest.mark.asyncio
 async def test_bidi_audio_io_output_interrupt(audio_output):
+    transcript_output = unittest.mock.AsyncMock()
+    audio_output._transcript_output = transcript_output
     audio_event = BidiAudioStreamEvent(
         audio=base64.b64encode(b"test-audio").decode("utf-8"),
         channels=2,
@@ -215,12 +257,25 @@ async def test_bidi_audio_io_output_interrupt(audio_output):
     tru_data, _ = audio_output._callback(None, frame_count=1)
     exp_data = b"\x00\x00"
     assert tru_data == exp_data
+    transcript_output.assert_any_await(interrupt_event)
 
 
-def test_bidi_audio_io_output_configs(py_audio, audio_output):
+@pytest.mark.asyncio
+async def test_response_complete_is_forwarded_to_transcript_output(audio_output):
+    transcript_output = unittest.mock.AsyncMock()
+    audio_output._transcript_output = transcript_output
+    audio_output._buffer.put(b"\x01\x02\x03\x04")
+    event = BidiResponseCompleteEvent(response_id="response-1", stop_reason="complete")
+
+    await audio_output(event)
+
+    transcript_output.assert_awaited_once_with(event)
+
+
+def test_bidi_audio_io_output_configs(pyaudio_module, py_audio, audio_output):
     py_audio.open.assert_called_once_with(
         channels=2,
-        format=pyaudio.paInt16,
+        format=pyaudio_module.paInt16,
         frames_per_buffer=2048,
         output=True,
         output_device_index=2,
@@ -229,36 +284,65 @@ def test_bidi_audio_io_output_configs(py_audio, audio_output):
     )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("direction", ["input", "output"])
+async def test_bidi_audio_io_start_rejects_model_without_audio_capability(pyaudio_module, direction):
+    agent = unittest.mock.MagicMock()
+    agent.model = object()
+    audio_io = BidiAudioIO()
+    io = audio_io.input() if direction == "input" else audio_io.output()
+
+    with pytest.raises(TypeError, match="BidiAudioIO requires a model that implements AudioCapable"):
+        await io.start(agent)
+
+    pyaudio_module.PyAudio.assert_not_called()
+
+
 # ===========================================================================
 # Audio processing (echo cancellation, noise suppression, AGC)
 # ===========================================================================
 
 # ---------------------------------------------------------------------------
-# AudioProcessorConfig validation
+# BidiAudioProcessorConfig defaults and validation
 # ---------------------------------------------------------------------------
 
 
-def test_config_defaults():
-    assert AudioProcessorConfig() == AudioProcessorConfig(
-        echo_cancellation=True,
-        stream_delay_ms=0,
-    )
+@pytest.mark.parametrize("audio_processor", [True, BidiAudioProcessorConfig()], ids=["boolean", "config"])
+def test_audio_processor_uses_defaults(audio_processor):
+    audio_io = BidiAudioIO(audio_processor=audio_processor)
+
+    assert audio_io._config["audio_processor"] == BidiAudioProcessorConfig(echo_cancellation=True, stream_delay_ms=0)
+    if isinstance(audio_processor, dict):
+        assert audio_processor == BidiAudioProcessorConfig()
+        assert audio_io._config["audio_processor"] is not audio_processor
+    assert audio_io._config["audio_processor"] is audio_io._audio_processor_config
+    assert audio_io._audio_processor is not None
 
 
 def test_config_rejects_negative_delay():
     with pytest.raises(ValueError, match="stream_delay_ms"):
-        AudioProcessorConfig(stream_delay_ms=-5)
+        BidiAudioIO(audio_processor=BidiAudioProcessorConfig(stream_delay_ms=-5))
 
 
 def test_config_rejects_excessive_delay():
     with pytest.raises(ValueError, match="stream_delay_ms"):
-        AudioProcessorConfig(stream_delay_ms=5000)
+        BidiAudioIO(audio_processor=BidiAudioProcessorConfig(stream_delay_ms=5000))
 
 
 def test_config_allows_disabling_echo_cancellation():
     # Headset case: noise suppression / AGC without echo cancellation.
-    config = AudioProcessorConfig(echo_cancellation=False)
-    assert config.echo_cancellation is False
+    config = BidiAudioProcessorConfig(echo_cancellation=False)
+    audio_io = BidiAudioIO(audio_processor=config)
+
+    assert config == BidiAudioProcessorConfig(echo_cancellation=False)
+    assert audio_io._config["audio_processor"] == BidiAudioProcessorConfig(echo_cancellation=False, stream_delay_ms=0)
+    assert audio_io._audio_processor is not None
+    assert audio_io._audio_processor._far_buffer is None
+
+
+def test_config_rejects_stream_delay_when_echo_cancellation_is_off():
+    with pytest.raises(ValueError, match="requires echo cancellation"):
+        BidiAudioIO(audio_processor=BidiAudioProcessorConfig(echo_cancellation=False, stream_delay_ms=10))
 
 
 # ---------------------------------------------------------------------------
@@ -266,44 +350,39 @@ def test_config_allows_disabling_echo_cancellation():
 # ---------------------------------------------------------------------------
 
 
-def test_processor_start_respects_echo_cancellation_flag():
-    module, processor_class, _ = _fake_pywebrtc()
-    with unittest.mock.patch.dict("sys.modules", {"pywebrtc_audio": module}):
-        proc = _AudioProcessor(AudioProcessorConfig(echo_cancellation=False))
-        proc.configure(input_rate=16000, output_rate=16000, num_channels=1)
+def test_processor_construction_respects_echo_cancellation_flag():
+    processor_patch, processor_class, _ = _fake_audio_processor()
+    with processor_patch:
+        _create_processor(echo_cancellation=False)
 
     assert processor_class.call_args.kwargs["echo_cancellation"] is False
 
 
-def test_ec_off_passes_none_far_and_skips_reference():
+def test_ec_off_processes_capture_with_none_reference():
     frame = np.ones(160, dtype=np.int16) * 1000
     cleaned = np.zeros(160, dtype=np.int16)
 
     processor = unittest.mock.MagicMock()
     processor.process.return_value = cleaned
-    module, _, _ = _fake_pywebrtc(processor)
+    processor_patch, _, _ = _fake_audio_processor(processor)
 
-    with unittest.mock.patch.dict("sys.modules", {"pywebrtc_audio": module}):
-        proc = _AudioProcessor(AudioProcessorConfig(echo_cancellation=False))
-        proc.configure(input_rate=16000, output_rate=16000, num_channels=1)
+    with processor_patch:
+        proc = _create_processor(echo_cancellation=False)
+        proc.process(frame.tobytes())
 
-        # record_playback is a no-op when EC is off.
-        proc.record_playback(np.ones(160, dtype=np.int16).tobytes())
-        proc.process_capture(frame.tobytes())
-
-    _, far_arg = processor.process.call_args[0]
-    assert far_arg is None
+    assert len(processor.process.call_args.args) == 2
+    np.testing.assert_array_equal(processor.process.call_args.args[0], frame)
+    assert processor.process.call_args.args[1] is None
 
 
-def test_process_capture_empty_input_returns_empty():
+def test_process_empty_input_returns_empty():
     # b"" is the shutdown sentinel emitted by _BidiAudioBuffer.stop(); it must not reach the C extension.
     processor = unittest.mock.MagicMock()
-    module, _, _ = _fake_pywebrtc(processor)
+    processor_patch, _, _ = _fake_audio_processor(processor)
 
-    with unittest.mock.patch.dict("sys.modules", {"pywebrtc_audio": module}):
-        proc = _AudioProcessor(AudioProcessorConfig())
-        proc.configure(input_rate=16000, output_rate=16000, num_channels=1)
-        result = proc.process_capture(b"")
+    with processor_patch:
+        proc = _create_processor()
+        result = proc.process(b"")
 
     assert result == b""
     processor.process.assert_not_called()
@@ -314,48 +393,77 @@ def test_process_capture_empty_input_returns_empty():
 # ---------------------------------------------------------------------------
 
 
-def test_no_processor_when_processing_disabled():
-    audio_io = BidiAudioIO()
-    assert audio_io._processor is None
-    assert audio_io.input()._processor is None
-    assert audio_io.output()._processor is None
+@pytest.mark.parametrize("config", [{}, {"audio_processor": False}], ids=["default", "false"])
+def test_no_audio_processor_when_processing_disabled(config):
+    audio_io = BidiAudioIO(**config)
+    input_ = audio_io.input()
+
+    assert audio_io._config["audio_processor"] is None
+    assert audio_io._audio_processor_config is None
+    assert audio_io._audio_processor is None
+    assert input_._audio_processor is None
+    assert audio_io.output()._audio_processor is None
 
 
-def test_processor_shared_between_input_and_output():
-    module, _, _ = _fake_pywebrtc()
-    with unittest.mock.patch.dict("sys.modules", {"pywebrtc_audio": module}):
-        audio_io = BidiAudioIO(processor=AudioProcessorConfig())
+def test_audio_processor_shared_between_input_and_output():
+    audio_processor_config = BidiAudioProcessorConfig(stream_delay_ms=20)
+    audio_io = BidiAudioIO(audio_processor=audio_processor_config)
+    input_ = audio_io.input()
+    output = audio_io.output()
 
-    assert audio_io._processor is not None
-    assert audio_io.input()._processor is audio_io._processor
-    assert audio_io.output()._processor is audio_io._processor
-
-
-def test_construction_raises_import_error_without_pywebrtc():
-    with unittest.mock.patch.dict("sys.modules", {"pywebrtc_audio": None}):
-        with pytest.raises(ImportError, match="pywebrtc-audio is required"):
-            BidiAudioIO(processor=AudioProcessorConfig())
+    assert audio_processor_config == BidiAudioProcessorConfig(stream_delay_ms=20)
+    assert audio_io._config["audio_processor"] == BidiAudioProcessorConfig(echo_cancellation=True, stream_delay_ms=20)
+    assert audio_io._config["audio_processor"] is not audio_processor_config
+    assert audio_io._config["audio_processor"] is audio_io._audio_processor_config
+    assert input_._audio_processor is audio_io._audio_processor
+    assert output._audio_processor is audio_io._audio_processor
 
 
-def test_processor_config_is_keyword_only():
-    # BidiAudioIO takes only keyword config; a positional processor config must not be accepted.
+def test_audio_module_import_error_includes_install_instruction():
+    module_name = "strands.experimental.bidi._audio"
+    module = sys.modules.pop(module_name)
+    original_import = builtins.__import__
+
+    def import_without_pywebrtc(name, *args, **kwargs):
+        if name == "pywebrtc_audio":
+            raise ModuleNotFoundError("No module named 'pywebrtc_audio'", name=name)
+        return original_import(name, *args, **kwargs)
+
+    try:
+        with unittest.mock.patch("builtins.__import__", side_effect=import_without_pywebrtc):
+            with pytest.raises(
+                ImportError,
+                match=(
+                    r"No module named 'pywebrtc_audio'.*Audio processing requires this optional dependency"
+                    r".*pip install 'strands-agents\[bidi-aec\]'"
+                ),
+            ):
+                BidiAudioIO(audio_processor=BidiAudioProcessorConfig())
+    finally:
+        sys.modules[module_name] = module
+
+
+def test_audio_config_is_keyword_only():
+    # BidiAudioIO takes only keyword configuration.
     with pytest.raises(TypeError):
-        BidiAudioIO(AudioProcessorConfig())  # type: ignore[misc]
+        BidiAudioIO(BidiAudioProcessorConfig())  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
-# _AudioProcessor.start — sample rate gate and processor construction
+# _BidiAudioProcessor startup and native processor construction
 # ---------------------------------------------------------------------------
 
 
-def test_processor_start_builds_audio_processor_with_config():
-    module, processor_class, _ = _fake_pywebrtc()
-    with unittest.mock.patch.dict("sys.modules", {"pywebrtc_audio": module}):
-        proc = _AudioProcessor(AudioProcessorConfig(stream_delay_ms=20))
-        proc.configure(input_rate=16000, output_rate=16000, num_channels=1)
+@pytest.mark.parametrize(("rate", "expected"), [(16000, 160), (24000, 240), (48000, 480)])
+def test_processor_calculates_frames_per_buffer(rate, expected):
+    assert _BidiAudioProcessor.frames_per_buffer(rate) == expected
 
-    # Noise suppression and auto gain control are always on when processing is enabled; only
-    # echo_cancellation and stream_delay_ms come from the config.
+
+def test_processor_construction_builds_audio_processor_with_config():
+    processor_patch, processor_class, _ = _fake_audio_processor()
+    with processor_patch:
+        _create_processor(stream_delay_ms=20)
+
     processor_class.assert_called_once_with(
         sample_rate=16000,
         num_channels=1,
@@ -366,41 +474,33 @@ def test_processor_start_builds_audio_processor_with_config():
     )
 
 
-@pytest.mark.parametrize("rate", [16000, 32000, 48000])
-def test_processor_start_accepts_supported_rates(rate):
-    module, _, _ = _fake_pywebrtc()
-    with unittest.mock.patch.dict("sys.modules", {"pywebrtc_audio": module}):
-        proc = _AudioProcessor(AudioProcessorConfig())
-        proc.configure(input_rate=rate, output_rate=rate, num_channels=1)
+@pytest.mark.parametrize("rate", [8000, 16000, 24000, 44100, 48000, 96000, 384000])
+def test_processor_construction_passes_input_rate_to_audio_processor(rate):
+    processor_patch, processor_class, _ = _fake_audio_processor()
+    with processor_patch:
+        _create_processor(input_rate=rate, output_rate=rate)
 
-
-@pytest.mark.parametrize("rate", [8000, 24000, 44100])
-def test_processor_start_rejects_unsupported_rates(rate):
-    proc = _AudioProcessor(AudioProcessorConfig())
-    with pytest.raises(ValueError, match="audio processing supports sample rates"):
-        proc.configure(input_rate=rate, output_rate=rate, num_channels=1)
+    assert processor_class.call_args.kwargs["sample_rate"] == rate
 
 
 # ---------------------------------------------------------------------------
-# _AudioProcessor reference buffer behaviour
+# _BidiAudioProcessor far data behaviour
 # ---------------------------------------------------------------------------
 
 
-def test_process_capture_passes_reference_to_processor():
+def test_process_passes_reference_to_processor():
     frame = np.ones(160, dtype=np.int16) * 1000
     ref = np.ones(160, dtype=np.int16) * 500
     cleaned = np.ones(160, dtype=np.int16) * 200
 
     processor = unittest.mock.MagicMock()
     processor.process.return_value = cleaned
-    module, _, _ = _fake_pywebrtc(processor)
+    processor_patch, _, _ = _fake_audio_processor(processor)
 
-    with unittest.mock.patch.dict("sys.modules", {"pywebrtc_audio": module}):
-        proc = _AudioProcessor(AudioProcessorConfig())
-        proc.configure(input_rate=16000, output_rate=16000, num_channels=1)
-
-        proc.record_playback(ref.tobytes())
-        result = proc.process_capture(frame.tobytes())
+    with processor_patch:
+        proc = _create_processor()
+        proc.add_far_data(ref.tobytes())
+        result = proc.process(frame.tobytes())
 
     near_arg, far_arg = processor.process.call_args[0]
     np.testing.assert_array_equal(near_arg, frame)
@@ -408,7 +508,7 @@ def test_process_capture_passes_reference_to_processor():
     np.testing.assert_array_equal(np.frombuffer(result, dtype=np.int16), cleaned)
 
 
-def test_process_capture_passes_silence_when_no_reference():
+def test_process_passes_silence_when_no_reference():
     # The WebRTC processor rejects a None far-end frame when echo cancellation is on, so an empty
     # reference buffer must be filled with zeros of the same length as the mic frame.
     frame = np.ones(160, dtype=np.int16) * 1000
@@ -416,12 +516,11 @@ def test_process_capture_passes_silence_when_no_reference():
 
     processor = unittest.mock.MagicMock()
     processor.process.return_value = cleaned
-    module, _, _ = _fake_pywebrtc(processor)
+    processor_patch, _, _ = _fake_audio_processor(processor)
 
-    with unittest.mock.patch.dict("sys.modules", {"pywebrtc_audio": module}):
-        proc = _AudioProcessor(AudioProcessorConfig())
-        proc.configure(input_rate=16000, output_rate=16000, num_channels=1)
-        proc.process_capture(frame.tobytes())
+    with processor_patch:
+        proc = _create_processor()
+        proc.process(frame.tobytes())
 
     near_arg, far_arg = processor.process.call_args[0]
     assert far_arg is not None
@@ -430,53 +529,39 @@ def test_process_capture_passes_silence_when_no_reference():
 
 
 def test_reference_overflow_drops_oldest():
-    module, _, _ = _fake_pywebrtc()
-    with unittest.mock.patch.dict("sys.modules", {"pywebrtc_audio": module}):
-        proc = _AudioProcessor(AudioProcessorConfig(), max_ref_frames=2)
-        proc.configure(input_rate=16000, output_rate=16000, num_channels=1)
-
-        proc.record_playback(b"\x01\x01")
-        proc.record_playback(b"\x02\x02")
-        proc.record_playback(b"\x03\x03")
-
-        # Mic frame is 2 samples (4 bytes); oldest frame (\x01\x01) was dropped on overflow.
-        ref = proc._take_reference(np.zeros(2, dtype=np.int16))
-
-    np.testing.assert_array_equal(ref, np.frombuffer(b"\x02\x02\x03\x03", dtype=np.int16))
-
-
-def test_clear_reference_drains_buffer_but_keeps_filter():
     processor = unittest.mock.MagicMock()
-    module, _, _ = _fake_pywebrtc(processor)
+    processor.process.return_value = np.zeros(2, dtype=np.int16)
+    processor_patch, _, _ = _fake_audio_processor(processor)
+    with processor_patch:
+        proc = _create_processor(far_buffer_size=2)
+        proc.add_far_data(b"\x01\x01\x01\x01")
+        proc.add_far_data(b"\x02\x02\x02\x02")
+        proc.add_far_data(b"\x03\x03\x03\x03")
 
-    with unittest.mock.patch.dict("sys.modules", {"pywebrtc_audio": module}):
-        proc = _AudioProcessor(AudioProcessorConfig())
-        proc.configure(input_rate=16000, output_rate=16000, num_channels=1)
-        proc.record_playback(b"\x01\x02\x03\x04")
-        proc.clear_reference()
+        # The oldest complete frame was dropped on overflow.
+        proc.process(np.zeros(2, dtype=np.int16).tobytes())
+
+    ref = processor.process.call_args.args[1]
+    np.testing.assert_array_equal(ref, np.frombuffer(b"\x02\x02\x02\x02", dtype=np.int16))
+
+
+def test_clear_far_buffer_drains_reference_but_keeps_filter():
+    processor = unittest.mock.MagicMock()
+    processor.process.return_value = np.zeros(2, dtype=np.int16)
+    processor_patch, _, _ = _fake_audio_processor(processor)
+
+    with processor_patch:
+        proc = _create_processor()
+        proc.add_far_data(b"\x01\x02\x03\x04")
+        proc.clear_far_data()
 
         # Buffer drained: reference for a 2-sample mic frame is silence.
-        ref = proc._take_reference(np.zeros(2, dtype=np.int16))
-        np.testing.assert_array_equal(ref, np.zeros(2, dtype=np.int16))
+        proc.process(np.zeros(2, dtype=np.int16).tobytes())
 
+    ref = processor.process.call_args.args[1]
+    np.testing.assert_array_equal(ref, np.zeros(2, dtype=np.int16))
     # Interruption must NOT reset the converged AEC filter.
     processor.reset.assert_not_called()
-
-
-def test_start_drains_stale_reference():
-    # Restarting the processor (e.g. after a model reconnect) must not pair reference frames left over
-    # from the previous session with fresh mic input.
-    module, _, _ = _fake_pywebrtc()
-    with unittest.mock.patch.dict("sys.modules", {"pywebrtc_audio": module}):
-        proc = _AudioProcessor(AudioProcessorConfig())
-        proc.configure(input_rate=16000, output_rate=16000, num_channels=1)
-        proc.record_playback(b"\x01\x02\x03\x04")
-
-        # Simulate a session restart.
-        proc.configure(input_rate=16000, output_rate=16000, num_channels=1)
-
-        ref = proc._take_reference(np.zeros(2, dtype=np.int16))
-        np.testing.assert_array_equal(ref, np.zeros(2, dtype=np.int16))
 
 
 # ---------------------------------------------------------------------------
@@ -485,29 +570,23 @@ def test_start_drains_stale_reference():
 
 
 def test_resample_same_rate_unchanged():
-    proc = _AudioProcessor(AudioProcessorConfig())
-    proc._input_rate = 16000
-    proc._output_rate = 16000
-    data = np.array([100, 200, 300, 400], dtype=np.int16).tobytes()
-    assert proc._resample_reference(data) == data
+    proc = _create_processor()
+    samples = np.array([100, 200, 300, 400], dtype=np.int16)
+    np.testing.assert_array_equal(proc._resample(samples), samples)
 
 
 def test_resample_downsample_length():
-    proc = _AudioProcessor(AudioProcessorConfig())
-    proc._input_rate = 16000
-    proc._output_rate = 24000
+    proc = _create_processor(output_rate=24000)
     samples = np.arange(240, dtype=np.int16)
-    result = np.frombuffer(proc._resample_reference(samples.tobytes()), dtype=np.int16)
+    result = proc._resample(samples)
     assert len(result) == round(240 * (16000 / 24000))
 
 
 def test_resample_upsample_length():
-    proc = _AudioProcessor(AudioProcessorConfig())
-    proc._input_rate = 24000
-    proc._output_rate = 16000
+    proc = _create_processor(input_rate=32000)
     samples = np.arange(160, dtype=np.int16)
-    result = np.frombuffer(proc._resample_reference(samples.tobytes()), dtype=np.int16)
-    assert len(result) == round(160 * (24000 / 16000))
+    result = proc._resample(samples)
+    assert len(result) == round(160 * (32000 / 16000))
 
 
 # ---------------------------------------------------------------------------
@@ -516,14 +595,14 @@ def test_resample_upsample_length():
 
 
 @pytest.mark.asyncio
-async def test_input_aligns_buffer_to_10ms_when_processing_on(py_audio, aec_agent):
-    module, _, _ = _fake_pywebrtc()
-    with unittest.mock.patch.dict("sys.modules", {"pywebrtc_audio": module}):
-        audio_io = BidiAudioIO(processor=AudioProcessorConfig(), input_frames_per_buffer=999)
+async def test_input_aligns_buffer_to_10ms_when_echo_cancellation_on(py_audio, aec_agent):
+    processor_patch, _, _ = _fake_audio_processor()
+    with processor_patch:
+        audio_io = BidiAudioIO(audio_processor=BidiAudioProcessorConfig())
         input_ = audio_io.input()
         await input_.start(aec_agent)
 
-    # 10ms at 16kHz = 160 samples, overriding the configured 999.
+    # 10ms at 16kHz = 160 samples.
     assert py_audio.open.call_args.kwargs["frames_per_buffer"] == 160
     await input_.stop()
 
@@ -538,25 +617,72 @@ async def test_input_keeps_configured_buffer_when_processing_off(py_audio, aec_a
     await input_.stop()
 
 
+@pytest.mark.asyncio
+async def test_input_keeps_configured_buffer_when_echo_cancellation_off(py_audio, aec_agent):
+    processor_patch, _, _ = _fake_audio_processor()
+    with processor_patch:
+        audio_io = BidiAudioIO(
+            audio_processor=BidiAudioProcessorConfig(echo_cancellation=False),
+            input_frames_per_buffer=1024,
+        )
+        input_ = audio_io.input()
+        await input_.start(aec_agent)
+
+    assert py_audio.open.call_args.kwargs["frames_per_buffer"] == 1024
+    await input_.stop()
+
+
 def test_mic_buffer_bounded_to_reference_horizon_when_ec_on():
     # The mic buffer must share the reference buffer's frame bound so both evict in lockstep under a stall,
-    # even if the user passes a larger input_buffer_size.
-    module, _, _ = _fake_pywebrtc()
-    with unittest.mock.patch.dict("sys.modules", {"pywebrtc_audio": module}):
-        audio_io = BidiAudioIO(processor=AudioProcessorConfig(), input_buffer_size=9999)
+    # using the configured input buffer size when it is below the processing cap.
+    processor_patch, _, _ = _fake_audio_processor()
+    with processor_patch:
+        audio_io = BidiAudioIO(audio_processor=BidiAudioProcessorConfig(), input_buffer_size=2)
         input_ = audio_io.input()
 
-    assert input_._buffer._size == audio_io._processor._max_ref_frames
+    assert audio_io._config["audio_processor"] == BidiAudioProcessorConfig(echo_cancellation=True, stream_delay_ms=0)
+    assert audio_io._config["input_buffer_size"] == 2
+    assert input_._buffer._size == 2
+    assert audio_io._audio_processor._far_buffer_size == 2
 
 
-def test_mic_buffer_uses_configured_size_when_ec_off():
+def test_mic_buffer_defaults_to_processing_limit():
+    audio_io = BidiAudioIO(audio_processor=BidiAudioProcessorConfig(), input_buffer_size=None)
+    input_ = audio_io.input()
+
+    assert audio_io._config["input_buffer_size"] == 100
+    assert input_._buffer._size == 100
+    assert audio_io._audio_processor._far_buffer_size == 100
+
+
+@pytest.mark.parametrize("input_buffer_size", [-1, 0, 101, 9999])
+def test_mic_buffer_rejects_invalid_size_when_ec_on(input_buffer_size):
+    with pytest.raises(ValueError, match="input_buffer_size"):
+        BidiAudioIO(audio_processor=BidiAudioProcessorConfig(), input_buffer_size=input_buffer_size)
+
+
+def test_mic_buffer_uses_configured_size_when_ec_off(pyaudio_module):
+    _ = pyaudio_module
     # With echo cancellation off there is no reference to align to, so the user's sizing is respected.
-    module, _, _ = _fake_pywebrtc()
-    with unittest.mock.patch.dict("sys.modules", {"pywebrtc_audio": module}):
-        audio_io = BidiAudioIO(processor=AudioProcessorConfig(echo_cancellation=False), input_buffer_size=7)
+    processor_patch, _, _ = _fake_audio_processor()
+    with processor_patch:
+        audio_io = BidiAudioIO(audio_processor=BidiAudioProcessorConfig(echo_cancellation=False), input_buffer_size=7)
         input_ = audio_io.input()
 
     assert input_._buffer._size == 7
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"input_frames_per_buffer": 160},
+        {"output_frames_per_buffer": 160},
+        {"input_frames_per_buffer": 160, "output_frames_per_buffer": 160},
+    ],
+)
+def test_frames_per_buffer_rejected_when_ec_on(config):
+    with pytest.raises(ValueError, match="calculated automatically"):
+        BidiAudioIO(audio_processor=BidiAudioProcessorConfig(), **config)
 
 
 @pytest.mark.asyncio
@@ -564,9 +690,9 @@ async def test_output_aligns_buffer_to_10ms_at_output_rate(py_audio, agent_mixed
     # Output stream runs at output_rate (24k here). frame_count is measured in samples at the stream's
     # own rate, so the buffer must be sized off output_rate (240 = 10ms@24k), NOT input_rate (which would
     # give 160 = 6.67ms@24k and produce short, zero-padded reference frames).
-    module, _, _ = _fake_pywebrtc()
-    with unittest.mock.patch.dict("sys.modules", {"pywebrtc_audio": module}):
-        audio_io = BidiAudioIO(processor=AudioProcessorConfig(), output_frames_per_buffer=999)
+    processor_patch, _, _ = _fake_audio_processor()
+    with processor_patch:
+        audio_io = BidiAudioIO(audio_processor=BidiAudioProcessorConfig())
         output = audio_io.output()
         await output.start(agent_mixed_rates)
 
@@ -576,9 +702,9 @@ async def test_output_aligns_buffer_to_10ms_at_output_rate(py_audio, agent_mixed
 
 @pytest.mark.asyncio
 async def test_output_aligns_buffer_to_10ms_matched_rates(py_audio, aec_agent):
-    module, _, _ = _fake_pywebrtc()
-    with unittest.mock.patch.dict("sys.modules", {"pywebrtc_audio": module}):
-        audio_io = BidiAudioIO(processor=AudioProcessorConfig())
+    processor_patch, _, _ = _fake_audio_processor()
+    with processor_patch:
+        audio_io = BidiAudioIO(audio_processor=BidiAudioProcessorConfig())
         output = audio_io.output()
         await output.start(aec_agent)
 
@@ -598,16 +724,51 @@ async def test_output_keeps_configured_buffer_when_processing_off(py_audio, aec_
 
 
 @pytest.mark.asyncio
+async def test_output_keeps_configured_buffer_when_echo_cancellation_off(py_audio, aec_agent):
+    audio_io = BidiAudioIO(
+        audio_processor=BidiAudioProcessorConfig(echo_cancellation=False),
+        output_frames_per_buffer=2048,
+    )
+    output = audio_io.output()
+    await output.start(aec_agent)
+
+    assert py_audio.open.call_args.kwargs["frames_per_buffer"] == 2048
+    assert output._audio_processor is None
+    await output.stop()
+
+
+@pytest.mark.asyncio
+async def test_input_start_replaces_far_buffer(py_audio, aec_agent):
+    audio_io = BidiAudioIO(audio_processor=BidiAudioProcessorConfig())
+    input_ = audio_io.input()
+
+    await input_.start(aec_agent)
+    first_far_buffer = audio_io._audio_processor._far_buffer
+    audio_io._audio_processor.add_far_data(b"\x01\x02")
+    await input_.stop()
+
+    await input_.start(aec_agent)
+
+    assert audio_io._audio_processor._far_buffer is not first_far_buffer
+    assert audio_io._audio_processor._get_far_data() == b""
+    await input_.stop()
+
+
+@pytest.mark.asyncio
 async def test_mixed_rate_reference_matches_mic_frame_length(py_audio, agent_mixed_rates):
     # End-to-end regression for the output-rate bug: with a correctly sized output buffer, a 10ms speaker
     # frame at 24k resamples to exactly a 10ms mic frame at 16k (320 bytes), so the reference is fully real
     # audio with no zero-padding.
     from strands.experimental.bidi.types.events import BidiAudioStreamEvent
 
-    module, _, _ = _fake_pywebrtc()
-    with unittest.mock.patch.dict("sys.modules", {"pywebrtc_audio": module}):
-        audio_io = BidiAudioIO(processor=AudioProcessorConfig())
+    processor = unittest.mock.MagicMock()
+    processor.process.return_value = np.zeros(160, dtype=np.int16)
+    processor_patch, _, _ = _fake_audio_processor(processor)
+    with processor_patch:
+        audio_io = BidiAudioIO(audio_processor=BidiAudioProcessorConfig())
+        input_ = audio_io.input()
         output = audio_io.output()
+        await input_.start(agent_mixed_rates)
         await output.start(agent_mixed_rates)
 
         # One 10ms playback frame at 24k = 240 samples = 480 bytes.
@@ -625,12 +786,14 @@ async def test_mixed_rate_reference_matches_mic_frame_length(py_audio, agent_mix
         # A 10ms mic frame at 16k = 160 samples = 320 bytes. The resampled reference must fill it with real
         # audio (not zero-padded silence).
         mic = np.zeros(160, dtype=np.int16)
-        ref = audio_io._processor._take_reference(mic)
+        input_._audio_processor.process(mic.tobytes())
+        ref = processor.process.call_args.args[1]
         assert ref.shape == mic.shape
         # With the bug, only ~107 samples of real reference arrive and the trailing ~53 are zero-padded.
         # With the fix, the resampled ramp fills the whole frame, so the final samples are non-zero.
         assert ref[-1] != 0 and ref[-10] != 0
 
+        await input_.stop()
         await output.stop()
 
 
@@ -638,10 +801,12 @@ async def test_mixed_rate_reference_matches_mic_frame_length(py_audio, agent_mix
 async def test_output_records_reference_at_playback(py_audio, aec_agent):
     from strands.experimental.bidi.types.events import BidiAudioStreamEvent
 
-    module, _, _ = _fake_pywebrtc()
-    with unittest.mock.patch.dict("sys.modules", {"pywebrtc_audio": module}):
-        audio_io = BidiAudioIO(processor=AudioProcessorConfig())
+    processor_patch, _, _ = _fake_audio_processor()
+    with processor_patch:
+        audio_io = BidiAudioIO(audio_processor=BidiAudioProcessorConfig())
+        input_ = audio_io.input()
         output = audio_io.output()
+        await input_.start(aec_agent)
         await output.start(aec_agent)
 
         audio_data = b"\x10\x20\x30\x40"
@@ -655,15 +820,14 @@ async def test_output_records_reference_at_playback(py_audio, aec_agent):
         )
 
         # Reference is written only when audio actually exits the speaker (callback).
-        mic = np.zeros(2, dtype=np.int16)
-        np.testing.assert_array_equal(audio_io._processor._take_reference(mic), np.zeros(2, dtype=np.int16))
+        assert audio_io._audio_processor._get_far_data() == b""
 
         played, _ = output._callback(None, frame_count=2)
         assert played == audio_data
 
-        ref = audio_io._processor._take_reference(mic)
-        np.testing.assert_array_equal(ref, np.frombuffer(audio_data, dtype=np.int16))
+        assert audio_io._audio_processor._get_far_data() == audio_data
 
+        await input_.stop()
         await output.stop()
 
 
@@ -671,10 +835,12 @@ async def test_output_records_reference_at_playback(py_audio, aec_agent):
 async def test_output_clears_reference_on_interruption(py_audio, aec_agent):
     from strands.experimental.bidi.types.events import BidiAudioStreamEvent, BidiInterruptionEvent
 
-    module, _, _ = _fake_pywebrtc()
-    with unittest.mock.patch.dict("sys.modules", {"pywebrtc_audio": module}):
-        audio_io = BidiAudioIO(processor=AudioProcessorConfig())
+    processor_patch, _, _ = _fake_audio_processor()
+    with processor_patch:
+        audio_io = BidiAudioIO(audio_processor=BidiAudioProcessorConfig())
+        input_ = audio_io.input()
         output = audio_io.output()
+        await input_.start(aec_agent)
         await output.start(aec_agent)
 
         audio_data = b"\x10\x20\x30\x40"
@@ -690,27 +856,29 @@ async def test_output_clears_reference_on_interruption(py_audio, aec_agent):
 
         await output(BidiInterruptionEvent(reason="user_speech"))
 
-        mic = np.zeros(2, dtype=np.int16)
-        np.testing.assert_array_equal(audio_io._processor._take_reference(mic), np.zeros(2, dtype=np.int16))
+        assert audio_io._audio_processor._get_far_data() == b""
+        await input_.stop()
         await output.stop()
 
 
 @pytest.mark.asyncio
-async def test_end_to_end_capture_cancels_echo(py_audio, aec_agent):
+async def test_input_applies_audio_processing(py_audio, aec_agent):
     frame = np.ones(160, dtype=np.int16) * 1000
     cleaned = np.ones(160, dtype=np.int16) * 200
 
     processor = unittest.mock.MagicMock()
     processor.process.return_value = cleaned
-    module, _, _ = _fake_pywebrtc(processor)
+    processor_patch, _, _ = _fake_audio_processor(processor)
 
-    with unittest.mock.patch.dict("sys.modules", {"pywebrtc_audio": module}):
-        audio_io = BidiAudioIO(processor=AudioProcessorConfig())
+    with processor_patch:
+        audio_io = BidiAudioIO(audio_processor=BidiAudioProcessorConfig())
         input_ = audio_io.input()
         await input_.start(aec_agent)
 
         input_._buffer.put(frame.tobytes())
         event = await input_()
+
+        await input_.stop()
 
     result = np.frombuffer(base64.b64decode(event.audio), dtype=np.int16)
     np.testing.assert_array_equal(result, cleaned)
@@ -730,22 +898,21 @@ def test_real_library_roundtrip_and_contract():
 
     # Echo cancellation on: first frame with an empty reference buffer must not crash (the empty buffer is
     # zero-filled, never passed as None), and output length matches input.
-    proc = _AudioProcessor(AudioProcessorConfig())
-    proc.configure(input_rate=16000, output_rate=16000, num_channels=1)
+    proc = _create_processor()
 
     mic = (np.ones(160, dtype=np.int16) * 1000).tobytes()
-    out = proc.process_capture(mic)
+    out = proc.process(mic)
     assert len(out) == len(mic)
 
     # With a recorded reference the pairing still yields a matching-length frame.
-    proc.record_playback((np.ones(160, dtype=np.int16) * 500).tobytes())
-    assert len(proc.process_capture(mic)) == len(mic)
+    proc.add_far_data((np.ones(160, dtype=np.int16) * 500).tobytes())
+    assert len(proc.process(mic)) == len(mic)
 
     # The empty shutdown sentinel is returned unchanged rather than reaching the C extension.
-    assert proc.process_capture(b"") == b""
+    assert proc.process(b"") == b""
 
-    # Contract that makes the zero-fill in _take_reference necessary: with echo cancellation on, the library
-    # rejects a None far-end frame. This is why an empty reference buffer must be zero-filled, never None.
+    # With echo cancellation on, the library rejects a None far-end frame. This is why an empty playback
+    # buffer must be zero-filled before invoking the native processor.
     with pytest.raises(ValueError):
         proc._processor.process(np.zeros(160, dtype=np.int16), None)
 
@@ -756,15 +923,14 @@ def test_real_library_echo_cancellation_off_still_processes():
     # Echo cancellation off: no reference is used (far=None) and the frame is still processed by noise
     # suppression / AGC. Assert the output actually differs from the input, so the test fails if the config
     # were ignored (a length-only check would pass even on an identity pass-through).
-    proc = _AudioProcessor(AudioProcessorConfig(echo_cancellation=False))
-    proc.configure(input_rate=16000, output_rate=16000, num_channels=1)
+    proc = _create_processor(echo_cancellation=False)
 
     rng = np.random.default_rng(0)
     out = np.array([], dtype=np.int16)
     frame = np.array([], dtype=np.int16)
     for _ in range(50):  # let noise suppression / AGC engage
         frame = (rng.standard_normal(160) * 300).astype(np.int16)
-        out = np.frombuffer(proc.process_capture(frame.tobytes()), dtype=np.int16)
+        out = np.frombuffer(proc.process(frame.tobytes()), dtype=np.int16)
 
     assert len(out) == len(frame)
     assert not np.array_equal(out, frame)

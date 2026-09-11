@@ -8,6 +8,8 @@ import pydantic
 import pytest
 
 import strands
+from strands.agent import AgentMetadata
+from strands.models import CacheConfig
 from strands.models.openai import OpenAIModel
 from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
 
@@ -720,6 +722,113 @@ def test_format_request_respects_legacy_stream_param(openai_client, model_id, me
 
     assert tru_request["stream"] is False
     assert "stream_options" not in tru_request
+
+
+def test_cache_key_maps_to_prompt_cache_key(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig(cache_key="tenant-42"))
+
+    assert model.format_request(messages)["prompt_cache_key"] == "tenant-42"
+
+
+def test_cache_key_absent_when_unset(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig())
+
+    assert "prompt_cache_key" not in model.format_request(messages)
+
+
+def test_cache_key_derived_from_agent_metadata_session(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig())
+
+    request = model.format_request(messages, agent_metadata=AgentMetadata(session_id="s1"))
+
+    assert request["prompt_cache_key"] == "strands-s1"
+
+
+def test_configured_cache_key_wins_over_agent_metadata(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig(cache_key="tenant-42"))
+
+    request = model.format_request(messages, agent_metadata=AgentMetadata(session_id="s1"))
+
+    assert request["prompt_cache_key"] == "tenant-42"
+
+
+def test_false_cache_key_opts_out_of_agent_metadata(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig(cache_key=False))
+
+    request = model.format_request(messages, agent_metadata=AgentMetadata(session_id="s1"))
+
+    assert "prompt_cache_key" not in request
+
+
+def test_agent_metadata_without_session_yields_no_cache_key(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig())
+
+    request = model.format_request(messages, agent_metadata=AgentMetadata(session_id=None))
+
+    assert "prompt_cache_key" not in request
+
+
+@pytest.mark.asyncio
+async def test_stream_derives_prompt_cache_key_from_agent_session(openai_client, model_id, agenerator, alist):
+    """stream threads agent_metadata so the outbound request carries the derived routing key."""
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig())
+    mock_delta = unittest.mock.Mock(content=None, tool_calls=None, reasoning_content=None)
+    mock_event_1 = unittest.mock.Mock(choices=[unittest.mock.Mock(finish_reason="stop", delta=mock_delta)])
+    mock_event_2 = unittest.mock.Mock()
+    mock_event_3 = unittest.mock.Mock(usage=None)
+    openai_client.chat.completions.create = unittest.mock.AsyncMock(
+        return_value=agenerator([mock_event_1, mock_event_2, mock_event_3]),
+    )
+
+    await alist(
+        model.stream([{"role": "user", "content": []}], agent_metadata=AgentMetadata(session_id="s1"))
+    )
+
+    _, call_kwargs = openai_client.chat.completions.create.call_args
+    assert call_kwargs["prompt_cache_key"] == "strands-s1"
+
+
+def test_explicit_prompt_cache_key_in_params_wins(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIModel(
+        model_id=model_id,
+        params={"prompt_cache_key": "explicit"},
+        cache_config=CacheConfig(cache_key="from-config"),
+    )
+
+    assert model.format_request(messages)["prompt_cache_key"] == "explicit"
+
+
+@pytest.mark.parametrize("retention", ["24h", "in_memory"])
+def test_translatable_ttl_maps_to_prompt_cache_retention(openai_client, model_id, messages, retention):
+    _ = openai_client
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig(cache_key="k", ttl=retention))
+
+    assert model.format_request(messages)["prompt_cache_retention"] == retention
+
+
+def test_untranslatable_ttl_is_ignored_and_warned(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig(cache_key="k", ttl="5m"))
+
+    with pytest.warns(UserWarning, match="not an openai retention value"):
+        request = model.format_request(messages)
+
+    assert "prompt_cache_retention" not in request
+
+
+def test_placement_fields_are_no_ops_warned(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig(strategy="anthropic", cache_key="k"))
+
+    with pytest.warns(UserWarning, match="have no effect"):
+        model.format_request(messages)
 
 
 def test_format_request_with_tool_choice_auto(model, messages, tool_specs, system_prompt):
@@ -1974,6 +2083,17 @@ def test_format_request_filters_s3_source_image(model, caplog):
     assert "Location sources are not supported by OpenAI" in caplog.text
 
 
+def test_format_request_skips_message_cache_point(model, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.openai")
+
+    messages = [{"role": "user", "content": [{"text": "durable prefix"}, {"cachePoint": {"type": "default"}}]}]
+
+    request = model.format_request(messages)
+
+    assert request["messages"][0]["content"] == [{"text": "durable prefix", "type": "text"}]
+    assert "cachePoint content block is not supported by OpenAI" in caplog.text
+
+
 def test_format_request_filters_location_source_document(model, caplog):
     """Test that documents with Location sources are filtered out with warning."""
     caplog.set_level(logging.WARNING, logger="strands.models.openai")
@@ -2172,6 +2292,7 @@ class TestOpenAIModelBedrockMantleConfig:
             ("google.gemma-4-26b-a4b", "/openai/v1"),
             ("google.gemma-4-e2b", "/openai/v1"),
             ("openai.gpt-5.6-terra", "/openai/v1"),
+            ("openai.gpt-6-astra", "/openai/v1"),
             # Gemma 3 is served from /v1 while Gemma 4 is not, so `google.` cannot be a prefix.
             ("google.gemma-3-27b-it", "/v1"),
             ("google.gemma-3-4b-it", "/v1"),
@@ -2204,6 +2325,7 @@ class TestOpenAIModelBedrockMantleConfig:
             # Point releases within a verified line, beyond the verified catalog.
             ("xai.grok-4.9", "/openai/v1"),
             ("openai.gpt-5.9-unreleased", "/openai/v1"),
+            ("openai.gpt-6-nova", "/openai/v1"),
             # New lines the prefixes deliberately do not cover.
             ("xai.grok-5", "/v1"),
             ("xai.grok-5-preview", "/v1"),
