@@ -1475,7 +1475,7 @@ class TestPromptCaching:
         assert self._breakpoints(request) == []
 
     def test_cache_config_adds_breakpoint_to_last_user_message(self, model, messages, model_id, max_tokens):
-        model.update_config(cache_config=CacheConfig(strategy="auto"))
+        model.update_config(cache_config=CacheConfig(strategy="anthropic"))
 
         assert model.format_request(messages) == {
             "max_tokens": max_tokens,
@@ -1486,19 +1486,142 @@ class TestPromptCaching:
             "tools": [],
         }
 
-    def test_auto_and_anthropic_strategies_coincide(self, model, messages, tool_specs):
-        """Documented behavior: the Anthropic API caches on every active Claude model, so ``auto`` has no
-        model-support check to apply and the two strategies produce the same request."""
+    def test_auto_and_anthropic_strategies_differ(self, model, messages, tool_specs):
+        """``auto`` delegates breakpoint placement to the API's automatic caching; ``anthropic`` keeps
+        the client-side injection on the last user message."""
         model.update_config(cache_config=CacheConfig(strategy="auto"))
         auto_request = model.format_request(messages, tool_specs)
 
         model.update_config(cache_config=CacheConfig(strategy="anthropic"))
         anthropic_request = model.format_request(messages, tool_specs)
 
-        assert auto_request == anthropic_request
+        assert auto_request["extra_body"] == {"cache_control": {"type": "ephemeral"}}
+        assert [bp for bp in self._breakpoints(auto_request) if bp[0] == "messages"] == []
+        assert "extra_body" not in anthropic_request
+        assert [bp for bp in self._breakpoints(anthropic_request) if bp[0] == "messages"] == [
+            ("messages", 0, {"type": "ephemeral"})
+        ]
+
+    def test_auto_turns_on_automatic_caching(self, model, messages, model_id, max_tokens):
+        """``auto`` sends the API's top-level cache_control instead of injecting a block-level point. The
+        field rides in extra_body because the pinned anthropic floor predates the native parameter."""
+        model.update_config(cache_config=CacheConfig(strategy="auto"))
+
+        assert model.format_request(messages) == {
+            "max_tokens": max_tokens,
+            "messages": [{"role": "user", "content": [{"type": "text", "text": "test"}]}],
+            "model": model_id,
+            "tools": [],
+            "extra_body": {"cache_control": {"type": "ephemeral"}},
+        }
+
+    def test_automatic_caching_carries_the_configured_ttl(self, model, messages):
+        model.update_config(cache_config=CacheConfig(strategy="auto", ttl="1h"))
+
+        request = model.format_request(messages)
+
+        assert request["extra_body"] == {"cache_control": {"type": "ephemeral", "ttl": "1h"}}
+
+    def test_automatic_caching_keeps_the_tools_and_system_sections(self, model, messages, tool_specs):
+        """Automatic caching covers the conversation; the tools and system sections keep their own
+        breakpoints and TTLs."""
+        model.update_config(cache_config=CacheConfig(strategy="auto", tools_ttl=True))
+
+        request = model.format_request(messages, tool_specs, system_prompt="static prompt")
+
+        assert self._breakpoints(request) == [
+            ("tools", "t2", {"type": "ephemeral"}),
+            ("system", "text", {"type": "ephemeral"}),
+        ]
+        assert request["extra_body"] == {"cache_control": {"type": "ephemeral"}}
+
+    def test_automatic_caching_still_strips_accumulated_cache_points(self, model):
+        """The breakpoint-budget protection applies under both strategies; only the placement moved."""
+        messages = [
+            {"role": "user", "content": [{"text": "one"}, {"cachePoint": {"type": "default"}}]},
+            {"role": "assistant", "content": [{"text": "two"}]},
+            {"role": "user", "content": [{"text": "three"}]},
+        ]
+        model.update_config(cache_config=CacheConfig(strategy="auto"))
+
+        request = model.format_request(messages)
+
+        assert self._breakpoints(request) == []
+        assert request["extra_body"] == {"cache_control": {"type": "ephemeral"}}
+
+    def test_automatic_caching_coexists_with_an_honored_cache_point(self, model):
+        """A hand-placed boundary in the last user message is still emitted alongside the top-level field."""
+        messages = [
+            {"role": "user", "content": [{"text": "stable"}, {"cachePoint": {"type": "default"}}, {"text": "volatile"}]}
+        ]
+        model.update_config(cache_config=CacheConfig(strategy="auto"))
+
+        request = model.format_request(messages)
+
+        assert self._breakpoints(request) == [("messages", 0, {"type": "ephemeral"})]
+        assert request["extra_body"] == {"cache_control": {"type": "ephemeral"}}
+
+    def test_automatic_caching_skipped_at_the_breakpoint_limit(self, model, messages, caplog):
+        """The API rejects the top-level field when the maximum of explicit breakpoints already exists."""
+        system = [{"type": "text", "text": f"chunk {i}", "cache_control": {"type": "ephemeral"}} for i in range(4)]
+        model.update_config(cache_config=CacheConfig(strategy="auto"), params={"system": system})
+
+        request = model.format_request(messages)
+
+        assert "extra_body" not in request
+        assert "skipped automatic caching" in caplog.text
+
+    def test_caller_supplied_top_level_cache_control_wins(self, model, messages):
+        """A cache_control passed through params is the caller's own placement; auto defers to it."""
+        model.update_config(
+            cache_config=CacheConfig(strategy="auto", ttl="1h"),
+            params={"cache_control": {"type": "ephemeral", "ttl": "5m"}},
+        )
+
+        request = model.format_request(messages)
+
+        assert request["cache_control"] == {"type": "ephemeral", "ttl": "5m"}
+        assert "extra_body" not in request
+
+    def test_automatic_caching_merges_with_params_extra_body(self, model, messages):
+        """Caller extra_body entries survive, and a caller cache_control there takes precedence."""
+        model.update_config(cache_config=CacheConfig(strategy="auto"), params={"extra_body": {"service_tier": "flex"}})
+
+        request = model.format_request(messages)
+
+        assert request["extra_body"] == {"cache_control": {"type": "ephemeral"}, "service_tier": "flex"}
+
+    def test_auto_with_per_call_trailing_blocks_falls_back_to_explicit_placement(self, model):
+        """Automatic caching cannot keep its breakpoint ahead of per-call content: it lands inside the
+        rebuilt tail, and every request writes a cache entry that none ever reads (verified live). A
+        declared tail therefore gets the explicit point placed ahead of it, and no top-level field."""
+        model.update_config(cache_config=CacheConfig(strategy="auto"))
+        messages = [{"role": "user", "content": [{"text": "durable ask"}, {"text": "per-call"}]}]
+
+        request = model.format_request(messages, dynamic_trailing_blocks=1)
+
+        assert "extra_body" not in request
+        assert request["messages"][0]["content"] == [
+            {"type": "text", "text": "durable ask", "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": "per-call"},
+        ]
+
+    def test_cross_sdk_automatic_caching_parity(self, model, messages):
+        """Pins the automatic-caching value shared with strands-ts, which sends the same top-level
+        cache_control natively rather than through extra_body. Update both together or the SDKs drift.
+
+        The mirror of this test is "turns on automatic caching for the auto strategy" in
+        strands-ts/src/models/__tests__/anthropic.test.ts.
+        """
+        model.update_config(cache_config=CacheConfig(strategy="auto", ttl="1h"))
+
+        request = model.format_request(messages)
+
+        assert request["extra_body"] == {"cache_control": {"type": "ephemeral", "ttl": "1h"}}
+        assert self._breakpoints(request) == []
 
     def test_cache_config_ttl_is_carried_onto_cache_control(self, model, messages):
-        model.update_config(cache_config=CacheConfig(strategy="auto", ttl="1h"))
+        model.update_config(cache_config=CacheConfig(strategy="anthropic", ttl="1h"))
 
         request = model.format_request(messages)
 
@@ -1549,7 +1672,7 @@ class TestPromptCaching:
 
     def test_tools_ttl_true_derives_from_shared_ttl(self, model, messages, tool_specs):
         """tools_ttl=True mirrors system_prompt_ttl: it derives the tools section duration from cache_config.ttl."""
-        model.update_config(cache_config=CacheConfig(strategy="auto", ttl="1h", tools_ttl=True))
+        model.update_config(cache_config=CacheConfig(strategy="anthropic", ttl="1h", tools_ttl=True))
 
         breakpoints = self._breakpoints(model.format_request(messages, tool_specs))
 
@@ -1560,7 +1683,7 @@ class TestPromptCaching:
 
     def test_tools_ttl_string_sets_the_section_duration(self, model, messages, tool_specs):
         """A tools_ttl string sets the tools section's own duration rather than deriving from the shared ttl."""
-        model.update_config(cache_config=CacheConfig(strategy="auto", ttl="1h", tools_ttl="5m"))
+        model.update_config(cache_config=CacheConfig(strategy="anthropic", ttl="1h", tools_ttl="5m"))
 
         breakpoints = self._breakpoints(model.format_request(messages, tool_specs))
 
@@ -1571,7 +1694,7 @@ class TestPromptCaching:
 
     def test_tools_ttl_true_without_shared_ttl_stays_untimed(self, model, messages, tool_specs):
         """With nothing to derive from, tools_ttl=True still caches the tools but at the API default."""
-        model.update_config(cache_config=CacheConfig(strategy="auto", tools_ttl=True))
+        model.update_config(cache_config=CacheConfig(strategy="anthropic", tools_ttl=True))
 
         breakpoints = self._breakpoints(model.format_request(messages, tool_specs))
 
@@ -1600,7 +1723,7 @@ class TestPromptCaching:
         """An explicitly set tools_ttl wins over the deprecated cache_tools when both are set."""
         with pytest.warns(DeprecationWarning, match="cache_tools is deprecated"):
             model.update_config(
-                cache_config=CacheConfig(strategy="auto", ttl="1h", tools_ttl="5m"),
+                cache_config=CacheConfig(strategy="anthropic", ttl="1h", tools_ttl="5m"),
                 cache_tools=CacheToolsConfig(ttl="1h"),
             )
 
@@ -1624,7 +1747,7 @@ class TestPromptCaching:
         assert not any(bp[0] == "tools" for bp in breakpoints)
 
     def test_both_options_produce_two_breakpoints(self, model, messages, tool_specs):
-        model.update_config(cache_config=CacheConfig(strategy="auto"), cache_tools="default")
+        model.update_config(cache_config=CacheConfig(strategy="anthropic"), cache_tools="default")
 
         breakpoints = self._breakpoints(model.format_request(messages, tool_specs))
 
@@ -1686,7 +1809,7 @@ class TestPromptCaching:
             {"role": "assistant", "content": [{"text": "two"}]},
             {"role": "user", "content": [{"text": "three"}]},
         ]
-        model.update_config(cache_config=CacheConfig(strategy="auto"))
+        model.update_config(cache_config=CacheConfig(strategy="anthropic"))
 
         request = model.format_request(messages, tool_specs)
 
@@ -1833,7 +1956,7 @@ class TestPromptCaching:
         strands-ts/src/models/__tests__/anthropic.test.ts.
         """
         caplog.set_level(logging.WARNING, logger="strands.models.anthropic")
-        model.update_config(cache_config=CacheConfig(strategy="auto"))
+        model.update_config(cache_config=CacheConfig(strategy="anthropic"))
         messages = [{"role": "user", "content": [{"cachePoint": {"type": "default"}}, {"text": "one"}]}]
 
         request = model.format_request(messages)
@@ -1844,7 +1967,7 @@ class TestPromptCaching:
     def test_honored_point_falls_back_when_everything_ahead_is_dropped_in_translation(self, model):
         """An image with a location source is an accepted carrier by block type but never reaches the API,
         so a point behind one has nothing to mark and automatic placement applies instead."""
-        model.update_config(cache_config=CacheConfig(strategy="auto"))
+        model.update_config(cache_config=CacheConfig(strategy="anthropic"))
         messages = [
             {
                 "role": "user",
@@ -1864,7 +1987,7 @@ class TestPromptCaching:
 
     def test_honored_point_falls_back_when_only_a_reasoning_block_is_ahead_of_it(self, model):
         """The API rejects ``cache_control`` on a thinking block, so it cannot carry an honored boundary."""
-        model.update_config(cache_config=CacheConfig(strategy="auto"))
+        model.update_config(cache_config=CacheConfig(strategy="anthropic"))
         messages = [
             {
                 "role": "user",
@@ -1892,7 +2015,7 @@ class TestPromptCaching:
         strands-ts/src/models/__tests__/anthropic.test.ts.
         """
         caplog.set_level(logging.WARNING, logger="strands.models.anthropic")
-        model.update_config(cache_config=CacheConfig(strategy="auto"))
+        model.update_config(cache_config=CacheConfig(strategy="anthropic"))
         messages = [
             {"role": "user", "content": [{"text": "stable"}]},
             {"role": "user", "content": [{"cachePoint": {"type": "default"}}]},
@@ -1956,7 +2079,7 @@ class TestPromptCaching:
                 ],
             }
         ]
-        model.update_config(cache_config=CacheConfig(strategy="auto"))
+        model.update_config(cache_config=CacheConfig(strategy="anthropic"))
 
         request = model.format_request(messages)
 
@@ -1972,7 +2095,7 @@ class TestPromptCaching:
                 "content": [{"reasoningContent": {"reasoningText": {"text": "thinking", "signature": "sig"}}}],
             }
         ]
-        model.update_config(cache_config=CacheConfig(strategy="auto"))
+        model.update_config(cache_config=CacheConfig(strategy="anthropic"))
 
         request = model.format_request(messages)
 
@@ -2027,7 +2150,7 @@ class TestPromptCaching:
         """An image with a location source is an accepted cache carrier by block type but is dropped when
         the request is formatted. The breakpoint has to fall back to the block before it rather than
         vanish, or enabling caching would remove the caching that worked without it."""
-        model.update_config(cache_config=CacheConfig(strategy="auto"))
+        model.update_config(cache_config=CacheConfig(strategy="anthropic"))
         messages = [
             {
                 "role": "user",
@@ -2079,7 +2202,7 @@ class TestPromptCaching:
 
     def test_breakpoint_lands_on_the_last_of_several_cacheable_blocks(self, model):
         """Placement on the *last* cacheable block is what makes the cached prefix cover the whole turn."""
-        model.update_config(cache_config=CacheConfig(strategy="auto"))
+        model.update_config(cache_config=CacheConfig(strategy="anthropic"))
         messages = [
             {
                 "role": "user",
@@ -2130,7 +2253,7 @@ class TestPromptCaching:
         Text-only parity cannot catch a breakpoint lost while translating a media block, which is exactly
         what regressed in the TypeScript implementation.
         """
-        model.update_config(cache_config=CacheConfig(strategy="auto"))
+        model.update_config(cache_config=CacheConfig(strategy="anthropic"))
         messages = [
             {
                 "role": "user",
@@ -2165,7 +2288,9 @@ class TestPromptCaching:
         The mirror of this test lives in strands-ts/src/models/__tests__/anthropic.test.ts. Update both
         together or the two SDKs will drift.
         """
-        model.update_config(cache_config=CacheConfig(strategy="auto", ttl="1h"), cache_tools=CacheToolsConfig(ttl="1h"))
+        model.update_config(
+            cache_config=CacheConfig(strategy="anthropic", ttl="1h"), cache_tools=CacheToolsConfig(ttl="1h")
+        )
         messages = [
             {"role": "user", "content": [{"text": "hello"}]},
             {"role": "assistant", "content": [{"text": "hi"}]},
@@ -2194,7 +2319,7 @@ class TestPromptCaching:
 
     def test_dynamic_trailing_blocks_keeps_the_cache_point_ahead_of_per_call_content(self, model):
         """The reusable prefix ends where per-call content begins, so the cache point precedes it."""
-        model.update_config(cache_config=CacheConfig(strategy="auto"))
+        model.update_config(cache_config=CacheConfig(strategy="anthropic"))
         messages = [{"role": "user", "content": [{"text": "durable ask"}, {"text": "per-call"}]}]
 
         request = model.format_request(messages, dynamic_trailing_blocks=1)
@@ -2206,7 +2331,7 @@ class TestPromptCaching:
         ]
 
     def test_dynamic_trailing_blocks_covers_every_block_of_a_multi_block_tail(self, model):
-        model.update_config(cache_config=CacheConfig(strategy="auto"))
+        model.update_config(cache_config=CacheConfig(strategy="anthropic"))
         messages = [{"role": "user", "content": [{"text": "durable ask"}, {"text": "injected"}, {"text": "status"}]}]
 
         request = model.format_request(messages, dynamic_trailing_blocks=2)
@@ -2220,7 +2345,7 @@ class TestPromptCaching:
 
     def test_dynamic_trailing_blocks_skips_the_cache_point_when_nothing_durable_precedes_it(self, model):
         """With no durable prefix there is nothing worth a cache point, so none is emitted."""
-        model.update_config(cache_config=CacheConfig(strategy="auto"))
+        model.update_config(cache_config=CacheConfig(strategy="anthropic"))
         messages = [{"role": "user", "content": [{"text": "per-call only"}]}]
 
         request = model.format_request(messages, dynamic_trailing_blocks=1)
@@ -2228,7 +2353,7 @@ class TestPromptCaching:
         assert self._breakpoints(request) == []
 
     def test_dynamic_trailing_blocks_carries_the_configured_ttl(self, model):
-        model.update_config(cache_config=CacheConfig(strategy="auto", ttl="1h"))
+        model.update_config(cache_config=CacheConfig(strategy="anthropic", ttl="1h"))
         messages = [{"role": "user", "content": [{"text": "durable ask"}, {"text": "per-call"}]}]
 
         request = model.format_request(messages, dynamic_trailing_blocks=1)
@@ -2236,7 +2361,7 @@ class TestPromptCaching:
         assert self._breakpoints(request) == [("messages", 0, {"type": "ephemeral", "ttl": "1h"})]
 
     def test_no_dynamic_trailing_blocks_places_the_cache_point_on_the_last_block(self, model):
-        model.update_config(cache_config=CacheConfig(strategy="auto"))
+        model.update_config(cache_config=CacheConfig(strategy="anthropic"))
         messages = [{"role": "user", "content": [{"text": "durable ask"}, {"text": "also durable"}]}]
 
         request = model.format_request(messages)
@@ -2264,7 +2389,7 @@ class TestPromptCaching:
         assert request["system"] == [{"type": "text", "text": "static prompt", "cache_control": {"type": "ephemeral"}}]
 
     def test_auto_injects_a_system_cache_point_on_the_last_block(self, model, messages):
-        model.update_config(cache_config=CacheConfig(strategy="auto"))
+        model.update_config(cache_config=CacheConfig(strategy="anthropic"))
         system_prompt_content = [{"text": "Heavy context"}, {"text": "More context"}]
 
         request = model.format_request(messages, system_prompt_content=system_prompt_content)
@@ -2300,7 +2425,7 @@ class TestPromptCaching:
         assert request["system"][0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
 
     def test_hand_placed_system_cache_point_is_not_doubled(self, model, messages):
-        model.update_config(cache_config=CacheConfig(strategy="auto"))
+        model.update_config(cache_config=CacheConfig(strategy="anthropic"))
         system_prompt_content = [
             {"text": "Heavy context"},
             {"cachePoint": {"type": "default"}},
