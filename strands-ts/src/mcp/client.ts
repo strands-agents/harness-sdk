@@ -8,6 +8,11 @@ import {
   type ServerCapabilities,
   type Implementation,
   type LoggingMessageNotificationParams,
+  type GetPromptResult,
+  type ListPromptsResult,
+  type ListResourcesResult,
+  type ListResourceTemplatesResult,
+  type ReadResourceResult,
 } from '@modelcontextprotocol/client'
 import { context, propagation, trace } from '@opentelemetry/api'
 import type { JSONSchema, JSONValue } from '../types/json.js'
@@ -99,6 +104,12 @@ export interface McpToolFilters {
   rejected?: McpToolMatcher[]
 }
 
+/** Options for the paginated MCP list methods (prompts, resources, resource templates). */
+export interface McpListOptions {
+  /** Fetches a single page starting at this token. Omit it to aggregate every page. */
+  paginationToken?: string
+}
+
 /** Per-call overrides for {@link McpClient.listTools}. */
 export interface McpListToolsOptions {
   /** Prefix for agent-facing tool names. An empty string disables a prefix set on the client. */
@@ -129,6 +140,9 @@ export interface McpClientOptions extends RuntimeConfig {
 
   /** Request timeouts applied to every tool call. Per-call options take precedence on overlap. */
   requestTimeouts?: McpRequestTimeouts
+
+  /** Page cap for the no-token list methods, which aggregate every page. 0 disables the cap. Defaults to the MCP client's 64. */
+  listMaxPages?: number
 
   /**
    * Callback to handle server-initiated elicitation requests.
@@ -233,6 +247,7 @@ export class McpClient {
       },
       {
         ...(this._elicitationCallback ? { capabilities: { elicitation: { form: {}, url: {} } } } : undefined),
+        ...(args.listMaxPages !== undefined && { listMaxPages: args.listMaxPages }),
         // Probe for protocol revision 2026-07-28 and fall back to the legacy initialize
         // handshake, mirroring the Python SDK's negotiate_auto posture.
         versionNegotiation: { mode: 'auto' },
@@ -360,6 +375,12 @@ export class McpClient {
     }
   }
 
+  /** Connects lazily and throws when the connection previously failed under `continueOnError`. */
+  private async _connectOrThrow(): Promise<void> {
+    await this.connect()
+    if (this._state === 'failed') throw new Error('MCP server failed to connect. Call connect(true) to retry.')
+  }
+
   /**
    * Disconnects the MCP client from the server and cleans up resources.
    *
@@ -474,6 +495,82 @@ export class McpClient {
   }
 
   /**
+   * Lists the prompts available on the server.
+   *
+   * Without a `paginationToken` the client aggregates every page into one result with no
+   * `nextCursor`, and throws `ListPaginationExceeded` when the server pages past `listMaxPages`
+   * (64 unless configured). With a token it fetches a single page whose `nextCursor` feeds the
+   * next call.
+   *
+   * @param options - Pagination options.
+   * @returns A promise that resolves with the raw MCP list prompts result.
+   * @throws Error when an earlier connect attempt failed with `continueOnError` set. Call `connect(true)` to retry.
+   */
+  public async listPrompts(options?: McpListOptions): Promise<ListPromptsResult> {
+    await this._connectOrThrow()
+    return await this._client.listPrompts(paginationParams(options))
+  }
+
+  /**
+   * Retrieves a prompt from the server by name.
+   *
+   * @param promptId - The name of the prompt to retrieve.
+   * @param args - Arguments for the prompt's template substitution.
+   * @returns A promise that resolves with the raw MCP prompt result.
+   * @throws Error when an earlier connect attempt failed with `continueOnError` set. Call `connect(true)` to retry.
+   */
+  public async getPrompt(promptId: string, args?: Record<string, string>): Promise<GetPromptResult> {
+    await this._connectOrThrow()
+    return await this._client.getPrompt({ name: promptId, ...(args && { arguments: args }) })
+  }
+
+  /**
+   * Lists the resources available on the server.
+   *
+   * Without a `paginationToken` the client aggregates every page into one result with no
+   * `nextCursor`, and throws `ListPaginationExceeded` when the server pages past `listMaxPages`
+   * (64 unless configured). With a token it fetches a single page whose `nextCursor` feeds the
+   * next call.
+   *
+   * @param options - Pagination options.
+   * @returns A promise that resolves with the raw MCP list resources result.
+   * @throws Error when an earlier connect attempt failed with `continueOnError` set. Call `connect(true)` to retry.
+   */
+  public async listResources(options?: McpListOptions): Promise<ListResourcesResult> {
+    await this._connectOrThrow()
+    return await this._client.listResources(paginationParams(options))
+  }
+
+  /**
+   * Reads a resource from the server.
+   *
+   * @param uri - The URI of the resource to read.
+   * @returns A promise that resolves with the raw MCP resource content.
+   * @throws Error when an earlier connect attempt failed with `continueOnError` set. Call `connect(true)` to retry.
+   */
+  public async readResource(uri: string | URL): Promise<ReadResourceResult> {
+    await this._connectOrThrow()
+    return await this._client.readResource({ uri: uri instanceof URL ? uri.toString() : uri })
+  }
+
+  /**
+   * Lists the resource templates available on the server.
+   *
+   * Without a `paginationToken` the client aggregates every page into one result with no
+   * `nextCursor`, and throws `ListPaginationExceeded` when the server pages past `listMaxPages`
+   * (64 unless configured). With a token it fetches a single page whose `nextCursor` feeds the
+   * next call.
+   *
+   * @param options - Pagination options.
+   * @returns A promise that resolves with the raw MCP list resource templates result.
+   * @throws Error when an earlier connect attempt failed with `continueOnError` set. Call `connect(true)` to retry.
+   */
+  public async listResourceTemplates(options?: McpListOptions): Promise<ListResourceTemplatesResult> {
+    await this._connectOrThrow()
+    return await this._client.listResourceTemplates(paginationParams(options))
+  }
+
+  /**
    * Invoke a tool on the connected MCP server using an McpTool instance.
    *
    * The client's `requestTimeouts` apply to the call; per-call options take precedence on overlap.
@@ -495,8 +592,7 @@ export class McpClient {
       )
     }
 
-    await this.connect()
-    if (this._state === 'failed') throw new Error('MCP server failed to connect. Call connect(true) to retry.')
+    await this._connectOrThrow()
 
     if (args === null || args === undefined) {
       return await this.callTool(tool, {}, options)
@@ -537,6 +633,11 @@ export class McpClient {
       ...options,
     }
   }
+}
+
+/** Maps the public `paginationToken` option to the MCP wire's `cursor` request parameter. */
+function paginationParams(options?: McpListOptions): { cursor: string } | undefined {
+  return options?.paginationToken !== undefined ? { cursor: options.paginationToken } : undefined
 }
 
 /**

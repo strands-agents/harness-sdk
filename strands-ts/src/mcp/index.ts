@@ -1,5 +1,6 @@
 export {
   type McpClientOptions,
+  type McpListOptions,
   type McpListToolsOptions,
   type McpToolFilterCallback,
   type McpToolFilters,

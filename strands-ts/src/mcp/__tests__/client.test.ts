@@ -36,6 +36,11 @@ vi.mock('@modelcontextprotocol/client', async (importOriginal) => ({
       close: vi.fn(),
       listTools: vi.fn(),
       callTool: vi.fn(),
+      listPrompts: vi.fn(),
+      getPrompt: vi.fn(),
+      listResources: vi.fn(),
+      readResource: vi.fn(),
+      listResourceTemplates: vi.fn(),
       setRequestHandler: vi.fn(),
       setNotificationHandler: vi.fn(),
       getServerCapabilities: vi.fn(),
@@ -152,6 +157,21 @@ describe('MCP Integration', () => {
           }),
         })
       )
+    })
+
+    it('passes listMaxPages to the SDK client when set', () => {
+      new McpClient({ applicationName: 'TestApp', transport: mockTransport, listMaxPages: 5 })
+
+      expect(Client).toHaveBeenLastCalledWith(
+        { name: 'TestApp', version: '0.0.1' },
+        expect.objectContaining({ listMaxPages: 5 })
+      )
+    })
+
+    it('omits listMaxPages when unset so the SDK default applies', () => {
+      new McpClient({ applicationName: 'TestApp', transport: mockTransport })
+
+      expect(vi.mocked(Client).mock.calls.at(-1)![1]).not.toHaveProperty('listMaxPages')
     })
 
     it('injects trace context into tool arguments when active span exists', async () => {
@@ -1278,6 +1298,129 @@ describe('server metadata getters', () => {
   it('connectionState is connected after successful connect', async () => {
     await client.connect()
     expect(client.connectionState).toBe('connected')
+  })
+})
+
+describe('prompts and resources', () => {
+  let client: McpClient
+  let sdkClientMock: {
+    connect: ReturnType<typeof vi.fn>
+    listPrompts: ReturnType<typeof vi.fn>
+    getPrompt: ReturnType<typeof vi.fn>
+    listResources: ReturnType<typeof vi.fn>
+    readResource: ReturnType<typeof vi.fn>
+    listResourceTemplates: ReturnType<typeof vi.fn>
+    setNotificationHandler: ReturnType<typeof vi.fn>
+    setRequestHandler: ReturnType<typeof vi.fn>
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    client = new McpClient({ applicationName: 'TestApp', transport: mockTransport })
+    sdkClientMock = vi.mocked(Client).mock.results.at(-1)!.value
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('connects lazily and lists prompts with the raw result returned', async () => {
+    const result = { prompts: [{ name: 'summarize' }] }
+    sdkClientMock.listPrompts.mockResolvedValue(result)
+
+    const prompts = await client.listPrompts()
+
+    expect(sdkClientMock.connect).toHaveBeenCalled()
+    expect(sdkClientMock.listPrompts).toHaveBeenCalledWith(undefined)
+    expect(prompts).toBe(result)
+  })
+
+  it('fetches a single prompts page when paginationToken is set', async () => {
+    const result = { prompts: [{ name: 'summarize' }], nextCursor: 'page-3' }
+    sdkClientMock.listPrompts.mockResolvedValue(result)
+
+    const prompts = await client.listPrompts({ paginationToken: 'page-2' })
+
+    expect(sdkClientMock.listPrompts).toHaveBeenCalledWith({ cursor: 'page-2' })
+    expect(prompts.nextCursor).toBe('page-3')
+  })
+
+  it('gets a prompt by name with arguments', async () => {
+    const result = { messages: [{ role: 'user', content: { type: 'text', text: 'Summarize AI' } }] }
+    sdkClientMock.getPrompt.mockResolvedValue(result)
+
+    const prompt = await client.getPrompt('summarize', { topic: 'AI' })
+
+    expect(sdkClientMock.getPrompt).toHaveBeenCalledWith({ name: 'summarize', arguments: { topic: 'AI' } })
+    expect(prompt).toBe(result)
+  })
+
+  it('gets a prompt by name without arguments', async () => {
+    sdkClientMock.getPrompt.mockResolvedValue({ messages: [] })
+
+    await client.getPrompt('summarize')
+
+    expect(sdkClientMock.getPrompt).toHaveBeenCalledWith({ name: 'summarize' })
+  })
+
+  it('lists resources with the raw result returned', async () => {
+    const result = { resources: [{ uri: 'file:///data.txt', name: 'data' }] }
+    sdkClientMock.listResources.mockResolvedValue(result)
+
+    const resources = await client.listResources()
+
+    expect(sdkClientMock.listResources).toHaveBeenCalledWith(undefined)
+    expect(resources).toBe(result)
+  })
+
+  it('fetches a single resources page when paginationToken is set', async () => {
+    sdkClientMock.listResources.mockResolvedValue({ resources: [] })
+
+    await client.listResources({ paginationToken: 'page-2' })
+
+    expect(sdkClientMock.listResources).toHaveBeenCalledWith({ cursor: 'page-2' })
+  })
+
+  it('reads a resource by string URI', async () => {
+    const result = { contents: [{ uri: 'file:///data.txt', text: 'hello' }] }
+    sdkClientMock.readResource.mockResolvedValue(result)
+
+    const resource = await client.readResource('file:///data.txt')
+
+    expect(sdkClientMock.readResource).toHaveBeenCalledWith({ uri: 'file:///data.txt' })
+    expect(resource).toBe(result)
+  })
+
+  it('reads a resource by URL instance', async () => {
+    sdkClientMock.readResource.mockResolvedValue({ contents: [] })
+
+    await client.readResource(new URL('file:///data.txt'))
+
+    expect(sdkClientMock.readResource).toHaveBeenCalledWith({ uri: 'file:///data.txt' })
+  })
+
+  it('lists resource templates with pagination', async () => {
+    const result = { resourceTemplates: [{ uriTemplate: 'file:///{name}.txt', name: 'files' }] }
+    sdkClientMock.listResourceTemplates.mockResolvedValue(result)
+
+    const templates = await client.listResourceTemplates({ paginationToken: 'page-2' })
+
+    expect(sdkClientMock.listResourceTemplates).toHaveBeenCalledWith({ cursor: 'page-2' })
+    expect(templates).toBe(result)
+  })
+
+  it('throws when the connection previously failed under continueOnError', async () => {
+    const failingClient = new McpClient({
+      applicationName: 'TestApp',
+      transport: mockTransport,
+      continueOnError: true,
+    })
+    const failingSdkClientMock = vi.mocked(Client).mock.results.at(-1)!.value
+    failingSdkClientMock.connect.mockRejectedValue(new Error('boom'))
+
+    await expect(failingClient.listPrompts()).rejects.toThrow(
+      'MCP server failed to connect. Call connect(true) to retry.'
+    )
   })
 })
 
