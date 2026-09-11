@@ -42,6 +42,11 @@ if 'cacheWriteInputTokens' in result.metrics.accumulated_usage:
     print(f"Cache write tokens: {result.metrics.accumulated_usage['cacheWriteInputTokens']}")
 ```
 
+When the model provider reports pricing data, `result.cost` contains the estimated
+cost in USD for that invocation. It includes all model calls made during the
+invocation and remains attached to that result if you invoke the same agent again.
+The value is `None` when the provider does not report cost.
+
 The `metrics` attribute of `AgentResult` (an instance of [`EventLoopMetrics`](@api/python/strands.telemetry.metrics)) provides comprehensive performance metric data about the agent's execution, while other attributes like `stop_reason`, `message`, and `state` provide context about the agent's response. This document explains the metrics available in the agent's response and how to interpret them.
 </Tab>
 <Tab label="TypeScript">

@@ -4,7 +4,7 @@ This module defines the AgentResult class which encapsulates the complete respon
 """
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 from pydantic import BaseModel
@@ -39,6 +39,21 @@ class AgentResult:
     interrupts: Sequence[Interrupt] | None = None
     structured_output: BaseModel | None = None
     checkpoint: Checkpoint | None = None
+    _cost: float | None = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        """Capture invocation-scoped values from the shared metrics object."""
+        self._cost = self.metrics.latest_invocation_cost if isinstance(self.metrics, EventLoopMetrics) else None
+
+    @property
+    def cost(self) -> float | None:
+        """Best-effort estimated cost in USD for this invocation.
+
+        Returns:
+            The cost across this invocation's model calls, or None when the model provider does
+            not report cost. A returned value is a lower bound when any call could not be priced.
+        """
+        return self._cost
 
     @property
     def context_size(self) -> int | None:

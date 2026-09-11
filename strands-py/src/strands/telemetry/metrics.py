@@ -226,6 +226,18 @@ class EventLoopMetrics:
     accumulated_metrics: Metrics = field(default_factory=lambda: Metrics(latencyMs=0))
 
     @property
+    def latest_invocation_cost(self) -> float | None:
+        """Best-effort estimated cost in USD for the latest agent invocation.
+
+        Returns:
+            The cost for the latest invocation, or None when no invocation exists or its model
+            calls did not report cost. A returned value is a lower bound when any call could not
+            be priced.
+        """
+        invocation = self.latest_agent_invocation
+        return invocation.usage.get("totalCostUsd") if invocation is not None else None
+
+    @property
     def latest_context_size(self) -> int | None:
         """Most recent context size from the last LLM call.
 
@@ -376,6 +388,11 @@ class EventLoopMetrics:
 
         if "cacheWriteInputTokens" in source:
             target["cacheWriteInputTokens"] = target.get("cacheWriteInputTokens", 0) + source["cacheWriteInputTokens"]
+
+        # Cost is optional and provider-specific: only sum when the source reports it, so a total
+        # remains absent (not a misleading 0) for providers that never price a call.
+        if "totalCostUsd" in source:
+            target["totalCostUsd"] = target.get("totalCostUsd", 0.0) + source["totalCostUsd"]
 
     def update_usage(self, usage: Usage) -> None:
         """Update the accumulated token usage with new usage data.
