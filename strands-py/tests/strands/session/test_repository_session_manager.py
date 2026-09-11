@@ -20,6 +20,7 @@ from strands.types.content import ContentBlock
 from strands.types.exceptions import SessionException
 from strands.types.session import Session, SessionAgent, SessionMessage, SessionType
 from tests.fixtures.mock_session_repository import MockedSessionRepository
+from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 
 @pytest.fixture
@@ -830,7 +831,12 @@ def test_sync_agent_skips_update_when_state_not_dirty_and_internal_state_unchang
     session_manager = RepositorySessionManager(session_id="test-session", session_repository=mock_repository)
 
     # Create and initialize agent
-    agent = Agent(agent_id="test-agent", session_manager=session_manager)
+    agent = Agent(
+        agent_id="test-agent",
+        model=MockedModelProvider([{"role": "assistant", "content": [{"text": "Hello!"}]}] * 3),
+        session_manager=session_manager,
+        callback_handler=None,
+    )
 
     # Track update_agent calls
     update_agent_calls = []
@@ -851,6 +857,10 @@ def test_sync_agent_skips_update_when_state_not_dirty_and_internal_state_unchang
 
     # Second sync without changes should skip update
     session_manager.sync_agent(agent)
+    assert len(update_agent_calls) == 0
+
+    for _ in range(3):
+        agent("Hello")
     assert len(update_agent_calls) == 0
 
 

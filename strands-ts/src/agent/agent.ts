@@ -1313,6 +1313,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     // async function* doesn't bind lexical `this`; capture for the terminal callback.
     // eslint-disable-next-line @typescript-eslint/no-this-alias
     const self = this
+    let completed = false
     try {
       const { result } = yield* this._middlewareRegistry.invoke(
         AgentStreamStage,
@@ -1329,13 +1330,7 @@ export class Agent implements LocalAgent, InvokableAgent {
           return { result }
         }
       )
-      if (
-        this._interruptState.activated &&
-        result.stopReason !== 'interrupt' &&
-        !this._interruptState.pendingToolExecution
-      ) {
-        this._interruptState.deactivate()
-      }
+      completed = result.stopReason !== 'interrupt'
       return result
     } catch (error) {
       if (error instanceof InterruptError) {
@@ -1359,6 +1354,15 @@ export class Agent implements LocalAgent, InvokableAgent {
         })
       }
       throw error
+    } finally {
+      // Keep unfinished tool calls and approvals the agent is still waiting for, even if the caller stops reading.
+      // Otherwise, discard old approvals so the next request cannot reuse them.
+      if (
+        !this._interruptState.pendingToolExecution &&
+        (completed || !this._interruptState.activated || !this._interruptState.getUnansweredInterrupt())
+      ) {
+        this._interruptState.deactivate()
+      }
     }
   }
 
@@ -1603,6 +1607,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     const agentSpan = this._tracer.startAgentSpan(agentSpanOptions)
 
     let caughtError: Error | undefined
+    let interrupted = false
     try {
       // Register structured output tool if schema provided
       if (structuredOutputTool) {
@@ -1796,14 +1801,9 @@ export class Agent implements LocalAgent, InvokableAgent {
           yield this._appendMessage(assistantMessage, invocationState)
           yield this._appendMessage(toolResultMessage, invocationState)
 
-          // Both messages are in history, so any stored pending execution is now stale.
-          this._interruptState.clearPendingToolExecution()
-
           // Deactivate interrupt state after successful tool execution so the next
           // cycle starts with a clean slate (new interrupts can be raised again).
-          if (this._interruptState.activated) {
-            this._interruptState.deactivate()
-          }
+          this._interruptState.deactivate()
 
           closeCycle()
 
@@ -1893,8 +1893,12 @@ export class Agent implements LocalAgent, InvokableAgent {
       if (error instanceof InterruptError) {
         // Handles interrupts from tools/hooks that propagated up through the agent loop.
         // AgentStreamStage middleware interrupts are caught separately in _streamWithMiddleware().
+        interrupted = true
         for (const interrupt of error.interrupts) {
           this._interruptState.registerInterrupt(interrupt)
+        }
+        if (!this._interruptState.pendingToolExecution) {
+          this._interruptState.activate()
         }
         // Fan out one event per interrupt. Each event exposes `interrupt.source` so
         // consumers can filter by origin (tool callback vs hook callback) without
@@ -1908,6 +1912,9 @@ export class Agent implements LocalAgent, InvokableAgent {
       caughtError = error as Error
       throw error
     } finally {
+      if (!interrupted && !this._interruptState.pendingToolExecution) {
+        this._interruptState.deactivate()
+      }
       // If cancelled but the catch block was bypassed (generator terminated
       // via .return() when the consumer breaks out of for-await), close an
       // existing user turn so the agent can be reinvoked.

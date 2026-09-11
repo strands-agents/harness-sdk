@@ -302,12 +302,13 @@ class AfterToolCallEvent(HookEvent[_LocalAgentT]):
 
 
 @dataclass
-class BeforeModelCallEvent(HookEvent):
+class BeforeModelCallEvent(HookEvent, _Interruptible):
     """Event triggered before the model is invoked.
 
     This event is fired just before the agent calls the model for inference,
     allowing hook providers to inspect or modify the messages and configuration
-    that will be sent to the model.
+    that will be sent to the model. Hook callbacks can raise an interrupt to pause
+    the agent before the call; resuming re-enters the same model call.
 
     Note: This event is not fired for invocations to structured_output.
 
@@ -319,8 +320,8 @@ class BeforeModelCallEvent(HookEvent):
             Computed by the agent loop from message metadata and token estimation.
             Available for hooks and plugins (e.g. conversation managers) to make
             proactive decisions about context management. None if estimation failed.
-        cancel: When set, cancels the model call. If a string, used as the cancellation message.
-            If True, a default message is used.
+        cancel: When set, ends the turn without calling the model. If a string, it becomes
+            the assistant's final message. If True, a default message is used.
     """
 
     invocation_state: dict[str, Any] = field(default_factory=dict)
@@ -329,6 +330,18 @@ class BeforeModelCallEvent(HookEvent):
 
     def _can_write(self, name: str) -> bool:
         return name == "cancel"
+
+    @override
+    def _interrupt_id(self, name: str) -> str:
+        """Unique id for the interrupt.
+
+        Args:
+            name: User defined name for the interrupt.
+
+        Returns:
+            Interrupt id.
+        """
+        return f"v1:before_model_call:{uuid.uuid5(uuid.NAMESPACE_OID, name)}"
 
 
 @dataclass

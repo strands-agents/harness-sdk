@@ -378,8 +378,9 @@ export class AfterToolCallEvent extends HookableEvent {
 /**
  * Event triggered just before the model is invoked.
  * Fired before sending messages to the model for inference.
+ * Hook callbacks can call {@link interrupt} to pause the agent before the call.
  */
-export class BeforeModelCallEvent extends HookableEvent {
+export class BeforeModelCallEvent extends HookableEvent implements Interruptible {
   readonly type = 'beforeModelCallEvent' as const
   readonly agent: LocalAgent
   readonly model: Model
@@ -413,6 +414,20 @@ export class BeforeModelCallEvent extends HookableEvent {
     if (data.projectedInputTokens !== undefined) {
       this.projectedInputTokens = data.projectedInputTokens
     }
+  }
+
+  /**
+   * Raises an interrupt for human-in-the-loop workflows.
+   * If a response is available (from a previous resume), returns it immediately.
+   * Otherwise, throws an InterruptError to halt agent execution before the model
+   * is called; resuming re-enters the same model call.
+   *
+   * @param params - Interrupt parameters including name and optional reason
+   * @returns The user's response when resuming from an interrupt
+   * @throws InterruptError when no response is available
+   */
+  interrupt<T = JSONValue>(params: InterruptParams): T {
+    return interruptFromAgent<T>(this.agent, `hook:beforeModelCall:${params.name}`, params, 'hook')
   }
 
   /**

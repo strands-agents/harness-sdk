@@ -4,15 +4,18 @@ import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { createMockTool } from '../../__fixtures__/tool-helpers.js'
 import { TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
 import {
+  AfterModelCallEvent,
   AfterToolCallEvent,
+  BeforeModelCallEvent,
   BeforeToolCallEvent,
   BeforeToolsEvent,
   InterruptEvent,
   MessageAddedEvent,
+  ModelStreamUpdateEvent,
 } from '../../hooks/events.js'
 import { FunctionTool } from '../../tools/function-tool.js'
 import { InterruptResponseContent } from '../../types/interrupt.js'
-import type { InterruptState, PendingToolExecution } from '../../interrupt.js'
+import { Interrupt, type InterruptState, type PendingToolExecution } from '../../interrupt.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
 
 /** Access the agent's internal interrupt state for test assertions. */
@@ -226,6 +229,173 @@ describe('Agent interrupt system', () => {
         stopReason: 'interrupt',
         interrupts: [{ name: 'batch_approval', reason: 'Approve all tools?' }],
       })
+    })
+  })
+
+  describe('interrupt from BeforeModelCallEvent hook', () => {
+    it('clears an answered approval when invalid resume limits reject the invocation', async () => {
+      const agent = new Agent({ model: new MockMessageModel(), printer: false })
+      agent.addHook(BeforeModelCallEvent, (event) => {
+        event.interrupt({ name: 'approve' })
+      })
+      const interrupted = await agent.invoke('First request')
+      expect(interrupted.stopReason).toBe('interrupt')
+
+      await expect(
+        agent.invoke([new InterruptResponseContent({ interruptId: interrupted.interrupts![0]!.id, response: 'yes' })], {
+          limits: { turns: 0 },
+        })
+      ).rejects.toThrow(new TypeError('limits.turns must be a positive finite number, got 0'))
+
+      expect(await agent.invoke('Fresh request')).toMatchObject({
+        stopReason: 'interrupt',
+        interrupts: [{ id: 'hook:beforeModelCall:approve', name: 'approve', response: undefined }],
+      })
+    })
+
+    it.each(['success', 'model error', 'consumer break', 'hook error'])(
+      'clears obsolete interrupts after resume: %s',
+      async (outcome) => {
+        const model = new MockMessageModel()
+          .addTurn(outcome === 'model error' ? new Error('model failed') : { type: 'textBlock', text: 'Approved' })
+          .addTurn({ type: 'textBlock', text: 'Must require a new approval' })
+        const agent = new Agent({ model, printer: false })
+        let requireBudgetApproval = true
+        agent.addHook(BeforeModelCallEvent, (event) => {
+          event.interrupt({ name: 'approve' })
+        })
+        agent.addHook(BeforeModelCallEvent, (event) => {
+          if (requireBudgetApproval) event.interrupt({ name: 'budget' })
+        })
+
+        const interrupted = await agent.invoke('do something')
+        expect(interrupted.interrupts).toStrictEqual([
+          new Interrupt({ id: 'hook:beforeModelCall:approve', name: 'approve' }),
+          new Interrupt({ id: 'hook:beforeModelCall:budget', name: 'budget' }),
+        ])
+
+        requireBudgetApproval = false
+        if (outcome === 'hook error') {
+          agent.addHook(ModelStreamUpdateEvent, () => {
+            throw new Error('streaming hook failed')
+          })
+        }
+        const responses = [
+          new InterruptResponseContent({ interruptId: 'hook:beforeModelCall:approve', response: 'yes' }),
+        ]
+        if (outcome === 'consumer break') {
+          for await (const event of agent.stream(responses)) {
+            if (event instanceof ModelStreamUpdateEvent) break
+          }
+        } else if (outcome === 'model error' || outcome === 'hook error') {
+          await expect(agent.invoke(responses)).rejects.toThrow(
+            outcome === 'model error' ? 'model failed' : 'streaming hook failed'
+          )
+        } else {
+          expect((await agent.invoke(responses)).stopReason).toBe('endTurn')
+        }
+
+        const nextResult = await agent.invoke('request requiring approval')
+        expect(nextResult).toMatchObject({
+          stopReason: 'interrupt',
+          interrupts: [{ id: 'hook:beforeModelCall:approve', name: 'approve' }],
+        })
+        expect(model.callCount).toBe(1)
+      }
+    )
+
+    it('preserves a streamed interrupt through resume and model retries', async () => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'textBlock', text: 'Retry this response' })
+        .addTurn({ type: 'textBlock', text: 'Approved' })
+      const responsesSeen: unknown[] = []
+      const agent = new Agent({ model, printer: false })
+      agent.addHook(BeforeModelCallEvent, (event) => {
+        responsesSeen.push(event.interrupt({ name: 'approve', reason: 'Approve the model call?' }))
+      })
+      agent.addHook(AfterModelCallEvent, (event) => {
+        event.retry = model.callCount === 1
+      })
+      let interruptEvent: InterruptEvent | undefined
+
+      for await (const event of agent.stream('do something')) {
+        if (event instanceof InterruptEvent) {
+          interruptEvent = event
+          break
+        }
+      }
+
+      expect(interruptEvent?.interrupt).toMatchObject({
+        id: 'hook:beforeModelCall:approve',
+        name: 'approve',
+        reason: 'Approve the model call?',
+      })
+      expect(model.callCount).toBe(0)
+      expect(agent.messages).toHaveLength(1)
+      expect(responsesSeen).toEqual([])
+
+      const result = await agent.invoke([
+        new InterruptResponseContent({ interruptId: 'hook:beforeModelCall:approve', response: 'yes' }),
+      ])
+
+      expect(result.stopReason).toBe('endTurn')
+      expect(result.lastMessage.content).toEqual([new TextBlock('Approved')])
+      expect(model.callCount).toBe(2)
+      expect(responsesSeen).toEqual(['yes', 'yes'])
+      expect((await agent.invoke('request requiring approval')).stopReason).toBe('interrupt')
+    })
+
+    it.each([false, true])('clears preemptive approvals after a request (model fails: %s)', async (failModel) => {
+      const model = new MockMessageModel()
+        .addTurn(failModel ? new Error('model failed') : { type: 'textBlock', text: 'Approved' })
+        .addTurn({ type: 'textBlock', text: 'Must require a new approval' })
+      let preapprove = true
+      const gateModelCall = (event: BeforeModelCallEvent): void => {
+        event.interrupt({ name: 'approve', ...(preapprove ? { response: 'yes' } : {}) })
+      }
+      const agent = new Agent({ model, printer: false })
+      agent.addHook(BeforeModelCallEvent, gateModelCall)
+
+      if (failModel) {
+        await expect(agent.invoke('preapproved request')).rejects.toThrow('model failed')
+      } else {
+        expect((await agent.invoke('preapproved request')).stopReason).toBe('endTurn')
+      }
+      preapprove = false
+
+      const restored = new Agent({ model, printer: false })
+      restored.addHook(BeforeModelCallEvent, gateModelCall)
+      restored.loadSnapshot(JSON.parse(JSON.stringify(agent.takeSnapshot({ preset: 'session' }))))
+
+      for (const nextAgent of [agent, restored]) {
+        const result = await nextAgent.invoke('request requiring approval')
+        expect(result).toMatchObject({
+          stopReason: 'interrupt',
+          interrupts: [{ id: 'hook:beforeModelCall:approve', name: 'approve' }],
+        })
+      }
+      expect(model.callCount).toBe(1)
+    })
+
+    it('requires a new approval after a preapproved model call executes tools', async () => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'work', toolUseId: 'tool-1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'Must require a new approval' })
+      const workCallback = vi.fn(() => 'done')
+      const work = createMockTool('work', workCallback)
+      const agent = new Agent({ model, tools: [work], printer: false })
+      agent.addHook(BeforeModelCallEvent, (event) => {
+        event.interrupt({ name: 'approve', ...(model.callCount === 0 ? { response: 'yes' } : {}) })
+      })
+
+      const result = await agent.invoke('do work')
+
+      expect(result).toMatchObject({
+        stopReason: 'interrupt',
+        interrupts: [{ id: 'hook:beforeModelCall:approve', name: 'approve' }],
+      })
+      expect(model.callCount).toBe(1)
+      expect(workCallback).toHaveBeenCalledOnce()
     })
   })
 

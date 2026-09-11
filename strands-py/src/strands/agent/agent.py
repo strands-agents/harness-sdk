@@ -1611,14 +1611,6 @@ class Agent(AgentBase, LocalAgent):
                             agent_result = AgentResult(*event["stop"])
                         yield event
 
-                    # A resumed AgentStreamStage interrupt that finished without tool execution
-                    # never hits the tool path's deactivate(), so clear the interrupt state here.
-                    if (
-                        self._interrupt_state.activated
-                        and (agent_result is None or agent_result.stop_reason != "interrupt")
-                        and self._interrupt_state.pending_tool_execution is None
-                    ):
-                        self._interrupt_state.deactivate()
                 except InterruptException as interrupt_exception:
                     # Refuse a late interrupt — resuming would re-call the model
                     # and corrupt history.
@@ -1663,7 +1655,13 @@ class Agent(AgentBase, LocalAgent):
                 caught_error = error
                 raise
             finally:
-                if not self._interrupt_state.activated:
+                if (
+                    (self._interrupt_state.activated or self._interrupt_state.interrupts)
+                    and (agent_result is None or agent_result.stop_reason != "interrupt")
+                    and self._interrupt_state.pending_tool_execution is None
+                ):
+                    self._interrupt_state.deactivate()
+                elif not self._interrupt_state.activated:
                     self._interrupt_state.end_interrupt_cycle()
 
                 self.conversation_manager.apply_management(self)

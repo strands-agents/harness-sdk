@@ -10,6 +10,10 @@ import { z } from 'zod'
 import { Agent, BeforeToolsEvent } from '@strands-agents/sdk'
 // --8<-- [end:hooks_before_tools_imports]
 
+// --8<-- [start:hooks_before_model_call_imports]
+import { Agent, BeforeModelCallEvent } from '@strands-agents/sdk'
+// --8<-- [end:hooks_before_model_call_imports]
+
 // --8<-- [start:tools_example_imports]
 import { Agent, tool } from '@strands-agents/sdk'
 import { z } from 'zod'
