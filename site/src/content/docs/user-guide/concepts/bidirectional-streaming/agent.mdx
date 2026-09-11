@@ -221,12 +221,10 @@ from strands.experimental.bidi.models import BedrockNovaSonicModel
 model = BedrockNovaSonicModel(
     model_id="amazon.nova-2-sonic-v1:0",
     region="us-east-1",
+    voice="matthew",
     audio={
-        "input_rate": 16000,
-        "output_rate": 16000,
-        "channels": 1,
-        "format": "pcm",
-        "voice": "matthew",
+        "input": {"sample_rate": 16000},
+        "output": {"sample_rate": 16000},
     },
 )
 ```

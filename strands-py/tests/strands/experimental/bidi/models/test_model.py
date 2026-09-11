@@ -57,10 +57,8 @@ class _TestBidiModel(BidiModel):
 class _AudioBidiModel(_TestBidiModel):
     def get_audio_config(self) -> AudioConfig:
         return {
-            "input_rate": 16000,
-            "output_rate": 24000,
-            "channels": 1,
-            "format": "pcm",
+            "input": {"sample_rate": 16000, "channels": 1, "format": "pcm"},
+            "output": {"sample_rate": 24000, "channels": 1, "format": "pcm"},
         }
 
 

@@ -28,7 +28,7 @@ import logging
 import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Literal, TypedDict, cast
 
 import boto3
 from aws_sdk_bedrock_runtime.client import AsyncBedrockRuntimeClient, InvokeModelWithBidirectionalStreamOperationInput
@@ -46,7 +46,7 @@ from smithy_core.shapes import ShapeID
 from smithy_http.aio.crt import AWSCRTHTTPClient, AWSCRTHTTPResponse
 from typing_extensions import Unpack, override
 
-from ....models._validation import validate_region
+from ....models._validation import validate_config_keys, validate_region
 from ....types._events import ToolResultEvent, ToolUseStreamEvent
 from ....types.content import Messages
 from ....types.tools import ToolResult, ToolSpec, ToolUse
@@ -67,6 +67,7 @@ from ..types.events import (
 )
 from .configs import (
     AudioConfig,
+    AudioStreamConfig,
     BidiConnectionConfig,
     BidiModelConfig,
     _validate_audio_config,
@@ -191,6 +192,30 @@ class _ResponseState:
         self.transcript = ""
 
 
+class BedrockNovaSonicAudioStreamConfig(TypedDict):
+    """Nova Sonic stream options. Audio uses mono PCM.
+
+    Attributes:
+        sample_rate: Sample rate in Hz.
+    """
+
+    sample_rate: Literal[8000, 16000, 24000]
+
+
+class BedrockNovaSonicAudioConfig(TypedDict, total=False):
+    """Nova Sonic input and output audio options.
+
+    Omitted streams use a sample rate of 16000 Hz.
+
+    Attributes:
+        input: Input stream options.
+        output: Output stream options.
+    """
+
+    input: BedrockNovaSonicAudioStreamConfig
+    output: BedrockNovaSonicAudioStreamConfig
+
+
 class BedrockNovaSonicModel(BidiModel, AudioCapable):
     """Amazon Bedrock Nova Sonic implementation for bidirectional streaming.
 
@@ -211,7 +236,8 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         *,
         boto_session: Session | None = None,
         region: str | None = None,
-        audio: AudioConfig | None = None,
+        audio: BedrockNovaSonicAudioConfig | None = None,
+        voice: str = "matthew",
         **model_config: Unpack[BidiModelConfig],
     ) -> None:
         """Initialize Nova Sonic bidirectional model.
@@ -220,18 +246,20 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             boto_session: Boto3 session used to resolve credentials and region.
             region: AWS region. Cannot be combined with ``boto_session``.
             audio: Audio configuration.
+            voice: Output voice identifier. Defaults to ``matthew``.
             **model_config: Model configuration.
 
         Raises:
-            ValueError: If both ``boto_session`` and ``region`` are provided or the resolved region is invalid.
+            ValueError: If audio options or the resolved region are invalid, or both ``boto_session`` and
+                ``region`` are provided.
         """
         if boto_session is not None and region is not None:
             raise ValueError("Cannot specify both 'boto_session' and 'region'")
 
         _validate_model_config(model_config)
-        _validate_audio_config(audio)
         self._config = BidiModelConfig(**model_config)
         self._config.setdefault("model_id", NOVA_SONIC_V2_MODEL_ID)
+        self._config["params"] = dict(self._config.get("params") or {})
 
         # Nova caps a connection at ~8 min; reconnect at 7 min, leaving headroom below the cap.
         # It also reports cumulative usage totals.
@@ -240,14 +268,8 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         )
         self.usage_is_cumulative = True
 
-        default_audio: AudioConfig = {
-            "input_rate": 16000,
-            "output_rate": 16000,
-            "channels": 1,
-            "format": "pcm",
-        }
-        self._audio_config = AudioConfig(**{**default_audio, **(audio or {})})
-        self._config["params"] = dict(self._config.get("params") or {})
+        self._resolve_audio_config(audio)
+        self._voice = voice
 
         self._session = boto_session or boto3.Session()
         resolved_region = region if region is not None else self._session.region_name or "us-east-1"
@@ -282,6 +304,25 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
     def get_audio_config(self) -> AudioConfig:
         """Get the resolved audio configuration."""
         return self._audio_config
+
+    def _resolve_audio_config(self, config: BedrockNovaSonicAudioConfig | None) -> None:
+        """Resolve and validate input and output audio settings."""
+        config = config or {}
+        validate_config_keys(config, BedrockNovaSonicAudioConfig)
+
+        input_config = config.get("input", {"sample_rate": 16000})
+        output_config = config.get("output", {"sample_rate": 16000})
+        for stream in (input_config, output_config):
+            validate_config_keys(stream, BedrockNovaSonicAudioStreamConfig)
+            sample_rate = stream["sample_rate"]
+            if sample_rate not in (8000, 16000, 24000):
+                raise ValueError(f"Unsupported sample rate: {sample_rate}. Expected 8000, 16000, or 24000.")
+
+        self._audio_config = AudioConfig(
+            input=AudioStreamConfig(sample_rate=input_config["sample_rate"], channels=1, format="pcm"),
+            output=AudioStreamConfig(sample_rate=output_config["sample_rate"], channels=1, format="pcm"),
+        )
+        _validate_audio_config(self._audio_config)
 
     async def start(
         self,
@@ -512,9 +553,9 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         # Build audio input configuration from config
         audio_input_config = {
             "mediaType": "audio/lpcm",
-            "sampleRateHertz": self._audio_config["input_rate"],
+            "sampleRateHertz": self._audio_config["input"]["sample_rate"],
             "sampleSizeBits": 16,
-            "channelCount": self._audio_config["channels"],
+            "channelCount": self._audio_config["input"]["channels"],
             "audioType": "SPEECH",
             "encoding": "base64",
         }
@@ -700,9 +741,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             return [
                 BidiAudioStreamEvent(
                     audio=audio_content,
-                    format="pcm",
-                    sample_rate=self._audio_config["output_rate"],
-                    channels=self._audio_config["channels"],
+                    **self._audio_config["output"],
                 )
             ]
 
@@ -823,10 +862,10 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         """Generate Nova Sonic prompt start event with tool configuration."""
         audio_output_config = {
             "mediaType": "audio/lpcm",
-            "sampleRateHertz": self._audio_config["output_rate"],
+            "sampleRateHertz": self._audio_config["output"]["sample_rate"],
             "sampleSizeBits": 16,
-            "channelCount": self._audio_config["channels"],
-            "voiceId": self._audio_config.get("voice", "matthew"),
+            "channelCount": self._audio_config["output"]["channels"],
+            "voiceId": self._voice,
             "encoding": "base64",
             "audioType": "SPEECH",
         }

@@ -18,13 +18,14 @@ import logging
 import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 
 from google import genai
 from google.genai import types as genai_types
 from google.genai.types import LiveConnectConfigOrDict, LiveServerContent, LiveServerMessage, UsageMetadata
 from typing_extensions import Unpack, override
 
+from ....models._validation import validate_config_keys
 from ....types._events import ToolResultEvent, ToolUseStreamEvent
 from ....types.content import Messages
 from ....types.tools import ToolResult, ToolSpec, ToolUse
@@ -47,6 +48,7 @@ from ..types.events import (
 )
 from .configs import (
     AudioConfig,
+    AudioStreamConfig,
     BidiConnectionConfig,
     BidiModelConfig,
     _merge_config,
@@ -73,6 +75,28 @@ class _TurnState:
     output_transcript: str = ""
 
 
+class GoogleGeminiLiveAudioStreamConfig(TypedDict):
+    """Gemini Live input stream options. Audio uses mono PCM.
+
+    Attributes:
+        sample_rate: Input sample rate in Hz.
+    """
+
+    sample_rate: int
+
+
+class GoogleGeminiLiveAudioConfig(TypedDict, total=False):
+    """Gemini Live audio options. Output is mono PCM at 24000 Hz.
+
+    Omitting the input stream uses a sample rate of 16000 Hz.
+
+    Attributes:
+        input: Input stream options.
+    """
+
+    input: GoogleGeminiLiveAudioStreamConfig
+
+
 class GoogleGeminiLiveModel(BidiModel, AudioCapable):
     """Google Gemini Live implementation using the official Google GenAI SDK.
 
@@ -85,7 +109,8 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         self,
         *,
         client_args: dict[str, Any] | None = None,
-        audio: AudioConfig | None = None,
+        audio: GoogleGeminiLiveAudioConfig | None = None,
+        voice: str | None = None,
         **model_config: Unpack[BidiModelConfig],
     ) -> None:
         """Initialize the Google Gemini Live bidirectional model.
@@ -93,12 +118,16 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         Args:
             client_args: Arguments for the underlying Google GenAI client.
             audio: Audio configuration.
+            voice: Prebuilt output voice name. Omit to use the provider's default.
             **model_config: Model configuration.
+
+        Raises:
+            ValueError: If the input sample rate is not positive.
         """
         _validate_model_config(model_config)
-        _validate_audio_config(audio)
         self._config = BidiModelConfig(**model_config)
         self._config.setdefault("model_id", "gemini-2.5-flash-native-audio-preview-09-2025")
+        self._config["params"] = dict(self._config.get("params") or {})
 
         # Gemini caps a single connection at ~10 min; reconnect before that, resuming the same
         # session via its handle. The GoAway message remains the reactive backstop.
@@ -108,17 +137,8 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         # Gemini reports per-response token deltas, not cumulative session totals.
         self.usage_is_cumulative = False
 
-        self._audio_config = AudioConfig(
-            **{
-                "input_rate": 16000,
-                "output_rate": 24000,
-                "channels": 1,
-                "format": "pcm",
-                **(audio or {}),
-            }
-        )
-
-        self._config["params"] = dict(self._config.get("params") or {})
+        self._resolve_audio_config(audio)
+        self._voice = voice
 
         self.client_args = dict(client_args or {})
         self._client = genai.Client(**self.client_args)
@@ -148,6 +168,23 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
     def get_audio_config(self) -> AudioConfig:
         """Get the resolved audio configuration."""
         return self._audio_config
+
+    def _resolve_audio_config(self, config: GoogleGeminiLiveAudioConfig | None) -> None:
+        """Resolve and validate input and output audio settings."""
+        config = config or {}
+        validate_config_keys(config, GoogleGeminiLiveAudioConfig)
+
+        input_config = config.get("input", {"sample_rate": 16000})
+        validate_config_keys(input_config, GoogleGeminiLiveAudioStreamConfig)
+        sample_rate = input_config["sample_rate"]
+        if sample_rate <= 0:
+            raise ValueError(f"Unsupported sample rate: {sample_rate}. Expected a positive value.")
+
+        self._audio_config = AudioConfig(
+            input=AudioStreamConfig(sample_rate=sample_rate, channels=1, format="pcm"),
+            output=AudioStreamConfig(sample_rate=24000, channels=1, format="pcm"),
+        )
+        _validate_audio_config(self._audio_config)
 
     async def start(
         self,
@@ -292,9 +329,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
             events.append(
                 BidiAudioStreamEvent(
                     audio=audio_b64,
-                    format="pcm",
-                    sample_rate=self._audio_config["output_rate"],
-                    channels=self._audio_config["channels"],
+                    **self._audio_config["output"],
                 )
             )
 
@@ -513,7 +548,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         audio_bytes = base64.b64decode(audio_input.audio)
 
         # Create audio blob for the SDK
-        mime_type = f"audio/pcm;rate={self._audio_config['input_rate']}"
+        mime_type = f"audio/pcm;rate={self._audio_config['input']['sample_rate']}"
         audio_blob = genai_types.Blob(data=audio_bytes, mime_type=mime_type)
 
         # Send real-time audio input - this automatically handles VAD and interruption
@@ -696,10 +731,8 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         if tools:
             config_dict["tools"] = self._format_tools_for_live_api(tools)
 
-        if "voice" in self._audio_config:
-            config_dict.setdefault("speech_config", {}).setdefault("voice_config", {}).setdefault(
-                "prebuilt_voice_config", {}
-            )["voice_name"] = self._audio_config["voice"]
+        if self._voice is not None:
+            config_dict["speech_config"] = {"voice_config": {"prebuilt_voice_config": {"voice_name": self._voice}}}
 
         return _merge_config(config_dict, self._config.get("params") or {})
 

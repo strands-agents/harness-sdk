@@ -26,6 +26,7 @@ from smithy_http.aio.crt import AWSCRTHTTPClient
 from strands.experimental.bidi.models.bedrock import (
     NOVA_SONIC_V1_MODEL_ID,
     NOVA_SONIC_V2_MODEL_ID,
+    BedrockNovaSonicAudioConfig,
     BedrockNovaSonicModel,
     _BedrockAWSCRTHTTPClient,
     _BedrockAWSCRTHTTPResponse,
@@ -379,92 +380,83 @@ async def test_crt_response_reports_cancelled_read_failure():
 # Audio Configuration Tests
 
 
-@pytest.mark.asyncio
-async def test_audio_config_defaults(model_id, boto_session):
-    """Test default audio configuration."""
-    model = BedrockNovaSonicModel(model_id=model_id, boto_session=boto_session)
+@pytest.mark.parametrize(
+    ("audio", "input_rate", "output_rate"),
+    [
+        pytest.param(None, 16000, 16000, id="defaults"),
+        pytest.param({}, 16000, 16000, id="empty"),
+        pytest.param({"input": {"sample_rate": 8000}}, 8000, 16000, id="input"),
+        pytest.param(BedrockNovaSonicAudioConfig(output={"sample_rate": 24000}), 16000, 24000, id="output"),
+        pytest.param({"input": {"sample_rate": 24000}, "output": {"sample_rate": 8000}}, 24000, 8000, id="both"),
+    ],
+)
+def test_get_audio_config(boto_session, audio, input_rate, output_rate):
+    model = BedrockNovaSonicModel(boto_session=boto_session, audio=audio)
 
-    assert model.get_audio_config() == {
-        "input_rate": 16000,
-        "output_rate": 16000,
-        "channels": 1,
-        "format": "pcm",
+    tru_config = model.get_audio_config()
+    exp_config = {
+        "input": {"sample_rate": input_rate, "channels": 1, "format": "pcm"},
+        "output": {"sample_rate": output_rate, "channels": 1, "format": "pcm"},
     }
+    assert tru_config == exp_config
+    assert model.get_audio_config() is tru_config
 
 
-@pytest.mark.asyncio
-async def test_audio_config_partial_override(model_id, boto_session):
-    """Test partial audio configuration override."""
-    model = BedrockNovaSonicModel(
-        model_id=model_id,
-        boto_session=boto_session,
-        audio={"output_rate": 24000, "voice": "ruth"},
-    )
-
-    assert model.get_audio_config() == {
-        "input_rate": 16000,
-        "output_rate": 24000,
-        "channels": 1,
-        "format": "pcm",
-        "voice": "ruth",
-    }
+@pytest.mark.parametrize("direction", ["input", "output"])
+def test__init__requires_audio_sample_rate(boto_session, direction):
+    with pytest.raises(KeyError, match="sample_rate"):
+        BedrockNovaSonicModel(boto_session=boto_session, audio={direction: {}})
 
 
-@pytest.mark.asyncio
-async def test_audio_config_full_override(model_id, boto_session):
-    """Test full audio configuration override."""
-    audio_config = {
-        "input_rate": 48000,
-        "output_rate": 48000,
-        "channels": 2,
-        "format": "pcm",
-        "voice": "stephen",
-    }
-    model = BedrockNovaSonicModel(
-        model_id=model_id,
-        boto_session=boto_session,
-        audio=audio_config,
-    )
-
-    assert model.get_audio_config() == audio_config
+@pytest.mark.parametrize("direction", ["input", "output"])
+def test__init__rejects_unsupported_audio_sample_rate(boto_session, direction):
+    with pytest.raises(ValueError, match="Unsupported sample rate"):
+        BedrockNovaSonicModel(boto_session=boto_session, audio={direction: {"sample_rate": 48000}})
 
 
 @pytest.mark.parametrize(
-    ("audio", "expected"),
+    ("audio", "invalid_key"),
     [
-        (
-            None,
-            {
-                "mediaType": "audio/lpcm",
-                "sampleRateHertz": 16000,
-                "sampleSizeBits": 16,
-                "channelCount": 1,
-                "voiceId": "matthew",
-                "encoding": "base64",
-                "audioType": "SPEECH",
-            },
-        ),
-        (
-            {"output_rate": 24000, "channels": 2, "voice": "ruth"},
-            {
-                "mediaType": "audio/lpcm",
-                "sampleRateHertz": 24000,
-                "sampleSizeBits": 16,
-                "channelCount": 2,
-                "voiceId": "ruth",
-                "encoding": "base64",
-                "audioType": "SPEECH",
-            },
-        ),
+        ({"input": {"sample_rate": 16000, "channels": 2}}, "channels"),
+        ({"output": {"sample_rate": 16000, "format": "wav"}}, "format"),
+        ({"voice": "ruth"}, "voice"),
     ],
 )
-def test_prompt_start_event_audio_output_config(boto_session, audio, expected):
+def test__init__warns_on_unknown_audio_keys(boto_session, audio, invalid_key):
+    with pytest.warns(UserWarning, match=invalid_key):
+        model = BedrockNovaSonicModel(boto_session=boto_session, audio=audio)
+
+    tru_config = model.get_audio_config()
+    exp_config = {
+        "input": {"sample_rate": 16000, "channels": 1, "format": "pcm"},
+        "output": {"sample_rate": 16000, "channels": 1, "format": "pcm"},
+    }
+    assert tru_config == exp_config
+
+
+@pytest.mark.parametrize(
+    ("options", "rate", "voice"),
+    [
+        pytest.param({}, 16000, "matthew", id="defaults"),
+        pytest.param({"audio": {"output": {"sample_rate": 24000}}, "voice": "ruth"}, 24000, "ruth", id="custom"),
+    ],
+)
+def test__get_prompt_start_event_audio_output_config(boto_session, options, rate, voice):
     """Prompt start uses the resolved audio output configuration."""
-    model = BedrockNovaSonicModel(boto_session=boto_session, audio=audio)
+    model = BedrockNovaSonicModel(boto_session=boto_session, **options)
 
     prompt_start = json.loads(model._get_prompt_start_event([]))["event"]["promptStart"]
-
-    assert prompt_start["audioOutputConfiguration"] == expected
+    tru_config = prompt_start["audioOutputConfiguration"]
+    exp_config = {
+        "mediaType": "audio/lpcm",
+        "sampleRateHertz": rate,
+        "sampleSizeBits": 16,
+        "channelCount": 1,
+        "voiceId": voice,
+        "encoding": "base64",
+        "audioType": "SPEECH",
+    }
+    assert tru_config == exp_config
 
 
 @pytest.mark.asyncio
@@ -1299,59 +1291,23 @@ async def test_message_history_empty_and_edge_cases(nova_model):
     assert "Second part" in content
 
 
-# Error Handling Tests
+# Audio Event Tests
 
 
-@pytest.mark.asyncio
-async def test_custom_audio_rates_in_events(model_id, boto_session):
-    """Test that audio events use configured sample rates."""
-    response_state = _ResponseState()
+@pytest.mark.parametrize(
+    ("audio", "rate"),
+    [
+        pytest.param(None, 16000, id="defaults"),
+        pytest.param({"output": {"sample_rate": 24000}}, 24000, id="custom"),
+    ],
+)
+def test__convert_nova_event_audio_format(boto_session, audio, rate):
+    model = BedrockNovaSonicModel(boto_session=boto_session, audio=audio)
+    audio_base64 = base64.b64encode(b"audio data").decode()
 
-    # Create model with custom audio configuration
-    model = BedrockNovaSonicModel(
-        model_id=model_id,
-        boto_session=boto_session,
-        audio={"output_rate": 48000, "channels": 2},
-    )
-
-    # Test audio output event uses custom configuration
-    audio_bytes = b"test audio data"
-    audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
-    nova_event = {"audioOutput": {"content": audio_base64}}
-    result = model._convert_nova_event(
-        nova_event,
-        response_state,
-    )[0]
-
-    assert isinstance(result, BidiAudioStreamEvent)
-    # Should use configured rates, not constants
-    assert result.sample_rate == 48000  # Custom config
-    assert result.channels == 2  # Custom config
-    assert result.format == "pcm"
-
-
-@pytest.mark.asyncio
-async def test_default_audio_rates_in_events(model_id, boto_session):
-    """Test that audio events use default sample rates when no custom config."""
-    response_state = _ResponseState()
-
-    # Create model without custom audio configuration
-    model = BedrockNovaSonicModel(model_id=model_id, boto_session=boto_session)
-
-    # Test audio output event uses defaults
-    audio_bytes = b"test audio data"
-    audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
-    nova_event = {"audioOutput": {"content": audio_base64}}
-    result = model._convert_nova_event(
-        nova_event,
-        response_state,
-    )[0]
-
-    assert isinstance(result, BidiAudioStreamEvent)
-    # Should use default rates
-    assert result.sample_rate == 16000  # Default output rate
-    assert result.channels == 1  # Default channels
-    assert result.format == "pcm"
+    tru_events = model._convert_nova_event({"audioOutput": {"content": audio_base64}}, _ResponseState())
+    exp_events = [BidiAudioStreamEvent(audio=audio_base64, format="pcm", sample_rate=rate, channels=1)]
+    assert tru_events == exp_events
 
 
 # Nova Sonic v2 Support Tests
@@ -1377,12 +1333,12 @@ async def test_nova_sonic_v1_instantiation(boto_session, mock_client):
     model_custom = BedrockNovaSonicModel(
         model_id=NOVA_SONIC_V1_MODEL_ID,
         boto_session=boto_session,
-        audio={"output_rate": 24000, "voice": "joanna"},
+        audio={"output": {"sample_rate": 24000}},
+        voice="joanna",
     )
 
     assert model_custom.model_id == NOVA_SONIC_V1_MODEL_ID
-    assert model_custom.get_audio_config()["output_rate"] == 24000
-    assert model_custom.get_audio_config()["voice"] == "joanna"
+    assert model_custom.get_audio_config()["output"]["sample_rate"] == 24000
 
 
 @pytest.mark.asyncio
@@ -1399,12 +1355,13 @@ async def test_nova_sonic_v2_instantiation(boto_session, mock_client):
     model_custom = BedrockNovaSonicModel(
         model_id=NOVA_SONIC_V2_MODEL_ID,
         boto_session=boto_session,
-        audio={"input_rate": 48000, "voice": "ruth"},
+        audio={"input": {"sample_rate": 24000}},
+        voice="ruth",
         params={"inferenceConfiguration": {"temperature": 0.8}},
     )
 
     assert model_custom.model_id == NOVA_SONIC_V2_MODEL_ID
-    assert model_custom.get_audio_config()["input_rate"] == 48000
+    assert model_custom.get_audio_config()["input"]["sample_rate"] == 24000
     assert (
         json.loads(model_custom._get_connection_start_event())["event"]["sessionStart"]["inferenceConfiguration"][
             "temperature"
@@ -1422,12 +1379,12 @@ async def test_nova_sonic_v1_v2_compatibility(boto_session, mock_client):
     model_v1 = BedrockNovaSonicModel(
         model_id=NOVA_SONIC_V1_MODEL_ID,
         boto_session=boto_session,
-        audio={"voice": "matthew"},
+        voice="matthew",
     )
     model_v2 = BedrockNovaSonicModel(
         model_id=NOVA_SONIC_V2_MODEL_ID,
         boto_session=boto_session,
-        audio={"voice": "matthew"},
+        voice="matthew",
     )
 
     assert model_v1.get_audio_config() == model_v2.get_audio_config()

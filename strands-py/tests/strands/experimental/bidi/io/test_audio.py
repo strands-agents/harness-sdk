@@ -62,10 +62,8 @@ def agent():
     mock = unittest.mock.MagicMock()
     mock.model = unittest.mock.MagicMock(spec=AudioCapable)
     mock.model.get_audio_config.return_value = {
-        "input_rate": 24000,
-        "output_rate": 16000,
-        "channels": 2,
-        "format": "test-format",
+        "input": {"sample_rate": 24000, "channels": 2, "format": "pcm"},
+        "output": {"sample_rate": 16000, "channels": 2, "format": "pcm"},
     }
     return mock
 
@@ -75,10 +73,8 @@ def aec_agent():
     mock = unittest.mock.MagicMock()
     mock.model = unittest.mock.MagicMock(spec=AudioCapable)
     mock.model.get_audio_config.return_value = {
-        "input_rate": 16000,
-        "output_rate": 16000,
-        "channels": 1,
-        "format": "pcm",
+        "input": {"sample_rate": 16000, "channels": 1, "format": "pcm"},
+        "output": {"sample_rate": 16000, "channels": 1, "format": "pcm"},
     }
     return mock
 
@@ -88,10 +84,8 @@ def agent_mixed_rates():
     mock = unittest.mock.MagicMock()
     mock.model = unittest.mock.MagicMock(spec=AudioCapable)
     mock.model.get_audio_config.return_value = {
-        "input_rate": 16000,
-        "output_rate": 24000,
-        "channels": 1,
-        "format": "pcm",
+        "input": {"sample_rate": 16000, "channels": 1, "format": "pcm"},
+        "output": {"sample_rate": 24000, "channels": 1, "format": "pcm"},
     }
     return mock
 
@@ -207,7 +201,7 @@ async def test_bidi_audio_io_input(audio_input):
     exp_event = BidiAudioInputEvent(
         audio=base64.b64encode(b"test-audio").decode("utf-8"),
         channels=2,
-        format="test-format",
+        format="pcm",
         sample_rate=24000,
     )
     assert tru_event == exp_event
@@ -230,13 +224,32 @@ async def test_bidi_audio_io_output(audio_output):
     audio_event = BidiAudioStreamEvent(
         audio=base64.b64encode(b"test-audio").decode("utf-8"),
         channels=2,
-        format="test-format",
+        format="pcm",
         sample_rate=16000,
     )
     await audio_output(audio_event)
 
-    tru_data, _ = audio_output._callback(None, frame_count=4)
+    tru_data, _ = audio_output._callback(None, frame_count=2)
     exp_data = b"test-aud"
+    assert tru_data == exp_data
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stream",
+    [
+        {"format": "wav", "sample_rate": 16000, "channels": 2},
+        {"format": "pcm", "sample_rate": 24000, "channels": 2},
+        {"format": "pcm", "sample_rate": 16000, "channels": 1},
+    ],
+)
+async def test_bidi_audio_io_output_rejects_changed_format(audio_output, stream):
+    event = BidiAudioStreamEvent(audio=base64.b64encode(b"audio").decode(), **stream)
+    with pytest.raises(ValueError, match="does not match the playback format"):
+        await audio_output(event)
+
+    tru_data, _ = audio_output._callback(None, frame_count=1)
+    exp_data = b"\x00\x00\x00\x00"
     assert tru_data == exp_data
 
 
@@ -247,7 +260,7 @@ async def test_bidi_audio_io_output_interrupt(audio_output):
     audio_event = BidiAudioStreamEvent(
         audio=base64.b64encode(b"test-audio").decode("utf-8"),
         channels=2,
-        format="test-format",
+        format="pcm",
         sample_rate=16000,
     )
     await audio_output(audio_event)
@@ -255,7 +268,7 @@ async def test_bidi_audio_io_output_interrupt(audio_output):
     await audio_output(interrupt_event)
 
     tru_data, _ = audio_output._callback(None, frame_count=1)
-    exp_data = b"\x00\x00"
+    exp_data = b"\x00\x00\x00\x00"
     assert tru_data == exp_data
     transcript_output.assert_any_await(interrupt_event)
 
@@ -295,6 +308,28 @@ async def test_bidi_audio_io_start_rejects_model_without_audio_capability(pyaudi
     with pytest.raises(TypeError, match="BidiAudioIO requires a model that implements AudioCapable"):
         await io.start(agent)
 
+    pyaudio_module.PyAudio.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("direction", ["input", "output"])
+@pytest.mark.parametrize("format", ["wav", "opus", "mp3"])
+async def test_bidi_audio_io_start_rejects_unsupported_encoding(pyaudio_module, agent, direction, format):
+    agent.model.get_audio_config.return_value[direction]["format"] = format
+    audio_io = BidiAudioIO()
+    channel = audio_io.input() if direction == "input" else audio_io.output()
+
+    with pytest.raises(ValueError, match="requires signed 16-bit PCM"):
+        await channel.start(agent)
+    pyaudio_module.PyAudio.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_echo_cancellation_rejects_different_channel_counts(pyaudio_module, aec_agent):
+    aec_agent.model.get_audio_config.return_value["output"]["channels"] = 2
+    audio_io = BidiAudioIO(audio_processor=True)
+    with pytest.raises(ValueError, match="matching input and output channel counts"):
+        await audio_io.input().start(aec_agent)
     pyaudio_module.PyAudio.assert_not_called()
 
 
@@ -358,7 +393,8 @@ def test_processor_construction_respects_echo_cancellation_flag():
     assert processor_class.call_args.kwargs["echo_cancellation"] is False
 
 
-def test_ec_off_processes_capture_with_none_reference():
+@pytest.mark.parametrize("output_rate", [None, 16000])
+def test_ec_off_processes_capture_with_none_reference(output_rate):
     frame = np.ones(160, dtype=np.int16) * 1000
     cleaned = np.zeros(160, dtype=np.int16)
 
@@ -367,12 +403,12 @@ def test_ec_off_processes_capture_with_none_reference():
     processor_patch, _, _ = _fake_audio_processor(processor)
 
     with processor_patch:
-        proc = _create_processor(echo_cancellation=False)
+        proc = _create_processor(echo_cancellation=False, output_rate=output_rate)
         proc.process(frame.tobytes())
 
-    assert len(processor.process.call_args.args) == 2
-    np.testing.assert_array_equal(processor.process.call_args.args[0], frame)
-    assert processor.process.call_args.args[1] is None
+    near_frame, reference_frame = processor.process.call_args.args
+    np.testing.assert_array_equal(near_frame, frame)
+    assert reference_frame is None
 
 
 def test_process_empty_input_returns_empty():
@@ -472,6 +508,24 @@ def test_processor_construction_builds_audio_processor_with_config():
         auto_gain_control=True,
         stream_delay_ms=20,
     )
+
+
+@pytest.mark.parametrize("num_channels", [0, 2])
+@pytest.mark.parametrize("echo_cancellation", [False, True])
+def test_processor_start_rejects_non_mono_audio(num_channels, echo_cancellation):
+    processor_patch, processor_class, _ = _fake_audio_processor()
+    with processor_patch, pytest.raises(ValueError, match="Audio processing currently supports only mono audio"):
+        _create_processor(num_channels=num_channels, echo_cancellation=echo_cancellation)
+
+    processor_class.assert_not_called()
+
+
+def test_processor_start_requires_output_rate_for_echo_cancellation():
+    processor_patch, processor_class, _ = _fake_audio_processor()
+    with processor_patch, pytest.raises(ValueError, match="Echo cancellation requires output_rate"):
+        _create_processor(output_rate=None)
+
+    processor_class.assert_not_called()
 
 
 @pytest.mark.parametrize("rate", [8000, 16000, 24000, 44100, 48000, 96000, 384000])
@@ -923,7 +977,7 @@ def test_real_library_echo_cancellation_off_still_processes():
     # Echo cancellation off: no reference is used (far=None) and the frame is still processed by noise
     # suppression / AGC. Assert the output actually differs from the input, so the test fails if the config
     # were ignored (a length-only check would pass even on an identity pass-through).
-    proc = _create_processor(echo_cancellation=False)
+    proc = _create_processor(echo_cancellation=False, output_rate=None)
 
     rng = np.random.default_rng(0)
     out = np.array([], dtype=np.int16)

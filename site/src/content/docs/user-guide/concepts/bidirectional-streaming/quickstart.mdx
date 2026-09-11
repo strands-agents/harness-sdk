@@ -288,7 +288,7 @@ Each provider has different features, timeout limits, and audio quality. See the
 
 ## Configuring Audio Settings
 
-Customize audio configuration for both the model and I/O:
+Choose supported audio settings on the model and device buffering on the I/O channel:
 
 ```python
 import asyncio
@@ -298,11 +298,8 @@ from strands.experimental.bidi.models import GoogleGeminiLiveModel
 
 # Configure model audio settings
 model = GoogleGeminiLiveModel(
-    audio={
-        "input_rate": 48000,   # Higher quality input
-        "output_rate": 24000,  # Standard output
-        "voice": "Puck"
-    }
+    audio={"input": {"sample_rate": 48000}},
+    voice="Puck",
 )
 
 # Configure I/O buffer settings
@@ -324,7 +321,9 @@ async def main():
 asyncio.run(main())
 ```
 
-The I/O automatically configures hardware to match the model's audio requirements.
+`BidiAudioIO` reads the model's resolved input and output formats through
+`get_audio_config()`. You do not need to repeat rates or channel counts on the I/O
+channel.
 
 ## Handling Interruptions
 
