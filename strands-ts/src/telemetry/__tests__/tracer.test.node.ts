@@ -1399,6 +1399,81 @@ describe('Tracer', () => {
     })
   })
 
+  describe('endNodeSpan', () => {
+    it('sets OK status on success', () => {
+      const tracer = new Tracer()
+      const span = tracer.startNodeSpan({ nodeId: 'broken', nodeType: 'node' })
+
+      tracer.endNodeSpan(span, { status: 'COMPLETED', duration: 5 })
+
+      expect(mockSpan.getAttributeValue('gen_ai.agent.status')).toBe('COMPLETED')
+      expect(mockSpan.calls.setStatus).toContainEqual({ status: { code: SpanStatusCode.OK } })
+      expect(mockSpan.calls.recordException).toHaveLength(0)
+    })
+
+    it('sets ERROR status and records the exception when a node result retains an error', () => {
+      const tracer = new Tracer()
+      const span = tracer.startNodeSpan({ nodeId: 'broken', nodeType: 'node' })
+      const error = new Error('broken stuff')
+
+      tracer.endNodeSpan(span, { status: 'FAILED', duration: 5, error })
+
+      expect(mockSpan.getAttributeValue('gen_ai.agent.status')).toBe('FAILED')
+      expect(mockSpan.calls.setStatus).toContainEqual({
+        status: { code: SpanStatusCode.ERROR, message: 'broken stuff' },
+      })
+      expect(mockSpan.calls.recordException).toContainEqual({ exception: error, time: undefined })
+    })
+
+    it('handles null span gracefully', () => {
+      const tracer = new Tracer()
+
+      expect(() => tracer.endNodeSpan(null, { status: 'FAILED', error: new Error('x') })).not.toThrow()
+    })
+  })
+
+  describe('endMultiAgentSpan', () => {
+    it('sets OK status on success', () => {
+      const tracer = new Tracer()
+      const span = tracer.startMultiAgentSpan({ orchestratorId: 'test-graph', orchestratorType: 'graph' })
+
+      tracer.endMultiAgentSpan(span, { duration: 10 })
+
+      expect(mockSpan.calls.setStatus).toContainEqual({ status: { code: SpanStatusCode.OK } })
+      expect(mockSpan.calls.recordException).toHaveLength(0)
+    })
+
+    it('sets ERROR status without recording an exception when the aggregate result failed', () => {
+      const tracer = new Tracer()
+      const span = tracer.startMultiAgentSpan({ orchestratorId: 'test-graph', orchestratorType: 'graph' })
+
+      tracer.endMultiAgentSpan(span, { duration: 10, status: 'FAILED' })
+
+      expect(mockSpan.getAttributeValue('gen_ai.agent.status')).toBe('FAILED')
+      expect(mockSpan.calls.setStatus).toContainEqual({ status: { code: SpanStatusCode.ERROR } })
+      expect(mockSpan.calls.recordException).toHaveLength(0)
+    })
+
+    it('records the exception when orchestration itself threw', () => {
+      const tracer = new Tracer()
+      const span = tracer.startMultiAgentSpan({ orchestratorId: 'test-graph', orchestratorType: 'graph' })
+      const error = new Error('max steps reached')
+
+      tracer.endMultiAgentSpan(span, { duration: 10, error })
+
+      expect(mockSpan.calls.setStatus).toContainEqual({
+        status: { code: SpanStatusCode.ERROR, message: 'max steps reached' },
+      })
+      expect(mockSpan.calls.recordException).toContainEqual({ exception: error, time: undefined })
+    })
+
+    it('handles null span gracefully', () => {
+      const tracer = new Tracer()
+
+      expect(() => tracer.endMultiAgentSpan(null, { status: 'FAILED' })).not.toThrow()
+    })
+  })
+
   describe('currentSpanContext', () => {
     it('returns undefined when no span is active', () => {
       vi.mocked(trace.getActiveSpan).mockReturnValue(undefined)

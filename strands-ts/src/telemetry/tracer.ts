@@ -590,10 +590,11 @@ export class Tracer {
 
     try {
       const attributes: Record<string, AttributeValue> = {}
+      if (options.status) attributes['gen_ai.agent.status'] = options.status
       if (options.duration !== undefined) attributes['gen_ai.agent.execution_time'] = options.duration
       if (options.usage) this._setUsageAttributes(attributes, options.usage)
 
-      this._endSpan(span, attributes, options.error)
+      this._endSpan(span, attributes, options.error, options.status === 'FAILED')
     } catch (err) {
       logger.warn(`error=<${err}> | failed to end multi-agent span`)
     }
@@ -646,7 +647,7 @@ export class Tracer {
       if (options.duration !== undefined) attributes['gen_ai.agent.execution_time'] = options.duration
       if (options.usage) this._setUsageAttributes(attributes, options.usage)
 
-      this._endSpan(span, attributes, options.error)
+      this._endSpan(span, attributes, options.error, options.status === 'FAILED')
     } catch (err) {
       logger.warn(`error=<${err}> | failed to end node span`)
     }
@@ -1001,7 +1002,7 @@ export class Tracer {
   /**
    * End a span with the given attributes and optional error.
    */
-  private _endSpan(span: Span, attributes?: Record<string, AttributeValue>, error?: Error): void {
+  private _endSpan(span: Span, attributes?: Record<string, AttributeValue>, error?: Error, failed?: boolean): void {
     try {
       const endAttributes: Record<string, AttributeValue> = { 'gen_ai.event.end_time': new Date().toISOString() }
       if (attributes) Object.assign(endAttributes, attributes)
@@ -1011,6 +1012,8 @@ export class Tracer {
       if (error) {
         span.setStatus({ code: SpanStatusCode.ERROR, message: error.message })
         span.recordException(error)
+      } else if (failed) {
+        span.setStatus({ code: SpanStatusCode.ERROR })
       } else {
         span.setStatus({ code: SpanStatusCode.OK })
       }
