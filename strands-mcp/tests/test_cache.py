@@ -77,6 +77,27 @@ class TestEnsurePageIndexUpdate:
 
         assert result is None
 
+    def test_ensure_page_records_failure_reason(self):
+        """A failed fetch records the exception text on the cached sentinel.
+
+        fetch_doc surfaces this reason (see #3328) so a consuming model can
+        tell a 404 from a DNS failure from a timeout.
+        """
+        cache._URL_CACHE["https://example.com/404"] = None
+
+        with patch(
+            "strands_mcp_server.utils.cache.doc_fetcher.fetch_and_clean",
+            side_effect=Exception("HTTP Error 404: Not Found"),
+        ):
+            result = cache.ensure_page("https://example.com/404")
+
+        assert result is None
+        entry = cache._URL_CACHE["https://example.com/404"]
+        assert isinstance(entry, cache._FailedEntry)
+        assert entry.reason == "Exception: HTTP Error 404: Not Found"
+        assert cache.get_failure_reason("https://example.com/404") == "Exception: HTTP Error 404: Not Found"
+        assert cache.get_failure_reason("https://example.com/never-seen") is None
+
 
 class TestPrefetchEnvVar:
     """Tests for background prefetch environment variable."""

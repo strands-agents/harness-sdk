@@ -57,9 +57,7 @@ def search_docs(query: str, k: int = 5) -> List[Dict[str, Any]]:
     url_cache = cache.get_url_cache()
 
     top = results[: min(len(results), cache.SNIPPET_HYDRATE_MAX)]
-    urls_to_hydrate = list(
-        dict.fromkeys(doc.uri for _, doc in top if (page := url_cache.get(doc.uri)) is None or not page.content)
-    )
+    urls_to_hydrate = list(dict.fromkeys(doc.uri for _, doc in top if cache.needs_hydration(doc.uri)))
     if urls_to_hydrate:
         with ThreadPoolExecutor(max_workers=len(urls_to_hydrate)) as executor:
             list(executor.map(cache.ensure_page, urls_to_hydrate))
@@ -68,6 +66,9 @@ def search_docs(query: str, k: int = 5) -> List[Dict[str, Any]]:
     return_docs: List[Dict[str, Any]] = []
     for score, doc in results:
         page = url_cache.get(doc.uri)
+        # Guard against non-Page entries (failed sentinel) — treat as not fetched
+        if not hasattr(page, "content"):
+            page = None
         snippet = text_processor.make_snippet(page, doc.display_title)
         return_docs.append(
             {
@@ -94,6 +95,11 @@ def fetch_doc(uri: str = "", section: str = "") -> Dict[str, Any]:
 
     For small documents (under ~8KB), the full content is returned directly
     regardless of mode, since sectioning would add overhead without benefit.
+
+    For documents with no parseable sections (no ## headings), content is
+    truncated to ~8KB and the response carries ``truncated: True``. The
+    ``document_small`` field indicates the content was returned as a single blob
+    rather than sectioned; it does not guarantee the content is complete.
 
     Recommended workflow:
     1. search_docs("your query") - find relevant URLs
@@ -123,6 +129,12 @@ def fetch_doc(uri: str = "", section: str = "") -> Dict[str, Any]:
         - document_small: true
         - content: Full document content (returned automatically)
 
+        For documents with no parseable sections:
+        - url, title: Document metadata
+        - document_small: true
+        - truncated: true (content was truncated to ~8KB)
+        - content: Truncated content with notice appended
+
         On error:
         - error: Error description
         - url: Requested URL
@@ -143,7 +155,8 @@ def fetch_doc(uri: str = "", section: str = "") -> Dict[str, Any]:
 
     page = cache.ensure_page(uri)
     if page is None:
-        return {"error": "fetch failed", "url": uri}
+        reason = cache.get_failure_reason(uri)
+        return {"error": f"fetch failed: {reason}" if reason else "fetch failed", "url": uri}
 
     # Small doc: return full content directly
     if len(page.content.encode("utf-8")) <= text_processor.SMALL_DOC_THRESHOLD:
@@ -157,14 +170,22 @@ def fetch_doc(uri: str = "", section: str = "") -> Dict[str, Any]:
 
     sections = text_processor.parse_sections(page.content)
 
-    # No parseable sections: treat as small doc regardless of size
+    # No parseable sections: return bounded content to protect token budget.
+    # The early return above already handled docs <= threshold, so here content
+    # is always over the threshold and always truncated.
     if not sections:
+        threshold = text_processor.SMALL_DOC_THRESHOLD
+        encoded = page.content.encode("utf-8")
+        trunc_msg = "\n\n… (truncated, no parseable sections)"
+        trunc_len = len(trunc_msg.encode("utf-8"))
+        content = encoded[: threshold - trunc_len].decode("utf-8", errors="ignore") + trunc_msg
         return {
             "url": uri,
             "title": page.title,
             "document_small": True,
+            "truncated": True,
             "reason": "no_sections",
-            "content": page.content,
+            "content": content,
         }
 
     # Section mode: extract specific section

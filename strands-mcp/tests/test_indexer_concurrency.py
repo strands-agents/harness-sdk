@@ -479,8 +479,9 @@ class TestBlocker2CacheBeforeIndexing:
             f"Got {len(results_after)} results."
         )
 
-    def test_fetch_failure_does_not_cache_none(self):
-        """When fetch_and_clean raises, the URL should remain retryable (cache stays None)."""
+    def test_fetch_failure_is_negatively_cached_until_ttl(self):
+        """When fetch_and_clean raises, the URL is negatively cached for the TTL
+        (no immediate re-fetch), then re-fetched once the entry expires."""
         cache._INDEX = indexer.IndexSearch()
         url = "https://strandsagents.com/flaky.md"
         cache._URL_CACHE[url] = None
@@ -510,12 +511,20 @@ class TestBlocker2CacheBeforeIndexing:
                 page1 = cache.ensure_page(url)
                 assert page1 is None
 
-                # Cache should still be None so retry is possible
-                assert cache._URL_CACHE.get(url) is None, "Failed fetch should not populate cache"
+                # The URL is negatively cached as a _FailedEntry, not left at None
+                entry = cache._URL_CACHE.get(url)
+                assert isinstance(entry, cache._FailedEntry)
 
-                # Second call: fetch succeeds
+                # Within TTL: short-circuited, no re-fetch attempt
                 page2 = cache.ensure_page(url)
-                assert page2 is not None
+                assert page2 is None
+                assert call_count[0] == 1
+
+                # Expire the entry: next call re-fetches and succeeds
+                entry._timestamp -= cache._FAILED_TTL_SECONDS + 1
+                page3 = cache.ensure_page(url)
+                assert page3 is not None
+                assert call_count[0] == 2
 
         # Term should be searchable
         results = cache._INDEX.search("flakyterm")
@@ -578,4 +587,199 @@ class TestUpdateContentAtomicity:
         assert any(doc.uri == "u1" for _, doc in results), (
             "page must be searchable by body term after retry — "
             "content was not committed on the failed attempt, so retry re-indexed it"
+        )
+
+
+class TestNeedsHydrationMutant:
+    """Regression: needs_hydration forced to always-True must be caught.
+
+    A mutant that makes needs_hydration() always return True would cause
+    unnecessary re-fetches of cached Pages and expired _FailedEntry checks
+    to be skipped.
+    """
+
+    @pytest.fixture(autouse=True)
+    def reset_cache_state(self):
+        """Reset cache module global state before each test."""
+        cache._INDEX = None
+        cache._URL_CACHE = {}
+        cache._URL_TITLES = {}
+        cache._LINKS_LOADED = False
+        cache._PREFETCH_STARTED = False
+        yield
+        cache._INDEX = None
+        cache._URL_CACHE = {}
+        cache._URL_TITLES = {}
+        cache._LINKS_LOADED = False
+        cache._PREFETCH_STARTED = False
+
+    def test_needs_hydration_false_for_unexpired_failed_entry(self):
+        """needs_hydration must return False for a non-expired _FailedEntry."""
+        url = "https://strandsagents.com/failed.md"
+        entry = cache._FailedEntry()
+        cache._URL_CACHE[url] = entry
+
+        # Entry is fresh — should NOT need hydration
+        assert not cache.needs_hydration(url), (
+            "needs_hydration() returned True for an unexpired _FailedEntry; "
+            "mutant survives if this passes with always-True"
+        )
+
+    def test_needs_hydration_true_after_ttl_expires(self):
+        """needs_hydration must return True once the _FailedEntry TTL expires."""
+        url = "https://strandsagents.com/flaky.md"
+        entry = cache._FailedEntry()
+        cache._URL_CACHE[url] = entry
+
+        # Expire the entry
+        entry._timestamp -= cache._FAILED_TTL_SECONDS + 1
+
+        assert cache.needs_hydration(url), (
+            "needs_hydration() returned False for an expired _FailedEntry; the TTL logic is broken"
+        )
+
+
+class TestRaceConditionFailureDoesNotClobberPage:
+    """Regression: a failed fetch must not clobber an existing cached Page.
+
+    Scenario: Thread B starts fetching (cache is empty). Thread A finishes and
+    caches a Page while Thread B is still fetching. Thread B's fetch fails.
+    Thread B must NOT overwrite Thread A's Page with a _FailedEntry.
+    """
+
+    @pytest.fixture(autouse=True)
+    def reset_cache_state(self):
+        """Reset cache module global state before each test."""
+        cache._INDEX = None
+        cache._URL_CACHE = {}
+        cache._URL_TITLES = {}
+        cache._LINKS_LOADED = False
+        cache._PREFETCH_STARTED = False
+        yield
+        cache._INDEX = None
+        cache._URL_CACHE = {}
+        cache._URL_TITLES = {}
+        cache._LINKS_LOADED = False
+        cache._PREFETCH_STARTED = False
+
+    def test_failure_does_not_clobber_existing_page(self, monkeypatch):
+        """A failed fetch must leave an existing cached Page intact.
+
+        Simulates: Thread B reads cache (None), starts fetch. Thread A caches a
+        Page during B's fetch. Thread B's fetch fails. The failure handler must
+        check the cache again under lock and NOT clobber the Page.
+        """
+        from strands_mcp_server.utils import doc_fetcher
+
+        url = "https://strandsagents.com/good.md"
+
+        # Start with empty cache
+        cache._URL_CACHE[url] = None
+
+        # Index is required for ensure_page to proceed
+        cache._INDEX = indexer.IndexSearch()
+        cache._INDEX.add(indexer.Doc(uri=url, display_title="Good Doc", content="", index_title="good doc"))
+
+        # Simulate Thread A inserting a Page during Thread B's fetch
+        existing_page = doc_fetcher.Page(url=url, title="Good Doc", content="Real content")
+
+        def failing_fetch(_url):
+            # Thread A caches the Page while Thread B is fetching
+            cache._URL_CACHE[url] = existing_page
+            raise ConnectionError("Network down")
+
+        monkeypatch.setattr(
+            "strands_mcp_server.utils.doc_fetcher.fetch_and_clean",
+            failing_fetch,
+        )
+
+        # Thread B's ensure_page should return None (failure) but NOT clobber the cache
+        result = cache.ensure_page(url)
+        assert result is None
+
+        # The cache must still hold Thread A's Page, not a _FailedEntry
+        cached = cache._URL_CACHE.get(url)
+        assert cached is existing_page, (
+            f"Expected the cached Page to remain; got {type(cached).__name__}. "
+            "The failure path clobbered a good Page with a _FailedEntry."
+        )
+
+
+class TestRaceConditionSuccessOverwritesSentinel:
+    """Regression: a successful fetch must overwrite a _FailedEntry that lands mid-fetch.
+
+    Scenario: Thread A starts fetching (cache is None). Thread B fails and writes a
+    _FailedEntry while Thread A is still fetching. Thread A's fetch succeeds. Thread A
+    must overwrite the sentinel with the real Page, not short-circuit because `existing
+    is not None`.
+    """
+
+    @pytest.fixture(autouse=True)
+    def reset_cache_state(self):
+        """Reset cache module global state before each test."""
+        cache._INDEX = None
+        cache._URL_CACHE = {}
+        cache._URL_TITLES = {}
+        cache._LINKS_LOADED = False
+        cache._PREFETCH_STARTED = False
+        yield
+        cache._INDEX = None
+        cache._URL_CACHE = {}
+        cache._URL_TITLES = {}
+        cache._LINKS_LOADED = False
+        cache._PREFETCH_STARTED = False
+
+    def test_success_overwrites_failed_entry_sentinel(self, monkeypatch):
+        """A successful fetch must overwrite a _FailedEntry injected mid-fetch.
+
+        Simulates: Thread A reads cache (None), starts fetch. Thread B fails and
+        writes a fresh _FailedEntry during A's fetch. Thread A's fetch succeeds.
+        The success path must detect the sentinel and overwrite it with the Page.
+
+        Pre-fix bug: the guard was `if existing is not None:` which short-circuits
+        when existing is a _FailedEntry, returning the sentinel → AttributeError
+        when the caller accesses .content/.title.
+        """
+        from strands_mcp_server.utils import doc_fetcher
+
+        url = "https://strandsagents.com/recovered.md"
+
+        # Seed the cache with None so the top-of-function check falls through and fetch starts
+        cache._URL_CACHE[url] = None
+
+        # Index is required for ensure_page to proceed
+        cache._INDEX = indexer.IndexSearch()
+        cache._INDEX.add(indexer.Doc(uri=url, display_title="Recovered Doc", content="", index_title="recovered doc"))
+
+        # fetch_and_clean injects a fresh _FailedEntry BEFORE returning success,
+        # simulating another thread's failure landing while this thread was fetching
+        def successful_fetch_with_race(_url):
+            # Another thread's failure lands while we're fetching
+            cache._URL_CACHE[url] = cache._FailedEntry()
+            # This thread's fetch succeeds
+            return type("Raw", (), {"title": "Recovered Doc", "content": "Fresh content"})()
+
+        monkeypatch.setattr(
+            "strands_mcp_server.utils.doc_fetcher.fetch_and_clean",
+            successful_fetch_with_race,
+        )
+        monkeypatch.setattr(
+            "strands_mcp_server.utils.cache.text_processor.format_display_title",
+            lambda u, t, c: t,
+        )
+
+        result = cache.ensure_page(url)
+
+        # The return value must be the Page, not the sentinel
+        assert isinstance(result, doc_fetcher.Page), (
+            f"Expected Page return; got {type(result).__name__}. "
+            "The success path short-circuited on the mid-fetch _FailedEntry."
+        )
+        assert result.content == "Fresh content"
+
+        # The cache must now hold the Page, not the sentinel
+        cached = cache._URL_CACHE.get(url)
+        assert isinstance(cached, doc_fetcher.Page), (
+            f"Expected cached Page; got {type(cached).__name__}. "
+            "The success path did not overwrite the mid-fetch _FailedEntry."
         )
