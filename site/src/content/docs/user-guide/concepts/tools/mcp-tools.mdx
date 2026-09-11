@@ -464,6 +464,67 @@ const result = await mcpClient.callTool(calcTool, { x: 10, y: 20 })
 </Tab>
 </Tabs>
 
+## Prompts and Resources
+
+Use the client APIs to discover prompts and resources, retrieve a prompt with
+arguments, or read resource content. Each list method returns one page. Continue
+until the response omits `nextCursor`, treating an empty cursor as another page.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from mcp import StdioServerParameters, stdio_client
+from strands.tools.mcp import MCPClient
+
+mcp_client = MCPClient(
+    lambda: stdio_client(
+        StdioServerParameters(
+            command="npx",
+            args=["-y", "@modelcontextprotocol/server-everything"],
+        )
+    )
+)
+
+with mcp_client:
+    prompt_page = mcp_client.list_prompts_sync()
+    prompts = list(prompt_page.prompts)
+    while prompt_page.nextCursor is not None:
+        prompt_page = mcp_client.list_prompts_sync(prompt_page.nextCursor)
+        prompts.extend(prompt_page.prompts)
+
+    prompt = mcp_client.get_prompt_sync(
+        "args-prompt",
+        {"city": "Seattle", "state": "Washington"},
+    )
+    resources = mcp_client.list_resources_sync()
+    resource_uri = "demo://resource/static/document/architecture.md"
+    resource = mcp_client.read_resource_sync(resource_uri)
+    templates = mcp_client.list_resource_templates_sync()
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/concepts/tools/mcp-tools_imports.ts:prompts_resources_imports"
+
+--8<-- "user-guide/concepts/tools/mcp-tools.ts:prompts_resources"
+```
+</Tab>
+</Tabs>
+
+These methods return MCP SDK result objects without converting them into Strands
+types. They do not add prompt messages to agent conversation history.
+
+Unlike `listTools()`, the prompt and resource list methods do not drain all pages.
+Pass the returned cursor to the next call. TypeScript callers can also pass MCP
+request options for cancellation, timeout, and progress notifications.
+
+Prompt and resource requests reject when the connection is unavailable. With
+`continueOnError`, `listTools()` returns an empty array, but these direct requests
+still reject. A server without prompt or resource support returns an MCP protocol
+error, commonly `-32601 Method not found`.
+
 ## Implementing an MCP Server
 
 Custom MCP servers can be created to extend agent capabilities:

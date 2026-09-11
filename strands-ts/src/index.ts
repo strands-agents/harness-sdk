@@ -309,6 +309,7 @@ export {
   type McpClientCredentials,
   type McpTransport,
   type McpCallToolOptions,
+  type McpRequestOptions,
   type TasksConfig,
   type McpConnectionState,
   type McpLoadServersOptions,
