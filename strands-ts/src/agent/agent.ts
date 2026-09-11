@@ -2120,6 +2120,7 @@ export class Agent implements LocalAgent, InvokableAgent {
 
     let attemptCount = 1
     while (true) {
+      this._throwIfCancelled()
       const selectedModel = this._modelForAttempt(invocationState)
       let projectedInputTokens: number | undefined
       try {

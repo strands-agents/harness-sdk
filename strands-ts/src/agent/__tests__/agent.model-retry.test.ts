@@ -41,6 +41,31 @@ describe('Agent retryStrategy wiring', () => {
     expect(result.lastMessage.content[0]).toEqual({ type: 'textBlock', text: 'ok' })
   })
 
+  it('interrupts retry backoff on cancellation without another model call', async () => {
+    const model = new MockMessageModel()
+      .addTurn(new ModelThrottledError('rate limited'))
+      .addTurn({ type: 'textBlock', text: 'unexpected retry' })
+    const controller = new AbortController()
+    const agent = new Agent({
+      model,
+      retryStrategy: new DefaultModelRetryStrategy({
+        maxAttempts: 3,
+        backoff: new ConstantBackoff({ delayMs: 5000 }),
+      }),
+    })
+
+    const invokePromise = agent.invoke('hi', { cancelSignal: controller.signal })
+    await vi.advanceTimersByTimeAsync(499)
+    expect(model.callCount).toBe(1)
+
+    controller.abort()
+    const result = await invokePromise
+
+    expect(result.stopReason).toBe('cancelled')
+    expect(model.callCount).toBe(1)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('does not retry non-throttling errors', async () => {
     const model = new MockMessageModel().addTurn(new Error('boom'))
 
