@@ -111,6 +111,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     const onAbort = (): void => {
       globalThis.clearTimeout(timer)
+      // Resolve so the retry loop can re-check cancellation before another model attempt.
       resolve()
     }
     const timer = globalThis.setTimeout(() => {
