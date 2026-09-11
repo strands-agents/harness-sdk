@@ -154,7 +154,10 @@ class EmergencyTruncateStrategy(TruncateStrategy):
         return await self._apply_per_message(context)
 
     async def _apply_per_message(self, context: ContextState) -> bool:
-        """Drop the oldest 20% of non-head messages each pass."""
+        """Drop the oldest 20% of non-head messages each pass.
+
+        Pins are intentionally ignored so an all-pinned overflow is still recoverable.
+        """
         messages = context.messages
         if len(messages) <= 3:
             return False
