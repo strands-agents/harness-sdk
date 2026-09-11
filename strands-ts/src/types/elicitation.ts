@@ -1,15 +1,15 @@
 import type {
   ElicitResult,
-  ElicitRequestParams,
-  ClientRequest,
-  ClientNotification,
-} from '@modelcontextprotocol/sdk/types.js'
-import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js'
+  ElicitRequestFormParams,
+  ElicitRequestURLParams,
+  ClientContext,
+} from '@modelcontextprotocol/client'
 
 /**
- * Context provided to an elicitation callback, including the abort signal for the in-flight request.
+ * Context provided to an elicitation callback. The abort signal for the in-flight request is
+ * available at `context.mcpReq.signal`.
  */
-export type ElicitationContext = RequestHandlerExtra<ClientRequest, ClientNotification>
+export type ElicitationContext = ClientContext
 
 /**
  * Callback invoked when an MCP server sends an elicitation request to gather user input during tool execution.
@@ -18,4 +18,9 @@ export type ElicitationContext = RequestHandlerExtra<ClientRequest, ClientNotifi
  * @param params - The elicitation parameters from the server (message, requested schema or URL).
  * @returns The user's response: accept (with content), decline, or cancel.
  */
-export type ElicitationCallback = (context: ElicitationContext, params: ElicitRequestParams) => Promise<ElicitResult>
+export type ElicitationCallback = (
+  context: ElicitationContext,
+  params:
+    | ElicitRequestFormParams
+    | (Omit<ElicitRequestURLParams, 'elicitationId'> & Partial<Pick<ElicitRequestURLParams, 'elicitationId'>>)
+) => Promise<ElicitResult>
