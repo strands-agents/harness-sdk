@@ -490,6 +490,20 @@ class TestAgentAsToolStreamEvent:
         assert event.agent_as_tool is mock_agent_as_tool
         assert event.tool_use_id == "agent_tool_123"
 
+    def test_payload_marks_the_chunk_as_a_sub_agent_event(self):
+        """The emitted dict carries the marker a consumer without the class needs.
+
+        Guards https://github.com/strands-agents/harness-sdk/issues/3749: the A2A executor sees
+        only the dict, and forwards a chunk a tool yielded itself but not a sub-agent's events.
+        """
+        tool_use: ToolUse = {"toolUseId": "id_123", "name": "researcher", "input": {}}
+
+        sub_agent_event = AgentAsToolStreamEvent(tool_use, {"data": "token"}, MagicMock()).as_dict()
+        tool_event = ToolStreamEvent(tool_use, {"progress": 1}).as_dict()
+
+        assert sub_agent_event["tool_stream_event"]["sub_agent"] is True
+        assert "sub_agent" not in tool_event["tool_stream_event"]
+
     def test_is_tool_stream_event_subclass(self):
         """Test that AgentAsToolStreamEvent is a ToolStreamEvent subclass."""
         tool_use: ToolUse = {

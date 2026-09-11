@@ -93,6 +93,7 @@ Each event emitted from the TypeScript agent is a class with a `type` attribute 
 - **`tool_stream_event`**: Information about [an event streamed from a tool](../tools/custom-tools.md#tool-streaming), including:
     - **`tool_use`**: The [`ToolUse`](@api/python/strands.types.tools#ToolUse) for the tool that streamed the event
     - **`data`**: The data streamed from the tool
+    - **`sub_agent`**: `True` when the event came from an [agent used as a tool](../multi-agent/agents-as-tools.md), absent otherwise
 </Tab>
 <Tab label="TypeScript">
 - **`BeforeToolCallEvent`**: Before a tool is executed

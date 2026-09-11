@@ -10,6 +10,7 @@ from a2a.utils.errors import ServerError
 
 from strands.agent.agent_result import AgentResult as SAAgentResult
 from strands.multiagent.a2a.executor import StrandsA2AExecutor, _StreamState
+from strands.types._events import AgentAsToolStreamEvent
 from strands.types.content import ContentBlock
 
 # Suppress A2A compliance warnings for legacy streaming mode tests, and the single-agent
@@ -2729,3 +2730,215 @@ async def test_interrupt_without_details_sends_no_data_part(mock_strands_agent, 
     parts = _input_required_message(mock_event_queue).parts
     assert not [p for p in parts if isinstance(p.root, DataPart)]
     assert isinstance(parts[0].root, TextPart)
+
+
+# --- streaming-tool progress ---------------------------------------------------------------------
+# Guards https://github.com/strands-agents/harness-sdk/issues/3749. Every yield of a streaming tool
+# reaches the client as a working status update, in both streaming modes, and the agent_response
+# artifact still holds the answer alone.
+
+
+def _working_status_messages(mock_event_queue):
+    """The status messages from every working event on the queue."""
+    from a2a.types import TaskState, TaskStatusUpdateEvent
+
+    events = [call[0][0] for call in mock_event_queue.enqueue_event.call_args_list]
+    return [
+        event.status.message
+        for event in events
+        if isinstance(event, TaskStatusUpdateEvent) and event.status.state == TaskState.working
+    ]
+
+
+def _working_status_data(mock_event_queue):
+    """The data of every working status part, grouped per message so the part count is pinned."""
+    return [[part.root.data for part in message.parts] for message in _working_status_messages(mock_event_queue)]
+
+
+def _tool_stream_chunk(data, tool_use_id="tu-1", name="fetch_report"):
+    """The event dict the agent emits when a streaming tool yields a chunk."""
+    from strands.types._events import ToolStreamEvent
+
+    return ToolStreamEvent({"toolUseId": tool_use_id, "name": name, "input": {}}, data).as_dict()
+
+
+def _sub_agent_chunk(data, tool_use_id="tu-2", name="researcher"):
+    """The event dict an agent used as a tool emits while its sub-agent streams."""
+    return AgentAsToolStreamEvent({"toolUseId": tool_use_id, "name": name, "input": {}}, data, MagicMock()).as_dict()
+
+
+def _tool_stream_payloads(mock_event_queue):
+    """The toolStream payload of every working status part that carries one."""
+    return [
+        data["toolStream"] for parts in _working_status_data(mock_event_queue) for data in parts if "toolStream" in data
+    ]
+
+
+async def _run_with_stream_events(executor, mock_strands_agent, mock_request_context, mock_event_queue, events):
+    """Drive one execution whose agent emits the given stream events before completing."""
+    mock_result = MagicMock(spec=SAAgentResult)
+    mock_result.stop_reason = "end_turn"
+    mock_result.__str__ = MagicMock(return_value="done")
+
+    async def mock_stream(agent_input, **kwargs):
+        for event in events:
+            yield event
+        yield {"result": mock_result}
+
+    mock_strands_agent.stream_async = MagicMock(side_effect=mock_stream)
+    _request_with_parts(mock_request_context, [_text_part("do the thing")], task_id="task-tool-stream")
+    await executor.execute(mock_request_context, mock_event_queue)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("compliant", [True, False], ids=["a2a_compliant", "legacy"])
+async def test_tool_stream_chunk_forwarded(compliant, mock_strands_agent, mock_request_context, mock_event_queue):
+    """A streaming tool's yield reaches the client in both modes, and the artifact stays clean."""
+    executor = StrandsA2AExecutor(mock_strands_agent, enable_a2a_compliant_streaming=compliant)
+    await _run_with_stream_events(
+        executor,
+        mock_strands_agent,
+        mock_request_context,
+        mock_event_queue,
+        [_tool_stream_chunk({"progress": 0.5})],
+    )
+
+    tru_messages = _working_status_data(mock_event_queue)
+    exp_messages = [[{"toolStream": {"toolUseId": "tu-1", "name": "fetch_report", "data": {"progress": 0.5}}}]]
+    assert tru_messages == exp_messages
+
+    # The chunk is progress, not output, so the artifact carries the answer alone.
+    tru_texts = _artifact_texts(mock_event_queue)
+    exp_texts = ["done"]
+    assert tru_texts == exp_texts
+
+
+@pytest.mark.asyncio
+async def test_tool_stream_forwards_every_chunk_in_order(mock_strands_agent, mock_request_context, mock_event_queue):
+    """Each yield is its own update, in order, and two tools stay separable by toolUseId."""
+    executor = StrandsA2AExecutor(mock_strands_agent)
+    await _run_with_stream_events(
+        executor,
+        mock_strands_agent,
+        mock_request_context,
+        mock_event_queue,
+        [
+            _tool_stream_chunk({"progress": 0.25}),
+            _tool_stream_chunk({"step": "fetch"}, tool_use_id="tu-2", name="lookup"),
+            _tool_stream_chunk({"progress": 0.75}),
+        ],
+    )
+
+    tru_messages = _working_status_data(mock_event_queue)
+    exp_messages = [
+        [{"toolStream": {"toolUseId": "tu-1", "name": "fetch_report", "data": {"progress": 0.25}}}],
+        [{"toolStream": {"toolUseId": "tu-2", "name": "lookup", "data": {"step": "fetch"}}}],
+        [{"toolStream": {"toolUseId": "tu-1", "name": "fetch_report", "data": {"progress": 0.75}}}],
+    ]
+    assert tru_messages == exp_messages
+
+
+@pytest.mark.asyncio
+async def test_tool_stream_status_update_carries_no_text_part(
+    mock_strands_agent, mock_request_context, mock_event_queue
+):
+    """A legacy client that concatenates working-update text must not pick up tool narration."""
+    executor = StrandsA2AExecutor(mock_strands_agent)
+    await _run_with_stream_events(
+        executor,
+        mock_strands_agent,
+        mock_request_context,
+        mock_event_queue,
+        [_tool_stream_chunk("searching"), {"data": "Here is "}],
+    )
+
+    messages = _working_status_messages(mock_event_queue)
+    tru_texts = [part.root.text for message in messages for part in message.parts if isinstance(part.root, TextPart)]
+    exp_texts = ["Here is "]
+    assert tru_texts == exp_texts
+
+
+class _Unserializable:
+    """A yield no JSON encoder accepts."""
+
+    def __str__(self):
+        return "<custom chunk>"
+
+
+@pytest.mark.asyncio
+async def test_tool_stream_chunk_that_is_not_json_falls_back_to_text(
+    mock_strands_agent, mock_request_context, mock_event_queue
+):
+    """A yield the transport cannot encode degrades to its string form rather than failing the task."""
+    executor = StrandsA2AExecutor(mock_strands_agent)
+    await _run_with_stream_events(
+        executor,
+        mock_strands_agent,
+        mock_request_context,
+        mock_event_queue,
+        [_tool_stream_chunk(_Unserializable())],
+    )
+
+    tru_messages = _working_status_data(mock_event_queue)
+    exp_messages = [[{"toolStream": {"toolUseId": "tu-1", "name": "fetch_report", "data": "<custom chunk>"}}]]
+    assert tru_messages == exp_messages
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_stream_is_reduced_to_tool_activity(mock_strands_agent, mock_request_context, mock_event_queue):
+    """An agent used as a tool reports which tool ran and how it ended, and nothing else.
+
+    Its per-token events would each become a status update the task history retains, and its
+    completed messages carry the sub-agent's text, tool inputs and tool results — which the parent
+    agent's own answer, not a progress update, is responsible for disclosing.
+    """
+    executor = StrandsA2AExecutor(mock_strands_agent)
+    await _run_with_stream_events(
+        executor,
+        mock_strands_agent,
+        mock_request_context,
+        mock_event_queue,
+        [
+            _sub_agent_chunk({"init_event_loop": True}),
+            _sub_agent_chunk({"data": "Paris"}),
+            _sub_agent_chunk({"event": {"contentBlockDelta": {}}}),
+            _sub_agent_chunk(
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"toolUse": {"toolUseId": "t1", "name": "lookup", "input": {"q": "secret"}}}],
+                        "metadata": {"usage": {"inputTokens": 7}},
+                        "tracking_id": "trk-1",
+                    }
+                }
+            ),
+            _sub_agent_chunk(
+                {
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {"toolResult": {"toolUseId": "t1", "status": "success", "content": [{"text": "secret"}]}}
+                        ],
+                    }
+                }
+            ),
+            _sub_agent_chunk({"message": {"role": "assistant", "content": [{"text": "Paris is sunny."}]}}),
+            _tool_stream_chunk({"progress": 0.5}),
+        ],
+    )
+
+    tru_payloads = _tool_stream_payloads(mock_event_queue)
+    exp_payloads = [
+        {
+            "toolUseId": "tu-2",
+            "name": "researcher",
+            "data": {"subAgent": [{"toolUse": {"toolUseId": "t1", "name": "lookup"}}]},
+        },
+        {
+            "toolUseId": "tu-2",
+            "name": "researcher",
+            "data": {"subAgent": [{"toolResult": {"toolUseId": "t1", "status": "success"}}]},
+        },
+        {"toolUseId": "tu-1", "name": "fetch_report", "data": {"progress": 0.5}},
+    ]
+    assert tru_payloads == exp_payloads
