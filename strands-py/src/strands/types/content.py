@@ -29,13 +29,43 @@ class GuardContentText(TypedDict):
     text: str
 
 
-class GuardContent(TypedDict):
-    """Content block to be evaluated by guardrails.
+GuardImageFormat = Literal["png", "jpeg"]
+"""Image formats supported by guardrails."""
+
+
+class GuardImageSource(TypedDict):
+    """Contains the content of an image to be evaluated by guardrails.
 
     Attributes:
+        bytes: The binary content of the image.
+    """
+
+    bytes: bytes
+
+
+class GuardContentImage(TypedDict):
+    """Image content to be evaluated by guardrails.
+
+    Attributes:
+        format: The format of the image (e.g., "png").
+        source: The source containing the image's binary content.
+    """
+
+    format: GuardImageFormat
+    source: GuardImageSource
+
+
+class GuardContent(TypedDict, total=False):
+    """Content block to be evaluated by guardrails.
+
+    Only one of `image` or `text` should be specified.
+
+    Attributes:
+        image: Image within content block to be evaluated by the guardrail.
         text: Text within content block to be evaluated by the guardrail.
     """
 
+    image: GuardContentImage
     text: GuardContentText
 
 
@@ -111,10 +141,12 @@ class SystemContentBlock(TypedDict, total=False):
 
     Attributes:
         cachePoint: A cache point configuration to optimize conversation history.
+        guardContent: Contains the content to assess with the guardrail.
         text: A system prompt for the model.
     """
 
     cachePoint: CachePoint
+    guardContent: GuardContent
     text: str
 
 

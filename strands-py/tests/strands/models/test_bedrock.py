@@ -569,6 +569,24 @@ def test_format_request_system_prompt_content(model, messages, model_id):
     assert tru_request == exp_request
 
 
+def test_format_request_system_prompt_content_guard_content(model, messages, model_id):
+    """Test format_request passes guardContent system blocks through to Bedrock."""
+    system_prompt_content = [
+        {"text": "You are a helpful assistant."},
+        {"guardContent": {"text": {"text": "Grounding document.", "qualifiers": ["grounding_source"]}}},
+    ]
+
+    tru_request = model.format_request(messages, system_prompt_content=system_prompt_content)
+    exp_request = {
+        "inferenceConfig": {},
+        "modelId": model_id,
+        "messages": messages,
+        "system": system_prompt_content,
+    }
+
+    assert tru_request == exp_request
+
+
 def test_format_request_system_prompt_content_with_cache_prompt_config(model, messages, model_id):
     """Test format_request with SystemContentBlock and cache_prompt config (backwards compatibility)."""
     system_prompt_content = [{"text": "You are a helpful assistant."}]
@@ -2467,6 +2485,23 @@ def test_format_request_message_content_guard_content_with_qualifiers(model, mod
     assert formatted == {"guardContent": {"text": {"text": "evaluate me", "qualifiers": ["guard_content"]}}}
 
 
+def test_format_request_message_content_guard_content_image(model, model_id):
+    """Test that _format_request_message_content formats guardContent image blocks."""
+    content = {"guardContent": {"image": {"format": "png", "source": {"bytes": b"fake_image_data"}}}}
+
+    formatted = model._format_request_message_content(content)
+
+    assert formatted == {"guardContent": {"image": {"format": "png", "source": {"bytes": b"fake_image_data"}}}}
+
+
+def test_format_request_message_content_guard_content_without_text_or_image(model, model_id):
+    """Test that _format_request_message_content rejects a guardContent block carrying neither member."""
+    content = {"guardContent": {}}
+
+    with pytest.raises(ValueError, match="guard content must have either text or image"):
+        model._format_request_message_content(content)
+
+
 def test_format_request_removes_status_field_when_configured(model, model_id):
     model.update_config(include_tool_result_status=False)
 
@@ -3457,6 +3492,36 @@ async def test_format_request_with_guardrail_latest_message_unsupported_image_fo
     assert "guardContent" not in formatted_messages[0]["content"][1]
     assert formatted_messages[0]["content"][1]["image"]["format"] == image_format
     assert f"image_format=<{image_format}> | format not supported by bedrock guardrails" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_format_request_with_guardrail_latest_message_non_bytes_image_source(model, caplog):
+    """Test that guardContent does not wrap an image whose source Bedrock guardrails reject."""
+    caplog.set_level(logging.WARNING, logger="strands.models.bedrock")
+
+    model.client.meta.service_model.shape_for.return_value.enum = ["png", "jpeg"]
+    model.update_config(
+        guardrail_id="test-guardrail",
+        guardrail_version="DRAFT",
+        guardrail_latest_message=True,
+    )
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"image": {"format": "png", "source": {"location": {"type": "s3", "uri": "s3://bucket/image.png"}}}},
+            ],
+        },
+    ]
+
+    request = model.format_request(messages)
+    formatted_content = request["messages"][0]["content"][0]
+
+    # GuardrailConverseImageSource only accepts bytes, so the image is left unwrapped
+    assert "guardContent" not in formatted_content
+    assert formatted_content["image"]["source"] == {"s3Location": {"uri": "s3://bucket/image.png"}}
+    assert "source_type=<non-bytes> | image source must be bytes for bedrock guardrails" in caplog.text
 
 
 @pytest.mark.asyncio
