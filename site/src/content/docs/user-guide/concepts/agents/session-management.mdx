@@ -141,9 +141,9 @@ Multi-agent session managers only track the current state of the Graph/Swarm exe
 
 ## Storage Backends
 
-Snapshot-based session managers accept any [Storage](../storage.mdx) backend, including
+Snapshot-based session managers accept any [Storage](../storage/index.mdx) backend, including
 `InMemoryStorage`, `LocalFileStorage`, `S3Storage`, and custom implementations. See
-[Storage](../storage.mdx) for backend configuration, tradeoffs, custom backends, and
+[Storage](../storage/index.mdx) for backend configuration, tradeoffs, custom backends, and
 required S3 permissions.
 
 <Tabs>
@@ -535,7 +535,7 @@ agent = Agent(session_manager=session_manager)
 <Tab label="TypeScript">
 
 The simplest approach is to pass any
-[Storage](../storage.mdx) backend directly — the
+[Storage](../storage/index.mdx) backend directly — the
 `SessionManager` wraps it automatically. For full control, you
 can implement the `SnapshotStorage` interface:
 

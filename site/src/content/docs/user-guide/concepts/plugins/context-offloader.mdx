@@ -57,7 +57,7 @@ See [Context Management](../context-management).
 :::
 
 Pass a `ContextOffloader` instance to your agent's `plugins` list
-with a [Storage](../storage.mdx) backend:
+with a [Storage](../storage/index.mdx) backend:
 
 <Tabs>
 <Tab label="Python">
@@ -112,7 +112,7 @@ agent = Agent(plugins=[
 
 ### Storage Backends
 
-`ContextOffloader` accepts any [Storage](../storage.mdx) backend.
+`ContextOffloader` accepts any [Storage](../storage/index.mdx) backend.
 Choose one based on your durability needs:
 
 | Backend | Persistence | Best for |
@@ -121,7 +121,7 @@ Choose one based on your durability needs:
 | `LocalFileStorage` | Local disk | Development, debugging, inspecting stored artifacts |
 | `S3Storage` | Amazon S3 | Production workloads, shared or durable artifact retention |
 
-See [Storage](../storage.mdx) for full details on each backend
+See [Storage](../storage/index.mdx) for full details on each backend
 and how to implement a custom one.
 
 **Eviction**: offloaded entries are automatically deleted after
