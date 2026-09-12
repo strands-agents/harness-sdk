@@ -23,6 +23,7 @@ from ..types.multiagent import MultiAgentInput
 from ..types.streaming import Metrics, StopReason, Usage
 from ..types.tools import ToolResult, ToolUse
 from ..types.traces import Attributes, AttributeValue
+from .config import _telemetry_disabled
 from .metrics import _total_prompt_tokens
 
 if TYPE_CHECKING:
@@ -116,8 +117,16 @@ class Tracer:
     def __init__(self) -> None:
         """Initialize the tracer."""
         self.service_name = __name__
-        self.tracer_provider: trace_api.TracerProvider | None = None
-        self.tracer_provider = trace_api.get_tracer_provider()
+        self.tracer_provider: trace_api.TracerProvider
+        if _telemetry_disabled():
+            # Honor the disable env vars at the instance level: the global provider
+            # is registered elsewhere (possibly by the host app), so silencing
+            # Strands means emitting through a no-op provider here rather than
+            # relying on what happens to be globally registered (#1059).
+            logger.debug("telemetry disabled via env var; using no-op tracer provider")
+            self.tracer_provider = trace_api.NoOpTracerProvider()
+        else:
+            self.tracer_provider = trace_api.get_tracer_provider()
         self.tracer = self.tracer_provider.get_tracer(self.service_name)
         ThreadingInstrumentor().instrument()
 
