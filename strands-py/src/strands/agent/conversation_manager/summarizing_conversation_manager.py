@@ -8,7 +8,7 @@ from typing_extensions import override
 from ..._async import run_async
 from ...tools._tool_helpers import noop_tool
 from ...tools.registry import ToolRegistry
-from ...types.content import Message, _ensure_tracking_id
+from ...types.content import ContentBlock, Message, _ensure_tracking_id
 from ...types.exceptions import ContextWindowOverflowException
 from ...types.tools import AgentTool
 from .compression.context_compression import (
@@ -28,6 +28,39 @@ logger = logging.getLogger(__name__)
 # ``DEFAULT_SUMMARIZATION_PROMPT`` is re-exported here for backward compatibility; the
 # canonical definition now lives in ``compression.context_compression``.
 __all__ = ["DEFAULT_SUMMARIZATION_PROMPT", "SummarizingConversationManager"]
+
+# A content block larger than this (in characters) is treated as "oversized" and is
+# pruned to a stub when the summarizing manager cannot summarize (insufficient
+# messages). Blocks at or below this size are left untouched, so the genuine
+# "too few messages" overflow case still raises ContextWindowOverflowException.
+_OVERSIZED_CONTENT_THRESHOLD = 256
+
+# Stub content that replaces an oversized message's content after pruning, so the
+# agent loop can retry the model call within the context window.
+_OVERSIZED_PRUNE_STUB = "[truncated oversized message]"
+
+
+def _content_block_size(block: ContentBlock) -> int:
+    """Estimate the character size of a content block.
+
+    ``text`` blocks use their text length; ``toolResult`` blocks sum the length of
+    their nested content parts (text or JSON); any other block (images, documents,
+    reasoning, tool uses) falls back to the length of its string representation so
+    that media-heavy blocks are accounted for when locating the oversized message.
+    """
+    if "text" in block:
+        return len(block["text"])
+    if "toolResult" in block:
+        total = 0
+        for part in block["toolResult"].get("content", []):
+            if "text" in part:
+                total += len(part["text"])
+            elif "json" in part:
+                total += len(str(part["json"]))
+            else:
+                total += len(str(part))
+        return total
+    return len(str(block))
 
 
 class SummarizingConversationManager(ConversationManager):
@@ -161,6 +194,8 @@ class SummarizingConversationManager(ConversationManager):
         )
 
         if messages_to_summarize_count <= 0:
+            if self._prune_oversized_message(agent):
+                return
             raise ContextWindowOverflowException("Cannot summarize: insufficient messages for summarization")
 
         # Adjust split point to avoid breaking ToolUse/ToolResult pairs
@@ -169,6 +204,8 @@ class SummarizingConversationManager(ConversationManager):
         )
 
         if messages_to_summarize_count <= 0:
+            if self._prune_oversized_message(agent):
+                return
             raise ContextWindowOverflowException("Cannot summarize: insufficient messages for summarization")
 
         # Pin first N messages permanently (only on first reduction)
@@ -197,6 +234,45 @@ class SummarizingConversationManager(ConversationManager):
 
         # Replace summarized range with protected messages + summary + remaining
         agent.messages[:] = protected_to_preserve + [self._summary_message] + remaining_messages
+
+    def _prune_oversized_message(self, agent: "Agent") -> bool:
+        """Prune the single largest content block when summarization is impossible.
+
+        When ``_summarize_oldest`` cannot summarize (too few messages to summarize),
+        the context overflow may be caused by one oversized message (e.g. a huge
+        ``toolResult``) rather than by accumulated history. This helper locates the
+        message whose largest content block exceeds ``_OVERSIZED_CONTENT_THRESHOLD``
+        and replaces that message's content with a small stub, so the agent loop can
+        retry the model call within the context window instead of raising.
+
+        The message itself is kept (its role and position are preserved) and only its
+        ``content`` is replaced; ``removed_message_count`` is therefore not touched.
+
+        Args:
+            agent: The agent whose ``messages`` are inspected and pruned in-place.
+
+        Returns:
+            ``True`` if an oversized message was found and pruned (the caller should
+            return instead of raising). ``False`` when no oversized block was found
+            (the caller should raise the original ``ContextWindowOverflowException``).
+        """
+        largest_size = 0
+        largest_index = -1
+        for index, message in enumerate(agent.messages):
+            for block in message.get("content", []):
+                size = _content_block_size(block)
+                if size > largest_size:
+                    largest_size = size
+                    largest_index = index
+        if largest_index < 0 or largest_size <= _OVERSIZED_CONTENT_THRESHOLD:
+            return False
+        agent.messages[largest_index]["content"] = [{"text": _OVERSIZED_PRUNE_STUB}]
+        logger.debug(
+            "pruned oversized message at index=<%s> (largest block size=<%s>)",
+            largest_index,
+            largest_size,
+        )
+        return True
 
     def _generate_summary(self, messages: list[Message], agent: "Agent") -> Message:
         """Generate a summary of the provided messages.

@@ -201,6 +201,46 @@ def test_reduce_context_insufficient_messages_for_summarization(mock_agent):
         manager.reduce_context(mock_agent, e=RuntimeError("overflow"))
 
 
+def test_single_oversized_toolresult_is_pruned_not_raised():
+    """A single oversized toolResult is pruned instead of raising when too few messages exist to summarize.
+
+    Regression for #981: when context overflows because of one huge toolResult but
+    ``preserve_recent_messages`` leaves too few messages to summarize,
+    ``reduce_context`` previously raised ``ContextWindowOverflowException("Cannot
+    summarize: insufficient messages for summarization")``. It now prunes the
+    oversized message in place so the agent loop can retry within the window.
+
+    This exercises the public ``reduce_context`` API with a mocked agent and does
+    NOT mock the function under fix (``_summarize_oldest`` / ``_prune_oversized_message``
+    run for real). On master this raises; on the branch the oversized block is pruned.
+    """
+    manager = SummarizingConversationManager(
+        summary_ratio=0.3,
+        preserve_recent_messages=10,  # greater than len(messages) -> insufficient messages path
+    )
+    oversized_text = "x" * 10_000
+    oversized_messages: Messages = [
+        {"role": "user", "content": [{"text": "small user message"}]},
+        {
+            "role": "user",
+            "content": [
+                {"toolResult": {"toolUseId": "123", "content": [{"text": oversized_text}], "status": "success"}}
+            ],
+        },
+    ]
+    mock_agent = Mock()
+    mock_agent.messages = oversized_messages
+
+    # Must not raise: the oversized toolResult is pruned to a stub.
+    manager.reduce_context(mock_agent, e=ContextWindowOverflowException("overflow"))
+
+    # The oversized toolResult message was pruned to a stub; the small message is untouched.
+    assert mock_agent.messages[1]["content"] == [{"text": "[truncated oversized message]"}]
+    assert mock_agent.messages[0]["content"] == [{"text": "small user message"}]
+    # No messages were added or removed; the agent can retry within the window.
+    assert len(mock_agent.messages) == 2
+
+
 def test_reduce_context_raises_on_summarization_failure():
     """Test that reduce_context raises exception when model.stream() fails."""
     failing_agent = Mock()
