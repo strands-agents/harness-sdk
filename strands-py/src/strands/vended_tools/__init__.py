@@ -14,7 +14,13 @@ The :data:`web_fetch` tool fetches an HTTP(S) URL and by default returns an
 analyst's answer to a prompt about the page content (``mode='agentic'``); use
 ``make_web_fetch(mode='markdown')`` for clean markdown output. It
 requires the optional ``web-fetch`` extra (``pip install 'strands-agents[web-fetch]'``)
-and is imported lazily, so accessing it without that extra raises :class:`ImportError`:
+and is imported lazily, so accessing it without that extra raises :class:`ImportError`.
+
+The :func:`make_a2a_client` factory creates a tool that discovers and sends messages to remote A2A-protocol
+agents. Supply the required ``allowed_endpoints`` list plus optional
+authentication via a :class:`~a2a.client.ClientConfig`, or custom size limits.
+It requires the optional ``a2a`` extra (``pip install 'strands-agents[a2a]'``)
+and is imported lazily, so accessing it without that extra raises :class:`ImportError`.
 
 The :data:`notebook` tool gives an agent a session-scoped scratchpad backed by
 :attr:`~strands.Agent.state`; use :func:`make_notebook` to supply a custom
@@ -60,6 +66,12 @@ def __getattr__(name: str) -> Any:
         if name == "web_fetch":
             return web_fetch
         return make_web_fetch
+    # a2a_client pulls the optional ``a2a`` extra, so it is lazy-loaded to keep
+    # the base import free of those dependencies.
+    if name == "make_a2a_client":
+        from .a2a_client import make_a2a_client
+
+        return make_a2a_client
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

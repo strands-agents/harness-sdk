@@ -17,6 +17,7 @@ sourceLinks:
   - path: strands-py/src/strands/vended_tools/shell/shell.py
   - path: strands-py/src/strands/vended_tools/sleep/sleep.py
   - path: strands-py/src/strands/vended_tools/web_fetch/web_fetch.py
+  - path: strands-py/src/strands/vended_tools/a2a_client/a2a_client.py
   - path: strands-py/src/strands/experimental/tools/stop/stop.py
 ---
 
@@ -45,6 +46,7 @@ Each tool is imported from its own subpath under `@strands-agents/sdk/vended-too
 | [Sleep](#sleep) | Pause execution for a bounded, cancellable duration | Python, TypeScript (Node.js, browsers) |
 | [Stop](#stop-experimental) | Gracefully end the agent loop when the task is complete | Python, TypeScript (Node.js, browsers) |
 | [Web Fetch](#web-fetch) | Fetch a URL and return cleaned markdown for a model to read | Python, TypeScript (Node.js) |
+| [A2A Client](#a2a-client) | Discover and send messages to remote A2A-protocol agents | Python |
 
 ### File Editor
 
@@ -507,6 +509,69 @@ agent = Agent(tools=[web_fetch])
 </Tabs>
 
 📖 [Full API Reference](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/web-fetch/README.md)
+
+---
+
+### A2A Client
+
+Lets your agent discover and communicate with remote [A2A (Agent-to-Agent) protocol](https://google.github.io/A2A/) agents.
+Two operations are available:
+
+- **`discover`** — fetches the agent card from a remote A2A endpoint and returns its capabilities, name, description, and skills.
+- **`send_message`** — sends a text message to a remote A2A agent and returns the response.
+
+The tool is stateless: a fresh ``A2AAgent`` is created on every call unless
+a ``client_config`` with a shared ``httpx_client`` is provided.
+Use ``make_a2a_client`` to restrict which endpoints the model may contact, supply the transport, or tune size limits.
+
+_Supported in: Python._
+
+:::note[Install required]
+`a2a_client` requires the optional `a2a` extra:
+
+```bash
+pip install 'strands-agents[a2a]'
+```
+:::
+
+:::caution[Endpoint security]
+`allowed_endpoints` is required and checked before any network connection is made, but it only gates the agent-card fetch. `send_message` is delivered to the `url` in that card, which may point to a different host, and HTTP redirects are not checked either. For full egress control, enforce it at the network layer — a network policy or microVM — where it applies to all outbound connections.
+:::
+
+**Example:**
+
+```python
+from strands import Agent
+from strands.vended_tools.a2a_client import make_a2a_client
+
+tool = make_a2a_client(
+    allowed_endpoints=["https://agent.example.com", "https://researcher.example.com"],
+)
+agent = Agent(tools=[tool])
+agent("Summarize the latest research from the agent at https://researcher.example.com")
+```
+
+With custom authentication and a tighter response cap:
+
+```python
+import httpx
+from a2a.client import ClientConfig
+from strands import Agent
+from strands.vended_tools.a2a_client import make_a2a_client
+
+config = ClientConfig(
+    httpx_client=httpx.AsyncClient(
+        headers={"Authorization": "Bearer your-token"},
+        timeout=60.0,
+    ),
+)
+tool = make_a2a_client(
+    allowed_endpoints=["https://agent.example.com", "https://researcher.example.com"],
+    client_config=config,
+    max_bytes=1 * 1024 * 1024,  # 1 MiB
+)
+agent = Agent(tools=[tool])
+```
 
 ---
 
