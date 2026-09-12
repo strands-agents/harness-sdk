@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Literal
 
 from typing_extensions import TypedDict
 
+from ....agent.conversation_manager.compression.pin_message import _has_pinned_flag, is_pinned
 from ....types.content import ContentBlock, Message, Messages
 from ....types.tools import ToolUse
 from ...retrieval_tool import RETRIEVAL_TOOL_NAME
@@ -30,12 +31,14 @@ class OffloadConditions(TypedDict, total=False):
     Attributes:
         threshold: Token threshold above which individual blocks are offloaded.
         utilization: Context utilization ratio (0-1+) above which the strategy fires.
-        preserve_recent: Number of most recent matching messages to leave untouched.
+        preserve_recent: Messages to preserve. An integer keeps that many most-recent
+            matches; a float between 0 and 1 (exclusive) is treated as a ratio of
+            the matching messages.
     """
 
     threshold: int
     utilization: float
-    preserve_recent: int
+    preserve_recent: int | float
 
 
 def _finite_or_none(value: int | float | None) -> int | float | None:
@@ -48,7 +51,7 @@ def _build_conditions(
     *,
     threshold: int | None = None,
     utilization: float | None = None,
-    preserve_recent: int = 0,
+    preserve_recent: int | float = 0,
 ) -> OffloadConditions:
     """Build an OffloadConditions dict from explicit kwargs."""
     conditions = OffloadConditions()
@@ -138,22 +141,26 @@ def _message_matches_target(
 def _get_oldest_matches(
     messages: Messages,
     target: OffloadTarget | None,
-    count: int,
+    count: int | float,
     tool_name_map: dict[str, str],
     tool_include_filter: set[str] | None,
     tool_exclude_filter: set[str] | None,
 ) -> list[Message]:
-    """Return target-matching messages excluding the ``count`` most recent matches."""
+    """Return target-matching messages excluding the ``count`` most recent matches.
+
+    When ``0 < count < 1`` it is treated as a ratio of the matching messages to preserve.
+    """
     matching = [
         msg
         for msg in messages
         if _message_matches_target(msg, target, tool_name_map, tool_include_filter, tool_exclude_filter)
     ]
-    if count <= 0:
+    resolved = math.ceil(len(matching) * count) if 0 < count < 1 else int(count)
+    if resolved <= 0:
         return matching
-    if count >= len(matching):
+    if resolved >= len(matching):
         return []
-    return matching[:-count]
+    return matching[:-resolved]
 
 
 def _collect_removable_with_pair(messages: Messages, index: int) -> list[Message]:
@@ -211,12 +218,16 @@ def _repair_alternation(messages: Messages) -> None:
         current = messages[read_index]
         if write_index > 0 and messages[write_index - 1]["role"] == current["role"]:
             prev = messages[write_index - 1]
+            prev_pinned = _has_pinned_flag(prev)
+            current_pinned = _has_pinned_flag(current)
             merged = Message(
                 role=prev["role"],
                 content=[*prev["content"], *current["content"]],
             )
             if "tracking_id" in prev:
                 merged["tracking_id"] = prev["tracking_id"]
+            if prev_pinned or current_pinned:
+                merged["metadata"] = {"custom": {"pinned": True}}
             messages[write_index - 1] = merged
         else:
             messages[write_index] = current
@@ -265,8 +276,7 @@ class BaseOffloadStrategy(ABC):
     _target: OffloadTarget | None
     _threshold: int | None
     _utilization_threshold: float | None
-    _preserve_recent: int
-    _removal_ratio: float = 0.3
+    _preserve_recent: float
     _include_filter: set[str] | None
     _exclude_filter: set[str] | None
     _stash: Stash | None
@@ -283,7 +293,7 @@ class BaseOffloadStrategy(ABC):
         util = _finite_or_none(conditions.get("utilization"))
         self._utilization_threshold = float(util) if util is not None else None
         preserve = _finite_or_none(conditions.get("preserve_recent"))
-        self._preserve_recent = int(preserve) if preserve is not None else 0
+        self._preserve_recent = float(preserve) if preserve is not None else 0
 
         self._include_filter, self._exclude_filter = _resolve_tool_filter(target)
 
@@ -304,6 +314,10 @@ class BaseOffloadStrategy(ABC):
         async def _eager_hook(event: MessageAddedEvent) -> None:
             try:
                 messages = event.agent.messages
+                index_map = {id(msg): i for i, msg in enumerate(messages)}
+                index = index_map.get(id(event.message), -1)
+                if index >= 0 and is_pinned(messages, index):
+                    return
                 tool_name_map = _build_tool_name_map(messages)
                 await self._transform_blocks(event.message, messages, tool_name_map, event.agent)
             except Exception:
@@ -315,7 +329,7 @@ class BaseOffloadStrategy(ABC):
         """Apply the strategy to the context."""
         self._stash = context.stash
         if self._is_message_level:
-            if context.utilization < self._utilization_threshold:  # type: ignore[operator]
+            if not context.overflow and context.utilization < self._utilization_threshold:  # type: ignore[operator]
                 return False
             return await self._apply_per_message(context)
 
@@ -326,19 +340,27 @@ class BaseOffloadStrategy(ABC):
         messages = context.messages
         agent = context.agent
         tool_name_map = _build_tool_name_map(messages)
-        eligible = _get_oldest_matches(
-            messages, self._target, self._preserve_recent, tool_name_map, self._include_filter, self._exclude_filter
+        eligible = (
+            _get_oldest_matches(
+                messages, self._target, self._preserve_recent, tool_name_map, self._include_filter, self._exclude_filter
+            )
+            if self._preserve_recent > 0
+            else list(messages)
         )
 
         acted = False
+        index_map = {id(msg): i for i, msg in enumerate(messages)}
         for message in eligible:
+            index = index_map.get(id(message), -1)
+            if index >= 0 and is_pinned(messages, index):
+                continue
             if await self._transform_blocks(message, messages, tool_name_map, agent):
                 acted = True
 
         return acted
 
     async def _apply_per_message(self, context: ContextState) -> bool:
-        """Message-level execution: remove oldest 30% of eligible messages with pair safety."""
+        """Message-level execution: remove all eligible messages with pair safety."""
         messages = context.messages
         if len(messages) <= 1:
             return False
@@ -347,11 +369,7 @@ class BaseOffloadStrategy(ABC):
         if not eligible:
             return False
 
-        # TODO: consider computing removal count from target utilization instead of a fixed ratio
-        target_removal = max(1, int(len(eligible) * self._removal_ratio))
-        to_remove = eligible[:target_removal]
-
-        removed, lowest_index = _splice_with_pairs(messages, to_remove)
+        removed, lowest_index = _splice_with_pairs(messages, eligible)
         if removed == 0:
             return False
 
@@ -416,11 +434,31 @@ class BaseOffloadStrategy(ABC):
         messages = context.messages
         tool_name_map = _build_tool_name_map(messages)
 
-        oldest = _get_oldest_matches(
-            messages, self._target, self._preserve_recent, tool_name_map, self._include_filter, self._exclude_filter
-        )
-        head_id = id(messages[0])
-        candidates = [msg for msg in oldest if id(msg) != head_id]
+        if self._preserve_recent > 0:
+            oldest = _get_oldest_matches(
+                messages,
+                self._target,
+                self._preserve_recent,
+                tool_name_map,
+                self._include_filter,
+                self._exclude_filter,
+            )
+            index_map = {id(msg): i for i, msg in enumerate(messages)}
+            candidates = [
+                msg
+                for msg in oldest
+                if msg is not messages[0] and not is_pinned(messages, index_map[id(msg)])
+            ]
+        else:
+            candidates = [
+                msg
+                for idx, msg in enumerate(messages)
+                if idx > 0
+                and not is_pinned(messages, idx)
+                and _message_matches_target(
+                    msg, self._target, tool_name_map, self._include_filter, self._exclude_filter
+                )
+            ]
 
         if self._threshold is None:
             return candidates

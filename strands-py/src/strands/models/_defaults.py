@@ -89,6 +89,7 @@ _CONTEXT_WINDOW_LIMITS: dict[str, int] = {
     "amazon.nova-2-lite-v1:0": 1_000_000,
     "amazon.nova-2-pro-preview-20251202-v1:0": 1_000_000,
     # OpenAI
+    "gpt-6-astra": 1_050_000,
     "gpt-5.6": 1_050_000,
     "gpt-5.6-sol": 1_050_000,
     "gpt-5.6-terra": 1_050_000,

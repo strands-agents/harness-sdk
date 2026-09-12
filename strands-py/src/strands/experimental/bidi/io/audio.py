@@ -27,6 +27,7 @@ from ..types.events import (
     BidiOutputEvent,
 )
 from ..types.io import BidiInput, BidiOutput
+from .transcript import _BidiTranscriptOutput
 
 if TYPE_CHECKING:
     from .._audio import _BidiAudioProcessor
@@ -198,7 +199,7 @@ class _BidiAudioInput(BidiInput):
         if not isinstance(agent.model, AudioCapable):
             raise TypeError("BidiAudioIO requires a model that implements AudioCapable")
 
-        audio_config = agent.model.audio_config
+        audio_config = agent.model.get_audio_config()
         self._channels = audio_config["channels"]
         self._format = audio_config["format"]
         self._rate = audio_config["input_rate"]
@@ -297,6 +298,7 @@ class _BidiAudioOutput(BidiOutput):
 
         self._audio_processor = audio_processor
         self._buffer = _BidiAudioBuffer(self._buffer_size)
+        self._transcript_output = _BidiTranscriptOutput()
 
     async def start(self, agent: "BidiAgent") -> None:
         """Start output stream.
@@ -309,7 +311,7 @@ class _BidiAudioOutput(BidiOutput):
         if not isinstance(agent.model, AudioCapable):
             raise TypeError("BidiAudioIO requires a model that implements AudioCapable")
 
-        audio_config = agent.model.audio_config
+        audio_config = agent.model.get_audio_config()
         self._channels = audio_config["channels"]
         self._rate = audio_config["output_rate"]
 
@@ -327,12 +329,15 @@ class _BidiAudioOutput(BidiOutput):
             rate=self._rate,
             stream_callback=self._callback,
         )
+        await self._transcript_output.start(agent)
 
         logger.debug("audio output stream started")
 
     async def stop(self) -> None:
         """Stop output stream."""
         logger.debug("stopping audio output stream")
+
+        await self._transcript_output.stop()
 
         if hasattr(self, "_stream"):
             self._stream.close()
@@ -345,6 +350,8 @@ class _BidiAudioOutput(BidiOutput):
 
     async def __call__(self, event: BidiOutputEvent) -> None:
         """Send audio to output stream."""
+        await self._transcript_output(event)
+
         if isinstance(event, BidiAudioStreamEvent):
             data = base64.b64decode(event["audio"])
             self._buffer.put(data)
@@ -379,8 +386,8 @@ class _BidiAudioOutput(BidiOutput):
 class BidiAudioIO:
     """Send and receive audio data from devices using PyAudio.
 
-    Reads microphone audio via ``input()`` and plays agent audio via ``output()``. On interruption, the
-    playback buffer is cleared to stop the agent mid-response.
+    Reads microphone audio via ``input()``, plays agent audio via ``output()``, and displays user and assistant
+    transcripts. Interruptions clear the playback buffer to stop the agent mid-response.
 
     When ``audio_processor=True`` or a ``BidiAudioProcessorConfig`` is passed, the microphone signal gets audio
     processing and, when echo cancellation is enabled, the agent's speaker output is used as a reference to

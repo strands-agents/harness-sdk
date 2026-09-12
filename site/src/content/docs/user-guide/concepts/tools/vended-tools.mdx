@@ -10,6 +10,7 @@ sourceLinks:
   - path: strands-ts/src/vended-tools/http-request/http-request.ts
   - path: strands-ts/src/vended-tools/notebook/notebook.ts
   - path: strands-ts/src/vended-tools/sleep/sleep.ts
+  - path: strands-ts/src/vended-tools/web-fetch/web-fetch.ts
   - path: strands-ts/src/experimental/vended-tools/stop/stop.ts
   - path: strands-py/src/strands/vended_tools/http_request/http_request.py
   - path: strands-py/src/strands/vended_tools/notebook/notebook.py
@@ -43,7 +44,7 @@ Each tool is imported from its own subpath under `@strands-agents/sdk/vended-too
 | [Bash](#bash) | Execute shell commands with persistent sessions | Python, TypeScript (Node.js, Unix/Linux/macOS) |
 | [Sleep](#sleep) | Pause execution for a bounded, cancellable duration | Python, TypeScript (Node.js, browsers) |
 | [Stop](#stop-experimental) | Gracefully end the agent loop when the task is complete | Python, TypeScript (Node.js, browsers) |
-| [Web Fetch](#web-fetch) | Fetch a URL and return cleaned markdown for a model to read | Python |
+| [Web Fetch](#web-fetch) | Fetch a URL and return cleaned markdown for a model to read | Python, TypeScript (Node.js) |
 
 ### File Editor
 
@@ -388,7 +389,7 @@ result = agent("Summarize the changes in ./CHANGELOG.md")
 ### Web Fetch
 
 Fetches an HTTP(S) URL and returns its content. Two modes are available,
-configured at construction time via `make_web_fetch`:
+configured at construction time via `make_web_fetch` / `makeWebFetch`:
 
 - **`agentic`** (default) — HTML is converted to markdown and passed to an
   analyst agent that answers a `prompt`, so the full page never enters the
@@ -397,26 +398,39 @@ configured at construction time via `make_web_fetch`:
 - **`markdown`** — HTML is converted to clean markdown with scripts, styles,
   and noise stripped. Use when the agent needs full pages for reasoning.
 
-The tool delegates all networking to an `httpx.AsyncClient`. Use the
-`make_web_fetch` factory to supply a pre-configured client with custom
-timeouts, redirects, proxies, or caching. The `max_bytes` parameter caps the
-HTTP response size (default 5 MiB); `max_content_chars` caps the extracted
-content delivered to the model or analyst (default 50,000 characters). For
-`mode='agentic'`, the factory also accepts a `model` for the analyst; the
-agent's own model is used when none is supplied.
+The `max_bytes` / `maxBytes` parameter caps the HTTP response size (default 5 MiB);
+`max_content_chars` / `maxContentChars` caps the extracted content delivered to the model or
+analyst (default 50,000 characters). For `mode='agentic'` / `mode: 'agentic'`,
+the factory also accepts a `model` for the analyst; the agent's own model is
+used when none is supplied.
 
-_Supported in: Python (all platforms)._
+The Python tool delegates all networking to an `httpx.AsyncClient`. Use the
+`make_web_fetch` factory to supply a pre-configured client with custom
+timeouts, redirects, proxies, or caching.
+
+_Supported in: Node.js (TypeScript); Python (all platforms)._
 
 :::note[Install required]
+<Tabs>
+<Tab label="Python">
 `web_fetch` requires the optional `web-fetch` extra:
 
 ```bash
 pip install 'strands-agents[web-fetch]'
 ```
+</Tab>
+<Tab label="TypeScript">
+HTML conversion requires the optional `turndown` peer dependency:
+
+```bash
+npm install turndown
+```
+</Tab>
+</Tabs>
 :::
 
 :::note[Security posture]
-`web_fetch` accepts only `http://` and `https://` URLs and caps response bodies
+Web fetch accepts only `http://` and `https://` URLs and caps response bodies
 at 5 MiB by default. Egress control belongs at the layer that encapsulates the
 agent — a sandbox, microVM, or network policy — where it can be enforced
 consistently across all tools, including `shell`.
@@ -425,6 +439,31 @@ consistently across all tools, including `shell`.
 **Example:**
 
 <Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/concepts/tools/vended-tools-imports.ts:web_fetch_import"
+
+--8<-- "user-guide/concepts/tools/vended-tools.ts:web_fetch_example"
+```
+
+Reading the full page as markdown:
+
+```typescript
+--8<-- "user-guide/concepts/tools/vended-tools-imports.ts:web_fetch_markdown_import"
+
+--8<-- "user-guide/concepts/tools/vended-tools.ts:web_fetch_markdown_example"
+```
+
+Tighter response cap with a dedicated analyst model:
+
+```typescript
+--8<-- "user-guide/concepts/tools/vended-tools-imports.ts:web_fetch_custom_import"
+
+--8<-- "user-guide/concepts/tools/vended-tools.ts:web_fetch_custom_example"
+```
+
+</Tab>
 <Tab label="Python">
 
 ```python
@@ -441,12 +480,12 @@ Reading the full page as markdown:
 from strands import Agent
 from strands.vended_tools import make_web_fetch
 
-tool = make_web_fetch(mode="markdown")
-agent = Agent(tools=[tool])
+web_fetch = make_web_fetch(mode="markdown")
+agent = Agent(tools=[web_fetch])
 agent("Read https://example.com/docs and then explain the architecture")
 ```
 
-Dedicated analyst model and tighter response cap:
+Tighter response cap with a dedicated analyst model and custom transport:
 
 ```python
 import httpx
@@ -454,18 +493,20 @@ from strands import Agent
 from strands.models import BedrockModel
 from strands.vended_tools import make_web_fetch
 
-tool = make_web_fetch(
+web_fetch = make_web_fetch(
     mode="agentic",
     client=httpx.AsyncClient(timeout=10.0),
     max_bytes=1 * 1024 * 1024,
     max_content_chars=25_000,
     model=BedrockModel(model_id="us.amazon.nova-micro-v1:0"),
 )
-agent = Agent(tools=[tool])
+agent = Agent(tools=[web_fetch])
 ```
 
 </Tab>
 </Tabs>
+
+📖 [Full API Reference](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/web-fetch/README.md)
 
 ---
 

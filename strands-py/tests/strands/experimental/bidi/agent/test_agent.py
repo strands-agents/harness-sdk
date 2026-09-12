@@ -26,13 +26,18 @@ class MockBidiModel(BidiModel):
     """Mock bidirectional model for testing."""
 
     def __init__(self, config=None, model_id="mock-model"):
-        self.config = config or {"audio": {"input_rate": 16000, "output_rate": 24000, "channels": 1}}
-        self.connection_config = {}
+        self._config = config or {"audio": {"input_rate": 16000, "output_rate": 24000, "channels": 1}}
         self.usage_is_cumulative = False
-        self.model_id = model_id
+        self._config["model_id"] = model_id
         self._connection_id = None
         self._started = False
         self._events_to_yield = []
+
+    def update_config(self, **model_config):
+        self._config.update(model_config)
+
+    def get_config(self):
+        return self._config.copy()
 
     async def start(self, system_prompt=None, tools=None, messages=None, **kwargs):
         if self._started:
@@ -138,7 +143,7 @@ def test_bidi_agent_init_with_various_configurations():
     assert agent_with_config.agent_id == "test_agent"
 
     # Test model config access
-    config = agent.model.config
+    config = agent.model.get_config()
     assert config["audio"]["input_rate"] == 16000
     assert config["audio"]["output_rate"] == 24000
     assert config["audio"]["channels"] == 1
@@ -157,6 +162,45 @@ def test_bidi_agent_system_prompt_setter(mock_model):
 
     assert agent.system_prompt == "updated prompt\nadditional instructions"
     assert agent.system_prompt_content == content_blocks
+
+
+@pytest.mark.parametrize("use_setter", [False, True])
+def test_system_prompt_tracks_content_changes(mock_model, use_setter):
+    """The string prompt reflects edits to shared content blocks."""
+    content_blocks = [{"text": "initial prompt"}, {"cachePoint": {"type": "default"}}]
+    agent = BidiAgent(model=mock_model, system_prompt=None if use_setter else content_blocks)
+    if use_setter:
+        agent.system_prompt = content_blocks
+
+    content_blocks[0]["text"] = "updated prompt"
+    assert agent.system_prompt == "updated prompt"
+
+    agent.system_prompt_content[0]["text"] = "another update"
+    assert agent.system_prompt == "another update"
+
+    content_blocks.pop(0)
+    assert agent.system_prompt is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("messages", [[], [{"role": "user", "content": [{"text": "Earlier message"}]}]])
+async def test_messages_preserve_caller_list(mock_model, messages):
+    """Messages sent by the agent are appended to the caller's history list."""
+    agent = BidiAgent(model=mock_model, messages=messages)
+    await agent.start()
+    try:
+        await agent.send("New message")
+    finally:
+        await agent.stop()
+
+    assert agent.messages is messages
+    tru_message = messages[-1]
+    exp_message = {
+        "role": "user",
+        "content": [{"text": "New message"}],
+        "tracking_id": unittest.mock.ANY,
+    }
+    assert tru_message == exp_message
 
 
 def test_bidi_agent_tool_emits_shared_hook_events_and_retries(mock_model):
@@ -327,13 +371,7 @@ async def test_bidi_agent_receive_events_from_model(agent):
     # Configure mock model to yield events
     events = [
         BidiAudioStreamEvent(audio="dGVzdA==", format="pcm", sample_rate=24000, channels=1),
-        BidiTranscriptStreamEvent(
-            text="Hello world",
-            role="assistant",
-            is_final=True,
-            delta={"text": "Hello world"},
-            current_transcript="Hello world",
-        ),
+        BidiTranscriptStreamEvent(delta="Hello world", role="assistant"),
     ]
     agent.model.set_events(events)
 

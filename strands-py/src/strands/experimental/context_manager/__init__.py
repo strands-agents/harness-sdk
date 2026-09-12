@@ -11,23 +11,27 @@ from ..._context_manager.context_manager import ContextManager
 from ..._context_manager.methods.reranker import BedrockReranker, Reranker, RerankerError
 from ..._context_manager.methods.summarize import SummarizeConfig
 from ..._context_manager.methods.truncate import TruncateConfig
+from ..._context_manager.presets import STRATEGY_PRESET_NAMES, StrategyPresetName
 from ..._context_manager.strategies.offload import Offload
 from ..._context_manager.strategies.offload.base import OffloadConditions, OffloadTarget
 from ..._context_manager.strategies.offload.relevance import RelevanceConfig
-from ..._context_manager.types import ContextState, ContextStrategy, StashConfig
+from ..._context_manager.types import ContextManagerConfig, ContextState, ContextStrategy, StashConfig
 
 __all__ = [
     "BedrockReranker",
     "ContextManager",
+    "ContextManagerConfig",
     "ContextState",
     "ContextStrategy",
     "Offload",
     "OffloadConditions",
     "OffloadTarget",
+    "STRATEGY_PRESET_NAMES",
     "RelevanceConfig",
     "Reranker",
     "RerankerError",
     "StashConfig",
+    "StrategyPresetName",
     "SummarizeConfig",
     "TruncateConfig",
 ]

@@ -53,6 +53,7 @@ except Exception as e:
 
 import openai  # noqa: E402 - must import after version check
 
+from ..agent.agent_metadata import AgentMetadata  # noqa: E402
 from ..types.citations import WebLocationDict  # noqa: E402
 from ..types.content import ContentBlock, Messages, Role, SystemContentBlock  # noqa: E402
 from ..types.event_loop import Usage  # noqa: E402
@@ -299,6 +300,7 @@ class OpenAIResponsesModel(Model):
         *,
         tool_choice: ToolChoice | None = None,
         model_state: dict[str, Any] | None = None,
+        agent_metadata: AgentMetadata | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamEvent, None]:
         """Stream conversation with the OpenAI Responses API model.
@@ -309,6 +311,7 @@ class OpenAIResponsesModel(Model):
             system_prompt: System prompt to provide context to the model.
             tool_choice: Selection strategy for tool invocation.
             model_state: Runtime state for model providers (e.g., server-side response ids).
+            agent_metadata: Invoking agent's metadata.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Yields:
@@ -319,7 +322,7 @@ class OpenAIResponsesModel(Model):
             ModelThrottledException: If the request is throttled by OpenAI (rate limits).
         """
         logger.debug("formatting request for OpenAI Responses API")
-        request = self._format_request(messages, tool_specs, system_prompt, tool_choice, model_state)
+        request = self._format_request(messages, tool_specs, system_prompt, tool_choice, model_state, agent_metadata)
         logger.debug("formatted request=<%s>", request)
 
         logger.debug("invoking OpenAI Responses API model")
@@ -545,6 +548,7 @@ class OpenAIResponsesModel(Model):
         system_prompt: str | None = None,
         tool_choice: ToolChoice | None = None,
         model_state: dict[str, Any] | None = None,
+        agent_metadata: AgentMetadata | None = None,
     ) -> dict[str, Any]:
         """Format an OpenAI Responses API compatible response streaming request.
 
@@ -554,6 +558,7 @@ class OpenAIResponsesModel(Model):
             system_prompt: System prompt to provide context to the model.
             tool_choice: Selection strategy for tool invocation.
             model_state: Runtime state for model providers (e.g., server-side response ids).
+            agent_metadata: Invoking agent's metadata.
 
         Returns:
             An OpenAI Responses API compatible response streaming request.
@@ -598,7 +603,7 @@ class OpenAIResponsesModel(Model):
             ]
             request.update(self._format_request_tool_choice(tool_choice))
 
-        apply_cache_config(request, cast(CacheConfig | None, self.config.get("cache_config")))
+        apply_cache_config(request, cast(CacheConfig | None, self.config.get("cache_config")), agent_metadata)
 
         return request
 

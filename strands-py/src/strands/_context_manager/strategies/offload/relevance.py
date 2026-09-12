@@ -132,7 +132,7 @@ class RelevanceStrategy(BaseOffloadStrategy):
         *,
         threshold: int | None = None,
         utilization: float | None = None,
-        preserve_recent: int = 0,
+        preserve_recent: int | float = 0,
     ) -> RelevanceStrategy:
         """Return a new instance with the given conditions applied."""
         return RelevanceStrategy(

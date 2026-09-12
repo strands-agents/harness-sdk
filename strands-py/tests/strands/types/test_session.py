@@ -2,8 +2,12 @@ import json
 import unittest.mock
 from uuid import uuid4
 
+import pytest
+
+from strands import Agent
 from strands.agent.conversation_manager.null_conversation_manager import NullConversationManager
 from strands.agent.state import AgentState
+from strands.experimental.bidi import BidiAgent
 from strands.interrupt import _InterruptState
 from strands.types.session import (
     Session,
@@ -129,7 +133,7 @@ def test_session_message_redaction_preserves_durable_id():
 
 
 def test_session_agent_from_agent():
-    agent = unittest.mock.Mock()
+    agent = unittest.mock.Mock(spec=Agent)
     agent.agent_id = "a1"
     agent.conversation_manager = unittest.mock.Mock(get_state=lambda: {"test": "conversation"})
     agent.state = AgentState({"test": "state"})
@@ -152,7 +156,7 @@ def test_session_agent_from_agent():
 
 
 def test_session_agent_initialize_internal_state():
-    agent = unittest.mock.Mock()
+    agent = unittest.mock.Mock(spec=Agent)
     session_agent = SessionAgent(
         agent_id="a1",
         conversation_manager_state={},
@@ -172,6 +176,59 @@ def test_session_agent_initialize_internal_state():
     tru_model_state = agent._model_state
     exp_model_state = {"response_id": "resp_abc"}
     assert tru_model_state == exp_model_state
+
+
+@pytest.mark.parametrize("has_interrupt_state", [False, True])
+def test_session_agent_from_agent_with_bidi(has_interrupt_state):
+    agent = unittest.mock.Mock(spec=BidiAgent)
+    agent.agent_id = "bidi"
+    agent.state = AgentState({"data": {"count": 2}})
+    if has_interrupt_state:
+        agent._interrupt_state = _InterruptState(context={"resume": "tool"})
+
+    session_agent = SessionAgent.from_agent(agent)
+    tru_session_agent = SessionAgent.from_dict(json.loads(json.dumps(session_agent.to_dict())))
+    exp_session_agent = SessionAgent(
+        agent_id="bidi",
+        state={"data": {"count": 2}},
+        conversation_manager_state={},
+        _internal_state={},
+        created_at=unittest.mock.ANY,
+        updated_at=unittest.mock.ANY,
+    )
+    assert tru_session_agent == exp_session_agent
+
+
+@pytest.mark.parametrize("has_interrupt_state", [False, True])
+def test_session_agent_initialize_internal_state_skips_bidi(has_interrupt_state):
+    agent = unittest.mock.Mock(spec=BidiAgent)
+    original_interrupt_state = _InterruptState(context={"existing": "bidi"})
+    if has_interrupt_state:
+        agent._interrupt_state = original_interrupt_state
+    saved_interrupt_state = _InterruptState(context={"resume": "tool"})
+    session_agent = SessionAgent(
+        agent_id="bidi",
+        state={},
+        conversation_manager_state={},
+        _internal_state={
+            "interrupt_state": saved_interrupt_state.to_dict(),
+            "model_state": {"response_id": "agent-only"},
+        },
+    )
+
+    session_agent.initialize_internal_state(agent)
+
+    assert hasattr(agent, "_interrupt_state") == has_interrupt_state
+    if has_interrupt_state:
+        assert agent._interrupt_state is original_interrupt_state
+    assert not hasattr(agent, "_model_state")
+
+
+@pytest.mark.parametrize("agent_type", [Agent, BidiAgent])
+def test_session_agent_requires_agent_id(agent_type):
+    agent = unittest.mock.Mock(spec=agent_type, agent_id=None)
+    with pytest.raises(ValueError, match="agent_id needs to be defined"):
+        SessionAgent.from_agent(agent)
 
 
 def test_session_agent_with_bytes():

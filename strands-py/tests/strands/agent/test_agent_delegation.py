@@ -232,7 +232,6 @@ def test_on_after_tools_sets_end_turn_on_success():
 
 
 def test_on_after_tools_suppressed_with_structured_output():
-
     class R(BaseModel):
         x: int
 

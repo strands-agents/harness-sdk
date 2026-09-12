@@ -139,7 +139,7 @@ export function formatChatRequest(
     }
   }
 
-  applyCacheConfig(request, config.cacheConfig)
+  applyCacheConfig(request, config.cacheConfig, options?.agentMetadata)
 
   if ('n' in request && request.n !== undefined && request.n !== null && request.n > 1) {
     throw new Error('Streaming with n > 1 is not supported')

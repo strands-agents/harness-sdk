@@ -7,7 +7,7 @@ import threading
 from typing import TYPE_CHECKING
 
 from .search.keyword import KeywordSearchStrategy
-from .storage import _NamespacedStorage, _normalize_key, _normalize_prefix
+from .storage import _EPHEMERAL, _NamespacedStorage, _normalize_key, _normalize_prefix
 
 if TYPE_CHECKING:
     from .storage import StorageSearchResult
@@ -28,6 +28,8 @@ class InMemoryStorage:
         data = await storage.read("sessions/abc/state.json")
         ```
     """
+
+    _ephemeral = _EPHEMERAL
 
     def __init__(self) -> None:
         """Initialize an empty in-memory store."""

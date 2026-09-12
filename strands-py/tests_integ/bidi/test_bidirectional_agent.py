@@ -14,7 +14,9 @@ import pytest
 
 from strands import tool
 from strands.experimental.bidi.agent.agent import BidiAgent
+from strands.experimental.bidi.hooks import BidiResponseCompleteEvent
 from strands.experimental.bidi.models import GoogleGeminiLiveModel, OpenAIRealtimeModel
+from strands.experimental.bidi.types.events import BidiResponseCompleteEvent as BidiResponseCompleteStreamEvent
 
 from .context import BidirectionalTestContext
 from .hook_utils import HookEventCollector
@@ -183,6 +185,7 @@ async def test_bidirectional_agent(agent_with_calculator, audio_generator, provi
     - Speech-to-text transcription
     - Tool execution (calculator) with hook verification
     - Multi-turn conversation flow
+    - Complete, correctly ordered conversation history
     - Text-to-speech audio output
     """
     provider_name = provider_config["name"]
@@ -220,10 +223,27 @@ async def test_bidirectional_agent(agent_with_calculator, audio_generator, provi
         logger.info("provider=<%s>, response_count=<%d> | total responses", provider_name, len(text_outputs_turn2))
 
         # Validate full conversation
+        messages = agent_with_calculator.messages
+        assert [message["role"] for message in messages] == ["user", "assistant", "user", "assistant"]
+        for message in messages:
+            assert len(message["content"]) == 1
+            assert message["content"][0]["text"].strip()
+
         # Validate audio outputs
         audio_outputs = ctx.get_audio_outputs()
         assert len(audio_outputs) > 0, f"[{provider_name}] No audio output received"
         total_audio_bytes = sum(len(audio) for audio in audio_outputs)
+
+        response_events = [event for event in ctx.get_events() if isinstance(event, BidiResponseCompleteStreamEvent)]
+        assert response_events, f"[{provider_name}] No response completion received"
+        tru_events = hook_collector.get_events_by_type("response_complete")
+        exp_events = [
+            BidiResponseCompleteEvent(
+                agent=agent_with_calculator, response_id=event.response_id, stop_reason=event.stop_reason
+            )
+            for event in response_events
+        ]
+        assert tru_events == exp_events
 
         # Verify tool execution hooks if tools were called
         tool_calls = hook_collector.get_tool_calls()

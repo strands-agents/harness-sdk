@@ -59,12 +59,9 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     const eligible = await this._getEligibleMessages(context)
     if (eligible.length === 0) return false
 
-    const summarizeCount = Math.max(1, Math.floor(eligible.length * this._removalRatio))
-    const toSummarize = eligible.slice(0, summarizeCount)
-
     // Expand to include paired messages so we don't orphan tool pairs
     const safeSet = new Set<Message>()
-    for (const message of toSummarize) {
+    for (const message of eligible) {
       const index = messages.indexOf(message)
       if (index === -1) continue
       for (const removable of collectRemovableWithPair(messages, index)) {
