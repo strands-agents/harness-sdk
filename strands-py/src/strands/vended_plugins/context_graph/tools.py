@@ -4,14 +4,14 @@ The graph decides a Resolution per Card from a note, and the note is a guess. A 
 worse answer but with a Title, an explicit invitation to ask. These three are what the invitation leads to:
 
 - ``expand_card`` asks by Title, reads the graph, and raises both axes for the rest of the turn.
-- ``expand_artifact`` asks by reference, reads the offloader's ``Storage``, and raises nothing: the content comes back
+- ``expand_artifact`` asks by reference, reads the ContextManager's stash, and raises nothing: the content comes back
   inline.
 - ``find_context`` asks by Description in the model's own words, reads the same vector index the turn choice scores
   against, and raises nothing.
 
 Five properties are shared by all three. Nothing here calls a language model or touches ``agent.messages``: none has a
 handle on the model, none holds a mutable reference to the history (Requirement 12.13). Every failure is a return value,
-never an exception — an unknown Title, an unknown reference, non-textual content and a missing ``ContextOffloader`` all
+never an exception — an unknown Title, an unknown reference, non-textual content and an absent stash all
 come back as prose naming what was missing (Requirements 12.3, 12.6, 12.7, 15.6, 16.8), because a raise would report the
 *tool* broken rather than the *request*. Success records the fed-back note and an error records nothing, by not calling
 :func:`~.scoring.record_reuse` on the error paths rather than by a branch inside it (Requirement 13.8); the elevation
@@ -45,11 +45,15 @@ _MAX_CANDIDATES = 5
 search that answers with the whole graph has re-injected the very thing the graph collapsed."""
 
 _CONTEXT_LINES = 5
-"""Lines around each pattern match, the default ``retrieve_offloaded_content`` already applies."""
+"""Lines around each pattern match, the default ``retrieve_context`` already applies."""
 
 _CHARS_PER_TOKEN = 4
-"""Characters per token, the same coarse estimate ``describe.py`` and the offloader use. Only ever used to *report* a
-cost back to the model, never to decide what is returned."""
+"""Characters per token, the same coarse estimate ``describe.py`` and the stash's retrieval tool use. Only ever used to
+*report* a cost back to the model, never to decide what is returned."""
+
+_MAX_RESULT_TOKENS = 10_000
+"""Output ceiling of a targeted read, the same budget the ContextManager's retrieval tool applies. Sharing the ceiling
+keeps a retrieval from re-offloading itself: an answer built to the same bound is left alone."""
 
 
 # ---- expand_card ------------------------------------------------------------------------------
@@ -116,17 +120,17 @@ async def expand_artifact(
     cycle: int,
     reuse_ttl_cycles: int,
 ) -> str:
-    """Read the artifact behind ``reference``, whole or in part, from the offloader's storage.
+    """Read the artifact behind ``reference``, whole or in part, from the ContextManager's stash.
 
-    The read is delegated and never reimplemented: ``ContextOffloader``'s ``Storage`` carries the path-traversal and
-    bucket-prefix guards, so the graph passes the reference along and opens no file, resolves no path and builds no URI.
+    The read is delegated and never reimplemented: the stash's ``Storage`` carries the path-traversal and bucket-prefix
+    guards, so the graph passes the reference along and opens no file, resolves no path and builds no URI.
 
     No Resolution changes on any path, success included (Requirement 11.8). The content asked for is in this answer, and
     what crosses into the next turn is the fed-back note on the artifact's Card.
 
     Args:
         state: Graph state of the agent. Its ``reuse`` and ``retrieval_cycles`` are mutated.
-        agent: The agent of the call, for its offloader and its storage.
+        agent: The agent of the call, for its ContextManager and its stash.
         reference: The artifact reference, as it was shown to the model.
         line_range: ``{"start": int, "end": int}``, 1-indexed and inclusive, or ``None``.
         pattern: Regex or keyword to keep only matching lines, or ``None``.
@@ -134,40 +138,40 @@ async def expand_artifact(
         reuse_ttl_cycles: Cycles the fed-back note survives.
 
     Returns:
-        The requested part of the artifact, or an error naming what was missing — a missing ``ContextOffloader``, an
-        unknown reference, non-textual content, or a line range outside the content — with nothing recorded and no
-        Resolution changed (Requirements 12.6, 12.7, 15.6).
+        The requested part of the artifact, or an error naming what was missing — an absent stash, an unknown reference,
+        non-textual content, or a line range outside the content — with nothing recorded and no Resolution changed
+        (Requirements 12.6, 12.7, 15.6).
     """
     state.retrieval_cycles += 1
 
-    # Imported at call time, so a graph running without an offloader does not pay for importing one.
-    from ..context_offloader.search import _is_searchable_content, _search_content
+    # Imported at call time, so a graph running without a stash does not pay for importing the search helpers.
+    from ..._context_manager.retrieval_tool import _extract_text
+    from ..context_offloader.search import _search_content
 
-    offloader = _offloader_of(agent)
-    if offloader is None:
+    stash = _stash_of(agent)
+    if stash is None:
         return (
             f"expand_artifact | no artifact storage is registered on this agent, so reference "
-            f"'{reference}' cannot be read | ContextOffloader is absent, which means no tool result was "
-            "ever offloaded and the full results are already in the conversation"
+            f"'{reference}' cannot be read | nothing was ever offloaded, which means the full results "
+            "are already in the conversation"
         )
 
-    read = await _retrieve(offloader, agent, reference)
+    read = await _retrieve(stash, reference)
     if read is None:
         return (
             f"expand_artifact | unknown reference '{reference}' | copy a reference exactly as it was "
             "shown to you in a turn's title or preview"
         )
-    content_bytes, content_type = read
 
-    if not _is_searchable_content(content_type):
+    text = _extract_text(read)
+    if text is None:
         return (
-            f"expand_artifact | reference '{reference}' holds non-textual content of content_type "
-            f"'{content_type}' | line_range and pattern do not apply to it, and it cannot be returned as "
-            "text | use retrieve_offloaded_content to receive it in its native format"
+            f"expand_artifact | reference '{reference}' holds non-textual content | line_range and "
+            "pattern do not apply to it, and it cannot be returned as text | use retrieve_context to "
+            "receive it in its native format"
         )
 
-    text = content_bytes.decode("utf-8", errors="replace")
-    max_chars = _max_chars_of(offloader)
+    max_chars = _MAX_RESULT_TOKENS * _CHARS_PER_TOKEN
 
     if line_range is None and pattern is None:
         answer = _whole_artifact(reference, text)
@@ -218,20 +222,20 @@ def _whole_artifact(reference: str, text: str) -> str:
     return f"{notice}\n\n{text}"
 
 
-def _offloader_of(agent: Agent) -> Any | None:
-    """The ``ContextOffloader`` registered on ``agent``, or ``None`` when there is none.
+def _stash_of(agent: Agent) -> Any | None:
+    """The ``ContextManager``'s stash on ``agent``, or ``None`` when there is none.
 
     Found by type over the agent's plugin registry rather than held as a constructor argument, so the graph works next
-    to an offloader it was not told about, including the one ``Agent`` appends under ``context_manager="auto"`` (Req.
-    15.5).
+    to a ContextManager it was not told about (Req. 15.5). ``None`` also covers a manager configured with
+    ``stash=False``, which leaves nothing to read.
 
     Args:
         agent: The agent of the call. Read only.
 
     Returns:
-        The offloader, or ``None`` when it is absent or the registry cannot be read at all.
+        The stash, or ``None`` when it is absent or the registry cannot be read at all.
     """
-    from ..context_offloader import ContextOffloader
+    from ..._context_manager.context_manager import ContextManager
 
     registry = getattr(agent, "_plugin_registry", None)
     plugins = getattr(registry, "_plugins", None)
@@ -239,54 +243,33 @@ def _offloader_of(agent: Agent) -> Any | None:
         return None
 
     for plugin in plugins.values():
-        if isinstance(plugin, ContextOffloader):
-            return plugin
+        if isinstance(plugin, ContextManager):
+            return getattr(plugin, "_stash", None)
     return None
 
 
-async def _retrieve(offloader: Any, agent: Agent, reference: str) -> tuple[bytes, str] | None:
-    """Read ``reference`` through the offloader's storage, or answer ``None``.
+async def _retrieve(stash: Any, reference: str) -> object | None:
+    """Read ``reference`` through the stash, or answer ``None``.
 
     Every failure collapses onto ``None`` — an unknown reference, uninitialized storage, an unreachable backend —
     because from the model's side they are one situation: the reference did not resolve. The distinction stays in the
     debug log.
 
     Args:
-        offloader: The agent's ``ContextOffloader``.
-        agent: The agent of the call, for storage bound to its sandbox.
+        stash: The agent's stash.
         reference: The reference to read.
 
     Returns:
-        The content and its content type, or ``None``.
+        The stashed block, or ``None``.
     """
-    from ..context_offloader.plugin import _retrieve_content
-
     try:
-        storage = offloader._storage_for_agent(agent)
-        return await _retrieve_content(storage, reference)
+        block: object | None = await stash.retrieve(reference)
     except Exception:
         logger.debug(
             "artifact reference=<%s> did not resolve | answering with an error message", reference, exc_info=True
         )
         return None
-
-
-def _max_chars_of(offloader: Any) -> int:
-    """Output ceiling of a targeted read, in characters, taken from the offloader's own budget.
-
-    Reusing ``max_result_tokens`` keeps a retrieval from re-offloading itself: the offloader replaces a result larger
-    than that budget, so an answer built to the same ceiling is left alone.
-
-    Args:
-        offloader: The agent's ``ContextOffloader``.
-
-    Returns:
-        The ceiling, at least one character.
-    """
-    tokens = getattr(offloader, "_max_result_tokens", None)
-    if not isinstance(tokens, int) or isinstance(tokens, bool) or tokens < 1:
-        return 10_000
-    return tokens * _CHARS_PER_TOKEN
+    return block
 
 
 def _span_of(line_range: dict[str, int] | None) -> tuple[int, int] | None:

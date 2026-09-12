@@ -17,9 +17,9 @@ Four claims run through the whole file.
 * **No language model, and no network.** The matcher is always a double, and the package-wide guard in
   ``conftest.py`` fails the test on the first outbound socket.
 
-``expand_artifact`` runs against a real ``ContextOffloader`` over ``InMemoryStorage``: the design's whole
-argument for that tool is that it delegates the read to storage that already carries the traversal
-guards, so doubling the storage would double away the thing under test.
+``expand_artifact`` runs against a real ``Stash`` over ``InMemoryStorage``: the design's whole argument
+for that tool is that it delegates the read to storage that already carries the traversal guards, so
+doubling the storage would double away the thing under test.
 """
 
 from __future__ import annotations
@@ -30,11 +30,12 @@ from typing import Any
 
 import pytest
 
+from strands._context_manager.context_manager import ContextManager
+from strands._context_manager.stash import Stash, _encode
+from strands.storage.in_memory_storage import InMemoryStorage
 from strands.vended_plugins.context_graph.plugin import ContextStrategy
 from strands.vended_plugins.context_graph.scoring import _REUSE_BONUS
 from strands.vended_plugins.context_graph.state import Card, CardChoice, TurnChoice, _GraphState
-from strands.vended_plugins.context_offloader import ContextOffloader
-from strands.vended_plugins.context_offloader.storage import InMemoryStorage
 
 from .stubs import StubMatcher
 
@@ -60,7 +61,7 @@ CONFIG: dict[str, Any] = {
 
 
 class FakePluginRegistry:
-    """Just the mapping ``tools._offloader_of`` reads."""
+    """Just the mapping ``tools._stash_of`` reads."""
 
     def __init__(self, *plugins: Any) -> None:
         self._plugins: dict[str, Any] = {plugin.name: plugin for plugin in plugins}
@@ -145,13 +146,23 @@ def context_for(agent: Any) -> Any:
     return SimpleNamespace(agent=agent)
 
 
-async def offloaded(agent: FakeAgent, content: bytes, content_type: str = "text/plain") -> tuple[ContextOffloader, str]:
-    """Register an offloader on ``agent`` and store ``content`` in it, returning its reference."""
-    storage = InMemoryStorage()
-    offloader = ContextOffloader(storage=storage)
-    agent._plugin_registry._plugins[offloader.name] = offloader
-    reference = await storage.store("tool-1_0", content, content_type)
-    return offloader, reference
+async def offloaded(agent: FakeAgent, content: bytes, content_type: str = "text/plain") -> tuple[Any, str]:
+    """Register a ContextManager on ``agent`` and stash ``content``, returning its reference.
+
+    Text lands as the ``{"text": ...}`` block the stash writes for a tool-result sub-block; anything else lands as a
+    media block, which the stash holds but cannot return as text.
+    """
+    manager = ContextManager(stash={"storage": InMemoryStorage(), "retrieval_tool": False})
+    stash = Stash(InMemoryStorage(), "session-1", "agent-1")
+    manager._stash = stash
+    agent._plugin_registry._plugins[manager.name] = manager
+
+    if content_type.startswith("text/"):
+        block: Any = {"text": content.decode("utf-8")}
+    else:
+        block = {"image": {"format": content_type.split("/")[-1], "source": {"bytes": content}}}
+    reference = await stash.store("tool-1", 0, _encode(block))
+    return manager, reference
 
 
 # --- expand_card --------------------------------------------------------------------------------
@@ -250,7 +261,7 @@ async def test_expand_card_counts_the_retrieval_cycle_even_when_it_refuses():
 
 
 @pytest.mark.asyncio
-async def test_expand_artifact_without_an_offloader_names_the_missing_storage():
+async def test_expand_artifact_without_a_stash_names_the_missing_storage():
     """Requirement 15.6: absence of A degrades to a message, never to an exception."""
     agent = FakeAgent()
     state = state_with(artifact_card("an artifact", 0, "mem_1_tool-1_0"))
@@ -271,7 +282,7 @@ async def test_expand_artifact_without_an_offloader_names_the_missing_storage():
 async def test_expand_artifact_whole_records_that_it_reinjects_every_token():
     """Requirement 12.5: the cheapest request to write must not also be the silent one."""
     agent = FakeAgent(cycle=1)
-    _offloader, reference = await offloaded(agent, b"line one\nline two\nline three")
+    _manager, reference = await offloaded(agent, b"line one\nline two\nline three")
     state = state_with(artifact_card("an artifact", 0, reference))
     strategy = strategy_over(state, agent)
     before = copy.deepcopy(agent.messages)
@@ -288,9 +299,9 @@ async def test_expand_artifact_whole_records_that_it_reinjects_every_token():
 
 @pytest.mark.asyncio
 async def test_expand_artifact_by_line_range_returns_only_that_span():
-    """Requirement 12.4: the read is delegated, and the span is the offloader's own 1-indexed contract."""
+    """Requirement 12.4: the read is delegated, and the span is the search helper's own 1-indexed contract."""
     agent = FakeAgent()
-    _offloader, reference = await offloaded(agent, b"alpha\nbravo\ncharlie\ndelta")
+    _manager, reference = await offloaded(agent, b"alpha\nbravo\ncharlie\ndelta")
     state = state_with(artifact_card("an artifact", 0, reference))
     strategy = strategy_over(state, agent)
 
@@ -307,7 +318,7 @@ async def test_expand_artifact_by_line_range_returns_only_that_span():
 @pytest.mark.asyncio
 async def test_expand_artifact_by_pattern_returns_the_matching_lines():
     agent = FakeAgent()
-    _offloader, reference = await offloaded(agent, b"ok\nERROR: it broke\nok again")
+    _manager, reference = await offloaded(agent, b"ok\nERROR: it broke\nok again")
     state = state_with(artifact_card("an artifact", 0, reference))
     strategy = strategy_over(state, agent)
 
@@ -337,17 +348,22 @@ async def test_expand_artifact_with_an_unknown_reference_names_it():
     ("line_range", "pattern"),
     [({"start": 1, "end": 2}, None), (None, "needle")],
 )
-async def test_expand_artifact_on_non_textual_content_names_the_content_type(line_range, pattern):
-    """Requirement 12.7: a line range does not apply to a PNG, and the answer says which type it was."""
+async def test_expand_artifact_on_non_textual_content_says_it_is_not_text(line_range, pattern):
+    """Requirement 12.7: a line range does not apply to a PNG, and the answer says so.
+
+    The stash holds a decoded block rather than bytes plus a MIME type, so the answer names the reference and the fact
+    that it is not text; the content type is no longer available to state.
+    """
     agent = FakeAgent()
-    _offloader, reference = await offloaded(agent, b"\x89PNG\r\n", "image/png")
+    _manager, reference = await offloaded(agent, b"\x89PNG\r\n", "image/png")
     state = state_with(artifact_card("an artifact", 0, reference))
     strategy = strategy_over(state, agent)
     choice = state.choice
 
     answer = await strategy.expand_artifact(reference, context_for(agent), line_range, pattern)
 
-    assert "image/png" in answer
+    assert "non-textual content" in answer
+    assert reference in answer
     assert state.choice is choice
     assert state.reuse == {}
 
@@ -355,7 +371,7 @@ async def test_expand_artifact_on_non_textual_content_names_the_content_type(lin
 @pytest.mark.asyncio
 async def test_expand_artifact_with_a_malformed_line_range_names_it():
     agent = FakeAgent()
-    _offloader, reference = await offloaded(agent, b"alpha\nbravo")
+    _manager, reference = await offloaded(agent, b"alpha\nbravo")
     state = state_with(artifact_card("an artifact", 0, reference))
     strategy = strategy_over(state, agent)
 
@@ -367,9 +383,9 @@ async def test_expand_artifact_with_a_malformed_line_range_names_it():
 
 @pytest.mark.asyncio
 async def test_expand_artifact_with_a_line_range_outside_the_content_answers_in_prose():
-    """The offloader's own validation raises; the graph turns it into something the model can act on."""
+    """The search helper's own validation raises; the graph turns it into something the model can act on."""
     agent = FakeAgent()
-    _offloader, reference = await offloaded(agent, b"alpha\nbravo")
+    _manager, reference = await offloaded(agent, b"alpha\nbravo")
     state = state_with(artifact_card("an artifact", 0, reference))
     strategy = strategy_over(state, agent)
 
@@ -383,7 +399,7 @@ async def test_expand_artifact_with_a_line_range_outside_the_content_answers_in_
 async def test_expand_artifact_reads_a_reference_the_graph_never_carded():
     """A reference storage holds but no Card addresses: the read succeeds, and no note has a home."""
     agent = FakeAgent()
-    _offloader, reference = await offloaded(agent, b"orphaned content")
+    _manager, reference = await offloaded(agent, b"orphaned content")
     state = state_with(subject_card("the ask", 0, "about the ask"))
     strategy = strategy_over(state, agent)
 
