@@ -303,7 +303,7 @@ class TestLivingWithTheOtherTwoPlugins:
         assert {card.kind for card in cards.values()} == {"subject"}
 
     def test_the_offloader_configuration_comes_out_as_it_went_in(self):
-        """Requirement 15.7: preview strategy, relevance threshold and preview budget are untouched."""
+        """Requirement 15.7: every offloader setting, the preview budget included, is untouched."""
         from strands.vended_plugins.context_offloader import ContextOffloader
 
         offloader = ContextOffloader(preview_tokens=123)
@@ -312,7 +312,6 @@ class TestLivingWithTheOtherTwoPlugins:
 
         ContextStrategy(strategy="graph").init_agent(agent)  # type: ignore[arg-type]
 
-        assert offloader._preview_strategy == before["_preview_strategy"]
         assert offloader._preview_tokens == 123
         assert vars(offloader) == before
 
