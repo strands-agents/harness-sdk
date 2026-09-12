@@ -1,0 +1,93 @@
+---
+title: OrcaRouter
+description: 'Run Strands agents on many models through OrcaRouter, using the SDK''s built-in OpenAI provider against the OpenAI-compatible endpoint.'
+integrationType: model-provider
+---
+
+[OrcaRouter](https://www.orcarouter.ai) is an OpenAI-compatible AI gateway built for
+both models and agents. Like OpenRouter, it exposes a provider/model namespace across
+many models — but it also combines adaptive routing, automatic failover, zero-markup
+inference, observability, guardrails, and agent-tool governance behind the same
+endpoint.
+
+:::note[OpenAI compatibility]
+This integration works through the SDK's built-in
+[OpenAI provider](../../user-guide/concepts/model-providers/openai.mdx) pointed at
+OrcaRouter's OpenAI-compatible endpoint; there is no separate OrcaRouter integration.
+Compatible endpoints can have quirks that deviate from the exact OpenAI API spec, so
+some features may behave differently than they do against OpenAI itself.
+:::
+
+## Installation
+
+The OpenAI provider is an optional dependency. To install, run:
+
+<Tabs>
+<Tab label="Python">
+
+```bash
+pip install 'strands-agents[openai]'
+```
+</Tab>
+<Tab label="TypeScript">
+
+```bash
+npm install @strands-agents/sdk openai
+```
+</Tab>
+</Tabs>
+
+## Usage
+
+Create an [API key](https://www.orcarouter.ai/keys), export it as
+`ORCAROUTER_API_KEY`, and point the provider at OrcaRouter's endpoint:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+import os
+
+from strands import Agent
+from strands.models.openai import OpenAIModel
+
+model = OpenAIModel(
+    client_args={
+        "api_key": os.environ["ORCAROUTER_API_KEY"],
+        "base_url": "https://api.orcarouter.ai/v1",
+    },
+    model_id="orcarouter/auto",
+)
+
+agent = Agent(model=model)
+response = agent("Explain tool calling in one sentence.")
+print(response)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "integrations/model-providers/orcarouter_imports.ts:usage_imports"
+
+--8<-- "integrations/model-providers/orcarouter.ts:usage"
+```
+</Tab>
+</Tabs>
+
+## Configuration
+
+Two client settings connect the provider to OrcaRouter:
+
+* **API key**: from your [OrcaRouter dashboard](https://www.orcarouter.ai/keys)
+* **Base URL**: `https://api.orcarouter.ai/v1`
+
+Model IDs come from the [OrcaRouter model catalog](https://www.orcarouter.ai/models) and
+are prefixed with the gateway name, for example `orcarouter/auto` or
+`orcarouter/fusion`. For model parameters and other provider options, see the
+[OpenAI provider](../../user-guide/concepts/model-providers/openai.mdx) guide.
+
+## References
+
+* [OrcaRouter docs](https://docs.orcarouter.ai)
+* [OrcaRouter model catalog](https://www.orcarouter.ai/models)
+* [OpenAI provider](../../user-guide/concepts/model-providers/openai.mdx)

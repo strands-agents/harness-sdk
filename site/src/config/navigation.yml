@@ -379,6 +379,7 @@ sidebar:
           - docs/integrations/model-providers/nebius-token-factory
           - docs/integrations/model-providers/nvidia-nim
           - docs/integrations/model-providers/openrouter
+          - docs/integrations/model-providers/orcarouter
           - docs/integrations/model-providers/sglang
           - docs/integrations/model-providers/vllm
           - docs/integrations/model-providers/mlx
