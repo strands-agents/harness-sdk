@@ -56,8 +56,11 @@ def _turn(result_text: str, tool_use_id: str = "t1") -> Messages:
         ),
         Message(
             role="user",
-            content=[ContentBlock(toolResult=ToolResult(toolUseId=tool_use_id, status="success",
-                                                         content=[{"text": result_text}]))],
+            content=[
+                ContentBlock(
+                    toolResult=ToolResult(toolUseId=tool_use_id, status="success", content=[{"text": result_text}])
+                )
+            ],
         ),
     ]
 
@@ -144,17 +147,22 @@ class TestBuildQuery:
         agent = unittest.mock.MagicMock()
         agent.messages = _turn("body")
         query = _build_query(agent.messages[2]["content"][0]["toolResult"], agent)
-        assert "ERROR" in query      # the user question
-        assert "app.log" in query    # the tool arguments
+        assert "ERROR" in query  # the user question
+        assert "app.log" in query  # the tool arguments
 
     def test_no_question_uses_arguments_only(self):
         agent = unittest.mock.MagicMock()
         agent.messages = [
-            Message(role="assistant",
-                    content=[ContentBlock(toolUse=ToolUse(toolUseId="t1", name="read_log", input={"path": "x.log"}))]),
-            Message(role="user",
-                    content=[ContentBlock(toolResult=ToolResult(toolUseId="t1", status="success",
-                                                                content=[{"text": "b"}]))]),
+            Message(
+                role="assistant",
+                content=[ContentBlock(toolUse=ToolUse(toolUseId="t1", name="read_log", input={"path": "x.log"}))],
+            ),
+            Message(
+                role="user",
+                content=[
+                    ContentBlock(toolResult=ToolResult(toolUseId="t1", status="success", content=[{"text": "b"}]))
+                ],
+            ),
         ]
         query = _build_query(agent.messages[1]["content"][0]["toolResult"], agent)
         assert "x.log" in query
