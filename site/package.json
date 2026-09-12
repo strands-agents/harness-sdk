@@ -56,7 +56,7 @@
     "vite": "^8.2.2"
   },
   "devDependencies": {
-    "@astrojs/markdown-remark": "^7.2.4",
+    "@astrojs/markdown-remark": "^7.3.0",
     "@astrojs/markdown-satteri": "^0.3.4",
     "@astrojs/starlight": "^0.41.9",
     "@octokit/rest": "^22.0.1",
