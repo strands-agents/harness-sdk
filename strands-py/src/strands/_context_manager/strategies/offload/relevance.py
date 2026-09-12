@@ -61,35 +61,40 @@ def _build_query(tool_result: ToolResult, agent: Agent) -> str:
     The block being replaced carries only ``toolUseId``, so both signals are recovered from
     ``agent.messages``: the newest user message with text, and the ``toolUse`` matching the id.
     """
-    tool_use_id = tool_result["toolUseId"]
-
-    user_text = ""
-    for message in reversed(agent.messages):
-        if message.get("role") != "user":
-            continue
-        texts = [block["text"] for block in message.get("content", []) if block.get("text")]
-        if texts:
-            user_text = "\n".join(texts)
-            break
-
-    tool_input: object = {}
-    for message in agent.messages:
-        if message.get("role") != "assistant":
-            continue
-        for block in message["content"]:
-            if "toolUse" in block and block["toolUse"]["toolUseId"] == tool_use_id:
-                tool_input = block["toolUse"].get("input", {})
+    user_text = _latest_question(agent)
 
     try:
-        serialized = json.dumps(tool_input)
+        serialized = json.dumps(_tool_input(agent, tool_result["toolUseId"]))
     except (TypeError, ValueError):
-        return (user_text or "")[-_MAX_QUERY_CHARS:] or "{}"
+        return user_text[-_MAX_QUERY_CHARS:] or "{}"
 
     if len(serialized) >= _MAX_QUERY_CHARS:
         return serialized[:_MAX_QUERY_CHARS]
 
     query = f"{user_text}\n{serialized}" if user_text else serialized
     return query[-_MAX_QUERY_CHARS:]
+
+
+def _latest_question(agent: Agent) -> str:
+    """The newest user message carrying text, or ``""``. Tool-result-only turns are not questions."""
+    for message in reversed(agent.messages):
+        if message.get("role") != "user":
+            continue
+        texts = [block["text"] for block in message.get("content", []) if block.get("text")]
+        if texts:
+            return "\n".join(texts)
+    return ""
+
+
+def _tool_input(agent: Agent, tool_use_id: str) -> object:
+    """The arguments of the ``toolUse`` matching ``tool_use_id``, or an empty mapping."""
+    for message in agent.messages:
+        if message.get("role") != "assistant":
+            continue
+        for block in message["content"]:
+            if "toolUse" in block and block["toolUse"]["toolUseId"] == tool_use_id:
+                return block["toolUse"].get("input", {})
+    return {}
 
 
 class RelevanceStrategy(BaseOffloadStrategy):
