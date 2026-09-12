@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
+from strands_mcp_server import server
 from strands_mcp_server.server import fetch_doc, search_docs
 from strands_mcp_server.utils.doc_fetcher import Page
 from strands_mcp_server.utils.indexer import Doc
@@ -132,7 +133,88 @@ class TestFetchDocTocMode:
 
         tru_result = fetch_doc(**kwargs)
 
-        assert tru_result == {"urls": [{"url": "https://strandsagents.com/a.md", "title": "Doc A"}]}
+        assert tru_result == {
+            "urls": [{"url": "https://strandsagents.com/a.md", "title": "Doc A"}],
+            "total": 1,
+            "offset": 0,
+            "limit": server.CATALOG_PAGE_SIZE,
+        }
+
+
+@patch("strands_mcp_server.server.cache")
+class TestFetchDocCatalogPagination:
+    """Catalog mode returns a bounded page instead of every URL (#3326)."""
+
+    @staticmethod
+    def _catalog(size):
+        return {f"https://strandsagents.com/{i:04d}.md": f"Doc {i}" for i in range(size)}
+
+    def test_large_catalog_is_capped_at_default_page_size(self, mock_cache):
+        mock_cache.get_url_titles.return_value = self._catalog(763)
+
+        tru_result = fetch_doc()
+
+        assert len(tru_result["urls"]) == server.CATALOG_PAGE_SIZE
+        assert tru_result["total"] == 763
+        assert tru_result["next_offset"] == server.CATALOG_PAGE_SIZE
+
+    def test_offset_and_limit_select_a_slice(self, mock_cache):
+        mock_cache.get_url_titles.return_value = self._catalog(50)
+
+        tru_result = fetch_doc(offset=10, limit=5)
+
+        assert [entry["title"] for entry in tru_result["urls"]] == [f"Doc {i}" for i in range(10, 15)]
+        assert tru_result["offset"] == 10
+        assert tru_result["limit"] == 5
+        assert tru_result["next_offset"] == 15
+
+    def test_last_page_omits_next_offset(self, mock_cache):
+        mock_cache.get_url_titles.return_value = self._catalog(10)
+
+        tru_result = fetch_doc(offset=5, limit=5)
+
+        assert len(tru_result["urls"]) == 5
+        assert "next_offset" not in tru_result
+
+    def test_offset_past_the_end_returns_empty_page(self, mock_cache):
+        mock_cache.get_url_titles.return_value = self._catalog(10)
+
+        tru_result = fetch_doc(offset=999)
+
+        assert tru_result["urls"] == []
+        assert tru_result["total"] == 10
+        assert "next_offset" not in tru_result
+
+    def test_paging_covers_every_entry_exactly_once(self, mock_cache):
+        catalog = self._catalog(25)
+        mock_cache.get_url_titles.return_value = catalog
+
+        seen, offset = [], 0
+        while True:
+            page = fetch_doc(offset=offset, limit=7)
+            seen.extend(entry["url"] for entry in page["urls"])
+            if "next_offset" not in page:
+                break
+            offset = page["next_offset"]
+
+        assert seen == list(catalog)
+
+    @pytest.mark.parametrize("limit,expected", [(0, 1), (-5, 1), (10_000, 500)])
+    def test_limit_is_clamped_to_a_usable_range(self, mock_cache, limit, expected):
+        mock_cache.get_url_titles.return_value = self._catalog(600)
+
+        tru_result = fetch_doc(limit=limit)
+
+        assert tru_result["limit"] == expected
+        assert len(tru_result["urls"]) == expected
+
+    def test_negative_offset_is_treated_as_zero(self, mock_cache):
+        mock_cache.get_url_titles.return_value = self._catalog(10)
+
+        tru_result = fetch_doc(offset=-5, limit=3)
+
+        assert tru_result["offset"] == 0
+        assert [entry["title"] for entry in tru_result["urls"]] == ["Doc 0", "Doc 1", "Doc 2"]
 
 
 @patch("strands_mcp_server.server.cache")

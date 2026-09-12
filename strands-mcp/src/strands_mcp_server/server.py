@@ -8,6 +8,9 @@ from .utils import cache, text_processor
 
 APP_NAME = "strands-agents-mcp-server"
 
+CATALOG_PAGE_SIZE = 100  # default catalog entries per fetch_doc call
+CATALOG_PAGE_MAX = 500  # ceiling on a caller-supplied catalog limit
+
 
 def _is_valid_doc_url(uri: str) -> bool:
     """Validate that a URI points to strandsagents.com over HTTPS."""
@@ -81,7 +84,7 @@ def search_docs(query: str, k: int = 5) -> List[Dict[str, Any]]:
 
 
 @mcp.tool()
-def fetch_doc(uri: str = "", section: str = "") -> Dict[str, Any]:
+def fetch_doc(uri: str = "", section: str = "", offset: int = 0, limit: int = CATALOG_PAGE_SIZE) -> Dict[str, Any]:
     """Read documentation pages with smart sectioning for token efficiency.
 
     Two modes of operation:
@@ -102,11 +105,19 @@ def fetch_doc(uri: str = "", section: str = "") -> Dict[str, Any]:
 
     Args:
         uri: Document URL (must be under https://strandsagents.com/).
-            If empty, returns a catalog of all available document URLs with titles.
+            If empty, returns one page of the catalog of available document URLs.
         section: Section ID from the TOC (e.g., "3" or "3.2").
             Omit to get the table of contents.
+        offset: Catalog mode only. Index of the first entry to return (default: 0).
+        limit: Catalog mode only. Maximum entries to return (default: 100, max: 500).
 
     Returns:
+        When uri is omitted (catalog mode):
+        - urls: One page of {url, title} entries, in llms.txt order
+        - total: Total number of catalogued documents
+        - offset, limit: The slice that was applied
+        - next_offset: Offset of the next page, absent on the last page
+
         When section is omitted (TOC mode):
         - url, title: Document metadata
         - preamble: Introductory text between page title and first section
@@ -136,7 +147,19 @@ def fetch_doc(uri: str = "", section: str = "") -> Dict[str, Any]:
 
     if not uri:
         url_titles = cache.get_url_titles()
-        return {"urls": [{"url": url, "title": title} for url, title in url_titles.items()]}
+        total = len(url_titles)
+        start = max(offset, 0)
+        page_size = min(max(limit, 1), CATALOG_PAGE_MAX)
+        page = list(url_titles.items())[start : start + page_size]
+        result: Dict[str, Any] = {
+            "urls": [{"url": url, "title": title} for url, title in page],
+            "total": total,
+            "offset": start,
+            "limit": page_size,
+        }
+        if start + page_size < total:
+            result["next_offset"] = start + page_size
+        return result
 
     if not _is_valid_doc_url(uri):
         return {"error": "only https://strandsagents.com URLs allowed", "url": uri}
