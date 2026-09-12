@@ -81,6 +81,47 @@ evaluator = ToolCalled(tool_name="calculator")
 **Parameters:**
 - `tool_name` (required): Name of the tool to check for.
 
+#### `SkillInvoked`
+
+Checks whether a named skill was loaded in the trajectory. Reach for this when a
+regression case has a known routing requirement: it calls no model, so it's faster and
+free, and it won't drift the way a judge-based check can.
+
+```python
+from strands_evals.evaluators import SkillInvoked
+
+evaluator = SkillInvoked(skill_name="pto-planning")
+
+# Asserting on several skills in one experiment needs distinct names
+evaluators = [
+    SkillInvoked(skill_name="pto-planning", name="SkillInvoked[pto-planning]"),
+    SkillInvoked(skill_name="benefits-advisor", name="SkillInvoked[benefits-advisor]"),
+]
+```
+
+**Parameters:**
+- `skill_name` (required): Name of the skill to check for.
+- `name` (optional): Evaluator name. Evaluator names must be unique within an experiment,
+  so pass this when using more than one instance.
+
+A refused load does not count as invoked, since the agent never received the skill and
+asserting it was used would be false. Only a successful load scores `1.0` and passes;
+every other outcome scores `0.0` and fails. Unlike the skill judges, this check has no
+not-applicable state. The `reason` names which outcome occurred:
+
+| Outcome | `reason` |
+|---------|----------|
+| Loaded | `skill '<name>' was invoked` |
+| Load refused by the harness | `skill '<name>' was requested but the load failed`, then ` (<n> attempts)` after more than one try, then `: <error>` when the harness supplies a message |
+| Requested, no outcome recorded | `skill '<name>' was requested but the trajectory records no outcome` |
+| Never requested | `skill '<name>' was not invoked` |
+| No trajectory supplied | `no trajectory provided` |
+
+For graded questions about skills, such as whether loading one was appropriate or how
+fully its steps were followed, use
+[SkillSelectionAccuracyEvaluator](skill_selection_evaluator.md) and
+[SkillInstructionFollowingEvaluator](skill_instruction_following_evaluator.md).
+
 ### Environment State Evaluators
 
 #### `StateEquals`

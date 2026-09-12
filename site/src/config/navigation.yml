@@ -239,6 +239,8 @@ sidebar:
               - docs/user-guide/evals-sdk/evaluators/recovery_strategy_evaluator
               - docs/user-guide/evals-sdk/evaluators/tool_selection_evaluator
               - docs/user-guide/evals-sdk/evaluators/tool_parameter_evaluator
+              - docs/user-guide/evals-sdk/evaluators/skill_selection_evaluator
+              - docs/user-guide/evals-sdk/evaluators/skill_instruction_following_evaluator
               - docs/user-guide/evals-sdk/evaluators/deterministic_evaluators
               - docs/user-guide/evals-sdk/evaluators/custom_evaluator
           - label: Detectors
