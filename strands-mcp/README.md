@@ -56,6 +56,14 @@ This MCP server provides curated documentation access to your GenAI tools via ll
 
 - `STRANDS_MCP_PREFETCH_ALL`: when set to a truthy value (`1`, `true`, `yes`), the server prefetches and indexes all pages in the background at startup, so body-term search works immediately instead of only after a page has been hydrated by a prior query. Defaults to off. Prefetch is best-effort and eventually consistent: results may be title-only until background hydration completes.
 
+- `STRANDS_MCP_LLMS_TXT`: comma-separated list of `llms.txt` URLs to index. Defaults to `https://strandsagents.com/llms.txt`. A value with no usable URLs falls back to the default.
+- `STRANDS_MCP_TIMEOUT`: HTTP request timeout in seconds. Defaults to `30`. A value that is not a positive number is ignored, with a warning, so a typo cannot stop the server from starting.
+- `STRANDS_MCP_USER_AGENT`: `User-Agent` header for outbound requests. Defaults to `strands-mcp-docs/1.0`.
+
+Configuration is read from the environment at import time.
+
+> **Note:** `fetch_doc` currently accepts only `https://strandsagents.com` URLs. Documents from other configured sources are indexed and searchable through `search_docs` (including their body text, which is hydrated during search), but cannot be read directly with `fetch_doc` yet.
+
 ## Prerequisites
 
 The usage methods below require [uv](https://github.com/astral-sh/uv) to be installed on your system. You can install it by following the [official installation instructions](https://github.com/astral-sh/uv#installation).
