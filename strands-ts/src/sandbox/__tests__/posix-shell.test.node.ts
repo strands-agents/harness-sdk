@@ -329,6 +329,28 @@ describe.skipIf(process.platform === 'win32')('PosixShellSandbox', () => {
       expect(result.exitCode).toBe(137)
     })
 
+    it('decodes multibyte UTF-8 sequences split across chunk boundaries', async () => {
+      // Regression guard for #4156. A UTF-8 character straddling a pipe read
+      // boundary must not be decoded as two invalid halves. The helper writes
+      // 'café☕' as two Buffers split mid-'é' (byte 4 of 5), so a per-chunk decode
+      // would yield U+FFFD replacements.
+      const script =
+        "const b=Buffer.from('café☕','utf8');" +
+        'process.stdout.write(b.subarray(0,4));' +
+        'setTimeout(()=>process.stdout.write(b.subarray(4)),20)'
+      const chunks: (StreamChunk | ExecutionResult)[] = []
+      for await (const chunk of streamProcess('node', ['-e', script])) {
+        chunks.push(chunk)
+      }
+      const result = chunks.find((c): c is ExecutionResult => c.type === 'executionResult')
+      expect(result?.stdout).toBe('café☕')
+      const streamed = chunks
+        .filter((c): c is StreamChunk => c.type === 'streamChunk' && c.streamType === 'stdout')
+        .map((c) => c.data)
+        .join('')
+      expect(streamed).toBe('café☕')
+    })
+
     it('returns enoentMessage when spawned binary does not exist', async () => {
       const chunks: (StreamChunk | ExecutionResult)[] = []
       for await (const chunk of streamProcess('nonexistent_binary_xyz_12345', [], {
