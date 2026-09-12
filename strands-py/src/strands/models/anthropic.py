@@ -635,10 +635,12 @@ class AnthropicModel(Model):
                 output_tokens = usage["output_tokens"]
                 cache_read = usage.get("cache_read_input_tokens") or 0
                 cache_write = usage.get("cache_creation_input_tokens") or 0
+                # Anthropic's input_tokens excludes tokens read from or written to the cache, so the
+                # billed total is the sum of all four counters.
                 usage_chunk: Usage = {
                     "inputTokens": input_tokens,
                     "outputTokens": output_tokens,
-                    "totalTokens": input_tokens + output_tokens,
+                    "totalTokens": input_tokens + output_tokens + cache_read + cache_write,
                 }
                 if cache_read:
                     usage_chunk["cacheReadInputTokens"] = cache_read

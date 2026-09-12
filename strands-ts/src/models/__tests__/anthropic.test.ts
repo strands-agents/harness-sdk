@@ -236,6 +236,37 @@ describe('AnthropicModel', () => {
       expect(events[5]).toEqual({ type: 'modelMessageStopEvent', stopReason: 'endTurn' })
     })
 
+    it('reports a total that includes cache reads and writes', async () => {
+      // Anthropic reports input_tokens net of the cache, so the four counters sum to the total (#3546).
+      const mockClient = createMockClient(async function* () {
+        yield {
+          type: 'message_start',
+          message: {
+            role: 'assistant',
+            usage: { input_tokens: 5, cache_read_input_tokens: 100, cache_creation_input_tokens: 50 },
+          },
+        }
+        yield { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 7 } }
+        yield { type: 'message_stop' }
+      })
+
+      const provider = new AnthropicModel({ client: mockClient })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      const events = await collectIterator(provider.stream(messages))
+
+      expect(events[1]).toEqual({
+        type: 'modelMetadataEvent',
+        usage: {
+          inputTokens: 5,
+          outputTokens: 7,
+          totalTokens: 162,
+          cacheReadInputTokens: 100,
+          cacheWriteInputTokens: 50,
+        },
+      })
+    })
+
     it('handles tool use events', async () => {
       const mockClient = createMockClient(async function* () {
         yield { type: 'message_start', message: { role: 'assistant', usage: { input_tokens: 10 } } }
