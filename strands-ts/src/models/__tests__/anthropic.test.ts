@@ -3,7 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { isNode } from '../../__fixtures__/environment.js'
 import { AnthropicModel } from '../anthropic.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
-import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
+import { collectGenerator, collectIterator } from '../../__fixtures__/model-test-helpers.js'
 import {
   Message,
   TextBlock,
@@ -271,6 +271,31 @@ describe('AnthropicModel', () => {
       expect(events).toContainEqual({ type: 'modelMessageStopEvent', stopReason: 'toolUse' })
     })
 
+    it('throws ContextWindowOverflowError when Anthropic reports a context window overflow', async () => {
+      const overflowEvent = {
+        type: 'message_delta',
+        delta: { stop_reason: 'model_context_window_exceeded' },
+        usage: { output_tokens: 1 },
+      }
+      const mockClient = createMockClient(async function* () {
+        yield { type: 'message_start', message: { role: 'assistant', usage: { input_tokens: 1 } } }
+        yield overflowEvent
+      })
+      const provider = new AnthropicModel({ client: mockClient })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toMatchObject({
+        name: 'ContextWindowOverflowError',
+        message: 'model_context_window_exceeded',
+        cause: overflowEvent,
+      })
+      await expect(collectGenerator(provider.streamAggregated(messages))).rejects.toMatchObject({
+        name: 'ContextWindowOverflowError',
+        message: 'model_context_window_exceeded',
+        cause: overflowEvent,
+      })
+    })
+
     it.each([
       ['pause_turn', 'pauseTurn'],
       ['refusal', 'refusal'],
@@ -378,14 +403,19 @@ describe('AnthropicModel', () => {
     })
 
     it('maps overload error to ContextWindowOverflowError', async () => {
+      const overflowError = new Error('prompt is too long')
       const mockClient = createMockClient(async function* () {
         yield { type: 'ping' } // Satisfy linter require-yield
-        throw new Error('prompt is too long')
+        throw overflowError
       })
       const provider = new AnthropicModel({ client: mockClient })
       const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
 
-      await expect(collectIterator(provider.stream(messages))).rejects.toThrow(ContextWindowOverflowError)
+      await expect(collectIterator(provider.stream(messages))).rejects.toMatchObject({
+        name: 'ContextWindowOverflowError',
+        message: 'prompt is too long',
+        cause: overflowError,
+      })
     })
 
     it.each([
