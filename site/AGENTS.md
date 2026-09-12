@@ -113,7 +113,7 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 #### Prerequisites
 
 - Python 3.10+
-- Node.js 20+, npm
+- Node.js 22+, npm
 
 #### Setup and Installation
 

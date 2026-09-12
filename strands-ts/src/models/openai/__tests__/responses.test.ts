@@ -306,6 +306,30 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(req.prompt_cache_key).toBe('explicit')
     })
 
+    it('derives prompt_cache_key from the agent metadata session when cacheKey is unset', async () => {
+      const req = await runOnce({ cacheConfig: {} }, [mkUserMessage()], { agentMetadata: { sessionId: 's1' } })
+      expect(req.prompt_cache_key).toBe('strands-s1')
+    })
+
+    it('lets a configured cacheKey win over the agent metadata session', async () => {
+      const req = await runOnce({ cacheConfig: { cacheKey: 'tenant-42' } }, [mkUserMessage()], {
+        agentMetadata: { sessionId: 's1' },
+      })
+      expect(req.prompt_cache_key).toBe('tenant-42')
+    })
+
+    it('treats a false cacheKey as an opt-out even with an agent metadata session', async () => {
+      const req = await runOnce({ cacheConfig: { cacheKey: false } }, [mkUserMessage()], {
+        agentMetadata: { sessionId: 's1' },
+      })
+      expect(req.prompt_cache_key).toBeUndefined()
+    })
+
+    it('omits prompt_cache_key when the agent metadata carries no session', async () => {
+      const req = await runOnce({ cacheConfig: {} }, [mkUserMessage()], { agentMetadata: {} })
+      expect(req.prompt_cache_key).toBeUndefined()
+    })
+
     it.each(['24h', 'in_memory'])(
       'maps retention-literal cacheConfig.ttl %s to prompt_cache_retention',
       async (ttl) => {

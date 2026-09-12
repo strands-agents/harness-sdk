@@ -3,6 +3,7 @@
 from . import agent, models, storage, telemetry, types
 from .agent.agent import Agent
 from .agent.base import AgentBase
+from .background_tasks import BackgroundTasksConfig
 from .event_loop._retry import ModelRetryStrategy
 from .interventions import InterventionHandler
 from .plugins import MultiAgentPlugin, Plugin
@@ -21,6 +22,7 @@ __all__ = [
     "Agent",
     "AgentBase",
     "AgentSkills",
+    "BackgroundTasksConfig",
     "InterventionHandler",
     "LocalAgent",
     "agent",

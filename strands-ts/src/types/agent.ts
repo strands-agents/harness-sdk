@@ -1,5 +1,6 @@
 import type { Sandbox } from '../sandbox/base.js'
 import type { Storage } from '../storage/storage.js'
+import type { ContextManager } from '../context-manager/context-manager.js'
 import type { StateStore } from '../state-store.js'
 import type { ContentBlock, ContentBlockData, Message, MessageData, StopReason, SystemPrompt } from './messages.js'
 import type { Interrupt } from '../interrupt.js'
@@ -304,6 +305,13 @@ export interface LocalAgent {
    * auto-namespaces under its own prefix to avoid key collisions.
    */
   readonly storage?: Storage | undefined
+
+  /**
+   * The resolved context manager instance. Present when a preset or config was provided.
+   *
+   * @internal
+   */
+  readonly contextManager?: ContextManager | undefined
 
   /**
    * Aggregated metrics for the agent's loop execution.

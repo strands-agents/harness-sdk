@@ -32,6 +32,14 @@ describe.skipIf(process.platform === 'win32')('makeShell', () => {
 
     expect((result as ShellOutput).output).toContain('hello sandbox')
     expect((result as ShellOutput).error).toBe('')
+    expect((result as ShellOutput).exit_code).toBe(0)
+  })
+
+  it('reports a non-zero exit code', async () => {
+    const { sandboxShell, context } = createSandboxShell()
+    const result = await sandboxShell.invoke({ command: 'exit 42' }, context)
+
+    expect((result as ShellOutput).exit_code).toBe(42)
   })
 
   it('captures stderr via sandbox', async () => {
@@ -39,6 +47,7 @@ describe.skipIf(process.platform === 'win32')('makeShell', () => {
     const result = await sandboxShell.invoke({ command: 'echo "oops" >&2' }, context)
 
     expect((result as ShellOutput).error).toContain('oops')
+    expect((result as ShellOutput).exit_code).toBe(0)
   })
 
   it('does not persist state between calls (stateless)', async () => {

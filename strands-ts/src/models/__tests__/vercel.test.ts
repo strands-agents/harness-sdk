@@ -9,19 +9,28 @@ import { APICallError } from '@ai-sdk/provider'
 import { VercelModel } from '../vercel.js'
 import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../../errors.js'
 import { logger } from '../../logging/logger.js'
+import { warnOnce } from '../../logging/warn-once.js'
 import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
 import { Message, TextBlock, ToolUseBlock, ToolResultBlock, ReasoningBlock, JsonBlock } from '../../types/messages.js'
 import { DocumentBlock, ImageBlock, VideoBlock } from '../../types/media.js'
 import type { ToolSpec } from '../../tools/types.js'
 
+vi.mock('../../logging/warn-once.js', () => ({
+  warnOnce: vi.fn(),
+}))
+
 /**
  * Creates a mock LanguageModelV3 that streams the given parts.
  */
-function createMockModel(parts: LanguageModelV3StreamPart[]): LanguageModelV3 {
+function createMockModel(
+  parts: LanguageModelV3StreamPart[],
+  provider = 'test',
+  modelId = 'test-model'
+): LanguageModelV3 {
   return {
     specificationVersion: 'v3',
-    provider: 'test',
-    modelId: 'test-model',
+    provider,
+    modelId,
     supportedUrls: {},
     doGenerate: vi.fn(),
     doStream: vi.fn(async (): Promise<LanguageModelV3StreamResult> => ({
@@ -58,14 +67,16 @@ const minimalParts: LanguageModelV3StreamPart[] = [
  */
 function setupCaptureTest(
   parts: LanguageModelV3StreamPart[] = minimalParts,
-  config?: Parameters<typeof VercelModel.prototype.updateConfig>[0]
+  config?: Parameters<typeof VercelModel.prototype.updateConfig>[0],
+  provider = 'test',
+  modelId = 'test-model'
 ): {
   model: VercelModel
   mock: LanguageModelV3
   callArgs: () => LanguageModelV3CallOptions
   collect: (messages: Message[], options?: Parameters<VercelModel['stream']>[1]) => ReturnType<typeof collectIterator>
 } {
-  const mock = createMockModel(parts)
+  const mock = createMockModel(parts, provider, modelId)
   const model = new VercelModel({ provider: mock, ...config })
   return {
     model,
@@ -705,6 +716,46 @@ describe('VercelModel', () => {
         expect(warnSpy).toHaveBeenCalled()
         warnSpy.mockRestore()
       })
+
+      // Regression: an everyTurn context injector folds rendered text onto a tool-result turn, making a
+      // mixed turn. Tool results must lead the split regardless of source-block order so each one stays
+      // adjacent to the assistant tool call it answers once an adapter re-merges the messages (#4138).
+      it.each([
+        { name: 'tool result then text', order: ['tu1', 'text'], roles: ['user', 'assistant', 'tool', 'user'] },
+        { name: 'text then tool result', order: ['text', 'tu1'], roles: ['user', 'assistant', 'tool', 'user'] },
+        {
+          name: 'text between parallel tool results',
+          order: ['tu1', 'text', 'tu2'],
+          roles: ['user', 'assistant', 'tool', 'tool', 'user'],
+        },
+      ])('keeps tool results ahead of injected text for $name', async ({ order, roles }) => {
+        const toolUseIds = order.filter((entry) => entry !== 'text')
+        const { collect, callArgs } = setupCaptureTest()
+        await collect([
+          new Message({ role: 'user', content: [new TextBlock('task')] }),
+          new Message({
+            role: 'assistant',
+            content: toolUseIds.map((toolUseId) => new ToolUseBlock({ name: 'calc', toolUseId, input: {} })),
+          }),
+          new Message({
+            role: 'user',
+            content: order.map((entry) =>
+              entry === 'text'
+                ? new TextBlock('\n\nNOTE')
+                : new ToolResultBlock({ toolUseId: entry, status: 'success', content: [new TextBlock('42')] })
+            ),
+          }),
+        ])
+
+        const prompt = callArgs().prompt
+        expect(prompt.map((message) => message.role)).toEqual(roles)
+        expect((prompt[2] as any).content[0]).toMatchObject({
+          type: 'tool-result',
+          toolCallId: 'tu1',
+          toolName: 'calc',
+        })
+        expect((prompt.at(-1) as any).content[0]).toEqual({ type: 'text', text: '\n\nNOTE' })
+      })
     })
 
     describe('assistant messages', () => {
@@ -943,6 +994,578 @@ describe('VercelModel', () => {
       const args = callArgs()
       expect(args).not.toHaveProperty('tools')
       expect(args).not.toHaveProperty('toolChoice')
+    })
+  })
+
+  describe('prompt caching', () => {
+    const userMessages = [new Message({ role: 'user', content: [new TextBlock('durable prefix')] })]
+    const toolSpecs: ToolSpec[] = [{ name: 'calculator', description: 'Calculate', inputSchema: { type: 'object' } }]
+
+    /** cacheControl on the last function tool. */
+    const toolCacheControl = (args: LanguageModelV3CallOptions): unknown => {
+      const tools = args.tools ?? []
+      for (let index = tools.length - 1; index >= 0; index--) {
+        const tool = tools[index]
+        if (tool?.type === 'function') return tool.providerOptions?.anthropic?.cacheControl
+      }
+      return undefined
+    }
+
+    /** cacheControl on the last content part of the last user message. */
+    const messageCacheControl = (args: LanguageModelV3CallOptions): unknown => {
+      const lastUser = [...args.prompt].reverse().find((message) => message.role === 'user')
+      if (lastUser?.role !== 'user') return undefined
+      const lastPart = lastUser.content[lastUser.content.length - 1]
+      return lastPart?.providerOptions?.anthropic?.cacheControl
+    }
+
+    /** cacheControl on the system message. */
+    const systemCacheControl = (args: LanguageModelV3CallOptions): unknown => {
+      const system = args.prompt.find((message) => message.role === 'system')
+      return system?.providerOptions?.anthropic?.cacheControl
+    }
+
+    it('strips cacheConfig from downstream call settings', async () => {
+      const { collect, callArgs } = setupCaptureTest(minimalParts, { cacheConfig: { ttl: '1h' } }, 'anthropic.messages')
+      await collect(userMessages)
+
+      expect(callArgs()).not.toHaveProperty('cacheConfig')
+    })
+
+    it('adds no cache markers when cacheConfig is unset', async () => {
+      const { collect, callArgs } = setupCaptureTest(minimalParts, undefined, 'anthropic.messages')
+      await collect(userMessages, { toolSpecs })
+
+      const args = callArgs()
+      expect(toolCacheControl(args)).toBeUndefined()
+      expect(messageCacheControl(args)).toBeUndefined()
+    })
+
+    describe('anthropic underlying provider', () => {
+      it('caches the last tool, the system prompt, and the last user message by default', async () => {
+        const { collect, callArgs } = setupCaptureTest(minimalParts, { cacheConfig: {} }, 'anthropic.messages')
+        await collect(userMessages, { toolSpecs, systemPrompt: 'be helpful' })
+
+        const args = callArgs()
+        expect(toolCacheControl(args)).toEqual({ type: 'ephemeral' })
+        expect(systemCacheControl(args)).toEqual({ type: 'ephemeral' })
+        expect(messageCacheControl(args)).toEqual({ type: 'ephemeral' })
+      })
+
+      it('carries a shared ttl onto every section', async () => {
+        const { collect, callArgs } = setupCaptureTest(
+          minimalParts,
+          { cacheConfig: { ttl: '1h' } },
+          'anthropic.messages'
+        )
+        await collect(userMessages, { toolSpecs, systemPrompt: 'be helpful' })
+
+        const args = callArgs()
+        expect(toolCacheControl(args)).toEqual({ type: 'ephemeral', ttl: '1h' })
+        expect(systemCacheControl(args)).toEqual({ type: 'ephemeral', ttl: '1h' })
+        expect(messageCacheControl(args)).toEqual({ type: 'ephemeral', ttl: '1h' })
+      })
+
+      it('lets a per-section ttl override the shared ttl', async () => {
+        const config = { cacheConfig: { ttl: '1h', messagesTTL: '5m' as const } }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'anthropic.messages')
+        await collect(userMessages, { toolSpecs })
+
+        const args = callArgs()
+        expect(toolCacheControl(args)).toEqual({ type: 'ephemeral', ttl: '1h' })
+        expect(messageCacheControl(args)).toEqual({ type: 'ephemeral', ttl: '5m' })
+      })
+
+      it('disables a section set to false', async () => {
+        const config = { cacheConfig: { ttl: '1h', toolsTTL: false as const, messagesTTL: false as const } }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'anthropic.messages')
+        await collect(userMessages, { toolSpecs })
+
+        const args = callArgs()
+        expect(toolCacheControl(args)).toBeUndefined()
+        expect(messageCacheControl(args)).toBeUndefined()
+      })
+
+      it('adds cacheControl to the user message without disturbing call-level provider options', async () => {
+        const config = {
+          cacheConfig: { messagesTTL: '1h' as const },
+          providerOptions: { anthropic: { thinking: { type: 'enabled' } } },
+        }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'anthropic.messages')
+        await collect(userMessages)
+
+        const args = callArgs()
+        expect(args.providerOptions?.anthropic).toEqual({ thinking: { type: 'enabled' } })
+        expect(messageCacheControl(args)).toEqual({ type: 'ephemeral', ttl: '1h' })
+      })
+
+      it('ignores cacheKey for the content-addressed anthropic provider', async () => {
+        const config = { cacheConfig: { cacheKey: 'tenant-42' } }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'anthropic.messages')
+        await collect(userMessages)
+
+        expect(callArgs().providerOptions?.openai).toBeUndefined()
+        expect(messageCacheControl(callArgs())).toEqual({ type: 'ephemeral' })
+      })
+
+      it('disables caching and warns once on an unknown strategy', async () => {
+        const config = { cacheConfig: { strategy: 'bogus' as unknown as 'auto' } }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'anthropic.messages')
+        await collect(userMessages, { toolSpecs })
+
+        expect(toolCacheControl(callArgs())).toBeUndefined()
+        expect(messageCacheControl(callArgs())).toBeUndefined()
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.objectContaining({ warn: expect.any(Function) }),
+          expect.stringContaining('unknown cache strategy')
+        )
+      })
+
+      it('keeps the breakpoint ahead of the trailing blocks a context injector rebuilds each call', async () => {
+        const injected = [
+          new Message({
+            role: 'user',
+            content: [new TextBlock('durable prefix'), new TextBlock('<now>2026-01-01</now>')],
+          }),
+        ]
+        const config = { cacheConfig: { messagesTTL: '1h' as const } }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'anthropic.messages')
+        await collect(injected, { dynamicTrailingBlocks: 1 })
+
+        const lastUser = [...callArgs().prompt].reverse().find((message) => message.role === 'user')
+        if (lastUser?.role !== 'user') throw new Error('expected a user message')
+        expect(lastUser.content[0]?.providerOptions?.anthropic?.cacheControl).toEqual({ type: 'ephemeral', ttl: '1h' })
+        expect(lastUser.content[1]?.providerOptions?.anthropic?.cacheControl).toBeUndefined()
+      })
+
+      it('skips the conversation breakpoint when every content block is rebuilt each call', async () => {
+        const config = { cacheConfig: { messagesTTL: '1h' as const } }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'anthropic.messages')
+        await collect(userMessages, { dynamicTrailingBlocks: 1 })
+
+        const lastUser = [...callArgs().prompt].reverse().find((message) => message.role === 'user')
+        if (lastUser?.role !== 'user') throw new Error('expected a user message')
+        expect(lastUser.content.every((part) => part.providerOptions?.anthropic?.cacheControl === undefined)).toBe(true)
+      })
+
+      it('applies markers for an explicit anthropic strategy without warning', async () => {
+        const config = { cacheConfig: { strategy: 'anthropic' as const } }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'anthropic.messages')
+        await collect(userMessages, { toolSpecs, systemPrompt: 'be helpful' })
+
+        const args = callArgs()
+        expect(toolCacheControl(args)).toEqual({ type: 'ephemeral' })
+        expect(systemCacheControl(args)).toEqual({ type: 'ephemeral' })
+        expect(messageCacheControl(args)).toEqual({ type: 'ephemeral' })
+        expect(warnOnce).not.toHaveBeenCalled()
+      })
+
+      it('caches the last durable content part, not the first, by default', async () => {
+        const twoDurableParts = [
+          new Message({ role: 'user', content: [new TextBlock('durable one'), new TextBlock('durable two')] }),
+        ]
+        const config = { cacheConfig: { messagesTTL: '1h' as const } }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'anthropic.messages')
+        await collect(twoDurableParts)
+
+        const lastUser = [...callArgs().prompt].reverse().find((message) => message.role === 'user')
+        if (lastUser?.role !== 'user') throw new Error('expected a user message')
+        expect(lastUser.content[0]?.providerOptions?.anthropic?.cacheControl).toBeUndefined()
+        expect(lastUser.content[1]?.providerOptions?.anthropic?.cacheControl).toEqual({ type: 'ephemeral', ttl: '1h' })
+      })
+    })
+
+    describe('openai underlying provider', () => {
+      it.each(['openai.chat', 'openai.responses'])('maps cacheKey to promptCacheKey for %s', async (provider) => {
+        const config = { cacheConfig: { cacheKey: 'tenant-42' } }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, provider)
+        await collect(userMessages)
+
+        expect(callArgs().providerOptions?.openai?.promptCacheKey).toBe('tenant-42')
+      })
+
+      it('omits the openai namespace entirely when nothing maps onto it', async () => {
+        const { collect, callArgs } = setupCaptureTest(minimalParts, { cacheConfig: {} }, 'openai.chat')
+        await collect(userMessages)
+
+        expect(callArgs().providerOptions?.openai).toBeUndefined()
+      })
+
+      it('lets an explicit promptCacheKey in providerOptions win over cacheConfig', async () => {
+        const config = {
+          cacheConfig: { cacheKey: 'from-config' },
+          providerOptions: { openai: { promptCacheKey: 'explicit' } },
+        }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'openai.chat')
+        await collect(userMessages)
+
+        expect(callArgs().providerOptions?.openai?.promptCacheKey).toBe('explicit')
+      })
+
+      it.each(['24h', 'in_memory'])('maps retention-literal ttl %s to promptCacheRetention', async (ttl) => {
+        const { collect, callArgs } = setupCaptureTest(minimalParts, { cacheConfig: { ttl } }, 'openai.chat')
+        await collect(userMessages)
+
+        expect(callArgs().providerOptions?.openai?.promptCacheRetention).toBe(ttl)
+      })
+
+      it('ignores a non-retention ttl and warns once', async () => {
+        const { collect, callArgs } = setupCaptureTest(minimalParts, { cacheConfig: { ttl: '5m' } }, 'openai.chat')
+        await collect(userMessages)
+
+        expect(callArgs().providerOptions?.openai?.promptCacheRetention).toBeUndefined()
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.objectContaining({ warn: expect.any(Function) }),
+          expect.stringContaining('ttl=<5m> | cacheConfig.ttl is not an openai retention value')
+        )
+      })
+
+      it('lets an explicit promptCacheRetention in providerOptions win over cacheConfig', async () => {
+        const config = {
+          cacheConfig: { ttl: 'in_memory' as const },
+          providerOptions: { openai: { promptCacheRetention: '24h' } },
+        }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'openai.chat')
+        await collect(userMessages)
+
+        expect(callArgs().providerOptions?.openai?.promptCacheRetention).toBe('24h')
+      })
+
+      it('does not warn about an unsupported ttl when an explicit promptCacheRetention already wins', async () => {
+        const config = {
+          cacheConfig: { ttl: '5m' },
+          providerOptions: { openai: { promptCacheRetention: '24h' } },
+        }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'openai.chat')
+        await collect(userMessages)
+
+        expect(callArgs().providerOptions?.openai?.promptCacheRetention).toBe('24h')
+        expect(warnOnce).not.toHaveBeenCalledWith(
+          expect.objectContaining({ warn: expect.any(Function) }),
+          expect.stringContaining('not an openai retention value')
+        )
+      })
+
+      it('warns once that placement fields have no effect', async () => {
+        const config = { cacheConfig: { strategy: 'anthropic' as const, toolsTTL: '1h' as const, cacheKey: 'k' } }
+        const { collect } = setupCaptureTest(minimalParts, config, 'openai.chat')
+        await collect(userMessages)
+
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.objectContaining({ warn: expect.any(Function) }),
+          expect.stringContaining('have no effect')
+        )
+      })
+    })
+
+    describe('bedrock underlying provider', () => {
+      // A Bedrock model id the default 'auto' strategy recognizes as caching-capable, and one it does not.
+      const CACHING_MODEL_ID = 'anthropic.claude-sonnet-4-20250514-v1:0'
+      const UNSUPPORTED_MODEL_ID = 'meta.llama3-70b-instruct-v1:0'
+
+      /** cachePoint on the system message. */
+      const bedrockSystemCachePoint = (args: LanguageModelV3CallOptions): unknown => {
+        const system = args.prompt.find((message) => message.role === 'system')
+        return system?.providerOptions?.bedrock?.cachePoint
+      }
+
+      /** cachePoint on the last content part of the last user message. */
+      const bedrockMessageCachePoint = (args: LanguageModelV3CallOptions): unknown => {
+        const lastUser = [...args.prompt].reverse().find((message) => message.role === 'user')
+        if (lastUser?.role !== 'user') return undefined
+        const lastPart = lastUser.content[lastUser.content.length - 1]
+        return lastPart?.providerOptions?.bedrock?.cachePoint
+      }
+
+      /** cachePoint on any function tool. */
+      const bedrockToolCachePoint = (args: LanguageModelV3CallOptions): unknown => {
+        for (const tool of args.tools ?? []) {
+          if (tool.type === 'function' && tool.providerOptions?.bedrock?.cachePoint !== undefined) {
+            return tool.providerOptions.bedrock.cachePoint
+          }
+        }
+        return undefined
+      }
+
+      it('caches the system prompt and the last user message by default', async () => {
+        const { collect, callArgs } = setupCaptureTest(
+          minimalParts,
+          { cacheConfig: {} },
+          'amazon-bedrock',
+          CACHING_MODEL_ID
+        )
+        await collect(userMessages, { toolSpecs, systemPrompt: 'be helpful' })
+
+        const args = callArgs()
+        expect(bedrockSystemCachePoint(args)).toEqual({ type: 'default' })
+        expect(bedrockMessageCachePoint(args)).toEqual({ type: 'default' })
+      })
+
+      it('carries a shared ttl onto system and messages', async () => {
+        const { collect, callArgs } = setupCaptureTest(
+          minimalParts,
+          { cacheConfig: { ttl: '1h' } },
+          'amazon-bedrock',
+          CACHING_MODEL_ID
+        )
+        await collect(userMessages, { systemPrompt: 'be helpful' })
+
+        const args = callArgs()
+        expect(bedrockSystemCachePoint(args)).toEqual({ type: 'default', ttl: '1h' })
+        expect(bedrockMessageCachePoint(args)).toEqual({ type: 'default', ttl: '1h' })
+      })
+
+      it('never marks tool definitions, since bedrock caches them as part of the prefix', async () => {
+        const config = { cacheConfig: { toolsTTL: '1h' as const } }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'amazon-bedrock', CACHING_MODEL_ID)
+        await collect(userMessages, { toolSpecs })
+
+        expect(bedrockToolCachePoint(callArgs())).toBeUndefined()
+      })
+
+      it('warns once that a configured toolsTTL has no effect, naming the value', async () => {
+        const config = { cacheConfig: { toolsTTL: '1h' as const } }
+        const { collect } = setupCaptureTest(minimalParts, config, 'amazon-bedrock', CACHING_MODEL_ID)
+        await collect(userMessages, { toolSpecs })
+
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.objectContaining({ warn: expect.any(Function) }),
+          expect.stringContaining('toolsTTL=<1h> | toolsTTL has no effect on the amazon-bedrock vercel adapter')
+        )
+      })
+
+      // toolsTTL:false reads as "do not cache tools", but tools ride the system/messages prefix
+      // regardless, so the request cannot honor it — warn rather than silently invert the intent.
+      it('warns that toolsTTL:false cannot opt tools out of prefix caching', async () => {
+        const config = { cacheConfig: { toolsTTL: false as const } }
+        const { collect } = setupCaptureTest(minimalParts, config, 'amazon-bedrock', CACHING_MODEL_ID)
+        await collect(userMessages, { toolSpecs })
+
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.objectContaining({ warn: expect.any(Function) }),
+          expect.stringContaining('toolsTTL=<false> | toolsTTL has no effect on the amazon-bedrock vercel adapter')
+        )
+      })
+
+      it('does not warn when toolsTTL is left at its enabled default', async () => {
+        const config = { cacheConfig: { toolsTTL: true as const } }
+        const { collect } = setupCaptureTest(minimalParts, config, 'amazon-bedrock', CACHING_MODEL_ID)
+        await collect(userMessages, { toolSpecs })
+
+        expect(warnOnce).not.toHaveBeenCalledWith(
+          expect.objectContaining({ warn: expect.any(Function) }),
+          expect.stringContaining('toolsTTL has no effect')
+        )
+      })
+
+      it('does not warn when toolsTTL is unset', async () => {
+        const { collect } = setupCaptureTest(minimalParts, { cacheConfig: {} }, 'amazon-bedrock', CACHING_MODEL_ID)
+        await collect(userMessages, { toolSpecs })
+
+        expect(warnOnce).not.toHaveBeenCalledWith(
+          expect.objectContaining({ warn: expect.any(Function) }),
+          expect.stringContaining('toolsTTL has no effect')
+        )
+      })
+
+      it('disables a section set to false', async () => {
+        const config = { cacheConfig: { ttl: '1h', systemPromptTTL: false as const, messagesTTL: false as const } }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'amazon-bedrock', CACHING_MODEL_ID)
+        await collect(userMessages, { systemPrompt: 'be helpful' })
+
+        const args = callArgs()
+        expect(bedrockSystemCachePoint(args)).toBeUndefined()
+        expect(bedrockMessageCachePoint(args)).toBeUndefined()
+      })
+
+      it('leaves call-level provider options untouched', async () => {
+        const config = {
+          cacheConfig: { messagesTTL: '1h' as const },
+          providerOptions: { bedrock: { reasoningConfig: { type: 'enabled' } } },
+        }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'amazon-bedrock', CACHING_MODEL_ID)
+        await collect(userMessages)
+
+        const args = callArgs()
+        expect(args.providerOptions?.bedrock).toEqual({ reasoningConfig: { type: 'enabled' } })
+        expect(bedrockMessageCachePoint(args)).toEqual({ type: 'default', ttl: '1h' })
+      })
+
+      it('places the cache point before a trailing non-pdf document bedrock would reject', async () => {
+        const withDocument = [
+          new Message({
+            role: 'user',
+            content: [
+              new TextBlock('durable prefix'),
+              new DocumentBlock({ format: 'csv', name: 'data', source: { bytes: new Uint8Array([1, 2, 3]) } }),
+            ],
+          }),
+        ]
+        const config = { cacheConfig: { messagesTTL: '1h' as const } }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'amazon-bedrock', CACHING_MODEL_ID)
+        await collect(withDocument)
+
+        const lastUser = [...callArgs().prompt].reverse().find((message) => message.role === 'user')
+        if (lastUser?.role !== 'user') throw new Error('expected a user message')
+        const textPart = lastUser.content.find((part) => part.type === 'text')
+        const documentPart = lastUser.content.find((part) => part.type === 'file')
+        expect(textPart?.providerOptions?.bedrock?.cachePoint).toEqual({ type: 'default', ttl: '1h' })
+        expect(documentPart?.providerOptions?.bedrock?.cachePoint).toBeUndefined()
+      })
+
+      it('skips the cache point when the last user message is only non-pdf documents', async () => {
+        const documentsOnly = [
+          new Message({
+            role: 'user',
+            content: [new DocumentBlock({ format: 'csv', name: 'data', source: { bytes: new Uint8Array([1, 2, 3]) } })],
+          }),
+        ]
+        const config = { cacheConfig: { messagesTTL: '1h' as const } }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'amazon-bedrock', CACHING_MODEL_ID)
+        await collect(documentsOnly)
+
+        const lastUser = [...callArgs().prompt].reverse().find((message) => message.role === 'user')
+        if (lastUser?.role !== 'user') throw new Error('expected a user message')
+        expect(lastUser.content.every((part) => part.providerOptions?.bedrock?.cachePoint === undefined)).toBe(true)
+      })
+
+      it('rides the conversation cache point onto an earlier user turn when the final turn is tool results only', async () => {
+        const toolResultsOnly = [
+          new Message({ role: 'user', content: [new TextBlock('durable prefix')] }),
+          new Message({
+            role: 'assistant',
+            content: [new ToolUseBlock({ name: 'calculator', toolUseId: 'tu1', input: {} })],
+          }),
+          new Message({
+            role: 'user',
+            content: [new ToolResultBlock({ toolUseId: 'tu1', status: 'success', content: [new TextBlock('42')] })],
+          }),
+        ]
+        const config = { cacheConfig: { messagesTTL: '1h' as const } }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'amazon-bedrock', CACHING_MODEL_ID)
+        await collect(toolResultsOnly)
+
+        const args = callArgs()
+        // The tool-results turn emits no user message, so the breakpoint rides the earlier user turn.
+        expect(args.prompt.filter((message) => message.role === 'user')).toHaveLength(1)
+        expect(bedrockMessageCachePoint(args)).toEqual({ type: 'default', ttl: '1h' })
+      })
+
+      it('keeps the cache point ahead of the trailing blocks a context injector rebuilds each call', async () => {
+        const injected = [
+          new Message({
+            role: 'user',
+            content: [new TextBlock('durable prefix'), new TextBlock('<now>2026-01-01</now>')],
+          }),
+        ]
+        const config = { cacheConfig: { messagesTTL: '1h' as const } }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'amazon-bedrock', CACHING_MODEL_ID)
+        await collect(injected, { dynamicTrailingBlocks: 1 })
+
+        const lastUser = [...callArgs().prompt].reverse().find((message) => message.role === 'user')
+        if (lastUser?.role !== 'user') throw new Error('expected a user message')
+        expect(lastUser.content[0]?.providerOptions?.bedrock?.cachePoint).toEqual({ type: 'default', ttl: '1h' })
+        expect(lastUser.content[1]?.providerOptions?.bedrock?.cachePoint).toBeUndefined()
+      })
+
+      it('disables caching and warns once on an unknown strategy', async () => {
+        const config = { cacheConfig: { strategy: 'bogus' as unknown as 'auto' } }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'amazon-bedrock', CACHING_MODEL_ID)
+        await collect(userMessages, { systemPrompt: 'be helpful' })
+
+        const args = callArgs()
+        expect(bedrockSystemCachePoint(args)).toBeUndefined()
+        expect(bedrockMessageCachePoint(args)).toBeUndefined()
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.objectContaining({ warn: expect.any(Function) }),
+          expect.stringContaining('unknown cache strategy')
+        )
+      })
+
+      it('caches the last durable content part, not the first, by default', async () => {
+        const twoDurableParts = [
+          new Message({ role: 'user', content: [new TextBlock('durable one'), new TextBlock('durable two')] }),
+        ]
+        const config = { cacheConfig: { messagesTTL: '1h' as const } }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'amazon-bedrock', CACHING_MODEL_ID)
+        await collect(twoDurableParts)
+
+        const lastUser = [...callArgs().prompt].reverse().find((message) => message.role === 'user')
+        if (lastUser?.role !== 'user') throw new Error('expected a user message')
+        expect(lastUser.content[0]?.providerOptions?.bedrock?.cachePoint).toBeUndefined()
+        expect(lastUser.content[1]?.providerOptions?.bedrock?.cachePoint).toEqual({ type: 'default', ttl: '1h' })
+      })
+
+      it('places the cache point on a trailing pdf document, which bedrock accepts', async () => {
+        const withPdf = [
+          new Message({
+            role: 'user',
+            content: [
+              new TextBlock('durable prefix'),
+              new DocumentBlock({ format: 'pdf', name: 'doc', source: { bytes: new Uint8Array([1, 2, 3]) } }),
+            ],
+          }),
+        ]
+        const config = { cacheConfig: { messagesTTL: '1h' as const } }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'amazon-bedrock', CACHING_MODEL_ID)
+        await collect(withPdf)
+
+        const lastUser = [...callArgs().prompt].reverse().find((message) => message.role === 'user')
+        if (lastUser?.role !== 'user') throw new Error('expected a user message')
+        const textPart = lastUser.content.find((part) => part.type === 'text')
+        const documentPart = lastUser.content.find((part) => part.type === 'file')
+        expect(textPart?.providerOptions?.bedrock?.cachePoint).toBeUndefined()
+        expect(documentPart?.providerOptions?.bedrock?.cachePoint).toEqual({ type: 'default', ttl: '1h' })
+      })
+
+      it('skips the cache point when every content block is rebuilt each call', async () => {
+        const config = { cacheConfig: { messagesTTL: '1h' as const } }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'amazon-bedrock', CACHING_MODEL_ID)
+        await collect(userMessages, { dynamicTrailingBlocks: 1 })
+
+        const lastUser = [...callArgs().prompt].reverse().find((message) => message.role === 'user')
+        if (lastUser?.role !== 'user') throw new Error('expected a user message')
+        expect(lastUser.content.every((part) => part.providerOptions?.bedrock?.cachePoint === undefined)).toBe(true)
+      })
+
+      it('under the default auto strategy, skips and warns for a model without caching support', async () => {
+        const config = { cacheConfig: {} }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'amazon-bedrock', UNSUPPORTED_MODEL_ID)
+        await collect(userMessages, { systemPrompt: 'be helpful' })
+
+        const args = callArgs()
+        expect(bedrockSystemCachePoint(args)).toBeUndefined()
+        expect(bedrockMessageCachePoint(args)).toBeUndefined()
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.objectContaining({ warn: expect.any(Function) }),
+          expect.stringContaining('does not support automatic caching')
+        )
+      })
+
+      it('caches on an unsupported model when the anthropic strategy is explicit', async () => {
+        const config = { cacheConfig: { strategy: 'anthropic' as const, messagesTTL: '1h' as const } }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'amazon-bedrock', UNSUPPORTED_MODEL_ID)
+        await collect(userMessages)
+
+        expect(bedrockMessageCachePoint(callArgs())).toEqual({ type: 'default', ttl: '1h' })
+      })
+    })
+
+    describe('unsupported underlying provider', () => {
+      it.each(['google.generative-ai', 'mistral.chat'])('warns once and adds no markers for %s', async (provider) => {
+        const config = { cacheConfig: { ttl: '1h', cacheKey: 'k' } }
+        const { collect, callArgs } = setupCaptureTest(minimalParts, config, provider)
+        await collect(userMessages, { toolSpecs })
+
+        const args = callArgs()
+        expect(toolCacheControl(args)).toBeUndefined()
+        expect(messageCacheControl(args)).toBeUndefined()
+        expect(args.providerOptions?.openai).toBeUndefined()
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.objectContaining({ warn: expect.any(Function) }),
+          expect.stringContaining('not supported for this vercel provider')
+        )
+      })
     })
   })
 })

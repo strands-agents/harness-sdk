@@ -1,6 +1,6 @@
 import type { Storage, StorageSearchResult } from './storage.js'
 
-import { namespace, normalizeKey, normalizePrefix } from './storage.js'
+import { EPHEMERAL, namespace, normalizeKey, normalizePrefix } from './storage.js'
 import { KeywordSearchStrategy } from './search/keyword.js'
 
 /**
@@ -25,6 +25,7 @@ import { KeywordSearchStrategy } from './search/keyword.js'
  * ```
  */
 export class InMemoryStorage implements Storage {
+  readonly [EPHEMERAL] = true as const
   private readonly _store = new Map<string, Uint8Array>()
 
   /**

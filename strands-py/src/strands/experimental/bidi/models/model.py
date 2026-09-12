@@ -16,19 +16,38 @@ Features:
 import abc
 import logging
 from collections.abc import AsyncIterable
-from typing import Any, NoReturn
+from typing import Any, NoReturn, Protocol, cast, runtime_checkable
 
 from ....models.model import Model
 from ....types._events import ToolResultEvent
 from ....types.content import Messages
 from ....types.tools import ToolSpec
-from ..types.events import (
-    BidiInputEvent,
-    BidiOutputEvent,
-)
-from ..types.model import BidiConnectionConfig
+from ..types.events import BidiInputEvent, BidiOutputEvent
+from .configs import AudioConfig, BidiConnectionConfig
 
 logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class Restartable(Protocol):
+    """A bidirectional model that can replace its active connection while preserving context."""
+
+    async def restart(
+        self,
+        system_prompt: str | None = None,
+        tools: list[ToolSpec] | None = None,
+        messages: Messages | None = None,
+        **restart_kwargs: Any,
+    ) -> None:
+        """Replace the active connection while preserving conversation context.
+
+        Args:
+            system_prompt: System instructions for the new connection.
+            tools: Tool specifications for the new connection.
+            messages: Conversation history to replay when required by the provider.
+            **restart_kwargs: Provider-specific restart options.
+        """
+        ...
 
 
 class BidiModel(Model, abc.ABC):
@@ -39,30 +58,22 @@ class BidiModel(Model, abc.ABC):
     provider-specific protocols while exposing a standardized event-based API.
 
     Attributes:
-        config: Configuration dictionary with provider-specific settings.
-        connection_config: Declared connection limit and reconnect timing. Providers that
-            support proactive reconnect populate this; an empty config means reactive-only
-            behavior.
+        model_id: Provider model identifier.
         usage_is_cumulative: Whether the provider reports cumulative connection token totals
             (True) rather than per-response deltas (False, the default when absent). Providers
             reporting deltas may omit it.
     """
 
-    config: dict[str, Any]
-    connection_config: BidiConnectionConfig
     usage_is_cumulative: bool
 
-    def update_config(self, **model_config: Any) -> None:
-        """Update the model configuration with the provided arguments.
+    @property
+    def model_id(self) -> str:
+        """Get the configured model identifier."""
+        return cast(str, self.get_config()["model_id"])
 
-        Args:
-            **model_config: Configuration overrides.
-        """
-        self.config.update(model_config)
-
-    def get_config(self) -> dict[str, Any]:
-        """Return a copy of the model configuration."""
-        return self.config.copy()
+    def get_connection_config(self) -> BidiConnectionConfig:
+        """Get the configured reconnect timing, or an empty config if unspecified."""
+        return cast(BidiConnectionConfig, self.get_config().get("connection", {}))
 
     def structured_output(self, *args: Any, **kwargs: Any) -> NoReturn:
         """Raise because bidirectional models do not support structured output."""
@@ -153,30 +164,6 @@ class BidiModel(Model, abc.ABC):
         """
         pass
 
-    async def reconnect(
-        self,
-        system_prompt: str | None = None,
-        tools: list[ToolSpec] | None = None,
-        messages: Messages | None = None,
-        **restart_kwargs: Any,
-    ) -> None:
-        """Close the current connection and establish a new one, preserving context.
-
-        Equivalent to ``stop()`` then ``start()``, but implemented by the provider so it
-        can apply its own resume mechanism (e.g. a session handle).
-
-        Args:
-            system_prompt: System instructions to configure model behavior.
-            tools: Tool specifications that the model can invoke during the conversation.
-            messages: Conversation history to replay for providers that resume via replay.
-            **restart_kwargs: Provider-specific restart options (e.g. from a timeout error).
-
-        Raises:
-            NotImplementedError: If the model does not implement reconnection.
-        """
-        # TODO: Make reconnect abstract after Google and OpenAI implement it.
-        raise NotImplementedError("reconnect is not implemented by this bidirectional model")
-
 
 class BidiModelTimeoutError(Exception):
     """Model timeout error.
@@ -196,3 +183,12 @@ class BidiModelTimeoutError(Exception):
         super().__init__(message)
 
         self.restart_config = restart_config
+
+
+@runtime_checkable
+class AudioCapable(Protocol):
+    """Protocol for models that support audio input and output."""
+
+    def get_audio_config(self) -> AudioConfig:
+        """Get the resolved audio configuration."""
+        ...

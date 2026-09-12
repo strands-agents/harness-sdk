@@ -37,11 +37,18 @@ class TestMakeShell:
         result = await sandbox_shell(command='echo "hello sandbox"', tool_context=_tool_context())
         assert "hello sandbox" in result["output"]
         assert result["error"] == ""
+        assert result["exit_code"] == 0
 
     @pytest.mark.asyncio
     async def test_captures_stderr_via_sandbox(self, sandbox_shell):
         result = await sandbox_shell(command='echo "oops" >&2', tool_context=_tool_context())
         assert "oops" in result["error"]
+        assert result["exit_code"] == 0
+
+    @pytest.mark.asyncio
+    async def test_reports_nonzero_exit_code(self, sandbox_shell):
+        result = await sandbox_shell(command="exit 42", tool_context=_tool_context())
+        assert result["exit_code"] == 42
 
     @pytest.mark.asyncio
     async def test_does_not_persist_state_between_calls(self, sandbox_shell):

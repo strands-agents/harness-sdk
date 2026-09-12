@@ -60,7 +60,7 @@ export function makeShell(
       const sandbox = boundSandbox ?? context.agent.sandbox
       try {
         const result = await sandbox.execute(input.command, { timeout: input.timeout ?? 120 })
-        return { output: result.stdout, error: result.stderr } as ShellOutput
+        return { output: result.stdout, error: result.stderr, exit_code: result.exitCode } as ShellOutput
       } catch (err) {
         // Shell* extends Bash* so pre-rename catch clauses keep matching.
         if (err instanceof SandboxTimeoutError) throw new ShellTimeoutError(err.message)

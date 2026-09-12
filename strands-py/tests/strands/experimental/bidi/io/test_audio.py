@@ -9,7 +9,13 @@ import pytest_asyncio
 
 from strands.experimental.bidi._audio import _BidiAudioProcessor
 from strands.experimental.bidi.io.audio import BidiAudioIO, BidiAudioProcessorConfig, _BidiAudioBuffer
-from strands.experimental.bidi.types.events import BidiAudioInputEvent, BidiAudioStreamEvent, BidiInterruptionEvent
+from strands.experimental.bidi.models import AudioCapable
+from strands.experimental.bidi.types.events import (
+    BidiAudioInputEvent,
+    BidiAudioStreamEvent,
+    BidiInterruptionEvent,
+    BidiResponseCompleteEvent,
+)
 
 
 def _fake_audio_processor(processor=None):
@@ -54,30 +60,25 @@ def audio_buffer():
 @pytest.fixture
 def agent():
     mock = unittest.mock.MagicMock()
-    mock.model.config = {
-        "audio": {
-            "input_rate": 24000,
-            "output_rate": 16000,
-            "channels": 2,
-            "format": "test-format",
-            "voice": "test-voice",
-        },
+    mock.model = unittest.mock.MagicMock(spec=AudioCapable)
+    mock.model.get_audio_config.return_value = {
+        "input_rate": 24000,
+        "output_rate": 16000,
+        "channels": 2,
+        "format": "test-format",
     }
     return mock
 
 
 @pytest.fixture
 def aec_agent():
-    # Audio processing requires a supported input rate (16k/32k/48k) and mono.
     mock = unittest.mock.MagicMock()
-    mock.model.config = {
-        "audio": {
-            "input_rate": 16000,
-            "output_rate": 16000,
-            "channels": 1,
-            "format": "pcm",
-            "voice": "test-voice",
-        },
+    mock.model = unittest.mock.MagicMock(spec=AudioCapable)
+    mock.model.get_audio_config.return_value = {
+        "input_rate": 16000,
+        "output_rate": 16000,
+        "channels": 1,
+        "format": "pcm",
     }
     return mock
 
@@ -85,14 +86,12 @@ def aec_agent():
 @pytest.fixture
 def agent_mixed_rates():
     mock = unittest.mock.MagicMock()
-    mock.model.config = {
-        "audio": {
-            "input_rate": 16000,
-            "output_rate": 24000,
-            "channels": 1,
-            "format": "pcm",
-            "voice": "test-voice",
-        },
+    mock.model = unittest.mock.MagicMock(spec=AudioCapable)
+    mock.model.get_audio_config.return_value = {
+        "input_rate": 16000,
+        "output_rate": 24000,
+        "channels": 1,
+        "format": "pcm",
     }
     return mock
 
@@ -243,6 +242,8 @@ async def test_bidi_audio_io_output(audio_output):
 
 @pytest.mark.asyncio
 async def test_bidi_audio_io_output_interrupt(audio_output):
+    transcript_output = unittest.mock.AsyncMock()
+    audio_output._transcript_output = transcript_output
     audio_event = BidiAudioStreamEvent(
         audio=base64.b64encode(b"test-audio").decode("utf-8"),
         channels=2,
@@ -256,6 +257,19 @@ async def test_bidi_audio_io_output_interrupt(audio_output):
     tru_data, _ = audio_output._callback(None, frame_count=1)
     exp_data = b"\x00\x00"
     assert tru_data == exp_data
+    transcript_output.assert_any_await(interrupt_event)
+
+
+@pytest.mark.asyncio
+async def test_response_complete_is_forwarded_to_transcript_output(audio_output):
+    transcript_output = unittest.mock.AsyncMock()
+    audio_output._transcript_output = transcript_output
+    audio_output._buffer.put(b"\x01\x02\x03\x04")
+    event = BidiResponseCompleteEvent(response_id="response-1", stop_reason="complete")
+
+    await audio_output(event)
+
+    transcript_output.assert_awaited_once_with(event)
 
 
 def test_bidi_audio_io_output_configs(pyaudio_module, py_audio, audio_output):
@@ -268,6 +282,20 @@ def test_bidi_audio_io_output_configs(pyaudio_module, py_audio, audio_output):
         rate=16000,
         stream_callback=audio_output._callback,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("direction", ["input", "output"])
+async def test_bidi_audio_io_start_rejects_model_without_audio_capability(pyaudio_module, direction):
+    agent = unittest.mock.MagicMock()
+    agent.model = object()
+    audio_io = BidiAudioIO()
+    io = audio_io.input() if direction == "input" else audio_io.output()
+
+    with pytest.raises(TypeError, match="BidiAudioIO requires a model that implements AudioCapable"):
+        await io.start(agent)
+
+    pyaudio_module.PyAudio.assert_not_called()
 
 
 # ===========================================================================
@@ -422,7 +450,7 @@ def test_audio_config_is_keyword_only():
 
 
 # ---------------------------------------------------------------------------
-# _BidiAudioProcessor startup — sample rate gate and native processor construction
+# _BidiAudioProcessor startup and native processor construction
 # ---------------------------------------------------------------------------
 
 
@@ -446,17 +474,13 @@ def test_processor_construction_builds_audio_processor_with_config():
     )
 
 
-@pytest.mark.parametrize("rate", [16000, 32000, 48000])
-def test_processor_construction_accepts_supported_rates(rate):
-    processor_patch, _, _ = _fake_audio_processor()
+@pytest.mark.parametrize("rate", [8000, 16000, 24000, 44100, 48000, 96000, 384000])
+def test_processor_construction_passes_input_rate_to_audio_processor(rate):
+    processor_patch, processor_class, _ = _fake_audio_processor()
     with processor_patch:
         _create_processor(input_rate=rate, output_rate=rate)
 
-
-@pytest.mark.parametrize("rate", [8000, 24000, 44100])
-def test_processor_construction_rejects_unsupported_rates(rate):
-    with pytest.raises(ValueError, match="audio processing supports sample rates"):
-        _create_processor(input_rate=rate, output_rate=rate)
+    assert processor_class.call_args.kwargs["sample_rate"] == rate
 
 
 # ---------------------------------------------------------------------------

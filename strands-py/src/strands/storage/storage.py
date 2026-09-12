@@ -21,6 +21,14 @@ SDK constructs use this to detect whether the caller already scoped the storage,
 so the default auto-prefix can be skipped.
 """
 
+_EPHEMERAL: object = object()
+"""Internal sentinel marking a storage backend as ephemeral (data does not survive restarts).
+
+Set on :class:`InMemoryStorage` and propagated by :class:`_NamespacedStorage` so that
+consumers (e.g. the session manager's stash integration) can detect ephemeral backends
+without an ``isinstance`` check that breaks for namespaced views of ephemeral storage.
+"""
+
 
 @dataclass
 class StorageSearchResult:
@@ -43,7 +51,7 @@ def _normalize_key(key: str) -> str:
     """Validate and normalize a storage key for path-based backends.
 
     Collapses runs of '/', strips leading and trailing '/', rejects empty
-    keys, and rejects any '..' segment.
+    keys, rejects backslashes, and rejects any '..' segment.
 
     Used by the shipped path-based backends (InMemoryStorage, LocalFileStorage,
     S3Storage), not required by the Storage protocol itself.
@@ -55,8 +63,10 @@ def _normalize_key(key: str) -> str:
         The normalized key.
 
     Raises:
-        StorageError: If the key is empty or contains a '..' segment.
+        StorageError: If the key is empty, contains backslashes, or contains a '..' segment.
     """
+    if "\\" in key:
+        raise StorageError(f"Invalid storage key '{key}': backslashes are not allowed")
     normalized = re.sub(r"/+", "/", key).strip("/")
     if not normalized:
         raise StorageError("Storage key must not be empty")
@@ -81,8 +91,10 @@ def _normalize_prefix(prefix: str) -> str:
         The normalized prefix.
 
     Raises:
-        StorageError: If the prefix contains a '..' segment.
+        StorageError: If the prefix contains backslashes or a '..' segment.
     """
+    if "\\" in prefix:
+        raise StorageError(f"Invalid storage prefix '{prefix}': backslashes are not allowed")
     normalized = re.sub(r"/+", "/", prefix).lstrip("/")
     if ".." in normalized.split("/"):
         raise StorageError(f"Invalid storage prefix '{prefix}': '..' path segments are not allowed")
@@ -199,6 +211,8 @@ class _NamespacedStorage:
         normalized = _normalize_prefix(prefix).rstrip("/")
         self._storage = storage
         self._prefix = f"{normalized}/" if normalized else ""
+        if getattr(storage, "_ephemeral", None) is _EPHEMERAL:
+            self._ephemeral = _EPHEMERAL
 
     async def write(self, key: str, data: bytes) -> None:
         """Store data under the prefixed key."""

@@ -151,6 +151,7 @@ export class SnapshotStorageAdapter implements SnapshotStorage {
   }
 
   private _historyKey(location: SnapshotLocation, snapshotId: string): string {
+    validateIdentifier(snapshotId)
     return `${this._scopePrefix(location)}/immutable_history/snapshot_${snapshotId}.json`
   }
 

@@ -70,6 +70,16 @@ describe('LocalFileStorage', () => {
     })
   })
 
+  describe('key validation', () => {
+    it('rejects keys containing backslashes', async () => {
+      await expect(storage.write('foo\\bar', new Uint8Array([1]))).rejects.toThrow('backslashes are not allowed')
+    })
+
+    it('rejects backslash path traversal', async () => {
+      await expect(storage.read('foo\\..\\..\\etc\\passwd')).rejects.toThrow('backslashes are not allowed')
+    })
+  })
+
   describe('delete', () => {
     it('removes an existing key', async () => {
       await storage.write('deleteme', new Uint8Array([1]))

@@ -15,7 +15,7 @@ jobs:
   authorization-check:
     name: Authorization Check
     permissions: read-all
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     outputs:
       approval-env: ${{ steps.auth.outputs.approval-env }}
     steps:
@@ -28,7 +28,7 @@ jobs:
 
   build-and-deploy:
     name: Build and Deploy Preview
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     needs: authorization-check
     environment: ${{ needs.authorization-check.outputs.approval-env }}
 

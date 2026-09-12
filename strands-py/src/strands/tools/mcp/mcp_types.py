@@ -1,15 +1,35 @@
 """Type definitions for MCP integration."""
 
+from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from mcp.shared.memory import MessageStream
 from mcp.shared.message import SessionMessage
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import NotRequired, Protocol, TypedDict
 
 from ...types.tools import ToolResult
 from ._compat import GetSessionIdCallback
+
+if TYPE_CHECKING:
+    from .mcp_agent_tool import MCPAgentTool
+
+
+class ToolsChangedCallback(Protocol):
+    """Called after the server announces a tool list change and the client refreshes it.
+
+    Implemented by a plain function as well — the `**kwargs` tail lets the calling
+    convention grow new keyword arguments without breaking existing callbacks.
+    """
+
+    def __call__(self, previous_names: list[str], refreshed_tools: list["MCPAgentTool"], **kwargs: Any) -> None:
+        """Handle a refresh, given the previous tool names and the refreshed tool instances."""
+        ...
+
+
+ToolsChanged = Callable[[list[str], "list[MCPAgentTool]"], None] | ToolsChangedCallback
+"""A tools-changed handler: the `**kwargs`-ready protocol or a plain two-argument callable."""
 
 
 class MCPClientCredentials(TypedDict):

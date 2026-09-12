@@ -4642,6 +4642,132 @@ async def test_non_streaming_citations_with_only_location(bedrock_client, model,
     assert "sourceContent" not in citation
 
 
+def test_non_streaming_reasoning_content_with_reasoning_text(bedrock_client, model):
+    """Test that convert_non_streaming_to_streaming handles reasoningContent with reasoningText."""
+    non_streaming_response = {
+        "output": {
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "reasoningContent": {
+                            "reasoningText": {
+                                "text": "Let me think about this...",
+                                "signature": "sig-abc123",
+                            }
+                        }
+                    }
+                ],
+            }
+        },
+        "stopReason": "end_turn",
+        "usage": {"inputTokens": 10, "outputTokens": 20},
+    }
+
+    events = list(model.convert_non_streaming_to_streaming(non_streaming_response))
+
+    reasoning_deltas = [
+        event
+        for event in events
+        if "contentBlockDelta" in event and "reasoningContent" in event.get("contentBlockDelta", {}).get("delta", {})
+    ]
+    assert len(reasoning_deltas) == 2
+
+    assert reasoning_deltas[0]["contentBlockDelta"]["delta"]["reasoningContent"] == {
+        "text": "Let me think about this..."
+    }
+    assert reasoning_deltas[1]["contentBlockDelta"]["delta"]["reasoningContent"] == {"signature": "sig-abc123"}
+
+
+def test_non_streaming_reasoning_content_without_signature(bedrock_client, model):
+    """Test that convert_non_streaming_to_streaming handles reasoningContent without a signature."""
+    non_streaming_response = {
+        "output": {
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "reasoningContent": {
+                            "reasoningText": {
+                                "text": "Let me think about this...",
+                            }
+                        }
+                    }
+                ],
+            }
+        },
+        "stopReason": "end_turn",
+        "usage": {"inputTokens": 10, "outputTokens": 20},
+    }
+
+    events = list(model.convert_non_streaming_to_streaming(non_streaming_response))
+
+    reasoning_deltas = [
+        event
+        for event in events
+        if "contentBlockDelta" in event and "reasoningContent" in event.get("contentBlockDelta", {}).get("delta", {})
+    ]
+    assert len(reasoning_deltas) == 1
+    assert reasoning_deltas[0]["contentBlockDelta"]["delta"]["reasoningContent"] == {
+        "text": "Let me think about this..."
+    }
+
+
+def test_non_streaming_reasoning_content_with_empty_reasoning_text(bedrock_client, model):
+    """Test that convert_non_streaming_to_streaming handles reasoningText without text or signature."""
+    non_streaming_response = {
+        "output": {
+            "message": {
+                "role": "assistant",
+                "content": [{"reasoningContent": {"reasoningText": {}}}],
+            }
+        },
+        "stopReason": "end_turn",
+        "usage": {"inputTokens": 5, "outputTokens": 10},
+    }
+
+    events = list(model.convert_non_streaming_to_streaming(non_streaming_response))
+
+    reasoning_deltas = [
+        event
+        for event in events
+        if "contentBlockDelta" in event and "reasoningContent" in event.get("contentBlockDelta", {}).get("delta", {})
+    ]
+    assert len(reasoning_deltas) == 0
+
+
+def test_non_streaming_reasoning_content_with_redacted_content(bedrock_client, model):
+    """Test that convert_non_streaming_to_streaming handles reasoningContent with redactedContent."""
+    non_streaming_response = {
+        "output": {
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "reasoningContent": {
+                            "redactedContent": b"redacted-bytes",
+                        }
+                    }
+                ],
+            }
+        },
+        "stopReason": "end_turn",
+        "usage": {"inputTokens": 5, "outputTokens": 10},
+    }
+
+    events = list(model.convert_non_streaming_to_streaming(non_streaming_response))
+
+    reasoning_deltas = [
+        event
+        for event in events
+        if "contentBlockDelta" in event and "reasoningContent" in event.get("contentBlockDelta", {}).get("delta", {})
+    ]
+    assert len(reasoning_deltas) == 1
+    assert reasoning_deltas[0]["contentBlockDelta"]["delta"]["reasoningContent"] == {
+        "redactedContent": b"redacted-bytes"
+    }
+
+
 class TestCountTokens:
     """Tests for BedrockModel.count_tokens native token counting."""
 
@@ -5061,6 +5187,54 @@ def test_format_request_tools_ttl_false_overrides_deprecated_cache_tools(bedrock
     assert not any("cachePoint" in tool for tool in tru_request["toolConfig"]["tools"])
 
 
+def test_format_request_auto_skips_tools_cache_point_for_a_model_without_caching(bedrock_client, messages, tool_spec):
+    """cache_tools follows the resolved strategy: auto on a non-Anthropic model emits no tools cache point.
+
+    Regression guard for https://github.com/strands-agents/harness-sdk/issues/4168.
+    """
+    _ = bedrock_client
+    with pytest.warns(DeprecationWarning, match="cache_tools is deprecated"):
+        model = BedrockModel(
+            model_id="amazon.nova-pro-v1:0",
+            cache_config=CacheConfig(strategy="auto"),
+            cache_tools=CacheToolsConfig(ttl="1h"),
+        )
+
+    tru_request = model.format_request(messages, tool_specs=[tool_spec])
+
+    assert not any("cachePoint" in tool for tool in tru_request["toolConfig"]["tools"])
+
+
+def test_format_request_auto_keeps_tools_cache_point_for_a_claude_model(bedrock_client, messages, tool_spec):
+    """cache_config resolving to anthropic leaves the deprecated cache_tools point in place."""
+    _ = bedrock_client
+    with pytest.warns(DeprecationWarning, match="cache_tools is deprecated"):
+        model = BedrockModel(
+            model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+            cache_config=CacheConfig(strategy="auto"),
+            cache_tools=CacheToolsConfig(ttl="1h"),
+        )
+
+    tru_point = model.format_request(messages, tool_specs=[tool_spec])["toolConfig"]["tools"][-1]
+
+    assert tru_point == {"cachePoint": {"type": "default", "ttl": "1h"}}
+
+
+def test_format_request_auto_cache_tools_inherits_shared_ttl_for_a_claude_model(bedrock_client, messages, tool_spec):
+    """A cache_tools point with no ttl of its own still inherits cache_config.ttl under an active strategy."""
+    _ = bedrock_client
+    with pytest.warns(DeprecationWarning, match="cache_tools is deprecated"):
+        model = BedrockModel(
+            model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+            cache_config=CacheConfig(strategy="auto", ttl="1h"),
+            cache_tools=CacheToolsConfig(),
+        )
+
+    tru_point = model.format_request(messages, tool_specs=[tool_spec])["toolConfig"]["tools"][-1]
+
+    assert tru_point == {"cachePoint": {"type": "default", "ttl": "1h"}}
+
+
 def test_format_request_applies_the_configured_ttl_to_a_system_cache_point(bedrock_client, messages):
     """Bedrock rejects a TTL that exceeds an earlier checkpoint's, so a configured ttl that reached the
     message cache point but not the system point ahead of it would emit an invalid request.
@@ -5208,9 +5382,9 @@ def test_format_request_leaves_a_tools_cache_point_alone_for_a_model_without_cac
         model_id="meta.llama3-70b-instruct-v1:0", cache_config=CacheConfig(ttl="1h"), cache_tools="default"
     )
 
-    tru_point = model.format_request(messages, tool_specs=[tool_spec])["toolConfig"]["tools"][-1]
+    tru_request = model.format_request(messages, tool_specs=[tool_spec])
 
-    assert tru_point == {"cachePoint": {"type": "default"}}
+    assert not any("cachePoint" in tool for tool in tru_request["toolConfig"]["tools"])
 
 
 def test_format_request_leaves_a_tools_cache_point_alone_for_an_empty_configured_ttl(

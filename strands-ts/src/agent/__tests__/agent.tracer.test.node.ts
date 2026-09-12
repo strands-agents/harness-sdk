@@ -409,6 +409,20 @@ describe('Agent tracer integration', () => {
   })
 
   describe('model invoke span lifecycle', () => {
+    it('ends the model invoke span once when the consumer breaks mid-model-response', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+      const agent = new Agent({ model })
+      const tracer = getLatestTracer()
+
+      for await (const event of agent.stream('Hi')) {
+        if (event.type === 'modelStreamUpdateEvent') break
+      }
+
+      expect(tracer.startModelInvokeSpan).toHaveBeenCalledTimes(1)
+      expect(tracer.endModelInvokeSpan).toHaveBeenCalledTimes(1)
+      expect(tracer.endModelInvokeSpan).toHaveBeenCalledWith({ mock: 'modelSpan' })
+    })
+
     it('starts and ends model span on successful model call', async () => {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
       const agent = new Agent({ model })
@@ -435,6 +449,7 @@ describe('Agent tracer integration', () => {
 
       await expect(agent.invoke('Hi')).rejects.toThrow()
 
+      expect(tracer.endModelInvokeSpan).toHaveBeenCalledTimes(1)
       expect(tracer.endModelInvokeSpan).toHaveBeenCalledWith(
         { mock: 'modelSpan' },
         expect.objectContaining({ error: expect.any(Error) })

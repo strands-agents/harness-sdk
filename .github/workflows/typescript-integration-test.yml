@@ -36,11 +36,15 @@ on:
         default: false
         type: boolean
 
+concurrency:
+  group: typescript-integration-test-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ inputs.ref == '' && github.event_name == 'pull_request_target' }}
+
 jobs:
   validate-call-ref:
     name: Validate workflow_call ref
     if: inputs.ref != ''
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     permissions:
       contents: read
     # Reject ref shapes that could check out untrusted code:
@@ -78,7 +82,7 @@ jobs:
       (needs.validate-call-ref.result == 'success' || needs.validate-call-ref.result == 'skipped')
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     outputs:
       approval-env: ${{ steps.auth.outputs.approval-env }}
     steps:
@@ -99,7 +103,7 @@ jobs:
 
   run-integration-tests:
     name: Run integration tests
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     needs: authorization-check
     if: always() && needs.authorization-check.result == 'success'
     environment:
@@ -134,6 +138,7 @@ jobs:
       - name: Install dependencies
         run: |
           npm ci --ignore-scripts
+          npm install --no-save "@tobilu/qmd@^2.8.0"
           npm run test:browser:install
 
       - name: Build the package
@@ -172,7 +177,7 @@ jobs:
           if-no-files-found: ignore
 
   upload-metrics:
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     needs: run-integration-tests
     # Publishes to the team's CloudWatch via STRANDS_INTEG_TEST_ROLE. Only run
     # when the integration-test job actually executed; on fork PRs the auth
