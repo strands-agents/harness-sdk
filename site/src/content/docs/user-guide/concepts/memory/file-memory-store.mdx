@@ -1,0 +1,329 @@
+---
+title: File Memory Store
+description: "A file-based memory store backed by the Storage
+  interface: markdown files with keyword search and
+  topic-aware extraction."
+tags: [memory]
+sourceLinks:
+  - path: strands-py/src/strands/vended_memory_stores/file_memory_store/store.py
+  - path: strands-ts/src/vended-memory-stores/file-memory-store/store.ts
+addedDate: 2026-09-08
+sidebar:
+  label: "File Store"
+---
+
+`FileMemoryStore` is a [`MemoryStore`](./overview#stores)
+that persists knowledge as markdown files through the SDK's
+unified `Storage` interface. Each topic gets its own `.md`
+file, and repeated writes to the same topic append rather
+than overwrite, so related facts accumulate in one place.
+
+Point it at a store name and the default local-file backend
+handles the rest:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.memory import MemoryManager
+from strands.vended_memory_stores.file_memory_store import (
+    FileMemoryStore,
+)
+
+store = FileMemoryStore(name="agent-memory")
+
+agent = Agent(
+    memory_manager=MemoryManager(stores=[store]),
+)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/concepts/memory/file-memory-store_imports.ts:basic_imports"
+
+--8<-- "user-guide/concepts/memory/file-memory-store.ts:basic"
+```
+</Tab>
+</Tabs>
+
+The store is writable by default, so the
+[`add_memory` tool](./overview#memory-tools) and
+[automatic extraction](./overview#automatic-extraction)
+work without extra setup.
+
+Search is keyword matching, not semantic. For
+embedding-based search over a managed vector store, use the
+[Bedrock Knowledge Base store](./bedrock-knowledge-base).
+
+## How It Works
+
+The store writes one markdown file per topic under a
+`memory/<name>/` namespace in storage. When you add content,
+the first line becomes the filename (slugified, truncated to
+50 characters, lowercased). A heading like
+`# Travel preferences` produces `travel-preferences.md`.
+
+If a file with that slug already exists, the new facts
+(lines after the heading) are appended to the existing file
+rather than overwriting it. This keeps related knowledge
+grouped by topic without the agent needing to know what
+already exists.
+
+When the slug has no usable characters (all punctuation,
+for example), the store falls back to a timestamped name
+like `entry-1717459200000.md`.
+
+## Configuration
+
+`FileMemoryStore` accepts the
+[shared `MemoryStore` fields](./overview#stores) (`name`,
+`description`,
+<Syntax py="max_search_results" ts="maxSearchResults" />,
+`writable`, `extraction`) plus one of its own:
+
+| Field | Purpose |
+|-------|---------|
+| `storage` | The `Storage` backend for file operations. Defaults to `LocalFileStorage` at `./.strands/`. Keys are auto-scoped under `memory/<name>/`, so stores with distinct names safely share one backend. |
+
+`writable` defaults to `true`. Construction accepts an
+empty `name` (the store scopes under `memory//`, which is
+valid but not recommended).
+
+The TypeScript SDK accepts additional extraction options
+(<Syntax py="extraction" ts="extraction" /> as an object):
+
+| Field | Purpose |
+|-------|---------|
+| `search` | Override the search strategy. When set, <Syntax py="search" ts="search" /> delegates to this strategy instead of the default keyword scan. TypeScript only. |
+| `extraction.model` | Model the built-in extractor uses to distill facts. Defaults to the agent's own model; set a cheaper one to cut cost. TypeScript only. |
+| `extraction.systemPrompt` | Custom framing for what counts as a durable fact, replacing the default guidance. TypeScript only. |
+
+## Storage Backend
+
+The default `LocalFileStorage` writes to `./.strands/`
+relative to the working directory, so a store named
+`agent-memory` lands at `./.strands/memory/agent-memory/`.
+
+Swap the backend to persist elsewhere. Any `Storage`
+implementation works: `S3Storage` for a shared bucket,
+`InMemoryStorage` for ephemeral runs, or a custom backend:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands.storage import S3Storage
+from strands.vended_memory_stores.file_memory_store import (
+    FileMemoryStore,
+)
+
+store = FileMemoryStore(
+    name="agent-memory",
+    storage=S3Storage(bucket="my-memory-bucket"),
+)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/concepts/memory/file-memory-store_imports.ts:custom_storage_imports"
+
+--8<-- "user-guide/concepts/memory/file-memory-store.ts:custom_storage"
+```
+</Tab>
+</Tabs>
+
+The store auto-scopes keys under `memory/<name>/` unless
+the provided storage is already namespaced, so two stores
+with different names on the same backend stay isolated. Two
+stores with the *same* name on the same backend share
+files: give them different names to keep them separate.
+
+## Search
+
+The default search ranks files by keyword token overlap: it
+counts how many distinct words from the query appear in
+each file's name and content, and returns the top scorers.
+A query with no usable words returns nothing.
+
+:::note
+The default search is lexical, not semantic. "Seat" matches
+"seat" but not "chair." For embedding-based semantic search
+over a managed vector store, use the
+[Bedrock Knowledge Base store](./bedrock-knowledge-base).
+:::
+
+<Tabs>
+<Tab label="Python">
+
+Python uses the built-in keyword search. To change the
+search behavior, implement a custom `MemoryStore` that
+wraps `FileMemoryStore` and overrides `search`.
+
+</Tab>
+<Tab label="TypeScript">
+
+Pass a `search` strategy to replace the default keyword
+scan. The SDK ships `QmdSearchStrategy` for BM25 ranking
+(requires `@tobilu/qmd`), or implement the
+`SearchStrategy` interface for your own backend:
+
+```typescript
+--8<-- "user-guide/concepts/memory/file-memory-store_imports.ts:custom_search_imports"
+
+--8<-- "user-guide/concepts/memory/file-memory-store.ts:custom_search"
+```
+</Tab>
+</Tabs>
+
+## Writing Memories
+
+<Syntax py="add" ts="add" /> stores content and returns
+the canonical storage key. The heading line drives the
+filename; subsequent lines are the facts:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands.vended_memory_stores.file_memory_store import (
+    FileMemoryStore,
+)
+
+store = FileMemoryStore(name="agent-memory")
+
+key = await store.add(
+    "# Travel preferences\n- Prefers aisle seats"
+)
+
+results = await store.search("seat preference")
+for entry in results:
+    print(entry.content, entry.metadata.get("score"))
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/concepts/memory/file-memory-store_imports.ts:search_and_add_imports"
+
+--8<-- "user-guide/concepts/memory/file-memory-store.ts:search_and_add"
+```
+</Tab>
+</Tabs>
+
+Concurrent writes to the same file are serialized so they
+don't clobber each other.
+
+## Extraction
+
+Enable [automatic extraction](./overview#automatic-extraction)
+to capture memories from the conversation without the agent
+calling a tool:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands.vended_memory_stores.file_memory_store import (
+    FileMemoryStore,
+)
+
+store = FileMemoryStore(
+    name="agent-memory",
+    extraction=True,
+)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/concepts/memory/file-memory-store_imports.ts:extraction_imports"
+
+--8<-- "user-guide/concepts/memory/file-memory-store.ts:extraction"
+```
+</Tab>
+</Tabs>
+
+With <Syntax py="extraction=True" ts="extraction: true" />,
+the store creates a **key-aware
+extractor** that reads the existing file headings from
+storage and injects them into the extraction prompt. The
+model then reuses those headings when new facts belong to
+an existing topic, keeping related knowledge grouped
+instead of fragmenting across files.
+
+<Tabs>
+<Tab label="Python">
+
+To steer what the extractor captures, pass an
+`ExtractionConfig` with a custom `ModelExtractor`:
+
+```python
+from strands.models import BedrockModel
+from strands.memory.extraction.model_extractor import (
+    ModelExtractor,
+)
+from strands.memory.extraction.types import ExtractionConfig
+from strands.vended_memory_stores.file_memory_store import (
+    FileMemoryStore,
+)
+
+store = FileMemoryStore(
+    name="agent-memory",
+    extraction=ExtractionConfig(
+        extractor=ModelExtractor(
+            model=BedrockModel(
+                model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            ),
+            system_prompt="Extract durable user preferences as discrete facts.",
+        ),
+    ),
+)
+```
+</Tab>
+<Tab label="TypeScript">
+
+Pass `model` and `systemPrompt` directly in the extraction
+config to customize the built-in extractor without
+replacing it:
+
+```typescript
+--8<-- "user-guide/concepts/memory/file-memory-store_imports.ts:extraction_custom_imports"
+
+--8<-- "user-guide/concepts/memory/file-memory-store.ts:extraction_custom"
+```
+</Tab>
+</Tabs>
+
+The store implements <Syntax py="add" ts="add" /> but not
+<Syntax py="add_messages" ts="addMessages" />, so
+extraction runs client-side: a `ModelExtractor` distills
+facts from the conversation and writes each through `add`.
+To change the cadence or swap the extractor, see
+[Automatic Extraction](./overview#automatic-extraction).
+
+## Scale and Limitations
+
+The store suits working memory for a single agent or a
+small team: hundreds to low thousands of files. Each
+`add` reads the target file and rewrites it, so throughput
+depends on the storage backend, not the store itself.
+
+Separate instances or processes writing the same storage
+namespace are not coordinated beyond the per-key lock
+within a single process. Avoid pointing two instances at
+the same namespace; the last write wins.
+
+## Related
+
+- [Memory](./overview) - the `MemoryManager` concept
+  this store plugs into, including the tools, extraction,
+  and injection it enables.
+- [Test memory store](./test-memory-store) - the
+  zero-setup vended `MemoryStore` backed by a local JSON
+  file, for prototyping and tests.
+- [Bedrock Knowledge Base store](./bedrock-knowledge-base) -
+  the managed `MemoryStore` with semantic search, for
+  production workloads.

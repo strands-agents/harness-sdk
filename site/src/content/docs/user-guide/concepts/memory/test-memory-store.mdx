@@ -204,5 +204,7 @@ backing file raises rather than returning bad data; a missing file starts empty.
 
 - [Memory](./overview) - the `MemoryManager` concept this store plugs into, including the
   tools, extraction, and injection it enables.
+- [File memory store](./file-memory-store) - the vended `MemoryStore` backed by the
+  `Storage` interface, persisting knowledge as markdown files with topic-aware extraction.
 - [Bedrock Knowledge Base store](./bedrock-knowledge-base) - the managed `MemoryStore`
   with semantic search, for production workloads.

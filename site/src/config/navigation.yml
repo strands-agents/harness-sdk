@@ -94,6 +94,7 @@ sidebar:
               - label: "Overview"
                 slug: docs/user-guide/concepts/memory/overview
               - docs/user-guide/concepts/memory/test-memory-store
+              - docs/user-guide/concepts/memory/file-memory-store
               - docs/user-guide/concepts/memory/bedrock-knowledge-base
           - docs/user-guide/concepts/agents/retry-strategies
           - label: Sandbox
