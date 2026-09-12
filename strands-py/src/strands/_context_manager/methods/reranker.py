@@ -1,7 +1,7 @@
 """Relevance scoring for offloaded tool result chunks.
 
-This module defines the scoring contract used by the ``"relevance"`` preview
-strategy of :class:`~strands.vended_plugins.context_offloader.ContextOffloader`.
+This module defines the scoring contract used by the ``offload:relevance``
+strategy (:class:`~strands._context_manager.strategies.offload.relevance.RelevanceStrategy`).
 The contract is intentionally narrow: given a query and a list of chunk texts,
 return one score per chunk. Anything that prevents that (transport failure,
 timeout, malformed response) surfaces as :class:`RerankerError`, so the caller
@@ -150,7 +150,7 @@ class BedrockReranker:
 
     Example:
         ```python
-        from strands.vended_plugins.context_offloader import BedrockReranker
+        from strands._context_manager.methods.reranker import BedrockReranker
 
         reranker = BedrockReranker(region_name="us-west-2")
         ```

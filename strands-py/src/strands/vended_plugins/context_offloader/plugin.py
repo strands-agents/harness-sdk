@@ -45,10 +45,9 @@ from __future__ import annotations
 import inspect
 import json
 import logging
-import math
 import weakref
 from collections.abc import Awaitable
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from typing_extensions import TypedDict
 
@@ -60,15 +59,12 @@ from ...storage.storage import _NAMESPACED, _NamespacedStorage
 from ...tools.decorator import tool
 from ...types.content import Message
 from ...types.tools import ToolContext, ToolResult, ToolResultContent
-from .relevance import RelevancePreview
-from .reranker import BedrockReranker
 from .search import _is_searchable_content, _search_content
 from .storage import InMemoryStorage
 from .storage import Storage as _LegacyStorage
 
 if TYPE_CHECKING:
     from ...agent.agent import Agent
-    from .reranker import Reranker
 
 logger = logging.getLogger(__name__)
 
@@ -138,36 +134,6 @@ async def _retrieve_content(
     return _unframe_content(data)
 
 
-def _result_char_count(content: list[ToolResultContent] | list[Any]) -> int:
-    """Count the characters a tool result contributes to the conversation.
-
-    Text blocks count their own length, JSON blocks the length of their serialization,
-    and binary blocks the size of their bytes — the same shapes the offload path already
-    handles. Used only for the metric log, so a block it cannot measure counts as 0
-    rather than raising.
-
-    Args:
-        content: The content blocks of a ``ToolResult``.
-
-    Returns:
-        The total count, never negative.
-    """
-    total = 0
-    for block in content:
-        if block.get("text"):
-            total += len(block["text"])
-        elif "json" in block:
-            try:
-                total += len(json.dumps(block["json"], indent=2))
-            except (TypeError, ValueError):
-                total += len(str(block["json"]))
-        elif "image" in block:
-            total += len(block["image"].get("source", {}).get("bytes", b"") or b"")
-        elif "document" in block:
-            total += len(block["document"].get("source", {}).get("bytes", b"") or b"")
-    return total
-
-
 class LineRange(TypedDict):
     """A span of lines to retrieve (1-indexed, inclusive)."""
 
@@ -183,104 +149,6 @@ _DEFAULT_PREVIEW_TOKENS = 1_000
 
 _CHARS_PER_TOKEN = 4
 """Approximate characters per token, fallback for preview slicing without tiktoken."""
-
-_DEFAULT_CHUNK_TOKENS = 2_500
-"""Default maximum token size of each chunk when scoring by relevance."""
-
-_DEFAULT_RELEVANCE_THRESHOLD = 0.5
-"""Default minimum score, in [0.0, 1.0], for a chunk to be eligible for the preview."""
-
-_MAX_QUERY_CHARS = 2_000
-"""Maximum character length of the scoring query submitted to the reranker."""
-
-_MAX_TRACKED_REFERENCES = 1_000
-"""Upper bound of the reference-to-tool-name map kept for the retrieval metric log."""
-
-PreviewStrategy = Literal["prefix", "relevance"]
-"""Strategy used to build the in-context preview of an offloaded tool result.
-
-``"prefix"`` keeps the leading characters of the result. ``"relevance"`` splits the
-result into chunks, scores them against the current query, and keeps the ones that
-pass the relevance threshold.
-"""
-
-_PREVIEW_STRATEGIES = ("prefix", "relevance")
-"""Accepted values of ``preview_strategy``, case-sensitive."""
-
-
-class _Unset:
-    """Sentinel type telling an omitted argument apart from one passed with its default."""
-
-    def __repr__(self) -> str:
-        """Return a readable placeholder for the sentinel."""
-        return "<unset>"
-
-
-_UNSET: Any = _Unset()
-"""Default of every relevance-only argument, so an explicit pass is detectable."""
-
-
-def _validate_relevance_threshold(value: Any) -> None:
-    """Raise ValueError unless ``value`` is a finite real number in ``[0.0, 1.0]``.
-
-    Args:
-        value: The candidate ``relevance_threshold``.
-
-    Raises:
-        ValueError: If the value is a bool, not a real number, not finite, or out of range.
-    """
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, (int, float))
-        or not math.isfinite(value)
-        or not 0.0 <= value <= 1.0
-    ):
-        raise ValueError(f"relevance_threshold must be a finite number in [0.0, 1.0], got {value!r}")
-
-
-def _validate_chunk_tokens(value: Any) -> None:
-    """Raise ValueError unless ``value`` is an integer greater than or equal to 1.
-
-    Args:
-        value: The candidate ``chunk_tokens``.
-
-    Raises:
-        ValueError: If the value is a bool, not an int, or less than 1.
-    """
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise ValueError(f"chunk_tokens must be an integer >= 1, got {value!r}")
-
-
-def _validate_reranker(reranker: Any) -> None:
-    """Raise ValueError unless ``reranker`` honors the scoring surface of ``Reranker``.
-
-    Checked structurally rather than by ``isinstance``: a runtime-checkable Protocol only
-    asserts the members exist, and the contract also constrains their types.
-
-    Args:
-        reranker: The candidate reranker.
-
-    Raises:
-        ValueError: If ``score`` is missing, not callable, does not accept
-            ``(query, chunks)``, or if ``max_sources_per_query`` is not an int >= 1.
-    """
-    score = getattr(reranker, "score", None)
-    if not callable(score):
-        raise ValueError(f"reranker must expose a callable score(query, chunks), got {type(reranker).__name__}")
-
-    try:
-        signature = inspect.signature(score)
-    except (TypeError, ValueError):
-        signature = None  # No introspectable signature (e.g. a C callable): trust the caller.
-    if signature is not None:
-        try:
-            signature.bind("query", ["chunk"])
-        except TypeError as error:
-            raise ValueError(f"reranker.score must accept (query, chunks): {error}") from error
-
-    max_sources = getattr(reranker, "max_sources_per_query", None)
-    if isinstance(max_sources, bool) or not isinstance(max_sources, int) or max_sources < 1:
-        raise ValueError(f"reranker.max_sources_per_query must be an integer >= 1, got {max_sources!r}")
 
 
 class ShouldOffload(Protocol):
@@ -330,8 +198,6 @@ class ContextOffloader(Plugin):
             Defaults to True.
         should_offload: Callback to control which tool results are offloaded.
             Defaults to None (all oversized results offloaded).
-        preview_strategy: How the preview is built, ``"prefix"`` (default) or
-            ``"relevance"``. See ``__init__`` for the relevance-only arguments.
 
     Example:
         ```python
@@ -365,11 +231,6 @@ class ContextOffloader(Plugin):
         include_retrieval_tool: bool = True,
         should_offload: ShouldOffload | None = None,
         evict_after_cycles: int | None = 20,
-        preview_strategy: PreviewStrategy = "prefix",
-        relevance_threshold: float = _UNSET,
-        chunk_tokens: int = _UNSET,
-        reranker: Reranker | None = _UNSET,
-        summarize_overflow: bool = _UNSET,
     ) -> None:
         """Initialize the ContextOffloader plugin.
 
@@ -393,28 +254,10 @@ class ContextOffloader(Plugin):
             evict_after_cycles: Number of agent loop cycles before an offloaded entry is
                 evicted (unified Storage only). Entries stored more than this many cycles
                 ago are deleted. Defaults to 20. Set to None to disable eviction.
-            preview_strategy: How the in-context preview is built, ``"prefix"`` or
-                ``"relevance"``. Defaults to ``"prefix"``, the leading-characters slice.
-                ``"relevance"`` scores chunks of the result against the current question
-                and keeps the ones above ``relevance_threshold``. Note that relevance
-                filtering cannot recover content a tool never returned: a tool that
-                paginates or aggregates at the source still needs to be fixed there.
-            relevance_threshold: Minimum score, in ``[0.0, 1.0]``, for a chunk to enter
-                the preview. Relevance strategy only. Defaults to 0.5.
-            chunk_tokens: Approximate token size of each scored chunk, the scoring
-                granularity. Relevance strategy only. Defaults to 2,500.
-            reranker: Scorer used to rank chunks. Relevance strategy only. Defaults to a
-                ``BedrockReranker`` with its default configuration.
-            summarize_overflow: Whether a truncated preview may be summarized. Never
-                applied to protected numeric or tabular content. Relevance strategy only.
-                Defaults to False.
 
         Raises:
             ValueError: If max_result_tokens is not positive, preview_tokens is negative,
-                preview_tokens >= max_result_tokens, evict_after_cycles is invalid,
-                preview_strategy is not ``"prefix"`` or ``"relevance"``, a relevance-only
-                argument is passed alongside ``preview_strategy="prefix"``, or a relevance
-                argument is out of its accepted domain.
+                preview_tokens >= max_result_tokens, or evict_after_cycles is invalid.
         """
         if max_result_tokens <= 0:
             raise ValueError("max_result_tokens must be positive")
@@ -424,38 +267,6 @@ class ContextOffloader(Plugin):
             raise ValueError("preview_tokens must be less than max_result_tokens")
         if evict_after_cycles is not None and (not isinstance(evict_after_cycles, int) or evict_after_cycles < 1):
             raise ValueError("evict_after_cycles must be a positive integer or None")
-        if preview_strategy not in _PREVIEW_STRATEGIES:
-            raise ValueError(f"preview_strategy must be 'prefix' or 'relevance', got {preview_strategy!r}")
-
-        # Relevance-only arguments carry a sentinel default, so passing one explicitly is
-        # detectable even when the value equals the default. Silently inert configuration is
-        # worse than an error: the user believes the feature is on.
-        relevance_args = {
-            "relevance_threshold": relevance_threshold,
-            "chunk_tokens": chunk_tokens,
-            "reranker": reranker,
-            "summarize_overflow": summarize_overflow,
-        }
-        if preview_strategy == "prefix":
-            passed = [name for name, value in relevance_args.items() if value is not _UNSET]
-            if passed:
-                raise ValueError(
-                    f"{', '.join(passed)} require preview_strategy='relevance', got 'prefix'; "
-                    "remove the argument or switch the strategy"
-                )
-        else:
-            if relevance_threshold is _UNSET:
-                relevance_threshold = _DEFAULT_RELEVANCE_THRESHOLD
-            if chunk_tokens is _UNSET:
-                chunk_tokens = _DEFAULT_CHUNK_TOKENS
-            if reranker is _UNSET:
-                reranker = None
-            if summarize_overflow is _UNSET:
-                summarize_overflow = False
-            _validate_relevance_threshold(relevance_threshold)
-            _validate_chunk_tokens(chunk_tokens)
-            if reranker is not None:
-                _validate_reranker(reranker)
 
         self._raw_storage: Storage | _LegacyStorage | None = storage
         self._storage: Storage | _LegacyStorage | None = self._resolve_storage(storage) if storage is not None else None
@@ -466,23 +277,6 @@ class ContextOffloader(Plugin):
         self._should_offload = should_offload
         self._evict_after_cycles = evict_after_cycles
         self._stored_cycles: weakref.WeakKeyDictionary[Agent, dict[str, int]] = weakref.WeakKeyDictionary()
-        # Which tool produced each stored reference, so the retrieval log can name it.
-        # Bounded: a reference is only interesting while its content is retrievable.
-        self._tool_name_by_reference: dict[str, str] = {}
-
-        # Strategy is fixed here and never revisited per tool result. Built last, once all
-        # validation passed, so a failing construction leaves no reranker, preview builder
-        # or AWS client behind.
-        self._preview_strategy: PreviewStrategy = preview_strategy
-        self._relevance: RelevancePreview | None = None
-        if preview_strategy == "relevance":
-            self._relevance = RelevancePreview(
-                reranker if reranker is not None else BedrockReranker(),
-                relevance_threshold=relevance_threshold,
-                chunk_tokens=chunk_tokens,
-                preview_tokens=preview_tokens,
-                summarize_overflow=summarize_overflow,
-            )
         super().__init__()
 
     @staticmethod
@@ -626,7 +420,6 @@ class ContextOffloader(Plugin):
         # Refresh the eviction cycle so actively-retrieved content survives
         # eviction for unified Storage backends, matching InMemoryStorage.retrieve.
         self._refresh_eviction_cycle(tool_context.agent, reference)
-        self._log_retrieval(reference)
 
         if pattern is None and line_range is None and context_lines is None:
             return self._decode_full_content(content_bytes, content_type, reference)
@@ -689,7 +482,6 @@ class ContextOffloader(Plugin):
         result = event.result
         content = result["content"]
         tool_use_id = event.tool_use["toolUseId"]
-        tool_name = event.tool_use.get("name", "")
 
         # Estimate token count by wrapping the tool result as a message for count_tokens
         tool_result_message: Message = {"role": "user", "content": [{"toolResult": result}]}
@@ -700,7 +492,7 @@ class ContextOffloader(Plugin):
 
         if self._should_offload is not None:
             try:
-                verdict = self._should_offload(tool_name, token_count)
+                verdict = self._should_offload(event.tool_use.get("name", ""), token_count)
                 if inspect.isawaitable(verdict):
                     verdict = await verdict
                 if not verdict:
@@ -726,7 +518,7 @@ class ContextOffloader(Plugin):
         # Store each content block individually
         storage = self._storage_for_agent(event.agent)
         cycle = event.agent.event_loop_metrics.cycle_count
-        references: list[tuple[str, str, str]] = []  # (ref, content_type, description)
+        references: list[tuple[str, str, str] | None] = []  # (ref, content_type, description) or None
         try:
             for i, block in enumerate(content):
                 key = f"{tool_use_id}_{i}"
@@ -748,7 +540,7 @@ class ContextOffloader(Plugin):
                         references.append((ref, f"image/{img_format}", f"image/{img_format}, {len(img_bytes):,} bytes"))
                         self._track_stored_cycle(event.agent, ref, cycle)
                     else:
-                        references.append(("", f"image/{img_format}", f"image/{img_format}, 0 bytes"))
+                        references.append(None)
                 elif "document" in block:
                     doc = block["document"]
                     doc_format = doc.get("format", "unknown")
@@ -759,7 +551,7 @@ class ContextOffloader(Plugin):
                         references.append((ref, f"application/{doc_format}", f"{doc_name}, {len(doc_bytes):,} bytes"))
                         self._track_stored_cycle(event.agent, ref, cycle)
                     else:
-                        references.append(("", f"application/{doc_format}", f"{doc_name}, 0 bytes"))
+                        references.append(None)
         except Exception:
             logger.warning(
                 "tool_use_id=<%s> | failed to offload tool result, keeping original",
@@ -768,8 +560,6 @@ class ContextOffloader(Plugin):
             )
             return
 
-        self._remember_tool_name(references, tool_name)
-
         logger.debug(
             "tool_use_id=<%s>, blocks=<%d>, tokens=<%d> | tool result offloaded",
             tool_use_id,
@@ -777,9 +567,12 @@ class ContextOffloader(Plugin):
             token_count,
         )
 
-        # Build preview text — positional slice, or relevance-filtered when configured
-        preview, relevance_applied = await self._build_preview(full_text, event)
-        ref_lines = "\n".join(f"  {ref} ({desc})" for ref, _, desc in references if ref)
+        # Build preview text — use tiktoken for exact slicing when available
+        preview = self._slice_preview(full_text) if full_text else ""
+        # Skip None: non-bytes image/document sources were left unstored (#4017).
+        ref_lines = "\n".join(
+            f"  {ref} ({desc})" for entry in references if entry is not None for ref, _, desc in [entry] if ref
+        )
 
         guidance = (
             "Tool result was offloaded to external storage due to size.\n"
@@ -795,14 +588,6 @@ class ContextOffloader(Plugin):
         else:
             guidance += "If you need more detail, use your available tools to access specific data."
 
-        # Only the relevance preview can carry gap markers: the positional preview never
-        # does, so explaining them there would describe something the model cannot see.
-        if relevance_applied:
-            guidance += (
-                "\n[... N lines omitted ...] marks N lines of the raw content left out of the preview;"
-                " read them back with line_range."
-            )
-
         preview_text = (
             f"[Offloaded: {len(content)} blocks, ~{token_count:,} tokens]\n"
             f"{guidance}\n\n"
@@ -813,7 +598,12 @@ class ContextOffloader(Plugin):
         # Build new content with preview + placeholders for non-text blocks
         new_content: list[ToolResultContent] = [ToolResultContent(text=preview_text)]
         for i, block in enumerate(content):
-            ref = references[i][0] if i < len(references) else ""
+            # None = unstored non-bytes source; keep the original block (#4017).
+            ref_entry = references[i] if i < len(references) else None
+            if ref_entry is None:
+                new_content.append(block)
+                continue
+            ref = ref_entry[0]
             if "text" in block or "json" in block:
                 continue
             elif "image" in block:
@@ -843,61 +633,6 @@ class ContextOffloader(Plugin):
             status=result["status"],
             content=new_content,
         )
-
-        # Last step of the handler: the metrics describe the result that was just produced,
-        # and their emission is never allowed to change it.
-        self._log_offload_metrics(tool_name, _result_char_count(content), _result_char_count(new_content))
-
-    @property
-    def _search_units(self) -> int:
-        """Search units consumed by this plugin instance, zero under the prefix strategy."""
-        return self._relevance.search_units if self._relevance is not None else 0
-
-    def _remember_tool_name(self, references: list[tuple[str, str, str]], tool_name: str) -> None:
-        """Associate every stored reference with the tool that produced it."""
-        for ref, _content_type, _description in references:
-            if ref:
-                self._tool_name_by_reference[ref] = tool_name
-        while len(self._tool_name_by_reference) > _MAX_TRACKED_REFERENCES:
-            # Insertion-ordered: the oldest reference is the first to go.
-            self._tool_name_by_reference.pop(next(iter(self._tool_name_by_reference)))
-
-    def _log_offload_metrics(self, tool_name: str, chars_before: int, chars_after: int) -> None:
-        """Emit the offload metrics, swallowing any failure of the emission itself.
-
-        The tool result is already built when this runs, and a broken logging handler is
-        no reason to change it — hence the blanket catch.
-
-        Args:
-            tool_name: Name of the tool whose result was offloaded.
-            chars_before: Character count of the tool result before filtering.
-            chars_after: Character count of the tool result after filtering.
-        """
-        try:
-            logger.info(
-                "tool_name=<%s>, chars_before=<%d>, chars_after=<%d> | tool result offloaded",
-                tool_name,
-                chars_before,
-                chars_after,
-            )
-            logger.info("search_units=<%d> | session search units consumed", self._search_units)
-        except Exception:
-            pass
-
-    def _log_retrieval(self, reference: str) -> None:
-        """Emit the retrieval metric, swallowing any failure of the emission itself.
-
-        Args:
-            reference: The storage reference that was retrieved.
-        """
-        try:
-            logger.info(
-                "tool_name=<%s>, reference=<%s> | offloaded content retrieved",
-                self._tool_name_by_reference.get(reference, "unknown"),
-                reference,
-            )
-        except Exception:
-            pass
 
     def _track_stored_cycle(self, agent: Agent, ref: str, cycle: int) -> None:
         """Record the cycle at which a key was stored (unified Storage eviction)."""
@@ -936,80 +671,3 @@ class ContextOffloader(Plugin):
             The preview text.
         """
         return text[: self._preview_tokens * _CHARS_PER_TOKEN]
-
-    async def _build_preview(self, full_text: str, event: AfterToolCallEvent) -> tuple[str, bool]:
-        """Return the in-context preview according to the configured strategy.
-
-        The single dispatch point of the preview strategy. It is also the single place
-        the relevance path can fail: the tool result must always be produced, so every
-        exception degrades to the positional preview instead of propagating. No failure
-        state is kept, so the next offloaded result is scored again.
-
-        Args:
-            full_text: Concatenation of the text and JSON blocks of the tool result.
-            event: The tool call event being offloaded, source of the scoring query.
-
-        Returns:
-            The preview, at most ``preview_tokens * _CHARS_PER_TOKEN`` characters long,
-            and ``""`` when ``full_text`` is empty, paired with whether the relevance
-            path produced it. The flag is ``False`` for the positional preview, whether
-            it comes from the ``"prefix"`` strategy or from degradation, so the caller
-            only explains gap markers when the preview can actually carry them.
-        """
-        if not full_text:
-            return "", False
-
-        # None under the "prefix" strategy, so no reranker or AWS client is ever reached.
-        if self._relevance is None:
-            return self._slice_preview(full_text), False
-
-        try:
-            return await self._relevance.build(full_text, self._build_query(event)), True
-        except Exception:
-            logger.warning(
-                "tool_name=<%s> | relevance preview failed, falling back to positional preview",
-                event.tool_use.get("name", ""),
-                exc_info=True,
-            )
-            return self._slice_preview(full_text), False
-
-    def _build_query(self, event: AfterToolCallEvent) -> str:
-        """Build the scoring query from the latest user question plus the tool arguments.
-
-        Scans ``event.agent.messages`` from newest to oldest and stops at the first
-        ``user`` message carrying text — messages holding only ``toolResult`` blocks are
-        not user questions and are skipped. The tool input, serialized as JSON, is the
-        closest signal to the current sub-goal, so it is always preserved: overflow past
-        ``_MAX_QUERY_CHARS`` is trimmed from the start.
-
-        Args:
-            event: The tool call event being offloaded.
-
-        Returns:
-            A non-empty query of at most ``_MAX_QUERY_CHARS`` characters.
-        """
-        tool_name = event.tool_use.get("name", "")
-
-        user_text = ""
-        for message in reversed(event.agent.messages):
-            if message.get("role") != "user":
-                continue
-            texts = [block["text"] for block in message.get("content", []) if block.get("text")]
-            if texts:
-                user_text = "\n".join(texts)
-                break
-
-        try:
-            serialized = json.dumps(event.tool_use.get("input", {}))
-        except (TypeError, ValueError):
-            # Unserializable arguments: keep the user question, or the tool name alone.
-            logger.debug("tool_name=<%s> | tool input is not JSON serializable", tool_name)
-            return (user_text or tool_name)[-_MAX_QUERY_CHARS:] or "{}"
-
-        # The serialization alone overflows: drop the user text, keep its leading characters.
-        if len(serialized) >= _MAX_QUERY_CHARS:
-            return serialized[:_MAX_QUERY_CHARS]
-
-        prefix = user_text or tool_name
-        query = f"{prefix}\n{serialized}" if prefix else serialized
-        return query[-_MAX_QUERY_CHARS:]
