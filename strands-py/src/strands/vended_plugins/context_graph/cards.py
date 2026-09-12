@@ -62,16 +62,19 @@ Each reference still stops at whitespace, ``|`` and ``]`` — the characters tha
 never contains — so a sentence that merely mentions a reference does not absorb the words after it."""
 
 
-def _inline_references(field: str) -> tuple[str, ...]:
-    """The references named in a matched ``ref:``/``refs:`` field, in order.
+def _inline_references(text: str) -> tuple[str, ...]:
+    """Every reference named inline in ``text``, in order of appearance.
 
     Args:
-        field: The captured field, one reference or several separated by commas.
+        text: A line or field that may carry one or more ``ref:``/``refs:`` fields.
 
     Returns:
         The references, each stripped of surrounding whitespace, empties dropped.
     """
-    return tuple(part.strip() for part in field.split(",") if part.strip())
+    found: list[str] = []
+    for match in _INLINE_REFERENCE.finditer(text):
+        found.extend(part.strip() for part in match.group(1).split(",") if part.strip())
+    return tuple(found)
 
 
 _LISTED_REFERENCE = re.compile(r"^[ \t]+(\S+)[ \t]*\(")
@@ -912,10 +915,7 @@ def _artifact_metadata(texts: Sequence[str], references: Collection[str]) -> dic
 
         for placeholder in _PLACEHOLDER.finditer(text):
             fields = placeholder.group(2)
-            inline = _INLINE_REFERENCE.search(fields)
-            if inline is None:
-                continue
-            named = _inline_references(inline.group(1))
+            named = _inline_references(fields)
             if not named or named[0] not in known:
                 continue
 
@@ -1141,9 +1141,8 @@ def _references_of(texts: Sequence[str]) -> tuple[str, ...]:
     for text in texts:
         listing = False
         for line in text.splitlines():
-            for match in _INLINE_REFERENCE.finditer(line):
-                for reference in _inline_references(match.group(1)):
-                    found.setdefault(reference, None)
+            for reference in _inline_references(line):
+                found.setdefault(reference, None)
 
             if _STORED_REFERENCES in line:
                 listing = True
