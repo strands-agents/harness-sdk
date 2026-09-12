@@ -1,0 +1,9 @@
+name: anyapi-mcp
+description: Remote MCP server giving Strands Agents hundreds of scraping and data APIs - social platforms, search results, and web pages - behind one key and one normalized JSON schema.
+integrationType: tool
+languages:
+  python: {}
+  typescript: {}
+github: https://github.com/getanyapi-com/skills
+docsUrl: https://getanyapi.com/docs/mcp-server
+addedDate: 2026-09-03
