@@ -1,7 +1,7 @@
 """Relevance-based preview building for offloaded tool results.
 
-Holds the deterministic, pure text primitives used by the ``"relevance"`` preview
-strategy of :class:`~strands.vended_plugins.context_offloader.plugin.ContextOffloader`.
+Holds the deterministic, pure text primitives used by the ``offload:relevance``
+strategy (:class:`~strands._context_manager.strategies.offload.relevance.RelevanceStrategy`).
 Nothing in this module performs I/O.
 """
 
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from .reranker import Reranker
 
 _CHARS_PER_TOKEN = 4
-"""Approximate characters per token, mirrors ``plugin._CHARS_PER_TOKEN``."""
+"""Approximate characters per token, mirrors ``methods.truncate.CHARS_PER_TOKEN``."""
 
 
 @dataclass(frozen=True)
@@ -398,9 +398,9 @@ def _assemble_preview(chunks: list[Chunk], selected: list[Chunk], budget_chars: 
 class RelevancePreview:
     """Build a preview that keeps the parts of a tool result the query asks about.
 
-    Composes the four steps of the ``"relevance"`` strategy: chunking, scoring,
+    Composes the four steps of the ``offload:relevance`` strategy: chunking, scoring,
     selection and assembly. Only the scoring step reaches outside this module, through
-    the injected :class:`~strands.vended_plugins.context_offloader.reranker.Reranker`.
+    the injected :class:`~strands._context_manager.methods.reranker.Reranker`.
 
     Args:
         reranker: Scorer used to rank chunks against the query.

@@ -2,7 +2,7 @@
 
 import pytest
 
-from strands.vended_plugins.context_offloader.relevance import (
+from strands._context_manager.methods.relevance import (
     Chunk,
     RelevancePreview,
     _assemble_preview,
@@ -12,7 +12,7 @@ from strands.vended_plugins.context_offloader.relevance import (
     _select_chunks,
     _validate_scores,
 )
-from strands.vended_plugins.context_offloader.reranker import RerankerError
+from strands._context_manager.methods.reranker import RerankerError
 
 
 def _chunks(*texts: str) -> list[Chunk]:
