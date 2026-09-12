@@ -7,8 +7,8 @@ Fetches an HTTP(S) URL and returns its relevant content. Distinct from the http-
 **This tool makes outbound HTTP requests to URLs chosen by the model.**
 
 - Only use with trusted input
-- Requests execute with the network access of the host process
-- For production deployments, consider running in a sandboxed environment (containers, VMs, etc.)
+- Requests execute with the network access of the sandbox
+- For production deployments, consider restricting sandbox network access (containers, VMs, network policies, etc.)
 - Never expose this tool to untrusted users or untrusted prompt input without additional security measures
 
 ## Install
@@ -72,6 +72,7 @@ The default tool, produced by `makeWebFetch()` with `mode: 'agentic'` and defaul
 | `description`     | `string`                  | (built-in)    | Tool description shown to the model. Defaults to a mode-appropriate description.        |
 | `maxBytes`        | `number`                  | `5242880`     | Maximum response body size in bytes (5 MiB).                                            |
 | `maxContentChars` | `number`                  | `50000`       | Maximum characters of extracted content delivered to the model.                         |
+| `timeout`         | `number`                  | `30`          | Maximum seconds to wait for the curl request. Pass `0` to disable.                      |
 | `model`           | `Model`                   |               | Analyst model for agentic mode. Falls back to the host agent's model when not provided. |
 
 Throws if `maxBytes` or `maxContentChars` is not a positive number.
