@@ -1,15 +1,10 @@
-import type {
-  ElicitResult,
-  ElicitRequestParams,
-  ClientRequest,
-  ClientNotification,
-} from '@modelcontextprotocol/sdk/types.js'
-import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js'
+import type { ElicitResult, ElicitRequestParams, ClientContext } from '@modelcontextprotocol/client'
 
 /**
- * Context provided to an elicitation callback, including the abort signal for the in-flight request.
+ * Context provided to an elicitation callback. The abort signal for the in-flight request is
+ * available at `context.mcpReq.signal`.
  */
-export type ElicitationContext = RequestHandlerExtra<ClientRequest, ClientNotification>
+export type ElicitationContext = ClientContext
 
 /**
  * Callback invoked when an MCP server sends an elicitation request to gather user input during tool execution.
