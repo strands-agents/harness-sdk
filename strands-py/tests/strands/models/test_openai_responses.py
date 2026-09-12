@@ -2154,3 +2154,94 @@ class TestOpenAIResponsesModelBedrockMantleConfig:
         model = OpenAIResponsesModel(model_id="openai.gpt-oss-120b", bedrock_mantle_config={"region": "us-east-1"})
         with pytest.raises(RuntimeError, match="Bedrock Mantle bearer token.*us-east-1"):
             model._resolve_client_args()
+
+
+def test_format_request_filters_location_source_document(model, caplog):
+    """Location-source documents are skipped with a warning instead of raising KeyError."""
+    caplog.set_level(logging.WARNING, logger="strands.models.openai_responses")
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"text": "summarize this"},
+                {
+                    "document": {
+                        "format": "pdf",
+                        "name": "spec",
+                        "source": {"location": {"type": "s3", "uri": "s3://my-bucket/spec.pdf"}},
+                    },
+                },
+            ],
+        },
+    ]
+
+    request = model._format_request(messages)
+
+    formatted_content = request["input"][0]["content"]
+    assert len(formatted_content) == 1
+    assert formatted_content[0]["type"] == "input_text"
+    assert "Location sources are not supported by OpenAI Responses" in caplog.text
+
+
+def test_format_request_filters_location_source_image(model, caplog):
+    """Location-source images are skipped with a warning instead of raising KeyError."""
+    caplog.set_level(logging.WARNING, logger="strands.models.openai_responses")
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"text": "look at this image"},
+                {
+                    "image": {
+                        "format": "png",
+                        "source": {"location": {"type": "s3", "uri": "s3://my-bucket/image.png"}},
+                    },
+                },
+            ],
+        },
+    ]
+
+    request = model._format_request(messages)
+
+    formatted_content = request["input"][0]["content"]
+    assert len(formatted_content) == 1
+    assert formatted_content[0]["type"] == "input_text"
+    assert "Location sources are not supported by OpenAI Responses" in caplog.text
+
+
+def test_format_request_filters_location_source_in_tool_result(model, caplog):
+    """Location-source blocks nested in a toolResult are skipped, not crashed on."""
+    caplog.set_level(logging.WARNING, logger="strands.models.openai_responses")
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": "tool-1",
+                        "status": "success",
+                        "content": [
+                            {"text": "fetched the file"},
+                            {
+                                "document": {
+                                    "format": "pdf",
+                                    "name": "report",
+                                    "source": {"location": {"type": "s3", "uri": "s3://my-bucket/report.pdf"}},
+                                },
+                            },
+                        ],
+                    },
+                },
+            ],
+        },
+    ]
+
+    request = model._format_request(messages)
+
+    tool_output = request["input"][0]["output"]
+    assert "fetched the file" in str(tool_output)
+    assert "report.pdf" not in str(tool_output)
+    assert "skipping toolResult content block" in caplog.text
