@@ -277,8 +277,9 @@ class Model(abc.ABC):
             system_prompt_content: System prompt content blocks for advanced features like caching.
             invocation_state: Caller-provided state/context that was passed to the agent when it was invoked.
             model_state: Runtime state for model providers (e.g., server-side response ids).
-            dynamic_trailing_blocks: How many trailing blocks of the last user message are rebuilt on every
-                call, so a provider placing cache points keeps its own ahead of them.
+            dynamic_trailing_blocks: How many content blocks at the end of the final user message may
+                change between calls. A provider that inserts prompt cache points should place them
+                before that boundary so the cached prefix stays stable; 0 means no such tail.
             cancel_signal: Event a provider can observe to abort an in-flight request. Support is
                 provider-dependent; a provider that ignores it still cancels at the SDK's
                 between-chunk checkpoint.
