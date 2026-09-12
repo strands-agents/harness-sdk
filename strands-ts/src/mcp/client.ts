@@ -1,16 +1,19 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { ClientCredentialsProvider } from '@modelcontextprotocol/sdk/client/auth-extensions.js'
-import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js'
-import { takeResult } from '@modelcontextprotocol/sdk/shared/responseMessage.js'
 import {
-  ElicitRequestSchema,
-  LoggingMessageNotificationSchema,
+  Client,
+  ClientCredentialsProvider,
+  StreamableHTTPClientTransport,
+  type CallToolRequestOptions,
+  type Transport,
+  type OAuthClientProvider,
   type ServerCapabilities,
   type Implementation,
   type LoggingMessageNotificationParams,
-} from '@modelcontextprotocol/sdk/types.js'
+  type GetPromptResult,
+  type ListPromptsResult,
+  type ListResourcesResult,
+  type ListResourceTemplatesResult,
+  type ReadResourceResult,
+} from '@modelcontextprotocol/client'
 import { context, propagation, trace } from '@opentelemetry/api'
 import type { JSONSchema, JSONValue } from '../types/json.js'
 import type { ElicitationCallback } from '../types/elicitation.js'
@@ -21,10 +24,12 @@ import { type McpLoadServersOptions, type McpServerConfig, mcpServerLoader } fro
 /**
  * Widened transport type that accepts MCP transport implementations without requiring explicit casts.
  *
- * Under `exactOptionalPropertyTypes`, `StreamableHTTPClientTransport` is not directly assignable
- * to `Transport` because its `sessionId` getter returns `string | undefined`, while `Transport`
- * declares `sessionId?: string` (absent or string, but not explicitly undefined).
- * This type relaxes that constraint so users can pass any MCP transport without `as Transport`.
+ * The `sessionId` member is widened to `string | undefined` so that, under
+ * `exactOptionalPropertyTypes`, transport instances whose `sessionId` getter returns
+ * `string | undefined` — including transports constructed from the legacy
+ * `@modelcontextprotocol/sdk` package — are assignable without `as Transport`. The MCP `Transport`
+ * contract's required members (`start`, `send`, `close`) are unchanged between the legacy package
+ * and `@modelcontextprotocol/client`, so legacy instances keep working.
  */
 export type McpTransport = Omit<Transport, 'sessionId'> & { sessionId?: string | undefined }
 
@@ -40,22 +45,29 @@ export interface RuntimeConfig {
  * WARNING: MCP Tasks is an experimental feature in both the MCP specification and this SDK.
  * The API may change without notice in future versions.
  *
- * When provided to McpClient, enables task-based tool invocation which supports
- * long-running tools with progress tracking. Without this config, tools are
- * called directly without task management.
+ * Task-augmented execution is temporarily unavailable while task support is rebuilt on the
+ * MCP tasks extension (https://github.com/strands-agents/harness-sdk/issues/1659). A client
+ * constructed with `tasksConfig` throws from {@link McpClient.callTool}. Use
+ * {@link McpClientOptions.requestTimeouts} to keep long-running tool calls alive meanwhile.
  */
 export interface TasksConfig {
-  /**
-   * Time-to-live in milliseconds for task polling.
-   * Defaults to 60000 (60 seconds).
-   */
+  /** Time-to-live in milliseconds for task polling. */
   ttl?: number
 
-  /**
-   * Maximum time in milliseconds to wait for task completion during polling.
-   * Defaults to 300000 (5 minutes).
-   */
+  /** Maximum time in milliseconds to wait for task completion during polling. */
   pollTimeout?: number
+}
+
+/** Request timeout options applied to every tool call made by the client. */
+export interface McpRequestTimeouts {
+  /** Milliseconds to wait for server activity on a request before failing. The MCP client default is 60000. */
+  timeout?: number
+
+  /** Upper bound in milliseconds on a whole request, regardless of server activity. */
+  maxTotalTimeout?: number
+
+  /** When true, progress notifications reset `timeout`; the client registers an internal progress handler so the progress token goes on the wire. */
+  resetTimeoutOnProgress?: boolean
 }
 
 /** Connection state of an MCP client. */
@@ -92,6 +104,12 @@ export interface McpToolFilters {
   rejected?: McpToolMatcher[]
 }
 
+/** Options for the paginated MCP list methods (prompts, resources, resource templates). */
+export interface McpListOptions {
+  /** Fetches a single page starting at this token. Omit it to aggregate every page. */
+  paginationToken?: string
+}
+
 /** Per-call overrides for {@link McpClient.listTools}. */
 export interface McpListToolsOptions {
   /** Prefix for agent-facing tool names. An empty string disables a prefix set on the client. */
@@ -113,10 +131,18 @@ export interface McpClientOptions extends RuntimeConfig {
 
   /**
    * Configuration for task-augmented tool execution (experimental).
-   * When provided (even as empty object), enables MCP task-based tool invocation.
-   * When undefined, tools are called directly without task management.
+   *
+   * Temporarily unavailable while task support is rebuilt on the MCP tasks extension
+   * (https://github.com/strands-agents/harness-sdk/issues/1659). When set, `callTool` throws.
+   * Use `requestTimeouts` to keep long-running tool calls alive meanwhile.
    */
   tasksConfig?: TasksConfig
+
+  /** Request timeouts applied to every tool call. Per-call options take precedence on overlap. */
+  requestTimeouts?: McpRequestTimeouts
+
+  /** Page cap for the no-token list methods, which aggregate every page. 0 disables the cap. Defaults to the MCP client's 64. */
+  listMaxPages?: number
 
   /**
    * Callback to handle server-initiated elicitation requests.
@@ -152,10 +178,18 @@ export type McpClientConfig = McpClientOptions & {
 
 /** MCP Client for interacting with Model Context Protocol servers. */
 export class McpClient {
-  /** Default TTL for task polling in milliseconds (60 seconds). */
+  /**
+   * Default TTL for task polling in milliseconds (60 seconds).
+   *
+   * Unused while task support is rebuilt on the MCP tasks extension (#1659). See `requestTimeouts`.
+   */
   public static readonly DEFAULT_TTL = 60000
 
-  /** Default poll timeout for task completion in milliseconds (5 minutes). */
+  /**
+   * Default poll timeout for task completion in milliseconds (5 minutes).
+   *
+   * Unused while task support is rebuilt on the MCP tasks extension (#1659). See `requestTimeouts`.
+   */
   public static readonly DEFAULT_POLL_TIMEOUT = 300000
 
   /**
@@ -183,6 +217,7 @@ export class McpClient {
   private _logHandler: (params: LoggingMessageNotificationParams) => void
   private _disableMcpInstrumentation: boolean
   private _tasksConfig: TasksConfig | undefined
+  private _requestTimeouts: McpRequestTimeouts | undefined
   private _elicitationCallback: ElicitationCallback | undefined
   private _prefix: string | undefined
   private _toolFilters: McpToolFilters | undefined
@@ -201,6 +236,7 @@ export class McpClient {
     this._continueOnError = args.continueOnError ?? false
     this._logHandler = args.logHandler ?? defaultLogHandler
     this._tasksConfig = args.tasksConfig
+    this._requestTimeouts = args.requestTimeouts
     this._elicitationCallback = args.elicitationCallback
     this._prefix = args.prefix
     this._toolFilters = args.toolFilters
@@ -211,6 +247,10 @@ export class McpClient {
       },
       {
         ...(this._elicitationCallback ? { capabilities: { elicitation: { form: {}, url: {} } } } : undefined),
+        ...(args.listMaxPages !== undefined && { listMaxPages: args.listMaxPages }),
+        // Probe for protocol revision 2026-07-28 and fall back to the legacy initialize
+        // handshake, mirroring the Python SDK's negotiate_auto posture.
+        versionNegotiation: { mode: 'auto' },
         listChanged: {
           tools: {
             autoRefresh: false,
@@ -223,11 +263,17 @@ export class McpClient {
       }
     )
 
-    this._client.setNotificationHandler(LoggingMessageNotificationSchema, (notification) => {
+    this._client.setNotificationHandler('notifications/message', (notification) => {
       this._logHandler(notification.params)
     })
 
     this._disableMcpInstrumentation = args.disableMcpInstrumentation ?? false
+
+    if (this._tasksConfig !== undefined) {
+      logger.warn(
+        `client=<${this._clientName}> | tasksConfig is set but task-augmented execution is temporarily unavailable (#1659), callTool will throw | use requestTimeouts for long-running tools`
+      )
+    }
   }
 
   private static _resolveTransport(args: McpClientConfig): Transport {
@@ -312,8 +358,8 @@ export class McpClient {
 
     if (this._elicitationCallback) {
       const callback = this._elicitationCallback
-      this._client.setRequestHandler(ElicitRequestSchema, async (request, extra) => {
-        return await callback(extra, request.params)
+      this._client.setRequestHandler('elicitation/create', async (request, requestContext) => {
+        return await callback(requestContext, request.params)
       })
     }
 
@@ -327,6 +373,12 @@ export class McpClient {
         `client=<${this._clientName}>, error=<${error}> | MCP server failed to connect, continuing (continueOnError)`
       )
     }
+  }
+
+  /** Connects lazily and throws when the connection previously failed under `continueOnError`. */
+  private async _connectOrThrow(): Promise<void> {
+    await this.connect()
+    if (this._state === 'failed') throw new Error('MCP server failed to connect. Call connect(true) to retry.')
   }
 
   /**
@@ -443,20 +495,104 @@ export class McpClient {
   }
 
   /**
+   * Lists the prompts available on the server.
+   *
+   * Without a `paginationToken` the client aggregates every page into one result with no
+   * `nextCursor`, and throws `ListPaginationExceeded` when the server pages past `listMaxPages`
+   * (64 unless configured). With a token it fetches a single page whose `nextCursor` feeds the
+   * next call.
+   *
+   * @param options - Pagination options.
+   * @returns A promise that resolves with the raw MCP list prompts result.
+   * @throws Error when an earlier connect attempt failed with `continueOnError` set. Call `connect(true)` to retry.
+   */
+  public async listPrompts(options?: McpListOptions): Promise<ListPromptsResult> {
+    await this._connectOrThrow()
+    return await this._client.listPrompts(paginationParams(options))
+  }
+
+  /**
+   * Retrieves a prompt from the server by name.
+   *
+   * @param promptId - The name of the prompt to retrieve.
+   * @param args - Arguments for the prompt's template substitution.
+   * @returns A promise that resolves with the raw MCP prompt result.
+   * @throws Error when an earlier connect attempt failed with `continueOnError` set. Call `connect(true)` to retry.
+   */
+  public async getPrompt(promptId: string, args?: Record<string, string>): Promise<GetPromptResult> {
+    await this._connectOrThrow()
+    return await this._client.getPrompt({ name: promptId, ...(args && { arguments: args }) })
+  }
+
+  /**
+   * Lists the resources available on the server.
+   *
+   * Without a `paginationToken` the client aggregates every page into one result with no
+   * `nextCursor`, and throws `ListPaginationExceeded` when the server pages past `listMaxPages`
+   * (64 unless configured). With a token it fetches a single page whose `nextCursor` feeds the
+   * next call.
+   *
+   * @param options - Pagination options.
+   * @returns A promise that resolves with the raw MCP list resources result.
+   * @throws Error when an earlier connect attempt failed with `continueOnError` set. Call `connect(true)` to retry.
+   */
+  public async listResources(options?: McpListOptions): Promise<ListResourcesResult> {
+    await this._connectOrThrow()
+    return await this._client.listResources(paginationParams(options))
+  }
+
+  /**
+   * Reads a resource from the server.
+   *
+   * @param uri - The URI of the resource to read.
+   * @returns A promise that resolves with the raw MCP resource content.
+   * @throws Error when an earlier connect attempt failed with `continueOnError` set. Call `connect(true)` to retry.
+   */
+  public async readResource(uri: string | URL): Promise<ReadResourceResult> {
+    await this._connectOrThrow()
+    return await this._client.readResource({ uri: uri instanceof URL ? uri.toString() : uri })
+  }
+
+  /**
+   * Lists the resource templates available on the server.
+   *
+   * Without a `paginationToken` the client aggregates every page into one result with no
+   * `nextCursor`, and throws `ListPaginationExceeded` when the server pages past `listMaxPages`
+   * (64 unless configured). With a token it fetches a single page whose `nextCursor` feeds the
+   * next call.
+   *
+   * @param options - Pagination options.
+   * @returns A promise that resolves with the raw MCP list resource templates result.
+   * @throws Error when an earlier connect attempt failed with `continueOnError` set. Call `connect(true)` to retry.
+   */
+  public async listResourceTemplates(options?: McpListOptions): Promise<ListResourceTemplatesResult> {
+    await this._connectOrThrow()
+    return await this._client.listResourceTemplates(paginationParams(options))
+  }
+
+  /**
    * Invoke a tool on the connected MCP server using an McpTool instance.
    *
-   * When `tasksConfig` was provided to the client constructor, uses experimental
-   * task-based invocation which supports long-running tools with progress tracking.
-   * Otherwise, calls tools directly without task management.
+   * The client's `requestTimeouts` apply to the call; per-call options take precedence on overlap.
    *
    * @param tool - The McpTool instance to invoke.
    * @param args - The arguments to pass to the tool.
    * @param options - Optional settings for the request.
    * @returns A promise that resolves with the result of the tool invocation.
+   * @throws Error when the client was constructed with `tasksConfig`: task-augmented execution
+   *         is temporarily unavailable while task support is rebuilt on the MCP tasks extension
+   *         (https://github.com/strands-agents/harness-sdk/issues/1659).
    */
   public async callTool(tool: McpTool, args: JSONValue, options?: McpCallToolOptions): Promise<JSONValue> {
-    await this.connect()
-    if (this._state === 'failed') throw new Error('MCP server failed to connect. Call connect(true) to retry.')
+    if (this._tasksConfig !== undefined) {
+      throw new Error(
+        'MCP task-augmented execution is temporarily unavailable while task support is rebuilt ' +
+          'on the MCP tasks extension (https://github.com/strands-agents/harness-sdk/issues/1659). ' +
+          'Unset tasksConfig to call tools now. Use requestTimeouts to keep long-running tool calls alive.'
+      )
+    }
+
+    await this._connectOrThrow()
 
     if (args === null || args === undefined) {
       return await this.callTool(tool, {}, options)
@@ -476,22 +612,32 @@ export class McpClient {
     // Use the server-side name for server communication; tool.name may carry a prefix.
     const toolName = this._serverToolNames.get(tool) ?? tool.name
 
-    if (this._tasksConfig === undefined) {
-      return (await this._client.callTool({ name: toolName, arguments: toolArgs }, undefined, options)) as JSONValue
-    }
-
-    // When tasksConfig is defined (even as empty object), use task-based invocation
-    // which supports long-running tools with progress tracking
-    const stream = this._client.experimental.tasks.callToolStream({ name: toolName, arguments: toolArgs }, undefined, {
-      timeout: this._tasksConfig.ttl ?? McpClient.DEFAULT_TTL,
-      maxTotalTimeout: this._tasksConfig.pollTimeout ?? McpClient.DEFAULT_POLL_TIMEOUT,
-      resetTimeoutOnProgress: true,
-      ...options,
-    })
-
-    const result = await takeResult(stream)
-    return result as JSONValue
+    return (await this._client.callTool(
+      { name: toolName, arguments: toolArgs },
+      this._buildCallOptions(options)
+    )) as JSONValue
   }
+
+  private _buildCallOptions(options?: McpCallToolOptions): CallToolRequestOptions | undefined {
+    const timeouts = this._requestTimeouts
+    if (timeouts === undefined) return options
+    return {
+      ...(timeouts.timeout !== undefined && { timeout: timeouts.timeout }),
+      ...(timeouts.maxTotalTimeout !== undefined && { maxTotalTimeout: timeouts.maxTotalTimeout }),
+      ...(timeouts.resetTimeoutOnProgress !== undefined && {
+        resetTimeoutOnProgress: timeouts.resetTimeoutOnProgress,
+      }),
+      // A progress token only goes on the wire when a progress handler is registered, which is
+      // what makes resetTimeoutOnProgress take effect.
+      ...(timeouts.resetTimeoutOnProgress && { onprogress: (): void => {} }),
+      ...options,
+    }
+  }
+}
+
+/** Maps the public `paginationToken` option to the MCP wire's `cursor` request parameter. */
+function paginationParams(options?: McpListOptions): { cursor: string } | undefined {
+  return options?.paginationToken !== undefined ? { cursor: options.paginationToken } : undefined
 }
 
 /**
