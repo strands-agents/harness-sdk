@@ -4,7 +4,14 @@ from typing_extensions import assert_type
 
 from strands import Agent, LocalAgent, ToolContext, tool
 from strands.experimental.bidi import BidiAgent
-from strands.hooks import AfterToolCallEvent, AgentInitializedEvent, BeforeToolCallEvent, MessageAddedEvent
+from strands.hooks import (
+    AfterToolCallEvent,
+    AfterToolsEvent,
+    AgentInitializedEvent,
+    BeforeToolCallEvent,
+    BeforeToolsEvent,
+    MessageAddedEvent,
+)
 from strands.session.repository_session_manager import RepositorySessionManager
 from strands.session.session_manager import SessionManager
 from strands.session.snapshot_session_manager import SnapshotSessionManager
@@ -46,6 +53,22 @@ def local_tool_call(event: BeforeToolCallEvent[LocalAgent] | AfterToolCallEvent[
     assert_type(event.agent, LocalAgent)
 
 
+def before_tools(event: BeforeToolsEvent) -> None:
+    assert_type(event.agent, Agent)
+
+
+def before_local_tools(event: BeforeToolsEvent[LocalAgent]) -> None:
+    assert_type(event.agent, LocalAgent)
+
+
+def after_tools(event: AfterToolsEvent) -> None:
+    assert_type(event.agent, Agent)
+
+
+async def after_local_tools(event: AfterToolsEvent[LocalAgent]) -> None:
+    assert_type(event.agent, LocalAgent)
+
+
 def agent_initialized(event: AgentInitializedEvent) -> None:
     assert_type(event.agent, Agent)
 
@@ -76,6 +99,8 @@ def register_hooks(agent: Agent, bidi_agent: BidiAgent, local_agent: LocalAgent)
     bidi_agent.add_hook(before_local_tool_call)
     bidi_agent.add_hook(after_local_tool_call)
     bidi_agent.add_hook(local_tool_call)
+    bidi_agent.add_hook(before_local_tools)
+    bidi_agent.add_hook(after_local_tools)
 
     local_agent.add_hook(before_local_tool_call)
     local_agent.add_hook(after_local_tool_call)

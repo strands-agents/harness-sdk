@@ -59,6 +59,10 @@ class MockBidiModel(BidiModel):
             raise RuntimeError("model not started | call start before sending")
         # Mock implementation - in real tests, this would trigger events
 
+    async def send_tool_results(self, message):
+        if not self._started:
+            raise RuntimeError("model not started | call start before sending")
+
     async def receive(self):
         """Async generator yielding mock events."""
         if not self._started:

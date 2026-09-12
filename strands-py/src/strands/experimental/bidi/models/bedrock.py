@@ -47,8 +47,8 @@ from smithy_http.aio.crt import AWSCRTHTTPClient, AWSCRTHTTPResponse
 from typing_extensions import Unpack, override
 
 from ....models._validation import validate_region
-from ....types._events import ToolResultEvent, ToolUseStreamEvent
-from ....types.content import Messages
+from ....types._events import ToolUseStreamEvent
+from ....types.content import Message, Messages
 from ....types.tools import ToolResult, ToolSpec, ToolUse
 from .._async import stop_all
 from ..types.events import (
@@ -61,6 +61,7 @@ from ..types.events import (
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
     BidiTextInputEvent,
+    BidiToolUsesCompleteEvent,
     BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
@@ -72,7 +73,7 @@ from .configs import (
     _validate_audio_config,
     _validate_model_config,
 )
-from .model import AudioCapable, BidiModel, BidiModelTimeoutError
+from .model import AudioCapable, BidiModel, BidiModelTimeoutError, _validate_tool_result_message
 
 logger = logging.getLogger(__name__)
 
@@ -171,11 +172,15 @@ class _ResponseState:
         role: Role of the current content block.
         generation_stage: Generation stage of the current text block.
         transcript: Accumulated user transcript or final assistant transcript.
+        tool_content_id: Content identifier for the active tool block.
+        tool_use: Normalized tool use captured for the active tool block.
     """
 
     role: str | None = None
     generation_stage: str | None = None
     transcript: str = ""
+    tool_content_id: str | None = None
+    tool_use: ToolUse | None = None
 
     def append_transcript(self, delta: str) -> str:
         """Append a transcript block while preserving word boundaries."""
@@ -189,6 +194,12 @@ class _ResponseState:
         self.role = None
         self.generation_stage = None
         self.transcript = ""
+        self.clear_tool_block()
+
+    def clear_tool_block(self) -> None:
+        """Clear the active tool block."""
+        self.tool_content_id = None
+        self.tool_use = None
 
 
 class BedrockNovaSonicModel(BidiModel, AudioCapable):
@@ -469,8 +480,8 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
                 logger.debug("converted_event_type=<%s> | yielding converted event", event_type)
                 yield model_event
 
-    async def send(self, content: BidiInputEvent | ToolResultEvent) -> None:
-        """Unified send method for all content types. Sends the given content to Nova Sonic.
+    async def send(self, content: BidiInputEvent) -> None:
+        """Send user input to Nova Sonic.
 
         Dispatches to appropriate internal handler based on content type.
 
@@ -491,15 +502,6 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             audio_size = len(base64.b64decode(content.audio)) if content.audio else 0
             logger.debug("audio_bytes=<%d>, format=<%s> | sending audio content", audio_size, content.format)
             await self._send_audio_content(content)
-        elif isinstance(content, ToolResultEvent):
-            tool_result = content.get("tool_result")
-            if tool_result:
-                logger.debug(
-                    "tool_use_id=<%s>, content_blocks=<%d> | sending tool result",
-                    tool_result.get("toolUseId", "unknown"),
-                    len(tool_result.get("content", [])),
-                )
-                await self._send_tool_result(tool_result)
         else:
             logger.error("content_type=<%s> | unsupported content type", type(content))
             raise ValueError(f"content_type={type(content)} | content not supported")
@@ -582,11 +584,21 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         ]
         await self._send_nova_events(events)
 
-    async def _send_tool_result(self, tool_result: ToolResult) -> None:
-        """Internal: Send tool result using Nova Sonic toolResult format."""
-        tool_use_id = tool_result["toolUseId"]
+    async def send_tool_results(self, message: Message) -> None:
+        """Send one complete tool-result group to Nova Sonic."""
+        if not self._connection_id:
+            raise RuntimeError("model not started | call start before sending")
 
-        logger.debug("tool_use_id=<%s> | sending nova tool result", tool_use_id)
+        events = [
+            event
+            for tool_result in _validate_tool_result_message(message)
+            for event in self._format_tool_result_events(tool_result)
+        ]
+        await self._send_nova_events(events)
+
+    def _format_tool_result_events(self, tool_result: ToolResult) -> list[str]:
+        """Convert a Strands tool result to Nova Sonic input events."""
+        tool_use_id = tool_result["toolUseId"]
 
         # Validate content types and preserve structure
         content = tool_result.get("content", [])
@@ -608,12 +620,11 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             result_data = {"content": content}
 
         content_name = str(uuid.uuid4())
-        events = [
+        return [
             self._get_tool_content_start_event(content_name, tool_use_id),
             self._get_tool_result_event(content_name, result_data),
             self._get_content_end_event(content_name),
         ]
-        await self._send_nova_events(events)
 
     async def stop(self) -> None:
         """Close Nova Sonic connection with proper cleanup sequence."""
@@ -731,11 +742,31 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         # Handle tool use
         if "toolUse" in nova_event:
             tool_use = nova_event["toolUse"]
+            content_id = tool_use.get("contentId")
+            if not isinstance(content_id, str) or not content_id:
+                raise ValueError("Nova toolUse must have a non-empty contentId")
+            if response_state.tool_content_id is None:
+                raise ValueError(f"Nova toolUse contentId '{content_id}' has no active TOOL contentStart")
+            if content_id != response_state.tool_content_id:
+                raise ValueError(
+                    f"Nova toolUse contentId '{content_id}' does not match active contentId "
+                    f"'{response_state.tool_content_id}'"
+                )
+            if response_state.tool_use is not None:
+                raise ValueError(f"Nova TOOL contentId '{content_id}' contains more than one toolUse event")
+
+            try:
+                tool_input = json.loads(tool_use["content"])
+            except (json.JSONDecodeError, KeyError, TypeError) as error:
+                raise ValueError(f"Nova toolUse contentId '{content_id}' has invalid JSON content") from error
             tool_use_event: ToolUse = {
                 "toolUseId": tool_use["toolUseId"],
                 "name": tool_use["toolName"],
-                "input": json.loads(tool_use["content"]),
+                "input": tool_input,
             }
+            if not isinstance(tool_input, dict):
+                raise ValueError(f"Nova toolUse contentId '{content_id}' content must decode to an object")
+            response_state.tool_use = tool_use_event
             return [
                 ToolUseStreamEvent(
                     delta={
@@ -773,6 +804,16 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         if "contentStart" in nova_event:
             content_data = nova_event["contentStart"]
             role = content_data["role"].strip().lower()
+            if content_data["type"] == "TOOL":
+                content_id = content_data.get("contentId")
+                if not isinstance(content_id, str) or not content_id:
+                    raise ValueError("Nova TOOL contentStart must have a non-empty contentId")
+                if response_state.tool_content_id is not None:
+                    raise ValueError(
+                        f"Nova TOOL contentStart contentId '{content_id}' arrived while contentId "
+                        f"'{response_state.tool_content_id}' is active"
+                    )
+                response_state.tool_content_id = content_id
             if content_data["type"] == "TEXT":
                 response_state.generation_stage = json.loads(content_data["additionalModelFields"])["generationStage"]
 
@@ -791,6 +832,9 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         if "contentEnd" in nova_event:
             content_end = nova_event["contentEnd"]
             stop_reason = content_end.get("stopReason")
+            if content_end.get("type") == "TOOL" or stop_reason == "TOOL_USE":
+                return self._complete_tool_block(content_end, response_state)
+
             # Nova ends a turn after its FINAL assistant text block (which follows the audio).
             # Both that text block and the preceding audio block carry END_TURN, so gate on
             # the FINAL text to emit exactly one per-turn complete, after that text is in
@@ -812,6 +856,32 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
 
         # Ignore all other events
         return []
+
+    @staticmethod
+    def _complete_tool_block(
+        content_end: dict[str, Any],
+        response_state: _ResponseState,
+    ) -> list[BidiOutputEvent]:
+        """Close one documented Nova tool block."""
+        content_id = content_end.get("contentId")
+        if not isinstance(content_id, str) or not content_id:
+            raise ValueError("Nova TOOL contentEnd must have a non-empty contentId")
+        if content_end.get("type") != "TOOL" or content_end.get("stopReason") != "TOOL_USE":
+            raise ValueError(f"Nova TOOL contentEnd '{content_id}' must have stopReason 'TOOL_USE'")
+        if response_state.tool_content_id is None:
+            raise ValueError(f"Nova TOOL contentEnd contentId '{content_id}' has no active TOOL contentStart")
+        if content_id != response_state.tool_content_id:
+            raise ValueError(
+                f"Nova TOOL contentEnd contentId '{content_id}' does not match active contentId "
+                f"'{response_state.tool_content_id}'"
+            )
+        if response_state.tool_use is None:
+            raise ValueError(f"Nova TOOL contentId '{content_id}' ended before a toolUse event")
+
+        tool_use = response_state.tool_use
+        completion_event = BidiToolUsesCompleteEvent({"role": "assistant", "content": [{"toolUse": tool_use}]})
+        response_state.clear_tool_block()
+        return [completion_event]
 
     def _get_connection_start_event(self) -> str:
         """Generate Nova Sonic connection start event."""

@@ -1,6 +1,8 @@
 ---
 title: Bidirectional Streaming Hooks
-description: 'Extend BidiAgent with hooks for bidirectional streaming events: connection lifecycle, interruptions, restarts, and real-time conversation logging.'
+description: >-
+  Extend BidiAgent with hooks for connection lifecycle, tool groups, interruptions,
+  restarts, message history, and conversation cleanup.
 sidebar:
   label: "Hooks"
 experimental: true
@@ -20,7 +22,9 @@ Hooks provide a composable extensibility mechanism for extending `BidiAgent` fun
 
 The bidirectional streaming hooks system extends the standard agent hooks with additional events specific to real-time streaming conversations, such as connection lifecycle, interruptions, and connection restarts.
 
-For a comprehensive introduction to the hooks concept and general patterns, see the [Hooks documentation](../agents/hooks.md). This guide focuses on bidirectional streaming-specific events and use cases.
+For an introduction to hooks and registration patterns, see the
+[Hooks documentation](../agents/hooks.md). This guide focuses on bidirectional
+streaming events and use cases.
 
 A **Hook Event** is a specific event in the lifecycle that callbacks can be associated with. A **Hook Callback** is a callback function that is invoked when the hook event is emitted.
 
@@ -132,6 +136,51 @@ agent.add_hook(retry_failed_tool)
 pass an event type, or a list of event types, explicitly. For more registration
 patterns and retry guidance, see the [Hooks documentation](../agents/hooks.md).
 
+### Shared Tool Group Hooks
+
+Use `BeforeToolsEvent` and `AfterToolsEvent` to apply one policy to the complete
+provider-defined tool group. Per-tool hooks still run for each admitted tool.
+
+```python
+from strands import LocalAgent
+from strands.experimental.bidi import BidiAgent
+from strands.hooks import AfterToolsEvent, BeforeToolsEvent
+
+
+def require_tool_approval(event: BeforeToolsEvent[LocalAgent]) -> None:
+    tool_names = [
+        block["toolUse"]["name"]
+        for block in event.message["content"]
+    ]
+    if "delete_account" in tool_names:
+        event.cancel = "Account deletion requires approval"
+
+
+def finish_after_tools(event: AfterToolsEvent[LocalAgent]) -> None:
+    if event.invocation_state.get("finish_after_tools"):
+        event.end_turn = "The requested operation is complete."
+
+
+agent = BidiAgent()
+agent.add_hook(require_tool_approval)
+agent.add_hook(finish_after_tools)
+```
+
+Setting `BeforeToolsEvent.cancel` skips the complete group and creates one error
+result per call. `AfterToolsEvent` still runs, but per-tool hooks do not.
+
+Setting `AfterToolsEvent.end_turn` records the tool exchange, appends the final
+assistant content, and closes the connection with reason `complete`. The agent does
+not submit the result group to a model provider that is no longer expected to
+continue.
+
+When consuming `start()` and `receive()` directly, call `stop()` after the terminal
+connection event. `run()` and the async context manager perform that cleanup.
+
+Bidirectional streaming does not support resumable tool interrupts. An interrupt
+from a batch hook stops before tool execution. An interrupt from a tool or per-tool
+hook stops the group without submitting partial results.
+
 ## Hook Event Lifecycle
 
 Use initialization and stop hooks for the agent lifecycle, and response-complete
@@ -144,7 +193,9 @@ flowchart TB
     Running --> Message[MessageAddedEvent]
     Running --> Response[BidiResponseCompleteEvent]
     Running --> Interruption[BidiInterruptionEvent]
-    Running --> Tools[BeforeToolCallEvent / AfterToolCallEvent]
+    Running --> BeforeTools[BeforeToolsEvent]
+    BeforeTools --> Tools[BeforeToolCallEvent / AfterToolCallEvent]
+    Tools --> AfterTools[AfterToolsEvent]
     Running --> BeforeRestart[BidiBeforeConnectionRestartEvent]
     BeforeRestart --> Restart[Restart connection]
     Restart --> AfterRestart[BidiAfterConnectionRestartEvent]
@@ -167,8 +218,10 @@ Choose hooks according to the boundary you need to observe:
 | `MessageAddedEvent` | After the framework adds a message to conversation history |
 | `BidiAgentStopEvent` | After attempting task and model cleanup, including failures |
 | `BidiResponseCompleteEvent` | When the model reports that a response ended |
+| `BeforeToolsEvent` | Before executing one complete provider-defined tool group |
 | `BeforeToolCallEvent` | Before executing a tool |
 | `AfterToolCallEvent` | After tool execution; reverse callback ordering |
+| `AfterToolsEvent` | After the group execution phase; reverse callback ordering |
 | `BidiInterruptionEvent` | When the model reports an interruption |
 | `BidiBeforeConnectionRestartEvent` | Before a scheduled or timeout-driven restart |
 | `BidiAfterConnectionRestartEvent` | After a restart attempt, including failures |

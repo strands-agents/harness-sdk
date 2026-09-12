@@ -1,11 +1,14 @@
 ---
 title: Events
-description: 'Send and receive bidirectional streaming events in Strands agents. Process audio, text, and tool activity in real time over persistent connections.'
+description: >-
+  Send and receive bidirectional streaming events for audio, text, tool activity,
+  interruptions, usage, and persistent connection lifecycle.
 experimental: true
 tags: [bidi-streaming]
 sourceLinks:
   - path: strands-py/src/strands/experimental/bidi/types/events.py
   - path: strands-py/src/strands/experimental/bidi/types/io.py
+  - path: strands-py/src/strands/experimental/bidi/agent/loop.py
 ---
 
 
@@ -330,11 +333,13 @@ async for event in agent.receive():
 
 ### Tool Events
 
-Events for tool execution during conversations. Bidirectional streaming reuses the standard `ToolUseStreamEvent` from Strands.
+Tool events separate visibility from execution authorization. A model provider streams
+each tool call first, then emits one event that closes the provider-defined group.
 
 #### ToolUseStreamEvent
 
-Emitted when the model requests tool execution. See [Tools Overview](../tools/index.md) for details.
+Use `ToolUseStreamEvent` to display or log a tool call as it arrives. This event does
+not authorize execution. The agent loop waits for `BidiToolUsesCompleteEvent`.
 
 ```python
 {
@@ -354,7 +359,45 @@ Emitted when the model requests tool execution. See [Tools Overview](../tools/in
   - `name`: Name of the tool
   - `input`: Tool input parameters
 
-Tools execute automatically in the background and results are sent back to the model without blocking the conversation.
+#### BidiToolUsesCompleteEvent
+
+Use `BidiToolUsesCompleteEvent` to identify the complete group that the agent loop
+executes. The event contains one assistant message with every tool call in provider
+order.
+
+```python
+{
+    "type": "bidi_tool_uses_complete",
+    "message": {
+        "role": "assistant",
+        "content": [
+            {
+                "toolUse": {
+                    "toolUseId": "tool_123",
+                    "name": "calculator",
+                    "input": {"expression": "2+2"}
+                }
+            }
+        ]
+    }
+}
+```
+
+The provider defines the group boundary. Gemini Live closes the group after its
+tool-call list. OpenAI Realtime closes it from the completed `response.done` output.
+Nova Sonic closes one call at the matching TOOL `contentEnd` event with
+`stopReason=TOOL_USE`; Nova groups are not response-wide.
+
+After the boundary, `BidiAgent` runs the group through its configured tool executor,
+records one assistant tool-use message and one user tool-result message, then submits
+the complete result group to the model provider.
+
+#### ToolResultEvent and ToolResultMessageEvent
+
+`ToolResultEvent` reports an individual result as each tool finishes.
+`ToolResultMessageEvent` reports the ordered user message that contains the complete
+result group. Concurrent execution can finish out of order, but the grouped message
+retains the provider's original tool-call order.
 
 ### Usage Events
 
@@ -501,12 +544,12 @@ async def main():
             
             elif event_type == "tool_use_stream":
                 tool_use = event["current_tool_use"]
-                print(f"🔧 Using tool: {tool_use['name']}")
-                print(f"   Input: {tool_use['input']}")
+                print(f"Tool visible: {tool_use['name']}")
+                print(f"Input: {tool_use['input']}")
             
-            elif event_type == "bidi_response_complete":
-                if event["stop_reason"] == "tool_use":
-                    print("   Tool executing in background...")
+            elif event_type == "bidi_tool_uses_complete":
+                tool_count = len(event["message"]["content"])
+                print(f"Executing tool group with {tool_count} call(s)")
 
 asyncio.run(main())
 ```

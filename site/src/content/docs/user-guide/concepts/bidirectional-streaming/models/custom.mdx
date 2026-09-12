@@ -1,0 +1,212 @@
+---
+title: Custom Bidirectional Model Providers
+description: >-
+  Implement a custom Python bidirectional model provider with grouped tool calls,
+  ordered results, reconnect safety, and hook-compatible events.
+languages: Python
+experimental: true
+tags: [bidi-streaming]
+sourceLinks:
+  - path: strands-py/src/strands/experimental/bidi/models/model.py
+  - path: strands-py/src/strands/experimental/bidi/types/events.py
+  - path: strands-py/src/strands/experimental/bidi/agent/loop.py
+---
+
+
+You implement a custom bidirectional model provider by translating its wire protocol
+into the `BidiModel` event contract. Tool calling uses a group boundary: stream calls
+for visibility, emit one completion event for execution, and accept one ordered
+result message.
+
+## What does the provider contract require?
+
+Your provider implements these operations:
+
+- `start()` opens the persistent connection.
+- `receive()` yields normalized output events.
+- `send()` accepts user text, audio, or image input.
+- `send_tool_results()` accepts one complete user-role tool-result message.
+- `stop()` closes the connection.
+- `update_config()` and `get_config()` expose model configuration.
+
+The agent loop owns tool execution. A provider must not execute tools or emit a
+completion boundary until its wire protocol confirms the complete group.
+
+## How does a provider authorize a tool group?
+
+Emit `ToolUseStreamEvent` for streaming visibility. Then emit exactly one
+`BidiToolUsesCompleteEvent` with the complete assistant message:
+
+```python
+import asyncio
+import json
+from collections.abc import AsyncIterable
+from typing import Any
+
+from strands.experimental.bidi import (
+    BidiInputEvent,
+    BidiOutputEvent,
+    BidiToolUsesCompleteEvent,
+    ToolUseStreamEvent,
+)
+from strands.experimental.bidi.models import BidiModel
+from strands.types.content import Message, Messages
+from strands.types.tools import ToolSpec, ToolUse
+
+
+class QueueBidiModel(BidiModel):
+    """Small in-memory provider adapter for contract testing."""
+
+    usage_is_cumulative = False
+
+    def __init__(self) -> None:
+        self._config = {"model_id": "queue-bidi"}
+        self._events: asyncio.Queue[BidiOutputEvent | None] = asyncio.Queue()
+        self.sent_inputs: list[BidiInputEvent] = []
+        self.sent_tool_messages: list[Message] = []
+
+    def update_config(self, **model_config: Any) -> None:
+        self._config.update(model_config)
+
+    def get_config(self) -> dict[str, Any]:
+        return self._config
+
+    async def start(
+        self,
+        system_prompt: str | None = None,
+        tools: list[ToolSpec] | None = None,
+        messages: Messages | None = None,
+        **kwargs: Any,
+    ) -> None:
+        return None
+
+    async def stop(self) -> None:
+        await self._events.put(None)
+
+    async def send(self, content: BidiInputEvent) -> None:
+        self.sent_inputs.append(content)
+
+    async def send_tool_results(self, message: Message) -> None:
+        if message.get("role") != "user" or not message.get("content"):
+            raise ValueError("expected a non-empty user tool-result message")
+
+        for block in message["content"]:
+            if set(block) != {"toolResult"}:
+                raise ValueError("tool-result content must contain only toolResult")
+            result = block["toolResult"]
+            if not isinstance(result.get("toolUseId"), str):
+                raise ValueError("toolUseId must be a string")
+            if result.get("status") not in {"success", "error"}:
+                raise ValueError("status must be success or error")
+            if not isinstance(result.get("content"), list):
+                raise ValueError("tool result content must be a list")
+
+        self.sent_tool_messages.append(message)
+
+    def receive(self) -> AsyncIterable[BidiOutputEvent]:
+        async def events() -> AsyncIterable[BidiOutputEvent]:
+            while (event := await self._events.get()) is not None:
+                yield event
+
+        return events()
+
+    async def publish_tool_group(self, tool_uses: list[ToolUse]) -> None:
+        for tool_use in tool_uses:
+            await self._events.put(
+                ToolUseStreamEvent(
+                    delta={
+                        "toolUse": {
+                            "toolUseId": tool_use["toolUseId"],
+                            "name": tool_use["name"],
+                            "input": json.dumps(tool_use["input"]),
+                        }
+                    },
+                    current_tool_use=tool_use,
+                )
+            )
+
+        message: Message = {
+            "role": "assistant",
+            "content": [
+                {"toolUse": tool_use}
+                for tool_use in tool_uses
+            ],
+        }
+        await self._events.put(BidiToolUsesCompleteEvent(message))
+```
+
+Reserve the completion event for the provider's real boundary. Gemini Live supplies
+an atomic call list. OpenAI Realtime supplies the authoritative completed response
+output. Nova Sonic supplies one call at a matching TOOL `contentEnd` event with
+`stopReason=TOOL_USE`.
+
+Do not infer a larger Nova group from `completionEnd`.
+
+## How does a provider submit tool results?
+
+`send_tool_results()` receives one user message whose content contains only
+`toolResult` blocks. Validate the complete message before writing any provider
+events. Preserve block order and request no more than one model continuation after
+the group.
+
+```python
+from strands.types.content import Message
+
+
+tool_result_message: Message = {
+    "role": "user",
+    "content": [
+        {
+            "toolResult": {
+                "toolUseId": "weather-1",
+                "status": "success",
+                "content": [{"text": "18 C and clear"}],
+            }
+        },
+        {
+            "toolResult": {
+                "toolUseId": "time-1",
+                "status": "success",
+                "content": [{"text": "09:30"}],
+            }
+        },
+    ],
+}
+```
+
+Do not retry a partial provider write. Tool side effects and local history already
+exist, and the provider might have accepted only part of the write.
+
+## How does grouped execution interact with hooks?
+
+The agent loop invokes `BeforeToolsEvent` once before the group and
+`AfterToolsEvent` once after the execution phase. It also invokes
+`BeforeToolCallEvent` and `AfterToolCallEvent` for each executed tool.
+
+`BeforeToolsEvent.cancel` creates one error result per call and skips per-tool hooks.
+`AfterToolsEvent.end_turn` records the exchange, appends final assistant content,
+and closes the connection with reason `complete` without sending tool results.
+When consuming `start()` and `receive()` directly, call `stop()` after the terminal
+connection event.
+
+Resumable tool interrupts are not supported by `BidiAgent`. A provider must not
+translate user speech interruption into tool-call cancellation.
+
+## What happens during a reconnect?
+
+The agent loop associates each admitted group with the connection generation that
+issued it. Tools continue running across a voice interruption or reconnect. If the
+connection changes before the group finishes, the loop records the ordered results
+but does not send stale tool-call identifiers to the replacement connection.
+
+The loop never splits a group across connections and never reruns a tool
+automatically.
+
+## How do existing custom providers migrate?
+
+Move tool-result handling out of `send()`. The input method now accepts only
+`BidiInputEvent`; grouped results use `send_tool_results(message)`.
+
+On the receive side, keep `ToolUseStreamEvent` for visibility and add
+`BidiToolUsesCompleteEvent` at the verified wire boundary. A stream event by itself
+does not start execution.

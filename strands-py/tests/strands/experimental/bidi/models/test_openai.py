@@ -31,11 +31,17 @@ from strands.experimental.bidi.types.events import (
     BidiInterruptionEvent,
     BidiResponseCompleteEvent,
     BidiTextInputEvent,
+    BidiToolUsesCompleteEvent,
     BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
 )
-from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolResult
+
+from ._tool_contract import assert_tool_group_contract
+
+
+def _tool_result_message(*tool_results: ToolResult):
+    return {"role": "user", "content": [{"toolResult": result} for result in tool_results]}
 
 
 @pytest.fixture
@@ -407,7 +413,7 @@ async def test_send_all_content_types(mock_websockets_connect, model):
         "status": "success",
         "content": [{"text": "Result: 42"}],
     }
-    await model.send(ToolResultEvent(tool_result))
+    await model.send_tool_results(_tool_result_message(tool_result))
     calls = mock_ws.send.call_args_list
     messages = [json.loads(call[0][0]) for call in calls]
     item_create = [m for m in messages if m.get("type") == "conversation.item.create"]
@@ -425,7 +431,7 @@ async def test_send_all_content_types(mock_websockets_connect, model):
         "status": "success",
         "content": [{"json": {"result": 42, "status": "ok"}}],
     }
-    await model.send(ToolResultEvent(tool_result_json))
+    await model.send_tool_results(_tool_result_message(tool_result_json))
     calls = mock_ws.send.call_args_list
     messages = [json.loads(call[0][0]) for call in calls]
     item_create = [m for m in messages if m.get("type") == "conversation.item.create"]
@@ -442,7 +448,7 @@ async def test_send_all_content_types(mock_websockets_connect, model):
         "status": "success",
         "content": [{"text": "Part 1"}, {"json": {"data": "value"}}, {"text": "Part 2"}],
     }
-    await model.send(ToolResultEvent(tool_result_multi))
+    await model.send_tool_results(_tool_result_message(tool_result_multi))
     calls = mock_ws.send.call_args_list
     messages = [json.loads(call[0][0]) for call in calls]
     item_create = [m for m in messages if m.get("type") == "conversation.item.create"]
@@ -460,7 +466,7 @@ async def test_send_all_content_types(mock_websockets_connect, model):
         "content": [{"image": {"format": "jpeg", "source": {"bytes": b"image_data"}}}],
     }
     with pytest.raises(ValueError, match=r"Content type not supported by OpenAI Realtime API"):
-        await model.send(ToolResultEvent(tool_result_image))
+        await model.send_tool_results(_tool_result_message(tool_result_image))
 
     # Test tool result with document content (should raise error)
     tool_result_doc: ToolResult = {
@@ -469,7 +475,7 @@ async def test_send_all_content_types(mock_websockets_connect, model):
         "content": [{"document": {"format": "pdf", "source": {"bytes": b"doc_data"}}}],
     }
     with pytest.raises(ValueError, match=r"Content type not supported by OpenAI Realtime API"):
-        await model.send(ToolResultEvent(tool_result_doc))
+        await model.send_tool_results(_tool_result_message(tool_result_doc))
 
     await model.stop()
 
@@ -506,6 +512,52 @@ async def test_send_edge_cases(mock_websockets_connect, model):
     # Image input must NOT auto-trigger a response — caller decides when to commit.
     assert not any(m.get("type") == "response.create" for m in image_calls)
 
+    await model.stop()
+
+
+@pytest.mark.asyncio
+async def test_send_grouped_tool_results(mock_websockets_connect, model):
+    """A complete result group creates all outputs before one continuation."""
+    _, mock_ws = mock_websockets_connect
+    await model.start()
+    mock_ws.send.reset_mock()
+    message = {
+        "role": "user",
+        "content": [
+            {"toolResult": {"toolUseId": "call-1", "status": "success", "content": [{"text": "first"}]}},
+            {"toolResult": {"toolUseId": "call-2", "status": "error", "content": [{"json": {"error": "second"}}]}},
+        ],
+    }
+
+    await model.send_tool_results(message)
+
+    events = [json.loads(call.args[0]) for call in mock_ws.send.call_args_list]
+    assert [event["item"]["call_id"] for event in events[:-1]] == ["call-1", "call-2"]
+    assert events[-1] == {"type": "response.create"}
+    assert sum(event["type"] == "response.create" for event in events) == 1
+    await model.stop()
+
+
+@pytest.mark.asyncio
+async def test_send_grouped_tool_results_does_not_continue_after_partial_failure(mock_websockets_connect, model):
+    """A partial output write never triggers a model continuation or automatic retry."""
+    _, mock_ws = mock_websockets_connect
+    await model.start()
+    mock_ws.send.reset_mock()
+    mock_ws.send.side_effect = [None, RuntimeError("write failed")]
+    message = {
+        "role": "user",
+        "content": [
+            {"toolResult": {"toolUseId": "call-1", "status": "success", "content": [{"text": "first"}]}},
+            {"toolResult": {"toolUseId": "call-2", "status": "success", "content": [{"text": "second"}]}},
+        ],
+    }
+
+    with pytest.raises(RuntimeError, match="write failed"):
+        await model.send_tool_results(message)
+
+    events = [json.loads(call.args[0]) for call in mock_ws.send.call_args_list]
+    assert [event["type"] for event in events] == ["conversation.item.create", "conversation.item.create"]
     await model.stop()
 
 
@@ -580,18 +632,41 @@ async def test_event_conversion(model):
     model._convert_openai_event(args_delta)
 
     args_done = {"type": "response.function_call_arguments.done", "call_id": "call-123"}
-    converted = model._convert_openai_event(args_done)
+    streamed = model._convert_openai_event(args_done)
     # Now returns list with ToolUseStreamEvent
-    assert isinstance(converted, list)
-    assert len(converted) == 1
+    assert isinstance(streamed, list)
+    assert len(streamed) == 1
     # ToolUseStreamEvent has delta and current_tool_use, not a "type" field
-    assert "delta" in converted[0]
-    assert "toolUse" in converted[0]["delta"]
-    tool_use = converted[0]["delta"]["toolUse"]
+    assert "delta" in streamed[0]
+    assert "toolUse" in streamed[0]["delta"]
+    tool_use = streamed[0]["delta"]["toolUse"]
     assert tool_use["toolUseId"] == "call-123"
     assert tool_use["name"] == "calculator"
     assert json.loads(tool_use["input"]) == {"expression": "2+2"}
-    assert converted[0]["current_tool_use"]["input"] == {"expression": "2+2"}
+    assert streamed[0]["current_tool_use"]["input"] == {"expression": "2+2"}
+
+    response_done = {
+        "type": "response.done",
+        "response": {
+            "id": "resp-tools",
+            "status": "completed",
+            "output": [
+                {
+                    "type": "function_call",
+                    "status": "completed",
+                    "call_id": "call-123",
+                    "name": "calculator",
+                    "arguments": '{"expression": "2+2"}',
+                }
+            ],
+        },
+    }
+    converted = model._convert_openai_event(response_done)
+    assert isinstance(converted, list)
+    assert isinstance(converted[0], BidiToolUsesCompleteEvent)
+    assert converted[0].tool_uses == [{"toolUseId": "call-123", "name": "calculator", "input": {"expression": "2+2"}}]
+    assert_tool_group_contract([*streamed, *converted], converted[0].tool_uses)
+    assert converted[1] == BidiResponseCompleteEvent(response_id="resp-tools", stop_reason="tool_use")
 
     # Test voice activity (now returns list with BidiInterruptionEvent for speech_started)
     speech_started = {"type": "input_audio_buffer.speech_started"}
@@ -618,7 +693,7 @@ async def test_event_conversion(model):
         "error": {"code": "response_cancel_not_active", "message": "No active response to cancel"},
     }
     converted = model._convert_openai_event(error_cancel_not_active)
-    assert converted is None  # Should be suppressed
+    assert converted is None
 
     # Test error handling - other errors should be logged but return None
     error_other = {"type": "error", "error": {"code": "some_other_error", "message": "Something went wrong"}}
@@ -626,6 +701,154 @@ async def test_event_conversion(model):
     assert converted is None
 
     await model.stop()
+
+
+def test_terminal_response_output_is_authoritative_for_interleaved_calls(model):
+    """Terminal output defines the executable group and order, independent of stream order."""
+    for call_id, name in (("call-1", "stream_one"), ("call-2", "stream_two")):
+        model._convert_openai_event(
+            {
+                "type": "response.output_item.added",
+                "item": {"type": "function_call", "call_id": call_id, "name": name},
+            }
+        )
+    model._convert_openai_event(
+        {"type": "response.function_call_arguments.delta", "call_id": "call-1", "delta": '{"stream":'}
+    )
+    model._convert_openai_event(
+        {"type": "response.function_call_arguments.delta", "call_id": "call-2", "delta": '{"stream":2}'}
+    )
+    model._convert_openai_event({"type": "response.function_call_arguments.delta", "call_id": "call-1", "delta": "1}"})
+    second_stream_event = model._convert_openai_event(
+        {"type": "response.function_call_arguments.done", "call_id": "call-2"}
+    )
+    first_stream_event = model._convert_openai_event(
+        {"type": "response.function_call_arguments.done", "call_id": "call-1"}
+    )
+    assert second_stream_event[0]["current_tool_use"]["input"] == {"stream": 2}
+    assert first_stream_event[0]["current_tool_use"]["input"] == {"stream": 1}
+
+    converted = model._convert_openai_event(
+        {
+            "type": "response.done",
+            "response": {
+                "id": "resp-1",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "function_call",
+                        "call_id": "call-1",
+                        "name": "terminal_one",
+                        "arguments": '{"terminal":1}',
+                    },
+                    {
+                        "type": "function_call",
+                        "call_id": "call-2",
+                        "name": "terminal_two",
+                        "arguments": '{"terminal":2}',
+                    },
+                ],
+            },
+        }
+    )
+
+    assert isinstance(converted[0], BidiToolUsesCompleteEvent)
+    assert converted[0].tool_uses == [
+        {"toolUseId": "call-1", "name": "terminal_one", "input": {"terminal": 1}},
+        {"toolUseId": "call-2", "name": "terminal_two", "input": {"terminal": 2}},
+    ]
+    assert converted[1].stop_reason == "tool_use"
+    assert model._function_call_buffer == {}
+
+
+@pytest.mark.parametrize(
+    "status,stop_reason",
+    [("cancelled", "interrupted"), ("failed", "error"), ("incomplete", "interrupted")],
+)
+def test_noncompleted_terminal_responses_do_not_execute_tools(model, status, stop_reason):
+    """Only a completed response can authorize terminal function calls."""
+    model._function_call_buffer["stale"] = {"name": "stale", "arguments": "{}"}
+
+    converted = model._convert_openai_event(
+        {
+            "type": "response.done",
+            "response": {
+                "id": "resp-terminal",
+                "status": status,
+                "output": [
+                    {
+                        "type": "function_call",
+                        "call_id": "call-1",
+                        "name": "must_not_run",
+                        "arguments": "{}",
+                    }
+                ],
+            },
+        }
+    )
+
+    assert converted == [BidiResponseCompleteEvent(response_id="resp-terminal", stop_reason=stop_reason)]
+    assert model._function_call_buffer == {}
+
+
+@pytest.mark.parametrize(
+    "output,error",
+    [
+        (
+            [{"type": "function_call", "call_id": "call-1", "name": "broken", "arguments": "{"}],
+            "invalid JSON",
+        ),
+        (
+            [
+                {"type": "function_call", "call_id": "duplicate", "name": "first", "arguments": "{}"},
+                {"type": "function_call", "call_id": "duplicate", "name": "second", "arguments": "{}"},
+            ],
+            "duplicate toolUseId",
+        ),
+    ],
+)
+def test_invalid_terminal_tool_groups_fail_and_clear_buffers(model, output, error):
+    """Malformed or duplicate terminal calls fail before execution and release buffers."""
+    model._function_call_buffer["stale"] = {"name": "stale", "arguments": "{}"}
+
+    with pytest.raises(ValueError, match=error):
+        model._convert_openai_event(
+            {
+                "type": "response.done",
+                "response": {"id": "resp-invalid", "status": "completed", "output": output},
+            }
+        )
+
+    assert model._function_call_buffer == {}
+
+
+def test_terminal_buffer_cleanup_allows_consecutive_responses(model):
+    """Terminal cleanup prevents one response's streamed calls leaking into the next."""
+    model._function_call_buffer["old-call"] = {"name": "old", "arguments": "{}"}
+    model._convert_openai_event(
+        {"type": "response.done", "response": {"id": "first", "status": "cancelled", "output": []}}
+    )
+
+    converted = model._convert_openai_event(
+        {
+            "type": "response.done",
+            "response": {
+                "id": "second",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "function_call",
+                        "call_id": "new-call",
+                        "name": "new_tool",
+                        "arguments": "{}",
+                    }
+                ],
+            },
+        }
+    )
+
+    assert converted[0].tool_uses == [{"toolUseId": "new-call", "name": "new_tool", "input": {}}]
+    assert model._function_call_buffer == {}
 
 
 @pytest.mark.parametrize(
@@ -1014,7 +1237,7 @@ async def test_tool_result_single_text_content(mock_websockets_connect, api_key)
         "content": [{"text": "Simple text result"}],
     }
 
-    await model.send(ToolResultEvent(tool_result))
+    await model.send_tool_results(_tool_result_message(tool_result))
 
     # Verify the sent event
     calls = mock_ws.send.call_args_list
@@ -1045,7 +1268,7 @@ async def test_tool_result_single_json_content(mock_websockets_connect, api_key)
         "content": [{"json": {"temperature": 72, "condition": "sunny"}}],
     }
 
-    await model.send(ToolResultEvent(tool_result))
+    await model.send_tool_results(_tool_result_message(tool_result))
 
     # Verify the sent event
     calls = mock_ws.send.call_args_list
@@ -1079,7 +1302,7 @@ async def test_tool_result_multiple_content_blocks(mock_websockets_connect, api_
         ],
     }
 
-    await model.send(ToolResultEvent(tool_result))
+    await model.send_tool_results(_tool_result_message(tool_result))
 
     # Verify the sent event
     calls = mock_ws.send.call_args_list
@@ -1114,7 +1337,7 @@ async def test_tool_result_image_content_raises_error(mock_websockets_connect, a
     }
 
     with pytest.raises(ValueError, match=r"Content type not supported by OpenAI Realtime API"):
-        await model.send(ToolResultEvent(tool_result))
+        await model.send_tool_results(_tool_result_message(tool_result))
 
     await model.stop()
 
@@ -1133,7 +1356,7 @@ async def test_tool_result_document_content_raises_error(mock_websockets_connect
     }
 
     with pytest.raises(ValueError, match=r"Content type not supported by OpenAI Realtime API"):
-        await model.send(ToolResultEvent(tool_result))
+        await model.send_tool_results(_tool_result_message(tool_result))
 
     await model.stop()
 

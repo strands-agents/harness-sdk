@@ -1,0 +1,36 @@
+[
+  {
+    "contentStart": {
+      "sessionId": "redacted-session",
+      "promptName": "redacted-prompt",
+      "completionId": "redacted-completion",
+      "contentId": "tool-content-1",
+      "type": "TOOL",
+      "role": "TOOL",
+      "toolUseOutputConfiguration": {
+        "mediaType": "application/json"
+      }
+    }
+  },
+  {
+    "toolUse": {
+      "sessionId": "redacted-session",
+      "promptName": "redacted-prompt",
+      "completionId": "redacted-completion",
+      "contentId": "tool-content-1",
+      "content": "{\"location\":\"Seattle\"}",
+      "toolName": "get_weather",
+      "toolUseId": "tool-use-1"
+    }
+  },
+  {
+    "contentEnd": {
+      "sessionId": "redacted-session",
+      "promptName": "redacted-prompt",
+      "completionId": "redacted-completion",
+      "contentId": "tool-content-1",
+      "stopReason": "TOOL_USE",
+      "type": "TOOL"
+    }
+  }
+]

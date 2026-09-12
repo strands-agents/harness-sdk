@@ -12,6 +12,7 @@ from ._executor import ToolExecutor
 
 if TYPE_CHECKING:  # pragma: no cover
     from ...agent import Agent
+    from ...experimental.bidi import BidiAgent
     from ..structured_output._structured_output_context import StructuredOutputContext
 
 
@@ -21,10 +22,10 @@ class SequentialToolExecutor(ToolExecutor):
     @override
     async def _execute(
         self,
-        agent: "Agent",
+        agent: "Agent | BidiAgent",
         tool_uses: list[ToolUse],
         tool_results: list[ToolResult],
-        cycle_trace: Trace,
+        cycle_trace: Trace | None,
         cycle_span: Any,
         invocation_state: dict[str, Any],
         structured_output_context: "StructuredOutputContext | None" = None,
@@ -37,7 +38,7 @@ class SequentialToolExecutor(ToolExecutor):
             agent: The agent for which tools are being executed.
             tool_uses: Metadata and inputs for the tools to be executed.
             tool_results: List of tool results from each tool execution.
-            cycle_trace: Trace object for the current event loop cycle.
+            cycle_trace: Trace object for the current event loop cycle, if available.
             cycle_span: Span object for tracing the cycle.
             invocation_state: Context for the tool invocation.
             structured_output_context: Context for structured output handling.
@@ -48,7 +49,7 @@ class SequentialToolExecutor(ToolExecutor):
         interrupted = False
 
         for tool_use in tool_uses:
-            if agent._observe_cancellation():
+            if ToolExecutor._is_cancelled(agent):
                 cancel_result: ToolResult = {
                     "toolUseId": str(tool_use.get("toolUseId")),
                     "status": "error",

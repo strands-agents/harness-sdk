@@ -58,9 +58,14 @@ class ToolExecutor(abc.ABC):
             return False
         if cast(dict[str, Any], after_event.result).get("cancelled") is True:
             return False
+        return not ToolExecutor._is_cancelled(agent)
+
+    @staticmethod
+    def _is_cancelled(agent: LocalAgent) -> bool:
+        """Return whether a standard Agent has observed cancellation."""
         if not ToolExecutor._is_agent(agent):
-            return True
-        return not cast("Agent", agent)._observe_cancellation()
+            return False
+        return bool(cast("Agent", agent)._observe_cancellation())
 
     async def _execute_background(
         self,
@@ -414,10 +419,10 @@ class ToolExecutor(abc.ABC):
 
     @staticmethod
     async def _stream_with_trace(
-        agent: "Agent",
+        agent: "Agent | BidiAgent",
         tool_use: ToolUse,
         tool_results: list[ToolResult],
-        cycle_trace: Trace,
+        cycle_trace: Trace | None,
         cycle_span: Any,
         invocation_state: dict[str, Any],
         structured_output_context: StructuredOutputContext | None = None,
@@ -429,7 +434,7 @@ class ToolExecutor(abc.ABC):
             agent: The agent for which the tool is being executed.
             tool_use: Metadata and inputs for the tool to be executed.
             tool_results: List of tool results from each tool execution.
-            cycle_trace: Trace object for the current event loop cycle.
+            cycle_trace: Trace object for the current event loop cycle, if available.
             cycle_span: Span object for tracing the cycle.
             invocation_state: Context for the tool invocation.
             structured_output_context: Context for structured output management.
@@ -442,52 +447,71 @@ class ToolExecutor(abc.ABC):
         structured_output_context = structured_output_context or StructuredOutputContext()
 
         tracer = get_tracer()
-
-        tool_call_span = tracer.start_tool_call_span(
-            tool_use, cycle_span, custom_trace_attributes=agent.trace_attributes
+        trace_attributes = cast("Agent", agent).trace_attributes if ToolExecutor._is_agent(agent) else None
+        tool_call_span = tracer.start_tool_call_span(tool_use, cycle_span, custom_trace_attributes=trace_attributes)
+        tool_trace = (
+            Trace(f"Tool: {tool_name}", parent_id=cycle_trace.id, raw_name=tool_name)
+            if cycle_trace is not None
+            else None
         )
-        tool_trace = Trace(f"Tool: {tool_name}", parent_id=cycle_trace.id, raw_name=tool_name)
         tool_start_time = time.time()
+        tool_result: ToolResult | None = None
+        tool_error: Exception | None = None
 
-        with trace_api.use_span(tool_call_span):
-            async for event in ToolExecutor._stream(
-                agent, tool_use, tool_results, invocation_state, structured_output_context, **kwargs
-            ):
-                yield event
+        try:
+            with trace_api.use_span(tool_call_span):
+                last_event: TypedEvent | None = None
+                async for event in ToolExecutor._stream(
+                    agent, tool_use, tool_results, invocation_state, structured_output_context, **kwargs
+                ):
+                    last_event = event
+                    yield event
 
-            if isinstance(event, ToolInterruptEvent):
+                if last_event is None:
+                    raise RuntimeError("tool execution stream completed without an event")
+
+                if isinstance(last_event, ToolInterruptEvent):
+                    tool_duration = time.time() - tool_start_time
+                    if ToolExecutor._is_agent(agent) and tool_trace is not None:
+                        cast("Agent", agent).event_loop_metrics.add_tool_usage(
+                            tool_use, tool_duration, tool_trace, False
+                        )
+                    if cycle_trace is not None and tool_trace is not None:
+                        cycle_trace.add_child(tool_trace)
+                    return
+
+                result_event = cast(ToolResultEvent, last_event)
+                tool_result = result_event.tool_result
+                tool_error = result_event.exception
+
+                tool_success = tool_result.get("status") == "success"
                 tool_duration = time.time() - tool_start_time
-                if ToolExecutor._is_agent(agent):
-                    agent.event_loop_metrics.add_tool_usage(tool_use, tool_duration, tool_trace, False)
-                cycle_trace.add_child(tool_trace)
-                tracer.end_tool_call_span(tool_call_span, tool_result=None)
-                return
-
-            result_event = cast(ToolResultEvent, event)
-            result = result_event.tool_result
-
-            tool_success = result.get("status") == "success"
-            tool_duration = time.time() - tool_start_time
-            message = Message(role="user", content=[{"toolResult": result}])
-            # A background dispatch acknowledgement is not the tool running; the run records its own
-            # metrics and trace, so the ack only marks its span.
-            if result_event.backgrounded:
-                tool_call_span.set_attribute("strands.tool.backgrounded", True)
-            else:
-                if ToolExecutor._is_agent(agent):
-                    agent.event_loop_metrics.add_tool_usage(tool_use, tool_duration, tool_trace, tool_success, message)
-                cycle_trace.add_child(tool_trace)
-
-            tracer.end_tool_call_span(tool_call_span, result, error=result_event.exception)
+                message = Message(role="user", content=[{"toolResult": tool_result}])
+                # A background dispatch acknowledgement is not the tool running; the run records its own
+                # metrics and trace, so the ack only marks its span.
+                if result_event.backgrounded:
+                    tool_call_span.set_attribute("strands.tool.backgrounded", True)
+                else:
+                    if ToolExecutor._is_agent(agent) and tool_trace is not None:
+                        cast("Agent", agent).event_loop_metrics.add_tool_usage(
+                            tool_use, tool_duration, tool_trace, tool_success, message
+                        )
+                    if cycle_trace is not None and tool_trace is not None:
+                        cycle_trace.add_child(tool_trace)
+        except Exception as error:
+            tool_error = error
+            raise
+        finally:
+            tracer.end_tool_call_span(tool_call_span, tool_result, error=tool_error)
 
     @abc.abstractmethod
     # pragma: no cover
     def _execute(
         self,
-        agent: "Agent",
+        agent: "Agent | BidiAgent",
         tool_uses: list[ToolUse],
         tool_results: list[ToolResult],
-        cycle_trace: Trace,
+        cycle_trace: Trace | None,
         cycle_span: Any,
         invocation_state: dict[str, Any],
         structured_output_context: "StructuredOutputContext | None" = None,
@@ -498,7 +522,7 @@ class ToolExecutor(abc.ABC):
             agent: The agent for which tools are being executed.
             tool_uses: Metadata and inputs for the tools to be executed.
             tool_results: List of tool results from each tool execution.
-            cycle_trace: Trace object for the current event loop cycle.
+            cycle_trace: Trace object for the current event loop cycle, if available.
             cycle_span: Span object for tracing the cycle.
             invocation_state: Context for the tool invocation.
             structured_output_context: Context for structured output management.

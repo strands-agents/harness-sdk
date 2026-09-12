@@ -145,6 +145,7 @@ sidebar:
                   - docs/user-guide/concepts/bidirectional-streaming/models/bedrock
                   - docs/user-guide/concepts/bidirectional-streaming/models/google
                   - docs/user-guide/concepts/bidirectional-streaming/models/openai
+                  - docs/user-guide/concepts/bidirectional-streaming/models/custom
               - docs/user-guide/concepts/bidirectional-streaming/io
               - docs/user-guide/concepts/bidirectional-streaming/events
               - docs/user-guide/concepts/bidirectional-streaming/interruption

@@ -15,6 +15,7 @@ import asyncio
 import base64
 import concurrent.futures
 import json
+from pathlib import Path
 from unittest.mock import ANY, AsyncMock, Mock, patch
 
 import pytest
@@ -40,12 +41,18 @@ from strands.experimental.bidi.types.events import (
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
     BidiTextInputEvent,
+    BidiToolUsesCompleteEvent,
     BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
 )
-from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolResult
+
+from ._tool_contract import assert_tool_group_contract
+
+
+def _tool_result_message(*tool_results: ToolResult):
+    return {"role": "user", "content": [{"toolResult": result} for result in tool_results]}
 
 
 # Test fixtures
@@ -69,6 +76,13 @@ def mock_stream():
     stream.input_stream.close = AsyncMock()
     stream.await_output = AsyncMock()
     return stream
+
+
+@pytest.fixture
+def nova_tool_use_output_events():
+    """Load the redacted tool block from the official Nova 2 Sonic output-event example."""
+    fixture_path = Path(__file__).parent / "fixtures" / "nova_tool_use_output.json"
+    return json.loads(fixture_path.read_text())
 
 
 @pytest.fixture
@@ -781,6 +795,132 @@ async def test_completion_end_is_not_a_turn_boundary(nova_model):
     assert nova_model._current_completion_id is None
 
 
+def test_documented_nova_tool_block_emits_singleton_completion(nova_model, nova_tool_use_output_events):
+    """The redacted official event order produces one stream event and one singleton boundary."""
+    response_state = _ResponseState()
+
+    started = nova_model._convert_nova_event(nova_tool_use_output_events[0], response_state)
+    streamed = nova_model._convert_nova_event(nova_tool_use_output_events[1], response_state)
+    completed = nova_model._convert_nova_event(nova_tool_use_output_events[2], response_state)
+
+    assert isinstance(started[0], BidiResponseStartEvent)
+    assert streamed[0]["current_tool_use"] == {
+        "toolUseId": "tool-use-1",
+        "name": "get_weather",
+        "input": {"location": "Seattle"},
+    }
+    assert isinstance(completed[0], BidiToolUsesCompleteEvent)
+    assert completed[0].tool_uses == [streamed[0]["current_tool_use"]]
+    assert_tool_group_contract([streamed[0], completed[0]], completed[0].tool_uses)
+    assert response_state.tool_content_id is None
+    assert response_state.tool_use is None
+
+
+def test_nova_tool_block_rejects_missing_or_mismatched_content_ids(nova_model):
+    """Malformed tool block identifiers fail before a completion event can execute tools."""
+    with pytest.raises(ValueError, match="contentStart must have a non-empty contentId"):
+        nova_model._convert_nova_event(
+            {"contentStart": {"role": "TOOL", "type": "TOOL"}},
+            _ResponseState(),
+        )
+
+    with pytest.raises(ValueError, match="has no active TOOL contentStart"):
+        nova_model._convert_nova_event(
+            {
+                "toolUse": {
+                    "contentId": "orphan",
+                    "toolUseId": "tool-1",
+                    "toolName": "weather",
+                    "content": "{}",
+                }
+            },
+            _ResponseState(),
+        )
+
+    response_state = _ResponseState()
+    nova_model._convert_nova_event(
+        {"contentStart": {"role": "TOOL", "type": "TOOL", "contentId": "expected"}},
+        response_state,
+    )
+    with pytest.raises(ValueError, match="does not match active contentId 'expected'"):
+        nova_model._convert_nova_event(
+            {
+                "toolUse": {
+                    "contentId": "unexpected",
+                    "toolUseId": "tool-1",
+                    "toolName": "weather",
+                    "content": "{}",
+                }
+            },
+            response_state,
+        )
+
+    with pytest.raises(ValueError, match="contentEnd must have a non-empty contentId"):
+        nova_model._convert_nova_event(
+            {"contentEnd": {"type": "TOOL", "stopReason": "TOOL_USE"}},
+            response_state,
+        )
+
+
+def test_nova_tool_block_rejects_duplicate_events(nova_model):
+    """Only one contentStart and one toolUse are accepted for an active tool block."""
+    response_state = _ResponseState()
+    content_start = {"contentStart": {"role": "TOOL", "type": "TOOL", "contentId": "tool-content"}}
+    nova_model._convert_nova_event(content_start, response_state)
+
+    with pytest.raises(ValueError, match="while contentId 'tool-content' is active"):
+        nova_model._convert_nova_event(content_start, response_state)
+
+    tool_use = {
+        "toolUse": {
+            "contentId": "tool-content",
+            "toolUseId": "tool-1",
+            "toolName": "weather",
+            "content": "{}",
+        }
+    }
+    nova_model._convert_nova_event(tool_use, response_state)
+    with pytest.raises(ValueError, match="more than one toolUse"):
+        nova_model._convert_nova_event(tool_use, response_state)
+
+
+def test_nova_tool_block_rejects_mismatched_or_premature_end(nova_model):
+    """A tool block closes only after its matching toolUse and TOOL_USE contentEnd."""
+    response_state = _ResponseState()
+    nova_model._convert_nova_event(
+        {"contentStart": {"role": "TOOL", "type": "TOOL", "contentId": "tool-content"}},
+        response_state,
+    )
+
+    with pytest.raises(ValueError, match="ended before a toolUse"):
+        nova_model._convert_nova_event(
+            {"contentEnd": {"contentId": "tool-content", "type": "TOOL", "stopReason": "TOOL_USE"}},
+            response_state,
+        )
+
+    nova_model._convert_nova_event(
+        {
+            "toolUse": {
+                "contentId": "tool-content",
+                "toolUseId": "tool-1",
+                "toolName": "weather",
+                "content": "{}",
+            }
+        },
+        response_state,
+    )
+    with pytest.raises(ValueError, match="does not match active contentId 'tool-content'"):
+        nova_model._convert_nova_event(
+            {"contentEnd": {"contentId": "other", "type": "TOOL", "stopReason": "TOOL_USE"}},
+            response_state,
+        )
+    with pytest.raises(ValueError, match="must have stopReason 'TOOL_USE'"):
+        nova_model._convert_nova_event(
+            {"contentEnd": {"contentId": "tool-content", "type": "TOOL", "stopReason": "END_TURN"}},
+            response_state,
+        )
+
+
 @pytest.mark.asyncio
 async def test_connection_config_declared(nova_model):
     """Nova declares its reconnect deadline and cumulative usage semantics."""
@@ -1003,7 +1143,7 @@ async def test_send_all_content_types(nova_model, mock_stream):
         "status": "success",
         "content": [{"text": "Weather is sunny"}],
     }
-    await nova_model.send(ToolResultEvent(tool_result_single))
+    await nova_model.send_tool_results(_tool_result_message(tool_result_single))
     # Should send contentStart, toolResult, and contentEnd
     assert mock_stream.input_stream.send.called
 
@@ -1013,7 +1153,7 @@ async def test_send_all_content_types(nova_model, mock_stream):
         "status": "success",
         "content": [{"text": "Part 1"}, {"json": {"data": "value"}}],
     }
-    await nova_model.send(ToolResultEvent(tool_result_multi))
+    await nova_model.send_tool_results(_tool_result_message(tool_result_multi))
     assert mock_stream.input_stream.send.called
 
     await nova_model.stop()
@@ -1034,6 +1174,34 @@ async def test_send_edge_cases(nova_model):
     with pytest.raises(ValueError, match=r"content not supported"):
         await nova_model.send(image_event)
 
+    await nova_model.stop()
+
+
+@pytest.mark.asyncio
+async def test_send_grouped_tool_results(nova_model, mock_stream):
+    """A singleton Nova result group is validated before its events are written."""
+    await nova_model.start()
+    mock_stream.input_stream.send.reset_mock()
+    message = {
+        "role": "user",
+        "content": [
+            {"toolResult": {"toolUseId": "call-1", "status": "success", "content": [{"text": "first"}]}},
+        ],
+    }
+
+    await nova_model.send_tool_results(message)
+
+    sent_events = [
+        json.loads(call.args[0].value.bytes_.decode("utf-8"))["event"]
+        for call in mock_stream.input_stream.send.call_args_list
+    ]
+    tool_use_ids = [
+        event["contentStart"]["toolResultInputConfiguration"]["toolUseId"]
+        for event in sent_events
+        if "contentStart" in event
+    ]
+    assert tool_use_ids == ["call-1"]
+    assert len([event for event in sent_events if "toolResult" in event]) == 1
     await nova_model.stop()
 
 
@@ -1072,9 +1240,21 @@ async def test_event_conversion(nova_model):
     assert result.get("role") == "assistant"
     assert result.delta == "Hello, world!"
 
-    # Test tool use (now returns ToolUseStreamEvent from core strands)
+    # Test documented tool block sequence.
     tool_input = {"location": "Seattle"}
-    nova_event = {"toolUse": {"toolUseId": "tool-123", "toolName": "get_weather", "content": json.dumps(tool_input)}}
+    content_id = "tool-content-123"
+    nova_model._convert_nova_event(
+        {"contentStart": {"role": "TOOL", "type": "TOOL", "contentId": content_id}},
+        response_state,
+    )
+    nova_event = {
+        "toolUse": {
+            "contentId": content_id,
+            "toolUseId": "tool-123",
+            "toolName": "get_weather",
+            "content": json.dumps(tool_input),
+        }
+    }
     result = nova_model._convert_nova_event(
         nova_event,
         response_state,
@@ -1087,6 +1267,26 @@ async def test_event_conversion(nova_model):
     assert tool_use["name"] == "get_weather"
     assert tool_use["input"] == json.dumps(tool_input)
     assert result["current_tool_use"]["input"] == tool_input
+    completed = nova_model._convert_nova_event(
+        {"contentEnd": {"contentId": content_id, "type": "TOOL", "stopReason": "TOOL_USE"}},
+        response_state,
+    )
+    assert completed == [
+        BidiToolUsesCompleteEvent(
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "toolUse": {
+                            "toolUseId": "tool-123",
+                            "name": "get_weather",
+                            "input": tool_input,
+                        }
+                    }
+                ],
+            }
+        )
+    ]
 
     # Test interruption (now returns BidiInterruptionEvent)
     nova_event = {"stopReason": "INTERRUPTED"}
@@ -1573,7 +1773,7 @@ async def test_tool_result_single_content_unwrapped(nova_model, mock_stream):
         "content": [{"text": "Single result"}],
     }
 
-    await nova_model.send(ToolResultEvent(tool_result))
+    await nova_model.send_tool_results(_tool_result_message(tool_result))
 
     # Verify events were sent
     assert mock_stream.input_stream.send.called
@@ -1608,7 +1808,7 @@ async def test_tool_result_multiple_content_as_array(nova_model, mock_stream):
         "content": [{"text": "Part 1"}, {"json": {"data": "value"}}],
     }
 
-    await nova_model.send(ToolResultEvent(tool_result))
+    await nova_model.send_tool_results(_tool_result_message(tool_result))
 
     # Verify events were sent
     assert mock_stream.input_stream.send.called
@@ -1647,7 +1847,7 @@ async def test_tool_result_empty_content(nova_model, mock_stream):
         "content": [],
     }
 
-    await nova_model.send(ToolResultEvent(tool_result))
+    await nova_model.send_tool_results(_tool_result_message(tool_result))
 
     # Verify events were sent
     assert mock_stream.input_stream.send.called
@@ -1684,7 +1884,7 @@ async def test_tool_result_unsupported_content_type(nova_model):
     }
 
     with pytest.raises(ValueError, match=r"Content type not supported by Nova Sonic"):
-        await nova_model.send(ToolResultEvent(tool_result_image))
+        await nova_model.send_tool_results(_tool_result_message(tool_result_image))
 
     # Test with document content (unsupported)
     tool_result_doc: ToolResult = {
@@ -1694,7 +1894,7 @@ async def test_tool_result_unsupported_content_type(nova_model):
     }
 
     with pytest.raises(ValueError, match=r"Content type not supported by Nova Sonic"):
-        await nova_model.send(ToolResultEvent(tool_result_doc))
+        await nova_model.send_tool_results(_tool_result_message(tool_result_doc))
 
     # Test with mixed content (one unsupported)
     tool_result_mixed: ToolResult = {
@@ -1704,6 +1904,6 @@ async def test_tool_result_unsupported_content_type(nova_model):
     }
 
     with pytest.raises(ValueError, match=r"Content type not supported by Nova Sonic"):
-        await nova_model.send(ToolResultEvent(tool_result_mixed))
+        await nova_model.send_tool_results(_tool_result_message(tool_result_mixed))
 
     await nova_model.stop()

@@ -9,13 +9,15 @@ import time
 import warnings
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 
 from opentelemetry.trace import Span
 
+from ....hooks import AfterToolsEvent, BeforeToolsEvent
 from ....telemetry.tracer import get_tracer
-from ....types._events import ToolInterruptEvent, ToolResultEvent, ToolResultMessageEvent, ToolUseStreamEvent
-from ....types.content import Message
+from ....tools._validator import validate_and_prepare_tools
+from ....types._events import ToolInterruptEvent, ToolResultEvent, ToolResultMessageEvent
+from ....types.content import ContentBlock, Message
 from ....types.tools import ToolResult, ToolUse
 from .. import _telemetry
 from .._async import _TaskPool, stop_all
@@ -42,6 +44,7 @@ from ..types.events import (
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
     BidiTextInputEvent,
+    BidiToolUsesCompleteEvent,
     BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
@@ -130,6 +133,11 @@ class _BidiAgentLoop:
         # error) are dropped rather than forwarded after the swap.
         self._generation = 0
 
+        # Tool use IDs are connection-scoped. Keep admitted IDs for the current generation
+        # so a duplicate completion event cannot execute the same call twice.
+        self._admitted_tool_use_ids: dict[int, set[str]] = {}
+        self._tool_batches_in_flight = 0
+
         # Turn-boundary tracking, so a proactive reconnect waits for the current turn to
         # finish rather than cutting off a response or dropping an unanswered user turn.
         # A provider that emits neither response nor transcript events never leaves the
@@ -182,6 +190,8 @@ class _BidiAgentLoop:
             raise
         _telemetry.end_connection_span(self._tracer, connection_span)
         self._reset_token_tracking()
+        self._admitted_tool_use_ids.clear()
+        self._tool_batches_in_flight = 0
         self._reset_turn_state()
 
         self._event_queue = asyncio.Queue(maxsize=1)
@@ -229,7 +239,7 @@ class _BidiAgentLoop:
 
             await self._agent.hooks.invoke_callbacks_async(BidiAgentStopEvent(agent=self._agent))
 
-    async def send(self, event: BidiInputEvent | ToolResultEvent) -> None:
+    async def send(self, event: BidiInputEvent) -> None:
         """Send model event.
 
         Additionally, add text input to messages array.
@@ -308,7 +318,7 @@ class _BidiAgentLoop:
                 raise event
 
             # Check for graceful shutdown event
-            if isinstance(event, BidiConnectionCloseEvent) and event.reason == "user_request":
+            if isinstance(event, BidiConnectionCloseEvent) and event.reason in {"complete", "user_request"}:
                 yield event
                 break
 
@@ -378,17 +388,60 @@ class _BidiAgentLoop:
             )
 
     def _reset_turn_state(self) -> None:
-        """Reset turn tracking to the idle boundary state."""
+        """Reset provider response state without discarding active tool work."""
         self._response_active = False
         self._awaiting_response = False
-        self._turn_complete.set()
+        self._update_turn_state()
 
     def _update_turn_state(self) -> None:
-        """Mark the turn complete when idle, or in-progress while a response is owed/active."""
-        if self._response_active or self._awaiting_response:
+        """Mark the turn complete only when no response or tool work remains."""
+        if self._response_active or self._awaiting_response or self._tool_batches_in_flight:
             self._turn_complete.clear()
         else:
             self._turn_complete.set()
+
+    def _reserve_tool_use_ids(self, tool_uses: list[ToolUse], generation: int) -> None:
+        """Reserve tool use IDs once for the connection generation that issued them."""
+        if generation != self._generation:
+            raise RuntimeError(
+                f"tool_generation=<{generation}>, current_generation=<{self._generation}>"
+                " | cannot admit tool uses from a superseded connection"
+            )
+
+        self._discard_obsolete_tool_admissions()
+        admitted = self._admitted_tool_use_ids.setdefault(generation, set())
+        duplicate_ids: set[str] = set()
+        pending_ids: set[str] = set()
+        for tool_use in tool_uses:
+            tool_use_id = tool_use["toolUseId"]
+            if tool_use_id in admitted or tool_use_id in pending_ids:
+                duplicate_ids.add(tool_use_id)
+            pending_ids.add(tool_use_id)
+
+        if duplicate_ids:
+            duplicates = ", ".join(sorted(duplicate_ids))
+            raise ValueError(f"tool_use_ids=<[{duplicates}]> | tool uses already admitted")
+
+        admitted.update(pending_ids)
+
+    def _discard_obsolete_tool_admissions(self) -> None:
+        """Discard reservations from superseded connection generations."""
+        admitted = self._admitted_tool_use_ids.get(self._generation)
+        self._admitted_tool_use_ids.clear()
+        if admitted is not None:
+            self._admitted_tool_use_ids[self._generation] = admitted
+
+    def _begin_tool_batch(self) -> None:
+        """Hold the turn boundary while a tool batch is active."""
+        self._tool_batches_in_flight += 1
+        self._update_turn_state()
+
+    def _end_tool_batch(self) -> None:
+        """Release one active tool batch and update the turn boundary."""
+        if self._tool_batches_in_flight == 0:
+            raise RuntimeError("tool batch accounting underflow")
+        self._tool_batches_in_flight -= 1
+        self._update_turn_state()
 
     async def _restart_connection(
         self,
@@ -479,6 +532,7 @@ class _BidiAgentLoop:
         try:
             previous_reader = self._model_task
             self._generation += 1
+            self._discard_obsolete_tool_admissions()
             await self._restart_model(restart_kwargs)
             await self._wait_for_model_task(previous_reader)
             self._model_task = self._task_pool.create(self._run_model(self._generation))
@@ -682,9 +736,14 @@ class _BidiAgentLoop:
                 if generation != self._generation:
                     return
 
-                if isinstance(event, ToolUseStreamEvent):
-                    tool_use = event["current_tool_use"]
-                    self._task_pool.create(self._run_tool(tool_use, generation))
+                if isinstance(event, BidiToolUsesCompleteEvent):
+                    self._reserve_tool_use_ids(event.tool_uses, generation)
+                    self._begin_tool_batch()
+                    try:
+                        self._task_pool.create(self._run_tools(event.message, generation))
+                    except BaseException:
+                        self._end_tool_batch()
+                        raise
 
         except Exception as error:
             model_error = error
@@ -704,96 +763,178 @@ class _BidiAgentLoop:
                 )
                 response_span = None
 
-    async def _run_tool(self, tool_use: ToolUse, generation: int) -> None:
-        """Task for running tool requested by the model using the tool executor.
+    async def _run_tools(self, message: Message, generation: int) -> None:
+        """Run one complete provider-defined tool group.
 
         Args:
-            tool_use: Tool use request from model.
-            generation: Connection generation that issued the tool use. If a reconnect
-                advances the generation before the tool finishes, the result is recorded
-                in history but not sent, since the new connection never issued this
-                tool_use_id and would reject the result.
+            message: Assistant message containing the complete tool-use group.
+            generation: Connection generation that issued the group.
         """
-        logger.debug("tool_name=<%s> | tool execution starting", tool_use["name"])
-
-        tool_results: list[ToolResult] = []
-
-        # Ensure request_state exists for tools like strands_tools.stop
-        invocation_state = self._invocation_state
-        if "request_state" not in invocation_state:
-            invocation_state["request_state"] = {}
-
-        tool_call_span = self._tracer.start_tool_call_span(tool_use, parent_span=self._session_span)
-        tool_result: ToolResult | None = None
-        tool_error: Exception | None = None
-
         try:
-            tool_events = self._agent.tool_executor._stream(
-                self._agent,
-                tool_use,
-                tool_results,
-                invocation_state,
-                structured_output_context=None,
-            )
-
-            async for tool_event in tool_events:
-                if isinstance(tool_event, ToolInterruptEvent):
-                    self._agent._interrupt_state.deactivate()
-                    interrupt_names = [interrupt.name for interrupt in tool_event.interrupts]
-                    raise RuntimeError(f"interrupts={interrupt_names} | tool interrupts are not supported in bidi")
-
-                await self._event_queue.put(tool_event)
-
-            # Normal flow for all tools (including stop_conversation)
-            tool_result_event = cast(ToolResultEvent, tool_event)
-            tool_result = tool_result_event.tool_result
-
-            tool_use_message: Message = {"role": "assistant", "content": [{"toolUse": tool_use}]}
-            tool_result_message: Message = {"role": "user", "content": [{"toolResult": tool_result_event.tool_result}]}
-            await self._agent._append_messages(tool_use_message, tool_result_message)
-
-            await self._event_queue.put(ToolResultMessageEvent(tool_result_message))
-
-            # Check for stop_event_loop flag (set by strands_tools.stop, stop_conversation, or any custom tool)
-            request_state = invocation_state.get("request_state", {})
-            should_stop = request_state.get("stop_event_loop", False)
-
-            # Backward compatibility: also check for stop_conversation by name (deprecated)
-            if not should_stop and tool_use["name"] == "stop_conversation":
-                warnings.warn(
-                    "Stopping the event loop by tool name 'stop_conversation' is deprecated. "
-                    "Use request_state['stop_event_loop'] = True instead.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-                should_stop = True
-
-            if should_stop:
-                logger.info("stop_event_loop=<True> | stopping conversation")
-                connection_id = getattr(self._agent.model, "_connection_id", "unknown")
-                await self._event_queue.put(
-                    BidiConnectionCloseEvent(connection_id=connection_id, reason="user_request")
-                )
-                return  # Skip sending result to model
-
-            # Wait out any in-flight reconnect (send() gates on the swap), then re-check: a tool
-            # that finished across a swap must not send its result to the new connection, which
-            # never issued this tool_use_id and would reject it. The exchange is already recorded
-            # in messages above for the provider's reconnect replay.
-            await self._send_gate.wait()
-            if generation != self._generation:
-                logger.warning(
-                    "tool_use_id=<%s> | tool completed across reconnect | result recorded, not sent to new connection",
-                    tool_use["toolUseId"],
-                )
-                return
-
-            # Send result to model
-            await self.send(tool_result_event)
-
+            await self._run_tools_impl(message, generation)
+        except asyncio.CancelledError:
+            raise
         except Exception as error:
-            tool_error = error
             await self._event_queue.put(error)
         finally:
-            # Single end site ensures the span is closed even on cancellation.
-            self._tracer.end_tool_call_span(tool_call_span, tool_result=tool_result, error=tool_error)
+            self._end_tool_batch()
+
+    async def _run_tools_impl(self, message: Message, generation: int) -> None:
+        """Execute, record, and deliver one tool group."""
+        tool_uses = BidiToolUsesCompleteEvent(message).tool_uses
+        invocation_state = self._invocation_state
+        invocation_state.setdefault("request_state", {})
+
+        before_event, interrupts = await self._agent.hooks.invoke_callbacks_async(
+            BeforeToolsEvent(agent=self._agent, message=message, invocation_state=invocation_state)
+        )
+        if interrupts:
+            self._raise_unsupported_tool_interrupts(interrupts)
+
+        tool_results: list[ToolResult] = []
+        try:
+            if before_event.cancel:
+                tool_results.extend(self._build_cancelled_tool_results(tool_uses, before_event.cancel))
+                for tool_result in tool_results:
+                    await self._event_queue.put(ToolResultEvent(tool_result))
+            else:
+                validated_tool_uses: list[ToolUse] = []
+                validation_results: list[ToolResult] = []
+                invalid_tool_use_ids: list[str] = []
+                validate_and_prepare_tools(
+                    message,
+                    validated_tool_uses,
+                    validation_results,
+                    invalid_tool_use_ids,
+                )
+                tool_results.extend(validation_results)
+                executable_tool_uses = [
+                    tool_use for tool_use in validated_tool_uses if tool_use["toolUseId"] not in invalid_tool_use_ids
+                ]
+                tool_events = self._agent.tool_executor._execute(
+                    self._agent,
+                    executable_tool_uses,
+                    tool_results,
+                    None,
+                    self._session_span,
+                    invocation_state,
+                )
+                async for tool_event in tool_events:
+                    await self._event_queue.put(tool_event)
+                    if isinstance(tool_event, ToolInterruptEvent):
+                        self._raise_unsupported_tool_interrupts(tool_event.interrupts)
+        finally:
+            try:
+                hook_message = self._build_tool_result_message(tool_uses, tool_results, require_complete=False)
+            except (KeyError, TypeError, ValueError):
+                hook_message = {
+                    "role": "user",
+                    "content": [{"toolResult": result} for result in tool_results],
+                }
+            after_event, _ = await self._agent.hooks.invoke_callbacks_async(
+                AfterToolsEvent(agent=self._agent, message=hook_message, invocation_state=invocation_state)
+            )
+
+        tool_result_message = self._build_tool_result_message(tool_uses, tool_results, require_complete=True)
+        await self._agent._append_messages(message, tool_result_message)
+        await self._event_queue.put(ToolResultMessageEvent(tool_result_message))
+
+        if after_event.end_turn:
+            end_turn_message = self._build_end_turn_message(after_event.end_turn)
+            await self._agent._append_messages(end_turn_message)
+            connection_id = getattr(self._agent.model, "_connection_id", "unknown")
+            await self._event_queue.put(BidiConnectionCloseEvent(connection_id=connection_id, reason="complete"))
+            return
+
+        if self._should_stop_after_tools(tool_uses, invocation_state):
+            connection_id = getattr(self._agent.model, "_connection_id", "unknown")
+            await self._event_queue.put(BidiConnectionCloseEvent(connection_id=connection_id, reason="user_request"))
+            return
+
+        await self._send_gate.wait()
+        if generation != self._generation:
+            tool_use_ids = [tool_use["toolUseId"] for tool_use in tool_uses]
+            logger.warning(
+                "tool_use_ids=<%s> | tool group completed across reconnect | results recorded, not sent",
+                tool_use_ids,
+            )
+            return
+
+        await self._agent.model.send_tool_results(tool_result_message)
+
+    @staticmethod
+    def _build_cancelled_tool_results(tool_uses: list[ToolUse], cancel: bool | str) -> list[ToolResult]:
+        """Create one error result per tool when a batch hook cancels execution."""
+        message = cancel if isinstance(cancel, str) else "Tool cancelled by hook"
+        return [
+            {
+                "toolUseId": tool_use["toolUseId"],
+                "status": "error",
+                "content": [{"text": message}],
+            }
+            for tool_use in tool_uses
+        ]
+
+    @staticmethod
+    def _build_end_turn_message(end_turn: bool | str | list[ContentBlock]) -> Message:
+        """Convert an after-tools end-turn value to a final assistant message."""
+        if isinstance(end_turn, list):
+            content = list(end_turn)
+        elif isinstance(end_turn, str):
+            content = [{"text": end_turn}]
+        else:
+            content = [{"text": "Turn ended early by hook after tool execution"}]
+        return {"role": "assistant", "content": content}
+
+    @staticmethod
+    def _build_tool_result_message(
+        tool_uses: list[ToolUse],
+        tool_results: list[ToolResult],
+        *,
+        require_complete: bool,
+    ) -> Message:
+        """Build a provider-ordered tool-result message and validate result cardinality."""
+        expected_ids = {tool_use["toolUseId"] for tool_use in tool_uses}
+        results_by_id: dict[str, ToolResult] = {}
+        for result in tool_results:
+            tool_use_id = result["toolUseId"]
+            if tool_use_id not in expected_ids:
+                raise ValueError(f"tool_use_id=<{tool_use_id}> | result does not belong to tool group")
+            if tool_use_id in results_by_id:
+                raise ValueError(f"tool_use_id=<{tool_use_id}> | tool group contains duplicate results")
+            results_by_id[tool_use_id] = result
+
+        missing_ids = expected_ids.difference(results_by_id)
+        if require_complete and missing_ids:
+            missing = ", ".join(sorted(missing_ids))
+            raise ValueError(f"tool_use_ids=<[{missing}]> | tool group is missing results")
+
+        content: list[ContentBlock] = []
+        for tool_use in tool_uses:
+            tool_use_id = tool_use["toolUseId"]
+            if tool_use_id in results_by_id:
+                content.append({"toolResult": results_by_id[tool_use_id]})
+        return {"role": "user", "content": content}
+
+    def _raise_unsupported_tool_interrupts(self, interrupts: list[Any]) -> None:
+        """Raise the bidi unsupported-operation error for tool interrupts."""
+        self._agent._interrupt_state.deactivate()
+        interrupt_names = [interrupt.name for interrupt in interrupts]
+        raise RuntimeError(f"interrupts={interrupt_names} | tool interrupts are not supported in bidi")
+
+    @staticmethod
+    def _should_stop_after_tools(tool_uses: list[ToolUse], invocation_state: dict[str, Any]) -> bool:
+        """Return whether tool state requests conversation closure."""
+        request_state = invocation_state["request_state"]
+        if request_state.get("stop_event_loop", False):
+            logger.info("stop_event_loop=<True> | stopping conversation")
+            return True
+        if any(tool_use["name"] == "stop_conversation" for tool_use in tool_uses):
+            warnings.warn(
+                "Stopping the event loop by tool name 'stop_conversation' is deprecated. "
+                "Use request_state['stop_event_loop'] = True instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            return True
+        return False

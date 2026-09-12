@@ -20,13 +20,21 @@ from strands.experimental.bidi.types.events import (
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
     BidiTextInputEvent,
+    BidiToolUsesCompleteEvent,
     BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
 )
-from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent, MessageAddedEvent
+from strands.hooks import AfterToolCallEvent, AfterToolsEvent, BeforeToolCallEvent, BeforeToolsEvent, MessageAddedEvent
+from strands.tools.executors import ConcurrentToolExecutor, SequentialToolExecutor
 from strands.types._events import ToolResultEvent, ToolResultMessageEvent, ToolUseStreamEvent
 from tests.fixtures.mock_hook_provider import MockHookProvider
+
+
+def _tool_group_event(*tool_uses):
+    return BidiToolUsesCompleteEvent(
+        {"role": "assistant", "content": [{"toolUse": tool_use} for tool_use in tool_uses]}
+    )
 
 
 @pytest.fixture
@@ -119,34 +127,56 @@ async def test_model_event_waits_for_hook_and_checks_generation(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("superseded", [False, True])
-async def test_tool_starts_after_request_is_queued(loop, agent, superseded):
+async def test_tool_stream_event_is_visibility_only(loop, agent, agenerator):
     tool_use = {"toolUseId": "tool-1", "name": "time_tool", "input": {}}
     request = ToolUseStreamEvent(current_tool_use=tool_use, delta="")
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([request]))
+    with unittest.mock.patch.object(loop, "_run_tools", new_callable=unittest.mock.AsyncMock) as run_tools:
+        await loop.start()
+        try:
+            await asyncio.wait_for(loop._model_task, timeout=2)
+            assert loop._event_queue.get_nowait() == request
+            run_tools.assert_not_called()
+        finally:
+            await loop.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("superseded", [False, True])
+async def test_tool_group_starts_after_completion_event_is_queued(loop, agent, superseded):
+    tool_use = {"toolUseId": "tool-1", "name": "time_tool", "input": {}}
+    completion = _tool_group_event(tool_use)
     first = BidiTextInputEvent(text="first")
-    request_received = asyncio.Event()
+    completion_available = asyncio.Event()
 
     async def receive():
         yield first
-        request_received.set()
-        yield request
+        completion_available.set()
+        yield completion
+
+    started = asyncio.Event()
+
+    async def run_tools(message, generation):
+        assert not loop._turn_complete.is_set()
+        started.set()
+        loop._end_tool_batch()
 
     agent.model.receive = receive
-    with unittest.mock.patch.object(loop, "_run_tool", new_callable=unittest.mock.AsyncMock) as run_tool:
+    with unittest.mock.patch.object(loop, "_run_tools", new=run_tools):
         await loop.start()
         try:
-            await asyncio.wait_for(request_received.wait(), timeout=2)
-            run_tool.assert_not_called()
+            await asyncio.wait_for(completion_available.wait(), timeout=2)
+            assert not started.is_set()
             if superseded:
                 loop._generation += 1
 
             assert loop._event_queue.get_nowait() == first
             await asyncio.wait_for(loop._model_task, timeout=2)
-            assert loop._event_queue.get_nowait() == request
+            assert loop._event_queue.get_nowait() == completion
             if superseded:
-                run_tool.assert_not_called()
+                assert not started.is_set()
             else:
-                run_tool.assert_awaited_once_with(tool_use, loop._generation)
+                await asyncio.wait_for(started.wait(), timeout=2)
         finally:
             await loop.stop()
 
@@ -388,6 +418,8 @@ class _NonRestartableModel(BidiModel):
 
     async def send(self, content): ...
 
+    async def send_tool_results(self, message): ...
+
 
 @pytest.mark.asyncio
 async def test_restart_falls_back_to_stop_start_when_provider_is_not_restartable():
@@ -431,6 +463,9 @@ class _StreamModel(BidiModel):
         await self.start(system_prompt, tools, messages, **kwargs)
 
     async def send(self, content):
+        return None
+
+    async def send_tool_results(self, message):
         return None
 
     async def emit(self, event):
@@ -682,7 +717,7 @@ async def test_tool_result_not_sent_when_completed_during_reconnect(agenerator):
     model = unittest.mock.AsyncMock(spec=BidiModel)
     model.restart = unittest.mock.AsyncMock(side_effect=lambda *a, **k: order.append("restart"))
     model.get_connection_config.return_value = {}
-    model.send.side_effect = lambda event: order.append("send")
+    model.send_tool_results.side_effect = lambda message: order.append("send")
     model.receive = unittest.mock.Mock(return_value=agenerator([]))
 
     agent = BidiAgent(model=model, tools=[slow_tool], system_prompt="hi")
@@ -696,7 +731,8 @@ async def test_tool_result_not_sent_when_completed_during_reconnect(agenerator):
 
     drain_task = asyncio.create_task(drain())
     tool_use = {"toolUseId": "t1", "name": "slow_tool", "input": {}}
-    tool_task = asyncio.create_task(loop._run_tool(tool_use, loop._generation))
+    loop._begin_tool_batch()
+    tool_task = asyncio.create_task(loop._run_tools(_tool_group_event(tool_use).message, loop._generation))
     for _ in range(10):
         await asyncio.sleep(0)
 
@@ -871,6 +907,93 @@ async def test_response_complete_clears_awaiting_response(loop, agent, agenerato
     assert loop._turn_complete.is_set()  # turn is idle, so a proactive reconnect fires immediately
 
     await loop.stop()
+
+
+def test_tool_use_ids_can_only_be_admitted_once_per_generation(loop):
+    tool_uses = [{"toolUseId": "tool-1", "name": "time_tool", "input": {}}]
+
+    loop._reserve_tool_use_ids(tool_uses, loop._generation)
+
+    with pytest.raises(ValueError, match="tool-1.*already admitted"):
+        loop._reserve_tool_use_ids(tool_uses, loop._generation)
+
+
+def test_tool_use_admission_rejects_duplicate_ids_within_batch(loop):
+    tool_uses = [
+        {"toolUseId": "tool-1", "name": "time_tool", "input": {}},
+        {"toolUseId": "tool-1", "name": "time_tool", "input": {}},
+    ]
+
+    with pytest.raises(ValueError, match="tool-1.*already admitted"):
+        loop._reserve_tool_use_ids(tool_uses, loop._generation)
+
+    assert loop._admitted_tool_use_ids[loop._generation] == set()
+
+
+def test_tool_use_admission_rejects_superseded_generation(loop):
+    with pytest.raises(RuntimeError, match="superseded connection"):
+        loop._reserve_tool_use_ids(
+            [{"toolUseId": "tool-1", "name": "time_tool", "input": {}}],
+            loop._generation - 1,
+        )
+
+
+def test_obsolete_tool_use_admissions_are_discarded(loop):
+    current_generation = loop._generation
+    loop._admitted_tool_use_ids = {
+        current_generation - 1: {"stale"},
+        current_generation: {"current"},
+    }
+
+    loop._discard_obsolete_tool_admissions()
+
+    assert loop._admitted_tool_use_ids == {current_generation: {"current"}}
+
+
+def test_tool_batch_holds_turn_boundary_until_final_release(loop):
+    loop._begin_tool_batch()
+    loop._begin_tool_batch()
+
+    assert loop._tool_batches_in_flight == 2
+    assert not loop._turn_complete.is_set()
+
+    loop._end_tool_batch()
+    assert loop._tool_batches_in_flight == 1
+    assert not loop._turn_complete.is_set()
+
+    loop._end_tool_batch()
+    assert loop._tool_batches_in_flight == 0
+    assert loop._turn_complete.is_set()
+
+
+def test_reset_turn_state_preserves_active_tool_batch(loop):
+    loop._response_active = True
+    loop._awaiting_response = True
+    loop._begin_tool_batch()
+
+    loop._reset_turn_state()
+
+    assert loop._response_active is False
+    assert loop._awaiting_response is False
+    assert loop._tool_batches_in_flight == 1
+    assert not loop._turn_complete.is_set()
+
+
+def test_tool_batch_accounting_rejects_underflow(loop):
+    with pytest.raises(RuntimeError, match="underflow"):
+        loop._end_tool_batch()
+
+
+@pytest.mark.parametrize("response_active,awaiting_response", [(True, False), (False, True)])
+def test_final_tool_batch_release_preserves_other_open_turn_state(loop, response_active, awaiting_response):
+    loop._begin_tool_batch()
+    loop._response_active = response_active
+    loop._awaiting_response = awaiting_response
+
+    loop._end_tool_batch()
+
+    assert loop._tool_batches_in_flight == 0
+    assert not loop._turn_complete.is_set()
 
 
 @pytest.mark.asyncio
@@ -1085,20 +1208,22 @@ async def test_bidi_agent_loop_receive_tool_use(loop, agent, agenerator):
     tool_result = {"toolUseId": "t1", "status": "success", "content": [{"text": "12:00"}]}
 
     tool_use_event = ToolUseStreamEvent(current_tool_use=tool_use, delta="")
+    completion_event = _tool_group_event(tool_use)
     tool_result_event = ToolResultEvent(tool_result)
 
-    agent.model.receive = unittest.mock.Mock(return_value=agenerator([tool_use_event]))
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([tool_use_event, completion_event]))
 
     await loop.start()
 
     tru_events = []
     async for event in loop.receive():
         tru_events.append(event)
-        if len(tru_events) >= 3:
+        if len(tru_events) >= 4:
             break
 
     exp_events = [
         tool_use_event,
+        completion_event,
         tool_result_event,
         # The message is assigned a durable tracking_id when appended to history.
         ToolResultMessageEvent(
@@ -1114,7 +1239,384 @@ async def test_bidi_agent_loop_receive_tool_use(loop, agent, agenerator):
     ]
     assert tru_messages == exp_messages
 
-    agent.model.send.assert_called_with(tool_result_event)
+    agent.model.send_tool_results.assert_awaited_once_with(tru_messages[1])
+
+
+@pytest.mark.asyncio
+async def test_batch_hooks_and_per_tool_hooks_fire_once_for_group(agent, agenerator):
+    @tool(name="first_tool")
+    async def first_tool():
+        return "first"
+
+    @tool(name="second_tool")
+    async def second_tool():
+        return "second"
+
+    agent.tool_registry.register_tool(first_tool)
+    agent.tool_registry.register_tool(second_tool)
+    tool_uses = [
+        {"toolUseId": "second-id", "name": "second_tool", "input": {}},
+        {"toolUseId": "first-id", "name": "first_tool", "input": {}},
+    ]
+    completion = _tool_group_event(*tool_uses)
+    hooks = MockHookProvider([BeforeToolsEvent, BeforeToolCallEvent, AfterToolCallEvent, AfterToolsEvent])
+    agent.hooks.add_hook(hooks)
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([completion]))
+
+    await agent.start()
+    try:
+        async for event in agent.receive():
+            if isinstance(event, ToolResultMessageEvent):
+                result_message = event["message"]
+                break
+    finally:
+        await agent.stop()
+
+    assert hooks.event_types_received.count(BeforeToolsEvent) == 1
+    assert hooks.event_types_received.count(AfterToolsEvent) == 1
+    assert hooks.event_types_received.count(BeforeToolCallEvent) == 2
+    assert hooks.event_types_received.count(AfterToolCallEvent) == 2
+    assert [block["toolResult"]["toolUseId"] for block in result_message["content"]] == [
+        "second-id",
+        "first-id",
+    ]
+    before_batch = next(event for event in hooks.events_received if isinstance(event, BeforeToolsEvent))
+    after_batch = next(event for event in hooks.events_received if isinstance(event, AfterToolsEvent))
+    assert before_batch.message is completion.message
+    assert after_batch.message["role"] == result_message["role"]
+    assert after_batch.message["content"] == result_message["content"]
+    agent.model.send_tool_results.assert_awaited_once_with(result_message)
+
+
+@pytest.mark.asyncio
+async def test_before_tools_cancellation_skips_per_tool_hooks(agent, agenerator):
+    tool_uses = [
+        {"toolUseId": "first-id", "name": "time_tool", "input": {}},
+        {"toolUseId": "second-id", "name": "time_tool", "input": {}},
+    ]
+    completion = _tool_group_event(*tool_uses)
+    hooks = MockHookProvider([BeforeToolsEvent, BeforeToolCallEvent, AfterToolCallEvent, AfterToolsEvent])
+    agent.hooks.add_hook(hooks)
+    agent.hooks.add_callback(BeforeToolsEvent, lambda event: setattr(event, "cancel", "blocked by policy"))
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([completion]))
+
+    await agent.start()
+    results = []
+    try:
+        async for event in agent.receive():
+            if isinstance(event, ToolResultEvent):
+                results.append(event.tool_result)
+            if isinstance(event, ToolResultMessageEvent):
+                result_message = event["message"]
+                break
+    finally:
+        await agent.stop()
+
+    assert hooks.event_types_received.count(BeforeToolsEvent) == 1
+    assert hooks.event_types_received.count(AfterToolsEvent) == 1
+    assert BeforeToolCallEvent not in hooks.event_types_received
+    assert AfterToolCallEvent not in hooks.event_types_received
+    assert results == [
+        {
+            "toolUseId": tool_use["toolUseId"],
+            "status": "error",
+            "content": [{"text": "blocked by policy"}],
+        }
+        for tool_use in tool_uses
+    ]
+    agent.model.send_tool_results.assert_awaited_once_with(result_message)
+
+
+@pytest.mark.asyncio
+async def test_invalid_tool_name_becomes_grouped_result_and_fires_after_tools(agent, agenerator):
+    tool_use = {"toolUseId": "invalid-id", "name": "invalid tool name", "input": {}}
+    hooks = MockHookProvider([BeforeToolsEvent, BeforeToolCallEvent, AfterToolCallEvent, AfterToolsEvent])
+    agent.hooks.add_hook(hooks)
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([_tool_group_event(tool_use)]))
+
+    await agent.start()
+    try:
+        async for event in agent.receive():
+            if isinstance(event, ToolResultMessageEvent):
+                result = event["message"]["content"][0]["toolResult"]
+                break
+    finally:
+        await agent.stop()
+
+    assert result["toolUseId"] == "invalid-id"
+    assert result["status"] == "error"
+    assert "invalid" in result["content"][0]["text"].lower()
+    assert hooks.event_types_received == [BeforeToolsEvent, AfterToolsEvent]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "executor,expected_max_active",
+    [(SequentialToolExecutor(), 1), (ConcurrentToolExecutor(), 2)],
+)
+async def test_bidi_uses_configured_tool_executor_strategy(agent, agenerator, executor, expected_max_active):
+    active = 0
+    max_active = 0
+
+    async def run_probe():
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.02)
+        active -= 1
+        return "done"
+
+    @tool(name="probe_one")
+    async def probe_one():
+        return await run_probe()
+
+    @tool(name="probe_two")
+    async def probe_two():
+        return await run_probe()
+
+    agent.tool_executor = executor
+    agent.tool_registry.register_tool(probe_one)
+    agent.tool_registry.register_tool(probe_two)
+    tool_uses = [
+        {"toolUseId": "one", "name": "probe_one", "input": {}},
+        {"toolUseId": "two", "name": "probe_two", "input": {}},
+    ]
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([_tool_group_event(*tool_uses)]))
+
+    await agent.start()
+    try:
+        async for event in agent.receive():
+            if isinstance(event, ToolResultMessageEvent):
+                break
+    finally:
+        await agent.stop()
+
+    assert max_active == expected_max_active
+
+
+@pytest.mark.asyncio
+async def test_duplicate_completion_event_executes_tool_once(agent, agenerator):
+    calls = 0
+
+    @tool(name="count_once")
+    async def count_once():
+        nonlocal calls
+        calls += 1
+        return "done"
+
+    agent.tool_registry.register_tool(count_once)
+    completion = _tool_group_event({"toolUseId": "once", "name": "count_once", "input": {}})
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([completion, completion]))
+
+    await agent.start()
+    try:
+        with pytest.raises(ValueError, match="already admitted"):
+            async for _ in agent.receive():
+                pass
+    finally:
+        await agent.stop()
+
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_batch_release_runs_when_before_tools_hook_raises(agent, agenerator):
+    agent.hooks.add_callback(BeforeToolsEvent, lambda event: (_ for _ in ()).throw(RuntimeError("hook failed")))
+    completion = _tool_group_event({"toolUseId": "tool-1", "name": "time_tool", "input": {}})
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([completion]))
+
+    await agent.start()
+    try:
+        with pytest.raises(RuntimeError, match="hook failed"):
+            async for _ in agent.receive():
+                pass
+        assert agent._loop._tool_batches_in_flight == 0
+        assert agent._loop._turn_complete.is_set()
+    finally:
+        await agent.stop()
+
+
+@pytest.mark.asyncio
+async def test_before_tools_interrupt_has_no_after_tools_pair(agent, agenerator):
+    events = []
+
+    def before(event):
+        events.append(type(event))
+        event.interrupt("approval", reason="approval required")
+
+    agent.hooks.add_callback(BeforeToolsEvent, before)
+    agent.hooks.add_callback(AfterToolsEvent, lambda event: events.append(type(event)))
+    completion = _tool_group_event({"toolUseId": "tool-1", "name": "time_tool", "input": {}})
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([completion]))
+
+    await agent.start()
+    try:
+        with pytest.raises(RuntimeError, match="tool interrupts are not supported in bidi"):
+            async for _ in agent.receive():
+                pass
+    finally:
+        await agent.stop()
+
+    assert events == [BeforeToolsEvent]
+    agent.model.send_tool_results.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_per_tool_interrupt_fires_after_tools_without_partial_send(agent, agenerator):
+    events = []
+    agent.hooks.add_callback(BeforeToolsEvent, lambda event: events.append(type(event)))
+    agent.hooks.add_callback(AfterToolsEvent, lambda event: events.append(type(event)))
+    agent.hooks.add_callback(
+        BeforeToolCallEvent,
+        lambda event: event.interrupt("approval", reason="approval required"),
+    )
+    completion = _tool_group_event({"toolUseId": "tool-1", "name": "time_tool", "input": {}})
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([completion]))
+
+    await agent.start()
+    try:
+        with pytest.raises(RuntimeError, match="tool interrupts are not supported in bidi"):
+            async for _ in agent.receive():
+                pass
+    finally:
+        await agent.stop()
+
+    assert events == [BeforeToolsEvent, AfterToolsEvent]
+    assert agent.messages == []
+    agent.model.send_tool_results.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "end_turn,expected_content",
+    [
+        (True, [{"text": "Turn ended early by hook after tool execution"}]),
+        ("finished by hook", [{"text": "finished by hook"}]),
+        ([{"text": "structured finish"}], [{"text": "structured finish"}]),
+    ],
+)
+async def test_after_tools_end_turn_records_and_closes_without_provider_send(
+    agent, agenerator, end_turn, expected_content
+):
+    def end_after_tools(event):
+        event.end_turn = end_turn
+
+    agent.hooks.add_callback(AfterToolsEvent, end_after_tools)
+    completion = _tool_group_event({"toolUseId": "tool-1", "name": "time_tool", "input": {}})
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([completion]))
+
+    await agent.start()
+    received = []
+    try:
+        async for event in agent.receive():
+            received.append(event)
+    finally:
+        await agent.stop()
+
+    close_event = received[-1]
+    assert isinstance(close_event, BidiConnectionCloseEvent)
+    assert close_event.reason == "complete"
+    assert [message["role"] for message in agent.messages] == ["assistant", "user", "assistant"]
+    assert agent.messages[-1]["content"] == expected_content
+    agent.model.send_tool_results.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_end_turn_takes_precedence_over_stop_event_loop(agent, agenerator):
+    agent.hooks.add_callback(AfterToolsEvent, lambda event: setattr(event, "end_turn", True))
+    completion = _tool_group_event({"toolUseId": "tool-1", "name": "time_tool", "input": {}})
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([completion]))
+
+    await agent.start(invocation_state={"request_state": {"stop_event_loop": True}})
+    try:
+        async for event in agent.receive():
+            if isinstance(event, BidiConnectionCloseEvent):
+                close_event = event
+    finally:
+        await agent.stop()
+
+    assert close_event.reason == "complete"
+    agent.model.send_tool_results.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_provider_send_failure_is_surfaced_once_after_history_is_recorded(agent, agenerator):
+    completion = _tool_group_event({"toolUseId": "tool-1", "name": "time_tool", "input": {}})
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([completion]))
+    agent.model.send_tool_results.side_effect = RuntimeError("provider write failed")
+
+    await agent.start()
+    try:
+        with pytest.raises(RuntimeError, match="provider write failed"):
+            async for _ in agent.receive():
+                pass
+    finally:
+        await agent.stop()
+
+    assert [message["role"] for message in agent.messages] == ["assistant", "user"]
+    assert agent.model.send_tool_results.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_barge_in_does_not_cancel_admitted_tool(agent, agenerator):
+    release_tool = asyncio.Event()
+    calls = 0
+
+    @tool(name="slow_barge_tool")
+    async def slow_barge_tool():
+        nonlocal calls
+        calls += 1
+        await release_tool.wait()
+        return "done"
+
+    agent.tool_registry.register_tool(slow_barge_tool)
+    completion = _tool_group_event({"toolUseId": "tool-1", "name": "slow_barge_tool", "input": {}})
+    interruption = BidiInterruptionEvent(reason="user_speech")
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([completion, interruption]))
+
+    await agent.start()
+    try:
+        async for event in agent.receive():
+            if event is interruption:
+                release_tool.set()
+            if isinstance(event, ToolResultMessageEvent):
+                break
+        for _ in range(20):
+            if agent.model.send_tool_results.await_count == 1:
+                break
+            await asyncio.sleep(0)
+    finally:
+        release_tool.set()
+        await agent.stop()
+
+    assert calls == 1
+    agent.model.send_tool_results.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_tool_batch_cancellation_releases_boundary_without_opening_send_gate(agent, agenerator):
+    completion = _tool_group_event({"toolUseId": "tool-1", "name": "time_tool", "input": {}})
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([]))
+    loop = agent._loop
+
+    await agent.start()
+    loop._send_gate.clear()
+    loop._begin_tool_batch()
+    task = asyncio.create_task(loop._run_tools(completion.message, loop._generation))
+    try:
+        while len(agent.messages) < 2:
+            await asyncio.wait_for(loop._event_queue.get(), timeout=2)
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert loop._tool_batches_in_flight == 0
+        assert loop._turn_complete.is_set()
+        assert not loop._send_gate.is_set()
+        agent.model.send_tool_results.assert_not_awaited()
+    finally:
+        await agent.stop()
 
 
 @pytest.mark.asyncio
@@ -1134,14 +1636,15 @@ async def test_bidi_agent_loop_tool_result_not_sent_after_reconnect(loop, agent,
     issuing_generation = loop._generation
     loop._generation += 1
 
-    # Drain the event queue (maxsize=1) so _run_tool's puts do not block.
+    # Drain the event queue (maxsize=1) so _run_tools's puts do not block.
     async def drain():
         while True:
             await loop._event_queue.get()
 
     drain_task = asyncio.create_task(drain())
     try:
-        await loop._run_tool(tool_use, issuing_generation)
+        loop._begin_tool_batch()
+        await loop._run_tools(_tool_group_event(tool_use).message, issuing_generation)
         await asyncio.sleep(0)
     finally:
         drain_task.cancel()
@@ -1152,7 +1655,7 @@ async def test_bidi_agent_loop_tool_result_not_sent_after_reconnect(loop, agent,
     assert agent.messages[0]["content"] == [{"toolUse": tool_use}]
     assert agent.messages[1]["content"][0]["toolResult"]["toolUseId"] == "t1"
     # ...but the stale result is not sent to the reconnected connection.
-    agent.model.send.assert_not_called()
+    agent.model.send_tool_results.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -1163,9 +1666,9 @@ async def test_bidi_agent_loop_request_state_initialized_for_tools(loop, agent, 
     even when invocation_state is not provided by the user.
     """
     tool_use = {"toolUseId": "t2", "name": "time_tool", "input": {}}
-    tool_use_event = ToolUseStreamEvent(current_tool_use=tool_use, delta="")
+    completion_event = _tool_group_event(tool_use)
 
-    agent.model.receive = unittest.mock.Mock(return_value=agenerator([tool_use_event]))
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([completion_event]))
 
     # Start without providing invocation_state
     await loop.start()
@@ -1197,9 +1700,9 @@ async def test_bidi_agent_loop_stop_event_loop_flag(agent, agenerator):
     loop = agent._loop
 
     tool_use = {"toolUseId": "t3", "name": "time_tool", "input": {}}
-    tool_use_event = ToolUseStreamEvent(current_tool_use=tool_use, delta="")
+    completion_event = _tool_group_event(tool_use)
 
-    agent.model.receive = unittest.mock.Mock(return_value=agenerator([tool_use_event]))
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([completion_event]))
 
     # Start with request_state that already has stop_event_loop=True
     # This simulates a tool having set it during execution
@@ -1209,7 +1712,7 @@ async def test_bidi_agent_loop_stop_event_loop_flag(agent, agenerator):
     async for event in loop.receive():
         tru_events.append(event)
 
-    # Should receive: tool_use_event, tool_result_event, tool_result_message, connection_close
+    # Should receive: completion_event, tool_result_event, tool_result_message, connection_close
     assert len(tru_events) == 4
 
     # Verify tool executed successfully
@@ -1223,7 +1726,7 @@ async def test_bidi_agent_loop_stop_event_loop_flag(agent, agenerator):
     assert connection_close_event["reason"] == "user_request"
 
     # Verify model.send was NOT called (tool result not sent to model)
-    agent.model.send.assert_not_called()
+    agent.model.send_tool_results.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -1238,9 +1741,9 @@ async def test_bidi_agent_loop_stop_conversation_deprecated_but_works(loop, agen
     agent.tool_registry.register_tool(stop_conversation)
 
     tool_use = {"toolUseId": "t5", "name": "stop_conversation", "input": {}}
-    tool_use_event = ToolUseStreamEvent(current_tool_use=tool_use, delta="")
+    completion_event = _tool_group_event(tool_use)
 
-    agent.model.receive = unittest.mock.Mock(return_value=agenerator([tool_use_event]))
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([completion_event]))
 
     await loop.start()
 
@@ -1250,7 +1753,7 @@ async def test_bidi_agent_loop_stop_conversation_deprecated_but_works(loop, agen
         async for event in loop.receive():
             tru_events.append(event)
 
-    # Should receive: tool_use_event, tool_result_event, tool_result_message, connection_close
+    # Should receive: completion_event, tool_result_event, tool_result_message, connection_close
     assert len(tru_events) == 4
 
     # Verify tool executed successfully
@@ -1265,7 +1768,7 @@ async def test_bidi_agent_loop_stop_conversation_deprecated_but_works(loop, agen
     assert connection_close_event["reason"] == "user_request"
 
     # Verify model.send was NOT called (tool result not sent to model)
-    agent.model.send.assert_not_called()
+    agent.model.send_tool_results.assert_not_awaited()
 
     # Verify deprecation warnings were emitted (from both the tool itself and the loop name check)
     deprecation_warnings = [w for w in caught_warnings if issubclass(w.category, DeprecationWarning)]
@@ -1292,18 +1795,15 @@ async def test_tools_share_invocation_state(agent, agenerator, invocation_state)
     hooks = MockHookProvider([BeforeToolCallEvent, AfterToolCallEvent])
     agent.hooks.add_hook(hooks)
     tool_uses = [{"toolUseId": f"call-{number}", "name": count_calls.tool_name, "input": {}} for number in (1, 2)]
-    agent.model.receive = unittest.mock.Mock(
-        return_value=agenerator([ToolUseStreamEvent(current_tool_use=tool_use, delta="") for tool_use in tool_uses])
-    )
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([_tool_group_event(*tool_uses)]))
 
     await agent.start(invocation_state=invocation_state)
     tru_results = []
     try:
         async for event in agent.receive():
             if isinstance(event, ToolResultMessageEvent):
-                tru_results.append(event["message"]["content"][0]["toolResult"])
-                if len(tru_results) == len(tool_uses):
-                    break
+                tru_results.extend(block["toolResult"] for block in event["message"]["content"])
+                break
     finally:
         await agent.stop()
 

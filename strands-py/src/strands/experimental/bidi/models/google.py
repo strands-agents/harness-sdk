@@ -25,8 +25,8 @@ from google.genai import types as genai_types
 from google.genai.types import LiveConnectConfigOrDict, LiveServerContent, LiveServerMessage, UsageMetadata
 from typing_extensions import Unpack, override
 
-from ....types._events import ToolResultEvent, ToolUseStreamEvent
-from ....types.content import Messages
+from ....types._events import ToolUseStreamEvent
+from ....types.content import Message, Messages
 from ....types.tools import ToolResult, ToolSpec, ToolUse
 from .._async import stop_all
 from ..types.events import (
@@ -40,6 +40,7 @@ from ..types.events import (
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
     BidiTextInputEvent,
+    BidiToolUsesCompleteEvent,
     BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
@@ -53,7 +54,7 @@ from .configs import (
     _validate_audio_config,
     _validate_model_config,
 )
-from .model import AudioCapable, BidiModel, BidiModelTimeoutError
+from .model import AudioCapable, BidiModel, BidiModelTimeoutError, _validate_tool_result_message
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +129,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         self._live_session_context_manager: Any = None
         self._live_session_handle: str | None = None
         self._connection_id: str | None = None
+        self._tool_call_names: dict[str, str] = {}
 
     @override
     def update_config(self, **model_config: Unpack[BidiModelConfig]) -> None:  # type: ignore[override]
@@ -166,6 +168,8 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         """
         if self._connection_id:
             raise RuntimeError("model already started | call stop before starting again")
+
+        self._tool_call_names.clear()
 
         # A fresh start (no handle) drops any handle from a prior session; otherwise the next
         # proactive reconnect would resume that conversation into this one. Resume paths pass the
@@ -299,12 +303,14 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
             )
 
         if message.tool_call and message.tool_call.function_calls:
+            tool_uses: list[ToolUse] = []
             for func_call in message.tool_call.function_calls:
                 tool_use_event: ToolUse = {
                     "toolUseId": cast(str, func_call.id),
                     "name": cast(str, func_call.name),
                     "input": func_call.args or {},
                 }
+                tool_uses.append(tool_use_event)
                 # Create ToolUseStreamEvent for consistency with standard agent
                 events.append(
                     ToolUseStreamEvent(
@@ -318,6 +324,22 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
                         current_tool_use=dict(tool_use_event),
                     )
                 )
+
+            tool_use_message: Message = {
+                "role": "assistant",
+                "content": [{"toolUse": tool_use} for tool_use in tool_uses],
+            }
+            completion_event = BidiToolUsesCompleteEvent(tool_use_message)
+            duplicate_ids = {tool_use["toolUseId"] for tool_use in completion_event.tool_uses}.intersection(
+                self._tool_call_names
+            )
+            if duplicate_ids:
+                duplicate_id = sorted(duplicate_ids)[0]
+                raise ValueError(f"gemini emitted duplicate pending toolUseId '{duplicate_id}'")
+            self._tool_call_names.update(
+                {tool_use["toolUseId"]: tool_use["name"] for tool_use in completion_event.tool_uses}
+            )
+            events.append(completion_event)
 
         if message.usage_metadata:
             events.append(self._convert_usage_metadata(message.usage_metadata))
@@ -475,14 +497,14 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
 
     async def send(
         self,
-        content: BidiInputEvent | ToolResultEvent,
+        content: BidiInputEvent,
     ) -> None:
-        """Unified send method for all content types. Sends the given inputs to the Gemini Live API.
+        """Send user input to the Gemini Live API.
 
         Dispatches to appropriate internal handler based on content type.
 
         Args:
-            content: Typed event (BidiTextInputEvent, BidiAudioInputEvent, BidiImageInputEvent, or ToolResultEvent).
+            content: Typed text, audio, or image input event.
 
         Raises:
             ValueError: If content type not supported (e.g., image content).
@@ -496,10 +518,6 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
             await self._send_audio_content(content)
         elif isinstance(content, BidiImageInputEvent):
             await self._send_image_content(content)
-        elif isinstance(content, ToolResultEvent):
-            tool_result = content.get("tool_result")
-            if tool_result:
-                await self._send_tool_result(tool_result)
         else:
             raise ValueError(f"content_type={type(content)} | content not supported")
 
@@ -541,8 +559,28 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         """
         await self._live_session.send_realtime_input(text=text)
 
-    async def _send_tool_result(self, tool_result: ToolResult) -> None:
-        """Internal: Send tool result using Gemini Live API."""
+    async def send_tool_results(self, message: Message) -> None:
+        """Send one complete tool-result group to Gemini Live."""
+        if not self._connection_id:
+            raise RuntimeError("model not started | call start before sending")
+
+        tool_results = _validate_tool_result_message(message)
+        missing_ids = [
+            result["toolUseId"] for result in tool_results if result["toolUseId"] not in self._tool_call_names
+        ]
+        if missing_ids:
+            raise ValueError(f"tool result has no pending Gemini function call for toolUseId '{missing_ids[0]}'")
+
+        function_responses = [
+            self._format_tool_result(tool_result, self._tool_call_names[tool_result["toolUseId"]])
+            for tool_result in tool_results
+        ]
+        await self._live_session.send_tool_response(function_responses=function_responses)
+        for tool_result in tool_results:
+            self._tool_call_names.pop(tool_result["toolUseId"], None)
+
+    def _format_tool_result(self, tool_result: ToolResult, function_name: str) -> genai_types.FunctionResponse:
+        """Convert a Strands tool result to a Gemini function response."""
         tool_use_id = tool_result.get("toolUseId")
         content = tool_result.get("content", [])
 
@@ -562,15 +600,11 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
             # Multiple items - send as array
             result_data = {"result": content}
 
-        # Create function response
-        func_response = genai_types.FunctionResponse(
+        return genai_types.FunctionResponse(
             id=tool_use_id,
-            name=tool_use_id,  # Gemini uses name as identifier
+            name=function_name,
             response=result_data,
         )
-
-        # Send tool response
-        await self._live_session.send_tool_response(function_responses=[func_response])
 
     async def stop(self) -> None:
         """Close Gemini Live API connection."""
@@ -589,6 +623,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
 
         async def stop_connection() -> None:
             self._connection_id = None
+            self._tool_call_names.clear()
 
         await stop_all(stop_session, stop_connection)
 

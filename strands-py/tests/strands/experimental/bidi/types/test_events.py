@@ -5,9 +5,12 @@ This module tests JSON serialization for all bidirectional streaming event types
 
 import base64
 import json
+from typing import get_args
 
 import pytest
 
+import strands.experimental.bidi as bidi
+import strands.experimental.bidi.types as bidi_types
 from strands.experimental.bidi.types.events import (
     BidiAudioInputEvent,
     BidiAudioStreamEvent,
@@ -19,11 +22,13 @@ from strands.experimental.bidi.types.events import (
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
     BidiTextInputEvent,
+    BidiToolUsesCompleteEvent,
     BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
     _normalize_role,
 )
+from strands.types.content import Message
 
 
 @pytest.mark.parametrize(
@@ -207,3 +212,83 @@ def test_transcript_stream_event_normalizes_role_casing():
     )
 
     assert event.role == "user"
+
+
+def test_tool_uses_complete_event_accepts_single_tool():
+    """A valid singleton group exposes its message and tool use."""
+    message: Message = {
+        "role": "assistant",
+        "content": [{"toolUse": {"toolUseId": "call-1", "name": "weather", "input": {"city": "Paris"}}}],
+    }
+
+    event = BidiToolUsesCompleteEvent(message)
+
+    assert event["type"] == "bidi_tool_uses_complete"
+    assert event.message is message
+    assert event.tool_uses == [message["content"][0]["toolUse"]]
+
+
+def test_tool_uses_complete_event_preserves_multi_tool_order():
+    """A valid multi-tool group preserves provider order."""
+    message: Message = {
+        "role": "assistant",
+        "content": [
+            {"toolUse": {"toolUseId": "call-2", "name": "second", "input": {}}},
+            {"toolUse": {"toolUseId": "call-1", "name": "first", "input": {}}},
+        ],
+    }
+
+    event = BidiToolUsesCompleteEvent(message)
+
+    assert [tool_use["toolUseId"] for tool_use in event.tool_uses] == ["call-2", "call-1"]
+
+
+@pytest.mark.parametrize(
+    "message,error",
+    [
+        ({"role": "user", "content": [{"toolUse": {"toolUseId": "1", "name": "tool", "input": {}}}]}, "role"),
+        ({"role": "assistant", "content": []}, "non-empty"),
+        ({"role": "assistant", "content": [{"text": "not a tool"}]}, "only 'toolUse'"),
+        (
+            {
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "1", "name": "tool", "input": {}}, "text": "mixed"}],
+            },
+            "only 'toolUse'",
+        ),
+        ({"role": "assistant", "content": [{"toolUse": {"name": "tool", "input": {}}}]}, "toolUseId"),
+        ({"role": "assistant", "content": [{"toolUse": {"toolUseId": "", "name": "tool", "input": {}}}]}, "toolUseId"),
+        ({"role": "assistant", "content": [{"toolUse": {"toolUseId": "1", "input": {}}}]}, "name"),
+        ({"role": "assistant", "content": [{"toolUse": {"toolUseId": "1", "name": "", "input": {}}}]}, "name"),
+        ({"role": "assistant", "content": [{"toolUse": {"toolUseId": "1", "name": "tool"}}]}, "input"),
+        (
+            {"role": "assistant", "content": [{"toolUse": {"toolUseId": "1", "name": "tool", "input": []}}]},
+            "input",
+        ),
+    ],
+)
+def test_tool_uses_complete_event_rejects_invalid_message(message, error):
+    """Malformed provider tool groups fail before loop execution."""
+    with pytest.raises(ValueError, match=error):
+        BidiToolUsesCompleteEvent(message)
+
+
+def test_tool_uses_complete_event_rejects_duplicate_ids():
+    """Tool-use identifiers are unique within a completed group."""
+    message: Message = {
+        "role": "assistant",
+        "content": [
+            {"toolUse": {"toolUseId": "duplicate", "name": "first", "input": {}}},
+            {"toolUse": {"toolUseId": "duplicate", "name": "second", "input": {}}},
+        ],
+    }
+
+    with pytest.raises(ValueError, match="duplicate toolUseId 'duplicate'"):
+        BidiToolUsesCompleteEvent(message)
+
+
+def test_tool_uses_complete_event_is_public_output_event():
+    """The event is exported from both public bidi packages and the output union."""
+    assert bidi.BidiToolUsesCompleteEvent is BidiToolUsesCompleteEvent
+    assert bidi_types.BidiToolUsesCompleteEvent is BidiToolUsesCompleteEvent
+    assert BidiToolUsesCompleteEvent in get_args(bidi.BidiOutputEvent)

@@ -7,6 +7,8 @@ import pytest
 import strands
 from strands import Agent
 from strands._middleware import MiddlewareRegistry
+from strands.experimental.bidi import BidiAgent
+from strands.experimental.bidi.models import BidiModel
 from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent, HookRegistry
 from strands.interrupt import _InterruptState
 from strands.tools.registry import ToolRegistry
@@ -126,6 +128,12 @@ def agent(tool_registry, hook_registry):
     mock_agent._middleware_registry = MiddlewareRegistry()
     mock_agent.trace_attributes = {}
     return mock_agent
+
+
+@pytest.fixture
+def bidi_agent(tool_registry):
+    model = unittest.mock.AsyncMock(spec=BidiModel)
+    return BidiAgent(model=model, tools=list(tool_registry.registry.values()))
 
 
 @pytest.fixture

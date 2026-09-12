@@ -28,12 +28,18 @@ from strands.experimental.bidi.types.events import (
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
     BidiTextInputEvent,
+    BidiToolUsesCompleteEvent,
     BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
 )
-from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolResult
+
+from ._tool_contract import assert_tool_group_contract
+
+
+def _tool_result_message(*tool_results: ToolResult):
+    return {"role": "user", "content": [{"toolResult": result} for result in tool_results]}
 
 
 @pytest.fixture
@@ -686,7 +692,8 @@ async def test_send_all_content_types(mock_genai_client, model):
         "status": "success",
         "content": [{"text": "Result: 42"}],
     }
-    await model.send(ToolResultEvent(tool_result))
+    model._tool_call_names[tool_result["toolUseId"]] = tool_result["toolUseId"]
+    await model.send_tool_results(_tool_result_message(tool_result))
     mock_live_session.send_tool_response.assert_called_once()
 
     await model.stop()
@@ -710,6 +717,73 @@ async def test_send_edge_cases(mock_genai_client, model):
         await model.send(unknown_content)
 
     await model.stop()
+
+
+@pytest.mark.asyncio
+async def test_send_grouped_tool_results(mock_genai_client, model, live_message):
+    """A complete result group is submitted in one Gemini API call."""
+    _, mock_live_session, _ = mock_genai_client
+    await model.start()
+    function_calls = []
+    for tool_use_id, name in (("call-1", "first_tool"), ("call-2", "second_tool")):
+        function_call = unittest.mock.Mock()
+        function_call.id = tool_use_id
+        function_call.name = name
+        function_call.args = {}
+        function_calls.append(function_call)
+    tool_call = unittest.mock.Mock()
+    tool_call.function_calls = function_calls
+    model._convert_gemini_live_event(live_message(tool_call=tool_call), _TurnState())
+    message = {
+        "role": "user",
+        "content": [
+            {"toolResult": {"toolUseId": "call-1", "status": "success", "content": [{"text": "first"}]}},
+            {"toolResult": {"toolUseId": "call-2", "status": "error", "content": [{"json": {"error": "second"}}]}},
+        ],
+    }
+
+    await model.send_tool_results(message)
+
+    mock_live_session.send_tool_response.assert_awaited_once()
+    responses = mock_live_session.send_tool_response.call_args.kwargs["function_responses"]
+    assert [response.id for response in responses] == ["call-1", "call-2"]
+    assert [response.name for response in responses] == ["first_tool", "second_tool"]
+    assert model._tool_call_names == {}
+    await model.stop()
+
+
+@pytest.mark.asyncio
+async def test_grouped_tool_results_validate_before_send(mock_genai_client, model, live_message):
+    """Unsupported grouped content fails before Gemini receives any response."""
+    _, mock_live_session, _ = mock_genai_client
+    await model.start()
+    function_call = unittest.mock.Mock()
+    function_call.id = "call-1"
+    function_call.name = "image_tool"
+    function_call.args = {}
+    tool_call = unittest.mock.Mock()
+    tool_call.function_calls = [function_call]
+    model._convert_gemini_live_event(live_message(tool_call=tool_call), _TurnState())
+    message = {
+        "role": "user",
+        "content": [
+            {
+                "toolResult": {
+                    "toolUseId": "call-1",
+                    "status": "success",
+                    "content": [{"image": {"format": "png", "source": {"bytes": b"image"}}}],
+                }
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="Content type not supported by Gemini Live API"):
+        await model.send_tool_results(message)
+
+    mock_live_session.send_tool_response.assert_not_awaited()
+    assert model._tool_call_names == {"call-1": "image_tool"}
+    await model.stop()
+    assert model._tool_call_names == {}
 
 
 # Receive Method Tests
@@ -805,7 +879,7 @@ async def test_event_conversion(mock_genai_client, model, live_message, server_c
     assert audio_event.audio == expected_b64
     assert audio_event.format == "pcm"
 
-    # Test single tool call (returns list with one event)
+    # Test single tool call
     mock_func_call = unittest.mock.Mock()
     mock_func_call.id = "tool-123"
     mock_func_call.name = "calculator"
@@ -817,9 +891,8 @@ async def test_event_conversion(mock_genai_client, model, live_message, server_c
     mock_tool = live_message(tool_call=mock_tool_call)
 
     tool_events = model._convert_gemini_live_event(mock_tool, turn_state)
-    # Should return a list of ToolUseStreamEvent
     assert isinstance(tool_events, list)
-    assert len(tool_events) == 1
+    assert len(tool_events) == 2
     tool_event = tool_events[0]
     # ToolUseStreamEvent has delta and current_tool_use, not a "type" field
     assert "delta" in tool_event
@@ -828,8 +901,13 @@ async def test_event_conversion(mock_genai_client, model, live_message, server_c
     assert tool_event["delta"]["toolUse"]["name"] == "calculator"
     assert tool_event["delta"]["toolUse"]["input"] == json.dumps({"expression": "2+2"})
     assert tool_event["current_tool_use"]["input"] == {"expression": "2+2"}
+    complete_event = tool_events[1]
+    assert isinstance(complete_event, BidiToolUsesCompleteEvent)
+    assert complete_event.tool_uses == [{"toolUseId": "tool-123", "name": "calculator", "input": {"expression": "2+2"}}]
+    assert_tool_group_contract(tool_events, complete_event.tool_uses)
 
-    # Test multiple tool calls (returns list with multiple events)
+    # Test multiple tool calls
+    model._tool_call_names.clear()
     mock_func_call_1 = unittest.mock.Mock()
     mock_func_call_1.id = "tool-123"
     mock_func_call_1.name = "calculator"
@@ -846,9 +924,8 @@ async def test_event_conversion(mock_genai_client, model, live_message, server_c
     mock_tool_multi = live_message(tool_call=mock_tool_call_multi)
 
     tool_events_multi = model._convert_gemini_live_event(mock_tool_multi, turn_state)
-    # Should return a list with two ToolUseStreamEvent
     assert isinstance(tool_events_multi, list)
-    assert len(tool_events_multi) == 2
+    assert len(tool_events_multi) == 3
 
     # Verify first tool call
     assert tool_events_multi[0]["delta"]["toolUse"]["toolUseId"] == "tool-123"
@@ -861,6 +938,16 @@ async def test_event_conversion(mock_genai_client, model, live_message, server_c
     assert tool_events_multi[1]["delta"]["toolUse"]["name"] == "weather"
     assert tool_events_multi[1]["delta"]["toolUse"]["input"] == json.dumps({"location": "Seattle"})
     assert tool_events_multi[1]["current_tool_use"]["input"] == {"location": "Seattle"}
+    complete_event = tool_events_multi[2]
+    assert isinstance(complete_event, BidiToolUsesCompleteEvent)
+    assert complete_event.message == {
+        "role": "assistant",
+        "content": [
+            {"toolUse": {"toolUseId": "tool-123", "name": "calculator", "input": {"expression": "2+2"}}},
+            {"toolUse": {"toolUseId": "tool-456", "name": "weather", "input": {"location": "Seattle"}}},
+        ],
+    }
+    assert_tool_group_contract(tool_events_multi, complete_event.tool_uses)
 
     # Test interruption
     mock_interrupt = live_message(server_content=server_content(interrupted=True))
@@ -1589,7 +1676,8 @@ async def test_tool_result_single_content_unwrapped(mock_genai_client, model):
         "content": [{"text": "Single result"}],
     }
 
-    await model.send(ToolResultEvent(tool_result))
+    model._tool_call_names[tool_result["toolUseId"]] = tool_result["toolUseId"]
+    await model.send_tool_results(_tool_result_message(tool_result))
 
     # Verify the tool response was sent
     mock_live_session.send_tool_response.assert_called_once()
@@ -1617,7 +1705,8 @@ async def test_tool_result_multiple_content_as_array(mock_genai_client, model):
         "content": [{"text": "Part 1"}, {"json": {"data": "value"}}],
     }
 
-    await model.send(ToolResultEvent(tool_result))
+    model._tool_call_names[tool_result["toolUseId"]] = tool_result["toolUseId"]
+    await model.send_tool_results(_tool_result_message(tool_result))
 
     # Verify the tool response was sent
     mock_live_session.send_tool_response.assert_called_once()
@@ -1651,7 +1740,8 @@ async def test_tool_result_unsupported_content_type(mock_genai_client, model):
     }
 
     with pytest.raises(ValueError, match=r"Content type not supported by Gemini Live API"):
-        await model.send(ToolResultEvent(tool_result_image))
+        model._tool_call_names[tool_result_image["toolUseId"]] = tool_result_image["toolUseId"]
+        await model.send_tool_results(_tool_result_message(tool_result_image))
 
     # Test with document content (unsupported)
     tool_result_doc: ToolResult = {
@@ -1661,7 +1751,8 @@ async def test_tool_result_unsupported_content_type(mock_genai_client, model):
     }
 
     with pytest.raises(ValueError, match=r"Content type not supported by Gemini Live API"):
-        await model.send(ToolResultEvent(tool_result_doc))
+        model._tool_call_names[tool_result_doc["toolUseId"]] = tool_result_doc["toolUseId"]
+        await model.send_tool_results(_tool_result_message(tool_result_doc))
 
     # Test with mixed content (one unsupported)
     tool_result_mixed: ToolResult = {
@@ -1671,6 +1762,7 @@ async def test_tool_result_unsupported_content_type(mock_genai_client, model):
     }
 
     with pytest.raises(ValueError, match=r"Content type not supported by Gemini Live API"):
-        await model.send(ToolResultEvent(tool_result_mixed))
+        model._tool_call_names[tool_result_mixed["toolUseId"]] = tool_result_mixed["toolUseId"]
+        await model.send_tool_results(_tool_result_message(tool_result_mixed))
 
     await model.stop()

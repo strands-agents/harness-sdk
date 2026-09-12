@@ -19,13 +19,50 @@ from collections.abc import AsyncIterable
 from typing import Any, NoReturn, Protocol, cast, runtime_checkable
 
 from ....models.model import Model
-from ....types._events import ToolResultEvent
-from ....types.content import Messages
-from ....types.tools import ToolSpec
+from ....types.content import Message, Messages
+from ....types.tools import ToolResult, ToolSpec
 from ..types.events import BidiInputEvent, BidiOutputEvent
 from .configs import AudioConfig, BidiConnectionConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_tool_result_message(message: Message) -> list[ToolResult]:
+    """Validate and extract one complete user tool-result group."""
+    if not isinstance(message, dict) or message.get("role") != "user":
+        raise ValueError("tool-result message must have role 'user'")
+
+    content = message.get("content")
+    if not isinstance(content, list) or not content:
+        raise ValueError("tool-result message content must be a non-empty list")
+
+    tool_results: list[ToolResult] = []
+    tool_use_ids: set[str] = set()
+    for index, block in enumerate(content):
+        if not isinstance(block, dict) or set(block) != {"toolResult"}:
+            raise ValueError(f"tool-result message content block {index} must contain only 'toolResult'")
+
+        tool_result = block["toolResult"]
+        if not isinstance(tool_result, dict):
+            raise ValueError(f"tool-result message content block {index} must contain an object-shaped tool result")
+
+        tool_use_id = tool_result.get("toolUseId")
+        if not isinstance(tool_use_id, str) or not tool_use_id:
+            raise ValueError(f"tool-result message content block {index} must have a non-empty 'toolUseId'")
+        if tool_use_id in tool_use_ids:
+            raise ValueError(f"tool-result message contains duplicate toolUseId '{tool_use_id}'")
+
+        if tool_result.get("status") not in ("success", "error"):
+            raise ValueError(f"tool-result message content block {index} must have status 'success' or 'error'")
+
+        result_content = tool_result.get("content")
+        if not isinstance(result_content, list) or not all(isinstance(item, dict) for item in result_content):
+            raise ValueError(f"tool-result message content block {index} must have list-shaped 'content'")
+
+        tool_use_ids.add(tool_use_id)
+        tool_results.append(tool_result)
+
+    return tool_results
 
 
 @runtime_checkable
@@ -55,7 +92,10 @@ class BidiModel(Model, abc.ABC):
 
     This interface defines the contract for models that support persistent streaming
     connections with real-time audio and text communication. Implementations handle
-    provider-specific protocols while exposing a standardized event-based API.
+    provider-specific protocols while exposing a standardized event-based API. Tool
+    calls stream for visibility, then a ``BidiToolUsesCompleteEvent`` authorizes one
+    complete provider-defined group. Tool results return through
+    ``send_tool_results()`` as one ordered user message.
 
     Attributes:
         model_id: Provider model identifier.
@@ -127,6 +167,8 @@ class BidiModel(Model, abc.ABC):
         This method should be called in a loop or async task to process model responses.
 
         The stream continues until the connection is closed or an error occurs.
+        Providers must emit ``ToolUseStreamEvent`` before
+        ``BidiToolUsesCompleteEvent`` for every executable tool group.
 
         Yields:
             BidiOutputEvent: Standardized event objects containing audio output,
@@ -138,29 +180,43 @@ class BidiModel(Model, abc.ABC):
     # pragma: no cover
     async def send(
         self,
-        content: BidiInputEvent | ToolResultEvent,
+        content: BidiInputEvent,
     ) -> None:
-        """Send content to the model over the active connection.
+        """Send user input to the model over the active connection.
 
-        Transmits user input or tool results to the model during an active streaming
-        session. Supports multiple content types including text, audio, images, and
-        tool execution results. Can be called multiple times during a conversation.
+        Tool results are submitted through ``send_tool_results()`` so providers receive
+        one complete result group.
 
         Args:
-            content: The content to send. Must be one of:
+            content: The user input to send. Must be one of:
 
                 - BidiTextInputEvent: Text message from the user
                 - BidiAudioInputEvent: Audio data for speech input
                 - BidiImageInputEvent: Image data for visual understanding
-                - ToolResultEvent: Result from a tool execution
 
         Example:
             ```
             await model.send(BidiTextInputEvent(text="Hello", role="user"))
             await model.send(BidiAudioInputEvent(audio=bytes, format="pcm", sample_rate=16000, channels=1))
             await model.send(BidiImageInputEvent(image=bytes, mime_type="image/jpeg", encoding="raw"))
-            await model.send(ToolResultEvent(tool_result))
             ```
+        """
+        pass
+
+    @abc.abstractmethod
+    # pragma: no cover
+    async def send_tool_results(self, message: Message) -> None:
+        """Send one complete user-role tool-result message.
+
+        Implementations must validate the full group before writing provider events,
+        preserve result order, and request at most one model continuation after the
+        complete group has been submitted.
+
+        Args:
+            message: User message containing only tool-result content blocks.
+
+        Raises:
+            ValueError: If the message or provider-specific result content is invalid.
         """
         pass
 

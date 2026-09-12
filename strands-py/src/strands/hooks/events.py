@@ -134,7 +134,7 @@ class MessageAddedEvent(HookEvent[_LocalAgentT]):
 
 
 @dataclass
-class BeforeToolsEvent(HookEvent, _Interruptible):
+class BeforeToolsEvent(HookEvent[_LocalAgentT], _Interruptible):
     """Event triggered before executing tools.
 
     This event is fired when the model returns tool use blocks that need to be executed.
@@ -170,7 +170,7 @@ class BeforeToolsEvent(HookEvent, _Interruptible):
 
 
 @dataclass
-class AfterToolsEvent(HookEvent):
+class AfterToolsEvent(HookEvent[_LocalAgentT]):
     """Event triggered after all tools complete execution.
 
     This event is fired after tool results are collected and ready to be added to conversation.

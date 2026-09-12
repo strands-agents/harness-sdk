@@ -45,6 +45,27 @@ async def test_concurrent_executor_execute(
 
 
 @pytest.mark.asyncio
+async def test_concurrent_executor_supports_bidi_without_cycle_trace(executor, bidi_agent, alist):
+    tool_uses = [
+        {"name": "weather_tool", "toolUseId": "1", "input": {}},
+        {"name": "temperature_tool", "toolUseId": "2", "input": {}},
+    ]
+    tool_results = []
+
+    tru_events = sorted(
+        await alist(executor._execute(bidi_agent, tool_uses, tool_results, None, None, {})),
+        key=lambda event: event.tool_use_id,
+    )
+
+    exp_events = [
+        ToolResultEvent({"toolUseId": "1", "status": "success", "content": [{"text": "sunny"}]}),
+        ToolResultEvent({"toolUseId": "2", "status": "success", "content": [{"text": "75F"}]}),
+    ]
+    assert tru_events == exp_events
+    assert tool_results == [event.tool_result for event in exp_events]
+
+
+@pytest.mark.asyncio
 async def test_concurrent_executor_preserves_tool_use_result_order(
     executor, agent, tool_results, cycle_trace, cycle_span, invocation_state, structured_output_context, alist
 ):

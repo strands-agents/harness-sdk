@@ -25,6 +25,8 @@ import logging
 from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
 from ....types._events import ToolUseStreamEvent, TypedEvent
+from ....types.content import Message
+from ....types.tools import ToolUse
 
 if TYPE_CHECKING:
     from ..models.model import BidiModelTimeoutError
@@ -494,6 +496,65 @@ class BidiResponseCompleteEvent(TypedEvent):
         return cast(StopReason, self["stop_reason"])
 
 
+def _validate_tool_use_message(message: Message) -> None:
+    """Validate a complete assistant tool-use message."""
+    if not isinstance(message, dict) or message.get("role") != "assistant":
+        raise ValueError("tool-use message must have role 'assistant'")
+
+    content = message.get("content")
+    if not isinstance(content, list) or not content:
+        raise ValueError("tool-use message content must be a non-empty list")
+
+    tool_use_ids: set[str] = set()
+    for index, block in enumerate(content):
+        if not isinstance(block, dict) or set(block) != {"toolUse"}:
+            raise ValueError(f"tool-use message content block {index} must contain only 'toolUse'")
+
+        tool_use = block["toolUse"]
+        if not isinstance(tool_use, dict):
+            raise ValueError(f"tool-use message content block {index} must contain an object-shaped tool use")
+
+        tool_use_id = tool_use.get("toolUseId")
+        if not isinstance(tool_use_id, str) or not tool_use_id:
+            raise ValueError(f"tool-use message content block {index} must have a non-empty 'toolUseId'")
+        if tool_use_id in tool_use_ids:
+            raise ValueError(f"tool-use message contains duplicate toolUseId '{tool_use_id}'")
+
+        name = tool_use.get("name")
+        if not isinstance(name, str) or not name:
+            raise ValueError(f"tool-use message content block {index} must have a non-empty 'name'")
+        if not isinstance(tool_use.get("input"), dict):
+            raise ValueError(f"tool-use message content block {index} must have an object-shaped 'input'")
+
+        tool_use_ids.add(tool_use_id)
+
+
+class BidiToolUsesCompleteEvent(TypedEvent):
+    """Complete provider-defined group of tool uses ready for execution.
+
+    Parameters:
+        message: Assistant message containing only tool-use content blocks.
+
+    Raises:
+        ValueError: If the message is not a valid, non-empty tool-use group.
+    """
+
+    def __init__(self, message: Message) -> None:
+        """Initialize a complete tool-use group event."""
+        _validate_tool_use_message(message)
+        super().__init__({"type": "bidi_tool_uses_complete", "message": message})
+
+    @property
+    def message(self) -> Message:
+        """Complete assistant tool-use message."""
+        return cast(Message, self["message"])
+
+    @property
+    def tool_uses(self) -> list[ToolUse]:
+        """Tool uses in provider order."""
+        return [block["toolUse"] for block in self.message["content"]]
+
+
 class ModalityUsage(dict):
     """Token usage for a specific modality.
 
@@ -669,9 +730,6 @@ class BidiErrorEvent(TypedEvent):
 # Type Unions
 # ============================================================================
 
-# Note: ToolResultEvent is imported from strands.types._events and used alongside
-# BidiInputEvent in send() methods for sending tool results back to the model.
-
 BidiInputEvent = BidiTextInputEvent | BidiAudioInputEvent | BidiImageInputEvent
 """Union of different bidi input event types."""
 
@@ -685,6 +743,7 @@ BidiOutputEvent = (
     | BidiTranscriptCompleteEvent
     | BidiInterruptionEvent
     | BidiResponseCompleteEvent
+    | BidiToolUsesCompleteEvent
     | BidiUsageEvent
     | BidiConnectionCloseEvent
     | BidiErrorEvent

@@ -18,8 +18,8 @@ import websockets
 from typing_extensions import Unpack, override
 from websockets import ClientConnection
 
-from ....types._events import ToolResultEvent, ToolUseStreamEvent
-from ....types.content import Messages
+from ....types._events import ToolUseStreamEvent
+from ....types.content import Message, Messages
 from ....types.tools import ToolResult, ToolSpec, ToolUse
 from .._async import stop_all
 from ..types.events import (
@@ -34,6 +34,7 @@ from ..types.events import (
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
     BidiTextInputEvent,
+    BidiToolUsesCompleteEvent,
     BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
@@ -49,7 +50,7 @@ from .configs import (
     _validate_audio_config,
     _validate_model_config,
 )
-from .model import AudioCapable, BidiModel, BidiModelTimeoutError
+from .model import AudioCapable, BidiModel, BidiModelTimeoutError, _validate_tool_result_message
 
 logger = logging.getLogger(__name__)
 
@@ -222,6 +223,8 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         """
         if self._connection_id:
             raise RuntimeError("model already started | call stop before starting again")
+
+        self._function_call_buffer.clear()
 
         logger.debug("openai realtime connection starting")
 
@@ -520,33 +523,7 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             return None
 
         elif event_type == "response.function_call_arguments.done":
-            call_id = openai_event.get("call_id")
-            if call_id and call_id in self._function_call_buffer:
-                function_call = self._function_call_buffer[call_id]
-                try:
-                    tool_use: ToolUse = {
-                        "toolUseId": call_id,
-                        "name": function_call["name"],
-                        "input": json.loads(function_call["arguments"]) if function_call["arguments"] else {},
-                    }
-                    del self._function_call_buffer[call_id]
-                    # Return ToolUseStreamEvent for consistency with standard agent
-                    return [
-                        ToolUseStreamEvent(
-                            delta={
-                                "toolUse": {
-                                    "toolUseId": tool_use["toolUseId"],
-                                    "name": tool_use["name"],
-                                    "input": json.dumps(tool_use["input"]),
-                                }
-                            },
-                            current_tool_use=dict(tool_use),
-                        )
-                    ]
-                except (json.JSONDecodeError, KeyError) as e:
-                    logger.warning("call_id=<%s>, error=<%s> | error parsing function arguments", call_id, e)
-                    del self._function_call_buffer[call_id]
-            return None
+            return self._convert_function_arguments_done(openai_event)
 
         # Voice activity detection - speech_started triggers interruption
         elif event_type == "input_audio_buffer.speech_started":
@@ -558,79 +535,12 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             response = openai_event.get("response", {})
             response_id = response.get("id", "unknown")
             logger.debug("response_id=<%s> | openai response cancelled", response_id)
+            self._function_call_buffer.clear()
             return [BidiResponseCompleteEvent(response_id=response_id, stop_reason="interrupted")]
 
         # Turn complete and usage - response finished
         elif event_type == "response.done":
-            response = openai_event.get("response", {})
-            response_id = response.get("id", "unknown")
-            status = response.get("status", "completed")
-            usage = response.get("usage")
-
-            # Map OpenAI status to our stop_reason
-            stop_reason_map = {
-                "completed": "complete",
-                "cancelled": "interrupted",
-                "failed": "error",
-                "incomplete": "interrupted",
-            }
-
-            # Build list of events to return
-            events: list[Any] = []
-
-            # Always add response complete event
-            events.append(
-                BidiResponseCompleteEvent(
-                    response_id=response_id,
-                    stop_reason=cast(StopReason, stop_reason_map.get(status, "complete")),
-                ),
-            )
-
-            # Add usage event if available
-            if usage:
-                input_details = usage.get("input_token_details", {})
-                output_details = usage.get("output_token_details", {})
-
-                # Build modality details
-                modality_details = []
-
-                # Text modality
-                text_input = input_details.get("text_tokens", 0)
-                text_output = output_details.get("text_tokens", 0)
-                if text_input > 0 or text_output > 0:
-                    modality_details.append(
-                        {"modality": "text", "input_tokens": text_input, "output_tokens": text_output}
-                    )
-
-                # Audio modality
-                audio_input = input_details.get("audio_tokens", 0)
-                audio_output = output_details.get("audio_tokens", 0)
-                if audio_input > 0 or audio_output > 0:
-                    modality_details.append(
-                        {"modality": "audio", "input_tokens": audio_input, "output_tokens": audio_output}
-                    )
-
-                # Image modality
-                image_input = input_details.get("image_tokens", 0)
-                if image_input > 0:
-                    modality_details.append({"modality": "image", "input_tokens": image_input, "output_tokens": 0})
-
-                # Cached tokens
-                cached_tokens = input_details.get("cached_tokens", 0)
-
-                # Add usage event
-                events.append(
-                    BidiUsageEvent(
-                        input_tokens=usage.get("input_tokens", 0),
-                        output_tokens=usage.get("output_tokens", 0),
-                        total_tokens=usage.get("total_tokens", 0),
-                        modality_details=cast(list[ModalityUsage], modality_details) if modality_details else None,
-                        cache_read_input_tokens=cached_tokens if cached_tokens > 0 else None,
-                    )
-                )
-
-            # Return list of events
-            return events
+            return self._convert_response_done(openai_event.get("response", {}))
 
         # Lifecycle events (log only) - combine multiple similar events
         elif event_type in ["conversation.item.retrieve", "conversation.item.added"]:
@@ -703,16 +613,160 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             logger.debug("event_type=<%s> | unhandled openai event type", event_type)
             return None
 
+    def _convert_function_arguments_done(self, openai_event: dict[str, Any]) -> list[BidiOutputEvent] | None:
+        """Convert completed streamed arguments to a visibility event."""
+        call_id = openai_event.get("call_id")
+        if not isinstance(call_id, str) or not call_id:
+            return None
+
+        function_call = self._function_call_buffer.get(call_id, {})
+        function_name = openai_event.get("name") or function_call.get("name")
+        arguments = openai_event.get("arguments")
+        if arguments is None:
+            arguments = function_call.get("arguments", "")
+
+        try:
+            tool_use = self._parse_openai_tool_use(call_id, function_name, arguments)
+        except ValueError as error:
+            logger.warning("call_id=<%s>, error=<%s> | error parsing streamed function arguments", call_id, error)
+            self._function_call_buffer.pop(call_id, None)
+            return None
+
+        self._function_call_buffer.pop(call_id, None)
+        return [
+            ToolUseStreamEvent(
+                delta={
+                    "toolUse": {
+                        "toolUseId": tool_use["toolUseId"],
+                        "name": tool_use["name"],
+                        "input": json.dumps(tool_use["input"]),
+                    }
+                },
+                current_tool_use=dict(tool_use),
+            )
+        ]
+
+    def _convert_response_done(self, response: dict[str, Any]) -> list[BidiOutputEvent]:
+        """Convert one terminal OpenAI response and clear response-scoped buffers."""
+        response_id = response.get("id", "unknown")
+        status = response.get("status", "completed")
+        tool_uses: list[ToolUse] = []
+
+        try:
+            if status == "completed":
+                tool_uses = self._extract_terminal_tool_uses(response.get("output", []))
+
+            stop_reason_map = {
+                "completed": "complete",
+                "cancelled": "interrupted",
+                "failed": "error",
+                "incomplete": "interrupted",
+            }
+            stop_reason = "tool_use" if tool_uses else stop_reason_map.get(status, "complete")
+            events: list[BidiOutputEvent] = []
+            if tool_uses:
+                message: Message = {
+                    "role": "assistant",
+                    "content": [{"toolUse": tool_use} for tool_use in tool_uses],
+                }
+                events.append(BidiToolUsesCompleteEvent(message))
+
+            events.append(
+                BidiResponseCompleteEvent(
+                    response_id=response_id,
+                    stop_reason=cast(StopReason, stop_reason),
+                )
+            )
+
+            usage_event = self._convert_response_usage(response.get("usage"))
+            if usage_event is not None:
+                events.append(usage_event)
+            return events
+        finally:
+            self._function_call_buffer.clear()
+
+    def _extract_terminal_tool_uses(self, output: Any) -> list[ToolUse]:
+        """Extract executable calls from terminal response output."""
+        if not isinstance(output, list):
+            raise ValueError("OpenAI terminal response output must be a list")
+
+        tool_uses = []
+        for item in output:
+            if not isinstance(item, dict) or item.get("type") != "function_call":
+                continue
+            if item.get("status") not in (None, "completed"):
+                raise ValueError("OpenAI terminal function call must have completed status")
+            tool_uses.append(
+                self._parse_openai_tool_use(
+                    item.get("call_id"),
+                    item.get("name"),
+                    item.get("arguments", ""),
+                )
+            )
+        return tool_uses
+
+    @staticmethod
+    def _parse_openai_tool_use(call_id: Any, name: Any, arguments: Any) -> ToolUse:
+        """Parse and validate one OpenAI function call."""
+        if not isinstance(call_id, str) or not call_id:
+            raise ValueError("OpenAI function call must have a non-empty call_id")
+        if not isinstance(name, str) or not name:
+            raise ValueError(f"OpenAI function call '{call_id}' must have a non-empty name")
+        if not isinstance(arguments, str):
+            raise ValueError(f"OpenAI function call '{call_id}' arguments must be a JSON string")
+
+        try:
+            parsed_arguments = json.loads(arguments) if arguments else {}
+        except json.JSONDecodeError as error:
+            raise ValueError(f"OpenAI function call '{call_id}' has invalid JSON arguments") from error
+        if not isinstance(parsed_arguments, dict):
+            raise ValueError(f"OpenAI function call '{call_id}' arguments must decode to an object")
+
+        return {"toolUseId": call_id, "name": name, "input": parsed_arguments}
+
+    @staticmethod
+    def _convert_response_usage(usage: Any) -> BidiUsageEvent | None:
+        """Convert terminal OpenAI usage metadata."""
+        if not isinstance(usage, dict):
+            return None
+
+        input_details = usage.get("input_token_details", {})
+        output_details = usage.get("output_token_details", {})
+        modality_details = []
+
+        text_input = input_details.get("text_tokens", 0)
+        text_output = output_details.get("text_tokens", 0)
+        if text_input > 0 or text_output > 0:
+            modality_details.append({"modality": "text", "input_tokens": text_input, "output_tokens": text_output})
+
+        audio_input = input_details.get("audio_tokens", 0)
+        audio_output = output_details.get("audio_tokens", 0)
+        if audio_input > 0 or audio_output > 0:
+            modality_details.append({"modality": "audio", "input_tokens": audio_input, "output_tokens": audio_output})
+
+        image_input = input_details.get("image_tokens", 0)
+        if image_input > 0:
+            modality_details.append({"modality": "image", "input_tokens": image_input, "output_tokens": 0})
+
+        cached_tokens = input_details.get("cached_tokens", 0)
+        return BidiUsageEvent(
+            input_tokens=usage.get("input_tokens", 0),
+            output_tokens=usage.get("output_tokens", 0),
+            total_tokens=usage.get("total_tokens", 0),
+            modality_details=cast(list[ModalityUsage], modality_details) if modality_details else None,
+            cache_read_input_tokens=cached_tokens if cached_tokens > 0 else None,
+        )
+
     async def send(
         self,
-        content: BidiInputEvent | ToolResultEvent,
+        content: BidiInputEvent,
     ) -> None:
-        """Unified send method for all content types. Sends the given content to OpenAI.
+        """Send user input to OpenAI Realtime.
 
         Dispatches to appropriate internal handler based on content type.
 
         Args:
-            content: Typed event (BidiTextInputEvent, BidiAudioInputEvent, BidiImageInputEvent, or ToolResultEvent).
+            content: Typed text, audio, or image input event.
 
         Raises:
             ValueError: If content type not supported.
@@ -727,10 +781,6 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             await self._send_audio_content(content)
         elif isinstance(content, BidiImageInputEvent):
             await self._send_image_content(content)
-        elif isinstance(content, ToolResultEvent):
-            tool_result = content.get("tool_result")
-            if tool_result:
-                await self._send_tool_result(tool_result)
         else:
             raise ValueError(f"content_type={type(content)} | content not supported")
 
@@ -761,11 +811,19 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         await self._send_event({"type": "conversation.item.create", "item": item_data})
         await self._send_event({"type": "response.create"})
 
-    async def _send_tool_result(self, tool_result: ToolResult) -> None:
-        """Internal: Send tool result back to OpenAI."""
-        tool_use_id = tool_result.get("toolUseId")
+    async def send_tool_results(self, message: Message) -> None:
+        """Send one complete tool-result group to OpenAI Realtime."""
+        if not self._connection_id:
+            raise RuntimeError("model not started | call start before sending")
 
-        logger.debug("tool_use_id=<%s> | sending openai tool result", tool_use_id)
+        output_items = [self._format_tool_result(tool_result) for tool_result in _validate_tool_result_message(message)]
+        for item_data in output_items:
+            await self._send_event({"type": "conversation.item.create", "item": item_data})
+        await self._send_event({"type": "response.create"})
+
+    def _format_tool_result(self, tool_result: ToolResult) -> dict[str, Any]:
+        """Convert a Strands tool result to an OpenAI function output item."""
+        tool_use_id = tool_result.get("toolUseId")
 
         # Validate content types and serialize, preserving structure
         result_output = ""
@@ -782,9 +840,7 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             # Preserve structure by JSON-dumping the entire content array
             result_output = json.dumps(tool_result["content"])
 
-        item_data = {"type": "function_call_output", "call_id": tool_use_id, "output": result_output}
-        await self._send_event({"type": "conversation.item.create", "item": item_data})
-        await self._send_event({"type": "response.create"})
+        return {"type": "function_call_output", "call_id": tool_use_id, "output": result_output}
 
     async def stop(self) -> None:
         """Close session and cleanup resources."""
@@ -798,6 +854,7 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
 
         async def stop_connection() -> None:
             self._connection_id = None
+            self._function_call_buffer.clear()
 
         await stop_all(stop_websocket, stop_connection)
 

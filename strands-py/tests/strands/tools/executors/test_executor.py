@@ -1,3 +1,4 @@
+import asyncio
 import unittest.mock
 from unittest.mock import ANY, MagicMock
 
@@ -261,6 +262,53 @@ async def test_executor_stream_with_trace(
 
     cycle_trace.add_child.assert_called_once()
     assert isinstance(cycle_trace.add_child.call_args[0][0], Trace)
+
+
+@pytest.mark.asyncio
+async def test_executor_stream_with_trace_supports_bidi_without_cycle_trace(executor, tracer, bidi_agent, alist):
+    tool_use: ToolUse = {"name": "weather_tool", "toolUseId": "1", "input": {}}
+    tool_results = []
+
+    tru_events = await alist(executor._stream_with_trace(bidi_agent, tool_use, tool_results, None, None, {}))
+
+    exp_result = {"toolUseId": "1", "status": "success", "content": [{"text": "sunny"}]}
+    assert tru_events == [ToolResultEvent(exp_result)]
+    assert tool_results == [exp_result]
+    tracer.start_tool_call_span.assert_called_once_with(tool_use, None, custom_trace_attributes=None)
+    tracer.end_tool_call_span.assert_called_once_with(
+        tracer.start_tool_call_span.return_value,
+        exp_result,
+        error=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_executor_stream_with_trace_closes_span_when_cancelled(
+    executor, tracer, agent, tool_results, cycle_trace, cycle_span, invocation_state
+):
+    started = asyncio.Event()
+    blocked = asyncio.Event()
+
+    async def blocked_stream(*_args, **_kwargs):
+        started.set()
+        await blocked.wait()
+        yield ToolResultEvent({"toolUseId": "1", "status": "success", "content": [{"text": "unused"}]})
+
+    tool_use: ToolUse = {"name": "weather_tool", "toolUseId": "1", "input": {}}
+    with unittest.mock.patch.object(ToolExecutor, "_stream", side_effect=blocked_stream):
+        stream = executor._stream_with_trace(agent, tool_use, tool_results, cycle_trace, cycle_span, invocation_state)
+        task = asyncio.create_task(anext(stream))
+        await started.wait()
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    tracer.end_tool_call_span.assert_called_once_with(
+        tracer.start_tool_call_span.return_value,
+        None,
+        error=None,
+    )
 
 
 @pytest.mark.asyncio

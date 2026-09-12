@@ -31,10 +31,12 @@ from strands.experimental.bidi.types.events import (
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
     BidiTextInputEvent,
+    BidiToolUsesCompleteEvent,
     BidiUsageEvent,
 )
 from strands.telemetry.tracer import Tracer
-from strands.types._events import ToolResultMessageEvent, ToolUseStreamEvent
+from strands.tools.executors._executor import ToolExecutor
+from strands.types._events import ToolResultMessageEvent
 
 
 class _InMemoryExporter(SpanExporter):
@@ -258,7 +260,7 @@ async def test_response_span_omits_time_to_first_audio_when_no_audio(loop, agent
 async def test_tool_call_span_created(loop, agent, agenerator, otel_setup):
     """Tool call span wraps tool execution."""
     tool_use = {"toolUseId": "t1", "name": "mock_tool", "input": {}}
-    events = [ToolUseStreamEvent(current_tool_use=tool_use, delta="")]
+    events = [BidiToolUsesCompleteEvent({"role": "assistant", "content": [{"toolUse": tool_use}]})]
     agent.model.receive = unittest.mock.Mock(return_value=agenerator(events))
 
     await loop.start()
@@ -280,17 +282,17 @@ async def test_tool_call_span_created(loop, agent, agenerator, otel_setup):
 async def test_tool_call_span_closed_on_error(loop, agent, agenerator, otel_setup):
     """Tool call span is closed with error status when tool execution raises."""
     tool_use = {"toolUseId": "t1", "name": "mock_tool", "input": {}}
-    events = [ToolUseStreamEvent(current_tool_use=tool_use, delta="")]
+    events = [BidiToolUsesCompleteEvent({"role": "assistant", "content": [{"toolUse": tool_use}]})]
     agent.model.receive = unittest.mock.Mock(return_value=agenerator(events))
-    agent.tool_executor._stream = unittest.mock.Mock(side_effect=RuntimeError("tool boom"))
 
-    await loop.start()
+    with unittest.mock.patch.object(ToolExecutor, "_stream", side_effect=RuntimeError("tool boom")):
+        await loop.start()
 
-    with pytest.raises(RuntimeError, match="tool boom"):
-        async for _ in loop.receive():
-            pass
+        with pytest.raises(RuntimeError, match="tool boom"):
+            async for _ in loop.receive():
+                pass
 
-    await loop.stop()
+        await loop.stop()
 
     spans = otel_setup.get_finished_spans()
     tool_spans = [s for s in spans if "execute_tool" in s.name]
