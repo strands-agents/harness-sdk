@@ -4,11 +4,8 @@ import pytest
 
 from strands import tool
 from strands.experimental.bidi.agent.agent import BidiAgent
-from strands.experimental.hooks.events import (
-    BidiAfterInvocationEvent,
-    BidiBeforeInvocationEvent,
-)
-from strands.hooks import HookProvider
+from strands.experimental.bidi.hooks.events import BidiAgentStopEvent
+from strands.hooks import AgentInitializedEvent, HookProvider
 
 from .hook_utils import HookEventCollector
 
@@ -18,7 +15,7 @@ class TestBidiAgentHooksLifecycle:
     """Test BidiAgent hook lifecycle events."""
 
     async def test_agent_initialization_emits_hook(self):
-        """Verify agent initialization emits BidiAgentInitializedEvent."""
+        """Verify agent initialization emits AgentInitializedEvent."""
         collector = HookEventCollector()
         agent = BidiAgent(hooks=[collector])
 
@@ -29,29 +26,20 @@ class TestBidiAgentHooksLifecycle:
         assert init_events[0].agent == agent
 
     async def test_session_lifecycle_emits_hooks(self):
-        """Verify session start/stop emits before/after invocation events."""
+        """Verify stopping the agent emits the cleanup event after initialization."""
         collector = HookEventCollector()
         agent = BidiAgent(hooks=[collector])
 
-        # Start session
         await agent.start()
-
-        # Should have emitted before_invocation
-        assert "before_invocation" in collector.get_event_types()
-
-        # Stop session
+        assert collector.get_events_by_type("agent_stop") == []
         await agent.stop()
 
-        # Should have emitted after_invocation
-        assert "after_invocation" in collector.get_event_types()
-
-        # Verify order: initialized -> before_invocation -> after_invocation
         event_types = collector.get_event_types()
-        assert event_types.index("initialized") < event_types.index("before_invocation")
-        assert event_types.index("before_invocation") < event_types.index("after_invocation")
+        assert event_types.index("initialized") < event_types.index("agent_stop")
+        assert len(collector.get_events_by_type("agent_stop")) == 1
 
     async def test_message_added_hook_on_text_input(self):
-        """Verify sending text emits BidiMessageAddedEvent."""
+        """Verify sending text emits MessageAddedEvent."""
         collector = HookEventCollector()
         agent = BidiAgent(hooks=[collector])
 
@@ -117,7 +105,7 @@ class TestBidiAgentHooksEventData:
             assert event.agent == agent
 
     async def test_message_added_event_contains_message(self):
-        """Verify BidiMessageAddedEvent contains the actual message."""
+        """Verify MessageAddedEvent contains the actual message."""
         collector = HookEventCollector()
         agent = BidiAgent(hooks=[collector])
 
@@ -146,15 +134,15 @@ class TestBidiAgentHooksOrdering:
 
         class FirstHook(HookProvider):
             def register_hooks(self, registry):
-                registry.add_callback(BidiBeforeInvocationEvent, lambda e: call_order.append("first"))
+                registry.add_callback(AgentInitializedEvent, lambda e: call_order.append("first"))
 
         class SecondHook(HookProvider):
             def register_hooks(self, registry):
-                registry.add_callback(BidiBeforeInvocationEvent, lambda e: call_order.append("second"))
+                registry.add_callback(AgentInitializedEvent, lambda e: call_order.append("second"))
 
         class ThirdHook(HookProvider):
             def register_hooks(self, registry):
-                registry.add_callback(BidiBeforeInvocationEvent, lambda e: call_order.append("third"))
+                registry.add_callback(AgentInitializedEvent, lambda e: call_order.append("third"))
 
         agent = BidiAgent(hooks=[FirstHook(), SecondHook(), ThirdHook()])
 
@@ -164,21 +152,21 @@ class TestBidiAgentHooksOrdering:
         # Verify order
         assert call_order == ["first", "second", "third"]
 
-    async def test_after_invocation_fires_in_reverse_order(self):
-        """Verify after invocation hooks fire in reverse order (cleanup)."""
+    async def test_agent_stop_fires_in_reverse_order(self):
+        """Verify agent stop hooks fire in reverse order (cleanup)."""
         call_order = []
 
         class FirstHook(HookProvider):
             def register_hooks(self, registry):
-                registry.add_callback(BidiAfterInvocationEvent, lambda e: call_order.append("first"))
+                registry.add_callback(BidiAgentStopEvent, lambda e: call_order.append("first"))
 
         class SecondHook(HookProvider):
             def register_hooks(self, registry):
-                registry.add_callback(BidiAfterInvocationEvent, lambda e: call_order.append("second"))
+                registry.add_callback(BidiAgentStopEvent, lambda e: call_order.append("second"))
 
         class ThirdHook(HookProvider):
             def register_hooks(self, registry):
-                registry.add_callback(BidiAfterInvocationEvent, lambda e: call_order.append("third"))
+                registry.add_callback(BidiAgentStopEvent, lambda e: call_order.append("third"))
 
         agent = BidiAgent(hooks=[FirstHook(), SecondHook(), ThirdHook()])
 
@@ -203,8 +191,7 @@ class TestBidiAgentHooksContextManager:
         # Verify lifecycle events
         event_types = collector.get_event_types()
         assert "initialized" in event_types
-        assert "before_invocation" in event_types
-        assert "after_invocation" in event_types
+        assert "agent_stop" in event_types
 
         # Verify order
-        assert event_types.index("before_invocation") < event_types.index("after_invocation")
+        assert event_types.index("initialized") < event_types.index("agent_stop")

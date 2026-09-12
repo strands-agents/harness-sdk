@@ -7,7 +7,8 @@ import pytest
 from pydantic import BaseModel
 
 from strands.experimental.bidi import Restartable
-from strands.experimental.bidi.models.model import AudioCapable, AudioConfig, BidiModel
+from strands.experimental.bidi.models.configs import AudioConfig
+from strands.experimental.bidi.models.model import AudioCapable, BidiModel
 from strands.experimental.bidi.types.events import BidiInputEvent, BidiOutputEvent
 from strands.models import Model
 from strands.types._events import ToolResultEvent
@@ -21,9 +22,14 @@ class _Output(BaseModel):
 
 class _TestBidiModel(BidiModel):
     def __init__(self) -> None:
-        self.config = {"model_id": "test-model"}
-        self.connection_config = {}
+        self._model_id = "test-model"
         self.usage_is_cumulative = False
+
+    def update_config(self, **model_config: Any) -> None:
+        self._model_id = model_config.get("model_id", self._model_id)
+
+    def get_config(self) -> dict[str, Any]:
+        return {"model_id": self._model_id}
 
     async def start(
         self,
@@ -48,9 +54,8 @@ class _TestBidiModel(BidiModel):
         pass
 
 
-class _AudioBidiModel(_TestBidiModel, AudioCapable):
-    @property
-    def audio_config(self) -> AudioConfig:
+class _AudioBidiModel(_TestBidiModel):
+    def get_audio_config(self) -> AudioConfig:
         return {
             "input_rate": 16000,
             "output_rate": 24000,
@@ -77,40 +82,6 @@ def test_model_is_model():
 def test_audio_capable_identifies_audio_models():
     assert isinstance(_AudioBidiModel(), AudioCapable)
     assert not isinstance(_TestBidiModel(), AudioCapable)
-
-
-def test_update_config():
-    model = _TestBidiModel()
-
-    model.update_config(model_id="updated-model")
-
-    assert model.get_config() == {"model_id": "updated-model"}
-
-
-@pytest.mark.parametrize(
-    ("model_config", "invalid_key"),
-    [
-        pytest.param({"model": "test-model"}, "model", id="model"),
-        pytest.param({"connection": {"restart_after": 30}}, "restart_after", id="connection"),
-    ],
-)
-def test_validate_config_warns_invalid_keys(model_config, invalid_key):
-    with pytest.warns(UserWarning, match=invalid_key):
-        _TestBidiModel._validate_config(model_config)
-
-
-def test_validate_audio_config_warns_invalid_keys():
-    with pytest.warns(UserWarning, match="input_rte"):
-        _AudioBidiModel._validate_audio_config({"input_rte": 48000})
-
-
-def test_get_config_returns_copy():
-    model = _TestBidiModel()
-
-    config = model.get_config()
-    config["model_id"] = "updated-model"
-
-    assert model.config == {"model_id": "test-model"}
 
 
 def test_model_without_restart_is_not_restartable():

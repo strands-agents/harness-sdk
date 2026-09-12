@@ -9,6 +9,7 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterable
 from typing import Any
 
+from ..agent.agent_metadata import AgentMetadata
 from ..models.model import Model
 from ..tools import InvalidToolUseNameException
 from ..tools.tools import validate_tool_use_name
@@ -521,6 +522,7 @@ async def stream_messages(
     model_state: dict[str, Any] | None = None,
     dynamic_trailing_blocks: int = 0,
     cancel_signal: threading.Event | None = None,
+    agent_metadata: AgentMetadata | None = None,
     **kwargs: Any,
 ) -> AsyncGenerator[TypedEvent, None]:
     """Streams messages to the model and processes the response.
@@ -539,6 +541,7 @@ async def stream_messages(
             call, so a provider placing cache points keeps its own ahead of them.
         cancel_signal: Optional threading.Event to check for cancellation during streaming. Also
             forwarded to the model so a provider can abort an in-flight request.
+        agent_metadata: Metadata of the invoking agent, forwarded to the model.
         **kwargs: Additional keyword arguments for future extensibility.
 
     Yields:
@@ -561,6 +564,7 @@ async def stream_messages(
         invocation_state=invocation_state,
         model_state=model_state,
         cancel_signal=cancel_signal,
+        agent_metadata=agent_metadata,
         # Omitted when zero, so an ordinary call's arguments are unchanged.
         **({"dynamic_trailing_blocks": dynamic_trailing_blocks} if dynamic_trailing_blocks else {}),
     )

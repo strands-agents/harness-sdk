@@ -13,6 +13,7 @@ export { StateStore } from './state-store.js'
 
 // Agent types
 export { AgentResult } from './types/agent.js'
+export type { AgentMetadata } from './agent/agent-metadata.js'
 export type { AgentConfig, ToolList, ToolExecutorStrategy } from './agent/agent.js'
 export type { BackgroundTasksConfig } from './background-tasks/types.js'
 export type { AgentAsToolOptions } from './agent/agent-as-tool.js'
@@ -275,6 +276,19 @@ export {
   type RetryStrategy,
   type RetryDecision,
 } from './retry/index.js'
+
+// Context Manager (experimental)
+export type { ContextManagerStrategy } from './context-manager/context-manager.js'
+export type { ContextManagerConfig, ContextStrategy, ContextState, StashConfig } from './context-manager/types.js'
+export { Offload } from './context-manager/strategies/offload/index.js'
+export type {
+  OffloadTarget,
+  OffloadConditions,
+  OffloadStrategyBuilder,
+} from './context-manager/strategies/offload/index.js'
+export type { TruncateConfig } from './context-manager/methods/truncate.js'
+export type { SummarizeConfig } from './context-manager/methods/summarize.js'
+export type { StrategyPresetName } from './context-manager/presets.js'
 
 // Conversation Manager
 export {

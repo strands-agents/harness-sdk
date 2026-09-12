@@ -3,7 +3,11 @@ import unittest.mock
 import pytest
 
 from strands.experimental.bidi.io import BidiTextIO
-from strands.experimental.bidi.types.events import BidiInterruptionEvent, BidiTextInputEvent, BidiTranscriptStreamEvent
+from strands.experimental.bidi.types.events import (
+    BidiInterruptionEvent,
+    BidiTextInputEvent,
+    BidiTranscriptStreamEvent,
+)
 
 
 @pytest.fixture
@@ -40,8 +44,8 @@ async def test_bidi_text_io_input(prompt_session, text_input):
     ("event", "exp_print"),
     [
         (BidiInterruptionEvent(reason="user_speech"), "interrupted"),
-        (BidiTranscriptStreamEvent(text="test text", delta="", is_final=False, role="user"), "Preview: test text"),
-        (BidiTranscriptStreamEvent(text="test text", delta="", is_final=True, role="user"), "test text"),
+        (BidiTranscriptStreamEvent(delta="test text", role="user"), "test text"),
+        (BidiTranscriptStreamEvent(delta="test text", role="assistant"), "test text"),
     ],
 )
 @pytest.mark.asyncio

@@ -44,10 +44,8 @@ import { InterventionRegistry } from '../interventions/registry.js'
 import type { LifecycleObserver } from '../types/lifecycle-observer.js'
 import { PluginRegistry } from '../plugins/registry.js'
 import { SlidingWindowConversationManager } from '../conversation-manager/sliding-window-conversation-manager.js'
-import { SummarizingConversationManager } from '../conversation-manager/summarizing-conversation-manager.js'
 import { NullConversationManager } from '../conversation-manager/null-conversation-manager.js'
 import { ConversationManager } from '../conversation-manager/conversation-manager.js'
-import { ContextOffloader } from '../vended-plugins/context-offloader/plugin.js'
 import { AgentDelegation } from './agent-delegation.js'
 import type { Storage } from '../storage/storage.js'
 import { HookRegistryImplementation } from '../hooks/registry.js'
@@ -124,6 +122,7 @@ import {
   createTokenUsageMiddleware,
 } from '../context-manager/modes/agentic/agentic-context.js'
 import { ContextManager } from '../context-manager/context-manager.js'
+import type { ContextManagerStrategy } from '../context-manager/context-manager.js'
 import { BackgroundTasks } from '../background-tasks/background-tasks.js'
 import type { BackgroundTasksConfig } from '../background-tasks/types.js'
 
@@ -151,33 +150,6 @@ export type ToolList = (Tool | McpClient | Agent | ToolList)[]
  * to honor the signal.
  */
 export type ToolExecutorStrategy = 'sequential' | 'concurrent'
-
-/**
- * Supported string presets for the `contextManager` parameter.
- */
-export const CONTEXT_MANAGER_STRATEGIES = ['auto', 'agentic'] as const
-type ContextManagerPreset = (typeof CONTEXT_MANAGER_STRATEGIES)[number]
-
-/**
- * Supported values for the `contextManager` parameter.
- *
- * - `"auto"`: Managed context with proactive compression + offloading.
- * - `"agentic"`: Model-driven context management via injected tools.
- * - `ContextManager` instance: Full control over strategy-driven offloading.
- * - `false`: Explicitly disable all context management (no compression, no offloading).
- */
-export type ContextManagerStrategy = ContextManagerPreset | ContextManager | false
-
-/** Benchmark-validated token threshold for offloading tool results. */
-const CONTEXT_MANAGER_MAX_RESULT_TOKENS = 1_500
-/** Higher offload threshold for agentic mode — the model manages its own context, so we preserve more inline. */
-const AGENTIC_CONTEXT_MANAGER_MAX_RESULT_TOKENS = 8_000
-/** Benchmark-validated preview token count for offloaded results. */
-const CONTEXT_MANAGER_PREVIEW_TOKENS = 750
-/** Benchmark-validated ratio of messages to summarize on overflow. */
-const CONTEXT_MANAGER_SUMMARY_RATIO = 0.3
-/** Benchmark-validated context window ratio that triggers proactive compression. */
-const CONTEXT_MANAGER_COMPRESSION_THRESHOLD = 0.85
 
 /**
  * Configuration object for creating a new Agent.
@@ -239,18 +211,15 @@ export type AgentConfig = {
   /**
    * Context management strategy that controls how messages are compressed and offloaded.
    *
-   * - `"auto"`: SummarizingConversationManager with proactive compression + ContextOffloader.
-   * - `"agentic"`: (Experimental) Lets the model drive context management via injected tools.
+   * - `"auto"`: Proactive truncation of tool results + summarization at 85% utilization.
+   * - `"agentic"`: (Experimental) Lets the model drive context management via injected tools,
+   *   with a higher truncation threshold and summarization only on overflow.
    *   This mode may change in future versions.
-   * - `ContextManager` instance: Strategy-driven offloading with overflow recovery.
+   * - `ContextManagerConfig` object: Custom strategy pipeline and stash configuration.
    * - `false`: Explicitly disable context management (no compression, no offloading).
    *
-   * When a `ContextManager` instance is provided, any co-provided `conversationManager` is ignored.
-   * Defaults to undefined (SlidingWindowConversationManager, no offloader).
-   *
-   * @remarks The offloader uses in-memory storage by default. When an agent-level
-   * `storage` is provided, the offloader uses that instead. Alternatively, provide
-   * an explicit `ContextOffloader` with its own storage via the `plugins` parameter.
+   * When set (except `false`), any co-provided `conversationManager` is ignored.
+   * Defaults to undefined (SlidingWindowConversationManager).
    */
   contextManager?: ContextManagerStrategy
   /**
@@ -345,10 +314,10 @@ export type AgentConfig = {
    * Default storage backend for agent subsystems.
    *
    * When provided, subsystems that do not have their own explicit storage
-   * (e.g., SessionManager, ContextOffloader) resolve from this value. Each
-   * subsystem auto-namespaces under its own prefix (`session/`, `offloader/`)
-   * to avoid key collisions. Storage specified directly on a subsystem always
-   * takes precedence over this agent-level default.
+   * (e.g., SessionManager, ContextManager) resolve from this value. Each
+   * subsystem auto-namespaces under its own prefix to avoid key collisions.
+   * Storage specified directly on a subsystem always takes precedence over
+   * this agent-level default.
    */
   storage?: Storage
 }
@@ -357,45 +326,23 @@ export type AgentConfig = {
  * Resolve the contextManager facade into a concrete ConversationManager.
  *
  * When contextManager is undefined, falls back to the default SlidingWindowConversationManager.
- * When "auto", uses SummarizingConversationManager with proactive compression.
- * When "agentic", uses SummarizingConversationManager without proactive compression
- * (the agent manages its context via tools; the context manager is only a reactive safety net).
- * When a ContextManager instance, uses NullConversationManager — the ContextManager owns
- * overflow recovery via apply().
+ * When a preset, config object, or false, uses NullConversationManager —
+ * the ContextManager owns overflow recovery and proactive compression.
  */
 function resolveConversationManager(
   contextManager: ContextManagerStrategy | undefined,
   conversationManager: ConversationManager | undefined
 ): ConversationManager {
+  if (contextManager === undefined) {
+    return conversationManager ?? new SlidingWindowConversationManager({ windowSize: 40 })
+  }
   if (contextManager === false) {
     return conversationManager ?? new NullConversationManager()
   }
-  if (contextManager instanceof ContextManager) {
-    return new NullConversationManager()
+  if (conversationManager) {
+    logger.warn('contextManager is set, ignoring co-provided conversationManager')
   }
-  if (contextManager === 'agentic') {
-    return (
-      conversationManager ??
-      new SummarizingConversationManager({
-        summaryRatio: CONTEXT_MANAGER_SUMMARY_RATIO,
-      })
-    )
-  }
-  if (contextManager === 'auto') {
-    return (
-      conversationManager ??
-      new SummarizingConversationManager({
-        summaryRatio: CONTEXT_MANAGER_SUMMARY_RATIO,
-        proactiveCompression: { compressionThreshold: CONTEXT_MANAGER_COMPRESSION_THRESHOLD },
-      })
-    )
-  }
-  if (contextManager !== undefined) {
-    throw new Error(
-      `Unsupported contextManager value: "${contextManager}". Supported values: ${CONTEXT_MANAGER_STRATEGIES.map((s) => `"${s}"`).join(', ')}`
-    )
-  }
-  return conversationManager ?? new SlidingWindowConversationManager({ windowSize: 40 })
+  return new NullConversationManager()
 }
 
 /**
@@ -566,7 +513,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     this.name = config?.name ?? DEFAULT_AGENT_NAME
     this.id = config?.id ?? DEFAULT_AGENT_ID
     if (config?.description !== undefined) this.description = config.description
-    this.contextManager = config?.contextManager instanceof ContextManager ? config.contextManager : undefined
+    this.contextManager = ContextManager.from(config?.contextManager)
     this.sessionManager = config?.sessionManager
     this.storage = config?.storage
     this.memoryManager =
@@ -642,13 +589,10 @@ export class Agent implements LocalAgent, InvokableAgent {
     // - Retry-strategy ordering is not load-bearing for correctness: `DefaultModelRetryStrategy`
     //   guards on `event.retry`, so a user hook that already set it short-circuits
     //   the strategy regardless of registration order.
-    const hasOffloader = (config?.plugins ?? []).some((p) => p.name === 'strands:context-offloader')
     // Always register AgentDelegation so delegation semantics work regardless of
     // when a delegate tool is added (construction, plugin getTools, MCP, runtime).
     // The plugin is a no-op when no delegation tools fire.
     const hasAgentDelegation = (config?.plugins ?? []).some((p) => p.name === 'strands:agent-delegation')
-
-    const contextManagerPlugin = config?.contextManager instanceof ContextManager ? config.contextManager : undefined
     this._backgroundTasks = config?.backgroundTasks
       ? new BackgroundTasks(
           config.backgroundTasks === true ? {} : config.backgroundTasks,
@@ -681,19 +625,8 @@ export class Agent implements LocalAgent, InvokableAgent {
       ...(config?.plugins ?? []),
       ...(this._backgroundTasks ? [this._backgroundTasks] : []),
       ...(!hasAgentDelegation ? [new AgentDelegation()] : []),
-      ...((config?.contextManager === 'auto' || config?.contextManager === 'agentic') && !hasOffloader
-        ? [
-            new ContextOffloader({
-              maxResultTokens:
-                config?.contextManager === 'agentic'
-                  ? AGENTIC_CONTEXT_MANAGER_MAX_RESULT_TOKENS
-                  : CONTEXT_MANAGER_MAX_RESULT_TOKENS,
-              previewTokens: CONTEXT_MANAGER_PREVIEW_TOKENS,
-            }),
-          ]
-        : []),
       ...(this.memoryManager ? [this.memoryManager] : []),
-      ...(contextManagerPlugin ? [contextManagerPlugin] : []),
+      ...(this.contextManager ? [this.contextManager] : []),
       ...(config?.sessionManager ? [config.sessionManager] : []),
       new ModelPlugin(this.model),
     ])
@@ -2334,6 +2267,7 @@ export class Agent implements LocalAgent, InvokableAgent {
             ...(ctx.toolChoice && { toolChoice: ctx.toolChoice }),
             // Omitted when zero, so an ordinary call's options are unchanged.
             ...(ctx.dynamicTrailingBlocks ? { dynamicTrailingBlocks: ctx.dynamicTrailingBlocks } : {}),
+            ...(self.sessionManager ? { agentMetadata: { sessionId: self.sessionId } } : {}),
           }
           const gen = self._streamFromModel(ctx.model, ctx.messages as Message[], streamOptions, ctx.invocationState)
           let iterResult = await gen.next()

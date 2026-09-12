@@ -6,6 +6,7 @@ import type { Storage } from '../storage/storage.js'
 import type { Stash } from './stash.js'
 import type { LocalAgent } from '../types/agent.js'
 import type { Message } from '../types/messages.js'
+import type { StrategyPresetName } from './presets.js'
 
 /**
  * A context reduction strategy that can offload, summarize, or otherwise
@@ -48,6 +49,13 @@ export interface ContextState {
   /** Current context utilization ratio (0-1+). Above 1.0 means overflow. */
   utilization: number
 
+  /**
+   * Set when running in response to a `ContextWindowOverflowError`.
+   * Strategies should bypass utilization gates when true — the provider
+   * already rejected the request, so the estimate is not trustworthy.
+   */
+  overflow?: boolean
+
   /** L1 stash for persisting offloaded content. Present when storage is configured. */
   stash?: Stash
 }
@@ -80,8 +88,11 @@ export interface ContextManagerConfig {
    * sees the output of the previous. Order determines priority — if two strategies
    * target the same content, the first one to shrink it below the next strategy's
    * threshold wins. When omitted, uses the default pipeline.
+   *
+   * Accepts raw `ContextStrategy` objects, preset name strings (e.g. `'largeToolOffloading'`),
+   * or a mix of both. Preset strings are resolved to their default strategy configurations.
    */
-  strategies?: ContextStrategy[]
+  strategies?: (ContextStrategy | StrategyPresetName)[]
 
   /**
    * L1 stash configuration. The stash persists offloaded content so the agent can
