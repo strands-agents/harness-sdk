@@ -19,7 +19,7 @@ from typing_extensions import Unpack, override
 from websockets import ClientConnection
 
 from ....types._events import ToolResultEvent, ToolUseStreamEvent
-from ....types.content import Messages
+from ....types.content import Messages, SystemContentBlock
 from ....types.tools import ToolResult, ToolSpec, ToolUse
 from .._async import stop_all
 from ..types.events import (
@@ -49,7 +49,12 @@ from .configs import (
     _validate_audio_config,
     _validate_model_config,
 )
-from .model import AudioCapable, BidiModel, BidiModelTimeoutError
+from .model import (
+    AudioCapable,
+    BidiModel,
+    BidiModelTimeoutError,
+    _system_prompt_content_to_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -207,7 +212,8 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
 
     async def start(
         self,
-        system_prompt: str | None = None,
+        *,
+        system_prompt_content: list[SystemContentBlock] | None = None,
         tools: list[ToolSpec] | None = None,
         messages: Messages | None = None,
         **kwargs: Any,
@@ -215,7 +221,7 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         """Establish bidirectional connection to OpenAI Realtime API.
 
         Args:
-            system_prompt: System instructions for the model.
+            system_prompt_content: Structured system instructions for the model.
             tools: List of tools available to the model.
             messages: Conversation history to initialize with.
             **kwargs: Additional configuration options.
@@ -244,7 +250,7 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         logger.debug("connection_id=<%s> | websocket connected successfully", self._connection_id)
 
         # Configure session
-        session_config = self._build_session_config(system_prompt, tools)
+        session_config = self._build_session_config(system_prompt_content, tools)
         await self._send_event({"type": "session.update", "session": session_config})
 
         # Add conversation history if provided
@@ -266,13 +272,18 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         # Other voice activity events are logged but don't create events
         return None
 
-    def _build_session_config(self, system_prompt: str | None, tools: list[ToolSpec] | None) -> dict[str, Any]:
+    def _build_session_config(
+        self,
+        system_prompt_content: list[SystemContentBlock] | None,
+        tools: list[ToolSpec] | None,
+    ) -> dict[str, Any]:
         """Build session configuration for OpenAI Realtime API.
 
         Model params recursively override defaults and directly supplied options.
         """
         config: dict[str, Any] = copy.deepcopy(DEFAULT_SESSION_CONFIG)
 
+        system_prompt = _system_prompt_content_to_text(system_prompt_content)
         if system_prompt:
             config["instructions"] = system_prompt
 
@@ -805,7 +816,8 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
 
     async def restart(
         self,
-        system_prompt: str | None = None,
+        *,
+        system_prompt_content: list[SystemContentBlock] | None = None,
         tools: list[ToolSpec] | None = None,
         messages: Messages | None = None,
         **restart_kwargs: Any,
@@ -817,14 +829,19 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         swap.
 
         Args:
-            system_prompt: System instructions for the new connection.
+            system_prompt_content: Structured system instructions for the new connection.
             tools: Tool specifications for the new connection.
             messages: Conversation history to replay into the new connection.
             **restart_kwargs: Reserved for provider-specific restart options.
         """
         logger.debug("openai realtime restart starting")
         await self.stop()
-        await self.start(system_prompt, tools, messages, **restart_kwargs)
+        await self.start(
+            system_prompt_content=system_prompt_content,
+            tools=tools,
+            messages=messages,
+            **restart_kwargs,
+        )
         # Re-anchor the fresh session so it continues the conversation rather than drifting. This is
         # a best-effort nudge: if the send fails, the connection is still healthy, so log and move on
         # rather than let a failed nudge tear down the session.

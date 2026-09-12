@@ -39,7 +39,7 @@ class MockBidiModel(BidiModel):
     def get_config(self):
         return self._config.copy()
 
-    async def start(self, system_prompt=None, tools=None, messages=None, **kwargs):
+    async def start(self, *, system_prompt_content=None, tools=None, messages=None, **kwargs):
         if self._started:
             raise RuntimeError("model already started | call stop before starting again")
         self._connection_id = str(uuid4())
@@ -50,9 +50,14 @@ class MockBidiModel(BidiModel):
             self._started = False
             self._connection_id = None
 
-    async def restart(self, system_prompt=None, tools=None, messages=None, **restart_kwargs):
+    async def restart(self, *, system_prompt_content=None, tools=None, messages=None, **restart_kwargs):
         await self.stop()
-        await self.start(system_prompt, tools, messages, **restart_kwargs)
+        await self.start(
+            system_prompt_content=system_prompt_content,
+            tools=tools,
+            messages=messages,
+            **restart_kwargs,
+        )
 
     async def send(self, content):
         if not self._started:

@@ -52,6 +52,27 @@ async def loop(agent):
 
 
 @pytest.mark.asyncio
+async def test_start_passes_structured_system_prompt_to_model(loop, agent, agenerator):
+    system_prompt_content = [
+        {"text": "Primary instructions"},
+        {"cachePoint": {"type": "default"}},
+        {"text": "Additional instructions"},
+    ]
+    agent.system_prompt = system_prompt_content
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([]))
+
+    await loop.start()
+    try:
+        agent.model.start.assert_awaited_once_with(
+            system_prompt_content=system_prompt_content,
+            tools=agent.tool_registry.get_all_tool_specs(),
+            messages=agent.messages,
+        )
+    finally:
+        await loop.stop()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("stop_reason", ["complete", "interrupted", "error", "tool_use"])
 async def test_response_complete_hook(agent, agenerator, stop_reason):
     hooks = MockHookProvider([BidiResponseCompleteHookEvent])
@@ -200,9 +221,9 @@ async def test_bidi_agent_loop_receive_restart_connection(loop, agent, agenerato
     # The reactive path restarts through the provider method and forwards the timeout config.
     assert agent.model.start.call_count == 1
     agent.model.restart.assert_called_once_with(
-        agent.system_prompt,
-        agent.tool_registry.get_all_tool_specs(),
-        agent.messages,
+        system_prompt_content=agent.system_prompt_content,
+        tools=agent.tool_registry.get_all_tool_specs(),
+        messages=agent.messages,
         test_restart_config=1,
     )
 
@@ -378,8 +399,8 @@ class _NonRestartableModel(BidiModel):
     def get_config(self):
         return {"model_id": "test-model"}
 
-    async def start(self, system_prompt=None, tools=None, messages=None, **kwargs):
-        self.started.append(system_prompt)
+    async def start(self, *, system_prompt_content=None, tools=None, messages=None, **kwargs):
+        self.started.append(system_prompt_content)
 
     async def stop(self):
         self.stopped += 1
@@ -398,7 +419,7 @@ async def test_restart_falls_back_to_stop_start_when_provider_is_not_restartable
     await agent._loop._restart_model({})
 
     assert model.stopped == 1
-    assert model.started == ["hi"]  # start() called once with the agent's system prompt
+    assert model.started == [[{"text": "hi"}]]
 
 
 class _StreamModel(BidiModel):
@@ -418,17 +439,22 @@ class _StreamModel(BidiModel):
     def get_config(self):
         return {"model_id": "test-model"}
 
-    async def start(self, system_prompt=None, tools=None, messages=None, **kwargs):
+    async def start(self, *, system_prompt_content=None, tools=None, messages=None, **kwargs):
         self._closed = asyncio.Event()
         self._inbox = asyncio.Queue()
 
     async def stop(self):
         self._closed.set()
 
-    async def restart(self, system_prompt=None, tools=None, messages=None, **kwargs):
+    async def restart(self, *, system_prompt_content=None, tools=None, messages=None, **kwargs):
         self.restart_calls += 1
         await self.stop()
-        await self.start(system_prompt, tools, messages, **kwargs)
+        await self.start(
+            system_prompt_content=system_prompt_content,
+            tools=tools,
+            messages=messages,
+            **kwargs,
+        )
 
     async def send(self, content):
         return None

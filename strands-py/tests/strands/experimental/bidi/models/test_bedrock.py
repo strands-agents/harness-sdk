@@ -467,12 +467,27 @@ def test_prompt_start_event_audio_output_config(boto_session, audio, expected):
     assert prompt_start["audioOutputConfiguration"] == expected
 
 
+def test_system_prompt_content_renders_text_blocks(boto_session):
+    """Nova receives text blocks in order and ignores unsupported structural blocks."""
+    model = BedrockNovaSonicModel(boto_session=boto_session)
+    system_prompt_content = [
+        {"text": "Primary instructions"},
+        {"cachePoint": {"type": "default"}},
+        {"text": "Additional instructions"},
+    ]
+
+    events = model._get_system_prompt_events(system_prompt_content)
+
+    text_input = json.loads(events[1])["event"]["textInput"]
+    assert text_input["content"] == "Primary instructions\nAdditional instructions"
+
+
 @pytest.mark.asyncio
 async def test_connection_lifecycle(nova_model, mock_client, mock_stream):
     """Test complete connection lifecycle with various configurations."""
 
     # Test basic connection
-    await nova_model.start(system_prompt="Test system prompt")
+    await nova_model.start(system_prompt_content=[{"text": "Test system prompt"}])
     assert nova_model._stream == mock_stream
     assert nova_model._connection_id is not None
     assert mock_client.invoke_model_with_bidirectional_stream.called
@@ -490,7 +505,7 @@ async def test_connection_lifecycle(nova_model, mock_client, mock_stream):
             "inputSchema": {"json": json.dumps({"type": "object", "properties": {}})},
         }
     ]
-    await nova_model.start(system_prompt="You are helpful", tools=tools)
+    await nova_model.start(system_prompt_content=[{"text": "You are helpful"}], tools=tools)
     # Verify initialization events were sent (connectionStart, promptStart, system prompt)
     assert mock_stream.input_stream.send.call_count >= 3
     await nova_model.stop()
@@ -820,11 +835,11 @@ async def test_restart_replays_history_through_start_path(nova_model, mock_strea
         {"role": "assistant", "content": [{"text": "It's sunny and 72 degrees."}]},
     ]
 
-    await nova_model.start(system_prompt="You are helpful", tools=tools, messages=messages)
+    await nova_model.start(system_prompt_content=[{"text": "You are helpful"}], tools=tools, messages=messages)
     first_connection_id = nova_model._connection_id
     mock_stream.input_stream.send.reset_mock()
 
-    await nova_model.restart(system_prompt="You are helpful", tools=tools, messages=messages)
+    await nova_model.restart(system_prompt_content=[{"text": "You are helpful"}], tools=tools, messages=messages)
 
     # Old stream was closed and a fresh connection established with a new id.
     assert mock_stream.close.called
@@ -845,9 +860,9 @@ async def test_restart_replays_history_through_start_path(nova_model, mock_strea
 @pytest.mark.asyncio
 async def test_restart_twice_does_not_raise(nova_model):
     """Two restarts in succession are safe because stop() is idempotent."""
-    await nova_model.start(system_prompt="You are helpful")
-    await nova_model.restart(system_prompt="You are helpful")
-    await nova_model.restart(system_prompt="You are helpful")
+    await nova_model.start(system_prompt_content=[{"text": "You are helpful"}])
+    await nova_model.restart(system_prompt_content=[{"text": "You are helpful"}])
+    await nova_model.restart(system_prompt_content=[{"text": "You are helpful"}])
     assert nova_model._connection_id is not None
     await nova_model.stop()
 
@@ -952,7 +967,7 @@ async def test_connection_with_message_history(nova_model, mock_client, mock_str
     ]
 
     # Start connection with message history
-    await nova_model.start(system_prompt="You are a helpful assistant", messages=messages)
+    await nova_model.start(system_prompt_content=[{"text": "You are a helpful assistant"}], messages=messages)
 
     # Verify initialization events were sent
     # Should include: sessionStart, promptStart, system prompt (3 events),

@@ -222,7 +222,7 @@ async def test_connection_lifecycle(mock_genai_client, model, system_prompt, too
     mock_live_session_cm.__aexit__.assert_called_once()
 
     # Test connection with system prompt
-    await model.start(system_prompt=system_prompt)
+    await model.start(system_prompt_content=[{"text": system_prompt}])
     call_args = mock_client.aio.live.connect.call_args
     config = call_args.kwargs.get("config", {})
     assert config.get("system_instruction") == system_prompt
@@ -363,7 +363,7 @@ async def test_restart_uses_updated_config(mock_genai_client, model):
     )
     connect.assert_called_once()
 
-    await model.restart(system_prompt="Direct instructions")
+    await model.restart(system_prompt_content=[{"text": "Direct instructions"}])
 
     assert connect.call_count == 2
     restarted_request = connect.call_args.kwargs
@@ -381,7 +381,7 @@ async def test_restart_resumes_via_session_handle(mock_genai_client, model):
     await model.start()
     model._live_session_handle = "handle-abc"
 
-    await model.restart(system_prompt="hi")
+    await model.restart(system_prompt_content=[{"text": "hi"}])
 
     assert mock_live_session_cm.__aexit__.called  # old connection torn down
     assert model._connection_id is not None  # new connection established
@@ -400,7 +400,7 @@ async def test_restart_prefers_explicit_handle_from_restart_kwargs(mock_genai_cl
     await model.start()
     model._live_session_handle = "tracked"
 
-    await model.restart(system_prompt="hi", live_session_handle="from-error")
+    await model.restart(system_prompt_content=[{"text": "hi"}], live_session_handle="from-error")
 
     config = mock_client.aio.live.connect.call_args.kwargs["config"]
     assert config["session_resumption"]["handle"] == "from-error"
@@ -437,7 +437,7 @@ async def test_restart_without_handle_starts_fresh_and_replays_history(mock_gena
     await model.start()
     assert model._live_session_handle is None
 
-    await model.restart(system_prompt="hi", messages=messages)
+    await model.restart(system_prompt_content=[{"text": "hi"}], messages=messages)
 
     # Fresh session (no resumption handle), with history replayed via send_client_content.
     config = mock_client.aio.live.connect.call_args.kwargs["config"]
@@ -467,7 +467,7 @@ async def test_restart_falls_back_to_fresh_session_when_resume_rejected(mock_gen
 
     mock_live_session_cm.__aenter__.side_effect = aenter_rejects_resume
 
-    await model.restart(system_prompt="hi", messages=messages)
+    await model.restart(system_prompt_content=[{"text": "hi"}], messages=messages)
 
     # Handle dropped, a fresh session established, and history replayed.
     assert model._live_session_handle is None
@@ -1304,8 +1304,14 @@ def test_config_building(model, system_prompt, tool_spec):
     assert isinstance(config_basic, dict)
 
     # Test with system prompt
-    config_prompt = model._build_live_config(system_prompt=system_prompt)
-    assert config_prompt["system_instruction"] == system_prompt
+    config_prompt = model._build_live_config(
+        system_prompt_content=[
+            {"text": system_prompt},
+            {"cachePoint": {"type": "default"}},
+            {"text": "Additional instructions"},
+        ]
+    )
+    assert config_prompt["system_instruction"] == f"{system_prompt}\nAdditional instructions"
 
     # Test with tools
     config_tools = model._build_live_config(tools=[tool_spec])
@@ -1378,7 +1384,7 @@ def test__build_live_config_params_override_direct_options(
     )
 
     tru_config = model._build_live_config(
-        system_prompt=system_prompt,
+        system_prompt_content=[{"text": system_prompt}],
         tools=[tool_spec],
         has_messages=True,
         live_session_handle="direct-handle",
@@ -1407,7 +1413,7 @@ def test__build_live_config_merges_nested_params(mock_genai_client, api_key):
     )
 
     tru_config = model._build_live_config(
-        system_prompt="Direct instructions",
+        system_prompt_content=[{"text": "Direct instructions"}],
         has_messages=True,
         live_session_handle="resume-handle",
     )
@@ -1498,7 +1504,7 @@ def test_update_config_replaces_params(mock_genai_client, api_key, params, exp_v
 
     model.update_config(params=params)
 
-    config = model._build_live_config(system_prompt="Direct instructions")
+    config = model._build_live_config(system_prompt_content=[{"text": "Direct instructions"}])
     assert model.get_config()["params"] == params
     assert config["system_instruction"] == "Direct instructions"
     tru_speech = config["speech_config"]

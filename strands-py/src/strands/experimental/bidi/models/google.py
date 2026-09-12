@@ -26,7 +26,7 @@ from google.genai.types import LiveConnectConfigOrDict, LiveServerContent, LiveS
 from typing_extensions import Unpack, override
 
 from ....types._events import ToolResultEvent, ToolUseStreamEvent
-from ....types.content import Messages
+from ....types.content import Messages, SystemContentBlock
 from ....types.tools import ToolResult, ToolSpec, ToolUse
 from .._async import stop_all
 from ..types.events import (
@@ -53,7 +53,12 @@ from .configs import (
     _validate_audio_config,
     _validate_model_config,
 )
-from .model import AudioCapable, BidiModel, BidiModelTimeoutError
+from .model import (
+    AudioCapable,
+    BidiModel,
+    BidiModelTimeoutError,
+    _system_prompt_content_to_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +156,8 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
 
     async def start(
         self,
-        system_prompt: str | None = None,
+        *,
+        system_prompt_content: list[SystemContentBlock] | None = None,
         tools: list[ToolSpec] | None = None,
         messages: Messages | None = None,
         **kwargs: Any,
@@ -159,7 +165,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         """Establish bidirectional connection with Gemini Live API.
 
         Args:
-            system_prompt: System instructions for the model.
+            system_prompt_content: Structured system instructions for the model.
             tools: List of tools available to the model.
             messages: Conversation history to initialize with.
             **kwargs: Additional configuration options.
@@ -183,7 +189,12 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
             and any("text" in block for message in messages for block in message["content"])
             and "live_session_handle" not in kwargs
         )
-        live_config = self._build_live_config(system_prompt, tools, has_messages=has_messages, **kwargs)
+        live_config = self._build_live_config(
+            system_prompt_content,
+            tools,
+            has_messages=has_messages,
+            **kwargs,
+        )
 
         # Create the context manager and session
         self._live_session_context_manager = self._client.aio.live.connect(
@@ -594,7 +605,8 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
 
     async def restart(
         self,
-        system_prompt: str | None = None,
+        *,
+        system_prompt_content: list[SystemContentBlock] | None = None,
         tools: list[ToolSpec] | None = None,
         messages: Messages | None = None,
         **restart_kwargs: Any,
@@ -607,7 +619,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         When no handle is available yet, falls back to a fresh connection with history replay.
 
         Args:
-            system_prompt: System instructions for the resumed connection.
+            system_prompt_content: Structured system instructions for the resumed connection.
             tools: Tool specifications for the resumed connection.
             messages: Conversation history, replayed only when resuming without a handle.
             **restart_kwargs: Provider restart options; ``live_session_handle`` resumes the session.
@@ -616,17 +628,32 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         logger.debug("session_handle=<%s> | gemini restart starting", handle)
         await self.stop()
 
-        if handle is not None and await self._try_resume(system_prompt, tools, handle, **restart_kwargs):
+        if handle is not None and await self._try_resume(
+            system_prompt_content=system_prompt_content,
+            tools=tools,
+            handle=handle,
+            **restart_kwargs,
+        ):
             logger.debug("connection_id=<%s> | gemini restart complete via resume", self._connection_id)
             return
 
         # No handle, or the server refused it: start fresh and replay history so the conversation
         # continues rather than going silent.
-        await self.start(system_prompt, tools, messages, **restart_kwargs)
+        await self.start(
+            system_prompt_content=system_prompt_content,
+            tools=tools,
+            messages=messages,
+            **restart_kwargs,
+        )
         logger.debug("connection_id=<%s> | gemini restart complete via fresh session", self._connection_id)
 
     async def _try_resume(
-        self, system_prompt: str | None, tools: list[ToolSpec] | None, handle: str, **restart_kwargs: Any
+        self,
+        *,
+        system_prompt_content: list[SystemContentBlock] | None,
+        tools: list[ToolSpec] | None,
+        handle: str,
+        **restart_kwargs: Any,
     ) -> bool:
         """Attempt to resume the session via ``handle``; report whether it succeeded.
 
@@ -634,7 +661,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         torn down, leaving the model ready for a fresh start.
 
         Args:
-            system_prompt: System instructions for the resumed connection.
+            system_prompt_content: Structured system instructions for the resumed connection.
             tools: Tool specifications for the resumed connection.
             handle: The session resumption handle to resume with.
             **restart_kwargs: Additional provider restart options.
@@ -643,7 +670,12 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
             ``True`` if the session resumed, ``False`` if the handle was refused.
         """
         try:
-            await self.start(system_prompt, tools, live_session_handle=handle, **restart_kwargs)
+            await self.start(
+                system_prompt_content=system_prompt_content,
+                tools=tools,
+                live_session_handle=handle,
+                **restart_kwargs,
+            )
             return True
         except Exception as error:
             logger.warning("error=<%s> | gemini resume failed | falling back to fresh session", error)
@@ -663,7 +695,10 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
             logger.debug("error=<%s> | teardown after failed resume", stop_error)
 
     def _build_live_config(
-        self, system_prompt: str | None = None, tools: list[ToolSpec] | None = None, **kwargs: Any
+        self,
+        system_prompt_content: list[SystemContentBlock] | None = None,
+        tools: list[ToolSpec] | None = None,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         """Build LiveConnectConfig for the official SDK.
 
@@ -688,7 +723,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         if has_messages and getattr(self._client, "vertexai", False) is not True:
             config_dict["history_config"] = {"initial_history_in_client_content": True}
 
-        # Add system instruction if provided
+        system_prompt = _system_prompt_content_to_text(system_prompt_content)
         if system_prompt:
             config_dict["system_instruction"] = system_prompt
 

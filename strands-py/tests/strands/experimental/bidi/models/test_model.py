@@ -8,11 +8,15 @@ from pydantic import BaseModel
 
 from strands.experimental.bidi import Restartable
 from strands.experimental.bidi.models.configs import AudioConfig
-from strands.experimental.bidi.models.model import AudioCapable, BidiModel
+from strands.experimental.bidi.models.model import (
+    AudioCapable,
+    BidiModel,
+    _system_prompt_content_to_text,
+)
 from strands.experimental.bidi.types.events import BidiInputEvent, BidiOutputEvent
 from strands.models import Model
 from strands.types._events import ToolResultEvent
-from strands.types.content import Messages
+from strands.types.content import Messages, SystemContentBlock
 from strands.types.tools import ToolSpec
 
 
@@ -33,7 +37,8 @@ class _TestBidiModel(BidiModel):
 
     async def start(
         self,
-        system_prompt: str | None = None,
+        *,
+        system_prompt_content: list[SystemContentBlock] | None = None,
         tools: list[ToolSpec] | None = None,
         messages: Messages | None = None,
         **kwargs: Any,
@@ -67,7 +72,8 @@ class _AudioBidiModel(_TestBidiModel):
 class _TestRestartableBidiModel(_TestBidiModel):
     async def restart(
         self,
-        system_prompt: str | None = None,
+        *,
+        system_prompt_content: list[SystemContentBlock] | None = None,
         tools: list[ToolSpec] | None = None,
         messages: Messages | None = None,
         **restart_kwargs: Any,
@@ -90,6 +96,18 @@ def test_model_without_restart_is_not_restartable():
 
 def test_model_with_restart_is_restartable():
     assert isinstance(_TestRestartableBidiModel(), Restartable)
+
+
+def test_system_prompt_content_to_text():
+    system_prompt_content = [
+        {"text": "Primary instructions"},
+        {"cachePoint": {"type": "default"}},
+        {"text": "Additional instructions"},
+    ]
+
+    assert _system_prompt_content_to_text(system_prompt_content) == "Primary instructions\nAdditional instructions"
+    assert _system_prompt_content_to_text([{"cachePoint": {"type": "default"}}]) is None
+    assert _system_prompt_content_to_text(None) is None
 
 
 def test_stream_raises_not_implemented():

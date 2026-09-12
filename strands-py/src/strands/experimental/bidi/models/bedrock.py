@@ -48,7 +48,7 @@ from typing_extensions import Unpack, override
 
 from ....models._validation import validate_region
 from ....types._events import ToolResultEvent, ToolUseStreamEvent
-from ....types.content import Messages
+from ....types.content import Messages, SystemContentBlock
 from ....types.tools import ToolResult, ToolSpec, ToolUse
 from .._async import stop_all
 from ..types.events import (
@@ -72,7 +72,12 @@ from .configs import (
     _validate_audio_config,
     _validate_model_config,
 )
-from .model import AudioCapable, BidiModel, BidiModelTimeoutError
+from .model import (
+    AudioCapable,
+    BidiModel,
+    BidiModelTimeoutError,
+    _system_prompt_content_to_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -285,7 +290,8 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
 
     async def start(
         self,
-        system_prompt: str | None = None,
+        *,
+        system_prompt_content: list[SystemContentBlock] | None = None,
         tools: list[ToolSpec] | None = None,
         messages: Messages | None = None,
         **kwargs: Any,
@@ -293,7 +299,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         """Establish bidirectional connection to Nova Sonic.
 
         Args:
-            system_prompt: System instructions for the model.
+            system_prompt_content: Structured system instructions for the model.
             tools: List of tools available to the model.
             messages: Conversation history to initialize with.
             **kwargs: Additional configuration options.
@@ -342,21 +348,24 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         )
         logger.debug("region=<%s> | nova sonic bidirectional stream established", self.region)
 
-        init_events = self._build_initialization_events(system_prompt, tools, messages)
+        init_events = self._build_initialization_events(system_prompt_content, tools, messages)
         logger.debug("event_count=<%d> | sending nova sonic initialization events", len(init_events))
         await self._send_nova_events(init_events)
 
         logger.info("connection_id=<%s> | nova sonic connection established", self._connection_id)
 
     def _build_initialization_events(
-        self, system_prompt: str | None, tools: list[ToolSpec] | None, messages: Messages | None
+        self,
+        system_prompt_content: list[SystemContentBlock] | None,
+        tools: list[ToolSpec] | None,
+        messages: Messages | None,
     ) -> list[str]:
         """Build the sequence of initialization events."""
         tools = tools or []
         events = [
             self._get_connection_start_event(),
             self._get_prompt_start_event(tools),
-            *self._get_system_prompt_events(system_prompt),
+            *self._get_system_prompt_events(system_prompt_content),
         ]
 
         # Add conversation history if provided
@@ -654,7 +663,8 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
 
     async def restart(
         self,
-        system_prompt: str | None = None,
+        *,
+        system_prompt_content: list[SystemContentBlock] | None = None,
         tools: list[ToolSpec] | None = None,
         messages: Messages | None = None,
         **restart_kwargs: Any,
@@ -662,14 +672,19 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         """Restart by closing the connection and starting a new one, replaying messages.
 
         Args:
-            system_prompt: System instructions for the new connection.
+            system_prompt_content: Structured system instructions for the new connection.
             tools: Tool specifications for the new connection.
             messages: Conversation history to replay into the new connection.
             **restart_kwargs: Reserved for provider-specific restart options.
         """
         logger.debug("nova restart starting")
         await self.stop()
-        await self.start(system_prompt, tools, messages, **restart_kwargs)
+        await self.start(
+            system_prompt_content=system_prompt_content,
+            tools=tools,
+            messages=messages,
+            **restart_kwargs,
+        )
         logger.debug("connection_id=<%s> | nova restart complete", self._connection_id)
 
     def _convert_nova_event(
@@ -863,9 +878,10 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             )
         return tool_config
 
-    def _get_system_prompt_events(self, system_prompt: str | None) -> list[str]:
+    def _get_system_prompt_events(self, system_prompt_content: list[SystemContentBlock] | None) -> list[str]:
         """Generate system prompt events."""
         content_name = str(uuid.uuid4())
+        system_prompt = _system_prompt_content_to_text(system_prompt_content)
         return [
             self._get_text_content_start_event(content_name, "SYSTEM", interactive=False),
             self._get_text_input_event(content_name, system_prompt or ""),

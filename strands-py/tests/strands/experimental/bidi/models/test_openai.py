@@ -227,7 +227,7 @@ async def test_connection_lifecycle(mock_websockets_connect, model, system_promp
 
     # Test connection with system prompt
     mock_ws.send.reset_mock()
-    await model.start(system_prompt=system_prompt)
+    await model.start(system_prompt_content=[{"text": system_prompt}])
     session_update = json.loads(mock_ws.send.call_args.args[0])
     assert session_update["type"] == "session.update"
     assert session_update["session"]["instructions"] == system_prompt
@@ -712,8 +712,15 @@ def test__build_session_config_direct_options(api_key, system_prompt, tool_spec)
         audio={"input_rate": 16000, "output_rate": 48000, "voice": "coral"},
     )
 
-    config = model._build_session_config(system_prompt, [tool_spec])
-    assert config["instructions"] == system_prompt
+    config = model._build_session_config(
+        [
+            {"text": system_prompt},
+            {"cachePoint": {"type": "default"}},
+            {"text": "Additional instructions"},
+        ],
+        [tool_spec],
+    )
+    assert config["instructions"] == f"{system_prompt}\nAdditional instructions"
     assert config["tools"] == [
         {
             "type": "function",
@@ -759,7 +766,7 @@ def test__build_session_config_merges_params_last(api_key, system_prompt, tool_s
         },
     )
 
-    tru_config = model._build_session_config(system_prompt, [tool_spec])
+    tru_config = model._build_session_config([{"text": system_prompt}], [tool_spec])
     exp_config = {
         "type": "realtime",
         "instructions": "",
@@ -791,7 +798,7 @@ def test__build_session_config_preserves_defaults(model, api_key, system_prompt,
         params={"output_modalities": ["text"]},
     )
 
-    config = custom_model._build_session_config(system_prompt, [tool_spec])
+    config = custom_model._build_session_config([{"text": system_prompt}], [tool_spec])
     config["audio"]["input"]["turn_detection"]["threshold"] = 0.9
 
     tru_config = model._build_session_config(None, None)
@@ -807,7 +814,7 @@ async def test_start_preserves_explicit_nulls(api_key, mock_websockets_connect):
         params={"audio": {"input": {"turn_detection": None, "transcription": None}}, "tracing": None},
     )
 
-    await model.start(system_prompt="Test instructions")
+    await model.start(system_prompt_content=[{"text": "Test instructions"}])
 
     tru_event = json.loads(mock_ws.send.call_args.args[0])
     exp_event = {
@@ -848,7 +855,7 @@ def test_update_config_replaces_params(api_key, params, exp_voice):
 
     model.update_config(params=params)
 
-    config = model._build_session_config("Direct instructions", None)
+    config = model._build_session_config([{"text": "Direct instructions"}], None)
     assert model.get_config()["params"] == params
     assert config["instructions"] == "Direct instructions"
     tru_output = config["audio"]["output"]
@@ -1186,14 +1193,14 @@ def test_update_config_warns_invalid_keys(model, model_config, invalid_key):
 async def test_restart_uses_updated_config(mock_websockets_connect, model):
     """Restart opens a new connection using the updated model ID and params."""
     mock_connect, mock_ws = mock_websockets_connect
-    await model.start(system_prompt="Initial instructions")
+    await model.start(system_prompt_content=[{"text": "Initial instructions"}])
     model.update_config(
         model_id="updated-model",
         params={"instructions": "Configured instructions", "max_output_tokens": 512},
     )
     mock_connect.assert_called_once()
 
-    await model.restart(system_prompt="Direct instructions")
+    await model.restart(system_prompt_content=[{"text": "Direct instructions"}])
 
     assert mock_connect.call_count == 2
     assert mock_connect.call_args.args[0] == "wss://api.openai.com/v1/realtime?model=updated-model"
@@ -1215,7 +1222,7 @@ async def test_restart_reestablishes_and_replays_history(mock_websockets_connect
     first_connection_id = model._connection_id
     mock_ws.send.reset_mock()
 
-    await model.restart(system_prompt=system_prompt, messages=messages)
+    await model.restart(system_prompt_content=[{"text": system_prompt}], messages=messages)
 
     mock_ws.close.assert_called_once()
     assert mock_connect.call_count == 2
