@@ -1,8 +1,22 @@
 import type { Storage, StorageSearchResult } from './storage.js'
+import type { Embedder, SearchStrategy } from './search/types.js'
 
 import { StorageError } from '../errors.js'
 import { namespace, normalizeKey, normalizePrefix } from './storage.js'
 import { KeywordSearchStrategy } from './search/keyword.js'
+import { S3VectorSearchStrategy } from './search/s3-vector.js'
+
+/** Configuration for enabling vector search via S3 Vectors on {@link S3Storage}. */
+export interface S3EmbeddingsConfig {
+  /** Function that produces embedding vectors from text. */
+  embedder: Embedder
+  /** S3 Vectors bucket name. Defaults to the storage bucket name suffixed with `-vectors`. */
+  vectorBucketName?: string
+  /** Vector index name. Defaults to `'default'`. */
+  indexName?: string
+  /** Maximum number of results to return. Defaults to 10. */
+  maxResults?: number
+}
 
 /** Configuration for {@link S3Storage}. */
 export interface S3StorageConfig {
@@ -12,6 +26,15 @@ export interface S3StorageConfig {
   region?: string
   /** Pre-configured S3 client. Cannot be combined with `region`. */
   s3Client?: import('@aws-sdk/client-s3').S3Client
+  /** Search strategy to use instead of the default keyword search. Takes precedence over `embeddings`. */
+  searchStrategy?: SearchStrategy
+  /**
+   * Shorthand for enabling native vector search via S3 Vectors.
+   *
+   * Pass a config object with an `embedder` to automatically wire up an
+   * {@link S3VectorSearchStrategy}. Ignored if `searchStrategy` is also provided.
+   */
+  embeddings?: S3EmbeddingsConfig
 }
 
 const S3_PAGE_SIZE = 1000
@@ -26,8 +49,12 @@ const S3_PAGE_SIZE = 1000
  * @example
  * ```typescript
  * import { S3Storage } from '@strands-agents/sdk/storage'
+ * import { bedrockEmbedder } from '@strands-agents/sdk/storage/embeddings'
  *
- * const storage = new S3Storage('my-bucket', { prefix: 'agents/' })
+ * const storage = new S3Storage('my-bucket', {
+ *   prefix: 'agents/',
+ *   embeddings: { embedder: bedrockEmbedder() },
+ * })
  * await storage.write('sessions/abc/snapshot.json', bytes)
  * ```
  */
@@ -35,11 +62,12 @@ export class S3Storage implements Storage {
   private readonly _bucket: string
   private readonly _prefix: string
   private readonly _region: string | undefined
+  private readonly _searchStrategy: SearchStrategy
   private _client: import('@aws-sdk/client-s3').S3Client | undefined
 
   /**
    * @param bucket - Target S3 bucket name
-   * @param config - Optional prefix, region, or pre-configured client
+   * @param config - Optional prefix, region, pre-configured client, or search configuration
    * @throws {@link StorageError} if both `region` and `s3Client` are provided
    */
   constructor(bucket: string, config?: S3StorageConfig) {
@@ -50,6 +78,19 @@ export class S3Storage implements Storage {
     this._prefix = config?.prefix ? config.prefix.split('/').filter(Boolean).join('/') + '/' : ''
     this._region = config?.region
     this._client = config?.s3Client
+    this._searchStrategy =
+      config?.searchStrategy ?? this._resolveEmbeddings(config?.embeddings) ?? KeywordSearchStrategy
+  }
+
+  private _resolveEmbeddings(embeddings: S3EmbeddingsConfig | undefined): SearchStrategy | undefined {
+    if (!embeddings) return undefined
+    return new S3VectorSearchStrategy({
+      embedder: embeddings.embedder,
+      vectorBucketName: embeddings.vectorBucketName ?? `${this._bucket}-vectors`,
+      indexName: embeddings.indexName ?? 'default',
+      ...(embeddings.maxResults != null && { maxResults: embeddings.maxResults }),
+      ...(this._region != null && { region: this._region }),
+    })
   }
 
   /**
@@ -68,6 +109,7 @@ export class S3Storage implements Storage {
     } catch (error: unknown) {
       throw new StorageError(`Failed to write '${normalized}' to S3 bucket '${this._bucket}'`, { cause: error })
     }
+    await this._searchStrategy.index?.(this, normalized, data)
   }
 
   /**
@@ -155,7 +197,7 @@ export class S3Storage implements Storage {
    * @returns All matches with relevance scores, ranked best-first
    */
   async search(query: string): Promise<StorageSearchResult[]> {
-    return KeywordSearchStrategy.search(this, query)
+    return this._searchStrategy.search(this, query)
   }
 
   private async _getClient(): Promise<import('@aws-sdk/client-s3').S3Client> {
