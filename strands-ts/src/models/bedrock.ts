@@ -68,6 +68,7 @@ import { ensureDefined } from '../types/validation.js'
 import { logger } from '../logging/logger.js'
 import { warnOnce } from '../logging/warn-once.js'
 import { NOOP_TOOL_SPEC } from '../tools/noop-tool.js'
+import { ensureStrictJsonSchema } from './_strict-schema.js'
 import { MODEL_DEFAULTS, defaultModelWarningMessage } from './defaults.js'
 
 const DEFAULT_BEDROCK_REGION_SUPPORTS_FIP = false
@@ -316,6 +317,18 @@ export interface BedrockModelConfig extends BaseModelConfig {
    * @defaultValue false
    */
   useNativeTokenCount?: boolean
+
+  /**
+   * Apply strict (structured-output) enforcement to every tool sent to this model.
+   *
+   * When `true`, injects `strict: true` into each `toolSpec`. Incompatible with citations
+   * for Anthropic models.
+   *
+   * @see https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolSpecification.html
+   *
+   * @defaultValue false
+   */
+  strictTools?: boolean
 }
 
 /**
@@ -782,13 +795,17 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     }
 
     if (toolSpecs.length > 0) {
+      const strictTools = this._config.strictTools === true
       const tools: Tool[] = toolSpecs.map(
         (spec) =>
           ({
             toolSpec: {
               name: spec.name,
               description: spec.description,
-              inputSchema: { json: spec.inputSchema },
+              inputSchema: {
+                json: strictTools && spec.inputSchema ? ensureStrictJsonSchema(spec.inputSchema) : spec.inputSchema,
+              },
+              ...(strictTools ? { strict: true } : {}),
             },
           }) as Tool
       )
