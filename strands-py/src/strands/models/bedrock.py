@@ -166,9 +166,9 @@ class BedrockModel(Model):
                 (e.g. "default") to cache the tools with no explicit TTL, or a CacheToolsConfig instance to set
                 both type and TTL (e.g. "1h"). Inherits cache_config.ttl if specified, otherwise it takes the
                 Bedrock default. Superseded by an explicitly set cache_config.tools_ttl.
-            guardrail_id: ID of the guardrail to apply
+            guardrail_id: ID of the guardrail to apply. Must be set together with guardrail_version.
             guardrail_trace: Guardrail trace mode. Defaults to enabled.
-            guardrail_version: Version of the guardrail to apply
+            guardrail_version: Version of the guardrail to apply. Must be set together with guardrail_id.
             guardrail_stream_processing_mode: The guardrail processing mode
             guardrail_redact_input: Flag to redact input if a guardrail is triggered. Defaults to True.
             guardrail_redact_input_message: If a Bedrock Input guardrail triggers, replace the input with this message.
@@ -331,6 +331,12 @@ class BedrockModel(Model):
         validate_config_keys(model_config, self.BedrockConfig)
         # __init__ delegates here, so the caller sits at stacklevel 4 on the constructor path.
         _warn_on_deprecated_cache_tools(model_config, stacklevel=4)
+
+        guardrail_id = model_config.get("guardrail_id", self.config.get("guardrail_id"))
+        guardrail_version = model_config.get("guardrail_version", self.config.get("guardrail_version"))
+        if bool(guardrail_id) != bool(guardrail_version):
+            raise ValueError("guardrail_id and guardrail_version must be set together")
+
         self.config.update(model_config)
 
     @override

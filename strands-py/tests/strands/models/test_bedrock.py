@@ -354,6 +354,21 @@ def test__init__model_config(bedrock_client):
     assert tru_max_tokens == exp_max_tokens
 
 
+@pytest.mark.parametrize(
+    "guardrail_config",
+    [
+        {"guardrail_id": "g1"},
+        {"guardrail_version": "v1"},
+        {"guardrail_id": "", "guardrail_version": "v1"},
+        {"guardrail_id": "g1", "guardrail_version": ""},
+    ],
+)
+def test__init__partial_guardrail_config_raises_value_error(bedrock_client, guardrail_config):
+    """Reject partial guardrail configuration (#4204)."""
+    with pytest.raises(ValueError, match="guardrail_id and guardrail_version must be set together"):
+        BedrockModel(model_id="m1", **guardrail_config)
+
+
 def test__init__context_window_limit(bedrock_client):
     _ = bedrock_client
 
@@ -410,6 +425,21 @@ def test_update_config(model, model_id):
     exp_model_id = model_id
 
     assert tru_model_id == exp_model_id
+
+
+@pytest.mark.parametrize(
+    "guardrail_config",
+    [
+        {"guardrail_id": "g1"},
+        {"guardrail_version": "v1"},
+        {"guardrail_id": "", "guardrail_version": "v1"},
+        {"guardrail_id": "g1", "guardrail_version": ""},
+    ],
+)
+def test_update_config_partial_guardrail_config_raises_value_error(model, guardrail_config):
+    """Reject updating only one guardrail setting (#4204)."""
+    with pytest.raises(ValueError, match="guardrail_id and guardrail_version must be set together"):
+        model.update_config(**guardrail_config)
 
 
 def test_cache_key_round_trips_through_config(model):
