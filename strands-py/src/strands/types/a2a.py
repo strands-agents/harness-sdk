@@ -1,22 +1,22 @@
 """Additional A2A types."""
 
-from typing import Any, TypeAlias
+from typing import TypeAlias
 
-from a2a.types import Message, Task, TaskArtifactUpdateEvent, TaskStatusUpdateEvent
+from a2a.types import StreamResponse
 
 from ._events import TypedEvent
 
-A2AResponse: TypeAlias = tuple[Task, TaskStatusUpdateEvent | TaskArtifactUpdateEvent | None] | Message | Any
+A2AResponse: TypeAlias = StreamResponse
 
 
 class A2AStreamEvent(TypedEvent):
     """Event emitted for every update received from the remote A2A server.
 
-    This event wraps all A2A response types during streaming, including:
-    - Partial task updates (TaskArtifactUpdateEvent)
-    - Status updates (TaskStatusUpdateEvent)
-    - Complete messages (Message)
-    - Final task completions
+    This event wraps every ``StreamResponse`` received during streaming, including:
+    - The initial ``Task`` (``task`` field)
+    - Partial task updates (``artifact_update`` field)
+    - Status updates (``status_update`` field)
+    - Complete messages (``message`` field)
 
     The event is emitted for EVERY update from the server, regardless of whether
     it represents a complete or partial response. When streaming completes, an
@@ -28,7 +28,7 @@ class A2AStreamEvent(TypedEvent):
         """Initialize with A2A event.
 
         Args:
-            a2a_event: The original A2A event (Task tuple or Message)
+            a2a_event: The original A2A StreamResponse event.
         """
         super().__init__(
             {

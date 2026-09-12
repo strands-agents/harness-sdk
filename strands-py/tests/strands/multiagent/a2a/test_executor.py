@@ -1,12 +1,13 @@
 """Tests for the StrandsA2AExecutor class."""
 
-import base64
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from a2a.types import DataPart, FilePart, InternalError, InvalidParamsError, TextPart, UnsupportedOperationError
-from a2a.utils.errors import ServerError
+from a2a.helpers import new_data_part
+from a2a.types import Part
+from a2a.utils.errors import InternalError, InvalidParamsError, UnsupportedOperationError
+from google.protobuf.json_format import MessageToDict
 
 from strands.agent.agent_result import AgentResult as SAAgentResult
 from strands.multiagent.a2a.executor import StrandsA2AExecutor, _StreamState
@@ -89,18 +90,10 @@ def test_strip_file_extension():
 
 
 def test_convert_a2a_parts_to_content_blocks_text_part():
-    """Test conversion of TextPart to ContentBlock."""
-    from a2a.types import TextPart
-
+    """Test conversion of a text Part to ContentBlock."""
     executor = StrandsA2AExecutor(MagicMock())
 
-    # Mock TextPart with proper spec
-    text_part = MagicMock(spec=TextPart)
-    text_part.text = "Hello, world!"
-
-    # Mock Part with TextPart root
-    part = MagicMock()
-    part.root = text_part
+    part = Part(text="Hello, world!")
 
     result = executor._convert_a2a_parts_to_content_blocks([part])
 
@@ -109,25 +102,10 @@ def test_convert_a2a_parts_to_content_blocks_text_part():
 
 
 def test_convert_a2a_parts_to_content_blocks_file_part_image_bytes():
-    """Test conversion of FilePart with image bytes to ContentBlock."""
+    """Test conversion of a raw Part with image bytes to ContentBlock."""
     executor = StrandsA2AExecutor(MagicMock())
 
-    base64_bytes = base64.b64encode(VALID_PNG_BYTES).decode("utf-8")
-
-    # Mock file object
-    file_obj = MagicMock()
-    file_obj.name = "test_image.png"
-    file_obj.mime_type = "image/png"
-    file_obj.bytes = base64_bytes
-    file_obj.uri = None
-
-    # Mock FilePart with proper spec
-    file_part = MagicMock(spec=FilePart)
-    file_part.file = file_obj
-
-    # Mock Part with FilePart root
-    part = MagicMock()
-    part.root = file_part
+    part = Part(raw=VALID_PNG_BYTES, media_type="image/png", filename="test_image.png")
 
     result = executor._convert_a2a_parts_to_content_blocks([part])
 
@@ -139,25 +117,10 @@ def test_convert_a2a_parts_to_content_blocks_file_part_image_bytes():
 
 
 def test_convert_a2a_parts_to_content_blocks_file_part_video_bytes():
-    """Test conversion of FilePart with video bytes to ContentBlock."""
+    """Test conversion of a raw Part with video bytes to ContentBlock."""
     executor = StrandsA2AExecutor(MagicMock())
 
-    base64_bytes = base64.b64encode(VALID_MP4_BYTES).decode("utf-8")
-
-    # Mock file object
-    file_obj = MagicMock()
-    file_obj.name = "test_video.mp4"
-    file_obj.mime_type = "video/mp4"
-    file_obj.bytes = base64_bytes
-    file_obj.uri = None
-
-    # Mock FilePart with proper spec
-    file_part = MagicMock(spec=FilePart)
-    file_part.file = file_obj
-
-    # Mock Part with FilePart root
-    part = MagicMock()
-    part.root = file_part
+    part = Part(raw=VALID_MP4_BYTES, media_type="video/mp4", filename="test_video.mp4")
 
     result = executor._convert_a2a_parts_to_content_blocks([part])
 
@@ -169,25 +132,10 @@ def test_convert_a2a_parts_to_content_blocks_file_part_video_bytes():
 
 
 def test_convert_a2a_parts_to_content_blocks_file_part_document_bytes():
-    """Test conversion of FilePart with document bytes to ContentBlock."""
+    """Test conversion of a raw Part with document bytes to ContentBlock."""
     executor = StrandsA2AExecutor(MagicMock())
 
-    base64_bytes = base64.b64encode(VALID_DOCUMENT_BYTES).decode("utf-8")
-
-    # Mock file object
-    file_obj = MagicMock()
-    file_obj.name = "test_document.pdf"
-    file_obj.mime_type = "application/pdf"
-    file_obj.bytes = base64_bytes
-    file_obj.uri = None
-
-    # Mock FilePart with proper spec
-    file_part = MagicMock(spec=FilePart)
-    file_part.file = file_obj
-
-    # Mock Part with FilePart root
-    part = MagicMock()
-    part.root = file_part
+    part = Part(raw=VALID_DOCUMENT_BYTES, media_type="application/pdf", filename="test_document.pdf")
 
     result = executor._convert_a2a_parts_to_content_blocks([part])
 
@@ -200,25 +148,10 @@ def test_convert_a2a_parts_to_content_blocks_file_part_document_bytes():
 
 
 def test_convert_a2a_parts_to_content_blocks_file_part_uri():
-    """Test conversion of FilePart with URI to ContentBlock."""
-    from a2a.types import FilePart
-
+    """Test conversion of a URL Part to ContentBlock."""
     executor = StrandsA2AExecutor(MagicMock())
 
-    # Mock file object with URI
-    file_obj = MagicMock()
-    file_obj.name = "test_image.png"
-    file_obj.mime_type = "image/png"
-    file_obj.bytes = None
-    file_obj.uri = "https://example.com/image.png"
-
-    # Mock FilePart with proper spec
-    file_part = MagicMock(spec=FilePart)
-    file_part.file = file_obj
-
-    # Mock Part with FilePart root
-    part = MagicMock()
-    part.root = file_part
+    part = Part(url="https://example.com/image.png", media_type="image/png", filename="test_image.png")
 
     result = executor._convert_a2a_parts_to_content_blocks([part])
 
@@ -229,76 +162,12 @@ def test_convert_a2a_parts_to_content_blocks_file_part_uri():
     assert "https://example.com/image.png" in content_block["text"]
 
 
-def test_convert_a2a_parts_to_content_blocks_file_part_with_bytes():
-    """Test conversion of FilePart with bytes data."""
-    executor = StrandsA2AExecutor(MagicMock())
-
-    base64_bytes = base64.b64encode(VALID_PNG_BYTES).decode("utf-8")
-
-    # Mock file object with bytes (no validation needed since no decoding)
-    file_obj = MagicMock()
-    file_obj.name = "test_image.png"
-    file_obj.mime_type = "image/png"
-    file_obj.bytes = base64_bytes
-    file_obj.uri = None
-
-    # Mock FilePart with proper spec
-    file_part = MagicMock(spec=FilePart)
-    file_part.file = file_obj
-
-    # Mock Part with FilePart root
-    part = MagicMock()
-    part.root = file_part
-
-    result = executor._convert_a2a_parts_to_content_blocks([part])
-
-    assert len(result) == 1
-    content_block = result[0]
-    assert "image" in content_block
-    assert content_block["image"]["source"]["bytes"] == VALID_PNG_BYTES
-
-
-def test_convert_a2a_parts_to_content_blocks_file_part_invalid_base64():
-    """Test conversion of FilePart with invalid base64 data raises ValueError."""
-    executor = StrandsA2AExecutor(MagicMock())
-
-    # Invalid base64 string - contains invalid characters
-    invalid_base64 = "SGVsbG8gV29ybGQ@#$%"
-
-    # Mock file object with invalid base64 bytes
-    file_obj = MagicMock()
-    file_obj.name = "test.txt"
-    file_obj.mime_type = "text/plain"
-    file_obj.bytes = invalid_base64
-    file_obj.uri = None
-
-    # Mock FilePart
-    file_part = MagicMock(spec=FilePart)
-    file_part.file = file_obj
-    part = MagicMock()
-    part.root = file_part
-
-    # Should handle the base64 decode error gracefully and return empty list
-    result = executor._convert_a2a_parts_to_content_blocks([part])
-    assert isinstance(result, list)
-    # The part should be skipped due to base64 decode error
-    assert len(result) == 0
-
-
 def test_convert_a2a_parts_to_content_blocks_data_part():
-    """Test conversion of DataPart to ContentBlock."""
-    from a2a.types import DataPart
-
+    """Test conversion of a data Part to ContentBlock."""
     executor = StrandsA2AExecutor(MagicMock())
 
-    # Mock DataPart with proper spec
     test_data = {"key": "value", "number": 42}
-    data_part = MagicMock(spec=DataPart)
-    data_part.data = test_data
-
-    # Mock Part with DataPart root
-    part = MagicMock()
-    part.root = data_part
+    part = new_data_part(test_data)
 
     result = executor._convert_a2a_parts_to_content_blocks([part])
 
@@ -312,23 +181,9 @@ def test_convert_a2a_parts_to_content_blocks_data_part():
 
 def test_convert_a2a_parts_to_content_blocks_mixed_parts():
     """Test conversion of mixed A2A parts to ContentBlocks."""
-    from a2a.types import DataPart, TextPart
-
     executor = StrandsA2AExecutor(MagicMock())
 
-    # Mock TextPart with proper spec
-    text_part = MagicMock(spec=TextPart)
-    text_part.text = "Text content"
-    text_part_mock = MagicMock()
-    text_part_mock.root = text_part
-
-    # Mock DataPart with proper spec
-    data_part = MagicMock(spec=DataPart)
-    data_part.data = {"test": "data"}
-    data_part_mock = MagicMock()
-    data_part_mock.root = data_part
-
-    parts = [text_part_mock, data_part_mock]
+    parts = [Part(text="Text content"), new_data_part({"test": "data"})]
     result = executor._convert_a2a_parts_to_content_blocks(parts)
 
     assert len(result) == 2
@@ -358,15 +213,8 @@ async def test_execute_streaming_mode_with_data_events(mock_strands_agent, mock_
     mock_task.context_id = "test-context-id"
     mock_request_context.current_task = mock_task
 
-    # Mock message with parts
-    from a2a.types import TextPart
-
     mock_message = MagicMock()
-    text_part = MagicMock(spec=TextPart)
-    text_part.text = "Test input"
-    part = MagicMock()
-    part.root = text_part
-    mock_message.parts = [part]
+    mock_message.parts = [Part(text="Test input")]
     mock_request_context.message = mock_message
 
     await executor.execute(mock_request_context, mock_event_queue)
@@ -402,15 +250,8 @@ async def test_execute_streaming_mode_with_result_event(mock_strands_agent, mock
     mock_task.context_id = "test-context-id"
     mock_request_context.current_task = mock_task
 
-    # Mock message with parts
-    from a2a.types import TextPart
-
     mock_message = MagicMock()
-    text_part = MagicMock(spec=TextPart)
-    text_part.text = "Test input"
-    part = MagicMock()
-    part.root = text_part
-    mock_message.parts = [part]
+    mock_message.parts = [Part(text="Test input")]
     mock_request_context.message = mock_message
 
     await executor.execute(mock_request_context, mock_event_queue)
@@ -447,15 +288,8 @@ async def test_execute_streaming_mode_with_empty_data(mock_strands_agent, mock_r
     mock_task.context_id = "test-context-id"
     mock_request_context.current_task = mock_task
 
-    # Mock message with parts
-    from a2a.types import TextPart
-
     mock_message = MagicMock()
-    text_part = MagicMock(spec=TextPart)
-    text_part.text = "Test input"
-    part = MagicMock()
-    part.root = text_part
-    mock_message.parts = [part]
+    mock_message.parts = [Part(text="Test input")]
     mock_request_context.message = mock_message
 
     await executor.execute(mock_request_context, mock_event_queue)
@@ -492,15 +326,8 @@ async def test_execute_streaming_mode_with_unexpected_event(mock_strands_agent, 
     mock_task.context_id = "test-context-id"
     mock_request_context.current_task = mock_task
 
-    # Mock message with parts
-    from a2a.types import TextPart
-
     mock_message = MagicMock()
-    text_part = MagicMock(spec=TextPart)
-    text_part.text = "Test input"
-    part = MagicMock()
-    part.root = text_part
-    mock_message.parts = [part]
+    mock_message.parts = [Part(text="Test input")]
     mock_request_context.message = mock_message
 
     await executor.execute(mock_request_context, mock_event_queue)
@@ -520,7 +347,7 @@ async def test_execute_streaming_mode_with_unexpected_event(mock_strands_agent, 
 async def test_execute_streaming_mode_fallback_to_text_extraction(
     mock_strands_agent, mock_request_context, mock_event_queue
 ):
-    """Test that execute raises ServerError when no A2A parts are available."""
+    """Test that execute raises the specific error when no A2A parts are available."""
 
     # Create executor
     executor = StrandsA2AExecutor(mock_strands_agent)
@@ -537,11 +364,8 @@ async def test_execute_streaming_mode_fallback_to_text_extraction(
     mock_request_context.message = mock_message
     mock_request_context.get_user_input.return_value = "Fallback input"
 
-    with pytest.raises(ServerError) as excinfo:
+    with pytest.raises(InternalError):
         await executor.execute(mock_request_context, mock_event_queue)
-
-    # Verify the error is a ServerError containing an InternalError
-    assert isinstance(excinfo.value.error, InternalError)
 
 
 @pytest.mark.asyncio
@@ -562,18 +386,11 @@ async def test_execute_creates_task_when_none_exists(mock_strands_agent, mock_re
     # Mock no existing task
     mock_request_context.current_task = None
 
-    # Mock message with parts
-    from a2a.types import TextPart
-
     mock_message = MagicMock()
-    text_part = MagicMock(spec=TextPart)
-    text_part.text = "Test input"
-    part = MagicMock()
-    part.root = text_part
-    mock_message.parts = [part]
+    mock_message.parts = [Part(text="Test input")]
     mock_request_context.message = mock_message
 
-    with patch("strands.multiagent.a2a.executor.new_task") as mock_new_task:
+    with patch("strands.multiagent.a2a.executor.new_task_from_user_message") as mock_new_task:
         mock_new_task.return_value = MagicMock(id="new-task-id", context_id="new-context-id")
 
         await executor.execute(mock_request_context, mock_event_queue)
@@ -601,15 +418,8 @@ async def test_execute_streaming_mode_handles_agent_exception(
     mock_task.context_id = "test-context-id"
     mock_request_context.current_task = mock_task
 
-    # Mock message with parts
-    from a2a.types import TextPart
-
     mock_message = MagicMock()
-    text_part = MagicMock(spec=TextPart)
-    text_part.text = "Test input"
-    part = MagicMock()
-    part.root = text_part
-    mock_message.parts = [part]
+    mock_message.parts = [Part(text="Test input")]
     mock_request_context.message = mock_message
 
     # Should NOT raise - instead transitions to failed state
@@ -623,19 +433,18 @@ async def test_execute_streaming_mode_handles_agent_exception(
     from a2a.types import TaskState, TaskStatusUpdateEvent
 
     failed_events = [
-        e for e in enqueued_events if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.failed
+        e
+        for e in enqueued_events
+        if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.TASK_STATE_FAILED
     ]
     assert len(failed_events) == 1
-    assert "Agent execution failed" in failed_events[0].status.message.parts[0].root.text
+    assert "Agent execution failed" in failed_events[0].status.message.parts[0].text
     executor = StrandsA2AExecutor(mock_strands_agent)
 
     # Cancel with no current_task raises UnsupportedOperationError
     mock_request_context.current_task = None
-    with pytest.raises(ServerError) as excinfo:
+    with pytest.raises(UnsupportedOperationError):
         await executor.cancel(mock_request_context, mock_event_queue)
-
-    # Verify the error is a ServerError containing an UnsupportedOperationError
-    assert isinstance(excinfo.value.error, UnsupportedOperationError)
 
 
 @pytest.mark.asyncio
@@ -714,16 +523,15 @@ async def test_handle_agent_result_with_content(mock_strands_agent):
     # Check that the artifact contains the expected content
     call_args = mock_updater.add_artifact.call_args[0][0]
     assert len(call_args) == 1
-    assert call_args[0].root.text == "Test response content"
+    assert call_args[0].text == "Test response content"
 
 
 def test_handle_conversion_error():
     """Test that conversion handles errors gracefully."""
     executor = StrandsA2AExecutor(MagicMock())
 
-    # Mock Part that will raise an exception during processing
-    problematic_part = MagicMock()
-    problematic_part.root = None  # This should cause an AttributeError
+    # A bare object with no HasField method raises AttributeError during processing.
+    problematic_part = object()
 
     # Should not raise an exception, but return empty list or handle gracefully
     result = executor._convert_a2a_parts_to_content_blocks([problematic_part])
@@ -742,110 +550,56 @@ def test_convert_a2a_parts_to_content_blocks_empty_list():
 
 
 def test_convert_a2a_parts_to_content_blocks_file_part_no_name():
-    """Test conversion of FilePart with no file name."""
+    """Test conversion of a raw Part with no filename."""
     executor = StrandsA2AExecutor(MagicMock())
 
-    base64_bytes = base64.b64encode(VALID_DOCUMENT_BYTES).decode("utf-8")
-
-    # Mock file object without name
-    file_obj = MagicMock()
-    delattr(file_obj, "name")  # Remove name attribute
-    file_obj.mime_type = "text/plain"
-    file_obj.bytes = base64_bytes
-    file_obj.uri = None
-
-    # Mock FilePart with proper spec
-    file_part = MagicMock(spec=FilePart)
-    file_part.file = file_obj
-
-    # Mock Part with FilePart root
-    part = MagicMock()
-    part.root = file_part
+    part = Part(raw=VALID_DOCUMENT_BYTES, media_type="text/plain")
 
     result = executor._convert_a2a_parts_to_content_blocks([part])
 
     assert len(result) == 1
     content_block = result[0]
     assert "document" in content_block
-    assert content_block["document"]["name"] == "FileNameNotProvided"  # Should use default
+    # Should use default
+    assert content_block["document"]["name"] == "FileNameNotProvided"
 
 
 def test_convert_a2a_parts_to_content_blocks_file_part_no_mime_type():
-    """Test conversion of FilePart with no MIME type."""
+    """Test conversion of a raw Part with no media_type."""
     executor = StrandsA2AExecutor(MagicMock())
 
-    base64_bytes = base64.b64encode(VALID_DOCUMENT_BYTES).decode("utf-8")
-
-    # Mock file object without MIME type
-    file_obj = MagicMock()
-    file_obj.name = "test_file"
-    delattr(file_obj, "mime_type")
-    file_obj.bytes = base64_bytes
-    file_obj.uri = None
-
-    # Mock FilePart with proper spec
-    file_part = MagicMock(spec=FilePart)
-    file_part.file = file_obj
-
-    # Mock Part with FilePart root
-    part = MagicMock()
-    part.root = file_part
+    part = Part(raw=VALID_DOCUMENT_BYTES, filename="test_file")
 
     result = executor._convert_a2a_parts_to_content_blocks([part])
 
     assert len(result) == 1
     content_block = result[0]
     assert "document" in content_block  # Should default to document with unknown type
-    assert content_block["document"]["format"] == "txt"  # Should use default format for unknown file type
+    # Should use default format for unknown file type
+    assert content_block["document"]["format"] == "txt"
 
 
 def test_convert_a2a_parts_to_content_blocks_file_part_no_bytes_no_uri():
-    """Test conversion of FilePart with neither bytes nor URI."""
-    from a2a.types import FilePart
-
+    """Test conversion of a Part with none of text/raw/url/data set."""
     executor = StrandsA2AExecutor(MagicMock())
 
-    # Mock file object without bytes or URI
-    file_obj = MagicMock()
-    file_obj.name = "test_file.txt"
-    file_obj.mime_type = "text/plain"
-    file_obj.bytes = None
-    file_obj.uri = None
-
-    # Mock FilePart with proper spec
-    file_part = MagicMock(spec=FilePart)
-    file_part.file = file_obj
-
-    # Mock Part with FilePart root
-    part = MagicMock()
-    part.root = file_part
+    part = Part()
 
     result = executor._convert_a2a_parts_to_content_blocks([part])
 
-    # Should return empty list since no fallback case exists
+    # Should return empty list since no field matches any conversion branch
     assert len(result) == 0
 
 
 def test_convert_a2a_parts_to_content_blocks_data_part_serialization_error():
-    """Test conversion of DataPart with non-serializable data."""
-    from a2a.types import DataPart
-
+    """Test conversion of a data Part when structured-data conversion fails."""
     executor = StrandsA2AExecutor(MagicMock())
 
-    # Create non-serializable data (e.g., a function)
-    def non_serializable():
-        pass
+    part = new_data_part({"key": "value"})
 
-    # Mock DataPart with proper spec
-    data_part = MagicMock(spec=DataPart)
-    data_part.data = {"function": non_serializable}  # This will cause JSON serialization to fail
-
-    # Mock Part with DataPart root
-    part = MagicMock()
-    part.root = data_part
-
-    # Should not raise an exception, should handle gracefully
-    result = executor._convert_a2a_parts_to_content_blocks([part])
+    with patch("strands.multiagent.a2a.executor.MessageToDict", side_effect=Exception("boom")):
+        # Should not raise an exception, should handle gracefully
+        result = executor._convert_a2a_parts_to_content_blocks([part])
 
     # The error handling should result in an empty list or the part being skipped
     assert isinstance(result, list)
@@ -855,22 +609,20 @@ def test_convert_a2a_parts_to_content_blocks_data_part_serialization_error():
 async def test_execute_streaming_mode_raises_error_for_empty_content_blocks(
     mock_strands_agent, mock_event_queue, mock_request_context
 ):
-    """Test that execute raises ServerError when content blocks are empty after conversion."""
+    """Test that execute raises the specific error when content blocks are empty after conversion."""
     executor = StrandsA2AExecutor(mock_strands_agent)
 
     # Create a mock message with parts that will result in empty content blocks
     # This could happen if all parts fail to convert or are invalid
     mock_message = MagicMock()
-    mock_message.parts = [MagicMock()]  # Has parts but they won't convert to valid content blocks
+    # Has parts but they won't convert to valid content blocks
+    mock_message.parts = [MagicMock()]
     mock_request_context.message = mock_message
 
     # Mock the conversion to return empty list
     with patch.object(executor, "_convert_a2a_parts_to_content_blocks", return_value=[]):
-        with pytest.raises(ServerError) as excinfo:
+        with pytest.raises(InternalError):
             await executor.execute(mock_request_context, mock_event_queue)
-
-        # Verify the error is a ServerError containing an InternalError
-        assert isinstance(excinfo.value.error, InternalError)
 
 
 @pytest.mark.asyncio
@@ -895,27 +647,13 @@ async def test_execute_with_mixed_part_types(mock_strands_agent, mock_request_co
     mock_request_context.current_task = mock_task
 
     # Create mixed parts
-    text_part = MagicMock(spec=TextPart)
-    text_part.text = "Hello"
-    text_part_mock = MagicMock()
-    text_part_mock.root = text_part
+    text_part_mock = Part(text="Hello")
 
-    # File part with bytes
-    file_obj = MagicMock()
-    file_obj.name = "image.png"
-    file_obj.mime_type = "image/png"
-    file_obj.bytes = base64.b64encode(VALID_PNG_BYTES).decode("utf-8")
-    file_obj.uri = None
-    file_part = MagicMock(spec=FilePart)
-    file_part.file = file_obj
-    file_part_mock = MagicMock()
-    file_part_mock.root = file_part
+    # File part with raw bytes
+    file_part_mock = Part(raw=VALID_PNG_BYTES, media_type="image/png", filename="image.png")
 
     # Data part
-    data_part = MagicMock(spec=DataPart)
-    data_part.data = {"key": "value"}
-    data_part_mock = MagicMock()
-    data_part_mock.root = data_part
+    data_part_mock = new_data_part({"key": "value"})
 
     # Mock message with mixed parts
     mock_message = MagicMock()
@@ -948,42 +686,16 @@ def test_integration_example():
     executor = StrandsA2AExecutor(MagicMock())
 
     # Example 1: Text content
-    text_part = MagicMock(spec=TextPart)
-    text_part.text = "Hello, this is a text message"
-    text_part_mock = MagicMock()
-    text_part_mock.root = text_part
+    text_part_mock = Part(text="Hello, this is a text message")
 
     # Example 2: Image file
-    image_bytes = base64.b64encode(VALID_PNG_BYTES).decode("utf-8")
-    image_file = MagicMock()
-    image_file.name = "photo.jpg"
-    image_file.mime_type = "image/jpeg"
-    image_file.bytes = image_bytes
-    image_file.uri = None
-
-    image_part = MagicMock(spec=FilePart)
-    image_part.file = image_file
-    image_part_mock = MagicMock()
-    image_part_mock.root = image_part
+    image_part_mock = Part(raw=VALID_PNG_BYTES, media_type="image/jpeg", filename="photo.jpg")
 
     # Example 3: Document file
-    doc_bytes = base64.b64encode(VALID_DOCUMENT_BYTES).decode("utf-8")
-    doc_file = MagicMock()
-    doc_file.name = "report.pdf"
-    doc_file.mime_type = "application/pdf"
-    doc_file.bytes = doc_bytes
-    doc_file.uri = None
-
-    doc_part = MagicMock(spec=FilePart)
-    doc_part.file = doc_file
-    doc_part_mock = MagicMock()
-    doc_part_mock.root = doc_part
+    doc_part_mock = Part(raw=VALID_DOCUMENT_BYTES, media_type="application/pdf", filename="report.pdf")
 
     # Example 4: Structured data
-    data_part = MagicMock(spec=DataPart)
-    data_part.data = {"user": "john_doe", "action": "upload_file", "timestamp": "2023-12-01T10:00:00Z"}
-    data_part_mock = MagicMock()
-    data_part_mock.root = data_part
+    data_part_mock = new_data_part({"user": "john_doe", "action": "upload_file", "timestamp": "2023-12-01T10:00:00Z"})
 
     # Convert all parts to ContentBlocks
     parts = [text_part_mock, image_part_mock, doc_part_mock, data_part_mock]
@@ -1003,7 +715,8 @@ def test_integration_example():
     # Document part becomes document ContentBlock
     assert "document" in content_blocks[2]
     assert content_blocks[2]["document"]["format"] == "pdf"
-    assert content_blocks[2]["document"]["name"] == "report"  # Extension stripped
+    # Extension stripped
+    assert content_blocks[2]["document"]["name"] == "report"
     assert content_blocks[2]["document"]["source"]["bytes"] == VALID_DOCUMENT_BYTES
 
     # Data part becomes text ContentBlock with JSON representation
@@ -1043,8 +756,6 @@ def test_default_formats_modularization():
 @pytest.mark.asyncio
 async def test_legacy_mode_emits_deprecation_warning(mock_strands_agent, mock_request_context, mock_event_queue):
     """Test that legacy streaming (default) emits deprecation warning."""
-    from a2a.types import TextPart
-
     executor = StrandsA2AExecutor(mock_strands_agent)  # Default is False
 
     # Mock stream_async
@@ -1059,13 +770,8 @@ async def test_legacy_mode_emits_deprecation_warning(mock_strands_agent, mock_re
     mock_task.context_id = "test-context-id"
     mock_request_context.current_task = mock_task
 
-    # Mock message
-    mock_text_part = MagicMock(spec=TextPart)
-    mock_text_part.text = "test"
-    mock_part = MagicMock()
-    mock_part.root = mock_text_part
     mock_message = MagicMock()
-    mock_message.parts = [mock_part]
+    mock_message.parts = [Part(text="test")]
     mock_request_context.message = mock_message
 
     with pytest.warns(UserWarning, match="does not conform to what is expected in the A2A spec"):
@@ -1076,8 +782,6 @@ async def test_legacy_mode_emits_deprecation_warning(mock_strands_agent, mock_re
 async def test_a2a_compliant_mode_no_warning(mock_strands_agent, mock_request_context, mock_event_queue):
     """Test that A2A-compliant mode does not emit warning."""
     import warnings
-
-    from a2a.types import TextPart
 
     executor = StrandsA2AExecutor(mock_strands_agent, enable_a2a_compliant_streaming=True)
 
@@ -1093,13 +797,8 @@ async def test_a2a_compliant_mode_no_warning(mock_strands_agent, mock_request_co
     mock_task.context_id = "test-context-id"
     mock_request_context.current_task = mock_task
 
-    # Mock message
-    mock_text_part = MagicMock(spec=TextPart)
-    mock_text_part.text = "test"
-    mock_part = MagicMock()
-    mock_part.root = mock_text_part
     mock_message = MagicMock()
-    mock_message.parts = [mock_part]
+    mock_message.parts = [Part(text="test")]
     mock_request_context.message = mock_message
 
     with warnings.catch_warnings():
@@ -1147,7 +846,7 @@ async def test_a2a_compliant_handle_result_first_chunk_with_content(mock_strands
     mock_updater.add_artifact.assert_called_once()
     parts = mock_updater.add_artifact.call_args[0][0]
     assert len(parts) == 1
-    assert parts[0].root.text == "Final response"
+    assert parts[0].text == "Final response"
     assert mock_updater.add_artifact.call_args[1]["artifact_id"] == "artifact-456"
     assert mock_updater.add_artifact.call_args[1]["last_chunk"] is True
     mock_updater.complete.assert_called_once()
@@ -1172,7 +871,7 @@ async def test_a2a_compliant_handle_result_first_chunk_with_none_result(mock_str
     mock_updater.add_artifact.assert_called_once()
     parts = mock_updater.add_artifact.call_args[0][0]
     assert len(parts) == 1
-    assert parts[0].root.text == ""
+    assert parts[0].text == ""
     assert mock_updater.add_artifact.call_args[1]["artifact_id"] == "artifact-789"
     assert mock_updater.add_artifact.call_args[1]["last_chunk"] is True
     mock_updater.complete.assert_called_once()
@@ -1200,7 +899,7 @@ async def test_a2a_compliant_handle_result_not_first_chunk(mock_strands_agent):
     mock_updater.add_artifact.assert_called_once()
     parts = mock_updater.add_artifact.call_args[0][0]
     assert len(parts) == 1
-    assert parts[0].root.text == ""
+    assert parts[0].text == ""
     assert mock_updater.add_artifact.call_args[1]["artifact_id"] == "artifact-abc"
     assert mock_updater.add_artifact.call_args[1]["append"] is True
     assert mock_updater.add_artifact.call_args[1]["last_chunk"] is True
@@ -1225,13 +924,8 @@ def _setup_streaming_context(
 
     mock_strands_agent.stream_async = MagicMock(side_effect=mock_stream)
 
-    # Set up message with a text part
-    mock_text_part = MagicMock(spec=TextPart)
-    mock_text_part.text = "test input"
-    mock_part = MagicMock()
-    mock_part.root = mock_text_part
     mock_message = MagicMock()
-    mock_message.parts = [mock_part]
+    mock_message.parts = [Part(text="test input")]
     mock_request_context.message = mock_message
 
 
@@ -1308,7 +1002,7 @@ async def test_invocation_state_context_when_no_task(mock_strands_agent, mock_re
 
     executor = StrandsA2AExecutor(mock_strands_agent)
 
-    with patch("strands.multiagent.a2a.executor.new_task") as mock_new_task:
+    with patch("strands.multiagent.a2a.executor.new_task_from_user_message") as mock_new_task:
         mock_new_task.return_value = MagicMock(id="generated-id", context_id="generated-ctx")
         await executor.execute(mock_request_context, mock_event_queue)
 
@@ -1350,7 +1044,7 @@ async def test_execute_transitions_to_failed_on_streaming_error(
     mock_strands_agent, mock_request_context, mock_event_queue
 ):
     """Test that errors during streaming transition task to failed state."""
-    from a2a.types import TaskState, TaskStatusUpdateEvent, TextPart
+    from a2a.types import TaskState, TaskStatusUpdateEvent
 
     async def mock_stream(content_blocks, **kwargs):
         """Mock streaming that raises mid-stream."""
@@ -1366,12 +1060,8 @@ async def test_execute_transitions_to_failed_on_streaming_error(
     mock_task.context_id = "ctx-fail"
     mock_request_context.current_task = mock_task
 
-    mock_text_part = MagicMock(spec=TextPart)
-    mock_text_part.text = "test"
-    mock_part = MagicMock()
-    mock_part.root = mock_text_part
     mock_message = MagicMock()
-    mock_message.parts = [mock_part]
+    mock_message.parts = [Part(text="test")]
     mock_request_context.message = mock_message
 
     # Should not raise
@@ -1380,10 +1070,52 @@ async def test_execute_transitions_to_failed_on_streaming_error(
     # Verify failed state was enqueued
     enqueued_events = [call[0][0] for call in mock_event_queue.enqueue_event.call_args_list]
     failed_events = [
-        e for e in enqueued_events if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.failed
+        e
+        for e in enqueued_events
+        if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.TASK_STATE_FAILED
     ]
     assert len(failed_events) == 1
-    assert "Agent execution failed" in failed_events[0].status.message.parts[0].root.text
+    assert "Agent execution failed" in failed_events[0].status.message.parts[0].text
+
+
+@pytest.mark.asyncio
+async def test_execute_a2a_client_error_transitions_to_failed(
+    mock_strands_agent, mock_request_context, mock_event_queue
+):
+    """An A2AError subclass raised by a nested A2A call transitions the task to failed."""
+    from a2a.types import TaskState, TaskStatusUpdateEvent
+    from a2a.utils.errors import A2AError
+
+    class FakeClientError(A2AError):
+        """Simulates an A2A client error from a nested remote call."""
+
+    async def mock_stream(content_blocks, **kwargs):
+        yield {"data": "partial"}
+        raise FakeClientError(message="Remote agent timed out")
+
+    mock_strands_agent.stream_async = MagicMock(side_effect=mock_stream)
+
+    executor = StrandsA2AExecutor(mock_strands_agent)
+
+    mock_task = MagicMock()
+    mock_task.id = "task-client-err"
+    mock_task.context_id = "ctx-client-err"
+    mock_request_context.current_task = mock_task
+
+    mock_message = MagicMock()
+    mock_message.parts = [Part(text="call remote agent")]
+    mock_request_context.message = mock_message
+
+    await executor.execute(mock_request_context, mock_event_queue)
+
+    enqueued_events = [call[0][0] for call in mock_event_queue.enqueue_event.call_args_list]
+    failed_events = [
+        e
+        for e in enqueued_events
+        if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.TASK_STATE_FAILED
+    ]
+    assert len(failed_events) == 1
+    assert "Agent execution failed" in failed_events[0].status.message.parts[0].text
 
 
 @pytest.mark.asyncio
@@ -1403,10 +1135,12 @@ async def test_cancel_with_valid_task(mock_strands_agent, mock_request_context, 
     # Verify canceled state was enqueued
     enqueued_events = [call[0][0] for call in mock_event_queue.enqueue_event.call_args_list]
     canceled_events = [
-        e for e in enqueued_events if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.canceled
+        e
+        for e in enqueued_events
+        if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.TASK_STATE_CANCELED
     ]
     assert len(canceled_events) == 1
-    assert "cancelled" in canceled_events[0].status.message.parts[0].root.text.lower()
+    assert "cancelled" in canceled_events[0].status.message.parts[0].text.lower()
 
 
 @pytest.mark.asyncio
@@ -1415,10 +1149,8 @@ async def test_cancel_without_task_raises_unsupported(mock_strands_agent, mock_r
     executor = StrandsA2AExecutor(mock_strands_agent)
     mock_request_context.current_task = None
 
-    with pytest.raises(ServerError) as excinfo:
+    with pytest.raises(UnsupportedOperationError):
         await executor.cancel(mock_request_context, mock_event_queue)
-
-    assert isinstance(excinfo.value.error, UnsupportedOperationError)
 
 
 @pytest.mark.asyncio
@@ -1426,7 +1158,7 @@ async def test_execute_with_interrupt_transitions_to_input_required(
     mock_strands_agent, mock_request_context, mock_event_queue
 ):
     """Test that agent interrupts map to input_required state."""
-    from a2a.types import TaskState, TaskStatusUpdateEvent, TextPart
+    from a2a.types import TaskState, TaskStatusUpdateEvent
 
     from strands.interrupt import Interrupt
 
@@ -1449,12 +1181,8 @@ async def test_execute_with_interrupt_transitions_to_input_required(
     mock_task.context_id = "ctx-interrupt"
     mock_request_context.current_task = mock_task
 
-    mock_text_part = MagicMock(spec=TextPart)
-    mock_text_part.text = "delete file X"
-    mock_part = MagicMock()
-    mock_part.root = mock_text_part
     mock_message = MagicMock()
-    mock_message.parts = [mock_part]
+    mock_message.parts = [Part(text="delete file X")]
     mock_request_context.message = mock_message
 
     await executor.execute(mock_request_context, mock_event_queue)
@@ -1464,10 +1192,10 @@ async def test_execute_with_interrupt_transitions_to_input_required(
     input_required_events = [
         e
         for e in enqueued_events
-        if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.input_required
+        if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.TASK_STATE_INPUT_REQUIRED
     ]
     assert len(input_required_events) == 1
-    msg_text = input_required_events[0].status.message.parts[0].root.text
+    msg_text = input_required_events[0].status.message.parts[0].text
     assert "approval" in msg_text
     assert "Need user approval" in msg_text
 
@@ -1475,7 +1203,7 @@ async def test_execute_with_interrupt_transitions_to_input_required(
 @pytest.mark.asyncio
 async def test_execute_with_multiple_interrupts(mock_strands_agent, mock_request_context, mock_event_queue):
     """Test handling of multiple interrupts in a single result."""
-    from a2a.types import TaskState, TaskStatusUpdateEvent, TextPart
+    from a2a.types import TaskState, TaskStatusUpdateEvent
 
     from strands.interrupt import Interrupt
 
@@ -1498,12 +1226,8 @@ async def test_execute_with_multiple_interrupts(mock_strands_agent, mock_request
     mock_task.context_id = "ctx-multi-int"
     mock_request_context.current_task = mock_task
 
-    mock_text_part = MagicMock(spec=TextPart)
-    mock_text_part.text = "delete with backup"
-    mock_part = MagicMock()
-    mock_part.root = mock_text_part
     mock_message = MagicMock()
-    mock_message.parts = [mock_part]
+    mock_message.parts = [Part(text="delete with backup")]
     mock_request_context.message = mock_message
 
     await executor.execute(mock_request_context, mock_event_queue)
@@ -1512,10 +1236,10 @@ async def test_execute_with_multiple_interrupts(mock_strands_agent, mock_request
     input_required_events = [
         e
         for e in enqueued_events
-        if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.input_required
+        if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.TASK_STATE_INPUT_REQUIRED
     ]
     assert len(input_required_events) == 1
-    msg_text = input_required_events[0].status.message.parts[0].root.text
+    msg_text = input_required_events[0].status.message.parts[0].text
     assert "confirm_delete" in msg_text
     assert "select_backup" in msg_text
     assert "Confirm deletion of file X" in msg_text
@@ -1525,7 +1249,7 @@ async def test_execute_with_multiple_interrupts(mock_strands_agent, mock_request
 @pytest.mark.asyncio
 async def test_execute_normal_completion_no_interrupts(mock_strands_agent, mock_request_context, mock_event_queue):
     """Test that normal completion (no interrupts) still works as before."""
-    from a2a.types import TaskState, TaskStatusUpdateEvent, TextPart
+    from a2a.types import TaskState, TaskStatusUpdateEvent
 
     mock_result = MagicMock(spec=SAAgentResult)
     mock_result.stop_reason = "end_turn"
@@ -1545,12 +1269,8 @@ async def test_execute_normal_completion_no_interrupts(mock_strands_agent, mock_
     mock_task.context_id = "ctx-normal"
     mock_request_context.current_task = mock_task
 
-    mock_text_part = MagicMock(spec=TextPart)
-    mock_text_part.text = "do something"
-    mock_part = MagicMock()
-    mock_part.root = mock_text_part
     mock_message = MagicMock()
-    mock_message.parts = [mock_part]
+    mock_message.parts = [Part(text="do something")]
     mock_request_context.message = mock_message
 
     await executor.execute(mock_request_context, mock_event_queue)
@@ -1558,7 +1278,9 @@ async def test_execute_normal_completion_no_interrupts(mock_strands_agent, mock_
     # Verify completed state was enqueued (not input_required)
     enqueued_events = [call[0][0] for call in mock_event_queue.enqueue_event.call_args_list]
     completed_events = [
-        e for e in enqueued_events if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.completed
+        e
+        for e in enqueued_events
+        if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.TASK_STATE_COMPLETED
     ]
     assert len(completed_events) == 1
 
@@ -1566,7 +1288,7 @@ async def test_execute_normal_completion_no_interrupts(mock_strands_agent, mock_
     input_required_events = [
         e
         for e in enqueued_events
-        if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.input_required
+        if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.TASK_STATE_INPUT_REQUIRED
     ]
     assert len(input_required_events) == 0
 
@@ -1584,17 +1306,13 @@ async def test_execute_setup_failure_raises_server_error(mock_strands_agent, moc
     # No message at all
     mock_request_context.message = None
 
-    with pytest.raises(ServerError) as excinfo:
+    with pytest.raises(InternalError):
         await executor.execute(mock_request_context, mock_event_queue)
-
-    assert isinstance(excinfo.value.error, InternalError)
 
 
 @pytest.mark.asyncio
 async def test_execute_error_when_task_already_terminal(mock_strands_agent, mock_request_context, mock_event_queue):
     """Test that error during execution is handled gracefully when task is already in terminal state."""
-    from a2a.types import TextPart
-
     # Make stream_async raise to trigger the error path
     mock_strands_agent.stream_async = MagicMock(side_effect=Exception("Agent error"))
 
@@ -1605,12 +1323,8 @@ async def test_execute_error_when_task_already_terminal(mock_strands_agent, mock
     mock_task.context_id = "ctx-already-done"
     mock_request_context.current_task = mock_task
 
-    mock_text_part = MagicMock(spec=TextPart)
-    mock_text_part.text = "test"
-    mock_part = MagicMock()
-    mock_part.root = mock_text_part
     mock_message = MagicMock()
-    mock_message.parts = [mock_part]
+    mock_message.parts = [Part(text="test")]
     mock_request_context.message = mock_message
 
     # Patch TaskUpdater.failed to raise RuntimeError (simulating task already in terminal state)
@@ -1650,7 +1364,9 @@ async def test_cancel_calls_agent_cancel_method(mock_strands_agent, mock_request
     # Verify task state is canceled
     enqueued_events = [call[0][0] for call in mock_event_queue.enqueue_event.call_args_list]
     canceled_events = [
-        e for e in enqueued_events if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.canceled
+        e
+        for e in enqueued_events
+        if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.TASK_STATE_CANCELED
     ]
     assert len(canceled_events) == 1
 
@@ -1676,14 +1392,16 @@ async def test_cancel_handles_agent_cancel_exception(mock_strands_agent, mock_re
     # Task should still be transitioned to canceled
     enqueued_events = [call[0][0] for call in mock_event_queue.enqueue_event.call_args_list]
     canceled_events = [
-        e for e in enqueued_events if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.canceled
+        e
+        for e in enqueued_events
+        if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.TASK_STATE_CANCELED
     ]
     assert len(canceled_events) == 1
 
 
 @pytest.mark.asyncio
 async def test_cancel_raises_when_task_already_terminal(mock_strands_agent, mock_request_context, mock_event_queue):
-    """Test that cancel() raises ServerError when task is already in a terminal state."""
+    """Test that cancel() raises the specific error when task is already in a terminal state."""
     executor = StrandsA2AExecutor(mock_strands_agent)
 
     mock_task = MagicMock()
@@ -1698,10 +1416,8 @@ async def test_cancel_raises_when_task_already_terminal(mock_strands_agent, mock
         mock_updater.new_agent_message = MagicMock(return_value=MagicMock())
         MockTaskUpdater.return_value = mock_updater
 
-        with pytest.raises(ServerError) as excinfo:
+        with pytest.raises(UnsupportedOperationError):
             await executor.cancel(mock_request_context, mock_event_queue)
-
-        assert isinstance(excinfo.value.error, UnsupportedOperationError)
         mock_updater.cancel.assert_called_once()
 
 
@@ -1722,7 +1438,7 @@ async def test_execute_handles_asyncio_cancelled_error(mock_strands_agent, mock_
     """
     import asyncio
 
-    from a2a.types import TaskState, TaskStatusUpdateEvent, TextPart
+    from a2a.types import TaskState, TaskStatusUpdateEvent
 
     async def mock_stream(content_blocks, **kwargs):
         """Mock streaming that gets cancelled mid-stream."""
@@ -1738,12 +1454,8 @@ async def test_execute_handles_asyncio_cancelled_error(mock_strands_agent, mock_
     mock_task.context_id = "ctx-cancelled"
     mock_request_context.current_task = mock_task
 
-    mock_text_part = MagicMock(spec=TextPart)
-    mock_text_part.text = "test"
-    mock_part = MagicMock()
-    mock_part.root = mock_text_part
     mock_message = MagicMock()
-    mock_message.parts = [mock_part]
+    mock_message.parts = [Part(text="test")]
     mock_request_context.message = mock_message
 
     # CancelledError should be re-raised (framework needs to know task was cancelled)
@@ -1753,12 +1465,14 @@ async def test_execute_handles_asyncio_cancelled_error(mock_strands_agent, mock_
     # But BEFORE re-raising, the task should have been transitioned to canceled
     enqueued_events = [call[0][0] for call in mock_event_queue.enqueue_event.call_args_list]
     canceled_events = [
-        e for e in enqueued_events if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.canceled
+        e
+        for e in enqueued_events
+        if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.TASK_STATE_CANCELED
     ]
     assert len(canceled_events) == 1
     assert (
-        "cancelled" in canceled_events[0].status.message.parts[0].root.text.lower()
-        or "connection termination" in canceled_events[0].status.message.parts[0].root.text.lower()
+        "cancelled" in canceled_events[0].status.message.parts[0].text.lower()
+        or "connection termination" in canceled_events[0].status.message.parts[0].text.lower()
     )
 
 
@@ -1772,8 +1486,6 @@ async def test_execute_asyncio_cancelled_when_task_already_terminal(
     will raise RuntimeError. We should handle this gracefully and still re-raise CancelledError.
     """
     import asyncio
-
-    from a2a.types import TextPart
 
     async def mock_stream(content_blocks, **kwargs):
         """Async generator that immediately raises CancelledError."""
@@ -1789,12 +1501,8 @@ async def test_execute_asyncio_cancelled_when_task_already_terminal(
     mock_task.context_id = "ctx-cancelled-terminal"
     mock_request_context.current_task = mock_task
 
-    mock_text_part = MagicMock(spec=TextPart)
-    mock_text_part.text = "test"
-    mock_part = MagicMock()
-    mock_part.root = mock_text_part
     mock_message = MagicMock()
-    mock_message.parts = [mock_part]
+    mock_message.parts = [Part(text="test")]
     mock_request_context.message = mock_message
 
     # Patch TaskUpdater to simulate task already in terminal state
@@ -1826,11 +1534,12 @@ async def test_execute_with_interrupt_empty_list_transitions_to_input_required(
     no interrupt details. This should STILL transition to input_required — the stop_reason
     is the authoritative signal. Previously this would silently complete the task.
     """
-    from a2a.types import TaskState, TaskStatusUpdateEvent, TextPart
+    from a2a.types import TaskState, TaskStatusUpdateEvent
 
     mock_result = MagicMock(spec=SAAgentResult)
     mock_result.stop_reason = "interrupt"
-    mock_result.interrupts = []  # Empty list — previously this was falsy and caused completion!
+    # Empty list — previously this was falsy and caused completion!
+    mock_result.interrupts = []
 
     async def mock_stream(content_blocks, **kwargs):
         yield {"result": mock_result}
@@ -1844,12 +1553,8 @@ async def test_execute_with_interrupt_empty_list_transitions_to_input_required(
     mock_task.context_id = "ctx-empty-interrupts"
     mock_request_context.current_task = mock_task
 
-    mock_text_part = MagicMock(spec=TextPart)
-    mock_text_part.text = "do something"
-    mock_part = MagicMock()
-    mock_part.root = mock_text_part
     mock_message = MagicMock()
-    mock_message.parts = [mock_part]
+    mock_message.parts = [Part(text="do something")]
     mock_request_context.message = mock_message
 
     await executor.execute(mock_request_context, mock_event_queue)
@@ -1859,16 +1564,18 @@ async def test_execute_with_interrupt_empty_list_transitions_to_input_required(
     input_required_events = [
         e
         for e in enqueued_events
-        if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.input_required
+        if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.TASK_STATE_INPUT_REQUIRED
     ]
     completed_events = [
-        e for e in enqueued_events if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.completed
+        e
+        for e in enqueued_events
+        if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.TASK_STATE_COMPLETED
     ]
 
     assert len(input_required_events) == 1, "Empty interrupts list should still trigger input_required"
     assert len(completed_events) == 0, "Should NOT complete when stop_reason='interrupt'"
     # Verify the fallback message is used
-    assert "additional input" in input_required_events[0].status.message.parts[0].root.text.lower()
+    assert "additional input" in input_required_events[0].status.message.parts[0].text.lower()
 
 
 @pytest.mark.asyncio
@@ -1880,7 +1587,7 @@ async def test_execute_with_interrupt_none_list_transitions_to_input_required(
     Same logic — the stop_reason is authoritative. None interrupts should
     still result in input_required transition.
     """
-    from a2a.types import TaskState, TaskStatusUpdateEvent, TextPart
+    from a2a.types import TaskState, TaskStatusUpdateEvent
 
     mock_result = MagicMock(spec=SAAgentResult)
     mock_result.stop_reason = "interrupt"
@@ -1898,12 +1605,8 @@ async def test_execute_with_interrupt_none_list_transitions_to_input_required(
     mock_task.context_id = "ctx-none-interrupts"
     mock_request_context.current_task = mock_task
 
-    mock_text_part = MagicMock(spec=TextPart)
-    mock_text_part.text = "do something"
-    mock_part = MagicMock()
-    mock_part.root = mock_text_part
     mock_message = MagicMock()
-    mock_message.parts = [mock_part]
+    mock_message.parts = [Part(text="do something")]
     mock_request_context.message = mock_message
 
     await executor.execute(mock_request_context, mock_event_queue)
@@ -1912,7 +1615,7 @@ async def test_execute_with_interrupt_none_list_transitions_to_input_required(
     input_required_events = [
         e
         for e in enqueued_events
-        if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.input_required
+        if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.TASK_STATE_INPUT_REQUIRED
     ]
     assert len(input_required_events) == 1
 
@@ -1938,7 +1641,9 @@ async def test_cancel_without_hasattr_cancel(mock_strands_agent, mock_request_co
     # Task should still be transitioned to canceled
     enqueued_events = [call[0][0] for call in mock_event_queue.enqueue_event.call_args_list]
     canceled_events = [
-        e for e in enqueued_events if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.canceled
+        e
+        for e in enqueued_events
+        if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.TASK_STATE_CANCELED
     ]
     assert len(canceled_events) == 1
 
@@ -2006,12 +1711,7 @@ def _make_stub_agent(stream_fn=None, *, messages=None):
 
 def _make_request_context(context_id: str, message_id: str, text: str):
     """Build a RequestContext-like object the executor can consume."""
-    from a2a.types import TextPart
-
-    text_part = MagicMock(spec=TextPart)
-    text_part.text = text
-    part = MagicMock()
-    part.root = text_part
+    part = Part(text=text)
 
     message = MagicMock()
     message.parts = [part]
@@ -2037,8 +1737,8 @@ def _artifact_texts(mock_event_queue):
         event = call[0][0]
         if isinstance(event, TaskArtifactUpdateEvent):
             for part in event.artifact.parts:
-                if hasattr(part.root, "text"):
-                    texts.append(part.root.text)
+                if part.HasField("text"):
+                    texts.append(part.text)
     return texts
 
 
@@ -2076,8 +1776,10 @@ async def test_single_agent_evicts_least_recently_used_context(mock_event_queue)
 
     await executor.execute(_make_request_context("ctx-A", "a-1", "hi"), mock_event_queue)
     await executor.execute(_make_request_context("ctx-B", "b-1", "hi"), mock_event_queue)
-    await executor.execute(_make_request_context("ctx-A", "a-2", "again"), mock_event_queue)  # touch A
-    await executor.execute(_make_request_context("ctx-C", "c-1", "hi"), mock_event_queue)  # evicts B
+    # touch A
+    await executor.execute(_make_request_context("ctx-A", "a-2", "again"), mock_event_queue)
+    # evicts B
+    await executor.execute(_make_request_context("ctx-C", "c-1", "hi"), mock_event_queue)
 
     assert set(executor._snapshots.keys()) == {"ctx-A", "ctx-C"}
 
@@ -2095,9 +1797,8 @@ async def test_execute_raises_when_context_id_missing(mock_strands_agent, mock_e
     context = _make_request_context("ignored", "m-1", "hello")
     context.context_id = None  # simulate the should-never-happen absent id
 
-    with pytest.raises(ServerError) as excinfo:
+    with pytest.raises(InternalError):
         await executor.execute(context, mock_event_queue)
-    assert isinstance(excinfo.value.error, InternalError)
 
 
 @pytest.mark.asyncio
@@ -2185,8 +1886,10 @@ async def test_factory_mode_evicts_least_recently_used_context(mock_event_queue)
 
     await executor.execute(_make_request_context("ctx-A", "a-1", "hi"), mock_event_queue)
     await executor.execute(_make_request_context("ctx-B", "b-1", "hi"), mock_event_queue)
-    await executor.execute(_make_request_context("ctx-A", "a-2", "again"), mock_event_queue)  # touch A
-    await executor.execute(_make_request_context("ctx-C", "c-1", "hi"), mock_event_queue)  # evicts B
+    # touch A
+    await executor.execute(_make_request_context("ctx-A", "a-2", "again"), mock_event_queue)
+    # evicts B
+    await executor.execute(_make_request_context("ctx-C", "c-1", "hi"), mock_event_queue)
 
     assert set(executor._contexts.keys()) == {"ctx-A", "ctx-C"}
 
@@ -2231,7 +1934,8 @@ async def test_concurrent_compliant_streaming_uses_distinct_artifact_ids():
             ) -> "AsyncGenerator":
                 yield {"messageStart": {"role": "assistant"}}
                 yield {"contentBlockStart": {"start": {}}}
-                await asyncio.sleep(0.01)  # force interleaving with the other request
+                # force interleaving with the other request
+                await asyncio.sleep(0.01)
                 yield {"contentBlockDelta": {"delta": {"text": f"chunk-{context_id}"}}}
                 yield {"contentBlockStop": {}}
                 yield {"messageStop": {"stopReason": "end_turn"}}
@@ -2280,30 +1984,18 @@ async def test_concurrent_compliant_streaming_uses_distinct_artifact_ids():
 
 
 def _interrupt_response_part(interrupt_id, response):
-    """Build an A2A DataPart carrying an interrupt response for the given id."""
-    data_part = MagicMock(spec=DataPart)
-    data_part.data = {"interruptResponse": {"interruptId": interrupt_id, "response": response}}
-    part = MagicMock()
-    part.root = data_part
-    return part
+    """Build an A2A data Part carrying an interrupt response for the given id."""
+    return new_data_part({"interruptResponse": {"interruptId": interrupt_id, "response": response}})
 
 
 def _data_part(data):
-    """Build an A2A DataPart carrying arbitrary structured data."""
-    data_part = MagicMock(spec=DataPart)
-    data_part.data = data
-    part = MagicMock()
-    part.root = data_part
-    return part
+    """Build an A2A data Part carrying arbitrary structured data."""
+    return new_data_part(data)
 
 
 def _text_part(text):
-    """Build an A2A TextPart."""
-    text_part = MagicMock(spec=TextPart)
-    text_part.text = text
-    part = MagicMock()
-    part.root = text_part
-    return part
+    """Build an A2A text Part."""
+    return Part(text=text)
 
 
 def _park_interrupt(agent, *interrupt_ids):
@@ -2389,6 +2081,41 @@ async def test_execute_multiple_interrupt_responses_all_delivered(
 
 
 @pytest.mark.asyncio
+async def test_execute_interrupt_response_numeric_values_arrive_as_float(
+    mock_strands_agent, mock_request_context, mock_event_queue
+):
+    """Protobuf Value has no integer type — all numbers round-trip as float.
+
+    This is a v1 wire-format limitation. Integers sent by a peer (e.g. 3) arrive as 3.0.
+    """
+    _park_interrupt(mock_strands_agent, "int-1")
+
+    mock_result = MagicMock(spec=SAAgentResult)
+    mock_result.stop_reason = "end_turn"
+    mock_result.interrupts = None
+    mock_result.__str__ = MagicMock(return_value="done")
+
+    async def mock_stream(agent_input, **kwargs):
+        yield {"result": mock_result}
+
+    mock_strands_agent.stream_async = MagicMock(side_effect=mock_stream)
+    executor = StrandsA2AExecutor(mock_strands_agent)
+
+    response = {"count": 3, "ratio": 1.5, "values": [1, 2, 3], "ok": True}
+    _request_with_parts(mock_request_context, [_interrupt_response_part("int-1", response)])
+    await executor.execute(mock_request_context, mock_event_queue)
+
+    tru_input = mock_strands_agent.stream_async.call_args[0][0]
+    tru_response = tru_input[0]["interruptResponse"]["response"]
+    assert tru_response["count"] == 3.0
+    assert isinstance(tru_response["count"], float)
+    assert tru_response["ratio"] == 1.5
+    assert tru_response["values"] == [1.0, 2.0, 3.0]
+    assert all(isinstance(v, float) for v in tru_response["values"])
+    assert tru_response["ok"] is True
+
+
+@pytest.mark.asyncio
 async def test_execute_null_interrupt_response_rejected(mock_strands_agent, mock_request_context, mock_event_queue):
     """A null answer leaves the interrupt unsatisfied, so it is refused instead of silently re-firing."""
     _park_interrupt(mock_strands_agent, "int-1")
@@ -2397,10 +2124,8 @@ async def test_execute_null_interrupt_response_rejected(mock_strands_agent, mock
 
     _request_with_parts(mock_request_context, [_interrupt_response_part("int-1", None)])
 
-    with pytest.raises(ServerError) as exc_info:
+    with pytest.raises(InvalidParamsError):
         await executor.execute(mock_request_context, mock_event_queue)
-
-    assert isinstance(exc_info.value.error, InvalidParamsError)
     mock_strands_agent.stream_async.assert_not_called()
 
 
@@ -2439,10 +2164,8 @@ async def test_execute_interrupt_response_for_unknown_id_fails_closed(
 
     _request_with_parts(mock_request_context, [_interrupt_response_part("int-other", {"approved": True})])
 
-    with pytest.raises(ServerError) as exc_info:
+    with pytest.raises(InvalidParamsError):
         await executor.execute(mock_request_context, mock_event_queue)
-
-    assert isinstance(exc_info.value.error, InvalidParamsError)
     mock_strands_agent.stream_async.assert_not_called()
 
 
@@ -2456,10 +2179,8 @@ async def test_execute_interrupt_response_when_not_parked_fails_closed(
 
     _request_with_parts(mock_request_context, [_interrupt_response_part("int-1", {"approved": True})])
 
-    with pytest.raises(ServerError) as exc_info:
+    with pytest.raises(InvalidParamsError):
         await executor.execute(mock_request_context, mock_event_queue)
-
-    assert isinstance(exc_info.value.error, InvalidParamsError)
     mock_strands_agent.stream_async.assert_not_called()
 
 
@@ -2474,10 +2195,8 @@ async def test_execute_rejected_resume_leaves_interrupt_parked(
 
     _request_with_parts(mock_request_context, [_interrupt_response_part("int-other", "yes")])
 
-    with pytest.raises(ServerError) as exc_info:
+    with pytest.raises(InvalidParamsError):
         await executor.execute(mock_request_context, mock_event_queue)
-
-    assert isinstance(exc_info.value.error, InvalidParamsError)
     assert state.activated
     assert "int-1" in state.interrupts
 
@@ -2496,10 +2215,8 @@ async def test_execute_duplicate_interrupt_responses_rejected(
         [_interrupt_response_part("int-1", {"approved": True}), _interrupt_response_part("int-1", {"approved": False})],
     )
 
-    with pytest.raises(ServerError) as exc_info:
+    with pytest.raises(InvalidParamsError):
         await executor.execute(mock_request_context, mock_event_queue)
-
-    assert isinstance(exc_info.value.error, InvalidParamsError)
     mock_strands_agent.stream_async.assert_not_called()
 
 
@@ -2524,10 +2241,8 @@ async def test_execute_malformed_interrupt_response_rejected(
 
     _request_with_parts(mock_request_context, [_data_part(malformed)])
 
-    with pytest.raises(ServerError) as exc_info:
+    with pytest.raises(InvalidParamsError):
         await executor.execute(mock_request_context, mock_event_queue)
-
-    assert isinstance(exc_info.value.error, InvalidParamsError)
     mock_strands_agent.stream_async.assert_not_called()
 
 
@@ -2545,10 +2260,8 @@ async def test_execute_interrupt_response_mixed_with_other_parts_rejected(
         [_interrupt_response_part("int-1", {"approved": True}), _text_part("and also do something else")],
     )
 
-    with pytest.raises(ServerError) as exc_info:
+    with pytest.raises(InvalidParamsError):
         await executor.execute(mock_request_context, mock_event_queue)
-
-    assert isinstance(exc_info.value.error, InvalidParamsError)
     mock_strands_agent.stream_async.assert_not_called()
 
 
@@ -2563,10 +2276,8 @@ async def test_execute_new_message_while_parked_fails_closed(
 
     _request_with_parts(mock_request_context, [_text_part("never mind, do something else")])
 
-    with pytest.raises(ServerError) as exc_info:
+    with pytest.raises(InvalidParamsError):
         await executor.execute(mock_request_context, mock_event_queue)
-
-    assert isinstance(exc_info.value.error, InvalidParamsError)
     mock_strands_agent.stream_async.assert_not_called()
 
 
@@ -2608,7 +2319,9 @@ def _input_required_message(mock_event_queue):
 
     events = [call[0][0] for call in mock_event_queue.enqueue_event.call_args_list]
     input_required = [
-        e for e in events if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.input_required
+        e
+        for e in events
+        if isinstance(e, TaskStatusUpdateEvent) and e.status.state == TaskState.TASK_STATE_INPUT_REQUIRED
     ]
     assert len(input_required) == 1
     return input_required[0].status.message
@@ -2642,7 +2355,7 @@ async def test_interrupt_advertises_ids_in_data_part(mock_strands_agent, mock_re
         [Interrupt(id="v1:tool_call:tu-1:abc", name="approve_campaign", reason={"name": "spring"})],
     )
 
-    data_parts = [p.root.data for p in _input_required_message(mock_event_queue).parts if isinstance(p.root, DataPart)]
+    data_parts = [MessageToDict(p.data) for p in _input_required_message(mock_event_queue).parts if p.HasField("data")]
     tru_data = data_parts
     exp_data = [
         {
@@ -2668,8 +2381,8 @@ async def test_interrupt_keeps_human_readable_text_part(mock_strands_agent, mock
         [Interrupt(id="int-1", name="approval", reason="Need user approval")],
     )
 
-    first_part = _input_required_message(mock_event_queue).parts[0].root
-    assert isinstance(first_part, TextPart)
+    first_part = _input_required_message(mock_event_queue).parts[0]
+    assert first_part.HasField("text")
     assert "approval" in first_part.text
     assert "Need user approval" in first_part.text
 
@@ -2688,7 +2401,7 @@ async def test_interrupt_advertises_every_pending_id(mock_strands_agent, mock_re
         [Interrupt(id="int-1", name="first"), Interrupt(id="int-2", name="second")],
     )
 
-    data_parts = [p.root.data for p in _input_required_message(mock_event_queue).parts if isinstance(p.root, DataPart)]
+    data_parts = [MessageToDict(p.data) for p in _input_required_message(mock_event_queue).parts if p.HasField("data")]
     tru_ids = [entry["interruptId"] for entry in data_parts[0]["interrupts"]]
     exp_ids = ["int-1", "int-2"]
     assert tru_ids == exp_ids
@@ -2714,7 +2427,7 @@ async def test_interrupt_reason_that_is_not_json_falls_back_to_text(
         [Interrupt(id="int-1", name="approval", reason=Unserializable())],
     )
 
-    data_parts = [p.root.data for p in _input_required_message(mock_event_queue).parts if isinstance(p.root, DataPart)]
+    data_parts = [MessageToDict(p.data) for p in _input_required_message(mock_event_queue).parts if p.HasField("data")]
     tru_reason = data_parts[0]["interrupts"][0]["reason"]
     exp_reason = "<custom reason>"
     assert tru_reason == exp_reason
@@ -2727,5 +2440,5 @@ async def test_interrupt_without_details_sends_no_data_part(mock_strands_agent, 
     await _run_until_interrupt(executor, mock_strands_agent, mock_request_context, mock_event_queue, [])
 
     parts = _input_required_message(mock_event_queue).parts
-    assert not [p for p in parts if isinstance(p.root, DataPart)]
-    assert isinstance(parts[0].root, TextPart)
+    assert not [p for p in parts if p.HasField("data")]
+    assert parts[0].HasField("text")

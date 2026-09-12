@@ -387,9 +387,9 @@ This feature is currently available in the Python SDK only.
 
 When a tool or hook on the served agent raises an [interrupt](../interrupts.md), the task moves to the A2A `input_required` state and waits. The client answers it, and the task resumes the paused tool exactly where it stopped.
 
-Answering an interrupt is the one flow on this page that needs the raw [`a2a-sdk`](https://github.com/a2aproject/a2a-python) client rather than `A2AAgent`. `A2AAgent` speaks in text, so it raises `ValueError` if you pass it interrupt responses, and it drops the `DataPart` carrying the interrupt ids when it reads the reply. The examples below build A2A messages directly.
+Answering an interrupt is the one flow on this page that needs the raw [`a2a-sdk`](https://github.com/a2aproject/a2a-python) client rather than `A2AAgent`. `A2AAgent` speaks in text, so it raises `ValueError` if you pass it interrupt responses, and it drops the data part carrying the interrupt ids when it reads the reply. The examples below build A2A messages directly.
 
-Each interrupt has a server-generated id, and an answer is bound to the id of the interrupt that raised it. The server advertises the pending interrupts on the `input_required` status message as a `DataPart`, alongside the human-readable `TextPart`:
+Each interrupt has a server-generated id, and an answer is bound to the id of the interrupt that raised it. The server advertises the pending interrupts on the `input_required` status message as a data part, alongside the human-readable text part:
 
 ```json
 {
@@ -406,7 +406,7 @@ Each interrupt has a server-generated id, and an answer is bound to the id of th
 }
 ```
 
-To answer, send a new message on the same `taskId` containing a `DataPart` that echoes the `interruptId` back with the response:
+To answer, send a new message on the same `taskId` containing a data part that echoes the `interruptId` back with the response:
 
 ```json
 {
@@ -420,25 +420,31 @@ To answer, send a new message on the same `taskId` containing a `DataPart` that 
 }
 ```
 
-The `response` becomes the return value of the `interrupt()` call that paused the tool. It is any JSON value except `null`, which the server refuses — a null answer would leave the interrupt unsatisfied and re-raise it. `false` and `0` are fine. Answer several interrupts in one message by sending one `DataPart` for each.
+The `response` becomes the return value of the `interrupt()` call that paused the tool. It is any JSON value except `null`, which the server refuses — a null answer would leave the interrupt unsatisfied and re-raise it. `false` and `0` are fine. Answer several interrupts in one message by sending one data part for each.
+
+A2A data parts carry numbers as protobuf `Value`, which has no integer type — a whole-number
+float like `1.0` is indistinguishable from the int `1` on the wire, so the server normalizes any
+whole float back to an int before it reaches `response`. A non-whole float such as `1.5` is
+unaffected.
 
 Reading the ids off the status message and answering them:
 
 ```python
-from a2a.types import DataPart, Part
+from a2a.helpers import new_data_part
+from google.protobuf.json_format import MessageToDict
 
 # The task parked in input_required; read the interrupts it is waiting on.
 pending = next(
-    part.root.data["interrupts"]
+    MessageToDict(part.data)["interrupts"]
     for part in task.status.message.parts
-    if isinstance(part.root, DataPart) and "interrupts" in part.root.data
+    if part.HasField("data") and "interrupts" in MessageToDict(part.data)
 )
 
 # Answer each one on the same taskId.
 answers = [
-    Part(root=DataPart(data={
+    new_data_part({
         "interruptResponse": {"interruptId": item["interruptId"], "response": {"approved": True}}
-    }))
+    })
     for item in pending
 ]
 ```
@@ -453,7 +459,7 @@ The server rejects an answer it cannot bind, before the agent runs, so a refused
 
 A task with a pending interrupt also rejects an ordinary conversational message — answer the interrupt, or cancel the task.
 
-A `DataPart` without an `interruptResponse` key is unaffected and continues to reach the agent as structured data.
+A data part without an `interruptResponse` key is unaffected and continues to reach the agent as structured data.
 
 ### Server Configuration Options
 
