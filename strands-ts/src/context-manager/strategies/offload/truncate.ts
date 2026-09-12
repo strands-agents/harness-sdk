@@ -58,16 +58,7 @@ export class TruncateStrategy extends BaseOffloadStrategy {
     const eligible = await this._getEligibleMessages(context)
     if (eligible.length === 0) return false
 
-    // Determine head/tail split based on config (default: favor tail — 30% head, 70% tail)
-    const previewMode = this._truncateConfig.preview ?? 'headTail'
-    const headShare = { head: 1, tail: 0, headTail: 0.3 }[previewMode]
-    const targetRemoval = Math.max(1, Math.floor(eligible.length * this._removalRatio))
-    const keepCount = eligible.length - targetRemoval
-
-    const headKeep = Math.floor(keepCount * headShare)
-    const tailKeep = keepCount - headKeep
-
-    const middleMessages = eligible.slice(headKeep, eligible.length - tailKeep)
+    const middleMessages = eligible
 
     if (middleMessages.length === 0) return false
 

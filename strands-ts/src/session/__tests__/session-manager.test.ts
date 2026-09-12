@@ -1117,7 +1117,7 @@ describe('SessionManager — stash with real Agent wiring', () => {
     const agent = new Agent({
       model: {} as any,
       storage,
-      contextManager: new ContextManager(),
+      contextManager: {},
       sessionManager,
       printer: false,
     })
@@ -1136,7 +1136,7 @@ describe('SessionManager — stash with real Agent wiring', () => {
     const freshAgent = new Agent({
       model: {} as any,
       storage,
-      contextManager: new ContextManager(),
+      contextManager: {},
       sessionManager: freshSessionManager,
       printer: false,
     })
@@ -1157,7 +1157,7 @@ describe('SessionManager — stash with real Agent wiring', () => {
     const agent = new Agent({
       model: {} as any,
       storage,
-      contextManager: new ContextManager(),
+      contextManager: {},
       sessionManager,
       printer: false,
     })

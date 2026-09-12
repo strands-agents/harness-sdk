@@ -34,7 +34,7 @@ class DropStrategy(BaseOffloadStrategy):
         *,
         threshold: int | None = None,
         utilization: float | None = None,
-        preserve_recent: int = 0,
+        preserve_recent: int | float = 0,
     ) -> DropStrategy:
         """Return a new instance with the given conditions applied."""
         return DropStrategy(

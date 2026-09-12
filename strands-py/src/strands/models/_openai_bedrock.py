@@ -27,7 +27,7 @@ _MANTLE_DOCS_URL = "https://docs.aws.amazon.com/bedrock/latest/userguide/inferen
 # can split across base paths (``google.gemma-4-*`` is on /openai/v1, ``google.gemma-3-*``
 # is on /v1). An unmatched new line falls through to /v1; the ``test_mantle_routing``
 # integ test fails naming any id that routes wrong.
-_OPENAI_PATH_MODEL_PREFIXES: tuple[str, ...] = ("openai.gpt-5.", "xai.grok-4.", "google.gemma-4-")
+_OPENAI_PATH_MODEL_PREFIXES: tuple[str, ...] = ("openai.gpt-5.", "openai.gpt-6-", "xai.grok-4.", "google.gemma-4-")
 
 
 def _resolve_mantle_base_path(model_id: str) -> str:

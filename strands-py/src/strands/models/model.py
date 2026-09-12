@@ -20,6 +20,7 @@ from ._defaults import DEFAULT_CONTEXT_WINDOW_LIMIT
 
 if TYPE_CHECKING:
     from ..agent.agent import Agent
+    from ..agent.agent_metadata import AgentMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +151,11 @@ class CacheConfig:
             the same static system prefix hit the cache. A TTL string (e.g. "1h") sets this section's own
             duration and is honored as written; True derives the duration from ``ttl``; False disables it.
             A hand-placed system cache point is honored rather than doubled.
-        cache_key: Stable identity a provider can use to route its cache. Defaults to None.
+        cache_key: Stable identity a prompt-cache-routing provider (OpenAI, LiteLLM, Mistral) uses as its
+            cache key. Left unset, it is derived per request as ``strands-<session_id>`` if the agent has
+            a session manager, so repeat runs of a session share a cache prefix with no key management.
+            Set it to a string to pin your own key, or ``False`` to opt out of routing entirely. The
+            resolved key (whether set or derived from the session id) is transmitted to the provider.
         tools_ttl: Cache the tool definitions, auto-injecting a cache point on the tool block so repeated calls
             with the same tools hit the cache. A TTL string (e.g. "1h") sets this section's own
             duration and is honored as written; True derives the duration from ``ttl``; False disables it.
@@ -161,7 +166,7 @@ class CacheConfig:
     strategy: Literal["auto", "anthropic"] = "auto"
     ttl: str | None = None
     system_prompt_ttl: bool | str = True
-    cache_key: str | None = None
+    cache_key: str | Literal[False] | None = None
     tools_ttl: bool | str | None = None
 
 
@@ -257,6 +262,7 @@ class Model(abc.ABC):
         system_prompt_content: list[SystemContentBlock] | None = None,
         invocation_state: dict[str, Any] | None = None,
         cancel_signal: threading.Event | None = None,
+        agent_metadata: "AgentMetadata | None" = None,
         **kwargs: Any,
     ) -> AsyncIterable[StreamEvent]:
         """Stream conversation with the model.
@@ -277,6 +283,9 @@ class Model(abc.ABC):
             cancel_signal: Event a provider can observe to abort an in-flight request. Support is
                 provider-dependent; a provider that ignores it still cancels at the SDK's
                 between-chunk checkpoint.
+            agent_metadata: Stable identity of the invoking agent (e.g. its session id), supplied per
+                request. A provider may consult it to derive a prompt-cache routing key; None when the
+                model is streamed directly without an agent.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Yields:

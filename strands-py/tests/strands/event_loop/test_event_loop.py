@@ -413,6 +413,7 @@ async def test_event_loop_cycle_tool_result(
         invocation_state=unittest.mock.ANY,
         model_state=unittest.mock.ANY,
         cancel_signal=unittest.mock.ANY,
+        agent_metadata=unittest.mock.ANY,
     )
 
 

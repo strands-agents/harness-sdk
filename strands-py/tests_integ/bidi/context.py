@@ -7,7 +7,6 @@ with continuous background threads that mimic real-world usage patterns.
 import asyncio
 import base64
 import logging
-import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -21,7 +20,6 @@ logger = logging.getLogger(__name__)
 QUEUE_POLL_TIMEOUT = 0.05  # 50ms - balance between responsiveness and CPU usage
 SILENCE_INTERVAL = 0.05  # 50ms - send silence every 50ms when queue empty
 AUDIO_CHUNK_DELAY = 0.01  # 10ms - small delay between audio chunks
-WAIT_POLL_INTERVAL = 0.1  # 100ms - how often to check for response completion
 
 
 class BidirectionalTestContext:
@@ -65,8 +63,8 @@ class BidirectionalTestContext:
 
         # Event storage (thread-safe)
         self._event_queue = asyncio.Queue()  # Events from collection thread
+        self._response_completions = asyncio.Queue()
         self.events = []  # Cached events for test access
-        self.last_event_time = None
 
         # Control flags
         self.active = False
@@ -96,7 +94,6 @@ class BidirectionalTestContext:
     async def start(self):
         """Start all background threads."""
         self.active = True
-        self.last_event_time = time.monotonic()
 
         self.threads = [
             asyncio.create_task(self._input_thread()),
@@ -163,41 +160,19 @@ class BidirectionalTestContext:
     async def wait_for_response(
         self,
         timeout: float = 15.0,
-        silence_threshold: float = 2.0,
-        min_events: int = 1,
-    ):
-        """Wait for model to finish responding.
-
-        Uses silence detection (no events for silence_threshold seconds)
-        combined with minimum event count to determine response completion.
+    ) -> None:
+        """Wait for the next model response to complete.
 
         Args:
             timeout: Maximum time to wait in seconds.
-            silence_threshold: Seconds of silence to consider response complete.
-            min_events: Minimum events before silence detection activates.
+
+        Raises:
+            TimeoutError: If a response completion event is not received before the timeout.
         """
-        start_time = time.monotonic()
-        initial_event_count = len(self.get_events())  # Drain queue
-
-        while time.monotonic() - start_time < timeout:
-            # Drain queue to get latest events
-            current_events = self.get_events()
-
-            # Check if we have minimum events
-            if len(current_events) - initial_event_count >= min_events:
-                # Check silence
-                elapsed_since_event = time.monotonic() - self.last_event_time
-                if elapsed_since_event >= silence_threshold:
-                    logger.debug(
-                        "event_count=<%d>, silence_duration=<%.1f> | response complete",
-                        len(current_events) - initial_event_count,
-                        elapsed_since_event,
-                    )
-                    return
-
-            await asyncio.sleep(WAIT_POLL_INTERVAL)
-
-        logger.warning("timeout=<%s> | response timeout", timeout)
+        try:
+            await asyncio.wait_for(self._response_completions.get(), timeout=timeout)
+        except asyncio.TimeoutError:
+            raise TimeoutError(f"timeout={timeout} | response completion event not received") from None
 
     def get_events(self, event_type: str | None = None) -> list[dict]:
         """Get collected events, optionally filtered by type.
@@ -215,7 +190,6 @@ class BidirectionalTestContext:
             try:
                 event = self._event_queue.get_nowait()
                 self.events.append(event)
-                self.last_event_time = time.monotonic()
             except asyncio.QueueEmpty:
                 break
 
@@ -235,7 +209,11 @@ class BidirectionalTestContext:
         for event in self.get_events():  # Drain queue first
             # Handle new TypedEvent format (bidi_transcript_stream)
             if event.get("type") == "bidi_transcript_stream":
-                text = event.get("text", "")
+                text = event.get("delta", "")
+                if text:
+                    texts.append(text)
+            elif event.get("type") == "bidi_transcript_complete":
+                text = event.get("transcript", "")
                 if text:
                     texts.append(text)
             # Handle legacy textOutput events (Nova Sonic, OpenAI)
@@ -351,6 +329,8 @@ class BidirectionalTestContext:
 
                 # Thread-safe: put in queue instead of direct append
                 await self._event_queue.put(event)
+                if event.get("type") == "bidi_response_complete" and event.get("stop_reason") == "complete":
+                    self._response_completions.put_nowait(event)
                 logger.debug("event_type=<%s> | event collected", event.get("type", "unknown"))
 
         except asyncio.CancelledError:

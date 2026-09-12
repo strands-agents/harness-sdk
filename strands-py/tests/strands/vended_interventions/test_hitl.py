@@ -919,7 +919,6 @@ class TestClassifierMode:
         assert executed == []
 
     def test_classifier_not_called_on_resume(self):
-
         from strands.vended_interventions.hitl.classifier import ClassifierResult
 
         executed = []

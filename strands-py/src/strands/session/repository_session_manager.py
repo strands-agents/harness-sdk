@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..agent.state import AgentState
 from ..tools._tool_helpers import generate_missing_tool_result_content
+from ..types.agent import LocalAgent
 from ..types.content import ContentBlock, Message, _generate_tracking_id
 from ..types.exceptions import SessionException
 from ..types.session import (
@@ -18,14 +19,12 @@ from .session_manager import SessionManager
 from .session_repository import SessionRepository
 
 if TYPE_CHECKING:
-    from ..agent.agent import Agent
-    from ..experimental.bidi.agent.agent import BidiAgent
     from ..multiagent.base import MultiAgentBase
 
 logger = logging.getLogger(__name__)
 
 
-class RepositorySessionManager(SessionManager):
+class RepositorySessionManager(SessionManager[LocalAgent]):
     """Session manager for persisting agents in a SessionRepository.
 
     This manager uses a :class:`SessionRepository` (a structured per-message CRUD interface),
@@ -75,7 +74,7 @@ class RepositorySessionManager(SessionManager):
         # Track the previously synced internal state for each agent to detect changes.
         self._last_synced_internal_state: dict[str, dict[str, Any]] = {}
 
-    def append_message(self, message: Message, agent: "Agent", **kwargs: Any) -> None:
+    def append_message(self, message: Message, agent: "LocalAgent", **kwargs: Any) -> None:
         """Append a message to the agent's session.
 
         Args:
@@ -94,7 +93,7 @@ class RepositorySessionManager(SessionManager):
         self._latest_agent_message[agent.agent_id] = session_message
         self.session_repository.create_message(self.session_id, agent.agent_id, session_message)
 
-    def redact_latest_message(self, redact_message: Message, agent: "Agent", **kwargs: Any) -> None:
+    def redact_latest_message(self, redact_message: Message, agent: "LocalAgent", **kwargs: Any) -> None:
         """Redact the latest message appended to the session.
 
         Args:
@@ -108,17 +107,22 @@ class RepositorySessionManager(SessionManager):
         latest_agent_message.redact_message = redact_message
         return self.session_repository.update_message(self.session_id, agent.agent_id, latest_agent_message)
 
-    def sync_agent(self, agent: "Agent", **kwargs: Any) -> None:
+    def sync_agent(self, agent: "LocalAgent", **kwargs: Any) -> None:
         """Serialize and update the agent into the session repository.
 
-        Only updates the agent if state has been modified or internal state has changed.
-        This optimization reduces unnecessary I/O operations when the agent processes
-        messages without modifying its state.
+        For Agent, only updates if state or internal state has changed. BidiAgent is
+        written on every sync, preserving its existing persistence behavior.
 
         Args:
             agent: Agent to sync to the session.
             **kwargs: Additional keyword arguments for future extensibility.
         """
+        from ..agent.agent import Agent
+
+        if not isinstance(agent, Agent):
+            self.session_repository.update_agent(self.session_id, SessionAgent.from_agent(agent))
+            return
+
         # Get current versions and conversation manager state
         current_state_version = agent.state._get_version()
         current_interrupt_state_version = agent._interrupt_state._get_version()
@@ -175,14 +179,20 @@ class RepositorySessionManager(SessionManager):
             "model_state": copy.deepcopy(current_model_state),
         }
 
-    def initialize(self, agent: "Agent", **kwargs: Any) -> None:
+    def initialize(self, agent: "LocalAgent", **kwargs: Any) -> None:
         """Initialize an agent with a session.
 
         Args:
             agent: Agent to initialize from the session
             **kwargs: Additional keyword arguments for future extensibility.
         """
-        if not RepositorySessionManager._warned_storage_ignored and agent.storage is not None:
+        from ..agent.agent import Agent
+
+        if (
+            isinstance(agent, Agent)
+            and not RepositorySessionManager._warned_storage_ignored
+            and agent.storage is not None
+        ):
             RepositorySessionManager._warned_storage_ignored = True
             logger.warning(
                 "agent_id=<%s> | agent-level storage is set but RepositorySessionManager does not use it;"
@@ -225,23 +235,26 @@ class RepositorySessionManager(SessionManager):
             session_agent.initialize_internal_state(agent)
 
             # Restore the conversation manager to its previous state, and get the optional prepend messages
-            prepend_messages = agent.conversation_manager.restore_from_session(session_agent.conversation_manager_state)
-
-            if prepend_messages is None:
-                prepend_messages = []
+            prepend_messages = []
+            offset = 0
+            if isinstance(agent, Agent):
+                prepend_messages = (
+                    agent.conversation_manager.restore_from_session(session_agent.conversation_manager_state) or []
+                )
+                offset = agent.conversation_manager.removed_message_count
 
             # List the messages currently in the session, using an offset of the messages previously removed
             # by the conversation manager.
             session_messages = self.session_repository.list_messages(
                 session_id=self.session_id,
                 agent_id=agent.agent_id,
-                offset=agent.conversation_manager.removed_message_count,
+                offset=offset,
             )
             if len(session_messages) > 0:
                 self._latest_agent_message[agent.agent_id] = session_messages[-1]
 
             # Skip restoring messages when conversation is managed server-side
-            if agent.model.stateful:
+            if isinstance(agent, Agent) and agent.model.stateful:
                 logger.debug(
                     "agent_id=<%s> | session_id=<%s> | skipping message restore for server-managed conversation",
                     agent.agent_id,
@@ -372,93 +385,3 @@ class RepositorySessionManager(SessionManager):
             source.deserialize_state(state)
 
         self._is_new_session = False
-
-    def initialize_bidi_agent(self, agent: "BidiAgent", **kwargs: Any) -> None:
-        """Initialize a bidirectional agent with a session.
-
-        Args:
-            agent: BidiAgent to initialize from the session
-            **kwargs: Additional keyword arguments for future extensibility.
-        """
-        if agent.agent_id in self._latest_agent_message:
-            raise SessionException("The `agent_id` of an agent must be unique in a session.")
-        self._latest_agent_message[agent.agent_id] = None
-
-        # Skip read_agent call for new sessions since no agents can exist yet
-        if self._is_new_session:
-            session_agent = None
-        else:
-            session_agent = self.session_repository.read_agent(self.session_id, agent.agent_id)
-
-        if session_agent is None:
-            logger.debug(
-                "agent_id=<%s> | session_id=<%s> | creating bidi agent",
-                agent.agent_id,
-                self.session_id,
-            )
-
-            session_agent = SessionAgent.from_bidi_agent(agent)
-            self.session_repository.create_agent(self.session_id, session_agent)
-            # Initialize messages with sequential indices
-            session_message = None
-            for i, message in enumerate(agent.messages):
-                session_message = SessionMessage.from_message(message, i)
-                self.session_repository.create_message(self.session_id, agent.agent_id, session_message)
-            self._latest_agent_message[agent.agent_id] = session_message
-        else:
-            logger.debug(
-                "agent_id=<%s> | session_id=<%s> | restoring bidi agent",
-                agent.agent_id,
-                self.session_id,
-            )
-            agent.state = AgentState(session_agent.state)
-
-            session_agent.initialize_bidi_internal_state(agent)
-
-            # BidiAgent has no conversation_manager, so no prepend_messages or removed_message_count
-            session_messages = self.session_repository.list_messages(
-                session_id=self.session_id,
-                agent_id=agent.agent_id,
-                offset=0,
-            )
-            if len(session_messages) > 0:
-                self._latest_agent_message[agent.agent_id] = session_messages[-1]
-
-            # Restore the agents messages array
-            agent.messages = [session_message.to_message() for session_message in session_messages]
-
-            # Fix broken session histories: https://github.com/strands-agents/harness-sdk/issues/859
-            agent.messages = self._fix_broken_tool_use(agent.messages)
-
-        self._is_new_session = False
-
-    def append_bidi_message(self, message: Message, agent: "BidiAgent", **kwargs: Any) -> None:
-        """Append a message to the bidirectional agent's session.
-
-        Args:
-            message: Message to add to the agent in the session
-            agent: BidiAgent to append the message to
-            **kwargs: Additional keyword arguments for future extensibility.
-        """
-        # Calculate the next index (0 if this is the first message, otherwise increment the previous index)
-        latest_agent_message = self._latest_agent_message[agent.agent_id]
-        if latest_agent_message:
-            next_index = latest_agent_message.message_id + 1
-        else:
-            next_index = 0
-
-        session_message = SessionMessage.from_message(message, next_index)
-        self._latest_agent_message[agent.agent_id] = session_message
-        self.session_repository.create_message(self.session_id, agent.agent_id, session_message)
-
-    def sync_bidi_agent(self, agent: "BidiAgent", **kwargs: Any) -> None:
-        """Serialize and update the bidirectional agent into the session repository.
-
-        Args:
-            agent: BidiAgent to sync to the session.
-            **kwargs: Additional keyword arguments for future extensibility.
-        """
-        self.session_repository.update_agent(
-            self.session_id,
-            SessionAgent.from_bidi_agent(agent),
-        )

@@ -9,6 +9,7 @@ Tests the unified GoogleGeminiLiveModel interface including:
 
 import asyncio
 import base64
+import copy
 import json
 import unittest.mock
 
@@ -27,6 +28,7 @@ from strands.experimental.bidi.types.events import (
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
     BidiTextInputEvent,
+    BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
 )
@@ -180,14 +182,24 @@ def test_model_initialization(mock_genai_client, model_id, api_key):
     assert model_default.model_id == "gemini-2.5-flash-native-audio-preview-09-2025"
     assert model_default.client_args == {}
     assert model_default._live_session is None
-    assert model_default.config["params"] == {}
+    tru_config = model_default.get_config()
+    exp_config = {
+        "model_id": "gemini-2.5-flash-native-audio-preview-09-2025",
+        "params": {},
+        "connection": {"restart_after_s": 540},
+    }
+    assert tru_config == exp_config
+    tru_config["model_id"] = "updated-model"
+    exp_config["model_id"] = "updated-model"
+    assert model_default.get_config() == exp_config
+    assert model_default.get_config() is tru_config
 
     model_with_key = GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key})
     assert model_with_key.model_id == model_id
     assert model_with_key.client_args == {"api_key": api_key}
 
     model_custom = GoogleGeminiLiveModel(model_id=model_id, params={"temperature": 0.7, "top_p": 0.9})
-    assert model_custom.config["params"] == {"temperature": 0.7, "top_p": 0.9}
+    assert model_custom.get_config()["params"] == {"temperature": 0.7, "top_p": 0.9}
     assert model_custom._build_live_config()["response_modalities"] == ["AUDIO"]
 
 
@@ -283,17 +295,14 @@ async def test_stop_is_idempotent(mock_genai_client, model):
 
 def test_connection_config_declared(model):
     """Gemini declares a proactive reconnect deadline and per-response (non-cumulative) usage."""
-    assert model.connection_config["restart_after_s"] == 540
+    assert model.get_connection_config()["restart_after_s"] == 540
     assert model.usage_is_cumulative is False
 
 
 def test_context_window_compression_enabled_by_default(model):
     """Sliding-window compression is on by default so a resumed session survives past the cap."""
     compression = model._build_live_config()["context_window_compression"]
-    assert isinstance(compression, genai_types.ContextWindowCompressionConfig)
-    assert isinstance(compression.sliding_window, genai_types.SlidingWindow)
-    # It flows into the live connect config.
-    assert "context_window_compression" in model._build_live_config()
+    assert compression == {"sliding_window": {}}
 
 
 def test_context_window_compression_overridable(mock_genai_client, model_id, api_key):
@@ -304,7 +313,8 @@ def test_context_window_compression_overridable(mock_genai_client, model_id, api
         client_args={"api_key": api_key},
         params={"context_window_compression": None},
     )
-    assert model.config["params"]["context_window_compression"] is None
+    assert model.get_config()["params"]["context_window_compression"] is None
+    assert model._build_live_config()["context_window_compression"] is None
 
 
 def test_connection_config_override(mock_genai_client, model_id, api_key):
@@ -315,7 +325,53 @@ def test_connection_config_override(mock_genai_client, model_id, api_key):
         client_args={"api_key": api_key},
         connection={"restart_after_s": 30},
     )
-    assert model.connection_config["restart_after_s"] == 30
+    assert model.get_connection_config()["restart_after_s"] == 30
+
+
+@pytest.mark.parametrize("connection", [{"restart_after_s": 30}, {"auto_reconnect": False}, {}])
+def test_update_config_replaces_connection(model, model_id, connection):
+    model.update_config(connection=connection)
+
+    tru_config = model.get_config()
+    exp_config = {"model_id": model_id, "params": {}, "connection": connection}
+    assert tru_config == exp_config
+    assert model.get_connection_config() == connection
+
+
+@pytest.mark.parametrize(
+    ("model_config", "invalid_key"),
+    [
+        pytest.param({"model": "test-model"}, "model", id="model"),
+        pytest.param({"connection": {"restart_after": 30}}, "restart_after", id="connection"),
+    ],
+)
+def test_update_config_warns_invalid_keys(model, model_config, invalid_key):
+    with pytest.warns(UserWarning, match=invalid_key):
+        model.update_config(**model_config)
+
+
+@pytest.mark.asyncio
+async def test_restart_uses_updated_config(mock_genai_client, model):
+    """Restart opens a new connection using the updated model ID and params."""
+    mock_client, _, _ = mock_genai_client
+    connect = mock_client.aio.live.connect
+    await model.start()
+
+    model.update_config(
+        model_id="updated-model",
+        params={"system_instruction": "Configured instructions", "temperature": 0.7},
+    )
+    connect.assert_called_once()
+
+    await model.restart(system_prompt="Direct instructions")
+
+    assert connect.call_count == 2
+    restarted_request = connect.call_args.kwargs
+    assert restarted_request["model"] == "updated-model"
+    assert restarted_request["config"]["system_instruction"] == "Configured instructions"
+    assert restarted_request["config"]["temperature"] == 0.7
+
+    await model.stop()
 
 
 @pytest.mark.asyncio
@@ -332,7 +388,7 @@ async def test_restart_resumes_via_session_handle(mock_genai_client, model):
 
     # The resumed connection carries the tracked handle, and history is not replayed.
     config = mock_client.aio.live.connect.call_args.kwargs["config"]
-    assert config["session_resumption"].handle == "handle-abc"
+    assert config["session_resumption"]["handle"] == "handle-abc"
 
     await model.stop()
 
@@ -347,7 +403,7 @@ async def test_restart_prefers_explicit_handle_from_restart_kwargs(mock_genai_cl
     await model.restart(system_prompt="hi", live_session_handle="from-error")
 
     config = mock_client.aio.live.connect.call_args.kwargs["config"]
-    assert config["session_resumption"].handle == "from-error"
+    assert config["session_resumption"]["handle"] == "from-error"
 
     await model.stop()
 
@@ -369,7 +425,7 @@ async def test_fresh_start_clears_tracked_handle(mock_genai_client, model):
 
     assert model._live_session_handle is None
     config = mock_client.aio.live.connect.call_args.kwargs["config"]
-    assert config["session_resumption"].handle is None
+    assert config["session_resumption"]["handle"] is None
 
     await model.stop()
 
@@ -385,7 +441,7 @@ async def test_restart_without_handle_starts_fresh_and_replays_history(mock_gena
 
     # Fresh session (no resumption handle), with history replayed via send_client_content.
     config = mock_client.aio.live.connect.call_args.kwargs["config"]
-    assert config["session_resumption"].handle is None
+    assert config["session_resumption"]["handle"] is None
     mock_live_session.send_client_content.assert_called()
 
     await model.stop()
@@ -405,7 +461,7 @@ async def test_restart_falls_back_to_fresh_session_when_resume_rejected(mock_gen
     # The resume attempt (handle present) fails; the fresh retry (no handle) succeeds.
     async def aenter_rejects_resume(*_args, **_kwargs):
         config = mock_client.aio.live.connect.call_args.kwargs["config"]
-        if config["session_resumption"].handle is not None:
+        if config["session_resumption"]["handle"] is not None:
             raise RuntimeError("resume handle rejected")
         return mock_live_session
 
@@ -417,7 +473,7 @@ async def test_restart_falls_back_to_fresh_session_when_resume_rejected(mock_gen
     assert model._live_session_handle is None
     assert model._connection_id is not None
     final_config = mock_client.aio.live.connect.call_args.kwargs["config"]
-    assert final_config["session_resumption"].handle is None
+    assert final_config["session_resumption"]["handle"] is None
     mock_live_session.send_client_content.assert_called()
 
     await model.stop()
@@ -451,7 +507,7 @@ async def test_proactive_reconnect_end_to_end_through_agent(mock_genai_client, m
     """End-to-end: BidiAgent + real Gemini model proactively reconnects before the deadline.
 
     Drives the full chain against the real GoogleGeminiLiveModel (mocked genai transport): the loop
-    reads Gemini's connection_config, arms the proactive timer, emits a warning, and reconnects
+    reads Gemini's connection config, arms the proactive timer, emits a warning, and reconnects
     through Gemini's own restart() before the deadline, resuming the session via its handle. No
     live network calls are made.
     """
@@ -477,7 +533,7 @@ async def test_proactive_reconnect_end_to_end_through_agent(mock_genai_client, m
 
     model = GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key})
     # A small deadline; the injected clock below fires it without wall time.
-    model.connection_config = {"restart_after_s": 1}
+    model.update_config(connection={"restart_after_s": 1})
 
     agent = BidiAgent(model=model, system_prompt="You are helpful")
 
@@ -514,7 +570,7 @@ async def test_proactive_reconnect_end_to_end_through_agent(mock_genai_client, m
 
     # The reconnect resumed the session via the tracked handle rather than starting fresh.
     resumed_config = mock_client.aio.live.connect.call_args.kwargs["config"]
-    assert resumed_config["session_resumption"].handle == "resume-handle"
+    assert resumed_config["session_resumption"]["handle"] == "resume-handle"
 
     await agent.stop()
 
@@ -660,21 +716,17 @@ async def test_send_edge_cases(mock_genai_client, model):
 
 
 @pytest.mark.asyncio
-async def test_receive_lifecycle_events(mock_genai_client, model, agenerator):
-    """Test that receive() emits connection start and end events."""
-    _, mock_live_session, _ = mock_genai_client
-    mock_live_session.receive.return_value = agenerator([])
-
+async def test_receive_emits_connection_start(model):
+    model.update_config(model_id="updated-model")
     await model.start()
 
-    async for event in model.receive():
-        _ = event
-        break
+    receiver = model.receive()
+    tru_event = await anext(receiver)
+    exp_event = BidiConnectionStartEvent(connection_id=model._connection_id, model="updated-model")
+    assert tru_event == exp_event
 
-    # Verify connection start and end
-    assert isinstance(event, BidiConnectionStartEvent)
-    assert event.get("type") == "bidi_connection_start"
-    assert event.connection_id == model._connection_id
+    await receiver.aclose()
+    await model.stop()
 
 
 @pytest.mark.asyncio
@@ -724,11 +776,9 @@ async def test_event_conversion(mock_genai_client, model, live_message, server_c
     text_event = text_events[0]
     assert isinstance(text_event, BidiTranscriptStreamEvent)
     assert text_event.get("type") == "bidi_transcript_stream"
-    assert text_event.text == "Hello from Gemini"
+    assert text_event.delta == "Hello from Gemini"
     assert text_event.role == "assistant"
-    assert text_event.is_final is True
-    assert text_event.delta == {"text": "Hello from Gemini"}
-    assert text_event.current_transcript == "Hello from Gemini"
+    assert text_event.delta == "Hello from Gemini"
 
     # Test multiple text parts (should concatenate)
     mock_model_turn_multi = unittest.mock.Mock()
@@ -740,8 +790,7 @@ async def test_event_conversion(mock_genai_client, model, live_message, server_c
     assert len(multi_text_events) == 1
     multi_text_event = multi_text_events[0]
     assert isinstance(multi_text_event, BidiTranscriptStreamEvent)
-    assert multi_text_event.text == "Hello from Gemini"  # Concatenated with space
-
+    assert multi_text_event.delta == "Hello from Gemini"  # Concatenated with space
     # Test audio output (base64 encoded)
     mock_audio = live_message(data=b"audio_data")
 
@@ -953,6 +1002,143 @@ async def test_interruption_emitted_alongside_other_server_content(
 
 
 @pytest.mark.asyncio
+async def test_interruption_preserves_user_transcription_already_in_progress(
+    mock_genai_client, model, live_message, server_content
+):
+    """A delayed interruption marker must not discard earlier fragments from the same utterance."""
+    _, _, _ = mock_genai_client
+    await model.start()
+    turn_state = _TurnState(response_open=True)
+
+    first = unittest.mock.Mock(text="Just one", finished=False)
+    second = unittest.mock.Mock(text=" second", finished=False)
+
+    model._convert_gemini_live_event(
+        live_message(server_content=server_content(input_transcription=first)),
+        turn_state,
+    )
+    events = model._convert_gemini_live_event(
+        live_message(server_content=server_content(interrupted=True, input_transcription=second)),
+        turn_state,
+    )
+
+    assert [type(event) for event in events] == [BidiInterruptionEvent, BidiTranscriptStreamEvent]
+    assert turn_state.input_transcript == "Just one second"
+
+    await model.stop()
+
+
+@pytest.mark.asyncio
+async def test_transcription_fragments_complete_at_turn_boundary(
+    mock_genai_client,
+    model,
+    live_message,
+    server_content,
+):
+    """Input and output fragments produce complete transcripts at turn completion."""
+    _, _, _ = mock_genai_client
+    await model.start()
+    turn_state = _TurnState()
+
+    first_input = unittest.mock.Mock(text="how ", finished=False)
+    second_input = unittest.mock.Mock(text="are you?", finished=False)
+
+    model._convert_gemini_live_event(
+        live_message(server_content=server_content(input_transcription=first_input)),
+        turn_state,
+    )
+    model._convert_gemini_live_event(
+        live_message(server_content=server_content(input_transcription=second_input)),
+        turn_state,
+    )
+
+    assert turn_state.input_transcript == "how are you?"
+
+    first_output = unittest.mock.Mock(text="I am ", finished=False)
+    second_output = unittest.mock.Mock(text="doing well.", finished=False)
+
+    model._convert_gemini_live_event(
+        live_message(server_content=server_content(output_transcription=first_output)),
+        turn_state,
+    )
+    model._convert_gemini_live_event(
+        live_message(server_content=server_content(output_transcription=second_output)),
+        turn_state,
+    )
+
+    assert turn_state.output_transcript == "I am doing well."
+
+    completed = model._convert_gemini_live_event(
+        live_message(server_content=server_content(turn_complete=True)),
+        turn_state,
+    )
+    assert completed == [
+        BidiTranscriptCompleteEvent("how are you?", "user"),
+        BidiTranscriptCompleteEvent("I am doing well.", "assistant"),
+        BidiResponseCompleteEvent(response_id=unittest.mock.ANY, stop_reason="complete"),
+    ]
+    assert turn_state.input_transcript == ""
+    assert turn_state.output_transcript == ""
+
+    await model.stop()
+
+
+@pytest.mark.parametrize(
+    ("response_open", "endings", "exp_events"),
+    [
+        pytest.param(
+            False,
+            [{"turn_complete": True}],
+            [BidiTranscriptCompleteEvent("Turn one.", "user")],
+            id="input-only",
+        ),
+        pytest.param(
+            True,
+            [{"interrupted": True}, {"turn_complete": True}],
+            [BidiInterruptionEvent(reason="user_speech"), BidiTranscriptCompleteEvent("Turn one.", "user")],
+            id="interrupted-then-complete",
+        ),
+        pytest.param(
+            True,
+            [{"interrupted": True, "turn_complete": True}],
+            [BidiInterruptionEvent(reason="user_speech"), BidiTranscriptCompleteEvent("Turn one.", "user")],
+            id="interrupted-and-complete",
+        ),
+    ],
+)
+def test_convert_gemini_live_event_completes_user_transcript_without_open_response(
+    model, response_open, endings, exp_events
+):
+    """Keep user transcripts separate across turns without assistant completion."""
+    turn_state = _TurnState(response_open=response_open)
+    model._convert_gemini_live_event(
+        genai_types.LiveServerMessage(server_content={"input_transcription": {"text": "Turn one."}}),
+        turn_state,
+    )
+
+    tru_events = []
+    for ending in endings:
+        tru_events.extend(
+            model._convert_gemini_live_event(genai_types.LiveServerMessage(server_content=ending), turn_state)
+        )
+    assert tru_events == exp_events
+    assert turn_state.input_transcript == ""
+
+    tru_events = model._convert_gemini_live_event(
+        genai_types.LiveServerMessage(
+            server_content={"input_transcription": {"text": "Turn two."}, "turn_complete": True}
+        ),
+        turn_state,
+    )
+    exp_events = [
+        BidiTranscriptStreamEvent(delta="Turn two.", role="user"),
+        BidiTranscriptCompleteEvent("Turn two.", "user"),
+    ]
+    assert tru_events == exp_events
+    assert turn_state.input_transcript == ""
+
+
+@pytest.mark.asyncio
 async def test_audio_takes_precedence_over_model_turn_text(
     mock_genai_client, model, live_message, server_content, text_part
 ):
@@ -1056,7 +1242,7 @@ def test_audio_config_defaults(mock_genai_client, model_id, api_key):
 
     model = GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key})
 
-    assert model.audio_config == {
+    assert model.get_audio_config() == {
         "input_rate": 16000,
         "output_rate": 24000,
         "channels": 1,
@@ -1074,7 +1260,7 @@ def test_audio_config_partial_override(mock_genai_client, model_id, api_key):
         audio={"output_rate": 48000, "voice": "Puck"},
     )
 
-    assert model.audio_config == {
+    assert model.get_audio_config() == {
         "input_rate": 16000,
         "output_rate": 48000,
         "channels": 1,
@@ -1099,7 +1285,7 @@ def test_audio_config_full_override(mock_genai_client, model_id, api_key):
         },
     )
 
-    assert model.audio_config == {
+    assert model.get_audio_config() == {
         "input_rate": 48000,
         "output_rate": 48000,
         "channels": 2,
@@ -1126,22 +1312,19 @@ def test_config_building(model, system_prompt, tool_spec):
     assert "tools" in config_tools
     assert len(config_tools["tools"]) > 0
 
-    # Test session_resumption — always present, uses SessionResumptionConfig
+    # Test session_resumption — always present, with an optional handle
     config_no_handle = model._build_live_config()
-    assert "session_resumption" in config_no_handle
-    assert isinstance(config_no_handle["session_resumption"], genai_types.SessionResumptionConfig)
-    assert config_no_handle["session_resumption"].handle is None
+    assert config_no_handle["session_resumption"] == {"handle": None}
 
     config_with_handle = model._build_live_config(live_session_handle="test-handle-123")
-    assert config_with_handle["session_resumption"].handle == "test-handle-123"
+    assert config_with_handle["session_resumption"] == {"handle": "test-handle-123"}
 
     # Test history_config — only set when has_messages=True
     config_no_messages = model._build_live_config(has_messages=False)
     assert "history_config" not in config_no_messages
 
     config_with_messages = model._build_live_config(has_messages=True)
-    assert isinstance(config_with_messages["history_config"], genai_types.HistoryConfig)
-    assert config_with_messages["history_config"].initial_history_in_client_content is True
+    assert config_with_messages["history_config"] == {"initial_history_in_client_content": True}
 
 
 def test__build_live_config_passes_through_params(mock_genai_client, api_key):
@@ -1149,13 +1332,178 @@ def test__build_live_config_passes_through_params(mock_genai_client, api_key):
     _ = mock_genai_client
     model = GoogleGeminiLiveModel(
         client_args={"api_key": api_key},
-        params={"temperature": 0.7, "proactivity": {"proactive_audio": True}},
+        params={"temperature": 0.7, "proactivity": {"proactive_audio": True}, "future_option": {"enabled": True}},
     )
 
     config = model._build_live_config()
 
     assert config["temperature"] == 0.7
     assert config["proactivity"] == {"proactive_audio": True}
+    assert config["future_option"] == {"enabled": True}
+
+
+@pytest.mark.parametrize(
+    "speech_config",
+    [
+        pytest.param(
+            {"voice_config": {"prebuilt_voice_config": {"voice_name": "Puck"}}},
+            id="dict",
+        ),
+        pytest.param(
+            genai_types.SpeechConfig(
+                voice_config=genai_types.VoiceConfig(
+                    prebuilt_voice_config=genai_types.PrebuiltVoiceConfig(voice_name="Puck")
+                )
+            ),
+            id="sdk-object",
+        ),
+        pytest.param(None, id="none"),
+    ],
+)
+def test__build_live_config_params_override_direct_options(
+    mock_genai_client, api_key, system_prompt, tool_spec, speech_config
+):
+    params = {
+        "system_instruction": "Configured instructions",
+        "tools": [],
+        "speech_config": speech_config,
+        "session_resumption": {"handle": "configured-handle"},
+        "history_config": {"initial_history_in_client_content": False},
+    }
+    exp_params = copy.deepcopy(params)
+    model = GoogleGeminiLiveModel(
+        client_args={"api_key": api_key},
+        audio={"voice": "Kore"},
+        params=params,
+    )
+
+    tru_config = model._build_live_config(
+        system_prompt=system_prompt,
+        tools=[tool_spec],
+        has_messages=True,
+        live_session_handle="direct-handle",
+    )
+
+    exp_config = {
+        "response_modalities": ["AUDIO"],
+        "output_audio_transcription": {},
+        "input_audio_transcription": {},
+        "context_window_compression": {"sliding_window": {}},
+        **exp_params,
+    }
+    assert tru_config == exp_config
+
+
+def test__build_live_config_merges_nested_params(mock_genai_client, api_key):
+    params = {
+        "speech_config": {"language_code": "en-US"},
+        "context_window_compression": {"trigger_tokens": 10000},
+        "session_resumption": {"transparent": True},
+    }
+    model = GoogleGeminiLiveModel(
+        client_args={"api_key": api_key},
+        audio={"voice": "Kore"},
+        params=params,
+    )
+
+    tru_config = model._build_live_config(
+        system_prompt="Direct instructions",
+        has_messages=True,
+        live_session_handle="resume-handle",
+    )
+    exp_config = {
+        "response_modalities": ["AUDIO"],
+        "output_audio_transcription": {},
+        "input_audio_transcription": {},
+        "context_window_compression": {"sliding_window": {}, "trigger_tokens": 10000},
+        "session_resumption": {"handle": "resume-handle", "transparent": True},
+        "history_config": {"initial_history_in_client_content": True},
+        "system_instruction": "Direct instructions",
+        "speech_config": {
+            "language_code": "en-US",
+            "voice_config": {"prebuilt_voice_config": {"voice_name": "Kore"}},
+        },
+    }
+    assert tru_config == exp_config
+
+
+def test__build_live_config_copies_sdk_objects(mock_genai_client, api_key):
+    speech_config = genai_types.SpeechConfig(language_code="en-US")
+    model = GoogleGeminiLiveModel(
+        client_args={"api_key": api_key},
+        params={"speech_config": speech_config},
+    )
+
+    config = model._build_live_config()
+    config["speech_config"].language_code = "fr-FR"
+
+    assert speech_config == genai_types.SpeechConfig(language_code="en-US")
+
+
+@pytest.mark.asyncio
+async def test_start_passes_merged_config_to_genai(mock_genai_client, api_key):
+    mock_client, _, _ = mock_genai_client
+    model = GoogleGeminiLiveModel(
+        client_args={"api_key": api_key},
+        audio={"voice": "Kore"},
+        params={
+            "speech_config": {
+                "language_code": "en-US",
+                "voice_config": {"prebuilt_voice_config": {"voice_name": None}},
+            },
+            "context_window_compression": {"trigger_tokens": 10000},
+            "session_resumption": {"transparent": True},
+            "input_audio_transcription": None,
+        },
+    )
+
+    await model.start(live_session_handle="resume-handle")
+
+    request_config = mock_client.aio.live.connect.call_args.kwargs["config"]
+    assert request_config["input_audio_transcription"] is None
+    assert request_config["speech_config"]["voice_config"]["prebuilt_voice_config"]["voice_name"] is None
+    config = genai_types.LiveConnectConfig(**request_config)
+    assert config.speech_config.voice_config.prebuilt_voice_config.voice_name is None
+    assert config.speech_config.language_code == "en-US"
+    assert config.context_window_compression.sliding_window is not None
+    assert config.context_window_compression.trigger_tokens == 10000
+    assert config.session_resumption.handle == "resume-handle"
+    assert config.session_resumption.transparent is True
+    assert config.input_audio_transcription is None
+    assert config.output_audio_transcription is not None
+    await model.stop()
+
+
+@pytest.mark.parametrize(
+    ("params", "exp_voice"),
+    [
+        pytest.param({}, "Kore", id="empty"),
+        pytest.param(None, "Kore", id="none"),
+        pytest.param(
+            {"speech_config": {"voice_config": {"prebuilt_voice_config": {"voice_name": "Puck"}}}},
+            "Puck",
+            id="replacement",
+        ),
+    ],
+)
+def test_update_config_replaces_params(mock_genai_client, api_key, params, exp_voice):
+    model = GoogleGeminiLiveModel(
+        client_args={"api_key": api_key},
+        audio={"voice": "Kore"},
+        params={
+            "system_instruction": "Configured instructions",
+            "speech_config": {"voice_config": {"prebuilt_voice_config": {"voice_name": "Aoede"}}},
+        },
+    )
+
+    model.update_config(params=params)
+
+    config = model._build_live_config(system_prompt="Direct instructions")
+    assert model.get_config()["params"] == params
+    assert config["system_instruction"] == "Direct instructions"
+    tru_speech = config["speech_config"]
+    exp_speech = {"voice_config": {"prebuilt_voice_config": {"voice_name": exp_voice}}}
+    assert tru_speech == exp_speech
 
 
 def test_tool_formatting(model, tool_spec):
@@ -1326,15 +1674,3 @@ async def test_tool_result_unsupported_content_type(mock_genai_client, model):
         await model.send(ToolResultEvent(tool_result_mixed))
 
     await model.stop()
-
-
-# Helper fixture for async generator
-@pytest.fixture
-def agenerator():
-    """Helper to create async generators for testing."""
-
-    async def _agenerator(items):
-        for item in items:
-            yield item
-
-    return _agenerator

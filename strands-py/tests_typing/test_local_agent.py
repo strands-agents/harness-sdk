@@ -4,7 +4,12 @@ from typing_extensions import assert_type
 
 from strands import Agent, LocalAgent, ToolContext, tool
 from strands.experimental.bidi import BidiAgent
-from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent
+from strands.hooks import AfterToolCallEvent, AgentInitializedEvent, BeforeToolCallEvent, MessageAddedEvent
+from strands.session.repository_session_manager import RepositorySessionManager
+from strands.session.session_manager import SessionManager
+from strands.session.snapshot_session_manager import SnapshotSessionManager
+from strands.types.content import Message
+from strands.types.session import SessionAgent
 
 
 @tool(context=True)
@@ -41,6 +46,22 @@ def local_tool_call(event: BeforeToolCallEvent[LocalAgent] | AfterToolCallEvent[
     assert_type(event.agent, LocalAgent)
 
 
+def agent_initialized(event: AgentInitializedEvent) -> None:
+    assert_type(event.agent, Agent)
+
+
+def message_added(event: MessageAddedEvent) -> None:
+    assert_type(event.agent, Agent)
+
+
+def local_agent_initialized(event: AgentInitializedEvent[LocalAgent]) -> None:
+    assert_type(event.agent, LocalAgent)
+
+
+async def local_message_added(event: MessageAddedEvent[LocalAgent]) -> None:
+    assert_type(event.agent, LocalAgent)
+
+
 def register_hooks(agent: Agent, bidi_agent: BidiAgent, local_agent: LocalAgent) -> None:
     shared_agent: LocalAgent = agent
     assert_type(shared_agent, LocalAgent)
@@ -63,6 +84,64 @@ def register_hooks(agent: Agent, bidi_agent: BidiAgent, local_agent: LocalAgent)
     local_agent.add_hook(before_local_tool_call, BeforeToolCallEvent)
     local_agent.add_hook(local_tool_call, [BeforeToolCallEvent, AfterToolCallEvent])
 
+    agent.add_hook(agent_initialized)
+    agent.add_hook(message_added)
+    for shared in (agent, bidi_agent, local_agent):
+        shared.add_hook(local_agent_initialized)
+        shared.add_hook(local_message_added)
+        shared.add_hook(local_agent_initialized, AgentInitializedEvent)
+        shared.add_hook(local_message_added, MessageAddedEvent)
+
 
 def local_agent_excludes_agent_only_members(local_agent: LocalAgent) -> None:
     local_agent.cleanup()  # type: ignore[attr-defined]
+
+
+def persist_local_agent(manager: RepositorySessionManager, agent: LocalAgent, message: Message) -> None:
+    manager.initialize(agent)
+    manager.append_message(message, agent)
+    manager.redact_latest_message(message, agent)
+    manager.sync_agent(agent)
+    session_agent = SessionAgent.from_agent(agent)
+    assert_type(session_agent, SessionAgent)
+    session_agent.initialize_internal_state(agent)
+
+
+class AgentOnlySessionManager(SessionManager):
+    def initialize(self, agent: Agent, **kwargs: Any) -> None:
+        pass
+
+    def append_message(self, message: Message, agent: Agent, **kwargs: Any) -> None:
+        pass
+
+    def sync_agent(self, agent: Agent, **kwargs: Any) -> None:
+        pass
+
+    def redact_latest_message(self, redact_message: Message, agent: Agent, **kwargs: Any) -> None:
+        pass
+
+
+def session_manager_types(
+    manager: SessionManager,
+    shared_manager: SessionManager[LocalAgent],
+    repository_manager: RepositorySessionManager,
+    snapshot_manager: SnapshotSessionManager,
+    agent: Agent,
+    bidi_agent: BidiAgent,
+    message: Message,
+) -> None:
+    manager.append_message(message, agent)
+    manager.append_message(message, bidi_agent)  # type: ignore[arg-type]
+    shared_manager.append_message(message, agent)
+    shared_manager.append_message(message, bidi_agent)
+
+    standard_manager: SessionManager = repository_manager
+    shared_repository_manager: SessionManager[LocalAgent] = repository_manager
+    Agent(session_manager=standard_manager)
+    Agent(session_manager=shared_manager)
+    Agent(session_manager=AgentOnlySessionManager())
+    Agent(session_manager=snapshot_manager)
+    BidiAgent(session_manager=shared_repository_manager)
+    BidiAgent(session_manager=shared_manager)
+    BidiAgent(session_manager=manager)  # type: ignore[arg-type]
+    BidiAgent(session_manager=snapshot_manager)  # type: ignore[arg-type]
