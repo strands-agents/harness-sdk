@@ -53,7 +53,11 @@ from strands.memory.types import (
     MemoryEntry,
     MemoryInjectionConfig,
     MemorySearchOptions,
+    MemoryStore,
     MemoryToolConfig,
+    SearchOptions,
+    _has_method,
+    _has_write_sink,
 )
 from strands.tools.decorator import tool
 
@@ -260,6 +264,38 @@ def test_constructor_raises_when_writable_without_write_sink():
     broken = _store("broken", writable=True, sinks=set())
     with pytest.raises(Exception, match="no add or add_messages"):
         MemoryManager(stores=[broken])
+
+
+@pytest.mark.asyncio
+async def test_memory_store_subclass_inherited_defaults_are_not_capabilities():
+    """A ``MemoryStore`` subclass implementing only ``search`` is a read-only store.
+
+    Guards https://github.com/strands-agents/harness-sdk/issues/3965: the optional
+    protocol methods carry default bodies so explicit subclasses are instantiable
+    under static type checkers, and an inherited default must not register as an
+    implemented capability.
+    """
+
+    class SearchOnlyStore(MemoryStore):
+        def __init__(self) -> None:
+            self.name = "search-only"
+            self.description = None
+            self.max_search_results = None
+            self.writable = False
+            self.extraction = None
+
+        async def search(self, query: str, options: SearchOptions | None = None) -> list[MemoryEntry]:
+            return []
+
+    store = SearchOnlyStore()
+    for method in ("add", "add_messages", "initialize", "get_tools"):
+        assert not _has_method(store, method)
+    assert not _has_write_sink(store)
+
+    mm = MemoryManager(stores=[store])
+    assert "add_memory" not in _tool_names(mm)
+    with pytest.raises(Exception, match="no writable store matched"):
+        await mm.add("fact")
 
 
 def test_constructor_raises_when_add_tool_enabled_but_no_store_implements_add():
