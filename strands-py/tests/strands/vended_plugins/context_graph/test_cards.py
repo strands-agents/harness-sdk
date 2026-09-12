@@ -17,6 +17,7 @@ from dataclasses import replace
 
 import pytest
 
+from strands._context_manager.stash import _format_stash_refs
 from strands.agent.conversation_manager.compression.pin_message import pin_message
 from strands.injection._message_injection import _is_user_turn
 from strands.vended_plugins.context_graph.cards import (
@@ -448,6 +449,20 @@ def test_derive_card_reads_an_inline_placeholder_reference():
     conversation = _closed_turn(result_text="[image: png, 900 bytes | ref: mem_1_tu1_2]")
 
     assert _derive(conversation).references == ("mem_1_tu1_2",)
+
+
+def test_derive_card_reads_the_stash_single_reference_form():
+    """The ContextManager writes ``[ref: x]`` where the offloader writes a placeholder field."""
+    conversation = _closed_turn(result_text=f"[Relevance: tool result]{_format_stash_refs(['tu1_0'])}")
+
+    assert _derive(conversation).references == ("tu1_0",)
+
+
+def test_derive_card_reads_the_stash_plural_reference_form():
+    """A multi-block tool result is stashed per sub-block, so its marker names every one."""
+    conversation = _closed_turn(result_text=f"[Relevance: tool result]{_format_stash_refs(['tu1_0', 'tu1_1'])}")
+
+    assert _derive(conversation).references == ("tu1_0", "tu1_1")
 
 
 def test_derive_card_ignores_a_message_without_tracking_id():

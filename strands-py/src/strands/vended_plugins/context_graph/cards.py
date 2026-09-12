@@ -53,9 +53,26 @@ _STORED_REFERENCES = "[Stored references:]"
 """Header the offloader writes above its reference listing. Matched as a substring, not a whole line: a listing that
 gained a prefix is still a listing."""
 
-_INLINE_REFERENCE = re.compile(r"\bref(?:erence)?:[ \t]*([^\s|\]]+)")
-"""A reference named inline, as the offloader's non-text placeholders name it: ``| ref: mem_1_tu-3_0``. Stops at
-whitespace, ``|`` and ``]``, the three characters that close the field; a reference contains none of them."""
+_INLINE_REFERENCE = re.compile(r"\bref(?:erence)?s?:[ \t]*([^\s,|\]]+(?:[ \t]*,[ \t]*[^\s,|\]]+)*)")
+"""A reference named inline, in either shape the two hosts write.
+
+The offloader's non-text placeholders name one: ``| ref: mem_1_tu-3_0``. The ContextManager's stash names one the same
+way and several as ``[refs: tu-3_0, tu-3_1]``, so a comma-separated run is accepted and the capture is split on commas.
+Each reference still stops at whitespace, ``|`` and ``]`` — the characters that close the field and that a reference
+never contains — so a sentence that merely mentions a reference does not absorb the words after it."""
+
+
+def _inline_references(field: str) -> tuple[str, ...]:
+    """The references named in a matched ``ref:``/``refs:`` field, in order.
+
+    Args:
+        field: The captured field, one reference or several separated by commas.
+
+    Returns:
+        The references, each stripped of surrounding whitespace, empties dropped.
+    """
+    return tuple(part.strip() for part in field.split(",") if part.strip())
+
 
 _LISTED_REFERENCE = re.compile(r"^[ \t]+(\S+)[ \t]*\(")
 """A reference on its own line under the listing header: two spaces, the reference, its description. Anchored on the
@@ -896,12 +913,15 @@ def _artifact_metadata(texts: Sequence[str], references: Collection[str]) -> dic
         for placeholder in _PLACEHOLDER.finditer(text):
             fields = placeholder.group(2)
             inline = _INLINE_REFERENCE.search(fields)
-            if inline is None or inline.group(1) not in known:
+            if inline is None:
+                continue
+            named = _inline_references(inline.group(1))
+            if not named or named[0] not in known:
                 continue
 
             fmt = fields.split(",")[0].strip()
             size = _SIZE_IN_BYTES.search(fields)
-            metadata[inline.group(1)] = (
+            metadata[named[0]] = (
                 f"{_PLACEHOLDER_TYPES[placeholder.group(1)]}/{fmt}" if fmt else None,
                 _byte_count(size.group(1)) if size else None,
             )
@@ -1122,7 +1142,8 @@ def _references_of(texts: Sequence[str]) -> tuple[str, ...]:
         listing = False
         for line in text.splitlines():
             for match in _INLINE_REFERENCE.finditer(line):
-                found.setdefault(match.group(1), None)
+                for reference in _inline_references(match.group(1)):
+                    found.setdefault(reference, None)
 
             if _STORED_REFERENCES in line:
                 listing = True
