@@ -32,6 +32,7 @@ def _make_graph(
     graph._interrupt_state = interrupt_state or _InterruptState()
     graph._resume_from_session = False
     graph._resume_next_nodes = []
+    graph.max_concurrency = None
     graph.id = "test_graph"
     return graph
 
@@ -551,6 +552,7 @@ def test_graph_builder_validation():
         .build()
     )
     assert graph.max_node_executions == 10
+    assert graph.max_concurrency is None
     assert graph.execution_timeout == 300.0
     assert graph.node_timeout == 60.0
     assert graph.reset_on_revisit is True
@@ -560,9 +562,33 @@ def test_graph_builder_validation():
     builder.add_node(agent1, "test_node")
     graph = builder.build()
     assert graph.max_node_executions is None
+    assert graph.max_concurrency is None
     assert graph.execution_timeout is None
     assert graph.node_timeout is None
     assert graph.reset_on_revisit is False
+
+
+@pytest.mark.parametrize("invalid_max_concurrency", [0, -1, 1.5, True])
+def test_graph_max_concurrency_validation(invalid_max_concurrency):
+    """Test max concurrency validation on the builder and graph constructor."""
+    exp_message = rf"max_concurrency=<{invalid_max_concurrency!r}> \| must be a positive integer"
+
+    with pytest.raises(ValueError, match=exp_message):
+        GraphBuilder().set_max_concurrency(invalid_max_concurrency)
+
+    with pytest.raises(ValueError, match=exp_message):
+        Graph(nodes={}, edges=set(), entry_points=set(), max_concurrency=invalid_max_concurrency)
+
+
+def test_graph_builder_max_concurrency_none_clears_limit():
+    """Test that None restores unlimited concurrency on the builder."""
+    builder = GraphBuilder().set_max_concurrency(1).set_max_concurrency(None)
+    builder.add_node(create_mock_agent("agent"), "agent")
+
+    tru_max_concurrency = builder.build().max_concurrency
+    exp_max_concurrency = None
+
+    assert tru_max_concurrency is exp_max_concurrency
 
 
 @pytest.mark.asyncio
@@ -1617,6 +1643,178 @@ async def test_graph_streaming_parallel_events(mock_strands_tracer, mock_use_spa
     node_start_events = [e for e in events if e.get("type") == "multiagent_node_start"]
     start_node_ids = set(e["node_id"] for e in node_start_events)
     assert start_node_ids == {"a", "b", "c"}
+
+
+@pytest.mark.parametrize(
+    ("max_concurrency", "exp_max_active_nodes"),
+    [(1, 1), (2, 2), (3, 3), (4, 3), (None, 3)],
+)
+@pytest.mark.asyncio
+async def test_graph_max_concurrency_limits_parallel_nodes(
+    max_concurrency, exp_max_active_nodes, mock_strands_tracer, mock_use_span
+):
+    """Test that graph execution does not exceed the configured concurrency limit."""
+    active_nodes = 0
+    max_active_nodes = 0
+
+    async def tracked_stream(*args, **kwargs):
+        nonlocal active_nodes, max_active_nodes
+        active_nodes += 1
+        max_active_nodes = max(max_active_nodes, active_nodes)
+        try:
+            await asyncio.sleep(0.01)
+            yield {"result": create_mock_agent("result").return_value}
+        finally:
+            active_nodes -= 1
+
+    builder = GraphBuilder()
+    for node_id in ("a", "b", "c"):
+        agent = create_mock_agent(f"agent_{node_id}")
+        agent.stream_async = Mock(side_effect=tracked_stream)
+        builder.add_node(agent, node_id)
+        builder.set_entry_point(node_id)
+
+    graph = builder.set_max_concurrency(max_concurrency).build()
+    tru_result = await graph.invoke_async("Test bounded parallel execution")
+
+    assert graph.max_concurrency == max_concurrency
+    assert max_active_nodes == exp_max_active_nodes
+    assert tru_result.status == Status.COMPLETED
+
+
+@pytest.mark.parametrize("invalid_max_concurrency", [0, -1, 1.5, True])
+@pytest.mark.asyncio
+async def test_graph_max_concurrency_validation_after_assignment(
+    invalid_max_concurrency, mock_strands_tracer, mock_use_span
+):
+    """Test that invalid public attribute assignments fail before scheduling nodes."""
+    builder = GraphBuilder()
+    builder.add_node(create_mock_agent("agent"), "agent")
+    graph = builder.build()
+    graph.max_concurrency = invalid_max_concurrency
+    exp_message = rf"max_concurrency=<{invalid_max_concurrency!r}> \| must be a positive integer"
+
+    with pytest.raises(ValueError, match=exp_message):
+        await graph.invoke_async("Test invalid reassignment")
+
+
+@pytest.mark.asyncio
+async def test_graph_max_concurrency_releases_slot_after_failure(mock_strands_tracer, mock_use_span):
+    """Test that a failed node releases its slot for a later node."""
+    failing_agent = create_mock_agent("failing")
+
+    async def failing_stream(*args, **kwargs):
+        yield {"agent_start": True}
+        raise RuntimeError("expected failure")
+
+    failing_agent.stream_async = Mock(side_effect=failing_stream)
+    succeeding_agent = create_mock_agent("succeeding")
+    builder = GraphBuilder()
+    builder.add_node(failing_agent, "failing")
+    builder.add_node(succeeding_agent, "succeeding")
+    graph = builder.build()
+    semaphore = asyncio.Semaphore(1)
+    event_queue = asyncio.Queue()
+
+    await graph._stream_node_to_queue(graph.nodes["failing"], event_queue, {}, semaphore)
+    assert semaphore.locked() is False
+
+    await asyncio.wait_for(
+        graph._stream_node_to_queue(graph.nodes["succeeding"], event_queue, {}, semaphore),
+        timeout=1,
+    )
+    assert semaphore.locked() is False
+    assert graph.nodes["succeeding"].execution_status == Status.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_graph_max_concurrency_releases_slot_after_cancellation(mock_strands_tracer, mock_use_span):
+    """Test that cancelling a node waiting in its stream releases its slot."""
+    stream_started = asyncio.Event()
+    never_finish = asyncio.Event()
+    blocked_agent = create_mock_agent("blocked")
+
+    async def blocked_stream(*args, **kwargs):
+        stream_started.set()
+        await never_finish.wait()
+        yield {"result": blocked_agent.return_value}
+
+    blocked_agent.stream_async = Mock(side_effect=blocked_stream)
+    succeeding_agent = create_mock_agent("succeeding")
+    builder = GraphBuilder()
+    builder.add_node(blocked_agent, "blocked")
+    builder.add_node(succeeding_agent, "succeeding")
+    graph = builder.build()
+    semaphore = asyncio.Semaphore(1)
+    event_queue = asyncio.Queue()
+
+    blocked_task = asyncio.create_task(graph._stream_node_to_queue(graph.nodes["blocked"], event_queue, {}, semaphore))
+    await stream_started.wait()
+    blocked_task.cancel()
+    await asyncio.gather(blocked_task, return_exceptions=True)
+    assert semaphore.locked() is False
+
+    await asyncio.wait_for(
+        graph._stream_node_to_queue(graph.nodes["succeeding"], event_queue, {}, semaphore),
+        timeout=1,
+    )
+    assert semaphore.locked() is False
+    assert graph.nodes["succeeding"].execution_status == Status.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_graph_node_timeout_excludes_concurrency_queue_time(mock_strands_tracer, mock_use_span):
+    """Test that queued nodes receive their full node timeout after acquiring a slot."""
+    builder = GraphBuilder()
+    builder.add_node(create_mock_agent("queued"), "queued")
+    graph = builder.set_node_timeout(0.05).build()
+    semaphore = asyncio.Semaphore(0)
+    event_queue = asyncio.Queue()
+
+    task = asyncio.create_task(graph._stream_node_to_queue(graph.nodes["queued"], event_queue, {}, semaphore))
+    await asyncio.sleep(0.1)
+
+    # Waiting for a concurrency slot must not start the per-node timeout.
+    assert not task.done()
+    tru_queued_status = graph.nodes["queued"].execution_status
+    exp_queued_status = Status.EXECUTING
+    assert tru_queued_status == exp_queued_status
+
+    semaphore.release()
+    await asyncio.wait_for(task, timeout=1)
+
+    assert graph.nodes["queued"].execution_status == Status.COMPLETED
+
+
+@pytest.mark.parametrize(
+    ("max_concurrency", "exp_status", "exp_tail_status"),
+    [(None, Status.COMPLETED, Status.COMPLETED), (1, Status.FAILED, Status.PENDING)],
+)
+@pytest.mark.asyncio
+async def test_graph_max_concurrency_interacts_with_execution_timeout(
+    max_concurrency, exp_status, exp_tail_status, mock_strands_tracer, mock_use_span
+):
+    """Test that serialized batches can exceed the graph-level execution timeout."""
+
+    async def delayed_stream(*args, **kwargs):
+        await asyncio.sleep(0.04)
+        yield {"result": create_mock_agent("result").return_value}
+
+    builder = GraphBuilder()
+    for node_id in ("a", "b", "c", "d"):
+        agent = create_mock_agent(node_id)
+        agent.stream_async = Mock(side_effect=delayed_stream)
+        builder.add_node(agent, node_id)
+        builder.set_entry_point(node_id)
+    builder.add_node(create_mock_agent("tail"), "tail")
+    for node_id in ("a", "b", "c", "d"):
+        builder.add_edge(node_id, "tail")
+
+    graph = builder.set_max_concurrency(max_concurrency).set_execution_timeout(0.1).build()
+    tru_result = await graph.invoke_async("Test execution timeout interaction")
+
+    assert tru_result.status == exp_status
+    assert graph.nodes["tail"].execution_status == exp_tail_status
 
 
 @pytest.mark.asyncio
