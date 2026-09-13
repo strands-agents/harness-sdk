@@ -364,7 +364,42 @@ Sometimes more than one request targets the same agent instance at once: a retri
   </Tab>
   <Tab label="TypeScript">
 
-  TypeScript rejects overlapping invocations: invoking an agent that is already running throws `ConcurrentInvocationError`. It does not offer a configurable concurrency mode or idempotency-token deduplication of retries; both are available only in the Python SDK.
+  An agent rejects overlapping invocations by default because each call mutates its shared conversation history:
+
+  ```typescript
+  import { Agent, ConcurrentInvocationError } from '@strands-agents/sdk'
+
+  const agent = new Agent()
+
+  try {
+    await agent.invoke('Summarize this report')
+  } catch (error) {
+    if (error instanceof ConcurrentInvocationError) {
+      // Another invocation is already running on this agent instance
+    }
+  }
+  ```
+
+  To deduplicate an in-flight retry, pass the same `idempotencyToken` to `invoke()` or `stream()`:
+
+  ```typescript
+  const options = { idempotencyToken: 'order-1234' }
+  const original = agent.invoke('Process order 1234', options)
+  const retry = agent.invoke('Process order 1234', options)
+
+  const [result, retriedResult] = await Promise.all([original, retry])
+  console.log(result === retriedResult) // true
+  ```
+
+  A matching retry waits for the original and receives the same result or error without rerunning the agent. A deduplicated `stream()` call emits only the final `AgentResultEvent`, not the original's intermediate events. If the primary stream is abandoned before it produces a result, waiting retries receive `IdempotencyAbortedError`. The token is forgotten when the invocation finishes, so it can be reused for a later request. A different token, or a call without a token, still receives `ConcurrentInvocationError` while work is in flight.
+
+  Advanced callers that provide their own synchronization can disable the guard:
+
+  ```typescript
+  const agent = new Agent({ concurrentInvocationMode: 'unsafeConcurrent' })
+  ```
+
+  This mode allows overlapping calls and ignores idempotency tokens. It does not protect conversation history or other shared agent state from interleaved mutation; using a separate agent per independent task is safer.
   </Tab>
 </Tabs>
 
