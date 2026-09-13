@@ -238,6 +238,38 @@ async function elicitationExample() {
 }
 void elicitationExample
 
+// --8<-- [start:progress_notifications]
+const progressClient = new McpClient({
+  transport: new StdioClientTransport({
+    command: 'python',
+    args: ['/path/to/server.py'],
+  }),
+  onProgress: ({ progress, total, message }) => {
+    const value = total === undefined ? progress : `${progress}/${total}`
+    console.log(
+      message === undefined ? `Progress: ${value}` : `Progress: ${value} — ${message}`
+    )
+  },
+})
+
+const longRunningTools = await progressClient.listTools()
+const longRunningTool = longRunningTools.find((tool) => tool.name === 'long_running_tool')
+
+if (longRunningTool !== undefined) {
+  await progressClient.callTool(
+    longRunningTool,
+    { input: 'data' },
+    {
+      timeout: 30_000,
+      maxTotalTimeout: 5 * 60_000,
+      onProgress: ({ progress, total }) => {
+        console.log(`This call: ${progress}/${total ?? '?'}`)
+      },
+    }
+  )
+}
+// --8<-- [end:progress_notifications]
+
 // --8<-- [start:tools_overview_example]
 // Create MCP client with stdio transport
 const mcpClientOverview = new McpClient({

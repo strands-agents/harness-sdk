@@ -7,6 +7,7 @@ tags: [tool-authoring, mcp]
 sourceLinks:
   - path: strands-py/src/strands/tools/mcp/mcp_client.py
   - path: strands-py/src/strands/tools/mcp/mcp_agent_tool.py
+  - path: strands-ts/src/mcp/client.ts
   - path: strands-ts/src/tools/mcp-tool.ts
 ---
 
@@ -622,7 +623,18 @@ result = client.call_tool_sync(
 </Tab>
 <Tab label="TypeScript">
 
-Progress notifications are not yet supported in the TypeScript SDK.
+Pass `onProgress` when constructing `McpClient` to receive updates from every direct tool call. A callback passed to `callTool` overrides the client callback for that call:
+
+```typescript
+--8<-- "user-guide/concepts/tools/mcp-tools_imports.ts:progress_notifications_imports"
+
+--8<-- "user-guide/concepts/tools/mcp-tools.ts:progress_notifications"
+```
+
+The callback receives the MCP progress object, including `progress`, and optional `total`
+and `message` values. Each progress update resets `timeout`; use `maxTotalTimeout` to
+bound the complete request. Progress callbacks are currently ignored when experimental
+task-augmented execution is enabled.
 
 </Tab>
 </Tabs>
