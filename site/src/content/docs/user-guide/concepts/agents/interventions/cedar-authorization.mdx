@@ -121,6 +121,12 @@ Schema validation integrates with the [`cedar-for-agents`](https://github.com/ce
 When using policy generators like [`cedar-agent-policy-builder`](https://github.com/cedar-policy/cedar-for-agents) that produce namespaced Cedar policies (e.g. `Agent::Action::"search"` instead of `Action::"search"`), set the `namespace` option to match:
 
 <Tabs>
+<Tab label="Python">
+
+```python
+--8<-- "user-guide/concepts/agents/interventions/cedar-authorization.py:namespace"
+```
+</Tab>
 <Tab label="TypeScript">
 
 ```typescript
@@ -133,7 +139,7 @@ When using policy generators like [`cedar-agent-policy-builder`](https://github.
 
 When `namespace` is set:
 
-| Cedar concept | Unnamespaced (default) | Namespaced (`namespace: 'Agent'`) |
+| Cedar concept | Unnamespaced (default) | Namespaced (`Agent`) |
 |---|---|---|
 | **Action** | `Action::"search"` | `Agent::Action::"search"` |
 | **Resource** | `Resource::"agent"` | `Agent::Resource::"default"` |
@@ -141,8 +147,16 @@ When `namespace` is set:
 
 Schema generation also uses the configured namespace, so `tools` and `namespace` work together correctly.
 
-:::note
-The `namespace` option is currently available in the TypeScript SDK only. Python support is planned.
+The namespace must be a single Cedar identifier such as `Agent`. Multi-segment
+namespaces such as `Org::App` are not supported.
+
+:::caution
+Setting `namespace` re-types the principal and resource. Migrate every unnamespaced
+entity reference, including references in `when` and `unless` conditions, entity
+identifiers, and any principal supplied through `principal` or
+<Syntax py="principal_resolver" ts="principalResolver" />. Supplied principals are not
+namespaced automatically, and the resource identifier changes from `agent` to `default`.
+A stale reference in a condition fails silently, which can turn a `forbid` into a no-op.
 :::
 
 ## Environment gating
