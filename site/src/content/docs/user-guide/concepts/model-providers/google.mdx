@@ -176,7 +176,10 @@ For a complete list of supported models, see the [Gemini API documentation](http
 <Tabs>
 <Tab label="Python">
 
-Google's built-in tools (Google Search, Code Execution, URL Context) can be passed via the `gemini_tools` config option. These are appended alongside any function tools registered on the agent.
+Configure Google's built-in tools (Google Search, Code Execution, URL Context) with
+`built_in_tools`. These tools are appended alongside any tools registered on the agent.
+The deprecated `gemini_tools` alias remains available for backward compatibility but
+emits a `DeprecationWarning`.
 
 ```python
 from google import genai
@@ -186,7 +189,7 @@ from strands.models.gemini import GeminiModel
 model = GeminiModel(
     client_args={"api_key": "<KEY>"},
     model_id="gemini-2.5-flash",
-    gemini_tools=[
+    built_in_tools=[
         genai.types.Tool(google_search=genai.types.GoogleSearch()),
     ],
 )
