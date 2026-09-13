@@ -211,31 +211,79 @@ class TestContextManagerRunStrategies:
         assert call_args.utilization == 0.4
 
 
-class TestAgentIntegration:
-    """Tests for ContextManager integration with the Agent._resolve_context_manager."""
+class TestFromStrategy:
+    """Tests for ContextManager.from_strategy() factory."""
 
-    def test_context_manager_false_returns_null_conversation_manager(self):
-        from strands.agent.agent import Agent
-        from strands.agent.conversation_manager import NullConversationManager
+    def test_none_returns_none(self):
+        assert ContextManager.from_strategy(None) is None
 
-        resolved_cm, resolved_plugins = Agent._resolve_context_manager(False, None, None)
-        assert isinstance(resolved_cm, NullConversationManager)
+    def test_false_returns_none(self):
+        assert ContextManager.from_strategy(False) is None
 
-    def test_context_manager_instance_appends_to_plugins(self):
-        from strands.agent.agent import Agent
-        from strands.agent.conversation_manager import NullConversationManager
+    def test_auto_returns_context_manager(self):
+        result = ContextManager.from_strategy("auto")
+        assert isinstance(result, ContextManager)
 
+    def test_agentic_returns_context_manager(self):
+        result = ContextManager.from_strategy("agentic")
+        assert isinstance(result, ContextManager)
+
+    def test_instance_returns_itself(self):
         cm = ContextManager()
-        resolved_cm, resolved_plugins = Agent._resolve_context_manager(cm, None, None)
-        assert isinstance(resolved_cm, NullConversationManager)
-        assert cm in resolved_plugins
+        assert ContextManager.from_strategy(cm) is cm
 
-    def test_context_manager_none_returns_none(self):
-        from strands.agent.agent import Agent
+    def test_dict_config_returns_context_manager(self):
+        result = ContextManager.from_strategy({"strategies": [Offload.drop("*").when(threshold=500)]})
+        assert isinstance(result, ContextManager)
 
-        resolved_cm, resolved_plugins = Agent._resolve_context_manager(None, None, None)
-        assert resolved_cm is None
-        assert resolved_plugins is None
+    def test_unknown_string_raises(self):
+        with pytest.raises(ValueError, match="Unknown context_manager preset"):
+            ContextManager.from_strategy("manual")
+
+    def test_unsupported_type_raises(self):
+        with pytest.raises(ValueError, match="Unsupported context_manager value"):
+            ContextManager.from_strategy(42)  # type: ignore[arg-type]
+
+
+class TestResolveConversationManager:
+    """Tests for ContextManager.resolve_conversation_manager()."""
+
+    def test_none_returns_sliding_window(self):
+        from strands.agent.conversation_manager import SlidingWindowConversationManager
+
+        result = ContextManager.resolve_conversation_manager(None, None)
+        assert isinstance(result, SlidingWindowConversationManager)
+
+    def test_none_with_user_cm_returns_user_cm(self):
+        from strands.agent.conversation_manager import SlidingWindowConversationManager
+
+        user_cm = SlidingWindowConversationManager(window_size=20)
+        result = ContextManager.resolve_conversation_manager(None, user_cm)
+        assert result is user_cm
+
+    def test_false_returns_null(self):
+        from strands.agent.conversation_manager import NullConversationManager
+
+        result = ContextManager.resolve_conversation_manager(False, None)
+        assert isinstance(result, NullConversationManager)
+
+    def test_auto_returns_null(self):
+        from strands.agent.conversation_manager import NullConversationManager
+
+        result = ContextManager.resolve_conversation_manager("auto", None)
+        assert isinstance(result, NullConversationManager)
+
+    def test_auto_with_user_cm_warns(self):
+        import warnings
+
+        from strands.agent.conversation_manager import NullConversationManager, SlidingWindowConversationManager
+
+        user_cm = SlidingWindowConversationManager(window_size=20)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = ContextManager.resolve_conversation_manager("auto", user_cm)
+        assert isinstance(result, NullConversationManager)
+        assert any("ignoring co-provided conversation_manager" in str(w.message) for w in caught)
 
 
 class TestContextManagerStashHook:
@@ -248,9 +296,7 @@ class TestContextManagerStashHook:
         cm = ContextManager(stash=True)
         cm.init_agent(mock_agent)
 
-        block = ContentBlock(
-            toolResult=ToolResult(toolUseId="tu-1", status="success", content=[{"text": "data"}])
-        )
+        block = ContentBlock(toolResult=ToolResult(toolUseId="tu-1", status="success", content=[{"text": "data"}]))
         message = Message(role="user", content=[block])
         event = MessageAddedEvent(agent=mock_agent, message=message)
         await mock_agent.hooks.invoke_callbacks_async(event)
@@ -382,3 +428,57 @@ class TestStrategyInitFallback:
         cm = ContextManager(strategies=[strategy])
         cm.init_agent(mock_agent)
         assert strategy.initialized is True
+
+
+class TestStashProperty:
+    """Tests for the stash property."""
+
+    def test_stash_is_none_before_init(self):
+        context_manager = ContextManager()
+        assert context_manager.stash is None
+
+    def test_stash_is_set_after_init(self, mock_agent):
+        mock_agent.session_id = "test-session"
+        mock_agent.storage = None
+        context_manager = ContextManager()
+        context_manager.init_agent(mock_agent)
+        assert context_manager.stash is not None
+
+    def test_stash_is_none_when_disabled(self, mock_agent):
+        context_manager = ContextManager(stash=False)
+        context_manager.init_agent(mock_agent)
+        assert context_manager.stash is None
+
+
+class TestStashIsDurable:
+    """Tests for the stash_is_durable property."""
+
+    def test_false_with_in_memory_storage(self, mock_agent):
+        mock_agent.session_id = "test-session"
+        mock_agent.storage = None
+        context_manager = ContextManager()
+        context_manager.init_agent(mock_agent)
+        assert context_manager.stash_is_durable is False
+
+    def test_true_with_non_in_memory_storage(self, mock_agent):
+        from strands.storage.local_file_storage import LocalFileStorage
+
+        mock_agent.session_id = "test-session"
+        mock_agent.storage = LocalFileStorage(base_dir="/tmp/test-stash-durable")
+        context_manager = ContextManager(stash=True)
+        context_manager.init_agent(mock_agent)
+        assert context_manager.stash_is_durable is True
+
+    def test_false_with_namespaced_in_memory_storage(self, mock_agent):
+        from strands.storage.in_memory_storage import InMemoryStorage
+        from strands.storage.storage import _NamespacedStorage
+
+        mock_agent.session_id = "test-session"
+        mock_agent.storage = _NamespacedStorage(InMemoryStorage(), "tenant")
+        context_manager = ContextManager(stash=True)
+        context_manager.init_agent(mock_agent)
+        assert context_manager.stash_is_durable is False
+
+    def test_false_before_init(self):
+        context_manager = ContextManager()
+        assert context_manager.stash_is_durable is False

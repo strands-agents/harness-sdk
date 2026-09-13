@@ -8,6 +8,7 @@ tags: [bidi-streaming]
 sourceLinks:
   - path: strands-py/src/strands/experimental/bidi/io/text.py
   - path: strands-py/src/strands/experimental/bidi/io/audio.py
+  - path: strands-py/src/strands/experimental/bidi/io/transcript.py
 ---
 
 
@@ -94,9 +95,9 @@ The `run()` method handles the startup, execution, and shutdown of both the agen
 Out of the box, Strands provides `BidiAudioIO` to help connect your microphone and speakers to the bidi-agent using [PyAudio](https://pypi.org/project/PyAudio/).
 
 :::note[Installation Required]
-`BidiAudioIO` requires the `bidi-pyaudio` extra and the PortAudio system library:
+`BidiAudioIO` requires the `bidi-io` and `bidi-pyaudio` extras plus the PortAudio system library:
 ```bash
-pip install "strands-agents[bidi,bidi-pyaudio]"
+pip install "strands-agents[bidi,bidi-io,bidi-pyaudio]"
 ```
 :::
 
@@ -122,7 +123,12 @@ async def main():
 asyncio.run(main())
 ```
 
-This creates a voice-enabled agent that captures audio from your microphone, streams it to the model in real-time, and plays responses through your speakers.
+This creates a voice-enabled agent that captures audio from your microphone, streams
+it to the model in real time, and plays responses through your speakers.
+
+Audio output also displays live transcripts, with user speech in shaded `>` blocks
+and assistant speech as plain text. The next user prompt appears when response
+generation finishes or is interrupted.
 
 ### Configurations
 
@@ -148,9 +154,9 @@ This creates a voice-enabled agent that captures audio from your microphone, str
 Strands also provides `BidiTextIO` for terminal-based text input and output using [prompt-toolkit](https://pypi.org/project/prompt-toolkit/).
 
 :::note[Installation Required]
-`BidiTextIO` is included with the `bidi` extra:
+`BidiTextIO` is included with the `bidi-io` extra:
 ```bash
-pip install "strands-agents[bidi]"
+pip install "strands-agents[bidi-io]"
 ```
 :::
 
@@ -176,9 +182,8 @@ async def main():
 asyncio.run(main())
 ```
 
-This creates a text-based agent that reads user input from the terminal and prints transcripts and responses to the console.
-
-Note, the agent provides a preview of what it is about to say before producing the final output. This preview text is prefixed with `Preview:`.
+This creates a text-based agent that reads user input from the terminal and prints
+transcripts and responses to the console.
 
 ### Configurations
 
@@ -230,8 +235,8 @@ async def main():
 
     while True:
         output_event = json.loads(await websocket.recv())
-        if output_event["type"] == "bidi_transcript_stream" and output_event["is_final"]:
-            print(output_event["text"])
+        if output_event["type"] == "bidi_transcript_complete":
+            print(output_event["transcript"])
             break
 
     await websocket.close()

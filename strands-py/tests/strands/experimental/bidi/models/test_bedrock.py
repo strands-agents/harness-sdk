@@ -104,7 +104,7 @@ async def test_model_initialization(model_id, boto_session):
     assert model._connection_id is None
 
 
-def test_get_config_returns_copy(boto_session):
+def test_get_config_returns_reference(boto_session):
     model = BedrockNovaSonicModel(boto_session=boto_session)
 
     config = model.get_config()
@@ -116,7 +116,9 @@ def test_get_config_returns_copy(boto_session):
     assert config == exp_config
 
     config["model_id"] = NOVA_SONIC_V1_MODEL_ID
+    exp_config["model_id"] = NOVA_SONIC_V1_MODEL_ID
     assert model.get_config() == exp_config
+    assert model.get_config() is config
 
 
 @pytest.mark.parametrize(

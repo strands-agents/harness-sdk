@@ -47,7 +47,7 @@ from .configs import (
     BidiModelConfig,
     _merge_config,
     _validate_audio_config,
-    _validate_bidi_config,
+    _validate_model_config,
 )
 from .model import AudioCapable, BidiModel, BidiModelTimeoutError
 
@@ -134,7 +134,7 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         Raises:
             ValueError: If the API key is missing or ``timeout_s`` exceeds the maximum.
         """
-        _validate_bidi_config(model_config)
+        _validate_model_config(model_config)
         _validate_audio_config(audio)
         self._config = BidiModelConfig(**model_config)
         self._config.setdefault("model_id", DEFAULT_MODEL)
@@ -192,13 +192,13 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         Args:
             **model_config: Configuration overrides.
         """
-        _validate_bidi_config(model_config)
+        _validate_model_config(model_config)
         self._config.update(model_config)
 
     @override
     def get_config(self) -> BidiModelConfig:
-        """Return a copy of the model configuration."""
-        return self._config.copy()
+        """Return the model configuration by reference."""
+        return self._config
 
     @override
     def get_audio_config(self) -> AudioConfig:

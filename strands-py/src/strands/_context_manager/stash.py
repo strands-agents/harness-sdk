@@ -9,9 +9,9 @@ from __future__ import annotations
 import base64
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from ..storage.storage import _resolve_namespace
+from ..storage.storage import _NamespacedStorage
 from ..types.content import ContentBlock
 
 if TYPE_CHECKING:
@@ -58,7 +58,14 @@ class Stash:
     """Namespaced storage wrapper for persisting offloaded content blocks."""
 
     def __init__(self, storage: Storage, session_id: str, agent_id: str) -> None:
-        self._storage = _resolve_namespace(storage, f"{STASH_PREFIX}/{session_id}/scopes/agent/{agent_id}")
+        self._base_storage = storage
+        self._session_id = session_id
+        self._storage = _NamespacedStorage(storage, f"{STASH_PREFIX}/{session_id}/scopes/agent/{agent_id}")
+
+    @property
+    def storage_type_name(self) -> str:
+        """Name of the base storage class, for diagnostic logging."""
+        return type(self._base_storage).__name__
 
     async def store(self, block_id: str, block_index: int, data: bytes) -> str:
         """Store a content block and return its deterministic reference key."""
@@ -109,6 +116,47 @@ class Stash:
         """Delete a stashed entry."""
         await self._storage.delete(reference)
         logger.debug("reference=<%s> | deleted stash entry", reference)
+
+    async def take_snapshot(self) -> dict[str, Any]:
+        """Serialize all stash entries for snapshot persistence.
+
+        Returns:
+            Map of reference keys to their deserialized JSON values.
+        """
+        keys = await self.list()
+        entries: dict[str, Any] = {}
+        for key in keys:
+            data = await self._storage.read(key)
+            if data is not None:
+                entries[key] = _decode(data)
+        return entries
+
+    async def load_snapshot(self, entries: dict[str, Any]) -> None:
+        """Restore stash entries from a previously captured snapshot.
+
+        Args:
+            entries: Map of reference keys to their JSON values (from :meth:`take_snapshot`).
+        """
+        for key, data in entries.items():
+            await self._storage.write(key, _encode(data))
+
+    async def clear(self) -> None:
+        """Delete all entries in this agent's stash namespace."""
+        keys = await self.list()
+        for key in keys:
+            await self._storage.delete(key)
+
+    async def clear_session(self) -> None:
+        """Delete all stash data for this session across all agents.
+
+        Unlike :meth:`clear`, which is scoped to this agent's namespace, this
+        scans ``context/<session_id>/`` on the base storage to remove data from
+        every agent that wrote to the session.
+        """
+        prefix = f"{STASH_PREFIX}/{self._session_id}/"
+        keys = await self._base_storage.list(prefix)
+        for key in keys:
+            await self._base_storage.delete(key)
 
     async def _store_tool_result(self, block: ContentBlock) -> None:
         """Store each sub-block of a tool result individually."""

@@ -43,36 +43,37 @@ You can also install support for specific providers:
 
 ```bash
 # With local microphone and speaker I/O
-pip install "strands-agents[bidi,bidi-pyaudio]"
+pip install "strands-agents[bidi,bidi-io,bidi-pyaudio]"
 
-# Without local microphone and speaker I/O
-pip install "strands-agents[bidi]"
+# With terminal text I/O
+pip install "strands-agents[bidi,bidi-io]"
 ```
 </Tab>
 <Tab label="OpenAI Realtime">
 
 ```bash
 # With local audio I/O
-pip install "strands-agents[bidi,bidi-pyaudio,bidi-openai]"
+pip install "strands-agents[bidi-io,bidi-openai,bidi-pyaudio]"
 
-# Server-side only
-pip install "strands-agents[bidi,bidi-openai]"
+# With terminal text I/O
+pip install "strands-agents[bidi-io,bidi-openai]"
 ```
 </Tab>
 <Tab label="Google Gemini Live">
 
 ```bash
 # With local audio I/O
-pip install "strands-agents[bidi,bidi-pyaudio,bidi-google]"
+pip install "strands-agents[bidi-google,bidi-io,bidi-pyaudio]"
 
-# Server-side only
-pip install "strands-agents[bidi,bidi-google]"
+# With terminal text I/O
+pip install "strands-agents[bidi-google,bidi-io]"
 ```
 </Tab>
 </Tabs>
 
 :::note[Server-Side Deployments]
 The `bidi-pyaudio` extra provides PyAudio for direct microphone and speaker access.
+The `bidi-io` extra provides terminal text input and transcript rendering.
 For server deployments where clients handle audio I/O, omit `bidi-pyaudio` and
 implement custom I/O handlers using the `BidiInput` and `BidiOutput` protocols. See
 [I/O Channels](io.md) for details.
@@ -176,42 +177,18 @@ And that's it! We now have a voice-enabled agent that can:
 - Listen to your voice through the microphone
 - Process speech in real-time
 - Respond with natural voice output
+- Display live user and assistant transcripts
 - Handle interruptions when you start speaking
 
 :::note[Stopping the Conversation]
 The `run()` method runs indefinitely. See [Controlling Conversation Lifecycle](#controlling-conversation-lifecycle) for proper ways to stop conversations.
 :::
 
-## Adding Text I/O
+## Live Transcripts
 
-Combine audio with text input/output for debugging or multi-modal interactions:
-
-```python
-import asyncio
-from strands.experimental.bidi import BidiAgent, BidiAudioIO
-from strands.experimental.bidi.io import BidiTextIO
-from strands.experimental.bidi.models import BedrockNovaSonicModel
-
-model = BedrockNovaSonicModel()
-agent = BidiAgent(
-    model=model,
-    system_prompt="You are a helpful assistant."
-)
-
-# Setup both audio and text I/O
-audio_io = BidiAudioIO()
-text_io = BidiTextIO()
-
-async def main():
-    await agent.run(
-        inputs=[audio_io.input()],
-        outputs=[audio_io.output(), text_io.output()]  # Both audio and text
-    )
-
-asyncio.run(main())
-```
-
-Now you'll see transcripts printed to the console while audio plays through your speakers.
+`BidiAudioIO.output()` displays user and assistant transcripts while audio plays
+through the speakers. User speech appears in shaded `>` blocks and assistant
+speech appears as plain text.
 
 ## Controlling Conversation Lifecycle
 

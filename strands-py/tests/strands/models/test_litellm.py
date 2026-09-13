@@ -90,9 +90,7 @@ async def test_stream_derives_prompt_cache_key_from_agent_session(litellm_acompl
         return_value=agenerator([mock_event_1, mock_event_2]),
     )
 
-    await alist(
-        model.stream([{"role": "user", "content": []}], agent_metadata=AgentMetadata(session_id="s1"))
-    )
+    await alist(model.stream([{"role": "user", "content": []}], agent_metadata=AgentMetadata(session_id="s1")))
 
     assert litellm_acompletion.call_args.kwargs["prompt_cache_key"] == "strands-s1"
 

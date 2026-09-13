@@ -1258,7 +1258,7 @@ async def test_stream_async_multi_modal_input(mock_model, agent, agenerator, ali
 
 
 def test_system_prompt_setter_string():
-    """Test that setting system_prompt with string updates both internal fields."""
+    """Test that setting system_prompt with a string updates its content blocks."""
     agent = Agent(system_prompt="initial prompt")
 
     agent.system_prompt = "updated prompt"
@@ -1268,7 +1268,7 @@ def test_system_prompt_setter_string():
 
 
 def test_system_prompt_setter_list():
-    """Test that setting system_prompt with list updates both internal fields."""
+    """Test that setting system_prompt with a list updates its content blocks."""
     agent = Agent()
 
     content_blocks = [{"text": "You are helpful"}, {"cache_control": {"type": "ephemeral"}}]
@@ -1279,7 +1279,7 @@ def test_system_prompt_setter_list():
 
 
 def test_system_prompt_setter_none():
-    """Test that setting system_prompt to None clears both internal fields."""
+    """Test that setting system_prompt to None clears its content blocks."""
     agent = Agent(system_prompt="initial prompt")
 
     agent.system_prompt = None
@@ -1313,6 +1313,24 @@ def test_system_prompt_content_returns_copy():
     content = agent.system_prompt_content
     content.append({"text": "injected"})
     assert agent.system_prompt_content == [{"text": "hello"}]
+
+
+@pytest.mark.parametrize("use_setter", [False, True])
+def test_system_prompt_tracks_content_changes(use_setter):
+    """The string prompt reflects edits to shared content blocks."""
+    content_blocks = [{"text": "initial prompt"}, {"cachePoint": {"type": "default"}}]
+    agent = Agent(system_prompt=None if use_setter else content_blocks)
+    if use_setter:
+        agent.system_prompt = content_blocks
+
+    content_blocks[0]["text"] = "updated prompt"
+    assert agent.system_prompt == "updated prompt"
+
+    agent.system_prompt_content[0]["text"] = "another update"
+    assert agent.system_prompt == "another update"
+
+    content_blocks.pop(0)
+    assert agent.system_prompt is None
 
 
 @pytest.mark.asyncio

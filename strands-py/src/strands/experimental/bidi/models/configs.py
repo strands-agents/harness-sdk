@@ -71,7 +71,7 @@ class BidiModelConfig(TypedDict, total=False):
     connection: BidiConnectionConfig
 
 
-def _validate_bidi_config(config: Mapping[str, Any]) -> None:
+def _validate_model_config(config: Mapping[str, Any]) -> None:
     """Validate shared bidirectional model configuration."""
     validate_config_keys(config, BidiModelConfig)
     validate_config_keys(config.get("connection", {}), BidiConnectionConfig)

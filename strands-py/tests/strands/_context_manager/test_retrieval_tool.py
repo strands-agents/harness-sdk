@@ -176,9 +176,7 @@ class TestInvalidLineRange:
     async def test_returns_error_for_missing_start_key(self, stash):
         ref = await _store_text(stash, "line 1\nline 2")
         tool = _create_retrieval_tool(stash)
-        result = await tool._tool_func(
-            {"toolUseId": "t1", "input": {"reference": ref, "line_range": {"end": 2}}}
-        )
+        result = await tool._tool_func({"toolUseId": "t1", "input": {"reference": ref, "line_range": {"end": 2}}})
         assert result["status"] == "error"
         assert "invalid line_range" in result["content"][0]["text"]
 

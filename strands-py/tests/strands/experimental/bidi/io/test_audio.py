@@ -10,7 +10,12 @@ import pytest_asyncio
 from strands.experimental.bidi._audio import _BidiAudioProcessor
 from strands.experimental.bidi.io.audio import BidiAudioIO, BidiAudioProcessorConfig, _BidiAudioBuffer
 from strands.experimental.bidi.models import AudioCapable
-from strands.experimental.bidi.types.events import BidiAudioInputEvent, BidiAudioStreamEvent, BidiInterruptionEvent
+from strands.experimental.bidi.types.events import (
+    BidiAudioInputEvent,
+    BidiAudioStreamEvent,
+    BidiInterruptionEvent,
+    BidiResponseCompleteEvent,
+)
 
 
 def _fake_audio_processor(processor=None):
@@ -237,6 +242,8 @@ async def test_bidi_audio_io_output(audio_output):
 
 @pytest.mark.asyncio
 async def test_bidi_audio_io_output_interrupt(audio_output):
+    transcript_output = unittest.mock.AsyncMock()
+    audio_output._transcript_output = transcript_output
     audio_event = BidiAudioStreamEvent(
         audio=base64.b64encode(b"test-audio").decode("utf-8"),
         channels=2,
@@ -250,6 +257,19 @@ async def test_bidi_audio_io_output_interrupt(audio_output):
     tru_data, _ = audio_output._callback(None, frame_count=1)
     exp_data = b"\x00\x00"
     assert tru_data == exp_data
+    transcript_output.assert_any_await(interrupt_event)
+
+
+@pytest.mark.asyncio
+async def test_response_complete_is_forwarded_to_transcript_output(audio_output):
+    transcript_output = unittest.mock.AsyncMock()
+    audio_output._transcript_output = transcript_output
+    audio_output._buffer.put(b"\x01\x02\x03\x04")
+    event = BidiResponseCompleteEvent(response_id="response-1", stop_reason="complete")
+
+    await audio_output(event)
+
+    transcript_output.assert_awaited_once_with(event)
 
 
 def test_bidi_audio_io_output_configs(pyaudio_module, py_audio, audio_output):

@@ -1,12 +1,15 @@
 """Tests for SnapshotSessionManager."""
 
 import asyncio
+import json
+import logging
 import tempfile
 import uuid
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from strands._context_manager.context_manager import ContextManager
 from strands.agent.agent import Agent
 from strands.agent.conversation_manager.sliding_window_conversation_manager import SlidingWindowConversationManager
 from strands.experimental.bidi import BidiAgent
@@ -15,10 +18,13 @@ from strands.multiagent import GraphBuilder, Swarm
 from strands.session.snapshot_session_manager import (
     SnapshotSessionManager,
     _new_snapshot_id,
+    _serialize_snapshot,
     _session_prefix,
     _snapshot_key,
 )
 from strands.storage import LocalFileStorage
+from strands.storage.in_memory_storage import InMemoryStorage
+from strands.types._snapshot import Snapshot
 from strands.types.content import ContentBlock
 from strands.types.exceptions import ContextWindowOverflowException, SnapshotException
 from tests.fixtures.mocked_model_provider import MockedModelProvider
@@ -814,3 +820,209 @@ async def test_wrong_shape_snapshot_raises_typed_error_on_restore(temp_dir, blob
 
     with pytest.raises(SnapshotException):
         Agent(model=_model("hi"), session_manager=SnapshotSessionManager("s1", storage=storage), agent_id="a1")
+
+
+# ---------------------------------------------------------------------------
+# Stash integration
+# ---------------------------------------------------------------------------
+
+
+class TestSnapshotStashIntegration:
+    """Tests for context-manager stash persistence through snapshots."""
+
+    @pytest.mark.asyncio
+    async def test_save_includes_inline_stash_for_ephemeral_storage(self, storage):
+        """Agent with InMemoryStorage-backed stash → stash entries are inlined in the snapshot."""
+        context_manager = ContextManager(stash={"storage": InMemoryStorage()})
+        manager = SnapshotSessionManager("s1", storage=storage)
+        agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
+        agent("go")
+
+        await context_manager.stash.load_snapshot({"ref-1": {"text": "stashed content"}})
+        manager.sync_agent(agent)
+
+        # Restore into a new agent and verify stash round-trips
+        restored_context_manager = ContextManager(stash={"storage": InMemoryStorage()})
+        manager2 = SnapshotSessionManager("s1", storage=storage)
+        Agent(model=_model("x"), session_manager=manager2, context_manager=restored_context_manager, agent_id="a1")
+
+        result = await restored_context_manager.stash.retrieve("ref-1")
+        assert result == {"text": "stashed content"}
+
+    @pytest.mark.asyncio
+    async def test_save_writes_external_ref_for_durable_storage(self, temp_dir):
+        """Agent with durable stash storage → snapshot carries an external reference, not inline data."""
+        stash_storage = LocalFileStorage(f"{temp_dir}/stash")
+        context_manager = ContextManager(stash={"storage": stash_storage})
+        session_storage = LocalFileStorage(f"{temp_dir}/session")
+        manager = SnapshotSessionManager("s1", storage=session_storage)
+        agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
+        agent("go")
+
+        await context_manager.stash.load_snapshot({"ref-1": {"text": "durable"}})
+        manager.sync_agent(agent)
+
+        # Read the raw snapshot and verify it has an external ref
+        key = _on_disk_key("s1", "a1")
+        raw = await session_storage.read(key)
+        snapshot_data = json.loads(raw)
+        stash_data = snapshot_data["data"].get("stash")
+        assert stash_data is not None
+        assert stash_data["location"] == "external"
+        assert stash_data["storage_type"] == "LocalFileStorage"
+
+    @pytest.mark.asyncio
+    async def test_save_omits_stash_when_no_context_manager(self, storage):
+        """Agent without ContextManager → snapshot has no stash key."""
+        manager = SnapshotSessionManager("s1", storage=storage)
+        agent = Agent(model=_model("hi"), session_manager=manager, agent_id="a1")
+        agent("go")
+
+        key = _on_disk_key("s1", "a1")
+        raw = await storage.read(key)
+        snapshot_data = json.loads(raw)
+        assert "stash" not in snapshot_data["data"]
+
+    @pytest.mark.asyncio
+    async def test_save_omits_stash_when_empty(self, storage):
+        """Agent with stash but no stored entries → no stash key in snapshot."""
+        context_manager = ContextManager(stash={"storage": InMemoryStorage()})
+        manager = SnapshotSessionManager("s1", storage=storage)
+        agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
+        agent("go")
+
+        await context_manager.stash.clear()
+        manager.sync_agent(agent)
+
+        key = _on_disk_key("s1", "a1")
+        raw = await storage.read(key)
+        snapshot_data = json.loads(raw)
+        assert "stash" not in snapshot_data["data"]
+
+    def test_restore_warns_on_storage_type_mismatch(self, storage, caplog):
+        """Restoring an external-ref snapshot with a different storage type logs a warning."""
+        snapshot = Snapshot(
+            scope="agent",
+            schema_version="1.0",
+            data={
+                "messages": [],
+                "state": {},
+                "stash": {"location": "external", "storage_type": "S3Storage"},
+            },
+            app_data={},
+        )
+        key = _on_disk_key("s1", "a1")
+        asyncio.run(storage.write(key, _serialize_snapshot(snapshot)))
+
+        context_manager = ContextManager(stash={"storage": InMemoryStorage()})
+        manager = SnapshotSessionManager("s1", storage=storage)
+        with caplog.at_level(logging.WARNING, logger="strands.session.snapshot_session_manager"):
+            Agent(model=_model("x"), session_manager=manager, context_manager=context_manager, agent_id="a1")
+
+        assert any("stash storage type changed" in record.message for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_delete_session_clears_stash(self, temp_dir):
+        """delete_session removes stash data in addition to snapshots."""
+        session_storage = LocalFileStorage(f"{temp_dir}/session")
+        stash_mem = InMemoryStorage()
+        context_manager = ContextManager(stash={"storage": stash_mem})
+        manager = SnapshotSessionManager("s1", storage=session_storage)
+        agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
+        agent("go")
+
+        await context_manager.stash.load_snapshot({"ref-1": {"text": "data"}})
+        assert await context_manager.stash.list() != []
+
+        await manager.delete_session()
+
+        assert await context_manager.stash.list() == []
+
+    @pytest.mark.asyncio
+    async def test_delete_session_without_initialize_clears_stash(self, temp_dir):
+        """delete_session on an uninitialized manager still clears stash data via storage fallback."""
+        shared_storage = LocalFileStorage(f"{temp_dir}/shared")
+        context_manager = ContextManager(stash={"storage": shared_storage})
+        manager = SnapshotSessionManager("s1", storage=shared_storage)
+        agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
+        agent("go")
+
+        await context_manager.stash.load_snapshot({"ref-1": {"text": "orphan"}})
+        assert await shared_storage.list("context/s1/") != []
+
+        bare_manager = SnapshotSessionManager("s1", storage=shared_storage)
+        await bare_manager.delete_session()
+
+        assert await shared_storage.list("context/s1/") == []
+
+    def test_no_context_manager_save_restore_works(self, storage):
+        """Save/restore works normally when no ContextManager is present."""
+        manager = SnapshotSessionManager("s1", storage=storage)
+        agent = Agent(model=_model("hi"), session_manager=manager, agent_id="a1")
+        agent("go")
+
+        manager2 = SnapshotSessionManager("s1", storage=storage)
+        agent2 = Agent(model=_model("x"), session_manager=manager2, agent_id="a1")
+        assert _texts(agent2) == _texts(agent)
+
+    def test_restore_succeeds_when_stash_load_fails(self, storage):
+        """A stash storage error during restore logs a warning but the agent is still restored."""
+        context_manager = ContextManager(stash={"storage": InMemoryStorage()})
+        manager = SnapshotSessionManager("s1", storage=storage)
+        agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
+        agent("go")
+
+        asyncio.run(context_manager.stash.load_snapshot({"ref-1": {"text": "data"}}))
+        manager.sync_agent(agent)
+
+        restored_context_manager = ContextManager(stash={"storage": InMemoryStorage()})
+        restored_context_manager._stash = Mock()
+        restored_context_manager._stash.load_snapshot = AsyncMock(side_effect=RuntimeError("corrupted"))
+        restored_context_manager._stash.storage_type_name = "InMemoryStorage"
+
+        manager2 = SnapshotSessionManager("s1", storage=storage)
+        agent2 = Agent(
+            model=_model("x"), session_manager=manager2, context_manager=restored_context_manager, agent_id="a1"
+        )
+        assert _texts(agent2) == _texts(agent)
+
+    @pytest.mark.asyncio
+    async def test_immutable_snapshot_includes_stash(self, temp_dir):
+        """A snapshot_trigger produces an immutable checkpoint with inline stash data."""
+        session_storage = LocalFileStorage(f"{temp_dir}/session")
+        context_manager = ContextManager(stash={"storage": InMemoryStorage()})
+        manager = SnapshotSessionManager(
+            "s1", storage=session_storage, snapshot_trigger=lambda **_: True
+        )
+        agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
+
+        await context_manager.stash.load_snapshot({"ref-1": {"text": "immutable data"}})
+        agent("go")
+
+        immutable_prefix = f"session/{_session_prefix('s1')}scopes/agent/a1/snapshots/immutable_history/"
+        keys = await session_storage.list(immutable_prefix)
+        assert len(keys) >= 1
+
+        raw = await session_storage.read(keys[0])
+        snapshot_data = json.loads(raw)
+        assert snapshot_data["data"]["stash"]["location"] == "inline"
+        assert "ref-1" in snapshot_data["data"]["stash"]["entries"]
+
+    @pytest.mark.asyncio
+    async def test_ephemeral_detection_survives_namespacing(self, storage):
+        """An InMemoryStorage wrapped with .namespace() is still detected as ephemeral."""
+        from strands.storage.storage import _NamespacedStorage
+
+        namespaced = _NamespacedStorage(InMemoryStorage(), "tenant")
+        context_manager = ContextManager(stash={"storage": namespaced})
+        manager = SnapshotSessionManager("s1", storage=storage)
+        agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
+        agent("go")
+
+        await context_manager.stash.load_snapshot({"ref-1": {"text": "wrapped ephemeral"}})
+        manager.sync_agent(agent)
+
+        key = _on_disk_key("s1", "a1")
+        raw = await storage.read(key)
+        snapshot_data = json.loads(raw)
+        assert snapshot_data["data"]["stash"]["location"] == "inline"
