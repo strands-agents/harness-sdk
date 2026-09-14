@@ -119,7 +119,7 @@ The agent emits lifecycle events at key points: before and after each invocation
 
 ### Cancellation
 
-The `agent.cancel()` method provides a way to stop the loop from outside, such as on a client disconnect, a timeout, or a UI "Stop" button. Calling `cancel()` sets an internal signal that the agent checks at key checkpoints. The cancel signal clears automatically when the invocation completes, so the agent is immediately reusable.
+The `agent.cancel()` method provides a way to stop the loop from outside, such as on a client disconnect, a timeout, or a UI "Stop" button. Calling `cancel()` sets an internal signal that the agent checks at key checkpoints. The cancel signal clears automatically when all active invocations complete, so the agent is reusable for future invocations. Calling `cancel()` while the agent is idle is a no-op, so it never affects the next invocation.
 
 <Tabs>
   <Tab label="Python">

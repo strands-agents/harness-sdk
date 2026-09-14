@@ -3,12 +3,12 @@
 import asyncio
 import threading
 import time
-from unittest.mock import ANY
 
 import pytest
 
 from strands import Agent, tool
 from strands.hooks import AfterModelCallEvent, BeforeModelCallEvent, BeforeToolCallEvent, BeforeToolsEvent
+from strands.types.agent import ConcurrentInvocationMode
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 # Default agent response for simple tests
@@ -19,26 +19,19 @@ DEFAULT_RESPONSE = {
 
 
 @pytest.mark.asyncio
-async def test_agent_cancel_before_invocation():
-    """Test agent.cancel() before invocation starts.
-
-    Verifies that calling cancel() before invoke_async() results in
-    immediate cancellation without any model calls.
+async def test_agent_cancel_on_idle_agent_is_noop():
+    """Regression test for issue #2156: cancelling while the agent is idle must not
+    affect the next invocation, which runs to completion.
     """
     agent = Agent(model=MockedModelProvider([DEFAULT_RESPONSE]))
 
-    # Cancel before invocation
+    # Cancel while idle
     agent.cancel()
 
     result = await agent.invoke_async("Hello")
 
-    assert result.stop_reason == "cancelled"
-    assert result.message == {
-        "role": "assistant",
-        "content": [{"text": "Cancelled by user"}],
-        "metadata": ANY,
-        "tracking_id": ANY,
-    }
+    assert result.stop_reason == "end_turn"
+    assert result.message["content"][0]["text"] == "Hello! How can I help you?"
 
 
 @pytest.mark.asyncio
@@ -120,19 +113,33 @@ async def test_agent_cancel_with_tools():
 
 @pytest.mark.asyncio
 async def test_agent_cancel_idempotent():
-    """Test that calling cancel() multiple times is safe.
+    """Test that calling cancel() multiple times during an invocation is safe.
 
-    Verifies that multiple cancel() calls are idempotent and don't
-    cause any issues.
+    Verifies that multiple cancel() calls are idempotent and don't cause any issues.
     """
-    agent = Agent(model=MockedModelProvider([DEFAULT_RESPONSE]))
+    streaming_started = asyncio.Event()
+    cancel_ready = asyncio.Event()
 
-    # Cancel multiple times
-    agent.cancel()
-    agent.cancel()
-    agent.cancel()
+    class DelayedModelProvider(MockedModelProvider):
+        async def stream(self, *args, **kwargs):
+            streaming_started.set()
+            # Block until cancel has been called
+            await cancel_ready.wait()
+            async for event in super().stream(*args, **kwargs):
+                yield event
 
+    agent = Agent(model=DelayedModelProvider([DEFAULT_RESPONSE]))
+
+    async def cancel_repeatedly():
+        await streaming_started.wait()
+        agent.cancel()
+        agent.cancel()
+        agent.cancel()
+        cancel_ready.set()
+
+    cancel_task = asyncio.create_task(cancel_repeatedly())
     result = await agent.invoke_async("Hello")
+    await cancel_task
 
     assert result.stop_reason == "cancelled"
 
@@ -282,18 +289,90 @@ async def test_agent_cancel_before_tool_execution_adds_tool_results():
 async def test_agent_cancel_continue_after():
     """Test that agent is reusable after cancellation.
 
-    Verifies that the cancel signal is cleared after an invocation completes,
+    Verifies that the cancel signal is cleared after a cancelled invocation completes,
     allowing subsequent invocations to run normally.
     """
-    agent = Agent(model=MockedModelProvider([DEFAULT_RESPONSE, DEFAULT_RESPONSE]))
+    streaming_started = asyncio.Event()
+    cancel_ready = asyncio.Event()
 
-    agent.cancel()
+    class DelayedModelProvider(MockedModelProvider):
+        async def stream(self, *args, **kwargs):
+            streaming_started.set()
+            # Block until cancel has been called
+            await cancel_ready.wait()
+            async for event in super().stream(*args, **kwargs):
+                yield event
+
+    agent = Agent(model=DelayedModelProvider([DEFAULT_RESPONSE, DEFAULT_RESPONSE]))
+
+    async def cancel_when_ready():
+        await streaming_started.wait()
+        agent.cancel()
+        cancel_ready.set()
+
+    cancel_task = asyncio.create_task(cancel_when_ready())
     result1 = await agent.invoke_async("Hello")
+    await cancel_task
     assert result1.stop_reason == "cancelled"
 
     # Second invocation should work normally
     result2 = await agent.invoke_async("Hello again")
     assert result2.stop_reason == "end_turn"
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_concurrent_reentrant_invocations():
+    """Cancelling during concurrent reentrant invocations cancels all of them, and only
+    the last teardown clears the shared cancel signal.
+
+    In UNSAFE_REENTRANT mode invocations share the cancel signal: an invocation finishing
+    while another is still running must not discard the pending cancellation.
+    """
+
+    first_started = asyncio.Event()
+    second_started = asyncio.Event()
+    release_first = asyncio.Event()
+    release_second = asyncio.Event()
+
+    class BlockingProvider(MockedModelProvider):
+        def __init__(self, responses):
+            super().__init__(responses)
+            self._calls = 0
+
+        async def stream(self, *args, **kwargs):
+            self._calls += 1
+            if self._calls == 1:
+                first_started.set()
+                await release_first.wait()
+            elif self._calls == 2:
+                second_started.set()
+                await release_second.wait()
+            async for event in super().stream(*args, **kwargs):
+                yield event
+
+    agent = Agent(
+        model=BlockingProvider([DEFAULT_RESPONSE, DEFAULT_RESPONSE, DEFAULT_RESPONSE]),
+        concurrent_invocation_mode=ConcurrentInvocationMode.UNSAFE_REENTRANT,
+    )
+
+    first = asyncio.create_task(agent.invoke_async("First"))
+    await first_started.wait()
+    second = asyncio.create_task(agent.invoke_async("Second"))
+    await second_started.wait()
+
+    agent.cancel()
+    release_second.set()
+    assert (await second).stop_reason == "cancelled"
+
+    # The first invocation must still observe the cancellation even though the second
+    # invocation finished after it was requested.
+    release_first.set()
+    assert (await first).stop_reason == "cancelled"
+
+    # The last teardown clears the signal, so the agent stays reusable.
+    assert not agent.cancel_signal.is_set()
+    third = await agent.invoke_async("Third")
+    assert third.stop_reason == "end_turn"
 
 
 @pytest.mark.asyncio
@@ -319,10 +398,13 @@ async def test_cancel_during_tool_interrupt_resume_preserves_interrupt_state():
     assert agent._interrupt_state.activated
     assert agent._interrupt_state.pending_tool_execution is not None
 
-    # Cancel the resume before the tool runs.
-    agent.cancel()
+    # Cancel the resume before the tool runs. cancel() only affects running invocations,
+    # so pass an already-set cancel signal instead.
+    resume_cancel_signal = threading.Event()
+    resume_cancel_signal.set()
     cancelled_result = await agent.invoke_async(
-        [{"interruptResponse": {"interruptId": interrupt_result.interrupts[0].id, "response": "go"}}]
+        [{"interruptResponse": {"interruptId": interrupt_result.interrupts[0].id, "response": "go"}}],
+        cancel_signal=resume_cancel_signal,
     )
 
     assert cancelled_result.stop_reason == "cancelled"
@@ -604,12 +686,14 @@ async def test_cancel_before_tool_runs_still_executes_the_approved_tool():
     interrupted = await agent.invoke_async("go")
     response = [{"interruptResponse": {"interruptId": interrupted.interrupts[0].id, "response": "go"}}]
 
-    agent.cancel()
-    cancelled = await agent.invoke_async(response)
+    # cancel() only affects running invocations, so pass an already-set cancel signal
+    # to cancel the resume before the tool runs.
+    resume_cancel_signal = threading.Event()
+    resume_cancel_signal.set()
+    cancelled = await agent.invoke_async(response, cancel_signal=resume_cancel_signal)
     assert cancelled.stop_reason == "cancelled"
     assert ran == []
 
-    agent._cancel_signal.clear()
     await agent.invoke_async(response)
     assert ran == ["executed"]
 

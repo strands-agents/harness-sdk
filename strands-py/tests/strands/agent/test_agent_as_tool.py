@@ -774,7 +774,8 @@ async def test_stream_pre_set_parent_cancel_signal_returns_error_without_model_r
     tool = _AgentAsTool(child, name="child", preserve_context=True)
 
     parent = Agent(name="parent", callback_handler=None)
-    parent.cancel()
+    # cancel() is a no-op while the parent is idle, so set the signal directly
+    parent._cancel_signal.set()
 
     events = [event async for event in tool.stream(tool_use, {"agent": parent})]
 
@@ -799,7 +800,8 @@ async def test_stream_sub_agent_cancel_does_not_clear_parent_signal(tool_use):
     tool = _AgentAsTool(child, name="child", preserve_context=True)
 
     parent = Agent(name="parent", callback_handler=None)
-    parent.cancel()
+    # cancel() is a no-op while the parent is idle, so set the signal directly
+    parent._cancel_signal.set()
 
     async for _ in tool.stream(tool_use, {"agent": parent}):
         pass

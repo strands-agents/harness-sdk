@@ -1,5 +1,6 @@
 """Integration tests for AgentStreamStage middleware (the outermost interception point)."""
 
+import threading
 from dataclasses import replace
 
 import pytest
@@ -655,8 +656,13 @@ def test_cancel_during_agent_stream_interrupt_resume_clears_state():
     assert result.stop_reason == "interrupt"
 
     # Cancel the resume; the pass ends cancelled and the agent-stream interrupt state is cleared.
-    agent.cancel()
-    result = agent([{"interruptResponse": {"interruptId": result.interrupts[0].id, "response": "go"}}])
+    # cancel() is a no-op while the agent is idle, so pass an already-set cancel signal instead.
+    resume_cancel_signal = threading.Event()
+    resume_cancel_signal.set()
+    result = agent(
+        [{"interruptResponse": {"interruptId": result.interrupts[0].id, "response": "go"}}],
+        cancel_signal=resume_cancel_signal,
+    )
 
     assert result.stop_reason == "cancelled"
     assert not agent._interrupt_state.activated

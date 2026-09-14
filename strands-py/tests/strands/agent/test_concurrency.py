@@ -13,12 +13,12 @@ from strands.types.exceptions import IdempotencyAbortedError
 
 @pytest.fixture
 def controller():
-    return _ConcurrencyController(ConcurrentInvocationMode.THROW)
+    return _ConcurrencyController(ConcurrentInvocationMode.THROW, cancel_signal=threading.Event())
 
 
 @pytest.fixture
 def reentrant_controller():
-    return _ConcurrencyController(ConcurrentInvocationMode.UNSAFE_REENTRANT)
+    return _ConcurrencyController(ConcurrentInvocationMode.UNSAFE_REENTRANT, cancel_signal=threading.Event())
 
 
 def test_mode_property(controller, reentrant_controller):

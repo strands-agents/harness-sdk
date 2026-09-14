@@ -1557,7 +1557,11 @@ async def test_tool_context_cancel_signal_is_agent_signal(alist):
 
 @pytest.mark.asyncio
 async def test_tool_context_cancel_signal_set_after_cancel(alist):
-    """A tool that cancels its agent reads the cancellation back off its own context."""
+    """A tool that cancels its running agent reads the cancellation back off its own context.
+
+    cancel() only takes effect while an invocation is running, so the direct tool stream is
+    wrapped in a started invocation.
+    """
     signal_states = []
 
     @strands.tool(context=True)
@@ -1567,12 +1571,17 @@ async def test_tool_context_cancel_signal_set_after_cancel(alist):
         signal_states.append(tool_context.cancel_signal.is_set())
         return "done"
 
-    await alist(
-        cancelling_tool.stream(
-            tool_use={"toolUseId": "test-id", "name": "cancelling_tool", "input": {}},
-            invocation_state={"agent": Agent(name="test_agent")},
+    agent = Agent(name="test_agent")
+    agent._concurrency.mark_started()
+    try:
+        await alist(
+            cancelling_tool.stream(
+                tool_use={"toolUseId": "test-id", "name": "cancelling_tool", "input": {}},
+                invocation_state={"agent": agent},
+            )
         )
-    )
+    finally:
+        agent._concurrency.mark_finished()
 
     assert signal_states == [True]
 
