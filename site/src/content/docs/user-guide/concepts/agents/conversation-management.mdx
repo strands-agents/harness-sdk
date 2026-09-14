@@ -494,96 +494,15 @@ Each conversation manager uses the same reduction logic for proactive compressio
 
 Because `BeforeModelCallEvent` triggers before every model call including calls within a tool-use cycle, this provides automatic in-loop compression. If an agent makes five tool calls in a single invocation and context grows past the threshold between calls three and four, compression triggers before call four.
 
-### Context Window Limit
+### Context window limit, token estimation, and utilization
 
-The threshold check requires the model's context window size. The SDK auto-populates `contextWindowLimit` from built-in lookup tables ([Python](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/_defaults.py), [TypeScript](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/defaults.ts)) for known models. You can override it manually for models not in the lookup table:
-
-<Tabs>
-<Tab label="Python">
-
-```python
-model = BedrockModel(
-    model_id="my-custom-model",
-    context_window_limit=128_000,
-)
-```
-
-</Tab>
-<Tab label="TypeScript">
-
-```typescript
-const model = new BedrockModel({
-  modelId: 'my-custom-model',
-  contextWindowLimit: 128_000,
-})
-```
-
-</Tab>
-</Tabs>
-
-:::caution[Inaccurate compression with default fallback]
-If `contextWindowLimit` is not set and the model ID is not in the built-in lookup table, the SDK falls back to a default of 200,000 tokens. When the default token limit is used but the model's actual context window is significantly different, proactive compression will not behave correctly.
-:::
-
-### Token Estimation
-
-The agent estimates input tokens using the following strategy:
-
-1. **Known baseline**: Reads `inputTokens + outputTokens` from the last assistant message's `metadata.usage`
-2. **Delta estimation**: Only estimates tokens for new messages added since that assistant message using the model's `countTokens()` method
-3. **Cold start fallback**: When no prior usage metadata exists (first call or after session restore without metadata), estimates all messages via `countTokens()`
-
-The `countTokens()` method uses a character-based heuristic to estimate token count by default (characters ÷ 4 for text, characters ÷ 2 for JSON). Some model providers support native token counting APIs for exact counts, which can be enabled on the model. See the Token Counting section on each provider's page for details and instructions:
-
-- [Amazon Bedrock](../model-providers/amazon-bedrock/#token-counting)
-- [Anthropic](../model-providers/anthropic/#token-counting)
-- [Google Gemini](../model-providers/google/#token-counting)
-- [OpenAI Responses](../model-providers/openai-responses/#token-counting)
-- [llama.cpp](../model-providers/llamacpp/#token-counting)
-
-### Utilization Estimation
-
-The Model base class provides an
-<Syntax
-  py="estimate_utilization(input_tokens)"
-  ts="estimateUtilization(inputTokens)"
-/> method that computes the fraction of the context window
-consumed by a given input token count. It uses the model's
-configured
-<Syntax
-  py="context_window_limit"
-  ts="contextWindowLimit"
-/> as the denominator, falling back to a default of 200,000
-tokens when not set:
-
-<Tabs>
-<Tab label="Python">
-
-```python
-ratio = model.estimate_utilization(input_tokens=projected_tokens)
-# ratio is 0–1+ (above 1.0 means overflow)
-```
-
-</Tab>
-<Tab label="TypeScript">
-
-```typescript
-const ratio = model.estimateUtilization(projectedTokens)
-// ratio is 0–1+ (above 1.0 means overflow)
-```
-
-</Tab>
-</Tabs>
-
-This method resolves the model's
-<Syntax
-  py="context_window_limit"
-  ts="contextWindowLimit"
-/> (falling back to the 200,000 default with a warning when
-not configured) and returns `inputTokens / contextWindowLimit`.
-The SDK's built-in conversation managers use this internally for
-proactive compression decisions, but you can also call it
-directly when building custom context management logic.
+Proactive compression relies on the model's context window
+limit, token counting, and utilization estimation. These
+are shared across both conversation managers and the
+ContextManager. See
+[Context Estimation](../context-management/context-estimation)
+for details on how the SDK resolves the context window
+limit, estimates token counts, and computes utilization.
 
 ## Creating a ConversationManager
 

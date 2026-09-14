@@ -94,6 +94,7 @@ sidebar:
               - docs/user-guide/concepts/context-management/built-in-modes
               - docs/user-guide/concepts/context-management/custom-strategies
               - docs/user-guide/concepts/context-management/presets
+              - docs/user-guide/concepts/context-management/context-estimation
           - label: Memory
             collapsed: true
             addedDate: 2026-06-17
