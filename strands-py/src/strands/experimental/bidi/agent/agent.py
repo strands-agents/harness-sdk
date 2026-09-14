@@ -88,7 +88,7 @@ class BidiAgent(LocalAgent):
             model: BidiModel instance, string model_id, or None for default detection.
             tools: Optional list of tools with flexible format support.
             system_prompt: System prompt for conversations as a string or structured content blocks.
-                Structured blocks are retained, while their text is passed to Bidi models as a string.
+                Structured blocks are retained and passed to Bidi models.
             messages: Optional conversation history to initialize with.
             record_direct_tool_call: Whether to record direct tool calls in message history.
             load_tools_from_directory: Whether to load and automatically reload tools in the `./tools/` directory.

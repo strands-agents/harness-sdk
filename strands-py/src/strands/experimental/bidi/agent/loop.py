@@ -171,7 +171,7 @@ class _BidiAgentLoop:
         )
         try:
             await self._agent.model.start(
-                system_prompt=self._agent.system_prompt,
+                system_prompt_content=self._agent.system_prompt_content,
                 tools=self._agent.tool_registry.get_all_tool_specs(),
                 messages=self._agent.messages,
             )
@@ -496,16 +496,26 @@ class _BidiAgentLoop:
     async def _restart_model(self, restart_kwargs: dict[str, Any]) -> None:
         """Restart through the provider when supported, otherwise use ``stop()`` then ``start()``."""
         model = self._agent.model
-        system_prompt = self._agent.system_prompt
+        system_prompt_content = self._agent.system_prompt_content
         tools = self._agent.tool_registry.get_all_tool_specs()
         messages = self._agent.messages
 
         if isinstance(model, Restartable):
-            await model.restart(system_prompt, tools, messages, **restart_kwargs)
+            await model.restart(
+                system_prompt_content=system_prompt_content,
+                tools=tools,
+                messages=messages,
+                **restart_kwargs,
+            )
             return
 
         await model.stop()
-        await model.start(system_prompt, tools, messages, **restart_kwargs)
+        await model.start(
+            system_prompt_content=system_prompt_content,
+            tools=tools,
+            messages=messages,
+            **restart_kwargs,
+        )
 
     async def _wait_for_model_task(self, task: asyncio.Task | None) -> None:
         """Await a superseded reader after its stream is closed; cancel only as a backstop.

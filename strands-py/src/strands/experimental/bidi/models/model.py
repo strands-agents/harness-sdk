@@ -20,12 +20,17 @@ from typing import Any, NoReturn, Protocol, cast, runtime_checkable
 
 from ....models.model import Model
 from ....types._events import ToolResultEvent
-from ....types.content import Messages
+from ....types.content import Messages, SystemContentBlock, split_system_prompt
 from ....types.tools import ToolSpec
 from ..types.events import BidiInputEvent, BidiOutputEvent
 from .configs import AudioConfig, BidiConnectionConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _system_prompt_content_to_text(system_prompt_content: list[SystemContentBlock] | None) -> str | None:
+    """Render structured system prompt content for providers that accept text instructions."""
+    return split_system_prompt(system_prompt_content)[0]
 
 
 @runtime_checkable
@@ -34,7 +39,8 @@ class Restartable(Protocol):
 
     async def restart(
         self,
-        system_prompt: str | None = None,
+        *,
+        system_prompt_content: list[SystemContentBlock] | None = None,
         tools: list[ToolSpec] | None = None,
         messages: Messages | None = None,
         **restart_kwargs: Any,
@@ -42,7 +48,7 @@ class Restartable(Protocol):
         """Replace the active connection while preserving conversation context.
 
         Args:
-            system_prompt: System instructions for the new connection.
+            system_prompt_content: Structured system instructions for the new connection.
             tools: Tool specifications for the new connection.
             messages: Conversation history to replay when required by the provider.
             **restart_kwargs: Provider-specific restart options.
@@ -87,7 +93,8 @@ class BidiModel(Model, abc.ABC):
     # pragma: no cover
     async def start(
         self,
-        system_prompt: str | None = None,
+        *,
+        system_prompt_content: list[SystemContentBlock] | None = None,
         tools: list[ToolSpec] | None = None,
         messages: Messages | None = None,
         **kwargs: Any,
@@ -99,7 +106,7 @@ class BidiModel(Model, abc.ABC):
         closed. Must be called before any send() or receive() operations.
 
         Args:
-            system_prompt: System instructions to configure model behavior.
+            system_prompt_content: Structured system instructions to configure model behavior.
             tools: Tool specifications that the model can invoke during the conversation.
             messages: Initial conversation history to provide context.
             **kwargs: Provider-specific configuration options.
