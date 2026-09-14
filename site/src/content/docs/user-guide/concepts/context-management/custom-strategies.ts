@@ -1,13 +1,10 @@
 import { Agent } from '@strands-agents/sdk'
-import {
-  ContextManager,
-  Offload,
-} from '@strands-agents/sdk/experimental'
+import { Offload } from '@strands-agents/sdk/experimental'
 
 async function basicConfig() {
   // --8<-- [start:basic_config]
   const agent = new Agent({
-    contextManager: new ContextManager({
+    contextManager: {
       strategies: [
         Offload.truncate('toolResults').when({
           threshold: 2000,
@@ -17,7 +14,7 @@ async function basicConfig() {
           preserveRecent: 4,
         }),
       ],
-    }),
+    },
   })
   // --8<-- [end:basic_config]
 }
@@ -72,9 +69,9 @@ async function conditions() {
 async function stash() {
   // --8<-- [start:stash_disabled]
   const agent = new Agent({
-    contextManager: new ContextManager({
+    contextManager: {
       stash: false,
-    }),
+    },
   })
   // --8<-- [end:stash_disabled]
 }
