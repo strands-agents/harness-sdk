@@ -50,6 +50,9 @@ export async function* streamProcess(
   options?: StreamProcessOptions
 ): AsyncGenerator<StreamChunk | ExecutionResult, void, undefined> {
   const proc = spawn(command, args)
+  // decode at the stream so multibyte UTF-8 characters split across chunks are reassembled
+  proc.stdout?.setEncoding('utf8')
+  proc.stderr?.setEncoding('utf8')
   const chunks: StreamChunk[] = []
   let stdout = ''
   let stderr = ''
