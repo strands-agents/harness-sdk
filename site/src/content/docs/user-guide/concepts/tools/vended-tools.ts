@@ -3,7 +3,7 @@ import { Agent } from '@strands-agents/sdk'
 import { bash } from '@strands-agents/sdk/vended-tools/bash'
 import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor'
 import { httpRequest } from '@strands-agents/sdk/vended-tools/http-request'
-import { notebook } from '@strands-agents/sdk/vended-tools/notebook'
+import { notebook, makeNotebook } from '@strands-agents/sdk/vended-tools/notebook'
 // --8<-- [end:basic_import]
 import { SessionManager, FileStorage } from '@strands-agents/sdk'
 import { sleep, makeSleep } from '@strands-agents/sdk/vended-tools/sleep'
@@ -90,6 +90,17 @@ async function notebookTaskExample() {
   // The agent uses the notebook to plan and track its work
   await agent.invoke('Write a project plan for building a personal budget tracker app')
   // --8<-- [end:notebook_example]
+}
+
+// Notebook custom configuration example
+async function notebookMakeExample() {
+  // --8<-- [start:notebook_custom_example]
+  const notes = makeNotebook({
+    name: 'notes',
+    maxNotebookSizeBytes: 64 * 1024, // 64 KiB
+  })
+  const agent = new Agent({ tools: [notes] })
+  // --8<-- [end:notebook_custom_example]
 }
 
 // Notebook state persistence example
