@@ -455,6 +455,105 @@ A task with a pending interrupt also rejects an ordinary conversational message 
 
 A `DataPart` without an `interruptResponse` key is unaffected and continues to reach the agent as structured data.
 
+### Streaming Tool Progress
+
+:::note[Python only]
+This feature is currently available in the Python SDK only.
+:::
+
+A [streaming tool](../tools/custom-tools.md#tool-streaming) yields values while it runs. The
+server forwards each yield to the client as a `working` status update, so a client watching
+`message/stream` sees progress while a long running tool executes. This needs no configuration.
+
+The server forwards every yield, including the last one. A tool's last yield is also its return
+value, so the client receives the tool's result as a chunk as well.
+
+The update carries a single `DataPart` and no `TextPart`:
+
+```json
+{
+  "kind": "data",
+  "data": {
+    "toolStream": {
+      "toolUseId": "tu-1",
+      "name": "fetch_report",
+      "data": {"progress": 25}
+    }
+  }
+}
+```
+
+Tool progress is progress, not output, so it never enters the `agent_response` artifact.
+A client that concatenates artifacts, or one that reads the text of every status update,
+still sees the agent's answer alone. Only a client that reads the `toolStream` key sees
+the tool progress.
+
+`A2AAgent` reads these chunks, unlike an interrupt. `stream_async` yields every protocol
+event, so the chunks arrive as `working` status updates while the tool runs:
+
+```python
+from a2a.types import DataPart, TaskStatusUpdateEvent
+
+async for event in a2a_agent.stream_async("Generate the report"):
+    if event.get("type") != "a2a_stream" or not isinstance(event["event"], tuple):
+        continue
+
+    _task, update = event["event"]
+    if not isinstance(update, TaskStatusUpdateEvent) or update.status.message is None:
+        continue
+
+    for part in update.status.message.parts:
+        if isinstance(part.root, DataPart) and "toolStream" in part.root.data:
+            chunk = part.root.data["toolStream"]
+            print(f"{chunk['name']}: {chunk['data']}")
+```
+
+`invoke` and `invoke_async` return the final result alone, so they never carry progress.
+
+`data` holds whatever the tool yielded. A yield the transport cannot encode as JSON
+degrades to its string form, so one bad yield never fails the task.
+
+The whole yield degrades together, not the one field at fault. A dict that holds a single
+unencodable value arrives as one string, not as a dict with one string field. Read `data`
+defensively, and expect a string wherever you expect an object.
+
+#### Agents Used as Tools
+
+An [agent used as a tool](agents-as-tools.md) does not choose what it yields — the SDK forwards
+the sub-agent's whole stream: a per-token delta for every token generated, the lifecycle events
+around each cycle, and one completed message at the end of each turn.
+
+The server reduces those to tool activity: which tool the sub-agent ran and how it ended, one
+update per completed message and none for a sub-agent that runs no tools. `data` holds a
+`subAgent` list of blocks stripped of their payloads:
+
+```json
+{
+  "toolStream": {
+    "toolUseId": "a4b2...",
+    "name": "researcher",
+    "data": {"subAgent": [{"toolUse": {"toolUseId": "t1", "name": "customer_lookup"}}]}
+  }
+}
+```
+
+A `toolResult` block reports `toolUseId` and `status` the same way. The `toolUseId` is the
+sub-agent's own, forwarded so a client can pair a tool starting with the update that reports how
+it ended, which matters when a sub-agent runs several tools at once.
+
+Nothing else about the message travels: tool inputs and results, the sub-agent's text and
+reasoning, token usage and message tracking ids all stay server-side. The parent agent's own
+answer is what discloses a sub-agent's work to the client, and it is free to summarize or
+withhold. A client gets enough to show "the researcher is running customer_lookup" and no content
+it was not meant to see.
+
+:::caution[A tool that relays a sub-agent's stream itself]
+A tool that runs `agent.stream_async` and yields the raw events is choosing those yields, so the
+server forwards every one and `data` holds a raw Strands event rather than the shape above. Yield
+a curated progress value instead of the raw event, or a long sub-agent answer becomes thousands
+of status updates.
+:::
+
 ### Server Configuration Options
 
 <Tabs>
