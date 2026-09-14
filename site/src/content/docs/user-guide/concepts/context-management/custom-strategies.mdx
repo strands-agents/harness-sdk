@@ -184,9 +184,9 @@ the strategy, not the method.
 | <Syntax py="preserve_recent" ts="preserveRecent" /> | — | Number of most recent matching messages to skip |
 
 <Syntax py="preserve_recent" ts="preserveRecent" />
-accepts an integer in both SDKs. In Python, a float
-between 0 and 1 is treated as a ratio (e.g., `0.7` keeps
-70% of matching messages).
+accepts an integer (absolute count) or a float between 0
+and 1 (ratio of matching messages, e.g., `0.7` keeps
+70%).
 
 ### Per-block example
 
