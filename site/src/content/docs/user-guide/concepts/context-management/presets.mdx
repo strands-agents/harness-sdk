@@ -1,12 +1,13 @@
 ---
 title: Strategy Presets
-description: "Named strategy presets that expand to preconfigured
-  Offload strategies for common context management patterns."
+description: "Named strategy presets that expand to
+  preconfigured Offload strategies for common context
+  management patterns."
 experimental: true
-languages: python
 tags: [conversation-management, token-management]
 sourceLinks:
   - path: strands-py/src/strands/_context_manager/presets.py
+  - path: strands-ts/src/context-manager/presets.ts
 addedDate: 2026-09-14
 ---
 
@@ -21,30 +22,33 @@ you need a pinned configuration.
 
 ## Available presets
 
-| Preset | Expands to |
-|--------|------------|
-| `"proactive_summarization"` | `Offload.summarize("*").when(utilization=0.7, preserve_recent=0.7)` |
-| `"large_tool_offloading"` | `Offload.truncate("tool_results", {"preview_tokens": 1000}).when(threshold=2500)` |
-| `"overflow_protection"` | `Offload.truncate("*").when(utilization=1.0, preserve_recent=4)` |
-| `"stale_tool_cleanup"` | `Offload.drop("tool_results").when(preserve_recent=5)` |
+| Preset | Python | TypeScript |
+|--------|--------|------------|
+| Proactive summarization | `"proactive_summarization"` | `"proactiveSummarization"` |
+| Large tool offloading | `"large_tool_offloading"` | `"largeToolOffloading"` |
+| Overflow protection | `"overflow_protection"` | `"overflowProtection"` |
+| Stale tool cleanup | `"stale_tool_cleanup"` | `"staleToolCleanup"` |
 
-**`proactive_summarization`** summarizes the oldest 30% of
+**Proactive summarization** summarizes the oldest 30% of
 messages when the context window reaches 70% capacity.
 
-**`large_tool_offloading`** truncates individual tool results
+**Large tool offloading** truncates individual tool results
 over 2,500 tokens to a 1,000-token preview, eagerly on
 message arrival.
 
-**`overflow_protection`** truncates the oldest messages when
+**Overflow protection** truncates the oldest messages when
 the context window is full, keeping the 4 most recent.
 
-**`stale_tool_cleanup`** drops tool results more than 5
+**Stale tool cleanup** drops tool results more than 5
 messages old.
 
 ## Using presets
 
 Pass preset name strings in the
-`strategies` array of a `ContextManager`:
+<Syntax py="strategies" ts="strategies" /> array:
+
+<Tabs>
+<Tab label="Python">
 
 ```python
 from strands import Agent
@@ -58,12 +62,25 @@ agent = Agent(
     },
 )
 ```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/concepts/context-management/presets_imports.ts:using_presets_imports"
+
+--8<-- "user-guide/concepts/context-management/presets.ts:using_presets"
+```
+</Tab>
+</Tabs>
 
 ## Mixing presets and custom strategies
 
 Combine named presets with raw `Offload` strategies in
 the same array. Order matters: strategies run as a
 pipeline, and each sees the output of the previous.
+
+<Tabs>
+<Tab label="Python">
 
 ```python
 from strands import Agent
@@ -81,6 +98,16 @@ agent = Agent(
     },
 )
 ```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/concepts/context-management/presets_imports.ts:mixing_imports"
+
+--8<-- "user-guide/concepts/context-management/presets.ts:mixing"
+```
+</Tab>
+</Tabs>
 
 The preset handles large tool results eagerly, and the
 custom summarization strategy compresses remaining content
