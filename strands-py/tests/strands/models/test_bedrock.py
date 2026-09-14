@@ -32,6 +32,10 @@ from strands.types.tools import ToolSpec
 
 FORMATTED_DEFAULT_MODEL_ID = DEFAULT_BEDROCK_MODEL_ID
 
+# cache_tools is deprecated in favor of CacheConfig(tools_ttl=...); tests that deliberately exercise the
+# backward-compat path emit its config-time DeprecationWarning, and assert it explicitly where relevant.
+pytestmark = pytest.mark.filterwarnings("ignore:cache_tools is deprecated:DeprecationWarning")
+
 
 @pytest.fixture
 def session_cls():
@@ -4789,6 +4793,132 @@ async def test_non_streaming_citations_with_only_location(bedrock_client, model,
     assert "sourceContent" not in citation
 
 
+def test_non_streaming_reasoning_content_with_reasoning_text(bedrock_client, model):
+    """Test that convert_non_streaming_to_streaming handles reasoningContent with reasoningText."""
+    non_streaming_response = {
+        "output": {
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "reasoningContent": {
+                            "reasoningText": {
+                                "text": "Let me think about this...",
+                                "signature": "sig-abc123",
+                            }
+                        }
+                    }
+                ],
+            }
+        },
+        "stopReason": "end_turn",
+        "usage": {"inputTokens": 10, "outputTokens": 20},
+    }
+
+    events = list(model.convert_non_streaming_to_streaming(non_streaming_response))
+
+    reasoning_deltas = [
+        event
+        for event in events
+        if "contentBlockDelta" in event and "reasoningContent" in event.get("contentBlockDelta", {}).get("delta", {})
+    ]
+    assert len(reasoning_deltas) == 2
+
+    assert reasoning_deltas[0]["contentBlockDelta"]["delta"]["reasoningContent"] == {
+        "text": "Let me think about this..."
+    }
+    assert reasoning_deltas[1]["contentBlockDelta"]["delta"]["reasoningContent"] == {"signature": "sig-abc123"}
+
+
+def test_non_streaming_reasoning_content_without_signature(bedrock_client, model):
+    """Test that convert_non_streaming_to_streaming handles reasoningContent without a signature."""
+    non_streaming_response = {
+        "output": {
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "reasoningContent": {
+                            "reasoningText": {
+                                "text": "Let me think about this...",
+                            }
+                        }
+                    }
+                ],
+            }
+        },
+        "stopReason": "end_turn",
+        "usage": {"inputTokens": 10, "outputTokens": 20},
+    }
+
+    events = list(model.convert_non_streaming_to_streaming(non_streaming_response))
+
+    reasoning_deltas = [
+        event
+        for event in events
+        if "contentBlockDelta" in event and "reasoningContent" in event.get("contentBlockDelta", {}).get("delta", {})
+    ]
+    assert len(reasoning_deltas) == 1
+    assert reasoning_deltas[0]["contentBlockDelta"]["delta"]["reasoningContent"] == {
+        "text": "Let me think about this..."
+    }
+
+
+def test_non_streaming_reasoning_content_with_empty_reasoning_text(bedrock_client, model):
+    """Test that convert_non_streaming_to_streaming handles reasoningText without text or signature."""
+    non_streaming_response = {
+        "output": {
+            "message": {
+                "role": "assistant",
+                "content": [{"reasoningContent": {"reasoningText": {}}}],
+            }
+        },
+        "stopReason": "end_turn",
+        "usage": {"inputTokens": 5, "outputTokens": 10},
+    }
+
+    events = list(model.convert_non_streaming_to_streaming(non_streaming_response))
+
+    reasoning_deltas = [
+        event
+        for event in events
+        if "contentBlockDelta" in event and "reasoningContent" in event.get("contentBlockDelta", {}).get("delta", {})
+    ]
+    assert len(reasoning_deltas) == 0
+
+
+def test_non_streaming_reasoning_content_with_redacted_content(bedrock_client, model):
+    """Test that convert_non_streaming_to_streaming handles reasoningContent with redactedContent."""
+    non_streaming_response = {
+        "output": {
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "reasoningContent": {
+                            "redactedContent": b"redacted-bytes",
+                        }
+                    }
+                ],
+            }
+        },
+        "stopReason": "end_turn",
+        "usage": {"inputTokens": 5, "outputTokens": 10},
+    }
+
+    events = list(model.convert_non_streaming_to_streaming(non_streaming_response))
+
+    reasoning_deltas = [
+        event
+        for event in events
+        if "contentBlockDelta" in event and "reasoningContent" in event.get("contentBlockDelta", {}).get("delta", {})
+    ]
+    assert len(reasoning_deltas) == 1
+    assert reasoning_deltas[0]["contentBlockDelta"]["delta"]["reasoningContent"] == {
+        "redactedContent": b"redacted-bytes"
+    }
+
+
 class TestCountTokens:
     """Tests for BedrockModel.count_tokens native token counting."""
 
@@ -5071,12 +5201,189 @@ def test_format_request_cache_tools_config_without_ttl(model, messages, model_id
 
 def test_format_request_cache_tools_string_backward_compat(model, messages, model_id, tool_spec, cache_type):
     """Test that passing cache_tools as a string still produces a cachePoint with only type."""
-    model.update_config(cache_tools=cache_type)
+    with pytest.warns(DeprecationWarning, match="cache_tools is deprecated"):
+        model.update_config(cache_tools=cache_type)
 
-    tru_request = model.format_request(messages, tool_specs=[tool_spec])
+        tru_request = model.format_request(messages, tool_specs=[tool_spec])
 
     exp_cache_point = {"cachePoint": {"type": cache_type}}
     assert tru_request["toolConfig"]["tools"][-1] == exp_cache_point
+
+
+def test_format_request_cache_tools_emits_deprecation_warning(model, messages, tool_spec):
+    """cache_tools is deprecated in favor of CacheConfig(tools_ttl=...); setting it warns."""
+    with pytest.warns(DeprecationWarning, match="cache_tools is deprecated. Use CacheConfig"):
+        model.update_config(cache_tools="default")
+
+
+def test_format_request_tools_ttl_true_derives_from_shared_ttl(bedrock_client, messages, tool_spec):
+    """tools_ttl=True mirrors system_prompt_ttl: it derives the tools section duration from cache_config.ttl."""
+    _ = bedrock_client
+    model = BedrockModel(
+        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        cache_config=CacheConfig(strategy="auto", ttl="1h", tools_ttl=True),
+    )
+
+    tru_point = model.format_request(messages, tool_specs=[tool_spec])["toolConfig"]["tools"][-1]
+
+    assert tru_point == {"cachePoint": {"type": "default", "ttl": "1h"}}
+
+
+def test_format_request_tools_ttl_string_sets_the_section_duration(bedrock_client, messages, tool_spec):
+    """A tools_ttl string sets the tools section's own duration rather than deriving from the shared ttl."""
+    _ = bedrock_client
+    model = BedrockModel(
+        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        cache_config=CacheConfig(strategy="auto", ttl="1h", tools_ttl="5m"),
+    )
+
+    tru_point = model.format_request(messages, tool_specs=[tool_spec])["toolConfig"]["tools"][-1]
+
+    assert tru_point == {"cachePoint": {"type": "default", "ttl": "5m"}}
+
+
+def test_format_request_tools_ttl_string_stands_the_system_point_down(bedrock_client, messages, tool_spec):
+    """A shorter tools_ttl leaves the auto system cache point at the provider default."""
+    _ = bedrock_client
+    model = BedrockModel(
+        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        cache_config=CacheConfig(strategy="auto", ttl="1h", tools_ttl="5m"),
+    )
+
+    request = model.format_request(messages, tool_specs=[tool_spec], system_prompt_content=[{"text": "static"}])
+
+    assert request["toolConfig"]["tools"][-1] == {"cachePoint": {"type": "default", "ttl": "5m"}}
+    assert {"cachePoint": {"type": "default"}} in request["system"]
+
+
+def test_format_request_tools_ttl_true_without_shared_ttl_stays_untimed(bedrock_client, messages, tool_spec):
+    """With nothing to derive from, tools_ttl=True still caches the tools but at the provider default."""
+    _ = bedrock_client
+    model = BedrockModel(
+        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        cache_config=CacheConfig(strategy="auto", tools_ttl=True),
+    )
+
+    tru_point = model.format_request(messages, tool_specs=[tool_spec])["toolConfig"]["tools"][-1]
+
+    assert tru_point == {"cachePoint": {"type": "default"}}
+
+
+def test_format_request_tools_ttl_false_disables_the_tools_cache_point(bedrock_client, messages, tool_spec):
+    """tools_ttl=False disables tool caching even when the shared ttl is set."""
+    _ = bedrock_client
+    model = BedrockModel(
+        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        cache_config=CacheConfig(strategy="auto", ttl="1h", tools_ttl=False),
+    )
+
+    tru_request = model.format_request(messages, tool_specs=[tool_spec])
+
+    assert not any("cachePoint" in tool for tool in tru_request["toolConfig"]["tools"])
+
+
+def test_format_request_tools_ttl_defaults_to_off(bedrock_client, messages, tool_spec):
+    """tools_ttl defaults to None (unset), so cache_config alone does not cache the tools yet."""
+    _ = bedrock_client
+    model = BedrockModel(
+        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        cache_config=CacheConfig(strategy="auto", ttl="1h"),
+    )
+
+    tru_request = model.format_request(messages, tool_specs=[tool_spec])
+
+    assert not any("cachePoint" in tool for tool in tru_request["toolConfig"]["tools"])
+
+
+def test_format_request_tools_ttl_is_off_for_a_model_without_caching(bedrock_client, messages, tool_spec):
+    """tools_ttl only reaches the wire under an active anthropic strategy, matching the tools point rule."""
+    _ = bedrock_client
+    model = BedrockModel(
+        model_id="amazon.nova-pro-v1:0",
+        cache_config=CacheConfig(strategy="auto", ttl="1h", tools_ttl=True),
+    )
+
+    tru_request = model.format_request(messages, tool_specs=[tool_spec])
+
+    assert not any("cachePoint" in tool for tool in tru_request["toolConfig"]["tools"])
+
+
+def test_format_request_tools_ttl_takes_precedence_over_deprecated_cache_tools(bedrock_client, messages, tool_spec):
+    """An explicitly set tools_ttl wins over the deprecated cache_tools when both are set."""
+    _ = bedrock_client
+    with pytest.warns(DeprecationWarning, match="cache_tools is deprecated"):
+        model = BedrockModel(
+            model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+            cache_config=CacheConfig(strategy="auto", ttl="1h", tools_ttl="5m"),
+            cache_tools=CacheToolsConfig(ttl="1h"),
+        )
+
+    tru_point = model.format_request(messages, tool_specs=[tool_spec])["toolConfig"]["tools"][-1]
+
+    assert tru_point == {"cachePoint": {"type": "default", "ttl": "5m"}}
+
+
+def test_format_request_tools_ttl_false_overrides_deprecated_cache_tools(bedrock_client, messages, tool_spec):
+    """tools_ttl=False disables tool caching even when the deprecated cache_tools is set."""
+    _ = bedrock_client
+    with pytest.warns(DeprecationWarning, match="cache_tools is deprecated"):
+        model = BedrockModel(
+            model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+            cache_config=CacheConfig(strategy="auto", ttl="1h", tools_ttl=False),
+            cache_tools=CacheToolsConfig(ttl="1h"),
+        )
+
+    tru_request = model.format_request(messages, tool_specs=[tool_spec])
+
+    assert not any("cachePoint" in tool for tool in tru_request["toolConfig"]["tools"])
+
+
+def test_format_request_auto_skips_tools_cache_point_for_a_model_without_caching(bedrock_client, messages, tool_spec):
+    """cache_tools follows the resolved strategy: auto on a non-Anthropic model emits no tools cache point.
+
+    Regression guard for https://github.com/strands-agents/harness-sdk/issues/4168.
+    """
+    _ = bedrock_client
+    with pytest.warns(DeprecationWarning, match="cache_tools is deprecated"):
+        model = BedrockModel(
+            model_id="amazon.nova-pro-v1:0",
+            cache_config=CacheConfig(strategy="auto"),
+            cache_tools=CacheToolsConfig(ttl="1h"),
+        )
+
+    tru_request = model.format_request(messages, tool_specs=[tool_spec])
+
+    assert not any("cachePoint" in tool for tool in tru_request["toolConfig"]["tools"])
+
+
+def test_format_request_auto_keeps_tools_cache_point_for_a_claude_model(bedrock_client, messages, tool_spec):
+    """cache_config resolving to anthropic leaves the deprecated cache_tools point in place."""
+    _ = bedrock_client
+    with pytest.warns(DeprecationWarning, match="cache_tools is deprecated"):
+        model = BedrockModel(
+            model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+            cache_config=CacheConfig(strategy="auto"),
+            cache_tools=CacheToolsConfig(ttl="1h"),
+        )
+
+    tru_point = model.format_request(messages, tool_specs=[tool_spec])["toolConfig"]["tools"][-1]
+
+    assert tru_point == {"cachePoint": {"type": "default", "ttl": "1h"}}
+
+
+def test_format_request_auto_cache_tools_inherits_shared_ttl_for_a_claude_model(bedrock_client, messages, tool_spec):
+    """A cache_tools point with no ttl of its own still inherits cache_config.ttl under an active strategy."""
+    _ = bedrock_client
+    with pytest.warns(DeprecationWarning, match="cache_tools is deprecated"):
+        model = BedrockModel(
+            model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+            cache_config=CacheConfig(strategy="auto", ttl="1h"),
+            cache_tools=CacheToolsConfig(),
+        )
+
+    tru_point = model.format_request(messages, tool_specs=[tool_spec])["toolConfig"]["tools"][-1]
+
+    assert tru_point == {"cachePoint": {"type": "default", "ttl": "1h"}}
 
 
 def test_format_request_applies_the_configured_ttl_to_a_system_cache_point(bedrock_client, messages):
@@ -5226,9 +5533,9 @@ def test_format_request_leaves_a_tools_cache_point_alone_for_a_model_without_cac
         model_id="meta.llama3-70b-instruct-v1:0", cache_config=CacheConfig(ttl="1h"), cache_tools="default"
     )
 
-    tru_point = model.format_request(messages, tool_specs=[tool_spec])["toolConfig"]["tools"][-1]
+    tru_request = model.format_request(messages, tool_specs=[tool_spec])
 
-    assert tru_point == {"cachePoint": {"type": "default"}}
+    assert not any("cachePoint" in tool for tool in tru_request["toolConfig"]["tools"])
 
 
 def test_format_request_leaves_a_tools_cache_point_alone_for_an_empty_configured_ttl(

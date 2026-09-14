@@ -10,6 +10,7 @@ from openai.types.responses import Response, ResponseErrorEvent, ResponseFailedE
 from openai.types.responses.response_error import ResponseError
 
 import strands
+from strands.agent import AgentMetadata
 from strands.models import CacheConfig
 from strands.models.openai_responses import _MAX_MEDIA_SIZE_BYTES, OpenAIResponsesModel
 from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
@@ -539,6 +540,60 @@ def test_cache_key_absent_when_unset(openai_client, model_id, messages):
     assert "prompt_cache_key" not in model._format_request(messages)
 
 
+def test_cache_key_derived_from_agent_metadata_session(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIResponsesModel(model_id=model_id, cache_config=CacheConfig())
+
+    request = model._format_request(messages, agent_metadata=AgentMetadata(session_id="s1"))
+
+    assert request["prompt_cache_key"] == "strands-s1"
+
+
+def test_configured_cache_key_wins_over_agent_metadata(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIResponsesModel(model_id=model_id, cache_config=CacheConfig(cache_key="tenant-42"))
+
+    request = model._format_request(messages, agent_metadata=AgentMetadata(session_id="s1"))
+
+    assert request["prompt_cache_key"] == "tenant-42"
+
+
+def test_false_cache_key_opts_out_of_agent_metadata(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIResponsesModel(model_id=model_id, cache_config=CacheConfig(cache_key=False))
+
+    request = model._format_request(messages, agent_metadata=AgentMetadata(session_id="s1"))
+
+    assert "prompt_cache_key" not in request
+
+
+def test_agent_metadata_without_session_yields_no_cache_key(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIResponsesModel(model_id=model_id, cache_config=CacheConfig())
+
+    request = model._format_request(messages, agent_metadata=AgentMetadata(session_id=None))
+
+    assert "prompt_cache_key" not in request
+
+
+@pytest.mark.asyncio
+async def test_stream_derives_prompt_cache_key_from_agent_session(openai_client, model_id, agenerator, alist):
+    """stream threads agent_metadata so the outbound request carries the derived routing key."""
+    model = OpenAIResponsesModel(model_id=model_id, cache_config=CacheConfig())
+    mock_complete_event = unittest.mock.Mock(
+        type="response.completed",
+        response=unittest.mock.Mock(
+            usage=unittest.mock.Mock(input_tokens=1, output_tokens=1, total_tokens=2, input_tokens_details=None)
+        ),
+    )
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=agenerator([mock_complete_event]))
+
+    messages = [{"role": "user", "content": [{"text": "test"}]}]
+    await alist(model.stream(messages, agent_metadata=AgentMetadata(session_id="s1")))
+
+    assert openai_client.responses.create.call_args.kwargs["prompt_cache_key"] == "strands-s1"
+
+
 def test_explicit_prompt_cache_key_in_params_wins(openai_client, model_id, messages):
     _ = openai_client
     model = OpenAIResponsesModel(
@@ -979,6 +1034,35 @@ async def test_stream_response_incomplete(openai_client, model, agenerator, alis
     assert len(metadata_events) == 1
     assert metadata_events[0]["metadata"]["usage"]["inputTokens"] == 10
     assert metadata_events[0]["metadata"]["usage"]["outputTokens"] == 100
+
+
+@pytest.mark.asyncio
+async def test_stream_response_incomplete_with_truncated_tool_call(openai_client, model, agenerator, alist):
+    """Test that max_tokens takes precedence over tool_use when a function call is cut off."""
+    mock_item_added_event = unittest.mock.Mock(
+        type="response.output_item.added",
+        item=unittest.mock.Mock(type="function_call", call_id="call_1", name="write_file", id="fc_1"),
+    )
+    mock_args_event = unittest.mock.Mock(
+        type="response.function_call_arguments.delta", item_id="fc_1", delta='{"path": "notes.md", "content": "Lorem'
+    )
+    mock_incomplete_event = unittest.mock.Mock(
+        type="response.incomplete",
+        response=unittest.mock.Mock(
+            usage=unittest.mock.Mock(input_tokens=10, output_tokens=50, total_tokens=60, input_tokens_details=None),
+            incomplete_details=unittest.mock.Mock(reason="max_output_tokens"),
+        ),
+    )
+
+    openai_client.responses.create = unittest.mock.AsyncMock(
+        return_value=agenerator([mock_item_added_event, mock_args_event, mock_incomplete_event])
+    )
+
+    messages = [{"role": "user", "content": [{"text": "save my notes"}]}]
+    tru_events = await alist(model.stream(messages))
+
+    assert {"messageStop": {"stopReason": "max_tokens"}} in tru_events
+    assert {"messageStop": {"stopReason": "tool_use"}} not in tru_events
 
 
 @pytest.mark.asyncio
@@ -1922,6 +2006,7 @@ class TestOpenAIResponsesModelBedrockMantleConfig:
             ("xai.grok-4.3", "/openai/v1"),
             ("google.gemma-4-31b", "/openai/v1"),
             ("openai.gpt-5.6-terra", "/openai/v1"),
+            ("openai.gpt-6-astra", "/openai/v1"),
             # Gemma 3 is served from /v1 while Gemma 4 is not, so `google.` cannot be a prefix.
             ("google.gemma-3-27b-it", "/v1"),
             ("openai.gpt-oss-120b", "/v1"),
@@ -1944,6 +2029,7 @@ class TestOpenAIResponsesModelBedrockMantleConfig:
             # Point releases within a verified line, beyond the verified catalog.
             ("xai.grok-4.9", "/openai/v1"),
             ("openai.gpt-5.9-unreleased", "/openai/v1"),
+            ("openai.gpt-6-nova", "/openai/v1"),
             # New lines the prefixes deliberately do not cover.
             ("xai.grok-5", "/v1"),
             ("xai.grok-5-preview", "/v1"),

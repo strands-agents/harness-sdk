@@ -254,6 +254,27 @@ describe('Tracer', () => {
       expect(mockSpan.getAttributeValue('gen_ai.usage.completion_tokens')).toBe(200)
     })
 
+    // Accumulated usage folds cached tokens into input_tokens for disjoint-cache providers,
+    // matching the per-invocation span (OTel GenAI semconv).
+    it('includes cached tokens in accumulated input_tokens for disjoint-cache providers', () => {
+      const tracer = new Tracer()
+      const span = tracer.startAgentSpan({ messages: [textMessage('user', 'Hi')], agentName: 'agent' })
+
+      tracer.endAgentSpan(span, {
+        accumulatedUsage: {
+          inputTokens: 10,
+          outputTokens: 20,
+          totalTokens: 58,
+          cacheReadInputTokens: 25,
+          cacheWriteInputTokens: 3,
+        },
+      })
+
+      expect(mockSpan.getAttributeValue('gen_ai.usage.input_tokens')).toBe(38)
+      expect(mockSpan.getAttributeValue('gen_ai.usage.prompt_tokens')).toBe(38)
+      expect(mockSpan.getAttributeValue('gen_ai.usage.total_tokens')).toBe(58)
+    })
+
     it('adds response event with stable conventions', () => {
       const tracer = new Tracer()
       const span = tracer.startAgentSpan({ messages: [textMessage('user', 'Hi')], agentName: 'agent' })
@@ -329,6 +350,45 @@ describe('Tracer', () => {
       expect(mockSpan.getAttributeValue('gen_ai.usage.output_tokens')).toBe(20)
       expect(mockSpan.getAttributeValue('gen_ai.usage.total_tokens')).toBe(30)
       expect(mockSpan.getAttributeValue('gen_ai.server.request.duration')).toBe(500)
+    })
+
+    // input_tokens must include cached tokens per the OTel GenAI semconv; disjoint-cache
+    // providers (Bedrock Converse, Anthropic-direct) report them separately, so fold them in.
+    it('includes cached tokens in input_tokens for disjoint-cache providers', () => {
+      const tracer = new Tracer()
+      const span = tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')] })
+
+      tracer.endModelInvokeSpan(span, {
+        usage: {
+          inputTokens: 10,
+          outputTokens: 20,
+          totalTokens: 58,
+          cacheReadInputTokens: 25,
+          cacheWriteInputTokens: 3,
+        },
+      })
+
+      expect(mockSpan.getAttributeValue('gen_ai.usage.input_tokens')).toBe(38)
+      expect(mockSpan.getAttributeValue('gen_ai.usage.prompt_tokens')).toBe(38)
+      expect(mockSpan.getAttributeValue('gen_ai.usage.output_tokens')).toBe(20)
+      expect(mockSpan.getAttributeValue('gen_ai.usage.total_tokens')).toBe(58)
+      expect(mockSpan.getAttributeValue('gen_ai.usage.cache_read.input_tokens')).toBe(25)
+      expect(mockSpan.getAttributeValue('gen_ai.usage.cache_creation.input_tokens')).toBe(3)
+    })
+
+    // Subset-cache providers (OpenAI, Gemini) already count cache inside input_tokens;
+    // the fold-in must be a no-op so cached tokens are not counted twice.
+    it('does not double-count when the provider already includes cache in input_tokens', () => {
+      const tracer = new Tracer()
+      const span = tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')] })
+
+      tracer.endModelInvokeSpan(span, {
+        usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120, cacheReadInputTokens: 30 },
+      })
+
+      expect(mockSpan.getAttributeValue('gen_ai.usage.input_tokens')).toBe(100)
+      expect(mockSpan.getAttributeValue('gen_ai.usage.prompt_tokens')).toBe(100)
+      expect(mockSpan.getAttributeValue('gen_ai.usage.cache_read.input_tokens')).toBe(30)
     })
 
     it('sets cache token attributes when provided', () => {

@@ -738,6 +738,8 @@ class Tracer:
         tools: list | None = None,
         custom_trace_attributes: Mapping[str, AttributeValue] | None = None,
         tools_config: dict | None = None,
+        system_prompt: str | None = None,
+        system_prompt_content: list | None = None,
         **kwargs: Any,
     ) -> Span:
         """Start a new span for an agent invocation.
@@ -749,6 +751,8 @@ class Tracer:
             tools: Optional list of tools being used.
             custom_trace_attributes: Optional mapping of custom trace attributes to include in the span.
             tools_config: Optional dictionary of tool configurations.
+            system_prompt: Optional system prompt string.
+            system_prompt_content: Optional list of system prompt content blocks.
             **kwargs: Additional attributes to add to the span.
 
         Returns:
@@ -782,9 +786,17 @@ class Tracer:
         # Add additional kwargs as attributes
         attributes.update({k: v for k, v in kwargs.items() if isinstance(v, (str, int, float, bool))})
 
+        if self.use_latest_genai_conventions and (system_prompt is not None or system_prompt_content is not None):
+            attributes["gen_ai.system_instructions"] = self._redact(
+                "gen_ai.system_instructions",
+                self._serialized_system_instructions(system_prompt, system_prompt_content),
+            )
+
         span = self._start_span(
             f"invoke_agent {agent_name}", attributes=attributes, span_kind=trace_api.SpanKind.INTERNAL
         )
+        if not self.use_latest_genai_conventions:
+            self._add_system_prompt_event(span, system_prompt, system_prompt_content)
         self._add_event_messages(span, messages)
 
         return span
@@ -1304,17 +1316,17 @@ class Tracer:
         if system_prompt is None and system_prompt_content is None:
             return
 
-        content_blocks: list[ContentBlock] = (
-            system_prompt_content if system_prompt_content else [{"text": system_prompt or ""}]
-        )
-
         if self.use_latest_genai_conventions:
-            parts = self._map_content_blocks_to_otel_parts(content_blocks)
             # system prompts are sensitive and policed under gen_ai.system_instructions
             self._add_event(
                 span,
                 "gen_ai.client.inference.operation.details",
-                {"gen_ai.system_instructions": self._redact("gen_ai.system_instructions", serialize(parts))},
+                {
+                    "gen_ai.system_instructions": self._redact(
+                        "gen_ai.system_instructions",
+                        self._serialized_system_instructions(system_prompt, system_prompt_content),
+                    )
+                },
                 to_span_attributes=self._span_attributes_only,
             )
         else:
@@ -1322,8 +1334,24 @@ class Tracer:
             self._add_event(
                 span,
                 "gen_ai.system.message",
-                {"content": self._redact("gen_ai.system_instructions", serialize(content_blocks))},
+                {
+                    "content": self._redact(
+                        "gen_ai.system_instructions",
+                        serialize(self._system_prompt_content_blocks(system_prompt, system_prompt_content)),
+                    )
+                },
             )
+
+    def _system_prompt_content_blocks(
+        self, system_prompt: str | None, system_prompt_content: list | None
+    ) -> list[ContentBlock]:
+        """Return system prompt content blocks, preferring structured content."""
+        return system_prompt_content if system_prompt_content else [{"text": system_prompt or ""}]
+
+    def _serialized_system_instructions(self, system_prompt: str | None, system_prompt_content: list | None) -> str:
+        """Serialize system prompt content using the latest semantic-convention format."""
+        content_blocks = self._system_prompt_content_blocks(system_prompt, system_prompt_content)
+        return serialize(self._map_content_blocks_to_otel_parts(content_blocks))
 
     def _add_event_messages(self, span: Span, messages: Messages) -> None:
         """Adds messages as event to the provided span based on the current GenAI conventions.

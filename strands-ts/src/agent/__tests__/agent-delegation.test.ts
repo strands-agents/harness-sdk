@@ -37,13 +37,14 @@ describe('AgentDelegation integration', () => {
         type: 'toolUseBlock',
         name: 'TechSupport',
         toolUseId: 'call-1',
-        input: { input: 'My wifi does not work' },
+        input: { input: 'My wifi does not work', _background_execution: true },
       })
 
       const orchestrator = new Agent({
         model: orchestratorModel,
         name: 'Orchestrator',
         tools: [billingAgent.asTool({ delegate: true }), techAgent.asTool({ delegate: true })],
+        backgroundTasks: {},
         printer: false,
       })
 

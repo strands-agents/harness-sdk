@@ -9,6 +9,15 @@ import { StorageError } from '../errors.js'
 export const NAMESPACED: unique symbol = Symbol.for('strands.storage.namespaced')
 
 /**
+ * Symbol marking storage backends whose data does not survive process restarts.
+ * Propagated through {@link "namespace"} so namespaced views of ephemeral storage
+ * remain detectable.
+ *
+ * @internal
+ */
+export const EPHEMERAL: unique symbol = Symbol.for('strands.storage.ephemeral')
+
+/**
  * Validates and normalizes a storage key for path-based backends: collapses
  * runs of `/`, strips leading and trailing `/`, and rejects empty keys and
  * any `..` segment.
@@ -22,6 +31,9 @@ export const NAMESPACED: unique symbol = Symbol.for('strands.storage.namespaced'
  * @throws {@link StorageError} if the key is empty or contains a `..` segment
  */
 export function normalizeKey(key: string): string {
+  if (key.includes('\\')) {
+    throw new StorageError(`Invalid storage key '${key}': backslashes are not allowed`)
+  }
   const segments = key.split('/').filter(Boolean)
   if (segments.length === 0) {
     throw new StorageError('Storage key must not be empty')
@@ -44,6 +56,9 @@ export function normalizeKey(key: string): string {
  * @throws {@link StorageError} if the prefix contains a `..` segment
  */
 export function normalizePrefix(prefix: string): string {
+  if (prefix.includes('\\')) {
+    throw new StorageError(`Invalid storage prefix '${prefix}': backslashes are not allowed`)
+  }
   const parts = prefix.split('/')
   const segments = parts.filter(Boolean)
   if (segments.includes('..')) {
@@ -185,6 +200,9 @@ export function namespace(storage: Storage, prefix: string): Storage {
     list: (query) => storage.list(`${p}${query}`).then((keys) => keys.map((key) => key.slice(p.length))),
     namespace: (sub) => namespace(storage, `${p}${sub}`),
     [NAMESPACED]: true,
+  }
+  if (EPHEMERAL in storage) {
+    ;(view as unknown as Record<symbol, boolean>)[EPHEMERAL] = true
   }
   if (storage.search) {
     view.search = (query: string): Promise<StorageSearchResult[]> =>

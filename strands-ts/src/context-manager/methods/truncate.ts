@@ -2,8 +2,6 @@
  * Truncate reduction method.
  *
  * Replaces content with a preview (head, tail, or head-tail).
- *
- * @internal
  */
 
 import { JsonBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
@@ -16,6 +14,8 @@ const CHARS_PER_TOKEN = 4
 
 /**
  * Configuration for the truncate method.
+ *
+ * @experimental
  */
 export interface TruncateConfig {
   /** Number of tokens to keep as preview text. Defaults to 1,000. */

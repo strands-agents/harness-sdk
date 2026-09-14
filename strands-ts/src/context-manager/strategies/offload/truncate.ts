@@ -10,6 +10,7 @@ import type { ContentBlock } from '../../../types/messages.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
 import { truncateToolResultBlock, truncateTextBlock, type TruncateConfig } from '../../methods/truncate.js'
+import { formatStashRefs } from '../../stash.js'
 import {
   BaseOffloadStrategy,
   spliceWithPairs,
@@ -57,16 +58,7 @@ export class TruncateStrategy extends BaseOffloadStrategy {
     const eligible = await this._getEligibleMessages(context)
     if (eligible.length === 0) return false
 
-    // Determine head/tail split based on config (default: favor tail — 30% head, 70% tail)
-    const previewMode = this._truncateConfig.preview ?? 'headTail'
-    const headShare = { head: 1, tail: 0, headTail: 0.3 }[previewMode]
-    const targetRemoval = Math.max(1, Math.floor(eligible.length * this._removalRatio))
-    const keepCount = eligible.length - targetRemoval
-
-    const headKeep = Math.floor(keepCount * headShare)
-    const tailKeep = keepCount - headKeep
-
-    const middleMessages = eligible.slice(headKeep, eligible.length - tailKeep)
+    const middleMessages = eligible
 
     if (middleMessages.length === 0) return false
 
@@ -82,16 +74,46 @@ export class TruncateStrategy extends BaseOffloadStrategy {
   }
 
   protected async _replaceBlock(
-    block: TextBlock | ToolResultBlock,
+    block: ContentBlock,
     tokens: number,
     message: Message,
-    _agent: LocalAgent
+    _agent: LocalAgent,
+    stashRefs: string[]
   ): Promise<ContentBlock | null> {
     if (block instanceof ToolResultBlock) {
       logger.debug(`toolUseId=<${block.toolUseId}>, tokens=<${tokens}> | truncated tool result`)
-      return truncateToolResultBlock(block, this._truncateConfig)
+      const truncated = truncateToolResultBlock(block, this._truncateConfig)
+      if (truncated !== block) {
+        return appendStashRefs(truncated, stashRefs)
+      }
+      return truncated
     }
-    logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | truncated text block`)
-    return truncateTextBlock(block, this._truncateConfig)
+    if (block instanceof TextBlock) {
+      logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | truncated text block`)
+      const truncated = truncateTextBlock(block, this._truncateConfig)
+      const refs = formatStashRefs(stashRefs)
+      return refs ? new TextBlock(`${truncated.text}\n\n[Stashed]${refs}`) : truncated
+    }
+    logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | offloaded media block`)
+    return new TextBlock(`[Offloaded: ~${tokens} tokens]${formatStashRefs(stashRefs)}`)
   }
+}
+
+function appendStashRefs(block: ToolResultBlock, stashRefs: string[]): ToolResultBlock {
+  const refs = formatStashRefs(stashRefs)
+  if (!refs) return block
+
+  const content = [...block.content]
+  for (let index = 0; index < content.length; index++) {
+    const item = content[index]!
+    if (item instanceof TextBlock) {
+      content[index] = new TextBlock(`${item.text}\n\n[Stashed]${refs}`)
+      return new ToolResultBlock({
+        toolUseId: block.toolUseId,
+        status: block.status,
+        content,
+      })
+    }
+  }
+  return block
 }

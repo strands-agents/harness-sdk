@@ -33,7 +33,7 @@ jobs:
     name: Label
     # A failed analysis has nothing trustworthy to label with.
     if: github.event.workflow_run.conclusion == 'success'
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     timeout-minutes: 5
     permissions:
       pull-requests: write

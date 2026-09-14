@@ -45,21 +45,12 @@ class _BidiTextOutput(BidiOutput):
                 print("user requested connection close using the stop tool.")
                 logger.debug("connection_id=<%s> | user requested connection close", event.connection_id)
         elif isinstance(event, BidiTranscriptStreamEvent):
-            text = event["text"]
-            is_final = event["is_final"]
-            role = event["role"]
-
             logger.debug(
-                "role=<%s>, is_final=<%s>, text_length=<%d> | text transcript received",
-                role,
-                is_final,
-                len(text),
+                "role=<%s>, text_length=<%d> | text transcript received",
+                event.role,
+                len(event.delta),
             )
-
-            if not is_final:
-                text = f"Preview: {text}"
-
-            print(text)
+            print(event.delta)
 
 
 class BidiTextIO:

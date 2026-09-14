@@ -10,15 +10,21 @@ import uuid
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol
 
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import NotRequired, TypedDict, TypeVar
 
 from .interrupt import _Interruptible
 from .media import DocumentContent, ImageContent
 
+if TYPE_CHECKING:
+    from .agent import LocalAgent
+
 JSONSchema = dict
 """Type alias for JSON Schema dictionaries."""
+
+_LocalAgentT = TypeVar("_LocalAgentT", bound="LocalAgent", default=Any)
+"""Local agent type exposed through ToolContext."""
 
 
 class ToolSpec(TypedDict):
@@ -140,7 +146,7 @@ class ToolChoiceTool(TypedDict):
 
 
 @dataclass
-class ToolContext(_Interruptible):
+class ToolContext(_Interruptible, Generic[_LocalAgentT]):
     """Context object containing framework-provided data for decorated tools.
 
     This object provides access to framework-level information that may be useful
@@ -164,7 +170,7 @@ class ToolContext(_Interruptible):
     """
 
     tool_use: ToolUse
-    agent: Any  # Agent or BidiAgent - using Any for backwards compatibility
+    agent: _LocalAgentT
     invocation_state: dict[str, Any]
     # Defaulted so a directly-constructed context stays valid; the SDK always supplies the
     # invoking agent's signal. Kept out of repr and equality: an Event carries no useful text

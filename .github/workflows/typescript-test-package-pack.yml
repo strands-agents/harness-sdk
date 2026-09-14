@@ -31,7 +31,7 @@ jobs:
     name: Pack Install
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
 
     steps:
       - name: Checkout code
@@ -43,7 +43,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 22
           package-manager-cache: false
 
       - name: Install dependencies
@@ -92,6 +92,19 @@ jobs:
 
           npx tsc --noEmit
           npx tsx verify.ts
+
+          # Guard against dependency bloat (#4169). Reinstall without the
+          # test fixture's devDependencies so we measure only what a consumer
+          # ships, then check against a tight ceiling.
+          npm install --ignore-scripts --no-audit --no-fund --omit=dev "$TARBALL_PATH"
+          SIZE_BYTES=$(du -sb node_modules | cut -f1)
+          SIZE_MB=$(( SIZE_BYTES / 1048576 ))
+          echo "[pack-test] consumer node_modules install size: ${SIZE_MB} MB"
+          MAX_MB=150
+          if [ "$SIZE_MB" -gt "$MAX_MB" ]; then
+            echo "::error::Install size ${SIZE_MB} MB exceeds ${MAX_MB} MB limit. A dependency may be pulling in unexpected native binaries."
+            exit 1
+          fi
 
       # Upload for release-typescript.yml's inspect/publish path to consume.
       # PR-triggered runs also upload (short retention) — harmless.

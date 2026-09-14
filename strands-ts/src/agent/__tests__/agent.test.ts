@@ -36,6 +36,9 @@ import { StructuredOutputError } from '../../errors.js'
 import { expectLoopMetrics } from '../../__fixtures__/metrics-helpers.js'
 import { expectAgentResult } from '../../__fixtures__/agent-helpers.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
+import type { StreamOptions } from '../../index.js'
+import type { ModelStreamEvent } from '../../models/streaming.js'
+import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 
 describe('Agent', () => {
   describe('stream', () => {
@@ -418,6 +421,72 @@ describe('Agent', () => {
         await agent.invoke('Test')
 
         expect(agent.metrics.cycleCount).toBe(1)
+      })
+
+      it('includes the completed cycle duration in the returned result metrics', async () => {
+        vi.useFakeTimers()
+        vi.setSystemTime(0)
+
+        try {
+          const model = new MockMessageModel().addTurn(
+            { type: 'toolUseBlock', name: 'slowTool', toolUseId: 'tool-1', input: {} },
+            { usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } }
+          )
+
+          const tool = createMockTool(
+            'slowTool',
+            (context) =>
+              new ToolResultBlock({
+                toolUseId: context.toolUse.toolUseId,
+                status: 'success' as const,
+                content: [new TextBlock('Done')],
+              })
+          )
+
+          const agent = new Agent({ model, tools: [tool] })
+          agent.addHook(BeforeToolsEvent, () => {
+            vi.setSystemTime(60)
+          })
+          agent.addHook(AfterToolsEvent, (event: AfterToolsEvent) => {
+            event.endTurn = true
+          })
+
+          const result = await agent.invoke('Test')
+
+          expect(result.stopReason).toBe('endTurn')
+          expect(result.metrics).toMatchObject({
+            cycleCount: 1,
+            totalDuration: 60,
+            averageCycleTime: 60,
+            latestAgentInvocation: { cycles: [{ duration: 60 }] },
+          })
+        } finally {
+          vi.useRealTimers()
+        }
+      })
+
+      it('includes the cycle duration when the model ends the turn without tools', async () => {
+        vi.useFakeTimers()
+        vi.setSystemTime(0)
+
+        try {
+          const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+          const agent = new Agent({ model })
+          agent.addHook(BeforeModelCallEvent, () => {
+            vi.setSystemTime(60)
+          })
+
+          const result = await agent.invoke('Test')
+
+          expect(result.metrics).toMatchObject({
+            cycleCount: 1,
+            totalDuration: 60,
+            averageCycleTime: 60,
+            latestAgentInvocation: { cycles: [{ duration: 60 }] },
+          })
+        } finally {
+          vi.useRealTimers()
+        }
       })
     })
 
@@ -2338,6 +2407,58 @@ describe('normalizeToolUseNames', () => {
       const agent = new Agent({ model: new MockMessageModel(), sessionManager })
 
       expect(agent.sessionId).toBe('my-session')
+    })
+  })
+
+  describe('agentMetadata', () => {
+    class RecordingModel extends MockMessageModel {
+      readonly receivedOptions: StreamOptions[] = []
+
+      override async *stream(messages: Message[], options?: StreamOptions): AsyncGenerator<ModelStreamEvent> {
+        this.receivedOptions.push(options ?? {})
+        yield* super.stream(messages, options)
+      }
+    }
+
+    it('forwards the session id to the model when a session manager is attached', async () => {
+      const model = new RecordingModel().addTurn({ type: 'textBlock', text: 'ok' })
+      const sessionManager = new SessionManager({ sessionId: 'my-session', storage: new InMemoryStorage() })
+      const agent = new Agent({ model, sessionManager, printer: false })
+
+      await agent.invoke('hi')
+
+      expect(model.receivedOptions[0]?.agentMetadata).toEqual({ sessionId: 'my-session' })
+    })
+
+    it('sends no agent metadata when no session manager is attached', async () => {
+      const model = new RecordingModel().addTurn({ type: 'textBlock', text: 'ok' })
+      const agent = new Agent({ model, printer: false })
+
+      await agent.invoke('hi')
+
+      expect(model.receivedOptions).toHaveLength(1)
+      expect(model.receivedOptions[0]?.agentMetadata).toBeUndefined()
+    })
+
+    it('routes each agent on its own session when one model is shared across sessions', async () => {
+      // Guards against the cross-session cache bleed a construction-time key fill would introduce.
+      const model = new RecordingModel().addTurn({ type: 'textBlock', text: 'ok' })
+      const agentS1 = new Agent({
+        model,
+        sessionManager: new SessionManager({ sessionId: 's1', storage: new InMemoryStorage() }),
+        printer: false,
+      })
+      const agentS2 = new Agent({
+        model,
+        sessionManager: new SessionManager({ sessionId: 's2', storage: new InMemoryStorage() }),
+        printer: false,
+      })
+
+      await agentS1.invoke('hi')
+      await agentS2.invoke('hi')
+
+      const sessionIds = model.receivedOptions.map((options) => options.agentMetadata?.sessionId)
+      expect(sessionIds).toEqual(['s1', 's2'])
     })
   })
 })

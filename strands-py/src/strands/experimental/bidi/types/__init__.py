@@ -16,12 +16,12 @@ from .events import (
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
     BidiTextInputEvent,
+    BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
     ModalityUsage,
 )
 from .io import BidiInput, BidiOutput
-from .model import BidiConnectionConfig
 
 __all__ = [
     "BidiInput",
@@ -41,11 +41,10 @@ __all__ = [
     "BidiResponseCompleteEvent",
     "BidiAudioStreamEvent",
     "BidiTranscriptStreamEvent",
+    "BidiTranscriptCompleteEvent",
     "BidiInterruptionEvent",
     "BidiUsageEvent",
     "ModalityUsage",
     "BidiErrorEvent",
     "BidiOutputEvent",
-    # Reconnect configuration
-    "BidiConnectionConfig",
 ]

@@ -15,7 +15,7 @@ Key features:
 Audio format normalization:
 
 - Supports PCM, WAV, Opus, and MP3 formats
-- Standardizes sample rates (16kHz, 24kHz, 48kHz)
+- Describes sample rates in Hz
 - Normalizes channel configurations (mono/stereo)
 - Abstracts provider-specific encodings
 - Audio data stored as base64-encoded strings for JSON compatibility
@@ -24,8 +24,7 @@ Audio format normalization:
 import logging
 from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
-from ....types._events import ModelStreamEvent, ToolUseStreamEvent, TypedEvent
-from ....types.streaming import ContentBlockDelta
+from ....types._events import ToolUseStreamEvent, TypedEvent
 
 if TYPE_CHECKING:
     from ..models.model import BidiModelTimeoutError
@@ -40,8 +39,6 @@ AudioChannel = Literal[1, 2]
 """
 AudioFormat = Literal["pcm", "wav", "opus", "mp3"]
 """Audio encoding format."""
-AudioSampleRate = Literal[8000, 16000, 24000, 48000]
-"""Audio sample rate in Hz."""
 
 Role = Literal["user", "assistant"]
 """Role of a message sender.
@@ -133,7 +130,7 @@ class BidiAudioInputEvent(TypedEvent):
     Parameters:
         audio: Base64-encoded audio string to send to model.
         format: Audio format from SUPPORTED_AUDIO_FORMATS.
-        sample_rate: Sample rate from SUPPORTED_SAMPLE_RATES.
+        sample_rate: Number of audio samples per second in Hz.
         channels: Channel count from SUPPORTED_CHANNELS.
     """
 
@@ -141,7 +138,7 @@ class BidiAudioInputEvent(TypedEvent):
         self,
         audio: str,
         format: AudioFormat | str,
-        sample_rate: AudioSampleRate,
+        sample_rate: int,
         channels: AudioChannel,
     ):
         """Initialize audio input event."""
@@ -166,9 +163,9 @@ class BidiAudioInputEvent(TypedEvent):
         return cast(AudioFormat, self["format"])
 
     @property
-    def sample_rate(self) -> AudioSampleRate:
+    def sample_rate(self) -> int:
         """Number of audio samples per second in Hz."""
-        return cast(AudioSampleRate, self["sample_rate"])
+        return cast(int, self["sample_rate"])
 
     @property
     def channels(self) -> AudioChannel:
@@ -347,7 +344,7 @@ class BidiAudioStreamEvent(TypedEvent):
         self,
         audio: str,
         format: AudioFormat,
-        sample_rate: AudioSampleRate,
+        sample_rate: int,
         channels: AudioChannel,
     ):
         """Initialize audio stream event."""
@@ -372,9 +369,9 @@ class BidiAudioStreamEvent(TypedEvent):
         return cast(AudioFormat, self["format"])
 
     @property
-    def sample_rate(self) -> AudioSampleRate:
+    def sample_rate(self) -> int:
         """Number of audio samples per second in Hz."""
-        return cast(AudioSampleRate, self["sample_rate"])
+        return cast(int, self["sample_rate"])
 
     @property
     def channels(self) -> AudioChannel:
@@ -382,64 +379,62 @@ class BidiAudioStreamEvent(TypedEvent):
         return cast(AudioChannel, self["channels"])
 
 
-class BidiTranscriptStreamEvent(ModelStreamEvent):
-    """Audio transcription streaming (user or assistant speech).
-
-    Supports incremental transcript updates for providers that send partial
-    transcripts before the final version.
+class BidiTranscriptStreamEvent(TypedEvent):
+    """Incremental transcription of user or assistant speech.
 
     Parameters:
-        delta: The incremental transcript change (ContentBlockDelta).
-        text: The delta text (same as delta content for convenience).
+        delta: The incremental transcript text.
         role: Who is speaking ("user" or "assistant").
-        is_final: Whether this is the final/complete transcript.
-        current_transcript: The accumulated transcript text so far (None for first delta).
     """
 
-    def __init__(
-        self,
-        delta: ContentBlockDelta,
-        text: str,
-        role: Role,
-        is_final: bool,
-        current_transcript: str | None = None,
-    ):
+    def __init__(self, delta: str, role: Role):
         """Initialize transcript stream event."""
         super().__init__(
             {
                 "type": "bidi_transcript_stream",
                 "delta": delta,
-                "text": text,
                 "role": _normalize_role(role, default="user"),
-                "is_final": is_final,
-                "current_transcript": current_transcript,
             }
         )
 
     @property
-    def delta(self) -> ContentBlockDelta:
-        """The incremental transcript change."""
-        return cast(ContentBlockDelta, self["delta"])
-
-    @property
-    def text(self) -> str:
-        """The text content to send to the model."""
-        return cast(str, self["text"])
+    def delta(self) -> str:
+        """The incremental transcript text."""
+        return cast(str, self["delta"])
 
     @property
     def role(self) -> Role:
         """The role of the message sender."""
         return cast(Role, self["role"])
 
-    @property
-    def is_final(self) -> bool:
-        """Whether this is the final/complete transcript."""
-        return cast(bool, self["is_final"])
+
+class BidiTranscriptCompleteEvent(TypedEvent):
+    """Complete transcript for one user or assistant turn.
+
+    Parameters:
+        transcript: The complete transcript text.
+        role: Who spoke ("user" or "assistant").
+    """
+
+    def __init__(self, transcript: str, role: Role):
+        """Initialize transcript complete event."""
+        super().__init__(
+            {
+                "type": "bidi_transcript_complete",
+                "transcript": transcript,
+                "role": _normalize_role(role, default="user"),
+            }
+        )
 
     @property
-    def current_transcript(self) -> str | None:
-        """The accumulated transcript text so far."""
-        return cast(str | None, self.get("current_transcript"))
+    def transcript(self) -> str:
+        """The complete transcript text."""
+        return cast(str, self["transcript"])
+
+    @property
+    def role(self) -> Role:
+        """The role of the speaker."""
+        return cast(Role, self["role"])
 
 
 class BidiInterruptionEvent(TypedEvent):
@@ -685,6 +680,7 @@ BidiOutputEvent = (
     | BidiResponseStartEvent
     | BidiAudioStreamEvent
     | BidiTranscriptStreamEvent
+    | BidiTranscriptCompleteEvent
     | BidiInterruptionEvent
     | BidiResponseCompleteEvent
     | BidiUsageEvent

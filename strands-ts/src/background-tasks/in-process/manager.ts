@@ -1,6 +1,8 @@
 import type { Agent } from '../../agent/agent.js'
 import type { ToolUseData } from '../../hooks/events.js'
 import { InterruptError, InterruptState } from '../../interrupt.js'
+import { createMiddlewareInterrupt } from '../../middleware/interrupt.js'
+import type { ExecuteToolContext } from '../../middleware/index.js'
 import type { InvocationState } from '../../types/agent.js'
 import { InterruptResponseContent, type InterruptParams, type InterruptResponse } from '../../types/interrupt.js'
 import type { JSONValue } from '../../types/json.js'
@@ -29,6 +31,7 @@ export interface InProcessTaskManagerConfig {
   readonly maxConcurrency?: number
   /** Per-execution timeout in milliseconds. Defaults to `Infinity`. */
   readonly timeout?: number
+  readonly onTaskUpdated?: (task: BackgroundTask) => void
 }
 
 /** Executes approved tool calls as in-process background tasks. @internal */
@@ -40,16 +43,13 @@ export class InProcessTaskManager implements BackgroundTaskManager {
   private readonly _taskIdBySubmission = new Map<string, string>()
   private readonly _taskWaiters = new Map<string, Set<(task: BackgroundTask) => void>>()
 
-  /**
-   * Creates an in-process background task manager.
-   *
-   * @param agent - Agent whose registered tools execute background work.
-   * @param executeTool - Executes an approved tool through the Agent's tool pipeline.
-   * @param config - Execution limits.
-   */
   constructor(
     agent: Agent,
-    executeTool: (tool: Tool, context: ToolContext) => Promise<ToolResultBlock>,
+    executeTool: (
+      tool: Tool,
+      context: ToolContext,
+      middlewareInterrupt: ExecuteToolContext['interrupt']
+    ) => Promise<ToolResultBlock>,
     config: InProcessTaskManagerConfig = {}
   ) {
     this._agent = agent
@@ -59,17 +59,18 @@ export class InProcessTaskManager implements BackgroundTaskManager {
       timeout: config.timeout ?? Infinity,
       execute: (context): Promise<InProcessTaskExecutionOutcome> => this._executeToolTask(context),
       onTaskUpdated: (record): void => {
+        const task = toBackgroundTask(record)
         if (isTaskStatusTerminal(record.status)) {
           this._executions.delete(record.invocationStateId)
         }
         if (record.status === 'input_required' || isTaskStatusTerminal(record.status)) {
-          this._notifyTaskWaiters(record)
+          this._notifyTaskWaiters(task)
         }
+        config.onTaskUpdated?.(task)
       },
     })
   }
 
-  /** {@inheritDoc BackgroundTaskManager.submit} */
   async submit(
     toolUse: Readonly<ToolUseData>,
     invocationState: InvocationState,
@@ -95,23 +96,23 @@ export class InProcessTaskManager implements BackgroundTaskManager {
     return toBackgroundTask(record)
   }
 
-  /** {@inheritDoc BackgroundTaskManager.get} */
   async get(taskId: string): Promise<BackgroundTask | undefined> {
     const record = this._engine.get(taskId)
     return record ? toBackgroundTask(record) : undefined
   }
 
-  /** {@inheritDoc BackgroundTaskManager.list} */
   async list(): Promise<readonly BackgroundTask[]> {
     return this._engine.list().map(toBackgroundTask)
   }
 
-  /** {@inheritDoc BackgroundTaskManager.cancel} */
+  hasTasks(): boolean {
+    return this._taskIdBySubmission.size > 0
+  }
+
   async cancel(taskId: string): Promise<BackgroundTask> {
     return toBackgroundTask(this._engine.cancel(taskId, { reason: 'Cancellation requested' }))
   }
 
-  /** {@inheritDoc BackgroundTaskManager.wait} */
   async wait(taskId: string): Promise<BackgroundTask> {
     const current = this._engine.get(taskId)
     if (!current) throw new BackgroundTaskNotFoundError(taskId)
@@ -131,7 +132,6 @@ export class InProcessTaskManager implements BackgroundTaskManager {
     })
   }
 
-  /** {@inheritDoc BackgroundTaskManager.waitForIdle} */
   async waitForIdle(options?: { readonly timeout?: number }): Promise<void> {
     const timeout = options?.timeout
     if (timeout !== undefined) assertTimerDelay('wait timeout', timeout)
@@ -146,7 +146,6 @@ export class InProcessTaskManager implements BackgroundTaskManager {
     }
   }
 
-  /** {@inheritDoc BackgroundTaskManager.resume} */
   async resume(taskId: string, responses: readonly InterruptResponse[]): Promise<BackgroundTask> {
     return toBackgroundTask(
       this._engine.resume(taskId, (state) => {
@@ -168,7 +167,6 @@ export class InProcessTaskManager implements BackgroundTaskManager {
     )
   }
 
-  /** {@inheritDoc BackgroundTaskManager.remove} */
   async remove(taskIds: readonly string[]): Promise<void> {
     const uniqueTaskIds = new Set(taskIds)
     for (const taskId of uniqueTaskIds) {
@@ -192,22 +190,27 @@ export class InProcessTaskManager implements BackgroundTaskManager {
     const interruptState = context.state ? InterruptState.fromJSON(context.state) : new InterruptState()
     try {
       return toolTaskOutcome(
-        await this._executeTool(execution.tool, {
-          agent: this._agent,
-          invocationState: execution.invocationState,
-          cancelSignal: context.cancelSignal,
-          toolUse: execution.toolUse,
-          interrupt: <T = JSONValue>(params: InterruptParams): T =>
-            interruptTool<T>(interruptState, context.taskId, params),
-        })
+        await this._executeTool(
+          execution.tool,
+          {
+            agent: this._agent,
+            invocationState: execution.invocationState,
+            cancelSignal: context.cancelSignal,
+            toolUse: execution.toolUse,
+            interrupt: <T = JSONValue>(params: InterruptParams): T =>
+              interruptTool<T>(interruptState, context.taskId, params),
+          },
+          createMiddlewareInterrupt(interruptState, `middleware:${context.taskId}`)
+        )
       )
     } catch (error) {
       if (error instanceof InterruptError) {
-        const taskInterruptPrefix = `tool:${context.taskId}:`
         const taskOwnsInterrupts =
           error.interrupts.length > 0 &&
           error.interrupts.every(
-            (interrupt) => interrupt.source === 'tool' && interrupt.id.startsWith(taskInterruptPrefix)
+            (interrupt) =>
+              (interrupt.source === 'middleware' || interrupt.source === 'tool') &&
+              interrupt.id.startsWith(`${interrupt.source}:${context.taskId}:`)
           )
         if (!taskOwnsInterrupts) throw error
 
@@ -219,10 +222,9 @@ export class InProcessTaskManager implements BackgroundTaskManager {
     }
   }
 
-  private _notifyTaskWaiters(record: InProcessTaskRecord): void {
-    const waiters = this._taskWaiters.get(record.taskId)
+  private _notifyTaskWaiters(task: BackgroundTask): void {
+    const waiters = this._taskWaiters.get(task.taskId)
     if (!waiters) return
-    const task = toBackgroundTask(record)
     for (const waiter of waiters) waiter(task)
   }
 }
