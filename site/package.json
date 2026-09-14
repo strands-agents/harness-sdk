@@ -53,7 +53,7 @@
     "turndown-plugin-gfm": "^1.0.2",
     "typedoc": "^0.28.20",
     "typescript": "^5.9.3",
-    "vite": "^8.2.2"
+    "vite": "^8.3.0"
   },
   "devDependencies": {
     "@astrojs/markdown-remark": "^7.2.4",
