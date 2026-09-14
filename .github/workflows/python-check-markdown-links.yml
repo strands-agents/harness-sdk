@@ -7,7 +7,7 @@ on:
 
 jobs:
   check-links:
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     permissions:
       contents: read
       issues: write

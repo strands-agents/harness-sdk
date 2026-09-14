@@ -48,6 +48,14 @@ class TestNormalizeKey:
         assert _normalize_key("foo/bar.txt") == "foo/bar.txt"
         assert _normalize_key("foo/...bar") == "foo/...bar"
 
+    def test_rejects_backslash(self):
+        with pytest.raises(StorageError, match="backslashes are not allowed"):
+            _normalize_key("foo\\bar")
+
+    def test_rejects_backslash_traversal(self):
+        with pytest.raises(StorageError, match="backslashes are not allowed"):
+            _normalize_key("foo\\..\\..\\secret")
+
 
 class TestNormalizePrefix:
     def test_simple_prefix(self):
@@ -68,6 +76,10 @@ class TestNormalizePrefix:
     def test_rejects_dot_dot(self):
         with pytest.raises(StorageError, match="path segments are not allowed"):
             _normalize_prefix("foo/../bar")
+
+    def test_rejects_backslash(self):
+        with pytest.raises(StorageError, match="backslashes are not allowed"):
+            _normalize_prefix("foo\\bar/")
 
 
 class TestNamespacedStorage:
@@ -125,7 +137,6 @@ class TestNamespacedStorage:
         await ns.write("key1", b"hello")
         keys = await ns.list("")
         assert keys == ["key1"]
-
 
     @pytest.mark.asyncio
     async def test_search_scopes_to_prefix(self, storage):

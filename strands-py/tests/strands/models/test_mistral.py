@@ -5,6 +5,7 @@ import pydantic
 import pytest
 
 import strands
+from strands.agent import AgentMetadata
 from strands.models import CacheConfig
 from strands.models.mistral import MistralModel
 from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
@@ -154,6 +155,42 @@ def test_prompt_cache_key_absent_when_unset(model_id, max_tokens, messages):
     model = MistralModel(model_id=model_id, max_tokens=max_tokens, cache_config=CacheConfig())
 
     request = model.format_request(messages)
+
+    assert "prompt_cache_key" not in request
+
+
+def test_cache_key_derived_from_agent_session(model_id, max_tokens, messages):
+    """With no configured cache_key, the routing key falls back to strands-<session_id>."""
+    model = MistralModel(model_id=model_id, max_tokens=max_tokens, cache_config=CacheConfig())
+
+    request = model.format_request(messages, agent_metadata=AgentMetadata(session_id="s1"))
+
+    assert request["prompt_cache_key"] == "strands-s1"
+
+
+def test_configured_cache_key_wins_over_agent_session(model_id, max_tokens, messages):
+    """A configured cache_key takes precedence over the derived session key."""
+    model = MistralModel(model_id=model_id, max_tokens=max_tokens, cache_config=CacheConfig(cache_key="tenant-42"))
+
+    request = model.format_request(messages, agent_metadata=AgentMetadata(session_id="s1"))
+
+    assert request["prompt_cache_key"] == "tenant-42"
+
+
+def test_false_cache_key_opts_out_of_agent_session(model_id, max_tokens, messages):
+    """cache_key=False is an explicit opt-out: no key is emitted even with a session to derive from."""
+    model = MistralModel(model_id=model_id, max_tokens=max_tokens, cache_config=CacheConfig(cache_key=False))
+
+    request = model.format_request(messages, agent_metadata=AgentMetadata(session_id="s1"))
+
+    assert "prompt_cache_key" not in request
+
+
+def test_agent_session_without_id_yields_no_cache_key(model_id, max_tokens, messages):
+    """An agent without a session id (no session manager) derives no routing key."""
+    model = MistralModel(model_id=model_id, max_tokens=max_tokens, cache_config=CacheConfig())
+
+    request = model.format_request(messages, agent_metadata=AgentMetadata(session_id=None))
 
     assert "prompt_cache_key" not in request
 
@@ -622,6 +659,29 @@ async def test_stream(mistral_client, model, agenerator, alist, captured_warning
     mistral_client.chat.stream_async.assert_called_once_with(**expected_request)
 
     assert len(captured_warnings) == 0
+
+
+@pytest.mark.asyncio
+async def test_stream_derives_prompt_cache_key_from_agent_session(
+    mistral_client, model_id, max_tokens, agenerator, alist
+):
+    """stream threads agent_metadata so the outbound request carries the derived routing key."""
+    model = MistralModel(model_id=model_id, max_tokens=max_tokens, cache_config=CacheConfig())
+    mock_event = unittest.mock.Mock(
+        data=unittest.mock.Mock(
+            choices=[
+                unittest.mock.Mock(delta=unittest.mock.Mock(content="ok", tool_calls=None), finish_reason="end_turn")
+            ],
+            usage=unittest.mock.Mock(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+        ),
+    )
+    mistral_client.chat.stream_async = unittest.mock.AsyncMock(return_value=agenerator([mock_event]))
+
+    messages = [{"role": "user", "content": [{"text": "test"}]}]
+    await alist(model.stream(messages, agent_metadata=AgentMetadata(session_id="s1")))
+
+    _, call_kwargs = mistral_client.chat.stream_async.call_args
+    assert call_kwargs["prompt_cache_key"] == "strands-s1"
 
 
 @pytest.mark.asyncio

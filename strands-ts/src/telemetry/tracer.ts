@@ -57,6 +57,7 @@ import type { ContentBlock, Message, SystemPrompt } from '../types/messages.js'
 import type { JSONSerializable } from '../types/json.js'
 import { jsonReplacer } from './json.js'
 import { getServiceName } from './utils.js'
+import { totalPromptTokens } from '../models/streaming.js'
 
 /**
  * JSON-serializable representation of LocalTrace.
@@ -1132,8 +1133,9 @@ export class Tracer {
    * attribute names for compatibility with different OTEL backends.
    */
   private _setUsageAttributes(attributes: Record<string, AttributeValue>, usage: Usage): void {
-    attributes['gen_ai.usage.prompt_tokens'] = usage.inputTokens
-    attributes['gen_ai.usage.input_tokens'] = usage.inputTokens
+    const promptTokens = totalPromptTokens(usage)
+    attributes['gen_ai.usage.prompt_tokens'] = promptTokens
+    attributes['gen_ai.usage.input_tokens'] = promptTokens
     attributes['gen_ai.usage.completion_tokens'] = usage.outputTokens
     attributes['gen_ai.usage.output_tokens'] = usage.outputTokens
     attributes['gen_ai.usage.total_tokens'] = usage.totalTokens

@@ -39,9 +39,9 @@ When using `BidiAudioIO`, interruptions are handled automatically:
 ```python
 import asyncio
 from strands.experimental.bidi import BidiAgent, BidiAudioIO
-from strands.experimental.bidi.models import BidiNovaSonicModel
+from strands.experimental.bidi.models import BedrockNovaSonicModel
 
-model = BidiNovaSonicModel()
+model = BedrockNovaSonicModel()
 agent = BidiAgent(model=model)
 audio_io = BidiAudioIO()
 
@@ -64,13 +64,13 @@ For custom behavior, process interruption events manually:
 ```python
 import asyncio
 from strands.experimental.bidi import BidiAgent
-from strands.experimental.bidi.models import BidiNovaSonicModel
+from strands.experimental.bidi.models import BedrockNovaSonicModel
 from strands.experimental.bidi.types.events import (
     BidiInterruptionEvent,
     BidiResponseCompleteEvent
 )
 
-model = BidiNovaSonicModel()
+model = BedrockNovaSonicModel()
 agent = BidiAgent(model=model)
 
 async def main():
@@ -139,13 +139,19 @@ agent = BidiAgent(
 If interruptions aren't being detected:
 
 ```python
+from strands.experimental.bidi.models import OpenAIRealtimeModel
+
 # Check VAD configuration (OpenAI)
-model = BidiOpenAIRealtimeModel(
-    provider_config={
-        "turn_detection": {
-            "type": "server_vad",
-            "threshold": 0.3,  # Lower = more sensitive
-            "silence_duration_ms": 300  # Shorter = faster detection
+model = OpenAIRealtimeModel(
+    params={
+        "audio": {
+            "input": {
+                "turn_detection": {
+                    "type": "server_vad",
+                    "threshold": 0.3,  # Lower = more sensitive
+                    "silence_duration_ms": 300  # Shorter = faster detection
+                }
+            }
         }
     }
 )
@@ -174,13 +180,20 @@ async def __call__(self, event: BidiOutputEvent):
 If the model is interrupted too easily:
 
 ```python
+from strands.experimental.bidi.models import OpenAIRealtimeModel
+
 # Increase VAD threshold (OpenAI)
-model = BidiOpenAIRealtimeModel(
-    provider_config={
-        "turn_detection": {
-            "threshold": 0.7,  # Higher = less sensitive
-            "prefix_padding_ms": 500,  # More context
-            "silence_duration_ms": 700  # Longer silence required
+model = OpenAIRealtimeModel(
+    params={
+        "audio": {
+            "input": {
+                "turn_detection": {
+                    "type": "server_vad",
+                    "threshold": 0.7,  # Higher = less sensitive
+                    "prefix_padding_ms": 500,  # More context
+                    "silence_duration_ms": 700  # Longer silence required
+                }
+            }
         }
     }
 )

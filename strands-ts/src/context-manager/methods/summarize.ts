@@ -4,8 +4,6 @@
  * Compresses text via an LLM call. The method is target-agnostic — it operates
  * on any text (a tool result, a range of messages, raw storage content).
  * Strategies handle selection and placement.
- *
- * @internal
  */
 
 import type { Model } from '../../models/model.js'
@@ -14,6 +12,16 @@ import type { ContentBlock, ToolResultContent } from '../../types/messages.js'
 import { logger } from '../../logging/logger.js'
 
 export const SUMMARIZED_PREFIX = '[Summarized:'
+
+/**
+ * Format a `[Summarized: ...]` marker with an optional summary body.
+ *
+ * @internal
+ */
+export function formatSummarized(description: string, tokens: number, summary?: string): string {
+  const header = `${SUMMARIZED_PREFIX} ${description}, ~${tokens.toLocaleString('en-US')} tokens]`
+  return summary ? `${header}\n\n${summary}` : header
+}
 
 // Subject to change as we benchmark summarization quality.
 const DEFAULT_SYSTEM_PROMPT = [
@@ -30,6 +38,8 @@ const DEFAULT_SYSTEM_PROMPT = [
 
 /**
  * Configuration for the summarize method.
+ *
+ * @experimental
  */
 export interface SummarizeConfig {
   /** Model to use for summarization. When omitted, uses the agent's model. */

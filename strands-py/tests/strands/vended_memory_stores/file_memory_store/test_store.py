@@ -87,9 +87,7 @@ class TestAdd:
 
     @pytest.mark.asyncio
     async def test_truncates_slug_at_50_chars(self, store, storage):
-        long_content = (
-            "this is a very long sentence that should be truncated when used as a filename slug for storage"
-        )
+        long_content = "this is a very long sentence that should be truncated when used as a filename slug for storage"
         await store.add(long_content)
         scoped = storage.namespace("memory/test-store")
         keys = await scoped.list("")
@@ -276,7 +274,6 @@ class TestExtraction:
         store = FileMemoryStore(name="ext-test", storage=storage)
         assert store.extraction is None
 
-
     @pytest.mark.asyncio
     async def test_key_aware_extractor_includes_headings_in_prompt(self, storage):
         store = FileMemoryStore(name="ext-test", storage=storage, extraction=True)
@@ -285,9 +282,7 @@ class TestExtraction:
 
         extractor = store.extraction["extractor"]
 
-        with patch(
-            "strands.vended_memory_stores.file_memory_store.store.ModelExtractor"
-        ) as mock_model_extractor_cls:
+        with patch("strands.vended_memory_stores.file_memory_store.store.ModelExtractor") as mock_model_extractor_cls:
             mock_instance = AsyncMock()
             mock_instance.extract = AsyncMock(return_value=[])
             mock_model_extractor_cls.return_value = mock_instance

@@ -25,7 +25,7 @@ labels:
   area-async:
     description: "Asynchronous flows, multi-threading, asyncio, concurrent execution, event loops, non-blocking operations"
   area-bidirectional-streaming:
-    description: "Bidirectional streaming, BidiAgent, real-time audio/video, WebRTC, WebSocket, Nova Sonic, voice agents"
+    description: "Bidirectional streaming, BidiAgent, real-time audio/video, WebRTC, WebSocket, Bedrock Nova Sonic, Google Gemini Live, OpenAI Realtime, voice agents"
   area-community:
     description: "Repo health, governance, contributor guides, release process, and CI dependency bumps. Not a fallback for issues that fit no other area."
   area-config:

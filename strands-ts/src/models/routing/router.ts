@@ -18,14 +18,14 @@
  *
  * The API is provisional and may change before it is finalized.
  */
-import { CancelledError, normalizeError } from '../../errors.js'
+import { CancelledError, JsonValidationError, normalizeError } from '../../errors.js'
 import { AfterInvocationEvent, AfterModelCallEvent, BeforeInvocationEvent } from '../../hooks/events.js'
 import { HookOrder } from '../../hooks/types.js'
 import { logger } from '../../logging/logger.js'
 import { InvokeModelStage } from '../../middleware/stages.js'
 import { Model } from '../model.js'
 import { cloneSystemPrompt, type Message, type SystemPrompt } from '../../types/messages.js'
-import { deepCopy } from '../../types/json.js'
+import { deepCopy, deepCopyWithValidation, type JSONValue } from '../../types/json.js'
 import type { InvokeModelContext } from '../../middleware/stages.js'
 import type { Plugin } from '../../plugins/plugin.js'
 import type { ToolSpec } from '../../tools/types.js'
@@ -41,10 +41,16 @@ export interface RoutingCandidateOptions {
   readonly name?: string
   /** Optional strategy-facing description. */
   readonly description?: string
+  /** Optional strategy-facing evidence; must be JSON-serializable and free of secrets. */
+  readonly metadata?: Readonly<Record<string, JSONValue>>
 }
 
 /**
- * A model or opaque model group with an optional name and description.
+ * A model or opaque model group with optional strategy-facing evidence.
+ *
+ * Classifier-based strategies may send `name`, `description`, and `metadata` across provider
+ * boundaries, so they must not contain secrets. Metadata is stored without copying, so it must not
+ * be mutated after construction.
  *
  * Base instances are frozen automatically. Subclasses must freeze themselves after initializing additional fields.
  */
@@ -55,16 +61,22 @@ export class RoutingCandidate {
   readonly name?: string
   /** Optional strategy-facing description. */
   readonly description?: string
+  /** Optional strategy-facing evidence; must be JSON-serializable and free of secrets. */
+  readonly metadata?: Readonly<Record<string, JSONValue>>
 
   /**
    * Create an immutable routing candidate.
    *
-   * @param options - Candidate model, name, and description
+   * @param options - Candidate model, name, description, and metadata
+   * @throws TypeError if metadata is not a plain object
+   * @throws JsonValidationError if metadata contains values that cannot be serialized to JSON
+   * @throws Error if metadata serialization fails for another reason
    */
   constructor(options: RoutingCandidateOptions) {
     this.model = options.model
     if (options.name !== undefined) this.name = options.name
     if (options.description !== undefined) this.description = options.description
+    if (options.metadata !== undefined) this.metadata = validatedMetadata(options.metadata)
     if (new.target === RoutingCandidate) Object.freeze(this)
   }
 }
@@ -241,12 +253,19 @@ export class ModelRouter implements Plugin {
   private async _open(context: RoutingContext): Promise<readonly [RoutingCandidate, Model]> {
     const candidate = await this._ask(context)
     if (candidate === undefined) {
-      logger.info(`strategy=<${this._strategyName}> | strategy declined the opening choice, using the default model`)
-      return [this._candidates[0]!, this.defaultModel]
+      const fallback = this._candidates[0]!
+      const model = this.defaultModel
+      logger.info(
+        `strategy=<${this._strategyName}>, candidate=<${candidateLabel(fallback)}>, model=<${modelLabel(model)}> | strategy declined the opening choice, using the default model`
+      )
+      return [fallback, model]
     }
 
-    logger.info(`strategy=<${this._strategyName}>, candidate=<${candidateLabel(candidate)}> | candidate selected`)
-    return [candidate, await this._resolve(candidate, context)]
+    const model = await this._resolve(candidate, context)
+    logger.info(
+      `strategy=<${this._strategyName}>, candidate=<${candidateLabel(candidate)}>, model=<${modelLabel(model)}> | candidate selected`
+    )
+    return [candidate, model]
   }
 
   /** Ask the strategy for a candidate and validate the answer. */
@@ -466,6 +485,25 @@ function asCandidate(item: unknown): RoutingCandidate {
     throw new TypeError(`candidate must be a Model or ModelRouter; got ${typeName(candidate.model)}`)
   }
   return candidate
+}
+
+/** Return caller-owned metadata after validating that it is a JSON-serializable object. */
+function validatedMetadata(metadata: Readonly<Record<string, JSONValue>>): Readonly<Record<string, JSONValue>> {
+  if (!isObject(metadata) || Array.isArray(metadata)) throw new TypeError('metadata must be an object')
+  try {
+    deepCopyWithValidation(metadata, 'metadata')
+  } catch (error) {
+    if (error instanceof JsonValidationError) throw error
+    throw new Error(`metadata must be JSON-serializable: ${normalizeError(error).message}`, { cause: error })
+  }
+  // JSON.stringify silently serializes non-finite numbers as null rather than failing.
+  JSON.stringify(metadata, (_key, value: unknown) => {
+    if (typeof value === 'number' && !Number.isFinite(value)) {
+      throw new JsonValidationError('metadata contains a non-finite number which cannot be serialized')
+    }
+    return value
+  })
+  return metadata
 }
 
 /** Reject any stateful candidate model. */

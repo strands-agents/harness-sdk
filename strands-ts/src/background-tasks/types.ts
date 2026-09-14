@@ -1,5 +1,22 @@
 import type { Interrupt } from '../interrupt.js'
+import type { Tool } from '../tools/tool.js'
 import type { ToolResultContentData } from '../types/messages.js'
+
+/** Configures background tool execution. */
+export interface BackgroundTasksConfig {
+  /** Wait for background work before an invocation returns. Defaults to `true`. */
+  readonly waitForCompletion?: boolean
+  /** Tools or registered tool names whose execution mode is selected by the model. Defaults to `['*']`. */
+  readonly agentic?: readonly (Tool | string)[]
+  /** Tools or registered tool names that always execute in the background. */
+  readonly always?: readonly (Tool | string)[]
+  /** Tools or registered tool names that never execute in the background. */
+  readonly never?: readonly (Tool | string)[]
+  /** Maximum number of physically executing background tasks. Defaults to `4`. */
+  readonly maxConcurrency?: number
+  /** Per-execution timeout in milliseconds. Defaults to `Infinity`. */
+  readonly timeout?: number
+}
 
 /** Background task lifecycle status. @internal */
 export type BackgroundTaskStatus = 'queued' | 'working' | 'input_required' | 'completed' | 'failed' | 'cancelled'

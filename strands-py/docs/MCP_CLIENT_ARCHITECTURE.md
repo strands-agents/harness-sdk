@@ -29,7 +29,7 @@ sequenceDiagram
         BG-->>Main: tool response via Future.set_result()
         Main-->>Dev: return tool result
     else Fatal error in tool response
-        BG->>BG: _handle_error_message() - raise exception
+        BG->>BG: _handle_session_message() - raise exception
         BG->>BG: Background thread exits
         Note over BG: Connection collapses
         BG-->>Main: exception via Future.set_exception()
@@ -38,7 +38,7 @@ sequenceDiagram
     
     Note over MCP,BG: Separate flow - server can send unexpected messages anytime
     MCP-->>BG: orphaned response (unknown request id)
-    BG->>BG: _handle_error_message() - log & continue
+    BG->>BG: _handle_session_message() - log & continue
     Note over BG: Connection stays alive (non-fatal error)
     
     Dev->>Main: exit context manager
@@ -74,12 +74,12 @@ Once the background thread's event loop is running, we can create `asyncio.Futur
 
 *Problem*: MCP SDK silently swallows server exceptions (HTTP timeouts, connection errors) without a message handler. Tool calls timeout on server side but client waits indefinitely for responses that never arrive.
 
-*Defense*: `message_handler=self._handle_error_message` in ClientSession
+*Defense*: `message_handler=self._handle_session_message` in ClientSession
 ```python
 async with ClientSession(
     read_stream,
     write_stream,
-    message_handler=self._handle_error_message,  # Prevents hanging
+    message_handler=self._handle_session_message,  # Prevents hanging
     elicitation_callback=self._elicitation_callback,
 ) as session:
 ```
@@ -91,7 +91,7 @@ async with ClientSession(
 3. **Server times out** and sends an exception message back to the MCP client
 4. **Without message handler**: MCP SDK silently ignores the exception, never calls `Future.set_result()` or `Future.set_exception()`
 5. **Main thread hangs forever** waiting for `invoke_future.result()` that will never complete
-6. **With `_handle_error_message`**: Exception is raised in background thread, propagates to `Future.set_exception()`, unblocks main thread
+6. **With `_handle_session_message`**: Exception is raised in background thread, propagates to `Future.set_exception()`, unblocks main thread
 
 The threading architecture makes this particularly problematic because the main thread has no way to detect that the background thread received an error - it can only wait for the Future to complete. Without the message handler, that Future never gets resolved.
 
@@ -116,7 +116,7 @@ async def run_async() -> T:
 
 ### Defense Against Premature Connection Collapse
 
-Before [PR #922](https://github.com/strands-agents/harness-sdk/pull/922), the MCP client would never collapse connections because exceptions were silently ignored. After adding `_handle_error_message`, we introduced the risk of collapsing connections on client-side errors that should be recoverable. The challenge is ensuring we:
+Before [PR #922](https://github.com/strands-agents/harness-sdk/pull/922), the MCP client would never collapse connections because exceptions were silently ignored. After adding `_handle_session_message`, we introduced the risk of collapsing connections on client-side errors that should be recoverable. The challenge is ensuring we:
 
 1. **DO collapse** when we want to (fatal server errors)
 2. **DO NOT collapse** when we don't want to (client-side errors, orphaned responses)
@@ -133,7 +133,7 @@ Client receives a response from server with an ID it doesn't recognize (orphaned
 
 **Connection Decision Flow**:
 1. MCP server sends error message to client
-2. `ClientSession` calls `message_handler=self._handle_error_message`
+2. `ClientSession` calls `message_handler=self._handle_session_message`
 3. **Decision point**: Is error in `_NON_FATAL_ERROR_PATTERNS`?
    - **Yes**: Log and continue (connection stays alive)
    - **No**: Raise exception (connection collapses)
