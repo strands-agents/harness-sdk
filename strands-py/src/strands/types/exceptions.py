@@ -38,6 +38,18 @@ class MaxTokensReachedException(Exception):
         super().__init__(message)
 
 
+class IncompleteStreamError(Exception):
+    """Exception raised when a model response stream ends without a completion signal.
+
+    A well-formed model response always terminates with a ``messageStop`` chunk. When the stream
+    ends without one — a provider aborting or truncating mid-response — the partial message is
+    unsafe to treat as a completed turn: with extended thinking on Bedrock it can be a
+    ``reasoningContent`` block whose ``signature`` never arrived, which Bedrock then refuses to
+    replay on any later turn. Raising here keeps that partial message out of history and lets an
+    ``AfterModelCallEvent`` retry hook re-issue the call.
+    """
+
+
 class ContextWindowOverflowException(Exception):
     """Exception raised when the context window is exceeded.
 
