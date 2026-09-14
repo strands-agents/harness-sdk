@@ -494,16 +494,6 @@ Each conversation manager uses the same reduction logic for proactive compressio
 
 Because `BeforeModelCallEvent` triggers before every model call including calls within a tool-use cycle, this provides automatic in-loop compression. If an agent makes five tool calls in a single invocation and context grows past the threshold between calls three and four, compression triggers before call four.
 
-### Context window limit, token estimation, and utilization
-
-Proactive compression relies on the model's context window
-limit, token counting, and utilization estimation. These
-are shared across both conversation managers and the
-ContextManager. See
-[Context Estimation](../context-management/context-estimation)
-for details on how the SDK resolves the context window
-limit, estimates token counts, and computes utilization.
-
 ## Creating a ConversationManager
 
 <Tabs>
