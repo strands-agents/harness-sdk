@@ -35,17 +35,14 @@ still overflowing after all user strategies have run.
 
 ```python
 from strands import Agent
-from strands._context_manager.strategies.offload import (
-    Offload,
-)
+from strands.experimental.context_manager import Offload
 
 agent = Agent(
     context_manager={
         "strategies": [
-            Offload.truncate(
-                "tool_results",
-                {"preview_tokens": 750},
-            ).when(threshold=1500),
+            Offload.truncate("tool_results").when(
+                threshold=2000,
+            ),
             Offload.summarize("*").when(
                 utilization=0.8,
                 preserve_recent=4,
@@ -87,9 +84,7 @@ retrieval.
 <Tab label="Python">
 
 ```python
-from strands._context_manager.strategies.offload import (
-    Offload,
-)
+from strands.experimental.context_manager import Offload
 
 Offload.truncate(
     "tool_results",
@@ -126,9 +121,7 @@ agent's model by default.
 <Tab label="Python">
 
 ```python
-from strands._context_manager.strategies.offload import (
-    Offload,
-)
+from strands.experimental.context_manager import Offload
 
 Offload.summarize("*").when(
     utilization=0.85,
@@ -162,9 +155,7 @@ entry.
 <Tab label="Python">
 
 ```python
-from strands._context_manager.strategies.offload import (
-    Offload,
-)
+from strands.experimental.context_manager import Offload
 
 Offload.drop("tool_results").when(preserve_recent=5)
 ```
@@ -205,9 +196,7 @@ Fire eagerly on individual blocks over 2,000 tokens:
 <Tab label="Python">
 
 ```python
-from strands._context_manager.strategies.offload import (
-    Offload,
-)
+from strands.experimental.context_manager import Offload
 
 Offload.truncate("tool_results").when(threshold=2000)
 ```
@@ -230,9 +219,7 @@ Summarize oldest messages when the window reaches 85%:
 <Tab label="Python">
 
 ```python
-from strands._context_manager.strategies.offload import (
-    Offload,
-)
+from strands.experimental.context_manager import Offload
 
 Offload.summarize("*").when(
     utilization=0.85,
@@ -259,9 +246,7 @@ the window reaches 90%:
 <Tab label="Python">
 
 ```python
-from strands._context_manager.strategies.offload import (
-    Offload,
-)
+from strands.experimental.context_manager import Offload
 
 Offload.truncate("tool_results").when(
     threshold=1500,

@@ -67,9 +67,7 @@ pipeline, and each sees the output of the previous.
 
 ```python
 from strands import Agent
-from strands._context_manager.strategies.offload import (
-    Offload,
-)
+from strands.experimental.context_manager import Offload
 
 agent = Agent(
     context_manager={
