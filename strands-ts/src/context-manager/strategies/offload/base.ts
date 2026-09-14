@@ -17,6 +17,7 @@ import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
 import type { Stash } from '../../stash.js'
 import { RETRIEVAL_TOOL_NAME } from '../../retrieval-tool.js'
+import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
 
 /**
  * Target for offload operations. This union is intentionally extensible — new
@@ -54,7 +55,11 @@ export interface OffloadConditions {
   /** Context utilization ratio (0-1+) above which the strategy fires. */
   utilization?: number
 
-  /** Number of most recent matching messages to leave untouched. */
+  /**
+   * How many recent matching messages to leave untouched.
+   * - Integer (1 or above): absolute count of messages to preserve.
+   * - Decimal (between 0 and 1 exclusive): ratio of matching messages to preserve (e.g. 0.7 = keep 70%).
+   */
   preserveRecent?: number
 }
 
@@ -139,13 +144,15 @@ export function messageMatchesTarget(
 }
 
 /**
- * Returns target-matching messages excluding the N most recent matches.
- * First filters to only messages that match the target, then removes the last N from that set.
+ * Returns target-matching messages excluding the most recent matches.
+ * First filters to only messages that match the target, then removes the tail.
+ *
+ * @param preserveRecent - Integer (1 or above): absolute count. Decimal (between 0 and 1 exclusive): ratio of matches to keep.
  */
 export function getOldestMatches(
   messages: Message[],
   target: OffloadTarget | undefined,
-  count: number,
+  preserveRecent: number,
   toolNameMap: Map<string, string>,
   toolIncludeFilter: Set<string> | undefined,
   toolExcludeFilter: Set<string> | undefined
@@ -153,6 +160,8 @@ export function getOldestMatches(
   const matching = messages.filter((message) =>
     messageMatchesTarget(message, target, toolNameMap, toolIncludeFilter, toolExcludeFilter)
   )
+  const count =
+    preserveRecent > 0 && preserveRecent < 1 ? Math.ceil(matching.length * preserveRecent) : Math.floor(preserveRecent)
   if (count >= matching.length) return []
   return matching.slice(0, -count)
 }
@@ -227,10 +236,12 @@ export function repairAlternation(messages: Message[]): void {
     const current = messages[readIndex]!
     if (writeIndex > 0 && messages[writeIndex - 1]!.role === current.role) {
       const prev = messages[writeIndex - 1]!
+      const pinned = prev.metadata?.custom?.pinned === true || current.metadata?.custom?.pinned === true
       messages[writeIndex - 1] = new Message({
         role: prev.role,
         content: [...prev.content, ...current.content],
         trackingId: prev.trackingId,
+        ...(pinned ? { metadata: { custom: { pinned: true } } } : {}),
       })
     } else {
       messages[writeIndex] = current
@@ -285,7 +296,6 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
   protected readonly _threshold: number | undefined
   protected readonly _utilizationThreshold: number | undefined
   protected readonly _preserveRecent: number
-  protected readonly _removalRatio: number = 0.3
   protected readonly _includeFilter: Set<string> | undefined
   protected readonly _excludeFilter: Set<string> | undefined
   protected _stash: Stash | undefined
@@ -298,7 +308,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     this._target = target
     this._threshold = finiteOrUndefined(conditions?.threshold)
     this._utilizationThreshold = finiteOrUndefined(conditions?.utilization)
-    this._preserveRecent = Math.floor(finiteOrUndefined(conditions?.preserveRecent) ?? 0)
+    this._preserveRecent = finiteOrUndefined(conditions?.preserveRecent) ?? 0
 
     const resolved = resolveToolFilter(target)
     this._includeFilter = resolved.include
@@ -316,6 +326,8 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     if (this._preserveRecent > 0) return
     agent.addHook(MessageAddedEvent, async (event) => {
       const messages = event.agent.messages
+      const index = messages.indexOf(event.message)
+      if (index >= 0 && isPinned(messages, index)) return
       const toolNameMap = buildToolNameMap(messages)
       await this._transformBlocks(event.message, messages, toolNameMap, event.agent)
     })
@@ -324,7 +336,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
   async apply(context: ContextState): Promise<boolean> {
     if (context.stash) this._stash = context.stash
     if (this._isMessageLevel) {
-      if (context.utilization < this._utilizationThreshold!) return false
+      if (!context.overflow && context.utilization < this._utilizationThreshold!) return false
       return this._applyPerMessage(context)
     }
 
@@ -349,6 +361,8 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     let acted = false
 
     for (const message of eligible) {
+      const index = messages.indexOf(message)
+      if (isPinned(messages, index)) continue
       if (await this._transformBlocks(message, messages, toolNameMap, agent)) {
         acted = true
       }
@@ -357,7 +371,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     return acted
   }
 
-  /** Message-level execution: remove oldest 30% of eligible messages with pair safety. */
+  /** Message-level execution: remove eligible messages with pair safety. */
   protected async _applyPerMessage(context: ContextState): Promise<boolean> {
     const { messages } = context
     if (messages.length <= 1) return false
@@ -365,10 +379,7 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
     const eligible = await this._getEligibleMessages(context)
     if (eligible.length === 0) return false
 
-    const targetRemoval = Math.max(1, Math.floor(eligible.length * this._removalRatio))
-    const toRemove = eligible.slice(0, targetRemoval)
-
-    const { removed, lowestIndex } = spliceWithPairs(messages, toRemove)
+    const { removed, lowestIndex } = spliceWithPairs(messages, eligible)
     if (removed === 0) return false
 
     const marker = this._makeRemovalMarker(removed)
@@ -443,11 +454,15 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
         toolNameMap,
         this._includeFilter,
         this._excludeFilter
-      ).filter((message) => messages.indexOf(message) > 0)
+      ).filter((message) => {
+        const index = messages.indexOf(message)
+        return index > 0 && !isPinned(messages, index)
+      })
     } else {
       candidates = messages.filter(
         (message, index) =>
           index > 0 &&
+          !isPinned(messages, index) &&
           messageMatchesTarget(message, this._target, toolNameMap, this._includeFilter, this._excludeFilter)
       )
     }
@@ -483,6 +498,8 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
 
 // --- Emergency truncation strategy ---
 
+const EMERGENCY_REMOVAL_RATIO = 0.2
+
 /**
  * Last-resort strategy that recomputes utilization and drops the oldest 20% of messages
  * when the context window is still overflowing after all user-configured strategies have run.
@@ -494,7 +511,6 @@ export abstract class BaseOffloadStrategy implements ContextStrategy {
  */
 export class EmergencyTruncateStrategy extends BaseOffloadStrategy {
   readonly name = 'offload:emergency-truncate'
-  protected override readonly _removalRatio = 0.2
 
   constructor() {
     super('*')
@@ -506,10 +522,28 @@ export class EmergencyTruncateStrategy extends BaseOffloadStrategy {
 
   override async apply(context: ContextState): Promise<boolean> {
     if (context.messages.length <= 3) return false
-    const tokens = await context.agent.model.countTokens(context.messages)
-    const utilization = context.agent.model.estimateUtilization(tokens)
-    if (utilization < 1.0) return false
-    return this._applyPerMessage({ ...context, utilization })
+    if (!context.overflow) {
+      const tokens = await context.agent.model.countTokens(context.messages)
+      const utilization = context.agent.model.estimateUtilization(tokens)
+      if (utilization < 1.0) return false
+    }
+    return this._applyPerMessage(context)
+  }
+
+  /** Drop the oldest 20% of non-head messages each pass. */
+  protected override async _applyPerMessage(context: ContextState): Promise<boolean> {
+    const { messages } = context
+    if (messages.length <= 3) return false
+
+    const removable = messages.filter((_, index) => index > 0)
+    const removeCount = Math.max(1, Math.floor(removable.length * EMERGENCY_REMOVAL_RATIO))
+    const toRemove = removable.slice(0, removeCount)
+
+    const { removed } = spliceWithPairs(messages, toRemove)
+    if (removed === 0) return false
+
+    repairAlternation(messages)
+    return true
   }
 
   protected async _replaceBlock(): Promise<ContentBlock | null> {

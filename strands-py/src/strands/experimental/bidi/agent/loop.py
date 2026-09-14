@@ -189,7 +189,7 @@ class _BidiAgentLoop:
         self._task_pool = _TaskPool()
         self._model_task = self._task_pool.create(self._run_model(self._generation))
 
-        self._invocation_state = invocation_state or {}
+        self._invocation_state = invocation_state if invocation_state is not None else {}
         self._send_gate.set()
         self._started = True
 
@@ -719,16 +719,9 @@ class _BidiAgentLoop:
         tool_results: list[ToolResult] = []
 
         # Ensure request_state exists for tools like strands_tools.stop
-        if "request_state" not in self._invocation_state:
-            self._invocation_state["request_state"] = {}
-
-        invocation_state: dict[str, Any] = {
-            **self._invocation_state,
-            "agent": self._agent,
-            "model": self._agent.model,
-            "messages": self._agent.messages,
-            "system_prompt": self._agent.system_prompt,
-        }
+        invocation_state = self._invocation_state
+        if "request_state" not in invocation_state:
+            invocation_state["request_state"] = {}
 
         tool_call_span = self._tracer.start_tool_call_span(tool_use, parent_span=self._session_span)
         tool_result: ToolResult | None = None

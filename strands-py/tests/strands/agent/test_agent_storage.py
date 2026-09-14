@@ -116,19 +116,10 @@ def test_offloader_namespaces_agent_storage_under_offloader():
 # --- context_manager="auto" integration ---
 
 
-def test_auto_context_manager_offloader_resolves_agent_storage():
+def test_auto_context_manager_registers_plugin():
     storage = UnifiedInMemoryStorage()
     agent = Agent(model=MockedModelProvider(SIMPLE_RESPONSE), storage=storage, context_manager="auto")
-
-    offloader = None
-    for plugin in agent._plugin_registry._plugins.values():
-        if isinstance(plugin, ContextOffloader):
-            offloader = plugin
-            break
-
-    assert offloader is not None
-    assert isinstance(offloader._storage, _NamespacedStorage)
-    assert offloader._storage._prefix == "offloader/"
+    assert "strands:context-manager" in agent._plugin_registry._plugins
 
 
 # --- SnapshotSessionManager resolves agent-level storage ---

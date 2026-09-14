@@ -4719,13 +4719,7 @@ def test_non_streaming_reasoning_content_with_empty_reasoning_text(bedrock_clien
         "output": {
             "message": {
                 "role": "assistant",
-                "content": [
-                    {
-                        "reasoningContent": {
-                            "reasoningText": {}
-                        }
-                    }
-                ],
+                "content": [{"reasoningContent": {"reasoningText": {}}}],
             }
         },
         "stopReason": "end_turn",

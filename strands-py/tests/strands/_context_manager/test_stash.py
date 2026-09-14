@@ -136,9 +136,7 @@ class TestStoreMessage:
 
     @pytest.mark.asyncio
     async def test_stores_image_block_with_bytes(self, stash):
-        block = ContentBlock(
-            image={"format": "png", "source": {"bytes": b"\x89PNG\r\n\x1a\n"}}
-        )
+        block = ContentBlock(image={"format": "png", "source": {"bytes": b"\x89PNG\r\n\x1a\n"}})
         message = Message(role="user", content=[block], tracking_id="track-img")
         await stash.store_message(message)
         result = await stash.retrieve("track-img_0")
