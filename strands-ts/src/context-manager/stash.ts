@@ -28,8 +28,8 @@ function decode(bytes: Uint8Array): unknown {
 /** Format stash refs for display in placeholders. Returns '' when refs is empty. */
 export function formatStashRefs(refs: string[]): string {
   if (refs.length === 0) return ''
-  if (refs.length === 1) return ` ref: ${refs[0]!}`
-  return ` refs: ${refs.join(', ')}`
+  if (refs.length === 1) return ` [ref: ${refs[0]!}]`
+  return ` [refs: ${refs.join(', ')}]`
 }
 
 /**
@@ -101,16 +101,14 @@ export class Stash {
       const block = message.content[blockIndex]!
       if (block instanceof ToolResultBlock) {
         if (skipToolUseIds?.has(block.toolUseId)) continue
-        await this._storeToolResult(block).catch((error) => {
-          logger.debug(`toolUseId=<${block.toolUseId}>, error=<${error}> | failed to stash tool result`)
-        })
+        await this._storeToolResult(block)
       } else if (block instanceof ToolUseBlock || block instanceof CachePointBlock || block instanceof ReasoningBlock) {
         continue
       } else {
         try {
           await this.store(message.trackingId, blockIndex, encode(block.toJSON()))
         } catch (error) {
-          logger.debug(`trackingId=<${message.trackingId}>, error=<${error}> | failed to stash block`)
+          logger.warn(`trackingId=<${message.trackingId}>, error=<${error}> | failed to stash block`)
         }
       }
     }
@@ -193,7 +191,13 @@ export class Stash {
   private async _storeToolResult(block: ToolResultBlock): Promise<void> {
     for (let blockIndex = 0; blockIndex < block.content.length; blockIndex++) {
       const item = block.content[blockIndex]!
-      await this.store(block.toolUseId, blockIndex, encode(item.toJSON()))
+      try {
+        await this.store(block.toolUseId, blockIndex, encode(item.toJSON()))
+      } catch (error) {
+        logger.warn(
+          `toolUseId=<${block.toolUseId}>, blockIndex=<${blockIndex}>, error=<${error}> | failed to stash sub-block`
+        )
+      }
     }
   }
 }

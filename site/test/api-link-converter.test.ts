@@ -167,15 +167,15 @@ const BROKEN_LINKS_TEST_DATA: [string, string][] = [
   ['../../../api-reference/python/types/tools.md#strands.types.tools.ToolUse', '@api/python/strands.types.tools#ToolUse'],
 
   // user-guide/concepts/bidirectional-streaming/models/google.mdx
-  ['../../../../api-reference/python/experimental/bidi/types/model.md#strands.experimental.bidi.types.model.AudioConfig', '@api/python/strands.experimental.bidi.types.model#AudioConfig'],
+  ['../../../../api-reference/python/experimental/bidi/models/configs.md#strands.experimental.bidi.models.configs.AudioConfig', '@api/python/strands.experimental.bidi.models.configs#AudioConfig'],
   ['../../../../api-reference/python/experimental/bidi/models/google.md#strands.experimental.bidi.models.google.GoogleGeminiLiveModel', '@api/python/strands.experimental.bidi.models.google#GoogleGeminiLiveModel'],
 
   // user-guide/concepts/bidirectional-streaming/models/bedrock.mdx
-  ['../../../../api-reference/python/experimental/bidi/types/model.md#strands.experimental.bidi.types.model.AudioConfig', '@api/python/strands.experimental.bidi.types.model#AudioConfig'],
+  ['../../../../api-reference/python/experimental/bidi/models/configs.md#strands.experimental.bidi.models.configs.AudioConfig', '@api/python/strands.experimental.bidi.models.configs#AudioConfig'],
   ['../../../../api-reference/python/experimental/bidi/models/bedrock.md#strands.experimental.bidi.models.bedrock.BedrockNovaSonicModel', '@api/python/strands.experimental.bidi.models.bedrock#BedrockNovaSonicModel'],
 
   // user-guide/concepts/bidirectional-streaming/models/openai.mdx
-  ['../../../../api-reference/python/experimental/bidi/types/model.md#strands.experimental.bidi.types.model.AudioConfig', '@api/python/strands.experimental.bidi.types.model#AudioConfig'],
+  ['../../../../api-reference/python/experimental/bidi/models/configs.md#strands.experimental.bidi.models.configs.AudioConfig', '@api/python/strands.experimental.bidi.models.configs#AudioConfig'],
   ['../../../../api-reference/python/experimental/bidi/models/openai.md#strands.experimental.bidi.models.openai.OpenAIRealtimeModel', '@api/python/strands.experimental.bidi.models.openai#OpenAIRealtimeModel'],
 ]
 
@@ -368,9 +368,9 @@ describe('API Link Converter', () => {
     it('should convert google.mdx links', () => {
       expect(
         convertApiLink(
-          '../../../../api-reference/python/experimental/bidi/types/model.md#strands.experimental.bidi.types.model.AudioConfig'
+          '../../../../api-reference/python/experimental/bidi/models/configs.md#strands.experimental.bidi.models.configs.AudioConfig'
         )
-      ).toBe('@api/python/strands.experimental.bidi.types.model#AudioConfig')
+      ).toBe('@api/python/strands.experimental.bidi.models.configs#AudioConfig')
 
       expect(
         convertApiLink(

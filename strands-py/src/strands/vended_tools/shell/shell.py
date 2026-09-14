@@ -51,7 +51,7 @@ def make_shell(
 
     @tool(name=name, description=description, context="tool_context")
     async def shell_tool(command: str, tool_context: ToolContext, timeout: int = _DEFAULT_TIMEOUT) -> ShellOutput:
-        """Executes a shell command and returns its output.
+        """Executes a shell command and returns its output and exit code.
 
         Args:
             command: The shell command to execute.
@@ -66,7 +66,7 @@ def make_shell(
         except Exception as e:
             # ShellExecutionError subclasses RuntimeError, so prior handlers still match.
             raise ShellExecutionError(str(e)) from e
-        return {"output": result.stdout, "error": result.stderr}
+        return {"output": result.stdout, "error": result.stderr, "exit_code": result.exit_code}
 
     return shell_tool
 

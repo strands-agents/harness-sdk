@@ -16,30 +16,16 @@ Features:
 import abc
 import logging
 from collections.abc import AsyncIterable
-from typing import Any, NoReturn, Protocol, TypedDict, cast, runtime_checkable
+from typing import Any, NoReturn, Protocol, cast, runtime_checkable
 
 from ....models.model import Model
 from ....types._events import ToolResultEvent
 from ....types.content import Messages
 from ....types.tools import ToolSpec
 from ..types.events import BidiInputEvent, BidiOutputEvent
-from ..types.model import AudioConfig, BidiConnectionConfig
+from .configs import AudioConfig, BidiConnectionConfig
 
 logger = logging.getLogger(__name__)
-
-
-class BidiModelConfig(TypedDict, total=False):
-    """Configuration shared by bidirectional model providers.
-
-    Attributes:
-        model_id: Provider model identifier.
-        params: Provider-specific keyword arguments passed to the model request or session.
-        connection: Reconnect timing overrides.
-    """
-
-    model_id: str
-    params: dict[str, Any] | None
-    connection: BidiConnectionConfig
 
 
 @runtime_checkable
@@ -72,32 +58,22 @@ class BidiModel(Model, abc.ABC):
     provider-specific protocols while exposing a standardized event-based API.
 
     Attributes:
-        config: Configuration dictionary with provider-specific settings.
         model_id: Provider model identifier.
-        connection_config: Declared connection limit and reconnect timing. Providers that
-            support proactive reconnect populate this; an empty config means reactive-only
-            behavior.
         usage_is_cumulative: Whether the provider reports cumulative connection token totals
             (True) rather than per-response deltas (False, the default when absent). Providers
             reporting deltas may omit it.
     """
 
-    config: Any
-    model_id: str
-    connection_config: BidiConnectionConfig
     usage_is_cumulative: bool
 
-    def update_config(self, **model_config: Any) -> None:
-        """Update the model configuration with the provided arguments.
+    @property
+    def model_id(self) -> str:
+        """Get the configured model identifier."""
+        return cast(str, self.get_config()["model_id"])
 
-        Args:
-            **model_config: Configuration overrides.
-        """
-        self.config.update(model_config)
-
-    def get_config(self) -> dict[str, Any]:
-        """Return a copy of the model configuration."""
-        return cast(dict[str, Any], self.config).copy()
+    def get_connection_config(self) -> BidiConnectionConfig:
+        """Get the configured reconnect timing, or an empty config if unspecified."""
+        return cast(BidiConnectionConfig, self.get_config().get("connection", {}))
 
     def structured_output(self, *args: Any, **kwargs: Any) -> NoReturn:
         """Raise because bidirectional models do not support structured output."""
@@ -213,7 +189,6 @@ class BidiModelTimeoutError(Exception):
 class AudioCapable(Protocol):
     """Protocol for models that support audio input and output."""
 
-    @property
-    def audio_config(self) -> AudioConfig:
+    def get_audio_config(self) -> AudioConfig:
         """Get the resolved audio configuration."""
         ...

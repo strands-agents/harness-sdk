@@ -197,3 +197,8 @@
   name: Chen Wu
   role: "Principal Applied Scientist, AWS"
   bio: Chen Wu is a Principal Applied Scientist working on agent optimization.
+
+- id: ramon-li
+  name: Ramon Li
+  role: "Software Engineer, AWS"
+  bio: Ramon Li is a Software Engineer at AWS working on the Strands Agents SDK.

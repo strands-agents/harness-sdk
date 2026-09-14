@@ -73,8 +73,8 @@ Check out [GitHub](https://github.com/strands-agents/harness-sdk).
     })
 
     it('should handle deeply nested relative paths', () => {
-      const input = `See [AudioConfig](../../../../api-reference/python/experimental/bidi/types/model.md#strands.experimental.bidi.types.model.AudioConfig).`
-      const expected = `See [AudioConfig](@api/python/strands.experimental.bidi.types.model#AudioConfig).`
+      const input = `See [AudioConfig](../../../../api-reference/python/experimental/bidi/models/configs.md#strands.experimental.bidi.models.configs.AudioConfig).`
+      const expected = `See [AudioConfig](@api/python/strands.experimental.bidi.models.configs#AudioConfig).`
       expect(convertApiLinks(input)).toBe(expected)
     })
 

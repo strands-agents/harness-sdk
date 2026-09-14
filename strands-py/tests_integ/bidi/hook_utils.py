@@ -1,14 +1,18 @@
 """Shared utilities for testing BidiAgent hooks."""
 
 from strands import LocalAgent
-from strands.experimental.hooks.events import (
-    BidiAfterInvocationEvent,
-    BidiAgentInitializedEvent,
-    BidiBeforeInvocationEvent,
+from strands.experimental.bidi.hooks.events import (
+    BidiAgentStopEvent,
     BidiInterruptionEvent,
-    BidiMessageAddedEvent,
+    BidiResponseCompleteEvent,
 )
-from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent, HookProvider
+from strands.hooks import (
+    AfterToolCallEvent,
+    AgentInitializedEvent,
+    BeforeToolCallEvent,
+    HookProvider,
+    MessageAddedEvent,
+)
 
 
 class HookEventCollector(HookProvider):
@@ -18,22 +22,22 @@ class HookEventCollector(HookProvider):
         self.events = []
 
     def register_hooks(self, registry):
-        registry.add_callback(BidiAgentInitializedEvent, self.on_initialized)
-        registry.add_callback(BidiBeforeInvocationEvent, self.on_before_invocation)
-        registry.add_callback(BidiAfterInvocationEvent, self.on_after_invocation)
+        registry.add_callback(AgentInitializedEvent, self.on_initialized)
+        registry.add_callback(BidiResponseCompleteEvent, self.on_response_complete)
+        registry.add_callback(BidiAgentStopEvent, self.on_agent_stop)
         registry.add_callback(BeforeToolCallEvent, self.on_before_tool_call)
         registry.add_callback(AfterToolCallEvent, self.on_after_tool_call)
-        registry.add_callback(BidiMessageAddedEvent, self.on_message_added)
+        registry.add_callback(MessageAddedEvent, self.on_message_added)
         registry.add_callback(BidiInterruptionEvent, self.on_interruption)
 
-    def on_initialized(self, event: BidiAgentInitializedEvent):
+    def on_initialized(self, event: AgentInitializedEvent[LocalAgent]):
         self.events.append(("initialized", event))
 
-    def on_before_invocation(self, event: BidiBeforeInvocationEvent):
-        self.events.append(("before_invocation", event))
+    def on_response_complete(self, event: BidiResponseCompleteEvent):
+        self.events.append(("response_complete", event))
 
-    def on_after_invocation(self, event: BidiAfterInvocationEvent):
-        self.events.append(("after_invocation", event))
+    def on_agent_stop(self, event: BidiAgentStopEvent):
+        self.events.append(("agent_stop", event))
 
     def on_before_tool_call(self, event: BeforeToolCallEvent[LocalAgent]):
         self.events.append(("before_tool_call", event))
@@ -41,7 +45,7 @@ class HookEventCollector(HookProvider):
     def on_after_tool_call(self, event: AfterToolCallEvent[LocalAgent]):
         self.events.append(("after_tool_call", event))
 
-    def on_message_added(self, event: BidiMessageAddedEvent):
+    def on_message_added(self, event: MessageAddedEvent[LocalAgent]):
         self.events.append(("message_added", event))
 
     def on_interruption(self, event: BidiInterruptionEvent):

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { Offload } from '../offload/index.js'
+import { getOldestMatches, buildToolNameMap } from '../offload/base.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import type { Agent } from '../../../agent/agent.js'
@@ -37,7 +38,7 @@ function heuristicCountTokens(messages: Message[]): number {
   return total
 }
 
-function makeContext(messages: Message[], utilization = 0.5): ContextState {
+function makeContext(messages: Message[], utilization = 0.5, overflow?: boolean): ContextState {
   const agent = createMockAgent({
     messages,
     extra: { model: { countTokens: async (msgs: Message[]) => heuristicCountTokens(msgs) } } as Partial<Agent>,
@@ -46,6 +47,7 @@ function makeContext(messages: Message[], utilization = 0.5): ContextState {
     messages,
     agent,
     utilization,
+    ...(overflow ? { overflow: true } : {}),
   }
 }
 
@@ -593,9 +595,173 @@ describe('Message-level drop vs truncate markers', () => {
 
     await strategy.apply(context)
 
-    const markerMsg = messages.find((m) => m.content.some((b) => b instanceof TextBlock && b.text.includes('elided')))
-    expect(markerMsg).toBeDefined()
-    const markerText = (markerMsg!.content[0] as TextBlock).text
+    const allText = messages.flatMap((m) =>
+      m.content.filter((b) => b instanceof TextBlock).map((b) => (b as TextBlock).text)
+    )
+    const markerText = allText.find((t) => t.includes('elided'))
+    expect(markerText).toBeDefined()
     expect(markerText).toMatch(/\[\.\.\. \d+ messages? elided \.\.\.\]/)
+  })
+})
+
+describe('pinned message protection', () => {
+  it('message-level drop skips pinned messages', async () => {
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('q1')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a1')] }),
+      new Message({
+        role: 'user',
+        content: [new TextBlock('pinned-msg')],
+        metadata: { custom: { pinned: true } },
+      }),
+      new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
+      new Message({ role: 'user', content: [new TextBlock('q3')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a3')] }),
+    ]
+    const strategy = Offload.drop('*').when({ utilization: 0.5 })
+    const context = makeContext(messages, 0.9)
+
+    await strategy.apply(context)
+
+    const allText = messages.flatMap((message) =>
+      message.content.filter((block) => block instanceof TextBlock).map((block) => (block as TextBlock).text)
+    )
+    expect(allText).toContain('pinned-msg')
+  })
+
+  it('message-level drop skips tool-pair partner of pinned message', async () => {
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('q1')] }),
+      new Message({
+        role: 'assistant',
+        content: [new ToolUseBlock({ toolUseId: 'tu-1', name: 'test', input: {} })],
+        metadata: { custom: { pinned: true } },
+      }),
+      new Message({
+        role: 'user',
+        content: [new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [new TextBlock('result')] })],
+      }),
+      new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
+      new Message({ role: 'user', content: [new TextBlock('q3')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a3')] }),
+    ]
+    const strategy = Offload.drop('*').when({ utilization: 0.5 })
+    const context = makeContext(messages, 0.9)
+
+    await strategy.apply(context)
+
+    const hasToolResult = messages.some((message) =>
+      message.content.some((block) => block instanceof ToolResultBlock && block.toolUseId === 'tu-1')
+    )
+    expect(hasToolResult).toBe(true)
+  })
+
+  it('pinned message survives repairAlternation merge across two passes', async () => {
+    // After pass 1 drops eligible messages, pinned-a3 becomes adjacent to a7 —
+    // repairAlternation must merge them and preserve the pinned metadata.
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('q1')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a1')] }),
+      new Message({ role: 'user', content: [new TextBlock('q2')] }),
+      new Message({
+        role: 'assistant',
+        content: [new TextBlock('pinned-a3')],
+        metadata: { custom: { pinned: true } },
+      }),
+      new Message({ role: 'user', content: [new TextBlock('q4')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a5')] }),
+      new Message({ role: 'user', content: [new TextBlock('q6')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a7')] }),
+      new Message({ role: 'user', content: [new TextBlock('q8')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a9')] }),
+      new Message({ role: 'user', content: [new TextBlock('q10')] }),
+    ]
+    const strategy = Offload.drop('*').when({ utilization: 0.5, preserveRecent: 4 })
+    const context = makeContext(messages, 0.9)
+
+    await strategy.apply(context)
+    await strategy.apply(context)
+
+    const allText = messages.flatMap((message) =>
+      message.content.filter((block) => block instanceof TextBlock).map((block) => (block as TextBlock).text)
+    )
+    expect(allText.some((text) => text.includes('pinned-a3'))).toBe(true)
+    const merged = messages.find((message) =>
+      message.content.some((block) => block instanceof TextBlock && (block as TextBlock).text === 'pinned-a3')
+    )
+    expect(merged?.metadata?.custom?.pinned).toBe(true)
+  })
+})
+
+describe('overflow bypass', () => {
+  it('message-level strategy fires on low utilization when overflow is set', async () => {
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('q1')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a1')] }),
+      new Message({ role: 'user', content: [new TextBlock('q2')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
+    ]
+    const strategy = Offload.drop('*').when({ utilization: 0.85 })
+    const context = makeContext(messages, 0.5, true)
+
+    const acted = await strategy.apply(context)
+    expect(acted).toBe(true)
+    expect(messages.length).toBeLessThan(4)
+  })
+
+  it('message-level strategy skips on low utilization without overflow', async () => {
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('q1')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a1')] }),
+      new Message({ role: 'user', content: [new TextBlock('q2')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('a2')] }),
+    ]
+    const strategy = Offload.drop('*').when({ utilization: 0.85 })
+    const context = makeContext(messages, 0.5)
+
+    const acted = await strategy.apply(context)
+    expect(acted).toBe(false)
+    expect(messages.length).toBe(4)
+  })
+})
+
+describe('getOldestMatches with ratio preserveRecent', () => {
+  function makeMessages(count: number): Message[] {
+    return Array.from(
+      { length: count },
+      (_, index) =>
+        new Message({ role: index % 2 === 0 ? 'user' : 'assistant', content: [new TextBlock(`msg-${index}`)] })
+    )
+  }
+
+  it('integer preserveRecent keeps absolute count', () => {
+    const messages = makeMessages(10)
+    const toolNameMap = buildToolNameMap(messages)
+    const result = getOldestMatches(messages, '*', 3, toolNameMap, undefined, undefined)
+    expect(result).toHaveLength(7)
+  })
+
+  it('decimal preserveRecent keeps ratio of matches', () => {
+    const messages = makeMessages(10)
+    const toolNameMap = buildToolNameMap(messages)
+    // 0.7 = keep 70% of 10 = ceil(7) = 7 preserved, 3 returned
+    const result = getOldestMatches(messages, '*', 0.7, toolNameMap, undefined, undefined)
+    expect(result).toHaveLength(3)
+  })
+
+  it('decimal preserveRecent rounds up', () => {
+    const messages = makeMessages(3)
+    const toolNameMap = buildToolNameMap(messages)
+    // 0.5 of 3 = ceil(1.5) = 2 preserved, 1 returned
+    const result = getOldestMatches(messages, '*', 0.5, toolNameMap, undefined, undefined)
+    expect(result).toHaveLength(1)
+  })
+
+  it('decimal preserveRecent of 0.99 preserves almost all', () => {
+    const messages = makeMessages(10)
+    const toolNameMap = buildToolNameMap(messages)
+    // 0.99 of 10 = ceil(9.9) = 10 preserved, 0 returned
+    const result = getOldestMatches(messages, '*', 0.99, toolNameMap, undefined, undefined)
+    expect(result).toHaveLength(0)
   })
 })

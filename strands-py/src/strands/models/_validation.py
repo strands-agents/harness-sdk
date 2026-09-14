@@ -83,7 +83,7 @@ def _cache_config_fields_set(cache_config: CacheConfig) -> set[str]:
 
 
 def warn_on_cache_config_not_supported(
-    cache_config: CacheConfig,
+    cache_config: CacheConfig | None,
     provider: str,
     *,
     supported: Collection[str],
@@ -92,12 +92,15 @@ def warn_on_cache_config_not_supported(
     """Warn once about supplied cache_config fields a provider does not support.
 
     Args:
-        cache_config: The provider's configured cache settings.
+        cache_config: The provider's configured cache settings, if any. ``None`` is a no-op, so callers
+            can pass an unset config directly without guarding it.
         provider: Human-readable provider name for the warning message.
         supported: Names of ``CacheConfig`` fields the provider applies; the rest are the no-ops.
         stacklevel: Frames to skip so the warning points at the caller. Defaults to 4, correct when a
             mapper one frame below ``format_request`` invokes this.
     """
+    if cache_config is None:
+        return
     unsupported = sorted(field for field in _cache_config_fields_set(cache_config) if field not in supported)
     if unsupported:
         warnings.warn(

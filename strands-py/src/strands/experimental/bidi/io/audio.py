@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, TypedDict
 import pyaudio
 from typing_extensions import Unpack
 
+from ..models.configs import AudioStreamConfig
 from ..models.model import AudioCapable
 from ..types.events import (
     BidiAudioInputEvent,
@@ -27,6 +28,7 @@ from ..types.events import (
     BidiOutputEvent,
 )
 from ..types.io import BidiInput, BidiOutput
+from .transcript import _BidiTranscriptOutput
 
 if TYPE_CHECKING:
     from .._audio import _BidiAudioProcessor
@@ -191,36 +193,41 @@ class _BidiAudioInput(BidiInput):
             agent: The BidiAgent instance, providing access to model configuration.
 
         Raises:
-            ValueError: If audio processing is enabled but the input rate is unsupported.
+            ValueError: If the audio format or audio processing configuration is unsupported.
         """
         logger.debug("starting audio input stream")
 
         if not isinstance(agent.model, AudioCapable):
             raise TypeError("BidiAudioIO requires a model that implements AudioCapable")
 
-        audio_config = agent.model.audio_config
-        self._channels = audio_config["channels"]
-        self._format = audio_config["format"]
-        self._rate = audio_config["input_rate"]
+        audio_config = agent.model.get_audio_config()
+        self._audio_config = audio_config["input"]
+        self._validate_audio_config(self._audio_config)
 
         if self._audio_processor is not None:
+            output_config = audio_config["output"]
+            if self._audio_processor.echo_cancellation_enabled:
+                self._validate_audio_config(output_config)
+                if self._audio_config["channels"] != output_config["channels"]:
+                    raise ValueError("Echo cancellation requires matching input and output channel counts")
+
             self._audio_processor.start(
-                input_rate=self._rate,
-                output_rate=audio_config["output_rate"],
-                num_channels=self._channels,
+                input_rate=self._audio_config["sample_rate"],
+                output_rate=output_config["sample_rate"],
+                num_channels=self._audio_config["channels"],
             )
             if self._audio_processor.echo_cancellation_enabled:
-                self._frames_per_buffer = self._audio_processor.frames_per_buffer(self._rate)
+                self._frames_per_buffer = self._audio_processor.frames_per_buffer(self._audio_config["sample_rate"])
 
         self._buffer.start()
         self._audio = pyaudio.PyAudio()
         self._stream = self._audio.open(
-            channels=self._channels,
+            channels=self._audio_config["channels"],
             format=pyaudio.paInt16,
             frames_per_buffer=self._frames_per_buffer,
             input=True,
             input_device_index=self._device_index,
-            rate=self._rate,
+            rate=self._audio_config["sample_rate"],
             stream_callback=self._callback,
         )
 
@@ -248,9 +255,7 @@ class _BidiAudioInput(BidiInput):
 
         return BidiAudioInputEvent(
             audio=base64.b64encode(data).decode("utf-8"),
-            channels=self._channels,
-            format=self._format,
-            sample_rate=self._rate,
+            **self._audio_config,
         )
 
     def _callback(
@@ -261,6 +266,12 @@ class _BidiAudioInput(BidiInput):
         """Callback to receive audio data from PyAudio."""
         self._buffer.put(in_data or b"")
         return (None, pyaudio.paContinue)
+
+    @staticmethod
+    def _validate_audio_config(config: AudioStreamConfig) -> None:
+        """Require PCM for microphone and echo cancellation reference audio."""
+        if config["format"] != "pcm":
+            raise ValueError(f"BidiAudioIO requires signed 16-bit PCM, received {config['format']}")
 
 
 class _BidiAudioOutput(BidiOutput):
@@ -297,42 +308,48 @@ class _BidiAudioOutput(BidiOutput):
 
         self._audio_processor = audio_processor
         self._buffer = _BidiAudioBuffer(self._buffer_size)
+        self._transcript_output = _BidiTranscriptOutput()
 
     async def start(self, agent: "BidiAgent") -> None:
         """Start output stream.
 
         Args:
             agent: The BidiAgent instance, providing access to model configuration.
+
+        Raises:
+            ValueError: If the model's output encoding is unsupported.
         """
         logger.debug("starting audio output stream")
 
         if not isinstance(agent.model, AudioCapable):
             raise TypeError("BidiAudioIO requires a model that implements AudioCapable")
 
-        audio_config = agent.model.audio_config
-        self._channels = audio_config["channels"]
-        self._rate = audio_config["output_rate"]
+        self._audio_config = agent.model.get_audio_config()["output"]
+        self._validate_audio_config(self._audio_config)
 
         if self._audio_processor is not None:
-            self._frames_per_buffer = self._audio_processor.frames_per_buffer(self._rate)
+            self._frames_per_buffer = self._audio_processor.frames_per_buffer(self._audio_config["sample_rate"])
 
         self._buffer.start()
         self._audio = pyaudio.PyAudio()
         self._stream = self._audio.open(
-            channels=self._channels,
+            channels=self._audio_config["channels"],
             format=pyaudio.paInt16,
             frames_per_buffer=self._frames_per_buffer,
             output=True,
             output_device_index=self._device_index,
-            rate=self._rate,
+            rate=self._audio_config["sample_rate"],
             stream_callback=self._callback,
         )
+        await self._transcript_output.start(agent)
 
         logger.debug("audio output stream started")
 
     async def stop(self) -> None:
         """Stop output stream."""
         logger.debug("stopping audio output stream")
+
+        await self._transcript_output.stop()
 
         if hasattr(self, "_stream"):
             self._stream.close()
@@ -344,8 +361,16 @@ class _BidiAudioOutput(BidiOutput):
         logger.debug("audio output stream stopped")
 
     async def __call__(self, event: BidiOutputEvent) -> None:
-        """Send audio to output stream."""
+        """Send audio to output stream.
+
+        Raises:
+            ValueError: If the audio encoding, rate, or channels differ from the playback stream.
+        """
+        await self._transcript_output(event)
+
         if isinstance(event, BidiAudioStreamEvent):
+            self._validate_audio_event(event, self._audio_config)
+
             data = base64.b64decode(event["audio"])
             self._buffer.put(data)
             logger.debug("audio_bytes=<%d> | audio chunk buffered for playback", len(data))
@@ -367,7 +392,7 @@ class _BidiAudioOutput(BidiOutput):
         When echo cancellation is enabled, records played audio as the reference at the moment it exits the
         speaker — the correct temporal alignment point for echo cancellation.
         """
-        byte_count = frame_count * pyaudio.get_sample_size(pyaudio.paInt16)
+        byte_count = frame_count * self._audio_config["channels"] * pyaudio.get_sample_size(pyaudio.paInt16)
         data = self._buffer.get(byte_count)
 
         if self._audio_processor is not None:
@@ -375,12 +400,28 @@ class _BidiAudioOutput(BidiOutput):
 
         return (data, pyaudio.paContinue)
 
+    @staticmethod
+    def _validate_audio_config(config: AudioStreamConfig) -> None:
+        """Require PCM for speaker audio."""
+        if config["format"] != "pcm":
+            raise ValueError(f"BidiAudioIO requires signed 16-bit PCM, received {config['format']}")
+
+    @staticmethod
+    def _validate_audio_event(event: BidiAudioStreamEvent, config: AudioStreamConfig) -> None:
+        """Require audio to match the playback format."""
+        if (event.format, event.sample_rate, event.channels) != (
+            config["format"],
+            config["sample_rate"],
+            config["channels"],
+        ):
+            raise ValueError("Audio output does not match the playback format. Restart audio I/O to reconfigure it.")
+
 
 class BidiAudioIO:
     """Send and receive audio data from devices using PyAudio.
 
-    Reads microphone audio via ``input()`` and plays agent audio via ``output()``. On interruption, the
-    playback buffer is cleared to stop the agent mid-response.
+    Reads microphone audio via ``input()``, plays agent audio via ``output()``, and displays user and assistant
+    transcripts. Interruptions clear the playback buffer to stop the agent mid-response.
 
     When ``audio_processor=True`` or a ``BidiAudioProcessorConfig`` is passed, the microphone signal gets audio
     processing and, when echo cancellation is enabled, the agent's speaker output is used as a reference to

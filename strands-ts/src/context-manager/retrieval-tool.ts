@@ -9,6 +9,7 @@
 import { z } from 'zod'
 import { tool } from '../tools/tool-factory.js'
 import { isSearchableContent, searchContent } from '../vended-plugins/context-offloader/search.js'
+import { DocumentBlock, ImageBlock, VideoBlock } from '../types/media.js'
 import type { JSONValue } from '../types/json.js'
 import type { Tool } from '../tools/tool.js'
 import { Message, ToolUseBlock } from '../types/messages.js'
@@ -67,7 +68,13 @@ export function createRetrievalTool(stash: Stash, maxResultTokens?: number): Too
       }
 
       if (!input.pattern && !input.line_range) {
-        return result.data as JSONValue
+        if (result.data && typeof result.data === 'object' && !Array.isArray(result.data)) {
+          const media = restoreMedia(result.data as Record<string, unknown>)
+          if (media) return media as unknown as JSONValue
+        }
+        const serialized = JSON.stringify(result.data)
+        if (serialized.length <= maxChars) return result.data as JSONValue
+        return `${serialized.slice(0, maxChars)}\n\n[truncated]`
       }
 
       const text = extractText(result.data)
@@ -99,6 +106,13 @@ export function trackRetrievalToolUseIds(message: Message, skipSet: Set<string>)
       skipSet.add(block.toolUseId)
     }
   }
+}
+
+function restoreMedia(data: Record<string, unknown>): ImageBlock | DocumentBlock | VideoBlock | null {
+  if ('image' in data) return ImageBlock.fromJSON(data as Parameters<typeof ImageBlock.fromJSON>[0])
+  if ('document' in data) return DocumentBlock.fromJSON(data as Parameters<typeof DocumentBlock.fromJSON>[0])
+  if ('video' in data) return VideoBlock.fromJSON(data as Parameters<typeof VideoBlock.fromJSON>[0])
+  return null
 }
 
 function extractText(data: unknown): string | null {

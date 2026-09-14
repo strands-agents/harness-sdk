@@ -216,11 +216,11 @@ Build real-time voice and audio conversations with persistent streaming connecti
 # Server-side only (no audio I/O dependencies)
 pip install strands-agents[bidi]
 
-# With all portable Bidi providers, text I/O, and audio processing
+# With all portable Bidi providers, terminal I/O, and audio processing (no local audio devices)
 pip install strands-agents[bidi-all]
 
 # For local microphone/speaker access, install PortAudio for your OS first, then:
-pip install strands-agents[bidi-pyaudio]
+pip install strands-agents[bidi,bidi-io,bidi-pyaudio]
 ```
 
 > **Note**: Bedrock Nova Sonic requires Python 3.12+ due to its experimental AWS SDK dependency.
@@ -231,7 +231,7 @@ pip install strands-agents[bidi-pyaudio]
 import asyncio
 from strands.experimental.bidi import BidiAgent
 from strands.experimental.bidi.models import BedrockNovaSonicModel
-from strands.experimental.bidi.io import BidiAudioIO, BidiTextIO
+from strands.experimental.bidi.io import BidiAudioIO
 from strands_tools import calculator, stop
 
 async def main():
@@ -239,25 +239,24 @@ async def main():
     model = BedrockNovaSonicModel()
     agent = BidiAgent(model=model, tools=[calculator, stop])
 
-    # Setup audio and text I/O (local audio requires the bidi-pyaudio extra)
+    # Setup audio I/O (local audio requires the bidi-pyaudio extra)
     audio_io = BidiAudioIO()
-    text_io = BidiTextIO()
 
-    # Run with real-time audio streaming
+    # Run with real-time audio streaming and terminal transcripts
     # stop tool allows user to verbally stop agent execution
     await agent.run(
         inputs=[audio_io.input()],
-        outputs=[audio_io.output(), text_io.output()]
+        outputs=[audio_io.output()]
     )
 
 if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-> **Note**: `BidiTextIO` is included with the `bidi` extra. `BidiAudioIO` requires the `bidi-pyaudio` extra and
-> the PortAudio system library. For server-side deployments where audio I/O is handled by clients (browsers,
-> mobile apps), install only `strands-agents[bidi]` and implement custom input/output handlers using the
-> `BidiInput` and `BidiOutput` protocols.
+> **Note**: `BidiTextIO` is included with the `bidi-io` extra. `BidiAudioIO` requires the `bidi-io` and
+> `bidi-pyaudio` extras plus the PortAudio system library. For server-side deployments where audio I/O is handled
+> by clients (browsers, mobile apps), install only `strands-agents[bidi]` and implement custom input/output handlers
+> using the `BidiInput` and `BidiOutput` protocols.
 
 **Configuration Options:**
 
@@ -288,19 +287,6 @@ audio_io = BidiAudioIO(
     output_device_index=1,  # Specific speaker
     input_buffer_size=10,
     output_buffer_size=10
-)
-
-# Text input mode (type messages instead of speaking)
-text_io = BidiTextIO()
-await agent.run(
-    inputs=[text_io.input()],  # Use text input
-    outputs=[audio_io.output(), text_io.output()]
-)
-
-# Multi-modal: Both audio and text input
-await agent.run(
-    inputs=[audio_io.input(), text_io.input()],  # Speak OR type
-    outputs=[audio_io.output(), text_io.output()]
 )
 ```
 
