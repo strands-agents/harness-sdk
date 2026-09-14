@@ -21,3 +21,8 @@ import { z } from 'zod'
 import { Agent } from '@strands-agents/sdk'
 import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
 // --8<-- [end:prompt_caching_imports]
+
+// --8<-- [start:bedrock_mantle_imports]
+import { Agent } from '@strands-agents/sdk'
+import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
+// --8<-- [end:bedrock_mantle_imports]

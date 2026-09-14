@@ -6,6 +6,7 @@ integrationType: model-provider
 sourceLinks:
   - path: strands-py/src/strands/models/anthropic.py
   - path: strands-ts/src/models/anthropic.ts
+  - path: strands-ts/src/models/anthropic-bedrock.ts
 ---
 
 [Anthropic](https://docs.anthropic.com/en/home) is an AI safety and research company focused on building reliable, interpretable, and steerable AI systems. Included in their offerings is the Claude AI family of models, which are known for their conversational abilities, careful reasoning, and capacity to follow complex instructions. The Strands Agents SDK implements an Anthropic provider, allowing users to run agents against Claude models directly.
@@ -67,6 +68,41 @@ print(response)
 ```
 </Tab>
 </Tabs>
+
+### Amazon Bedrock (Mantle)
+
+Claude models also run on
+[Amazon Bedrock's Anthropic-compatible endpoint](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-messages-api.html)
+powered by Mantle, which bills through your AWS account instead of an Anthropic API key.
+Give the provider a region and it signs every request with SigV4 from the standard AWS
+credential chain.
+
+Model IDs on Mantle differ from the direct API. The endpoint serves
+`anthropic.claude-sonnet-5`, `anthropic.claude-opus-4-8`, and `anthropic.claude-haiku-4-5`,
+among others.
+
+<Tabs>
+<Tab label="TypeScript">
+
+Mantle needs one more package alongside the provider:
+
+```bash
+npm install @anthropic-ai/bedrock-sdk
+```
+
+```typescript
+--8<-- "user-guide/concepts/model-providers/anthropic_imports.ts:bedrock_mantle_imports"
+
+--8<-- "user-guide/concepts/model-providers/anthropic.ts:bedrock_mantle"
+```
+</Tab>
+</Tabs>
+
+Omit the region to resolve it from the `AWS_REGION` environment variable. To authenticate
+with a named profile or a
+[Bedrock API key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-key-management.html)
+instead of the default credential chain, add `profile` or
+<Syntax py="api_key" ts="apiKey" /> to the same config.
 
 ## Configuration
 

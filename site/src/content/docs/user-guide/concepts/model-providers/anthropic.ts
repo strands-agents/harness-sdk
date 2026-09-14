@@ -94,3 +94,18 @@ async function promptCaching() {
   // { inputTokens: 12, ..., cacheReadInputTokens: 2505 }
   // --8<-- [end:prompt_caching]
 }
+
+// Amazon Bedrock (Mantle)
+async function bedrockMantle() {
+  // --8<-- [start:bedrock_mantle]
+  const model = new AnthropicModel({
+    modelId: 'anthropic.claude-sonnet-5',
+    maxTokens: 1028,
+    bedrockMantleConfig: { region: 'us-east-1' },
+  })
+
+  const agent = new Agent({ model })
+  const response = await agent.invoke('What is 2+2?')
+  console.log(response)
+  // --8<-- [end:bedrock_mantle]
+}

@@ -1,4 +1,6 @@
+import type { AnthropicBedrockMantle, BedrockMantleClientOptions } from '@anthropic-ai/bedrock-sdk'
 import Anthropic, { type ClientOptions } from '@anthropic-ai/sdk'
+import { type BedrockMantleConfig, createMantleClient, resolveMantleClientOptions } from './anthropic-bedrock.js'
 import {
   Model,
   type BaseModelConfig,
@@ -18,6 +20,8 @@ import { encodeBase64 } from '../types/media.js'
 import { logger } from '../logging/logger.js'
 import { warnOnce } from '../logging/warn-once.js'
 import { MODEL_DEFAULTS, defaultMaxTokensWarningMessage, defaultModelWarningMessage } from './defaults.js'
+
+export type { BedrockMantleConfig } from './anthropic-bedrock.js'
 
 // Union of overflow phrases observed across Anthropic responses, matched
 // case-insensitively. Kept in lowercase so the comparison is a single
@@ -82,28 +86,66 @@ export interface AnthropicModelOptions extends AnthropicModelConfig {
   apiKey?: string
   client?: Anthropic
   clientConfig?: ClientOptions
+
+  /**
+   * Route requests through Amazon Bedrock's Mantle (Anthropic-compatible) endpoint.
+   *
+   * Requests are signed with SigV4 unless the config supplies an API key, using the
+   * profile it names or the standard AWS credential chain. Cannot be combined with a
+   * pre-built `client`, a top-level `apiKey`, or `clientConfig.apiKey`.
+   *
+   * @see https://docs.aws.amazon.com/bedrock/latest/userguide/inference-messages-api.html
+   */
+  bedrockMantleConfig?: BedrockMantleConfig
 }
 
 export class AnthropicModel extends Model<AnthropicModelConfig> {
   private _config: AnthropicModelConfig
-  private _client: Anthropic
+  private _client?: Anthropic | AnthropicBedrockMantle
+  private _mantleClientOptions?: BedrockMantleClientOptions
+  private _clientPromise?: Promise<AnthropicBedrockMantle>
+  private readonly _defaultModelId: string
 
   constructor(options?: AnthropicModelOptions) {
     super()
-    const { apiKey, client, clientConfig, ...modelConfig } = options || {}
+    const { apiKey, client, clientConfig, bedrockMantleConfig, ...modelConfig } = options || {}
+
+    this._defaultModelId = bedrockMantleConfig
+      ? MODEL_DEFAULTS.anthropic.mantleModelId
+      : MODEL_DEFAULTS.anthropic.modelId
 
     this._config = {
-      modelId: MODEL_DEFAULTS.anthropic.modelId,
+      modelId: this._defaultModelId,
       maxTokens: MODEL_DEFAULTS.anthropic.maxTokens,
       ...modelConfig,
     }
 
     if (modelConfig.modelId === undefined) {
-      warnOnce(logger, defaultModelWarningMessage(MODEL_DEFAULTS.anthropic.modelId))
+      warnOnce(logger, defaultModelWarningMessage(this._defaultModelId))
     }
 
     if (modelConfig.maxTokens === undefined) {
       warnOnce(logger, defaultMaxTokensWarningMessage(MODEL_DEFAULTS.anthropic.maxTokens))
+    }
+
+    if (bedrockMantleConfig) {
+      const conflicting = [
+        ...(client ? ['client'] : []),
+        ...(apiKey ? ['apiKey'] : []),
+        ...(clientConfig?.apiKey ? ['clientConfig.apiKey'] : []),
+      ]
+      if (conflicting.length > 0) {
+        throw new Error(
+          `bedrockMantleConfig cannot be combined with ${conflicting.join(', ')}; ` +
+            'authentication is derived from the Mantle config automatically.'
+        )
+      }
+
+      // Options resolve eagerly so an unresolvable or malformed region fails here, but the
+      // Mantle client lives in an optional package and is imported on first use, since a
+      // constructor cannot await.
+      this._mantleClientOptions = resolveMantleClientOptions(bedrockMantleConfig, clientConfig)
+      return
     }
 
     if (client) {
@@ -125,12 +167,27 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     }
   }
 
+  /**
+   * Resolves the client for the current request.
+   *
+   * Returns the client built in the constructor, or awaits the lazily imported Mantle
+   * client when `bedrockMantleConfig` was supplied.
+   */
+  private async _resolveClient(): Promise<Anthropic | AnthropicBedrockMantle> {
+    if (this._client !== undefined) {
+      return this._client
+    }
+    this._clientPromise ??= createMantleClient(this._mantleClientOptions!)
+    this._client = await this._clientPromise
+    return this._client
+  }
+
   updateConfig(modelConfig: AnthropicModelConfig): void {
     this._config = { ...this._config, ...modelConfig }
   }
 
   getConfig(): AnthropicModelConfig {
-    return resolveConfigMetadata(this._config, this._config.modelId ?? MODEL_DEFAULTS.anthropic.modelId)
+    return resolveConfigMetadata(this._config, this._config.modelId ?? this._defaultModelId)
   }
 
   /**
@@ -157,9 +214,10 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       }
 
       const requestOptions = this._buildRequestOptions()
+      const client = await this._resolveClient()
       const response = requestOptions
-        ? await this._client.messages.countTokens(params, requestOptions)
-        : await this._client.messages.countTokens(params)
+        ? await client.messages.countTokens(params, requestOptions)
+        : await client.messages.countTokens(params)
 
       logger.debug(`total_tokens=<${response.input_tokens}> | native token count`)
       return response.input_tokens
@@ -173,9 +231,8 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     try {
       const request = this._formatRequest(messages, options)
       const requestOptions = this._buildRequestOptions()
-      const stream = requestOptions
-        ? this._client.messages.stream(request, requestOptions)
-        : this._client.messages.stream(request)
+      const client = await this._resolveClient()
+      const stream = requestOptions ? client.messages.stream(request, requestOptions) : client.messages.stream(request)
 
       const usage = createEmptyUsage()
 

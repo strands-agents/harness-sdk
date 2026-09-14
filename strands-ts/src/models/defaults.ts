@@ -8,6 +8,9 @@
 export const MODEL_DEFAULTS = {
   anthropic: {
     modelId: 'claude-sonnet-4-6',
+    // Bedrock Mantle serves a different catalog under `anthropic.`-prefixed ids and does
+    // not carry Sonnet 4.6, so the direct-API default would 404 on that endpoint.
+    mantleModelId: 'anthropic.claude-sonnet-5',
     maxTokens: 64_000,
   },
   bedrock: {
