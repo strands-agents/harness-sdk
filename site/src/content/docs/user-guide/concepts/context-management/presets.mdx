@@ -1,0 +1,89 @@
+---
+title: Strategy Presets
+description: "Named strategy presets that expand to preconfigured
+  Offload strategies for common context management patterns."
+experimental: true
+languages: python
+tags: [conversation-management, token-management]
+sourceLinks:
+  - path: strands-py/src/strands/_context_manager/presets.py
+addedDate: 2026-09-14
+---
+
+Named strategy presets are shorthand for preconfigured
+`Offload` strategies. Pass a preset name string in the
+strategies array instead of building the strategy by hand.
+
+Preset expansions are internal defaults and may change
+between releases as tuning improves. The preset *name* is
+the stable contract. Use raw `Offload.*` strategies when
+you need a pinned configuration.
+
+## Available presets
+
+| Preset | Expands to |
+|--------|------------|
+| `"proactive_summarization"` | `Offload.summarize("*").when(utilization=0.7, preserve_recent=0.7)` |
+| `"large_tool_offloading"` | `Offload.truncate("tool_results", {"preview_tokens": 1000}).when(threshold=2500)` |
+| `"overflow_protection"` | `Offload.truncate("*").when(utilization=1.0, preserve_recent=4)` |
+| `"stale_tool_cleanup"` | `Offload.drop("tool_results").when(preserve_recent=5)` |
+
+**`proactive_summarization`** summarizes the oldest 30% of
+messages when the context window reaches 70% capacity.
+
+**`large_tool_offloading`** truncates individual tool results
+over 2,500 tokens to a 1,000-token preview, eagerly on
+message arrival.
+
+**`overflow_protection`** truncates the oldest messages when
+the context window is full, keeping the 4 most recent.
+
+**`stale_tool_cleanup`** drops tool results more than 5
+messages old.
+
+## Using presets
+
+Pass preset name strings in the
+`strategies` array of a `ContextManager`:
+
+```python
+from strands import Agent
+
+agent = Agent(
+    context_manager={
+        "strategies": [
+            "proactive_summarization",
+            "large_tool_offloading",
+        ],
+    },
+)
+```
+
+## Mixing presets and custom strategies
+
+Combine named presets with raw `Offload` strategies in
+the same array. Order matters: strategies run as a
+pipeline, and each sees the output of the previous.
+
+```python
+from strands import Agent
+from strands._context_manager.strategies.offload import (
+    Offload,
+)
+
+agent = Agent(
+    context_manager={
+        "strategies": [
+            "large_tool_offloading",
+            Offload.summarize("*").when(
+                utilization=0.9,
+                preserve_recent=2,
+            ),
+        ],
+    },
+)
+```
+
+The preset handles large tool results eagerly, and the
+custom summarization strategy compresses remaining content
+at 90% utilization.

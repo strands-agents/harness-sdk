@@ -1,0 +1,353 @@
+---
+title: Custom Strategies
+description: "Build custom context management strategies
+  with the Offload builder API, conditions, targets, and
+  stash configuration."
+experimental: true
+tags: [conversation-management, token-management]
+sourceLinks:
+  - path: strands-py/src/strands/_context_manager/strategies/offload/base.py
+  - path: strands-py/src/strands/_context_manager/strategies/offload/truncate.py
+  - path: strands-py/src/strands/_context_manager/strategies/offload/summarize.py
+  - path: strands-ts/src/context-manager/strategies/offload/base.ts
+  - path: strands-ts/src/context-manager/strategies/offload/index.ts
+addedDate: 2026-09-14
+---
+
+When the [built-in modes](./built-in-modes) don't fit,
+build a custom strategy pipeline. Define which content to
+reduce, how to reduce it, and when each strategy fires.
+
+## Strategy pipeline
+
+Strategies run as an ordered pipeline. Each strategy sees
+the output of the previous one, so order determines
+priority. If two strategies target the same content, the
+first one to shrink it below the next strategy's threshold
+wins.
+
+The SDK always appends an emergency truncation strategy as
+the final step. It only fires when the context window is
+still overflowing after all user strategies have run.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands._context_manager.strategies.offload import (
+    Offload,
+)
+
+agent = Agent(
+    context_manager={
+        "strategies": [
+            Offload.truncate(
+                "tool_results",
+                {"preview_tokens": 750},
+            ).when(threshold=1500),
+            Offload.summarize("*").when(
+                utilization=0.8,
+                preserve_recent=4,
+            ),
+        ],
+    },
+)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/concepts/context-management/custom-strategies_imports.ts:basic_config_imports"
+
+--8<-- "user-guide/concepts/context-management/custom-strategies.ts:basic_config"
+```
+</Tab>
+</Tabs>
+
+:::note
+In TypeScript, construct a
+`ContextManager` instance directly. Python also accepts a
+config dict with a `strategies` key.
+:::
+
+## Offload builder
+
+The `Offload` namespace exposes three methods. Each returns
+a strategy builder that can be chained with
+<Syntax py=".when()" ts=".when()" /> to add conditions.
+
+### Truncate
+
+Replaces oversized content with a head/tail preview. The
+original content is stored in the stash for later
+retrieval.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands._context_manager.strategies.offload import (
+    Offload,
+)
+
+Offload.truncate(
+    "tool_results",
+    {"preview_tokens": 750},
+).when(threshold=1500)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/concepts/context-management/custom-strategies_imports.ts:truncate_imports"
+
+--8<-- "user-guide/concepts/context-management/custom-strategies.ts:truncate"
+```
+</Tab>
+</Tabs>
+
+**Truncate configuration:**
+
+| Parameter | Python | TypeScript | Default |
+|-----------|--------|------------|---------|
+| Preview size | `preview_tokens` | `previewTokens` | 1,000 |
+| Preview mode | `preview` | `preview` | `"head_tail"` / `"headTail"` |
+
+Preview modes: `"head"`, `"tail"`,
+<Syntax py='"head_tail"' ts='"headTail"' />.
+
+### Summarize
+
+Replaces content with an LLM-generated summary. Uses the
+agent's model by default.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands._context_manager.strategies.offload import (
+    Offload,
+)
+
+Offload.summarize("*").when(
+    utilization=0.85,
+    preserve_recent=4,
+)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/concepts/context-management/custom-strategies_imports.ts:summarize_imports"
+
+--8<-- "user-guide/concepts/context-management/custom-strategies.ts:summarize"
+```
+</Tab>
+</Tabs>
+
+**Summarize configuration:**
+
+| Parameter | Python | TypeScript | Default |
+|-----------|--------|------------|---------|
+| Model | `model` | `model` | Agent's model |
+| System prompt | `system_prompt` | `systemPrompt` | Built-in |
+
+### Drop
+
+Removes matching content entirely. No preview, no stash
+entry.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands._context_manager.strategies.offload import (
+    Offload,
+)
+
+Offload.drop("tool_results").when(preserve_recent=5)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/concepts/context-management/custom-strategies_imports.ts:drop_imports"
+
+--8<-- "user-guide/concepts/context-management/custom-strategies.ts:drop"
+```
+</Tab>
+</Tabs>
+
+## Conditions
+
+Chain <Syntax py=".when()" ts=".when()" /> to control when
+a strategy fires. Conditions determine the granularity of
+the strategy, not the method.
+
+| Condition | Granularity | Behavior |
+|-----------|-------------|----------|
+| <Syntax py="threshold" ts="threshold" /> only | Per-block, eager | Acts on each block above this token size on message arrival |
+| <Syntax py="utilization" ts="utilization" /> only | Message-level, batch | Removes/summarizes oldest messages when utilization exceeded |
+| Both | Message-level | Targets messages with blocks over the threshold, fires at utilization |
+| <Syntax py="preserve_recent" ts="preserveRecent" /> | — | Number of most recent matching messages to skip |
+
+<Syntax py="preserve_recent" ts="preserveRecent" />
+accepts an integer in both SDKs. In Python, a float
+between 0 and 1 is treated as a ratio (e.g., `0.7` keeps
+70% of matching messages).
+
+### Per-block example
+
+Fire eagerly on individual blocks over 2,000 tokens:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands._context_manager.strategies.offload import (
+    Offload,
+)
+
+Offload.truncate("tool_results").when(threshold=2000)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/concepts/context-management/custom-strategies_imports.ts:conditions_imports"
+
+--8<-- "user-guide/concepts/context-management/custom-strategies.ts:conditions_threshold"
+```
+</Tab>
+</Tabs>
+
+### Message-level example
+
+Summarize oldest messages when the window reaches 85%:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands._context_manager.strategies.offload import (
+    Offload,
+)
+
+Offload.summarize("*").when(
+    utilization=0.85,
+    preserve_recent=4,
+)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/concepts/context-management/custom-strategies_imports.ts:conditions_imports"
+
+--8<-- "user-guide/concepts/context-management/custom-strategies.ts:conditions_utilization"
+```
+</Tab>
+</Tabs>
+
+### Combined example
+
+Target tool results over 1,500 tokens, but only fire when
+the window reaches 90%:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands._context_manager.strategies.offload import (
+    Offload,
+)
+
+Offload.truncate("tool_results").when(
+    threshold=1500,
+    utilization=0.9,
+)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/concepts/context-management/custom-strategies_imports.ts:conditions_imports"
+
+--8<-- "user-guide/concepts/context-management/custom-strategies.ts:conditions_both"
+```
+</Tab>
+</Tabs>
+
+## Targets
+
+Targets specify which content a strategy applies to.
+
+| Target | Python | TypeScript |
+|--------|--------|------------|
+| All content | `"*"` | `"*"` |
+| Tool results | `"tool_results"` | `"toolResults"` |
+| Failed tool results | `"tool_result_errors"` | `"toolResultErrors"` |
+| Assistant text | `"assistant_text"` | `"assistantText"` |
+| User text | `"user_text"` | `"userText"` |
+| Specific tools | `["tool::bash", "tool::read_file"]` | `["tool::bash", "tool::read_file"]` |
+| Exclude tools | `["!tool::bash"]` | `["!tool::bash"]` |
+
+Tool name lists use the `tool::` prefix. Prefix a name
+with `!` to exclude it (apply to all tools *except* the
+listed ones).
+
+## Stash
+
+The stash stores all message content on arrival as JSON,
+before any strategy runs. Truncated or summarized content
+can be retrieved on demand through the
+<Syntax
+  py="retrieve_context"
+  ts="retrieve_context"
+/> tool,
+which the SDK registers by default.
+
+Stash uses in-memory storage by default. Configure it
+through the
+<Syntax py="stash" ts="stash" /> key:
+
+- Omit or pass `true` for defaults (in-memory storage)
+- Pass a config with a custom storage backend
+- Pass `false` to disable stash entirely
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+
+# Disable stash and retrieval tool
+agent = Agent(
+    context_manager={
+        "stash": False,
+    },
+)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/concepts/context-management/custom-strategies_imports.ts:stash_imports"
+
+--8<-- "user-guide/concepts/context-management/custom-strategies.ts:stash_disabled"
+```
+</Tab>
+</Tabs>
+
+## Emergency truncation
+
+Every strategy pipeline ends with an emergency truncation
+strategy, appended automatically. It fires only when the
+context window is still overflowing after all user
+strategies have run. When it fires, it drops the oldest
+20% of non-head messages.
+
+Emergency truncation intentionally ignores pinned messages
+so an all-pinned overflow is still recoverable. Regular
+strategies respect pins.

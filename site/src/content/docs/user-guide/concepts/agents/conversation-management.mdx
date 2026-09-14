@@ -30,8 +30,21 @@ As conversations grow, managing this context becomes increasingly important for 
 4. **Coherence**: Maintaining logical flow and preserving important information
 
 :::tip[Quick setup]
-For most agents, you can skip manual configuration entirely.
-See [Context Management](../context-management).
+For most agents, pass
+<Syntax
+  py='context_manager="auto"'
+  ts='contextManager: "auto"'
+/> and skip manual configuration.
+See [Context Management](../context-management). When
+<Syntax
+  py="context_manager"
+  ts="contextManager"
+/> is set, the ContextManager owns all context reduction
+and any co-provided
+<Syntax
+  py="conversation_manager"
+  ts="conversationManager"
+/> is ignored.
 :::
 
 ## Built-in Conversation Managers
