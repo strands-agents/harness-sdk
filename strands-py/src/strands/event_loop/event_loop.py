@@ -17,9 +17,10 @@ from typing import TYPE_CHECKING, Any
 from opentelemetry import trace as trace_api
 
 from .._middleware.stages import InvokeModelContext, InvokeModelStage
+from ..agent import _continuation
 from ..experimental.checkpoint import Checkpoint, CheckpointPosition
 from ..hooks import AfterModelCallEvent, AfterToolsEvent, BeforeModelCallEvent, BeforeToolsEvent
-from ..interrupt import PendingToolExecution
+from ..interrupt import InterruptException, PendingToolExecution
 from ..telemetry.metrics import Trace, _total_prompt_tokens
 from ..telemetry.tracer import Tracer, get_tracer
 from ..tools._validator import validate_and_prepare_tools
@@ -394,6 +395,7 @@ async def event_loop_cycle(
             EventLoopException,
             ContextWindowOverflowException,
             MaxTokensReachedException,
+            InterruptException,
         ) as e:
             # These exceptions should bubble up directly rather than get wrapped in an EventLoopException
             tracer.end_span_with_error(cycle_span, str(e), e)
@@ -451,6 +453,19 @@ async def recurse_event_loop(
     recursive_trace.end()
 
 
+async def _invoke_before_model_call_hooks(agent: "Agent", event: BeforeModelCallEvent) -> BeforeModelCallEvent:
+    """Run BeforeModelCallEvent hooks, raising any interrupt they registered.
+
+    No tool execution is pending at this point, so resuming re-enters the same model call.
+    """
+    event, interrupts = await agent.hooks.invoke_callbacks_async(event)
+    if not interrupts:
+        return event
+    for interrupt in interrupts:
+        agent._interrupt_state.interrupts.setdefault(interrupt.id, interrupt)
+    raise InterruptException(interrupts[0])
+
+
 async def _handle_model_execution(
     agent: "Agent",
     cycle_span: Any,
@@ -499,9 +514,27 @@ async def _handle_model_execution(
                 invocation_state=invocation_state,
                 projected_input_tokens=projected_input_tokens,
             )
-            await agent.hooks.invoke_callbacks_async(before_model_call_event)
+            model_continuation: Messages | None = None
+            try:
+                before_model_call_event = await _invoke_before_model_call_hooks(agent, before_model_call_event)
+                model_continuation = await _continuation.prepare(
+                    before_model_call_event,
+                    agent._convert_prompt_to_messages,
+                )
+            finally:
+                if model_continuation is None:
+                    await _continuation.abandon(
+                        before_model_call_event,
+                        RuntimeError(
+                            "Agent stream closed before continuation input was incorporated into agent history"
+                        ),
+                    )
 
             if before_model_call_event.cancel:
+                await _continuation.abandon(
+                    before_model_call_event,
+                    RuntimeError("Continuation abandoned by BeforeModelCallEvent"),
+                )
                 cancel_text = (
                     before_model_call_event.cancel
                     if isinstance(before_model_call_event.cancel, str)
@@ -526,6 +559,17 @@ async def _handle_model_execution(
                     continue
                 yield ModelStopReason(stop_reason=stop_reason, message=message, usage=usage, metrics=metrics)
                 break
+
+            if model_continuation is not None:
+                await agent._append_continuation_messages(model_continuation, before_model_call_event)
+                try:
+                    projected_input_tokens = await _estimate_input_tokens(agent)
+                except Exception as error:
+                    projected_input_tokens = None
+                    logger.debug(
+                        "error=<%s> | token estimation failed after continuation input, proceeding without estimate",
+                        error,
+                    )
 
             if structured_output_context.forced_mode:
                 tool_spec = structured_output_context.get_tool_spec()
@@ -615,6 +659,8 @@ async def _handle_model_execution(
 
             break  # Success! Break out of retry loop
 
+        except InterruptException:
+            raise
         except Exception as e:
             after_model_call_event = AfterModelCallEvent(
                 agent=agent,
@@ -701,6 +747,7 @@ def _make_invoke_model_terminal(
                     model_state=model_state,
                     dynamic_trailing_blocks=ctx.dynamic_trailing_blocks,
                     cancel_signal=agent._cancel_signal,
+                    agent_metadata=agent._metadata,
                 ):
                     yield event
 

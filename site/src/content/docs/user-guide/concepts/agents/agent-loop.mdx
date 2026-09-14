@@ -12,7 +12,17 @@ A language model can answer questions. An agent can *do things*. The agent loop 
 
 When a model receives a request it cannot fully address with its training alone, it needs to reach out into the world: read files, query databases, call APIs, execute code. The agent loop is the orchestration layer that enables this. It manages the cycle of reasoning and action that allows a model to tackle problems requiring multiple steps, external information, or real-world side effects.
 
-This is the foundational concept in Strands. Everything else builds on top of it.
+This is the foundational concept in the Strands Agents SDK, installed as
+`strands-agents` on PyPI and `@strands-agents/sdk` on npm. Everything else builds
+on top of it. The loop ships with the controls a production agent needs:
+
+- [Invocation limits](#invocation-limits) cap the turns and tokens one call may use
+- [Cancellation](#cancellation) stops a running agent mid-loop
+- [Stop reasons](#stop-reasons) report why the loop ended
+- [Concurrent invocations](#concurrent-invocations) guard against overlapping
+  calls on one agent instance
+- [Hooks](./hooks.mdx) intercept any step, and
+  [retry strategies](./retry-strategies.mdx) recover from model and tool errors
 
 ## How the Loop Works
 

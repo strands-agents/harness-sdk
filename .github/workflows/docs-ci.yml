@@ -14,7 +14,7 @@ defaults:
 jobs:
   ci:
     name: CI
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     steps:
       - name: Checkout
         uses: actions/checkout@v7

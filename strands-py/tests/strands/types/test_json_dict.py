@@ -1,5 +1,8 @@
 """Tests for JSONSerializableDict class."""
 
+import copy
+import pickle
+
 import pytest
 
 from strands.types.json_dict import JSONSerializableDict
@@ -174,3 +177,20 @@ def test_version_increments_independently():
     state.delete("key1")
     version_after_delete = state._get_version()
     assert version_after_delete == version_after_second_set + 1
+
+
+@pytest.mark.parametrize("clone", [copy.deepcopy, lambda state: pickle.loads(pickle.dumps(state))])
+def test_clone_round_trips_and_is_independent(clone):
+    state = JSONSerializableDict({"key": {"nested": [1, 2]}})
+    state.set("other", "value")
+
+    cloned = clone(state)
+    cloned.set("key", "changed")
+
+    tru_original = (state.get(), state._get_version())
+    exp_original = ({"key": {"nested": [1, 2]}, "other": "value"}, 1)
+    assert tru_original == exp_original
+
+    tru_cloned = (cloned.get(), cloned._get_version())
+    exp_cloned = ({"key": "changed", "other": "value"}, 2)
+    assert tru_cloned == exp_cloned

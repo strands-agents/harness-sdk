@@ -78,7 +78,7 @@ The [Python SDK README](strands-py/) covers tools, model providers, MCP, and bid
 
 ### TypeScript
 
-Requires Node.js 20+:
+Requires Node.js 22+:
 
 ```bash
 npm install @strands-agents/sdk

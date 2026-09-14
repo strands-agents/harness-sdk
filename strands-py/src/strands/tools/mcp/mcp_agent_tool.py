@@ -14,6 +14,7 @@ from typing_extensions import override
 
 from ...types._events import ToolResultEvent
 from ...types.tools import AgentTool, ToolGenerator, ToolSpec, ToolUse
+from ._compat import input_schema, output_schema
 
 if TYPE_CHECKING:
     from .mcp_client import MCPClient
@@ -43,7 +44,8 @@ class MCPAgentTool(AgentTool):
             mcp_client: The MCP server connection to use for tool invocation
             name_override: Optional name to use for the agent tool (for disambiguation)
                            If None, uses the original MCP tool name
-            timeout: Optional timeout duration for tool execution
+            timeout: Optional timeout duration for tool execution. On the mcp 2.x line, the timeout
+                     bounds each request round of a multi round-trip tool call rather than the call as a whole.
         """
         super().__init__()
         logger.debug("tool_name=<%s> | creating mcp agent tool", mcp_tool.name)
@@ -75,19 +77,22 @@ class MCPAgentTool(AgentTool):
         description: str = self.mcp_tool.description or f"Tool which performs {self.mcp_tool.name}"
 
         spec: ToolSpec = {
-            "inputSchema": {"json": self.mcp_tool.inputSchema},
+            "inputSchema": {"json": input_schema(self.mcp_tool)},
             "name": self.tool_name,  # Use agent-facing name in spec
             "description": description,
         }
 
-        if self.mcp_tool.outputSchema:
-            spec["outputSchema"] = {"json": self.mcp_tool.outputSchema}
+        tool_output_schema = output_schema(self.mcp_tool)
+        if tool_output_schema:
+            spec["outputSchema"] = {"json": tool_output_schema}
 
         # Pass annotations through opaquely: per MCP spec they are untrusted hints,
         # and the annotation vocabulary is still evolving (SEP-1984, SEP-1913).
         # An annotations object with no set fields is treated the same as no annotations.
+        # Dump by alias so the keys are the camelCase wire names on both `mcp`
+        # lines: 2.x fields are snake_case with camelCase aliases; 1.x has no aliases.
         if self.mcp_tool.annotations:
-            annotations = self.mcp_tool.annotations.model_dump(exclude_none=True)
+            annotations = self.mcp_tool.annotations.model_dump(by_alias=True, exclude_none=True)
             if annotations:
                 spec["annotations"] = annotations
 

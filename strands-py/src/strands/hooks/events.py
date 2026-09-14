@@ -17,14 +17,14 @@ from ..types.content import ContentBlock, Message, Messages
 from ..types.interrupt import _Interruptible
 from ..types.streaming import StopReason
 from ..types.tools import AgentTool, ToolResult, ToolUse
-from .registry import BaseHookEvent, HookEvent
+from .registry import BaseHookEvent, HookEvent, _LocalAgentT
 
 if TYPE_CHECKING:
     from ..multiagent.base import MultiAgentBase
 
 
 @dataclass
-class AgentInitializedEvent(HookEvent):
+class AgentInitializedEvent(HookEvent[_LocalAgentT]):
     """Event triggered when an agent has finished initialization.
 
     This event is fired after the agent has been fully constructed and all
@@ -115,7 +115,7 @@ class AfterInvocationEvent(HookEvent):
 
 
 @dataclass
-class MessageAddedEvent(HookEvent):
+class MessageAddedEvent(HookEvent[_LocalAgentT]):
     """Event triggered when a message is added to the agent's conversation.
 
     This event is fired whenever the agent adds a new message to its internal
@@ -205,7 +205,7 @@ class AfterToolsEvent(HookEvent):
 
 
 @dataclass
-class BeforeToolCallEvent(HookEvent, _Interruptible):
+class BeforeToolCallEvent(HookEvent[_LocalAgentT], _Interruptible):
     """Event triggered before a tool is invoked.
 
     This event is fired just before the agent executes a tool, allowing hook
@@ -245,7 +245,7 @@ class BeforeToolCallEvent(HookEvent, _Interruptible):
 
 
 @dataclass
-class AfterToolCallEvent(HookEvent):
+class AfterToolCallEvent(HookEvent[_LocalAgentT]):
     """Event triggered after a tool invocation completes.
 
     This event is fired after the agent has finished executing a tool,

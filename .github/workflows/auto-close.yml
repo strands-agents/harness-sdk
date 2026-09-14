@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   auto-close:
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     strategy:
       matrix:
         include:

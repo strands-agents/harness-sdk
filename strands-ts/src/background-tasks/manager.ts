@@ -22,6 +22,8 @@ export interface BackgroundTaskManager {
   get(taskId: string): Promise<BackgroundTask | undefined>
   /** Lists the tasks currently tracked by the manager. */
   list(): Promise<readonly BackgroundTask[]>
+  /** Whether the manager is tracking any tasks (including terminal ones not yet removed). */
+  hasTasks(): boolean
   /**
    * Requests cancellation of one task.
    *

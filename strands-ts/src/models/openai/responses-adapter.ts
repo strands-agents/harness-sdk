@@ -126,7 +126,7 @@ export function formatResponsesRequest(
   if (config.maxTokens !== undefined) request.max_output_tokens = config.maxTokens
   if (config.topP !== undefined) request.top_p = config.topP
 
-  applyCacheConfig(request, config.cacheConfig)
+  applyCacheConfig(request, config.cacheConfig, options?.agentMetadata)
 
   return request
 }

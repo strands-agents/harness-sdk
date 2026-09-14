@@ -120,9 +120,7 @@ class FileMemoryStore(MemoryStore):
         self.extraction: ExtractionConfig | bool | None = self._resolve_extraction(config)
         self._write_lock = asyncio.Lock()
 
-    def _resolve_extraction(
-        self, config: FileMemoryStoreConfig
-    ) -> ExtractionConfig | bool | None:
+    def _resolve_extraction(self, config: FileMemoryStoreConfig) -> ExtractionConfig | bool | None:
         extraction: ExtractionConfig | bool | None = config.get("extraction")
         if extraction is None or extraction is False:
             return extraction
@@ -151,8 +149,10 @@ class FileMemoryStore(MemoryStore):
         if option_max is not None and option_max < 1:
             raise ValueError("max_search_results must be >= 1")
         max_results = (
-            option_max if option_max is not None
-            else self.max_search_results if self.max_search_results is not None
+            option_max
+            if option_max is not None
+            else self.max_search_results
+            if self.max_search_results is not None
             else _DEFAULT_MAX_SEARCH_RESULTS
         )
 

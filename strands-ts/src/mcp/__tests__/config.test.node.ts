@@ -385,6 +385,56 @@ describe('McpClient.loadServers', () => {
       expect((await client!.listTools()).map((tool) => tool.name)).toEqual(['default_echo'])
     })
 
+    it('prefixes tools with the server name when prefixWithServerName is set', async () => {
+      const [client] = await McpClient.loadServers({ slack: { command: 'node' } }, undefined, {
+        prefixWithServerName: true,
+      })
+      const sdkClient = vi.mocked(Client).mock.results.at(-1)!.value
+      sdkClient.listTools.mockResolvedValue({ tools: [{ name: 'search', inputSchema: {} }] })
+
+      expect((await client!.listTools()).map((tool) => tool.name)).toEqual(['slack_search'])
+    })
+
+    it('replaces unsupported tool-name characters in the server name when prefixWithServerName is set', async () => {
+      const [client] = await McpClient.loadServers({ 'awslabs.aws-docs mcp/server': { command: 'node' } }, undefined, {
+        prefixWithServerName: true,
+      })
+      const sdkClient = vi.mocked(Client).mock.results.at(-1)!.value
+      sdkClient.listTools.mockResolvedValue({ tools: [{ name: 'search', inputSchema: {} }] })
+
+      expect((await client!.listTools()).map((tool) => tool.name)).toEqual(['awslabs_aws-docs_mcp_server_search'])
+    })
+
+    it('prefers the server name over a default prefix when prefixWithServerName is set', async () => {
+      const [client] = await McpClient.loadServers(
+        { slack: { command: 'node' } },
+        { prefix: 'global' },
+        { prefixWithServerName: true }
+      )
+      const sdkClient = vi.mocked(Client).mock.results.at(-1)!.value
+      sdkClient.listTools.mockResolvedValue({ tools: [{ name: 'search', inputSchema: {} }] })
+
+      expect((await client!.listTools()).map((tool) => tool.name)).toEqual(['slack_search'])
+    })
+
+    it('lets an explicit server prefix win over prefixWithServerName', async () => {
+      const clients = await McpClient.loadServers(
+        { slack: { command: 'node', prefix: 'chat.v2' }, chorus: { command: 'node', prefix: '' } },
+        undefined,
+        { prefixWithServerName: true }
+      )
+      const [slackSdk, chorusSdk] = vi
+        .mocked(Client)
+        .mock.results.slice(-2)
+        .map((result) => result.value)
+      slackSdk.listTools.mockResolvedValue({ tools: [{ name: 'search', inputSchema: {} }] })
+      chorusSdk.listTools.mockResolvedValue({ tools: [{ name: 'search', inputSchema: {} }] })
+
+      // An explicit prefix is taken as-is: only the server-name-derived prefix is sanitized.
+      expect((await clients[0]!.listTools()).map((tool) => tool.name)).toEqual(['chat.v2_search'])
+      expect((await clients[1]!.listTools()).map((tool) => tool.name)).toEqual(['search'])
+    })
+
     it('uses server name as applicationName when not in defaults', async () => {
       const clients = await McpClient.loadServers({
         'my-named-server': { command: 'node' },

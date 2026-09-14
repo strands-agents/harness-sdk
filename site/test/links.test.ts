@@ -66,9 +66,9 @@ describe('Link Utilities', () => {
       )
       expect(
         resolveApiShorthand(
-          '@api/python/strands.experimental.bidi.models.gemini_live#BidiGeminiLiveModel'
+          '@api/python/strands.experimental.bidi.models.google#GoogleGeminiLiveModel'
         )
-      ).toBe('/docs/api/python/strands.experimental.bidi.models.gemini_live/#BidiGeminiLiveModel')
+      ).toBe('/docs/api/python/strands.experimental.bidi.models.google/#GoogleGeminiLiveModel')
     })
   })
 

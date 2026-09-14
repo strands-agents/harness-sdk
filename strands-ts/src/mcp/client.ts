@@ -16,7 +16,7 @@ import type { JSONSchema, JSONValue } from '../types/json.js'
 import type { ElicitationCallback } from '../types/elicitation.js'
 import { McpTool } from '../tools/mcp-tool.js'
 import { logger } from '../logging/index.js'
-import { type McpServerConfig, mcpServerLoader } from './config.js'
+import { type McpLoadServersOptions, type McpServerConfig, mcpServerLoader } from './config.js'
 
 /**
  * Widened transport type that accepts MCP transport implementations without requiring explicit casts.
@@ -163,13 +163,15 @@ export class McpClient {
    *
    * @param config - A file path to a JSON config, or a flat server map object.
    * @param defaults - Options applied to all clients unless overridden per-server.
+   * @param options - Loader behavior, such as prefixing tools with the server name.
    * @returns An array of McpClient instances ready to be passed to an Agent.
    */
   public static async loadServers(
     config: string | Record<string, McpServerConfig>,
-    defaults?: McpClientOptions
+    defaults?: McpClientOptions,
+    options?: McpLoadServersOptions
   ): Promise<McpClient[]> {
-    return (await mcpServerLoader.get()(config, defaults)).map((c) => new McpClient(c))
+    return (await mcpServerLoader.get()(config, defaults, options)).map((c) => new McpClient(c))
   }
 
   private _clientName: string

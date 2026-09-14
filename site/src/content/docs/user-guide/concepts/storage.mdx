@@ -194,6 +194,35 @@ so applications that never construct an `S3Storage` pay nothing.
 </Tab>
 </Tabs>
 
+#### Required S3 permissions
+
+The credentials used by `S3Storage` need these permissions:
+
+- `s3:PutObject` to create and update data
+- `s3:GetObject` to retrieve data
+- `s3:DeleteObject` to delete data
+- `s3:ListBucket` to list keys under the configured prefix
+
+This policy grants the required permissions for one bucket:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:PutObject", "s3:GetObject", "s3:DeleteObject"],
+      "Resource": "arn:aws:s3:::my-agent-sessions/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::my-agent-sessions"
+    }
+  ]
+}
+```
+
 You cannot pass both a region and a pre-configured client; pick
 one or the other.
 

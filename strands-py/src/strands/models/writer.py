@@ -18,8 +18,13 @@ from ..types.content import ContentBlock, Messages
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolResult, ToolSpec, ToolUse
-from ._validation import _has_location_source, validate_config_keys, warn_on_tool_choice_not_supported
-from .model import BaseModelConfig, Model
+from ._validation import (
+    _has_location_source,
+    validate_config_keys,
+    warn_on_cache_config_not_supported,
+    warn_on_tool_choice_not_supported,
+)
+from .model import BaseModelConfig, CacheConfig, Model
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +49,7 @@ class WriterModel(Model):
         Attributes:
             model_id: Model name to use (e.g. palmyra-x5, palmyra-x4, etc.).
             max_tokens: Maximum number of tokens to generate.
+            cache_config: Prompt caching settings. Writer honors no cache fields, so any set field is ignored.
             stop: Default stop sequences.
             stream_options: Additional options for streaming.
             temperature: What sampling temperature to use.
@@ -52,6 +58,7 @@ class WriterModel(Model):
 
         model_id: str
         max_tokens: int | None
+        cache_config: CacheConfig | None
         stop: str | list[str] | None
         stream_options: dict[str, Any]
         temperature: float | None
@@ -279,7 +286,7 @@ class WriterModel(Model):
             The formatted request.
         """
         request = {
-            **{k: v for k, v in self.config.items()},
+            **{k: v for k, v in self.config.items() if k != "cache_config"},
             "messages": self._format_request_messages(messages, system_prompt),
             "stream": True,
         }
@@ -304,6 +311,8 @@ class WriterModel(Model):
                 for tool_spec in tool_specs
             ]
 
+        # Writer applies no CacheConfig fields; warn that any set field is ignored.
+        warn_on_cache_config_not_supported(self.config.get("cache_config"), "Writer", supported=set(), stacklevel=3)
         return request
 
     def format_chunk(self, event: Any) -> StreamEvent:

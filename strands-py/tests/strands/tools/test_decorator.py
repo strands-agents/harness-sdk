@@ -12,7 +12,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 import strands
-from strands import Agent
+from strands import Agent, LocalAgent
 from strands.interrupt import Interrupt, _InterruptState
 from strands.types._events import ToolInterruptEvent, ToolResultEvent, ToolStreamEvent
 from strands.types.tools import AgentTool, ToolContext, ToolUse
@@ -1507,6 +1507,28 @@ async def test_tool_context_injection_default():
             "test_reference": value_to_pass,
         },
     )
+
+
+@pytest.mark.asyncio
+async def test_tool_context_injection_parameterized():
+    """Test that parameterized ToolContext annotations are injected."""
+
+    @strands.tool(context=True)
+    def context_tool(tool_context: ToolContext[LocalAgent]) -> str:
+        return tool_context.agent.name
+
+    agent = Agent(name="test_agent")
+    events = [
+        event
+        async for event in context_tool.stream(
+            tool_use={"toolUseId": "test-id", "name": "context_tool", "input": {}},
+            invocation_state={"agent": agent},
+        )
+    ]
+
+    assert events == [
+        ToolResultEvent({"toolUseId": "test-id", "status": "success", "content": [{"text": "test_agent"}]})
+    ]
 
 
 @pytest.mark.asyncio
