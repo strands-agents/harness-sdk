@@ -69,6 +69,16 @@ class GuardContent(TypedDict, total=False):
     text: GuardContentText
 
 
+class SystemGuardContent(TypedDict):
+    """Text content in a system prompt to be evaluated by guardrails.
+
+    Attributes:
+        text: Text within the system prompt to be evaluated by the guardrail.
+    """
+
+    text: GuardContentText
+
+
 class ReasoningTextBlock(TypedDict, total=False):
     """Contains the reasoning that the model used to return the output.
 
@@ -146,7 +156,7 @@ class SystemContentBlock(TypedDict, total=False):
     """
 
     cachePoint: CachePoint
-    guardContent: GuardContent
+    guardContent: SystemGuardContent
     text: str
 
 
