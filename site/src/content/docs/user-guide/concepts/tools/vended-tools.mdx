@@ -400,13 +400,10 @@ configured at construction time via `make_web_fetch` / `makeWebFetch`:
 
 The `max_bytes` / `maxBytes` parameter caps the HTTP response size (default 5 MiB);
 `max_content_chars` / `maxContentChars` caps the extracted content delivered to the model or
-analyst (default 50,000 characters). For `mode='agentic'` / `mode: 'agentic'`,
-the factory also accepts a `model` for the analyst; the agent's own model is
+analyst (default 50,000 characters). The `timeout` parameter sets
+the curl request timeout (default 30 s; pass `0` to disable). For `mode='agentic'` /
+`mode: 'agentic'`, the factory also accepts a `model` for the analyst; the agent's own model is
 used when none is supplied.
-
-The Python tool delegates all networking to an `httpx.AsyncClient`. Use the
-`make_web_fetch` factory to supply a pre-configured client with custom
-timeouts, redirects, proxies, or caching.
 
 _Supported in: Node.js (TypeScript); Python (all platforms)._
 
@@ -431,9 +428,9 @@ npm install turndown
 
 :::note[Security posture]
 Web fetch accepts only `http://` and `https://` URLs and caps response bodies
-at 5 MiB by default. Egress control belongs at the layer that encapsulates the
-agent — a sandbox, microVM, or network policy — where it can be enforced
-consistently across all tools, including `shell`.
+at 5 MiB by default. Requests run inside the agent's sandbox, so network
+access is scoped to whatever the sandbox permits. Egress control at the
+network or sandbox boundary is still recommended for production deployments.
 :::
 
 **Example:**
@@ -485,19 +482,18 @@ agent = Agent(tools=[web_fetch])
 agent("Read https://example.com/docs and then explain the architecture")
 ```
 
-Tighter response cap with a dedicated analyst model and custom transport:
+Tighter response cap with a dedicated analyst model:
 
 ```python
-import httpx
 from strands import Agent
 from strands.models import BedrockModel
 from strands.vended_tools import make_web_fetch
 
 web_fetch = make_web_fetch(
     mode="agentic",
-    client=httpx.AsyncClient(timeout=10.0),
     max_bytes=1 * 1024 * 1024,
     max_content_chars=25_000,
+    timeout=15,
     model=BedrockModel(model_id="us.amazon.nova-micro-v1:0"),
 )
 agent = Agent(tools=[web_fetch])
