@@ -253,39 +253,45 @@ Events for speech-to-text transcription of both user and assistant speech.
 
 #### BidiTranscriptStreamEvent
 
-Emitted when speech is transcribed. Supports incremental updates for providers that send partial transcripts.
+Emitted for each incremental transcript update.
 
 ```python
 {
     "type": "bidi_transcript_stream",
-    "delta": {"text": "Hello"},
-    "text": "Hello",
-    "role": "assistant",
-    "is_final": True,
-    "current_transcript": "Hello world"
+    "delta": "Hello",
+    "role": "assistant"
 }
 ```
 
 **Properties:**
 
-- `delta`: The incremental transcript change
-- `text`: The delta text (same as delta content)
+- `delta`: The incremental transcript text
 - `role`: Who is speaking (`"user"` or `"assistant"`)
-- `is_final`: Whether this is the final/complete transcript
-- `current_transcript`: The accumulated transcript text so far (None for first delta)
+
+#### BidiTranscriptCompleteEvent
+
+Emitted once with the complete transcript for a user or assistant turn.
+
+```python
+{
+    "type": "bidi_transcript_complete",
+    "transcript": "Hello world",
+    "role": "assistant"
+}
+```
+
+**Properties:**
+
+- `transcript`: The complete transcript text
+- `role`: Who spoke (`"user"` or `"assistant"`)
 
 **Usage:**
 ```python
 async for event in agent.receive():
     if event["type"] == "bidi_transcript_stream":
-        role = event["role"]
-        text = event["text"]
-        is_final = event["is_final"]
-        
-        if is_final:
-            print(f"{role}: {text}")
-        else:
-            print(f"{role} (preview): {text}")
+        print(event["delta"], end="", flush=True)
+    elif event["type"] == "bidi_transcript_complete":
+        print(f"\n{event['role']}: {event['transcript']}")
 ```
 
 ### Interruption Events
@@ -441,9 +447,8 @@ async def main():
         elif event["type"] == "bidi_audio_stream":
             print(f"🔊 Audio chunk: {len(event['audio'])} bytes")
         
-        elif event["type"] == "bidi_transcript_stream":
-            if event["is_final"]:
-                print(f"{event['role']}: {event['text']}")
+        elif event["type"] == "bidi_transcript_complete":
+            print(f"{event['role']}: {event['transcript']}")
         
         elif event["type"] == "bidi_response_complete":
             print(f"✅ Response complete: {event['stop_reason']}")
@@ -466,25 +471,9 @@ async def main():
     async with BidiAgent(model=model) as agent:
         await agent.send("Tell me about Python")
         
-        # Track incremental transcript updates
-        current_speaker = None
-        current_text = ""
-        
         async for event in agent.receive():
-            if event["type"] == "bidi_transcript_stream":
-                role = event["role"]
-                
-                if role != current_speaker:
-                    if current_text:
-                        print(f"\n{current_speaker}: {current_text}")
-                    current_speaker = role
-                    current_text = ""
-                
-                current_text = event.get("current_transcript", event["text"])
-                
-                if event["is_final"]:
-                    print(f"\n{role}: {current_text}")
-                    current_text = ""
+            if event["type"] == "bidi_transcript_complete":
+                print(f"{event['role']}: {event['transcript']}")
 
 asyncio.run(main())
 ```
@@ -507,8 +496,8 @@ async def main():
         async for event in agent.receive():
             event_type = event["type"]
             
-            if event_type == "bidi_transcript_stream" and event["is_final"]:
-                print(f"{event['role']}: {event['text']}")
+            if event_type == "bidi_transcript_complete":
+                print(f"{event['role']}: {event['transcript']}")
             
             elif event_type == "tool_use_stream":
                 tool_use = event["current_tool_use"]
@@ -538,8 +527,8 @@ async def main():
         interruption_count = 0
         
         async for event in agent.receive():
-            if event["type"] == "bidi_transcript_stream" and event["is_final"]:
-                print(f"{event['role']}: {event['text']}")
+            if event["type"] == "bidi_transcript_complete":
+                print(f"{event['role']}: {event['transcript']}")
             
             elif event["type"] == "bidi_interruption":
                 interruption_count += 1
@@ -573,8 +562,8 @@ async def main():
             elif event["type"] == "bidi_connection_start":
                 print(f"✅ Connected to {event['model']}")
             
-            elif event["type"] == "bidi_transcript_stream" and event["is_final"]:
-                print(f"{event['role']}: {event['text']}")
+            elif event["type"] == "bidi_transcript_complete":
+                print(f"{event['role']}: {event['transcript']}")
 
 asyncio.run(main())
 ```

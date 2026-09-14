@@ -27,6 +27,7 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from typing import Any, cast
 
 import boto3
@@ -42,10 +43,10 @@ from boto3.session import Session
 from smithy_aws_core.identity.static import StaticCredentialsResolver
 from smithy_core.aio.eventstream import DuplexEventStream
 from smithy_core.shapes import ShapeID
-from smithy_http.aio.crt import AWSCRTHTTPClient
-from typing_extensions import Unpack
+from smithy_http.aio.crt import AWSCRTHTTPClient, AWSCRTHTTPResponse
+from typing_extensions import Unpack, override
 
-from ....models._validation import validate_config_keys, validate_region
+from ....models._validation import validate_region
 from ....types._events import ToolResultEvent, ToolUseStreamEvent
 from ....types.content import Messages
 from ....types.tools import ToolResult, ToolSpec, ToolUse
@@ -60,16 +61,18 @@ from ..types.events import (
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
     BidiTextInputEvent,
+    BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
 )
-from ..types.model import AudioConfig, BidiConnectionConfig
-from .model import (
-    AudioCapable,
-    BidiModel,
+from .configs import (
+    AudioConfig,
+    BidiConnectionConfig,
     BidiModelConfig,
-    BidiModelTimeoutError,
+    _validate_audio_config,
+    _validate_model_config,
 )
+from .model import AudioCapable, BidiModel, BidiModelTimeoutError
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +87,108 @@ _MAX_HISTORY_MESSAGE_BYTES = 50 * 1024  # 50KB per message
 _MAX_HISTORY_TOTAL_BYTES = 200 * 1024  # 200KB total history
 
 _STRANDS_USER_AGENT_EXTRA = "strands-agents"
+
+# TODO: Remove the CRT lifecycle workaround when both upstream issues are fixed:
+# https://github.com/aws/aws-sdk-python/issues/13
+# https://github.com/awslabs/aws-crt-python/issues/762
+_AWS_ERROR_HTTP_STREAM_HAS_COMPLETED = 2080
+
+
+def _is_http_stream_completed_error(error: BaseException) -> bool:
+    """Return whether a CRT write observed an already-completed HTTP stream."""
+    if getattr(error, "code", None) == _AWS_ERROR_HTTP_STREAM_HAS_COMPLETED:
+        return True
+    return isinstance(error, RuntimeError) and "AWS_ERROR_HTTP_STREAM_HAS_COMPLETED" in str(error)
+
+
+class _BedrockAWSCRTHTTPClient(AWSCRTHTTPClient):
+    """Observe CRT request writers so their terminal results are always consumed."""
+
+    async def _await_response(self, stream: Any) -> AWSCRTHTTPResponse:
+        writer_task = getattr(stream, "_writer", None)
+        if isinstance(writer_task, asyncio.Task):
+            writer_task.add_done_callback(self._observe_request_writer)
+        response = await super()._await_response(stream)
+        return _BedrockAWSCRTHTTPResponse(status=response.status, fields=response.fields, stream=stream)
+
+    def _observe_request_writer(self, task: asyncio.Task[Any]) -> None:
+        """Consume a CRT request-writer result and report unexpected failures."""
+        if task.cancelled():
+            return
+
+        error = task.exception()
+        if error is None:
+            return
+        if _is_http_stream_completed_error(error):
+            logger.debug("error=<%s> | request writer stopped after HTTP/2 stream completion", error)
+            return
+
+        task.get_loop().call_exception_handler(
+            {
+                "message": "bedrock HTTP/2 request writer failed",
+                "exception": error,
+                "task": task,
+            }
+        )
+
+
+class _BedrockAWSCRTHTTPResponse(AWSCRTHTTPResponse):
+    """Keep CRT response reads alive until the stream resolves them."""
+
+    async def chunks(self) -> AsyncGenerator[bytes, None]:
+        while True:
+            read_task = asyncio.create_task(self._stream.get_next_response_chunk())
+            try:
+                await asyncio.wait({read_task})
+            except asyncio.CancelledError:
+                read_task.add_done_callback(self._observe_cancelled_read)
+                raise
+
+            chunk = read_task.result()
+            if not chunk:
+                return
+            yield chunk
+
+    def _observe_cancelled_read(self, task: asyncio.Task[bytes]) -> None:
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            task.get_loop().call_exception_handler(
+                {
+                    "message": "bedrock HTTP/2 response reader failed after cancellation",
+                    "exception": error,
+                    "task": task,
+                }
+            )
+
+
+@dataclass
+class _ResponseState:
+    """Track transcript state for one Nova event stream.
+
+    Attributes:
+        role: Role of the current content block.
+        generation_stage: Generation stage of the current text block.
+        transcript: Accumulated user transcript or final assistant transcript.
+    """
+
+    role: str | None = None
+    generation_stage: str | None = None
+    transcript: str = ""
+
+    def append_transcript(self, delta: str) -> str:
+        """Append a transcript block while preserving word boundaries."""
+        if self.transcript and delta and not self.transcript[-1].isspace() and not delta[0].isspace():
+            delta = f" {delta}"
+        self.transcript += delta
+        return delta
+
+    def reset(self) -> None:
+        """Reset the response state."""
+        self.role = None
+        self.generation_stage = None
+        self.transcript = ""
 
 
 class BedrockNovaSonicModel(BidiModel, AudioCapable):
@@ -123,13 +228,16 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         if boto_session is not None and region is not None:
             raise ValueError("Cannot specify both 'boto_session' and 'region'")
 
-        validate_config_keys(model_config, BidiModelConfig)
-        self.config = BidiModelConfig(**model_config)
-        self.model_id = self.config.setdefault("model_id", NOVA_SONIC_V2_MODEL_ID)
+        _validate_model_config(model_config)
+        _validate_audio_config(audio)
+        self._config = BidiModelConfig(**model_config)
+        self._config.setdefault("model_id", NOVA_SONIC_V2_MODEL_ID)
 
         # Nova caps a connection at ~8 min; reconnect at 7 min, leaving headroom below the cap.
         # It also reports cumulative usage totals.
-        self.connection_config = BidiConnectionConfig(**{"restart_after_s": 420, **self.config.get("connection", {})})
+        self._config["connection"] = BidiConnectionConfig(
+            **{"restart_after_s": 420, **self._config.get("connection", {})}
+        )
         self.usage_is_cumulative = True
 
         default_audio: AudioConfig = {
@@ -139,8 +247,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             "format": "pcm",
         }
         self._audio_config = AudioConfig(**{**default_audio, **(audio or {})})
-        self.config["params"] = dict(self.config.get("params") or {})
-        self.config["connection"] = self.connection_config
+        self._config["params"] = dict(self._config.get("params") or {})
 
         self._session = boto_session or boto3.Session()
         resolved_region = region if region is not None else self._session.region_name or "us-east-1"
@@ -151,16 +258,28 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         self._audio_content_name: str | None = None
         self._current_completion_id: str | None = None
 
-        # Indicates if model is done generating transcript
-        self._generation_stage: str | None = None
-
         # Ensure certain events are sent in sequence when required
         self._send_lock = asyncio.Lock()
 
-        logger.debug("model_id=<%s> | nova sonic model initialized", self.model_id)
+        logger.debug("model_id=<%s> | nova sonic model initialized", self._config["model_id"])
 
-    @property
-    def audio_config(self) -> AudioConfig:
+    @override
+    def update_config(self, **model_config: Unpack[BidiModelConfig]) -> None:  # type: ignore[override]
+        """Update the model configuration with the provided arguments.
+
+        Args:
+            **model_config: Configuration overrides.
+        """
+        _validate_model_config(model_config)
+        self._config.update(model_config)
+
+    @override
+    def get_config(self) -> BidiModelConfig:
+        """Return the model configuration by reference."""
+        return self._config
+
+    @override
+    def get_audio_config(self) -> AudioConfig:
         """Get the resolved audio configuration."""
         return self._audio_config
 
@@ -211,7 +330,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             aws_access_key_id=credentials.access_key,
             aws_secret_access_key=credentials.secret_key,
             aws_session_token=credentials.token,
-            transport=AWSCRTHTTPClient(),
+            transport=_BedrockAWSCRTHTTPClient(),
             user_agent_extra=_STRANDS_USER_AGENT_EXTRA,
         )
 
@@ -219,7 +338,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         logger.debug("region=<%s> | nova sonic client initialized", self.region)
 
         self._stream = await self._client.invoke_model_with_bidirectional_stream(
-            InvokeModelWithBidirectionalStreamOperationInput(model_id=self.model_id)
+            InvokeModelWithBidirectionalStreamOperationInput(model_id=self._config["model_id"])
         )
         logger.debug("region=<%s> | nova sonic bidirectional stream established", self.region)
 
@@ -311,9 +430,10 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             raise RuntimeError("model not started | call start before receiving")
 
         logger.debug("nova event stream starting")
-        yield BidiConnectionStartEvent(connection_id=self._connection_id, model=self.model_id)
+        yield BidiConnectionStartEvent(connection_id=self._connection_id, model=self._config["model_id"])
 
         _, output = await self._stream.await_output()
+        response_state = _ResponseState()
         while True:
             try:
                 event_data = await output.receive()
@@ -342,15 +462,12 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             nova_event = json.loads(raw_bytes)["event"]
             self._log_event_type(nova_event)
 
-            model_event = self._convert_nova_event(nova_event)
-            if model_event:
+            for model_event in self._convert_nova_event(nova_event, response_state):
                 event_type = (
                     model_event.get("type", "unknown") if isinstance(model_event, dict) else type(model_event).__name__
                 )
                 logger.debug("converted_event_type=<%s> | yielding converted event", event_type)
                 yield model_event
-            else:
-                logger.debug("event_not_converted | nova event did not produce output event")
 
     async def send(self, content: BidiInputEvent | ToolResultEvent) -> None:
         """Unified send method for all content types. Sends the given content to Nova Sonic.
@@ -395,9 +512,9 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         # Build audio input configuration from config
         audio_input_config = {
             "mediaType": "audio/lpcm",
-            "sampleRateHertz": self.audio_config["input_rate"],
+            "sampleRateHertz": self._audio_config["input_rate"],
             "sampleSizeBits": 16,
-            "channelCount": self.audio_config["channels"],
+            "channelCount": self._audio_config["channels"],
             "audioType": "SPEECH",
             "encoding": "base64",
         }
@@ -555,49 +672,61 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         await self.start(system_prompt, tools, messages, **restart_kwargs)
         logger.debug("connection_id=<%s> | nova restart complete", self._connection_id)
 
-    def _convert_nova_event(self, nova_event: dict[str, Any]) -> BidiOutputEvent | None:
+    def _convert_nova_event(
+        self,
+        nova_event: dict[str, Any],
+        response_state: _ResponseState,
+    ) -> list[BidiOutputEvent]:
         """Convert Nova Sonic events to TypedEvent format."""
         # Handle completion start - track completionId
         if "completionStart" in nova_event:
             completion_data = nova_event["completionStart"]
             self._current_completion_id = completion_data.get("completionId")
             logger.debug("completion_id=<%s> | nova completion started", self._current_completion_id)
-            return None
+            return []
 
         # completionEnd brackets the whole prompt/session, not a turn (its completionId is
         # constant across turns). Per-turn boundaries come from contentEnd stopReason below,
         # so only clear completion tracking here.
         if "completionEnd" in nova_event:
             self._current_completion_id = None
-            return None
+            response_state.reset()
+            return []
 
         # Handle audio output
         if "audioOutput" in nova_event:
             # Audio is already base64 string from Nova Sonic
             audio_content = nova_event["audioOutput"]["content"]
-            return BidiAudioStreamEvent(
-                audio=audio_content,
-                format="pcm",
-                sample_rate=self.audio_config["output_rate"],
-                channels=self.audio_config["channels"],
-            )
+            return [
+                BidiAudioStreamEvent(
+                    audio=audio_content,
+                    format="pcm",
+                    sample_rate=self._audio_config["output_rate"],
+                    channels=self._audio_config["channels"],
+                )
+            ]
 
         # Handle text output (transcripts)
         elif "textOutput" in nova_event:
             text_output = nova_event["textOutput"]
             text_content = text_output["content"]
+            role = text_output["role"].strip().lower()
             # Check for Nova Sonic interruption pattern
             if '{ "interrupted" : true }' in text_content:
                 logger.debug("nova interruption detected in text output")
-                return BidiInterruptionEvent(reason="user_speech")
+                response_state.reset()
+                return [BidiInterruptionEvent(reason="user_speech")]
 
-            return BidiTranscriptStreamEvent(
-                delta={"text": text_content},
-                text=text_content,
-                role=text_output["role"],
-                is_final=self._generation_stage == "FINAL",
-                current_transcript=text_content,
-            )
+            if role == "user":
+                return [BidiTranscriptStreamEvent(delta=response_state.append_transcript(text_content), role="user")]
+
+            # Accumulate FINAL text for the completed assistant transcript.
+            if response_state.generation_stage == "FINAL":
+                response_state.append_transcript(text_content)
+                return []
+
+            # Separately, stream speculative assistant text for low-latency updates.
+            return [BidiTranscriptStreamEvent(delta=text_content, role="assistant")]
 
         # Handle tool use
         if "toolUse" in nova_event:
@@ -607,21 +736,24 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
                 "name": tool_use["toolName"],
                 "input": json.loads(tool_use["content"]),
             }
-            return ToolUseStreamEvent(
-                delta={
-                    "toolUse": {
-                        "toolUseId": tool_use_event["toolUseId"],
-                        "name": tool_use_event["name"],
-                        "input": json.dumps(tool_use_event["input"]),
-                    }
-                },
-                current_tool_use=dict(tool_use_event),
-            )
+            return [
+                ToolUseStreamEvent(
+                    delta={
+                        "toolUse": {
+                            "toolUseId": tool_use_event["toolUseId"],
+                            "name": tool_use_event["name"],
+                            "input": json.dumps(tool_use_event["input"]),
+                        }
+                    },
+                    current_tool_use=dict(tool_use_event),
+                )
+            ]
 
         # Handle interruption
         if nova_event.get("stopReason") == "INTERRUPTED":
             logger.debug("nova interruption detected via stop reason")
-            return BidiInterruptionEvent(reason="user_speech")
+            response_state.reset()
+            return [BidiInterruptionEvent(reason="user_speech")]
 
         # Handle usage events - convert to multimodal usage format
         if "usageEvent" in nova_event:
@@ -629,23 +761,32 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             total_input = usage_data.get("totalInputTokens", 0)
             total_output = usage_data.get("totalOutputTokens", 0)
 
-            return BidiUsageEvent(
-                input_tokens=total_input,
-                output_tokens=total_output,
-                total_tokens=usage_data.get("totalTokens", total_input + total_output),
-            )
+            return [
+                BidiUsageEvent(
+                    input_tokens=total_input,
+                    output_tokens=total_output,
+                    total_tokens=usage_data.get("totalTokens", total_input + total_output),
+                )
+            ]
 
         # Handle content start events (emit response start)
         if "contentStart" in nova_event:
             content_data = nova_event["contentStart"]
+            role = content_data["role"].strip().lower()
             if content_data["type"] == "TEXT":
-                self._generation_stage = json.loads(content_data["additionalModelFields"])["generationStage"]
+                response_state.generation_stage = json.loads(content_data["additionalModelFields"])["generationStage"]
 
-            # Emit response start event using API-provided completionId
-            # completionId should already be tracked from completionStart event
-            return BidiResponseStartEvent(
+            response_start = BidiResponseStartEvent(
                 response_id=self._current_completion_id or str(uuid.uuid4())  # Fallback to UUID if missing
             )
+            previous_role = response_state.role
+            response_state.role = role
+            if previous_role == "user" and role != "user":
+                transcript_complete = BidiTranscriptCompleteEvent(response_state.transcript, "user")
+                response_state.transcript = ""
+                return [transcript_complete, response_start]
+
+            return [response_start]
 
         if "contentEnd" in nova_event:
             content_end = nova_event["contentEnd"]
@@ -654,20 +795,27 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             # Both that text block and the preceding audio block carry END_TURN, so gate on
             # the FINAL text to emit exactly one per-turn complete, after that text is in
             # history. INTERRUPTED (barge-in) ends the turn regardless of block.
-            is_final_text = content_end.get("type") == "TEXT" and self._generation_stage == "FINAL"
-            self._generation_stage = None
+            is_final_text = content_end.get("type") == "TEXT" and response_state.generation_stage == "FINAL"
+            response_state.generation_stage = None
             if stop_reason == "INTERRUPTED" or (stop_reason == "END_TURN" and is_final_text):
-                return BidiResponseCompleteEvent(
+                response_complete = BidiResponseCompleteEvent(
                     response_id=self._current_completion_id or str(uuid.uuid4()),
                     stop_reason="interrupted" if stop_reason == "INTERRUPTED" else "complete",
                 )
+                if stop_reason != "INTERRUPTED" and response_state.transcript:
+                    transcript_complete = BidiTranscriptCompleteEvent(response_state.transcript, "assistant")
+                    response_state.reset()
+                    return [transcript_complete, response_complete]
+
+                response_state.reset()
+                return [response_complete]
 
         # Ignore all other events
-        return None
+        return []
 
     def _get_connection_start_event(self) -> str:
         """Generate Nova Sonic connection start event."""
-        session_start_event: dict[str, Any] = {"event": {"sessionStart": {**(self.config["params"] or {})}}}
+        session_start_event: dict[str, Any] = {"event": {"sessionStart": {**(self._config.get("params") or {})}}}
 
         return json.dumps(session_start_event)
 
@@ -675,10 +823,10 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         """Generate Nova Sonic prompt start event with tool configuration."""
         audio_output_config = {
             "mediaType": "audio/lpcm",
-            "sampleRateHertz": self.audio_config["output_rate"],
+            "sampleRateHertz": self._audio_config["output_rate"],
             "sampleSizeBits": 16,
-            "channelCount": self.audio_config["channels"],
-            "voiceId": self.audio_config.get("voice", "matthew"),
+            "channelCount": self._audio_config["channels"],
+            "voiceId": self._audio_config.get("voice", "matthew"),
             "encoding": "base64",
             "audioType": "SPEECH",
         }

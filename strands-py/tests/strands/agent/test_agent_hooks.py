@@ -15,6 +15,7 @@ from strands.hooks import (
     BeforeToolCallEvent,
     MessageAddedEvent,
 )
+from strands.interrupt import Interrupt, InterruptException
 from strands.types.content import Messages
 from strands.types.exceptions import ModelThrottledException
 from strands.types.tools import ToolResult, ToolUse
@@ -1117,3 +1118,31 @@ def test_hooks_param_callable_invoked_during_lifecycle():
 
     assert len(before_events) == 1
     assert isinstance(before_events[0], BeforeInvocationEvent)
+
+
+def test_before_model_call_hook_interrupt_stops_and_resumes_at_model_call():
+    interrupt = Interrupt(id="v1:model_call:approve", name="approve", reason="Approve the model call?")
+    responses_seen = []
+
+    def gate_model_call(event: BeforeModelCallEvent):
+        registered = event.agent._interrupt_state.interrupts.get(interrupt.id)
+        if registered is None or registered.response is None:
+            raise InterruptException(interrupt)
+        responses_seen.append(registered.response)
+
+    agent = Agent(
+        model=MockedModelProvider([{"role": "assistant", "content": [{"text": "Approved"}]}]),
+        callback_handler=None,
+    )
+    agent.hooks.add_callback(BeforeModelCallEvent, gate_model_call)
+
+    interrupted = agent("do something")
+    assert interrupted.stop_reason == "interrupt"
+    assert [pending.id for pending in interrupted.interrupts] == [interrupt.id]
+    assert len(agent.messages) == 1
+
+    result = agent([{"interruptResponse": {"interruptId": interrupt.id, "response": "yes"}}])
+    assert result.stop_reason == "end_turn"
+    assert result.message["content"][0]["text"] == "Approved"
+    assert responses_seen == ["yes"]
+    assert agent._interrupt_state.activated is False

@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from .... import _identifier
 from ...._middleware import MiddlewareRegistry
 from ....agent.state import AgentState
-from ....hooks import HookCallback, HookOrder, HookProvider, HookRegistry
+from ....hooks import AgentInitializedEvent, HookCallback, HookOrder, HookProvider, HookRegistry, MessageAddedEvent
 from ....hooks.registry import TEvent
 from ....interrupt import _InterruptState
 from ....tools._caller import _ToolCaller
@@ -34,7 +34,6 @@ from ....tools.watcher import ToolWatcher
 from ....types.agent import LocalAgent
 from ....types.content import Message, Messages, SystemContentBlock, _ensure_tracking_id, split_system_prompt
 from ....types.tools import AgentTool
-from ...hooks.events import BidiAgentInitializedEvent, BidiMessageAddedEvent
 from .._async import _TaskGroup, stop_all
 from ..models.model import BidiModel
 from ..types.agent import BidiAgentInput
@@ -79,7 +78,7 @@ class BidiAgent(LocalAgent):
         description: str | None = None,
         hooks: list[HookProvider] | None = None,
         state: AgentState | dict | None = None,
-        session_manager: "SessionManager | None" = None,
+        session_manager: "SessionManager[LocalAgent] | None" = None,
         tool_executor: ToolExecutor | None = None,
         **kwargs: Any,
     ):
@@ -120,8 +119,8 @@ class BidiAgent(LocalAgent):
         else:
             raise TypeError("model must be a BidiModel, string, or None")
 
-        self._system_prompt, self._system_prompt_content = split_system_prompt(system_prompt)
-        self.messages = messages or []
+        _, self._system_prompt_content = split_system_prompt(system_prompt)
+        self.messages = messages if messages is not None else []
 
         # Agent identification
         self.agent_id = _identifier.validate(agent_id or _DEFAULT_AGENT_ID, _identifier.Identifier.AGENT)
@@ -177,9 +176,6 @@ class BidiAgent(LocalAgent):
 
         self._loop = _BidiAgentLoop(self)
 
-        # Emit initialization event
-        self.hooks.invoke_callbacks(BidiAgentInitializedEvent(agent=self))
-
         # TODO: Determine if full support is required
         self._interrupt_state = _InterruptState()
 
@@ -192,6 +188,8 @@ class BidiAgent(LocalAgent):
         self._message_lock = asyncio.Lock()
 
         self._started = False
+
+        self.hooks.invoke_callbacks(AgentInitializedEvent[LocalAgent](agent=self))
 
     @property
     def tool(self) -> _ToolCaller:
@@ -221,12 +219,12 @@ class BidiAgent(LocalAgent):
     @property
     def system_prompt(self) -> str | None:
         """Get the system prompt as a string."""
-        return self._system_prompt
+        return split_system_prompt(self._system_prompt_content)[0]
 
     @system_prompt.setter
     def system_prompt(self, value: str | list[SystemContentBlock] | None) -> None:
         """Set the system prompt and retain its structured content representation."""
-        self._system_prompt, self._system_prompt_content = split_system_prompt(value)
+        _, self._system_prompt_content = split_system_prompt(value)
 
     @property
     def system_prompt_content(self) -> list[SystemContentBlock] | None:
@@ -280,9 +278,9 @@ class BidiAgent(LocalAgent):
         model events, tool execution, and connection management.
 
         Args:
-            invocation_state: Optional context to pass to tools during execution.
-                This allows passing custom data (user_id, session_id, database connections, etc.)
-                that tools can access via their invocation_state parameter.
+            invocation_state: Optional context shared by reference with tools and hooks until stop(),
+                including across connection restarts. Tools access it through ToolContext.invocation_state.
+                Defaults to a new empty dictionary.
 
         Raises:
             RuntimeError:
@@ -414,20 +412,19 @@ class BidiAgent(LocalAgent):
         Args:
             inputs: Input callables to read data from a source
             outputs: Output callables to receive events from the agent
-            invocation_state: Optional context to pass to tools during execution.
-                This allows passing custom data (user_id, session_id, database connections, etc.)
-                that tools can access via their invocation_state parameter.
+            invocation_state: Optional context shared by reference with tools and hooks for the duration of run(),
+                including across connection restarts. Tools access it through ToolContext.invocation_state.
+                Defaults to a new empty dictionary.
 
         Example:
             ```python
             # Using model defaults:
             model = BedrockNovaSonicModel()
             audio_io = BidiAudioIO()
-            text_io = BidiTextIO()
             agent = BidiAgent(model=model, tools=[calculator])
             await agent.run(
                 inputs=[audio_io.input()],
-                outputs=[audio_io.output(), text_io.output()],
+                outputs=[audio_io.output()],
                 invocation_state={"user_id": "user_123"}
             )
 
@@ -492,4 +489,4 @@ class BidiAgent(LocalAgent):
             for message in messages:
                 _ensure_tracking_id(message)
                 self.messages.append(message)
-                await self.hooks.invoke_callbacks_async(BidiMessageAddedEvent(agent=self, message=message))
+                await self.hooks.invoke_callbacks_async(MessageAddedEvent[LocalAgent](agent=self, message=message))

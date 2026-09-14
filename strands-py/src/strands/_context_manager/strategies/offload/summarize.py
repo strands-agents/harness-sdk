@@ -14,6 +14,7 @@ from ...methods.summarize import (
     _summarize_content,
     _tool_result_to_content_blocks,
 )
+from ...stash import _format_stash_refs
 from ...types import ContextState
 from .base import (
     BaseOffloadStrategy,
@@ -54,7 +55,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         *,
         threshold: int | None = None,
         utilization: float | None = None,
-        preserve_recent: int = 0,
+        preserve_recent: int | float = 0,
     ) -> SummarizeStrategy:
         """Return a new instance with the given conditions applied."""
         return SummarizeStrategy(
@@ -84,12 +85,9 @@ class SummarizeStrategy(BaseOffloadStrategy):
         if not eligible:
             return False
 
-        summarize_count = max(1, int(len(eligible) * self._removal_ratio))
-        to_summarize = eligible[:summarize_count]
-
         identity_map = {id(msg): index for index, msg in enumerate(messages)}
         safe_ids: set[int] = set()
-        for message in to_summarize:
+        for message in eligible:
             index = identity_map.get(id(message))
             if index is None:
                 continue
@@ -127,10 +125,13 @@ class SummarizeStrategy(BaseOffloadStrategy):
         tokens: int,
         message: Message,
         agent: Agent,
+        stash_refs: list[str],
     ) -> ContentBlock | None:
         model = self._resolve_model(agent)
         if not model:
             return None
+
+        refs = _format_stash_refs(stash_refs)
 
         if "toolResult" in block:
             tool_result = block["toolResult"]
@@ -140,7 +141,8 @@ class SummarizeStrategy(BaseOffloadStrategy):
                 return None
 
             logger.debug("tool_use_id=<%s>, tokens=<%s> | summarized tool result", tool_result["toolUseId"], tokens)
-            summarized_content: list[ToolResultContent] = [{"text": _format_summarized("tool result", tokens, summary)}]
+            marker = _format_summarized("tool result", tokens, summary) + refs
+            summarized_content: list[ToolResultContent] = [{"text": marker}]
             return ContentBlock(
                 toolResult=ToolResult(
                     toolUseId=tool_result["toolUseId"],
@@ -150,15 +152,23 @@ class SummarizeStrategy(BaseOffloadStrategy):
             )
 
         if "text" not in block:
+            summary = await _summarize_content([block], model, self._config)
+            if summary:
+                logger.debug(
+                    "tracking_id=<%s>, tokens=<%s> | summarized media block", message.get("tracking_id"), tokens
+                )
+                marker = _format_summarized("media block", tokens, summary) + refs
+                return ContentBlock(text=marker)
             logger.debug("tracking_id=<%s>, tokens=<%s> | offloaded media block", message.get("tracking_id"), tokens)
-            return ContentBlock(text=f"[Offloaded: ~{tokens} tokens]")
+            return ContentBlock(text=f"[Offloaded: ~{tokens} tokens]{refs}")
 
         summary = await _summarize_content([ContentBlock(text=block["text"])], model, self._config)
         if not summary:
             return None
 
         logger.debug("tracking_id=<%s>, tokens=<%s> | summarized text block", message.get("tracking_id"), tokens)
-        return ContentBlock(text=_format_summarized("text block", tokens, summary))
+        marker = _format_summarized("text block", tokens, summary) + refs
+        return ContentBlock(text=marker)
 
     def _resolve_model(self, agent: Agent) -> Model | None:
         return self._config.get("model") or agent.model

@@ -9,7 +9,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 
-from ..types.model import BidiConnectionConfig
+from ..models.configs import BidiConnectionConfig
 
 logger = logging.getLogger(__name__)
 

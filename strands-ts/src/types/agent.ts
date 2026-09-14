@@ -307,9 +307,7 @@ export interface LocalAgent {
   readonly storage?: Storage | undefined
 
   /**
-   * The context manager instance, when a {@link ContextManager} was passed to the agent.
-   * Undefined when no context manager is configured or when a string preset
-   * (`'auto'`, `'agentic'`) was used.
+   * The resolved context manager instance. Present when a preset or config was provided.
    *
    * @internal
    */
