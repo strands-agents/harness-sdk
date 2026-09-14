@@ -132,6 +132,8 @@ generation finishes or is interrupted.
 
 ### Configurations
 
+Use these options to configure audio devices and buffering:
+
 | Parameter | Description | Example | Default |
 | --------- | ----------- | ------- | ------- |
 | `input_buffer_size` | Maximum number of audio chunks to buffer from microphone before dropping oldest. | `1024` | None (unbounded) |
@@ -140,6 +142,14 @@ generation finishes or is interrupted.
 | `output_buffer_size` | Maximum number of audio chunks to buffer for speaker playback before dropping oldest. | `2048` | None (unbounded) |
 | `output_device_index` | Specific speaker device ID to use for audio output. | `2` | None (system default) |
 | `output_frames_per_buffer` | Number of audio frames to be written per output callback (affects latency and performance). | `1024` | 512 |
+
+Configure voice and supported sample rates on the model. `BidiAudioIO` reads
+`model.get_audio_config()`, which returns separate `input` and `output` dictionaries,
+each containing `sample_rate`, `channels`, and `format`. It uses those values to
+configure capture and playback, so you do not need to repeat them on the I/O channel.
+
+`BidiAudioIO` requires signed 16-bit little-endian PCM. Starting a device stream with
+another encoding raises `ValueError`. Use custom I/O for other encodings.
 
 ### Interruption Handling
 

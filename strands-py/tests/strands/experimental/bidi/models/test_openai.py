@@ -140,64 +140,68 @@ def test_model_initialization(api_key, model_name, monkeypatch):
 # Audio Configuration Tests
 
 
-def test_audio_config_defaults(api_key, model_name):
-    """Test default audio configuration."""
-    model = OpenAIRealtimeModel(model_id=model_name, api_key=api_key)
+@pytest.mark.parametrize(
+    ("options", "voice"),
+    [
+        pytest.param({}, "alloy", id="defaults"),
+        pytest.param({"voice": "echo"}, "echo", id="custom-voice"),
+    ],
+)
+def test_get_audio_config(api_key, options, voice):
+    model = OpenAIRealtimeModel(api_key=api_key, **options)
 
-    assert model.get_audio_config() == {
-        "input_rate": 24000,
-        "output_rate": 24000,
-        "channels": 1,
-        "format": "pcm",
-        "voice": "alloy",
+    tru_config = model.get_audio_config()
+    exp_config = {
+        "input": {"sample_rate": 24000, "channels": 1, "format": "pcm"},
+        "output": {"sample_rate": 24000, "channels": 1, "format": "pcm"},
     }
+    assert tru_config == exp_config
+    assert model.get_audio_config() is tru_config
+
+    tru_output = model._build_session_config(None, None)["audio"]["output"]
+    exp_output = {"format": {"type": "audio/pcm", "rate": 24000}, "voice": voice}
+    assert tru_output == exp_output
 
 
-def test_audio_config_partial_override(api_key, model_name):
-    """Test partial audio configuration override."""
-    model = OpenAIRealtimeModel(
-        model_id=model_name,
-        api_key=api_key,
-        audio={"output_rate": 48000, "voice": "echo"},
-    )
+@pytest.mark.parametrize("direction", ["input", "output"])
+@pytest.mark.parametrize(
+    "audio_format",
+    [
+        {"rate": 48000},
+        {"rate": None},
+        {"type": "audio/pcmu"},
+        {"type": "audio/pcma"},
+        {"type": "audio/mp3"},
+    ],
+)
+def test__init__rejects_unsupported_audio_format(api_key, direction, audio_format):
+    with pytest.raises(ValueError, match="Unsupported"):
+        OpenAIRealtimeModel(api_key=api_key, params={"audio": {direction: {"format": audio_format}}})
 
-    assert model.get_audio_config() == {
-        "input_rate": 24000,
-        "output_rate": 48000,
-        "channels": 1,
-        "format": "pcm",
-        "voice": "echo",
+
+@pytest.mark.parametrize("direction", ["input", "output"])
+@pytest.mark.parametrize(
+    "audio_format",
+    [
+        {"type": "audio/pcmu"},
+        {"rate": 16000},
+    ],
+)
+def test_update_config_rejects_unsupported_audio_format(api_key, direction, audio_format):
+    model = OpenAIRealtimeModel(api_key=api_key, params={"max_output_tokens": 2048})
+    audio_config = model.get_audio_config()
+
+    with pytest.raises(ValueError, match="Unsupported"):
+        model.update_config(model_id="updated-model", params={"audio": {direction: {"format": audio_format}}})
+
+    tru_config = model.get_config()
+    exp_config = {
+        "model_id": "gpt-realtime",
+        "params": {"max_output_tokens": 2048},
+        "connection": {"restart_after_s": OPENAI_MAX_TIMEOUT_S - OPENAI_PROACTIVE_RECONNECT_MARGIN_S},
     }
-
-
-def test_audio_config_full_override(api_key, model_name):
-    """Test full audio configuration override."""
-    model = OpenAIRealtimeModel(
-        model_id=model_name,
-        api_key=api_key,
-        audio={
-            "input_rate": 48000,
-            "output_rate": 48000,
-            "channels": 2,
-            "format": "pcm",
-            "voice": "shimmer",
-        },
-    )
-
-    assert model.get_audio_config() == {
-        "input_rate": 48000,
-        "output_rate": 48000,
-        "channels": 2,
-        "format": "pcm",
-        "voice": "shimmer",
-    }
-
-
-def test_audio_config_voice_override(api_key, model_name):
-    """Test that voice can be configured independently."""
-    model = OpenAIRealtimeModel(model_id=model_name, api_key=api_key, audio={"voice": "fable"})
-
-    assert model.get_audio_config()["voice"] == "fable"
+    assert tru_config == exp_config
+    assert model.get_audio_config() is audio_config
 
 
 def test_init_without_api_key_raises(monkeypatch):
@@ -709,7 +713,7 @@ def test_convert_openai_event_transcript(model, event, expected):
 def test__build_session_config_direct_options(api_key, system_prompt, tool_spec):
     model = OpenAIRealtimeModel(
         api_key=api_key,
-        audio={"input_rate": 16000, "output_rate": 48000, "voice": "coral"},
+        voice="coral",
     )
 
     config = model._build_session_config(system_prompt, [tool_spec])
@@ -722,8 +726,8 @@ def test__build_session_config_direct_options(api_key, system_prompt, tool_spec)
             "parameters": tool_spec["inputSchema"]["json"],
         }
     ]
-    assert config["audio"]["input"]["format"] == {"type": "audio/pcm", "rate": 16000}
-    assert config["audio"]["output"] == {"format": {"type": "audio/pcm", "rate": 48000}, "voice": "coral"}
+    assert config["audio"]["input"]["format"] == {"type": "audio/pcm", "rate": 24000}
+    assert config["audio"]["output"] == {"format": {"type": "audio/pcm", "rate": 24000}, "voice": "coral"}
 
 
 def test__build_session_config_passes_through_params(api_key):
@@ -744,7 +748,7 @@ def test__build_session_config_merges_params_last(api_key, system_prompt, tool_s
     """Params override direct options while preserving unspecified nested defaults."""
     model = OpenAIRealtimeModel(
         api_key=api_key,
-        audio={"input_rate": 48000, "output_rate": 48000, "voice": "echo"},
+        voice="echo",
         params={
             "instructions": "",
             "tools": [],
@@ -787,7 +791,7 @@ def test__build_session_config_preserves_defaults(model, api_key, system_prompt,
     exp_config = model._build_session_config(None, None)
     custom_model = OpenAIRealtimeModel(
         api_key=api_key,
-        audio={"voice": "coral", "input_rate": 48000},
+        voice="coral",
         params={"output_modalities": ["text"]},
     )
 
@@ -842,7 +846,7 @@ async def test_start_preserves_explicit_nulls(api_key, mock_websockets_connect):
 def test_update_config_replaces_params(api_key, params, exp_voice):
     model = OpenAIRealtimeModel(
         api_key=api_key,
-        audio={"voice": "coral"},
+        voice="coral",
         params={"instructions": "Params instructions", "audio": {"output": {"voice": "echo"}}},
     )
 
@@ -915,87 +919,14 @@ async def test_send_event_helper(mock_websockets_connect, model):
     await model.stop()
 
 
-@pytest.mark.asyncio
-async def test_custom_audio_sample_rate(mock_websockets_connect, api_key):
-    """Test that a custom audio sample rate is used in audio events."""
-    _, mock_ws = mock_websockets_connect
+@pytest.mark.parametrize("voice", ["alloy", "echo"])
+def test__convert_openai_event_audio_format(api_key, voice):
+    model = OpenAIRealtimeModel(api_key=api_key, voice=voice)
+    audio_base64 = base64.b64encode(b"audio data").decode()
 
-    custom_sample_rate = 48000
-    model = OpenAIRealtimeModel(api_key=api_key, audio={"output_rate": custom_sample_rate})
-
-    await model.start()
-
-    # Simulate receiving an audio delta event from OpenAI
-    openai_audio_event = {"type": "response.output_audio.delta", "delta": "base64audiodata"}
-
-    # Convert the event
-    converted_events = model._convert_openai_event(openai_audio_event)
-
-    # Verify the audio event uses the custom sample rate
-    assert converted_events is not None
-    assert len(converted_events) == 1
-    audio_event = converted_events[0]
-    assert isinstance(audio_event, BidiAudioStreamEvent)
-    assert audio_event.sample_rate == custom_sample_rate
-    assert audio_event.format == "pcm"
-    assert audio_event.channels == 1
-
-    await model.stop()
-
-
-@pytest.mark.asyncio
-async def test_default_audio_sample_rate(mock_websockets_connect, api_key):
-    """Test that default audio sample rate is used when no custom config is provided."""
-    _, mock_ws = mock_websockets_connect
-
-    # Create model without custom audio config
-    model = OpenAIRealtimeModel(api_key=api_key)
-
-    await model.start()
-
-    # Simulate receiving an audio delta event from OpenAI
-    openai_audio_event = {"type": "response.output_audio.delta", "delta": "base64audiodata"}
-
-    # Convert the event
-    converted_events = model._convert_openai_event(openai_audio_event)
-
-    # Verify the audio event uses the default sample rate (24000)
-    assert converted_events is not None
-    assert len(converted_events) == 1
-    audio_event = converted_events[0]
-    assert isinstance(audio_event, BidiAudioStreamEvent)
-    assert audio_event.sample_rate == 24000  # Default from DEFAULT_SAMPLE_RATE
-    assert audio_event.format == "pcm"
-    assert audio_event.channels == 1
-
-    await model.stop()
-
-
-@pytest.mark.asyncio
-async def test_partial_audio_config(mock_websockets_connect, api_key):
-    """Test that partial audio config doesn't break and falls back to defaults."""
-    _, mock_ws = mock_websockets_connect
-
-    model = OpenAIRealtimeModel(api_key=api_key, audio={"voice": "alloy"})
-
-    await model.start()
-
-    # Simulate receiving an audio delta event from OpenAI
-    openai_audio_event = {"type": "response.output_audio.delta", "delta": "base64audiodata"}
-
-    # Convert the event
-    converted_events = model._convert_openai_event(openai_audio_event)
-
-    # Verify the audio event uses the default sample rate
-    assert converted_events is not None
-    assert len(converted_events) == 1
-    audio_event = converted_events[0]
-    assert isinstance(audio_event, BidiAudioStreamEvent)
-    assert audio_event.sample_rate == 24000  # Falls back to default
-    assert audio_event.format == "pcm"
-    assert audio_event.channels == 1
-
-    await model.stop()
+    tru_events = model._convert_openai_event({"type": "response.output_audio.delta", "delta": audio_base64})
+    exp_events = [BidiAudioStreamEvent(audio=audio_base64, format="pcm", sample_rate=24000, channels=1)]
+    assert tru_events == exp_events
 
 
 # Tool Result Content Tests
@@ -1337,6 +1268,11 @@ async def test_receive_binds_websocket_per_reader(mock_websockets_connect, model
         return_value=json.dumps({"type": "response.output_audio.delta", "delta": "FROM_WS2"})
     )
     model._websocket = ws2
+    blocker.set()
+    tru_event = await reader.__anext__()
+    exp_event = BidiAudioStreamEvent(audio="FROM_WS1", format="pcm", sample_rate=24000, channels=1)
+    assert tru_event == exp_event
+    blocker.clear()
 
     # The bound reader stays parked on ws1 and never touches the replacement socket.
     with pytest.raises(asyncio.TimeoutError):

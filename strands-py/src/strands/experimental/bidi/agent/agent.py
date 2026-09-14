@@ -431,8 +431,8 @@ class BidiAgent(LocalAgent):
             # Using custom audio config:
             model = BedrockNovaSonicModel(
                 audio={
-                    "input_rate": 48000,
-                    "output_rate": 24000,
+                    "input": {"sample_rate": 16000},
+                    "output": {"sample_rate": 24000},
                 }
             )
             audio_io = BidiAudioIO()

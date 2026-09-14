@@ -17,7 +17,7 @@ import pytest
 from google.genai import types as genai_types
 
 from strands.experimental.bidi.agent import loop as loop_module
-from strands.experimental.bidi.models.google import GoogleGeminiLiveModel, _TurnState
+from strands.experimental.bidi.models.google import GoogleGeminiLiveAudioConfig, GoogleGeminiLiveModel, _TurnState
 from strands.experimental.bidi.models.model import BidiModelTimeoutError
 from strands.experimental.bidi.types.events import (
     BidiAudioInputEvent,
@@ -1236,62 +1236,82 @@ async def test_interruption_closes_response_without_complete(mock_genai_client, 
 # Audio Configuration Tests
 
 
-def test_audio_config_defaults(mock_genai_client, model_id, api_key):
-    """Test default audio configuration."""
-    _ = mock_genai_client
+@pytest.mark.parametrize("audio", [None, {}])
+def test_get_audio_config_defaults(mock_genai_client, api_key, audio):
+    model = GoogleGeminiLiveModel(client_args={"api_key": api_key}, audio=audio)
 
-    model = GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key})
-
-    assert model.get_audio_config() == {
-        "input_rate": 16000,
-        "output_rate": 24000,
-        "channels": 1,
-        "format": "pcm",
+    tru_config = model.get_audio_config()
+    exp_config = {
+        "input": {"sample_rate": 16000, "channels": 1, "format": "pcm"},
+        "output": {"sample_rate": 24000, "channels": 1, "format": "pcm"},
     }
+    assert tru_config == exp_config
+    assert model.get_audio_config() is tru_config
+    assert "speech_config" not in model._build_live_config()
 
 
-def test_audio_config_partial_override(mock_genai_client, model_id, api_key):
-    """Test partial audio configuration override."""
-    _ = mock_genai_client
-
+def test_get_audio_config_custom_input(mock_genai_client, api_key):
     model = GoogleGeminiLiveModel(
-        model_id=model_id,
         client_args={"api_key": api_key},
-        audio={"output_rate": 48000, "voice": "Puck"},
+        audio=GoogleGeminiLiveAudioConfig(input={"sample_rate": 48000}),
+        voice="Puck",
     )
 
-    assert model.get_audio_config() == {
-        "input_rate": 16000,
-        "output_rate": 48000,
-        "channels": 1,
-        "format": "pcm",
-        "voice": "Puck",
+    tru_config = model.get_audio_config()
+    exp_config = {
+        "input": {"sample_rate": 48000, "channels": 1, "format": "pcm"},
+        "output": {"sample_rate": 24000, "channels": 1, "format": "pcm"},
     }
+    assert tru_config == exp_config
+    tru_speech = model._build_live_config()["speech_config"]
+    exp_speech = {"voice_config": {"prebuilt_voice_config": {"voice_name": "Puck"}}}
+    assert tru_speech == exp_speech
 
 
-def test_audio_config_full_override(mock_genai_client, model_id, api_key):
-    """Test full audio configuration override."""
-    _ = mock_genai_client
+@pytest.mark.parametrize(
+    ("audio", "invalid_key"),
+    [
+        ({"output": {"sample_rate": 48000}}, "output"),
+        ({"input": {"sample_rate": 16000, "channels": 2}}, "channels"),
+        ({"input": {"sample_rate": 16000, "format": "mp3"}}, "format"),
+    ],
+)
+def test__init__warns_on_unknown_audio_keys(mock_genai_client, api_key, audio, invalid_key):
+    with pytest.warns(UserWarning, match=invalid_key):
+        model = GoogleGeminiLiveModel(client_args={"api_key": api_key}, audio=audio)
 
-    model = GoogleGeminiLiveModel(
-        model_id=model_id,
-        client_args={"api_key": api_key},
-        audio={
-            "input_rate": 48000,
-            "output_rate": 48000,
-            "channels": 2,
-            "format": "pcm",
-            "voice": "Aoede",
-        },
+    tru_config = model.get_audio_config()
+    exp_config = {
+        "input": {"sample_rate": 16000, "channels": 1, "format": "pcm"},
+        "output": {"sample_rate": 24000, "channels": 1, "format": "pcm"},
+    }
+    assert tru_config == exp_config
+
+
+def test__init__requires_audio_sample_rate(mock_genai_client, api_key):
+    with pytest.raises(KeyError, match="sample_rate"):
+        GoogleGeminiLiveModel(client_args={"api_key": api_key}, audio={"input": {}})
+
+
+@pytest.mark.parametrize("rate", [0, -1])
+def test__init__rejects_invalid_audio_sample_rate(mock_genai_client, api_key, rate):
+    with pytest.raises(ValueError, match="positive"):
+        GoogleGeminiLiveModel(client_args={"api_key": api_key}, audio={"input": {"sample_rate": rate}})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rate", [32000, 44100, 48000])
+async def test_send_audio_uses_resolved_input_rate(mock_genai_client, api_key, rate):
+    _, session, _ = mock_genai_client
+    model = GoogleGeminiLiveModel(client_args={"api_key": api_key}, audio={"input": {"sample_rate": rate}})
+    await model.start()
+    await model.send(
+        BidiAudioInputEvent(audio=base64.b64encode(b"audio").decode(), format="pcm", sample_rate=rate, channels=1)
     )
-
-    assert model.get_audio_config() == {
-        "input_rate": 48000,
-        "output_rate": 48000,
-        "channels": 2,
-        "format": "pcm",
-        "voice": "Aoede",
-    }
+    session.send_realtime_input.assert_awaited_once_with(
+        audio=genai_types.Blob(data=b"audio", mime_type=f"audio/pcm;rate={rate}")
+    )
+    await model.stop()
 
 
 # Helper Method Tests
@@ -1373,7 +1393,7 @@ def test__build_live_config_params_override_direct_options(
     exp_params = copy.deepcopy(params)
     model = GoogleGeminiLiveModel(
         client_args={"api_key": api_key},
-        audio={"voice": "Kore"},
+        voice="Kore",
         params=params,
     )
 
@@ -1402,7 +1422,7 @@ def test__build_live_config_merges_nested_params(mock_genai_client, api_key):
     }
     model = GoogleGeminiLiveModel(
         client_args={"api_key": api_key},
-        audio={"voice": "Kore"},
+        voice="Kore",
         params=params,
     )
 
@@ -1445,7 +1465,7 @@ async def test_start_passes_merged_config_to_genai(mock_genai_client, api_key):
     mock_client, _, _ = mock_genai_client
     model = GoogleGeminiLiveModel(
         client_args={"api_key": api_key},
-        audio={"voice": "Kore"},
+        voice="Kore",
         params={
             "speech_config": {
                 "language_code": "en-US",
@@ -1489,7 +1509,7 @@ async def test_start_passes_merged_config_to_genai(mock_genai_client, api_key):
 def test_update_config_replaces_params(mock_genai_client, api_key, params, exp_voice):
     model = GoogleGeminiLiveModel(
         client_args={"api_key": api_key},
-        audio={"voice": "Kore"},
+        voice="Kore",
         params={
             "system_instruction": "Configured instructions",
             "speech_config": {"voice_config": {"prebuilt_voice_config": {"voice_name": "Aoede"}}},
@@ -1518,60 +1538,27 @@ def test_tool_formatting(model, tool_spec):
     assert formatted_empty == []
 
 
-# Tool Result Content Tests
+# Audio Event Tests
 
 
-@pytest.mark.asyncio
-async def test_custom_audio_rates_in_events(mock_genai_client, model_id, api_key, live_message):
-    """Test that audio events use configured sample rates and channels."""
-    _, _, _ = mock_genai_client
+@pytest.mark.parametrize(
+    "audio",
+    [
+        pytest.param(None, id="defaults"),
+        pytest.param({"input": {"sample_rate": 48000}}, id="custom-input"),
+    ],
+)
+def test__convert_gemini_live_event_audio_format(mock_genai_client, api_key, live_message, audio):
+    model = GoogleGeminiLiveModel(client_args={"api_key": api_key}, audio=audio)
+    turn_state = _TurnState(response_open=True)
 
-    model = GoogleGeminiLiveModel(
-        model_id=model_id,
-        client_args={"api_key": api_key},
-        audio={"output_rate": 48000, "channels": 2},
-    )
-    await model.start()
-    turn_state = _TurnState(response_open=True)  # mid-response, so no response-start is prepended
-
-    # Test audio output event uses custom configuration
-    mock_audio = live_message(data=b"audio_data")
-
-    audio_events = model._convert_gemini_live_event(mock_audio, turn_state)
-    assert len(audio_events) == 1
-    audio_event = audio_events[0]
-    assert isinstance(audio_event, BidiAudioStreamEvent)
-    # Should use configured rates, not constants
-    assert audio_event.sample_rate == 48000  # Custom config
-    assert audio_event.channels == 2  # Custom config
-    assert audio_event.format == "pcm"
-
-    await model.stop()
-
-
-@pytest.mark.asyncio
-async def test_default_audio_rates_in_events(mock_genai_client, model_id, api_key, live_message):
-    """Test that audio events use default sample rates when no custom config."""
-    _, _, _ = mock_genai_client
-
-    # Create model without custom audio configuration
-    model = GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key})
-    await model.start()
-    turn_state = _TurnState(response_open=True)  # mid-response, so no response-start is prepended
-
-    # Test audio output event uses defaults
-    mock_audio = live_message(data=b"audio_data")
-
-    audio_events = model._convert_gemini_live_event(mock_audio, turn_state)
-    assert len(audio_events) == 1
-    audio_event = audio_events[0]
-    assert isinstance(audio_event, BidiAudioStreamEvent)
-    # Should use default rates
-    assert audio_event.sample_rate == 24000  # Default output rate
-    assert audio_event.channels == 1  # Default channels
-    assert audio_event.format == "pcm"
-
-    await model.stop()
+    tru_events = model._convert_gemini_live_event(live_message(data=b"audio_data"), turn_state)
+    exp_events = [
+        BidiAudioStreamEvent(
+            audio=base64.b64encode(b"audio_data").decode(), format="pcm", sample_rate=24000, channels=1
+        )
+    ]
+    assert tru_events == exp_events
 
 
 # Tool Result Content Tests

@@ -49,7 +49,7 @@ from strands_tools import calculator, stop
 async def main() -> None:
     model = GoogleGeminiLiveModel(
         model_id="gemini-2.5-flash-native-audio-preview-09-2025",
-        audio={"voice": "Kore"},
+        voice="Kore",
         client_args={"api_key": "<GOOGLE_API_KEY>"},
     )
     # stop tool allows user to verbally stop agent execution.
@@ -75,15 +75,14 @@ the [Google GenAI client reference](https://googleapis.github.io/python-genai/ge
 | Parameter | Description | Example | Options |
 | --------- | ----------- | ------- | ------- |
 | `model_id` | Gemini Live model identifier. | `"gemini-2.5-flash-native-audio-preview-09-2025"` | [Gemini models](https://ai.google.dev/gemini-api/docs/models) |
-| `audio` | Audio configuration. | `{"voice": "Kore"}` | [reference](@api/python/strands.experimental.bidi.models.configs#AudioConfig) |
+| `audio` | Input audio options. | `{"input": {"sample_rate": 48000}}` | [reference](@api/python/strands.experimental.bidi.models.google#GoogleGeminiLiveAudioConfig) |
+| `voice` | Prebuilt output voice name. Uses the provider default when omitted. | `"Kore"` | [Voices and languages](https://docs.cloud.google.com/text-to-speech/docs/list-voices-and-types) |
 | `params` | Gemini Live session parameters. | `{"temperature": 0.7}` | [`LiveConnectConfig`](https://googleapis.github.io/python-genai/genai.html#genai.types.LiveConnectConfig) |
 | `connection` | Reconnect timing overrides. | `{"auto_reconnect": false}` | [reference](@api/python/strands.experimental.bidi.models.configs#BidiConnectionConfig) |
 
-For the list of supported voices and languages, see [here](https://docs.cloud.google.com/text-to-speech/docs/list-voices-and-types).
-
 ### Additional Provider Options
 
-Use direct options such as `audio` for common settings. For additional Google GenAI
+Use direct options such as `voice` for common settings. For additional Google GenAI
 options, pass `params` using snake_case field names.
 
 ```python
@@ -91,7 +90,7 @@ from strands.experimental.bidi.models import GoogleGeminiLiveModel
 
 model = GoogleGeminiLiveModel(
     client_args={"api_key": "<GOOGLE_API_KEY>"},
-    audio={"voice": "Kore"},
+    voice="Kore",
     params={"temperature": 0.7, "speech_config": {"language_code": "en-US"}},
 )
 ```

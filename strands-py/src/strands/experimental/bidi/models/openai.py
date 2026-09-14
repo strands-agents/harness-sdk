@@ -23,7 +23,6 @@ from ....types.content import Messages
 from ....types.tools import ToolResult, ToolSpec, ToolUse
 from .._async import stop_all
 from ..types.events import (
-    AudioSampleRate,
     BidiAudioInputEvent,
     BidiAudioStreamEvent,
     BidiConnectionStartEvent,
@@ -43,6 +42,7 @@ from ..types.events import (
 )
 from .configs import (
     AudioConfig,
+    AudioStreamConfig,
     BidiConnectionConfig,
     BidiModelConfig,
     _merge_config,
@@ -87,7 +87,7 @@ DEFAULT_SESSION_CONFIG = {
                 "silence_duration_ms": 500,
             },
         },
-        "output": {"format": {"type": "audio/pcm", "rate": DEFAULT_SAMPLE_RATE}, "voice": "alloy"},
+        "output": {"format": {"type": "audio/pcm", "rate": DEFAULT_SAMPLE_RATE}},
     },
 }
 
@@ -118,7 +118,7 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         organization: str | None = None,
         project: str | None = None,
         timeout_s: int = OPENAI_MAX_TIMEOUT_S,
-        audio: AudioConfig | None = None,
+        voice: str = "alloy",
         **model_config: Unpack[BidiModelConfig],
     ) -> None:
         """Initialize OpenAI Realtime bidirectional model.
@@ -128,16 +128,17 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             organization: OpenAI organization. Defaults to ``OPENAI_ORGANIZATION``.
             project: OpenAI project. Defaults to ``OPENAI_PROJECT``.
             timeout_s: Maximum connection duration in seconds.
-            audio: Audio configuration.
+            voice: Output voice identifier. Defaults to ``alloy``.
             **model_config: Model configuration.
 
         Raises:
-            ValueError: If the API key is missing or ``timeout_s`` exceeds the maximum.
+            ValueError: If the API key is missing, ``timeout_s`` exceeds the maximum,
+                or audio formats are unsupported.
         """
         _validate_model_config(model_config)
-        _validate_audio_config(audio)
         self._config = BidiModelConfig(**model_config)
         self._config.setdefault("model_id", DEFAULT_MODEL)
+        self._config["params"] = dict(self._config.get("params") or {})
 
         # OpenAI reports per-response token usage on response.done, not cumulative session totals.
         self.usage_is_cumulative = False
@@ -166,17 +167,8 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             }
         )
 
-        self._audio_config = AudioConfig(
-            **{
-                "input_rate": cast(AudioSampleRate, DEFAULT_SAMPLE_RATE),
-                "output_rate": cast(AudioSampleRate, DEFAULT_SAMPLE_RATE),
-                "channels": 1,
-                "format": "pcm",
-                "voice": "alloy",
-                **(audio or {}),
-            }
-        )
-        self._config["params"] = dict(self._config.get("params") or {})
+        self._voice = voice
+        self._resolve_audio_config(self._config.get("params"))
 
         # Connection state (initialized in start())
         self._connection_id: str | None = None
@@ -191,8 +183,13 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
 
         Args:
             **model_config: Configuration overrides.
+
+        Raises:
+            ValueError: If the configured audio formats are unsupported.
         """
         _validate_model_config(model_config)
+        if "params" in model_config:
+            self._resolve_audio_config(model_config["params"])
         self._config.update(model_config)
 
     @override
@@ -204,6 +201,27 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
     def get_audio_config(self) -> AudioConfig:
         """Get the resolved audio configuration."""
         return self._audio_config
+
+    def _resolve_audio_config(self, params: dict[str, Any] | None) -> None:
+        """Resolve audio settings and validate native format overrides."""
+        audio = (params or {}).get("audio", {})
+        for direction in ("input", "output"):
+            stream = audio.get(direction, {})
+            audio_format = stream.get("format", {})
+
+            format_type = audio_format.get("type", "audio/pcm")
+            if format_type != "audio/pcm":
+                raise ValueError(f"Unsupported audio format: {format_type}. Expected audio/pcm.")
+
+            sample_rate = audio_format.get("rate", DEFAULT_SAMPLE_RATE)
+            if sample_rate != DEFAULT_SAMPLE_RATE:
+                raise ValueError(f"Unsupported sample rate: {sample_rate}. Expected {DEFAULT_SAMPLE_RATE}.")
+
+        self._audio_config = AudioConfig(
+            input=AudioStreamConfig(sample_rate=DEFAULT_SAMPLE_RATE, channels=1, format="pcm"),
+            output=AudioStreamConfig(sample_rate=DEFAULT_SAMPLE_RATE, channels=1, format="pcm"),
+        )
+        _validate_audio_config(self._audio_config)
 
     async def start(
         self,
@@ -279,20 +297,7 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         if tools:
             config["tools"] = self._convert_tools_to_openai_format(tools)
 
-        audio_config = self._audio_config
-
-        if "voice" in audio_config:
-            config.setdefault("audio", {}).setdefault("output", {})["voice"] = audio_config["voice"]
-
-        if "input_rate" in audio_config:
-            config.setdefault("audio", {}).setdefault("input", {}).setdefault("format", {})["rate"] = audio_config[
-                "input_rate"
-            ]
-
-        if "output_rate" in audio_config:
-            config.setdefault("audio", {}).setdefault("output", {}).setdefault("format", {})["rate"] = audio_config[
-                "output_rate"
-            ]
+        config["audio"]["output"]["voice"] = self._voice
 
         return _merge_config(config, self._config.get("params") or {})
 
@@ -466,17 +471,10 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         # Audio output
         elif event_type == "response.output_audio.delta":
             # Audio is already base64 string from OpenAI
-            # Use the resolved output sample rate from our merged configuration
-            sample_rate = self._audio_config["output_rate"]
-
-            # Channels from config is guaranteed to be 1 or 2
-            channels = self._audio_config["channels"]
             return [
                 BidiAudioStreamEvent(
                     audio=openai_event["delta"],
-                    format="pcm",
-                    sample_rate=sample_rate,
-                    channels=channels,
+                    **self._audio_config["output"],
                 )
             ]
 

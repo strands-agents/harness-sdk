@@ -5,34 +5,38 @@ from collections.abc import Mapping
 from typing import Any, TypedDict
 
 from ....models._validation import validate_config_keys
-from ..types.events import AudioChannel, AudioFormat, AudioSampleRate
+from ..types.events import AudioChannel, AudioFormat
 
-__all__ = ["AudioConfig", "BidiConnectionConfig", "BidiModelConfig"]
+__all__ = ["AudioConfig", "AudioStreamConfig", "BidiConnectionConfig", "BidiModelConfig"]
 
 
-class AudioConfig(TypedDict, total=False):
-    """Audio configuration for bidirectional streaming models.
-
-    Defines common audio parameters supported by bidirectional model providers.
-    All fields are optional to support models that only need specific parameters.
-
-    Model providers build this configuration by merging user-provided values
-    with their own defaults. Audio I/O implementations use the stream settings
-    to configure hardware, while model providers apply settings such as voice.
+class AudioStreamConfig(TypedDict):
+    """Resolved format of an audio stream.
 
     Attributes:
-        input_rate: Input sample rate in Hz (e.g., 8000, 16000, 24000, 48000)
-        output_rate: Output sample rate in Hz (e.g., 8000, 16000, 24000, 48000)
-        channels: Number of audio channels (1=mono, 2=stereo)
-        format: Audio encoding format
-        voice: Voice used for model audio output.
+        sample_rate: Sample rate in Hz.
+        channels: Number of audio channels.
+        format: Audio encoding.
     """
 
-    input_rate: AudioSampleRate
-    output_rate: AudioSampleRate
+    sample_rate: int
     channels: AudioChannel
     format: AudioFormat
-    voice: str
+
+
+class AudioConfig(TypedDict):
+    """Resolved input and output formats consumed by audio I/O.
+
+    Pass provider-specific audio options to the model constructor and use
+    ``get_audio_config()`` to obtain the resulting stream formats.
+
+    Attributes:
+        input: Audio format configured for model input.
+        output: Audio format produced by the model.
+    """
+
+    input: AudioStreamConfig
+    output: AudioStreamConfig
 
 
 class BidiConnectionConfig(TypedDict, total=False):
@@ -77,9 +81,11 @@ def _validate_model_config(config: Mapping[str, Any]) -> None:
     validate_config_keys(config.get("connection", {}), BidiConnectionConfig)
 
 
-def _validate_audio_config(config: Mapping[str, Any] | None) -> None:
+def _validate_audio_config(config: AudioConfig) -> None:
     """Validate shared audio configuration."""
-    validate_config_keys(config or {}, AudioConfig)
+    validate_config_keys(config, AudioConfig)
+    validate_config_keys(config["input"], AudioStreamConfig)
+    validate_config_keys(config["output"], AudioStreamConfig)
 
 
 def _merge_config(config: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
