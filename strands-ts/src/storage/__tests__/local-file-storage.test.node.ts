@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { LocalFileStorage } from '../local-file-storage.js'
 import { rm, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -140,6 +140,46 @@ describe('LocalFileStorage', () => {
 
       const keys = await storage.list('')
       expect(keys).toEqual(['a', 'b', 'c'])
+    })
+  })
+
+  describe('searchStrategy', () => {
+    it('delegates search to the configured strategy', async () => {
+      const mockStrategy = {
+        search: vi.fn().mockResolvedValue([{ key: 'found.md', score: 1 }]),
+      }
+      const custom = new LocalFileStorage(baseDir, undefined, { searchStrategy: mockStrategy })
+      await custom.write('found.md', new TextEncoder().encode('hello'))
+
+      const results = await custom.search!('hello')
+
+      expect(mockStrategy.search).toHaveBeenCalledWith(custom, 'hello')
+      expect(results).toEqual([{ key: 'found.md', score: 1 }])
+    })
+
+    it('calls strategy.index on write when present', async () => {
+      const mockStrategy = {
+        search: vi.fn().mockResolvedValue([]),
+        index: vi.fn().mockResolvedValue(undefined),
+      }
+      const custom = new LocalFileStorage(baseDir, undefined, { searchStrategy: mockStrategy })
+      const data = new TextEncoder().encode('content')
+
+      await custom.write('doc.md', data)
+
+      expect(mockStrategy.index).toHaveBeenCalledWith(custom, 'doc.md', data)
+    })
+
+    it('propagates strategy to namespaced instances', async () => {
+      const mockStrategy = {
+        search: vi.fn().mockResolvedValue([]),
+      }
+      const custom = new LocalFileStorage(baseDir, undefined, { searchStrategy: mockStrategy })
+      const namespaced = custom.namespace('sub')
+
+      await namespaced.search!('test')
+
+      expect(mockStrategy.search).toHaveBeenCalledWith(namespaced, 'test')
     })
   })
 

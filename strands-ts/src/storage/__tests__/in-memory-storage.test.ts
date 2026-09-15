@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { InMemoryStorage } from '../in-memory-storage.js'
 import { StorageError } from '../../errors.js'
 
@@ -102,6 +102,43 @@ describe('InMemoryStorage', () => {
       storage.clear()
       const keys = await storage.list('')
       expect(keys).toEqual([])
+    })
+  })
+
+  describe('searchStrategy', () => {
+    it('delegates search to the configured strategy', async () => {
+      const mockStrategy = {
+        search: vi.fn().mockResolvedValue([{ key: 'found.md', score: 1 }]),
+      }
+      const custom = new InMemoryStorage({ searchStrategy: mockStrategy })
+      await custom.write('found.md', new TextEncoder().encode('hello'))
+
+      const results = await custom.search!('hello')
+
+      expect(mockStrategy.search).toHaveBeenCalledWith(custom, 'hello')
+      expect(results).toEqual([{ key: 'found.md', score: 1 }])
+    })
+
+    it('calls strategy.index on write when present', async () => {
+      const mockStrategy = {
+        search: vi.fn().mockResolvedValue([]),
+        index: vi.fn().mockResolvedValue(undefined),
+      }
+      const custom = new InMemoryStorage({ searchStrategy: mockStrategy })
+      const data = new TextEncoder().encode('content')
+
+      await custom.write('doc.md', data)
+
+      expect(mockStrategy.index).toHaveBeenCalledWith(custom, 'doc.md', data)
+    })
+
+    it('uses keyword search by default', async () => {
+      await storage.write('hello-world', new TextEncoder().encode('greeting'))
+
+      const results = await storage.search!('hello')
+
+      expect(results.length).toBeGreaterThan(0)
+      expect(results[0]!.key).toBe('hello-world')
     })
   })
 
