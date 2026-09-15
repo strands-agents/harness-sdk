@@ -203,15 +203,26 @@ class AnthropicModel(Model):
             }
 
         if "toolResult" in content:
-            return {
-                "content": [
+            # Mirror the message-path gate at anthropic.py:211 — toolResult content
+            # nesting location-source documents/images would otherwise crash with
+            # KeyError: 'bytes' when recursively formatting each entry below.
+            # See https://github.com/strands-agents/harness-sdk/issues/4018
+            formatted_inner: list[dict[str, Any]] = []
+            for tool_result_content in content["toolResult"]["content"]:
+                if _has_location_source(cast(ContentBlock, tool_result_content)):
+                    logger.warning(
+                        "Location sources are not supported by Anthropic | skipping toolResult content block"
+                    )
+                    continue
+                formatted_inner.append(
                     self._format_request_message_content(
                         {"text": json.dumps(tool_result_content["json"], ensure_ascii=False)}
                         if "json" in tool_result_content
                         else cast(ContentBlock, tool_result_content)
                     )
-                    for tool_result_content in content["toolResult"]["content"]
-                ],
+                )
+            return {
+                "content": formatted_inner,
                 "is_error": content["toolResult"]["status"] == "error",
                 "tool_use_id": content["toolResult"]["toolUseId"],
                 "type": "tool_result",

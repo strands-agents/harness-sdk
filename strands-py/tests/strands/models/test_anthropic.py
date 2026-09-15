@@ -12,6 +12,7 @@ import pytest
 import strands
 from strands.models.anthropic import AnthropicModel
 from strands.models.model import CacheConfig, CacheToolsConfig
+from strands.types.content import Messages
 from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
 
 
@@ -1206,6 +1207,70 @@ def test_format_request_filters_location_source_document(model, model_id, max_to
     ]
     assert tru_request["messages"] == exp_messages
     assert "Location sources are not supported by Anthropic" in caplog.text
+
+
+def test_format_request_filters_location_source_document_in_tool_result(model, model_id, max_tokens, caplog):
+    """Regression for https://github.com/strands-agents/harness-sdk/issues/4018.
+
+    A location-source document nested inside a toolResult must be warn-and-skipped
+    rather than crashing with KeyError: 'bytes' when the Anthropic provider
+    recursively formats each entry of the toolResult content list.
+    """
+    caplog.set_level(logging.WARNING, logger="strands.models.anthropic")
+
+    messages: Messages = [
+        {"role": "user", "content": [{"text": "fetch the report"}]},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "toolUse": {
+                        "input": {"path": "report.pdf"},
+                        "name": "fetch_doc",
+                        "toolUseId": "t1",
+                    },
+                },
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": "t1",
+                        "status": "success",
+                        "content": [
+                            {
+                                "document": {
+                                    "format": "pdf",
+                                    "name": "report.pdf",
+                                    "source": {
+                                        "location": {"type": "s3", "uri": "s3://bucket/report.pdf"},
+                                    },
+                                },
+                            },
+                            {"text": "fallback summary"},
+                        ],
+                    },
+                },
+            ],
+        },
+    ]
+
+    tru_request = model.format_request(messages)
+    # No exception is the headline assertion; toolResult preserves the text
+    # block but drops the location-source document and emits the warn+skip log.
+    last = tru_request["messages"][-1]
+    assert last["role"] == "user"
+    assert last["content"] == [
+        {
+            "content": [{"text": "fallback summary", "type": "text"}],
+            "is_error": False,
+            "tool_use_id": "t1",
+            "type": "tool_result",
+        },
+    ]
+    assert "Location sources are not supported by Anthropic | skipping toolResult content block" in caplog.text
 
 
 @pytest.mark.asyncio
