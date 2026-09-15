@@ -865,9 +865,8 @@ def test_format_chunk_metadata(model):
 
 
 def test_format_chunk_metadata_with_cache_tokens(model):
-    """When prompt caching is active, Anthropic returns cache_read_input_tokens
-    and cache_creation_input_tokens alongside input_tokens; surface them so
-    downstream cost accounting reflects what the user is billed for."""
+    """Anthropic reports input_tokens net of the cache, so the cache counters are surfaced and the
+    total is the sum of all four counters (#3546)."""
     event = {
         "type": "metadata",
         "usage": {
@@ -884,7 +883,7 @@ def test_format_chunk_metadata_with_cache_tokens(model):
             "usage": {
                 "inputTokens": 5,
                 "outputTokens": 7,
-                "totalTokens": 12,
+                "totalTokens": 162,
                 "cacheReadInputTokens": 100,
                 "cacheWriteInputTokens": 50,
             },
