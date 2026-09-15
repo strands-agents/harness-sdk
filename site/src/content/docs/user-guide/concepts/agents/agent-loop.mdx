@@ -98,16 +98,32 @@ When an agent receives a request, it initializes by registering tools, setting u
 
 Each model invocation ends with a stop reason that determines what happens next:
 
-- **End turn**: The model has finished its response and has no further actions to take. This is the normal successful termination. The loop exits and returns the model's final message.
-- **Tool use**: The model wants to execute one or more tools before continuing. The loop executes the requested tools, appends the results to the conversation history, and invokes the model again.
-- **Cancelled**: The agent was stopped externally via `agent.cancel()`. See [Cancellation](#cancellation) below.
-- **Limit turns** (<Syntax py="limit_turns" ts="limitTurns" />): The per-invocation turn budget was exhausted. See [Invocation Limits](#invocation-limits).
-- **Limit total tokens** (<Syntax py="limit_total_tokens" ts="limitTotalTokens" />): The cumulative token budget was exhausted. See [Invocation Limits](#invocation-limits).
-- **Limit output tokens** (<Syntax py="limit_output_tokens" ts="limitOutputTokens" />): The output token budget was exhausted. See [Invocation Limits](#invocation-limits).
-- **Max tokens**: The model's response was truncated because it hit the token limit. This is unrecoverable within the current loop. The model cannot continue from a partial response, and the loop terminates with an error.
-- **Stop sequence**: The model encountered a configured stop sequence. Like end turn, this terminates the loop normally.
-- **Content filtered**: The response was blocked by safety mechanisms.
-- **Guardrail intervention**: A guardrail policy stopped generation.
+- **End turn** (<Syntax py="end_turn" ts="endTurn" />): The model has finished its
+  response and has no further actions to take. This is the normal successful termination.
+  The loop exits and returns the model's final message.
+- **Tool use** (<Syntax py="tool_use" ts="toolUse" />): The model wants to execute one or
+  more tools before continuing. The loop executes the requested tools, appends the results
+  to the conversation history, and invokes the model again.
+- **Cancelled** (`cancelled`): The agent was stopped externally via `agent.cancel()`. See
+  [Cancellation](#cancellation) below.
+- **Limit turns** (<Syntax py="limit_turns" ts="limitTurns" />): The per-invocation turn
+  budget was exhausted. See [Invocation Limits](#invocation-limits).
+- **Limit total tokens** (<Syntax py="limit_total_tokens" ts="limitTotalTokens" />): The
+  cumulative token budget was exhausted. See [Invocation Limits](#invocation-limits).
+- **Limit output tokens** (<Syntax py="limit_output_tokens" ts="limitOutputTokens" />):
+  The output token budget was exhausted. See [Invocation Limits](#invocation-limits).
+- **Max tokens** (<Syntax py="max_tokens" ts="maxTokens" />): The model's response was
+  truncated because it hit the token limit. This is unrecoverable within the current loop.
+  The model cannot continue from a partial response, and the loop terminates with an
+  error.
+- **Stop sequence** (<Syntax py="stop_sequence" ts="stopSequence" />): The model
+  encountered a configured stop sequence. Like end turn, this terminates the loop
+  normally.
+- **Content filtered** (<Syntax py="content_filtered" ts="contentFiltered" />): The
+  response was blocked by safety mechanisms.
+- **Guardrail intervention**
+  (<Syntax py="guardrail_intervened" ts="guardrailIntervened" />): A guardrail policy
+  stopped generation.
 
 The limit stop reasons indicate graceful budget exhaustion. The agent's message history remains in a valid state, and you can reinvoke with a higher budget or different prompt.
 
