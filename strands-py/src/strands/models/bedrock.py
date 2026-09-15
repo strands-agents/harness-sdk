@@ -1027,6 +1027,8 @@ class BedrockModel(Model):
                         return None
                 elif "bytes" in source:
                     formatted_document_source = {"bytes": source["bytes"]}
+                elif "text" in source:
+                    formatted_document_source = {"text": source["text"]}
                 result["source"] = formatted_document_source
 
             # Handle optional fields

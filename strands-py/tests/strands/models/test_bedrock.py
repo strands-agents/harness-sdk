@@ -2920,6 +2920,36 @@ def test_format_request_filters_document_content_blocks(model, model_id):
     assert "metadata" not in document_block
 
 
+def test_format_request_accepts_document_text_source(model, model_id):
+    """Test that a document with a text source is properly formatted."""
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "document": {
+                        "name": "notes",
+                        "format": "txt",
+                        "source": {"text": "the quick brown fox"},
+                        "citations": {"enabled": True},
+                    }
+                },
+            ],
+        }
+    ]
+
+    formatted_request = model.format_request(messages)
+
+    document = formatted_request["messages"][0]["content"][0]["document"]
+    expected = {
+        "name": "notes",
+        "format": "txt",
+        "source": {"text": "the quick brown fox"},
+        "citations": {"enabled": True},
+    }
+    assert document == expected
+
+
 def test_format_request_filters_nested_reasoning_content(model, model_id):
     """Test deep filtering of nested reasoningText fields."""
     messages = [
