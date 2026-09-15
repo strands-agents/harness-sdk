@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
 import { TestSandbox } from '../../__fixtures__/test-sandbox.node.js'
 import { buildShellEnvPrefix } from '../posix-shell.js'
-import { SandboxPathNotFoundError } from '../errors.js'
+import { SandboxPathNotFoundError, SandboxTimeoutError } from '../errors.js'
 import { streamProcess } from '../stream-process.js'
 import type { ExecutionResult, StreamChunk } from '../types.js'
 
@@ -252,6 +252,13 @@ describe.skipIf(process.platform === 'win32')('PosixShellSandbox', () => {
       await expect(sandbox.execute('sleep 60', { timeout: 0.2 })).rejects.toThrow('timed out')
       const elapsed = Date.now() - start
       expect(elapsed).toBeLessThan(2000)
+    })
+
+    it('reports the output captured before the kill on timeout', async () => {
+      const error = await sandbox.execute('echo partial; echo warn >&2; sleep 5', { timeout: 0.3 }).catch((e) => e)
+      expect(error).toBeInstanceOf(SandboxTimeoutError)
+      expect(error.stdout).toBe('partial\n')
+      expect(error.stderr).toBe('warn\n')
     })
 
     it('does not timeout fast commands', async () => {
