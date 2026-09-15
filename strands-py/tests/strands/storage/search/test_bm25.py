@@ -22,11 +22,11 @@ class TestBuildQuery:
 
     def test_filters_stop_words_and_short_terms(self):
         result = _build_query("the authentication flow")
-        assert result == "authentication flow"
+        assert result == "authentication* flow*"
 
     def test_joins_terms_sorted(self):
         result = _build_query("OAuth authentication tokens")
-        assert result == "authentication oauth tokens"
+        assert result == "authentication* oauth* tokens*"
 
 
 class TestStopWords:

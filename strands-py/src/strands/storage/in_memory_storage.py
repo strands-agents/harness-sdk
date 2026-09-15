@@ -6,6 +6,7 @@ import builtins
 import threading
 from typing import TYPE_CHECKING
 
+from ..types.exceptions import StorageError
 from .search.keyword import KeywordSearchStrategy
 from .storage import _EPHEMERAL, _NamespacedStorage, _normalize_key, _normalize_prefix
 
@@ -62,8 +63,6 @@ class InMemoryStorage:
             try:
                 await self._search_strategy.index(self, normalized, data)
             except Exception as error:
-                from ..types.exceptions import StorageError
-
                 raise StorageError(f"Wrote '{key}' but indexing failed") from error
 
     async def read(self, key: str) -> bytes | None:

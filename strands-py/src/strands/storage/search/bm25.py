@@ -159,8 +159,9 @@ STOP_WORDS: frozenset[str] = frozenset(
 def _build_query(query: str) -> str | None:
     """Build an FTS5 match expression from a natural-language query.
 
-    Filters stop words and single-character tokens, then joins with
-    implicit AND so all terms must be present (ranked by BM25).
+    Filters stop words and single-character tokens, appends a prefix
+    wildcard to each term, then joins with implicit AND so all terms
+    must be present as prefixes (ranked by BM25).
 
     Args:
         query: Natural-language search query.
@@ -171,7 +172,7 @@ def _build_query(query: str) -> str | None:
     terms = sorted(term for term in tokenize(query) if len(term) > 1 and term not in STOP_WORDS)
     if not terms:
         return None
-    return " ".join(terms)
+    return " ".join(f"{term}*" for term in terms)
 
 
 @dataclass
@@ -249,7 +250,7 @@ class Bm25SearchStrategy:
 
         async with self._lock:
             conn = self._ensure_connection(storage)
-            await asyncio.to_thread(self._upsert, conn, key, content, content_hash)
+            await asyncio.shield(asyncio.to_thread(self._upsert, conn, key, content, content_hash))
 
     async def search(self, storage: LocalFileStorage, query: str, **kwargs: Any) -> list[StorageSearchResult]:
         """Search the index using BM25 full-text search.
@@ -271,7 +272,7 @@ class Bm25SearchStrategy:
 
         async with self._lock:
             conn = self._ensure_connection(storage)
-            return await asyncio.to_thread(self._query, conn, fts_query)
+            return await asyncio.shield(asyncio.to_thread(self._query, conn, fts_query))
 
     async def close(self) -> None:
         """Close the SQLite connection and release resources."""
