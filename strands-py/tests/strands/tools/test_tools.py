@@ -432,6 +432,68 @@ def test_normalize_tool_spec_empty_input_schema():
     assert normalized == expected
 
 
+def test_normalize_schema_does_not_mutate_caller_schema():
+    """normalize_schema must not write into the schema dict the caller passed in (#3910)."""
+    schema = {"type": "object", "properties": {"name": {}}}
+    original = {"type": "object", "properties": {"name": {}}}
+
+    normalize_schema(schema)
+
+    assert schema == original
+
+
+def test_normalize_schema_does_not_mutate_nested_object_properties():
+    """The recursive object-schema path must not mutate the caller's nested property dict either."""
+    schema = {
+        "type": "object",
+        "properties": {"data": {"type": "object", "properties": {"id": {}}}},
+    }
+    original = {
+        "type": "object",
+        "properties": {"data": {"type": "object", "properties": {"id": {}}}},
+    }
+
+    normalize_schema(schema)
+
+    assert schema == original
+
+
+def test_normalize_tool_spec_does_not_mutate_caller_tool_spec():
+    """normalize_tool_spec must not write into the tool_spec dict the caller passed in (#3910)."""
+    tool_spec = {
+        "name": "demo",
+        "description": "demo",
+        "inputSchema": {"json": {"type": "object", "properties": {"query": {}}}},
+    }
+    original = {
+        "name": "demo",
+        "description": "demo",
+        "inputSchema": {"json": {"type": "object", "properties": {"query": {}}}},
+    }
+
+    normalize_tool_spec(tool_spec)
+
+    assert tool_spec == original
+
+
+def test_normalize_tool_spec_direct_schema_does_not_mutate_caller_tool_spec():
+    """Same guarantee on the "direct schema" (no "json" key yet) branch."""
+    tool_spec = {
+        "name": "demo",
+        "description": "demo",
+        "inputSchema": {"type": "object", "properties": {"query": {}}},
+    }
+    original = {
+        "name": "demo",
+        "description": "demo",
+        "inputSchema": {"type": "object", "properties": {"query": {}}},
+    }
+
+    normalize_tool_spec(tool_spec)
+
+    assert tool_spec == original
+
+
 def test_validate_tool_use_with_valid_input():
     tool_use: ToolUse = {
         "name": "valid",
