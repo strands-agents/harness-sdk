@@ -876,10 +876,20 @@ export class Agent implements LocalAgent, InvokableAgent {
    *
    * Each cap, when set, must be a positive finite number. Fractional values
    * are accepted — harmless, and useful for token budgets derived from
-   * arithmetic.
+   * arithmetic. Unrecognized keys are rejected for the same reason: a
+   * mistyped cap name would otherwise silently apply no limit at all.
    */
   private _validateLimits(options: InvokeOptions | undefined): void {
     if (!options?.limits) return
+    const unrecognizedKeys = Object.keys(options.limits).filter(
+      (key) => key !== 'turns' && key !== 'outputTokens' && key !== 'totalTokens'
+    )
+    if (unrecognizedKeys.length > 0) {
+      throw new TypeError(
+        `limits keys [${unrecognizedKeys.join(', ')}] are not recognized caps, ` +
+          `expected 'turns', 'outputTokens', or 'totalTokens'`
+      )
+    }
     const assertPositive = (name: string, value: number | undefined): void => {
       if (value !== undefined && (!Number.isFinite(value) || value <= 0)) {
         throw new TypeError(`${name} must be a positive finite number, got ${value}`)
