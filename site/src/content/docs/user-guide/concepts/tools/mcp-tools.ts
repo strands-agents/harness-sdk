@@ -187,6 +187,41 @@ const agentMultiple = new Agent({
   void agent
 }
 
+async function promptsAndResources() {
+  // --8<-- [start:prompts_resources]
+  await using mcpClient = new McpClient({
+    transport: new StdioClientTransport({
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-everything'],
+    }),
+  })
+
+  let promptPage = await mcpClient.listPrompts()
+  const prompts = [...promptPage.prompts]
+  while (promptPage.nextCursor !== undefined) {
+    promptPage = await mcpClient.listPrompts(promptPage.nextCursor)
+    prompts.push(...promptPage.prompts)
+  }
+
+  const prompt = await mcpClient.getPrompt('args-prompt', {
+    city: 'Seattle',
+    state: 'Washington',
+  })
+  const resources = await mcpClient.listResources()
+  const resourceUri = 'demo://resource/static/document/architecture.md'
+  const resource = await mcpClient.readResource(resourceUri, { timeout: 10_000 })
+  const templates = await mcpClient.listResourceTemplates()
+
+  console.log({
+    prompts,
+    prompt: prompt.messages,
+    resources: resources.resources,
+    resource: resource.contents,
+    templates: templates.resourceTemplates,
+  })
+  // --8<-- [end:prompts_resources]
+}
+
 // --8<-- [start:mcp_server]
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
