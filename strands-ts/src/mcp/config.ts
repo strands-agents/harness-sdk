@@ -1,4 +1,10 @@
-import type { McpClientConfig, McpClientCredentials, McpClientOptions, TasksConfig } from './client.js'
+import type {
+  McpClientConfig,
+  McpClientCredentials,
+  McpClientOptions,
+  McpRequestTimeouts,
+  TasksConfig,
+} from './client.js'
 import { createDefaultSlot } from '../default-slot.js'
 
 /**
@@ -44,8 +50,10 @@ export interface McpServerConfig {
   disabled?: boolean
   /** When true, config or connection failures skip this server instead of throwing. */
   continueOnError?: boolean
-  /** Task-augmented tool execution configuration (experimental). */
+  /** Configuration for automatic task execution on modern and legacy MCP servers. */
   tasksConfig?: TasksConfig
+  /** Request timeouts applied to every tool call on this server. */
+  requestTimeouts?: McpRequestTimeouts
 }
 
 /** Options controlling how `McpClient.loadServers` translates config entries into clients. */

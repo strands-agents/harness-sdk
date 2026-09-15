@@ -13,7 +13,7 @@ import type { TasksConfig } from '@strands-agents/sdk'
  * Returns the client - caller is responsible for disconnecting.
  * @param serverUrl - The URL of the MCP server
  * @param appName - The application name for the client
- * @param tasksConfig - Optional tasks configuration. When provided, enables task-based tool invocation.
+ * @param tasksConfig - Optional configuration for task execution.
  */
 function createClient(serverUrl: string, appName: string, tasksConfig?: TasksConfig): McpClient {
   return new McpClient({
@@ -48,7 +48,6 @@ describe('MCP Task Integration Tests', () => {
         const instantTool = tools.find((t) => t.name === 'instant_task')
         expect(instantTool).toBeDefined()
 
-        // McpClient.callTool uses callToolStream internally
         const result = await client.callTool(instantTool!, { value: 'hello from instant task' })
 
         expect(result).toMatchObject({
@@ -95,7 +94,6 @@ describe('MCP Task Integration Tests', () => {
         const failingTool = tools.find((t) => t.name === 'failing_task')
         expect(failingTool).toBeDefined()
 
-        // McpClient.callTool uses takeResult() which throws on task failure
         await expect(client.callTool(failingTool!, { error_message: 'This task failed on purpose!' })).rejects.toThrow(
           /failed/i
         )
