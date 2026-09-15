@@ -32,7 +32,7 @@ Users can raise interrupts within their [hook callbacks](./agents/hooks.md) to p
 <Tabs>
 <Tab label="Python">
 
-Both `BeforeToolCallEvent` and `BeforeToolsEvent` are interruptible. Interrupting on a `BeforeToolCallEvent` allows users to intercept an individual tool call before execution, while interrupting on `BeforeToolsEvent` pauses the entire batch of tool calls before any of them execute — useful for approving a whole set of tool calls at once.
+`BeforeToolCallEvent`, `BeforeToolsEvent`, and `BeforeModelCallEvent` are interruptible. Interrupting on a `BeforeToolCallEvent` allows users to intercept an individual tool call before execution, while interrupting on `BeforeToolsEvent` pauses the entire batch of tool calls before any of them execute — useful for approving a whole set of tool calls at once. Interrupting on `BeforeModelCallEvent` pauses the agent before it calls the model; resuming re-enters the same model call.
 
 #### BeforeToolCallEvent
 
@@ -159,10 +159,40 @@ while result.stop_reason == "interrupt":
 
 Setting `event.cancel` (to `True` for a default message, or a string for a custom one) produces an error tool result for every tool in the batch and skips execution entirely, so no per-tool `BeforeToolCallEvent` fires.
 
+#### BeforeModelCallEvent
+
+```python
+from strands import Agent
+from strands.hooks import BeforeModelCallEvent
+
+
+def approve_model_call(event: BeforeModelCallEvent) -> None:
+    approval = event.interrupt(
+        "myapp-model-call-approval",
+        reason="Approve this model call?",
+    )
+    if approval.lower() != "y":
+        event.cancel = "Model call cancelled by user"
+
+
+agent = Agent(hooks=[approve_model_call], callback_handler=None)
+result = agent("Summarize the quarterly report")
+
+while result.stop_reason == "interrupt":
+    responses = []
+    for interrupt in result.interrupts:
+        user_input = input(f"{interrupt.reason} (y/N): ")
+        responses.append(
+            {"interruptResponse": {"interruptId": interrupt.id, "response": user_input}}
+        )
+
+    result = agent(responses)
+```
+
 </Tab>
 <Tab label="TypeScript">
 
-Both `BeforeToolCallEvent` and `BeforeToolsEvent` are interruptible. Interrupting on a `BeforeToolCallEvent` allows users to intercept individual tool calls before execution, while `BeforeToolsEvent` allows intercepting the entire batch of tool calls before any execute.
+`BeforeToolCallEvent`, `BeforeToolsEvent`, and `BeforeModelCallEvent` are interruptible. Interrupting on a `BeforeToolCallEvent` allows users to intercept individual tool calls before execution, while `BeforeToolsEvent` allows intercepting the entire batch of tool calls before any execute. Interrupting on `BeforeModelCallEvent` pauses the agent before it calls the model; resuming re-enters the same model call.
 
 #### BeforeToolCallEvent
 
@@ -179,8 +209,21 @@ Both `BeforeToolCallEvent` and `BeforeToolsEvent` are interruptible. Interruptin
 
 --8<-- "user-guide/concepts/interrupts.ts:hooks_before_tools"
 ```
+
+#### BeforeModelCallEvent
+
+```typescript
+--8<-- "user-guide/concepts/interrupts_imports.ts:hooks_before_model_call_imports"
+
+--8<-- "user-guide/concepts/interrupts.ts:hooks_before_model_call"
+```
+
 </Tab>
 </Tabs>
+
+`BeforeModelCallEvent` fires before each model call attempt, including retries.
+On resume and retries, `event.interrupt` reuses the approval. The SDK clears it
+after tool execution or when the request completes.
 
 ### Components
 
@@ -190,7 +233,7 @@ Interrupts in Strands are comprised of the following components:
 <Tab label="Python">
 
 - `event.interrupt` - Raises an interrupt with a unique name and optional reason
-    - The `name` must be unique across all interrupt calls configured on the same event (`BeforeToolCallEvent` or `BeforeToolsEvent`). In the example above, we demonstrate using `app_name` to namespace the interrupt call. This is particularly helpful if you plan to vend your hooks to other users.
+    - The `name` must be unique across all interrupt calls configured on the same event (`BeforeToolCallEvent`, `BeforeToolsEvent`, or `BeforeModelCallEvent`). Use a namespace prefix to avoid collisions when sharing hooks.
     - You can assign additional context for raising the interrupt to the `reason` field. Note, the `reason` must be JSON-serializable. 
 - `result.stop_reason` - Check if agent stopped due to "interrupt"
 - `result.interrupts` - List of interrupts that were raised
@@ -201,15 +244,20 @@ Interrupts in Strands are comprised of the following components:
     - You can either set `cancel_tool` to `True` or provide a custom cancellation message.
 - `event.cancel` (`BeforeToolsEvent`) - Cancel every tool call in the batch based on the interrupt response
     - You can either set `cancel` to `True` or provide a custom cancellation message.
+- `event.cancel` (`BeforeModelCallEvent`) - End the turn without calling the model
+    - Set `cancel` to `True` for a default message or provide a custom string. The
+      cancellation message becomes the assistant's final message.
 
 For additional details on each of these components, refer to the [Python API Reference](@api/python/strands.types.interrupt).
 </Tab>
 <Tab label="TypeScript">
 
-- [`BeforeToolCallEvent`](@api/typescript/BeforeToolCallEvent) / [`BeforeToolsEvent`](@api/typescript/BeforeToolsEvent): hook events that expose the ability to interrupt via the `interrupt` method
+- [`BeforeToolCallEvent`](@api/typescript/BeforeToolCallEvent) / [`BeforeToolsEvent`](@api/typescript/BeforeToolsEvent) / [`BeforeModelCallEvent`](@api/typescript/BeforeModelCallEvent): hook events that expose the ability to interrupt via the `interrupt` method
     - `event.interrupt({ name, reason? })`: halts the agent loop. `name` is a string identifier and `reason` is an optional JSON-serializable value providing context for why the interrupt was raised.
     - The `name` must be unique across all interrupt calls configured on the same event. In the example above, we demonstrate using a namespace prefix for the interrupt call. This is particularly helpful if you plan to vend your hooks to other users.
-    - `event.cancel`: cancel tool execution based on the interrupt response. Set to `true` for a default message or provide a custom cancellation message string.
+    - `event.cancel`: cancel tool execution (or, on `BeforeModelCallEvent`, the model call) based on the interrupt response. Set to `true` for a default message or provide a custom cancellation message string.
+        - On `BeforeModelCallEvent`, this ends the turn without calling the model and
+          returns the cancellation message as the assistant's final message.
 - [`AgentResult`](@api/typescript/AgentResult): returned by `invoke()` / `stream()`, contains interrupt information when the agent pauses
     - `result.stopReason`: check if agent stopped due to `'interrupt'`
     - `result.interrupts`: array of `Interrupt` objects, each containing the user-provided `name` and `reason`, along with a unique `id`
