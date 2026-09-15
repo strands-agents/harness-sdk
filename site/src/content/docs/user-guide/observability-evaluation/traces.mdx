@@ -530,8 +530,12 @@ print(response)
 </Tab>
 </Tabs>
 
-## Sending traces to CloudWatch X-ray
-There are several ways to send traces, metrics, and logs to CloudWatch. Please visit the following pages for more details and configurations:
+## Sending traces to CloudWatch
+
+Strands exports to CloudWatch through the OTLP exporter, either via an OpenTelemetry Collector or directly to CloudWatch Transaction Search. See the [CloudWatch trace export example](../../examples/cloudwatch_traces.md) for a walkthrough of both routes.
+
+Reference documentation:
+
 1. [AWS Distro for OpenTelemetry Collector](https://aws-otel.github.io/docs/getting-started/x-ray#configuring-the-aws-x-ray-exporter)
 2. [AWS CloudWatch OpenTelemetry User Guide](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch-OpenTelemetry-Sections.html)
   - Please ensure Transaction Search is enabled in CloudWatch.

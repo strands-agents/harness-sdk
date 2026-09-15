@@ -297,6 +297,7 @@ sidebar:
       - docs/examples/python/meta_tooling
       - docs/examples/python/mcp_calculator
       - docs/examples/python/multimodal
+      - docs/examples/cloudwatch_traces
 
   - label: Community
     items:
