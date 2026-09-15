@@ -298,6 +298,29 @@ def test_document_citations_streaming(streaming_agent, letter_pdf):
     streaming_agent("What is your favorite part?")
 
 
+def test_document_text_source_citations(non_streaming_agent):
+    content: list[ContentBlock] = [
+        {
+            "document": {
+                "name": "ai note",
+                "source": {
+                    "text": (
+                        "Artificial intelligence is the simulation of human intelligence by machines. "
+                        "Modern AI systems learn patterns from large datasets to make predictions."
+                    )
+                },
+                "citations": {"enabled": True},
+                "context": "A short note about artificial intelligence",
+                "format": "txt",
+            },
+        },
+        {"text": "What does the document say about artificial intelligence? Use citations to back up your answer."},
+    ]
+    non_streaming_agent(content)
+
+    assert any("citationsContent" in content for content in non_streaming_agent.messages[-1]["content"])
+
+
 def test_structured_output_multi_modal_input(streaming_agent, yellow_img, yellow_color):
     content = [
         {"text": "Is this image red, blue, or yellow?"},
