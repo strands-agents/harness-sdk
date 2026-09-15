@@ -11,12 +11,12 @@ import queue
 
 import numpy as np
 import numpy.typing as npt
-from pywebrtc_audio import AudioProcessor
+import pywebrtc_audio
 
 logger = logging.getLogger(__name__)
 
 
-class _BidiAudioProcessor:
+class AudioProcessor:
     """Coordinate WebRTC microphone processing with playback reference audio.
 
     Buffers played audio for echo cancellation and processes microphone audio with aligned playback frames.
@@ -81,7 +81,7 @@ class _BidiAudioProcessor:
 
         self._input_rate = input_rate
         self._output_rate = output_rate
-        self._processor = AudioProcessor(
+        self._processor = pywebrtc_audio.AudioProcessor(
             sample_rate=input_rate,
             num_channels=num_channels,
             echo_cancellation=self._echo_cancellation,
