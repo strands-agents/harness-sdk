@@ -1241,7 +1241,6 @@ class TestUnifiedStorage:
 
     @pytest.mark.asyncio
     async def test_eviction_debug_log_on_delete_failure(self, unified_mock_agent, caplog):
-
         from strands.storage import InMemoryStorage as UnifiedInMemory
 
         storage = UnifiedInMemory()

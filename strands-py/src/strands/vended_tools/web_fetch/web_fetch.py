@@ -212,7 +212,8 @@ async def _fetch_once(
         WebFetchError: On timeout, transport failure, HTTP error status, or
             body exceeding ``max_bytes``.
     """
-    _check_cancelled(cancel_signal)
+    if cancel_signal is not None and cancel_signal.is_set():
+        raise asyncio.CancelledError("Web fetch tool request cancelled")
 
     owns_client = client is None
     active_client = client if client is not None else httpx.AsyncClient(follow_redirects=True)
@@ -231,7 +232,8 @@ async def _fetch_once(
             chunks: list[bytes] = []
             total = 0
             async for chunk in response.aiter_bytes():
-                _check_cancelled(cancel_signal)
+                if cancel_signal is not None and cancel_signal.is_set():
+                    raise asyncio.CancelledError("Web fetch tool request cancelled")
                 total += len(chunk)
                 if total > max_bytes:
                     raise WebFetchError(f"Response body exceeded {max_bytes} bytes. Refusing to buffer more.")
@@ -261,9 +263,3 @@ def _parse_charset(content_type: str) -> str:
             if value:
                 return value
     return "utf-8"
-
-
-def _check_cancelled(cancel_signal: threading.Event | None) -> None:
-    """Raise :class:`asyncio.CancelledError` if the agent's cancel signal has been set."""
-    if cancel_signal is not None and cancel_signal.is_set():
-        raise asyncio.CancelledError("Request cancelled")

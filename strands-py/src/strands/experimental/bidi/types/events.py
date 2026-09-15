@@ -15,7 +15,7 @@ Key features:
 Audio format normalization:
 
 - Supports PCM, WAV, Opus, and MP3 formats
-- Standardizes sample rates (16kHz, 24kHz, 48kHz)
+- Describes sample rates in Hz
 - Normalizes channel configurations (mono/stereo)
 - Abstracts provider-specific encodings
 - Audio data stored as base64-encoded strings for JSON compatibility
@@ -39,8 +39,6 @@ AudioChannel = Literal[1, 2]
 """
 AudioFormat = Literal["pcm", "wav", "opus", "mp3"]
 """Audio encoding format."""
-AudioSampleRate = Literal[8000, 16000, 24000, 48000]
-"""Audio sample rate in Hz."""
 
 Role = Literal["user", "assistant"]
 """Role of a message sender.
@@ -132,7 +130,7 @@ class BidiAudioInputEvent(TypedEvent):
     Parameters:
         audio: Base64-encoded audio string to send to model.
         format: Audio format from SUPPORTED_AUDIO_FORMATS.
-        sample_rate: Sample rate from SUPPORTED_SAMPLE_RATES.
+        sample_rate: Number of audio samples per second in Hz.
         channels: Channel count from SUPPORTED_CHANNELS.
     """
 
@@ -140,7 +138,7 @@ class BidiAudioInputEvent(TypedEvent):
         self,
         audio: str,
         format: AudioFormat | str,
-        sample_rate: AudioSampleRate,
+        sample_rate: int,
         channels: AudioChannel,
     ):
         """Initialize audio input event."""
@@ -165,9 +163,9 @@ class BidiAudioInputEvent(TypedEvent):
         return cast(AudioFormat, self["format"])
 
     @property
-    def sample_rate(self) -> AudioSampleRate:
+    def sample_rate(self) -> int:
         """Number of audio samples per second in Hz."""
-        return cast(AudioSampleRate, self["sample_rate"])
+        return cast(int, self["sample_rate"])
 
     @property
     def channels(self) -> AudioChannel:
@@ -346,7 +344,7 @@ class BidiAudioStreamEvent(TypedEvent):
         self,
         audio: str,
         format: AudioFormat,
-        sample_rate: AudioSampleRate,
+        sample_rate: int,
         channels: AudioChannel,
     ):
         """Initialize audio stream event."""
@@ -371,9 +369,9 @@ class BidiAudioStreamEvent(TypedEvent):
         return cast(AudioFormat, self["format"])
 
     @property
-    def sample_rate(self) -> AudioSampleRate:
+    def sample_rate(self) -> int:
         """Number of audio samples per second in Hz."""
-        return cast(AudioSampleRate, self["sample_rate"])
+        return cast(int, self["sample_rate"])
 
     @property
     def channels(self) -> AudioChannel:

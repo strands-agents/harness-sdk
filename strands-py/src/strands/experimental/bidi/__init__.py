@@ -12,7 +12,7 @@ from ...types._events import (
 from .agent.agent import BidiAgent
 
 # Model interface (for custom implementations)
-from .models.configs import AudioConfig, BidiConnectionConfig, BidiModelConfig
+from .models.configs import AudioConfig, AudioStreamConfig, BidiConnectionConfig, BidiModelConfig
 from .models.model import AudioCapable, BidiModel, Restartable
 
 # Built-in tools (deprecated - use strands_tools.stop instead)
@@ -75,6 +75,7 @@ __all__ = [
     # Model interface
     "AudioCapable",
     "AudioConfig",
+    "AudioStreamConfig",
     "BidiModel",
     "BidiModelConfig",
     "Restartable",
