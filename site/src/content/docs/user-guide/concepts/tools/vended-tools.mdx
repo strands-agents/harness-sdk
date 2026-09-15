@@ -12,6 +12,7 @@ sourceLinks:
   - path: strands-ts/src/vended-tools/sleep/sleep.ts
   - path: strands-ts/src/vended-tools/web-fetch/web-fetch.ts
   - path: strands-ts/src/experimental/vended-tools/stop/stop.ts
+  - path: strands-py/src/strands/vended_tools/handoff_to_user/handoff_to_user.py
   - path: strands-py/src/strands/vended_tools/http_request/http_request.py
   - path: strands-py/src/strands/vended_tools/notebook/notebook.py
   - path: strands-py/src/strands/vended_tools/shell/shell.py
@@ -43,6 +44,7 @@ Each tool is imported from its own subpath under `@strands-agents/sdk/vended-too
 | [Notebook](#notebook) | Manage persistent text notebooks | Python, TypeScript (Node.js, browsers) |
 | [Bash](#bash) | Execute shell commands with persistent sessions | Python, TypeScript (Node.js, Unix/Linux/macOS) |
 | [Sleep](#sleep) | Pause execution for a bounded, cancellable duration | Python, TypeScript (Node.js, browsers) |
+| [Handoff to User](#handoff-to-user) | Pause the agent loop and surface a message to the user | Python |
 | [Stop](#stop-experimental) | Gracefully end the agent loop when the task is complete | Python, TypeScript (Node.js, browsers) |
 | [Web Fetch](#web-fetch) | Fetch a URL and return cleaned markdown for a model to read | Python, TypeScript (Node.js) |
 
@@ -347,6 +349,68 @@ agent = Agent(tools=[short_sleep])
 </Tabs>
 
 📖 [Full API Reference](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/sleep/README.md)
+
+---
+
+### Handoff to User
+
+Lets the model pause the agent loop and surface a message to the user for
+human-in-the-loop input. Use this when the agent needs explicit confirmation,
+additional information, or user approval before proceeding.
+
+_Supported in: all platforms (Python)._
+
+:::note[Bidirectional streaming not supported]
+`handoff_to_user` relies on the interrupt/resume mechanism, which requires the agent loop to fully halt and restart. It cannot be used inside bidirectional streaming sessions, where the loop runs continuously without a clean pause point.
+:::
+
+The loop halts with `stop_reason == "interrupt"` and the message is available
+on the interrupt's `reason` field in `AgentResult.interrupts`. Resume the agent
+by passing back an `interruptResponse` content block with the interrupt ID and
+the user's reply; the tool then returns that reply as its result and the model
+continues. To recognize a handoff interrupt, match its `name` against the exported
+`HANDOFF_INTERRUPT_NAME` constant.
+
+:::note[Combining with HumanInTheLoop]
+`HumanInTheLoop()` requires approval for every tool by default, so pairing it
+with `handoff_to_user` prompts the user twice — once to approve the call, then
+again to answer it. Allow-list the tool with
+`HumanInTheLoop(allowed_tools=["handoff_to_user"])` so only the handoff itself
+prompts.
+:::
+
+**Example:**
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.vended_tools import handoff_to_user
+
+agent = Agent(
+    tools=[handoff_to_user],
+    system_prompt=(
+        "Before deleting any files, call handoff_to_user to confirm with the user."
+    ),
+)
+
+result = agent("Delete all .tmp files in /workspace.")
+interrupt = result.interrupts[0]
+print(interrupt.reason)
+
+resumed = agent([
+    {
+        "interruptResponse": {
+            "interruptId": interrupt.id,
+            "response": "confirmed",
+        }
+    }
+])
+```
+
+</Tab>
+</Tabs>
 
 ---
 
