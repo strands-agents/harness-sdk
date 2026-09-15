@@ -191,6 +191,24 @@ async def test_invalid_limits_raise_type_error(limits):
         await agent.invoke_async("go", limits=limits)
 
 
+@pytest.mark.parametrize(
+    "limits",
+    [
+        {"max_turns": 3},
+        {"turn": 3},
+        {"turns": 3, "max_tokens": 100},
+    ],
+)
+@pytest.mark.asyncio
+async def test_unrecognized_limits_keys_raise_type_error(limits):
+    """An unrecognized cap name is rejected instead of silently applying no limit (#4354)."""
+    final = {"role": "assistant", "content": [{"text": "never reached"}]}
+    agent = Agent(model=MockedModelProvider([final]))
+
+    with pytest.raises(TypeError, match="not recognized"):
+        await agent.invoke_async("go", limits=limits)
+
+
 @pytest.mark.asyncio
 async def test_limits_propagate_through_stream_async():
     agent = _agent(
