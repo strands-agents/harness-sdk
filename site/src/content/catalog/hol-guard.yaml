@@ -1,0 +1,9 @@
+name: HOL Guard
+description: Fail-closed HOL Guard command intervention for command-bearing Strands tools before execution.
+integrationType: intervention
+languages:
+  python:
+    package: hol-guard
+github: https://github.com/hashgraph-online/hol-guard
+maintainedBy: partner
+addedDate: 2026-08-24
