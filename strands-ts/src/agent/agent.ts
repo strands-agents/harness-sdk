@@ -1126,6 +1126,16 @@ export class Agent implements LocalAgent, InvokableAgent {
         // Process interrupt responses before middleware runs so context.interrupt() can find them
         const interruptResponses = this._extractInterruptResponses(currentArgs)
         if (interruptResponses.length > 0) {
+          // Counterpart to the "non-interrupt input while interrupted" check in _stream():
+          // once the interrupt has been answered the state is deactivated, so there is
+          // nothing to resume. Accepting the responses here would silently drop them and
+          // issue a phantom model call, appending an assistant message directly after the
+          // previous one — role alternation real providers reject.
+          if (!this._interruptState.activated) {
+            throw new TypeError(
+              'Agent is not in an interrupted state. The interrupt being answered is no longer active (it was already answered or the interrupt state was cleared).'
+            )
+          }
           this._interruptState.resume(interruptResponses)
         }
 
