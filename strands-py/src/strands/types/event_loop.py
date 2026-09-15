@@ -14,6 +14,9 @@ class Usage(TypedDict, total=False):
         totalTokens: Total number of tokens (input + output).
         cacheReadInputTokens: Number of tokens read from cache (optional).
         cacheWriteInputTokens: Number of tokens written to cache (optional).
+        totalCostUsd: Best-effort estimated cost of the interaction in USD (optional). Set only by
+            providers that can price a call (currently LiteLLM); absent for providers that do not
+            report cost, so consumers must treat a missing key as "cost not tracked".
     """
 
     inputTokens: Required[int]
@@ -21,6 +24,7 @@ class Usage(TypedDict, total=False):
     totalTokens: Required[int]
     cacheReadInputTokens: int
     cacheWriteInputTokens: int
+    totalCostUsd: float
 
 
 class Metrics(TypedDict, total=False):
