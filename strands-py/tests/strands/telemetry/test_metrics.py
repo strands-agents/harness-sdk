@@ -336,6 +336,52 @@ def test_event_loop_metrics_add_tool_usage(mock_time, trace, tool, event_loop_me
     assert tru_trace_attrs == exp_trace_attrs
 
 
+def test_event_loop_metrics_update_usage_records_main_source(usage, event_loop_metrics, mock_get_meter_provider):
+    event_loop_metrics.reset_usage_metrics()
+    event_loop_metrics.update_usage(usage)
+
+    assert event_loop_metrics.accumulated_usage_by_source == {"main": usage}
+
+
+def test_event_loop_metrics_record_auxiliary_usage(usage, event_loop_metrics, mock_get_meter_provider):
+    event_loop_metrics.reset_usage_metrics()
+    event_loop_metrics.start_cycle(attributes={"event_loop_cycle_id": "test-cycle"})
+    event_loop_metrics.update_usage(usage)
+    metrics_client = event_loop_metrics._metrics_client
+    metrics_client.event_loop_input_tokens.record.reset_mock()
+
+    auxiliary_usage = Usage(inputTokens=100, outputTokens=10, totalTokens=110)
+    event_loop_metrics.record_auxiliary_usage(auxiliary_usage, "summarization")
+    event_loop_metrics.record_auxiliary_usage(auxiliary_usage, "summarization")
+
+    exp_total = Usage(inputTokens=201, outputTokens=22, totalTokens=223, cacheWriteInputTokens=2)
+    assert event_loop_metrics.accumulated_usage == exp_total
+    assert event_loop_metrics.accumulated_usage_by_source == {
+        "main": usage,
+        "summarization": Usage(inputTokens=200, outputTokens=20, totalTokens=220),
+    }
+    # Per-invocation usage feeds limits, so it includes auxiliary spend.
+    assert event_loop_metrics.latest_agent_invocation.usage == exp_total
+    # Cycle usage feeds context-size projection, so it does not.
+    assert event_loop_metrics.latest_agent_invocation.cycles[0].usage == usage
+    # The auxiliary agent already recorded its own histograms.
+    metrics_client.event_loop_input_tokens.record.assert_not_called()
+
+
+def test_event_loop_metrics_record_auxiliary_usage_rejects_main_source(event_loop_metrics, mock_get_meter_provider):
+    with pytest.raises(ValueError, match="reserved"):
+        event_loop_metrics.record_auxiliary_usage(Usage(inputTokens=1, outputTokens=1, totalTokens=2), "main")
+
+
+def test_event_loop_metrics_record_auxiliary_usage_without_invocation(event_loop_metrics, mock_get_meter_provider):
+    auxiliary_usage = Usage(inputTokens=5, outputTokens=5, totalTokens=10, cacheReadInputTokens=3)
+    event_loop_metrics.record_auxiliary_usage(auxiliary_usage, "web_fetch")
+
+    assert event_loop_metrics.accumulated_usage == auxiliary_usage
+    assert event_loop_metrics.accumulated_usage_by_source == {"web_fetch": auxiliary_usage}
+    assert event_loop_metrics.agent_invocations == []
+
+
 def test_event_loop_metrics_update_usage(usage, event_loop_metrics, mock_get_meter_provider):
     event_loop_metrics.reset_usage_metrics()
     event_loop_metrics.start_cycle(attributes={"event_loop_cycle_id": "test-cycle"})
@@ -394,6 +440,7 @@ def test_event_loop_metrics_get_summary(trace, tool, event_loop_metrics, mock_ge
             "outputTokens": 0,
             "totalTokens": 0,
         },
+        "accumulated_usage_by_source": {},
         "agent_invocations": [],
         "average_cycle_time": 0,
         "tool_usage": {

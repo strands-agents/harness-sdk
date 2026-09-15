@@ -21,6 +21,11 @@ def _make_mock_agent():
         {"role": "assistant", "content": [{"text": "World"}]},
     ]
     agent.model = MagicMock()
+
+    async def invoke_auxiliary_async(auxiliary_agent, prompt, *, source, **kwargs):
+        return await auxiliary_agent.invoke_async(prompt, **kwargs)
+
+    agent.invoke_auxiliary_async = invoke_auxiliary_async
     agent.take_snapshot = MagicMock(return_value=Snapshot(scope="agent", schema_version="1.0", data={}, app_data={}))
     agent.load_snapshot = MagicMock()
     agent.__hash__ = MagicMock(return_value=id(agent))

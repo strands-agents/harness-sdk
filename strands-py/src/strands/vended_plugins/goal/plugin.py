@@ -394,7 +394,9 @@ class GoalLoop(Plugin):
                 system_prompt=self._judge_system_prompt,
                 structured_output_model=JudgeOutcome,
             )
-            result = await judge.invoke_async(build_judge_prompt(goal_description, host_agent.messages))
+            result = await host_agent.invoke_auxiliary_async(
+                judge, build_judge_prompt(goal_description, host_agent.messages), source="goal_judge"
+            )
             if result.structured_output and isinstance(result.structured_output, JudgeOutcome):
                 return ValidationOutcome(
                     passed=result.structured_output.passed,

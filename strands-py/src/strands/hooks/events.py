@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
 if TYPE_CHECKING:
+    from ..agent.agent import Agent
     from ..agent.agent_result import AgentResult
 
 from ..types.agent import AgentInput
@@ -386,6 +387,58 @@ class AfterModelCallEvent(HookEvent):
 
     def _can_write(self, name: str) -> bool:
         return name == "retry"
+
+    @property
+    def should_reverse_callbacks(self) -> bool:
+        """True to invoke callbacks in reverse order."""
+        return True
+
+
+@dataclass
+class BeforeAuxiliaryCallEvent(HookEvent):
+    """Event triggered before an agent invokes an auxiliary agent on its own behalf.
+
+    Auxiliary agents do side work for the host agent — summarizing history, classifying a tool
+    call for approval, judging a goal, analyzing a fetched page — via
+    :meth:`~strands.agent.Agent.invoke_auxiliary_async`. Their model calls do not fire the host's
+    ``Before/AfterModelCallEvent``; subscribe to this pair to observe them. This event is
+    observation-only: its fields are read-only and it cannot cancel the call.
+
+    Attributes:
+        source: Which auxiliary feature is calling (e.g. ``"summarization"``, ``"web_fetch"``).
+        auxiliary_agent: The agent about to be invoked.
+        prompt: The prompt it will be invoked with.
+        invocation_state: State passed through the auxiliary invocation.
+    """
+
+    source: str
+    auxiliary_agent: "Agent"
+    prompt: AgentInput = None
+    invocation_state: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class AfterAuxiliaryCallEvent(HookEvent):
+    """Event triggered after an auxiliary agent invocation completes, successfully or not.
+
+    Fires after the auxiliary agent's usage has been rolled into the host's
+    ``event_loop_metrics``. Callbacks run in reverse registration order.
+
+    Attributes:
+        source: Which auxiliary feature called.
+        auxiliary_agent: The agent that was invoked. Its ``event_loop_metrics`` hold its usage
+            whether or not the invocation succeeded.
+        invocation_state: State passed through the auxiliary invocation.
+        result: The auxiliary agent's result, or None if the invocation raised.
+        exception: What the invocation raised, or None on success. ``BaseException`` because
+            cancellation surfaces here too.
+    """
+
+    source: str
+    auxiliary_agent: "Agent"
+    invocation_state: dict[str, Any] = field(default_factory=dict)
+    result: "AgentResult | None" = None
+    exception: BaseException | None = None
 
     @property
     def should_reverse_callbacks(self) -> bool:

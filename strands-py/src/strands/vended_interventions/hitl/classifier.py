@@ -121,7 +121,9 @@ def _create_llm_risk_classifier(config: LLMClassifierConfig | None = None) -> Hu
             f"Tool: {tool_use['name']}\n"
             f"Input: {json.dumps(tool_use['input'], indent=2)}"
         )
-        result = await inner.invoke_async(prompt, structured_output_model=_RiskDecision)
+        result = await event.agent.invoke_auxiliary_async(
+            inner, prompt, source="hitl_classifier", structured_output_model=_RiskDecision
+        )
         decision = result.structured_output
         if not isinstance(decision, _RiskDecision):
             raise ValueError(f"LLM risk classifier produced no structured output (stop_reason={result.stop_reason!r})")

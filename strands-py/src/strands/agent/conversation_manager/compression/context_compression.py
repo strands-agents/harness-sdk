@@ -10,15 +10,18 @@ messages by type.
 import logging
 from typing import TYPE_CHECKING, Literal, cast
 
-from ....event_loop.streaming import process_stream
 from ....types.content import Message
 from ....types.exceptions import ContextWindowOverflowException
 
 if TYPE_CHECKING:
+    from ....agent.agent import Agent
     from ....models.model import Model
 
 logger = logging.getLogger(__name__)
 
+
+SUMMARIZATION_REQUEST = "Please summarize this conversation."
+"""User turn sent to the summarizer agent after the history it should summarize."""
 
 DEFAULT_SUMMARIZATION_PROMPT = """You are a conversation summarizer. Provide a concise summary of the conversation \
 history.
@@ -150,46 +153,41 @@ async def generate_summary(
     messages_to_summarize: list[Message],
     model: "Model",
     system_prompt: str | None = None,
+    *,
+    agent: "Agent | None" = None,
 ) -> Message:
-    """Generate a summary of the provided messages by calling the model directly.
-
-    This bypasses the full agent pipeline (lock, metrics, traces, tool loop) and simply
-    asks the underlying model to summarize the conversation.
+    """Generate a summary of the provided messages with a tool-less summarizer agent.
 
     Args:
         messages_to_summarize: The messages to summarize.
         model: The model used to generate the summary.
         system_prompt: Optional system prompt override. Defaults to
             :data:`DEFAULT_SUMMARIZATION_PROMPT`.
+        agent: The agent whose history is being summarized. When given, the summarizer runs
+            via :meth:`~strands.agent.Agent.invoke_auxiliary_async` so its usage rolls into
+            this agent's metrics and its trace nests under this agent's.
 
     Returns:
         A user-role message containing the model-generated summary.
-
-    Raises:
-        RuntimeError: If the model fails to produce a response.
     """
-    resolved_system_prompt = system_prompt if system_prompt is not None else DEFAULT_SUMMARIZATION_PROMPT
+    from ....agent.agent import Agent
+    from ..null_conversation_manager import NullConversationManager
 
-    summarization_messages = list(messages_to_summarize) + [
-        {"role": "user", "content": [{"text": "Please summarize this conversation."}]}
-    ]
-
-    chunks = model.stream(
-        summarization_messages,
-        tool_specs=None,
-        system_prompt=resolved_system_prompt,
+    summarizer = Agent(
+        name="summarizer",
+        model=model,
+        system_prompt=system_prompt if system_prompt is not None else DEFAULT_SUMMARIZATION_PROMPT,
+        messages=list(messages_to_summarize),
+        conversation_manager=NullConversationManager(),
+        callback_handler=None,
     )
-
-    result_message: Message | None = None
-    async for event in process_stream(chunks):
-        if "stop" in event:
-            _, result_message, _, _ = event["stop"]
-
-    if result_message is None:
-        raise RuntimeError("Failed to generate summary: no response from model")
+    if agent is not None:
+        result = await agent.invoke_auxiliary_async(summarizer, SUMMARIZATION_REQUEST, source="summarization")
+    else:
+        result = await summarizer.invoke_async(SUMMARIZATION_REQUEST)
 
     # Return the summary as a user-role message so it's valid as conversation history
-    return cast(Message, {**result_message, "role": "user"})
+    return cast(Message, {**result.message, "role": "user"})
 
 
 def matches_message_type(message: Message, filter: MessageType) -> bool:

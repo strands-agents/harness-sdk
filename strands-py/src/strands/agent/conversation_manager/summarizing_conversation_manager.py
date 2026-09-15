@@ -13,6 +13,7 @@ from ...types.exceptions import ContextWindowOverflowException
 from ...types.tools import AgentTool
 from .compression.context_compression import (
     DEFAULT_SUMMARIZATION_PROMPT,
+    SUMMARIZATION_REQUEST,
     adjust_split_point_for_tool_pairs,
     generate_summary,
 )
@@ -201,17 +202,13 @@ class SummarizingConversationManager(ConversationManager):
     def _generate_summary(self, messages: list[Message], agent: "Agent") -> Message:
         """Generate a summary of the provided messages.
 
-        When a dedicated summarization_agent was provided at init time, it is invoked as before
-        (full agent pipeline, tool execution, etc.).
-
-        In the default case (no summarization_agent), the parent agent's *model* is called
-        directly via ``model.stream()``.  This avoids re-entering the agent pipeline which
-        would deadlock on ``_invocation_lock`` and corrupt metrics / traces / interrupt state.
+        Either path runs a separate agent as ``agent``'s auxiliary (see
+        :meth:`~strands.agent.Agent.invoke_auxiliary`): the dedicated ``summarization_agent`` when one
+        was configured, otherwise a tool-less summarizer built on ``agent``'s model.
 
         Args:
             messages: The messages to summarize.
-            agent: The agent instance whose model will be used for summarization when no
-                dedicated summarization_agent was configured.
+            agent: The agent whose history is being summarized.
 
         Returns:
             A message containing the conversation summary.
@@ -220,7 +217,7 @@ class SummarizingConversationManager(ConversationManager):
             Exception: If summary generation fails.
         """
         if self.summarization_agent is not None:
-            return self._generate_summary_with_agent(messages)
+            return self._generate_summary_with_agent(messages, agent)
 
         return self._generate_summary_with_model(messages, agent)
 
@@ -228,11 +225,13 @@ class SummarizingConversationManager(ConversationManager):
     # Path 1 – dedicated summarization agent (backward-compatible)
     # ------------------------------------------------------------------
 
-    def _generate_summary_with_agent(self, messages: list[Message]) -> Message:
+    def _generate_summary_with_agent(self, messages: list[Message], agent: "Agent") -> Message:
         """Generate a summary using the dedicated summarization agent.
 
         Args:
             messages: The messages to summarize.
+            agent: The agent whose history is being summarized; the summarization agent runs as
+                its auxiliary so usage rolls up and the trace nests.
 
         Returns:
             A message containing the conversation summary.
@@ -259,7 +258,7 @@ class SummarizingConversationManager(ConversationManager):
 
             summarization_agent.messages = messages
 
-            result = summarization_agent("Please summarize this conversation.")
+            result = agent.invoke_auxiliary(summarization_agent, SUMMARIZATION_REQUEST, source="summarization")
             return cast(Message, {**result.message, "role": "user"})
 
         finally:
@@ -270,16 +269,14 @@ class SummarizingConversationManager(ConversationManager):
                 summarization_agent._default_structured_output_model = original_structured_output_model
 
     # ------------------------------------------------------------------
-    # Path 2 – default case: call model.stream() directly
+    # Path 2 – default case: tool-less summarizer on the agent's model
     # ------------------------------------------------------------------
 
     def _generate_summary_with_model(self, messages: list[Message], agent: "Agent") -> Message:
-        """Generate a summary by calling the agent's model directly.
+        """Generate a summary with a summarizer agent built on the agent's model.
 
-        This bypasses the full agent pipeline (lock, metrics, traces, tool loop) and
-        simply asks the underlying model to summarize the conversation. Delegates the
-        actual model call to the shared :func:`generate_summary` helper, wrapping it in
-        ``run_async`` because this method is invoked from a synchronous context.
+        Delegates to the shared :func:`generate_summary` helper, wrapping it in ``run_async``
+        because this method is invoked from a synchronous context.
 
         Args:
             messages: The messages to summarize.
@@ -288,7 +285,7 @@ class SummarizingConversationManager(ConversationManager):
         Returns:
             A message containing the conversation summary.
         """
-        return run_async(lambda: generate_summary(messages, agent.model, self.summarization_system_prompt))
+        return run_async(lambda: generate_summary(messages, agent.model, self.summarization_system_prompt, agent=agent))
 
     def _adjust_split_point_for_tool_pairs(self, messages: list[Message], split_point: int) -> int:
         """Adjust the split point to avoid breaking ToolUse/ToolResult pairs.

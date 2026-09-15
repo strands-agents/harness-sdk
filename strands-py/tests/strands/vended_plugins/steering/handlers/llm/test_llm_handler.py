@@ -1,12 +1,22 @@
 """Unit tests for LLM steering handler."""
 
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 from strands.vended_plugins.steering.core.action import Guide, Interrupt, Proceed
 from strands.vended_plugins.steering.handlers.llm.llm_handler import LLMSteeringHandler, _LLMSteering
 from strands.vended_plugins.steering.handlers.llm.mappers import DefaultPromptMapper
+
+
+def _mock_host_agent():
+    agent = Mock()
+
+    async def invoke_auxiliary_async(auxiliary_agent, prompt, *, source, **kwargs):
+        return await auxiliary_agent.invoke_async(prompt, **kwargs)
+
+    agent.invoke_auxiliary_async = invoke_auxiliary_async
+    return agent
 
 
 def test_llm_steering_handler_initialization():
@@ -54,9 +64,9 @@ async def test_steer_proceed_decision(mock_agent_class):
 
     mock_result = Mock()
     mock_result.structured_output = _LLMSteering(decision="proceed", reason="Tool call is safe")
-    mock_steering_agent.return_value = mock_result
+    mock_steering_agent.invoke_async = AsyncMock(return_value=mock_result)
 
-    agent = Mock()
+    agent = _mock_host_agent()
     tool_use = {"name": "test_tool", "input": {"param": "value"}}
 
     result = await handler.steer_before_tool(agent=agent, tool_use=tool_use)
@@ -77,9 +87,9 @@ async def test_steer_guide_decision(mock_agent_class):
 
     mock_result = Mock()
     mock_result.structured_output = _LLMSteering(decision="guide", reason="Consider security implications")
-    mock_steering_agent.return_value = mock_result
+    mock_steering_agent.invoke_async = AsyncMock(return_value=mock_result)
 
-    agent = Mock()
+    agent = _mock_host_agent()
     tool_use = {"name": "test_tool", "input": {"param": "value"}}
 
     result = await handler.steer_before_tool(agent=agent, tool_use=tool_use)
@@ -100,9 +110,9 @@ async def test_steer_interrupt_decision(mock_agent_class):
 
     mock_result = Mock()
     mock_result.structured_output = _LLMSteering(decision="interrupt", reason="Human approval required")
-    mock_steering_agent.return_value = mock_result
+    mock_steering_agent.invoke_async = AsyncMock(return_value=mock_result)
 
-    agent = Mock()
+    agent = _mock_host_agent()
     tool_use = {"name": "test_tool", "input": {"param": "value"}}
 
     result = await handler.steer_before_tool(agent=agent, tool_use=tool_use)
@@ -128,9 +138,9 @@ async def test_steer_unknown_decision(mock_agent_class):
 
     mock_result = Mock()
     mock_result.structured_output = mock_steering_decision
-    mock_steering_agent.return_value = mock_result
+    mock_steering_agent.invoke_async = AsyncMock(return_value=mock_result)
 
-    agent = Mock()
+    agent = _mock_host_agent()
     tool_use = {"name": "test_tool", "input": {"param": "value"}}
 
     result = await handler.steer_before_tool(agent=agent, tool_use=tool_use)
@@ -152,9 +162,9 @@ async def test_steer_uses_custom_model(mock_agent_class):
 
     mock_result = Mock()
     mock_result.structured_output = _LLMSteering(decision="proceed", reason="OK")
-    mock_steering_agent.return_value = mock_result
+    mock_steering_agent.invoke_async = AsyncMock(return_value=mock_result)
 
-    agent = Mock()
+    agent = _mock_host_agent()
     agent.model = Mock()
     tool_use = {"name": "test_tool", "input": {"param": "value"}}
 
@@ -175,9 +185,9 @@ async def test_steer_uses_agent_model_when_no_custom_model(mock_agent_class):
 
     mock_result = Mock()
     mock_result.structured_output = _LLMSteering(decision="proceed", reason="OK")
-    mock_steering_agent.return_value = mock_result
+    mock_steering_agent.invoke_async = AsyncMock(return_value=mock_result)
 
-    agent = Mock()
+    agent = _mock_host_agent()
     agent.model = Mock()
     tool_use = {"name": "test_tool", "input": {"param": "value"}}
 

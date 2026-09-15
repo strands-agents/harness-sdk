@@ -290,6 +290,32 @@ class TestAnalyst:
         assert received_model[0] is host_model
 
     @pytest.mark.asyncio
+    async def test_analyst_runs_as_the_host_agents_auxiliary(self, monkeypatch):
+        # With a real host agent the analyst is invoked through invoke_auxiliary_async, so its usage rolls up.
+        from strands import Agent
+        from tests.fixtures.mocked_model_provider import MockedModelProvider
+
+        analyst_model = MockedModelProvider([{"role": "assistant", "content": [{"text": "analysis"}]}])
+        host_agent = Agent(model=MockedModelProvider([]), callback_handler=None)
+        auxiliary_calls: list[tuple[str, str]] = []
+        original = host_agent.invoke_auxiliary_async
+
+        async def spy(auxiliary_agent, prompt, *, source, **kwargs):
+            auxiliary_calls.append((source, auxiliary_agent.model is analyst_model))
+            return await original(auxiliary_agent, prompt, source=source, **kwargs)
+
+        monkeypatch.setattr(host_agent, "invoke_auxiliary_async", spy)
+        ctx = ToolContext(
+            tool_use=ToolUse(toolUseId="wf_3", name="web_fetch", input={}), agent=host_agent, invocation_state={}
+        )
+
+        tool = make_web_fetch(client=self._page_client(), model=analyst_model, mode="agentic")
+        tru_result = await tool(url="https://example.com/", prompt="Summarize", tool_context=ctx)
+
+        assert tru_result.strip() == "analysis"
+        assert auxiliary_calls == [("web_fetch", True)]
+
+    @pytest.mark.asyncio
     async def test_empty_prompt_with_model_returns_markdown(self, monkeypatch):
         # markdown mode skips the analyst regardless of model configuration.
         fake_model = SimpleNamespace()

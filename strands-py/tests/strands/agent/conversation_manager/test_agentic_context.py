@@ -10,6 +10,7 @@ from strands._context_manager.modes.agentic.agentic_context import (
     truncate_context,
 )
 from strands.agent.conversation_manager.compression.pin_message import pin_message
+from strands.models.model import Model
 from strands.types.content import Message
 
 
@@ -46,15 +47,22 @@ async def _mock_model_stream_error(error):
 
 
 def mock_model(summary_text="Summary of older messages"):
-    model = Mock()
+    model = Mock(spec=Model)
+    model.stateful = False
     model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream(summary_text))
     return model
+
+
+async def _invoke_auxiliary_async(auxiliary_agent, prompt, *, source, **kwargs):
+    """Stand in for ``Agent.invoke_auxiliary_async``: run the auxiliary agent, skip the telemetry."""
+    return await auxiliary_agent.invoke_async(prompt)
 
 
 def make_agent(messages, model=None):
     agent = Mock()
     agent.messages = messages
-    agent.model = model if model is not None else Mock()
+    agent.model = model if model is not None else mock_model()
+    agent.invoke_auxiliary_async = _invoke_auxiliary_async
     return agent
 
 
@@ -150,12 +158,13 @@ class TestSummarizeContext:
         assert messages[0]["role"] == "user"
 
     async def test_returns_failure_message_when_model_throws(self, alist):
-        model = Mock()
+        model = Mock(spec=Model)
+        model.stateful = False
         model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream_error(RuntimeError("model error")))
         messages = make_messages(20)
         agent = make_agent(messages, model)
         result = await invoke_tool(summarize_context, agent, alist, keep_recent=5, summary_ratio=0.5)
-        assert "Summarization failed" in result
+        assert "Summarization failed: model error" in result
 
 
 @pytest.mark.asyncio
