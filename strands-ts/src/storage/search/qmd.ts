@@ -143,3 +143,8 @@ function buildQuery(query: string): string | null {
   if (terms.length === 0) return null
   return terms.join(' ')
 }
+
+/** Cross-SDK alias for {@link QmdSearchStrategy}. */
+export { QmdSearchStrategy as Bm25SearchStrategy }
+/** Cross-SDK alias for {@link QmdSearchStrategyConfig}. */
+export type { QmdSearchStrategyConfig as Bm25SearchStrategyConfig }

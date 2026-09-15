@@ -166,6 +166,12 @@
         "default": "./dist/src/storage/search/qmd.js"
       }
     },
+    "./storage/search/bm25": {
+      "node": {
+        "types": "./dist/src/storage/search/qmd.d.ts",
+        "default": "./dist/src/storage/search/qmd.js"
+      }
+    },
     "./sandbox": {
       "types": "./dist/src/sandbox/index.d.ts",
       "default": "./dist/src/sandbox/index.js"
