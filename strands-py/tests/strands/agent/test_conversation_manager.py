@@ -609,6 +609,62 @@ def test_truncation_targets_oldest_message_first():
     assert "... [truncated:" not in newest_text
 
 
+def test_truncation_skips_small_older_results_and_truncates_newer_large_result():
+    """A small oldest tool result must not stop truncation of a newer large one; no messages are trimmed (#4341)."""
+    large_text = "X" * 20000
+    manager = SlidingWindowConversationManager(window_size=40)
+    messages = [
+        {"role": "user", "content": [{"text": "hi"}]},
+        {"role": "assistant", "content": [{"toolUse": {"toolUseId": "1", "name": "tool1", "input": {}}}]},
+        {
+            "role": "user",
+            "content": [{"toolResult": {"toolUseId": "1", "content": [{"text": "OK"}], "status": "success"}}],
+        },
+        {"role": "assistant", "content": [{"toolUse": {"toolUseId": "2", "name": "tool2", "input": {}}}]},
+        {
+            "role": "user",
+            "content": [{"toolResult": {"toolUseId": "2", "content": [{"text": large_text}], "status": "success"}}],
+        },
+        {"role": "assistant", "content": [{"text": "done"}]},
+    ]
+    test_agent = Agent(messages=messages)
+
+    manager.reduce_context(test_agent, e=RuntimeError("context overflow"))
+
+    assert len(messages) == 6
+    assert manager.removed_message_count == 0
+    assert messages[2]["content"][0]["toolResult"]["content"][0]["text"] == "OK"
+    assert "... [truncated:" in messages[4]["content"][0]["toolResult"]["content"][0]["text"]
+
+
+def test_truncation_moves_to_next_message_once_oldest_is_already_truncated():
+    """Repeated overflows truncate the next untruncated tool result before falling back to trimming (#4341)."""
+    large_text = "X" * 20000
+    manager = SlidingWindowConversationManager(window_size=40)
+    messages = [
+        {"role": "user", "content": [{"text": "hi"}]},
+        {"role": "assistant", "content": [{"toolUse": {"toolUseId": "1", "name": "tool1", "input": {}}}]},
+        {
+            "role": "user",
+            "content": [{"toolResult": {"toolUseId": "1", "content": [{"text": large_text}], "status": "success"}}],
+        },
+        {"role": "assistant", "content": [{"toolUse": {"toolUseId": "2", "name": "tool2", "input": {}}}]},
+        {
+            "role": "user",
+            "content": [{"toolResult": {"toolUseId": "2", "content": [{"text": large_text}], "status": "success"}}],
+        },
+    ]
+    test_agent = Agent(messages=messages)
+
+    manager.reduce_context(test_agent, e=RuntimeError("context overflow"))
+    manager.reduce_context(test_agent, e=RuntimeError("context overflow"))
+
+    assert len(messages) == 5
+    assert manager.removed_message_count == 0
+    assert "... [truncated:" in messages[2]["content"][0]["toolResult"]["content"][0]["text"]
+    assert "... [truncated:" in messages[4]["content"][0]["toolResult"]["content"][0]["text"]
+
+
 def test_large_tool_result_partially_truncated_with_context_preserved():
     """Large tool results are truncated in the middle while the beginning and end are preserved."""
     preserve = 200  # matches _PRESERVE_CHARS
