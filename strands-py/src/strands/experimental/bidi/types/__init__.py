@@ -2,20 +2,16 @@
 
 from .agent import BidiAgentInput
 from .events import (
-    BidiAudioInputEvent,
     BidiAudioStreamEvent,
     BidiConnectionCloseEvent,
     BidiConnectionRestartEvent,
     BidiConnectionStartEvent,
     BidiConnectionWarningEvent,
     BidiErrorEvent,
-    BidiImageInputEvent,
-    BidiInputEvent,
     BidiInterruptionEvent,
     BidiOutputEvent,
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
-    BidiTextInputEvent,
     BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
@@ -27,11 +23,6 @@ __all__ = [
     "BidiInput",
     "BidiOutput",
     "BidiAgentInput",
-    # Input Events
-    "BidiTextInputEvent",
-    "BidiAudioInputEvent",
-    "BidiImageInputEvent",
-    "BidiInputEvent",
     # Output Events
     "BidiConnectionStartEvent",
     "BidiConnectionRestartEvent",

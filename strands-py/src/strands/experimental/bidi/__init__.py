@@ -9,6 +9,8 @@ from ...types._events import (
     ToolStreamEvent,
     ToolUseStreamEvent,
 )
+from ...types.content import TextBlock
+from ...types.media import AudioBlock, ImageBlock
 from .agent.agent import BidiAgent
 
 # Model interface (for custom implementations)
@@ -17,23 +19,20 @@ from .models.model import AudioCapable, BidiModel, Restartable
 
 # Built-in tools (deprecated - use strands_tools.stop instead)
 from .tools import stop_conversation
+from .types.agent import BidiAgentInput
 
 # Event types - For type hints and event handling
 from .types.events import (
-    BidiAudioInputEvent,
     BidiAudioStreamEvent,
     BidiConnectionCloseEvent,
     BidiConnectionRestartEvent,
     BidiConnectionStartEvent,
     BidiConnectionWarningEvent,
     BidiErrorEvent,
-    BidiImageInputEvent,
-    BidiInputEvent,
     BidiInterruptionEvent,
     BidiOutputEvent,
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
-    BidiTextInputEvent,
     BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
@@ -46,11 +45,10 @@ if TYPE_CHECKING:
 __all__ = [
     # Main interface
     "BidiAgent",
-    # Input Event types
-    "BidiTextInputEvent",
-    "BidiAudioInputEvent",
-    "BidiImageInputEvent",
-    "BidiInputEvent",
+    "BidiAgentInput",
+    "TextBlock",
+    "AudioBlock",
+    "ImageBlock",
     # Output Event types
     "BidiConnectionStartEvent",
     "BidiConnectionRestartEvent",

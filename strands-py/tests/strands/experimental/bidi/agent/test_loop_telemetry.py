@@ -27,10 +27,10 @@ from strands.experimental.bidi.hooks.events import (
 from strands.experimental.bidi.models import BidiModel, BidiModelTimeoutError
 from strands.experimental.bidi.types.events import (
     BidiAudioStreamEvent,
+    BidiConnectionCloseEvent,
     BidiInterruptionEvent,
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
-    BidiTextInputEvent,
     BidiUsageEvent,
 )
 from strands.telemetry.tracer import Tracer
@@ -302,9 +302,9 @@ async def test_tool_call_span_closed_on_error(loop, agent, agenerator, otel_setu
 async def test_connection_restart_span(loop, agent, agenerator, otel_setup):
     """Connection restart creates a span with error message."""
     timeout_error = BidiModelTimeoutError("8 minute timeout")
-    text_event = BidiTextInputEvent(text="after restart")
+    close_event = BidiConnectionCloseEvent(connection_id="test", reason="complete")
 
-    agent.model.receive = unittest.mock.Mock(side_effect=[timeout_error, agenerator([text_event])])
+    agent.model.receive = unittest.mock.Mock(side_effect=[timeout_error, agenerator([close_event])])
 
     await loop.start()
 

@@ -26,46 +26,51 @@ flowchart LR
 
 ## I/O Interfaces
 
-The bidi-agent uses two protocol interfaces that define how data flows in and out of conversations:
+The bidi agent uses two protocol interfaces that define how data flows in and out of
+conversations:
 
-- `BidiInput`: A callable protocol for reading data from sources (microphone, keyboard, WebSocket) and converting it into `BidiInputEvent` objects that the agent can process.
-- `BidiOutput`: A callable protocol for receiving `BidiOutputEvent` objects from the agent and handling them appropriately (playing audio, displaying text, sending over network).
+- `BidiInput`: A callable protocol for reading data from sources such as a microphone,
+  keyboard, or WebSocket and returning `BidiAgentInput`.
+- `BidiOutput`: A callable protocol for receiving `BidiOutputEvent` objects from the
+  agent and handling them appropriately.
 
-Both protocols include optional lifecycle methods (`start` and `stop`) for resource management, allowing you to initialize connections, allocate hardware, or clean up when the conversation begins and ends.
+Both protocols include optional lifecycle methods (`start` and `stop`) for resource
+management.
 
 Implementation of these protocols will look as follows:
 
 ```python
-from strands.experimental.bidi import BidiAgent
-from strands_tools import stop
+from strands.experimental.bidi import BidiAgent, BidiAgentInput
 from strands.experimental.bidi.types.events import BidiOutputEvent
 from strands.experimental.bidi.types.io import BidiInput, BidiOutput
 
 
 class MyBidiInput(BidiInput):
     async def start(self, agent: BidiAgent) -> None:
-        # start up input resources if required
-        # extract information from agent if required
+        # Initialize input resources or state, using agent as needed.
+        return
 
-    async def __call__(self) -> BidiInputEvent:
-        # await reading input data
-        # format into specific BidiInputEvent
+    async def __call__(self) -> BidiAgentInput:
+        # Read or generate input and return a BidiAgentInput value.
+        return {"text": "Hello"}
 
-    async def stop() -> None:
-        # tear down input resources if required
+    async def stop(self) -> None:
+        # Clean up any input resources or state.
+        return
 
 
 class MyBidiOutput(BidiOutput):
     async def start(self, agent: BidiAgent) -> None:
-        # start up output resources if required
-        # extract information from agent if required
+        # Initialize output resources or state, using agent as needed.
+        return
 
     async def __call__(self, event: BidiOutputEvent) -> None:
-        # extract data from event
-        # await outputing data
+        # Process the event as needed for your application.
+        print(event)
 
-    async def stop() -> None:
-        # tear down output resources if required
+    async def stop(self) -> None:
+        # Clean up any output resources or state.
+        return
 ```
 
 ## I/O Usage
@@ -240,8 +245,8 @@ import websockets
 async def main():
     websocket = await websockets.connect("ws://localhost:8000/text-chat")
 
-    input_event = {"type": "bidi_text_input", "text": "Hello, how are you?"}
-    await websocket.send(json.dumps(input_event))
+    input_content = {"text": "Hello, how are you?"}
+    await websocket.send(json.dumps(input_content))
 
     while True:
         output_event = json.loads(await websocket.recv())

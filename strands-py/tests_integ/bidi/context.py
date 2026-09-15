@@ -343,7 +343,7 @@ class BidirectionalTestContext:
         """Generate silence chunk for background audio.
 
         Returns:
-            BidiAudioInputEvent with silence data.
+            Audio content block with silence data.
         """
         silence = b"\x00" * self.silence_chunk_size
         return self.audio_generator.create_audio_input_event(silence)

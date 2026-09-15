@@ -8,7 +8,8 @@ by separating input and output concerns into independent callables.
 from collections.abc import Awaitable
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from ..types.events import BidiInputEvent, BidiOutputEvent
+from .agent import BidiAgentInput
+from .events import BidiOutputEvent
 
 if TYPE_CHECKING:
     from ..agent.agent import BidiAgent
@@ -30,11 +31,11 @@ class BidiInput(Protocol):
         """Stop input."""
         return
 
-    def __call__(self) -> Awaitable[BidiInputEvent]:
+    def __call__(self) -> Awaitable[BidiAgentInput]:
         """Read input data from the source.
 
         Returns:
-            Awaitable that resolves to an input event (audio, text, image, etc.)
+            Awaitable that resolves to input content (audio, text, image, etc.)
         """
         ...
 

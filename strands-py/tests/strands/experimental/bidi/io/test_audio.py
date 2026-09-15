@@ -11,11 +11,11 @@ from strands.experimental.bidi._audio import _BidiAudioProcessor
 from strands.experimental.bidi.io.audio import BidiAudioIO, BidiAudioProcessorConfig, _BidiAudioBuffer
 from strands.experimental.bidi.models import AudioCapable
 from strands.experimental.bidi.types.events import (
-    BidiAudioInputEvent,
     BidiAudioStreamEvent,
     BidiInterruptionEvent,
     BidiResponseCompleteEvent,
 )
+from strands.types.media import AudioBlock
 
 
 def _fake_audio_processor(processor=None):
@@ -198,12 +198,7 @@ async def test_bidi_audio_io_input(audio_input):
     audio_input._callback(b"test-audio")
 
     tru_event = await audio_input()
-    exp_event = BidiAudioInputEvent(
-        audio=base64.b64encode(b"test-audio").decode("utf-8"),
-        channels=2,
-        format="pcm",
-        sample_rate=24000,
-    )
+    exp_event = AudioBlock(format="pcm", source={"bytes": b"test-audio"})
     assert tru_event == exp_event
 
 
@@ -934,7 +929,7 @@ async def test_input_applies_audio_processing(py_audio, aec_agent):
 
         await input_.stop()
 
-    result = np.frombuffer(base64.b64decode(event.audio), dtype=np.int16)
+    result = np.frombuffer(event.source["bytes"], dtype=np.int16)
     np.testing.assert_array_equal(result, cleaned)
 
 

@@ -4,8 +4,12 @@ description: 'Send and receive bidirectional streaming events in Strands agents.
 experimental: true
 tags: [bidi-streaming]
 sourceLinks:
+  - path: strands-py/src/strands/experimental/bidi/types/agent.py
+  - path: strands-py/src/strands/experimental/bidi/types/content.py
+  - path: strands-py/src/strands/types/content.py
   - path: strands-py/src/strands/experimental/bidi/types/events.py
   - path: strands-py/src/strands/experimental/bidi/types/io.py
+  - path: strands-py/src/strands/types/media.py
 ---
 
 
@@ -47,56 +51,68 @@ async def main():
 asyncio.run(main())
 ```
 
-## Input Event Types
+## Input Types
 
-Events sent to the model via `agent.send()`.
+Send text, audio, or images with `agent.send()`. It accepts a string, a `TextBlock`,
+`AudioBlock`, or `ImageBlock`, or a dictionary containing exactly one `text`,
+`audio`, or `image` key.
 
-### BidiTextInputEvent
+### Text
 
 Send text input to the model.
 
 ```python
+from strands.types.content import TextBlock
+
+await agent.send(TextBlock("What is the weather?"))
+
+# Strings and dictionaries are also accepted:
 await agent.send("What is the weather?")
-# Or explicitly:
-from strands.experimental.bidi.types.events import BidiTextInputEvent
-await agent.send(BidiTextInputEvent(text="What is the weather?", role="user"))
+await agent.send({"text": "What is the weather?"})
 ```
 
-### BidiAudioInputEvent
+### Audio
 
-Send audio input to the model. Audio must be base64-encoded.
+Send audio bytes using an audio content block. The model configuration determines
+the sample rate and channel count for real-time PCM audio.
 
 ```python
-import base64
-from strands.experimental.bidi.types.events import BidiAudioInputEvent
+from pathlib import Path
 
-audio_bytes = record_audio()  # Your audio capture logic
-audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+from strands.types.media import AudioBlock
 
-await agent.send(BidiAudioInputEvent(
-    audio=audio_base64,
-    format="pcm",
-    sample_rate=16000,
-    channels=1
-))
+audio_bytes = Path("audio.pcm").read_bytes()
+
+await agent.send(AudioBlock(format="pcm", source={"bytes": audio_bytes}))
+
+# Or use a dictionary:
+await agent.send({
+    "audio": {
+        "format": "pcm",
+        "source": {"bytes": audio_bytes},
+    }
+})
 ```
 
-### BidiImageInputEvent
+### Image
 
-Send image input to the model. Images must be base64-encoded.
+Send image bytes using an image content block.
 
 ```python
-import base64
-from strands.experimental.bidi.types.events import BidiImageInputEvent
+from strands.types.media import ImageBlock
 
 with open("image.jpg", "rb") as f:
     image_bytes = f.read()
-    image_base64 = base64.b64encode(image_bytes).decode('utf-8')
 
-await agent.send(BidiImageInputEvent(
-    image=image_base64,
-    mime_type="image/jpeg"
-))
+await agent.send(ImageBlock(format="jpeg", source={"bytes": image_bytes}))
+
+# Or use a dictionary:
+await agent.send({
+    "image": {
+        "format": "jpeg",
+        "source": {"bytes": image_bytes},
+    }
+})
 ```
 
 ## Output Event Types
