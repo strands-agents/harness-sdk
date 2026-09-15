@@ -208,17 +208,22 @@ class SlidingWindowConversationManager(ConversationManager):
             return
 
         # Try to truncate the tool result first (only for reactive overflow, not proactive compression)
-        if e is not None:
-            oldest_message_idx_with_tool_results = self._find_oldest_message_with_tool_results(messages)
-            if oldest_message_idx_with_tool_results is not None and self.should_truncate_results:
+        if e is not None and self.should_truncate_results:
+            # Walk messages with tool results from oldest to newest and stop at the first one where truncation
+            # actually changes something. Older results may be too small to truncate or already truncated; in that
+            # case a newer large result is still a better candidate than trimming messages.
+            message_idx_with_tool_results = self._find_oldest_message_with_tool_results(messages)
+            while message_idx_with_tool_results is not None:
                 logger.debug(
                     "message_index=<%s> | found message with tool results at index",
-                    oldest_message_idx_with_tool_results,
+                    message_idx_with_tool_results,
                 )
-                results_truncated = self._truncate_tool_results(messages, oldest_message_idx_with_tool_results)
-                if results_truncated:
-                    logger.debug("message_index=<%s> | tool results truncated", oldest_message_idx_with_tool_results)
+                if self._truncate_tool_results(messages, message_idx_with_tool_results):
+                    logger.debug("message_index=<%s> | tool results truncated", message_idx_with_tool_results)
                     return
+                message_idx_with_tool_results = self._find_oldest_message_with_tool_results(
+                    messages, start_index=message_idx_with_tool_results + 1
+                )
 
         # Try to trim index id when tool result cannot be truncated anymore
         # If the number of messages is less than the window_size, then we default to 2, otherwise, trim to window size
@@ -377,7 +382,7 @@ class SlidingWindowConversationManager(ConversationManager):
 
         return changes_made
 
-    def _find_oldest_message_with_tool_results(self, messages: Messages) -> int | None:
+    def _find_oldest_message_with_tool_results(self, messages: Messages, start_index: int = 0) -> int | None:
         """Find the index of the oldest message containing tool results.
 
         Iterates from oldest to newest so that truncation targets the least-recent
@@ -385,11 +390,13 @@ class SlidingWindowConversationManager(ConversationManager):
 
         Args:
             messages: The conversation message history.
+            start_index: The index to begin searching from. Defaults to the start of the history.
 
         Returns:
-            Index of the oldest message with tool results, or None if no such message exists.
+            Index of the oldest message with tool results at or after ``start_index``, or None if no such message
+            exists.
         """
-        for idx in range(len(messages)):
+        for idx in range(max(start_index, 0), len(messages)):
             if is_pinned(messages, idx):
                 continue
             current_message = messages[idx]
