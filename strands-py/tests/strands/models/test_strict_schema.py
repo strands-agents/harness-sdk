@@ -1,3 +1,5 @@
+import pytest
+
 from strands.models._strict_schema import ensure_strict_json_schema
 
 
@@ -129,6 +131,72 @@ def test_ref_inline_uses_deep_copy():
     assert result["properties"]["a"]["description"] == "first"
     assert result["properties"]["b"]["description"] == "second"
     assert result["properties"]["a"] is not result["properties"]["b"]
+
+
+def test_recursive_array_ref_is_preserved():
+    schema = {
+        "$defs": {
+            "Node": {
+                "type": "object",
+                "properties": {
+                    "children": {
+                        "type": "array",
+                        "items": {"$ref": "#/$defs/Node"},
+                    }
+                },
+            }
+        },
+        "type": "object",
+        "properties": {"root": {"$ref": "#/$defs/Node"}},
+    }
+
+    tru_schema = ensure_strict_json_schema(schema)
+    exp_schema = {
+        "$defs": {
+            "Node": {
+                "type": "object",
+                "properties": {
+                    "children": {
+                        "type": "array",
+                        "items": {"$ref": "#/$defs/Node"},
+                    }
+                },
+                "additionalProperties": False,
+            }
+        },
+        "type": "object",
+        "properties": {"root": {"$ref": "#/$defs/Node"}},
+        "additionalProperties": False,
+    }
+
+    assert tru_schema == exp_schema
+
+
+def test_circular_ref_with_sibling_keys_is_rejected():
+    schema = {
+        "$defs": {
+            "Node": {
+                "type": "object",
+                "properties": {
+                    "child": {
+                        "$ref": "#/$defs/Node",
+                        "description": "The child node",
+                    }
+                },
+                "required": ["child"],
+            }
+        },
+        "$ref": "#/$defs/Node",
+    }
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"Circular JSON Schema reference with sibling keys cannot be inlined: "
+            r"#/\$defs/Node -> #/\$defs/Node"
+        ),
+    ):
+        ensure_strict_json_schema(schema)
 
 
 def test_arrays_anyof_allof():
