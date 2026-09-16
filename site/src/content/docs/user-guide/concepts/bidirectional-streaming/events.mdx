@@ -100,13 +100,12 @@ await agent.send({
 
 ### Image
 
-Send a complete encoded image with `ImageBlock`. A live camera feed sends successive
-images, each containing a complete frame.
+Send image bytes using an image content block.
 
 ```python
 from strands.types.media import ImageBlock
 
-with open("frame.jpg", "rb") as f:
+with open("image.jpg", "rb") as f:
     image_bytes = f.read()
 
 await agent.send(ImageBlock(format="jpeg", source={"bytes": image_bytes}))
