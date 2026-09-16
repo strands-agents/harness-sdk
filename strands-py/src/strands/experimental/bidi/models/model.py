@@ -147,16 +147,17 @@ class BidiModel(Model, abc.ABC):
         tool execution results. Can be called multiple times during a conversation.
 
         Args:
-            content: A TextBlock, AudioBlock, ImageBlock, or ToolResultBlock.
+            content: A TextBlock, AudioDelta, ImageBlock, or ToolResultBlock.
 
         Example:
             ```
+            from strands.experimental.bidi.types.media import AudioDelta
             from strands.types.content import TextBlock
-            from strands.types.media import AudioBlock, ImageBlock
+            from strands.types.media import ImageBlock
             from strands.types.tools import ToolResultBlock
 
             await model.send(TextBlock("Hello"))
-            await model.send(AudioBlock(format="pcm", source={"bytes": audio_bytes}))
+            await model.send(AudioDelta(format="pcm", source={"bytes": audio_bytes}))
             await model.send(ImageBlock(format="jpeg", source={"bytes": image_bytes}))
             await model.send(ToolResultBlock(tool_use_id="call-1", status="success", content=[{"text": "Done"}]))
             ```

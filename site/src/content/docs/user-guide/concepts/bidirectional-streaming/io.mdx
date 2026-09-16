@@ -129,7 +129,7 @@ asyncio.run(main())
 ```
 
 This creates a voice-enabled agent that captures audio from your microphone, streams
-it to the model in real time, and plays responses through your speakers.
+it to the model as `AudioDelta` inputs, and plays responses through your speakers.
 
 Audio output also displays live transcripts, with user speech in shaded `>` blocks
 and assistant speech as plain text. The next user prompt appears when response

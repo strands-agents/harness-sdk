@@ -10,7 +10,7 @@ from ...types._events import (
     ToolUseStreamEvent,
 )
 from ...types.content import TextBlock
-from ...types.media import AudioBlock, ImageBlock
+from ...types.media import ImageBlock
 from .agent.agent import BidiAgent
 
 # Model interface (for custom implementations)
@@ -38,6 +38,7 @@ from .types.events import (
     BidiUsageEvent,
     ModalityUsage,
 )
+from .types.media import AudioDelta
 
 if TYPE_CHECKING:
     from .io.audio import BidiAudioIO, BidiAudioIOConfig, BidiAudioProcessorConfig
@@ -47,7 +48,7 @@ __all__ = [
     "BidiAgent",
     "BidiAgentInput",
     "TextBlock",
-    "AudioBlock",
+    "AudioDelta",
     "ImageBlock",
     # Output Event types
     "BidiConnectionStartEvent",

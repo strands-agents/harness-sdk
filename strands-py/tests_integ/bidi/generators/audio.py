@@ -107,16 +107,16 @@ class AudioGenerator:
         audio_data: bytes,
         format: Literal["pcm", "wav", "opus", "mp3"] = NOVA_SONIC_FORMAT,
     ) -> dict:
-        """Create an audio content block from raw audio data.
+        """Create an audio delta from raw audio data.
 
         Args:
             audio_data: Raw audio bytes.
             format: Audio format.
 
         Returns:
-            Audio content block ready for agent.send().
+            Audio delta ready for agent.send().
         """
-        return {"audio": {"format": format, "source": {"bytes": audio_data}}}
+        return {"audio_delta": {"format": format, "source": {"bytes": audio_data}}}
 
     def clear_cache(self) -> None:
         """Clear all cached audio files."""
@@ -131,14 +131,14 @@ async def generate_test_audio(text: str, use_cache: bool = True) -> dict:
     """Generate test audio input event from text.
 
     Convenience function that creates an AudioGenerator and returns
-    a ready-to-use audio content block.
+    a ready-to-use audio delta.
 
     Args:
         text: Text to convert to speech.
         use_cache: Whether to use cached audio.
 
     Returns:
-        Audio content block ready for agent.send().
+        Audio delta ready for agent.send().
     """
     generator = AudioGenerator()
     audio_data = await generator.generate_audio(text, use_cache=use_cache)

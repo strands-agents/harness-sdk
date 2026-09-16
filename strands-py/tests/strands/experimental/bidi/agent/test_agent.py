@@ -16,6 +16,7 @@ from strands.experimental.bidi.types.events import (
     BidiConnectionStartEvent,
     BidiTranscriptStreamEvent,
 )
+from strands.experimental.bidi.types.media import AudioDelta
 from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent
 from strands.types.content import SystemContentBlock, TextBlock
 from strands.types.media import AudioBlock, ImageBlock
@@ -350,19 +351,22 @@ async def test_send_normalizes_text(agent, input_data):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("content_key", "block_type", "media_format"),
-    [("audio", AudioBlock, "pcm"), ("image", ImageBlock, "jpeg")],
+    ("content_key", "content_type", "media_format"),
+    [("audio_delta", AudioDelta, "pcm"), ("image", ImageBlock, "jpeg")],
     ids=["audio", "image"],
 )
-async def test_send_normalizes_media(agent, content_key, block_type, media_format):
+async def test_send_normalizes_media(agent, content_key, content_type, media_format):
     """Media dictionaries retain their source without adding history."""
     await agent.start()
     agent.model.send = unittest.mock.AsyncMock()
     source = {"bytes": b"\x00\xff"}
 
-    await agent.send({content_key: {"format": media_format, "source": source}})
+    content_data = {content_key: {"format": media_format, "source": source}}
+    exp_content = content_type(format=media_format, source=source)
+    assert exp_content.to_dict() == content_data
 
-    exp_content = block_type(format=media_format, source=source)
+    await agent.send(exp_content.to_dict())
+
     agent.model.send.assert_awaited_once_with(exp_content)
     assert agent.model.send.await_args.args[0].source is source
     assert agent.messages == []
@@ -373,13 +377,13 @@ async def test_send_normalizes_media(agent, content_key, block_type, media_forma
     "content",
     [
         TextBlock("Hello"),
-        AudioBlock(format="pcm", source={"bytes": b"audio"}),
+        AudioDelta(format="pcm", source={"bytes": b"audio"}),
         ImageBlock(format="jpeg", source={"bytes": b"image"}),
     ],
     ids=["text", "audio", "image"],
 )
-async def test_send_preserves_block_identity(agent, content):
-    """Existing block objects are passed through by reference."""
+async def test_send_preserves_input_identity(agent, content):
+    """Input objects are passed through by reference."""
     await agent.start()
     agent.model.send = unittest.mock.AsyncMock()
 
@@ -415,14 +419,18 @@ async def test_send_concurrent_text(agent):
         ([], TypeError),
         ([{"text": "Hello"}], TypeError),
         (ToolResultBlock(tool_use_id="call-1", status="success", content=[{"text": "Done"}]), TypeError),
-        ({"audio": None}, TypeError),
+        (AudioBlock(format="pcm", source={"bytes": b"audio"}), TypeError),
+        ({"audio": {"format": "pcm", "source": {"bytes": b"audio"}}}, ValueError),
+        ({"format": "pcm", "source": {"bytes": b"audio"}}, ValueError),
+        ({"format": "jpeg", "source": {"bytes": b"image"}}, ValueError),
+        ({"audio_delta": None}, TypeError),
         ({"image": b"image"}, TypeError),
         ({}, ValueError),
         ({"document": {"format": "txt", "name": "test", "source": {"bytes": b"test"}}}, ValueError),
         ({"text": "Hello", "image": {"format": "jpeg", "source": {"bytes": b"image"}}}, ValueError),
         ({"toolResult": {"toolUseId": "call-1", "status": "success", "content": [{"text": "Done"}]}}, ValueError),
-        ({"audio": {"format": "pcm"}}, TypeError),
-        ({"audio": {"format": "pcm", "source": {"bytes": b"audio"}, "extra": True}}, TypeError),
+        ({"audio_delta": {"format": "pcm"}}, TypeError),
+        ({"audio_delta": {"format": "pcm", "source": {"bytes": b"audio"}, "extra": True}}, TypeError),
         ({"image": {"format": "jpeg"}}, TypeError),
         ({"image": {"format": "jpeg", "source": {"bytes": b"image"}, "extra": True}}, TypeError),
     ],
@@ -447,7 +455,7 @@ async def test_send_preserves_model_type_error(agent):
     agent.model.send = unittest.mock.AsyncMock(side_effect=error)
 
     with pytest.raises(TypeError) as exc_info:
-        await agent.send({"audio": {"format": "pcm", "source": {"bytes": b"audio"}}})
+        await agent.send({"audio_delta": {"format": "pcm", "source": {"bytes": b"audio"}}})
 
     assert exc_info.value is error
 

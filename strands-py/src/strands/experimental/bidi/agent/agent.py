@@ -33,7 +33,6 @@ from ....tools.tool_provider import ToolProvider
 from ....tools.watcher import ToolWatcher
 from ....types.agent import LocalAgent
 from ....types.content import (
-    ContentBlock,
     Message,
     Messages,
     SystemContentBlock,
@@ -41,13 +40,14 @@ from ....types.content import (
     _ensure_tracking_id,
     split_system_prompt,
 )
-from ....types.media import AudioBlock, ImageBlock
+from ....types.media import ImageBlock
 from ....types.tools import AgentTool
 from .._async import _TaskGroup, stop_all
 from ..models.model import BidiModel
 from ..types.agent import BidiAgentInput
 from ..types.events import BidiOutputEvent
 from ..types.io import BidiInput, BidiOutput
+from ..types.media import AudioDelta
 from .loop import _BidiAgentLoop
 
 if TYPE_CHECKING:
@@ -308,25 +308,26 @@ class BidiAgent(LocalAgent):
     async def send(self, input_data: BidiAgentInput) -> None:
         """Send content to the model.
 
-        A string is shorthand for a text block. Text, audio, and image blocks
-        can be passed as objects or dictionaries.
+        A string is shorthand for a text block. Image blocks contain complete
+        images. Audio deltas append samples to the live input stream without
+        explicitly ending the user's turn.
 
         Args:
             input_data: Can be:
 
                 - str: Text message from user
-                - TextBlock, AudioBlock, or ImageBlock: A single content block
-                - BidiContentBlockData: A dictionary containing one text, audio, or image key
+                - TextBlock, AudioDelta, or ImageBlock: Text, streaming audio, or image input
+                - BidiContentBlockData: A dictionary containing one text, audio_delta, or image key
 
         Raises:
             RuntimeError: If start has not been called.
-            TypeError: If the input has an unsupported type or invalid content block arguments.
-            ValueError: If the input dictionary does not contain exactly one text, audio, or image key.
+            TypeError: If the input has an unsupported type or invalid input arguments.
+            ValueError: If the input dictionary does not contain exactly one text, audio_delta, or image key.
 
         Example:
             await agent.send("Hello")
-            await agent.send(AudioBlock(format="pcm", source={"bytes": audio_bytes}))
-            await agent.send({"audio": {"format": "pcm", "source": {"bytes": audio_bytes}}})
+            await agent.send(AudioDelta(format="pcm", source={"bytes": audio_bytes}))
+            await agent.send({"audio_delta": {"format": "pcm", "source": {"bytes": audio_bytes}}})
         """
         if not self._started:
             raise RuntimeError("agent not started | call start before sending")
@@ -335,18 +336,18 @@ class BidiAgent(LocalAgent):
             input_data = TextBlock(input_data)
         elif isinstance(input_data, dict):
             if len(input_data) != 1:
-                raise ValueError("invalid input | content block must contain exactly one of text, audio, or image")
-            content_data = cast(ContentBlock, input_data)
+                raise ValueError("invalid input | must contain exactly one of text, audio_delta, or image")
+            content_data = cast(dict[str, Any], input_data)
             if "text" in content_data:
                 input_data = TextBlock(content_data["text"])
-            elif "audio" in content_data:
-                input_data = AudioBlock(**content_data["audio"])
+            elif "audio_delta" in content_data:
+                input_data = AudioDelta(**content_data["audio_delta"])
             elif "image" in content_data:
                 input_data = ImageBlock(**content_data["image"])
             else:
-                raise ValueError("invalid input | content block must contain exactly one of text, audio, or image")
-        elif not isinstance(input_data, (TextBlock, AudioBlock, ImageBlock)):
-            raise TypeError("invalid input | must be str, TextBlock, AudioBlock, ImageBlock, or BidiContentBlockData")
+                raise ValueError("invalid input | must contain exactly one of text, audio_delta, or image")
+        elif not isinstance(input_data, (TextBlock, AudioDelta, ImageBlock)):
+            raise TypeError("invalid input | must be str, TextBlock, AudioDelta, ImageBlock, or BidiContentBlockData")
 
         await self._loop.send(input_data)
 

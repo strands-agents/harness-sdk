@@ -15,7 +15,7 @@ from strands.experimental.bidi.types.events import (
     BidiInterruptionEvent,
     BidiResponseCompleteEvent,
 )
-from strands.types.media import AudioBlock
+from strands.experimental.bidi.types.media import AudioDelta
 
 
 @pytest.fixture
@@ -105,7 +105,7 @@ async def test_bidi_audio_io_input(audio_input):
     audio_input._callback(b"test-audio")
 
     tru_event = await audio_input()
-    exp_event = AudioBlock(format="pcm", source={"bytes": b"test-audio"})
+    exp_event = AudioDelta(format="pcm", source={"bytes": b"test-audio"})
     assert tru_event == exp_event
 
 

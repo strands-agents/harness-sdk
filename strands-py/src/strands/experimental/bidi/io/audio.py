@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, Any, TypedDict
 import pyaudio
 from typing_extensions import Unpack
 
-from ....types.media import AudioBlock
 from .._audio.buffer import AudioBuffer
 from ..models.configs import AudioStreamConfig
 from ..models.model import AudioCapable
@@ -28,6 +27,7 @@ from ..types.events import (
     BidiOutputEvent,
 )
 from ..types.io import BidiInput, BidiOutput
+from ..types.media import AudioDelta
 from .transcript import _BidiTranscriptOutput
 
 if TYPE_CHECKING:
@@ -158,14 +158,14 @@ class _BidiAudioInput(BidiInput):
 
         logger.debug("audio input stream stopped")
 
-    async def __call__(self) -> AudioBlock:
+    async def __call__(self) -> AudioDelta:
         """Read audio from input stream, applying echo cancellation if enabled."""
         data = await asyncio.to_thread(self._buffer.get)
 
         if self._audio_processor is not None:
             data = await asyncio.to_thread(self._audio_processor.process, data)
 
-        return AudioBlock(format=self._audio_config["format"], source={"bytes": data})
+        return AudioDelta(format=self._audio_config["format"], source={"bytes": data})
 
     def _callback(
         self,

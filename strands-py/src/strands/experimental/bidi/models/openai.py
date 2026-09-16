@@ -21,7 +21,7 @@ from websockets import ClientConnection
 
 from ....types._events import ToolUseStreamEvent
 from ....types.content import Messages, TextBlock
-from ....types.media import AudioBlock, ImageBlock
+from ....types.media import ImageBlock
 from ....types.tools import ToolResultBlock, ToolSpec, ToolUse
 from .._async import stop_all
 from ..types.content import BidiContentBlock
@@ -39,6 +39,7 @@ from ..types.events import (
     Role,
     StopReason,
 )
+from ..types.media import AudioDelta
 from .configs import (
     AudioConfig,
     AudioStreamConfig,
@@ -709,7 +710,7 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         Dispatches to appropriate internal handler based on content type.
 
         Args:
-            content: A TextBlock, AudioBlock, ImageBlock, or ToolResultBlock.
+            content: A TextBlock, AudioDelta, ImageBlock, or ToolResultBlock.
 
         Raises:
             ValueError: If content type not supported.
@@ -719,7 +720,7 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
 
         if isinstance(content, TextBlock):
             await self._send_text_content(content.text)
-        elif isinstance(content, AudioBlock):
+        elif isinstance(content, AudioDelta):
             await self._send_audio_content(content)
         elif isinstance(content, ImageBlock):
             await self._send_image_content(content)
@@ -728,7 +729,7 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         else:
             raise ValueError(f"content_type={type(content)} | content not supported")
 
-    async def _send_audio_content(self, audio_input: AudioBlock) -> None:
+    async def _send_audio_content(self, audio_input: AudioDelta) -> None:
         """Internal: Send audio content to OpenAI for processing."""
         audio_bytes = audio_input.source.get("bytes")
         if audio_bytes is None:

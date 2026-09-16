@@ -229,7 +229,7 @@ class _BidiAgentLoop:
             await self._agent.hooks.invoke_callbacks_async(BidiAgentStopEvent(agent=self._agent))
 
     async def send(self, content: BidiContentBlock | ToolResultBlock) -> None:
-        """Send a content block to the model.
+        """Send user input or a tool result to the model.
 
         Text input is also added to the conversation history.
 
