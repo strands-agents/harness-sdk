@@ -242,6 +242,11 @@ Most event properties are read-only to prevent unintended modifications. However
 <Tabs>
 <Tab label="Python">
 
+- [`BeforeInvocationEvent`](@api/python/strands.hooks.events#BeforeInvocationEvent)
+    - `messages` - Mutable. Inspect, modify, replace, or remove the normalized input
+      messages before they enter conversation history. See
+      [Modify invocation messages](hooks.md#modify-invocation-messages).
+
 - [`AfterModelCallEvent`](@api/python/strands.hooks.events#AfterModelCallEvent)
     - `retry` - Request a retry of the model invocation. See [Model Call Retry](hooks.md#model-call-retry).
 
@@ -267,7 +272,10 @@ Most event properties are read-only to prevent unintended modifications. However
 </Tab>
 <Tab label="TypeScript">
 
-- `BeforeInvocationEvent`
+- [`BeforeInvocationEvent`](@api/typescript/BeforeInvocationEvent)
+    - `messages` - Mutable. Inspect, modify, replace, or remove the normalized input
+      messages before they enter conversation history. See
+      [Modify invocation messages](hooks.md#modify-invocation-messages).
     - `cancel` - Cancel the agent invocation with a message.
 
 - `BeforeModelCallEvent`
