@@ -7,6 +7,9 @@ tags: [tool-authoring, mcp]
 sourceLinks:
   - path: strands-py/src/strands/tools/mcp/mcp_client.py
   - path: strands-py/src/strands/tools/mcp/mcp_agent_tool.py
+  - path: strands-ts/src/mcp/client.ts
+  - path: strands-ts/src/mcp/config.ts
+  - path: strands-ts/src/mcp/config.node.ts
   - path: strands-ts/src/tools/mcp-tool.ts
 ---
 
@@ -206,7 +209,11 @@ oauth_mcp_client = MCPClient(
 
 `scopes` is joined with spaces and is advisory only: if the server advertises its own scopes (via the `WWW-Authenticate` header or its protected-resource / authorization-server metadata), the server's scopes are used instead and this value is ignored. Token acquisition and refresh happen automatically. The `headers` parameter can be combined with `auth` when the server also expects custom headers.
 
-For advanced flows such as the interactive authorization_code grant, pass any `httpx.Auth` implementation as `auth_provider` instead. The `mcp` package's `OAuthClientProvider` is one such implementation:
+For advanced flows such as the interactive authorization_code grant, pass an
+authentication provider as `auth_provider`. Providers from the installed `mcp`
+package pass through directly. Strands also adapts header-mutating `httpx.Auth`
+implementations for transports that use `httpx2`. The `mcp` package's
+`OAuthClientProvider` works across both supported major versions:
 
 ```python
 from mcp.client.auth import OAuthClientProvider
@@ -261,6 +268,26 @@ mcp_client = MCPClient(lambda: aws_iam_streamablehttp_client(
 ```typescript
 --8<-- "user-guide/concepts/tools/mcp-tools.ts:streamable_http"
 ```
+
+#### OAuth Authentication
+
+For machine-to-machine authentication, pass the server `url` and an `auth`
+credential. `McpClient` constructs the Streamable HTTP transport and exchanges the
+client credentials for tokens:
+
+```typescript
+--8<-- "user-guide/concepts/tools/mcp-tools_imports.ts:mcp_client_imports"
+
+--8<-- "user-guide/concepts/tools/mcp-tools.ts:streamable_http_oauth"
+```
+
+The optional `scopes` array is joined with spaces for the token request. Use
+`headers` when the server requires additional headers alongside OAuth.
+
+For advanced OAuth flows, pass an `OAuthClientProvider` as `authProvider`. The
+`auth` and `authProvider` options are mutually exclusive, both require `url`, and
+OAuth is supported only with Streamable HTTP. Declarative configuration supports
+the same `auth` credential through [`loadServers`](#using-multiple-mcp-servers).
 </Tab>
 </Tabs>
 
@@ -318,12 +345,60 @@ with sse_mcp_client, stdio_mcp_client:
 # Managed approach
 agent = Agent(tools=[sse_mcp_client, stdio_mcp_client])
 ```
+
+**Load from configuration**
+
+Use `load_servers` to create clients from a dictionary or JSON file. Transport
+types are detected from `command` or `url`, and environment placeholders keep
+credentials out of the configuration:
+
+```python
+from strands import Agent
+from strands.tools.mcp import MCPClient
+
+clients = MCPClient.load_servers(
+    {
+        "mcpServers": {
+            "documentation": {
+                "command": "uvx",
+                "args": ["awslabs.aws-documentation-mcp-server@latest"],
+            },
+            "protected-api": {
+                "url": "https://api.example.com/mcp/",
+                "auth": {
+                    "client_id": "${OAUTH_CLIENT_ID}",
+                    "client_secret": "${OAUTH_CLIENT_SECRET}",
+                    "scopes": ["mcp:tools"],
+                },
+            },
+        }
+    },
+    prefix_with_server_name=True,
+)
+
+agent = Agent(tools=clients)
+```
 </Tab>
 <Tab label="TypeScript">
 
 ```typescript
 --8<-- "user-guide/concepts/tools/mcp-tools.ts:multiple_servers"
 ```
+
+**Load from configuration**
+
+In Node.js, use `loadServers` to create clients from an object or JSON file.
+Transport types are detected from `command` or `url`, and environment placeholders
+keep credentials out of the configuration:
+
+```typescript
+--8<-- "user-guide/concepts/tools/mcp-tools_imports.ts:mcp_client_imports"
+
+--8<-- "user-guide/concepts/tools/mcp-tools.ts:load_servers"
+```
+
+Set `prefixWithServerName` when servers expose tools with overlapping names.
+A server-level `prefix` overrides the generated prefix, and `prefix: ''` disables it.
 </Tab>
 </Tabs>
 
