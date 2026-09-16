@@ -6,7 +6,7 @@ from unittest.mock import Mock
 import pytest
 
 from strands import LocalAgent
-from strands.experimental.bidi import BidiAgent
+from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.hooks import (
     BidiAgentStopEvent,
     BidiInterruptionEvent,

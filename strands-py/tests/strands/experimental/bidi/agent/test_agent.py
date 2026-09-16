@@ -8,9 +8,9 @@ from uuid import uuid4
 import pytest
 
 from strands import LocalAgent, ToolContext, tool
-from strands.experimental.bidi.agent.agent import BidiAgent
-from strands.experimental.bidi.models.model import BidiModel
-from strands.experimental.bidi.types.events import (
+from strands.experimental.bidi.agent import BidiAgent
+from strands.experimental.bidi.models import BidiModel
+from strands.experimental.bidi.types import (
     BidiAudioStreamEvent,
     BidiConnectionCloseEvent,
     BidiConnectionStartEvent,
@@ -283,7 +283,7 @@ def test_bidi_agent_session_id_delegates_to_session_manager(mock_model):
 
 @pytest.mark.skipif(sys.version_info < (3, 12), reason="BedrockNovaSonicModel is only supported for Python 3.12+")
 def test_bidi_agent_init_with_default_model():
-    from strands.experimental.bidi.models.bedrock import BedrockNovaSonicModel
+    from strands.experimental.bidi.models import BedrockNovaSonicModel
 
     agent = BidiAgent(model=None)
 
@@ -292,7 +292,7 @@ def test_bidi_agent_init_with_default_model():
 
 @pytest.mark.skipif(sys.version_info < (3, 12), reason="BedrockNovaSonicModel is only supported for Python 3.12+")
 def test_bidi_agent_init_with_model_id():
-    from strands.experimental.bidi.models.bedrock import BedrockNovaSonicModel
+    from strands.experimental.bidi.models import BedrockNovaSonicModel
 
     model_id = "amazon.nova-sonic-v1:0"
     agent = BidiAgent(model=model_id)

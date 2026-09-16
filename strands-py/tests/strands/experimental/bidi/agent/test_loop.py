@@ -6,13 +6,13 @@ import pytest
 import pytest_asyncio
 
 from strands import ToolContext, tool
-from strands.experimental.bidi import BidiAgent
+from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.agent.loop import _ReaderError
-from strands.experimental.bidi.hooks.events import BidiAgentStopEvent, BidiBeforeConnectionRestartEvent
-from strands.experimental.bidi.hooks.events import BidiInterruptionEvent as BidiInterruptionHookEvent
-from strands.experimental.bidi.hooks.events import BidiResponseCompleteEvent as BidiResponseCompleteHookEvent
+from strands.experimental.bidi.hooks import BidiAgentStopEvent, BidiBeforeConnectionRestartEvent
+from strands.experimental.bidi.hooks import BidiInterruptionEvent as BidiInterruptionHookEvent
+from strands.experimental.bidi.hooks import BidiResponseCompleteEvent as BidiResponseCompleteHookEvent
 from strands.experimental.bidi.models import BidiModel, BidiModelTimeoutError
-from strands.experimental.bidi.types.events import (
+from strands.experimental.bidi.types import (
     BidiConnectionCloseEvent,
     BidiConnectionRestartEvent,
     BidiConnectionWarningEvent,
@@ -934,7 +934,7 @@ async def test_proactive_reconnect_waits_for_turn_boundary(loop, agent, agenerat
 @pytest.mark.asyncio
 async def test_bidi_agent_loop_restart_hook_reports_reason(loop, agent, agenerator):
     """The reactive path reports reason='timeout' with the error; proactive reports 'scheduled' with None."""
-    from strands.experimental.bidi.hooks.events import BidiBeforeConnectionRestartEvent
+    from strands.experimental.bidi.hooks import BidiBeforeConnectionRestartEvent
 
     before_events = []
     agent.hooks.add_callback(
@@ -1042,7 +1042,7 @@ async def test_bidi_agent_loop_proactive_reconnect_completes_when_reconnect_susp
 @pytest.mark.asyncio
 async def test_bidi_agent_loop_cumulative_usage_not_double_counted(loop, agent, agenerator):
     """Cumulative providers replace running counts rather than summing successive totals."""
-    from strands.experimental.bidi.types.events import BidiUsageEvent
+    from strands.experimental.bidi.types import BidiUsageEvent
 
     agent.model.usage_is_cumulative = True
     events = [

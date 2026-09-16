@@ -16,10 +16,10 @@ import unittest.mock
 import pytest
 from google.genai import types as genai_types
 
-from strands.experimental.bidi.agent import loop as loop_module
-from strands.experimental.bidi.models.google import GoogleGeminiLiveAudioConfig, GoogleGeminiLiveModel, _TurnState
-from strands.experimental.bidi.models.model import BidiModelTimeoutError
-from strands.experimental.bidi.types.events import (
+import strands.experimental.bidi.agent.loop as loop_module
+from strands.experimental.bidi.models import BidiModelTimeoutError, GoogleGeminiLiveAudioConfig, GoogleGeminiLiveModel
+from strands.experimental.bidi.models.google import _TurnState
+from strands.experimental.bidi.types import (
     BidiAudioStreamEvent,
     BidiConnectionStartEvent,
     BidiInterruptionEvent,
@@ -509,8 +509,8 @@ async def test_proactive_reconnect_end_to_end_through_agent(mock_genai_client, m
     through Gemini's own restart() before the deadline, resuming the session via its handle. No
     live network calls are made.
     """
-    from strands.experimental.bidi.agent.agent import BidiAgent
-    from strands.experimental.bidi.types.events import BidiConnectionWarningEvent
+    from strands.experimental.bidi.agent import BidiAgent
+    from strands.experimental.bidi.types import BidiConnectionWarningEvent
 
     mock_client, mock_live_session, _ = mock_genai_client
 

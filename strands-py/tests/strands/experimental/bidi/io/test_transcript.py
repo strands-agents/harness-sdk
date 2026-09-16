@@ -8,7 +8,7 @@ from rich.console import Console
 
 import strands.experimental.bidi.io.transcript as transcript_module
 from strands.experimental.bidi.io.transcript import _BidiTranscriptOutput, _UserText
-from strands.experimental.bidi.types.events import (
+from strands.experimental.bidi.types import (
     BidiInterruptionEvent,
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,

@@ -3,7 +3,7 @@ import unittest.mock
 import pytest
 
 from strands.experimental.bidi.io import BidiTextIO
-from strands.experimental.bidi.types.events import BidiInterruptionEvent, BidiTranscriptStreamEvent
+from strands.experimental.bidi.types import BidiInterruptionEvent, BidiTranscriptStreamEvent
 from strands.types.content import TextBlock
 
 

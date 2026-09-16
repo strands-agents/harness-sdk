@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from strands.experimental.bidi.types.events import (
+from strands.experimental.bidi.types import (
     BidiAudioStreamEvent,
     BidiConnectionCloseEvent,
     BidiConnectionStartEvent,
@@ -19,8 +19,8 @@ from strands.experimental.bidi.types.events import (
     BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
-    _normalize_role,
 )
+from strands.experimental.bidi.types.events import _normalize_role
 
 
 @pytest.mark.parametrize(

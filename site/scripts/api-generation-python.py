@@ -25,6 +25,86 @@ from pydoc_markdown.contrib.processors.smart import SmartProcessor
 from pydoc_markdown.contrib.source_linkers.git import GitSourceLinker
 import docspec
 
+BIDI_PUBLIC_API = {
+    "strands.experimental.bidi.agent": {
+        "strands.experimental.bidi.agent.agent": {"BidiAgent"},
+    },
+    "strands.experimental.bidi.hooks": {
+        "strands.experimental.bidi.hooks.events": {
+            "BidiAfterConnectionRestartEvent",
+            "BidiAgentStopEvent",
+            "BidiBeforeConnectionRestartEvent",
+            "BidiInterruptionEvent",
+            "BidiResponseCompleteEvent",
+        },
+    },
+    "strands.experimental.bidi.io": {
+        "strands.experimental.bidi.io.audio": {"BidiAudioIO"},
+        "strands.experimental.bidi.io._configs": {"BidiAudioIOConfig", "BidiAudioProcessorConfig"},
+        "strands.experimental.bidi.io.text": {"BidiTextIO"},
+    },
+    "strands.experimental.bidi.models": {
+        "strands.experimental.bidi.models.bedrock": {"BedrockNovaSonicModel"},
+        "strands.experimental.bidi.models.configs": {
+            "AudioConfig",
+            "AudioStreamConfig",
+            "BedrockNovaSonicAudioConfig",
+            "BedrockNovaSonicAudioStreamConfig",
+            "BidiConnectionConfig",
+            "BidiModelConfig",
+            "GoogleGeminiLiveAudioConfig",
+            "GoogleGeminiLiveAudioStreamConfig",
+        },
+        "strands.experimental.bidi.models.google": {"GoogleGeminiLiveModel"},
+        "strands.experimental.bidi.models.model": {
+            "AudioCapable",
+            "BidiModel",
+            "BidiModelTimeoutError",
+            "Restartable",
+        },
+        "strands.experimental.bidi.models.openai": {"OpenAIRealtimeModel"},
+    },
+    "strands.experimental.bidi.tools": {
+        "strands.experimental.bidi.tools.stop_conversation": {"stop_conversation"},
+    },
+    "strands.experimental.bidi.types": {
+        "strands.experimental.bidi.types.agent": {"BidiAgentInput"},
+        "strands.experimental.bidi.types.content": {"BidiContentBlock", "BidiContentBlockData"},
+        "strands.experimental.bidi.types.events": {
+            "AudioChannel",
+            "AudioFormat",
+            "BidiAudioStreamEvent",
+            "BidiConnectionCloseEvent",
+            "BidiConnectionRestartEvent",
+            "BidiConnectionStartEvent",
+            "BidiConnectionWarningEvent",
+            "BidiErrorEvent",
+            "BidiInterruptionEvent",
+            "BidiOutputEvent",
+            "BidiResponseCompleteEvent",
+            "BidiResponseStartEvent",
+            "BidiTranscriptCompleteEvent",
+            "BidiTranscriptStreamEvent",
+            "BidiUsageEvent",
+            "ModalityUsage",
+            "Role",
+            "StopReason",
+        },
+        "strands.experimental.bidi.types.io": {"BidiInput", "BidiOutput"},
+    },
+}
+
+BIDI_PUBLIC_SOURCES = {
+    source_module: (public_module, symbols)
+    for public_module, source_modules in BIDI_PUBLIC_API.items()
+    for source_module, symbols in source_modules.items()
+}
+
+BIDI_INTERNAL_MODULES = {
+    "strands.experimental.bidi.agent.loop",
+    "strands.experimental.bidi.io.transcript",
+}
+
 
 class CustomGitSourceLinker(GitSourceLinker):
     """Custom source linker that returns 'Defined in: [path:line](url)' format."""
@@ -101,10 +181,25 @@ def generate_docs():
 
     # Generate index file
     module_files = []
+    bidi_public_sections = {module_name: [] for module_name in BIDI_PUBLIC_API}
 
     # Write each module to a separate file
     for module in modules:
         module_name = module.name
+
+        if module_name in BIDI_PUBLIC_API:
+            continue
+
+        if module_name in BIDI_INTERNAL_MODULES:
+            continue
+
+        if module_name in BIDI_PUBLIC_SOURCES:
+            public_module, public_symbols = BIDI_PUBLIC_SOURCES[module_name]
+            module.members = [member for member in module.members if member.name in public_symbols]
+            rendered = renderer.render_to_string([module]).replace(module_name, public_module)
+            if rendered.strip():
+                bidi_public_sections[public_module].append(rendered)
+            continue
 
         # Skip modules with underscore (private/internal modules)
         # Check if any part of the module path starts with underscore
@@ -142,6 +237,26 @@ editUrl: false
             filepath.write_text(content, encoding="utf-8")
             module_files.append((module_name, str(filepath.relative_to(output_dir))))
             print(f"Generated: {filepath}")
+
+    for module_name, sections in bidi_public_sections.items():
+        if not sections:
+            continue
+
+        filepath = output_dir / f"{module_name}.mdx"
+        slug = f"docs/api/python/{module_name}"
+        rendered_sections = "\n\n".join(sections)
+        content = f"""
+---
+title: {module_name}
+slug:  {slug}
+editUrl: false
+---
+{rendered_sections}
+""".strip()
+        content = content.replace("{", "\\{").replace("<A2A", "&gt;A2A")
+        filepath.write_text(content, encoding="utf-8")
+        module_files.append((module_name, str(filepath.relative_to(output_dir))))
+        print(f"Generated: {filepath}")
 
     print(f"\nTotal modules documented: {len(module_files)}")
 

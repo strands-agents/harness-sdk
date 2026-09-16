@@ -8,9 +8,9 @@ import numpy as np
 import pytest
 import pytest_asyncio
 
-from strands.experimental.bidi.io.audio import BidiAudioIO, BidiAudioProcessorConfig
+from strands.experimental.bidi.io import BidiAudioIO, BidiAudioProcessorConfig
 from strands.experimental.bidi.models import AudioCapable
-from strands.experimental.bidi.types.events import (
+from strands.experimental.bidi.types import (
     BidiAudioStreamEvent,
     BidiInterruptionEvent,
     BidiResponseCompleteEvent,
@@ -502,7 +502,7 @@ async def test_mixed_rate_reference_matches_mic_frame_length(py_audio, agent_mix
     # End-to-end regression for the output-rate bug: with a correctly sized output buffer, a 10ms speaker
     # frame at 24k resamples to exactly a 10ms mic frame at 16k (320 bytes), so the reference is fully real
     # audio with no zero-padding.
-    from strands.experimental.bidi.types.events import BidiAudioStreamEvent
+    from strands.experimental.bidi.types import BidiAudioStreamEvent
 
     processor = mock_audio_processor.return_value
     processor.process.return_value = np.zeros(160, dtype=np.int16)
@@ -540,7 +540,7 @@ async def test_mixed_rate_reference_matches_mic_frame_length(py_audio, agent_mix
 
 @pytest.mark.asyncio
 async def test_output_records_reference_at_playback(py_audio, aec_agent, mock_audio_processor):
-    from strands.experimental.bidi.types.events import BidiAudioStreamEvent
+    from strands.experimental.bidi.types import BidiAudioStreamEvent
 
     audio_io = BidiAudioIO(audio_processor=BidiAudioProcessorConfig())
     input_ = audio_io.input()
@@ -572,7 +572,7 @@ async def test_output_records_reference_at_playback(py_audio, aec_agent, mock_au
 
 @pytest.mark.asyncio
 async def test_output_clears_reference_on_interruption(py_audio, aec_agent, mock_audio_processor):
-    from strands.experimental.bidi.types.events import BidiAudioStreamEvent, BidiInterruptionEvent
+    from strands.experimental.bidi.types import BidiAudioStreamEvent, BidiInterruptionEvent
 
     audio_io = BidiAudioIO(audio_processor=BidiAudioProcessorConfig())
     input_ = audio_io.input()

@@ -16,14 +16,13 @@ import unittest.mock
 
 import pytest
 
-from strands.experimental.bidi.models.model import BidiModelTimeoutError
+from strands.experimental.bidi.models import BidiModelTimeoutError, OpenAIRealtimeModel
 from strands.experimental.bidi.models.openai import (
     _RESTART_INSTRUCTION,
     OPENAI_MAX_TIMEOUT_S,
     OPENAI_PROACTIVE_RECONNECT_MARGIN_S,
-    OpenAIRealtimeModel,
 )
-from strands.experimental.bidi.types.events import (
+from strands.experimental.bidi.types import (
     BidiAudioStreamEvent,
     BidiConnectionStartEvent,
     BidiInterruptionEvent,

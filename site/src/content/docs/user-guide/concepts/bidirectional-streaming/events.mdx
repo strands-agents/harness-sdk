@@ -34,7 +34,7 @@ Bidirectional streaming uses a different event model than [standard streaming](.
 
 ```python
 import asyncio
-from strands.experimental.bidi import BidiAgent
+from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 async def main():
@@ -442,7 +442,8 @@ async for event in agent.receive():
 
 ```python
 import asyncio
-from strands.experimental.bidi import BidiAgent, BidiAudioIO
+from strands.experimental.bidi.agent import BidiAgent
+from strands.experimental.bidi.io import BidiAudioIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 async def main():
@@ -478,7 +479,7 @@ asyncio.run(main())
 
 ```python
 import asyncio
-from strands.experimental.bidi import BidiAgent
+from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 async def main():
@@ -498,7 +499,7 @@ asyncio.run(main())
 
 ```python
 import asyncio
-from strands.experimental.bidi import BidiAgent
+from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 from strands_tools import calculator
 
@@ -531,7 +532,7 @@ asyncio.run(main())
 
 ```python
 import asyncio
-from strands.experimental.bidi import BidiAgent
+from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 async def main():
@@ -561,7 +562,7 @@ asyncio.run(main())
 
 ```python
 import asyncio
-from strands.experimental.bidi import BidiAgent
+from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 async def main():

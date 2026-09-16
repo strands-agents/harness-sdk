@@ -28,7 +28,7 @@ import logging
 import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import Any, Literal, TypedDict, cast
+from typing import Any, cast
 
 import boto3
 from aws_sdk_bedrock_runtime.client import AsyncBedrockRuntimeClient, InvokeModelWithBidirectionalStreamOperationInput
@@ -67,6 +67,8 @@ from ..types.events import (
 from .configs import (
     AudioConfig,
     AudioStreamConfig,
+    BedrockNovaSonicAudioConfig,
+    BedrockNovaSonicAudioStreamConfig,
     BidiConnectionConfig,
     BidiModelConfig,
     _validate_audio_config,
@@ -189,30 +191,6 @@ class _ResponseState:
         self.role = None
         self.generation_stage = None
         self.transcript = ""
-
-
-class BedrockNovaSonicAudioStreamConfig(TypedDict):
-    """Nova Sonic stream options. Audio uses mono PCM.
-
-    Attributes:
-        sample_rate: Sample rate in Hz.
-    """
-
-    sample_rate: Literal[8000, 16000, 24000]
-
-
-class BedrockNovaSonicAudioConfig(TypedDict, total=False):
-    """Nova Sonic input and output audio options.
-
-    Omitted streams use a sample rate of 16000 Hz.
-
-    Attributes:
-        input: Input stream options.
-        output: Output stream options.
-    """
-
-    input: BedrockNovaSonicAudioStreamConfig
-    output: BedrockNovaSonicAudioStreamConfig
 
 
 class BedrockNovaSonicModel(BidiModel, AudioCapable):

@@ -6,11 +6,8 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from strands.experimental.bidi import Restartable
-from strands.experimental.bidi.models.configs import AudioConfig
-from strands.experimental.bidi.models.model import AudioCapable, BidiModel
-from strands.experimental.bidi.types.content import BidiContentBlock
-from strands.experimental.bidi.types.events import BidiOutputEvent
+from strands.experimental.bidi.models import AudioCapable, AudioConfig, BidiModel, Restartable
+from strands.experimental.bidi.types import BidiContentBlock, BidiOutputEvent
 from strands.models import Model
 from strands.types.content import Messages
 from strands.types.tools import ToolResultBlock, ToolSpec

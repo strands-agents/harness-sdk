@@ -46,7 +46,7 @@ export interface DocInfo {
  *
  * Example:
  * - strands.agent.agent -> Agent > Agent
- * - strands.experimental.bidi.types.events -> Experimental > Bidi > Types > Events
+ * - strands.experimental.bidi.types -> Experimental > Bidi > Types
  */
 export function buildPythonApiSidebar(docs: DocInfo[], currentSlug: string): SidebarEntry[] {
   const pythonApiDocs = docs.filter(
