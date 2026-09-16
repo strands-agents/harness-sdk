@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 
+import strands.experimental.bidi
 from strands import LocalAgent, ToolContext, tool
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import BidiModel
@@ -20,6 +21,10 @@ from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent
 from strands.types.content import SystemContentBlock, TextBlock
 from strands.types.media import AudioBlock, ImageBlock
 from strands.types.tools import ToolResultBlock
+
+
+def test_bidi_agent_is_not_exported_from_root():
+    assert not hasattr(strands.experimental.bidi, "BidiAgent")
 
 
 class MockBidiModel(BidiModel):

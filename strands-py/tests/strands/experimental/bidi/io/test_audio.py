@@ -1,13 +1,17 @@
 import base64
 import builtins
 import importlib
+import os
+import subprocess
 import sys
 import unittest.mock
+from pathlib import Path
 
 import numpy as np
 import pytest
 import pytest_asyncio
 
+import strands.experimental.bidi.io as bidi_io
 from strands.experimental.bidi.io import BidiAudioIO, BidiAudioProcessorConfig
 from strands.experimental.bidi.models import AudioCapable
 from strands.experimental.bidi.types import (
@@ -16,6 +20,39 @@ from strands.experimental.bidi.types import (
     BidiResponseCompleteEvent,
 )
 from strands.types.media import AudioBlock
+
+
+def test_io_rejects_unknown_export():
+    with pytest.raises(AttributeError, match="UnknownBidiIO"):
+        bidi_io.__getattr__("UnknownBidiIO")
+
+
+def test_bidi_root_does_not_import_optional_dependencies():
+    project_root = Path(__file__).resolve().parents[5]
+    env = os.environ.copy()
+    python_path = str(project_root / "src")
+    if existing_python_path := env.get("PYTHONPATH"):
+        python_path = os.pathsep.join((python_path, existing_python_path))
+    env["PYTHONPATH"] = python_path
+
+    code = """
+import sys
+
+import strands.experimental.bidi
+
+optional_modules = (
+    "aws_sdk_bedrock_runtime",
+    "google.genai",
+    "prompt_toolkit",
+    "pyaudio",
+    "rich",
+    "websockets",
+)
+loaded = [name for name in optional_modules if name in sys.modules]
+if loaded:
+    raise AssertionError(f"optional dependencies imported eagerly: {loaded}")
+"""
+    subprocess.run([sys.executable, "-c", code], check=True, env=env)
 
 
 @pytest.fixture

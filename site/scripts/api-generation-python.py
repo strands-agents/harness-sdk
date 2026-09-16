@@ -13,97 +13,112 @@ Usage:
     pip install pydoc-markdown && python scripts/api-generation-python.py  # fallback
 """
 
+import ast
+import importlib.util
 import shutil
 from pathlib import Path
 
+import docspec
 from pydoc_markdown import PydocMarkdown
 from pydoc_markdown.contrib.loaders.python import PythonLoader
-from pydoc_markdown.contrib.renderers.markdown import MarkdownRenderer
-from pydoc_markdown.contrib.processors.filter import FilterProcessor
 from pydoc_markdown.contrib.processors.crossref import CrossrefProcessor
+from pydoc_markdown.contrib.processors.filter import FilterProcessor
 from pydoc_markdown.contrib.processors.smart import SmartProcessor
+from pydoc_markdown.contrib.renderers.markdown import MarkdownRenderer
 from pydoc_markdown.contrib.source_linkers.git import GitSourceLinker
-import docspec
 
-BIDI_PUBLIC_API = {
-    "strands.experimental.bidi.agent": {
-        "strands.experimental.bidi.agent.agent": {"BidiAgent"},
-    },
-    "strands.experimental.bidi.hooks": {
-        "strands.experimental.bidi.hooks.events": {
-            "BidiAfterConnectionRestartEvent",
-            "BidiAgentStopEvent",
-            "BidiBeforeConnectionRestartEvent",
-            "BidiInterruptionEvent",
-            "BidiResponseCompleteEvent",
-        },
-    },
-    "strands.experimental.bidi.io": {
-        "strands.experimental.bidi.io.audio": {"BidiAudioIO"},
-        "strands.experimental.bidi.io._configs": {"BidiAudioIOConfig", "BidiAudioProcessorConfig"},
-        "strands.experimental.bidi.io.text": {"BidiTextIO"},
-    },
-    "strands.experimental.bidi.models": {
-        "strands.experimental.bidi.models.bedrock": {"BedrockNovaSonicModel"},
-        "strands.experimental.bidi.models.configs": {
-            "AudioConfig",
-            "AudioStreamConfig",
-            "BedrockNovaSonicAudioConfig",
-            "BedrockNovaSonicAudioStreamConfig",
-            "BidiConnectionConfig",
-            "BidiModelConfig",
-            "GoogleGeminiLiveAudioConfig",
-            "GoogleGeminiLiveAudioStreamConfig",
-        },
-        "strands.experimental.bidi.models.google": {"GoogleGeminiLiveModel"},
-        "strands.experimental.bidi.models.model": {
-            "AudioCapable",
-            "BidiModel",
-            "BidiModelTimeoutError",
-            "Restartable",
-        },
-        "strands.experimental.bidi.models.openai": {"OpenAIRealtimeModel"},
-    },
-    "strands.experimental.bidi.tools": {
-        "strands.experimental.bidi.tools.stop_conversation": {"stop_conversation"},
-    },
-    "strands.experimental.bidi.types": {
-        "strands.experimental.bidi.types.agent": {"BidiAgentInput"},
-        "strands.experimental.bidi.types.content": {"BidiContentBlock", "BidiContentBlockData"},
-        "strands.experimental.bidi.types.events": {
-            "AudioChannel",
-            "AudioFormat",
-            "BidiAudioStreamEvent",
-            "BidiConnectionCloseEvent",
-            "BidiConnectionRestartEvent",
-            "BidiConnectionStartEvent",
-            "BidiConnectionWarningEvent",
-            "BidiErrorEvent",
-            "BidiInterruptionEvent",
-            "BidiOutputEvent",
-            "BidiResponseCompleteEvent",
-            "BidiResponseStartEvent",
-            "BidiTranscriptCompleteEvent",
-            "BidiTranscriptStreamEvent",
-            "BidiUsageEvent",
-            "ModalityUsage",
-            "Role",
-            "StopReason",
-        },
-        "strands.experimental.bidi.types.io": {"BidiInput", "BidiOutput"},
-    },
-}
+BIDI_PACKAGE = "strands.experimental.bidi"
 
-BIDI_PUBLIC_SOURCES = {
-    source_module: (public_module, symbols)
-    for public_module, source_modules in BIDI_PUBLIC_API.items()
-    for source_module, symbols in source_modules.items()
-}
 
-BIDI_INTERNAL_MODULES = {
-    "strands.experimental.bidi.agent.loop",
-    "strands.experimental.bidi.io.transcript",
-}
+def _read_module_tree(source_root: Path, module_name: str) -> ast.Module:
+    module_path = source_root.joinpath(*module_name.split("."), "__init__.py")
+    return ast.parse(module_path.read_text(encoding="utf-8"), filename=str(module_path))
+
+
+def _read_all_exports(module_tree: ast.Module, module_name: str) -> list[str]:
+    for statement in module_tree.body:
+        if not isinstance(statement, ast.Assign):
+            continue
+        if not any(isinstance(target, ast.Name) and target.id == "__all__" for target in statement.targets):
+            continue
+
+        exports = ast.literal_eval(statement.value)
+        if isinstance(exports, list) and all(isinstance(export, str) for export in exports):
+            return exports
+        break
+
+    raise ValueError(f"{module_name} must declare __all__ as a list of strings")
+
+
+def _read_lazy_exports(module_tree: ast.Module) -> set[str]:
+    exports = set()
+    for statement in module_tree.body:
+        if not isinstance(statement, ast.FunctionDef) or statement.name != "__getattr__":
+            continue
+        if not statement.args.args:
+            continue
+
+        parameter_name = statement.args.args[0].arg
+        for node in ast.walk(statement):
+            if not isinstance(node, ast.If) or not isinstance(node.test, ast.Compare):
+                continue
+            comparison = node.test
+            if (
+                isinstance(comparison.left, ast.Name)
+                and comparison.left.id == parameter_name
+                and len(comparison.ops) == 1
+                and isinstance(comparison.ops[0], ast.Eq)
+                and len(comparison.comparators) == 1
+                and isinstance(comparison.comparators[0], ast.Constant)
+                and isinstance(comparison.comparators[0].value, str)
+            ):
+                exports.add(comparison.comparators[0].value)
+    return exports
+
+
+def _resolve_import(module_name: str, imported_module: ast.ImportFrom) -> str:
+    if imported_module.level:
+        relative_name = "." * imported_module.level + (imported_module.module or "")
+        return importlib.util.resolve_name(relative_name, module_name)
+    if imported_module.module:
+        return imported_module.module
+    raise ValueError(f"{module_name} contains an unsupported import")
+
+
+def _read_public_sources(source_root: Path, module_name: str) -> dict[str, set[str]]:
+    module_tree = _read_module_tree(source_root, module_name)
+    public_names = set(_read_all_exports(module_tree, module_name)) | _read_lazy_exports(module_tree)
+    imports = {}
+
+    for node in ast.walk(module_tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        source_module = _resolve_import(module_name, node)
+        for imported_name in node.names:
+            if imported_name.name == "*":
+                continue
+            public_name = imported_name.asname or imported_name.name
+            imports[public_name] = (source_module, imported_name.name)
+
+    missing_names = public_names - imports.keys()
+    if missing_names:
+        missing = ", ".join(sorted(missing_names))
+        raise ValueError(f"{module_name} exports symbols without source imports: {missing}")
+
+    public_sources: dict[str, set[str]] = {}
+    for public_name in public_names:
+        source_module, source_name = imports[public_name]
+        public_sources.setdefault(source_module, set()).add(source_name)
+    return public_sources
+
+
+def _read_bidi_public_api(source_root: Path) -> dict[str, dict[str, set[str]]]:
+    package_tree = _read_module_tree(source_root, BIDI_PACKAGE)
+    owner_names = _read_all_exports(package_tree, BIDI_PACKAGE)
+    return {
+        f"{BIDI_PACKAGE}.{owner_name}": _read_public_sources(source_root, f"{BIDI_PACKAGE}.{owner_name}")
+        for owner_name in owner_names
+    }
 
 
 class CustomGitSourceLinker(GitSourceLinker):
@@ -125,7 +140,7 @@ class CustomGitSourceLinker(GitSourceLinker):
 
 
 def generate_docs():
-    input_path =  "../strands-py/src"
+    input_path = Path("../strands-py/src")
     output_path = "./.build/api-docs/python"
 
     """Generate markdown documentation for all strands modules."""
@@ -143,7 +158,7 @@ def generate_docs():
 
     # Configure the Python loader
     loader = PythonLoader(
-        search_path=[input_path],
+        search_path=[str(input_path)],
         packages=["strands"],
     )
     session.loaders = [loader]
@@ -173,6 +188,12 @@ def generate_docs():
     # Load and process modules
     modules = session.load_modules()
     session.process(modules)
+    bidi_public_api = _read_bidi_public_api(input_path)
+    bidi_public_sources = {
+        source_module: (public_module, symbols)
+        for public_module, source_modules in bidi_public_api.items()
+        for source_module, symbols in source_modules.items()
+    }
 
     # Modules to exclude from documentation
     excluded_modules = {
@@ -181,24 +202,32 @@ def generate_docs():
 
     # Generate index file
     module_files = []
-    bidi_public_sections = {module_name: [] for module_name in BIDI_PUBLIC_API}
+    bidi_public_sections = {module_name: [] for module_name in bidi_public_api}
 
     # Write each module to a separate file
     for module in modules:
         module_name = module.name
 
-        if module_name in BIDI_PUBLIC_API:
+        if module_name in bidi_public_api:
             continue
 
-        if module_name in BIDI_INTERNAL_MODULES:
+        if module_name == BIDI_PACKAGE:
             continue
 
-        if module_name in BIDI_PUBLIC_SOURCES:
-            public_module, public_symbols = BIDI_PUBLIC_SOURCES[module_name]
+        if module_name in bidi_public_sources:
+            public_module, public_symbols = bidi_public_sources[module_name]
+            available_symbols = {member.name for member in module.members}
+            missing_symbols = public_symbols - available_symbols
+            if missing_symbols:
+                missing = ", ".join(sorted(missing_symbols))
+                raise ValueError(f"{module_name} does not define mapped symbols: {missing}")
             module.members = [member for member in module.members if member.name in public_symbols]
             rendered = renderer.render_to_string([module]).replace(module_name, public_module)
             if rendered.strip():
                 bidi_public_sections[public_module].append(rendered)
+            continue
+
+        if module_name.startswith(f"{BIDI_PACKAGE}."):
             continue
 
         # Skip modules with underscore (private/internal modules)
@@ -213,8 +242,6 @@ def generate_docs():
             continue
 
         # Parse module path: strands.agent.base -> strands.agent.base.mdx
-        parts = module_name.split(".")
-        simple_name = parts[-1]
         filename = f"{module_name}.mdx"
         filepath = output_dir / filename
         slug = f"docs/api/python/{module_name}"

@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING, Any
 
-from ._configs import BidiAudioIOConfig, BidiAudioProcessorConfig
+from .configs import BidiAudioIOConfig, BidiAudioProcessorConfig
 
 if TYPE_CHECKING:
     from .audio import BidiAudioIO

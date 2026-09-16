@@ -28,7 +28,7 @@ from ..types.events import (
     BidiOutputEvent,
 )
 from ..types.io import BidiInput, BidiOutput
-from ._configs import BidiAudioIOConfig, BidiAudioProcessorConfig
+from .configs import BidiAudioIOConfig, BidiAudioProcessorConfig
 from .transcript import _BidiTranscriptOutput
 
 if TYPE_CHECKING:
