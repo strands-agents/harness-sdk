@@ -1,9 +1,9 @@
 ---
 title: I/O Channels
 description: 'Connect microphones, speakers, consoles, and WebSockets to a Strands bidi-agent with BidiInput and BidiOutput channels for audio and text.'
-experimental: true
 sidebar:
   label: "IO"
+experimental: true
 tags: [bidi-streaming]
 sourceLinks:
   - path: strands-py/src/strands/experimental/bidi/io/text.py
@@ -40,9 +40,10 @@ management.
 Implementation of these protocols will look as follows:
 
 ```python
-from strands.experimental.bidi import BidiAgent, BidiAgentInput
-from strands.experimental.bidi.types.events import BidiOutputEvent
-from strands.experimental.bidi.types.io import BidiInput, BidiOutput
+from strands.experimental.bidi.agent import BidiAgent
+from strands.experimental.bidi.types import BidiAgentInput
+from strands.experimental.bidi.types import BidiOutputEvent
+from strands.experimental.bidi.types import BidiInput, BidiOutput
 
 
 class MyBidiInput(BidiInput):
@@ -80,7 +81,7 @@ To connect your I/O channels into the agent loop, you can pass them as arguments
 ```python
 import asyncio
 
-from strands.experimental.bidi import BidiAgent
+from strands.experimental.bidi.agent import BidiAgent
 from strands_tools import stop
 
 
@@ -109,7 +110,7 @@ pip install "strands-agents[bidi,bidi-io,bidi-pyaudio]"
 ```python
 import asyncio
 
-from strands.experimental.bidi import BidiAgent
+from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.io import BidiAudioIO
 from strands_tools import stop
 
@@ -178,7 +179,7 @@ pip install "strands-agents[bidi-io]"
 ```python
 import asyncio
 
-from strands.experimental.bidi import BidiAgent
+from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.io import BidiTextIO
 from strands_tools import stop
 
@@ -214,7 +215,7 @@ WebSockets are a common I/O channel for bidi-agents. To learn how to setup WebSo
 # server.py
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
-from strands.experimental.bidi import BidiAgent
+from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import OpenAIRealtimeModel
 
 app = FastAPI()

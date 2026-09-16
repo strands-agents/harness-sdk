@@ -10,9 +10,9 @@ from strands.agent.conversation_manager.null_conversation_manager import NullCon
 from strands.agent.conversation_manager.sliding_window_conversation_manager import SlidingWindowConversationManager
 from strands.agent.conversation_manager.summarizing_conversation_manager import SummarizingConversationManager
 from strands.agent.state import AgentState
-from strands.experimental.bidi import BidiAgent
-from strands.experimental.bidi.hooks.events import BidiAgentStopEvent
-from strands.experimental.bidi.models.model import BidiModel
+from strands.experimental.bidi.agent import BidiAgent
+from strands.experimental.bidi.hooks import BidiAgentStopEvent
+from strands.experimental.bidi.models import BidiModel
 from strands.hooks import AfterInvocationEvent
 from strands.interrupt import _InterruptState
 from strands.session.repository_session_manager import RepositorySessionManager

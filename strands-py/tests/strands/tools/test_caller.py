@@ -5,7 +5,8 @@ import weakref
 import pytest
 
 from strands import Agent, tool
-from strands.experimental.bidi import BidiAgent, BidiModel
+from strands.experimental.bidi.agent import BidiAgent
+from strands.experimental.bidi.models import BidiModel
 from strands.tools.tool_provider import ToolProvider
 from strands.types.exceptions import ConcurrencyException
 

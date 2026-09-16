@@ -23,17 +23,16 @@ from aws_sdk_bedrock_runtime.models import ModelTimeoutException, ValidationExce
 from awscrt.exceptions import from_code
 from smithy_http.aio.crt import AWSCRTHTTPClient
 
+from strands.experimental.bidi.models import BedrockNovaSonicAudioConfig, BedrockNovaSonicModel, BidiModelTimeoutError
 from strands.experimental.bidi.models.bedrock import (
     NOVA_SONIC_V1_MODEL_ID,
     NOVA_SONIC_V2_MODEL_ID,
-    BedrockNovaSonicAudioConfig,
-    BedrockNovaSonicModel,
     _BedrockAWSCRTHTTPClient,
     _BedrockAWSCRTHTTPResponse,
     _ResponseState,
 )
-from strands.experimental.bidi.models.model import BidiModelTimeoutError
-from strands.experimental.bidi.types.events import (
+from strands.experimental.bidi.types import (
+    AudioDelta,
     BidiAudioStreamEvent,
     BidiInterruptionEvent,
     BidiResponseCompleteEvent,
@@ -42,7 +41,6 @@ from strands.experimental.bidi.types.events import (
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
 )
-from strands.experimental.bidi.types.media import AudioDelta
 from strands.types.content import TextBlock
 from strands.types.media import ImageBlock
 from strands.types.tools import ToolResultBlock
@@ -852,8 +850,8 @@ async def test_proactive_reconnect_end_to_end_through_agent(model_id, boto_sessi
     and restarts through Nova's own restart() before the session deadline, replaying
     history via Nova's initialization path. No live AWS calls are made.
     """
-    from strands.experimental.bidi.agent.agent import BidiAgent
-    from strands.experimental.bidi.types.events import BidiConnectionWarningEvent
+    from strands.experimental.bidi.agent import BidiAgent
+    from strands.experimental.bidi.types import BidiConnectionWarningEvent
 
     # Nova never emits events on its own here; await_output blocks so the model task idles
     # while the proactive timer drives the reconnect.

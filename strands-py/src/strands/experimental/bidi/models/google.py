@@ -18,7 +18,7 @@ import logging
 import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import Any, TypedDict, cast
+from typing import Any, cast
 
 from google import genai
 from google.genai import types as genai_types
@@ -50,6 +50,8 @@ from .configs import (
     AudioStreamConfig,
     BidiConnectionConfig,
     BidiModelConfig,
+    GoogleGeminiLiveAudioConfig,
+    GoogleGeminiLiveAudioStreamConfig,
     _merge_config,
     _validate_audio_config,
     _validate_model_config,
@@ -72,28 +74,6 @@ class _TurnState:
     response_id: str | None = None
     input_transcript: str = ""
     output_transcript: str = ""
-
-
-class GoogleGeminiLiveAudioStreamConfig(TypedDict):
-    """Gemini Live input stream options. Audio uses mono PCM.
-
-    Attributes:
-        sample_rate: Input sample rate in Hz.
-    """
-
-    sample_rate: int
-
-
-class GoogleGeminiLiveAudioConfig(TypedDict, total=False):
-    """Gemini Live audio options. Output is mono PCM at 24000 Hz.
-
-    Omitting the input stream uses a sample rate of 16000 Hz.
-
-    Attributes:
-        input: Input stream options.
-    """
-
-    input: GoogleGeminiLiveAudioStreamConfig
 
 
 class GoogleGeminiLiveModel(BidiModel, AudioCapable):

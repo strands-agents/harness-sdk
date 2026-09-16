@@ -13,10 +13,10 @@ import os
 import pytest
 
 from strands import tool
-from strands.experimental.bidi.agent.agent import BidiAgent
+from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.hooks import BidiResponseCompleteEvent
 from strands.experimental.bidi.models import GoogleGeminiLiveModel, OpenAIRealtimeModel
-from strands.experimental.bidi.types.events import BidiResponseCompleteEvent as BidiResponseCompleteStreamEvent
+from strands.experimental.bidi.types import BidiResponseCompleteEvent as BidiResponseCompleteStreamEvent
 
 from .context import BidirectionalTestContext
 from .hook_utils import HookEventCollector

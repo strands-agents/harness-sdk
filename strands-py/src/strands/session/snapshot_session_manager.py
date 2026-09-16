@@ -46,7 +46,7 @@ from .session_manager import SessionManager
 if TYPE_CHECKING:
     from .._context_manager.stash import Stash
     from ..agent.agent import Agent
-    from ..experimental.bidi.agent.agent import BidiAgent
+    from ..experimental.bidi.agent import BidiAgent
 
 logger = logging.getLogger(__name__)
 
@@ -298,7 +298,7 @@ class SnapshotSessionManager(SessionManager):
         Raises:
             NotImplementedError: If agent is a BidiAgent.
         """
-        from ..experimental.bidi.agent.agent import BidiAgent
+        from ..experimental.bidi.agent import BidiAgent
 
         if isinstance(agent, BidiAgent):
             raise NotImplementedError(

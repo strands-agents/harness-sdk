@@ -151,7 +151,7 @@ class BidiModel(Model, abc.ABC):
 
         Example:
             ```
-            from strands.experimental.bidi.types.media import AudioDelta
+            from strands.experimental.bidi.types import AudioDelta
             from strands.types.content import TextBlock
             from strands.types.media import ImageBlock
             from strands.types.tools import ToolResultBlock

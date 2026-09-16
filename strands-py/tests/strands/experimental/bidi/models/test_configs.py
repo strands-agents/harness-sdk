@@ -4,9 +4,8 @@ import copy
 
 import pytest
 
+from strands.experimental.bidi.models import AudioConfig, AudioStreamConfig
 from strands.experimental.bidi.models.configs import (
-    AudioConfig,
-    AudioStreamConfig,
     _merge_config,
     _validate_audio_config,
     _validate_model_config,

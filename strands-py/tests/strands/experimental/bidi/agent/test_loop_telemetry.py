@@ -18,14 +18,15 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter, SpanExportResult
 from opentelemetry.trace import StatusCode
 
+import strands.experimental.bidi._telemetry as _telemetry
 from strands import tool
-from strands.experimental.bidi import BidiAgent, _telemetry
-from strands.experimental.bidi.hooks.events import (
+from strands.experimental.bidi.agent import BidiAgent
+from strands.experimental.bidi.hooks import (
     BidiAfterConnectionRestartEvent,
     BidiBeforeConnectionRestartEvent,
 )
 from strands.experimental.bidi.models import BidiModel, BidiModelTimeoutError
-from strands.experimental.bidi.types.events import (
+from strands.experimental.bidi.types import (
     BidiAudioStreamEvent,
     BidiConnectionCloseEvent,
     BidiInterruptionEvent,

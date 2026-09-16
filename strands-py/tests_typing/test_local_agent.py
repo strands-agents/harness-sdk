@@ -3,7 +3,7 @@ from typing import Any
 from typing_extensions import assert_type
 
 from strands import Agent, LocalAgent, ToolContext, tool
-from strands.experimental.bidi import BidiAgent
+from strands.experimental.bidi.agent import BidiAgent
 from strands.hooks import AfterToolCallEvent, AgentInitializedEvent, BeforeToolCallEvent, MessageAddedEvent
 from strands.session.repository_session_manager import RepositorySessionManager
 from strands.session.session_manager import SessionManager

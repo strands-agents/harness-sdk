@@ -38,7 +38,8 @@ When using `BidiAudioIO`, interruptions are handled automatically:
 
 ```python
 import asyncio
-from strands.experimental.bidi import BidiAgent, BidiAudioIO
+from strands.experimental.bidi.agent import BidiAgent
+from strands.experimental.bidi.io import BidiAudioIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 model = BedrockNovaSonicModel()
@@ -63,9 +64,9 @@ For custom behavior, process interruption events manually:
 
 ```python
 import asyncio
-from strands.experimental.bidi import BidiAgent
+from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import BedrockNovaSonicModel
-from strands.experimental.bidi.types.events import (
+from strands.experimental.bidi.types import (
     BidiInterruptionEvent,
     BidiResponseCompleteEvent
 )
@@ -110,8 +111,8 @@ asyncio.run(main())
 Use hooks to track interruptions across your application:
 
 ```python
-from strands.experimental.bidi import BidiAgent
-from strands.experimental.bidi.hooks.events import BidiInterruptionEvent as BidiInterruptionHookEvent
+from strands.experimental.bidi.agent import BidiAgent
+from strands.experimental.bidi.hooks import BidiInterruptionEvent as BidiInterruptionHookEvent
 
 class InterruptionTracker:
     def __init__(self):

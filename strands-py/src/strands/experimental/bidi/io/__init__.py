@@ -2,26 +2,23 @@
 
 from typing import TYPE_CHECKING, Any
 
-from .text import BidiTextIO
+from .configs import BidiAudioIOConfig, BidiAudioProcessorConfig
 
 if TYPE_CHECKING:
-    from .audio import BidiAudioIO, BidiAudioIOConfig, BidiAudioProcessorConfig
+    from .audio import BidiAudioIO
+    from .text import BidiTextIO
 
 __all__ = ["BidiAudioProcessorConfig", "BidiAudioIO", "BidiAudioIOConfig", "BidiTextIO"]
 
 
 def __getattr__(name: str) -> Any:
-    """Lazy load the audio IO implementation only when accessed."""
-    if name == "BidiAudioProcessorConfig":
-        from .audio import BidiAudioProcessorConfig
-
-        return BidiAudioProcessorConfig
+    """Lazy load optional I/O implementations only when accessed."""
     if name == "BidiAudioIO":
         from .audio import BidiAudioIO
 
         return BidiAudioIO
-    if name == "BidiAudioIOConfig":
-        from .audio import BidiAudioIOConfig
+    if name == "BidiTextIO":
+        from .text import BidiTextIO
 
-        return BidiAudioIOConfig
+        return BidiTextIO
     raise AttributeError(f"cannot import name '{name}' from '{__name__}' ({__file__})")
