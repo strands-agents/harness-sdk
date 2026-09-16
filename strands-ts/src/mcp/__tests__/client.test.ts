@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
+import type { RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js'
 import {
   McpError,
   ErrorCode,
@@ -539,6 +540,112 @@ describe('MCP Integration', () => {
       })
     })
 
+    it('forwards the client progress callback to direct tool calls', async () => {
+      const onProgress = vi.fn()
+      const progressClient = new McpClient({
+        applicationName: 'TestApp',
+        transport: mockTransport,
+        onProgress,
+      })
+      const progressSdkClientMock = vi.mocked(Client).mock.results.at(-1)!.value
+      const tool = new McpTool({ name: 'calc', description: '', inputSchema: {}, client: progressClient })
+      progressSdkClientMock.callTool.mockResolvedValue({ content: [] })
+
+      await progressClient.callTool(tool, { op: 'add' })
+
+      expect(progressSdkClientMock.callTool).toHaveBeenCalledWith(
+        { name: 'calc', arguments: { op: 'add' } },
+        undefined,
+        { onprogress: expect.any(Function), resetTimeoutOnProgress: true }
+      )
+
+      const requestOptions = progressSdkClientMock.callTool.mock.calls[0]![2] as RequestOptions
+      requestOptions.onprogress?.({ progress: 1, total: 2, message: 'working' })
+      await vi.waitFor(() => {
+        expect(onProgress).toHaveBeenCalledWith({ progress: 1, total: 2, message: 'working' })
+      })
+    })
+
+    it('uses a per-call progress callback instead of the client callback', async () => {
+      const defaultOnProgress = vi.fn()
+      const callOnProgress = vi.fn()
+      const progressClient = new McpClient({
+        applicationName: 'TestApp',
+        transport: mockTransport,
+        onProgress: defaultOnProgress,
+      })
+      const progressSdkClientMock = vi.mocked(Client).mock.results.at(-1)!.value
+      const tool = new McpTool({ name: 'calc', description: '', inputSchema: {}, client: progressClient })
+      progressSdkClientMock.callTool.mockResolvedValue({ content: [] })
+
+      await progressClient.callTool(tool, { op: 'add' }, { onProgress: callOnProgress })
+
+      expect(progressSdkClientMock.callTool).toHaveBeenCalledWith(
+        { name: 'calc', arguments: { op: 'add' } },
+        undefined,
+        { onprogress: expect.any(Function), resetTimeoutOnProgress: true }
+      )
+
+      const requestOptions = progressSdkClientMock.callTool.mock.calls[0]![2] as RequestOptions
+      requestOptions.onprogress?.({ progress: 1 })
+      await vi.waitFor(() => {
+        expect(callOnProgress).toHaveBeenCalledWith({ progress: 1 })
+        expect(defaultOnProgress).not.toHaveBeenCalled()
+      })
+    })
+
+    it('forwards cancellation and bounded timeout options with progress', async () => {
+      const onProgress = vi.fn()
+      const tool = new McpTool({ name: 'calc', description: '', inputSchema: {}, client })
+      sdkClientMock.callTool.mockResolvedValue({ content: [] })
+      const controller = new AbortController()
+
+      await client.callTool(
+        tool,
+        { op: 'add' },
+        {
+          signal: controller.signal,
+          onProgress,
+          timeout: 30000,
+          maxTotalTimeout: 120000,
+        }
+      )
+
+      expect(sdkClientMock.callTool).toHaveBeenCalledWith({ name: 'calc', arguments: { op: 'add' } }, undefined, {
+        signal: controller.signal,
+        timeout: 30000,
+        onprogress: expect.any(Function),
+        resetTimeoutOnProgress: true,
+        maxTotalTimeout: 120000,
+      })
+    })
+
+    it('logs progress callback failures without rejecting the tool call', async () => {
+      const callbackError = new Error('progress sink failed')
+      const onProgress = vi.fn(async () => {
+        throw callbackError
+      })
+      const progressClient = new McpClient({
+        applicationName: 'TestApp',
+        transport: mockTransport,
+        onProgress,
+      })
+      const progressSdkClientMock = vi.mocked(Client).mock.results.at(-1)!.value
+      const tool = new McpTool({ name: 'calc', description: '', inputSchema: {}, client: progressClient })
+      progressSdkClientMock.callTool.mockResolvedValue({ content: [] })
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => undefined)
+
+      await progressClient.callTool(tool, { op: 'add' })
+      const requestOptions = progressSdkClientMock.callTool.mock.calls[0]![2] as RequestOptions
+      requestOptions.onprogress?.({ progress: 1 })
+
+      await vi.waitFor(() => {
+        expect(warnSpy).toHaveBeenCalledWith(
+          'tool=<calc>, error=<Error: progress sink failed> | progress callback failed'
+        )
+      })
+    })
+
     it('forwards abort signal to callToolStream when tasksConfig is provided', async () => {
       const resultsLengthBefore = vi.mocked(Client).mock.results.length
       const taskClient = new McpClient({
@@ -557,6 +664,31 @@ describe('MCP Integration', () => {
         { name: 'calc', arguments: { op: 'add' } },
         undefined,
         { timeout: 60000, maxTotalTimeout: 300000, resetTimeoutOnProgress: true, signal: controller.signal }
+      )
+    })
+
+    it('ignores progress callbacks for task-augmented tool calls', async () => {
+      const resultsLengthBefore = vi.mocked(Client).mock.results.length
+      const taskClient = new McpClient({
+        applicationName: 'TestApp',
+        transport: mockTransport,
+        tasksConfig: {},
+        onProgress: vi.fn(),
+      })
+      const taskSdkClientMock = vi.mocked(Client).mock.results[resultsLengthBefore]!.value
+      const tool = new McpTool({ name: 'calc', description: '', inputSchema: {}, client: taskClient })
+      taskSdkClientMock.experimental.tasks.callToolStream.mockReturnValue(createMockCallToolStream({ content: [] })())
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => undefined)
+
+      await taskClient.callTool(tool, { op: 'add' })
+
+      expect(taskSdkClientMock.experimental.tasks.callToolStream).toHaveBeenCalledWith(
+        { name: 'calc', arguments: { op: 'add' } },
+        undefined,
+        { timeout: 60000, maxTotalTimeout: 300000, resetTimeoutOnProgress: true }
+      )
+      expect(warnSpy).toHaveBeenCalledWith(
+        'tool=<calc> | progress callbacks are ignored when task-augmented execution is enabled'
       )
     })
 
