@@ -31,7 +31,7 @@ from ....types.content import Messages, TextBlock
 from ....types.media import ImageBlock
 from ....types.tools import ToolResultBlock, ToolSpec, ToolUse
 from .._async import stop_all
-from ..types.content import BidiContentBlock
+from ..types.content import BidiContentBlock, BidiContentDelta
 from ..types.events import (
     BidiAudioStreamEvent,
     BidiConnectionStartEvent,
@@ -509,7 +509,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
 
     async def send(
         self,
-        content: BidiContentBlock | ToolResultBlock,
+        content: BidiContentBlock | BidiContentDelta | ToolResultBlock,
     ) -> None:
         """Unified send method for all content types. Sends the given inputs to the Gemini Live API.
 

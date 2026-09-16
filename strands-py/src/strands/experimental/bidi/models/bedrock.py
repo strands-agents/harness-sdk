@@ -51,7 +51,7 @@ from ....types._events import ToolUseStreamEvent
 from ....types.content import Messages, TextBlock
 from ....types.tools import ToolResultBlock, ToolSpec, ToolUse
 from .._async import stop_all
-from ..types.content import BidiContentBlock
+from ..types.content import BidiContentBlock, BidiContentDelta
 from ..types.events import (
     BidiAudioStreamEvent,
     BidiConnectionStartEvent,
@@ -509,7 +509,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
                 logger.debug("converted_event_type=<%s> | yielding converted event", event_type)
                 yield model_event
 
-    async def send(self, content: BidiContentBlock | ToolResultBlock) -> None:
+    async def send(self, content: BidiContentBlock | BidiContentDelta | ToolResultBlock) -> None:
         """Unified send method for all content types. Sends the given content to Nova Sonic.
 
         Dispatches to appropriate internal handler based on content type.

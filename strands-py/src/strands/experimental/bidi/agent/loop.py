@@ -31,7 +31,7 @@ from ..hooks.events import (
     BidiResponseCompleteEvent as BidiResponseCompleteHookEvent,
 )
 from ..models import BidiModelTimeoutError, Restartable
-from ..types.content import BidiContentBlock
+from ..types.content import BidiContentBlock, BidiContentDelta
 from ..types.events import (
     BidiAudioStreamEvent,
     BidiConnectionCloseEvent,
@@ -228,7 +228,7 @@ class _BidiAgentLoop:
 
             await self._agent.hooks.invoke_callbacks_async(BidiAgentStopEvent(agent=self._agent))
 
-    async def send(self, content: BidiContentBlock | ToolResultBlock) -> None:
+    async def send(self, content: BidiContentBlock | BidiContentDelta | ToolResultBlock) -> None:
         """Send user input or a tool result to the model.
 
         Text input is also added to the conversation history.

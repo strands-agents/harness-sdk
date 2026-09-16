@@ -21,7 +21,7 @@ from typing import Any, NoReturn, Protocol, cast, runtime_checkable
 from ....models.model import Model
 from ....types.content import Messages
 from ....types.tools import ToolResultBlock, ToolSpec
-from ..types.content import BidiContentBlock
+from ..types.content import BidiContentBlock, BidiContentDelta
 from ..types.events import BidiOutputEvent
 from .configs import AudioConfig, BidiConnectionConfig
 
@@ -138,7 +138,7 @@ class BidiModel(Model, abc.ABC):
     # pragma: no cover
     async def send(
         self,
-        content: BidiContentBlock | ToolResultBlock,
+        content: BidiContentBlock | BidiContentDelta | ToolResultBlock,
     ) -> None:
         """Send content to the model over the active connection.
 

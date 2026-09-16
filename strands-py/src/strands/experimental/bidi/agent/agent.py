@@ -317,7 +317,8 @@ class BidiAgent(LocalAgent):
 
                 - str: Text message from user
                 - TextBlock, AudioDelta, or ImageBlock: Text, streaming audio, or image input
-                - BidiContentBlockData: A dictionary containing one text, audio_delta, or image key
+                - BidiContentBlockData: A dictionary containing one text or image key
+                - BidiContentDeltaData: A dictionary containing one audio_delta key
 
         Raises:
             RuntimeError: If start has not been called.
@@ -347,7 +348,10 @@ class BidiAgent(LocalAgent):
             else:
                 raise ValueError("invalid input | must contain exactly one of text, audio_delta, or image")
         elif not isinstance(input_data, (TextBlock, AudioDelta, ImageBlock)):
-            raise TypeError("invalid input | must be str, TextBlock, AudioDelta, ImageBlock, or BidiContentBlockData")
+            raise TypeError(
+                "invalid input | must be str, TextBlock, AudioDelta, ImageBlock, "
+                "BidiContentBlockData, or BidiContentDeltaData"
+            )
 
         await self._loop.send(input_data)
 
