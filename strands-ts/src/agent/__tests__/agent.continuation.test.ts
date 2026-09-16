@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { createMockTool } from '../../__fixtures__/tool-helpers.js'
-import { AfterInvocationEvent, BeforeModelCallEvent, MessageAddedEvent } from '../../hooks/events.js'
+import {
+  AfterInvocationEvent,
+  BeforeInvocationEvent,
+  BeforeModelCallEvent,
+  MessageAddedEvent,
+} from '../../hooks/events.js'
 import { InterruptResponseContent } from '../../types/interrupt.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
 import { Agent } from '../agent.js'
@@ -33,6 +38,11 @@ describe('Agent continuation input', () => {
     const abandoned = vi.fn()
     const agent = new Agent({ model, printer: false })
     let resumed = false
+    const beforeInvocationInputs: string[][] = []
+
+    agent.addHook(BeforeInvocationEvent, (event) => {
+      beforeInvocationInputs.push(event.messages.map(textOf))
+    })
 
     agent.addHook(AfterInvocationEvent, (event) => {
       if (resumed) return
@@ -57,6 +67,7 @@ describe('Agent continuation input', () => {
     expect(requests[1]?.map((message) => message.role)).toEqual(['user', 'assistant', 'user'])
     expect(textOf(requests[1]!.at(-1)!)).toBe('firstsecondpublic')
     expect(agent.messages.map(textOf)).toEqual(['start', 'initial', 'firstsecondpublic', 'final'])
+    expect(beforeInvocationInputs).toEqual([['start'], ['first', 'second', 'public']])
     expect(appended).toEqual(['first', 'second'])
     expect(abandoned).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'Continuation input must contain a complete message sequence' })

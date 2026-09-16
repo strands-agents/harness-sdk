@@ -1167,8 +1167,17 @@ export class Agent implements LocalAgent, InvokableAgent {
           this._interruptState.resume(interruptResponses)
         }
 
+        const preparedArgs = continuations.combine(continuationEvent, currentArgs, (continuationArgs) =>
+          this._normalizeInput(continuationArgs)
+        )
+        const inputMessages = this._normalizeInput(preparedArgs)
+
         // Hooks fire outside middleware — always, even on short-circuit.
-        const beforeInvocationEvent = new BeforeInvocationEvent({ agent: this, invocationState })
+        const beforeInvocationEvent = new BeforeInvocationEvent({
+          agent: this,
+          invocationState,
+          messages: inputMessages,
+        })
         yield await this._invokeCallbacks(beforeInvocationEvent)
 
         if (beforeInvocationEvent.cancel) {
@@ -1199,7 +1208,13 @@ export class Agent implements LocalAgent, InvokableAgent {
         let caughtError: Error | undefined
         const afterInvocationEvent = new AfterInvocationEvent({ agent: this, invocationState })
         try {
-          result = yield* this._streamWithMiddleware(currentArgs, resolvedOptions, invocationState, continuationEvent)
+          result = yield* this._streamWithMiddleware(
+            currentArgs,
+            resolvedOptions,
+            invocationState,
+            beforeInvocationEvent.messages,
+            continuationEvent
+          )
         } catch (error) {
           caughtError = error as Error
         } finally {
@@ -1270,6 +1285,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     args: InvokeArgs,
     options: InvokeOptions,
     invocationState: InvocationState,
+    inputMessages: Message[],
     continuationEvent?: AfterInvocationEvent
   ): AsyncGenerator<AgentStreamEvent, AgentResult, undefined> {
     // Snapshot so a gate that re-reads its response after next() still resolves even if a tool cycle called deactivate().
@@ -1295,7 +1311,8 @@ export class Agent implements LocalAgent, InvokableAgent {
           const result = yield* self._streamCore(
             streamArgs,
             ctx.options,
-            streamArgs === ctx.args ? undefined : continuationEvent
+            streamArgs === ctx.args ? undefined : continuationEvent,
+            ctx.args === args ? inputMessages : undefined
           )
           return { result }
         }
@@ -1340,9 +1357,10 @@ export class Agent implements LocalAgent, InvokableAgent {
   private async *_streamCore(
     args: InvokeArgs,
     options?: InvokeOptions,
-    continuationEvent?: AfterInvocationEvent
+    continuationEvent?: AfterInvocationEvent,
+    inputMessages?: Message[]
   ): AsyncGenerator<AgentStreamEvent, AgentResult, undefined> {
-    const streamGenerator = this._stream(args, options, continuationEvent)
+    const streamGenerator = this._stream(args, options, continuationEvent, inputMessages)
     let caughtError: Error | undefined
     let iterationResult: IteratorResult<AgentStreamEvent, AgentResult>
     try {
@@ -1513,9 +1531,11 @@ export class Agent implements LocalAgent, InvokableAgent {
   private async *_stream(
     args: InvokeArgs,
     options?: InvokeOptions,
-    continuationEvent?: AfterInvocationEvent
+    continuationEvent?: AfterInvocationEvent,
+    inputMessages?: Message[]
   ): AsyncGenerator<AgentStreamEvent, AgentResult, undefined> {
     let currentArgs: InvokeArgs | undefined = args
+    let pendingInputMessages = inputMessages
     let result: AgentResult | undefined
 
     this._validateLimits(options)
@@ -1558,13 +1578,13 @@ export class Agent implements LocalAgent, InvokableAgent {
     }
 
     // Normalize input to get the user messages for telemetry
-    const inputMessages = this._normalizeInput(args)
+    const traceInputMessages = pendingInputMessages ?? this._normalizeInput(args)
 
     // Start agent trace span
     this._meter.startNewInvocation()
     const agentModelId = this.model.modelId
     const agentSpanOptions: Parameters<Tracer['startAgentSpan']>[0] = {
-      messages: inputMessages,
+      messages: traceInputMessages,
       agentName: this.name,
       agentId: this.id,
       tools: this.tools,
@@ -1625,8 +1645,8 @@ export class Agent implements LocalAgent, InvokableAgent {
 
         try {
           // Normalize input and append user messages on first invocation only
-          if (currentArgs !== undefined) {
-            const messagesToAppend = this._normalizeInput(currentArgs)
+          if (currentArgs !== undefined || pendingInputMessages !== undefined) {
+            const messagesToAppend = pendingInputMessages ?? this._normalizeInput(currentArgs)
             if (continuationEvent) {
               yield* await this._appendContinuationMessages(messagesToAppend, continuationEvent, invocationState)
             } else {
@@ -1635,6 +1655,7 @@ export class Agent implements LocalAgent, InvokableAgent {
               }
             }
             currentArgs = undefined
+            pendingInputMessages = undefined
           }
 
           // Check if we're resuming from a tool interrupt

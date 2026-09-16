@@ -142,20 +142,27 @@ export class BeforeInvocationEvent extends HookableEvent {
   readonly invocationState: InvocationState
 
   /**
+   * Input messages for this invocation.
+   * Hook callbacks may mutate this array or replace it before processing.
+   */
+  messages: Message[]
+
+  /**
    * Set by hook callbacks to cancel this invocation.
    * When set to `true`, a default cancel message is used.
    * When set to a string, that string is used as the assistant response message.
    */
   cancel: boolean | string = false
 
-  constructor(data: { agent: LocalAgent; invocationState: InvocationState }) {
+  constructor(data: { agent: LocalAgent; invocationState: InvocationState; messages?: Message[] }) {
     super()
     this.agent = data.agent
     this.invocationState = data.invocationState
+    this.messages = data.messages ?? []
   }
 
   /**
-   * Serializes for wire transport, excluding the agent reference and invocationState.
+   * Serializes for wire transport, excluding the agent reference, invocationState, and messages.
    * Called automatically by JSON.stringify().
    */
   toJSON(): Pick<BeforeInvocationEvent, 'type'> {
