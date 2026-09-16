@@ -51,9 +51,28 @@ For non-text content, the plugin replaces the result with a descriptive placehol
 ## Getting Started
 
 :::tip[Quick setup]
-You can enable a pre-configured `ContextOffloader` alongside
-summarization-based context management with a single parameter.
-See [Context Management](../context-management).
+The [ContextManager](../context-management) includes
+built-in offloading strategies with stash and retrieval.
+For most agents, pass
+<Syntax
+  py='context_manager="auto"'
+  ts='contextManager: "auto"'
+/> instead of configuring `ContextOffloader` separately.
+:::
+
+:::note
+`ContextOffloader` is for agents that configure offloading
+independently of
+<Syntax
+  py="context_manager"
+  ts="contextManager"
+/>.
+When
+<Syntax
+  py="context_manager"
+  ts="contextManager"
+/> is set, its built-in strategies handle offloading and
+this plugin is not needed.
 :::
 
 Pass a `ContextOffloader` instance to your agent's `plugins` list

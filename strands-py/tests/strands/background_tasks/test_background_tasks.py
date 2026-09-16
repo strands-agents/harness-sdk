@@ -21,7 +21,6 @@ from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 _BACKGROUND_TASKS_STATE_KEY = "strands.background_tasks"
 _MANAGE_TOOL_NAME = "strands_manage_background_task"
-_RESULT_TOOL_NAME = "strands_background_task_result"
 
 
 def _assistant_text(text: str) -> dict[str, Any]:
@@ -40,7 +39,7 @@ def _deliveries(messages: Messages) -> list[ToolUse]:
         block["toolUse"]
         for message in messages
         for block in message["content"]
-        if "toolUse" in block and block["toolUse"]["name"] == _RESULT_TOOL_NAME
+        if "toolUse" in block and block["toolUse"]["name"] == _MANAGE_TOOL_NAME
     ]
 
 
@@ -282,7 +281,9 @@ async def test_fails_task_when_middleware_substitutes_foreground_only_tool() -> 
     await agent.invoke_async("Run work.")
 
     tru_result = _delivered_result(agent)
-    exp_result = {"toolUseId": ANY, "status": "error", "content": [{"text": "Tool cannot run in the background"}]}
+    exp_result = {"toolUseId": ANY, "status": "success", "content": [{"json": ANY}]}
+    assert tru_result["content"][0]["json"]["status"] == "failed"
+    assert tru_result["content"][0]["json"]["error"]["message"] == "Tool cannot run in the background"
     assert tru_result == exp_result
 
 
@@ -301,9 +302,10 @@ async def test_fails_task_when_middleware_drops_tool_result() -> None:
     await agent.invoke_async("Run work.")
 
     tru_result = _delivered_result(agent)
-    exp_result = {"toolUseId": ANY, "status": "error", "content": [{"text": ANY}]}
+    exp_result = {"toolUseId": ANY, "status": "success", "content": [{"json": ANY}]}
+    assert tru_result["content"][0]["json"]["status"] == "failed"
     assert tru_result == exp_result
-    assert "did not yield a ToolResultEvent" in tru_result["content"][0]["text"]
+    assert "did not yield a ToolResultEvent" in tru_result["content"][0]["json"]["error"]["message"]
 
 
 @pytest.mark.asyncio
@@ -360,7 +362,7 @@ async def test_surfaces_and_resumes_interrupts_raised_by_background_tools() -> N
     exp_responses = ["yes"]
     assert tru_responses == exp_responses
     tru_result = _delivered_result(agent)
-    exp_result = {"toolUseId": ANY, "status": "success", "content": [{"text": "approved"}]}
+    exp_result = {"toolUseId": ANY, "status": "success", "content": [{"json": ANY}, {"text": "approved"}]}
     assert tru_result == exp_result
 
 
@@ -416,11 +418,29 @@ async def test_dispatches_selected_calls_through_tool_pipeline_and_delivers_resu
     assert tru_requested_input == exp_requested_input
 
     tru_deliveries = _deliveries(agent.messages)
-    exp_deliveries = [{"name": _RESULT_TOOL_NAME, "toolUseId": ANY, "input": {"tool_name": "work"}}]
+    exp_deliveries = [{"name": _MANAGE_TOOL_NAME, "toolUseId": ANY, "input": {"mode": "get", "task_id": ANY}}]
     assert tru_deliveries == exp_deliveries
+    assert tru_deliveries[0]["name"] in {spec["name"] for spec in tool_specs[0]}
+    assert tru_deliveries[0]["input"]["task_id"] == tru_deliveries[0]["toolUseId"]
 
     tru_result = _delivered_result(agent)
-    exp_result = {"toolUseId": ANY, "status": "success", "content": [{"text": "done:background"}]}
+    exp_result = {
+        "toolUseId": ANY,
+        "status": "success",
+        "content": [
+            {
+                "json": {
+                    "task_id": tru_deliveries[0]["toolUseId"],
+                    "tool_use_id": "work-use",
+                    "tool_name": "work",
+                    "status": "completed",
+                    "created_at": ANY,
+                    "last_updated_at": ANY,
+                }
+            },
+            {"text": "done:background"},
+        ],
+    }
     assert tru_result == exp_result
     assert _persisted_tasks(agent) is None
 
@@ -500,7 +520,7 @@ async def test_applies_always_and_never_policies_per_tool() -> None:
     assert tru_inputs == exp_inputs
 
     tru_deliveries = _deliveries(agent.messages)
-    exp_deliveries = [{"name": _RESULT_TOOL_NAME, "toolUseId": ANY, "input": {"tool_name": "background"}}]
+    exp_deliveries = [{"name": _MANAGE_TOOL_NAME, "toolUseId": ANY, "input": {"mode": "get", "task_id": ANY}}]
     assert tru_deliveries == exp_deliveries
 
     tru_incompatible_result = _tool_result(agent, "incompatible-use")
@@ -519,12 +539,13 @@ async def test_applies_always_and_never_policies_per_tool() -> None:
 @pytest.mark.asyncio
 async def test_delivers_work_that_finishes_between_invocations() -> None:
     released = asyncio.Event()
+    content = [{"text": "done"}, {"image": {"format": "png", "source": {"location": {"uri": "s3://bucket/image.png"}}}}]
 
     @tool(name="work")
-    async def work() -> str:
+    async def work() -> dict[str, Any]:
         """Perform deferred work."""
         await released.wait()
-        return "done"
+        return {"status": "success", "content": content}
 
     agent = Agent(
         model=MockedModelProvider(
@@ -557,10 +578,13 @@ async def test_delivers_work_that_finishes_between_invocations() -> None:
             "status": "completed",
             "created_at": ANY,
             "last_updated_at": ANY,
-            "result": {"content": [{"text": "done"}]},
+            "result": {"content": content},
         }
     ]
     assert tru_tasks == exp_tasks
+    task_id = tru_tasks[0]["task_id"]
+    inspected = await _invoke_management_tool(agent, {"mode": "get", "task_id": task_id})
+    assert inspected["content"][1:] == content
 
     snapshot = agent.take_snapshot(preset="session")
     restored = Agent(
@@ -574,6 +598,7 @@ async def test_delivers_work_that_finishes_between_invocations() -> None:
     tru_delivery_count = len(_deliveries(restored.messages))
     exp_delivery_count = 1
     assert tru_delivery_count == exp_delivery_count
+    assert _delivered_result(restored) == {**inspected, "toolUseId": task_id}
     assert _persisted_tasks(restored) is None
 
 
@@ -679,7 +704,9 @@ async def test_load_state_fails_restored_non_terminal_work() -> None:
     await agent.invoke_async("Continue.")
 
     tru_deliveries = _deliveries(agent.messages)
-    exp_deliveries = [{"name": _RESULT_TOOL_NAME, "toolUseId": "working", "input": {"tool_name": "working-work"}}]
+    exp_deliveries = [
+        {"name": _MANAGE_TOOL_NAME, "toolUseId": "working", "input": {"mode": "get", "task_id": "working"}}
+    ]
     assert tru_deliveries == exp_deliveries
 
 

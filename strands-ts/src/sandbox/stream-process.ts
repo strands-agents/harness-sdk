@@ -132,7 +132,7 @@ export async function* streamProcess(
 
   if (options?.timeout !== undefined) {
     timeoutHandle = setTimeout(() => {
-      terminate(new SandboxTimeoutError(options.timeout!))
+      terminate(new SandboxTimeoutError(options.timeout!, stdout, stderr))
     }, options.timeout * 1000)
   }
 

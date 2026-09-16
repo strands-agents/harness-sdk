@@ -13,13 +13,13 @@ requires pywebrtc-audio (pip install strands-agents[bidi-aec]).
 import asyncio
 import base64
 import logging
-import queue
 from typing import TYPE_CHECKING, Any, TypedDict
 
 import pyaudio
 from typing_extensions import Unpack
 
 from ....types.media import AudioBlock
+from .._audio.buffer import AudioBuffer
 from ..models.configs import AudioStreamConfig
 from ..models.model import AudioCapable
 from ..types.events import (
@@ -31,7 +31,7 @@ from ..types.io import BidiInput, BidiOutput
 from .transcript import _BidiTranscriptOutput
 
 if TYPE_CHECKING:
-    from .._audio import _BidiAudioProcessor
+    from .._audio.processor import AudioProcessor
     from ..agent.agent import BidiAgent
 
 logger = logging.getLogger(__name__)
@@ -63,94 +63,6 @@ class BidiAudioIOConfig(TypedDict, total=False):
     output_frames_per_buffer: int
 
 
-class _BidiAudioBuffer:
-    """Buffer chunks of audio data between agent and PyAudio."""
-
-    _buffer: queue.Queue[bytes]
-    _data: bytearray
-
-    def __init__(self, size: int | None = None):
-        """Initialize buffer settings.
-
-        Args:
-            size: Size of the buffer (default: unbounded).
-        """
-        self._size = size or 0
-
-    def start(self) -> None:
-        """Setup buffer."""
-        self._buffer = queue.Queue(self._size)
-        self._data = bytearray()
-
-    def stop(self) -> None:
-        """Tear down buffer."""
-        if hasattr(self, "_data"):
-            self._data.clear()
-        if hasattr(self, "_buffer"):
-            # Unblock waited get calls by putting an empty chunk.
-            # Note, Queue.shutdown exists but is a 3.13+ only feature; we simulate shutdown with the below
-            # logic. A full queue already has data available to unblock a consumer, so no sentinel is needed.
-            try:
-                self._buffer.put_nowait(b"")
-            except queue.Full:
-                pass
-            self._buffer = queue.Queue(self._size)
-
-    def put(self, chunk: bytes) -> None:
-        """Put data chunk into buffer.
-
-        If full, removes the oldest chunk.
-        """
-        if self._buffer.full():
-            logger.debug("buffer is full | removing oldest chunk")
-            try:
-                self._buffer.get_nowait()
-            except queue.Empty:
-                logger.debug("buffer already empty")
-                pass
-
-        self._buffer.put_nowait(chunk)
-
-    def get(self, byte_count: int | None = None) -> bytes:
-        """Get the number of bytes specified from the buffer.
-
-        Args:
-            byte_count: Number of bytes to get from buffer.
-
-                - If the number of bytes specified is not available, the return is padded with silence.
-                - If the number of bytes is not specified, get the first chunk put in the buffer.
-
-        Returns:
-            Specified number of bytes.
-        """
-        if not byte_count:
-            self._data.extend(self._buffer.get())
-            byte_count = len(self._data)
-
-        while len(self._data) < byte_count:
-            try:
-                self._data.extend(self._buffer.get_nowait())
-            except queue.Empty:
-                break
-
-        padding_bytes = b"\x00" * max(byte_count - len(self._data), 0)
-        self._data.extend(padding_bytes)
-
-        data = self._data[:byte_count]
-        del self._data[:byte_count]
-
-        return bytes(data)
-
-    def clear(self) -> None:
-        """Clear the buffer."""
-        self._data.clear()
-        while True:
-            try:
-                self._buffer.get_nowait()
-            except queue.Empty:
-                break
-
-
 class _BidiAudioInput(BidiInput):
     """Handle audio input from user.
 
@@ -171,7 +83,7 @@ class _BidiAudioInput(BidiInput):
         self,
         config: BidiAudioIOConfig,
         *,
-        audio_processor: "_BidiAudioProcessor | None",
+        audio_processor: "AudioProcessor | None",
     ) -> None:
         """Initialize input settings.
 
@@ -184,7 +96,7 @@ class _BidiAudioInput(BidiInput):
         self._frames_per_buffer = config.get("input_frames_per_buffer", _BidiAudioInput._FRAMES_PER_BUFFER)
 
         self._audio_processor = audio_processor
-        self._buffer = _BidiAudioBuffer(self._buffer_size)
+        self._buffer = AudioBuffer(self._buffer_size)
 
     async def start(self, agent: "BidiAgent") -> None:
         """Start input stream.
@@ -291,7 +203,7 @@ class _BidiAudioOutput(BidiOutput):
         self,
         config: BidiAudioIOConfig,
         *,
-        audio_processor: "_BidiAudioProcessor | None",
+        audio_processor: "AudioProcessor | None",
     ) -> None:
         """Initialize output settings.
 
@@ -304,7 +216,7 @@ class _BidiAudioOutput(BidiOutput):
         self._frames_per_buffer = config.get("output_frames_per_buffer", _BidiAudioOutput._FRAMES_PER_BUFFER)
 
         self._audio_processor = audio_processor
-        self._buffer = _BidiAudioBuffer(self._buffer_size)
+        self._buffer = AudioBuffer(self._buffer_size)
         self._transcript_output = _BidiTranscriptOutput()
 
     async def start(self, agent: "BidiAgent") -> None:
@@ -454,7 +366,7 @@ class BidiAudioIO:
         ```
     """
 
-    _audio_processor: "_BidiAudioProcessor | None"
+    _audio_processor: "AudioProcessor | None"
     _audio_processor_config: BidiAudioProcessorConfig | None
 
     def __init__(self, **config: Unpack[BidiAudioIOConfig]) -> None:
@@ -500,14 +412,14 @@ class BidiAudioIO:
             return
 
         try:
-            from .._audio import _BidiAudioProcessor
+            from .._audio.processor import AudioProcessor
         except ImportError as error:
             raise ImportError(
                 f"{error}. Audio processing requires this optional dependency. "
                 "Install it with: pip install 'strands-agents[bidi-aec]'."
             ) from error
 
-        self._audio_processor = _BidiAudioProcessor(
+        self._audio_processor = AudioProcessor(
             echo_cancellation=self._audio_processor_config["echo_cancellation"],
             stream_delay_ms=self._audio_processor_config["stream_delay_ms"],
             far_buffer_size=self._config.get("input_buffer_size"),
