@@ -246,6 +246,7 @@ class SnapshotSessionManager(SessionManager):
         self._save_latest_on: SaveLatestStrategy = save_latest_on
         self._snapshot_trigger = snapshot_trigger
         self._agent_stash: Stash | None = None
+        self._stash_is_caller_managed: bool = False
 
     @property
     def _resolved_storage(self) -> Storage:
@@ -313,6 +314,7 @@ class SnapshotSessionManager(SessionManager):
         context_manager = agent.context_manager
         if context_manager is not None:
             self._agent_stash = context_manager.stash
+            self._stash_is_caller_managed = context_manager.stash is not None and not context_manager.owns_stash
         run_async(lambda: self._initialize_async(agent))
 
     def sync_agent(self, agent: "Agent", **kwargs: Any) -> None:
@@ -613,8 +615,14 @@ class SnapshotSessionManager(SessionManager):
         as the session manager; if the stash was configured with a separate storage, the
         fallback will not find its data.
 
+        A caller-managed stash (rooted at a storage view the caller scoped with ``namespace()``) is
+        never deleted.
+
         Storage errors are logged and swallowed so a stash failure never prevents session deletion.
         """
+        if self._stash_is_caller_managed:
+            logger.debug("session_id=<%s> | skipping stash deletion, stash is caller-managed", self.session_id)
+            return
         try:
             if self._agent_stash is not None:
                 await self._agent_stash.clear()

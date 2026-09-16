@@ -9,6 +9,7 @@ from strands._context_manager.strategies.offload import Offload
 from strands._context_manager.strategies.offload.truncate import EmergencyTruncateStrategy
 from strands.hooks import HookRegistry
 from strands.hooks.events import AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
+from strands.storage.in_memory_storage import InMemoryStorage
 from strands.types.content import ContentBlock, Message
 from strands.types.exceptions import ContextWindowOverflowException
 from strands.types.tools import ToolResult, ToolUse
@@ -482,3 +483,75 @@ class TestStashIsDurable:
     def test_false_before_init(self):
         context_manager = ContextManager()
         assert context_manager.stash_is_durable is False
+
+
+class TestStashRoot:
+    """Tests for resolving the stash root from the configured storage."""
+
+    @pytest.mark.asyncio
+    async def test_caller_scoped_storage_is_exact_root(self, mock_agent):
+        storage = InMemoryStorage()
+        context_manager = ContextManager(stash={"storage": storage.namespace("team")})
+        context_manager.init_agent(mock_agent)
+        await context_manager.stash.store("tool-1", 0, b"{}")
+
+        assert await storage.list("") == ["team/tool-1_0"]
+        assert context_manager.owns_stash is False
+
+    @pytest.mark.asyncio
+    async def test_unscoped_storage_uses_per_agent_root(self, mock_agent):
+        mock_agent.session_id = "s1"
+        storage = InMemoryStorage()
+        context_manager = ContextManager(stash={"storage": storage})
+        context_manager.init_agent(mock_agent)
+        await context_manager.stash.store("tool-1", 0, b"{}")
+
+        assert await storage.list("") == ["context/s1/scopes/agent/test-agent/tool-1_0"]
+        assert context_manager.owns_stash is True
+
+    @pytest.mark.asyncio
+    async def test_scoped_agent_storage_uses_per_agent_root(self, mock_agent):
+        mock_agent.session_id = "s1"
+        storage = InMemoryStorage()
+        mock_agent.storage = storage.namespace("tenant")
+        context_manager = ContextManager()
+        context_manager.init_agent(mock_agent)
+        await context_manager.stash.store("tool-1", 0, b"{}")
+
+        assert await storage.list("") == ["tenant/context/s1/scopes/agent/test-agent/tool-1_0"]
+        assert context_manager.owns_stash is True
+
+    def test_owns_stash_false_when_stash_disabled(self, mock_agent):
+        context_manager = ContextManager(stash=False)
+        context_manager.init_agent(mock_agent)
+
+        assert context_manager.owns_stash is False
+
+    @pytest.mark.asyncio
+    async def test_agents_in_different_sessions_sharing_a_view_retrieve_each_others_references(self):
+        storage = InMemoryStorage()
+        context_managers = []
+        agents = []
+        for session_id, agent_id in (("s1", "researcher"), ("s2", "writer")):
+            agent = unittest.mock.MagicMock()
+            agent.session_id = session_id
+            agent.agent_id = agent_id
+            agent.hooks = HookRegistry()
+            context_manager = ContextManager(stash={"storage": storage.namespace("team")})
+            context_manager.init_agent(agent)
+            agents.append(agent)
+            context_managers.append(context_manager)
+
+        researcher = agents[0]
+        block = ContentBlock(toolResult=ToolResult(toolUseId="tu-1", status="success", content=[{"text": "findings"}]))
+        event = MessageAddedEvent(agent=researcher, message=Message(role="user", content=[block]))
+        await researcher.hooks.invoke_callbacks_async(event)
+
+        retrieval_tool = context_managers[1]._tools[0]
+        tool_use = ToolUse(toolUseId="tu-2", name="retrieve_context", input={"reference": "tu-1_0"})
+        events = [event async for event in retrieval_tool.stream(tool_use, {})]
+        tool_result = events[-1].tool_result
+
+        assert tool_result["status"] == "success"
+        assert "findings" in tool_result["content"][0]["text"]
+        assert await storage.list("") == ["team/tu-1_0"]

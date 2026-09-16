@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Literal
 from ..hooks.events import AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
 from ..plugins.plugin import Plugin
 from ..storage.in_memory_storage import InMemoryStorage
-from ..storage.storage import _EPHEMERAL
+from ..storage.storage import _NAMESPACED
 from ..types.exceptions import ContextWindowOverflowException
 from .presets import _resolve_strategies
 from .retrieval_tool import _create_retrieval_tool, _track_retrieval_tool_use_ids
@@ -74,7 +74,8 @@ class ContextManager(Plugin):
             strategies: Ordered pipeline of context reduction strategies.
                 Accepts concrete strategies and/or preset name strings.
             stash: L1 stash configuration. Omit or True for defaults (InMemoryStorage);
-                False to disable; dict for custom storage/options.
+                False to disable; dict for custom storage/options. See :class:`StashConfig` for
+                sharing a stash between agents through a caller-scoped storage view.
         """
         user_strategies: list[ContextStrategy]
         if strategies is not None:
@@ -95,8 +96,10 @@ class ContextManager(Plugin):
             stash_obj.get("retrieval_tool", True) if stash_obj else True
         )
 
+        self._stash_storage_is_caller_scoped: bool = (
+            getattr(self._stash_explicit_storage, "_namespaced", None) is _NAMESPACED
+        )
         self._stash: Stash | None = None
-        self._stash_is_durable: bool = False
         self._retrieval_tool_use_ids: set[str] = set()
         self._backfill_done: bool = False
 
@@ -113,7 +116,16 @@ class ContextManager(Plugin):
 
         When True, stash data does not need to be embedded in session snapshots.
         """
-        return self._stash_is_durable
+        return self._stash is not None and self._stash.is_durable
+
+    @property
+    def owns_stash(self) -> bool:
+        """Whether this ContextManager created the stash and manages its lifecycle.
+
+        False when the stash storage is a caller-scoped view (from ``storage.namespace(...)``). The
+        caller manages that stash, so session managers must not delete its data.
+        """
+        return self._stash is not None and not self._stash_storage_is_caller_scoped
 
     @staticmethod
     def from_strategy(
@@ -190,10 +202,7 @@ class ContextManager(Plugin):
 
     def init_agent(self, agent: Agent) -> None:
         """Register strategy hooks for proactive compression and overflow recovery."""
-        if not self._stash_disabled:
-            storage = self._stash_explicit_storage or getattr(agent, "storage", None) or InMemoryStorage()
-            self._stash_is_durable = getattr(storage, "_ephemeral", None) is not _EPHEMERAL
-            self._stash = Stash(storage, agent.session_id, agent.agent_id)
+        self._stash = self._resolve_stash(agent)
 
         if self._stash is not None:
             stash = self._stash
@@ -245,6 +254,15 @@ class ContextManager(Plugin):
             event.retry = True
 
         agent.hooks.add_callback(AfterModelCallEvent, _on_after_model_call)
+
+    def _resolve_stash(self, agent: Agent) -> Stash | None:
+        """Build the stash, rooted at caller-scoped storage as-is or per-agent otherwise."""
+        if self._stash_disabled:
+            return None
+        if self._stash_explicit_storage is not None and self._stash_storage_is_caller_scoped:
+            return Stash._at_root(self._stash_explicit_storage)
+        storage = self._stash_explicit_storage or getattr(agent, "storage", None) or InMemoryStorage()
+        return Stash(storage, agent.session_id, agent.agent_id)
 
     async def _backfill_stash(self, agent: Agent) -> None:
         """Stash any messages already on the agent that were not seen by the hook.

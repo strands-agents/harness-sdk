@@ -955,6 +955,35 @@ class TestSnapshotStashIntegration:
 
         assert await shared_storage.list("context/s1/") == []
 
+    @pytest.mark.asyncio
+    async def test_delete_session_keeps_caller_managed_stash(self, temp_dir):
+        """delete_session never deletes a stash rooted at a caller-scoped storage view."""
+        context_manager = ContextManager(stash={"storage": InMemoryStorage().namespace("team")})
+        manager = SnapshotSessionManager("s1", storage=LocalFileStorage(f"{temp_dir}/session"))
+        agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
+        agent("go")
+        await context_manager.stash.load_snapshot({"ref-1": {"text": "shared"}})
+
+        await manager.delete_session()
+
+        assert await context_manager.stash.retrieve("ref-1") == {"text": "shared"}
+
+    @pytest.mark.asyncio
+    async def test_caller_managed_ephemeral_stash_round_trips_inline(self, storage):
+        """A caller-managed stash on ephemeral storage is inlined so a restore in a new process can retrieve it."""
+        context_manager = ContextManager(stash={"storage": InMemoryStorage().namespace("team")})
+        manager = SnapshotSessionManager("s1", storage=storage)
+        agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
+        agent("go")
+        await context_manager.stash.load_snapshot({"ref-1": {"text": "shared"}})
+        manager.sync_agent(agent)
+
+        restored_context_manager = ContextManager(stash={"storage": InMemoryStorage().namespace("team")})
+        manager2 = SnapshotSessionManager("s1", storage=storage)
+        Agent(model=_model("x"), session_manager=manager2, context_manager=restored_context_manager, agent_id="a1")
+
+        assert await restored_context_manager.stash.retrieve("ref-1") == {"text": "shared"}
+
     def test_no_context_manager_save_restore_works(self, storage):
         """Save/restore works normally when no ContextManager is present."""
         manager = SnapshotSessionManager("s1", storage=storage)
@@ -1010,13 +1039,16 @@ class TestSnapshotStashIntegration:
 
     @pytest.mark.asyncio
     async def test_ephemeral_detection_survives_namespacing(self, storage):
-        """An InMemoryStorage wrapped with .namespace() is still detected as ephemeral."""
-        from strands.storage.storage import _NamespacedStorage
-
-        namespaced = _NamespacedStorage(InMemoryStorage(), "tenant")
-        context_manager = ContextManager(stash={"storage": namespaced})
+        """An SDK-managed stash on a namespaced InMemoryStorage agent storage is still detected as ephemeral."""
+        context_manager = ContextManager()
         manager = SnapshotSessionManager("s1", storage=storage)
-        agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
+        agent = Agent(
+            model=_model("hi"),
+            session_manager=manager,
+            context_manager=context_manager,
+            storage=InMemoryStorage().namespace("tenant"),
+            agent_id="a1",
+        )
         agent("go")
 
         await context_manager.stash.load_snapshot({"ref-1": {"text": "wrapped ephemeral"}})

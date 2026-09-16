@@ -11,7 +11,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from ..storage.storage import _NamespacedStorage
+from ..storage.storage import _EPHEMERAL, _NamespacedStorage
 from ..types.content import ContentBlock
 
 if TYPE_CHECKING:
@@ -55,17 +55,38 @@ def _format_stash_refs(refs: list[str]) -> str:
 
 
 class Stash:
-    """Namespaced storage wrapper for persisting offloaded content blocks."""
+    """Namespaced storage wrapper for persisting offloaded content blocks.
+
+    The per-agent stash lives under ``context/<session_id>/scopes/agent/<agent_id>/``. A stash
+    rooted at a caller-scoped storage view (see :meth:`_at_root`) uses the view as its exact root,
+    so every agent given that view reads and writes the same keys across sessions.
+    """
 
     def __init__(self, storage: Storage, session_id: str, agent_id: str) -> None:
-        self._base_storage = storage
-        self._session_id = session_id
-        self._storage = _NamespacedStorage(storage, f"{STASH_PREFIX}/{session_id}/scopes/agent/{agent_id}")
+        """Initialize the per-agent stash under ``context/<session_id>/scopes/agent/<agent_id>/``."""
+        session_storage = _NamespacedStorage(storage, f"{STASH_PREFIX}/{session_id}")
+        self._base_storage: Storage = storage
+        self._session_storage: Storage = session_storage
+        self._storage: Storage = session_storage.namespace(f"scopes/agent/{agent_id}")
+
+    @classmethod
+    def _at_root(cls, storage: Storage) -> Stash:
+        """Create a stash rooted exactly at a caller-scoped storage view, with no prefix appended."""
+        stash = cls.__new__(cls)
+        stash._base_storage = storage
+        stash._session_storage = storage
+        stash._storage = storage
+        return stash
 
     @property
     def storage_type_name(self) -> str:
         """Name of the base storage class, for diagnostic logging."""
         return type(self._base_storage).__name__
+
+    @property
+    def is_durable(self) -> bool:
+        """Whether the backing storage survives process restarts."""
+        return getattr(self._base_storage, "_ephemeral", None) is not _EPHEMERAL
 
     async def store(self, block_id: str, block_index: int, data: bytes) -> str:
         """Store a content block and return its deterministic reference key."""
@@ -141,7 +162,7 @@ class Stash:
             await self._storage.write(key, _encode(data))
 
     async def clear(self) -> None:
-        """Delete all entries in this agent's stash namespace."""
+        """Delete all entries in this stash's namespace."""
         keys = await self.list()
         for key in keys:
             await self._storage.delete(key)
@@ -149,14 +170,13 @@ class Stash:
     async def clear_session(self) -> None:
         """Delete all stash data for this session across all agents.
 
-        Unlike :meth:`clear`, which is scoped to this agent's namespace, this
-        scans ``context/<session_id>/`` on the base storage to remove data from
-        every agent that wrote to the session.
+        For the per-agent stash this scans ``context/<session_id>/`` to remove data from every agent
+        that wrote to the session. For a stash rooted at a caller-scoped view it deletes everything
+        under the view.
         """
-        prefix = f"{STASH_PREFIX}/{self._session_id}/"
-        keys = await self._base_storage.list(prefix)
+        keys = await self._session_storage.list("")
         for key in keys:
-            await self._base_storage.delete(key)
+            await self._session_storage.delete(key)
 
     async def _store_tool_result(self, block: ContentBlock) -> None:
         """Store each sub-block of a tool result individually."""
