@@ -244,7 +244,8 @@ Most event properties are read-only to prevent unintended modifications. However
 
 - [`BeforeInvocationEvent`](@api/python/strands.hooks.events#BeforeInvocationEvent)
     - `messages` - Mutable. Inspect, modify, replace, or remove the normalized input
-      messages before they enter conversation history. See
+      messages before they enter conversation history. `None` when fired from
+      `structured_output`. See
       [Modify invocation messages](hooks.md#modify-invocation-messages).
 
 - [`AfterModelCallEvent`](@api/python/strands.hooks.events#AfterModelCallEvent)
