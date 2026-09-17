@@ -1167,10 +1167,7 @@ export class Agent implements LocalAgent, InvokableAgent {
           this._interruptState.resume(interruptResponses)
         }
 
-        const preparedArgs = continuations.combine(continuationEvent, currentArgs, (continuationArgs) =>
-          this._normalizeInput(continuationArgs)
-        )
-        const inputMessages = this._normalizeInput(preparedArgs)
+        const inputMessages = this._normalizeInput(currentArgs)
 
         // Hooks fire outside middleware — always, even on short-circuit.
         const beforeInvocationEvent = new BeforeInvocationEvent({
@@ -1305,14 +1302,22 @@ export class Agent implements LocalAgent, InvokableAgent {
         AgentStreamStage,
         context,
         async function* (ctx: AgentStreamContext): AsyncGenerator<AgentStreamEvent, AgentStreamResult, undefined> {
-          const streamArgs = continuations.combine(continuationEvent, ctx.args, (continuationArgs) =>
+          const combinedArgs = continuations.combine(continuationEvent, ctx.args, (continuationArgs) =>
             self._normalizeInput(continuationArgs)
           )
+          const continuationApplied = combinedArgs !== ctx.args
+          const middlewareReplacedArgs = ctx.args !== args
+          const streamArgs =
+            continuationApplied && !middlewareReplacedArgs
+              ? continuations.combine(continuationEvent, inputMessages, (continuationArgs) =>
+                  self._normalizeInput(continuationArgs)
+                )
+              : combinedArgs
           const result = yield* self._streamCore(
             streamArgs,
             ctx.options,
-            streamArgs === ctx.args ? undefined : continuationEvent,
-            ctx.args === args ? inputMessages : undefined
+            continuationApplied ? continuationEvent : undefined,
+            !continuationApplied && !middlewareReplacedArgs ? inputMessages : undefined
           )
           return { result }
         }
