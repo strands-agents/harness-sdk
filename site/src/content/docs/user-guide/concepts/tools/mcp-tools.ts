@@ -297,7 +297,7 @@ async function loadServersExample() {
         },
       },
     },
-    undefined, // No shared client defaults
+    undefined, // Skip optional client defaults
     { prefixWithServerName: true }
   )
 
