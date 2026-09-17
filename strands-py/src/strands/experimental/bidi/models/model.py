@@ -19,10 +19,10 @@ from collections.abc import AsyncIterable
 from typing import Any, NoReturn, Protocol, cast, runtime_checkable
 
 from ....models.model import Model
-from ....types._events import ToolResultEvent
 from ....types.content import Messages
-from ....types.tools import ToolSpec
-from ..types.events import BidiInputEvent, BidiOutputEvent
+from ....types.tools import ToolResultBlock, ToolSpec
+from ..types.content import BidiContentBlock, BidiContentDelta
+from ..types.events import BidiOutputEvent
 from .configs import AudioConfig, BidiConnectionConfig
 
 logger = logging.getLogger(__name__)
@@ -138,7 +138,7 @@ class BidiModel(Model, abc.ABC):
     # pragma: no cover
     async def send(
         self,
-        content: BidiInputEvent | ToolResultEvent,
+        content: BidiContentBlock | BidiContentDelta | ToolResultBlock,
     ) -> None:
         """Send content to the model over the active connection.
 
@@ -147,19 +147,19 @@ class BidiModel(Model, abc.ABC):
         tool execution results. Can be called multiple times during a conversation.
 
         Args:
-            content: The content to send. Must be one of:
-
-                - BidiTextInputEvent: Text message from the user
-                - BidiAudioInputEvent: Audio data for speech input
-                - BidiImageInputEvent: Image data for visual understanding
-                - ToolResultEvent: Result from a tool execution
+            content: A TextBlock, AudioDelta, ImageBlock, or ToolResultBlock.
 
         Example:
             ```
-            await model.send(BidiTextInputEvent(text="Hello", role="user"))
-            await model.send(BidiAudioInputEvent(audio=bytes, format="pcm", sample_rate=16000, channels=1))
-            await model.send(BidiImageInputEvent(image=bytes, mime_type="image/jpeg", encoding="raw"))
-            await model.send(ToolResultEvent(tool_result))
+            from strands.experimental.bidi.types import AudioDelta
+            from strands.types.content import TextBlock
+            from strands.types.media import ImageBlock
+            from strands.types.tools import ToolResultBlock
+
+            await model.send(TextBlock("Hello"))
+            await model.send(AudioDelta(format="pcm", source={"bytes": audio_bytes}))
+            await model.send(ImageBlock(format="jpeg", source={"bytes": image_bytes}))
+            await model.send(ToolResultBlock(tool_use_id="call-1", status="success", content=[{"text": "Done"}]))
             ```
         """
         pass

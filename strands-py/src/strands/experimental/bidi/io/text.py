@@ -5,11 +5,11 @@ from typing import Any
 
 from prompt_toolkit import PromptSession
 
+from ....types.content import TextBlock
 from ..types.events import (
     BidiConnectionCloseEvent,
     BidiInterruptionEvent,
     BidiOutputEvent,
-    BidiTextInputEvent,
     BidiTranscriptStreamEvent,
 )
 from ..types.io import BidiInput, BidiOutput
@@ -25,10 +25,10 @@ class _BidiTextInput(BidiInput):
         prompt = config.get("input_prompt", "")
         self._session: PromptSession = PromptSession(prompt)
 
-    async def __call__(self) -> BidiTextInputEvent:
+    async def __call__(self) -> TextBlock:
         """Read user input from stdin."""
         text = await self._session.prompt_async()
-        return BidiTextInputEvent(text.strip(), role="user")
+        return TextBlock(text.strip())
 
 
 class _BidiTextOutput(BidiOutput):

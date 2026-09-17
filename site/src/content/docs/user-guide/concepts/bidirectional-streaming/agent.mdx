@@ -15,7 +15,7 @@ The `BidiAgent` is a specialized agent designed for real-time bidirectional stre
 flowchart TB
     subgraph User
         A[Microphone] --> B[Audio Input]
-        C[Text Input] --> D[Input Events]
+        C[Text Input] --> D[Input Content]
         B --> D
     end
     
@@ -68,7 +68,8 @@ print(result.message)  # "The result is 1200"
 
 ```python
 import asyncio
-from strands.experimental.bidi import BidiAgent, BidiAudioIO
+from strands.experimental.bidi.agent import BidiAgent
+from strands.experimental.bidi.io import BidiAudioIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 model = BedrockNovaSonicModel()
@@ -195,7 +196,7 @@ User → send() → Model → receive() → Model Task → Event Queue → recei
 ### Basic Configuration
 
 ```python
-from strands.experimental.bidi import BidiAgent
+from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 model = BedrockNovaSonicModel()
@@ -444,4 +445,4 @@ The agent automatically cleans up background tasks, model connections, I/O chann
 - [Model Providers](models/bedrock.md) - Provider-specific configuration
 - [Observability](observability.md) - Trace sessions, responses, and interruptions
 - [Quickstart](quickstart.md) - Getting started guide
-- [Python API Reference](@api/python/strands.experimental.bidi.agent.agent) - Complete API documentation
+- [Python API Reference](@api/python/strands.experimental.bidi.agent) - Complete API documentation

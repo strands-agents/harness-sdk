@@ -87,7 +87,7 @@ from ..tools.registry import ToolRegistry
 from ..tools.structured_output._structured_output_context import StructuredOutputContext
 from ..tools.watcher import ToolWatcher
 from ..types._events import AgentResultEvent, EventLoopStopEvent, InitEventLoopEvent, ModelStreamChunkEvent, TypedEvent
-from ..types.agent import AgentInput, ConcurrentInvocationMode, Limits, LocalAgent
+from ..types.agent import _LIMITS_KEYS, AgentInput, ConcurrentInvocationMode, Limits, LocalAgent
 from ..types.content import (
     ContentBlock,
     Message,
@@ -826,7 +826,7 @@ class Agent(AgentBase, LocalAgent):
             ConcurrencyException: If another invocation is already in progress on this agent instance.
             IdempotencyAbortedError: If this call is a duplicate of an inflight ``idempotency_token``
                 whose primary invocation was aborted before producing a result.
-            TypeError: If a value in ``limits`` is not a positive integer.
+            TypeError: If ``limits`` contains an unrecognized key or a value that is not a positive integer.
             Exception: Any exceptions from the agent invocation will be propagated to the caller.
         """
         return run_async(
@@ -919,7 +919,7 @@ class Agent(AgentBase, LocalAgent):
             ConcurrencyException: If another invocation is already in progress on this agent instance.
             IdempotencyAbortedError: If this call is a duplicate of an inflight ``idempotency_token``
                 whose primary invocation was aborted before producing a result.
-            TypeError: If a value in ``limits`` is not a positive integer.
+            TypeError: If ``limits`` contains an unrecognized key or a value that is not a positive integer.
             Exception: Any exceptions from the agent invocation will be propagated to the caller.
         """
         events = self.stream_async(
@@ -1263,7 +1263,7 @@ class Agent(AgentBase, LocalAgent):
             ConcurrencyException: If another invocation is already in progress on this agent instance.
             IdempotencyAbortedError: If this call is a duplicate of an inflight ``idempotency_token``
                 whose primary invocation was aborted before producing a result.
-            TypeError: If a value in ``limits`` is not a positive integer.
+            TypeError: If ``limits`` contains an unrecognized key or a value that is not a positive integer.
             Exception: Any exceptions from the agent invocation will be propagated to the caller.
 
         Example:
@@ -1853,20 +1853,25 @@ class Agent(AgentBase, LocalAgent):
         Each cap, when set, must be a positive ``int``. Booleans are rejected because
         ``bool`` is a subclass of ``int`` in Python and ``True``/``False`` would
         otherwise pass through as ``1``/``0``, silently no-op'ing or tripping
-        immediately.
+        immediately. Unrecognized keys are rejected for the same reason: a mistyped
+        cap name would otherwise silently apply no limit at all.
 
         Args:
             limits: The caps to validate, or ``None`` to skip.
 
         Raises:
-            TypeError: If any value is not a positive int.
+            TypeError: If any key is not a recognized cap or any value is not a
+                positive int.
         """
         if not limits:
             return
-        for key in ("turns", "output_tokens", "total_tokens"):
-            if key not in limits:
-                continue
-            value = limits[key]
+        unrecognized_keys = sorted(key for key in limits if key not in _LIMITS_KEYS)
+        if unrecognized_keys:
+            raise TypeError(
+                f"limits keys {unrecognized_keys} are not recognized caps, "
+                f"expected one of {', '.join(repr(key) for key in _LIMITS_KEYS)}"
+            )
+        for key, value in limits.items():
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise TypeError(f"limits[{key!r}] must be a positive int, got {value!r}")
 

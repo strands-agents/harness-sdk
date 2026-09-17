@@ -15,8 +15,8 @@ from opentelemetry.trace import Span
 
 from ....telemetry.tracer import get_tracer
 from ....types._events import ToolInterruptEvent, ToolResultEvent, ToolResultMessageEvent, ToolUseStreamEvent
-from ....types.content import Message
-from ....types.tools import ToolResult, ToolUse
+from ....types.content import Message, TextBlock
+from ....types.tools import ToolResult, ToolResultBlock, ToolUse
 from .. import _telemetry
 from .._async import _TaskPool, stop_all
 from ..hooks.events import (
@@ -31,17 +31,16 @@ from ..hooks.events import (
     BidiResponseCompleteEvent as BidiResponseCompleteHookEvent,
 )
 from ..models import BidiModelTimeoutError, Restartable
+from ..types.content import BidiContentBlock, BidiContentDelta
 from ..types.events import (
     BidiAudioStreamEvent,
     BidiConnectionCloseEvent,
     BidiConnectionRestartEvent,
     BidiConnectionWarningEvent,
-    BidiInputEvent,
     BidiInterruptionEvent,
     BidiOutputEvent,
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
-    BidiTextInputEvent,
     BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
@@ -229,13 +228,13 @@ class _BidiAgentLoop:
 
             await self._agent.hooks.invoke_callbacks_async(BidiAgentStopEvent(agent=self._agent))
 
-    async def send(self, event: BidiInputEvent | ToolResultEvent) -> None:
-        """Send model event.
+    async def send(self, content: BidiContentBlock | BidiContentDelta | ToolResultBlock) -> None:
+        """Send user input or a tool result to the model.
 
-        Additionally, add text input to messages array.
+        Text input is also added to the conversation history.
 
         Args:
-            event: User input event or tool result.
+            content: User input or tool result to send.
 
         Raises:
             RuntimeError: If start has not been called.
@@ -247,17 +246,16 @@ class _BidiAgentLoop:
             logger.debug("waiting for model send signal")
             await self._send_gate.wait()
 
-        if isinstance(event, BidiTextInputEvent):
-            message: Message = {"role": event.role, "content": [{"text": event.text}]}
+        if isinstance(content, TextBlock):
+            message: Message = {"role": "user", "content": [{"text": content.text}]}
             await self._agent._append_messages(message)
-            if event.role == "user":
-                # A user text turn owes a response, same as a finished audio turn. Mark it so a
-                # proactive reconnect waits for the reply instead of swapping mid-turn; without
-                # this, a text-driven session always looks idle and the turn can be cut.
-                self._awaiting_response = True
-                self._update_turn_state()
+            # A user text turn owes a response, same as a finished audio turn. Mark it so a
+            # proactive reconnect waits for the reply instead of swapping mid-turn; without
+            # this, a text-driven session always looks idle and the turn can be cut.
+            self._awaiting_response = True
+            self._update_turn_state()
 
-        await self._agent.model.send(event)
+        await self._agent.model.send(content)
 
     async def receive(self) -> AsyncGenerator[BidiOutputEvent, None]:
         """Receive model and tool call events.
@@ -789,7 +787,13 @@ class _BidiAgentLoop:
                 return
 
             # Send result to model
-            await self.send(tool_result_event)
+            await self.send(
+                ToolResultBlock(
+                    tool_use_id=tool_result["toolUseId"],
+                    status=tool_result["status"],
+                    content=tool_result["content"],
+                )
+            )
 
         except Exception as error:
             tool_error = error

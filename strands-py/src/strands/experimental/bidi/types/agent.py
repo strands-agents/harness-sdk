@@ -5,6 +5,7 @@ This module defines the types used for BidiAgent.
 
 from typing import TypeAlias
 
-from .events import BidiAudioInputEvent, BidiImageInputEvent, BidiTextInputEvent
+from .content import BidiContentBlock, BidiContentBlockData, BidiContentDelta, BidiContentDeltaData
 
-BidiAgentInput: TypeAlias = str | BidiTextInputEvent | BidiAudioInputEvent | BidiImageInputEvent
+BidiAgentInput: TypeAlias = str | BidiContentBlock | BidiContentBlockData | BidiContentDelta | BidiContentDeltaData
+"""Input accepted by a bidirectional agent."""

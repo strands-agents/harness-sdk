@@ -22,6 +22,7 @@ import {
   VideoBlock,
   DocumentBlock,
 } from '../../index.js'
+import type { InvokeOptions } from '../../index.js'
 import { AgentPrinter } from '../printer.js'
 import {
   AfterInvocationEvent,
@@ -2366,6 +2367,18 @@ describe('normalizeToolUseNames', () => {
       ])('rejects %s with TypeError', async (_label, options) => {
         const agent = new Agent({ model: new MockMessageModel().addTurn({ type: 'textBlock', text: 'never reached' }) })
         await expect(agent.invoke('go', options)).rejects.toThrow(TypeError)
+      })
+    })
+
+    describe('when a limit key is unrecognized', () => {
+      // Guards #4354: a mistyped cap name is rejected instead of silently applying no limit.
+      it.each([
+        ['maxTurns', { limits: { maxTurns: 3 } }],
+        ['turn', { limits: { turn: 3 } }],
+        ['a typo alongside a valid cap', { limits: { turns: 3, maxTokens: 100 } }],
+      ])('rejects %s with TypeError', async (_label, options) => {
+        const agent = new Agent({ model: new MockMessageModel().addTurn({ type: 'textBlock', text: 'never reached' }) })
+        await expect(agent.invoke('go', options as InvokeOptions)).rejects.toThrow(/not recognized/)
       })
     })
 

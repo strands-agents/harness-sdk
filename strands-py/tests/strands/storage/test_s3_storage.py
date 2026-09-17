@@ -1,5 +1,7 @@
 """Tests for S3Storage."""
 
+from unittest.mock import AsyncMock
+
 import pytest
 
 from strands.storage import S3Storage
@@ -204,6 +206,22 @@ class TestS3Storage:
         # Verify continuation token was passed on second call
         second_call_kwargs = mock_client.list_objects_v2.call_args_list[1][1]
         assert second_call_kwargs["ContinuationToken"] == "token_1"
+
+
+    @pytest.mark.asyncio
+    async def test_write_indexes_with_search_strategy(self, s3_bucket):
+        strategy = AsyncMock()
+        storage = S3Storage("test-bucket", boto_session=s3_bucket, search_strategy=strategy)
+        await storage.write("key", b"data")
+        strategy.index.assert_awaited_once_with(storage, "key", b"data")
+
+    @pytest.mark.asyncio
+    async def test_search_delegates_to_strategy(self, s3_bucket):
+        strategy = AsyncMock()
+        strategy.search.return_value = []
+        storage = S3Storage("test-bucket", boto_session=s3_bucket, search_strategy=strategy)
+        await storage.search("query")
+        strategy.search.assert_awaited_once_with(storage, "query")
 
 
 class TestS3StorageWithPrefix:

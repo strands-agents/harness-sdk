@@ -2,17 +2,30 @@
 
 from typing import Any
 
-from .configs import AudioConfig, AudioStreamConfig, BidiConnectionConfig, BidiModelConfig
+from .configs import (
+    AudioConfig,
+    AudioStreamConfig,
+    BedrockNovaSonicAudioConfig,
+    BedrockNovaSonicAudioStreamConfig,
+    BidiConnectionConfig,
+    BidiModelConfig,
+    GoogleGeminiLiveAudioConfig,
+    GoogleGeminiLiveAudioStreamConfig,
+)
 from .model import AudioCapable, BidiModel, BidiModelTimeoutError, Restartable
 
 __all__ = [
     "AudioCapable",
     "AudioConfig",
     "AudioStreamConfig",
+    "BedrockNovaSonicAudioConfig",
+    "BedrockNovaSonicAudioStreamConfig",
     "BidiConnectionConfig",
     "BidiModel",
     "BidiModelConfig",
     "BidiModelTimeoutError",
+    "GoogleGeminiLiveAudioConfig",
+    "GoogleGeminiLiveAudioStreamConfig",
     "Restartable",
 ]
 

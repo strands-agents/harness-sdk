@@ -38,7 +38,8 @@ are produced automatically:
 ```python
 import asyncio
 
-from strands.experimental.bidi import BidiAgent, BidiConnectionStartEvent
+from strands.experimental.bidi.agent import BidiAgent
+from strands.experimental.bidi.types import BidiConnectionStartEvent
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 from strands.telemetry import StrandsTelemetry
 
@@ -288,7 +289,7 @@ Register a hook provider to accumulate session health counters:
 ```python
 import logging
 
-from strands.experimental.bidi.hooks.events import (
+from strands.experimental.bidi.hooks import (
     BidiAfterConnectionRestartEvent,
     BidiInterruptionEvent,
 )
@@ -330,11 +331,8 @@ Traces record aggregate session tokens. The per-modality breakdown is only avail
 the event stream:
 
 ```python
-from strands.experimental.bidi import (
-    BidiAgent,
-    BidiResponseCompleteEvent,
-    BidiUsageEvent,
-)
+from strands.experimental.bidi.agent import BidiAgent
+from strands.experimental.bidi.types import BidiResponseCompleteEvent, BidiUsageEvent
 
 
 async def track_session(agent: BidiAgent) -> None:
@@ -484,4 +482,4 @@ in the trace:
 - [Events](events.md) - Complete guide to bidirectional streaming events
 - [Hooks](hooks.md) - Extend agent functionality with hooks
 - [Interruptions](interruption.md) - How barge-in detection works
-- [Python API Reference](@api/python/strands.experimental.bidi.agent.agent) - Complete API documentation
+- [Python API Reference](@api/python/strands.experimental.bidi.agent) - Complete API documentation

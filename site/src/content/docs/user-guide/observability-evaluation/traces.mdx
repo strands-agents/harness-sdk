@@ -535,3 +535,16 @@ There are several ways to send traces, metrics, and logs to CloudWatch. Please v
 1. [AWS Distro for OpenTelemetry Collector](https://aws-otel.github.io/docs/getting-started/x-ray#configuring-the-aws-x-ray-exporter)
 2. [AWS CloudWatch OpenTelemetry User Guide](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch-OpenTelemetry-Sections.html)
   - Please ensure Transaction Search is enabled in CloudWatch.
+
+## Third-party observability backends
+
+Because Strands emits standard OpenTelemetry spans, you can point them at whichever observability backend you already use. Set the OTLP endpoint and headers (see [Environment Variables](#environment-variables)) to your provider, or follow the provider's own Strands guide:
+
+| Backend | Integration guide |
+|---------|-------------------|
+| Langfuse | [Observability for Strands Agents with Langfuse](https://langfuse.com/docs/integrations/strands-agents) |
+| Arize Phoenix | [Strands Agents Tracing](https://arize.com/docs/phoenix/integrations/python/strands-agents/strands-agents-tracing) |
+| Braintrust | [Strands Agent SDK](https://www.braintrust.dev/docs/integrations/sdk-integrations/strands-agent) |
+| LangSmith | [Trace Strands Agents applications](https://docs.langchain.com/langsmith/trace-with-strands-agents) |
+
+Any OpenTelemetry-compatible backend works the same way: Strands does not require a specific provider, so you keep your existing tracing setup when you adopt it.

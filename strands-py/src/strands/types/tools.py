@@ -119,6 +119,35 @@ class ToolResult(TypedDict):
     toolUseId: str
 
 
+class _ToolResultBlockData(TypedDict):
+    toolResult: ToolResult
+
+
+@dataclass
+class ToolResultBlock:
+    """Tool result content for a message.
+
+    Attributes:
+        tool_use_id: Identifier of the tool request that produced this result.
+        status: Whether the tool execution succeeded or failed.
+        content: Content returned by the tool.
+    """
+
+    tool_use_id: str
+    status: ToolResultStatus
+    content: list[ToolResultContent]
+
+    def to_dict(self) -> _ToolResultBlockData:
+        """Return the dictionary form of this block."""
+        return {
+            "toolResult": {
+                "toolUseId": self.tool_use_id,
+                "status": self.status,
+                "content": self.content,
+            }
+        }
+
+
 class ToolChoiceAuto(TypedDict):
     """Configuration for automatic tool selection.
 

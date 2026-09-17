@@ -3,8 +3,8 @@
 import pytest
 
 from strands import tool
-from strands.experimental.bidi.agent.agent import BidiAgent
-from strands.experimental.bidi.hooks.events import BidiAgentStopEvent
+from strands.experimental.bidi.agent import BidiAgent
+from strands.experimental.bidi.hooks import BidiAgentStopEvent
 from strands.hooks import AgentInitializedEvent, HookProvider
 
 from .hook_utils import HookEventCollector

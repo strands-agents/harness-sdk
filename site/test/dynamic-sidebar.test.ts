@@ -61,8 +61,8 @@ describe('buildPythonApiSidebar', () => {
 
   it('should create nested groups for deep module paths', () => {
     const docs: DocInfo[] = [
-      { id: 'docs/api/python/strands.experimental.bidi.types.events.mdx', title: 'strands.experimental.bidi.types.events' },
-      { id: 'docs/api/python/strands.experimental.bidi.types.io.mdx', title: 'strands.experimental.bidi.types.io' },
+      { id: 'docs/api/python/strands.experimental.bidi.types.mdx', title: 'strands.experimental.bidi.types' },
+      { id: 'docs/api/python/strands.experimental.bidi.models.mdx', title: 'strands.experimental.bidi.models' },
     ]
 
     const sidebar = buildPythonApiSidebar(docs, '')
@@ -72,18 +72,13 @@ describe('buildPythonApiSidebar', () => {
     expect(sidebar[0]?.type).toBe('group')
     expect(sidebar[0]?.label).toBe('Experimental')
 
-    // Navigate to bidi > types
     const experimental = sidebar[0] as Extract<SidebarEntry, { type: 'group' }>
     const bidi = experimental.entries[0] as Extract<SidebarEntry, { type: 'group' }>
     expect(bidi.label).toBe('Bidi')
 
-    const types = bidi.entries[0] as Extract<SidebarEntry, { type: 'group' }>
-    expect(types.label).toBe('Types')
-
-    // Should have events and io links
-    expect(types.entries).toHaveLength(2)
-    expect(types.entries.map((e) => e.label)).toContain('Events')
-    expect(types.entries.map((e) => e.label)).toContain('Io')
+    expect(bidi.entries).toHaveLength(2)
+    expect(bidi.entries.map((e) => e.label)).toContain('Models')
+    expect(bidi.entries.map((e) => e.label)).toContain('Types')
   })
 
   it('should mark current page as isCurrent', () => {

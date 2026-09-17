@@ -59,12 +59,11 @@ IO adapters are interchangeable. The agent, loop, and model layers are unaware o
 **Current developer experience** — local mic/speaker with PyAudio:
 
 ```python
-from strands.experimental.bidi import BidiAgent
-from strands.experimental.bidi.models.nova_sonic import BidiNovaSonicModel
-from strands.experimental.bidi.io.audio import BidiAudioIO
-from strands.experimental.bidi.io.text import BidiTextIO
+from strands.experimental.bidi.agent import BidiAgent
+from strands.experimental.bidi.io import BidiAudioIO, BidiTextIO
+from strands.experimental.bidi.models import BedrockNovaSonicModel
 
-agent = BidiAgent(model=BidiNovaSonicModel(), tools=[my_tool], system_prompt="You are a helpful assistant.")
+agent = BidiAgent(model=BedrockNovaSonicModel(), tools=[my_tool], system_prompt="You are a helpful assistant.")
 audio_io = BidiAudioIO()
 text_io = BidiTextIO()
 
@@ -334,13 +333,13 @@ class BidiIvsIO(BidiWebRtcIO):
 ### Minimal — Server
 
 ```python
-from strands.experimental.bidi import BidiAgent
-from strands.experimental.bidi.models.nova_sonic import BidiNovaSonicModel
-from strands.experimental.bidi.io.webrtc.ivs import BidiIvsIO
+from strands.experimental.bidi.agent import BidiAgent
+from strands.experimental.bidi.io import BidiIvsIO
+from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 # Configure model and IO independently
 agent = BidiAgent(
-    model=BidiNovaSonicModel(),
+    model=BedrockNovaSonicModel(),
     tools=[my_tool],
     system_prompt="You are a helpful assistant.",
 )
@@ -353,17 +352,17 @@ await agent.run(inputs=[ivs_io.input()], outputs=[ivs_io.output()])
 ### Swap Model — Same IO
 
 ```python
-from strands.experimental.bidi.models.openai_realtime import BidiOpenAIRealtimeModel
+from strands.experimental.bidi.models import OpenAIRealtimeModel
 
 # Same IVS IO works with any model — transport is decoupled from inference
-agent = BidiAgent(model=BidiOpenAIRealtimeModel(), tools=[...])
+agent = BidiAgent(model=OpenAIRealtimeModel(), tools=[...])
 await agent.run(inputs=[ivs_io.input()], outputs=[ivs_io.output()])
 ```
 
 ### Composable Outputs
 
 ```python
-from strands.experimental.bidi.io.text import BidiTextIO
+from strands.experimental.bidi.io import BidiTextIO
 
 # Multiple outputs receive the same events — useful for logging or multi-channel delivery
 text_io = BidiTextIO()
@@ -378,8 +377,8 @@ await agent.run(
 ```python
 import asyncio
 from fastapi import FastAPI
-from strands.experimental.bidi import BidiAgent
-from strands.experimental.bidi.io.webrtc.ivs import BidiIvsIO
+from strands.experimental.bidi.agent import BidiAgent
+from strands.experimental.bidi.io import BidiIvsIO
 
 app = FastAPI()
 

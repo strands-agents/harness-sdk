@@ -16,24 +16,23 @@ import unittest.mock
 import pytest
 from google.genai import types as genai_types
 
-from strands.experimental.bidi.agent import loop as loop_module
-from strands.experimental.bidi.models.google import GoogleGeminiLiveAudioConfig, GoogleGeminiLiveModel, _TurnState
-from strands.experimental.bidi.models.model import BidiModelTimeoutError
-from strands.experimental.bidi.types.events import (
-    BidiAudioInputEvent,
+import strands.experimental.bidi.agent.loop as loop_module
+from strands.experimental.bidi.models import BidiModelTimeoutError, GoogleGeminiLiveAudioConfig, GoogleGeminiLiveModel
+from strands.experimental.bidi.models.google import _TurnState
+from strands.experimental.bidi.types import (
+    AudioDelta,
     BidiAudioStreamEvent,
     BidiConnectionStartEvent,
-    BidiImageInputEvent,
     BidiInterruptionEvent,
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
-    BidiTextInputEvent,
     BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
 )
-from strands.types._events import ToolResultEvent
-from strands.types.tools import ToolResult
+from strands.types.content import TextBlock
+from strands.types.media import ImageBlock
+from strands.types.tools import ToolResultBlock
 
 
 @pytest.fixture
@@ -511,8 +510,8 @@ async def test_proactive_reconnect_end_to_end_through_agent(mock_genai_client, m
     through Gemini's own restart() before the deadline, resuming the session via its handle. No
     live network calls are made.
     """
-    from strands.experimental.bidi.agent.agent import BidiAgent
-    from strands.experimental.bidi.types.events import BidiConnectionWarningEvent
+    from strands.experimental.bidi.agent import BidiAgent
+    from strands.experimental.bidi.types import BidiConnectionWarningEvent
 
     mock_client, mock_live_session, _ = mock_genai_client
 
@@ -653,40 +652,23 @@ async def test_send_all_content_types(mock_genai_client, model):
     await model.start()
 
     # Test text input — uses send_realtime_input for mid-session text
-    text_input = BidiTextInputEvent(text="Hello", role="user")
-    await model.send(text_input)
+    await model.send(TextBlock("Hello"))
     mock_live_session.send_realtime_input.assert_called_once()
     call_args = mock_live_session.send_realtime_input.call_args
     assert call_args.kwargs.get("text") == "Hello"
 
-    # Test audio input (base64 encoded)
+    # Test audio input
     mock_live_session.send_realtime_input.reset_mock()
-    audio_b64 = base64.b64encode(b"audio_bytes").decode("utf-8")
-    audio_input = BidiAudioInputEvent(
-        audio=audio_b64,
-        format="pcm",
-        sample_rate=16000,
-        channels=1,
-    )
-    await model.send(audio_input)
+    await model.send(AudioDelta(format="pcm", source={"bytes": b"audio_bytes"}))
     mock_live_session.send_realtime_input.assert_called_once()
 
-    # Test image input (base64 encoded, no encoding parameter)
-    image_b64 = base64.b64encode(b"image_bytes").decode("utf-8")
-    image_input = BidiImageInputEvent(
-        image=image_b64,
-        mime_type="image/jpeg",
-    )
-    await model.send(image_input)
+    # Test image input
+    await model.send(ImageBlock(format="jpeg", source={"bytes": b"image_bytes"}))
     mock_live_session.send.assert_called_once()
 
     # Test tool result
-    tool_result: ToolResult = {
-        "toolUseId": "tool-123",
-        "status": "success",
-        "content": [{"text": "Result: 42"}],
-    }
-    await model.send(ToolResultEvent(tool_result))
+    tool_result = ToolResultBlock(tool_use_id="tool-123", status="success", content=[{"text": "Result: 42"}])
+    await model.send(tool_result)
     mock_live_session.send_tool_response.assert_called_once()
 
     await model.stop()
@@ -698,9 +680,8 @@ async def test_send_edge_cases(mock_genai_client, model):
     _, mock_live_session, _ = mock_genai_client
 
     # Test send when inactive
-    text_input = BidiTextInputEvent(text="Hello", role="user")
     with pytest.raises(RuntimeError, match=r"call start before sending"):
-        await model.send(text_input)
+        await model.send(TextBlock("Hello"))
     mock_live_session.send_realtime_input.assert_not_called()
 
     # Test unknown content type
@@ -1305,9 +1286,7 @@ async def test_send_audio_uses_resolved_input_rate(mock_genai_client, api_key, r
     _, session, _ = mock_genai_client
     model = GoogleGeminiLiveModel(client_args={"api_key": api_key}, audio={"input": {"sample_rate": rate}})
     await model.start()
-    await model.send(
-        BidiAudioInputEvent(audio=base64.b64encode(b"audio").decode(), format="pcm", sample_rate=rate, channels=1)
-    )
+    await model.send(AudioDelta(format="pcm", source={"bytes": b"audio"}))
     session.send_realtime_input.assert_awaited_once_with(
         audio=genai_types.Blob(data=b"audio", mime_type=f"audio/pcm;rate={rate}")
     )
@@ -1570,13 +1549,9 @@ async def test_tool_result_single_content_unwrapped(mock_genai_client, model):
     _, mock_live_session, _ = mock_genai_client
     await model.start()
 
-    tool_result: ToolResult = {
-        "toolUseId": "tool-123",
-        "status": "success",
-        "content": [{"text": "Single result"}],
-    }
+    tool_result = ToolResultBlock(tool_use_id="tool-123", status="success", content=[{"text": "Single result"}])
 
-    await model.send(ToolResultEvent(tool_result))
+    await model.send(tool_result)
 
     # Verify the tool response was sent
     mock_live_session.send_tool_response.assert_called_once()
@@ -1598,13 +1573,11 @@ async def test_tool_result_multiple_content_as_array(mock_genai_client, model):
     _, mock_live_session, _ = mock_genai_client
     await model.start()
 
-    tool_result: ToolResult = {
-        "toolUseId": "tool-456",
-        "status": "success",
-        "content": [{"text": "Part 1"}, {"json": {"data": "value"}}],
-    }
+    tool_result = ToolResultBlock(
+        tool_use_id="tool-456", status="success", content=[{"text": "Part 1"}, {"json": {"data": "value"}}]
+    )
 
-    await model.send(ToolResultEvent(tool_result))
+    await model.send(tool_result)
 
     # Verify the tool response was sent
     mock_live_session.send_tool_response.assert_called_once()
@@ -1631,33 +1604,33 @@ async def test_tool_result_unsupported_content_type(mock_genai_client, model):
     await model.start()
 
     # Test with image content (unsupported)
-    tool_result_image: ToolResult = {
-        "toolUseId": "tool-999",
-        "status": "success",
-        "content": [{"image": {"format": "jpeg", "source": {"bytes": b"image_data"}}}],
-    }
+    tool_result_image = ToolResultBlock(
+        tool_use_id="tool-999",
+        status="success",
+        content=[{"image": {"format": "jpeg", "source": {"bytes": b"image_data"}}}],
+    )
 
     with pytest.raises(ValueError, match=r"Content type not supported by Gemini Live API"):
-        await model.send(ToolResultEvent(tool_result_image))
+        await model.send(tool_result_image)
 
     # Test with document content (unsupported)
-    tool_result_doc: ToolResult = {
-        "toolUseId": "tool-888",
-        "status": "success",
-        "content": [{"document": {"format": "pdf", "source": {"bytes": b"doc_data"}}}],
-    }
+    tool_result_doc = ToolResultBlock(
+        tool_use_id="tool-888",
+        status="success",
+        content=[{"document": {"format": "pdf", "source": {"bytes": b"doc_data"}}}],
+    )
 
     with pytest.raises(ValueError, match=r"Content type not supported by Gemini Live API"):
-        await model.send(ToolResultEvent(tool_result_doc))
+        await model.send(tool_result_doc)
 
     # Test with mixed content (one unsupported)
-    tool_result_mixed: ToolResult = {
-        "toolUseId": "tool-777",
-        "status": "success",
-        "content": [{"text": "Valid text"}, {"image": {"format": "jpeg", "source": {"bytes": b"image_data"}}}],
-    }
+    tool_result_mixed = ToolResultBlock(
+        tool_use_id="tool-777",
+        status="success",
+        content=[{"text": "Valid text"}, {"image": {"format": "jpeg", "source": {"bytes": b"image_data"}}}],
+    )
 
     with pytest.raises(ValueError, match=r"Content type not supported by Gemini Live API"):
-        await model.send(ToolResultEvent(tool_result_mixed))
+        await model.send(tool_result_mixed)
 
     await model.stop()

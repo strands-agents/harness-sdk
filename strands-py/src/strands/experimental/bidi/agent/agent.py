@@ -17,7 +17,7 @@ import asyncio
 import logging
 import uuid
 from collections.abc import AsyncGenerator
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
 from .... import _identifier
 from ...._middleware import MiddlewareRegistry
@@ -32,19 +32,22 @@ from ....tools.registry import ToolRegistry
 from ....tools.tool_provider import ToolProvider
 from ....tools.watcher import ToolWatcher
 from ....types.agent import LocalAgent
-from ....types.content import Message, Messages, SystemContentBlock, _ensure_tracking_id, split_system_prompt
+from ....types.content import (
+    Message,
+    Messages,
+    SystemContentBlock,
+    TextBlock,
+    _ensure_tracking_id,
+    split_system_prompt,
+)
+from ....types.media import ImageBlock
 from ....types.tools import AgentTool
 from .._async import _TaskGroup, stop_all
 from ..models.model import BidiModel
 from ..types.agent import BidiAgentInput
-from ..types.events import (
-    BidiAudioInputEvent,
-    BidiImageInputEvent,
-    BidiInputEvent,
-    BidiOutputEvent,
-    BidiTextInputEvent,
-)
+from ..types.events import BidiOutputEvent
 from ..types.io import BidiInput, BidiOutput
+from ..types.media import AudioDelta
 from .loop import _BidiAgentLoop
 
 if TYPE_CHECKING:
@@ -302,56 +305,55 @@ class BidiAgent(LocalAgent):
         await self._loop.start(invocation_state)
         self._started = True
 
-    async def send(self, input_data: BidiAgentInput | dict[str, Any]) -> None:
-        """Send input to the model (text, audio, image, or event dict).
+    async def send(self, input_data: BidiAgentInput) -> None:
+        """Send content to the model.
 
-        Unified method for sending text, audio, and image input to the model during
-        an active conversation session. Accepts TypedEvent instances or plain dicts
-        (e.g., from WebSocket clients) which are automatically reconstructed.
+        A string is shorthand for a text block. Image blocks contain complete
+        images. Audio deltas append samples to the live input stream without
+        explicitly ending the user's turn.
 
         Args:
             input_data: Can be:
 
                 - str: Text message from user
-                - BidiInputEvent: TypedEvent
-                - dict: Event dictionary (will be reconstructed to TypedEvent)
+                - TextBlock, AudioDelta, or ImageBlock: Text, streaming audio, or image input
+                - BidiContentBlockData: A dictionary containing one text or image key
+                - BidiContentDeltaData: A dictionary containing one audio_delta key
 
         Raises:
             RuntimeError: If start has not been called.
-            ValueError: If invalid input type.
+            TypeError: If the input has an unsupported type or invalid input arguments.
+            ValueError: If the input dictionary does not contain exactly one text, audio_delta, or image key.
 
         Example:
             await agent.send("Hello")
-            await agent.send(BidiAudioInputEvent(audio="base64...", format="pcm", ...))
-            await agent.send({"type": "bidirectional_text_input", "text": "Hello", "role": "user"})
+            await agent.send(AudioDelta(format="pcm", source={"bytes": audio_bytes}))
+            await agent.send({"audio_delta": {"format": "pcm", "source": {"bytes": audio_bytes}}})
         """
         if not self._started:
             raise RuntimeError("agent not started | call start before sending")
 
-        input_event: BidiInputEvent
-
         if isinstance(input_data, str):
-            input_event = BidiTextInputEvent(text=input_data)
-
-        elif isinstance(input_data, BidiInputEvent):
-            input_event = input_data
-
-        elif isinstance(input_data, dict) and "type" in input_data:
-            input_type = input_data["type"]
-            input_data = {key: value for key, value in input_data.items() if key != "type"}
-            if input_type == "bidi_text_input":
-                input_event = BidiTextInputEvent(**input_data)
-            elif input_type == "bidi_audio_input":
-                input_event = BidiAudioInputEvent(**input_data)
-            elif input_type == "bidi_image_input":
-                input_event = BidiImageInputEvent(**input_data)
+            input_data = TextBlock(input_data)
+        elif isinstance(input_data, dict):
+            if len(input_data) != 1:
+                raise ValueError("invalid input | must contain exactly one of text, audio_delta, or image")
+            content_data = cast(dict[str, Any], input_data)
+            if "text" in content_data:
+                input_data = TextBlock(content_data["text"])
+            elif "audio_delta" in content_data:
+                input_data = AudioDelta(**content_data["audio_delta"])
+            elif "image" in content_data:
+                input_data = ImageBlock(**content_data["image"])
             else:
-                raise ValueError(f"input_type=<{input_type}> | input type not supported")
+                raise ValueError("invalid input | must contain exactly one of text, audio_delta, or image")
+        elif not isinstance(input_data, (TextBlock, AudioDelta, ImageBlock)):
+            raise TypeError(
+                "invalid input | must be str, TextBlock, AudioDelta, ImageBlock, "
+                "BidiContentBlockData, or BidiContentDeltaData"
+            )
 
-        else:
-            raise ValueError("invalid input | must be str, BidiInputEvent, or event dict")
-
-        await self._loop.send(input_event)
+        await self._loop.send(input_data)
 
     async def receive(self) -> AsyncGenerator[BidiOutputEvent, None]:
         """Receive events from the model including audio, text, and tool calls.

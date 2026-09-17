@@ -16,26 +16,24 @@ import unittest.mock
 
 import pytest
 
-from strands.experimental.bidi.models.model import BidiModelTimeoutError
+from strands.experimental.bidi.models import BidiModelTimeoutError, OpenAIRealtimeModel
 from strands.experimental.bidi.models.openai import (
     _RESTART_INSTRUCTION,
     OPENAI_MAX_TIMEOUT_S,
     OPENAI_PROACTIVE_RECONNECT_MARGIN_S,
-    OpenAIRealtimeModel,
 )
-from strands.experimental.bidi.types.events import (
-    BidiAudioInputEvent,
+from strands.experimental.bidi.types import (
+    AudioDelta,
     BidiAudioStreamEvent,
     BidiConnectionStartEvent,
-    BidiImageInputEvent,
     BidiInterruptionEvent,
     BidiResponseCompleteEvent,
-    BidiTextInputEvent,
     BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
 )
-from strands.types._events import ToolResultEvent
-from strands.types.tools import ToolResult
+from strands.types.content import TextBlock
+from strands.types.media import ImageBlock
+from strands.types.tools import ToolResultBlock
 
 
 @pytest.fixture
@@ -379,8 +377,7 @@ async def test_send_all_content_types(mock_websockets_connect, model):
     await model.start()
 
     # Test text input
-    text_input = BidiTextInputEvent(text="Hello", role="user")
-    await model.send(text_input)
+    await model.send(TextBlock("Hello"))
     calls = mock_ws.send.call_args_list
     messages = [json.loads(call[0][0]) for call in calls]
     item_create = [m for m in messages if m.get("type") == "conversation.item.create"]
@@ -388,15 +385,9 @@ async def test_send_all_content_types(mock_websockets_connect, model):
     assert len(item_create) > 0
     assert len(response_create) > 0
 
-    # Test audio input (base64 encoded)
+    # Test audio input
     audio_b64 = base64.b64encode(b"audio_bytes").decode("utf-8")
-    audio_input = BidiAudioInputEvent(
-        audio=audio_b64,
-        format="pcm",
-        sample_rate=24000,
-        channels=1,
-    )
-    await model.send(audio_input)
+    await model.send(AudioDelta(format="pcm", source={"bytes": b"audio_bytes"}))
     calls = mock_ws.send.call_args_list
     messages = [json.loads(call[0][0]) for call in calls]
     audio_append = [m for m in messages if m.get("type") == "input_audio_buffer.append"]
@@ -406,12 +397,8 @@ async def test_send_all_content_types(mock_websockets_connect, model):
     assert audio_append[0]["audio"] == audio_b64
 
     # Test tool result with text content
-    tool_result: ToolResult = {
-        "toolUseId": "tool-123",
-        "status": "success",
-        "content": [{"text": "Result: 42"}],
-    }
-    await model.send(ToolResultEvent(tool_result))
+    tool_result = ToolResultBlock(tool_use_id="tool-123", status="success", content=[{"text": "Result: 42"}])
+    await model.send(tool_result)
     calls = mock_ws.send.call_args_list
     messages = [json.loads(call[0][0]) for call in calls]
     item_create = [m for m in messages if m.get("type") == "conversation.item.create"]
@@ -424,12 +411,10 @@ async def test_send_all_content_types(mock_websockets_connect, model):
     assert output == [{"text": "Result: 42"}]
 
     # Test tool result with JSON content
-    tool_result_json: ToolResult = {
-        "toolUseId": "tool-456",
-        "status": "success",
-        "content": [{"json": {"result": 42, "status": "ok"}}],
-    }
-    await model.send(ToolResultEvent(tool_result_json))
+    tool_result_json = ToolResultBlock(
+        tool_use_id="tool-456", status="success", content=[{"json": {"result": 42, "status": "ok"}}]
+    )
+    await model.send(tool_result_json)
     calls = mock_ws.send.call_args_list
     messages = [json.loads(call[0][0]) for call in calls]
     item_create = [m for m in messages if m.get("type") == "conversation.item.create"]
@@ -441,12 +426,12 @@ async def test_send_all_content_types(mock_websockets_connect, model):
     assert output == [{"json": {"result": 42, "status": "ok"}}]
 
     # Test tool result with multiple content blocks
-    tool_result_multi: ToolResult = {
-        "toolUseId": "tool-789",
-        "status": "success",
-        "content": [{"text": "Part 1"}, {"json": {"data": "value"}}, {"text": "Part 2"}],
-    }
-    await model.send(ToolResultEvent(tool_result_multi))
+    tool_result_multi = ToolResultBlock(
+        tool_use_id="tool-789",
+        status="success",
+        content=[{"text": "Part 1"}, {"json": {"data": "value"}}, {"text": "Part 2"}],
+    )
+    await model.send(tool_result_multi)
     calls = mock_ws.send.call_args_list
     messages = [json.loads(call[0][0]) for call in calls]
     item_create = [m for m in messages if m.get("type") == "conversation.item.create"]
@@ -458,22 +443,22 @@ async def test_send_all_content_types(mock_websockets_connect, model):
     assert output == [{"text": "Part 1"}, {"json": {"data": "value"}}, {"text": "Part 2"}]
 
     # Test tool result with image content (should raise error)
-    tool_result_image: ToolResult = {
-        "toolUseId": "tool-999",
-        "status": "success",
-        "content": [{"image": {"format": "jpeg", "source": {"bytes": b"image_data"}}}],
-    }
+    tool_result_image = ToolResultBlock(
+        tool_use_id="tool-999",
+        status="success",
+        content=[{"image": {"format": "jpeg", "source": {"bytes": b"image_data"}}}],
+    )
     with pytest.raises(ValueError, match=r"Content type not supported by OpenAI Realtime API"):
-        await model.send(ToolResultEvent(tool_result_image))
+        await model.send(tool_result_image)
 
     # Test tool result with document content (should raise error)
-    tool_result_doc: ToolResult = {
-        "toolUseId": "tool-888",
-        "status": "success",
-        "content": [{"document": {"format": "pdf", "source": {"bytes": b"doc_data"}}}],
-    }
+    tool_result_doc = ToolResultBlock(
+        tool_use_id="tool-888",
+        status="success",
+        content=[{"document": {"format": "pdf", "source": {"bytes": b"doc_data"}}}],
+    )
     with pytest.raises(ValueError, match=r"Content type not supported by OpenAI Realtime API"):
-        await model.send(ToolResultEvent(tool_result_doc))
+        await model.send(tool_result_doc)
 
     await model.stop()
 
@@ -484,20 +469,15 @@ async def test_send_edge_cases(mock_websockets_connect, model):
     _, mock_ws = mock_websockets_connect
 
     # Test send when inactive
-    text_input = BidiTextInputEvent(text="Hello", role="user")
     with pytest.raises(RuntimeError, match=r"call start before sending"):
-        await model.send(text_input)
+        await model.send(TextBlock("Hello"))
     mock_ws.send.assert_not_called()
 
     # Test image input (sent as input_image content block on user message)
     await model.start()
     mock_ws.send.reset_mock()
     image_b64 = base64.b64encode(b"image_bytes").decode("utf-8")
-    image_input = BidiImageInputEvent(
-        image=image_b64,
-        mime_type="image/jpeg",
-    )
-    await model.send(image_input)
+    await model.send(ImageBlock(format="jpeg", source={"bytes": b"image_bytes"}))
 
     # Verify exactly one event was sent: a conversation.item.create with input_image
     image_calls = [json.loads(call[0][0]) for call in mock_ws.send.call_args_list]
@@ -939,13 +919,9 @@ async def test_tool_result_single_text_content(mock_websockets_connect, api_key)
     model = OpenAIRealtimeModel(api_key=api_key)
     await model.start()
 
-    tool_result: ToolResult = {
-        "toolUseId": "call-123",
-        "status": "success",
-        "content": [{"text": "Simple text result"}],
-    }
+    tool_result = ToolResultBlock(tool_use_id="call-123", status="success", content=[{"text": "Simple text result"}])
 
-    await model.send(ToolResultEvent(tool_result))
+    await model.send(tool_result)
 
     # Verify the sent event
     calls = mock_ws.send.call_args_list
@@ -970,13 +946,11 @@ async def test_tool_result_single_json_content(mock_websockets_connect, api_key)
     model = OpenAIRealtimeModel(api_key=api_key)
     await model.start()
 
-    tool_result: ToolResult = {
-        "toolUseId": "call-456",
-        "status": "success",
-        "content": [{"json": {"temperature": 72, "condition": "sunny"}}],
-    }
+    tool_result = ToolResultBlock(
+        tool_use_id="call-456", status="success", content=[{"json": {"temperature": 72, "condition": "sunny"}}]
+    )
 
-    await model.send(ToolResultEvent(tool_result))
+    await model.send(tool_result)
 
     # Verify the sent event
     calls = mock_ws.send.call_args_list
@@ -1000,17 +974,17 @@ async def test_tool_result_multiple_content_blocks(mock_websockets_connect, api_
     model = OpenAIRealtimeModel(api_key=api_key)
     await model.start()
 
-    tool_result: ToolResult = {
-        "toolUseId": "call-789",
-        "status": "success",
-        "content": [
+    tool_result = ToolResultBlock(
+        tool_use_id="call-789",
+        status="success",
+        content=[
             {"text": "Weather data:"},
             {"json": {"temp": 72, "humidity": 65}},
             {"text": "Forecast: sunny"},
         ],
-    }
+    )
 
-    await model.send(ToolResultEvent(tool_result))
+    await model.send(tool_result)
 
     # Verify the sent event
     calls = mock_ws.send.call_args_list
@@ -1038,14 +1012,14 @@ async def test_tool_result_image_content_raises_error(mock_websockets_connect, a
     model = OpenAIRealtimeModel(api_key=api_key)
     await model.start()
 
-    tool_result: ToolResult = {
-        "toolUseId": "call-999",
-        "status": "success",
-        "content": [{"image": {"format": "jpeg", "source": {"bytes": b"fake_image_data"}}}],
-    }
+    tool_result = ToolResultBlock(
+        tool_use_id="call-999",
+        status="success",
+        content=[{"image": {"format": "jpeg", "source": {"bytes": b"fake_image_data"}}}],
+    )
 
     with pytest.raises(ValueError, match=r"Content type not supported by OpenAI Realtime API"):
-        await model.send(ToolResultEvent(tool_result))
+        await model.send(tool_result)
 
     await model.stop()
 
@@ -1057,14 +1031,14 @@ async def test_tool_result_document_content_raises_error(mock_websockets_connect
     model = OpenAIRealtimeModel(api_key=api_key)
     await model.start()
 
-    tool_result: ToolResult = {
-        "toolUseId": "call-888",
-        "status": "success",
-        "content": [{"document": {"format": "pdf", "source": {"bytes": b"fake_pdf_data"}}}],
-    }
+    tool_result = ToolResultBlock(
+        tool_use_id="call-888",
+        status="success",
+        content=[{"document": {"format": "pdf", "source": {"bytes": b"fake_pdf_data"}}}],
+    )
 
     with pytest.raises(ValueError, match=r"Content type not supported by OpenAI Realtime API"):
-        await model.send(ToolResultEvent(tool_result))
+        await model.send(tool_result)
 
     await model.stop()
 

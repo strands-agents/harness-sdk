@@ -76,7 +76,24 @@ async function structuredOutputExample() {
   // --8<-- [end:structured_output]
 }
 
+// Built-in tools
+async function builtInTools() {
+  // --8<-- [start:builtin_tools]
+  const model = new AnthropicModel({
+    apiKey: '<KEY>',
+    modelId: 'claude-sonnet-4-6',
+    maxTokens: 1028,
+    anthropicTools: [{ type: 'web_search_20260318', name: 'web_search', max_uses: 5 }],
+  })
+
+  const agent = new Agent({ model })
+  const response = await agent.invoke('What are the latest AI news today?')
+  console.log(response)
+  // --8<-- [end:builtin_tools]
+}
+
 void structuredOutputExample
+void builtInTools
 
 async function promptCaching() {
   // --8<-- [start:prompt_caching]

@@ -23,30 +23,27 @@ from aws_sdk_bedrock_runtime.models import ModelTimeoutException, ValidationExce
 from awscrt.exceptions import from_code
 from smithy_http.aio.crt import AWSCRTHTTPClient
 
+from strands.experimental.bidi.models import BedrockNovaSonicAudioConfig, BedrockNovaSonicModel, BidiModelTimeoutError
 from strands.experimental.bidi.models.bedrock import (
     NOVA_SONIC_V1_MODEL_ID,
     NOVA_SONIC_V2_MODEL_ID,
-    BedrockNovaSonicAudioConfig,
-    BedrockNovaSonicModel,
     _BedrockAWSCRTHTTPClient,
     _BedrockAWSCRTHTTPResponse,
     _ResponseState,
 )
-from strands.experimental.bidi.models.model import BidiModelTimeoutError
-from strands.experimental.bidi.types.events import (
-    BidiAudioInputEvent,
+from strands.experimental.bidi.types import (
+    AudioDelta,
     BidiAudioStreamEvent,
-    BidiImageInputEvent,
     BidiInterruptionEvent,
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
-    BidiTextInputEvent,
     BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
 )
-from strands.types._events import ToolResultEvent
-from strands.types.tools import ToolResult
+from strands.types.content import TextBlock
+from strands.types.media import ImageBlock
+from strands.types.tools import ToolResultBlock
 
 
 # Test fixtures
@@ -853,8 +850,8 @@ async def test_proactive_reconnect_end_to_end_through_agent(model_id, boto_sessi
     and restarts through Nova's own restart() before the session deadline, replaying
     history via Nova's initialization path. No live AWS calls are made.
     """
-    from strands.experimental.bidi.agent.agent import BidiAgent
-    from strands.experimental.bidi.types.events import BidiConnectionWarningEvent
+    from strands.experimental.bidi.agent import BidiAgent
+    from strands.experimental.bidi.types import BidiConnectionWarningEvent
 
     # Nova never emits events on its own here; await_output blocks so the model task idles
     # while the proactive timer drives the reconnect.
@@ -976,36 +973,29 @@ async def test_send_all_content_types(nova_model, mock_stream):
     await nova_model.start()
 
     # Test text content
-    text_event = BidiTextInputEvent(text="Hello, Nova!", role="user")
-    await nova_model.send(text_event)
+    await nova_model.send(TextBlock("Hello, Nova!"))
     # Should send contentStart, textInput, and contentEnd
     assert mock_stream.input_stream.send.call_count >= 3
 
-    # Test audio content (base64 encoded)
-    audio_b64 = base64.b64encode(b"audio data").decode("utf-8")
-    audio_event = BidiAudioInputEvent(audio=audio_b64, format="pcm", sample_rate=16000, channels=1)
-    await nova_model.send(audio_event)
+    # Test audio content
+    await nova_model.send(AudioDelta(format="pcm", source={"bytes": b"audio data"}))
     # Should start audio connection and send audio
     assert nova_model._audio_content_name
     assert mock_stream.input_stream.send.called
 
     # Test tool result with single content item (should be unwrapped)
-    tool_result_single: ToolResult = {
-        "toolUseId": "tool-123",
-        "status": "success",
-        "content": [{"text": "Weather is sunny"}],
-    }
-    await nova_model.send(ToolResultEvent(tool_result_single))
+    tool_result_single = ToolResultBlock(
+        tool_use_id="tool-123", status="success", content=[{"text": "Weather is sunny"}]
+    )
+    await nova_model.send(tool_result_single)
     # Should send contentStart, toolResult, and contentEnd
     assert mock_stream.input_stream.send.called
 
     # Test tool result with multiple content items (should send as array)
-    tool_result_multi: ToolResult = {
-        "toolUseId": "tool-456",
-        "status": "success",
-        "content": [{"text": "Part 1"}, {"json": {"data": "value"}}],
-    }
-    await nova_model.send(ToolResultEvent(tool_result_multi))
+    tool_result_multi = ToolResultBlock(
+        tool_use_id="tool-456", status="success", content=[{"text": "Part 1"}, {"json": {"data": "value"}}]
+    )
+    await nova_model.send(tool_result_multi)
     assert mock_stream.input_stream.send.called
 
     await nova_model.stop()
@@ -1015,16 +1005,11 @@ async def test_send_all_content_types(nova_model, mock_stream):
 async def test_send_edge_cases(nova_model):
     """Test send() edge cases and error handling."""
 
-    # Test image content (not supported, base64 encoded, no encoding parameter)
+    # Test image content (not supported)
     await nova_model.start()
-    image_b64 = base64.b64encode(b"image data").decode("utf-8")
-    image_event = BidiImageInputEvent(
-        image=image_b64,
-        mime_type="image/jpeg",
-    )
 
     with pytest.raises(ValueError, match=r"content not supported"):
-        await nova_model.send(image_event)
+        await nova_model.send(ImageBlock(format="jpeg", source={"bytes": b"image data"}))
 
     await nova_model.stop()
 
@@ -1524,13 +1509,9 @@ async def test_tool_result_single_content_unwrapped(nova_model, mock_stream):
     """Test that single content item is unwrapped (optimization)."""
     await nova_model.start()
 
-    tool_result: ToolResult = {
-        "toolUseId": "tool-123",
-        "status": "success",
-        "content": [{"text": "Single result"}],
-    }
+    tool_result = ToolResultBlock(tool_use_id="tool-123", status="success", content=[{"text": "Single result"}])
 
-    await nova_model.send(ToolResultEvent(tool_result))
+    await nova_model.send(tool_result)
 
     # Verify events were sent
     assert mock_stream.input_stream.send.called
@@ -1559,13 +1540,11 @@ async def test_tool_result_multiple_content_as_array(nova_model, mock_stream):
     """Test that multiple content items are sent as array."""
     await nova_model.start()
 
-    tool_result: ToolResult = {
-        "toolUseId": "tool-456",
-        "status": "success",
-        "content": [{"text": "Part 1"}, {"json": {"data": "value"}}],
-    }
+    tool_result = ToolResultBlock(
+        tool_use_id="tool-456", status="success", content=[{"text": "Part 1"}, {"json": {"data": "value"}}]
+    )
 
-    await nova_model.send(ToolResultEvent(tool_result))
+    await nova_model.send(tool_result)
 
     # Verify events were sent
     assert mock_stream.input_stream.send.called
@@ -1598,13 +1577,9 @@ async def test_tool_result_empty_content(nova_model, mock_stream):
     """Test that empty content is handled gracefully."""
     await nova_model.start()
 
-    tool_result: ToolResult = {
-        "toolUseId": "tool-789",
-        "status": "success",
-        "content": [],
-    }
+    tool_result = ToolResultBlock(tool_use_id="tool-789", status="success", content=[])
 
-    await nova_model.send(ToolResultEvent(tool_result))
+    await nova_model.send(tool_result)
 
     # Verify events were sent
     assert mock_stream.input_stream.send.called
@@ -1634,33 +1609,33 @@ async def test_tool_result_unsupported_content_type(nova_model):
     await nova_model.start()
 
     # Test with image content (unsupported)
-    tool_result_image: ToolResult = {
-        "toolUseId": "tool-999",
-        "status": "success",
-        "content": [{"image": {"format": "jpeg", "source": {"bytes": b"image_data"}}}],
-    }
+    tool_result_image = ToolResultBlock(
+        tool_use_id="tool-999",
+        status="success",
+        content=[{"image": {"format": "jpeg", "source": {"bytes": b"image_data"}}}],
+    )
 
     with pytest.raises(ValueError, match=r"Content type not supported by Nova Sonic"):
-        await nova_model.send(ToolResultEvent(tool_result_image))
+        await nova_model.send(tool_result_image)
 
     # Test with document content (unsupported)
-    tool_result_doc: ToolResult = {
-        "toolUseId": "tool-888",
-        "status": "success",
-        "content": [{"document": {"format": "pdf", "source": {"bytes": b"doc_data"}}}],
-    }
+    tool_result_doc = ToolResultBlock(
+        tool_use_id="tool-888",
+        status="success",
+        content=[{"document": {"format": "pdf", "source": {"bytes": b"doc_data"}}}],
+    )
 
     with pytest.raises(ValueError, match=r"Content type not supported by Nova Sonic"):
-        await nova_model.send(ToolResultEvent(tool_result_doc))
+        await nova_model.send(tool_result_doc)
 
     # Test with mixed content (one unsupported)
-    tool_result_mixed: ToolResult = {
-        "toolUseId": "tool-777",
-        "status": "success",
-        "content": [{"text": "Valid text"}, {"image": {"format": "jpeg", "source": {"bytes": b"image_data"}}}],
-    }
+    tool_result_mixed = ToolResultBlock(
+        tool_use_id="tool-777",
+        status="success",
+        content=[{"text": "Valid text"}, {"image": {"format": "jpeg", "source": {"bytes": b"image_data"}}}],
+    )
 
     with pytest.raises(ValueError, match=r"Content type not supported by Nova Sonic"):
-        await nova_model.send(ToolResultEvent(tool_result_mixed))
+        await nova_model.send(tool_result_mixed)
 
     await nova_model.stop()

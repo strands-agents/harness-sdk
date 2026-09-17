@@ -28,7 +28,7 @@ import logging
 import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import Any, Literal, TypedDict, cast
+from typing import Any, cast
 
 import boto3
 from aws_sdk_bedrock_runtime.client import AsyncBedrockRuntimeClient, InvokeModelWithBidirectionalStreamOperationInput
@@ -47,27 +47,28 @@ from smithy_http.aio.crt import AWSCRTHTTPClient, AWSCRTHTTPResponse
 from typing_extensions import Unpack, override
 
 from ....models._validation import validate_config_keys, validate_region
-from ....types._events import ToolResultEvent, ToolUseStreamEvent
-from ....types.content import Messages
-from ....types.tools import ToolResult, ToolSpec, ToolUse
+from ....types._events import ToolUseStreamEvent
+from ....types.content import Messages, TextBlock
+from ....types.tools import ToolResultBlock, ToolSpec, ToolUse
 from .._async import stop_all
+from ..types.content import BidiContentBlock, BidiContentDelta
 from ..types.events import (
-    BidiAudioInputEvent,
     BidiAudioStreamEvent,
     BidiConnectionStartEvent,
-    BidiInputEvent,
     BidiInterruptionEvent,
     BidiOutputEvent,
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
-    BidiTextInputEvent,
     BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
 )
+from ..types.media import AudioDelta
 from .configs import (
     AudioConfig,
     AudioStreamConfig,
+    BedrockNovaSonicAudioConfig,
+    BedrockNovaSonicAudioStreamConfig,
     BidiConnectionConfig,
     BidiModelConfig,
     _validate_audio_config,
@@ -190,30 +191,6 @@ class _ResponseState:
         self.role = None
         self.generation_stage = None
         self.transcript = ""
-
-
-class BedrockNovaSonicAudioStreamConfig(TypedDict):
-    """Nova Sonic stream options. Audio uses mono PCM.
-
-    Attributes:
-        sample_rate: Sample rate in Hz.
-    """
-
-    sample_rate: Literal[8000, 16000, 24000]
-
-
-class BedrockNovaSonicAudioConfig(TypedDict, total=False):
-    """Nova Sonic input and output audio options.
-
-    Omitted streams use a sample rate of 16000 Hz.
-
-    Attributes:
-        input: Input stream options.
-        output: Output stream options.
-    """
-
-    input: BedrockNovaSonicAudioStreamConfig
-    output: BedrockNovaSonicAudioStreamConfig
 
 
 class BedrockNovaSonicModel(BidiModel, AudioCapable):
@@ -510,13 +487,13 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
                 logger.debug("converted_event_type=<%s> | yielding converted event", event_type)
                 yield model_event
 
-    async def send(self, content: BidiInputEvent | ToolResultEvent) -> None:
+    async def send(self, content: BidiContentBlock | BidiContentDelta | ToolResultBlock) -> None:
         """Unified send method for all content types. Sends the given content to Nova Sonic.
 
         Dispatches to appropriate internal handler based on content type.
 
         Args:
-            content: Input event.
+            content: A TextBlock, AudioDelta, or ToolResultBlock.
 
         Raises:
             ValueError: If content type not supported (e.g., image content).
@@ -524,23 +501,27 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         if not self._connection_id:
             raise RuntimeError("model not started | call start before sending")
 
-        if isinstance(content, BidiTextInputEvent):
-            text_preview = content.text[:100] if len(content.text) > 100 else content.text
-            logger.debug("text_length=<%d>, text_preview=<%s> | sending text content", len(content.text), text_preview)
-            await self._send_text_content(content.text)
-        elif isinstance(content, BidiAudioInputEvent):
-            audio_size = len(base64.b64decode(content.audio)) if content.audio else 0
-            logger.debug("audio_bytes=<%d>, format=<%s> | sending audio content", audio_size, content.format)
+        if isinstance(content, TextBlock):
+            text = content.text
+            text_preview = text[:100] if len(text) > 100 else text
+            logger.debug("text_length=<%d>, text_preview=<%s> | sending text content", len(text), text_preview)
+            await self._send_text_content(text)
+        elif isinstance(content, AudioDelta):
+            audio_bytes = content.source.get("bytes")
+            audio_size = len(audio_bytes) if audio_bytes else 0
+            logger.debug(
+                "audio_bytes=<%d>, format=<%s> | sending audio content",
+                audio_size,
+                content.format,
+            )
             await self._send_audio_content(content)
-        elif isinstance(content, ToolResultEvent):
-            tool_result = content.get("tool_result")
-            if tool_result:
-                logger.debug(
-                    "tool_use_id=<%s>, content_blocks=<%d> | sending tool result",
-                    tool_result.get("toolUseId", "unknown"),
-                    len(tool_result.get("content", [])),
-                )
-                await self._send_tool_result(tool_result)
+        elif isinstance(content, ToolResultBlock):
+            logger.debug(
+                "tool_use_id=<%s>, content_blocks=<%d> | sending tool result",
+                content.tool_use_id,
+                len(content.content),
+            )
+            await self._send_tool_result(content)
         else:
             logger.error("content_type=<%s> | unsupported content type", type(content))
             raise ValueError(f"content_type={type(content)} | content not supported")
@@ -577,21 +558,23 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
 
         await self._send_nova_events([audio_content_start])
 
-    async def _send_audio_content(self, audio_input: BidiAudioInputEvent) -> None:
+    async def _send_audio_content(self, audio_input: AudioDelta) -> None:
         """Internal: Send audio using Nova Sonic protocol-specific format."""
         # Start audio connection if not already active
         if not self._audio_content_name:
             await self._start_audio_connection()
 
-        # Audio is already base64 encoded in the event
-        # Send audio input event
+        audio_bytes = audio_input.source.get("bytes")
+        if audio_bytes is None:
+            raise ValueError("audio source must contain bytes for Nova Sonic")
+        audio = base64.b64encode(audio_bytes).decode("utf-8")
         audio_event = json.dumps(
             {
                 "event": {
                     "audioInput": {
                         "promptName": self._connection_id,
                         "contentName": self._audio_content_name,
-                        "content": audio_input.audio,
+                        "content": audio,
                     }
                 }
             }
@@ -623,14 +606,14 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         ]
         await self._send_nova_events(events)
 
-    async def _send_tool_result(self, tool_result: ToolResult) -> None:
+    async def _send_tool_result(self, tool_result: ToolResultBlock) -> None:
         """Internal: Send tool result using Nova Sonic toolResult format."""
-        tool_use_id = tool_result["toolUseId"]
+        tool_use_id = tool_result.tool_use_id
 
         logger.debug("tool_use_id=<%s> | sending nova tool result", tool_use_id)
 
         # Validate content types and preserve structure
-        content = tool_result.get("content", [])
+        content = tool_result.content
 
         # Validate all content types are supported
         for block in content:

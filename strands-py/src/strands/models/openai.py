@@ -94,10 +94,12 @@ class OpenAIModel(Model):
                 May be combined with ``bedrock_mantle_config``; when both are set,
                 ``bedrock_mantle_config`` derives ``base_url`` and ``api_key`` (which must not
                 appear in ``client_args``).
-            bedrock_mantle_config: Route requests through Amazon Bedrock's Mantle
-                (OpenAI-compatible) endpoint. See :class:`BedrockMantleConfig` for accepted
-                keys. When set, a fresh bearer token is minted on every request. Cannot be
-                combined with a pre-built ``client``.
+            bedrock_mantle_config: Route requests through one of Amazon Bedrock's
+                OpenAI-compatible endpoints, ``bedrock-mantle`` (the default) or
+                ``bedrock-runtime`` via the config's ``endpoint`` key. See
+                :class:`BedrockMantleConfig` for accepted keys. When set, a fresh bearer
+                token is minted on every request. Cannot be combined with a pre-built
+                ``client``.
             **model_config: Configuration options for the OpenAI model.
 
         Raises:

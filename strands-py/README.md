@@ -229,7 +229,7 @@ pip install strands-agents[bidi,bidi-io,bidi-pyaudio]
 
 ```python
 import asyncio
-from strands.experimental.bidi import BidiAgent
+from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 from strands.experimental.bidi.io import BidiAudioIO
 from strands_tools import calculator, stop

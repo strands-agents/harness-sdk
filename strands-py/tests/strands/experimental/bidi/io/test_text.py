@@ -3,11 +3,8 @@ import unittest.mock
 import pytest
 
 from strands.experimental.bidi.io import BidiTextIO
-from strands.experimental.bidi.types.events import (
-    BidiInterruptionEvent,
-    BidiTextInputEvent,
-    BidiTranscriptStreamEvent,
-)
+from strands.experimental.bidi.types import BidiInterruptionEvent, BidiTranscriptStreamEvent
+from strands.types.content import TextBlock
 
 
 @pytest.fixture
@@ -36,7 +33,7 @@ async def test_bidi_text_io_input(prompt_session, text_input):
     prompt_session.prompt_async = unittest.mock.AsyncMock(return_value="test value")
 
     tru_event = await text_input()
-    exp_event = BidiTextInputEvent(text="test value", role="user")
+    exp_event = TextBlock("test value")
     assert tru_event == exp_event
 
 

@@ -10,7 +10,7 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from strands.experimental.bidi.agent.agent import BidiAgent
+    from strands.experimental.bidi.agent import BidiAgent
 
     from .generators.audio import AudioGenerator
 
@@ -343,7 +343,7 @@ class BidirectionalTestContext:
         """Generate silence chunk for background audio.
 
         Returns:
-            BidiAudioInputEvent with silence data.
+            Audio delta with silence data.
         """
         silence = b"\x00" * self.silence_chunk_size
         return self.audio_generator.create_audio_input_event(silence)
