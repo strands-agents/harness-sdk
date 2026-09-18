@@ -503,6 +503,35 @@ def test_use_ProxyMeter_if_no_global_meter_provider():
     assert isinstance(metrics_client.meter, _ProxyMeter)
 
 
+@pytest.mark.parametrize("disable_var", ["OTEL_SDK_DISABLED", "STRANDS_OTEL_DISABLED"])
+def test_metrics_client_disabled_uses_noop_meter_over_global_provider(disable_var, monkeypatch):
+    """When disabled, MetricsClient creates instruments on a no-op meter provider even if a
+    real provider is registered globally — mirroring the Tracer NoOp so the reported metrics
+    leak (#1059) is closed, not just the span half. Reads the global meter unconditionally
+    otherwise, so gating only StrandsTelemetry setup would not silence it (poshinchen review).
+    """
+    from opentelemetry.metrics import NoOpMeter
+
+    for name in ("OTEL_SDK_DISABLED", "STRANDS_OTEL_DISABLED"):
+        monkeypatch.delenv(name, raising=False)
+    strands.telemetry.metrics.MetricsClient._instance = None
+
+    # Host app owns OTel: a real meter provider is globally registered.
+    real_provider = MeterProvider()
+    with mock.patch(
+        "strands.telemetry.metrics.metrics_api.get_meter_provider", return_value=real_provider
+    ) as mock_get_meter_provider:
+        monkeypatch.setenv(disable_var, "true")
+        client = MetricsClient()
+
+    # No-op meter instead of the host's provider, and the global was never consulted.
+    assert isinstance(client.meter, NoOpMeter)
+    mock_get_meter_provider.assert_not_called()
+
+    # Reset so later tests build a fresh (enabled) singleton.
+    strands.telemetry.metrics.MetricsClient._instance = None
+
+
 def test_metrics_client_singleton_is_thread_safe():
     """Test that MetricsClient singleton is safe under concurrent access.
 
