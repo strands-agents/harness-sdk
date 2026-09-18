@@ -84,7 +84,7 @@ class _BeginResult:
 
 
 class _ConcurrencyController:
-    """Owns the invocation lock and the inflight idempotency-token registry.
+    """Owns the invocation lock, the inflight idempotency-token registry, and the active-invocation count.
 
     In THROW mode only one invocation can be inflight at a time, so a single
     inflight slot suffices. The lock and registry use ``threading`` primitives
@@ -92,8 +92,10 @@ class _ConcurrencyController:
     waiter notification bridges back to each waiter's loop via ``call_soon_threadsafe``.
     """
 
-    def __init__(self, mode: ConcurrentInvocationMode) -> None:
+    def __init__(self, mode: ConcurrentInvocationMode, *, cancel_signal: threading.Event) -> None:
         self._mode = mode
+        self._cancel_signal = cancel_signal
+        self._active_invocations = 0
         self._invocation_lock = threading.Lock()
         self._inflight_token: Any = None
         self._inflight: _InflightInvocation | None = None
@@ -124,6 +126,11 @@ class _ConcurrencyController:
         lock_acquired = True
         if self._mode == ConcurrentInvocationMode.THROW:
             lock_acquired = self._invocation_lock.acquire(blocking=False)
+
+        if lock_acquired:
+            # Count the invocation inside begin() so cancel() cannot observe a gap
+            # between admission and an active count above zero.
+            self.mark_started()
 
         return _BeginResult(waiting_on=None, registered_token=registered_token, lock_acquired=lock_acquired)
 
@@ -163,6 +170,36 @@ class _ConcurrencyController:
             inflight.settle(result, None)
         else:
             inflight.settle(None, IdempotencyAbortedError("Primary invocation was aborted before producing a result."))
+
+    def mark_started(self) -> None:
+        """Record that an invocation has begun.
+
+        Called by :meth:`begin` once the invocation is admitted.
+        """
+        with self._inflight_lock:
+            self._active_invocations += 1
+
+    def mark_finished(self) -> None:
+        """Record that an invocation has ended.
+
+        Clears the cancel signal when the last invocation ends so the agent stays reusable.
+        Atomic with :meth:`request_cancel`, so a cancel arriving during teardown cannot
+        leave the signal set for the next invocation.
+        """
+        with self._inflight_lock:
+            self._active_invocations -= 1
+            if self._active_invocations == 0:
+                self._cancel_signal.clear()
+
+    def request_cancel(self) -> None:
+        """Set the cancel signal when an invocation is inflight.
+
+        No-op while the agent is idle: setting the signal with nothing running would
+        cancel the next invocation instead of the current one.
+        """
+        with self._inflight_lock:
+            if self._active_invocations > 0:
+                self._cancel_signal.set()
 
     def try_acquire_lock(self) -> bool:
         """Non-blockingly acquire the invocation lock.

@@ -495,7 +495,7 @@ class Agent(AgentBase, LocalAgent):
         # Runtime state for model providers (e.g., server-side response ids)
         self._model_state: dict[str, Any] = {}
 
-        self._concurrency = _ConcurrencyController(concurrent_invocation_mode)
+        self._concurrency = _ConcurrencyController(concurrent_invocation_mode, cancel_signal=self._cancel_signal)
 
         if (
             retry_strategy is not None
@@ -615,6 +615,8 @@ class Agent(AgentBase, LocalAgent):
 
         The agent will return a result with stop_reason="cancelled".
 
+        Calling cancel() while the agent is idle is a no-op, so it never affects the next invocation.
+
         For cancellation driven from outside the agent (a client disconnect, a request
         lifecycle, a timeout), pass a ``cancel_signal`` into the invocation instead. The agent
         observes both, so either cancels independently.
@@ -636,7 +638,7 @@ class Agent(AgentBase, LocalAgent):
         Note:
             Multiple calls to cancel() are safe and idempotent.
         """
-        self._cancel_signal.set()
+        self._concurrency.request_cancel()
 
     @property
     def cancel_signal(self) -> threading.Event:
@@ -1388,8 +1390,8 @@ class Agent(AgentBase, LocalAgent):
                 cancel_watcher.cancel()
             self._external_cancel_signal = None
 
-            # Clear cancel signal to allow agent reuse after cancellation
-            self._cancel_signal.clear()
+            # Clears the cancel signal once the last invocation ends, allowing agent reuse
+            self._concurrency.mark_finished()
 
             self._concurrency.complete(begin.registered_token, result=result)
             if self._concurrency.mode == ConcurrentInvocationMode.THROW:
