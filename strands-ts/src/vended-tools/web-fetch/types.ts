@@ -48,4 +48,9 @@ export interface MakeWebFetchOptions {
   model?: Model
   /** Extraction mode. Defaults to `'agentic'`. */
   mode?: 'markdown' | 'agentic'
+  /**
+   * Maximum time in seconds to wait for the curl request. Defaults to 30.
+   * Pass `0` to disable the timeout.
+   */
+  timeout?: number
 }
