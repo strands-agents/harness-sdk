@@ -96,7 +96,7 @@ def test_unknown_save_latest_on_is_rejected(storage):
 
 
 def test_graph_snapshot_is_persisted_after_run(storage):
-    """Running a Graph with the manager writes its state to the multi_agent scope key."""
+    """Running a Graph with the manager writes its state to the multiAgent scope key."""
     builder = GraphBuilder()
     builder.add_node(Agent(model=_model("done"), agent_id="n1"), "n1")
     builder.set_graph_id("g1")
@@ -105,17 +105,17 @@ def test_graph_snapshot_is_persisted_after_run(storage):
 
     asyncio.run(graph.invoke_async("go"))
 
-    key = "session/mm/scopes/multi_agent/g1/snapshots/snapshot_latest.json"
+    key = "session/mm/scopes/multiAgent/g1/snapshots/snapshot_latest.json"
     raw = asyncio.run(storage.read(key))
     assert raw is not None
     snapshot = _deserialize_snapshot(raw)
-    assert snapshot.scope == "multi_agent"
+    assert snapshot.scope == "multiAgent"
     assert snapshot.data["orchestrator_id"] == "g1"
     assert snapshot.data["state"]["type"] == "graph"
 
 
 def test_swarm_snapshot_is_persisted_after_run(storage):
-    """Running a Swarm with the manager writes its state to the multi_agent scope key."""
+    """Running a Swarm with the manager writes its state to the multiAgent scope key."""
     swarm = Swarm(
         nodes=[Agent(model=_model("done"), agent_id="n1")],
         session_manager=SnapshotSessionManager("mm", storage=storage),
@@ -124,7 +124,7 @@ def test_swarm_snapshot_is_persisted_after_run(storage):
 
     asyncio.run(swarm.invoke_async("go"))
 
-    key = "session/mm/scopes/multi_agent/sw1/snapshots/snapshot_latest.json"
+    key = "session/mm/scopes/multiAgent/sw1/snapshots/snapshot_latest.json"
     raw = asyncio.run(storage.read(key))
     assert raw is not None
     assert _deserialize_snapshot(raw).data["state"]["type"] == "swarm"
@@ -280,7 +280,7 @@ def test_load_snapshot_restores_mid_run_state(storage):
         "execution_time": 5,
     }
     snapshot = Snapshot(
-        scope="multi_agent",
+        scope="multiAgent",
         schema_version=SNAPSHOT_SCHEMA_VERSION,
         data={"orchestrator_id": "g1", "state": mid_run_state},
         app_data={},
@@ -318,7 +318,7 @@ def test_load_snapshot_rejects_wrong_scope(storage):
         app_data={},
     )
     swarm = Swarm(nodes=[Agent(model=_model("done"), agent_id="n1")], id="sw1")
-    with pytest.raises(SnapshotException, match="Expected snapshot scope 'multi_agent'"):
+    with pytest.raises(SnapshotException, match="Expected snapshot scope 'multiAgent'"):
         load_snapshot(swarm, agent_scoped)
 
 
@@ -331,16 +331,20 @@ def test_completed_orchestrator_reinvokes_from_scratch(storage):
     from strands.multiagent._snapshot import load_snapshot, take_snapshot
 
     def _swarm():
-        return Swarm(nodes=[Agent(model=_model("done"), agent_id="n1")], id="sw1")
+        agent = Agent(model=_model("done"), agent_id="n1")
+        return Swarm(nodes=[agent], id="sw1"), agent
 
-    source = _swarm()
+    source, _ = _swarm()
     asyncio.run(source.invoke_async("go"))
     assert take_snapshot(source).data["state"]["next_nodes_to_execute"] == []
 
-    restored = _swarm()
+    restored, restored_agent = _swarm()
     load_snapshot(restored, take_snapshot(source))
     result = asyncio.run(restored.invoke_async("go again"))
-    assert result.status is not None
+
+    assert result.status == Status.COMPLETED
+    assert restored.state.task == "go again"
+    assert "User Request: go again" in "\n".join(_texts(restored_agent))
 
 
 def test_invocation_strategy_does_not_register_node_hook(storage):
