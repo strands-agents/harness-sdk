@@ -83,6 +83,9 @@ describe('cacheConfig portability across providers', () => {
       if (!Array.isArray(message.content)) continue
       for (const block of message.content) if (block.cache_control) messagePoints.push(block.cache_control)
     }
+    // Under the default auto strategy the conversation is cached by the top-level automatic
+    // cache_control rather than a block-level point; both mean the messages section is on.
+    if (captured.request?.cache_control) messagePoints.push(captured.request.cache_control)
     return {
       tools: (captured.request?.tools ?? [])
         .filter((entry: any) => entry.cache_control)
