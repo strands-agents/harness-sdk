@@ -8,6 +8,7 @@ import json
 import logging
 import mimetypes
 import secrets
+import warnings
 from collections.abc import AsyncGenerator
 from typing import Any, TypeVar, cast
 
@@ -45,11 +46,12 @@ class GeminiModel(Model):
             params: Additional model parameters (e.g., temperature).
                 For a complete list of supported parameters, see
                 https://ai.google.dev/api/generate-content#generationconfig.
-            gemini_tools: Gemini-specific tools that are not FunctionDeclarations
+            built_in_tools: Gemini-specific tools that are not FunctionDeclarations
                 (e.g., GoogleSearch, CodeExecution, ComputerUse, UrlContext, FileSearch).
                 Use the standard tools interface for function calling tools.
                 For a complete list of supported tools, see
                 https://ai.google.dev/api/caching#Tool
+            gemini_tools: Deprecated alias for built_in_tools.
             use_native_token_count: Whether to use the native Gemini count_tokens API.
                 When True, count_tokens() calls the Gemini API for accurate counts.
                 When False (default), skips the API call and uses the local estimator.
@@ -57,6 +59,7 @@ class GeminiModel(Model):
 
         model_id: Required[str]
         params: dict[str, Any]
+        built_in_tools: list[genai.types.Tool]
         gemini_tools: list[genai.types.Tool]
         use_native_token_count: bool
 
@@ -83,9 +86,11 @@ class GeminiModel(Model):
             **model_config: Configuration options for the Gemini model.
 
         Raises:
-            ValueError: If both `client` and `client_args` are provided.
+            ValueError: If both `client` and `client_args` are provided, if both `built_in_tools` and
+                `gemini_tools` are configured, or if built-in tools contain function declarations.
         """
         validate_config_keys(model_config, GeminiModel.GeminiConfig)
+        model_config = self._normalize_built_in_tools(model_config)
         self.config = GeminiModel.GeminiConfig(**model_config)
 
         # Validate that only one client configuration method is provided
@@ -95,9 +100,8 @@ class GeminiModel(Model):
         self._custom_client = client
         self.client_args = client_args or {}
 
-        # Validate gemini_tools if provided
-        if "gemini_tools" in self.config:
-            self._validate_gemini_tools(self.config["gemini_tools"])
+        if "built_in_tools" in self.config:
+            self._validate_built_in_tools(self.config["built_in_tools"])
 
         logger.debug("config=<%s> | initializing", self.config)
 
@@ -107,10 +111,14 @@ class GeminiModel(Model):
 
         Args:
             **model_config: Configuration overrides.
+
+        Raises:
+            ValueError: If both `built_in_tools` and `gemini_tools` are configured, or if built-in tools contain
+                function declarations.
         """
-        # Validate gemini_tools if provided
-        if "gemini_tools" in model_config:
-            self._validate_gemini_tools(model_config["gemini_tools"])
+        model_config = self._normalize_built_in_tools(model_config)
+        if "built_in_tools" in model_config:
+            self._validate_built_in_tools(model_config["built_in_tools"])
 
         self.config.update(model_config)
 
@@ -273,7 +281,7 @@ class GeminiModel(Model):
         Return:
             Gemini tool list, or None when no tools are configured (Vertex AI rejects empty arrays).
         """
-        if not tool_specs and not self.config.get("gemini_tools"):
+        if not tool_specs and not self.config.get("built_in_tools"):
             return None
         tools = [
             genai.types.Tool(
@@ -287,8 +295,8 @@ class GeminiModel(Model):
                 ],
             ),
         ]
-        if self.config.get("gemini_tools"):
-            tools.extend(self.config["gemini_tools"])
+        if self.config.get("built_in_tools"):
+            tools.extend(self.config["built_in_tools"])
         return tools
 
     @staticmethod
@@ -719,25 +727,53 @@ class GeminiModel(Model):
         yield {"output": output_model.model_validate(response.parsed)}
 
     @staticmethod
-    def _validate_gemini_tools(gemini_tools: list[genai.types.Tool]) -> None:
-        """Validate that gemini_tools does not contain FunctionDeclarations.
+    def _normalize_built_in_tools(model_config: GeminiConfig) -> GeminiConfig:
+        """Normalize the deprecated gemini_tools alias to built_in_tools.
+
+        Args:
+            model_config: Gemini model configuration to normalize.
+
+        Returns:
+            Gemini model configuration using the canonical built_in_tools field.
+
+        Raises:
+            ValueError: If built_in_tools and gemini_tools are both configured.
+        """
+        if "built_in_tools" in model_config and "gemini_tools" in model_config:
+            raise ValueError(
+                "built_in_tools and gemini_tools cannot be configured in tandem; gemini_tools is deprecated."
+            )
+
+        if "gemini_tools" in model_config:
+            warnings.warn(
+                "gemini_tools is deprecated and will be removed in v2.0.0. Use built_in_tools instead.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+            model_config["built_in_tools"] = model_config.pop("gemini_tools")
+
+        return model_config
+
+    @staticmethod
+    def _validate_built_in_tools(built_in_tools: list[genai.types.Tool]) -> None:
+        """Validate that built_in_tools does not contain FunctionDeclarations.
 
         Gemini-specific tools should only include tools that cannot be represented
         as FunctionDeclarations (e.g., GoogleSearch, CodeExecution, ComputerUse).
         Standard function calling tools should use the tools interface instead.
 
         Args:
-            gemini_tools: List of Gemini tools to validate
+            built_in_tools: List of Gemini tools to validate.
 
         Raises:
-            ValueError: If any tool contains function_declarations
+            ValueError: If any tool contains function_declarations.
         """
-        for tool in gemini_tools:
+        for tool in built_in_tools:
             # Check if the tool has function_declarations attribute and it's not empty
             if hasattr(tool, "function_declarations") and tool.function_declarations:
                 raise ValueError(
-                    "gemini_tools should not contain FunctionDeclarations. "
+                    "built_in_tools should not contain FunctionDeclarations. "
                     "Use the standard tools interface for function calling tools. "
-                    "gemini_tools is reserved for Gemini-specific tools like "
+                    "built_in_tools is reserved for Gemini-specific tools like "
                     "GoogleSearch, CodeExecution, ComputerUse, UrlContext, and FileSearch."
                 )
