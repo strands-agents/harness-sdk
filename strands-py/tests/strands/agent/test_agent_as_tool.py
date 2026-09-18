@@ -140,7 +140,7 @@ async def test_stream_passes_input_to_agent(tool, mock_agent, tool_use, agent_re
     async for _ in tool.stream(tool_use, {}):
         pass
 
-    mock_agent.stream_async.assert_called_once_with("hello", cancel_signal=None)
+    mock_agent.stream_async.assert_called_once_with("hello", invocation_state={}, cancel_signal=None)
 
 
 @pytest.mark.asyncio
@@ -155,7 +155,7 @@ async def test_stream_empty_input(tool, mock_agent, agent_result):
     async for _ in tool.stream(empty_tool_use, {}):
         pass
 
-    mock_agent.stream_async.assert_called_once_with("", cancel_signal=None)
+    mock_agent.stream_async.assert_called_once_with("", invocation_state={}, cancel_signal=None)
 
 
 @pytest.mark.asyncio
@@ -170,7 +170,7 @@ async def test_stream_string_input(tool, mock_agent, agent_result):
     async for _ in tool.stream(tool_use, {}):
         pass
 
-    mock_agent.stream_async.assert_called_once_with("direct string", cancel_signal=None)
+    mock_agent.stream_async.assert_called_once_with("direct string", invocation_state={}, cancel_signal=None)
 
 
 @pytest.mark.asyncio
@@ -727,15 +727,17 @@ def test_agent_mixed_with_regular_tools_in_tools_list():
 
 @pytest.mark.asyncio
 async def test_stream_forwards_parent_cancel_signal_to_sub_agent(tool, mock_agent, tool_use, agent_result):
-    """The wrapped agent receives the parent's cancellation signal as its external signal."""
+    """The wrapped agent receives the parent's invocation state and cancellation signal."""
     from strands.agent.agent import Agent
 
     mock_agent.stream_async.return_value = _mock_stream_async(agent_result)
     parent = Agent(name="parent", callback_handler=None)
+    invocation_state = {"agent": parent, "request_state": {"auth_token": "secret"}}
 
-    async for _ in tool.stream(tool_use, {"agent": parent}):
+    async for _ in tool.stream(tool_use, invocation_state):
         pass
 
+    assert mock_agent.stream_async.call_args.kwargs["invocation_state"] is invocation_state
     assert mock_agent.stream_async.call_args.kwargs["cancel_signal"] is parent.cancel_signal
 
 
