@@ -149,27 +149,36 @@ For additional details on styling, please see our dedicated [Style Guide](./stra
 The TypeScript SDK uses an npm workspace rooted at the repository root.
 
 ```bash
-npm ci              # install dependencies (from repo root)
-npm run build       # build
-npm test            # run unit tests
-npm run lint        # lint
-npm run type-check  # type checking
+npm ci  # install dependencies (from repo root)
 ```
+
+Before opening a TypeScript pull request, run the locally reproducible checks
+exercised by PR CI:
+
+```bash
+npm run build                 # build
+npm run lint                  # lint
+npm run format:check          # formatting
+npm run type-check            # type checking
+npm run check:browser-bundle  # browser bundle
+npm run test:browser:install  # install Chromium once for browser tests
+npm run test:all:coverage     # Node.js and browser unit tests with coverage
+npm run test:package          # package and local consumer checks
+npm run test:integ:selective  # integration tests affected by your changes
+```
+
+PR CI also packs the SDK and installs the tarball outside the monorepo to catch
+missing optional peer dependencies. That exact smoke test currently runs only
+in the [TypeScript package-pack workflow](./.github/workflows/typescript-test-package-pack.yml);
+`npm run test:package` is the closest local package check.
 
 #### Running Selective Integration Tests Locally
 
-From the repository root, run only the integration tests relevant to your
-changes (computed relative to `main`, including uncommitted edits):
-
-```bash
-npm run test:integ:selective
-```
-
-This uses Vitest's module graph to run only the `integ-node` and
-`integ-browser` specs that depend on the source files you changed. If you
-alter a structural file (`package.json`, `package-lock.json`, a `strands-ts`
-`tsconfig`, `vitest.config.ts`, a shared integration fixture under
-`test/integ/__fixtures__/`, or a TypeScript CI workflow), the full
+The `test:integ:selective` command uses Vitest's module graph to run only the
+`integ-node` and `integ-browser` specs that depend on the source files you
+changed. If you alter a structural file (`package.json`, `package-lock.json`,
+a `strands-ts` `tsconfig`, `vitest.config.ts`, a shared integration fixture
+under `test/integ/__fixtures__/`, or a TypeScript CI workflow), the full
 integration suite runs automatically.
 
 ### Documentation Site
@@ -255,12 +264,10 @@ To send us a pull request, please:
 
 1. Create a branch.
 2. Modify the source; please focus on the specific change you are contributing. If you also reformat all the code, it will be hard for us to focus on your change.
-3. Format your code using `hatch fmt --formatter`.
-4. Run linting checks with `hatch fmt --linter`.
-5. Ensure local tests pass with `hatch test` and `hatch run test-integ`.
-6. Commit to your branch using clear commit messages following the [Conventional Commits](https://www.conventionalcommits.org) specification.
-7. Send us a pull request, answering any default questions in the pull request interface.
-8. Pay attention to any automated CI failures reported in the pull request, and stay involved in the conversation.
+3. Run the relevant formatting, linting, build, and test commands from the [Development Environment](#development-environment) section for the area you changed.
+4. Commit to your branch using clear commit messages following the [Conventional Commits](https://www.conventionalcommits.org) specification.
+5. Send us a pull request, answering any default questions in the pull request interface.
+6. Pay attention to any automated CI failures reported in the pull request, and stay involved in the conversation.
 
 
 ## Code of Conduct
