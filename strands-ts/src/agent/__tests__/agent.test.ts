@@ -7,7 +7,7 @@ import { McpTool } from '../../tools/mcp-tool.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { collectGenerator } from '../../__fixtures__/model-test-helpers.js'
 import { createMockTool, createRandomTool } from '../../__fixtures__/tool-helpers.js'
-import { ConcurrentInvocationError } from '../../errors.js'
+import { ConcurrentInvocationError, IdempotencyAbortedError } from '../../errors.js'
 import {
   MaxTokensError,
   TextBlock,
@@ -31,6 +31,7 @@ import {
   BeforeInvocationEvent,
   BeforeModelCallEvent,
   BeforeToolsEvent,
+  AgentResultEvent,
 } from '../../hooks/events.js'
 import { BedrockModel } from '../../models/bedrock.js'
 import { StructuredOutputError } from '../../errors.js'
@@ -875,6 +876,12 @@ describe('Agent', () => {
   })
 
   describe('concurrency guards', () => {
+    it('rejects an unknown concurrent invocation mode', () => {
+      expect(() => new Agent({ concurrentInvocationMode: 'unsupported' as never })).toThrow(
+        'Unknown concurrentInvocationMode: unsupported'
+      )
+    })
+
     it('prevents parallel invocations', async () => {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Response' })
       const agent = new Agent({ model })
@@ -898,6 +905,112 @@ describe('Agent', () => {
 
       const result2 = await agent.invoke('Second')
       expect(result2.lastMessage.content).toEqual([{ type: 'textBlock', text: 'Second response' }])
+    })
+
+    it('deduplicates concurrent invocations with the same idempotency token', async () => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'textBlock', text: 'Original response' })
+        .addTurn({ type: 'textBlock', text: 'Duplicate work' })
+      const agent = new Agent({ model })
+
+      const original = agent.invoke('First', { idempotencyToken: 'request-123' })
+      const duplicate = agent.invoke('Retry', { idempotencyToken: 'request-123' })
+      const [originalResult, duplicateResult] = await Promise.all([original, duplicate])
+
+      expect(duplicateResult).toBe(originalResult)
+      expect(model.callCount).toBe(1)
+    })
+
+    it('deduplicates stream calls and only yields the final event to the duplicate', async () => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'textBlock', text: 'Original response' })
+        .addTurn({ type: 'textBlock', text: 'Duplicate work' })
+      const agent = new Agent({ model })
+
+      const original = collectGenerator(agent.stream('First', { idempotencyToken: 'request-123' }))
+      const duplicate = collectGenerator(agent.stream('Retry', { idempotencyToken: 'request-123' }))
+      const [originalStream, duplicateStream] = await Promise.all([original, duplicate])
+
+      expect(duplicateStream.result).toBe(originalStream.result)
+      expect(duplicateStream.items).toEqual([
+        new AgentResultEvent({
+          agent,
+          result: originalStream.result,
+          invocationState: originalStream.result.invocationState,
+        }),
+      ])
+      expect(model.callCount).toBe(1)
+    })
+
+    it('rejects a different idempotency token while an invocation is running', async () => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'textBlock', text: 'Original response' })
+        .addTurn({ type: 'textBlock', text: 'Different request' })
+      const agent = new Agent({ model })
+
+      const original = agent.invoke('First', { idempotencyToken: 'request-123' })
+      const competing = agent.invoke('Second', { idempotencyToken: 'request-456' })
+
+      await expect(competing).rejects.toThrow(ConcurrentInvocationError)
+      await expect(original).resolves.toBeDefined()
+      expect(model.callCount).toBe(1)
+    })
+
+    it('propagates the primary invocation error to duplicates', async () => {
+      const model = new MockMessageModel().addTurn(new Error('Original failed')).addTurn(new Error('Duplicate work'))
+      const agent = new Agent({ model, retryStrategy: null })
+
+      const original = agent.invoke('First', { idempotencyToken: 'request-123' })
+      const duplicate = agent.invoke('Retry', { idempotencyToken: 'request-123' })
+      const [originalResult, duplicateResult] = await Promise.allSettled([original, duplicate])
+
+      expect(originalResult.status).toBe('rejected')
+      expect(duplicateResult.status).toBe('rejected')
+      if (originalResult.status === 'rejected' && duplicateResult.status === 'rejected') {
+        expect(duplicateResult.reason).toBe(originalResult.reason)
+      }
+      expect(model.callCount).toBe(1)
+    })
+
+    it('cleans up an idempotency token after failure', async () => {
+      const model = new MockMessageModel()
+        .addTurn(new Error('Original failed'))
+        .addTurn({ type: 'textBlock', text: 'Retry succeeded' })
+      const agent = new Agent({ model, retryStrategy: null })
+
+      await expect(agent.invoke('First', { idempotencyToken: 'request-123' })).rejects.toThrow('Original failed')
+      await expect(agent.invoke('Retry', { idempotencyToken: 'request-123' })).resolves.toMatchObject({
+        lastMessage: { content: [{ type: 'textBlock', text: 'Retry succeeded' }] },
+      })
+      expect(model.callCount).toBe(2)
+    })
+
+    it('rejects duplicates when the primary stream is abandoned', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Response' })
+      const agent = new Agent({ model, printer: false })
+      const primary = agent.stream('First', { idempotencyToken: 'request-123' })
+
+      await primary.next()
+      const duplicate = agent.invoke('Retry', { idempotencyToken: 'request-123' })
+      await primary.return(undefined as never)
+
+      await expect(duplicate).rejects.toThrow(IdempotencyAbortedError)
+      await expect(agent.invoke('Later', { idempotencyToken: 'request-123' })).resolves.toBeDefined()
+    })
+
+    it('allows overlapping invocations in unsafeConcurrent mode and ignores idempotency tokens', async () => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'textBlock', text: 'First response' })
+        .addTurn({ type: 'textBlock', text: 'Second response' })
+      const agent = new Agent({ model, concurrentInvocationMode: 'unsafeConcurrent' })
+
+      const first = agent.invoke('First', { idempotencyToken: 'shared-token' })
+      const second = agent.invoke('Second', { idempotencyToken: 'shared-token' })
+      const results = await Promise.all([first, second])
+
+      expect(results).toHaveLength(2)
+      expect(model.callCount).toBe(2)
+      expect(agent.isInvoking).toBe(false)
     })
 
     it('releases lock after errors and abandoned streams', async () => {
