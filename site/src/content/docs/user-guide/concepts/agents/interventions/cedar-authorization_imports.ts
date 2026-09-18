@@ -12,6 +12,12 @@ import { CedarAuthorization } from '@strands-agents/sdk/vended-interventions/ced
 import { z } from 'zod'
 // --8<-- [end:role_based_imports]
 
+// --8<-- [start:role_entities_imports]
+import { Agent, tool } from '@strands-agents/sdk'
+import { CedarAuthorization } from '@strands-agents/sdk/vended-interventions/cedar'
+import { z } from 'zod'
+// --8<-- [end:role_entities_imports]
+
 // --8<-- [start:rate_limit_imports]
 import { Agent, tool } from '@strands-agents/sdk'
 import { CedarAuthorization } from '@strands-agents/sdk/vended-interventions/cedar'
