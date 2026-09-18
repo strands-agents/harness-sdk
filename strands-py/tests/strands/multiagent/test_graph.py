@@ -13,7 +13,7 @@ from strands.multiagent.base import MultiAgentBase, MultiAgentResult, NodeResult
 from strands.multiagent.graph import Graph, GraphBuilder, GraphEdge, GraphNode, GraphResult, GraphState, Status
 from strands.session.file_session_manager import FileSessionManager
 from strands.session.session_manager import SessionManager
-from strands.types._events import MultiAgentNodeCancelEvent
+from strands.types._events import MultiAgentNodeSkipEvent
 
 
 def _make_graph(
@@ -2275,11 +2275,47 @@ async def test_graph_tracing_setup_failure_does_not_leak_timer(mock_strands_trac
 
 
 @pytest.mark.parametrize(
-    ("cancel_node", "cancel_message"),
-    [(True, "node cancelled by user"), ("custom cancel message", "custom cancel message")],
+    ("skip_node", "skip_message"),
+    [(True, "node skipped by user"), ("custom skip message", "custom skip message")],
 )
 @pytest.mark.asyncio
-async def test_graph_cancel_node(cancel_node, cancel_message):
+async def test_graph_skip_node(skip_node, skip_message):
+    def skip_callback(event):
+        event.skip_node = skip_node
+        return event
+
+    agent = create_mock_agent("test_agent", "Should not execute")
+    builder = GraphBuilder()
+    builder.add_node(agent, "test_agent")
+    builder.set_entry_point("test_agent")
+    graph = builder.build()
+    graph.hooks.add_callback(BeforeNodeCallEvent, skip_callback)
+
+    tru_skip_event = None
+    async for event in graph.stream_async("test task"):
+        if event.get("type") == "multiagent_node_skip":
+            tru_skip_event = event
+
+    exp_skip_event = MultiAgentNodeSkipEvent(node_id="test_agent", message=skip_message)
+    assert tru_skip_event == exp_skip_event
+
+    assert graph.state.status == Status.COMPLETED
+    assert any(node.node_id == "test_agent" for node in graph.state.completed_nodes)
+    assert "test_agent" in graph.state.results
+    assert graph.state.results["test_agent"].status == Status.SKIPPED
+    skipped_node = next(node for node in graph.state.completed_nodes if node.node_id == "test_agent")
+    assert skipped_node.execution_status == Status.SKIPPED
+    agent.stream_async.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("cancel_node", "cancel_message"),
+    [(True, "node skipped by user"), ("custom cancel message", "custom cancel message")],
+)
+@pytest.mark.asyncio
+async def test_graph_cancel_node_backward_compat(cancel_node, cancel_message):
+    """cancel_node works as a backward-compatible alias for skip_node and produces a multiagent_node_skip event."""
+
     def cancel_callback(event):
         event.cancel_node = cancel_node
         return event
@@ -2291,20 +2327,144 @@ async def test_graph_cancel_node(cancel_node, cancel_message):
     graph = builder.build()
     graph.hooks.add_callback(BeforeNodeCallEvent, cancel_callback)
 
-    stream = graph.stream_async("test task")
+    tru_skip_event = None
+    async for event in graph.stream_async("test task"):
+        if event.get("type") == "multiagent_node_skip":
+            tru_skip_event = event
 
-    tru_cancel_event = None
-    with pytest.raises(RuntimeError, match=cancel_message):
-        async for event in stream:
-            if event.get("type") == "multiagent_node_cancel":
-                tru_cancel_event = event
+    exp_skip_event = MultiAgentNodeSkipEvent(node_id="test_agent", message=cancel_message)
+    assert tru_skip_event == exp_skip_event
 
-    exp_cancel_event = MultiAgentNodeCancelEvent(node_id="test_agent", message=cancel_message)
-    assert tru_cancel_event == exp_cancel_event
+    assert graph.state.status == Status.COMPLETED
+    assert any(node.node_id == "test_agent" for node in graph.state.completed_nodes)
+    assert "test_agent" in graph.state.results
+    assert graph.state.results["test_agent"].status == Status.SKIPPED
+    skipped_node = next(node for node in graph.state.completed_nodes if node.node_id == "test_agent")
+    assert skipped_node.execution_status == Status.SKIPPED
+    agent.stream_async.assert_not_called()
 
-    tru_status = graph.state.status
-    exp_status = Status.FAILED
-    assert tru_status == exp_status
+
+@pytest.mark.parametrize(
+    ("skip_node", "cancel_node", "expected_message"),
+    [
+        (True, "cancel_node message", "node skipped by user"),
+        ("skip_node message", "cancel_node message", "skip_node message"),
+        (False, "cancel_node message", "cancel_node message"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_graph_skip_node_precedence_over_cancel_node(skip_node, cancel_node, expected_message):
+    """A truthy skip_node supplies the message; cancel_node is only consulted when skip_node is falsy."""
+
+    def skip_callback(event):
+        event.skip_node = skip_node
+        event.cancel_node = cancel_node
+        return event
+
+    agent = create_mock_agent("test_agent", "Should not execute")
+    builder = GraphBuilder()
+    builder.add_node(agent, "test_agent")
+    builder.set_entry_point("test_agent")
+    graph = builder.build()
+    graph.hooks.add_callback(BeforeNodeCallEvent, skip_callback)
+
+    tru_skip_event = None
+    async for event in graph.stream_async("test task"):
+        if event.get("type") == "multiagent_node_skip":
+            tru_skip_event = event
+
+    exp_skip_event = MultiAgentNodeSkipEvent(node_id="test_agent", message=expected_message)
+    assert tru_skip_event == exp_skip_event
+
+    assert graph.state.results["test_agent"].status == Status.SKIPPED
+    agent.stream_async.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_graph_skip_node_downstream_executes():
+    """Downstream nodes must run after an upstream node is skipped via skip_node."""
+    skip_event_ids: list[str] = []
+
+    def skip_step_a(event):
+        if event.node_id == "step_a":
+            event.skip_node = "step_a skipped"
+        return event
+
+    step_a = create_mock_agent("step_a", "Should not run")
+    step_b = create_mock_agent("step_b", "Step B completed")
+
+    builder = GraphBuilder()
+    builder.add_node(step_a, "step_a")
+    builder.add_node(step_b, "step_b")
+    builder.add_edge("step_a", "step_b")
+    builder.set_entry_point("step_a")
+    graph = builder.build()
+    graph.hooks.add_callback(BeforeNodeCallEvent, skip_step_a)
+
+    result = None
+    async for event in graph.stream_async("test task"):
+        if event.get("type") == "multiagent_node_skip":
+            skip_event_ids.append(event["node_id"])
+        if "result" in event:
+            result = event["result"]
+
+    assert skip_event_ids == ["step_a"]
+    assert graph.state.status == Status.COMPLETED
+
+    # GraphResult counts the skip separately: completed_nodes stays "ran to success"
+    assert result is not None
+    assert result.total_nodes == 2
+    assert result.completed_nodes == 1
+    assert result.skipped_nodes == 1
+    assert result.failed_nodes == 0
+    step_a.stream_async.assert_not_called()
+    step_b.stream_async.assert_called_once()
+
+    assert any(node.node_id == "step_a" for node in graph.state.completed_nodes)
+    assert any(node.node_id == "step_b" for node in graph.state.completed_nodes)
+    assert "step_a" in graph.state.results
+    assert "step_b" in graph.state.results
+
+    # step_a was skipped, so its NodeResult must carry Status.SKIPPED, not COMPLETED
+    assert graph.state.results["step_a"].status == Status.SKIPPED
+    assert graph.state.results["step_b"].status == Status.COMPLETED
+    skipped_node = next(node for node in graph.state.completed_nodes if node.node_id == "step_a")
+    assert skipped_node.execution_status == Status.SKIPPED
+
+    # step_b must receive only the original task, with no orphaned "From step_a:" header
+    step_b_input = step_b.stream_async.call_args.args[0]
+    assert len(step_b_input) == 1
+    assert step_b_input[0]["text"] == "test task"
+
+
+@pytest.mark.asyncio
+async def test_graph_cancel_node_backward_compat_downstream_executes():
+    """cancel_node, the backward-compatible alias for skip_node, still allows downstream nodes to run."""
+    skipped_nodes: list[str] = []
+
+    def cancel_step_a(event):
+        if event.node_id == "step_a":
+            event.cancel_node = "step_a skipped"
+        return event
+
+    step_a = create_mock_agent("step_a", "Should not run")
+    step_b = create_mock_agent("step_b", "Step B completed")
+
+    builder = GraphBuilder()
+    builder.add_node(step_a, "step_a")
+    builder.add_node(step_b, "step_b")
+    builder.add_edge("step_a", "step_b")
+    builder.set_entry_point("step_a")
+    graph = builder.build()
+    graph.hooks.add_callback(BeforeNodeCallEvent, cancel_step_a)
+
+    async for event in graph.stream_async("test task"):
+        if event.get("type") == "multiagent_node_skip":
+            skipped_nodes.append(event["node_id"])
+
+    assert skipped_nodes == ["step_a"]
+    assert graph.state.results["step_a"].status == Status.SKIPPED
+    assert graph.state.results["step_b"].status == Status.COMPLETED
 
 
 def test_graph_interrupt_on_before_node_call_event(interrupt_hook):
@@ -3545,3 +3705,205 @@ class TestResumeInFlightSibling:
         join_input_text = " ".join(str(block) for block in join_input)
         assert "From left:" in join_input_text
         assert "From right:" in join_input_text
+
+
+@pytest.mark.asyncio
+async def test_graph_skipped_node_survives_interrupted_sibling_resume():
+    """A node skipped in the same batch as an interrupted sibling still releases its downstream node on resume."""
+
+    def skip_a_interrupt_b(event):
+        if event.node_id == "step_a":
+            event.skip_node = "step_a skipped"
+        elif event.node_id == "step_b":
+            return event.interrupt("test_name", reason="test_reason")
+        return event
+
+    step_a = create_mock_agent("step_a", "Should not run")
+    step_b = create_mock_agent("step_b", "Step B completed")
+    step_c = create_mock_agent("step_c", "Step C completed")
+
+    builder = GraphBuilder()
+    builder.add_node(step_a, "step_a")
+    builder.add_node(step_b, "step_b")
+    builder.add_node(step_c, "step_c")
+    builder.add_edge("step_a", "step_c")
+    builder.set_entry_point("step_a")
+    builder.set_entry_point("step_b")
+    graph = builder.build()
+    graph.hooks.add_callback(BeforeNodeCallEvent, skip_a_interrupt_b)
+
+    result = await graph.invoke_async("test task")
+    assert result.status == Status.INTERRUPTED
+    assert graph.state.results["step_a"].status == Status.SKIPPED
+
+    interrupt = result.interrupts[0]
+    result = await graph.invoke_async(
+        [{"interruptResponse": {"interruptId": interrupt.id, "response": "test_response"}}]
+    )
+
+    assert result.status == Status.COMPLETED
+    assert "step_c" in graph.state.results, "downstream of the skipped node never ran after resume"
+    assert graph.state.results["step_c"].status == Status.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_graph_deserialize_state_restores_skipped_status():
+    """A skipped node round-trips through session serialization as SKIPPED rather than COMPLETED."""
+
+    def skip_a_interrupt_b(event):
+        if event.node_id == "step_a":
+            event.skip_node = "step_a skipped"
+        elif event.node_id == "step_b":
+            return event.interrupt("test_name", reason="test_reason")
+        return event
+
+    def build_graph():
+        builder = GraphBuilder()
+        builder.add_node(create_mock_agent("step_a", "Should not run"), "step_a")
+        builder.add_node(create_mock_agent("step_b", "Step B completed"), "step_b")
+        builder.add_node(create_mock_agent("step_c", "Step C completed"), "step_c")
+        builder.add_edge("step_a", "step_c")
+        builder.set_entry_point("step_a")
+        builder.set_entry_point("step_b")
+        return builder.build()
+
+    graph = build_graph()
+    graph.hooks.add_callback(BeforeNodeCallEvent, skip_a_interrupt_b)
+    await graph.invoke_async("test task")
+
+    payload = graph.serialize_state()
+    assert payload["next_nodes_to_execute"]
+
+    restored = build_graph()
+    restored.deserialize_state(payload)
+
+    assert restored.nodes["step_a"].execution_status == Status.SKIPPED
+    assert restored.nodes["step_b"].execution_status == Status.INTERRUPTED
+
+
+@pytest.mark.asyncio
+async def test_graph_fan_in_with_one_skipped_dependency():
+    """A fan-in node sees only its non-skipped dependency's output, with no header for the skipped one."""
+
+    def skip_step_a(event):
+        if event.node_id == "step_a":
+            event.skip_node = "step_a skipped"
+        return event
+
+    step_a = create_mock_agent("step_a", "Should not run")
+    step_b = create_mock_agent("step_b", "Step B completed")
+    step_c = create_mock_agent("step_c", "Step C completed")
+
+    builder = GraphBuilder()
+    builder.add_node(step_a, "step_a")
+    builder.add_node(step_b, "step_b")
+    builder.add_node(step_c, "step_c")
+    builder.add_edge("step_a", "step_c")
+    builder.add_edge("step_b", "step_c")
+    builder.set_entry_point("step_a")
+    builder.set_entry_point("step_b")
+    graph = builder.build()
+    graph.hooks.add_callback(BeforeNodeCallEvent, skip_step_a)
+
+    result = await graph.invoke_async("test task")
+
+    assert result.status == Status.COMPLETED
+    assert graph.state.results["step_c"].status == Status.COMPLETED
+
+    step_c_input = "".join(block.get("text", "") for block in step_c.stream_async.call_args.args[0])
+    assert "From step_b:" in step_c_input
+    assert "From step_a:" not in step_c_input
+
+
+@pytest.mark.asyncio
+async def test_graph_conditional_edge_from_skipped_node():
+    """An edge condition that accounts for a skipped node's None result routes on it normally."""
+
+    def upstream_produced_output(state):
+        node_result = state.results.get("step_a")
+        return node_result is not None and node_result.result is not None
+
+    def upstream_was_skipped(state):
+        node_result = state.results.get("step_a")
+        return node_result is not None and node_result.result is None
+
+    def skip_step_a(event):
+        if event.node_id == "step_a":
+            event.skip_node = "step_a skipped"
+        return event
+
+    step_b = create_mock_agent("step_b", "Step B completed")
+    step_c = create_mock_agent("step_c", "Step C completed")
+
+    builder = GraphBuilder()
+    builder.add_node(create_mock_agent("step_a", "Should not run"), "step_a")
+    builder.add_node(step_b, "step_b")
+    builder.add_node(step_c, "step_c")
+    builder.add_edge("step_a", "step_b", condition=upstream_produced_output)
+    builder.add_edge("step_a", "step_c", condition=upstream_was_skipped)
+    builder.set_entry_point("step_a")
+    graph = builder.build()
+    graph.hooks.add_callback(BeforeNodeCallEvent, skip_step_a)
+
+    result = await graph.invoke_async("test task")
+
+    assert result.status == Status.COMPLETED
+    assert "step_b" not in graph.state.results
+    assert graph.state.results["step_c"].status == Status.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_graph_skipped_node_counts_toward_max_node_executions():
+    """A skipped node still counts toward max_node_executions, which bounds traversal rather than work done."""
+
+    def skip_step_a(event):
+        if event.node_id == "step_a":
+            event.skip_node = "step_a skipped"
+        return event
+
+    builder = GraphBuilder()
+    builder.add_node(create_mock_agent("step_a", "Should not run"), "step_a")
+    builder.add_node(create_mock_agent("step_b", "Step B completed"), "step_b")
+    builder.add_edge("step_a", "step_b")
+    builder.set_entry_point("step_a")
+    builder.set_max_node_executions(1)
+    graph = builder.build()
+    graph.hooks.add_callback(BeforeNodeCallEvent, skip_step_a)
+
+    result = await graph.invoke_async("test task")
+
+    assert result.status == Status.FAILED
+    assert "step_b" not in graph.state.results
+    assert [node.node_id for node in graph.state.execution_order] == ["step_a"]
+
+
+@pytest.mark.asyncio
+async def test_graph_nested_graph_with_only_skipped_nodes_leaves_no_header():
+    """A nested graph whose nodes were all skipped contributes no orphaned "From <node>:" header downstream."""
+
+    def skip_inner(event):
+        if event.node_id == "inner_step":
+            event.skip_node = "inner_step skipped"
+        return event
+
+    inner_builder = GraphBuilder()
+    inner_builder.add_node(create_mock_agent("inner_step", "Should not run"), "inner_step")
+    inner_builder.set_entry_point("inner_step")
+    inner_graph = inner_builder.build()
+    inner_graph.hooks.add_callback(BeforeNodeCallEvent, skip_inner)
+
+    downstream = create_mock_agent("downstream", "Downstream completed")
+
+    builder = GraphBuilder()
+    builder.add_node(inner_graph, "inner")
+    builder.add_node(downstream, "downstream")
+    builder.add_edge("inner", "downstream")
+    builder.set_entry_point("inner")
+    graph = builder.build()
+
+    result = await graph.invoke_async("test task")
+
+    assert result.status == Status.COMPLETED
+    downstream_input = downstream.stream_async.call_args.args[0]
+    assert len(downstream_input) == 1
+    assert downstream_input[0]["text"] == "test task"

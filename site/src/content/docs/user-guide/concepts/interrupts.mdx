@@ -507,7 +507,7 @@ class ApprovalHook(HookProvider):
 
         approval = event.interrupt(f"{self.app_name}-approval", reason={"resources": "example"})
         if approval.lower() != "y":
-            event.cancel_node = "User denied permission to cleanup resources"
+            event.skip_node = "User denied permission to cleanup resources"
 
 
 swarm = Swarm(
@@ -532,7 +532,10 @@ while result.status == Status.INTERRUPTED:
 
     result = swarm(responses)
 
-print(f"MESSAGE: {json.dumps(result.results['cleanup'].result.message, indent=2)}")
+if "cleanup" not in result.results:
+    print("MESSAGE: cleanup produced no result, which is how a skipped node looks in a swarm")
+else:
+    print(f"MESSAGE: {json.dumps(result.results['cleanup'].result.message, indent=2)}")
 ```
 </Tab>
 <Tab label="TypeScript">
@@ -560,8 +563,10 @@ Swarms also support interrupts raised from within the nodes themselves following
     - Each `interrupt` contains the user provided name and reason, along with an instance id.
 - `interruptResponse` - Content block type for configuring the interrupt responses.
     - Each `response` is uniquely identified by their interrupt's id and will be returned from the associated interrupt call when invoked the second time around. Note, the `response` must be JSON-serializable.
-- `event.cancel_node` - Cancel node execution based on interrupt response
-    - You can either set `cancel_node` to `True` or provide a custom cancellation message.
+- `event.skip_node` - Skip node execution based on interrupt response
+    - You can either set `skip_node` to `True` or provide a custom skip message.
+    - In a swarm, skipping a node ends the sequence and the result carries `Status.FAILED`, because each node builds on the previous node's output.
+    - `event.cancel_node` is a backward-compatible alias with the same behavior.
 </Tab>
 <Tab label="TypeScript">
 
@@ -615,7 +620,7 @@ class ApprovalHook(HookProvider):
 
         approval = event.interrupt(f"{self.app_name}-approval", reason={"resources": "example"})
         if approval.lower() != "y":
-            event.cancel_node = "User denied permission to cleanup resources"
+            event.skip_node = "User denied permission to cleanup resources"
 
 
 inspector_agent = Agent(name="inspector", system_prompt="You inspect resources.", callback_handler=None)
@@ -644,7 +649,11 @@ while result.status == Status.INTERRUPTED:
 
     result = graph(responses)
 
-print(f"MESSAGE: {json.dumps(result.results['cleanup'].result.message, indent=2)}")
+cleanup_result = result.results["cleanup"]
+if cleanup_result.status == Status.SKIPPED:
+    print("MESSAGE: cleanup was skipped, the rest of the graph still ran")
+else:
+    print(f"MESSAGE: {json.dumps(cleanup_result.result.message, indent=2)}")
 ```
 </Tab>
 <Tab label="TypeScript">
@@ -672,8 +681,10 @@ Graphs also support interrupts raised from within the nodes themselves following
     - Each `interrupt` contains the user provided name and reason, along with an instance id.
 - `interruptResponse` - Content block type for configuring the interrupt responses
     - Each `response` is uniquely identified by their interrupt's id and will be returned from the associated interrupt call when invoked the second time around. Note, the `response` must be JSON-serializable.
-- `event.cancel_node` - Cancel node execution based on interrupt response
-    - You can either set `cancel_node` to `True` or provide a custom cancellation message.
+- `event.skip_node` - Skip node execution based on interrupt response
+    - You can either set `skip_node` to `True` or provide a custom skip message.
+    - In a graph, the skipped node records a `NodeResult` with `Status.SKIPPED` and `result=None`, and downstream nodes still run. They receive no input from the skipped node, and an edge condition reading its output has to handle `None`.
+    - `event.cancel_node` is a backward-compatible alias with the same behavior.
 </Tab>
 <Tab label="TypeScript">
 

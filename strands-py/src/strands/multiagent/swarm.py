@@ -44,8 +44,8 @@ from ..telemetry import get_tracer
 from ..tools.decorator import tool
 from ..types._events import (
     MultiAgentHandoffEvent,
-    MultiAgentNodeCancelEvent,
     MultiAgentNodeInterruptEvent,
+    MultiAgentNodeSkipEvent,
     MultiAgentNodeStartEvent,
     MultiAgentNodeStopEvent,
     MultiAgentNodeStreamEvent,
@@ -824,14 +824,13 @@ class Swarm(MultiAgentBase):
                         yield self._activate_interrupt(current_node, interrupts)
                         break
 
-                    if before_event.cancel_node:
-                        cancel_message = (
-                            before_event.cancel_node
-                            if isinstance(before_event.cancel_node, str)
-                            else "node cancelled by user"
-                        )
-                        logger.debug("reason=<%s> | cancelling execution", cancel_message)
-                        yield MultiAgentNodeCancelEvent(current_node.node_id, cancel_message)
+                    skip_value = before_event.skip_node or before_event.cancel_node
+
+                    if skip_value:
+                        skip_message = skip_value if isinstance(skip_value, str) else "node skipped by user"
+                        logger.debug("reason=<%s> | node skipped, stopping swarm sequence", skip_message)
+                        yield MultiAgentNodeSkipEvent(current_node.node_id, skip_message)
+                        # Linear swarm: nodes depend on prior output; skip sets FAILED (unlike graph, which continues).
                         self.state.completion_status = Status.FAILED
                         break
 

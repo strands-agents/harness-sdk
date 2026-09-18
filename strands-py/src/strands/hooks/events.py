@@ -415,18 +415,25 @@ class BeforeNodeCallEvent(BaseHookEvent, _Interruptible):
         source: The multi-agent orchestrator instance
         node_id: ID of the node about to execute
         invocation_state: Configuration that user passes in
-        cancel_node: A user defined message that when set, will cancel the node execution with status FAILED.
-            The message will be emitted under a MultiAgentNodeCancel event. If set to `True`, Strands will cancel the
-            node using a default cancel message.
+        skip_node: A user defined message that when set, will skip the node execution and emit a
+            ``MultiAgentNodeSkipEvent``. If set to ``True``, a default skip message is used. Any
+            falsy value (``False``, ``""`` etc.) means "do not skip". Takes precedence over
+            ``cancel_node`` when both are truthy. In a graph the skipped node records a
+            ``NodeResult`` with ``result=None``, so an edge condition reading that node's output
+            has to handle ``None``.
+        cancel_node: Alias for ``skip_node``, kept so existing code keeps working. It behaves
+            identically today; the separate name leaves room for a distinct cancel semantic later.
     """
 
     source: "MultiAgentBase"
     node_id: str
     invocation_state: dict[str, Any] | None = None
     cancel_node: bool | str = False
+    # Appended rather than placed next to its alias so that cancel_node keeps its positional slot.
+    skip_node: bool | str = False
 
     def _can_write(self, name: str) -> bool:
-        return name in ["cancel_node"]
+        return name in ["skip_node", "cancel_node"]
 
     @override
     def _interrupt_id(self, name: str) -> str:

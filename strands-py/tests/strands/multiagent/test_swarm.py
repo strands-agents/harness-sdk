@@ -2308,11 +2308,48 @@ async def test_swarm_resume_interrupted_self_handoff_preserved(mock_strands_trac
 
 
 @pytest.mark.parametrize(
-    ("cancel_node", "cancel_message"),
-    [(True, "node cancelled by user"), ("custom cancel message", "custom cancel message")],
+    ("skip_node", "skip_message"),
+    [(True, "node skipped by user"), ("custom skip message", "custom skip message")],
 )
 @pytest.mark.asyncio
-async def test_swarm_cancel_node(cancel_node, cancel_message, alist):
+async def test_swarm_skip_node(skip_node, skip_message, alist):
+    def skip_callback(event):
+        event.skip_node = skip_node
+        return event
+
+    agent = create_mock_agent("test_agent", "Should not execute")
+    swarm = Swarm([agent])
+    swarm.hooks.add_callback(BeforeNodeCallEvent, skip_callback)
+
+    stream = swarm.stream_async("test task")
+
+    tru_events = await alist(stream)
+    exp_events = [
+        {
+            "message": skip_message,
+            "node_id": "test_agent",
+            "type": "multiagent_node_skip",
+        },
+        {
+            "result": ANY,
+            "type": "multiagent_result",
+        },
+    ]
+    assert tru_events == exp_events
+
+    tru_status = swarm.state.completion_status
+    exp_status = Status.FAILED
+    assert tru_status == exp_status
+
+
+@pytest.mark.parametrize(
+    ("cancel_node", "cancel_message"),
+    [(True, "node skipped by user"), ("custom cancel message", "custom cancel message")],
+)
+@pytest.mark.asyncio
+async def test_swarm_cancel_node_backward_compat(cancel_node, cancel_message, alist):
+    """cancel_node works as a backward-compatible alias for skip_node and produces multiagent_node_skip."""
+
     def cancel_callback(event):
         event.cancel_node = cancel_node
         return event
@@ -2321,14 +2358,13 @@ async def test_swarm_cancel_node(cancel_node, cancel_message, alist):
     swarm = Swarm([agent])
     swarm.hooks.add_callback(BeforeNodeCallEvent, cancel_callback)
 
-    stream = swarm.stream_async("test task")
+    tru_events = await alist(swarm.stream_async("test task"))
 
-    tru_events = await alist(stream)
     exp_events = [
         {
             "message": cancel_message,
             "node_id": "test_agent",
-            "type": "multiagent_node_cancel",
+            "type": "multiagent_node_skip",
         },
         {
             "result": ANY,

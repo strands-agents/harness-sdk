@@ -166,15 +166,15 @@ async def test_swarm_interrupt_reject(swarm):
             },
         },
     ]
-    tru_cancel_id = None
+    tru_skip_id = None
     async for event in swarm.stream_async(responses):
-        if event.get("type") == "multiagent_node_cancel":
-            tru_cancel_id = event["node_id"]
+        if event.get("type") == "multiagent_node_skip":
+            tru_skip_id = event["node_id"]
 
     multiagent_result = event["result"]
 
-    exp_cancel_id = "weather"
-    assert tru_cancel_id == exp_cancel_id
+    exp_skip_id = "weather"
+    assert tru_skip_id == exp_skip_id
 
     tru_status = multiagent_result.status
     exp_status = Status.FAILED
@@ -287,17 +287,14 @@ async def test_graph_interrupt_reject(graph):
         },
     ]
 
-    try:
-        async for event in graph.stream_async(responses):
-            if event.get("type") == "multiagent_node_cancel":
-                tru_cancel_id = event["node_id"]
+    tru_skip_id = None
+    async for event in graph.stream_async(responses):
+        if event.get("type") == "multiagent_node_skip":
+            tru_skip_id = event["node_id"]
 
-    except RuntimeError as e:
-        assert "node rejected" in str(e)
-
-    exp_cancel_id = "weather"
-    assert tru_cancel_id == exp_cancel_id
+    exp_skip_id = "weather"
+    assert tru_skip_id == exp_skip_id
 
     tru_state_status = graph.state.status
-    exp_state_status = Status.FAILED
+    exp_state_status = Status.COMPLETED
     assert tru_state_status == exp_state_status

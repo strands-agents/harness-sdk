@@ -582,7 +582,11 @@ class MultiAgentNodeStreamEvent(TypedEvent):
 
 
 class MultiAgentNodeCancelEvent(TypedEvent):
-    """Event emitted when a user cancels node execution from their BeforeNodeCallEvent hook."""
+    """Superseded by :class:`MultiAgentNodeSkipEvent`. Nothing in the library emits this.
+
+    Kept so that code importing it keeps working. Bypassed nodes now emit
+    ``multiagent_node_skip`` instead of ``multiagent_node_cancel``.
+    """
 
     def __init__(self, node_id: str, message: str) -> None:
         """Initialize with cancel message.
@@ -594,6 +598,30 @@ class MultiAgentNodeCancelEvent(TypedEvent):
         super().__init__(
             {
                 "type": "multiagent_node_cancel",
+                "node_id": node_id,
+                "message": message,
+            }
+        )
+
+
+class MultiAgentNodeSkipEvent(TypedEvent):
+    """Event emitted when a node is bypassed via :attr:`BeforeNodeCallEvent.skip_node`.
+
+    Also triggered by the :attr:`BeforeNodeCallEvent.cancel_node` alias. The orchestrator's
+    behavior after skip depends on its type: a graph continues executing downstream nodes,
+    while a swarm stops the current run.
+    """
+
+    def __init__(self, node_id: str, message: str) -> None:
+        """Initialize with skip message.
+
+        Args:
+            node_id: Unique identifier for the node.
+            message: The node skip message.
+        """
+        super().__init__(
+            {
+                "type": "multiagent_node_skip",
                 "node_id": node_id,
                 "message": message,
             }
