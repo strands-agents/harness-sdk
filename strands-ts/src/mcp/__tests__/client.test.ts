@@ -958,6 +958,42 @@ describe('MCP Integration', () => {
       expect(content.json).toEqual(expect.objectContaining({ value: data }))
     })
 
+    it('surfaces structuredContent on the tool result', async () => {
+      vi.mocked(mockClientWrapper.callTool).mockResolvedValue({
+        content: [{ type: 'text', text: 'Sunny' }],
+        structuredContent: { temperature: 72, conditions: 'sunny' },
+      })
+
+      const result = await runTool<ToolResultBlock>(tool.stream(toolContext))
+
+      expect(result.status).toBe('success')
+      expect(result.structuredContent).toEqual({ temperature: 72, conditions: 'sunny' })
+    })
+
+    it('passes non-object structuredContent through the mapper', async () => {
+      // Mapper-level coverage only: the MCP SDK's transport validation is object-only
+      // today, so a real server cannot deliver non-object values until it implements
+      // SEP-2106. The mapper is ready for that without changes.
+      vi.mocked(mockClientWrapper.callTool).mockResolvedValue({
+        content: [{ type: 'text', text: 'count' }],
+        structuredContent: 42,
+      })
+
+      const result = await runTool<ToolResultBlock>(tool.stream(toolContext))
+
+      expect(result.structuredContent).toBe(42)
+    })
+
+    it('omits structuredContent when the server does not return it', async () => {
+      vi.mocked(mockClientWrapper.callTool).mockResolvedValue({
+        content: [{ type: 'text', text: 'Sunny' }],
+      })
+
+      const result = await runTool<ToolResultBlock>(tool.stream(toolContext))
+
+      expect(result.structuredContent).toBeUndefined()
+    })
+
     it('provides default message for empty output', async () => {
       vi.mocked(mockClientWrapper.callTool).mockResolvedValue({ content: [] })
 
