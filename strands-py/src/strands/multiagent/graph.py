@@ -953,6 +953,9 @@ class Graph(MultiAgentBase):
         Only evaluates destination nodes of outbound edges from the completed batch,
         instead of iterating over all nodes in the graph.
         """
+        if any(node.execution_status == Status.FAILED for node in completed_batch):
+            return []
+
         # Collect unique candidate nodes reachable from the completed batch
         candidates = {edge.to_node for edge in self.edges if edge.from_node in completed_batch}
 
@@ -1069,11 +1072,15 @@ class Graph(MultiAgentBase):
                 # Handle stop_reason and interrupts (use getattr for AgentBase compatibility)
                 stop_reason = getattr(agent_response, "stop_reason", "end_turn")
                 interrupts = getattr(agent_response, "interrupts", None) or []
+                agent_status = {
+                    "cancelled": Status.FAILED,
+                    "interrupt": Status.INTERRUPTED,
+                }.get(stop_reason, Status.COMPLETED)
 
                 node_result = NodeResult(
                     result=agent_response,
                     execution_time=round((time.time() - start_time) * 1000),
-                    status=Status.INTERRUPTED if stop_reason == "interrupt" else Status.COMPLETED,
+                    status=agent_status,
                     accumulated_usage=usage,
                     accumulated_metrics=metrics,
                     execution_count=1,
