@@ -10,8 +10,15 @@ from strands.tools.mcp import MCPClient, MCPClientCredentials
 from strands.tools.mcp._compat import MCP_V2
 from strands.tools.mcp.mcp_client import _InMemoryTokenStorage
 
+from .conftest import SDK_USER_AGENT
+
 # mcp 2.x renamed the provider's `scopes` keyword to `scope`.
 SCOPE_KWARG = "scope" if MCP_V2 else "scopes"
+
+
+@pytest.fixture(autouse=True)
+def _pin_sdk_version(pinned_sdk_version):
+    """Every SDK-built transport in this module carries the pinned User-Agent."""
 
 
 @pytest.fixture
@@ -29,7 +36,9 @@ def test_url_builds_streamable_http_transport(streamablehttp_transport):
 
     client._transport_callable()
 
-    streamablehttp_transport.assert_called_once_with(url="https://mcp.example.com", headers=None, auth=None)
+    streamablehttp_transport.assert_called_once_with(
+        url="https://mcp.example.com", headers={"User-Agent": SDK_USER_AGENT}, auth=None
+    )
 
 
 def test_transport_callable_passthrough(streamablehttp_transport):
@@ -48,7 +57,17 @@ def test_headers_passed_to_transport(streamablehttp_transport):
     client._transport_callable()
 
     streamablehttp_transport.assert_called_once_with(
-        url="https://mcp.example.com", headers={"X-Api-Key": "abc"}, auth=None
+        url="https://mcp.example.com", headers={"X-Api-Key": "abc", "User-Agent": SDK_USER_AGENT}, auth=None
+    )
+
+
+def test_user_agent_header_overrides_sdk_default(streamablehttp_transport):
+    client = MCPClient(url="https://mcp.example.com", headers={"user-agent": "mine/1"})
+
+    client._transport_callable()
+
+    streamablehttp_transport.assert_called_once_with(
+        url="https://mcp.example.com", headers={"user-agent": "mine/1"}, auth=None
     )
 
 
@@ -104,7 +123,7 @@ def test_auth_and_headers_passed_together(streamablehttp_transport):
     client._transport_callable()
 
     kwargs = streamablehttp_transport.call_args.kwargs
-    assert kwargs["headers"] == {"X-Trace": "123"}
+    assert kwargs["headers"] == {"X-Trace": "123", "User-Agent": SDK_USER_AGENT}
     assert isinstance(kwargs["auth"], ClientCredentialsOAuthProvider)
 
 

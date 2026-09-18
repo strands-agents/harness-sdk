@@ -3,7 +3,13 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
-import type { McpClientConfig, McpClientOptions, McpToolFilters, McpTransport } from './client.js'
+import {
+  withDefaultUserAgent,
+  type McpClientConfig,
+  type McpClientOptions,
+  type McpToolFilters,
+  type McpTransport,
+} from './client.js'
 import type { McpLoadServersOptions, McpServerConfig } from './config.js'
 import { logger } from '../logging/index.js'
 
@@ -106,13 +112,12 @@ function buildSseConfig(server: McpServerConfig): McpClientConfig {
   if (server.auth)
     throw new Error('SSE transport does not support auth — use streamable-http or provide a pre-configured transport')
 
-  const headers = server.headers ? interpolateRecord(server.headers) : undefined
+  const headers = withDefaultUserAgent(server.headers ? interpolateRecord(server.headers) : undefined)
 
   return {
-    transport: new SSEClientTransport(
-      new URL(interpolateEnv(server.url)),
-      headers ? { requestInit: { headers } } : undefined
-    ) as McpTransport,
+    transport: new SSEClientTransport(new URL(interpolateEnv(server.url)), {
+      requestInit: { headers },
+    }) as McpTransport,
   }
 }
 
@@ -122,9 +127,7 @@ function baseOptions(
   defaults?: McpClientOptions,
   options?: McpLoadServersOptions
 ): McpClientOptions {
-  // applicationName is the shared app identity sent in the MCP handshake; honor an explicit
-  // default for all clients, falling back to the server's config key when none is given.
-  const opts: McpClientOptions = { ...defaults, applicationName: defaults?.applicationName ?? name }
+  const opts: McpClientOptions = { ...defaults }
   if (options?.prefixWithServerName) opts.prefix = name.replace(/[^A-Za-z0-9_-]/g, '_')
   if (server.continueOnError != null) opts.continueOnError = server.continueOnError
   if (server.tasksConfig != null) opts.tasksConfig = server.tasksConfig

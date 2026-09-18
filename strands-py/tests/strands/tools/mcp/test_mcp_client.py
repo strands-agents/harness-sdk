@@ -3,6 +3,7 @@ import base64
 import threading
 import time
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,6 +11,7 @@ from mcp import ListToolsResult
 from mcp.types import CallToolResult as MCPCallToolResult
 from mcp.types import (
     GetPromptResult,
+    Implementation,
     ListPromptsResult,
     ListResourcesResult,
     ListResourceTemplatesResult,
@@ -30,10 +32,11 @@ from pydantic import AnyUrl
 import strands.tools.mcp.mcp_client as mcp_client_module
 from strands.tools.mcp import MCPClient
 from strands.tools.mcp._compat import MCP_V2, next_cursor, resource_templates
+from strands.tools.mcp.mcp_client import _sdk_version, _with_default_user_agent
 from strands.tools.mcp.mcp_types import MCPToolResult
 from strands.types.exceptions import MCPClientInitializationError
 
-from .conftest import assert_session_call_tool_once_with, make_mcp_error
+from .conftest import SDK_USER_AGENT, assert_session_call_tool_once_with, make_mcp_error
 
 # Fixtures mock_transport and mock_session are imported from conftest.py
 
@@ -1982,16 +1985,16 @@ def test_map_mcp_content_subclass_override(mock_transport, mock_session):
 
 
 @pytest.mark.parametrize(
-    "application_name,application_version,expected_name,expected_version_check",
+    "application_name,application_version,exp_client_info",
     [
-        ("my-fraud-agent", None, "my-fraud-agent", lambda v: v and v != "0.1.0"),
-        ("my-agent/v2.1.0 (prod)", None, "my-agent/v2.1.0 (prod)", lambda v: v and v != "0.1.0"),
-        ("my-agent", "2.3.1", "my-agent", lambda v: v == "2.3.1"),
+        ("my-fraud-agent", None, Implementation(name="my-fraud-agent", version="9.9.9")),
+        ("my-agent/v2.1.0 (prod)", None, Implementation(name="my-agent/v2.1.0 (prod)", version="9.9.9")),
+        ("my-agent", "2.3.1", Implementation(name="my-agent", version="2.3.1")),
     ],
     ids=["name-only-uses-sdk-version", "special-characters", "explicit-version"],
 )
 def test_mcp_client_client_info_passed(
-    mock_transport, mock_session, application_name, application_version, expected_name, expected_version_check
+    mock_transport, mock_session, pinned_sdk_version, application_name, application_version, exp_client_info
 ):
     """Test that application_name and application_version are passed through to ClientSession as client_info."""
     with patch("strands.tools.mcp.mcp_client.ClientSession") as mock_client_session:
@@ -2007,14 +2010,13 @@ def test_mcp_client_client_info_passed(
             kwargs["application_version"] = application_version
 
         with MCPClient(mock_transport["transport_callable"], **kwargs) as _client:
-            call_kwargs = mock_client_session.call_args[1]
-            assert call_kwargs["client_info"].name == expected_name
-            assert expected_version_check(call_kwargs["client_info"].version)
+            tru_client_info = mock_client_session.call_args[1]["client_info"]
+            assert tru_client_info == exp_client_info
 
 
 def test_mcp_client_client_name_property(mock_transport):
-    """Test that client_name exposes the configured application_name."""
-    assert MCPClient(mock_transport["transport_callable"]).client_name is None
+    """Test that client_name exposes application_name, or the SDK default when unset."""
+    assert MCPClient(mock_transport["transport_callable"]).client_name == "AWS Strands"
     assert MCPClient(mock_transport["transport_callable"], application_name="my-agent").client_name == "my-agent"
 
 
@@ -2023,8 +2025,10 @@ def test_mcp_client_client_name_property(mock_transport):
     [None, ""],
     ids=["none", "empty-string"],
 )
-def test_mcp_client_client_info_none_when_no_name(mock_transport, mock_session, application_name):
-    """Test that client_info is None when application_name is not provided or empty."""
+def test_mcp_client_client_info_defaults_to_sdk_identity(
+    mock_transport, mock_session, pinned_sdk_version, application_name
+):
+    """Test that client_info reports the SDK identity when application_name is not provided or empty."""
     with patch("strands.tools.mcp.mcp_client.ClientSession") as mock_client_session:
         mock_session_cm = AsyncMock()
         mock_session_instance = AsyncMock()
@@ -2036,5 +2040,31 @@ def test_mcp_client_client_info_none_when_no_name(mock_transport, mock_session, 
         kwargs = {"application_name": application_name} if application_name is not None else {}
 
         with MCPClient(mock_transport["transport_callable"], **kwargs) as _client:
-            call_kwargs = mock_client_session.call_args[1]
-            assert call_kwargs["client_info"] is None
+            tru_client_info = mock_client_session.call_args[1]["client_info"]
+            assert tru_client_info == Implementation(name="AWS Strands", version="9.9.9")
+
+
+def test__sdk_version_falls_back_when_package_not_installed():
+    """Test that the version lookup degrades to "unknown" instead of raising when the dist is not installed."""
+    with patch("strands.tools.mcp.mcp_client.pkg_version", side_effect=PackageNotFoundError("strands-agents")):
+        assert _sdk_version() == "unknown"
+
+
+@pytest.mark.parametrize(
+    "headers,exp_headers",
+    [
+        (None, {"User-Agent": SDK_USER_AGENT}),
+        ({"X-Api-Key": "abc"}, {"X-Api-Key": "abc", "User-Agent": SDK_USER_AGENT}),
+        ({"user-agent": "mine/1"}, {"user-agent": "mine/1"}),
+        ({"User-Agent": "mine/1"}, {"User-Agent": "mine/1"}),
+    ],
+    ids=["none", "merges", "lowercase-user-agent-wins", "user-agent-wins"],
+)
+def test__with_default_user_agent(pinned_sdk_version, headers, exp_headers):
+    """Test that the SDK User-Agent is added only when the caller did not set one, without mutating the input."""
+    original_headers = dict(headers) if headers is not None else None
+
+    tru_headers = _with_default_user_agent(headers)
+
+    assert tru_headers == exp_headers
+    assert headers == original_headers

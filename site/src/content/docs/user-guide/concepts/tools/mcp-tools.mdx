@@ -510,6 +510,55 @@ and `toolFilters` too, where filter strings are regexes.
 </Tab>
 </Tabs>
 
+### Client Identity
+
+Each client identifies itself to the server twice. The MCP `initialize`
+handshake carries a `clientInfo` with the name `AWS Strands` and the SDK version.
+HTTP transports that the SDK constructs also send a `User-Agent` header of
+`AWS-Strands/<version>`. Set <Syntax py="application_name" ts="applicationName" />
+and <Syntax py="application_version" ts="applicationVersion" /> to report your
+application in `clientInfo` instead. A `User-Agent` in `headers` replaces the SDK
+default. A transport you construct yourself
+(<Syntax py="transport_callable" ts="transport" />) is used as-is and carries no
+SDK `User-Agent`.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands.tools.mcp import MCPClient
+
+mcp_client = MCPClient(
+    url="https://api.example.com/mcp/",
+    application_name="my-fraud-agent",
+    application_version="2.1.0",
+)
+```
+
+The same keys apply to a server entry in a `load_servers` config:
+
+```json
+{
+  "mcpServers": {
+    "docs": {
+      "url": "https://api.example.com/mcp/",
+      "application_name": "my-fraud-agent",
+      "application_version": "2.1.0"
+    }
+  }
+}
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/concepts/tools/mcp-tools_imports.ts:mcp_client_imports"
+
+--8<-- "user-guide/concepts/tools/mcp-tools.ts:client_identity"
+```
+</Tab>
+</Tabs>
+
 ## Direct Tool Invocation
 
 While tools are typically invoked by the agent based on user requests, MCP tools can also be called directly:

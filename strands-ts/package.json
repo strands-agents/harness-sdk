@@ -190,6 +190,7 @@
     }
   },
   "scripts": {
+    "prebuild": "node scripts/sync-version.mjs",
     "build": "tsc --project src/tsconfig.json",
     "prepack": "npm run build",
     "check": "npm run lint && npm run format && npm run type-check && npm run check:browser-bundle && npm run test:coverage && npm run test:package",

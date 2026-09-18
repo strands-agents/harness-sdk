@@ -22,6 +22,7 @@ from collections.abc import Callable, Coroutine, Sequence
 from concurrent import futures
 from contextlib import AsyncExitStack
 from datetime import timedelta
+from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as pkg_version
 from pathlib import Path
 from re import Pattern
@@ -169,6 +170,10 @@ class MCPServerConfig(TypedDict, total=False):
     when this one fails: a config-resolution failure (e.g. a missing env var) skips it during
     load_servers instead of raising, and a connection failure yields no tools instead of raising
     when the agent loads them.
+
+    'application_name' and 'application_version' override the identity sent in the initialize
+    handshake ("AWS Strands" and the SDK version by default). A 'User-Agent' in 'headers' replaces
+    the SDK default on HTTP transports.
     """
 
     command: str
@@ -186,6 +191,29 @@ class MCPServerConfig(TypedDict, total=False):
     startup_timeout: int
     application_name: str
     application_version: str
+
+
+# clientInfo.name sent in the initialize handshake unless application_name overrides it.
+_DEFAULT_CLIENT_NAME = "AWS Strands"
+# Hyphenated because a User-Agent product token cannot contain spaces.
+_USER_AGENT_PRODUCT = "AWS-Strands"
+
+
+def _sdk_version() -> str:
+    """Return the installed Strands SDK version, or "unknown" when the distribution metadata is unavailable."""
+    try:
+        return pkg_version("strands-agents")
+    except PackageNotFoundError:
+        return "unknown"
+
+
+def _with_default_user_agent(headers: dict[str, str] | None) -> dict[str, str]:
+    """Return a copy of ``headers`` with the SDK ``User-Agent`` added unless the caller set one (any casing)."""
+    merged = dict(headers or {})
+    if any(name.lower() == "user-agent" for name in merged):
+        return merged
+    merged["User-Agent"] = f"{_USER_AGENT_PRODUCT}/{_sdk_version()}"
+    return merged
 
 
 MIME_TO_FORMAT: dict[str, ImageFormat] = {
@@ -324,10 +352,12 @@ class MCPClient(ToolProvider):
 
         Args:
             transport_callable: A callable that returns an MCPTransport (read_stream, write_stream) tuple.
-                Mutually exclusive with `url`.
+                Mutually exclusive with `url`. Used as-is: the SDK does not add its `User-Agent` to a
+                caller-supplied transport.
             url: Server URL. When provided, a streamable HTTP transport is constructed automatically.
                 Mutually exclusive with `transport_callable`.
-            headers: HTTP headers to include on every request to the server. Requires `url`.
+            headers: HTTP headers to include on every request to the server. Requires `url`. The SDK adds
+                `User-Agent: AWS-Strands/<version>` unless the headers already include a `User-Agent`.
             auth: Client credentials for OAuth machine-to-machine (client_credentials grant)
                 authentication. Requires `url`. Mutually exclusive with `auth_provider`.
             auth_provider: Custom `httpx.Auth` for advanced auth flows, passed through to the
@@ -336,11 +366,10 @@ class MCPClient(ToolProvider):
                 Defaults to 30.
             tool_filters: Optional filters to apply to tools.
             prefix: Optional prefix for tool names.
-            application_name: Optional name to identify this agent via clientInfo.name.
-                If provided, the MCP server will see this name during the initialize handshake.
-                Defaults to None (uses the MCP SDK default "mcp").
-            application_version: Optional version string to report alongside application_name.
-                Defaults to None (uses the Strands SDK version).
+            application_name: Name reported to the server as `clientInfo.name` in the initialize handshake.
+                Defaults to "AWS Strands".
+            application_version: Version reported as `clientInfo.version` alongside `application_name`.
+                Defaults to the installed Strands SDK version.
             continue_on_error: When True, a connection failure during `load_tools` is logged and
                 yields no tools instead of raising, so one unavailable server does not prevent an
                 agent from using the others. Only the connection (`start()`) is swallowed; an error
@@ -373,8 +402,8 @@ class MCPClient(ToolProvider):
         self._startup_timeout = startup_timeout
         self._tool_filters = tool_filters
         self._prefix = prefix
-        self._application_name = application_name
-        self._application_version = application_version
+        self._application_name = application_name or _DEFAULT_CLIENT_NAME
+        self._application_version = application_version or _sdk_version()
         self._continue_on_error = continue_on_error
         # True after a swallowed init failure, so load_tools stops retrying a failed server.
         self._connection_failed = False
@@ -476,11 +505,8 @@ class MCPClient(ToolProvider):
         return self
 
     @property
-    def client_name(self) -> str | None:
-        """The ``application_name`` reported to the server, or ``None`` when unset (see ``__init__``).
-
-        Defaults to the config key for ``load_servers`` clients.
-        """
+    def client_name(self) -> str:
+        """The ``clientInfo.name`` sent to the server: ``application_name`` or the SDK default (see ``__init__``)."""
         return self._application_name
 
     @property
@@ -1475,14 +1501,7 @@ class MCPClient(ToolProvider):
                     write_stream,
                     message_handler=self._handle_session_message,
                     elicitation_callback=self._elicitation_callback,
-                    client_info=(
-                        Implementation(
-                            name=self._application_name,
-                            version=self._application_version or pkg_version("strands-agents"),
-                        )
-                        if self._application_name
-                        else None
-                    ),
+                    client_info=Implementation(name=self._application_name, version=self._application_version),
                     **task_session_kwargs(self._is_tasks_enabled()),
                 ) as session:
                     self._log_debug_with_thread("initializing MCP session")
@@ -2552,6 +2571,7 @@ def _resolve_transport_callable(
     if scheme == "http" and (auth is not None or auth_provider is not None):
         logger.warning("url=<%s> | sending oauth credentials over plaintext http", server_url)
     resolved_auth = _build_client_credentials_auth(server_url, auth) if auth is not None else auth_provider
+    headers = _with_default_user_agent(headers)
     return lambda: streamable_http_transport(url=server_url, headers=headers, auth=resolved_auth)
 
 
@@ -2611,7 +2631,7 @@ def _build_client_from_config(
         startup_timeout=server.get("startup_timeout", 30),
         tool_filters=_parse_config_tool_filters(name, server.get("tool_filters")),
         prefix=server.get("prefix", _sanitize_prefix(name) if prefix_with_server_name else None),
-        application_name=server.get("application_name", name),
+        application_name=server.get("application_name"),
         application_version=server.get("application_version"),
         continue_on_error=server.get("continue_on_error", continue_on_error),
     )
@@ -2647,7 +2667,7 @@ def _config_transport_callable(name: str, transport: str, server: dict[str, Any]
             url = server.get("url")
             if not url:
                 raise ValueError(f"server '{name}': streamable-http transport requires 'url'")
-            headers = server.get("headers")
+            headers = _with_default_user_agent(server.get("headers"))
             resolved_auth = _parse_config_auth(name, cast(str, url), server.get("auth"))
             return lambda: streamable_http_transport(url=cast(str, url), headers=headers, auth=resolved_auth)
 
@@ -2655,7 +2675,7 @@ def _config_transport_callable(name: str, transport: str, server: dict[str, Any]
             url = server.get("url")
             if not url:
                 raise ValueError(f"server '{name}': sse transport requires 'url'")
-            headers = server.get("headers")
+            headers = _with_default_user_agent(server.get("headers"))
             return lambda: sse_client(url=cast(str, url), headers=headers)
 
         case _:

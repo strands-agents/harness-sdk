@@ -17,6 +17,12 @@ import type { ElicitationCallback } from '../types/elicitation.js'
 import { McpTool } from '../tools/mcp-tool.js'
 import { logger } from '../logging/index.js'
 import { type McpLoadServersOptions, type McpServerConfig, mcpServerLoader } from './config.js'
+import { SDK_VERSION } from '../version.js'
+
+/** `clientInfo.name` sent in the MCP initialize handshake unless `applicationName` overrides it. */
+const DEFAULT_CLIENT_NAME = 'AWS Strands'
+/** HTTP product token; hyphenated because a `User-Agent` product token cannot contain spaces. */
+const USER_AGENT_PRODUCT = 'AWS-Strands'
 
 /**
  * Widened transport type that accepts MCP transport implementations without requiring explicit casts.
@@ -30,7 +36,9 @@ export type McpTransport = Omit<Transport, 'sessionId'> & { sessionId?: string |
 
 /** Temporary placeholder for RuntimeConfig */
 export interface RuntimeConfig {
+  /** `clientInfo.name` sent to the server in the MCP initialize handshake. Defaults to `'AWS Strands'`. */
   applicationName?: string
+  /** `clientInfo.version` sent to the server alongside `applicationName`. Defaults to the SDK version. */
   applicationVersion?: string
 }
 
@@ -134,7 +142,7 @@ export interface McpClientOptions extends RuntimeConfig {
 
 /** Arguments for configuring an MCP Client. */
 export type McpClientConfig = McpClientOptions & {
-  /** Pre-constructed transport. Mutually exclusive with `url`. */
+  /** Pre-constructed transport, used as-is (no SDK `User-Agent`). Mutually exclusive with `url`. */
   transport?: McpTransport
 
   /** Server URL. When provided, a StreamableHTTP transport is constructed automatically. */
@@ -146,7 +154,10 @@ export type McpClientConfig = McpClientOptions & {
   /** Custom OAuth provider for advanced auth flows. Requires `url`. Mutually exclusive with `auth`. */
   authProvider?: OAuthClientProvider
 
-  /** Custom headers to include on every request to the server. Requires `url`. */
+  /**
+   * Custom headers to include on every request to the server. Requires `url`.
+   * A `User-Agent` here replaces the SDK default `AWS-Strands/<version>`.
+   */
   headers?: Record<string, string>
 }
 
@@ -194,8 +205,8 @@ export class McpClient {
   private _pendingRefresh = false
 
   constructor(args: McpClientConfig) {
-    this._clientName = args.applicationName || 'strands-agents-ts-sdk'
-    this._clientVersion = args.applicationVersion || '0.0.1'
+    this._clientName = args.applicationName || DEFAULT_CLIENT_NAME
+    this._clientVersion = args.applicationVersion || SDK_VERSION
     this._transport = McpClient._resolveTransport(args)
     this._state = 'disconnected'
     this._continueOnError = args.continueOnError ?? false
@@ -260,7 +271,7 @@ export class McpClient {
     const url = args.url instanceof URL ? args.url : new URL(args.url!)
     return new StreamableHTTPClientTransport(url, {
       ...(authProvider && { authProvider }),
-      ...(args.headers && { requestInit: { headers: args.headers } }),
+      requestInit: { headers: withDefaultUserAgent(args.headers) },
     }) as Transport
   }
 
@@ -572,4 +583,18 @@ function injectTraceContext(args: JSONValue): JSONValue {
     logger.warn(`error=<${error}> | failed to inject trace context into mcp tool call args`)
     return args
   }
+}
+
+/**
+ * Returns a copy of `headers` with the SDK `User-Agent` added unless the caller set one (any casing).
+ *
+ * @param headers - Caller-supplied request headers.
+ * @returns Headers for every request of an SDK-constructed HTTP transport.
+ * @internal
+ */
+export function withDefaultUserAgent(headers?: Record<string, string>): Record<string, string> {
+  const merged = { ...headers }
+  if (Object.keys(merged).some((name) => name.toLowerCase() === 'user-agent')) return merged
+  merged['User-Agent'] = `${USER_AGENT_PRODUCT}/${SDK_VERSION}`
+  return merged
 }

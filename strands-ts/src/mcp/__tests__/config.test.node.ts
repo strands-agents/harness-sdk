@@ -5,6 +5,10 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { McpClient } from '../client.js'
 import { mcpServerLoader } from '../config.js'
+import { SDK_VERSION } from '../../version.js'
+
+const SDK_USER_AGENT = `AWS-Strands/${SDK_VERSION}`
+const SDK_REQUEST_INIT = { requestInit: { headers: { 'User-Agent': SDK_USER_AGENT } } }
 
 vi.mock('node:fs/promises', () => ({
   readFile: vi.fn(),
@@ -77,7 +81,7 @@ describe('McpClient.loadServers', () => {
       })
 
       expect(clients).toHaveLength(1)
-      expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(new URL('https://example.com/mcp'), {})
+      expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(new URL('https://example.com/mcp'), SDK_REQUEST_INIT)
       expect(StdioClientTransport).not.toHaveBeenCalled()
       expect(SSEClientTransport).not.toHaveBeenCalled()
     })
@@ -88,7 +92,7 @@ describe('McpClient.loadServers', () => {
       })
 
       expect(clients).toHaveLength(1)
-      expect(SSEClientTransport).toHaveBeenCalledWith(new URL('https://example.com/sse'), undefined)
+      expect(SSEClientTransport).toHaveBeenCalledWith(new URL('https://example.com/sse'), SDK_REQUEST_INIT)
     })
 
     it('explicit transport overrides auto-detection', async () => {
@@ -151,7 +155,7 @@ describe('McpClient.loadServers', () => {
       })
 
       expect(SSEClientTransport).toHaveBeenCalledWith(new URL('https://example.com/sse'), {
-        requestInit: { headers: { Authorization: 'Bearer abc' } },
+        requestInit: { headers: { Authorization: 'Bearer abc', 'User-Agent': SDK_USER_AGENT } },
       })
     })
 
@@ -163,7 +167,7 @@ describe('McpClient.loadServers', () => {
       })
 
       expect(clients).toHaveLength(1)
-      expect(SSEClientTransport).toHaveBeenCalledWith(new URL('https://myhost.com/mcp'), undefined)
+      expect(SSEClientTransport).toHaveBeenCalledWith(new URL('https://myhost.com/mcp'), SDK_REQUEST_INIT)
     })
 
     it('throws when env var is not set', async () => {
@@ -181,11 +185,12 @@ describe('McpClient.loadServers', () => {
 
       const clients = await McpClient.loadServers({
         broken: { command: 'node', env: { VAL: '${NONEXISTENT_VAR}' }, continueOnError: true },
-        working: { command: 'node' },
+        working: { command: 'node', args: ['working.js'] },
       })
 
       expect(clients).toHaveLength(1)
-      expect(clients[0]!.clientName).toBe('working')
+      expect(StdioClientTransport).toHaveBeenCalledTimes(1)
+      expect(StdioClientTransport).toHaveBeenCalledWith({ command: 'node', args: ['working.js'] })
     })
 
     it('throws on a non-object entry even when continueOnError is true', async () => {
@@ -357,9 +362,12 @@ describe('McpClient.loadServers', () => {
           toolFilters: { allowed: ['${NONEXISTENT_PATTERN}'] },
           continueOnError: true,
         },
-        good: { command: 'node' },
+        good: { command: 'node', prefix: 'good' },
       })
-      expect(clients.map((client) => client.clientName)).toEqual(['good'])
+      expect(clients).toHaveLength(1)
+      const sdkClient = vi.mocked(Client).mock.results.at(-1)!.value
+      sdkClient.listTools.mockResolvedValue({ tools: [{ name: 'echo', inputSchema: {} }] })
+      expect((await clients[0]!.listTools()).map((tool) => tool.name)).toEqual(['good_echo'])
     })
 
     it('preserves explicit empty server prefix and filters over defaults', async () => {
@@ -435,12 +443,12 @@ describe('McpClient.loadServers', () => {
       expect((await clients[1]!.listTools()).map((tool) => tool.name)).toEqual(['search'])
     })
 
-    it('uses server name as applicationName when not in defaults', async () => {
+    it('defaults applicationName to the SDK identity, not the server name', async () => {
       const clients = await McpClient.loadServers({
         'my-named-server': { command: 'node' },
       })
 
-      expect(clients[0]!.clientName).toBe('my-named-server')
+      expect(clients[0]!.clientName).toBe('AWS Strands')
     })
 
     it('uses defaults applicationName over server name', async () => {
@@ -460,11 +468,13 @@ describe('McpClient.loadServers', () => {
     it('skips an invalid config regex when continueOnError is true', async () => {
       const clients = await McpClient.loadServers({
         bad: { command: 'node', toolFilters: { rejected: ['([unclosed'] }, continueOnError: true },
-        good: { command: 'node' },
+        good: { command: 'node', prefix: 'good' },
       })
 
       expect(clients).toHaveLength(1)
-      expect(clients[0]!.clientName).toBe('good')
+      const sdkClient = vi.mocked(Client).mock.results.at(-1)!.value
+      sdkClient.listTools.mockResolvedValue({ tools: [{ name: 'echo', inputSchema: {} }] })
+      expect((await clients[0]!.listTools()).map((tool) => tool.name)).toEqual(['good_echo'])
     })
 
     it('throws when server has neither command nor url', async () => {
@@ -534,12 +544,13 @@ describe('McpClient.loadServers', () => {
   describe('disabled', () => {
     it('skips disabled servers', async () => {
       const clients = await McpClient.loadServers({
-        active: { command: 'node' },
+        active: { command: 'node', args: ['active.js'] },
         inactive: { command: 'node', disabled: true },
       })
 
       expect(clients).toHaveLength(1)
-      expect(clients[0]!.clientName).toBe('active')
+      expect(StdioClientTransport).toHaveBeenCalledTimes(1)
+      expect(StdioClientTransport).toHaveBeenCalledWith({ command: 'node', args: ['active.js'] })
     })
   })
 
