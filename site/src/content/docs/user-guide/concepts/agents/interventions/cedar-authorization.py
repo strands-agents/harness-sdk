@@ -234,6 +234,68 @@ def schema_validation_example():
     # --8<-- [end:schema_validation]
 
 
+def namespace_example():
+    # --8<-- [start:namespace]
+    from strands import Agent, tool
+    from strands.vended_interventions.cedar import (
+        CedarAuthorization,
+        ToolDefinition,
+    )
+
+    @tool
+    def search(query: str) -> str:
+        """Search for information."""
+        return f"Results for: {query}"
+
+    search_def: ToolDefinition = {
+        "name": "search",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+        },
+    }
+
+    cedar = CedarAuthorization(
+        namespace="Agent",
+        policies="""
+          permit(
+            principal,
+            action == Agent::Action::"search",
+            resource
+          );
+        """,
+        tools=[search_def],
+        entities=[
+            {
+                "uid": {
+                    "type": "Agent::Resource",
+                    "id": "default",
+                },
+                "attrs": {},
+                "parents": [],
+            }
+        ],
+        principal_resolver=lambda state: (
+            {
+                "type": "Agent::User",
+                "id": state["user_id"],
+            }
+            if state.get("user_id")
+            else None
+        ),
+    )
+
+    agent = Agent(
+        tools=[search],
+        interventions=[cedar],
+    )
+    agent(
+        "Search for reports",
+        invocation_state={"user_id": "alice"},
+    )
+    # --8<-- [end:namespace]
+
+
 def env_gating_example():
     # --8<-- [start:env_gating]
     from strands import Agent, tool
