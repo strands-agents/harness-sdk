@@ -216,7 +216,7 @@ Seamlessly integrate Model Context Protocol (MCP) servers:
 
 ```typescript
 import { Agent, McpClient } from "@strands-agents/sdk";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 // Create a client for a local MCP server
 const documentationTools = new McpClient({
@@ -235,6 +235,34 @@ await agent.invoke("Use a random tool from the MCP server.");
 
 await documentationTools.disconnect();
 ```
+
+Enable automatic task execution on the same `McpClient` for modern SEP-2663 and legacy task servers:
+
+```typescript
+await using taskTools = new McpClient({
+  url: "https://example.com/mcp",
+  tasksConfig: { timeoutMs: 300_000 },
+});
+const agent = new Agent({ tools: [taskTools] });
+await agent.invoke("Run the server's task tool.");
+```
+
+`callTool()` returns the final tool result. For explicit SEP-2663 task control, use
+`callToolWithTask()`, then `getTask()`, `updateTask()`, and `cancelTask()`.
+To bound total wall-clock time, set `tasksConfig.timeoutMs`; a call's `options.timeoutMs`
+overrides that value. The existing `ttl` and `pollTimeout` names remain supported:
+
+| Setting | Scope | Default |
+| --- | --- | --- |
+| `ttl` | Inactivity within one request; overrides `requestTimeouts.timeout` | 60,000 ms |
+| `pollTimeout` | Maximum duration of one request; overrides `requestTimeouts.maxTotalTimeout` | 300,000 ms |
+| `timeoutMs` | Entire automatic operation, including polling and input callbacks | Modern: 300,000 ms; legacy: no overall limit |
+
+The first limit reached ends the wait. With `requestTimeouts.resetTimeoutOnProgress`,
+matching progress resets the inactivity timer only; neither the per-request maximum
+nor the overall deadline moves. For example, with `ttl: 10_000`, `pollTimeout: 30_000`,
+and `timeoutMs: 120_000`, progress can keep a request alive beyond 10 seconds, but
+no request may exceed 30 seconds and the whole operation cannot exceed 120 seconds.
 
 ### Multi-Agent Orchestration
 
@@ -342,4 +370,3 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 ## Security
 
 See [CONTRIBUTING](https://github.com/strands-agents/harness-sdk/blob/main/CONTRIBUTING.md#security-issue-notifications) for more information on reporting security issues.
-
