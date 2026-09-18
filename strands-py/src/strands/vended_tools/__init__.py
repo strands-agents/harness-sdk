@@ -42,6 +42,7 @@ from ._bash import _RENAME_RATIONALE, make_bash  # noqa: F401  deprecated tool, 
 from .file_editor import file_editor, make_file_editor
 from .handoff_to_user import HANDOFF_INTERRUPT_NAME, handoff_to_user, make_handoff_to_user
 from .http_request import http_request, make_http_request
+from .mcp_router import make_mcp_router
 from .notebook import make_notebook, notebook
 from .shell import make_shell, shell
 from .sleep import make_sleep, sleep
@@ -79,6 +80,7 @@ __all__ = [
     "make_handoff_to_user",
     "make_http_request",
     "make_notebook",
+    "make_mcp_router",
     "make_shell",
     "make_sleep",
     "notebook",

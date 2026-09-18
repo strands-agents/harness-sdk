@@ -16,6 +16,7 @@ sourceLinks:
   - path: strands-py/src/strands/vended_tools/handoff_to_user/handoff_to_user.py
   - path: strands-py/src/strands/vended_tools/http_request/http_request.py
   - path: strands-py/src/strands/vended_tools/notebook/notebook.py
+  - path: strands-py/src/strands/vended_tools/mcp_router/mcp_router.py
   - path: strands-py/src/strands/vended_tools/shell/shell.py
   - path: strands-py/src/strands/vended_tools/sleep/sleep.py
   - path: strands-py/src/strands/vended_tools/web_fetch/web_fetch.py
@@ -44,6 +45,7 @@ Each tool is imported from its own subpath under `@strands-agents/sdk/vended-too
 | [HTTP Request](#http-request) | Make HTTP requests to external APIs | Python, TypeScript (Node.js 22+, browsers) |
 | [Notebook](#notebook) | Manage persistent text notebooks | Python, TypeScript (Node.js, browsers) |
 | [Bash](#bash) | Execute shell commands with persistent sessions | Python, TypeScript (Node.js, Unix/Linux/macOS) |
+| [MCP Router](#mcp-router) | Connect to Model Context Protocol servers on a developer-set allowlist | Python |
 | [Sleep](#sleep) | Pause execution for a bounded, cancellable duration | Python, TypeScript (Node.js, browsers) |
 | [Handoff to User](#handoff-to-user) | Pause the agent loop and surface a message to the user | Python, TypeScript (Node.js, browsers) |
 | [Stop](#stop-experimental) | Gracefully end the agent loop when the task is complete | Python, TypeScript (Node.js, browsers) |
@@ -592,6 +594,48 @@ agent = Agent(tools=[web_fetch])
 </Tabs>
 
 📖 [Full API Reference](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/web-fetch/README.md)
+
+---
+
+### MCP Router
+
+Lets your agent connect to Model Context Protocol servers at runtime, list the tools they expose, invoke one, and disconnect. The factory takes a developer-set allowlist of server configurations; the model can only initiate connections to servers on that list.
+
+The tool exposes five commands: `connect` (opens a named connection to an allowlisted server using a `connection_id`), `list_connections` (returns all open connection IDs for the current agent), `list_tools` (returns the tools the server exposes), `call_tool` (invokes a tool by name), and `disconnect` (closes a connection).
+
+Connections are scoped per agent and persist across invocations on the same agent instance. A connection is closed when the model calls `disconnect` explicitly, or when the agent is garbage collected. The connection remains open otherwise.
+
+_Supported in: all platforms (Python)._
+
+:::caution[Security Warning]
+The allowlist controls which servers the model may connect to. For HTTP servers, treat this like any network request — egress control belongs at the encapsulation layer. For stdio servers, the allowlisted command is spawned as a local process with access to the host filesystem, environment variables, and network. Only allowlist commands you would run directly on the host.
+:::
+
+**Example:**
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.vended_tools import make_mcp_router
+
+mcp_router = make_mcp_router(
+    servers={
+        "files": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]},
+        "my-api": {"url": "https://mcp.example.com/mcp"},
+    },
+    max_connections=5,
+)
+agent = Agent(tools=[mcp_router])
+agent(
+    "Connect to 'files', list its tools, "
+    "call the read_file tool on /tmp/hello.txt, then disconnect."
+)
+```
+
+</Tab>
+</Tabs>
 
 ---
 
