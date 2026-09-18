@@ -89,33 +89,42 @@ Multi-agent systems (Graph/Swarm) can also use session management to persist the
 <Tab label="Python">
 
 :::caution
-`SnapshotSessionManager` does not support Graph or Swarm. Use a repository-based
-session manager on the orchestrator. Agents inside a multi-agent system must not have
-their own session manager.
+Only the orchestrator should have a session manager. Agents inside a graph or swarm
+must not have their own session manager.
 :::
+
+Pass an explicit storage backend to
+[`SnapshotSessionManager`](@api/python/strands.session.snapshot_session_manager):
 
 ```python
 from strands import Agent
 from strands.multiagent import GraphBuilder
-from strands.session import FileSessionManager
+from strands.session import SnapshotSessionManager
+from strands.storage import LocalFileStorage
 
-# Create agents
-agent1 = Agent(name="researcher")
-agent2 = Agent(name="writer")
+researcher = Agent(name="researcher")
+writer = Agent(name="writer")
 
-# Create a repository-based session manager for the graph
-session_manager = FileSessionManager(session_id="multi-agent-session")
+session_manager = SnapshotSessionManager(
+    session_id="multi-agent-session",
+    storage=LocalFileStorage("./sessions/"),
+    multi_agent_save_latest_on="node",
+)
 
-# Build the graph with session management on the orchestrator
 builder = GraphBuilder()
-builder.add_node(agent1, "researcher")
-builder.add_node(agent2, "writer")
+builder.add_node(researcher, "researcher")
+builder.add_node(writer, "writer")
 builder.add_edge("researcher", "writer")
 builder.set_session_manager(session_manager)
 graph = builder.build()
 
 result = graph("Research and write about AI")
 ```
+
+The default `"node"` strategy saves after every node and when the invocation ends. Use
+`"invocation"` to reduce storage writes and save only when the invocation ends. See the
+[API reference](@api/python/strands.session.snapshot_session_manager) for
+`MultiAgentSaveLatestStrategy` and its accepted values.
 
 </Tab>
 <Tab label="TypeScript">
@@ -171,8 +180,9 @@ over agent-level storage. If neither provides storage, initialization fails.
 ### Snapshot-based Session Managers
 
 `SnapshotSessionManager` in Python and `SessionManager` in TypeScript persist a complete
-point-in-time snapshot. Both restore `snapshot_latest` during initialization and support
-immutable checkpoints.
+point-in-time snapshot. For single agents, both restore `snapshot_latest` during
+initialization and support immutable checkpoints. For graph and swarm, both restore the
+latest orchestrator snapshot before the first invocation.
 
 **Single Agent Events**
 
@@ -212,8 +222,12 @@ See [Basic Usage](#basic-usage) for configuration examples.
 <Tabs>
 <Tab label="Python">
 
-`SnapshotSessionManager` does not support Graph or Swarm. Use a repository-based manager
-for Python multi-agent persistence.
+- **Before Multi-Agent Invocation**: Restores orchestrator state from `snapshot_latest` on
+  the first invocation.
+- **After Node Call** (`multi_agent_save_latest_on="node"`, default): Saves after each
+  node and again when the invocation ends.
+- **After Multi-Agent Invocation** (`multi_agent_save_latest_on="invocation"`): Saves only
+  when the full invocation ends.
 
 </Tab>
 <Tab label="TypeScript">
@@ -239,11 +253,12 @@ Repository-based session managers are available in the Python SDK only.
 :::
 
 `FileSessionManager`, `S3SessionManager`, and `RepositorySessionManager` store individual
-message records and agent metadata. Use them for existing repository-format sessions,
-Graph, Swarm, or bidirectional streaming.
+message records and agent metadata. Use them for existing repository-format sessions or
+bidirectional streaming.
 
-`SnapshotSessionManager` remains the recommended option for new single-agent sessions.
-Use the repository-based managers when you need one of the compatibility cases above:
+`SnapshotSessionManager` is the recommended option for new single-agent and multi-agent
+sessions. Use the repository-based managers when you need one of the compatibility cases
+above:
 
 ```python
 from strands import Agent
