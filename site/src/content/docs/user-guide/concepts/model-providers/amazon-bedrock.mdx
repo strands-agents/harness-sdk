@@ -536,6 +536,50 @@ When `guardLatestUserMessage: true`, only the most recent user message is sent t
 </Tab>
 </Tabs>
 
+#### Guarding specific content
+
+In addition to evaluating whole messages, you can mark individual pieces of content for guardrail evaluation by adding a `guardContent` block to a message's content. This lets you guard only selected parts of a turn (for example, untrusted text pulled from a retrieval source) rather than the entire conversation.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.models import BedrockModel
+
+bedrock_model = BedrockModel(
+    model_id="global.anthropic.claude-sonnet-4-6",
+    guardrail_id="your-guardrail-id",
+    guardrail_version="DRAFT",
+)
+
+agent = Agent(model=bedrock_model)
+
+# Only the guardContent block below is evaluated by the guardrail
+agent([
+    {
+        "guardContent": {
+            "text": {
+                "text": "Untrusted text to evaluate against the guardrail.",
+                "qualifiers": ["guard_content"],
+            }
+        }
+    },
+    {"text": "Summarize the text above."},
+])
+```
+
+The `qualifiers` field tells Bedrock how to treat the text:
+
+- `guard_content`: evaluate the text against the guardrail's content policies.
+- `grounding_source`: supply reference material for a [contextual grounding check](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-contextual-grounding-check.html).
+- `query`: supply the user query for a contextual grounding check.
+
+See the Bedrock [`GuardrailConverseContentBlock`](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_GuardrailConverseContentBlock.html) API reference for more details.
+
+</Tab>
+</Tabs>
+
 
 ### Caching
 
