@@ -91,6 +91,7 @@ export class TruncateStrategy extends BaseOffloadStrategy {
     if (block instanceof TextBlock) {
       logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | truncated text block`)
       const truncated = truncateTextBlock(block, this._truncateConfig)
+      if (truncated === block) return block
       const refs = formatStashRefs(stashRefs)
       return refs ? new TextBlock(`${truncated.text}\n\n[Stashed]${refs}`) : truncated
     }
