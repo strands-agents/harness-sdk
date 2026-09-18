@@ -7,6 +7,7 @@ import pytest
 
 from strands._context_manager.stash import Stash, _BytesEncoder, _format_stash_refs
 from strands.storage.in_memory_storage import InMemoryStorage
+from strands.storage.local_file_storage import LocalFileStorage
 from strands.types.content import ContentBlock, Message
 from strands.types.tools import ToolResult
 
@@ -343,3 +344,46 @@ class TestClearSession:
 
         assert await stash_s1.list() == []
         assert await stash_s10.list() == ["tool-1_0"]
+
+
+class TestCallerScopedRoot:
+    """Tests for stashes rooted at a caller-scoped storage view."""
+
+    @pytest.mark.asyncio
+    async def test_view_is_exact_root(self):
+        storage = InMemoryStorage()
+        stash = Stash._at_root(storage.namespace("tenants/t1/research"))
+        await stash.store("tool-1", 0, json.dumps({"text": "test"}).encode("utf-8"))
+
+        assert await storage.list("") == ["tenants/t1/research/tool-1_0"]
+
+    @pytest.mark.asyncio
+    async def test_stashes_sharing_a_view_read_each_others_entries(self):
+        storage = InMemoryStorage()
+        stash_a = Stash._at_root(storage.namespace("team"))
+        stash_b = Stash._at_root(storage.namespace("team"))
+        await stash_a.store("tool-1", 0, json.dumps({"text": "from a"}).encode("utf-8"))
+
+        assert await stash_b.retrieve("tool-1_0") == {"text": "from a"}
+
+    @pytest.mark.asyncio
+    async def test_clear_session_deletes_only_under_view(self):
+        storage = InMemoryStorage()
+        stash = Stash._at_root(storage.namespace("team_1"))
+        other = Stash._at_root(storage.namespace("team_10"))
+        await stash.store("tool-1", 0, json.dumps({"text": "1"}).encode("utf-8"))
+        await other.store("tool-1", 0, json.dumps({"text": "10"}).encode("utf-8"))
+
+        await stash.clear_session()
+
+        assert await storage.list("") == ["team_10/tool-1_0"]
+
+
+class TestIsDurable:
+    """Tests for the is_durable property."""
+
+    def test_false_for_in_memory_storage(self):
+        assert Stash._at_root(InMemoryStorage().namespace("team")).is_durable is False
+
+    def test_true_for_durable_storage(self, tmp_path):
+        assert Stash(LocalFileStorage(base_dir=str(tmp_path)), "s", "a").is_durable is True

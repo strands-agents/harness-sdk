@@ -71,6 +71,18 @@ class ContextStrategy(Protocol):
 class StashConfig(TypedDict, total=False):
     """Configuration for the L1 stash.
 
+    By default each agent stashes under ``context/<session_id>/scopes/agent/<agent_id>/`` within
+    ``storage``. When ``storage`` is a view you scoped with ``storage.namespace(...)``, the view is
+    used as the exact stash root with no prefix, so agents given the same view share one stash
+    across sessions::
+
+        team = S3Storage("my-bucket").namespace(f"tenants/{tenant_id}/research")
+        researcher = Agent(context_manager={"stash": {"storage": team}})
+        writer = Agent(context_manager={"stash": {"storage": team}})
+
+    You manage a stash rooted at a scoped view: the SDK never deletes its data, including when a
+    session is deleted.
+
     Attributes:
         storage: Storage backend. Defaults to InMemoryStorage when omitted.
         retrieval_tool: Whether to register the retrieve_context tool. Defaults to True.
