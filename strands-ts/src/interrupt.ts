@@ -213,13 +213,6 @@ export class InterruptState implements InterruptStateData {
   }
 
   /**
-   * Clears the pending tool execution state.
-   */
-  clearPendingToolExecution(): void {
-    this.pendingToolExecution = undefined
-  }
-
-  /**
    * Returns the list of interrupts as an array.
    */
   getInterruptsList(): Interrupt[] {

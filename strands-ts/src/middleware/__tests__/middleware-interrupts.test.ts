@@ -4,9 +4,10 @@ import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { collectGenerator } from '../../__fixtures__/model-test-helpers.js'
 import { createMockTool } from '../../__fixtures__/tool-helpers.js'
 import { ExecuteToolStage, AgentStreamStage } from '../stages.js'
-import { TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { AgentResult } from '../../types/agent.js'
 import { InterruptResponseContent } from '../../types/interrupt.js'
-import { AfterInvocationEvent, InterruptEvent } from '../../hooks/events.js'
+import { AfterInvocationEvent, BeforeModelCallEvent, ContentBlockEvent, InterruptEvent } from '../../hooks/events.js'
 
 describe('Middleware interrupts', () => {
   describe('ExecuteToolStage', () => {
@@ -279,6 +280,84 @@ describe('Middleware interrupts', () => {
 
       expect(finalResult.stopReason).toBe('endTurn')
     })
+
+    it.each(['short circuit', 'error', 'consumer break'])(
+      'requires a new approval after middleware resumes without next(): %s',
+      async (outcome) => {
+        const agent = new Agent({ model: new MockMessageModel(), printer: false })
+        const message = new Message({ role: 'assistant', content: [new TextBlock('Denied')] })
+        agent.addMiddleware(AgentStreamStage, async function* (context) {
+          context.interrupt({ name: 'gate' })
+          if (outcome === 'error') throw new Error('middleware failed')
+          if (outcome === 'consumer break') {
+            yield new ContentBlockEvent({ agent, contentBlock: new TextBlock('Starting'), invocationState: {} })
+          }
+          return { result: new AgentResult({ stopReason: 'endTurn', lastMessage: message, invocationState: {} }) }
+        })
+
+        const interrupted = await agent.invoke('First request')
+        expect(interrupted.stopReason).toBe('interrupt')
+        const responses = [
+          new InterruptResponseContent({ interruptId: interrupted.interrupts![0]!.id, response: 'yes' }),
+        ]
+        if (outcome === 'error') {
+          await expect(agent.invoke(responses)).rejects.toThrow('middleware failed')
+        } else if (outcome === 'consumer break') {
+          for await (const event of agent.stream(responses)) {
+            if (event instanceof ContentBlockEvent) break
+          }
+        } else {
+          expect((await agent.invoke(responses)).stopReason).toBe('endTurn')
+        }
+
+        expect(await agent.invoke('Fresh request')).toMatchObject({
+          stopReason: 'interrupt',
+          interrupts: [{ id: 'middleware:agentStream:gate', name: 'gate', response: undefined }],
+        })
+      }
+    )
+
+    it.each(['output transformation', 'short circuit'])(
+      'clears unanswered interrupts when middleware completes a partial resume: %s',
+      async (outcome) => {
+        const agent = new Agent({ model: new MockMessageModel(), printer: false })
+        agent.addHook(BeforeModelCallEvent, (event) => {
+          event.interrupt({ name: 'approve' })
+        })
+        agent.addHook(BeforeModelCallEvent, (event) => {
+          event.interrupt({ name: 'budget' })
+        })
+        const interrupted = await agent.invoke('First request')
+        expect(interrupted.interrupts).toHaveLength(2)
+        const result = new AgentResult({
+          stopReason: 'endTurn',
+          lastMessage: new Message({ role: 'assistant', content: [new TextBlock('Denied')] }),
+          invocationState: {},
+        })
+        const remove =
+          outcome === 'output transformation'
+            ? agent.addMiddleware(AgentStreamStage.Output, () => ({ result }))
+            : // eslint-disable-next-line require-yield
+              agent.addMiddleware(AgentStreamStage, async function* () {
+                return { result }
+              })
+
+        expect(
+          await agent.invoke([
+            new InterruptResponseContent({ interruptId: interrupted.interrupts![0]!.id, response: 'yes' }),
+          ])
+        ).toBe(result)
+        remove()
+
+        expect(await agent.invoke('Fresh request')).toMatchObject({
+          stopReason: 'interrupt',
+          interrupts: [
+            { id: 'hook:beforeModelCall:approve', name: 'approve', response: undefined },
+            { id: 'hook:beforeModelCall:budget', name: 'budget', response: undefined },
+          ],
+        })
+      }
+    )
 
     it('clears interrupt state after resuming to a non-tool completion so the agent is reusable', async () => {
       const model = new MockMessageModel()

@@ -1,3 +1,4 @@
+import json
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 import pytest
@@ -15,7 +16,8 @@ from strands.hooks import (
     BeforeToolCallEvent,
     MessageAddedEvent,
 )
-from strands.interrupt import Interrupt, InterruptException
+from strands.interrupt import Interrupt
+from strands.types._snapshot import Snapshot
 from strands.types.content import Messages
 from strands.types.exceptions import ModelThrottledException
 from strands.types.tools import ToolResult, ToolUse
@@ -1120,29 +1122,112 @@ def test_hooks_param_callable_invoked_during_lifecycle():
     assert isinstance(before_events[0], BeforeInvocationEvent)
 
 
-def test_before_model_call_hook_interrupt_stops_and_resumes_at_model_call():
-    interrupt = Interrupt(id="v1:model_call:approve", name="approve", reason="Approve the model call?")
+def test_before_model_call_hook_reuses_approval_on_resume_and_retry():
     responses_seen = []
 
     def gate_model_call(event: BeforeModelCallEvent):
-        registered = event.agent._interrupt_state.interrupts.get(interrupt.id)
-        if registered is None or registered.response is None:
-            raise InterruptException(interrupt)
-        responses_seen.append(registered.response)
+        responses_seen.append(event.interrupt("approve", reason="Approve the model call?"))
 
-    agent = Agent(
-        model=MockedModelProvider([{"role": "assistant", "content": [{"text": "Approved"}]}]),
-        callback_handler=None,
+    model = MockedModelProvider(
+        [
+            {"role": "assistant", "content": [{"text": "Retry this response"}]},
+            {"role": "assistant", "content": [{"text": "Approved"}]},
+        ]
     )
+
+    def retry_model_call(event: AfterModelCallEvent):
+        event.retry = model.index == 1
+
+    agent = Agent(model=model, callback_handler=None)
     agent.hooks.add_callback(BeforeModelCallEvent, gate_model_call)
+    agent.hooks.add_callback(AfterModelCallEvent, retry_model_call)
 
     interrupted = agent("do something")
-    assert interrupted.stop_reason == "interrupt"
-    assert [pending.id for pending in interrupted.interrupts] == [interrupt.id]
-    assert len(agent.messages) == 1
 
-    result = agent([{"interruptResponse": {"interruptId": interrupt.id, "response": "yes"}}])
+    tru_interrupts = interrupted.interrupts
+    exp_interrupts = [
+        Interrupt(
+            id="v1:before_model_call:5cf56bed-067e-5438-a1ef-dbfa3405e45d",
+            name="approve",
+            reason="Approve the model call?",
+        )
+    ]
+    assert interrupted.stop_reason == "interrupt"
+    assert model.index == 0
+    assert tru_interrupts == exp_interrupts
+    assert len(agent.messages) == 1
+    assert responses_seen == []
+
+    result = agent([{"interruptResponse": {"interruptId": exp_interrupts[0].id, "response": "yes"}}])
+
     assert result.stop_reason == "end_turn"
     assert result.message["content"][0]["text"] == "Approved"
-    assert responses_seen == ["yes"]
+    assert model.index == 2
+    assert responses_seen == ["yes", "yes"]
     assert agent._interrupt_state.activated is False
+
+    assert agent("request requiring approval").stop_reason == "interrupt"
+
+
+@pytest.mark.parametrize("fail_model", [False, True])
+def test_before_model_call_hook_clears_preemptive_approval_after_request(fail_model):
+    model = MockedModelProvider(
+        [
+            {"role": "assistant", "content": [{"text": "Approved"}]},
+            {"role": "assistant", "content": [{"text": "Must require a new approval"}]},
+        ]
+    )
+    preapprove = True
+
+    def gate_model_call(event: BeforeModelCallEvent):
+        event.interrupt("approve", response="yes" if preapprove else None)
+
+    agent = Agent(model=model, callback_handler=None)
+    agent.hooks.add_callback(BeforeModelCallEvent, gate_model_call)
+    if fail_model:
+        with patch.object(model, "stream", side_effect=RuntimeError("model failed")):
+            with pytest.raises(RuntimeError, match="model failed"):
+                agent("preapproved request")
+    else:
+        assert agent("preapproved request").stop_reason == "end_turn"
+    preapprove = False
+
+    restored = Agent(model=model, callback_handler=None)
+    restored.hooks.add_callback(BeforeModelCallEvent, gate_model_call)
+    snapshot = json.loads(json.dumps(agent.take_snapshot(preset="session").to_dict()))
+    restored.load_snapshot(Snapshot.from_dict(snapshot))
+
+    for next_agent in [agent, restored]:
+        result = next_agent("request requiring approval")
+        assert result.stop_reason == "interrupt"
+        tru_interrupts = result.interrupts
+        exp_interrupts = [Interrupt(id="v1:before_model_call:5cf56bed-067e-5438-a1ef-dbfa3405e45d", name="approve")]
+        assert tru_interrupts == exp_interrupts
+    assert model.index == (0 if fail_model else 1)
+
+
+def test_before_model_call_hook_requires_new_approval_after_tools():
+    @strands.tool
+    def work():
+        return "done"
+
+    model = MockedModelProvider(
+        [
+            {"role": "assistant", "content": [{"toolUse": {"name": "work", "toolUseId": "tool-1", "input": {}}}]},
+            {"role": "assistant", "content": [{"text": "Must require a new approval"}]},
+        ]
+    )
+    agent = Agent(model=model, tools=[work], callback_handler=None)
+
+    def gate_model_call(event: BeforeModelCallEvent):
+        event.interrupt("approve", response="yes" if model.index == 0 else None)
+
+    agent.hooks.add_callback(BeforeModelCallEvent, gate_model_call)
+    result = agent("do work")
+
+    assert result.stop_reason == "interrupt"
+    tru_interrupts = result.interrupts
+    exp_interrupts = [Interrupt(id="v1:before_model_call:5cf56bed-067e-5438-a1ef-dbfa3405e45d", name="approve")]
+    assert tru_interrupts == exp_interrupts
+    assert model.index == 1
+    assert agent.messages[-1]["content"][0]["toolResult"]["content"] == [{"text": "done"}]

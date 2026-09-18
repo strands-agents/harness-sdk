@@ -3,6 +3,7 @@
 
 import { Agent, tool, SessionManager, FileStorage } from '@strands-agents/sdk'
 import {
+  BeforeModelCallEvent,
   BeforeToolCallEvent,
   BeforeToolsEvent,
   BeforeNodeCallEvent,
@@ -81,9 +82,7 @@ async function hooksBeforeToolCallExample() {
 async function hooksBeforeToolsExample() {
   // --8<-- [start:hooks_before_tools]
   const agent = new Agent({
-    tools: [
-      /* ... */
-    ],
+    tools: [/* ... */],
   })
 
   agent.addHook(BeforeToolsEvent, (event) => {
@@ -102,6 +101,42 @@ async function hooksBeforeToolsExample() {
     }
   })
   // --8<-- [end:hooks_before_tools]
+}
+
+// =====================
+// Hooks — BeforeModelCallEvent Example
+// =====================
+
+async function hooksBeforeModelCallExample() {
+  // --8<-- [start:hooks_before_model_call]
+  const agent = new Agent()
+
+  agent.addHook(BeforeModelCallEvent, (event) => {
+    const response = event.interrupt<{ approved: boolean }>({
+      name: 'model_call_approval',
+      reason: 'Approve this model call?',
+    })
+    if (!response.approved) {
+      event.cancel = 'Model call cancelled by user'
+    }
+  })
+
+  let result = await agent.invoke('Summarize the quarterly report')
+
+  while (result.stopReason === 'interrupt') {
+    const responses = result.interrupts!.map((interrupt) => ({
+      interruptResponse: {
+        interruptId: interrupt.id,
+        // In a real app, collect user input here
+        response: { approved: true },
+      },
+    }))
+
+    result = await agent.invoke(responses)
+  }
+
+  console.log('MESSAGE:', JSON.stringify(result.lastMessage))
+  // --8<-- [end:hooks_before_model_call]
 }
 
 // =====================
@@ -326,6 +361,7 @@ async function graphBeforeNodeCallExample() {
 // Suppress unused function warnings
 void hooksBeforeToolCallExample
 void hooksBeforeToolsExample
+void hooksBeforeModelCallExample
 void toolsExample
 void sessionManagementExample
 void swarmBeforeNodeCallExample
