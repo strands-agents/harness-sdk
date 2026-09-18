@@ -102,6 +102,29 @@ If you encounter the error `ModuleNotFoundError: No module named 'litellm'`, thi
 
 ## Advanced Features
 
+### Cost tracking
+
+To track spend for a LiteLLM-backed agent, read `cost` from the result of each
+invocation. The value includes every model call made during that invocation,
+including additional calls after tool use.
+
+```python
+from strands import Agent
+from strands.models.litellm import LiteLLMModel
+
+model = LiteLLMModel(model_id="openai/gpt-4o")
+agent = Agent(model=model)
+
+result = agent("Summarize the benefits of prompt caching.")
+
+if result.cost is not None:
+    print(f"Invocation cost: ${result.cost:.6f}")
+```
+
+LiteLLM calculates the estimate from its model pricing data. `cost` is `None`
+when LiteLLM cannot price the selected model. If one model call cannot be priced,
+the value is a lower bound for the invocation.
+
 ### Caching
 
 LiteLLM supports provider-agnostic caching through SystemContentBlock arrays, allowing you to define cache points that work across all supported model providers. This enables you to reuse parts of previous requests, which can significantly reduce token usage and latency.
