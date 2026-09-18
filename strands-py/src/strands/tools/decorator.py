@@ -384,11 +384,14 @@ class FunctionToolMetadata:
             ValueError: If the input data fails validation, with details about what failed.
         """
         try:
-            # Validate with Pydantic model
+            # Validate with Pydantic model. Keep nested model instances instead of
+            # dumping them to dicts: the schema advertises a BaseModel parameter, so
+            # the function should receive that model, not a plain mapping.
             validated = self.input_model(**input_data)
-
-            # Return as dict
-            return validated.model_dump()
+            return {
+                name: getattr(validated, name)
+                for name in type(validated).model_fields
+            }
         except Exception as e:
             # Re-raise with more detailed error message
             error_msg = str(e)

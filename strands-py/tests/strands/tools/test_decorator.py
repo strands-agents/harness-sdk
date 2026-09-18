@@ -2229,3 +2229,46 @@ def test_tool_nullable_optional_field_simplifies_anyof():
     # Since tag is not required, anyOf should be simplified away
     assert "anyOf" not in schema["properties"]["tag"]
     assert schema["properties"]["tag"]["type"] == "string"
+
+
+class Payload(BaseModel):
+    name: str
+    count: int
+
+
+@pytest.mark.asyncio
+async def test_basemodel_parameter_is_coerced_from_dict():
+    """A nested BaseModel parameter should arrive as that model, not a dict."""
+
+    @strands.tool
+    def takes_a_model(payload: Payload) -> str:
+        """Accept a nested model.
+
+        Args:
+            payload: A Payload object.
+        """
+        return f"received {type(payload).__name__}: {payload!r}"
+
+    spec = takes_a_model.tool_spec["inputSchema"]["json"]["properties"]["payload"]
+    assert spec.get("$ref") == "#/$defs/Payload" or spec.get("title") == "Payload"
+
+    validated = takes_a_model._metadata.validate_input({"payload": {"name": "a", "count": 1}})
+    assert isinstance(validated["payload"], Payload)
+    assert validated["payload"].name == "a"
+
+    tool_use = {"toolUseId": "test-id", "input": {"payload": {"name": "a", "count": 1}}}
+    events = [event async for event in takes_a_model.stream(tool_use, {})]
+    text = events[-1]["tool_result"]["content"][0]["text"]
+    assert text.startswith("received Payload:")
+    assert "name='a'" in text
+    assert "count=1" in text
+
+
+def test_basemodel_parameter_rejects_invalid_payload():
+    @strands.tool
+    def takes_a_model(payload: Payload) -> str:
+        """Accept a nested model."""
+        return payload.name
+
+    with pytest.raises(ValueError, match="Validation failed"):
+        takes_a_model._metadata.validate_input({"payload": {"name": "a"}})
