@@ -85,7 +85,7 @@ jobs:
         continue-on-error: false
 
       - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
+        uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
   unit-test-mcp-v1:
@@ -134,7 +134,7 @@ jobs:
           pytest tests/strands/tools/mcp -vv --cov=src/strands --cov-report=xml
 
       - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
+        uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
 
