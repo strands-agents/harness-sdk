@@ -78,7 +78,6 @@ class SummarizingConversationManager(ConversationManager):
         self.summarization_agent = summarization_agent
         self.summarization_system_prompt = summarization_system_prompt
         self.pin_first = max(0, pin_first) if pin_first is not None else None
-        self._pin_first_applied = False
         self._summary_message: Message | None = None
 
     @override
@@ -97,7 +96,10 @@ class SummarizingConversationManager(ConversationManager):
 
     def get_state(self) -> dict[str, Any]:
         """Returns a dictionary representation of the state for the Summarizing Conversation Manager."""
-        return {"summary_message": self._summary_message, **super().get_state()}
+        return {
+            "summary_message": self._summary_message,
+            **super().get_state(),
+        }
 
     def apply_management(self, agent: "Agent", **kwargs: Any) -> None:
         """Apply management strategy to conversation history.
@@ -146,6 +148,9 @@ class SummarizingConversationManager(ConversationManager):
     def _summarize_oldest(self, agent: "Agent") -> None:
         """Summarize the oldest messages and replace them with a summary.
 
+        Bookkeeping updates (removed_message_count, pinned_head_count) are applied only after
+        summary generation succeeds, making the operation atomic by construction.
+
         Args:
             agent: The agent instance.
 
@@ -172,9 +177,8 @@ class SummarizingConversationManager(ConversationManager):
             raise ContextWindowOverflowException("Cannot summarize: insufficient messages for summarization")
 
         # Pin first N messages permanently (only on first reduction)
-        if self.pin_first and not self._pin_first_applied:
+        if self.pin_first and self.pinned_head_count == 0:
             apply_pin_first(agent.messages, self.pin_first)
-            self._pin_first_applied = True
 
         # Partition [0, messages_to_summarize_count) into pinned (preserve) and non-pinned (summarize)
         protected_to_preserve, to_summarize = partition_pinned(agent.messages, 0, messages_to_summarize_count)
@@ -184,16 +188,17 @@ class SummarizingConversationManager(ConversationManager):
 
         remaining_messages = agent.messages[messages_to_summarize_count:]
 
-        # Keep track of the number of messages that have been summarized thus far.
-        self.removed_message_count += len(to_summarize)
-        # If there is a summary message, don't count it in the removed_message_count.
-        if self._summary_message:
-            self.removed_message_count -= 1
+        # Generate summary — if this fails, no bookkeeping is updated
+        summary_message = self._generate_summary(to_summarize, agent)
+        _ensure_tracking_id(summary_message)
 
-        # Generate summary
-        self._summary_message = self._generate_summary(to_summarize, agent)
-        # Assign tracking id to the summary message since it bypasses the append method.
-        _ensure_tracking_id(self._summary_message)
+        # All mutations below this point: summary generation succeeded, commit the changes.
+        removed_count = len(to_summarize)
+        if self._summary_message:
+            removed_count -= 1
+        self.removed_message_count += removed_count
+        self.pinned_head_count = len(protected_to_preserve)
+        self._summary_message = summary_message
 
         # Replace summarized range with protected messages + summary + remaining
         agent.messages[:] = protected_to_preserve + [self._summary_message] + remaining_messages
