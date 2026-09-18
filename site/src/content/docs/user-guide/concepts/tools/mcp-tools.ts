@@ -254,3 +254,55 @@ const agentOverview = new Agent({
 
 await agentOverview.invoke('Calculate the square root of 144')
 // --8<-- [end:tools_overview_example]
+
+async function streamableHttpOAuthExample() {
+  // --8<-- [start:streamable_http_oauth]
+  const clientId = process.env.OAUTH_CLIENT_ID
+  const clientSecret = process.env.OAUTH_CLIENT_SECRET
+
+  if (!clientId || !clientSecret) {
+    throw new Error('Set OAUTH_CLIENT_ID and OAUTH_CLIENT_SECRET')
+  }
+
+  const oauthMcpClient = new McpClient({
+    url: 'https://api.example.com/mcp/',
+    auth: {
+      clientId,
+      clientSecret,
+      scopes: ['mcp:tools'],
+    },
+    headers: { 'X-Client-Name': 'support-agent' },
+  })
+
+  const agent = new Agent({ tools: [oauthMcpClient] })
+  // --8<-- [end:streamable_http_oauth]
+  void agent
+}
+void streamableHttpOAuthExample
+
+async function loadServersExample() {
+  // --8<-- [start:load_servers]
+  const clients = await McpClient.loadServers(
+    {
+      documentation: {
+        command: 'uvx',
+        args: ['awslabs.aws-documentation-mcp-server@latest'],
+      },
+      protectedApi: {
+        url: 'https://api.example.com/mcp/',
+        auth: {
+          clientId: '${OAUTH_CLIENT_ID}',
+          clientSecret: '${OAUTH_CLIENT_SECRET}',
+          scopes: ['mcp:tools'],
+        },
+      },
+    },
+    undefined, // Skip optional client defaults
+    { prefixWithServerName: true }
+  )
+
+  const agent = new Agent({ tools: clients })
+  // --8<-- [end:load_servers]
+  void agent
+}
+void loadServersExample

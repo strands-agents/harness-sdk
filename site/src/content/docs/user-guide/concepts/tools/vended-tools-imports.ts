@@ -14,6 +14,11 @@ import { Agent } from '@strands-agents/sdk'
 import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor'
 // --8<-- [end:file_editor_import]
 
+// --8<-- [start:handoff_to_user_import]
+import { Agent, InterruptResponseContent } from '@strands-agents/sdk'
+import { handoffToUser, HANDOFF_INTERRUPT_NAME } from '@strands-agents/sdk/vended-tools/handoff-to-user'
+// --8<-- [end:handoff_to_user_import]
+
 // --8<-- [start:http_request_import]
 import { Agent } from '@strands-agents/sdk'
 import { httpRequest } from '@strands-agents/sdk/vended-tools/http-request'

@@ -703,6 +703,33 @@ class TestInterruptPropagation:
         assert len(interrupts) == 1
         assert interrupts[0].name == "confirm-deny"
 
+    @pytest.mark.parametrize("on_error_mode", ["proceed", "deny"])
+    @pytest.mark.asyncio
+    async def test_handler_raised_interrupt_propagates_regardless_of_on_error(
+        self, hook_registry, agent, on_error_mode
+    ):
+        """A handler calling event.interrupt() directly pauses the agent under any on_error (#4371)."""
+
+        class DirectInterruptHandler(InterventionHandler):
+            name = "direct-interrupt"
+
+            @property
+            def on_error(self):
+                return on_error_mode
+
+            async def before_tool_call(self, event):
+                response = event.interrupt("approval", reason="approve?")
+                return Proceed() if response == "yes" else Deny(reason="not approved")
+
+        InterventionRegistry([DirectInterruptHandler()], hook_registry)
+
+        event = make_before_tool_call_event(agent)
+        _, interrupts = await hook_registry.invoke_callbacks_async(event)
+
+        assert len(interrupts) == 1
+        assert interrupts[0].name == "approval"
+        assert event.cancel_tool is False
+
 
 class TestTransformAfterModelCall:
     @pytest.mark.asyncio

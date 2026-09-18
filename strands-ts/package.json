@@ -64,6 +64,10 @@
       "types": "./dist/src/vended-tools/file-editor/index.d.ts",
       "default": "./dist/src/vended-tools/file-editor/index.js"
     },
+    "./vended-tools/handoff-to-user": {
+      "types": "./dist/src/vended-tools/handoff-to-user/index.d.ts",
+      "default": "./dist/src/vended-tools/handoff-to-user/index.js"
+    },
     "./vended-tools/http-request": {
       "types": "./dist/src/vended-tools/http-request/index.d.ts",
       "default": "./dist/src/vended-tools/http-request/index.js"

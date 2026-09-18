@@ -6,6 +6,7 @@ sidebar:
 tags: [tool-authoring]
 sourceLinks:
   - path: strands-ts/src/vended-tools/file-editor/file-editor.ts
+  - path: strands-ts/src/vended-tools/handoff-to-user/handoff-to-user.ts
   - path: strands-ts/src/vended-tools/bash/bash.ts
   - path: strands-ts/src/vended-tools/http-request/http-request.ts
   - path: strands-ts/src/vended-tools/notebook/notebook.ts
@@ -44,7 +45,7 @@ Each tool is imported from its own subpath under `@strands-agents/sdk/vended-too
 | [Notebook](#notebook) | Manage persistent text notebooks | Python, TypeScript (Node.js, browsers) |
 | [Bash](#bash) | Execute shell commands with persistent sessions | Python, TypeScript (Node.js, Unix/Linux/macOS) |
 | [Sleep](#sleep) | Pause execution for a bounded, cancellable duration | Python, TypeScript (Node.js, browsers) |
-| [Handoff to User](#handoff-to-user) | Pause the agent loop and surface a message to the user | Python |
+| [Handoff to User](#handoff-to-user) | Pause the agent loop and surface a message to the user | Python, TypeScript (Node.js, browsers) |
 | [Stop](#stop-experimental) | Gracefully end the agent loop when the task is complete | Python, TypeScript (Node.js, browsers) |
 | [Web Fetch](#web-fetch) | Fetch a URL and return cleaned markdown for a model to read | Python, TypeScript (Node.js) |
 
@@ -358,13 +359,13 @@ Lets the model pause the agent loop and surface a message to the user for
 human-in-the-loop input. Use this when the agent needs explicit confirmation,
 additional information, or user approval before proceeding.
 
-_Supported in: all platforms (Python)._
+_Supported in: Node.js, modern browsers (TypeScript); all platforms (Python)._
 
 :::note[Bidirectional streaming not supported]
 `handoff_to_user` relies on the interrupt/resume mechanism, which requires the agent loop to fully halt and restart. It cannot be used inside bidirectional streaming sessions, where the loop runs continuously without a clean pause point.
 :::
 
-The loop halts with `stop_reason == "interrupt"` and the message is available
+The loop halts with a `stop_reason` / `stopReason` of `"interrupt"` and the message is available
 on the interrupt's `reason` field in `AgentResult.interrupts`. Resume the agent
 by passing back an `interruptResponse` content block with the interrupt ID and
 the user's reply; the tool then returns that reply as its result and the model
@@ -375,8 +376,8 @@ continues. To recognize a handoff interrupt, match its `name` against the export
 `HumanInTheLoop()` requires approval for every tool by default, so pairing it
 with `handoff_to_user` prompts the user twice — once to approve the call, then
 again to answer it. Allow-list the tool with
-`HumanInTheLoop(allowed_tools=["handoff_to_user"])` so only the handoff itself
-prompts.
+`HumanInTheLoop(allowed_tools=["handoff_to_user"])` / `new HumanInTheLoop({ allowedTools: ["handoff_to_user"] })`
+so only the handoff itself prompts.
 :::
 
 **Example:**
@@ -384,14 +385,18 @@ prompts.
 <Tabs>
 <Tab label="TypeScript">
 
-`handoff_to_user` is not yet supported in the TypeScript SDK.
+```typescript
+--8<-- "user-guide/concepts/tools/vended-tools-imports.ts:handoff_to_user_import"
+
+--8<-- "user-guide/concepts/tools/vended-tools.ts:handoff_to_user_example"
+```
 
 </Tab>
 <Tab label="Python">
 
 ```python
 from strands import Agent
-from strands.vended_tools import handoff_to_user
+from strands.vended_tools.handoff_to_user import HANDOFF_INTERRUPT_NAME, handoff_to_user
 
 agent = Agent(
     tools=[handoff_to_user],
@@ -401,7 +406,7 @@ agent = Agent(
 )
 
 result = agent("Delete all .tmp files in /workspace.")
-interrupt = result.interrupts[0]
+interrupt = next(i for i in (result.interrupts or []) if i.name == HANDOFF_INTERRUPT_NAME)
 print(interrupt.reason)
 
 resumed = agent([
@@ -416,6 +421,8 @@ resumed = agent([
 
 </Tab>
 </Tabs>
+
+📖 [Full API Reference](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/handoff-to-user/README.md)
 
 ---
 
