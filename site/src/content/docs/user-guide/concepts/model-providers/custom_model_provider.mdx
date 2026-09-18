@@ -194,6 +194,17 @@ The `stream` method accepts three parameters:
 - [`list[ToolSpec]`](@api/python/strands.types.tools#ToolSpec): List of tool specifications that the model can decide to use.
 - `SystemPrompt`: A system prompt string given to the Model to prompt it how to answer the user.
 
+Beyond those, the SDK passes keyword arguments that a provider can either declare by name or leave to `**kwargs`:
+
+- `tool_choice`: Selection strategy for tool invocation.
+- `system_prompt_content`: System prompt content blocks for advanced features like caching.
+- `invocation_state`: Caller-provided state/context that was passed to the agent when it was invoked.
+- `model_state`: Runtime state for model providers (e.g., server-side response ids).
+- `dynamic_trailing_blocks`: How many content blocks at the end of the final user message may change between calls. A provider that inserts prompt cache points should place them before that boundary so the cached prefix stays stable; `0` means no such tail.
+- `cancel_signal`: Event a provider can observe to abort an in-flight request.
+
+Keep `**kwargs` in your signature so a later addition to this list does not break your provider.
+
 ```python
     @override
     async def stream(
