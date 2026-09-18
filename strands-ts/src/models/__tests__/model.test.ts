@@ -122,6 +122,43 @@ describe('Model', () => {
           'Model reached maximum token limit. This is an unrecoverable state that requires intervention.'
         )
       })
+
+      it('defaults to assistant when stream content arrives without a message start event', async () => {
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelContentBlockStartEvent' }
+          yield {
+            type: 'modelContentBlockDeltaEvent',
+            delta: { type: 'textDelta', text: 'Hello from a provider without stream-start' },
+          }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+        })
+
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+        const { items, result } = await collectGenerator(provider.streamAggregated(messages))
+
+        expect(items).toEqual([
+          { type: 'modelContentBlockStartEvent' },
+          {
+            type: 'modelContentBlockDeltaEvent',
+            delta: { type: 'textDelta', text: 'Hello from a provider without stream-start' },
+          },
+          { type: 'modelContentBlockStopEvent' },
+          { type: 'textBlock', text: 'Hello from a provider without stream-start' },
+          { type: 'modelMessageStopEvent', stopReason: 'endTurn' },
+        ])
+        expect(result).toEqual({
+          message: {
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'textBlock', text: 'Hello from a provider without stream-start' }],
+            trackingId: anyTrackingId,
+          },
+          stopReason: 'endTurn',
+          metadata: undefined,
+        })
+      })
     })
 
     describe('when streaming multiple text blocks', () => {
