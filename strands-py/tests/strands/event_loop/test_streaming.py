@@ -636,6 +636,61 @@ def test_handle_content_block_stop(state, exp_updated_state):
     assert tru_updated_state == exp_updated_state
 
 
+def test_handle_content_block_stop_preserves_text_with_tool_use():
+    """Preserve accumulated text when a tool use stops in the same block (#4004)."""
+    state = {
+        "content": [],
+        "current_tool_use": {"toolUseId": "tool-1", "name": "read_file", "input": "{}"},
+        "text": "Let me check that for you.",
+        "reasoningText": "",
+        "citationsContent": [],
+        "redactedContent": b"",
+    }
+
+    tru_updated_state = strands.event_loop.streaming.handle_content_block_stop(state)
+    exp_updated_state = {
+        "content": [
+            {
+                "toolUse": {
+                    "toolUseId": "tool-1",
+                    "name": "read_file",
+                    "input": {},
+                }
+            },
+            {"text": "Let me check that for you."},
+        ],
+        "current_tool_use": {},
+        "text": "",
+        "reasoningText": "",
+        "citationsContent": [],
+        "redactedContent": b"",
+    }
+
+    assert tru_updated_state == exp_updated_state
+
+
+@pytest.mark.asyncio
+async def test_process_stream_preserves_text_with_pending_tool_use(agenerator, alist):
+    """Preserve text when a tool use stops before the text block closes (#4004)."""
+    response = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockDelta": {"delta": {"text": "Let me check that for you."}}},
+        {"contentBlockStart": {"start": {"toolUse": {"toolUseId": "tool-1", "name": "read_file"}}}},
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": "{}"}}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "tool_use"}},
+    ]
+
+    tru_events = await alist(strands.event_loop.streaming.process_stream(agenerator(response)))
+    tru_message = _get_message_from_event(cast(ModelStopReason, tru_events[-1]))
+    exp_content = [
+        {"toolUse": {"toolUseId": "tool-1", "name": "read_file", "input": {}}},
+        {"text": "Let me check that for you."},
+    ]
+
+    assert tru_message["content"] == exp_content
+
+
 @unittest.mock.patch("strands.event_loop.streaming.logger")
 def test_handle_content_block_stop_logs_warning_on_malformed_json(mock_logger):
     state = {
