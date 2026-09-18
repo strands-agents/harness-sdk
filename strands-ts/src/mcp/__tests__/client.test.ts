@@ -1,14 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import {
-  McpError,
-  ErrorCode,
-  ElicitRequestSchema,
+  Client,
+  ProtocolError,
+  ProtocolErrorCode,
   UrlElicitationRequiredError,
-} from '@modelcontextprotocol/sdk/types.js'
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { ClientCredentialsProvider } from '@modelcontextprotocol/sdk/client/auth-extensions.js'
+  StreamableHTTPClientTransport,
+  ClientCredentialsProvider,
+  type Transport,
+  type LoggingMessageNotificationParams,
+} from '@modelcontextprotocol/client'
 import { McpClient } from '../client.js'
 import { McpTool } from '../../tools/mcp-tool.js'
 import { JsonBlock, type TextBlock, type ToolResultBlock } from '../../types/messages.js'
@@ -19,31 +19,17 @@ import type { ElicitationCallback } from '../../types/elicitation.js'
 import { context, propagation, trace, TraceFlags } from '@opentelemetry/api'
 import type { SpanContext } from '@opentelemetry/api'
 import { logger } from '../../logging/index.js'
-import type { LoggingMessageNotificationParams } from '@modelcontextprotocol/sdk/types.js'
 
-/**
- * Helper to create a mock async generator that yields a result message.
- * This simulates the behavior of callToolStream returning a stream that ends with a result.
- */
-function createMockCallToolStream(result: unknown) {
-  return async function* () {
-    yield { type: 'result', result }
-  }
-}
-
-vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
+// Only the constructible surfaces are mocked; the error classes and other exports stay real so
+// instanceof checks in the code under test keep working.
+vi.mock('@modelcontextprotocol/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@modelcontextprotocol/client')>()),
   StreamableHTTPClientTransport: vi.fn(function () {
     return { start: vi.fn(), send: vi.fn(), close: vi.fn() }
   }),
-}))
-
-vi.mock('@modelcontextprotocol/sdk/client/auth-extensions.js', () => ({
   ClientCredentialsProvider: vi.fn(function () {
     return { redirectUrl: undefined, clientMetadata: { client_id: 'test' } }
   }),
-}))
-
-vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
   Client: vi.fn(function () {
     return {
       connect: vi.fn(),
@@ -55,11 +41,6 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
       getServerCapabilities: vi.fn(),
       getServerVersion: vi.fn(),
       getInstructions: vi.fn(),
-      experimental: {
-        tasks: {
-          callToolStream: vi.fn(),
-        },
-      },
     }
   }),
 }))
@@ -151,7 +132,6 @@ describe('MCP Integration', () => {
       getServerCapabilities: ReturnType<typeof vi.fn>
       getServerVersion: ReturnType<typeof vi.fn>
       getInstructions: ReturnType<typeof vi.fn>
-      experimental: { tasks: { callToolStream: ReturnType<typeof vi.fn> } }
     }
 
     beforeEach(() => {
@@ -166,6 +146,7 @@ describe('MCP Integration', () => {
       expect(Client).toHaveBeenCalledWith(
         { name: 'TestApp', version: '0.0.1' },
         expect.objectContaining({
+          versionNegotiation: { mode: 'auto' },
           listChanged: expect.objectContaining({
             tools: expect.objectContaining({ autoRefresh: false, debounceMs: 300 }),
           }),
@@ -428,32 +409,24 @@ describe('MCP Integration', () => {
       await prefixedClient.callTool(tools[1]!, { value: 1 })
 
       expect(tools.map((tool) => tool.name)).toEqual(['server_keep_one', 'server_keep_two'])
-      expect(prefixedSdkClient.callTool).toHaveBeenCalledWith(
-        { name: 'keep_two', arguments: { value: 1 } },
-        undefined,
-        undefined
-      )
+      expect(prefixedSdkClient.callTool).toHaveBeenCalledWith({ name: 'keep_two', arguments: { value: 1 } }, undefined)
     })
 
-    it('uses the server-side name for task-based invocation of a prefixed tool', async () => {
-      const taskClient = new McpClient({
+    it('uses the server-side name for a prefixed tool called with requestTimeouts', async () => {
+      const timeoutsClient = new McpClient({
         applicationName: 'TestApp',
         transport: mockTransport,
         prefix: 'server',
-        tasksConfig: {},
+        requestTimeouts: { timeout: 30000 },
       })
-      const taskSdkClient = vi.mocked(Client).mock.results.at(-1)!.value
-      taskSdkClient.listTools.mockResolvedValue({ tools: [{ name: 'long_task', inputSchema: {} }] })
-      taskSdkClient.experimental.tasks.callToolStream.mockReturnValue(createMockCallToolStream({ content: [] })())
+      const timeoutsSdkClient = vi.mocked(Client).mock.results.at(-1)!.value
+      timeoutsSdkClient.listTools.mockResolvedValue({ tools: [{ name: 'long_task', inputSchema: {} }] })
+      timeoutsSdkClient.callTool.mockResolvedValue({ content: [] })
 
-      const [tool] = await taskClient.listTools()
-      await taskClient.callTool(tool!, {})
+      const [tool] = await timeoutsClient.listTools()
+      await timeoutsClient.callTool(tool!, {})
 
-      expect(taskSdkClient.experimental.tasks.callToolStream).toHaveBeenCalledWith(
-        { name: 'long_task', arguments: {} },
-        undefined,
-        expect.any(Object)
-      )
+      expect(timeoutsSdkClient.callTool).toHaveBeenCalledWith({ name: 'long_task', arguments: {} }, { timeout: 30000 })
     })
 
     it('surfaces tool annotations in the tool spec', async () => {
@@ -512,19 +485,14 @@ describe('MCP Integration', () => {
       expect(tools[0]!.description).toBe('Tool which performs my_tool')
     })
 
-    it('uses callTool when tasksConfig is undefined (default)', async () => {
+    it('calls the tool without timeout overrides when requestTimeouts is undefined (default)', async () => {
       const tool = new McpTool({ name: 'calc', description: '', inputSchema: {}, client })
       sdkClientMock.callTool.mockResolvedValue({ content: [] })
 
       await client.callTool(tool, { op: 'add' })
 
       expect(sdkClientMock.connect).toHaveBeenCalled()
-      expect(sdkClientMock.callTool).toHaveBeenCalledWith(
-        { name: 'calc', arguments: { op: 'add' } },
-        undefined,
-        undefined
-      )
-      expect(sdkClientMock.experimental.tasks.callToolStream).not.toHaveBeenCalled()
+      expect(sdkClientMock.callTool).toHaveBeenCalledWith({ name: 'calc', arguments: { op: 'add' } }, undefined)
     })
 
     it('forwards abort signal to SDK callTool', async () => {
@@ -534,55 +502,159 @@ describe('MCP Integration', () => {
 
       await client.callTool(tool, { op: 'add' }, { signal: controller.signal })
 
-      expect(sdkClientMock.callTool).toHaveBeenCalledWith({ name: 'calc', arguments: { op: 'add' } }, undefined, {
-        signal: controller.signal,
-      })
+      expect(sdkClientMock.callTool).toHaveBeenCalledWith(
+        { name: 'calc', arguments: { op: 'add' } },
+        { signal: controller.signal }
+      )
     })
 
-    it('forwards abort signal to callToolStream when tasksConfig is provided', async () => {
+    it('applies requestTimeouts to every tool call and merges per-call options', async () => {
       const resultsLengthBefore = vi.mocked(Client).mock.results.length
-      const taskClient = new McpClient({
+      const timeoutsClient = new McpClient({
         applicationName: 'TestApp',
         transport: mockTransport,
-        tasksConfig: {},
+        requestTimeouts: { timeout: 30000, maxTotalTimeout: 120000 },
       })
-      const taskSdkClientMock = vi.mocked(Client).mock.results[resultsLengthBefore]!.value
-      const tool = new McpTool({ name: 'calc', description: '', inputSchema: {}, client: taskClient })
-      taskSdkClientMock.experimental.tasks.callToolStream.mockReturnValue(createMockCallToolStream({ content: [] })())
+      const timeoutsSdkClientMock = vi.mocked(Client).mock.results[resultsLengthBefore]!.value
+      const tool = new McpTool({ name: 'calc', description: '', inputSchema: {}, client: timeoutsClient })
+      timeoutsSdkClientMock.callTool.mockResolvedValue({ content: [] })
       const controller = new AbortController()
 
-      await taskClient.callTool(tool, { op: 'add' }, { signal: controller.signal })
+      await timeoutsClient.callTool(tool, { op: 'add' }, { signal: controller.signal })
 
-      expect(taskSdkClientMock.experimental.tasks.callToolStream).toHaveBeenCalledWith(
+      expect(timeoutsSdkClientMock.callTool).toHaveBeenCalledWith(
         { name: 'calc', arguments: { op: 'add' } },
-        undefined,
-        { timeout: 60000, maxTotalTimeout: 300000, resetTimeoutOnProgress: true, signal: controller.signal }
+        { timeout: 30000, maxTotalTimeout: 120000, signal: controller.signal }
       )
     })
 
-    it('uses callToolStream when tasksConfig is provided (empty object)', async () => {
+    it('registers a progress handler when resetTimeoutOnProgress is set', async () => {
       const resultsLengthBefore = vi.mocked(Client).mock.results.length
-      const taskClient = new McpClient({
+      const timeoutsClient = new McpClient({
         applicationName: 'TestApp',
         transport: mockTransport,
-        tasksConfig: {},
+        requestTimeouts: { timeout: 5000, resetTimeoutOnProgress: true },
       })
-      const taskSdkClientMock = vi.mocked(Client).mock.results[resultsLengthBefore]!.value
-      const tool = new McpTool({ name: 'calc', description: '', inputSchema: {}, client: taskClient })
-      taskSdkClientMock.experimental.tasks.callToolStream.mockReturnValue(createMockCallToolStream({ content: [] })())
+      const timeoutsSdkClientMock = vi.mocked(Client).mock.results[resultsLengthBefore]!.value
+      const tool = new McpTool({ name: 'calc', description: '', inputSchema: {}, client: timeoutsClient })
+      timeoutsSdkClientMock.callTool.mockResolvedValue({ content: [] })
 
-      await taskClient.callTool(tool, { op: 'add' })
+      await timeoutsClient.callTool(tool, { op: 'add' })
 
-      expect(taskSdkClientMock.connect).toHaveBeenCalled()
-      expect(taskSdkClientMock.experimental.tasks.callToolStream).toHaveBeenCalledWith(
+      // A progress token only goes on the wire when a progress handler is registered, so
+      // resetTimeoutOnProgress must be accompanied by one to take effect.
+      expect(timeoutsSdkClientMock.callTool).toHaveBeenCalledWith(
         { name: 'calc', arguments: { op: 'add' } },
-        undefined,
-        { timeout: 60000, maxTotalTimeout: 300000, resetTimeoutOnProgress: true }
+        { timeout: 5000, resetTimeoutOnProgress: true, onprogress: expect.any(Function) }
       )
-      expect(taskSdkClientMock.callTool).not.toHaveBeenCalled()
     })
 
-    it('passes custom TTL and pollTimeout to callToolStream', async () => {
+    it('forwards the client progressCallback to SDK callTool and delivers progress updates', async () => {
+      const resultsLengthBefore = vi.mocked(Client).mock.results.length
+      const progressUpdates: unknown[] = []
+      const progressClient = new McpClient({
+        applicationName: 'TestApp',
+        transport: mockTransport,
+        progressCallback: (progress) => progressUpdates.push(progress),
+      })
+      const progressSdkClientMock = vi.mocked(Client).mock.results[resultsLengthBefore]!.value
+      const tool = new McpTool({ name: 'calc', description: '', inputSchema: {}, client: progressClient })
+      progressSdkClientMock.callTool.mockResolvedValue({ content: [] })
+
+      await progressClient.callTool(tool, { op: 'add' })
+
+      expect(progressSdkClientMock.callTool).toHaveBeenCalledWith(
+        { name: 'calc', arguments: { op: 'add' } },
+        { onprogress: expect.any(Function) }
+      )
+      progressSdkClientMock.callTool.mock.calls[0]![1].onprogress({ progress: 5, total: 10, message: 'halfway' })
+      await vi.waitFor(() => expect(progressUpdates).toEqual([{ progress: 5, total: 10, message: 'halfway' }]))
+    })
+
+    it('per-call progressCallback takes precedence over the client callback', async () => {
+      const resultsLengthBefore = vi.mocked(Client).mock.results.length
+      const clientCallback = vi.fn()
+      const perCallCallback = vi.fn()
+      const progressClient = new McpClient({
+        applicationName: 'TestApp',
+        transport: mockTransport,
+        progressCallback: clientCallback,
+      })
+      const progressSdkClientMock = vi.mocked(Client).mock.results[resultsLengthBefore]!.value
+      const tool = new McpTool({ name: 'calc', description: '', inputSchema: {}, client: progressClient })
+      progressSdkClientMock.callTool.mockResolvedValue({ content: [] })
+
+      await progressClient.callTool(tool, { op: 'add' }, { progressCallback: perCallCallback })
+
+      progressSdkClientMock.callTool.mock.calls[0]![1].onprogress({ progress: 1 })
+      await vi.waitFor(() => expect(perCallCallback).toHaveBeenCalledWith({ progress: 1 }))
+      expect(clientCallback).not.toHaveBeenCalled()
+    })
+
+    it('delivers progress to the user callback when resetTimeoutOnProgress is also set', async () => {
+      const resultsLengthBefore = vi.mocked(Client).mock.results.length
+      const progressUpdates: unknown[] = []
+      const progressClient = new McpClient({
+        applicationName: 'TestApp',
+        transport: mockTransport,
+        requestTimeouts: { resetTimeoutOnProgress: true },
+        progressCallback: (progress) => progressUpdates.push(progress),
+      })
+      const progressSdkClientMock = vi.mocked(Client).mock.results[resultsLengthBefore]!.value
+      const tool = new McpTool({ name: 'calc', description: '', inputSchema: {}, client: progressClient })
+      progressSdkClientMock.callTool.mockResolvedValue({ content: [] })
+
+      await progressClient.callTool(tool, { op: 'add' })
+
+      expect(progressSdkClientMock.callTool).toHaveBeenCalledWith(
+        { name: 'calc', arguments: { op: 'add' } },
+        { resetTimeoutOnProgress: true, onprogress: expect.any(Function) }
+      )
+      progressSdkClientMock.callTool.mock.calls[0]![1].onprogress({ progress: 2, total: 4 })
+      await vi.waitFor(() => expect(progressUpdates).toEqual([{ progress: 2, total: 4 }]))
+    })
+
+    it('logs a warning when the progressCallback throws', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const resultsLengthBefore = vi.mocked(Client).mock.results.length
+      const progressClient = new McpClient({
+        applicationName: 'TestApp',
+        transport: mockTransport,
+        progressCallback: () => {
+          throw new Error('boom')
+        },
+      })
+      const progressSdkClientMock = vi.mocked(Client).mock.results[resultsLengthBefore]!.value
+      const tool = new McpTool({ name: 'calc', description: '', inputSchema: {}, client: progressClient })
+      progressSdkClientMock.callTool.mockResolvedValue({ content: [] })
+
+      await progressClient.callTool(tool, { op: 'add' })
+
+      progressSdkClientMock.callTool.mock.calls[0]![1].onprogress({ progress: 1 })
+      await vi.waitFor(() => expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('progress callback failed')))
+    })
+
+    it('logs a warning when an async progressCallback rejects', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const resultsLengthBefore = vi.mocked(Client).mock.results.length
+      const progressClient = new McpClient({
+        applicationName: 'TestApp',
+        transport: mockTransport,
+        progressCallback: async () => {
+          throw new Error('socket closed')
+        },
+      })
+      const progressSdkClientMock = vi.mocked(Client).mock.results[resultsLengthBefore]!.value
+      const tool = new McpTool({ name: 'calc', description: '', inputSchema: {}, client: progressClient })
+      progressSdkClientMock.callTool.mockResolvedValue({ content: [] })
+
+      await progressClient.callTool(tool, { op: 'add' })
+
+      progressSdkClientMock.callTool.mock.calls[0]![1].onprogress({ progress: 1 })
+      await vi.waitFor(() => expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('progress callback failed')))
+    })
+
+    it('throws on callTool when tasksConfig is set', async () => {
       const resultsLengthBefore = vi.mocked(Client).mock.results.length
       const taskClient = new McpClient({
         applicationName: 'TestApp',
@@ -591,15 +663,35 @@ describe('MCP Integration', () => {
       })
       const taskSdkClientMock = vi.mocked(Client).mock.results[resultsLengthBefore]!.value
       const tool = new McpTool({ name: 'calc', description: '', inputSchema: {}, client: taskClient })
-      taskSdkClientMock.experimental.tasks.callToolStream.mockReturnValue(createMockCallToolStream({ content: [] })())
 
-      await taskClient.callTool(tool, { op: 'add' })
+      await expect(taskClient.callTool(tool, { op: 'add' })).rejects.toThrow(/temporarily unavailable/)
+      expect(taskSdkClientMock.callTool).not.toHaveBeenCalled()
+    })
 
-      expect(taskSdkClientMock.experimental.tasks.callToolStream).toHaveBeenCalledWith(
-        { name: 'calc', arguments: { op: 'add' } },
-        undefined,
-        { timeout: 30000, maxTotalTimeout: 120000, resetTimeoutOnProgress: true }
-      )
+    it('still lists tools when tasksConfig is set', async () => {
+      const resultsLengthBefore = vi.mocked(Client).mock.results.length
+      const taskClient = new McpClient({
+        applicationName: 'TestApp',
+        transport: mockTransport,
+        tasksConfig: {},
+      })
+      const taskSdkClientMock = vi.mocked(Client).mock.results[resultsLengthBefore]!.value
+      taskSdkClientMock.listTools.mockResolvedValue({ tools: [{ name: 'calc', inputSchema: {} }] })
+
+      const tools = await taskClient.listTools()
+
+      expect(tools.map((tool) => tool.name)).toEqual(['calc'])
+    })
+
+    it('warns at construction when tasksConfig is set and only then', () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+      new McpClient({ applicationName: 'TestApp', transport: mockTransport, tasksConfig: {} })
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('callTool will throw'))
+
+      warnSpy.mockClear()
+      new McpClient({ applicationName: 'TestApp', transport: mockTransport })
+      expect(warnSpy).not.toHaveBeenCalled()
     })
 
     it('validates tool arguments', async () => {
@@ -631,7 +723,7 @@ describe('MCP Integration', () => {
 
       await elicitClient.connect()
 
-      expect(elicitSdkClientMock.setRequestHandler).toHaveBeenCalledWith(ElicitRequestSchema, expect.any(Function))
+      expect(elicitSdkClientMock.setRequestHandler).toHaveBeenCalledWith('elicitation/create', expect.any(Function))
       const setHandlerOrder = elicitSdkClientMock.setRequestHandler.mock.invocationCallOrder[0]!
       const connectOrder = elicitSdkClientMock.connect.mock.invocationCallOrder[0]!
       expect(setHandlerOrder).toBeLessThan(connectOrder)
@@ -655,7 +747,7 @@ describe('MCP Integration', () => {
       expect(lastCall[1]).toEqual(expect.objectContaining({ capabilities: { elicitation: { form: {}, url: {} } } }))
     })
 
-    it('elicitation handler returns accepted result with content', async () => {
+    it('elicitation handler returns accepted result with content and exposes the abort signal at mcpReq.signal', async () => {
       const callbackResult = { action: 'accept' as const, content: { username: 'alice' } }
       const callback: ElicitationCallback = vi.fn().mockResolvedValue(callbackResult)
       const { handler } = await connectAndGetElicitationHandler(callback)
@@ -663,11 +755,14 @@ describe('MCP Integration', () => {
         method: 'elicitation/create',
         params: { message: 'Enter username', requestedSchema: { type: 'object' } },
       }
-      const extra = { signal: new AbortController().signal }
+      const abortSignal = new AbortController().signal
+      const extra = { mcpReq: { signal: abortSignal } }
 
       const result = await handler(request, extra)
 
       expect(callback).toHaveBeenCalledWith(extra, request.params)
+      const receivedContext = vi.mocked(callback).mock.calls[0]![0]
+      expect(receivedContext.mcpReq.signal).toBe(abortSignal)
       expect(result).toEqual({ action: 'accept', content: { username: 'alice' } })
     })
 
@@ -680,7 +775,7 @@ describe('MCP Integration', () => {
           method: 'elicitation/create',
           params: { message: 'Enter username', requestedSchema: { type: 'object' } },
         }
-        const extra = { signal: new AbortController().signal }
+        const extra = { mcpReq: { signal: new AbortController().signal } }
 
         const result = await handler(request, extra)
 
@@ -702,7 +797,7 @@ describe('MCP Integration', () => {
           elicitationId: 'elicit-123',
         },
       }
-      const extra = { signal: new AbortController().signal }
+      const extra = { mcpReq: { signal: new AbortController().signal } }
 
       const result = await handler(request, extra)
 
@@ -717,7 +812,7 @@ describe('MCP Integration', () => {
         method: 'elicitation/create',
         params: { message: 'Confirm?' },
       }
-      const extra = { signal: new AbortController().signal }
+      const extra = { mcpReq: { signal: new AbortController().signal } }
 
       await expect(handler(request, extra)).rejects.toThrow('User cancelled')
     })
@@ -735,7 +830,6 @@ describe('MCP Integration', () => {
       getServerCapabilities: ReturnType<typeof vi.fn>
       getServerVersion: ReturnType<typeof vi.fn>
       getInstructions: ReturnType<typeof vi.fn>
-      experimental: { tasks: { callToolStream: ReturnType<typeof vi.fn> } }
     }
 
     beforeEach(() => {
@@ -1098,7 +1192,7 @@ describe('MCP Integration', () => {
       expect((result.content[2] as TextBlock).text).toBe('Some notes')
     })
 
-    it('surfaces elicitation data for McpError with code -32042', async () => {
+    it('surfaces elicitation data for ProtocolError with code -32042', async () => {
       const elicitations = [
         {
           mode: 'url',
@@ -1107,18 +1201,20 @@ describe('MCP Integration', () => {
           url: 'https://github.com/login/oauth/authorize?client_id=abc',
         },
       ]
-      const mcpError = new McpError(ErrorCode.UrlElicitationRequired, 'Authorization required', { elicitations })
-      vi.mocked(mockClientWrapper.callTool).mockRejectedValue(mcpError)
+      const protocolError = new ProtocolError(ProtocolErrorCode.UrlElicitationRequired, 'Authorization required', {
+        elicitations,
+      })
+      vi.mocked(mockClientWrapper.callTool).mockRejectedValue(protocolError)
 
       const result = await runTool<ToolResultBlock>(tool.stream(toolContext))
 
       expect(result.status).toBe('error')
       expect((result.content[0] as TextBlock).text).toBe(
-        `MCP Elicitation required: [${String(mcpError)}] with data ${JSON.stringify(elicitations)}`
+        `MCP Elicitation required: [${String(protocolError)}] with data ${JSON.stringify(elicitations)}`
       )
     })
 
-    it('surfaces multiple elicitations for McpError with code -32042', async () => {
+    it('surfaces multiple elicitations for ProtocolError with code -32042', async () => {
       const elicitations = [
         {
           mode: 'url',
@@ -1133,27 +1229,29 @@ describe('MCP Integration', () => {
           url: 'https://accounts.google.com/o/oauth2/auth',
         },
       ]
-      const mcpError = new McpError(ErrorCode.UrlElicitationRequired, 'Authorization required', { elicitations })
-      vi.mocked(mockClientWrapper.callTool).mockRejectedValue(mcpError)
+      const protocolError = new ProtocolError(ProtocolErrorCode.UrlElicitationRequired, 'Authorization required', {
+        elicitations,
+      })
+      vi.mocked(mockClientWrapper.callTool).mockRejectedValue(protocolError)
 
       const result = await runTool<ToolResultBlock>(tool.stream(toolContext))
 
       expect(result.status).toBe('error')
       expect((result.content[0] as TextBlock).text).toBe(
-        `MCP Elicitation required: [${String(mcpError)}] with data ${JSON.stringify(elicitations)}`
+        `MCP Elicitation required: [${String(protocolError)}] with data ${JSON.stringify(elicitations)}`
       )
     })
 
-    it('falls through to generic error for McpError -32042 with malformed data', async () => {
-      const mcpError = new McpError(ErrorCode.UrlElicitationRequired, 'Authorization required', {
+    it('falls through to generic error for ProtocolError -32042 with malformed data', async () => {
+      const protocolError = new ProtocolError(ProtocolErrorCode.UrlElicitationRequired, 'Authorization required', {
         unexpected: 'shape',
       })
-      vi.mocked(mockClientWrapper.callTool).mockRejectedValue(mcpError)
+      vi.mocked(mockClientWrapper.callTool).mockRejectedValue(protocolError)
 
       const result = await runTool<ToolResultBlock>(tool.stream(toolContext))
 
       expect(result.status).toBe('error')
-      expect((result.content[0] as TextBlock).text).toBe('MCP error -32042: Authorization required')
+      expect((result.content[0] as TextBlock).text).toBe('Authorization required')
     })
 
     it('surfaces elicitation data for UrlElicitationRequiredError', async () => {
@@ -1175,48 +1273,48 @@ describe('MCP Integration', () => {
       expect((result.content[0] as TextBlock).text).toContain('https://example.com/auth')
     })
 
-    it('falls through to generic error for McpError -32042 with undefined data', async () => {
-      const mcpError = new McpError(ErrorCode.UrlElicitationRequired, 'Auth required')
-      vi.mocked(mockClientWrapper.callTool).mockRejectedValue(mcpError)
+    it('falls through to generic error for ProtocolError -32042 with undefined data', async () => {
+      const protocolError = new ProtocolError(ProtocolErrorCode.UrlElicitationRequired, 'Auth required')
+      vi.mocked(mockClientWrapper.callTool).mockRejectedValue(protocolError)
 
       const result = await runTool<ToolResultBlock>(tool.stream(toolContext))
 
       expect(result.status).toBe('error')
-      expect((result.content[0] as TextBlock).text).toBe('MCP error -32042: Auth required')
+      expect((result.content[0] as TextBlock).text).toBe('Auth required')
     })
 
-    it('falls through to generic error for McpError -32042 with non-array elicitations', async () => {
-      const mcpError = new McpError(ErrorCode.UrlElicitationRequired, 'Auth required', {
+    it('falls through to generic error for ProtocolError -32042 with non-array elicitations', async () => {
+      const protocolError = new ProtocolError(ProtocolErrorCode.UrlElicitationRequired, 'Auth required', {
         elicitations: 'not-an-array',
       })
-      vi.mocked(mockClientWrapper.callTool).mockRejectedValue(mcpError)
+      vi.mocked(mockClientWrapper.callTool).mockRejectedValue(protocolError)
 
       const result = await runTool<ToolResultBlock>(tool.stream(toolContext))
 
       expect(result.status).toBe('error')
-      expect((result.content[0] as TextBlock).text).toBe('MCP error -32042: Auth required')
+      expect((result.content[0] as TextBlock).text).toBe('Auth required')
     })
 
-    it('falls through to generic error for McpError -32042 with empty elicitations', async () => {
-      const mcpError = new McpError(ErrorCode.UrlElicitationRequired, 'Auth required', {
+    it('falls through to generic error for ProtocolError -32042 with empty elicitations', async () => {
+      const protocolError = new ProtocolError(ProtocolErrorCode.UrlElicitationRequired, 'Auth required', {
         elicitations: [],
       })
-      vi.mocked(mockClientWrapper.callTool).mockRejectedValue(mcpError)
+      vi.mocked(mockClientWrapper.callTool).mockRejectedValue(protocolError)
 
       const result = await runTool<ToolResultBlock>(tool.stream(toolContext))
 
       expect(result.status).toBe('error')
-      expect((result.content[0] as TextBlock).text).toBe('MCP error -32042: Auth required')
+      expect((result.content[0] as TextBlock).text).toBe('Auth required')
     })
 
-    it('falls through to generic error for McpError with a different code', async () => {
-      const mcpError = new McpError(ErrorCode.InvalidRequest, 'Bad request')
-      vi.mocked(mockClientWrapper.callTool).mockRejectedValue(mcpError)
+    it('falls through to generic error for ProtocolError with a different code', async () => {
+      const protocolError = new ProtocolError(ProtocolErrorCode.InvalidRequest, 'Bad request')
+      vi.mocked(mockClientWrapper.callTool).mockRejectedValue(protocolError)
 
       const result = await runTool<ToolResultBlock>(tool.stream(toolContext))
 
       expect(result.status).toBe('error')
-      expect((result.content[0] as TextBlock).text).toBe('MCP error -32600: Bad request')
+      expect((result.content[0] as TextBlock).text).toBe('Bad request')
     })
   })
 })

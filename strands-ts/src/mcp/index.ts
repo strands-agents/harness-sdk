@@ -1,6 +1,8 @@
 export {
   type McpClientOptions,
   type McpListToolsOptions,
+  type McpProgress,
+  type McpProgressCallback,
   type McpToolFilterCallback,
   type McpToolFilters,
   type McpToolMatcher,
@@ -8,6 +10,7 @@ export {
   type McpClientCredentials,
   type McpTransport,
   type McpCallToolOptions,
+  type McpRequestTimeouts,
   type TasksConfig,
   type McpConnectionState,
   McpClient,
