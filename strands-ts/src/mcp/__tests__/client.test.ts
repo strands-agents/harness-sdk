@@ -11,7 +11,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { ClientCredentialsProvider } from '@modelcontextprotocol/sdk/client/auth-extensions.js'
 import { McpClient } from '../client.js'
 import { McpTool } from '../../tools/mcp-tool.js'
-import { JsonBlock, type TextBlock, type ToolResultBlock } from '../../types/messages.js'
+import { JsonBlock, ToolResultBlock, type TextBlock } from '../../types/messages.js'
 import { ImageBlock } from '../../types/media.js'
 import type { LocalAgent } from '../../types/agent.js'
 import type { ToolContext } from '../../tools/tool.js'
@@ -964,6 +964,68 @@ describe('MCP Integration', () => {
       const result = await runTool<ToolResultBlock>(tool.stream(toolContext))
 
       expect((result.content[0] as TextBlock).text).toContain('completed successfully')
+    })
+
+    it('surfaces structuredContent from the tool result', async () => {
+      const structuredContent = { temperature: 72, conditions: 'sunny' }
+      vi.mocked(mockClientWrapper.callTool).mockResolvedValue({
+        content: [{ type: 'text', text: 'Sunny, 72F' }],
+        structuredContent,
+      })
+
+      const result = await runTool<ToolResultBlock>(tool.stream(toolContext))
+
+      expect(result.structuredContent).toEqual(structuredContent)
+    })
+
+    it('surfaces result metadata from the _meta field', async () => {
+      const meta = { 'ui.resourceUri': 'ui://weather/card.html' }
+      vi.mocked(mockClientWrapper.callTool).mockResolvedValue({
+        content: [{ type: 'text', text: 'Sunny' }],
+        _meta: meta,
+      })
+
+      const result = await runTool<ToolResultBlock>(tool.stream(toolContext))
+
+      expect(result.metadata).toEqual(meta)
+    })
+
+    it('preserves falsy structuredContent payloads', async () => {
+      vi.mocked(mockClientWrapper.callTool).mockResolvedValue({
+        content: [{ type: 'text', text: '0' }],
+        structuredContent: 0,
+      })
+
+      const result = await runTool<ToolResultBlock>(tool.stream(toolContext))
+
+      expect(result.structuredContent).toBe(0)
+    })
+
+    it('omits structuredContent and metadata when the server sends neither', async () => {
+      vi.mocked(mockClientWrapper.callTool).mockResolvedValue({
+        content: [{ type: 'text', text: 'Sunny' }],
+      })
+
+      const result = await runTool<ToolResultBlock>(tool.stream(toolContext))
+
+      expect(result.structuredContent).toBeUndefined()
+      expect(result.metadata).toBeUndefined()
+      expect(result.toJSON().toolResult).not.toHaveProperty('structuredContent')
+      expect(result.toJSON().toolResult).not.toHaveProperty('metadata')
+    })
+
+    it('round-trips structuredContent and metadata through JSON', async () => {
+      vi.mocked(mockClientWrapper.callTool).mockResolvedValue({
+        content: [{ type: 'text', text: 'Sunny' }],
+        structuredContent: { temperature: 72 },
+        _meta: { 'ui.resourceUri': 'ui://weather/card.html' },
+      })
+
+      const result = await runTool<ToolResultBlock>(tool.stream(toolContext))
+      const restored = ToolResultBlock.fromJSON(result.toJSON())
+
+      expect(restored.structuredContent).toEqual({ temperature: 72 })
+      expect(restored.metadata).toEqual({ 'ui.resourceUri': 'ui://weather/card.html' })
     })
 
     it('handles protocol-level errors', async () => {
