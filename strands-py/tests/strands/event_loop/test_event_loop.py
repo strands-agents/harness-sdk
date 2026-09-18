@@ -1038,19 +1038,37 @@ async def test_event_loop_cycle_exception_model_hooks(mock_sleep, agent, model, 
 
     # 1st call - throttled
     assert next(events) == BeforeModelCallEvent(agent=agent, invocation_state=ANY)
-    expected_after = AfterModelCallEvent(agent=agent, invocation_state=ANY, stop_response=None, exception=exception)
+    expected_after = AfterModelCallEvent(
+        agent=agent,
+        invocation_state=ANY,
+        stop_response=None,
+        exception=exception,
+        attempt_count=1,
+    )
     expected_after.retry = True
     assert next(events) == expected_after
 
     # 2nd call - throttled
     assert next(events) == BeforeModelCallEvent(agent=agent, invocation_state=ANY)
-    expected_after = AfterModelCallEvent(agent=agent, invocation_state=ANY, stop_response=None, exception=exception)
+    expected_after = AfterModelCallEvent(
+        agent=agent,
+        invocation_state=ANY,
+        stop_response=None,
+        exception=exception,
+        attempt_count=2,
+    )
     expected_after.retry = True
     assert next(events) == expected_after
 
     # 3rd call - throttled
     assert next(events) == BeforeModelCallEvent(agent=agent, invocation_state=ANY)
-    expected_after = AfterModelCallEvent(agent=agent, invocation_state=ANY, stop_response=None, exception=exception)
+    expected_after = AfterModelCallEvent(
+        agent=agent,
+        invocation_state=ANY,
+        stop_response=None,
+        exception=exception,
+        attempt_count=3,
+    )
     expected_after.retry = True
     assert next(events) == expected_after
 
@@ -1064,6 +1082,7 @@ async def test_event_loop_cycle_exception_model_hooks(mock_sleep, agent, model, 
             stop_reason="end_turn",
         ),
         exception=None,
+        attempt_count=4,
     )
 
     # Final message

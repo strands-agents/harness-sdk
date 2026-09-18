@@ -266,7 +266,7 @@ class StructuredOutputEvent(TypedEvent):
 class EventLoopThrottleEvent(TypedEvent):
     """Event emitted when the event loop is throttled due to rate limiting."""
 
-    def __init__(self, delay: int) -> None:
+    def __init__(self, delay: float) -> None:
         """Initialize with the throttle delay duration.
 
         Args:

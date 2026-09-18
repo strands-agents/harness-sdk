@@ -303,7 +303,8 @@ class Agent(AgentBase, LocalAgent):
             tool_executor: Definition of tool execution strategy (e.g., sequential, concurrent, etc.).
             retry_strategy: Strategy for retrying model calls on throttling or other transient errors.
                 Defaults to ModelRetryStrategy with max_attempts=6, initial_delay=4s, max_delay=240s.
-                Implement a custom HookProvider for custom retry logic, or pass None to disable retries.
+                Pass a custom backoff strategy, subclass ModelRetryStrategy to customize decisions,
+                or pass None to disable retries.
             concurrent_invocation_mode: Mode controlling concurrent invocation behavior.
                 Defaults to "throw" which raises ConcurrencyException if concurrent invocation is attempted.
                 Set to "unsafe_reentrant" to skip lock acquisition entirely, allowing concurrent invocations.

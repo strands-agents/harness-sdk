@@ -3,7 +3,8 @@ title: Retry Strategies
 description: 'Handle model provider rate limits in Strands agents. Configure retry strategies with exponential backoff, custom parameters, or your own retry logic.'
 tags: [event-loop, error-handling]
 sourceLinks:
-  - path: strands-py/src/strands/event_loop/_retry.py
+  - path: strands-py/src/strands/retry/model_retry_strategy.py
+  - path: strands-py/src/strands/retry/backoff.py
   - path: strands-ts/src/retry/model-retry-strategy.ts
   - path: strands-ts/src/retry/default-model-retry-strategy.ts
 ---
@@ -61,9 +62,9 @@ In TypeScript, `ModelRetryStrategy` is the abstract base class. Use `DefaultMode
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `max_attempts` | `int` | `6` | Total number of attempts including the initial call. Set to `1` to disable retries. |
+| `max_attempts` | `int` | `6` | Total attempts including the initial call. Must be `>= 1`; set to `1` to disable retries. |
 | `initial_delay` | `float` | `4` | Seconds to wait before the first retry. Subsequent retries double this value. |
-| `max_delay` | `float` | `128` | Maximum seconds to wait between retries. Caps the exponential growth. |
+| `max_delay` | `float` | `240` | Maximum seconds to wait between retries. Caps the exponential growth. |
 
 </Tab>
 <Tab label="TypeScript">
@@ -80,23 +81,44 @@ In TypeScript, `ModelRetryStrategy` is the abstract base class. Use `DefaultMode
 
 ### Backoff Strategies
 
-In TypeScript, the delay between retries is delegated to a `BackoffStrategy` passed via the `backoff` parameter. The Python SDK does not expose a separate backoff interface; configure exponential backoff through the `initial_delay` and `max_delay` parameters above.
+The delay between retries is delegated to a backoff strategy. Both SDKs ship three:
+
+- `ExponentialBackoff` (default): grows by a configurable multiplier.
+- `LinearBackoff`: grows by the attempt number.
+- `ConstantBackoff`: returns the same delay for every retry.
+
+`ExponentialBackoff` and `LinearBackoff` support `none`, `full`, `equal`, and
+`decorrelated` jitter. The default for those standalone strategies is `full`, which
+spreads concurrent clients across the wait window. For backward compatibility,
+Python's `ModelRetryStrategy` uses deterministic exponential backoff when no custom
+strategy is provided.
 
 <Tabs>
 <Tab label="Python">
 
-Configure backoff through `ModelRetryStrategy` parameters in [Customizing Retry Behavior](#customizing-retry-behavior).
+Python durations are expressed in seconds. A custom strategy implements
+`BackoffStrategy.next_delay(context)` and can use the one-based attempt number,
+elapsed time, and previous delay from `BackoffContext`.
+
+```python
+from strands import Agent, LinearBackoff, ModelRetryStrategy
+
+agent = Agent(
+    retry_strategy=ModelRetryStrategy(
+        max_attempts=4,
+        backoff=LinearBackoff(
+            base_delay=2,
+            max_delay=60,
+            jitter="equal",
+        ),
+    )
+)
+```
 
 </Tab>
 <Tab label="TypeScript">
 
-The TypeScript SDK ships three built-in strategies:
-
-- `ExponentialBackoff` (default): delay grows as `baseMs * multiplier^(attempt-1)`, capped at `maxMs`.
-- `LinearBackoff`: delay grows as `baseMs * attempt`, capped at `maxMs`.
-- `ConstantBackoff`: same delay for every retry.
-
-`ExponentialBackoff` and `LinearBackoff` accept a `jitter` option (`'none'`, `'full'`, `'equal'`, `'decorrelated'`). Default is `'full'` jitter, which spreads concurrent clients across the wait window. `ConstantBackoff` returns the configured delay unchanged.
+TypeScript durations are expressed in milliseconds.
 
 ```typescript
 --8<-- "user-guide/concepts/agents/retry-strategies_imports.ts:custom_backoff_imports"
@@ -165,6 +187,9 @@ agent = Agent(
 )
 ```
 
+For full control, override `compute_retry_decision` and return a `RetryDecision`.
+The base class preserves hook ordering, sleeping, compatibility events, and retry flags.
+
 A retry-strategy instance carries per-turn state and must not be shared across agents. Create a new instance per agent.
 
 </Tab>
@@ -187,7 +212,11 @@ A retry-strategy instance carries per-turn state and must not be shared across a
 
 ### Using a Hook
 
-Hooks are simpler when you only need to inspect a model error and request a retry. Set `event.retry = true` from an `AfterModelCallEvent` callback. Hooks do not introduce delays automatically; the example below adds a 2-second wait.
+Hooks are simpler when you only need to inspect a model error and request a retry. Set
+`event.retry = true` from an `AfterModelCallEvent` callback. Hooks do not introduce
+delays automatically; the examples below add a 2-second wait. The event's
+<Syntax py="attempt_count" ts="attemptCount" /> field is one-based and resets for
+each new retry budget.
 
 <Tabs>
 <Tab label="Python">
@@ -198,26 +227,18 @@ from strands import Agent
 from strands.hooks import HookProvider, HookRegistry, AfterModelCallEvent
 
 class CustomRetry(HookProvider):
-    def __init__(self, max_retries: int = 3, delay: float = 2.0):
-        self.max_retries = max_retries
-        self.delay = delay
-        self.attempts = 0
-
     def register_hooks(self, registry: HookRegistry) -> None:
         registry.add_callback(AfterModelCallEvent, self.maybe_retry)
 
     async def maybe_retry(self, event: AfterModelCallEvent) -> None:
-        if event.exception and self.attempts < self.max_retries:
-            self.attempts += 1
-            await asyncio.sleep(self.delay)
+        if event.exception and event.attempt_count < 3:
+            await asyncio.sleep(2)
             event.retry = True
 
 agent = Agent(hooks=[CustomRetry()])
 ```
 </Tab>
 <Tab label="TypeScript">
-
-The `AfterModelCallEvent` exposes `attemptCount` (1-indexed). Use it to bound retry counts without tracking state outside the hook.
 
 ```typescript
 --8<-- "user-guide/concepts/agents/retry-strategies_imports.ts:hook_retry_imports"
