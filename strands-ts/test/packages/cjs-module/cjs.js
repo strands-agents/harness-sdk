@@ -27,6 +27,7 @@ async function main() {
 
   const { BedrockModel: BedrockFromSubpath } = await import('@strands-agents/sdk/models/bedrock')
   const { OpenAIModel } = await import('@strands-agents/sdk/models/openai')
+  const { LiteLLMModel } = await import('@strands-agents/sdk/models/litellm')
   const { AnthropicModel } = await import('@strands-agents/sdk/models/anthropic')
   const { GoogleModel } = await import('@strands-agents/sdk/models/google')
 
@@ -116,6 +117,11 @@ async function main() {
     throw new Error('GoalLoop from subpath should match barrel export')
   }
   console.log('✓ GoalLoop subpath export verified')
+
+  if (typeof LiteLLMModel !== 'function') {
+    throw new Error('LiteLLMModel subpath export is not constructible')
+  }
+  console.log('✓ LiteLLMModel subpath export verified')
 
   // Reference remaining imports so static analysis doesn't flag them unused.
   void OpenAIModel

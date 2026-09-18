@@ -25,6 +25,7 @@ import { GoalLoop as GoalLoopFromSubpath } from '@strands-agents/sdk/vended-plug
 // Verify model subpath exports
 import { BedrockModel as BedrockFromSubpath } from '@strands-agents/sdk/models/bedrock'
 import { OpenAIModel } from '@strands-agents/sdk/models/openai'
+import { LiteLLMModel } from '@strands-agents/sdk/models/litellm'
 import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
 import { GoogleModel } from '@strands-agents/sdk/models/google'
 
@@ -130,6 +131,11 @@ if (ModelRouterFromSubpath !== ModelRouter) {
   throw new Error('ModelRouter from subpath should match main export')
 }
 console.log('✓ Model subpath exports verified')
+
+if (typeof LiteLLMModel !== 'function') {
+  throw new Error('LiteLLMModel subpath export is not constructible')
+}
+console.log('✓ LiteLLMModel subpath export verified')
 
 // Verify barrel exports match individual subpath exports
 if (

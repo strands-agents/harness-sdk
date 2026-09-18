@@ -4,7 +4,7 @@
  * that transitively pulls an optional peer fails at module load.
  *
  * Subpaths deliberately NOT imported because they require optional peers:
- *   models/{anthropic,openai,google,vercel}, a2a, a2a/express,
+ *   models/{anthropic,openai,litellm,google,vercel}, a2a, a2a/express,
  *   session/s3-storage, telemetry. Those are covered by the sibling
  *   `../esm-module` and `../cjs-module` suites.
  */
@@ -135,7 +135,12 @@ if (!(ctxErr instanceof Error)) {
 void AgentResult
 console.log('[pack-test] Error + result types importable')
 
-if (barrelBash !== bash || barrelFileEditor !== fileEditor || barrelHttpRequest !== httpRequest || barrelNotebook !== notebook) {
+if (
+  barrelBash !== bash ||
+  barrelFileEditor !== fileEditor ||
+  barrelHttpRequest !== httpRequest ||
+  barrelNotebook !== notebook
+) {
   throw new Error('Barrel vended-tools exports do not match individual subpath exports')
 }
 if (

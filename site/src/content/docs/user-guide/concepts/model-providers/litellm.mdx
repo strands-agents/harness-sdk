@@ -1,54 +1,83 @@
 ---
 title: LiteLLM
-description: 'Use LiteLLM with Strands agents to access models from OpenAI, Anthropic, Amazon, and more through one API. Install and configure LiteLLMModel.'
-tags: [structured-output]
-languages: Python
+description: >-
+  Use LiteLLM with Strands agents in Python or TypeScript to access models from
+  OpenAI, Anthropic, Amazon, and more through one OpenAI-compatible gateway.
+tags: [structured-output, caching]
 integrationType: model-provider
 sourceLinks:
   - path: strands-py/src/strands/models/litellm.py
+  - path: strands-ts/src/models/litellm.ts
 ---
 
-[LiteLLM](https://docs.litellm.ai/docs/) is a unified interface for various LLM providers that allows you to interact with models from Amazon, Anthropic, OpenAI, and many others through a single API. The Strands Agents SDK implements a LiteLLM provider, allowing you to run agents against any model LiteLLM supports.
+[LiteLLM](https://docs.litellm.ai/docs/) provides one API for models from Amazon,
+Anthropic, OpenAI, and many other providers. Strands Agents supports LiteLLM in
+both SDKs, with a language-specific connection model.
 
 ## Installation
 
-LiteLLM is configured as an optional dependency in Strands Agents. To install, run:
+Install the provider dependencies for the SDK you use.
+
+<Tabs>
+<Tab label="Python">
 
 ```bash
 pip install 'strands-agents[litellm]' strands-agents-tools
 ```
+</Tab>
+<Tab label="TypeScript">
+
+The TypeScript provider connects to the gateway through the OpenAI client:
+
+```bash
+npm install @strands-agents/sdk openai zod
+```
+
+Set `LITELLM_BASE_URL` and `LITELLM_API_KEY` before running the examples.
+</Tab>
+</Tabs>
 
 ## Usage
 
-After installing `litellm`, you can import and initialize Strands Agents' LiteLLM provider as follows:
+Initialize `LiteLLMModel` with the model alias configured in LiteLLM.
+
+<Tabs>
+<Tab label="Python">
 
 ```python
 from strands import Agent
 from strands.models.litellm import LiteLLMModel
-from strands_tools import calculator
 
 model = LiteLLMModel(
-    client_args={
-        "api_key": "<KEY>",
-    },
-    # **model_config
-    model_id="anthropic/claude-3-7-sonnet-20250219",
-    params={
-        "max_tokens": 1000,
-        "temperature": 0.7,
-    }
+    client_args={"api_key": "<KEY>"},
+    model_id="anthropic/claude-sonnet-4-20250514",
+    params={"temperature": 0.7},
 )
 
-agent = Agent(model=model, tools=[calculator])
-response = agent("What is 2+2")
+agent = Agent(model=model)
+response = agent("What is 2+2?")
 print(response)
 ```
+</Tab>
+<Tab label="TypeScript">
 
-## Using LiteLLM Proxy
+```typescript
+--8<-- "user-guide/concepts/model-providers/litellm_imports.ts:basic_usage_imports"
 
-To use a [LiteLLM Proxy Server](https://docs.litellm.ai/docs/simple_proxy), you have two options:
+--8<-- "user-guide/concepts/model-providers/litellm.ts:basic_usage"
+```
+</Tab>
+</Tabs>
 
-### Option 1: Use `use_litellm_proxy` parameter
+## Using a LiteLLM gateway
+
+Connect the provider to a LiteLLM gateway by setting its URL and virtual key.
+
+<Tabs>
+<Tab label="Python">
+
+Python routes calls through the [proxy](https://docs.litellm.ai/docs/simple_proxy)
+with `use_litellm_proxy` or a `litellm_proxy/` model prefix:
 
 ```python
 from strands import Agent
@@ -58,94 +87,157 @@ model = LiteLLMModel(
     client_args={
         "api_key": "<PROXY_KEY>",
         "api_base": "<PROXY_URL>",
-        "use_litellm_proxy": True
+        "use_litellm_proxy": True,
     },
-    model_id="amazon.nova-lite-v1:0"
+    model_id="amazon.nova-lite-v1:0",
 )
 
 agent = Agent(model=model)
 response = agent("Tell me a story")
 ```
+</Tab>
+<Tab label="TypeScript">
 
-### Option 2: Use `litellm_proxy/` prefix in model ID
+TypeScript uses the gateway URL directly. The URL must expose the OpenAI-compatible
+`/chat/completions` endpoint:
 
-```python
-model = LiteLLMModel(
-    client_args={
-        "api_key": "<PROXY_KEY>",
-        "api_base": "<PROXY_URL>"
-    },
-    model_id="litellm_proxy/amazon.nova-lite-v1:0"
-)
+```typescript
+--8<-- "user-guide/concepts/model-providers/litellm_imports.ts:proxy_imports"
+
+--8<-- "user-guide/concepts/model-providers/litellm.ts:proxy_usage"
 ```
+
+The TypeScript provider does not use Python's `use_litellm_proxy` option or the
+`litellm_proxy/` model prefix.
+</Tab>
+</Tabs>
 
 ## Configuration
 
-### Client Configuration
+### Client configuration
 
-The `client_args` configure the underlying LiteLLM `completion` API. For a complete list of available arguments, please refer to the LiteLLM [docs](https://docs.litellm.ai/docs/completion/input).
+Configure the client connection separately from model inference parameters.
 
-### Model Configuration
+<Tabs>
+<Tab label="Python">
 
-The `model_config` configures the underlying model selected for inference. The supported configurations are:
+`client_args` accepts the arguments passed to LiteLLM. See the LiteLLM [completion
+input documentation](https://docs.litellm.ai/docs/completion/input) for the
+available options.
+</Tab>
+<Tab label="TypeScript">
 
-|  Parameter | Description | Example | Options |
-|------------|-------------|---------|---------|
-| `model_id` | ID of a model to use | `anthropic/claude-3-7-sonnet-20250219` | [reference](https://docs.litellm.ai/docs/providers)
-| `params` | Model specific parameters | `{"max_tokens": 1000, "temperature": 0.7}` | [reference](https://docs.litellm.ai/docs/completion/input)
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `baseURL` | LiteLLM gateway URL | `process.env.LITELLM_BASE_URL` |
+| `apiKey` | LiteLLM virtual key | `process.env.LITELLM_API_KEY` |
+| `clientConfig` | Additional OpenAI client settings | `{ timeout: 30_000 }` |
+| `client` | Pre-configured OpenAI client | `new OpenAI({ ... })` |
+
+The examples require both environment variables and throw an error when either is
+missing. Use an HTTPS URL for a remote gateway.
+</Tab>
+</Tabs>
+
+### Model configuration
+
+Set the model alias and inference parameters on `LiteLLMModel`.
+
+<Tabs>
+<Tab label="Python">
+
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `model_id` | Model alias or provider/model identifier | `"anthropic/claude-sonnet-4"` |
+| `params` | Model-specific parameters | `{"max_tokens": 1000, "temperature": 0.7}` |
+</Tab>
+<Tab label="TypeScript">
+
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `modelId` | Model alias or provider/model identifier | `'anthropic/claude-sonnet-4'` |
+| `stream` | Select streaming or non-streaming responses | `false` |
+| `maxTokens` | Maximum output tokens | `1000` |
+| `temperature` | Controls randomness | `0.7` |
+| `topP` | Nucleus sampling | `0.9` |
+| `frequencyPenalty` | Reduces repetition | `0.5` |
+| `presencePenalty` | Encourages new topics | `0.5` |
+| `params` | Additional LiteLLM parameters | `{ seed: 42 }` |
+</Tab>
+</Tabs>
 
 ## Troubleshooting
 
-### Module Not Found
+Install the provider dependency when the SDK cannot resolve the LiteLLM integration.
 
-If you encounter the error `ModuleNotFoundError: No module named 'litellm'`, this means you haven't installed the `litellm` dependency in your environment. To fix, run `pip install 'strands-agents[litellm]'`.
+<Tabs>
+<Tab label="Python">
 
-## Advanced Features
+If you see `ModuleNotFoundError: No module named 'litellm'`, install the Python extra:
+
+```bash
+pip install 'strands-agents[litellm]'
+```
+</Tab>
+<Tab label="TypeScript">
+
+If `@strands-agents/sdk/models/litellm` or `openai` cannot be resolved, install
+both packages:
+
+```bash
+npm install @strands-agents/sdk openai
+```
+</Tab>
+</Tabs>
+
+## Advanced features
 
 ### Caching
 
-LiteLLM supports provider-agnostic caching through SystemContentBlock arrays, allowing you to define cache points that work across all supported model providers. This enables you to reuse parts of previous requests, which can significantly reduce token usage and latency.
+Add a cache point to the system prompt when the provider and model support prompt
+caching. Cache availability and minimum token requirements depend on the upstream
+provider.
 
-#### System Prompt Caching
-
-Use SystemContentBlock arrays to define cache points in your system prompts:
+<Tabs>
+<Tab label="Python">
 
 ```python
 from strands import Agent
 from strands.models.litellm import LiteLLMModel
 from strands.types.content import SystemContentBlock
 
-# Define system content with cache points
 system_content = [
-    SystemContentBlock(
-        text="You are a helpful assistant that provides concise answers. "
-             "This is a long system prompt with detailed instructions..."
-             "..." * 1000  # needs to be at least 1,024 tokens
-    ),
-    SystemContentBlock(cachePoint={"type": "default"})
+    SystemContentBlock(text="Reusable instructions and context."),
+    SystemContentBlock(cachePoint={"type": "default", "ttl": "1h"}),
 ]
 
-# Create an agent with SystemContentBlock array
-model = LiteLLMModel(
-    model_id="bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0"
+agent = Agent(
+    model=LiteLLMModel(model_id="anthropic/claude-sonnet-4-20250514"),
+    system_prompt=system_content,
 )
-
-agent = Agent(model=model, system_prompt=system_content)
-
-# First request will cache the system prompt
-response1 = agent("Tell me about Python")
-# Cache metrics like cacheWriteInputTokens will be present in response1.metrics.accumulated_usage
-
-# Second request will reuse the cached system prompt
-response2 = agent("Tell me about JavaScript")
-# Cache metrics like cacheReadInputTokens will be present in response2.metrics.accumulated_usage
+response = agent("Summarize this report.")
+print(response.metrics.accumulated_usage)
 ```
+</Tab>
+<Tab label="TypeScript">
 
-> **Note**: Caching availability and behavior depends on the underlying model provider accessed through LiteLLM. Some providers may have minimum token requirements or other limitations for cache creation.
+```typescript
+--8<-- "user-guide/concepts/model-providers/litellm_imports.ts:caching_imports"
 
-### Structured Output
+--8<-- "user-guide/concepts/model-providers/litellm.ts:caching_usage"
+```
+</Tab>
+</Tabs>
 
-LiteLLM supports structured output by proxying requests to underlying model providers that support tool calling. The availability of structured output depends on the specific model and provider you're using through LiteLLM.
+Cache usage appears in model metadata and agent accumulated usage when the upstream
+provider reports cache reads or writes.
+
+### Structured output
+
+Use structured output when the agent must return data that conforms to a schema.
+
+<Tabs>
+<Tab label="Python">
 
 ```python
 from pydantic import BaseModel, Field
@@ -153,33 +245,32 @@ from strands import Agent
 from strands.models.litellm import LiteLLMModel
 
 class BookAnalysis(BaseModel):
-    """Analyze a book's key information."""
     title: str = Field(description="The book's title")
     author: str = Field(description="The book's author")
-    genre: str = Field(description="Primary genre or category")
-    summary: str = Field(description="Brief summary of the book")
+    genre: str = Field(description="Primary genre")
+    summary: str = Field(description="Brief summary")
     rating: int = Field(description="Rating from 1-10", ge=1, le=10)
 
-model = LiteLLMModel(
-    model_id="bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0"
-)
-
-agent = Agent(model=model)
-
+agent = Agent(model=LiteLLMModel(model_id="anthropic/claude-sonnet-4-20250514"))
 result = agent.structured_output(
     BookAnalysis,
-    """
-    Analyze this book: "The Hitchhiker's Guide to the Galaxy" by Douglas Adams.
-    It's a science fiction comedy about Arthur Dent's adventures through space
-    after Earth is destroyed. It's widely considered a classic of humorous sci-fi.
-    """
+    "Analyze The Hitchhiker's Guide to the Galaxy by Douglas Adams.",
 )
-
-print(f"Title: {result.title}")
-print(f"Author: {result.author}")
-print(f"Genre: {result.genre}")
-print(f"Rating: {result.rating}")
+print(result.title, result.rating)
 ```
+</Tab>
+<Tab label="TypeScript">
+
+TypeScript uses the Agent structured-output workflow, which validates the tool result
+against a Zod schema:
+
+```typescript
+--8<-- "user-guide/concepts/model-providers/litellm_imports.ts:structured_output_imports"
+
+--8<-- "user-guide/concepts/model-providers/litellm.ts:structured_output"
+```
+</Tab>
+</Tabs>
 
 ## References
 

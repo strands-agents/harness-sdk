@@ -32,6 +32,10 @@
       "types": "./dist/src/models/openai/index.d.ts",
       "default": "./dist/src/models/openai/index.js"
     },
+    "./models/litellm": {
+      "types": "./dist/src/models/litellm.d.ts",
+      "default": "./dist/src/models/litellm.js"
+    },
     "./models/bedrock": {
       "types": "./dist/src/models/bedrock.d.ts",
       "default": "./dist/src/models/bedrock.js"
