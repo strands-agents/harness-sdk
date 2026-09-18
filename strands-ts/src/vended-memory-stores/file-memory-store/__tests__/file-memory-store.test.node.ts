@@ -263,6 +263,42 @@ describe('FileMemoryStore', () => {
     })
   })
 
+  describe('search strategy override', () => {
+    it('delegates search to the provided strategy', async () => {
+      const strategy = {
+        search: vi.fn().mockResolvedValue([{ key: 'custom.md', score: 0.9 }]),
+        index: vi.fn().mockResolvedValue(undefined),
+      }
+      const strategyStore = new FileMemoryStore({ name: 'strat-test', storage, search: strategy })
+      await strategyStore.add('some content')
+      const results = await strategyStore.search('anything')
+      expect(strategy.search).toHaveBeenCalledOnce()
+      expect(results).toHaveLength(0) // key doesn't exist in storage, so hydration returns empty
+    })
+
+    it('calls index on add when strategy has index', async () => {
+      const strategy = {
+        search: vi.fn().mockResolvedValue([]),
+        index: vi.fn().mockResolvedValue(undefined),
+      }
+      const strategyStore = new FileMemoryStore({ name: 'idx-test', storage, search: strategy })
+      await strategyStore.add('User prefers dark mode')
+      expect(strategy.index).toHaveBeenCalledOnce()
+      const [, key, data] = strategy.index.mock.calls[0]!
+      expect(key).toMatch(/\.md$/)
+      expect(new TextDecoder().decode(data)).toContain('User prefers dark mode')
+    })
+
+    it('does not call index when strategy omits it', async () => {
+      const strategy = {
+        search: vi.fn().mockResolvedValue([]),
+      }
+      const strategyStore = new FileMemoryStore({ name: 'no-idx', storage, search: strategy })
+      await strategyStore.add('Some content')
+      // no error thrown — index is optional on SearchStrategy
+    })
+  })
+
   describe('extraction (key-aware extractor)', () => {
     const createMockModel = (modelId: string): { modelId: string; streamAggregated: Mock } => ({
       modelId,

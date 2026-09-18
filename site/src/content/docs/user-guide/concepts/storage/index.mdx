@@ -40,16 +40,16 @@ Agent and let subsystems resolve from it.
 <Tab label="Python">
 
 ```python
---8<-- "user-guide/concepts/storage.py:agent_level"
+--8<-- "user-guide/concepts/storage/storage.py:agent_level"
 ```
 
 </Tab>
 <Tab label="TypeScript">
 
 ```typescript
---8<-- "user-guide/concepts/storage_imports.ts:agent_level_imports"
+--8<-- "user-guide/concepts/storage/storage_imports.ts:agent_level_imports"
 
---8<-- "user-guide/concepts/storage.ts:agent_level"
+--8<-- "user-guide/concepts/storage/storage.ts:agent_level"
 ```
 
 </Tab>
@@ -70,16 +70,16 @@ for that plugin only.
 <Tab label="Python">
 
 ```python
---8<-- "user-guide/concepts/storage.py:per_plugin"
+--8<-- "user-guide/concepts/storage/storage.py:per_plugin"
 ```
 
 </Tab>
 <Tab label="TypeScript">
 
 ```typescript
---8<-- "user-guide/concepts/storage_imports.ts:per_plugin_imports"
+--8<-- "user-guide/concepts/storage/storage_imports.ts:per_plugin_imports"
 
---8<-- "user-guide/concepts/storage.ts:per_plugin"
+--8<-- "user-guide/concepts/storage/storage.ts:per_plugin"
 ```
 
 </Tab>
@@ -115,16 +115,16 @@ zero-config, gone when the process exits.
 <Tab label="Python">
 
 ```python
---8<-- "user-guide/concepts/storage.py:in_memory"
+--8<-- "user-guide/concepts/storage/storage.py:in_memory"
 ```
 
 </Tab>
 <Tab label="TypeScript">
 
 ```typescript
---8<-- "user-guide/concepts/storage_imports.ts:in_memory_imports"
+--8<-- "user-guide/concepts/storage/storage_imports.ts:in_memory_imports"
 
---8<-- "user-guide/concepts/storage.ts:in_memory"
+--8<-- "user-guide/concepts/storage/storage.ts:in_memory"
 ```
 
 </Tab>
@@ -138,22 +138,22 @@ Each key becomes a file under a base directory. Writes are atomic
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | <Syntax py="base_dir" ts="baseDir" /> | `"./.strands/"` | Root directory |
-| <Syntax py="sandbox" ts="sandbox" /> | `None`/`undefined` | Optional [Sandbox](./sandbox/index.mdx) |
+| <Syntax py="sandbox" ts="sandbox" /> | `None`/`undefined` | Optional [Sandbox](../sandbox/index.mdx) |
 
 <Tabs>
 <Tab label="Python">
 
 ```python
---8<-- "user-guide/concepts/storage.py:local_file"
+--8<-- "user-guide/concepts/storage/storage.py:local_file"
 ```
 
 </Tab>
 <Tab label="TypeScript">
 
 ```typescript
---8<-- "user-guide/concepts/storage_imports.ts:local_file_imports"
+--8<-- "user-guide/concepts/storage/storage_imports.ts:local_file_imports"
 
---8<-- "user-guide/concepts/storage.ts:local_file"
+--8<-- "user-guide/concepts/storage/storage.ts:local_file"
 ```
 
 </Tab>
@@ -179,16 +179,16 @@ so applications that never construct an `S3Storage` pay nothing.
 <Tab label="Python">
 
 ```python
---8<-- "user-guide/concepts/storage.py:s3"
+--8<-- "user-guide/concepts/storage/storage.py:s3"
 ```
 
 </Tab>
 <Tab label="TypeScript">
 
 ```typescript
---8<-- "user-guide/concepts/storage_imports.ts:s3_imports"
+--8<-- "user-guide/concepts/storage/storage_imports.ts:s3_imports"
 
---8<-- "user-guide/concepts/storage.ts:s3"
+--8<-- "user-guide/concepts/storage/storage.ts:s3"
 ```
 
 </Tab>
@@ -253,9 +253,11 @@ subsystems.
 
 ## Next steps
 
-- [Context Offloader](./plugins/context-offloader.mdx): offload
-  large tool results
-- [Session Management](./agents/session-management.mdx): persist
-  conversations across restarts
-- [Sandbox](./sandbox/index.mdx): route Storage I/O through a
-  sandboxed environment
+- [Search Strategies](./search-strategies.mdx): plug in
+  keyword, BM25, or custom search over stored content
+- [Context Offloader](../plugins/context-offloader.mdx):
+  offload large tool results
+- [Session Management](../agents/session-management.mdx):
+  persist conversations across restarts
+- [Sandbox](../sandbox/index.mdx): route Storage I/O through
+  a sandboxed environment
