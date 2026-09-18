@@ -1,0 +1,10 @@
+name: strands-neuraltrust
+description: TrustGuard intervention that evaluates agent input, model responses, tool arguments, and tool results, with blocking and validated redaction.
+integrationType: intervention
+maintainedBy: partner
+languages:
+  python:
+    package: strands-neuraltrust
+github: https://github.com/NeuralTrust/strands-neuraltrust
+docsUrl: https://docs.neuraltrust.ai/integrations/strands
+addedDate: 2026-09-14
