@@ -7,6 +7,7 @@ import pytest
 from strands.agent.conversation_manager.compression.context_compression import (
     DEFAULT_SUMMARIZATION_PROMPT,
     adjust_split_point_for_tool_pairs,
+    as_user_summary,
     find_valid_trim_point,
     generate_summary,
     matches_message_type,
@@ -33,6 +34,18 @@ def tool_result_msg(tool_use_id: str, text: str = "result") -> Message:
 
 async def _mock_model_stream(response_text):
     yield {"messageStart": {"role": "assistant"}}
+    yield {"contentBlockStart": {"start": {}}}
+    yield {"contentBlockDelta": {"delta": {"text": response_text}}}
+    yield {"contentBlockStop": {}}
+    yield {"messageStop": {"stopReason": "end_turn"}}
+
+
+async def _mock_reasoning_model_stream(response_text):
+    yield {"messageStart": {"role": "assistant"}}
+    yield {"contentBlockStart": {"start": {}}}
+    yield {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "thinking"}}}}
+    yield {"contentBlockDelta": {"delta": {"reasoningContent": {"signature": "sig"}}}}
+    yield {"contentBlockStop": {}}
     yield {"contentBlockStart": {"start": {}}}
     yield {"contentBlockDelta": {"delta": {"text": response_text}}}
     yield {"contentBlockStop": {}}
@@ -199,3 +212,51 @@ class TestGenerateSummary:
 
         with pytest.raises(RuntimeError, match="model failed"):
             await generate_summary([text_msg("user", "hello")], model)
+
+    async def test_drops_reasoning_blocks_from_the_summary(self):
+        # A reasoning model's reply must not leak reasoningContent into the user-role summary;
+        # Bedrock rejects it with "User messages cannot contain reasoning content".
+        model = Mock()
+        model.stream = Mock(side_effect=lambda *a, **kw: _mock_reasoning_model_stream("Summary"))
+
+        tru_result = await generate_summary([text_msg("user", "hello")], model)
+
+        exp_result = {"role": "user", "content": [{"text": "Summary"}]}
+        assert tru_result == exp_result
+
+
+class TestAsUserSummary:
+    def test_keeps_only_text_blocks(self):
+        message: Message = {
+            "role": "assistant",
+            "content": [
+                {"reasoningContent": {"reasoningText": {"text": "thinking", "signature": "sig"}}},
+                {"text": "Summary"},
+                {"toolUse": {"toolUseId": "id-1", "name": "test", "input": {}}},
+            ],
+        }
+
+        tru_result = as_user_summary(message)
+
+        exp_result = {"role": "user", "content": [{"text": "Summary"}]}
+        assert tru_result == exp_result
+
+    def test_unwraps_text_from_citations_blocks(self):
+        message: Message = {
+            "role": "assistant",
+            "content": [{"citationsContent": {"citations": [], "content": [{"text": "Cited summary"}]}}],
+        }
+
+        tru_result = as_user_summary(message)
+
+        exp_result = {"role": "user", "content": [{"text": "Cited summary"}]}
+        assert tru_result == exp_result
+
+    def test_raises_when_the_reply_has_no_text(self):
+        message: Message = {
+            "role": "assistant",
+            "content": [{"reasoningContent": {"reasoningText": {"text": "thinking"}}}],
+        }
+
+        with pytest.raises(RuntimeError, match="no text"):
+            as_user_summary(message)

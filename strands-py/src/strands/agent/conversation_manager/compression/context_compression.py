@@ -8,10 +8,10 @@ messages by type.
 """
 
 import logging
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal
 
 from ....event_loop.streaming import process_stream
-from ....types.content import Message
+from ....types.content import ContentBlock, Message
 from ....types.exceptions import ContextWindowOverflowException
 
 if TYPE_CHECKING:
@@ -166,7 +166,7 @@ async def generate_summary(
         A user-role message containing the model-generated summary.
 
     Raises:
-        RuntimeError: If the model fails to produce a response.
+        RuntimeError: If the model fails to produce a response, or its reply carries no text.
     """
     resolved_system_prompt = system_prompt if system_prompt is not None else DEFAULT_SUMMARIZATION_PROMPT
 
@@ -188,8 +188,34 @@ async def generate_summary(
     if result_message is None:
         raise RuntimeError("Failed to generate summary: no response from model")
 
-    # Return the summary as a user-role message so it's valid as conversation history
-    return cast(Message, {**result_message, "role": "user"})
+    return as_user_summary(result_message)
+
+
+def as_user_summary(message: Message) -> Message:
+    """Re-role a model reply as the user-role summary message kept in history.
+
+    Only the reply's text is kept: providers reject reasoning and tool-use blocks in user
+    messages (Bedrock: "User messages cannot contain reasoning content").
+
+    Args:
+        message: The summarizer's reply.
+
+    Returns:
+        A user-role message holding the reply's text blocks.
+
+    Raises:
+        RuntimeError: If the reply carries no text.
+    """
+    text_blocks: list[ContentBlock] = []
+    for block in message["content"]:
+        if "text" in block:
+            text_blocks.append({"text": block["text"]})
+        elif "citationsContent" in block:
+            # A cited reply carries its text nested inside the citations block.
+            text_blocks.extend({"text": cited["text"]} for cited in block["citationsContent"].get("content", []))
+    if not text_blocks:
+        raise RuntimeError("Failed to generate summary: model response contained no text")
+    return {"role": "user", "content": text_blocks}
 
 
 def matches_message_type(message: Message, filter: MessageType) -> bool:
