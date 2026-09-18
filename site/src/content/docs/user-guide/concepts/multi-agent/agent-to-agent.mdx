@@ -381,15 +381,11 @@ In single-agent mode the server reuses one agent across every context, swapping 
 
 ### Answering Interrupts
 
-:::note[Python only]
-This feature is currently available in the Python SDK only.
-:::
+When a tool or hook on the served agent raises an [interrupt](../interrupts.md), the task moves to the A2A `input-required` state and waits. The client answers it, and the task resumes the paused tool exactly where it stopped.
 
-When a tool or hook on the served agent raises an [interrupt](../interrupts.md), the task moves to the A2A `input_required` state and waits. The client answers it, and the task resumes the paused tool exactly where it stopped.
+Answering an interrupt is the one flow on this page that needs the raw A2A client rather than `A2AAgent`. `A2AAgent` speaks in text, so it rejects interrupt responses on the way out and drops the data part carrying the interrupt ids on the way back. The examples below build A2A messages directly.
 
-Answering an interrupt is the one flow on this page that needs the raw [`a2a-sdk`](https://github.com/a2aproject/a2a-python) client rather than `A2AAgent`. `A2AAgent` speaks in text, so it raises `ValueError` if you pass it interrupt responses, and it drops the `DataPart` carrying the interrupt ids when it reads the reply. The examples below build A2A messages directly.
-
-Each interrupt has a server-generated id, and an answer is bound to the id of the interrupt that raised it. The server advertises the pending interrupts on the `input_required` status message as a `DataPart`, alongside the human-readable `TextPart`:
+Each interrupt has a server-generated id, and an answer is bound to the id of the interrupt that raised it. The server advertises the pending interrupts on the `input-required` status message as a data part, alongside the human-readable text part:
 
 ```json
 {
@@ -420,14 +416,17 @@ To answer, send a new message on the same `taskId` containing a `DataPart` that 
 }
 ```
 
-The `response` becomes the return value of the `interrupt()` call that paused the tool. It is any JSON value except `null`, which the server refuses — a null answer would leave the interrupt unsatisfied and re-raise it. `false` and `0` are fine. Answer several interrupts in one message by sending one `DataPart` for each.
+The `response` becomes the return value of the `interrupt()` call that paused the tool. It is any JSON value except `null`, which the server refuses — a null answer would leave the interrupt unsatisfied and re-raise it. `false` and `0` are fine. Answer several interrupts in one message by sending one data part for each.
 
 Reading the ids off the status message and answering them:
+
+<Tabs>
+<Tab label="Python">
 
 ```python
 from a2a.types import DataPart, Part
 
-# The task parked in input_required; read the interrupts it is waiting on.
+# The task parked in input-required; read the interrupts it is waiting on.
 pending = next(
     part.root.data["interrupts"]
     for part in task.status.message.parts
@@ -442,6 +441,25 @@ answers = [
     for item in pending
 ]
 ```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+// The task parked in input-required; read the interrupts it is waiting on.
+const pending = (task.status.message?.parts ?? []).flatMap((part) =>
+  part.kind === 'data' && 'interrupts' in part.data ? (part.data.interrupts as { interruptId: string }[]) : []
+)
+
+// Answer each one on the same taskId.
+const answers = pending.map((item) => ({
+  kind: 'data' as const,
+  data: { interruptResponse: { interruptId: item.interruptId, response: { approved: true } } },
+}))
+```
+
+</Tab>
+</Tabs>
 
 The server rejects an answer it cannot bind, before the agent runs, so a refused answer leaves the interrupt pending and the task still answerable. An answer is rejected when:
 

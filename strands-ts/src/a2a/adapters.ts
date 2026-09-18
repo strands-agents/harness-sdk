@@ -5,12 +5,96 @@
  */
 
 import type { Part, FileWithBytes, FileWithUri } from '@a2a-js/sdk'
+import { A2AError } from '@a2a-js/sdk/server'
 import type { ContentBlock } from '../types/messages.js'
 import { TextBlock } from '../types/messages.js'
 import type { ImageFormat, DocumentFormat, VideoFormat } from '../mime.js'
 import { toMimeType, toMediaFormat } from '../mime.js'
 import { ImageBlock, VideoBlock, DocumentBlock, decodeBase64, encodeBase64 } from '../types/media.js'
+import { InterruptResponseContent } from '../types/interrupt.js'
+import type { JSONValue } from '../types/json.js'
 import { logger } from '../logging/logger.js'
+
+/**
+ * Key identifying a data part that carries a Strands interrupt response. The A2A payload mirrors
+ * the `InterruptResponseContent` type verbatim, so the wire contract and the SDK type cannot drift.
+ */
+export const INTERRUPT_RESPONSE_KEY = 'interruptResponse'
+
+/**
+ * Key under which an `input-required` status message advertises the interrupts awaiting an answer.
+ * Each entry carries the `interruptId` that the matching interrupt response must echo back.
+ */
+export const INTERRUPTS_KEY = 'interrupts'
+
+/**
+ * Extracts Strands interrupt responses from inbound A2A message parts.
+ *
+ * A client resumes a task parked in `input-required` by sending a data part shaped like the
+ * `InterruptResponseContent` type:
+ *
+ * ```json
+ * { "kind": "data", "data": { "interruptResponse": { "interruptId": "<id>", "response": <any> } } }
+ * ```
+ *
+ * Recognition is deliberately narrow: only the explicit shape above is treated as a resume, so an
+ * ordinary data part still reaches the generic content-block path unchanged.
+ *
+ * @param parts - Array of A2A protocol parts from the inbound message
+ * @returns The interrupt responses carried by `parts`, or undefined when none are present and the
+ *   caller should fall back to generic content-block conversion
+ * @throws A2AError when an interrupt response is malformed, carries a null response, repeats an
+ *   interrupt id, or is accompanied by unrelated content in the same message
+ */
+export function extractInterruptResponses(parts: Part[]): InterruptResponseContent[] | undefined {
+  const responses: InterruptResponseContent[] = []
+  const seenIds = new Set<string>()
+  let unrelatedParts = 0
+
+  for (const part of parts) {
+    if (part.kind !== 'data' || !(INTERRUPT_RESPONSE_KEY in part.data)) {
+      unrelatedParts += 1
+      continue
+    }
+
+    const payload = part.data[INTERRUPT_RESPONSE_KEY]
+    if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+      throw A2AError.invalidParams(`'${INTERRUPT_RESPONSE_KEY}' must be an object with 'interruptId' and 'response'`)
+    }
+
+    const { interruptId, response } = payload as { interruptId?: unknown; response?: unknown }
+    if (typeof interruptId !== 'string' || interruptId.length === 0) {
+      throw A2AError.invalidParams("Interrupt response is missing a non-empty 'interruptId'")
+    }
+
+    // An interrupt whose response is null reads as "not yet answered", so a null answer would leave
+    // the interrupt unsatisfied and re-raise it: the client would see an identical input-required
+    // and no error. Falsy answers such as false are fine.
+    if (response === undefined || response === null) {
+      throw A2AError.invalidParams(`Interrupt response for '${interruptId}' must provide a non-null 'response'`)
+    }
+
+    // Two answers for one interrupt are ambiguous; reject rather than silently choosing one.
+    if (seenIds.has(interruptId)) {
+      throw A2AError.invalidParams(`Duplicate interrupt response for '${interruptId}'`)
+    }
+
+    seenIds.add(interruptId)
+    responses.push(new InterruptResponseContent({ interruptId, response: response as JSONValue }))
+  }
+
+  if (responses.length === 0) {
+    return undefined
+  }
+
+  // The agent resumes from interrupt responses alone, so delivering both would mean dropping the
+  // conversational content — exactly the silent behaviour the resume path must avoid.
+  if (unrelatedParts > 0) {
+    throw A2AError.invalidParams('A message carrying interrupt responses must not contain other content parts')
+  }
+
+  return responses
+}
 
 /**
  * Converts A2A protocol parts to Strands SDK content blocks.
