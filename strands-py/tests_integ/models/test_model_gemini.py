@@ -1,4 +1,5 @@
 import os
+import uuid
 
 import pydantic
 import pytest
@@ -7,6 +8,7 @@ from google import genai
 import strands
 from strands import Agent
 from strands.models.gemini import GeminiModel
+from strands.models.model import CacheConfig
 from tests_integ.models import providers
 
 # these tests only run if we have the gemini api key
@@ -312,3 +314,51 @@ class TestCountTokens:
         without = await model.count_tokens(messages=messages)
         with_tools = await model.count_tokens(messages=messages, tool_specs=tool_specs, system_prompt="Be helpful.")
         assert with_tools > without
+
+
+# A system prompt large enough to clear Gemini's minimum cacheable-token threshold for explicit
+# CachedContent; a shorter prefix is declined and silently falls back to implicit caching.
+_CACHEABLE_INTRO = "You are a meticulous assistant. Follow these standing guidelines on every turn."
+_CACHEABLE_GUIDELINES = "\n".join(
+    f"Guideline {index}: be accurate, state any assumptions you make, and keep your answers concise."
+    for index in range(600)
+)
+_CACHEABLE_SYSTEM_PROMPT = f"{_CACHEABLE_INTRO}\n{_CACHEABLE_GUIDELINES}"
+
+
+def _stream_usage(events):
+    return next(event["metadata"]["usage"] for event in events if "metadata" in event)
+
+
+class TestPromptCaching:
+    @pytest.fixture
+    def caching_messages(self):
+        return [{"role": "user", "content": [{"text": "In one sentence, what do your guidelines ask of you?"}]}]
+
+    def _model(self, cache_config):
+        return GeminiModel(
+            client_args={"api_key": os.getenv("GOOGLE_API_KEY")},
+            model_id="gemini-2.5-flash",
+            params={"temperature": 0},
+            cache_config=cache_config,
+        )
+
+    @pytest.mark.asyncio
+    async def test_managed_cache_created_once_and_reused_across_models(self, caching_messages, alist):
+        # A unique cache_key makes this run own its resource, so reuse is proven, not inherited.
+        cache_config = CacheConfig(ttl="5m", cache_key=f"strands-integ-{uuid.uuid4()}")
+
+        creator = self._model(cache_config)
+        creator_events = await alist(creator.stream(caching_messages, system_prompt=_CACHEABLE_SYSTEM_PROMPT))
+        assert _stream_usage(creator_events).get("cacheReadInputTokens", 0) > 0
+
+        # A fresh model instance with the identical prefix reuses the resource created above.
+        reuser = self._model(cache_config)
+        reuser_events = await alist(reuser.stream(caching_messages, system_prompt=_CACHEABLE_SYSTEM_PROMPT))
+        assert _stream_usage(reuser_events).get("cacheReadInputTokens", 0) > 0
+
+        # Identity is content-derived, never session-derived, so the two models share one resource.
+        client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+        display_name = cache_config.cache_key
+        matching = [cached async for cached in await client.aio.caches.list() if cached.display_name == display_name]
+        assert len(matching) == 1
