@@ -333,10 +333,12 @@ function formatDocumentInput(docBlock: DocumentBlock): Record<string, unknown> |
   if (docBlock.source.type === 'documentSourceBytes') {
     const base64 = encodeBase64(docBlock.source.bytes)
     const mimeType = toMimeType(docBlock.format) || `application/${docBlock.format}`
+    const suffix = `.${docBlock.format}`
+    const filename = docBlock.name.endsWith(suffix) ? docBlock.name : `${docBlock.name}${suffix}`
     return {
       type: 'input_file',
       file_data: `data:${mimeType};base64,${base64}`,
-      filename: docBlock.name,
+      filename,
     }
   }
   logger.warn(`source_type=<${docBlock.source.type}> | only byte source documents supported in responses api`)
