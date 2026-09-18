@@ -1060,6 +1060,20 @@ class BedrockModel(Model):
             result = {"format": image["format"], "source": formatted_image_source}
             return {"image": result}
 
+        # https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_AudioBlock.html
+        if "audio" in content:
+            audio = content["audio"]
+            source = audio["source"]
+            formatted_audio_source: dict[str, Any] | None
+            if "location" in source:
+                formatted_audio_source = self._handle_location(source["location"])
+                if formatted_audio_source is None:
+                    return None
+            elif "bytes" in source:
+                formatted_audio_source = {"bytes": source["bytes"]}
+            result = {"format": audio["format"], "source": formatted_audio_source}
+            return {"audio": result}
+
         # https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ReasoningContentBlock.html
         if "reasoningContent" in content:
             reasoning = content["reasoningContent"]
