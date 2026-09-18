@@ -168,6 +168,7 @@ sidebar:
           - docs/user-guide/concepts/model-providers
           - docs/user-guide/concepts/model-providers/model-routing
           - docs/user-guide/concepts/model-providers/amazon-bedrock
+          - docs/user-guide/concepts/model-providers/amazon-bedrock-invoke
           - docs/user-guide/concepts/model-providers/amazon-nova
           - docs/user-guide/concepts/model-providers/anthropic
           - docs/user-guide/concepts/model-providers/google

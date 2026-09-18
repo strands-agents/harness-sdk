@@ -83,6 +83,9 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 │   │       ├── labs/
 │   │       ├── learning/         # Course lesson pages
 │   │       └── user-guide/
+│   │           └── concepts/
+│   │               └── model-providers/
+│   │                   └── amazon-bedrock-invoke.mdx # Native Invoke API provider
 │   ├── data/                     # Bot-maintained data (catalog-stats.json — updated by the
 │   │                             #   catalog-stats workflow; do not hand-edit)
 │   ├── layouts/                  # Custom layouts
