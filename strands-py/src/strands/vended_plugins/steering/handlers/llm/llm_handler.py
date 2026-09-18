@@ -82,9 +82,10 @@ class LLMSteeringHandler(SteeringHandler):
         steering_agent = Agent(system_prompt=self.system_prompt, model=self.model or agent.model, callback_handler=None)
 
         # Get LLM decision
-        llm_result: _LLMSteering = cast(
-            _LLMSteering, steering_agent(prompt, structured_output_model=_LLMSteering).structured_output
+        steering_result = await agent.invoke_auxiliary_async(
+            steering_agent, prompt, source="steering", structured_output_model=_LLMSteering
         )
+        llm_result = cast(_LLMSteering, steering_result.structured_output)
 
         # Convert LLM decision to steering action
         match llm_result.decision:

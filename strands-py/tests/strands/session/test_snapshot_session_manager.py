@@ -991,9 +991,7 @@ class TestSnapshotStashIntegration:
         """A snapshot_trigger produces an immutable checkpoint with inline stash data."""
         session_storage = LocalFileStorage(f"{temp_dir}/session")
         context_manager = ContextManager(stash={"storage": InMemoryStorage()})
-        manager = SnapshotSessionManager(
-            "s1", storage=session_storage, snapshot_trigger=lambda **_: True
-        )
+        manager = SnapshotSessionManager("s1", storage=session_storage, snapshot_trigger=lambda **_: True)
         agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
 
         await context_manager.stash.load_snapshot({"ref-1": {"text": "immutable data"}})

@@ -182,8 +182,14 @@ def make_web_fetch(
         if len(content) > max_content_chars:
             content = content[:max_content_chars] + "\n\n[content truncated]"
         invoke_prompt = f"URL: {url}\n\nRequest: {prompt}\n\n--- Content ---\n{content}"
+        host = tool_context.agent if tool_context else None
         try:
-            result = await analyst.invoke_async(invoke_prompt, cancel_signal=cancel_signal)
+            if isinstance(host, Agent):
+                result = await host.invoke_auxiliary_async(
+                    analyst, invoke_prompt, source="web_fetch", cancel_signal=cancel_signal
+                )
+            else:
+                result = await analyst.invoke_async(invoke_prompt, cancel_signal=cancel_signal)
         except Exception as exc:
             raise WebFetchError(f"Web fetch analyst failed for {url}: {exc}") from exc
         return str(result)

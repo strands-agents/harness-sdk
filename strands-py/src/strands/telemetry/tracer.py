@@ -730,6 +730,36 @@ class Tracer:
 
         self._end_span(span)
 
+    def start_auxiliary_span(self, source: str, agent_name: str) -> Span:
+        """Start a span wrapping an auxiliary agent invocation.
+
+        The auxiliary agent's own ``invoke_agent`` span parents under this one via OTel context.
+
+        Args:
+            source: Which auxiliary feature is calling (e.g. ``"summarization"``).
+            agent_name: Name of the auxiliary agent.
+
+        Returns:
+            The created span.
+        """
+        attributes = self._get_common_attributes("invoke_auxiliary")
+        attributes.update({"strands.source": source, "gen_ai.agent.name": agent_name})
+        return self._start_span(f"invoke_auxiliary {source}", attributes=attributes)
+
+    def end_auxiliary_span(self, span: Span, error: BaseException | None = None) -> None:
+        """End an auxiliary agent span.
+
+        Args:
+            span: The span to end.
+            error: What the invocation raised, if anything. Cancellation leaves the status UNSET.
+        """
+        if isinstance(error, Exception):
+            self._end_span(span, error=error)
+        elif error is not None:
+            self.end_span_with_cancellation(span, error)
+        else:
+            self._end_span(span)
+
     def start_agent_span(
         self,
         messages: Messages,

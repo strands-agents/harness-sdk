@@ -35,20 +35,38 @@ async def _mock_model_stream_error(error):
     yield  # pragma: no cover – makes this a generator
 
 
+async def _invoke_auxiliary_async(auxiliary_agent, prompt, *, source, **kwargs):
+    """Stand in for ``Agent.invoke_auxiliary_async``: run the auxiliary agent, skip the telemetry."""
+    return await auxiliary_agent.invoke_async(prompt)
+
+
+def _stream_system_prompt(model):
+    """Return the system prompt the summarizer passed positionally to ``model.stream``."""
+    return model.stream.call_args.args[2]
+
+
+def _route_auxiliary_calls(host):
+    """Wire a bare mock host so auxiliary invocations reach the auxiliary agent."""
+    host.invoke_auxiliary = lambda auxiliary_agent, prompt, *, source, **kwargs: auxiliary_agent(prompt)
+    host.invoke_auxiliary_async = _invoke_auxiliary_async
+    return host
+
+
 class MockAgent:
     """Mock agent for testing summarization.
 
-    In the default path (no summarization_agent) the manager now calls
-    ``agent.model.stream()`` directly, so the model attribute must return a
-    proper async iterable.  When used as a *summarization_agent* the manager
-    still calls ``agent("…")``, so the ``__call__`` interface is kept.
+    As the *host* agent, the manager runs a summarizer as its auxiliary, so
+    ``invoke_auxiliary``/``invoke_auxiliary_async`` route to that agent and ``model`` must behave
+    like a real model provider. As a *summarization_agent* it is called through ``agent("…")``,
+    so the ``__call__`` interface is kept.
     """
 
     def __init__(self, summary_response="This is a summary of the conversation."):
         self.summary_response = summary_response
         self.system_prompt = None
         self.messages = []
-        self.model = Mock()
+        self.model = Mock(spec=Model)
+        self.model.stateful = False
         self.model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream(self.summary_response))
         self.call_tracker = Mock()
         self.tool_registry = Mock()
@@ -61,6 +79,14 @@ class MockAgent:
         result = Mock()
         result.message = {"role": "assistant", "content": [{"text": self.summary_response}]}
         return result
+
+    def invoke_auxiliary(self, auxiliary_agent, prompt, *, source, **kwargs):
+        """Stand in for ``Agent.invoke_auxiliary``: run the auxiliary agent, skip the telemetry."""
+        return auxiliary_agent(prompt)
+
+    async def invoke_auxiliary_async(self, auxiliary_agent, prompt, *, source, **kwargs):
+        """Stand in for ``Agent.invoke_auxiliary_async``: run the auxiliary agent, skip the telemetry."""
+        return await auxiliary_agent.invoke_async(prompt)
 
 
 def create_mock_agent(summary_response="This is a summary of the conversation.") -> "Agent":
@@ -203,8 +229,9 @@ def test_reduce_context_insufficient_messages_for_summarization(mock_agent):
 
 def test_reduce_context_raises_on_summarization_failure():
     """Test that reduce_context raises exception when model.stream() fails."""
-    failing_agent = Mock()
-    failing_agent.model = Mock()
+    failing_agent = _route_auxiliary_calls(Mock())
+    failing_agent.model = Mock(spec=Model)
+    failing_agent.model.stateful = False
     failing_agent.model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream_error(Exception("Agent failed")))
     failing_agent_messages: Messages = [
         {"role": "user", "content": [{"text": "Message 1"}]},
@@ -262,8 +289,9 @@ def test_generate_summary_with_tool_content(summarizing_manager, mock_agent):
 
 def test_generate_summary_raises_on_model_failure():
     """Test that _generate_summary raises exception when model.stream() fails."""
-    failing_agent = Mock()
-    failing_agent.model = Mock()
+    failing_agent = _route_auxiliary_calls(Mock())
+    failing_agent.model = Mock(spec=Model)
+    failing_agent.model.stateful = False
     failing_agent.model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream_error(Exception("Agent failed")))
 
     manager = SummarizingConversationManager()
@@ -376,8 +404,8 @@ def test_uses_summarization_agent_when_provided():
     summary_agent.call_tracker.assert_called_once()
 
 
-def test_default_path_calls_model_directly():
-    """Test that the default path (no summarization_agent) calls model.stream() directly."""
+def test_default_path_uses_parent_model_without_invoking_parent():
+    """Test that the default path (no summarization_agent) summarizes with the parent agent's model."""
     manager = SummarizingConversationManager()
 
     messages: Messages = [
@@ -388,7 +416,6 @@ def test_default_path_calls_model_directly():
     parent_agent = create_mock_agent("Parent agent summary")
     summary = manager._generate_summary(messages, parent_agent)
 
-    # Should use the model directly (via model.stream)
     summary_content = summary["content"][0]
     assert "text" in summary_content and summary_content["text"] == "Parent agent summary"
 
@@ -412,8 +439,7 @@ def test_default_path_passes_correct_system_prompt():
     manager._generate_summary(messages, parent_agent)
 
     # Verify model.stream() was called with the default summarization system prompt
-    call_kwargs = parent_agent.model.stream.call_args
-    assert call_kwargs.kwargs["system_prompt"] == DEFAULT_SUMMARIZATION_PROMPT
+    assert _stream_system_prompt(parent_agent.model) == DEFAULT_SUMMARIZATION_PROMPT
 
 
 def test_default_path_uses_custom_system_prompt():
@@ -430,8 +456,7 @@ def test_default_path_uses_custom_system_prompt():
     manager._generate_summary(messages, mock_agent)
 
     # Verify model.stream() was called with the custom system prompt
-    call_kwargs = mock_agent.model.stream.call_args
-    assert call_kwargs.kwargs["system_prompt"] == custom_prompt
+    assert _stream_system_prompt(mock_agent.model) == custom_prompt
 
 
 def test_default_path_does_not_modify_agent_state():
@@ -463,11 +488,12 @@ def test_default_path_does_not_modify_agent_state_on_exception():
     """Test that agent state is untouched when model.stream() fails in default path."""
     manager = SummarizingConversationManager()
 
-    mock_agent = Mock()
+    mock_agent = _route_auxiliary_calls(Mock())
     mock_agent.system_prompt = "Original prompt"
     agent_messages: Messages = [{"role": "user", "content": [{"text": "Original"}]}]
     mock_agent.messages = agent_messages
-    mock_agent.model = Mock()
+    mock_agent.model = Mock(spec=Model)
+    mock_agent.model.stateful = False
     mock_agent.model.stream = Mock(
         side_effect=lambda *a, **kw: _mock_model_stream_error(Exception("Summarization failed"))
     )
@@ -495,8 +521,8 @@ def test_default_path_passes_no_tool_specs():
     manager._generate_summary(messages, agent)
 
     # model.stream() should be called with tool_specs=None
-    call_kwargs = agent.model.stream.call_args
-    assert call_kwargs.kwargs.get("tool_specs") is None or call_kwargs[0][1] is None
+    tool_specs = agent.model.stream.call_args.args[1]
+    assert tool_specs is None
 
 
 def test_agent_path_state_restoration_with_summarization_agent():
@@ -542,7 +568,7 @@ def test_agent_path_state_restoration_on_exception():
     ]
 
     with pytest.raises(Exception, match="Summarization failed"):
-        manager._generate_summary(messages, cast("Agent", Mock()))
+        manager._generate_summary(messages, cast("Agent", _route_auxiliary_calls(Mock())))
 
     # State should still be restored
     assert summary_agent.system_prompt == "Original prompt"
@@ -835,9 +861,10 @@ def test_generate_summary_disables_structured_output_on_summarization_agent():
 
 
 def _make_summarizing_threshold_agent(messages, summary_response="Summary of conversation", context_window_limit=1000):
-    agent = MagicMock()
+    agent = _route_auxiliary_calls(MagicMock())
     agent.messages = messages
     agent.model = MagicMock()
+    agent.model.stateful = False
     agent.model.context_window_limit = context_window_limit
     agent.model._utilization_limit_warned = False
     agent.model.estimate_utilization = lambda input_tokens: Model.estimate_utilization(agent.model, input_tokens)
@@ -899,12 +926,7 @@ def test_proactive_compression_swallows_errors():
         else {"role": "assistant", "content": [{"text": f"Response {i}"}]}
         for i in range(20)
     ]
-    agent = MagicMock()
-    agent.messages = messages
-    agent.model = MagicMock()
-    agent.model.context_window_limit = 1000
-    agent.model._utilization_limit_warned = False
-    agent.model.estimate_utilization = lambda input_tokens: Model.estimate_utilization(agent.model, input_tokens)
+    agent = _make_summarizing_threshold_agent(messages, context_window_limit=1000)
     agent.model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream_error(RuntimeError("model failed")))
 
     registry = HookRegistry()

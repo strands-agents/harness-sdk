@@ -12,6 +12,7 @@ from strands.agent.conversation_manager.compression.context_compression import (
     matches_message_type,
 )
 from strands.agent.conversation_manager.compression.pin_message import partition_pinned, pin_message
+from strands.models.model import Model
 from strands.types.content import Message
 from strands.types.exceptions import ContextWindowOverflowException
 
@@ -46,9 +47,16 @@ async def _mock_model_stream_error(error):
 
 
 def mock_model(summary_text="Summary of conversation"):
-    model = Mock()
+    model = Mock(spec=Model)
+    model.stateful = False
     model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream(summary_text))
     return model
+
+
+def stream_call_args(model):
+    """Return the (messages, tool_specs, system_prompt) the summarizer passed to ``model.stream``."""
+    args = model.stream.call_args.args
+    return args[0], args[1], args[2]
 
 
 class TestAdjustSplitPointForToolPairs:
@@ -168,24 +176,25 @@ class TestGenerateSummary:
         model = mock_model("Summary")
         await generate_summary([text_msg("user", "hello")], model)
 
-        _, kwargs = model.stream.call_args
-        assert kwargs["system_prompt"] == DEFAULT_SUMMARIZATION_PROMPT
+        _, _, system_prompt = stream_call_args(model)
+        assert system_prompt == DEFAULT_SUMMARIZATION_PROMPT
 
     async def test_passes_a_custom_system_prompt(self):
         model = mock_model("Summary")
         await generate_summary([text_msg("user", "hello")], model, "Custom prompt")
 
-        _, kwargs = model.stream.call_args
-        assert kwargs["system_prompt"] == "Custom prompt"
+        _, _, system_prompt = stream_call_args(model)
+        assert system_prompt == "Custom prompt"
 
     async def test_appends_summarization_request_message(self):
         model = mock_model("Summary")
         original = [text_msg("user", "hello"), text_msg("assistant", "hi")]
         await generate_summary(original, model)
 
-        passed_messages = model.stream.call_args.args[0]
+        passed_messages, tool_specs, _ = stream_call_args(model)
         assert len(passed_messages) == 3
         assert "summarize" in passed_messages[2]["content"][0]["text"].lower()
+        assert tool_specs is None
 
     async def test_does_not_mutate_original_messages(self):
         model = mock_model("Summary")
@@ -194,7 +203,8 @@ class TestGenerateSummary:
         assert len(original) == 2
 
     async def test_propagates_model_errors(self):
-        model = Mock()
+        model = Mock(spec=Model)
+        model.stateful = False
         model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream_error(RuntimeError("model failed")))
 
         with pytest.raises(RuntimeError, match="model failed"):

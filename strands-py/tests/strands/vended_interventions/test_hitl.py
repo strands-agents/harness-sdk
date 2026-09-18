@@ -970,7 +970,7 @@ class TestBuiltInClassifier:
 
     @pytest.mark.asyncio
     async def test_creates_inner_agent_and_returns_decision(self):
-        from unittest.mock import AsyncMock, MagicMock, patch
+        from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
         from strands.vended_interventions.hitl.classifier import (
             ClassifierResult,
@@ -987,9 +987,10 @@ class TestBuiltInClassifier:
         event.tool_use = {"name": "delete_file", "input": {"path": "/data"}}
         event.agent.model = MagicMock()
 
+        event.agent.invoke_auxiliary_async = AsyncMock(return_value=mock_result)
+
         with patch("strands.agent.Agent") as mock_agent_cls:
             mock_agent = MagicMock()
-            mock_agent.invoke_async = AsyncMock(return_value=mock_result)
             mock_agent_cls.return_value = mock_agent
 
             result = await classifier(event)
@@ -998,7 +999,9 @@ class TestBuiltInClassifier:
         assert result.requires_human_in_the_loop is True
         assert result.reason == "destructive"
         mock_agent_cls.assert_called_once()
-        mock_agent.invoke_async.assert_called_once()
+        event.agent.invoke_auxiliary_async.assert_called_once_with(
+            mock_agent, ANY, source="hitl_classifier", structured_output_model=_RiskDecision
+        )
 
     @pytest.mark.asyncio
     async def test_raises_when_no_model_available(self):
@@ -1031,9 +1034,10 @@ class TestBuiltInClassifier:
         event.tool_use = {"name": "tool", "input": {}}
         event.agent.model = MagicMock()
 
+        event.agent.invoke_auxiliary_async = AsyncMock(return_value=mock_result)
+
         with patch("strands.agent.Agent") as mock_agent_cls:
             mock_agent = MagicMock()
-            mock_agent.invoke_async = AsyncMock(return_value=mock_result)
             mock_agent_cls.return_value = mock_agent
 
             with pytest.raises(ValueError, match="no structured output"):
@@ -1060,9 +1064,10 @@ class TestBuiltInClassifier:
         event.tool_use = {"name": "read", "input": {}}
         event.agent.model = agent_model
 
+        event.agent.invoke_auxiliary_async = AsyncMock(return_value=mock_result)
+
         with patch("strands.agent.Agent") as mock_agent_cls:
             mock_agent = MagicMock()
-            mock_agent.invoke_async = AsyncMock(return_value=mock_result)
             mock_agent_cls.return_value = mock_agent
 
             await classifier(event)
@@ -1090,9 +1095,10 @@ class TestBuiltInClassifier:
         event.tool_use = {"name": "read", "input": {}}
         event.agent.model = MagicMock()
 
+        event.agent.invoke_auxiliary_async = AsyncMock(return_value=mock_result)
+
         with patch("strands.agent.Agent") as mock_agent_cls:
             mock_agent = MagicMock()
-            mock_agent.invoke_async = AsyncMock(return_value=mock_result)
             mock_agent_cls.return_value = mock_agent
 
             await classifier(event)

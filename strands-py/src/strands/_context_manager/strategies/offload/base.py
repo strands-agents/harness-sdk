@@ -445,9 +445,7 @@ class BaseOffloadStrategy(ABC):
             )
             index_map = {id(msg): i for i, msg in enumerate(messages)}
             candidates = [
-                msg
-                for msg in oldest
-                if msg is not messages[0] and not is_pinned(messages, index_map[id(msg)])
+                msg for msg in oldest if msg is not messages[0] and not is_pinned(messages, index_map[id(msg)])
             ]
         else:
             candidates = [
