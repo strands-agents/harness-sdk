@@ -361,6 +361,12 @@ Most event properties are read-only to prevent unintended modifications. However
 <Tabs>
 <Tab label="Python">
 
+- [`BeforeInvocationEvent`](@api/python/strands.hooks.events#BeforeInvocationEvent)
+    - `messages` - Mutable. Inspect, modify, replace, or remove the normalized input
+      messages before they enter conversation history. `None` when fired from
+      `structured_output`. See
+      [Modify invocation messages](#modify-invocation-messages).
+
 - [`AfterModelCallEvent`](@api/python/strands.hooks.events#AfterModelCallEvent)
     - `retry` - Request a retry of the model invocation. See [Model Call Retry](#model-call-retry).
 
@@ -386,7 +392,10 @@ Most event properties are read-only to prevent unintended modifications. However
 </Tab>
 <Tab label="TypeScript">
 
-- `BeforeInvocationEvent`
+- [`BeforeInvocationEvent`](@api/typescript/BeforeInvocationEvent)
+    - `messages` - Mutable. Inspect, modify, replace, or remove the normalized input
+      messages before they enter conversation history. See
+      [Modify invocation messages](#modify-invocation-messages).
     - `cancel` - Cancel the agent invocation with a message.
 
 - `BeforeModelCallEvent`
@@ -414,6 +423,47 @@ Most event properties are read-only to prevent unintended modifications. However
     - `resume` - Trigger a follow-up agent invocation with new input. Setting it re-enters the agent loop under the same invocation lock. See [Invocation resume](#invocation-resume).
 </Tab>
 </Tabs>
+
+### Modify invocation messages
+
+To sanitize input before it enters conversation history, modify the `messages`
+property on `BeforeInvocationEvent`. The SDK normalizes the current invocation input
+before the event runs. Changes made by the hook become the input appended to history
+and sent to the model.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.hooks import BeforeInvocationEvent
+
+agent = Agent()
+
+def redact_input(event: BeforeInvocationEvent) -> None:
+    if not event.messages:
+        return
+
+    event.messages[-1]["content"] = [{"text": "[REDACTED]"}]
+
+agent.add_hook(redact_input, BeforeInvocationEvent)
+agent("Contact me at user@example.com")
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/concepts/agents/hooks_imports.ts:modify_invocation_messages_imports"
+
+--8<-- "user-guide/concepts/agents/hooks.ts:modify_invocation_messages"
+```
+
+The live event exposes `messages`, but `toJSON()` omits them.
+</Tab>
+</Tabs>
+
+Assign a new collection to `event.messages` to replace the input. Assign an empty
+collection to remove the input from the invocation.
 
 ### Callback Ordering
 
