@@ -20,7 +20,7 @@ import type { ChatStreamState, OpenAIChatConfig } from './types.js'
 
 export const DEFAULT_CHAT_MODEL_ID = MODEL_DEFAULTS.openai.modelId
 
-const MANAGED_PARAMS: ReadonlySet<string> = new Set(['model', 'messages', 'stream', 'stream_options'])
+const MANAGED_PARAMS: ReadonlySet<string> = new Set(['model', 'messages', 'stream'])
 
 /**
  * Logs a warning for each chat-managed key present in `params`.
@@ -28,7 +28,17 @@ const MANAGED_PARAMS: ReadonlySet<string> = new Set(['model', 'messages', 'strea
  * @internal
  */
 export function warnManagedParams(params: Record<string, unknown> | undefined): void {
-  warnManagedParamsShared(params, MANAGED_PARAMS)
+  if (!params) return
+  // Params explicitly set to `null` are omitted from the request (see
+  // `formatChatRequest`), so they are honored rather than ignored and should
+  // not warn alongside the other managed keys.
+  const warned: Record<string, unknown> = { ...params }
+  for (const key of Object.keys(warned)) {
+    if (warned[key] === null) {
+      delete warned[key]
+    }
+  }
+  warnManagedParamsShared(warned, MANAGED_PARAMS)
 }
 
 type OpenAIChatChoice = {
@@ -61,13 +71,28 @@ export function formatChatRequest(
 ): OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming {
   // User `params` are spread first so provider-managed fields always win.
   // The managed-params warning fires at config time to surface the collision.
+  const params = config.params ?? {}
   const request = {
-    ...(config.params ?? {}),
+    ...params,
     model: config.modelId ?? DEFAULT_CHAT_MODEL_ID,
     messages: [] as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
     stream: true as const,
-    stream_options: { include_usage: true },
   } as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming
+
+  // Any param explicitly set to `null` is omitted from the request, mirroring
+  // the Python SDK for endpoints that reject the field. An `undefined` param
+  // keeps the default behavior below; a set param passes through.
+  const requestParams = request as unknown as Record<string, unknown>
+  for (const key of Object.keys(params)) {
+    if (params[key] === null) {
+      delete requestParams[key]
+    }
+  }
+
+  // `stream_options` defaults to include usage when not explicitly set.
+  if (params.stream_options !== null && request.stream_options === undefined) {
+    request.stream_options = { include_usage: true }
+  }
 
   if (options?.systemPrompt !== undefined) {
     if (typeof options.systemPrompt === 'string') {

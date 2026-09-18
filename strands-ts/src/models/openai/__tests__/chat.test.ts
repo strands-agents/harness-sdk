@@ -351,9 +351,9 @@ describe('OpenAIModel', () => {
     it('warns on updateConfig when params contains provider-managed keys', () => {
       const model = new OpenAIModel({ api: 'chat', client: {} as OpenAI })
       const warnSpy = vi.spyOn(logger, 'warn')
-      model.updateConfig({ params: { stream_options: { include_usage: false } } })
+      model.updateConfig({ params: { stream: false } })
       expect(warnSpy).toHaveBeenCalledTimes(1)
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("'stream_options'"))
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("'stream'"))
       warnSpy.mockRestore()
     })
 
@@ -364,7 +364,7 @@ describe('OpenAIModel', () => {
       warnSpy.mockRestore()
     })
 
-    it('provider-managed fields in params are overridden and cannot take effect', async () => {
+    it('overrides managed fields while passing through set params', async () => {
       const captured: { request: any } = { request: null }
       const mockClient = createMockClientWithCapture(captured)
       const warnSpy = vi.spyOn(logger, 'warn')
@@ -383,9 +383,56 @@ describe('OpenAIModel', () => {
       await collectIterator(provider.stream(messages))
       expect(captured.request.model).toBe('gpt-5.4')
       expect(captured.request.stream).toBe(true)
-      expect(captured.request.stream_options).toEqual({ include_usage: true })
+      // stream_options is a set param and passes through.
+      expect(captured.request.stream_options).toEqual({ include_usage: false })
       expect(Array.isArray(captured.request.messages)).toBe(true)
       expect(captured.request.messages[0]).toEqual({ role: 'user', content: [{ type: 'text', text: 'Hi' }] })
+      warnSpy.mockRestore()
+    })
+
+    it('omits stream_options when params.stream_options is null', async () => {
+      const captured: { request: any } = { request: null }
+      const mockClient = createMockClientWithCapture(captured)
+      const warnSpy = vi.spyOn(logger, 'warn')
+      const provider = new OpenAIModel({
+        api: 'chat',
+        modelId: 'gpt-5.4',
+        client: mockClient,
+        params: { stream_options: null },
+      })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+      await collectIterator(provider.stream(messages))
+      expect(captured.request.stream_options).toBeUndefined()
+      // The opt-out is honored rather than ignored, so no warning is emitted.
+      expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining("'stream_options'"))
+      warnSpy.mockRestore()
+    })
+
+    it('omits any param set to null while passing through set params', async () => {
+      const captured: { request: any } = { request: null }
+      const mockClient = createMockClientWithCapture(captured)
+      const provider = new OpenAIModel({
+        api: 'chat',
+        modelId: 'gpt-5.4',
+        client: mockClient,
+        params: { temperature: null, top_p: 0.8, max_tokens: null },
+      })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+      await collectIterator(provider.stream(messages))
+      expect(captured.request.temperature).toBeUndefined()
+      expect(captured.request.max_tokens).toBeUndefined()
+      expect(captured.request.top_p).toBe(0.8)
+    })
+
+    it('does not warn for params set to null since they are omitted, not ignored', () => {
+      const warnSpy = vi.spyOn(logger, 'warn')
+      new OpenAIModel({
+        api: 'chat',
+        modelId: 'gpt-5.4',
+        client: createMockClientWithCapture({ request: null }),
+        params: { seed: null },
+      })
+      expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining("'seed'"))
       warnSpy.mockRestore()
     })
   })
