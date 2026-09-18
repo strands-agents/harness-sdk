@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from strands.hooks.events import BeforeInvocationEvent
+from strands.hooks.events import BeforeInvocationEvent, BeforeModelCallEvent
 from strands.hooks.registry import HookRegistry
 from strands.plugins.registry import _PluginRegistry
 from strands.sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
@@ -1027,3 +1027,548 @@ class TestSetStateField:
         agent.state.set(plugin._state_key, "not-a-dict")
         with pytest.raises(TypeError, match="expected dict for state key"):
             plugin._set_state_field(agent, "k", "v")
+
+
+class TestDynamicLoadingConfiguration:
+    """Tests for the dynamic_loading flag and per-configuration tool variants."""
+
+    def test_default_exposes_activate_variant(self):
+        """Default configuration exposes one tool named skills, backed by the skills method."""
+        plugin = AgentSkills(skills=[_make_skill()])
+
+        assert len(plugin.tools) == 1
+        assert plugin.tools[0].tool_name == "skills"
+        assert plugin.tools[0].__name__ == "skills"
+
+    def test_dynamic_exposes_action_variant(self):
+        """dynamic_loading=True exposes one tool named skills, backed by dynamic_skills."""
+        plugin = AgentSkills(skills=[_make_skill()], dynamic_loading=True)
+
+        assert len(plugin.tools) == 1
+        assert plugin.tools[0].tool_name == "skills"
+        assert plugin.tools[0].__name__ == "dynamic_skills"
+
+    def test_dynamic_loading_is_keyword_only(self):
+        """dynamic_loading must be passed as a keyword argument."""
+        with pytest.raises(TypeError):
+            AgentSkills([_make_skill()], "agent_skills", 20, False, True)  # type: ignore[misc]
+
+
+class TestDynamicSkillsToolActivate:
+    """Tests for the activate action of the dynamic skills tool variant."""
+
+    @pytest.mark.asyncio
+    async def test_activate_returns_instructions(self):
+        """The activate action matches the default variant's behaviour."""
+        skill = _make_skill(instructions="Full instructions here.")
+        plugin = AgentSkills(skills=[skill], dynamic_loading=True)
+        agent = _mock_agent()
+        tool_context = _mock_tool_context(agent)
+
+        result = await plugin.dynamic_skills(action="activate", skill_name="test-skill", tool_context=tool_context)
+
+        assert "Full instructions here." in result
+
+    @pytest.mark.asyncio
+    async def test_activate_tracks_in_agent_state(self):
+        """Activation through the dynamic variant is tracked like the default variant."""
+        plugin = AgentSkills(skills=[_make_skill()], dynamic_loading=True)
+        agent = _mock_agent()
+        tool_context = _mock_tool_context(agent)
+
+        await plugin.dynamic_skills(action="activate", skill_name="test-skill", tool_context=tool_context)
+
+        assert plugin.get_activated_skills(agent) == ["test-skill"]
+
+    @pytest.mark.asyncio
+    async def test_activate_without_name(self):
+        """Activating without a skill name returns an error listing available skills."""
+        plugin = AgentSkills(skills=[_make_skill()], dynamic_loading=True)
+        agent = _mock_agent()
+        tool_context = _mock_tool_context(agent)
+
+        result = await plugin.dynamic_skills(action="activate", tool_context=tool_context)
+
+        assert "required" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_unknown_action(self):
+        """An unknown action returns an error listing the valid actions."""
+        plugin = AgentSkills(skills=[_make_skill()], dynamic_loading=True)
+        agent = _mock_agent()
+        tool_context = _mock_tool_context(agent)
+
+        result = await plugin.dynamic_skills(action="explode", tool_context=tool_context)  # type: ignore[arg-type]
+
+        assert "unknown action" in result.lower()
+        assert "activate" in result and "load" in result and "unload" in result
+
+
+class TestDynamicSkillsToolLoad:
+    """Tests for the load action of the dynamic skills tool variant."""
+
+    @pytest.mark.asyncio
+    async def test_load_adds_skills(self, tmp_path):
+        """Loading a parent directory registers its skills and reports them."""
+        repo_skills = tmp_path / "repo" / "skills"
+        _make_skill_dir(repo_skills, "repo-skill-a")
+        _make_skill_dir(repo_skills, "repo-skill-b")
+        plugin = AgentSkills(skills=[_make_skill()], dynamic_loading=True)
+        agent = _mock_agent()
+        await plugin.init_agent(agent)
+        tool_context = _mock_tool_context(agent)
+
+        result = await plugin.dynamic_skills(action="load", path=str(repo_skills), tool_context=tool_context)
+
+        assert "Loaded 2 skill(s)" in result
+        assert "repo-skill-a" in result and "repo-skill-b" in result
+        names = {s.name for s in plugin.get_available_skills(agent)}
+        assert {"test-skill", "repo-skill-a", "repo-skill-b"} <= names
+
+    @pytest.mark.asyncio
+    async def test_loaded_skill_is_activatable(self, tmp_path):
+        """A dynamically loaded skill can be activated like a configured one."""
+        _make_skill_dir(tmp_path, "repo-skill")
+        plugin = AgentSkills(skills=[_make_skill()], dynamic_loading=True)
+        agent = _mock_agent()
+        await plugin.init_agent(agent)
+        tool_context = _mock_tool_context(agent)
+
+        await plugin.dynamic_skills(action="load", path=str(tmp_path), tool_context=tool_context)
+        result = await plugin.dynamic_skills(action="activate", skill_name="repo-skill", tool_context=tool_context)
+
+        assert "Instructions for repo-skill" in result
+
+    @pytest.mark.asyncio
+    async def test_load_records_path_in_state(self, tmp_path):
+        """A successful load records the path in agent state for session persistence."""
+        _make_skill_dir(tmp_path, "repo-skill")
+        plugin = AgentSkills(skills=[_make_skill()], dynamic_loading=True)
+        agent = _mock_agent()
+        await plugin.init_agent(agent)
+        tool_context = _mock_tool_context(agent)
+
+        await plugin.dynamic_skills(action="load", path=str(tmp_path), tool_context=tool_context)
+
+        state_data = agent.state.get("agent_skills")
+        assert state_data["dynamic_paths"] == [str(tmp_path)]
+
+    @pytest.mark.asyncio
+    async def test_load_requires_path(self):
+        """The load action without a path returns an error."""
+        plugin = AgentSkills(skills=[_make_skill()], dynamic_loading=True)
+        agent = _mock_agent()
+        tool_context = _mock_tool_context(agent)
+
+        result = await plugin.dynamic_skills(action="load", tool_context=tool_context)
+
+        assert "requires a 'path'" in result
+
+    @pytest.mark.asyncio
+    async def test_load_nonexistent_path(self, tmp_path):
+        """Loading a path with no skills reports what was expected and records nothing."""
+        plugin = AgentSkills(skills=[_make_skill()], dynamic_loading=True)
+        agent = _mock_agent()
+        await plugin.init_agent(agent)
+        tool_context = _mock_tool_context(agent)
+
+        result = await plugin.dynamic_skills(action="load", path=str(tmp_path / "missing"), tool_context=tool_context)
+
+        assert "No skills found" in result
+        state_data = agent.state.get("agent_skills")
+        assert not (state_data or {}).get("dynamic_paths")
+
+    @pytest.mark.asyncio
+    async def test_load_trailing_slash_normalized(self, tmp_path):
+        """Loading with a trailing slash and unloading without one refer to the same path."""
+        _make_skill_dir(tmp_path, "repo-skill")
+        plugin = AgentSkills(skills=[_make_skill()], dynamic_loading=True)
+        agent = _mock_agent()
+        await plugin.init_agent(agent)
+        tool_context = _mock_tool_context(agent)
+
+        await plugin.dynamic_skills(action="load", path=f"{tmp_path}/", tool_context=tool_context)
+        result = await plugin.dynamic_skills(action="unload", path=str(tmp_path), tool_context=tool_context)
+
+        assert "Unloaded 1 skill(s)" in result
+
+    @pytest.mark.asyncio
+    async def test_reload_refreshes_path(self, tmp_path):
+        """Re-loading a path picks up new skills and drops deleted ones."""
+        import shutil
+
+        _make_skill_dir(tmp_path, "old-skill")
+        plugin = AgentSkills(skills=[_make_skill()], dynamic_loading=True)
+        agent = _mock_agent()
+        await plugin.init_agent(agent)
+        tool_context = _mock_tool_context(agent)
+
+        await plugin.dynamic_skills(action="load", path=str(tmp_path), tool_context=tool_context)
+        shutil.rmtree(tmp_path / "old-skill")
+        _make_skill_dir(tmp_path, "new-skill")
+
+        result = await plugin.dynamic_skills(action="load", path=str(tmp_path), tool_context=tool_context)
+
+        assert "new-skill" in result
+        assert "Removed on refresh: old-skill" in result
+        names = {s.name for s in plugin.get_available_skills(agent)}
+        assert "new-skill" in names
+        assert "old-skill" not in names
+
+    @pytest.mark.asyncio
+    async def test_dynamic_skill_cannot_shadow_configured(self, tmp_path):
+        """A dynamic skill whose name collides with a configured skill is skipped."""
+        _make_skill_dir(tmp_path, "test-skill", description="An impostor")
+        configured = _make_skill(instructions="Configured instructions.")
+        plugin = AgentSkills(skills=[configured], dynamic_loading=True)
+        agent = _mock_agent()
+        await plugin.init_agent(agent)
+        tool_context = _mock_tool_context(agent)
+
+        result = await plugin.dynamic_skills(action="load", path=str(tmp_path), tool_context=tool_context)
+
+        assert "collides with a configured skill" in result
+        assert "test-skill" in result
+        activated = await plugin.dynamic_skills(action="activate", skill_name="test-skill", tool_context=tool_context)
+        assert "Configured instructions." in activated
+        assert plugin.get_dynamic_skills(agent) == {}
+
+    @pytest.mark.asyncio
+    async def test_collision_between_dynamic_paths_most_recent_wins(self, tmp_path):
+        """When two dynamic paths provide the same skill name, the most recent load wins."""
+        path_a = tmp_path / "a"
+        path_b = tmp_path / "b"
+        _make_skill_dir(path_a, "shared-skill", description="From A")
+        _make_skill_dir(path_b, "shared-skill", description="From B")
+        plugin = AgentSkills(skills=[_make_skill()], dynamic_loading=True)
+        agent = _mock_agent()
+        await plugin.init_agent(agent)
+        tool_context = _mock_tool_context(agent)
+
+        await plugin.dynamic_skills(action="load", path=str(path_a), tool_context=tool_context)
+        await plugin.dynamic_skills(action="load", path=str(path_b), tool_context=tool_context)
+
+        skill = next(s for s in plugin.get_available_skills(agent) if s.name == "shared-skill")
+        assert skill.description == "From B"
+        assert plugin.get_dynamic_skills(agent)["shared-skill"] == str(path_b)
+
+
+class TestDynamicSkillsToolUnload:
+    """Tests for the unload action of the dynamic skills tool variant."""
+
+    @pytest.mark.asyncio
+    async def test_unload_removes_skills_and_state(self, tmp_path):
+        """Unloading removes the path's skills and its state record."""
+        _make_skill_dir(tmp_path, "repo-skill")
+        plugin = AgentSkills(skills=[_make_skill()], dynamic_loading=True)
+        agent = _mock_agent()
+        await plugin.init_agent(agent)
+        tool_context = _mock_tool_context(agent)
+
+        await plugin.dynamic_skills(action="load", path=str(tmp_path), tool_context=tool_context)
+        result = await plugin.dynamic_skills(action="unload", path=str(tmp_path), tool_context=tool_context)
+
+        assert "Unloaded 1 skill(s)" in result
+        names = {s.name for s in plugin.get_available_skills(agent)}
+        assert "repo-skill" not in names
+        assert "test-skill" in names
+        state_data = agent.state.get("agent_skills")
+        assert state_data["dynamic_paths"] == []
+
+    @pytest.mark.asyncio
+    async def test_unload_unknown_path(self, tmp_path):
+        """Unloading a path that contributed nothing returns a hint with loaded paths."""
+        _make_skill_dir(tmp_path, "repo-skill")
+        plugin = AgentSkills(skills=[_make_skill()], dynamic_loading=True)
+        agent = _mock_agent()
+        await plugin.init_agent(agent)
+        tool_context = _mock_tool_context(agent)
+
+        await plugin.dynamic_skills(action="load", path=str(tmp_path), tool_context=tool_context)
+        result = await plugin.dynamic_skills(action="unload", path="/nope", tool_context=tool_context)
+
+        assert "No skills are loaded from '/nope'" in result
+        assert str(tmp_path) in result
+
+    @pytest.mark.asyncio
+    async def test_unload_requires_path(self):
+        """The unload action without a path returns an error."""
+        plugin = AgentSkills(skills=[_make_skill()], dynamic_loading=True)
+        agent = _mock_agent()
+        tool_context = _mock_tool_context(agent)
+
+        result = await plugin.dynamic_skills(action="unload", tool_context=tool_context)
+
+        assert "requires a 'path'" in result
+
+
+class TestDynamicSkillsPersistence:
+    """Tests for restoring dynamic skills from agent state across runs."""
+
+    @pytest.mark.asyncio
+    async def test_restore_on_init_agent(self, tmp_path):
+        """A fresh plugin instance restores dynamic skills recorded in agent state."""
+        _make_skill_dir(tmp_path, "repo-skill")
+        plugin = AgentSkills(skills=[_make_skill()], dynamic_loading=True)
+        agent = _mock_agent()
+        agent.state.set("agent_skills", {"dynamic_paths": [str(tmp_path)]})
+
+        await plugin.init_agent(agent)
+
+        names = {s.name for s in plugin.get_available_skills(agent)}
+        assert "repo-skill" in names
+        assert plugin.get_dynamic_skills(agent) == {"repo-skill": str(tmp_path)}
+
+    @pytest.mark.asyncio
+    async def test_restore_fail_soft_on_missing_path(self, tmp_path):
+        """A recorded path that no longer exists loads nothing but stays recorded."""
+        plugin = AgentSkills(skills=[_make_skill()], dynamic_loading=True)
+        agent = _mock_agent()
+        agent.state.set("agent_skills", {"dynamic_paths": [str(tmp_path / "gone")]})
+
+        await plugin.init_agent(agent)
+
+        names = {s.name for s in plugin.get_available_skills(agent)}
+        assert names == {"test-skill"}
+        state_data = agent.state.get("agent_skills")
+        assert state_data["dynamic_paths"] == [str(tmp_path / "gone")]
+
+    @pytest.mark.asyncio
+    async def test_programmatic_load_unload_without_flag(self, tmp_path):
+        """load_skills_for / unload_skills_for work regardless of dynamic_loading."""
+        _make_skill_dir(tmp_path, "repo-skill")
+        plugin = AgentSkills(skills=[_make_skill()])
+        agent = _mock_agent()
+        await plugin.init_agent(agent)
+
+        added = await plugin.load_skills_for(agent, tmp_path)
+        assert added == ["repo-skill"]
+        assert "repo-skill" in {s.name for s in plugin.get_available_skills(agent)}
+
+        removed = plugin.unload_skills_for(agent, tmp_path)
+        assert removed == ["repo-skill"]
+        assert "repo-skill" not in {s.name for s in plugin.get_available_skills(agent)}
+
+
+class TestDynamicSkillsInjection:
+    """Tests for system prompt injection behaviour with dynamic loading."""
+
+    @pytest.mark.asyncio
+    async def test_usage_hint_present_in_dynamic_mode(self):
+        """The injected block opens with a usage hint when dynamic loading is enabled."""
+        plugin = AgentSkills(skills=[_make_skill()], dynamic_loading=True)
+        agent = _mock_agent()
+
+        await plugin._on_before_invocation(BeforeInvocationEvent(agent=agent))
+
+        assert "<usage>" in agent.system_prompt
+        assert 'action="load"' in agent.system_prompt
+
+    @pytest.mark.asyncio
+    async def test_usage_hint_present_when_no_skills(self):
+        """The usage hint appears even when no skills are loaded yet."""
+        plugin = AgentSkills(skills=[], dynamic_loading=True)
+        agent = _mock_agent()
+
+        await plugin._on_before_invocation(BeforeInvocationEvent(agent=agent))
+
+        assert "<usage>" in agent.system_prompt
+        assert "No skills are currently available." in agent.system_prompt
+
+    def test_default_xml_unchanged(self):
+        """Default configuration produces the exact same XML as before (no usage hint)."""
+        skill = _make_skill()
+        plugin = AgentSkills(skills=[skill])
+
+        xml = plugin._generate_skills_xml()
+
+        assert xml == (
+            "<available_skills>\n"
+            "<skill>\n"
+            "<name>test-skill</name>\n"
+            "<description>A test skill</description>\n"
+            "</skill>\n"
+            "</available_skills>"
+        )
+
+    @pytest.mark.asyncio
+    async def test_before_model_call_reinjects_after_load(self, tmp_path):
+        """A mid-invocation load appears in the system prompt on the next model call."""
+        _make_skill_dir(tmp_path, "repo-skill")
+        plugin = AgentSkills(skills=[_make_skill()], dynamic_loading=True)
+        agent = _mock_agent()
+        await plugin.init_agent(agent)
+        await plugin._on_before_invocation(BeforeInvocationEvent(agent=agent))
+        assert "repo-skill" not in agent.system_prompt
+
+        tool_context = _mock_tool_context(agent)
+        await plugin.dynamic_skills(action="load", path=str(tmp_path), tool_context=tool_context)
+        await plugin._on_before_model_call(BeforeModelCallEvent(agent=agent))
+
+        assert "<name>repo-skill</name>" in agent.system_prompt
+        # And it does not accumulate blocks on repeated calls
+        first = agent.system_prompt
+        await plugin._on_before_model_call(BeforeModelCallEvent(agent=agent))
+        assert agent.system_prompt == first
+
+    @pytest.mark.asyncio
+    async def test_before_model_call_noop_in_default_mode(self):
+        """The before-model-call hook does nothing in the default configuration."""
+        plugin = AgentSkills(skills=[_make_skill()])
+        agent = _mock_agent()
+        original = agent.system_prompt
+
+        await plugin._on_before_model_call(BeforeModelCallEvent(agent=agent))
+
+        assert agent.system_prompt == original
+
+    @pytest.mark.asyncio
+    async def test_unload_disappears_from_prompt(self, tmp_path):
+        """An unloaded skill disappears from the system prompt on the next model call."""
+        _make_skill_dir(tmp_path, "repo-skill")
+        plugin = AgentSkills(skills=[_make_skill()], dynamic_loading=True)
+        agent = _mock_agent()
+        await plugin.init_agent(agent)
+        tool_context = _mock_tool_context(agent)
+
+        await plugin.dynamic_skills(action="load", path=str(tmp_path), tool_context=tool_context)
+        await plugin._on_before_model_call(BeforeModelCallEvent(agent=agent))
+        assert "<name>repo-skill</name>" in agent.system_prompt
+
+        await plugin.dynamic_skills(action="unload", path=str(tmp_path), tool_context=tool_context)
+        await plugin._on_before_model_call(BeforeModelCallEvent(agent=agent))
+        assert "<name>repo-skill</name>" not in agent.system_prompt
+
+
+class TestDynamicSkillsSessionRestore:
+    """Regression tests for the session-manager restore ordering.
+
+    Session managers replace ``agent.state`` wholesale on ``AgentInitializedEvent``,
+    which fires AFTER plugin ``init_agent`` already ran, so recorded dynamic paths
+    are only visible at hook time. The hooks reconcile them.
+    """
+
+    @pytest.mark.asyncio
+    async def test_state_replaced_after_init_restores_on_before_invocation(self, tmp_path):
+        """Dynamic paths that appear in state after init_agent load on the invocation hook."""
+        _make_skill_dir(tmp_path, "restored-skill")
+        plugin = AgentSkills(skills=[_make_skill()], dynamic_loading=True)
+        agent = _mock_agent()
+        await plugin.init_agent(agent)  # state is empty at this point, like a real Agent
+
+        # Simulate RepositorySessionManager.initialize replacing the state wholesale.
+        agent.state.set(plugin._state_key, {"dynamic_paths": [str(tmp_path)]})
+
+        await plugin._on_before_invocation(BeforeInvocationEvent(agent=agent))
+
+        assert "restored-skill" in plugin.get_dynamic_skills(agent)
+        assert "restored-skill" in agent.system_prompt
+
+    @pytest.mark.asyncio
+    async def test_state_replaced_after_init_restores_on_before_model_call(self, tmp_path):
+        """The model-call hook reconciles too, so mid-invocation state is honoured."""
+        _make_skill_dir(tmp_path, "restored-skill")
+        plugin = AgentSkills(skills=[_make_skill()], dynamic_loading=True)
+        agent = _mock_agent()
+        await plugin.init_agent(agent)
+
+        agent.state.set(plugin._state_key, {"dynamic_paths": [str(tmp_path)]})
+
+        await plugin._on_before_model_call(BeforeModelCallEvent(agent=agent))
+
+        assert "restored-skill" in plugin.get_dynamic_skills(agent)
+
+    @pytest.mark.asyncio
+    async def test_missing_recorded_path_is_retried_until_it_appears(self, tmp_path):
+        """A recorded path that does not exist yet is fail-soft and retried on later hooks."""
+        plugin = AgentSkills(skills=[], dynamic_loading=True)
+        agent = _mock_agent()
+        await plugin.init_agent(agent)
+        missing = tmp_path / "not-cloned-yet"
+        agent.state.set(plugin._state_key, {"dynamic_paths": [str(missing)]})
+
+        await plugin._on_before_invocation(BeforeInvocationEvent(agent=agent))
+        assert plugin.get_dynamic_skills(agent) == {}
+
+        _make_skill_dir(missing, "late-skill")
+        await plugin._on_before_model_call(BeforeModelCallEvent(agent=agent))
+        assert "late-skill" in plugin.get_dynamic_skills(agent)
+
+    @pytest.mark.asyncio
+    async def test_reconcile_does_not_refresh_contributing_paths(self, tmp_path):
+        """Hooks only load missing paths; refreshing a live path stays an explicit action."""
+        skill_dir = _make_skill_dir(tmp_path, "live-skill")
+        plugin = AgentSkills(skills=[], dynamic_loading=True)
+        agent = _mock_agent()
+        await plugin.init_agent(agent)
+        await plugin.dynamic_skills(action="load", path=str(tmp_path), tool_context=_mock_tool_context(agent))
+        assert "live-skill" in plugin.get_dynamic_skills(agent)
+
+        (skill_dir / "SKILL.md").unlink()  # would disappear on an implicit refresh
+        await plugin._on_before_invocation(BeforeInvocationEvent(agent=agent))
+
+        assert "live-skill" in plugin.get_dynamic_skills(agent)
+
+
+class TestDynamicSkillsRobustness:
+    """Edge cases raised in pre-PR critic review."""
+
+    @pytest.mark.asyncio
+    async def test_corrupted_dynamic_paths_state_is_ignored(self):
+        """A non-list dynamic_paths value (corrupted persisted state) is ignored fail-soft."""
+        plugin = AgentSkills(skills=[_make_skill()], dynamic_loading=True)
+        agent = _mock_agent()
+        agent.state.set(plugin._state_key, {"dynamic_paths": "/etc/not-a-list"})
+
+        await plugin._on_before_invocation(BeforeInvocationEvent(agent=agent))
+
+        assert plugin.get_dynamic_skills(agent) == {}
+
+    def test_normalize_path_edge_cases(self):
+        """Root paths survive normalization; trailing slashes and whitespace are stripped."""
+        from strands.vended_plugins.skills.agent_skills import _normalize_dynamic_path
+
+        assert _normalize_dynamic_path("./repo/skills/") == "./repo/skills"
+        assert _normalize_dynamic_path("  ./repo/skills  ") == "./repo/skills"
+        assert _normalize_dynamic_path("/") == "/"
+        assert _normalize_dynamic_path("///") == "/"
+        assert _normalize_dynamic_path("   ") == ""
+
+    def test_subclass_extra_tools_are_preserved(self):
+        """Filtering the skills tool variants must not drop @tool methods added by subclasses."""
+        from strands.tools.decorator import tool as tool_decorator
+
+        class ExtendedSkills(AgentSkills):
+            @tool_decorator
+            def extra(self) -> str:
+                """An extra subclass tool."""
+                return "extra"
+
+        for dynamic in (False, True):
+            plugin = ExtendedSkills(skills=[_make_skill()], dynamic_loading=dynamic)
+            names = sorted(t.tool_name for t in plugin.tools)
+            assert names == ["extra", "skills"]
+            variant = next(t for t in plugin.tools if t.tool_name == "skills")
+            assert variant.__name__ == ("dynamic_skills" if dynamic else "skills")
+
+    @pytest.mark.asyncio
+    async def test_unload_after_override_removes_skill_outright(self, tmp_path):
+        """Unloading an overriding path does not resurrect the overridden version."""
+        path_a = tmp_path / "a"
+        path_b = tmp_path / "b"
+        _make_skill_dir(path_a, "shared-skill", description="from A")
+        _make_skill_dir(path_b, "shared-skill", description="from B")
+        plugin = AgentSkills(skills=[], dynamic_loading=True)
+        agent = _mock_agent()
+        await plugin.init_agent(agent)
+        tool_context = _mock_tool_context(agent)
+
+        await plugin.dynamic_skills(action="load", path=str(path_a), tool_context=tool_context)
+        await plugin.dynamic_skills(action="load", path=str(path_b), tool_context=tool_context)
+        assert plugin.get_dynamic_skills(agent)["shared-skill"] == str(path_b)
+
+        result = await plugin.dynamic_skills(action="unload", path=str(path_b), tool_context=tool_context)
+
+        assert "shared-skill" in result
+        assert "shared-skill" not in plugin.get_dynamic_skills(agent)
+        assert "shared-skill" not in {s.name for s in plugin.get_available_skills(agent)}
