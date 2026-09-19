@@ -135,3 +135,74 @@ async def test_concurrent_executor_reraises_exceptions(
         await alist(stream)
 
     assert tool_results == []
+
+
+@pytest.mark.asyncio
+async def test_concurrent_executor_cancel_aborts_in_flight_tool(
+    executor, agent, tool_results, cycle_trace, cycle_span, invocation_state, structured_output_context, alist
+):
+    """In-flight tools must observe agent cancel and return a tool error (#4403)."""
+
+    @strands.tool(name="hanging_tool")
+    async def hanging_tool():
+        await asyncio.sleep(60)
+        return "too late"
+
+    agent.tool_registry.register_tool(hanging_tool)
+
+    tool_uses = [{"name": "hanging_tool", "toolUseId": "hang-1", "input": {}}]
+    stream = executor._execute(
+        agent, tool_uses, tool_results, cycle_trace, cycle_span, invocation_state, structured_output_context
+    )
+
+    async def cancel_soon():
+        await asyncio.sleep(0.1)
+        agent._cancel_signal.set()
+
+    cancel_task = asyncio.create_task(cancel_soon())
+    events = await asyncio.wait_for(alist(stream), timeout=5)
+    await cancel_task
+
+    assert len(events) >= 1
+    result_events = [e for e in events if isinstance(e, ToolResultEvent)]
+    assert result_events
+    assert result_events[0].tool_result["status"] == "error"
+    assert "cancelled" in result_events[0].tool_result["content"][0]["text"].lower()
+    assert tool_results
+    assert tool_results[0]["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_executor_stalled_stream_becomes_tool_error_on_cancel(
+    executor, agent, tool_results, cycle_trace, cycle_span, invocation_state, structured_output_context, alist
+):
+    """A tool stream that never yields must still end as a cancel tool error (#4403)."""
+
+    @strands.tool(name="stalled_tool")
+    def stalled_tool():
+        return "unused"
+
+    async def never_yield(_tool_use, _invocation_state):
+        await asyncio.Future()  # never completes
+        yield  # pragma: no cover
+
+    stalled_tool.stream = never_yield
+    agent.tool_registry.register_tool(stalled_tool)
+
+    tool_uses = [{"name": "stalled_tool", "toolUseId": "stall-1", "input": {}}]
+    stream = executor._execute(
+        agent, tool_uses, tool_results, cycle_trace, cycle_span, invocation_state, structured_output_context
+    )
+
+    async def cancel_soon():
+        await asyncio.sleep(0.1)
+        agent._cancel_signal.set()
+
+    cancel_task = asyncio.create_task(cancel_soon())
+    events = await asyncio.wait_for(alist(stream), timeout=5)
+    await cancel_task
+
+    result_events = [e for e in events if isinstance(e, ToolResultEvent)]
+    assert result_events
+    assert result_events[0].tool_result["status"] == "error"
+    assert tool_results[0]["status"] == "error"

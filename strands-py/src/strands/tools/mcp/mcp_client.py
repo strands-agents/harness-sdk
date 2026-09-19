@@ -1131,7 +1131,11 @@ class MCPClient(ToolProvider):
             future = self._invoke_on_background_thread(
                 coro, cancel_signal=cancel_signal, cancellation_state=cancellation_state
             )
-            call_tool_result: MCPCallToolResult = await asyncio.wrap_future(future)
+            call_tool_result = await self._await_background_call(
+                future,
+                cancel_signal=cancel_signal,
+                read_timeout_seconds=read_timeout_seconds,
+            )
             return self._handle_tool_result(tool_use_id, call_tool_result)
         except Exception as e:
             logger.exception("tool execution failed")
@@ -1806,6 +1810,71 @@ class MCPClient(ToolProvider):
                 cancellation_task.add_done_callback(lambda task: task.exception() if not task.cancelled() else None)
         except Exception as error:
             self._log_debug_with_thread("error=<%s> | failed to notify MCP server of cancellation", str(error))
+
+
+    async def _await_background_call(
+        self,
+        future: futures.Future[MCPCallToolResult],
+        *,
+        cancel_signal: threading.Event | None = None,
+        read_timeout_seconds: timedelta | None = None,
+    ) -> MCPCallToolResult:
+        """Await a background MCP call, aborting when cancel wins or the call stalls.
+
+        ``_invoke_on_background_thread`` already watches ``cancel_signal`` on the MCP
+        session loop. This outer wait is a second line of defense for callers waiting
+        on ``asyncio.wrap_future``: if the session loop wedges after a transport
+        timeout, cancel (or an overall bound derived from the read timeout) still
+        unblocks the agent tool stream instead of hanging forever.
+        """
+        wrapped = asyncio.wrap_future(future)
+        tasks: list[asyncio.Task[Any]] = []
+        cancel_task: asyncio.Task[None] | None = None
+
+        if cancel_signal is not None:
+
+            async def _poll_cancel() -> None:
+                while not cancel_signal.is_set():
+                    await asyncio.sleep(0.05)
+
+            cancel_task = asyncio.create_task(_poll_cancel())
+            tasks.append(cancel_task)
+
+        timeout: float | None = None
+        if read_timeout_seconds is not None:
+            # Allow the transport timeout to fire first, then fail closed.
+            timeout = max(read_timeout_seconds.total_seconds(), 0) + 5.0
+
+        try:
+            wait_set: set[asyncio.Future[Any] | asyncio.Task[Any]] = {wrapped, *tasks}
+            done, pending = await asyncio.wait(
+                wait_set,
+                timeout=timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                if task is not wrapped:
+                    task.cancel()
+            if pending:
+                await asyncio.gather(*(t for t in pending if t is not wrapped), return_exceptions=True)
+
+            if cancel_signal is not None and cancel_signal.is_set():
+                future.cancel()
+                raise _MCPCallCancelledError("Tool execution cancelled")
+
+            if wrapped in done:
+                return await wrapped
+
+            # Timed out waiting for the background future after the read timeout window.
+            future.cancel()
+            raise TimeoutError(
+                f"MCP tool call stalled after {timeout:.1f}s without completing"
+            )
+        finally:
+            if cancel_task is not None and not cancel_task.done():
+                cancel_task.cancel()
+                await asyncio.gather(cancel_task, return_exceptions=True)
+
 
     def _invoke_on_background_thread(
         self,
