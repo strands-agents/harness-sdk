@@ -20,6 +20,7 @@ sourceLinks:
   - path: strands-py/src/strands/vended_tools/sleep/sleep.py
   - path: strands-py/src/strands/vended_tools/web_fetch/web_fetch.py
   - path: strands-py/src/strands/experimental/tools/stop/stop.py
+  - path: strands-py/src/strands/experimental/tools/python_repl/python_repl.py
 ---
 
 Vended tools are pre-built tools included directly in the Strands SDK for common agent tasks like file operations, shell commands, HTTP requests, and persistent notes. 
@@ -48,6 +49,7 @@ Each tool is imported from its own subpath under `@strands-agents/sdk/vended-too
 | [Handoff to User](#handoff-to-user) | Pause the agent loop and surface a message to the user | Python, TypeScript (Node.js, browsers) |
 | [Stop](#stop-experimental) | Gracefully end the agent loop when the task is complete | Python, TypeScript (Node.js, browsers) |
 | [Web Fetch](#web-fetch) | Fetch a URL and return cleaned markdown for a model to read | Python, TypeScript (Node.js) |
+| [Python REPL](#python-repl-experimental) | Execute Python code in a sandboxed interpreter with persistent session state | Python |
 
 ### File Editor
 
@@ -592,6 +594,58 @@ agent = Agent(tools=[web_fetch])
 </Tabs>
 
 📖 [Full API Reference](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/web-fetch/README.md)
+
+---
+
+### Python REPL (Experimental)
+
+> This tool is experimental and subject to change in future
+> revisions without notice.
+
+Runs model-generated Python code in a [Monty](https://github.com/pydantic/monty) sandbox. Session state (variables, imports, and definitions) persists across calls via agent state, so the model can build on earlier results without redefining everything each turn. Pass `reset_state=True` to start from a clean namespace.
+
+_Supported in: Python only._
+
+:::note[Install required]
+`python_repl` requires the optional `python-repl` extra:
+
+```bash
+pip install 'strands-agents[python-repl]'
+```
+:::
+
+:::note[Security posture]
+Monty is a language-level sandbox, not an OS-level one. The bytecode has no
+host operations, so untrusted code cannot reach the filesystem, network, or
+environment. For an OS boundary around the tools the code calls, run the agent
+in a [sandboxed environment](../sandbox/index.mdx).
+:::
+
+**Example:**
+
+```python
+from strands import Agent
+from strands.experimental.tools import python_repl
+
+agent = Agent(tools=[python_repl])
+agent("Use python_repl to compute the first 10 Fibonacci numbers and print them.")
+```
+
+**Custom limits:**
+
+```python
+from strands import Agent
+from strands.experimental.tools import make_python_repl
+
+python_repl = make_python_repl(
+    max_duration_secs=10.0,
+    max_memory=64 * 1024 * 1024,
+    max_output_chars=10_000,
+    max_session_bytes=5 * 1024 * 1024,
+    timeout=30.0,
+)
+agent = Agent(tools=[python_repl])
+```
 
 ---
 

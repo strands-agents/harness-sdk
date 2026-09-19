@@ -18,6 +18,14 @@ def __getattr__(name: str) -> Any:
             stacklevel=2,
         )
         return ToolProvider
+    # python_repl pulls the optional ``python-repl`` extra, so it is lazy-loaded to keep
+    # the base import free of those dependencies.
+    if name in ("make_python_repl", "python_repl"):
+        from .python_repl import make_python_repl, python_repl
+
+        if name == "python_repl":
+            return python_repl
+        return make_python_repl
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
