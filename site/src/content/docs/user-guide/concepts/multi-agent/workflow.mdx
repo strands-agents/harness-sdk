@@ -151,11 +151,16 @@ The full implementation of the workflow tool can be found in the [Strands Tools 
 
 1. **Persistent State Management**
 
-    - Pause and resume workflows
+    - Pause and resume workflows (upcoming capability; currently unimplemented stubs in the `workflow` tool)
     - Recover from failures automatically
     - Inspect intermediate results
+
+   :::note[Pause and Resume Status]
+   The `pause` and `resume` actions are upcoming stubs in the `workflow` tool and are not yet implemented. If you need pause and resume capabilities today, use [Graph interrupts](../interrupts.md#graph).
+   :::
+
    ```python
-   # Pause and resume example
+   # Pause and resume example (upcoming stubs in workflow tool)
    agent.tool.workflow(action="pause", workflow_id="data_analysis")
    agent.tool.workflow(action="resume", workflow_id="data_analysis")
    ```
