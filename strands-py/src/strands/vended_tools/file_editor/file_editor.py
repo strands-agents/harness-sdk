@@ -194,12 +194,10 @@ def _build_str_replace_result(
     new_content = original_content.replace(old_str, replacement, 1)
     replacement_line = len(original_content[: original_content.index(old_str)].split("\n")) - 1
     inserted_lines = len(replacement.split("\n"))
-    original_lines = len(old_str.split("\n"))
-    line_difference = inserted_lines - original_lines
 
     new_lines = new_content.split("\n")
     start_line = max(0, replacement_line - _SNIPPET_LINES)
-    end_line = min(len(new_lines), replacement_line + _SNIPPET_LINES + line_difference + 1)
+    end_line = min(len(new_lines), replacement_line + inserted_lines + _SNIPPET_LINES)
     snippet = "\n".join(new_lines[start_line:end_line])
 
     return new_content, snippet, start_line
