@@ -332,7 +332,7 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
                 else:
                     non_tool_result_content.append(block)
 
-            if set(existing_results.keys()) == set(tool_use_ids):
+            if next_message["role"] == "user" and set(existing_results.keys()) == set(tool_use_ids):
                 continue
 
             logger.warning(
@@ -342,10 +342,13 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
                 list(existing_results.keys()),
             )
 
-            # Ensure a toolResult slot exists after this assistant message
-            # This synthesized message bypasses the append chokepoint, so give it a durable
-            # tracking id — matching messages appended through the normal path.
-            if not existing_results and non_tool_result_content:
+            # toolResult blocks belong in a user message. Preserve other follower content in place.
+            if next_message["role"] != "user":
+                next_message["content"] = non_tool_result_content
+                messages.insert(index + 1, {"role": "user", "content": [], "tracking_id": _generate_tracking_id()})
+                next_message = messages[index + 1]
+                non_tool_result_content = []
+            elif not existing_results and non_tool_result_content:
                 messages.insert(index + 1, {"role": "user", "content": [], "tracking_id": _generate_tracking_id()})
                 next_message = messages[index + 1]
                 non_tool_result_content = []
