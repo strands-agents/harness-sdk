@@ -2,6 +2,7 @@
 Tests for the function-based tool decorator pattern.
 """
 
+import functools
 import warnings
 from asyncio import Queue
 from collections.abc import AsyncGenerator
@@ -125,6 +126,54 @@ async def test_stream(identity_tool, alist):
     exp_events = [ToolResultEvent({"toolUseId": "t1", "status": "success", "content": [{"text": "2"}]})]
 
     assert tru_events == exp_events
+
+
+@pytest.mark.asyncio
+async def test_stream_awaits_coroutine_returned_by_sync_wrapper(alist):
+    calls = []
+
+    async def identity(a: int) -> int:
+        calls.append(a)
+        return a
+
+    @functools.wraps(identity)
+    def wrapped(a: int):
+        return identity(a)
+
+    identity_tool = strands.tool(wrapped)
+    stream = identity_tool.stream({"toolUseId": "t1", "input": {"a": 2}}, {})
+
+    # Guards async tools hidden behind synchronous decorators (#4410).
+    tru_events = await alist(stream)
+    exp_events = [ToolResultEvent({"toolUseId": "t1", "status": "success", "content": [{"text": "2"}]})]
+
+    assert tru_events == exp_events
+    assert calls == [2]
+
+
+@pytest.mark.asyncio
+async def test_stream_handles_error_from_coroutine_returned_by_sync_wrapper(alist):
+    """Coroutine failures keep decorated-tool error semantics (#4410)."""
+
+    async def fail(a: int) -> int:
+        raise RuntimeError(f"failed: {a}")
+
+    @functools.wraps(fail)
+    def wrapped(a: int):
+        return fail(a)
+
+    failing_tool = strands.tool(wrapped)
+    stream = failing_tool.stream({"toolUseId": "t1", "input": {"a": 2}}, {})
+
+    tru_result = (await alist(stream))[-1]
+    exp_tool_result = {
+        "toolUseId": "t1",
+        "status": "error",
+        "content": [{"text": "Error: RuntimeError - failed: 2"}],
+    }
+
+    assert tru_result.tool_result == exp_tool_result
+    assert isinstance(tru_result.exception, RuntimeError)
 
 
 @pytest.mark.asyncio

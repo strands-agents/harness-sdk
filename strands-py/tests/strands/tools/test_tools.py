@@ -1,3 +1,5 @@
+import functools
+
 import pytest
 
 import strands
@@ -537,6 +539,63 @@ async def test_stream(identity_tool, alist):
     tru_events = await alist(stream)
     exp_events = [ToolResultEvent(({"tool_use": 1}, 2))]
     assert tru_events == exp_events
+
+
+@pytest.mark.asyncio
+async def test_stream_awaits_coroutine_returned_by_sync_wrapper(alist):
+    calls = []
+
+    async def identity(tool_use, a):
+        calls.append(a)
+        return tool_use, a
+
+    @functools.wraps(identity)
+    def wrapped(tool_use, a):
+        return identity(tool_use, a)
+
+    identity_tool = PythonAgentTool(
+        tool_name="identity",
+        tool_spec={
+            "name": "identity",
+            "description": "identity",
+            "inputSchema": {"type": "object", "properties": {"a": {"type": "integer"}}},
+        },
+        tool_func=wrapped,
+    )
+    stream = identity_tool.stream({"tool_use": 1}, {"a": 2})
+
+    # Guards module tools whose synchronous entry point returns a coroutine (#4410).
+    tru_events = await alist(stream)
+    exp_events = [ToolResultEvent(({"tool_use": 1}, 2))]
+
+    assert tru_events == exp_events
+    assert calls == [2]
+
+
+@pytest.mark.asyncio
+async def test_stream_propagates_error_from_coroutine_returned_by_sync_wrapper(alist):
+    """Coroutine failures keep module-tool propagation semantics (#4410)."""
+
+    async def fail(tool_use, a):
+        raise RuntimeError(f"failed: {a}")
+
+    @functools.wraps(fail)
+    def wrapped(tool_use, a):
+        return fail(tool_use, a)
+
+    failing_tool = PythonAgentTool(
+        tool_name="fail",
+        tool_spec={
+            "name": "fail",
+            "description": "fail",
+            "inputSchema": {"type": "object", "properties": {"a": {"type": "integer"}}},
+        },
+        tool_func=wrapped,
+    )
+    stream = failing_tool.stream({"tool_use": 1}, {"a": 2})
+
+    with pytest.raises(RuntimeError, match="failed: 2"):
+        await alist(stream)
 
 
 def test_normalize_schema_with_anyof():
