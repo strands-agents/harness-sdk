@@ -804,6 +804,72 @@ def test_boundary_text_in_tool_result_not_truncated():
     assert messages[0]["content"][0]["toolResult"]["content"][0]["text"] == boundary_text
 
 
+def test_text_just_over_threshold_not_truncated_when_marker_would_grow_it():
+    """Text in the band just above 2 * _PRESERVE_CHARS must be left alone when the marker would make it longer."""
+    manager = SlidingWindowConversationManager(window_size=10)
+    text = "X" * 401  # marker overhead would turn this into ~446 characters
+    messages = [
+        {
+            "role": "user",
+            "content": [{"toolResult": {"toolUseId": "1", "content": [{"text": text}], "status": "success"}}],
+        }
+    ]
+
+    changed = manager._truncate_tool_results(messages, 0)
+
+    assert not changed
+    result_text = messages[0]["content"][0]["toolResult"]["content"][0]["text"]
+    assert result_text == text
+    assert "[truncated:" not in result_text
+
+
+def test_truncation_only_applied_when_it_shrinks_the_text():
+    """Across the threshold band, the text is either left as is or made strictly shorter, never longer."""
+    manager = SlidingWindowConversationManager(window_size=10)
+    for length in (401, 420, 447, 448, 500):
+        text = "X" * length
+        messages = [
+            {
+                "role": "user",
+                "content": [{"toolResult": {"toolUseId": "1", "content": [{"text": text}], "status": "success"}}],
+            }
+        ]
+
+        changed = manager._truncate_tool_results(messages, 0)
+
+        result_text = messages[0]["content"][0]["toolResult"]["content"][0]["text"]
+        assert len(result_text) <= length, f"length {length} grew to {len(result_text)}"
+        assert changed == (len(result_text) < length), f"length {length}: changed={changed}"
+
+
+def test_reduce_context_walks_past_tool_result_in_marker_growth_band():
+    """A tool result the marker cannot shrink is skipped, and the next large result is truncated instead."""
+    manager = SlidingWindowConversationManager(window_size=10, should_truncate_results=True)
+    small_text = "X" * 401
+    large_text = "Y" * 2000
+    messages = [
+        {"role": "user", "content": [{"text": "start"}]},
+        {"role": "assistant", "content": [{"toolUse": {"toolUseId": "1", "name": "t", "input": {}}}]},
+        {
+            "role": "user",
+            "content": [{"toolResult": {"toolUseId": "1", "content": [{"text": small_text}], "status": "success"}}],
+        },
+        {"role": "assistant", "content": [{"toolUse": {"toolUseId": "2", "name": "t", "input": {}}}]},
+        {
+            "role": "user",
+            "content": [{"toolResult": {"toolUseId": "2", "content": [{"text": large_text}], "status": "success"}}],
+        },
+    ]
+    agent = MagicMock()
+    agent.messages = messages
+
+    manager.reduce_context(agent, e=ContextWindowOverflowException("overflow"))
+
+    assert len(messages) == 5
+    assert messages[2]["content"][0]["toolResult"]["content"][0]["text"] == small_text
+    assert "[truncated:" in messages[4]["content"][0]["toolResult"]["content"][0]["text"]
+
+
 # ==============================================================================
 # window_size=0 and negative window_size validation tests
 # ==============================================================================

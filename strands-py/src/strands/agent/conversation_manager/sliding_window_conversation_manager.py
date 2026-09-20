@@ -358,9 +358,13 @@ class SlidingWindowConversationManager(ConversationManager):
                             truncated_text = (
                                 f"{prefix}...\n\n... [truncated: {removed} chars removed] ...\n\n...{suffix}"
                             )
-                            new_items.append({"text": truncated_text})
-                            item_changed = True
-                            continue
+                            # The marker adds about 45 characters, so text just over the threshold would grow.
+                            # Only rewrite when that actually shrinks the item; otherwise leave it untouched and
+                            # unmarked, so the caller does not count this message as reduced.
+                            if len(truncated_text) < len(text):
+                                new_items.append({"text": truncated_text})
+                                item_changed = True
+                                continue
 
                     new_items.append(item)
 
