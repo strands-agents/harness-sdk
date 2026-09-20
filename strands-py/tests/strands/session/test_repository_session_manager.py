@@ -1,7 +1,7 @@
 """Tests for AgentSessionManager."""
 
 import copy
-from unittest.mock import Mock
+from unittest.mock import ANY, Mock
 
 import pytest
 
@@ -322,6 +322,41 @@ def test_fix_broken_tool_use_adds_missing_tool_results(existing_session_manager)
     # still carry a durable tracking id like any other message.
     assert isinstance(fixed_messages[1].get("tracking_id"), str)
     assert fixed_messages[1]["tracking_id"]
+
+
+@pytest.mark.parametrize("following_role", ["assistant", "user"])
+def test_fix_broken_tool_use_empty_following_message(session_manager, following_role):
+    """Missing results use a user message and preserve an empty assistant follower (#4409)."""
+    tool_message = {
+        "role": "assistant",
+        "content": [{"toolUse": {"toolUseId": "tool-1", "name": "example", "input": {}}}],
+    }
+    following_message = {"role": following_role, "content": [], "tracking_id": "following-message"}
+    exp_messages = [
+        copy.deepcopy(tool_message),
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": "tool-1",
+                        "status": "error",
+                        "content": [{"text": "Tool was interrupted."}],
+                    }
+                }
+            ],
+            "tracking_id": ANY if following_role == "assistant" else "following-message",
+        },
+    ]
+    if following_role == "assistant":
+        exp_messages.append(copy.deepcopy(following_message))
+
+    tru_messages = session_manager._fix_broken_tool_use([tool_message, following_message])
+
+    assert tru_messages == exp_messages
+    assert isinstance(tru_messages[1]["tracking_id"], str) and tru_messages[1]["tracking_id"]
+    exp_repeated = copy.deepcopy(tru_messages)
+    assert session_manager._fix_broken_tool_use(tru_messages) == exp_repeated
 
 
 def test_fix_broken_tool_use_extends_partial_tool_results(existing_session_manager):

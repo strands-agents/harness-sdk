@@ -345,7 +345,7 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
             # Ensure a toolResult slot exists after this assistant message
             # This synthesized message bypasses the append chokepoint, so give it a durable
             # tracking id — matching messages appended through the normal path.
-            if not existing_results and non_tool_result_content:
+            if not existing_results and (non_tool_result_content or next_message["role"] != "user"):
                 messages.insert(index + 1, {"role": "user", "content": [], "tracking_id": _generate_tracking_id()})
                 next_message = messages[index + 1]
                 non_tool_result_content = []
