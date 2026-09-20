@@ -5,6 +5,7 @@ Tests for the function-based tool decorator pattern.
 import warnings
 from asyncio import Queue
 from collections.abc import AsyncGenerator
+from functools import wraps
 from typing import Annotated, Any
 from unittest.mock import MagicMock
 
@@ -39,6 +40,18 @@ def identity_invoke_async():
 @pytest.fixture
 def identity_tool(request):
     return request.getfixturevalue(request.param)
+
+
+@pytest.fixture(scope="module")
+def identity_invoke_wrapped_async():
+    async def identity(a: int):
+        return a
+
+    @wraps(identity)
+    def wrapper(*args, **kwargs):
+        return identity(*args, **kwargs)
+
+    return strands.tool(wrapper)
 
 
 def test__init__invalid_name():
@@ -116,9 +129,12 @@ def test_get_display_properties(identity_tool):
     assert tru_properties == exp_properties
 
 
-@pytest.mark.parametrize("identity_tool", ["identity_invoke", "identity_invoke_async"], indirect=True)
+@pytest.mark.parametrize(
+    "identity_tool", ["identity_invoke", "identity_invoke_async", "identity_invoke_wrapped_async"], indirect=True
+)
 @pytest.mark.asyncio
 async def test_stream(identity_tool, alist):
+    # Await results from sync-wrapped async tools (#4410).
     stream = identity_tool.stream({"toolUseId": "t1", "input": {"a": 2}}, {})
 
     tru_events = await alist(stream)

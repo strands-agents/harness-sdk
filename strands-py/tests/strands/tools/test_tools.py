@@ -1,3 +1,5 @@
+from functools import wraps
+
 import pytest
 
 import strands
@@ -49,6 +51,15 @@ def identity_tool(request):
         },
         tool_func=identity,
     )
+
+
+@pytest.fixture(scope="module")
+def identity_invoke_wrapped_async(identity_invoke_async):
+    @wraps(identity_invoke_async)
+    def wrapper(*args, **kwargs):
+        return identity_invoke_async(*args, **kwargs)
+
+    return wrapper
 
 
 def test_validate_tool_use_name_valid():
@@ -529,9 +540,12 @@ def test_get_display_properties(identity_tool):
     assert tru_properties == exp_properties
 
 
-@pytest.mark.parametrize("identity_tool", ["identity_invoke", "identity_invoke_async"], indirect=True)
+@pytest.mark.parametrize(
+    "identity_tool", ["identity_invoke", "identity_invoke_async", "identity_invoke_wrapped_async"], indirect=True
+)
 @pytest.mark.asyncio
 async def test_stream(identity_tool, alist):
+    # Await results from sync-wrapped async tools (#4410).
     stream = identity_tool.stream({"tool_use": 1}, {"a": 2})
 
     tru_events = await alist(stream)
