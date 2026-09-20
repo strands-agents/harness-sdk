@@ -695,21 +695,18 @@ class Graph(MultiAgentBase):
 
                 logger.debug("status=<%s> | graph execution completed", self.state.status)
 
-                # Yield final result (consistent with Agent's AgentResultEvent format)
-                result = self._build_result(interrupts)
-
-                # Use the same event format as Agent for consistency
-                yield MultiAgentResultEvent(result=result).as_dict()
-
             except Exception:
                 logger.exception("graph execution failed")
                 self.state.status = Status.FAILED
                 raise
             finally:
                 self.state.execution_time = self._commit_active_interval(self.state.execution_time)
-                await self.hooks.invoke_callbacks_async(AfterMultiAgentInvocationEvent(self))
+                await self.hooks.invoke_callbacks_async(AfterMultiAgentInvocationEvent(self, invocation_state))
                 self._resume_from_session = False
                 self._resume_next_nodes.clear()
+
+            result = self._build_result(interrupts)
+            yield MultiAgentResultEvent(result=result).as_dict()
 
     def _validate_graph(self, nodes: dict[str, GraphNode]) -> None:
         """Validate graph nodes for duplicate instances."""
