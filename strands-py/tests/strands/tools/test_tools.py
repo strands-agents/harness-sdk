@@ -77,6 +77,23 @@ def test_validate_tool_use_name_invalid_pattern():
         validate_tool_use_name(tool)
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "search\n",
+        "search\r",
+        "search ",
+        "search\t",
+        "\nsearch",
+    ],
+)
+def test_validate_tool_use_name_invalid_whitespace(name):
+    # An anchored re.match still accepts a trailing newline because `$` matches before it.
+    tool = {"name": name, "toolUseId": "123"}
+    with pytest.raises(InvalidToolUseNameException, match="invalid tool name pattern"):
+        validate_tool_use_name(tool)
+
+
 def test_validate_tool_use_name_too_long():
     tool = {"name": "a" * 65, "toolUseId": "123"}
     with pytest.raises(InvalidToolUseNameException, match="invalid tool name length"):
