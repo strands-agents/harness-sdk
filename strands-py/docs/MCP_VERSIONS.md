@@ -38,7 +38,44 @@ These behave differently on 2.x:
 - `read_timeout_seconds` on tool calls bounds each request round instead of the whole call, because a 2.x tool call can involve several round trips.
 - 2.x drops unknown `ToolAnnotations` keys that 1.x preserves.
 - `get_prompt` and `read_resource` return the installed `mcp` package's own result models, and 2.x renamed their fields from camelCase to snake_case (for example `mimeType` became `mime_type`). Code that reads fields on those results follows the installed version.
+- `complete_sync` and `complete_async` also return the installed package's `CompleteResult`. Candidate strings are in `result.completion.values` on both versions. The optional continuation hint is `result.completion.hasMore` on 1.x and `result.completion.has_more` on 2.x; `total` can be absent on either version.
 - `auth_provider` on `MCPClient` takes an HTTPX auth object, and mcp 2.x is built on `httpx2`, which rejects `httpx.Auth` instances at request time. On a 2.x install, pass an `httpx2`-compatible auth object instead. OAuth client credentials passed through the `auth` config are unaffected, because the SDK builds the provider from the installed `mcp` package.
 - MCP Tasks work on both versions through `tasks_config`: the client drives the finalized SEP-2663 task extension on 2.x and the legacy 2025-11-25 experimental flow on 1.x, and tool calls return the same results either way. The manual task lifecycle methods (`submit_tool_sync`, `get_task_sync`, `update_task_sync`, `cancel_task_sync`, and their `_async` pairs) require 2.x and raise `RuntimeError` on 1.x.
 
 The compatibility layer only covers the Strands API. If you write your own MCP server with the `mcp` package, or build transports from `mcp` APIs yourself before passing them to `MCPClient`, that code uses `mcp` directly and the renames above apply to it. Follow the official guide at [modelcontextprotocol/python-sdk `docs/migration.md`](https://github.com/modelcontextprotocol/python-sdk/blob/main/docs/migration.md) for that part of the migration.
+
+## Completing prompt and resource arguments
+
+Use `complete_sync` or `await complete_async(...)` inside an active `MCPClient`
+session. The server supplies candidates; no model call is needed. Import reference
+types from the installed MCP package and pass URI templates without expanding or
+normalizing them:
+
+```python
+from mcp.types import ResourceTemplateReference
+from strands.tools.mcp import MCPClient
+
+# This server must provide completions for the referenced template.
+with MCPClient(url="http://127.0.0.1:8000/mcp") as client:
+    result = client.complete_sync(
+        ref=ResourceTemplateReference(
+            type="ref/resource", uri="github://repos/{owner}/{repo}"
+        ),
+        argument={"name": "repo", "value": "py"},
+        context_arguments={"owner": "modelcontextprotocol"},
+    )
+    print(result.completion.values)
+```
+
+For a prompt, use `PromptReference(type="ref/prompt", name="review")`. An empty
+argument value requests candidates for an empty prefix. `context_arguments`
+contains already resolved values, allowing one field's candidates to depend on
+another field. Omitting context is distinct from passing an empty dictionary.
+
+Both entry points preserve candidate ordering and optional result metadata.
+`hasMore` / `has_more` is a hint, not a pagination cursor; Strands does not fetch
+additional candidates automatically. Empty candidates are a successful result.
+Unsupported completions and other server errors propagate as MCP errors instead
+of being converted into empty candidates. The async entry point supports caller
+cancellation and does not block the caller's event loop; connection startup and
+shutdown still use the existing client lifecycle.

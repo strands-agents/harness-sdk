@@ -9,6 +9,8 @@ import pytest
 from mcp import ListToolsResult
 from mcp.types import CallToolResult as MCPCallToolResult
 from mcp.types import (
+    CompleteResult,
+    Completion,
     GetPromptResult,
     ListPromptsResult,
     ListResourcesResult,
@@ -16,9 +18,11 @@ from mcp.types import (
     PaginatedRequestParams,
     Prompt,
     PromptMessage,
+    PromptReference,
     ReadResourceResult,
     Resource,
     ResourceTemplate,
+    ResourceTemplateReference,
     TextResourceContents,
     ToolListChangedNotification,
 )
@@ -42,6 +46,171 @@ from .conftest import assert_session_call_tool_once_with, make_mcp_error
 def mcp_client(mock_transport, mock_session):
     with MCPClient(mock_transport["transport_callable"]) as client:
         yield client
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["sync", "async"])
+@pytest.mark.parametrize(
+    "ref",
+    [
+        PromptReference(type="ref/prompt", name="review"),
+        ResourceTemplateReference(type="ref/resource", uri="github://repos/{owner}/{repo}%2F"),
+    ],
+)
+@pytest.mark.parametrize("context_arguments", [None, {}, {"owner": "组织"}])
+async def test_complete_preserves_arguments_and_result(mcp_client, mock_session, mode, ref, context_arguments):
+    exp_result = CompleteResult(completion=Completion(values=["z", "", "a", "z"], total=10))
+    mock_session.complete.return_value = exp_result
+    argument = {"name": "repo", "value": ""}
+
+    if mode == "sync":
+        tru_result = mcp_client.complete_sync(ref, argument, context_arguments)
+    else:
+        tru_result = await mcp_client.complete_async(ref, argument, context_arguments)
+
+    assert tru_result is exp_result
+    mock_session.complete.assert_awaited_once_with(
+        ref, {"name": "repo", "value": ""}, context_arguments=context_arguments
+    )
+    assert argument == {"name": "repo", "value": ""}
+
+
+@pytest.mark.parametrize("total,has_more", [(None, None), (0, False), (12, True)])
+def test_complete_preserves_optional_metadata(mcp_client, mock_session, total, has_more):
+    fields = {"has_more" if MCP_V2 else "hasMore": has_more}
+    exp_result = CompleteResult(completion=Completion(values=[], total=total, **fields))
+    mock_session.complete.return_value = exp_result
+    tru_result = mcp_client.complete_sync(
+        PromptReference(type="ref/prompt", name="review"), {"name": "language", "value": "unknown"}
+    )
+    assert tru_result is exp_result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["sync", "async"])
+@pytest.mark.parametrize("started", [False, True])
+async def test_complete_requires_active_session(mock_transport, mock_session, mode, started):
+    client = MCPClient(mock_transport["transport_callable"])
+    if started:
+        client.start()
+        client.stop(None, None, None)
+    ref = PromptReference(type="ref/prompt", name="review")
+    with pytest.raises(MCPClientInitializationError, match="client.session is not running"):
+        if mode == "sync":
+            client.complete_sync(ref, {"name": "language", "value": "py"})
+        else:
+            await client.complete_async(ref, {"name": "language", "value": "py"})
+    mock_session.complete.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["sync", "async"])
+@pytest.mark.parametrize("code", [-32601, -32602])
+async def test_complete_propagates_server_error(mcp_client, mock_session, mode, code):
+    error = make_mcp_error(code, "completion rejected")
+    exp_result = CompleteResult(completion=Completion(values=["python"]))
+    mock_session.complete.side_effect = [error, exp_result]
+    ref = PromptReference(type="ref/prompt", name="review")
+    with pytest.raises(type(error)) as caught:
+        if mode == "sync":
+            mcp_client.complete_sync(ref, {"name": "language", "value": "py"})
+        else:
+            await mcp_client.complete_async(ref, {"name": "language", "value": "py"})
+    assert caught.value is error
+    assert await mcp_client.complete_async(ref, {"name": "language", "value": "py"}) is exp_result
+
+
+@pytest.mark.asyncio
+async def test_complete_async_cancellation_keeps_session_usable(mcp_client, mock_session):
+    started = threading.Event()
+    finished = threading.Event()
+
+    async def complete(*args, **kwargs):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            finished.set()
+
+    mock_session.complete.side_effect = complete
+    ref = PromptReference(type="ref/prompt", name="review")
+    request = asyncio.create_task(mcp_client.complete_async(ref, {"name": "language", "value": "py"}))
+    try:
+        assert await asyncio.to_thread(started.wait, 5)
+        # Reaching this point while the server is waiting also checks event-loop responsiveness.
+        request.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await request
+        assert await asyncio.to_thread(finished.wait, 5)
+    finally:
+        request.cancel()
+        await asyncio.gather(request, return_exceptions=True)
+
+    mock_session.complete.side_effect = None
+    exp_result = CompleteResult(completion=Completion(values=["python"]))
+    mock_session.complete.return_value = exp_result
+    tru_result = await asyncio.wait_for(mcp_client.complete_async(ref, {"name": "language", "value": "py"}), 5)
+    assert tru_result is exp_result
+
+
+@pytest.mark.asyncio
+async def test_complete_async_finishes_when_client_closes(mcp_client, mock_session, mock_transport):
+    started = threading.Event()
+    request_finished = threading.Event()
+
+    async def close_transport(*args):
+        # Keep the mocked transport alive until in-flight request cleanup has completed.
+        assert await asyncio.to_thread(request_finished.wait, 5)
+
+    mock_transport["transport_cm"].__aexit__.side_effect = close_transport
+
+    async def complete(*args, **kwargs):
+        started.set()
+        await asyncio.Event().wait()
+
+    mock_session.complete.side_effect = complete
+    request = asyncio.create_task(
+        mcp_client.complete_async(
+            PromptReference(type="ref/prompt", name="review"), {"name": "language", "value": "py"}
+        )
+    )
+    request.add_done_callback(lambda completed: request_finished.set())
+    try:
+        assert await asyncio.to_thread(started.wait, 5)
+        await asyncio.to_thread(mcp_client.stop, None, None, None)
+        with pytest.raises(RuntimeError):
+            await asyncio.wait_for(request, 5)
+    finally:
+        request.cancel()
+        await asyncio.gather(request, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_complete_async_keeps_concurrent_contexts_separate(mcp_client, mock_session):
+    gate = None
+
+    async def complete(ref, argument, context_arguments):
+        nonlocal gate
+        if gate is None:
+            gate = asyncio.Event()
+        if context_arguments["owner"] == "first":
+            await gate.wait()
+        else:
+            gate.set()
+        return CompleteResult(completion=Completion(values=[context_arguments["owner"] + argument["value"]]))
+
+    mock_session.complete.side_effect = complete
+    ref = ResourceTemplateReference(type="ref/resource", uri="github://repos/{owner}/{repo}")
+    results = await asyncio.wait_for(
+        asyncio.gather(
+            mcp_client.complete_async(ref, {"name": "repo", "value": "-repo"}, {"owner": "first"}),
+            mcp_client.complete_async(ref, {"name": "repo", "value": "-repo"}, {"owner": "second"}),
+        ),
+        5,
+    )
+    tru_values = [result.completion.values for result in results]
+    exp_values = [["first-repo"], ["second-repo"]]
+    assert tru_values == exp_values
 
 
 def test_mcp_client_context_manager(mock_transport, mock_session):
