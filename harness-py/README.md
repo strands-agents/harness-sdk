@@ -542,3 +542,6 @@ report a vulnerability. Please do not open a public issue for security concerns.
 ## License
 
 Apache-2.0. See [LICENSE](https://github.com/strands-agents/harness-sdk/blob/main/harness-py/LICENSE).
+
+<!-- ci-check: temporary no-op to exercise the harness-py integration-test workflow; revert before merge -->
+
