@@ -4,6 +4,10 @@
  */
 
 import { Agent, BedrockModel, ModelRouter, tool, Tool } from '@strands-agents/sdk'
+import { MockMessageModel, TestModelProvider } from '@strands-agents/sdk/testing'
+
+const offlineModel = new MockMessageModel().addTurn({ type: 'textBlock', text: 'offline' })
+await new Agent({ model: new TestModelProvider(() => offlineModel.stream([])), printer: false }).invoke('test')
 
 import { ModelRouter as ModelRouterFromSubpath } from '@strands-agents/sdk/models/routing'
 import { notebook } from '@strands-agents/sdk/vended-tools/notebook'
