@@ -119,7 +119,7 @@ def test_config_maps_to_harness_agent_kwargs(tmp_path):
     assert kwargs == {
         "name": "Strands harness",
         "model": DEFAULT_HARNESS_AGENT_CONFIG["model"],
-        "effort": "auto",
+        "effort": "high",
         "context_manager": "auto",
         "session": True,
         "skills": True,

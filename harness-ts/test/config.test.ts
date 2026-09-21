@@ -52,7 +52,7 @@ describe('HarnessAgentConfig', () => {
     await expect(harnessAgentOptionsFromConfig(DEFAULT_HARNESS_AGENT_CONFIG)).resolves.toMatchObject({
       name: 'Strands harness',
       model: DEFAULT_HARNESS_AGENT_CONFIG.model,
-      effort: 'auto',
+      effort: 'high',
       contextManager: 'auto',
       memory: { dir: join(process.cwd(), '.agent/memory') },
       session: { dir: join(process.cwd(), '.agent/sessions') },

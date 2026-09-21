@@ -55,7 +55,7 @@ agent("Find the slowest test in this repo and explain why it's slow")
 
 ```python
 create_harness(
-    model="bedrock/global.anthropic.claude-opus-4-8",  # "provider/name", a bare Bedrock id, or a Model instance
+    model="bedrock/global.anthropic.claude-opus-5",  # "provider/name", a bare Bedrock id, or a Model instance
     effort="auto",                          # "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
     instructions=None,                      # domain text appended to the system prompt
     tools=None,                             # your tools, added alongside the built-ins
@@ -122,10 +122,10 @@ Everything above is a default, not a constraint. Here's how to adjust each piece
 Pass a `provider/model` string, a bare model id, or a ready-made `Model` instance:
 
 ```python
-create_harness(model="anthropic/claude-opus-4-8")  # Anthropic's API directly
+create_harness(model="anthropic/claude-opus-5")  # Anthropic's API directly
 create_harness(model="openai/gpt-5.6-sol")         # OpenAI
 create_harness(model="google/gemini-3.5-flash")    # Google
-create_harness(model="bedrock/global.anthropic.claude-opus-4-8")  # the default, spelled out
+create_harness(model="bedrock/global.anthropic.claude-opus-5")  # the default, spelled out
 create_harness(model="bedrock-mantle/openai.gpt-5.6-sol")  # Bedrock's OpenAI-compatible endpoint
 
 from strands.models.openai import OpenAIModel

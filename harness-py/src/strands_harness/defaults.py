@@ -2,9 +2,9 @@
 
 from strands_harness.types.agent import BuiltinPluginName, BuiltinToolName
 
-DEFAULT_MODEL = "bedrock/global.anthropic.claude-opus-4-8"
+DEFAULT_MODEL = "bedrock/global.anthropic.claude-opus-5"
 
-DEFAULT_EFFORT = "auto"
+DEFAULT_EFFORT = "high"
 
 DEFAULT_CONTEXT_MANAGER = "auto"
 

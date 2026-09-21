@@ -54,7 +54,7 @@ await agent.invoke("Find the slowest test in this repo and explain why it's slow
 
 ```typescript
 await createHarness({
-  model: 'bedrock/global.anthropic.claude-opus-4-8', // "provider/name", a bare Bedrock id, or a Model instance
+  model: 'bedrock/global.anthropic.claude-opus-5', // "provider/name", a bare Bedrock id, or a Model instance
   effort: 'auto', // "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
   instructions: undefined, // domain text appended to the system prompt
   tools: undefined, // your tools, added alongside the built-ins
@@ -125,10 +125,10 @@ Everything above is a default, not a constraint. Here's how to adjust each piece
 Pass a `provider/model` string, a bare model id, or a ready-made `Model` instance:
 
 ```typescript
-await createHarness({ model: 'anthropic/claude-opus-4-8' }) // Anthropic's API directly
+await createHarness({ model: 'anthropic/claude-opus-5' }) // Anthropic's API directly
 await createHarness({ model: 'openai/gpt-5.6-sol' }) // OpenAI
 await createHarness({ model: 'google/gemini-3.5-flash' }) // Google
-await createHarness({ model: 'bedrock/global.anthropic.claude-opus-4-8' }) // the default, spelled out
+await createHarness({ model: 'bedrock/global.anthropic.claude-opus-5' }) // the default, spelled out
 await createHarness({ model: 'bedrock-mantle/openai.gpt-5.6-sol' }) // Bedrock's OpenAI-compatible endpoint
 
 import { OpenAIModel } from '@strands-agents/sdk/models/openai'
