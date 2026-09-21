@@ -328,6 +328,25 @@ response = agent("Write a short story about an AI assistant.")
 </Tab>
 </Tabs>
 
+#### Python Read Timeout
+
+The Python SDK applies a default `read_timeout` of 120 seconds when constructing the Bedrock Runtime client, since botocore defaults to 60 seconds, which large or non-streaming requests can exceed. The default also applies when you pass your own `boto_client_config` without a `read_timeout`; set one explicitly to override it:
+
+```python
+from botocore.config import Config as BotocoreConfig
+from strands.models import BedrockModel
+
+bedrock_model = BedrockModel(
+    model_id="global.anthropic.claude-sonnet-4-6",
+    boto_client_config=BotocoreConfig(
+        retries={"max_attempts": 3, "mode": "standard"},
+        read_timeout=300,
+    ),
+)
+```
+
+Passing `read_timeout=None` explicitly disables the timeout entirely.
+
 #### TypeScript Request Timeout
 
 The TypeScript SDK applies a default `requestTimeout` of 120000 ms (120 seconds) when constructing the Bedrock Runtime client, since the underlying AWS SDK defaults to `0` (disabled), which lets a stuck connection hang. The timeout counts stream inactivity, so a long-thinking model or a large tool-call payload that keeps the stream quiet past the limit fails with `Stream timed out because of no activity`. Raise it with the `requestTimeout` option:
