@@ -108,7 +108,7 @@ describe.skipIf(process.platform === 'win32')('makeShell', () => {
 
 describe('deprecated makeBash alias', () => {
   // Consumers key registries, hooks, and defaults lists on the runtime name, so an
-  // alias that returned a tool named 'shell' would still break them (see awsarron/stan#6).
+  // alias that returned a tool named 'shell' would still break them.
   it('keeps the pre-rename tool name', () => {
     expect(makeBash().name).toBe('bash')
   })
