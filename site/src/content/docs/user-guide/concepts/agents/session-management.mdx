@@ -376,6 +376,54 @@ asyncio.run(restore_snapshot())
 </Tab>
 </Tabs>
 
+## Application metadata
+
+Save round identifiers or experiment settings alongside SDK state by supplying
+application metadata for each snapshot capture. Application metadata providers
+are available in the TypeScript SDK.
+
+<Tabs>
+<Tab label="TypeScript">
+
+Set `snapshotAppData` to a synchronous reader that returns the complete record for
+`snapshot.appData`:
+
+```typescript
+--8<-- "user-guide/concepts/agents/session-management_imports.ts:app_data"
+
+--8<-- "user-guide/concepts/agents/session-management.ts:app_data"
+```
+
+This example saves a snapshot manually without invoking a model. Automatic saves
+use the same reader. The context includes `sessionId`, `target`, and `scope`:
+`scope: 'agent'` provides a `LocalAgent`, while `scope: 'multiAgent'` provides a
+`Graph` or `Swarm`. The public types are `SnapshotAppDataContext` and
+`SnapshotAppDataProvider`.
+
+Return a `Record<string, JSONValue>`. The SDK validates and deep-copies it before
+awaiting stash or storage operations. Later mutations do not change the captured
+copy. Each capture replaces the entire record. Without a provider, the target's
+existing snapshot behavior is preserved, including its existing application data.
+
+The reader runs once per capture, which can occur several times during one agent
+invocation. A triggered immutable snapshot and its latest snapshot share one
+capture. Update application variables before saving; do not increment rounds,
+mutate the target, or start another save inside the reader. Async readers, arrays
+at the top level, and values that cannot be serialized as JSON are rejected.
+
+For ordinary saves, a reader or validation error propagates before any snapshot
+is written. If metadata fails during an already-enabled guardrail redaction
+flush, the SDK still persists the redacted state with empty application data,
+then rethrows the metadata error. A storage failure takes precedence. The existing
+`saveLatestOn` policy still controls whether redaction triggers a save.
+
+`restoreSnapshot` restores SDK-owned state; it does not call the metadata reader
+or update external application variables. Read saved metadata through your
+configured snapshot storage and decide how to apply it in your application.
+
+</Tab>
+</Tabs>
+
 ## Deleting Sessions
 
 To remove all snapshots for a session, call the session manager's delete method:

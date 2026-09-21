@@ -337,6 +337,8 @@ export type {
   SessionManagerConfig,
   SaveLatestStrategy,
   MultiAgentSaveLatestStrategy,
+  SnapshotAppDataContext,
+  SnapshotAppDataProvider,
 } from './session/session-manager.js'
 export type { SnapshotManifest, SnapshotTriggerCallback, SnapshotTriggerParams } from './session/types.js'
 export type { SessionStorage, SnapshotStorage, SnapshotLocation } from './session/storage.js'
