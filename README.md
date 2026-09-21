@@ -42,7 +42,7 @@ Build and run AI agents in Python and TypeScript with Strands. Start with **Stra
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://strandsagents.com/latest/assets/harness-sdk-overview-dark.svg">
-    <img src="https://strandsagents.com/latest/assets/harness-sdk-overview-light.svg" alt="Run a preconfigured agent with Strands harness, built with the Harness SDK's agent loop, tools, context assembly, sessions, and hooks. Use the SDK to build your own agent." width="640">
+    <img src="https://strandsagents.com/latest/assets/harness-sdk-overview-light.svg" alt="Run a preconfigured agent with Strands harness, built with the Harness SDK. Build your own agent with SDK models, tools, context, memory, sessions, hooks, plugins, and interventions." width="640">
   </picture>
 </p>
 
