@@ -99,6 +99,8 @@
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.109.1",
     "@aws/bedrock-token-generator": "^1.1.0",
+    "@cedar-policy/cedar-wasm": "4.11.2",
+    "@cedar-policy/mcp-schema-generator-wasm": "0.6.0",
     "@eslint/js": "^10.0.1",
     "@google/genai": "^2.6.0",
     "@types/node": "^25.9.4",
