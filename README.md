@@ -13,7 +13,7 @@
   </h1>
 
   <h2>
-    Run a ready-to-work agent or build your own.
+    Run a preconfigured agent or build your own.
   </h2>
 
   <div align="center">
@@ -35,24 +35,31 @@
   </p>
 </div>
 
-Build and run AI agents in Python and TypeScript with Strands. Start with **Strands harness** for an agent with tools, context management, sessions, and memory already configured. Use the **Harness SDK** to assemble your own agent from the same building blocks.
+Build and run AI agents in Python and TypeScript with Strands. Start with **Strands harness** for preconfigured tools, context management, session management, and memory. Choose the **Harness SDK** to configure these building blocks yourself.
 
 ## Start here
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://strandsagents.com/latest/assets/harness-sdk-overview-dark.svg">
+    <img src="https://strandsagents.com/latest/assets/harness-sdk-overview-light.svg" alt="Run a preconfigured agent with Strands harness, built with the Harness SDK's agent loop, tools, context assembly, sessions, and hooks. Use the SDK to build your own agent." width="640">
+  </picture>
+</p>
 
 | I want a working agent now | I want to build my own agent |
 | --- | --- |
 | **Strands harness**: start with a preconfigured agent, then customize it. | **Harness SDK**: choose your tools, model provider, and agent configuration. |
 | [Run the harness](#quick-start) | [Build with the SDK](#build-with-the-harness-sdk) |
 
-Strands harness is the Harness SDK, preconfigured. It returns a regular SDK `Agent`: change, extend, or replace any default, and use the SDK directly wherever you need more control.
+Strands harness is the Harness SDK preconfigured. It returns an SDK `Agent`, so you can change, extend, or replace every default as your requirements change.
 
-## Quick Start
+## Quick start
 
-Give the harness a task in a working directory of your choice. The default model provider is Amazon Bedrock; [configure AWS credentials and model access](https://strandsagents.com/docs/user-guide/sdk/model-providers/amazon-bedrock/) before running an example. The [harness quickstart](https://strandsagents.com/docs/user-guide/harness/quickstart/) covers other model providers.
+Ask the harness to create and read a file in your working directory. Before running an example, [configure AWS credentials and model access](https://strandsagents.com/docs/user-guide/sdk/model-providers/amazon-bedrock/). These examples use Amazon Bedrock by default; the [harness quickstart](https://strandsagents.com/docs/user-guide/harness/quickstart/) covers other model providers.
 
 ### Python
 
-Requires Python 3.10+:
+Install the harness in a Python 3.10+ environment:
 
 ```bash
 pip install strands-harness
@@ -65,11 +72,11 @@ agent = create_harness()
 agent("Write Hello from Strands to hello-strands.txt, then read the file back.")
 ```
 
-The harness supplies the file tools for this task. Its [Python README](harness-py/) shows how to configure tools, sessions, memory, and model providers.
+Example result: `hello-strands.txt` contains `Hello from Strands`. The harness includes file tools for this task. See the [Python harness README](harness-py/) to configure tools, session management, memory, and model providers.
 
 ### TypeScript
 
-Requires Node.js 22+:
+Install the harness in a Node.js 22+ project:
 
 ```bash
 npm install @strands-agents/harness
@@ -83,28 +90,28 @@ const result = await agent.invoke('Write Hello from Strands to hello-strands.txt
 console.log(result)
 ```
 
-Use an ES module with top-level `await`. See the [TypeScript harness README](harness-ts/) for configuration and examples.
+Example result: `hello-strands.txt` contains `Hello from Strands`. Run this code in an ES module with top-level `await`. See the [TypeScript setup guide](https://strandsagents.com/docs/user-guide/sdk/quickstart/overview/) for project setup and the [TypeScript harness README](harness-ts/) for configuration.
 
 ### Terminal
 
-The CLI wraps the harness for interactive use. Requires Node.js 22+:
+Chat with the harness from your terminal. Install the CLI with Node.js 22+:
 
 ```bash
 npm install -g @strands-agents/cli
 strands
 ```
 
-See the [CLI README](strands-cli/) for model selection, saved configurations, and non-interactive use.
+The `strands` command opens interactive setup or chat. See the [CLI README](strands-cli/) for model selection, saved configurations, and non-interactive use.
 
 ## Build with the Harness SDK
 
-Choose the SDK when you want to assemble the agent's configuration yourself. It provides the [agent loop](https://strandsagents.com/docs/user-guide/sdk/agents/agent-loop/), [tools and MCP](https://strandsagents.com/docs/user-guide/sdk/tools/), [context management](https://strandsagents.com/docs/user-guide/sdk/context-management/), [sessions](https://strandsagents.com/docs/user-guide/sdk/agents/session-management/), and [hooks](https://strandsagents.com/docs/user-guide/sdk/agents/hooks/). You can also add streaming, multi-agent patterns, structured output, and observability.
+Build an agent with your own tools and model provider configuration. Use the SDK's [agent loop](https://strandsagents.com/docs/user-guide/sdk/agents/agent-loop/), [tools and MCP](https://strandsagents.com/docs/user-guide/sdk/tools/), [context management](https://strandsagents.com/docs/user-guide/sdk/context-management/), [session management](https://strandsagents.com/docs/user-guide/sdk/agents/session-management/), and [hooks](https://strandsagents.com/docs/user-guide/sdk/agents/hooks/) as building blocks.
 
 These examples use Amazon Bedrock by default and require AWS credentials and model access. The [SDK quickstart](https://strandsagents.com/docs/user-guide/sdk/quickstart/overview/) covers setup and other model providers.
 
 ### Python SDK
 
-Requires Python 3.10+:
+Install the SDK in a Python 3.10+ environment:
 
 ```bash
 pip install strands-agents
@@ -121,7 +128,7 @@ Add your own tools and configuration with the [Python SDK](strands-py/).
 
 ### TypeScript SDK
 
-Requires Node.js 22+:
+Install the SDK in a Node.js 22+ project:
 
 ```bash
 npm install @strands-agents/sdk
@@ -135,7 +142,7 @@ const result = await agent.invoke('Explain when to use semantic versioning.')
 console.log(result)
 ```
 
-Use an ES module with top-level `await`. See the [TypeScript SDK](strands-ts/) for tools, structured output, and multi-agent examples.
+Run this code in an ES module with top-level `await`. The [SDK quickstart](https://strandsagents.com/docs/user-guide/sdk/quickstart/overview/) covers project setup. See the [TypeScript SDK](strands-ts/) for tools, structured output, and multi-agent examples.
 
 ## Repository layout
 
@@ -164,11 +171,9 @@ Follow the guide for the part of your agent you want to build or customize:
 - API Reference: [Python](https://strandsagents.com/docs/api/python/strands.agent.agent/) · [TypeScript](https://strandsagents.com/docs/api/typescript/)
 - [Production and deployment](https://strandsagents.com/docs/user-guide/sdk/deploy/operating-agents-in-production/)
 
-The docs themselves live in this monorepo under [`site/`](site/), and doc PRs are welcome alongside code changes.
-
 ## Development
 
-Set up the package you want to change using its contribution guide. Git operations run from the repository root.
+Set up the package you want to change using its contribution guide:
 
 - [Monorepo development and contributions](CONTRIBUTING.md)
 - [Python SDK development](strands-py/README.md#development)
@@ -179,8 +184,9 @@ Set up the package you want to change using its contribution guide. Git operatio
 
 Report bugs, suggest features, or submit a pull request. See the [Contributing Guide](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md).
 
-## Stay in touch with the team
-Come meet the Strands team and other users on [**Discord**](https://discord.com/invite/strands)
+## Community
+
+Join other developers and the Strands team on [Discord](https://discord.gg/strands).
 
 ## License
 

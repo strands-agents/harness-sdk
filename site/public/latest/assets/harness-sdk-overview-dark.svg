@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="424" viewBox="0 0 640 424" role="img" aria-labelledby="title description">
+  <title id="title">Strands harness and the Harness SDK</title>
+  <desc id="description">Run a preconfigured agent with Strands harness, built with the Harness SDK's agent loop, tools, context assembly, sessions, and hooks. Use the SDK to build your own agent.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4adb9e"/>
+    </marker>
+  </defs>
+  <rect width="640" height="424" rx="16" fill="#0d1117"/>
+  <g font-family="Arial, Helvetica, sans-serif">
+    <rect x="16" y="16" width="608" height="116" rx="12" fill="#123328" stroke="#4adb9e" stroke-width="2"/>
+    <text x="40" y="62" fill="#e9fff4" font-size="32" font-weight="700">Strands harness</text>
+    <text x="40" y="100" fill="#b6dfca" font-size="24">Run a preconfigured agent</text>
+    <path d="M 320 136 V 172" stroke="#4adb9e" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="342" y="162" fill="#b5c1cc" font-size="22">built with</text>
+    <rect x="16" y="186" width="608" height="222" rx="12" fill="#161e28" stroke="#536575" stroke-width="2"/>
+    <text x="40" y="228" fill="#f0f5fa" font-size="32" font-weight="700">Harness SDK</text>
+    <text x="40" y="264" fill="#b5c1cc" font-size="24">Build your own agent</text>
+    <g fill="#222e3a" stroke="#45596b">
+      <rect x="40" y="284" width="174" height="40" rx="8"/>
+      <rect x="226" y="284" width="174" height="40" rx="8"/>
+      <rect x="412" y="284" width="188" height="40" rx="8"/>
+      <rect x="40" y="348" width="268" height="40" rx="8"/>
+      <rect x="320" y="348" width="280" height="40" rx="8"/>
+    </g>
+    <g fill="#f0f5fa" font-size="24" text-anchor="middle">
+      <text x="127" y="312">Agent loop</text>
+      <text x="313" y="312">Tools</text>
+      <text x="506" y="312">Hooks</text>
+      <text x="174" y="376">Context assembly</text>
+      <text x="460" y="376">Sessions</text>
+    </g>
+  </g>
+</svg>
