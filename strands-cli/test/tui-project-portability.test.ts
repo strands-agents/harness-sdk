@@ -71,7 +71,8 @@ it('builds and runs a packaged local tool after its original source is removed',
   )
   const project = importAgentProject(archive)
   await rm(source, { recursive: true })
-  await symlink(resolve(import.meta.dirname, '../../node_modules'), join(project.root, 'node_modules'), 'junction')
+  // The CLI installs standalone, so its deps live under strands-cli/node_modules, not a hoisted ../../node_modules.
+  await symlink(resolve(import.meta.dirname, '../node_modules'), join(project.root, 'node_modules'), 'junction')
   await run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'build'], { cwd: project.root })
   const { stdout } = await run(
     process.execPath,

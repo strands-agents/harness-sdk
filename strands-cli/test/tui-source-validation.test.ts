@@ -7,6 +7,10 @@ import { expect, it } from 'vitest'
 it('loads ESM authoring folders and import-only packages using exported module semantics', async () => {
   const root = await mkdtemp(join(tmpdir(), 'strands-source-loading-'))
   try {
+    // Authored projects are ESM (the CLI writes `type: module` into every export, see
+    // src/tui/project/export.ts). Declare it so the loader honors it: left ambient, the tool loads
+    // through the CommonJS path, where an `import`-only dependency has no resolvable export.
+    await writeFile(join(root, 'package.json'), '{"type":"module"}')
     const dependency = join(root, 'node_modules', 'import-only')
     await mkdir(dependency, { recursive: true })
     await writeFile(
@@ -37,6 +41,10 @@ inputSchema: { type: 'object' }, callback: async () => message })`
 it('uses declared file roots without a dot prefix to invalidate loaded source', async () => {
   const root = await mkdtemp(join(tmpdir(), 'strands-source-loading-'))
   try {
+    // Declare the project ESM like a real exported project (src/tui/project/export.ts). Left ambient,
+    // the tool loads via CommonJS on some node/tsx builds, where source-reload cannot isolate a
+    // reloaded module by URL and this identity check silently regresses.
+    await writeFile(join(root, 'package.json'), '{"type":"module"}')
     await mkdir(join(root, 'extensions'))
     await writeFile(join(root, 'extensions', 'tool.ts'), 'export default { marker: Math.random() }\n')
     await writeFile(join(root, 'extensions', 'helper.ts'), "export const value = 'first'\n")
