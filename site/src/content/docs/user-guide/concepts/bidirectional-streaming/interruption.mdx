@@ -34,17 +34,17 @@ The interruption flow: Model's VAD detects user speech → `BidiInterruptionEven
 
 ### Automatic Handling (Default)
 
-When using `BidiAudioIO`, interruptions are handled automatically:
+When using `AudioIO`, interruptions are handled automatically:
 
 ```python
 import asyncio
 from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.io import BidiAudioIO
+from strands.experimental.bidi.io import AudioIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 model = BedrockNovaSonicModel()
 agent = BidiAgent(model=model)
-audio_io = BidiAudioIO()
+audio_io = AudioIO()
 
 async def main():
     # Interruptions handled automatically
@@ -56,7 +56,8 @@ async def main():
 asyncio.run(main())
 ```
 
-The `BidiAudioIO` output automatically clears the audio buffer, stops playback immediately, and resumes normal operation for the next response.
+The `AudioIO` output automatically clears the audio buffer, stops playback
+immediately, and resumes normal operation for the next response.
 
 ### Manual Handling
 
@@ -112,13 +113,13 @@ Use hooks to track interruptions across your application:
 
 ```python
 from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.hooks import BidiInterruptionEvent as BidiInterruptionHookEvent
+from strands.experimental.bidi.hooks import BidiInterruptionEvent as InterruptionHookEvent
 
 class InterruptionTracker:
     def __init__(self):
         self.interruption_count = 0
     
-    async def on_interruption(self, event: BidiInterruptionHookEvent):
+    async def on_interruption(self, event: InterruptionHookEvent):
         self.interruption_count += 1
         print(f"Interruption #{self.interruption_count}: {event.reason}")
         
@@ -158,7 +159,7 @@ model = OpenAIRealtimeModel(
 )
 
 # Verify microphone is working
-audio_io = BidiAudioIO(input_device_index=1)  # Specify device
+audio_io = AudioIO(input_device_index=1)  # Specify device
 
 # Check system permissions (macOS)
 # System Preferences → Security & Privacy → Microphone
@@ -169,7 +170,7 @@ audio_io = BidiAudioIO(input_device_index=1)  # Specify device
 If audio keeps playing after interruption:
 
 ```python
-# Ensure BidiAudioIO is handling interruptions
+# Ensure AudioIO is handling interruptions
 async def __call__(self, event: BidiOutputEvent):
     if isinstance(event, BidiInterruptionEvent):
         self._buffer.clear()  # Critical!

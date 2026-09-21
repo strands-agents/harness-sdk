@@ -16,7 +16,7 @@ import unittest.mock
 
 import pytest
 
-from strands.experimental.bidi.models import BidiModelTimeoutError, OpenAIRealtimeModel
+from strands.experimental.bidi.models import ConnectionTimeoutError, OpenAIRealtimeModel
 from strands.experimental.bidi.models.openai import (
     _RESTART_INSTRUCTION,
     OPENAI_MAX_TIMEOUT_S,
@@ -529,7 +529,7 @@ async def test_receive_timeout(mock_time, model):
 
     await model.start()
 
-    with pytest.raises(BidiModelTimeoutError, match=r"timeout_s=<1>"):
+    with pytest.raises(ConnectionTimeoutError, match=r"timeout_s=<1>"):
         async for _ in model.receive():
             pass
 

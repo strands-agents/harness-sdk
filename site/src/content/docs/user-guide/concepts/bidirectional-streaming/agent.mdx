@@ -69,12 +69,12 @@ print(result.message)  # "The result is 1200"
 ```python
 import asyncio
 from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.io import BidiAudioIO
+from strands.experimental.bidi.io import AudioIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 model = BedrockNovaSonicModel()
 agent = BidiAgent(model=model, tools=[calculator])
-audio_io = BidiAudioIO()
+audio_io = AudioIO()
 
 async def main():
     # Persistent connection with continuous streaming
@@ -303,7 +303,7 @@ await agent.stop()
 
 ```python
 agent = BidiAgent(model=model)
-audio_io = BidiAudioIO()
+audio_io = AudioIO()
 
 await agent.run(
     inputs=[audio_io.input()],
@@ -401,7 +401,7 @@ finally:
 import signal
 
 agent = BidiAgent(model=model)
-audio_io = BidiAudioIO()
+audio_io = AudioIO()
 
 async def main():
     # Setup signal handler
@@ -427,7 +427,8 @@ asyncio.run(main())
 
 ### Resource Cleanup
 
-The agent automatically cleans up background tasks, model connections, I/O channels, event queues, and invokes cleanup hooks.
+The agent automatically cleans up background tasks, model connections, I/O streams,
+and event queues, then invokes cleanup hooks.
 
 ### Best Practices
 
@@ -441,7 +442,7 @@ The agent automatically cleans up background tasks, model connections, I/O chann
 ## Next Steps
 
 - [Events](events.md) - Complete guide to bidirectional streaming events
-- [I/O Channels](io.md) - Building custom input/output channels
+- [I/O Streams](io.md) - Building custom input and output streams
 - [Model Providers](models/bedrock.md) - Provider-specific configuration
 - [Observability](observability.md) - Trace sessions, responses, and interruptions
 - [Quickstart](quickstart.md) - Getting started guide

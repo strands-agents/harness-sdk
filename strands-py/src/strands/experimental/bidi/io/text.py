@@ -12,12 +12,12 @@ from ..types.events import (
     BidiOutputEvent,
     BidiTranscriptStreamEvent,
 )
-from ..types.io import BidiInput, BidiOutput
+from ..types.io import InputStream, OutputStream
 
 logger = logging.getLogger(__name__)
 
 
-class _BidiTextInput(BidiInput):
+class _BidiTextInputStream(InputStream):
     """Handle text input from user."""
 
     def __init__(self, config: dict[str, Any]) -> None:
@@ -31,7 +31,7 @@ class _BidiTextInput(BidiInput):
         return TextBlock(text.strip())
 
 
-class _BidiTextOutput(BidiOutput):
+class _BidiTextOutputStream(OutputStream):
     """Handle text output from bidi agent."""
 
     async def __call__(self, event: BidiOutputEvent) -> None:
@@ -53,7 +53,7 @@ class _BidiTextOutput(BidiOutput):
             print(event.delta)
 
 
-class BidiTextIO:
+class ConsoleIO:
     """Handle text input and output to and from bidi agent.
 
     Accepts input from stdin and outputs to stdout.
@@ -69,10 +69,10 @@ class BidiTextIO:
         """
         self._config = config
 
-    def input(self) -> _BidiTextInput:
-        """Return text processing BidiInput."""
-        return _BidiTextInput(self._config)
+    def input(self) -> _BidiTextInputStream:
+        """Return the standard-input stream."""
+        return _BidiTextInputStream(self._config)
 
-    def output(self) -> _BidiTextOutput:
-        """Return text processing BidiOutput."""
-        return _BidiTextOutput()
+    def output(self) -> _BidiTextOutputStream:
+        """Return the standard-output stream."""
+        return _BidiTextOutputStream()

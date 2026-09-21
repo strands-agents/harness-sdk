@@ -48,15 +48,15 @@ from ..types.media import AudioDelta
 from .configs import (
     AudioConfig,
     AudioStreamConfig,
-    BidiConnectionConfig,
-    BidiModelConfig,
+    ConnectionConfig,
     GoogleGeminiLiveAudioConfig,
     GoogleGeminiLiveAudioStreamConfig,
+    ModelConfig,
     _merge_config,
     _validate_audio_config,
     _validate_model_config,
 )
-from .model import AudioCapable, BidiModel, BidiModelTimeoutError
+from .model import AudioCapable, BidiModel, ConnectionTimeoutError
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +90,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         client_args: dict[str, Any] | None = None,
         audio: GoogleGeminiLiveAudioConfig | None = None,
         voice: str | None = None,
-        **model_config: Unpack[BidiModelConfig],
+        **model_config: Unpack[ModelConfig],
     ) -> None:
         """Initialize the Google Gemini Live bidirectional model.
 
@@ -104,15 +104,13 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
             ValueError: If the input sample rate is not positive.
         """
         _validate_model_config(model_config)
-        self._config = BidiModelConfig(**model_config)
+        self._config = ModelConfig(**model_config)
         self._config.setdefault("model_id", "gemini-2.5-flash-native-audio-preview-09-2025")
         self._config["params"] = dict(self._config.get("params") or {})
 
         # Gemini caps a single connection at ~10 min; reconnect before that, resuming the same
         # session via its handle. The GoAway message remains the reactive backstop.
-        self._config["connection"] = BidiConnectionConfig(
-            **{"restart_after_s": 540, **self._config.get("connection", {})}
-        )
+        self._config["connection"] = ConnectionConfig(**{"restart_after_s": 540, **self._config.get("connection", {})})
         # Gemini reports per-response token deltas, not cumulative session totals.
         self.usage_is_cumulative = False
 
@@ -129,7 +127,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         self._connection_id: str | None = None
 
     @override
-    def update_config(self, **model_config: Unpack[BidiModelConfig]) -> None:  # type: ignore[override]
+    def update_config(self, **model_config: Unpack[ModelConfig]) -> None:  # type: ignore[override]
         """Update the model configuration with the provided arguments.
 
         Args:
@@ -139,7 +137,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         self._config.update(model_config)
 
     @override
-    def get_config(self) -> BidiModelConfig:
+    def get_config(self) -> ModelConfig:
         """Return the model configuration by reference."""
         return self._config
 
@@ -276,10 +274,10 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
             List of event dicts (empty list if no events to emit).
 
         Raises:
-            BidiModelTimeoutError: If gemini responds with go away message.
+            ConnectionTimeoutError: If Gemini responds with a go-away message.
         """
         if message.go_away:
-            raise BidiModelTimeoutError(
+            raise ConnectionTimeoutError(
                 message.go_away.model_dump_json(), live_session_handle=self._live_session_handle
             )
 

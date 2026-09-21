@@ -16,7 +16,7 @@ from ..types.events import (
     BidiTranscriptStreamEvent,
     Role,
 )
-from ..types.io import BidiOutput
+from ..types.io import OutputStream
 
 if TYPE_CHECKING:
     from ..agent.agent import BidiAgent
@@ -66,7 +66,7 @@ class _UserText(ConsoleRenderable):
         yield erase_to_end
 
 
-class _BidiTranscriptOutput(BidiOutput):
+class _BidiTranscriptOutputStream(OutputStream):
     """Render transcript events to a terminal stream."""
 
     def __init__(self) -> None:

@@ -152,7 +152,7 @@ Emitted when the agent is restarting the model connection after a timeout. The c
 ```python
 {
     "type": "bidi_connection_restart",
-    "timeout_error": BidiModelTimeoutError(...)
+    "timeout_error": ConnectionTimeoutError(...)
 }
 ```
 
@@ -448,13 +448,13 @@ async for event in agent.receive():
 ```python
 import asyncio
 from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.io import BidiAudioIO
+from strands.experimental.bidi.io import AudioIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 async def main():
     model = BedrockNovaSonicModel()
     agent = BidiAgent(model=model)
-    audio_io = BidiAudioIO()
+    audio_io = AudioIO()
     
     await agent.start()
     
