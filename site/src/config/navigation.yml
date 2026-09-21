@@ -80,7 +80,11 @@ sidebar:
         items:
           - docs/user-guide/concepts/agents/agent-loop
           - docs/user-guide/concepts/agents/state
-          - docs/user-guide/concepts/storage
+          - label: Storage
+            items:
+              - label: "Overview"
+                slug: docs/user-guide/concepts/storage
+              - docs/user-guide/concepts/storage/search-strategies
           - docs/user-guide/concepts/agents/session-management
           - docs/user-guide/concepts/agents/snapshots
           - docs/user-guide/concepts/agents/prompts

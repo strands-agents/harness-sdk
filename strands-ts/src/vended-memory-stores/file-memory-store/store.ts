@@ -293,7 +293,11 @@ export class FileMemoryStore implements MemoryStore {
         } else {
           merged = content
         }
-        await this._storage.write(canonicalKey, encoder.encode(merged))
+        const data = encoder.encode(merged)
+        await this._storage.write(canonicalKey, data)
+        if (this._searchStrategy?.index) {
+          await this._searchStrategy.index(this._storage, canonicalKey, data)
+        }
         return canonicalKey
       })
     this._writeLocks.set(canonicalKey, current)
