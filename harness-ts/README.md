@@ -86,8 +86,6 @@ malformed or wrong-language references fail instead of being ignored.
 
 ## Installation
 
-Requires Node.js 22 or later.
-
 ```bash
 npm install @strands-agents/harness
 ```
