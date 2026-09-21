@@ -9,7 +9,8 @@ import {
 } from '@modelcontextprotocol/sdk/types.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { ClientCredentialsProvider } from '@modelcontextprotocol/sdk/client/auth-extensions.js'
-import { McpClient } from '../client.js'
+import { McpClient, withDefaultUserAgent } from '../client.js'
+import { SDK_VERSION } from '../../version.js'
 import { McpTool } from '../../tools/mcp-tool.js'
 import { JsonBlock, type TextBlock, type ToolResultBlock } from '../../types/messages.js'
 import { ImageBlock } from '../../types/media.js'
@@ -112,6 +113,8 @@ const mockTransport = {
   send: vi.fn(),
 } as unknown as Transport
 
+const SDK_USER_AGENT = `AWS-Strands/${SDK_VERSION}`
+
 describe('MCP Integration', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -164,13 +167,22 @@ describe('MCP Integration', () => {
 
     it('initializes SDK client with correct configuration', () => {
       expect(Client).toHaveBeenCalledWith(
-        { name: 'TestApp', version: '0.0.1' },
+        { name: 'TestApp', version: SDK_VERSION },
         expect.objectContaining({
           listChanged: expect.objectContaining({
             tools: expect.objectContaining({ autoRefresh: false, debounceMs: 300 }),
           }),
         })
       )
+    })
+
+    it('defaults clientInfo to the SDK identity and honors explicit overrides', () => {
+      const defaultClient = new McpClient({ transport: mockTransport })
+      expect(Client).toHaveBeenLastCalledWith({ name: 'AWS Strands', version: SDK_VERSION }, expect.anything())
+      expect(defaultClient.clientName).toBe('AWS Strands')
+
+      new McpClient({ transport: mockTransport, applicationName: 'TestApp', applicationVersion: '2.1.0' })
+      expect(Client).toHaveBeenLastCalledWith({ name: 'TestApp', version: '2.1.0' }, expect.anything())
     })
 
     it('injects trace context into tool arguments when active span exists', async () => {
@@ -1484,7 +1496,9 @@ describe('McpClient transport resolution', () => {
 
   it('constructs StreamableHTTPClientTransport when url is provided', () => {
     new McpClient({ url: 'https://mcp.example.com' })
-    expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(new URL('https://mcp.example.com'), {})
+    expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(new URL('https://mcp.example.com'), {
+      requestInit: { headers: { 'User-Agent': SDK_USER_AGENT } },
+    })
   })
 
   it('constructs ClientCredentialsProvider when auth is provided', () => {
@@ -1492,6 +1506,7 @@ describe('McpClient transport resolution', () => {
     expect(ClientCredentialsProvider).toHaveBeenCalledWith({ clientId: 'id', clientSecret: 'secret' })
     expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(new URL('https://mcp.example.com'), {
       authProvider: expect.anything(),
+      requestInit: { headers: { 'User-Agent': SDK_USER_AGENT } },
     })
   })
 
@@ -1512,6 +1527,7 @@ describe('McpClient transport resolution', () => {
     new McpClient({ url: 'https://mcp.example.com', authProvider: customProvider })
     expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(new URL('https://mcp.example.com'), {
       authProvider: customProvider,
+      requestInit: { headers: { 'User-Agent': SDK_USER_AGENT } },
     })
   })
 
@@ -1546,13 +1562,22 @@ describe('McpClient transport resolution', () => {
   it('accepts URL instance for url field', () => {
     const url = new URL('https://mcp.example.com/path')
     new McpClient({ url })
-    expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(url, {})
+    expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(url, {
+      requestInit: { headers: { 'User-Agent': SDK_USER_AGENT } },
+    })
   })
 
   it('passes headers as requestInit to transport', () => {
     new McpClient({ url: 'https://mcp.example.com', headers: { 'X-Api-Key': 'abc' } })
     expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(new URL('https://mcp.example.com'), {
-      requestInit: { headers: { 'X-Api-Key': 'abc' } },
+      requestInit: { headers: { 'X-Api-Key': 'abc', 'User-Agent': SDK_USER_AGENT } },
+    })
+  })
+
+  it('keeps a caller-supplied User-Agent instead of the SDK default', () => {
+    new McpClient({ url: 'https://mcp.example.com', headers: { 'user-agent': 'mine/1.0' } })
+    expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(new URL('https://mcp.example.com'), {
+      requestInit: { headers: { 'user-agent': 'mine/1.0' } },
     })
   })
 
@@ -1565,7 +1590,7 @@ describe('McpClient transport resolution', () => {
     expect(ClientCredentialsProvider).toHaveBeenCalledWith({ clientId: 'id', clientSecret: 'secret' })
     expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(new URL('https://mcp.example.com'), {
       authProvider: expect.anything(),
-      requestInit: { headers: { 'X-Trace': '123' } },
+      requestInit: { headers: { 'X-Trace': '123', 'User-Agent': SDK_USER_AGENT } },
     })
   })
 
@@ -1573,5 +1598,20 @@ describe('McpClient transport resolution', () => {
     expect(() => new McpClient({ transport: mockTransport, headers: { 'X-Foo': 'bar' } } as never)).toThrow(
       '"auth", "authProvider", and "headers" require "url"'
     )
+  })
+})
+
+describe('withDefaultUserAgent', () => {
+  it('adds the SDK User-Agent unless the caller set one in any casing', () => {
+    expect(withDefaultUserAgent(undefined)).toEqual({ 'User-Agent': SDK_USER_AGENT })
+    expect(withDefaultUserAgent({ 'X-Api-Key': 'abc' })).toEqual({ 'X-Api-Key': 'abc', 'User-Agent': SDK_USER_AGENT })
+    expect(withDefaultUserAgent({ 'user-agent': 'mine/1' })).toEqual({ 'user-agent': 'mine/1' })
+    expect(withDefaultUserAgent({ 'User-Agent': 'mine/1' })).toEqual({ 'User-Agent': 'mine/1' })
+  })
+
+  it('does not mutate the caller headers', () => {
+    const headers = { 'X-Api-Key': 'abc' }
+    withDefaultUserAgent(headers)
+    expect(headers).toEqual({ 'X-Api-Key': 'abc' })
   })
 })

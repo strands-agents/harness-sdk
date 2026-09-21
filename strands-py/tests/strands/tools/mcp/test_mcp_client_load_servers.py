@@ -8,8 +8,17 @@ import pytest
 from strands.tools.mcp._compat import MCP_V2
 from strands.tools.mcp.mcp_client import MCPClient
 
+from .conftest import SDK_USER_AGENT
+
 # mcp 2.x renamed the provider's `scopes` keyword to `scope`.
 SCOPE_KWARG = "scope" if MCP_V2 else "scopes"
+
+SDK_HEADERS = {"User-Agent": SDK_USER_AGENT}
+
+
+@pytest.fixture(autouse=True)
+def _pin_sdk_version(pinned_sdk_version):
+    """Every SDK-built HTTP transport in this module carries the pinned User-Agent."""
 
 
 @pytest.fixture
@@ -59,7 +68,7 @@ def test_url_detects_streamable_http(mock_client, transports):
     clients = MCPClient.load_servers({"srv": {"url": "https://example.com/mcp"}})
     assert len(clients) == 1
     _open(mock_client[0][0])
-    transports["http"].assert_called_once_with(url="https://example.com/mcp", headers=None, auth=None)
+    transports["http"].assert_called_once_with(url="https://example.com/mcp", headers=SDK_HEADERS, auth=None)
     transports["sse"].assert_not_called()
 
 
@@ -67,7 +76,7 @@ def test_explicit_sse(mock_client, transports):
     clients = MCPClient.load_servers({"srv": {"url": "https://example.com/sse", "transport": "sse"}})
     assert len(clients) == 1
     _open(mock_client[0][0])
-    transports["sse"].assert_called_once_with(url="https://example.com/sse", headers=None)
+    transports["sse"].assert_called_once_with(url="https://example.com/sse", headers=SDK_HEADERS)
     transports["http"].assert_not_called()
 
 
@@ -100,7 +109,7 @@ def test_interpolates_in_headers(mock_client, transports, monkeypatch):
     MCPClient.load_servers({"srv": {"url": "https://example.com/mcp", "headers": {"Authorization": "Bearer ${TOKEN}"}}})
     _open(mock_client[0][0])
     transports["http"].assert_called_once_with(
-        url="https://example.com/mcp", headers={"Authorization": "Bearer abc"}, auth=None
+        url="https://example.com/mcp", headers={"Authorization": "Bearer abc", "User-Agent": SDK_USER_AGENT}, auth=None
     )
 
 
@@ -150,7 +159,7 @@ def test_prefix_and_startup_timeout_passed(mock_client, transports):
         "tool_filters": None,
         "prefix": "p",
         "continue_on_error": False,
-        "application_name": "srv",
+        "application_name": None,
         "application_version": None,
     }
 
@@ -162,7 +171,7 @@ def test_default_startup_timeout(mock_client, transports):
         "tool_filters": None,
         "prefix": None,
         "continue_on_error": False,
-        "application_name": "srv",
+        "application_name": None,
         "application_version": None,
     }
 
@@ -175,7 +184,20 @@ def test_prefix_with_server_name_uses_config_key(mock_client, transports):
 def test_prefix_with_server_name_sanitizes_config_key(mock_client, transports):
     MCPClient.load_servers({"awslabs.aws-docs mcp/server": {"command": "node"}}, prefix_with_server_name=True)
     assert mock_client[0][1]["prefix"] == "awslabs_aws-docs_mcp_server"
-    assert mock_client[0][1]["application_name"] == "awslabs.aws-docs mcp/server"
+
+
+def test_application_name_and_version_from_config(mock_client, transports):
+    MCPClient.load_servers({"srv": {"command": "node", "application_name": "my-app", "application_version": "1.0"}})
+    assert mock_client[0][1]["application_name"] == "my-app"
+    assert mock_client[0][1]["application_version"] == "1.0"
+
+
+def test_user_agent_header_from_config_overrides_sdk_default(mock_client, transports):
+    MCPClient.load_servers({"srv": {"url": "https://example.com/mcp", "headers": {"user-agent": "mine/1"}}})
+    _open(mock_client[0][0])
+    transports["http"].assert_called_once_with(
+        url="https://example.com/mcp", headers={"user-agent": "mine/1"}, auth=None
+    )
 
 
 def test_prefix_with_server_name_explicit_prefix_is_not_sanitized(mock_client, transports):
@@ -232,7 +254,7 @@ def test_extracts_mcp_servers_key(mock_client, transports, tmp_path):
     _open(mock_client[0][0])
     _open(mock_client[1][0])
     transports["stdio"].assert_called_once()
-    transports["http"].assert_called_once_with(url="https://x.com", headers=None, auth=None)
+    transports["http"].assert_called_once_with(url="https://x.com", headers=SDK_HEADERS, auth=None)
 
 
 def test_flat_object_without_wrapper(mock_client, transports, tmp_path):
@@ -326,7 +348,7 @@ def test_continue_on_error_skips_server_with_failed_config(mock_client, transpor
     assert len(clients) == 1
     # The one surviving client must be "ok" (http), not the broken stdio server that failed to build.
     _open(mock_client[0][0])
-    transports["http"].assert_called_once_with(url="https://example.com/mcp", headers=None, auth=None)
+    transports["http"].assert_called_once_with(url="https://example.com/mcp", headers=SDK_HEADERS, auth=None)
     transports["stdio"].assert_not_called()
 
 

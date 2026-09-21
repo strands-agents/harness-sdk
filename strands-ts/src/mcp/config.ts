@@ -30,7 +30,10 @@ export interface McpServerConfig {
   cwd?: string
   /** Server endpoint URL (streamable-http or SSE transport, supports `${VAR}` or `${env:VAR}` interpolation). */
   url?: string
-  /** HTTP headers sent with every request (supports `${VAR}` or `${env:VAR}` interpolation). */
+  /**
+   * HTTP headers sent with every request (supports `${VAR}` or `${env:VAR}` interpolation).
+   * A `User-Agent` here replaces the SDK default.
+   */
   headers?: Record<string, string>
   /** Explicit transport type. When omitted, auto-detected: `command` → stdio, `url` → streamable-http. */
   transport?: 'stdio' | 'sse' | 'streamable-http'

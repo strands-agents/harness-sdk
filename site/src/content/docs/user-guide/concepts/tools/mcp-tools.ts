@@ -306,3 +306,23 @@ async function loadServersExample() {
   void agent
 }
 void loadServersExample
+
+async function clientIdentityExample() {
+  // --8<-- [start:client_identity]
+  const identifiedClient = new McpClient({
+    url: 'https://api.example.com/mcp/',
+    applicationName: 'my-fraud-agent',
+    applicationVersion: '2.1.0',
+  })
+
+  // Defaults apply the same identity to every server loaded from a config
+  const clients = await McpClient.loadServers(
+    { docs: { url: 'https://api.example.com/mcp/' } },
+    { applicationName: 'my-fraud-agent', applicationVersion: '2.1.0' }
+  )
+
+  const agent = new Agent({ tools: [identifiedClient, ...clients] })
+  // --8<-- [end:client_identity]
+  void agent
+}
+void clientIdentityExample

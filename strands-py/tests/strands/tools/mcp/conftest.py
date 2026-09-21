@@ -9,6 +9,9 @@ from mcp.types import ErrorData
 from strands.tools.mcp import _compat
 from strands.tools.mcp._compat import MCPError
 
+# The User-Agent the SDK sends once `pinned_sdk_version` fixes the version.
+SDK_USER_AGENT = "AWS-Strands/9.9.9"
+
 
 def make_mcp_error(code: int, message: str = "", data: Any = None) -> Exception:
     """Construct the installed line's MCP error: 2.x takes (code, message, data), 1.x takes ErrorData."""
@@ -45,6 +48,13 @@ def assert_session_call_tool_once_with(
     mock_session.call_tool.assert_called_once_with(
         name, arguments, read_timeout_seconds, progress_callback=progress_callback, meta=meta
     )
+
+
+@pytest.fixture
+def pinned_sdk_version():
+    """Pin the SDK version so clientInfo and User-Agent assertions are exact."""
+    with patch("strands.tools.mcp.mcp_client._sdk_version", return_value="9.9.9"):
+        yield
 
 
 @pytest.fixture
