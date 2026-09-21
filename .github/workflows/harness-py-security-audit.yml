@@ -1,0 +1,50 @@
+name: "Harness Python: Security Audit"
+
+# Informational pip-audit of the harness-py (`strands-harness`) dependency
+# closure. Reusable; called by release-harness-py.yml. Mirrors the SDK's
+# python-security-audit.yml. Does not block the release: PR-introduced vulns
+# are gated by the repo-level Dependency Review job in ci.yml, and pre-existing
+# advisories are driven down via Dependabot.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+
+jobs:
+  security-audit:
+    name: pip-audit
+    permissions:
+      contents: read
+    runs-on: strands-agents_ubuntu-latest_4-core
+    defaults:
+      run:
+        working-directory: harness-py
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install pip-audit
+        run: pip install --no-cache-dir pip-audit
+
+      - name: Audit installed dependency closure (informational)
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          # Resolve the full dependency closure into a temp venv and audit it,
+          # mirroring what an end user actually installs.
+          python -m venv /tmp/audit-env
+          /tmp/audit-env/bin/pip install --upgrade pip
+          /tmp/audit-env/bin/pip install .
+          pip-audit --path /tmp/audit-env/lib/python*/site-packages

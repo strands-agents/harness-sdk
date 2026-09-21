@@ -71,8 +71,8 @@ Documentation = "https://strandsagents.com"
 
 [tool.hatch.version]
 source = "vcs"
-raw-options.tag_regex = "^python/v(?P<version>.+)$"
-raw-options.git_describe_command = ["git", "describe", "--dirty", "--tags", "--long", "--match", "python/v*"]
+raw-options.tag_regex = "^harness-python/v(?P<version>.+)$"
+raw-options.git_describe_command = ["git", "describe", "--dirty", "--tags", "--long", "--match", "harness-python/v*"]
 raw-options.search_parent_directories = true
 raw-options.fallback_version = "0.0.0"
 
