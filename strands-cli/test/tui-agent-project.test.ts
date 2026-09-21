@@ -145,7 +145,7 @@ describe('agent projects', () => {
               harnessAgentOptionsFromConfig(config, root),
             createHarness: (options: Record<string, unknown>) => {
               const effective: Record<string, unknown> = {
-                effort: 'auto',
+                effort: 'high',
                 contextManager: 'auto',
                 session: { dir: './.agent/sessions' },
                 memory: { dir: './.agent/memory' },

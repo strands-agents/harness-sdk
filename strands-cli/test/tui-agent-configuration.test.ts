@@ -175,7 +175,14 @@ describe('strands_config tool', () => {
   })
 
   it('preserves optional default caching and explicit overrides when validating local models', async () => {
-    const config = CliConfigStore.memory({}, {}, {}, { profile: { model: 'ollama/review-model', builtinTools: [] } })
+    const config = CliConfigStore.memory(
+      {},
+      {},
+      {},
+      // ollama supports no reasoning levels; pin effort to 'auto' so the default 'high' is not
+      // rejected by resolveEffort (see #4472).
+      { profile: { model: 'ollama/review-model', builtinTools: [], effort: 'auto' } }
+    )
     const control = configurationTool(config)
     await control.invoke({ action: 'update', profile: { name: 'Local Strands harness' } })
     await expect(control.invoke({ action: 'apply', revision: 1 })).resolves.toContain('Configuration validated')
@@ -189,7 +196,14 @@ describe('strands_config tool', () => {
   })
 
   it('gives the agent a model-listing recovery hint and records reload failures in its conversation', async () => {
-    const config = CliConfigStore.memory({}, {}, {}, { profile: { model: 'ollama/missing', builtinTools: [] } })
+    // ollama supports no reasoning levels; pin effort to 'auto' so the default 'high' is not
+    // rejected by resolveEffort (see #4472).
+    const config = CliConfigStore.memory(
+      {},
+      {},
+      {},
+      { profile: { model: 'ollama/missing', builtinTools: [], effort: 'auto' } }
+    )
     const control = configurationTool(config)
     vi.mocked(discoverProviderModels).mockResolvedValueOnce({
       available: true,
