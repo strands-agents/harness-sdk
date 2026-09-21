@@ -55,7 +55,7 @@ await agent.invoke("Find the slowest test in this repo and explain why it's slow
 ```typescript
 await createHarness({
   model: 'bedrock/global.anthropic.claude-opus-5', // "provider/name", a bare Bedrock id, or a Model instance
-  effort: 'auto', // "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
+  effort: 'high', // "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
   instructions: undefined, // domain text appended to the system prompt
   tools: undefined, // your tools, added alongside the built-ins
   plugins: undefined, // your Strands plugins, added alongside the built-in ones
@@ -141,8 +141,8 @@ and it's used as-is. Reasoning effort is mapped to whatever each provider expect
 for every provider:
 
 ```typescript
-await createHarness({ effort: 'high' }) // minimal | low | medium | high | xhigh | max, as the provider offers them
-await createHarness({ effort: 'auto' }) // the provider's recommended level (high where supported), the default
+await createHarness({ effort: 'high' }) // the default; minimal | low | medium | high | xhigh | max, as the provider offers them
+await createHarness({ effort: 'auto' }) // the provider's recommended level (high where supported)
 await createHarness({ effort: 'off' }) // reasoning off (the provider's `none` level where it has one)
 ```
 

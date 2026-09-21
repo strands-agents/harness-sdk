@@ -56,7 +56,7 @@ agent("Find the slowest test in this repo and explain why it's slow")
 ```python
 create_harness(
     model="bedrock/global.anthropic.claude-opus-5",  # "provider/name", a bare Bedrock id, or a Model instance
-    effort="auto",                          # "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
+    effort="high",                          # "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
     instructions=None,                      # domain text appended to the system prompt
     tools=None,                             # your tools, added alongside the built-ins
     mcp_servers=None,                       # MCP servers: a mcpServers JSON path or the mapping itself
@@ -138,8 +138,8 @@ and it's used as-is. Reasoning effort is mapped to whatever each provider expect
 for every provider:
 
 ```python
-create_harness(effort="high")     # minimal | low | medium | high | xhigh | max, as the provider offers them
-create_harness(effort="auto")     # the provider's recommended level (high where supported), the default
+create_harness(effort="high")     # the default; minimal | low | medium | high | xhigh | max, as the provider offers them
+create_harness(effort="auto")     # the provider's recommended level (high where supported)
 create_harness(effort="off")      # no reasoning
 ```
 
