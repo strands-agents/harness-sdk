@@ -185,7 +185,7 @@ Out of the box, `create_harness()` returns an agent that:
 - Delegates open-ended subtasks to a built-in helper agent, and tracks multi-step work with a checklist.
 - Loads skills if they exist.
 
-After installing Strands harness, we include a skills file for your coding agent to quickly understand it. This makes it easy to add an MCP server or create config for deploying on popular providers including AWS, GCP, Azure, Cloudflare, and Modal.
+Strands harness can be deployed on any provider with a linux container, such as Modal, Cloudflare Containers, Azure Container Apps, Google Cloud Run, Amazon ECS, and Amazon Bedrock AgentCore.
 
 We also have the Strands CLI that allows you to prototype your agent in plain English. Wire up your model provider of choice, then add prompts and tools to watch your agent come to life. Afterwards, you can run `/export` in the Strands CLI to get a copy of the code in either TypeScript or Python, a very convenient way to keep iterating on Strands harness with your preferred coding agent.
 
@@ -223,4 +223,6 @@ We're excited for all kinds of agents that'll come to life with Strands harness.
 
 ## Try it out today
 
-You can check out the [Python](https://github.com/strands-agents/harness-sdk/tree/main/harness-py) or [TypeScript](https://github.com/strands-agents/harness-sdk/tree/main/harness-ts) version of Strands harness today. The CLI will be launched later today as a separate package. Stay tuned in our [Discord](https://discord.gg/strands)!
+You can easily install Strands harness with `pip install strands-harness` for Python or `npm install @strands-agents/harness` for TypeScript.
+
+We believe quickly prototyping with a batteries included harness will create more useful agents. Our team is also in [Discord](https://discord.gg/strands), so come say hi or ask us any question about agents!

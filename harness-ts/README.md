@@ -104,7 +104,7 @@ npm install @google/genai       # for google/*
 Out of the box, `createHarness()` gives you an agent that:
 
 - **Runs on frontier models with reasoning on**, across Amazon Bedrock, Anthropic, OpenAI, and
-  Google. The default is Claude Opus 4.8 on Amazon Bedrock, behind a tuned system prompt: explore
+  Google. The default is Claude Opus 5 on Amazon Bedrock, behind a tuned system prompt: explore
   before changing things, confirm before anything irreversible, verify before calling a task done.
 - **Comes with working tools**: a shell, file tools (`read`, `write`, `edit`), web access, and
   `programmatic_tool_caller`, a sandbox where it writes code that chains, loops over, and
