@@ -573,6 +573,52 @@ For more information on implementing MCP servers, see the [MCP documentation](ht
 
 ## Advanced Usage
 
+### Complete prompt and resource arguments
+
+Request server-supplied candidates to populate a selector for prompt arguments or
+resource template variables. The server must implement completions for the
+referenced prompt or template. This feature is available in the Python SDK.
+
+<Tabs>
+<Tab label="Python">
+
+Call `complete_sync` inside an active client session. This example assumes a server
+at the given URL that completes the `repo` variable in the template:
+
+```python
+from mcp.types import ResourceTemplateReference
+from strands.tools.mcp import MCPClient
+
+with MCPClient(url="http://127.0.0.1:8000/mcp") as client:
+    result = client.complete_sync(
+        ref=ResourceTemplateReference(
+            type="ref/resource", uri="github://repos/{owner}/{repo}"
+        ),
+        argument={"name": "repo", "value": "py"},
+        context_arguments={"owner": "modelcontextprotocol"},
+    )
+    print(result.completion.values)
+```
+
+For a prompt, import `PromptReference` from `mcp.types` and pass
+`PromptReference(type="ref/prompt", name="review")` as `ref`. Use an empty `value`
+to request candidates for an empty prefix. Pass already resolved fields through
+`context_arguments` when candidates depend on another argument. Keep the resource
+URI template unexpanded.
+
+Use `await client.complete_async(...)` with the same arguments in asynchronous
+code. Both methods return the installed MCP package's `CompleteResult`, preserve
+candidate order, and propagate server errors. An empty candidate list is a
+successful result. Completion requests do not invoke a model.
+
+The optional continuation hint is `result.completion.hasMore` with MCP 1.x and
+`result.completion.has_more` with MCP 2.x. It is not a pagination cursor; the client
+does not fetch additional candidates automatically. `result.completion.total` can
+be absent on either version.
+
+</Tab>
+</Tabs>
+
 ### Elicitation
 
 An MCP server can pause a tool call to request additional input from the user. Configure an elicitation callback on the client to respond to these requests:
