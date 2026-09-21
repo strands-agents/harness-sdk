@@ -334,11 +334,13 @@ export const agent = await createHarness({
     const imported = importAgentProject(extracted)
     expect(imported.language).toBe(language)
     if (language === 'python') {
-      expect(entries.has('vendor/strands-harness/src/strands_harness/config.py')).toBe(true)
-      expect(entries.get('requirements.txt')?.toString()).toContain('./vendor/strands-harness')
+      expect([...entries.keys()].some((path) => path.startsWith('vendor/'))).toBe(false)
+      expect(entries.get('requirements.txt')?.toString()).toMatch(/^strands-harness~=/m)
       expect(entries.get('requirements.txt')?.toString()).toContain('strands-agents[cedar]')
     } else {
-      expect(JSON.parse(entries.get('package.json')!.toString()).dependencies['@cedar-policy/cedar-wasm']).toBeTruthy()
+      const dependencies = JSON.parse(entries.get('package.json')!.toString()).dependencies
+      expect(dependencies['@cedar-policy/cedar-wasm']).toBeTruthy()
+      expect(dependencies['@strands-agents/harness']).toMatch(/^\^\d/)
     }
   })
 
@@ -360,7 +362,7 @@ export const agent = await createHarness({
     const tsEntries = await readZipEntries(typescript)
     expect(JSON.parse(tsEntries.get('package.json')!.toString()).dependencies[dependency!]).toBeTruthy()
     const pyEntries = await readZipEntries(python)
-    expect(pyEntries.get('requirements.txt')?.toString()).toContain(`./vendor/strands-harness[${extra}]`)
+    expect(pyEntries.get('requirements.txt')?.toString()).toContain(`strands-harness[${extra}]~=`)
   })
 
   it('includes a production build and points chat users to the Strands CLI', async () => {

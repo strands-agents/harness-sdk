@@ -9,8 +9,8 @@ name: "Harness CLI: Release"
 #
 # The CLI depends on @strands-agents/harness and @strands-agents/sdk as version
 # RANGES (< 2.0.0 / < 1.18.0), resolved from the registry at install time -- so
-# there is no exact-pin or check-library-published gate. The tarball bundles the
-# harness-py source (scripts/bundle-python.js), so no PyPI dependency either.
+# there is no exact-pin or check-library-published gate. Exported projects pull
+# the harness from npm / PyPI too, so the tarball carries no vendored library.
 #
 # One-time setup before the first non-dry run:
 #   - GitHub environments `release-gate` and `npm` (already used by other releases).
@@ -243,9 +243,7 @@ jobs:
             echo "::error::${tgzs[0]}: is $name@$version, expected $EXPECTED_NAME@$EXPECTED_VERSION."
             exit 1
           fi
-          tar tzf "${tgzs[0]}" | grep -q '^package/dist/python/pyproject.toml$' \
-            || { echo "::error::${tgzs[0]}: missing bundled harness-py (dist/python)."; exit 1; }
-          echo "${tgzs[0]} is $name@$version and bundles harness-py"
+          echo "${tgzs[0]} is $name@$version"
 
       - name: Upload verified tarball for publish
         uses: actions/upload-artifact@v7.0.1

@@ -3,9 +3,9 @@ name: "Harness CLI: Test Package Pack"
 # End-to-end package install smoke test for the Strands CLI (`@strands-agents/cli`).
 # Reusable; called by release-harness-cli.yml. Reproduces a real user's install:
 # `npm pack` the CLI, install the tarball in a tempdir OUTSIDE the repo tree (so
-# nothing hoists), run the `strands` bin, and confirm the bundled harness-py is
-# present. The CLI's @strands-agents/harness / @strands-agents/sdk deps resolve
-# from the registry (ranged, not pinned), so only the CLI tarball is packed.
+# nothing hoists), and run the `strands` bin. The CLI's @strands-agents/harness /
+# @strands-agents/sdk deps resolve from the registry (ranged, not pinned), so only
+# the CLI tarball is packed.
 
 on:
   workflow_call:
@@ -57,9 +57,7 @@ jobs:
           fi
 
       - name: Pack, install in a tmpdir, run the bin
-        # npm pack runs prepack (clean + build = tsc + bundle-python.js), so the
-        # tarball carries the bundled harness-py under dist/python. The tmpdir
-        # MUST live outside the monorepo so nothing hoists into resolution.
+        # The tmpdir MUST live outside the monorepo so nothing hoists into resolution.
         run: |
           set -euo pipefail
           TARBALL=$(npm pack --silent)
@@ -72,17 +70,6 @@ jobs:
           npm init -y >/dev/null
           npm install --ignore-scripts --no-audit --no-fund "$TARBALL_PATH"
           ./node_modules/.bin/strands --help
-
-      - name: Assert the tarball bundles harness-py
-        # `strands --help` never touches the Python sidecar, so a silent
-        # bundle-python.js failure would pass the smoke test above.
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          tgzs=(./*.tgz)
-          tar tzf "${tgzs[0]}" > contents.txt
-          grep -q '^package/dist/python/pyproject.toml$' contents.txt \
-            || { echo "::error::CLI tarball has no bundled Python (dist/python missing)."; exit 1; }
 
       - name: Upload tarball for downstream inspect/publish
         uses: actions/upload-artifact@v7.0.1

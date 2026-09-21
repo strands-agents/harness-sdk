@@ -19,7 +19,7 @@
     "NOTICE"
   ],
   "scripts": {
-    "build": "tsc --project src/tsconfig.json && node scripts/bundle-python.js",
+    "build": "tsc --project src/tsconfig.json",
     "clean:dist": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "prepack": "npm run clean:dist && npm run build",
     "clean": "rm -rf dist node_modules",
@@ -27,10 +27,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage --exclude test/tui-pty-lifecycle.test.ts && vitest run test/tui-pty-lifecycle.test.ts",
-    "lint": "eslint bin scripts src test",
-    "lint:fix": "eslint bin scripts src test --fix",
-    "format": "prettier --write bin scripts src test",
-    "format:check": "prettier --check bin scripts src test",
+    "lint": "eslint bin src test",
+    "lint:fix": "eslint bin src test --fix",
+    "format": "prettier --write bin src test",
+    "format:check": "prettier --check bin src test",
     "type-check": "tsc --noEmit --project src/tsconfig.json",
     "type-check:test": "tsc --noEmit --project tsconfig.json",
     "check": "npm run lint && npm run format:check && npm run type-check && npm run type-check:test && npm run test:coverage",
