@@ -2,6 +2,9 @@
 title: Metrics
 description: 'Track agent performance metrics in Strands: token usage, latency, tool call counts, and event loop cycles, all available through AgentResult.'
 tags: [observability]
+sourceLinks:
+  - path: strands-py/src/strands/telemetry/metrics.py
+  - path: strands-py/src/strands/event_loop/_model_metrics.py
 ---
 
 Metrics are essential for understanding agent performance, optimizing behavior, and monitoring resource usage. The Strands Agents SDK provides comprehensive metrics tracking capabilities that give you visibility into how your agents operate.
@@ -141,6 +144,64 @@ This allows you to track metrics at both the individual invocation level and acr
 ```typescript
 --8<-- "user-guide/observability-evaluation/metrics.ts:agent_loop_metrics"
 ```
+</Tab>
+</Tabs>
+
+## Output throughput
+
+Inspect output tokens per second to compare completed model calls and track
+changes in client-observed throughput. This feature is available in the Python SDK.
+
+<Tabs>
+<Tab label="Python">
+
+Configure [Amazon Bedrock credentials](../concepts/model-providers/amazon-bedrock/)
+before running this example:
+
+```python
+from strands import Agent
+from strands.models import BedrockModel
+
+agent = Agent(model=BedrockModel())
+result = agent("Explain how rain forms.")
+
+# The metrics object accumulates data across this agent's invocations.
+print(result.metrics.average_output_tokens_per_second)
+print(result.metrics.output_throughput_sample_count)
+
+invocation = result.metrics.latest_agent_invocation
+if invocation is not None:
+    print(invocation.average_output_tokens_per_second)
+    for cycle in invocation.cycles:
+        print(cycle.output_tokens_per_second)
+        for call in cycle.model_invocations:
+            print(call.model_id, call.output_tokens_per_second)
+```
+
+Each `ModelInvocationMetric` record contains `model_id`, `output_tokens`, and
+`client_duration` in seconds. Timing starts when the terminal model streaming
+operation begins and ends when it receives the last raw chunk. It includes request
+preparation, time to first output, adapter-internal retries, network delays, and
+backpressure between chunks. It excludes tool execution, hooks outside that
+operation, event-loop retry backoff, and processing after the last chunk. This
+measures throughput observed by the client, not server-side decoding speed.
+
+Aggregate rates divide the sum of valid output counts by the sum of their matching
+durations. `output_throughput_sample_count` counts those valid pairs. Missing or
+invalid values do not contribute; no valid pairs produces `None`. An explicit
+zero output count can produce a valid rate of `0.0`. Counts come from the last
+explicit `outputTokens` reported in each raw model stream. If a model provider
+fills missing usage with zero, the SDK cannot distinguish that from a reported zero.
+
+Failed, cancelled, prematurely closed, and middleware-short-circuited streams do
+not produce records. A completed response retried by an after-model hook does
+count. Use each record's `model_id` when comparing models with different tokenizers.
+
+Use `latest_agent_invocation` for the latest request. `get_summary()` copies the new
+throughput records and includes rates and sample counts at every aggregation
+level. These metrics are not exported to OpenTelemetry instruments or restored
+from historical session snapshots.
+
 </Tab>
 </Tabs>
 
