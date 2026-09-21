@@ -83,7 +83,7 @@ export interface HarnessAgentOptions extends Omit<
   /**
    * A `Model` or `ModelRouter` instance, a `"provider/name"` string (e.g.
    * `"anthropic/claude-fable-5"`), a bare Bedrock model id, or `undefined` for the harness default
-   * (Bedrock Opus 4.8).
+   * (Bedrock Opus 5).
    */
   model?: Model | ModelRouter | string
   /**
