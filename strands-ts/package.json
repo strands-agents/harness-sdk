@@ -19,6 +19,10 @@
     "LICENSE"
   ],
   "exports": {
+    "./testing": {
+      "types": "./dist/src/testing/index.d.ts",
+      "default": "./dist/src/testing/index.js"
+    },
     ".": {
       "types": "./dist/src/index.d.ts",
       "node": "./dist/src/index.node.js",
@@ -193,7 +197,7 @@
     "build": "tsc --project src/tsconfig.json",
     "prepack": "npm run build",
     "check": "npm run lint && npm run format && npm run type-check && npm run check:browser-bundle && npm run test:coverage && npm run test:package",
-    "check:browser-bundle": "esbuild src/index.ts --bundle --platform=browser --format=esm --packages=external --outfile=/dev/null",
+    "check:browser-bundle": "node scripts/check-browser-bundle.mjs",
     "clean": "rm -rf node_modules dist",
     "lock:refresh": "rm -rf node_modules && npm install --ignore-scripts --os=linux --os=darwin --os=win32 --cpu=x64 --cpu=arm64 --cpu=wasm32",
     "test": "vitest run --project unit-node",

@@ -8,6 +8,8 @@ integrationType: model-provider
 sourceLinks:
   - path: strands-py/src/strands/models/model.py
   - path: strands-ts/src/models/model.ts
+  - path: strands-ts/src/testing/mock-message-model.ts
+  - path: strands-ts/src/testing/test-model-provider.ts
 ---
 
 Strands Agents SDK provides an extensible interface for implementing custom model providers, allowing organizations to integrate their own LLM services while keeping implementation details private to their codebase.
@@ -49,6 +51,48 @@ flowchart TD
     Base --> Ollama["Ollama Model Provider"]
     Base --> Custom["Custom Model Provider"]
 ```
+
+## Test agents offline
+
+Run an agent with scripted model responses to test application behavior without
+model credentials or a model service. These testing model providers are available
+in the TypeScript SDK.
+
+<Tabs>
+<Tab label="TypeScript">
+
+Use `MockMessageModel` to describe responses as content blocks:
+
+```typescript
+--8<-- "user-guide/concepts/model-providers/custom_model_provider_imports.ts:offline"
+
+--8<-- "user-guide/concepts/model-providers/custom_model_provider.ts:offline"
+```
+
+`addTurn` accepts a content block, an array of blocks, or an `Error`. Its optional
+second argument supplies `usage` or overrides `stopReason`. Plain content blocks
+need a `type` discriminator, as shown above.
+
+A single configured turn repeats on every call. Multiple turns are consumed in
+order, and another call after exhaustion throws. `callCount` counts streams when
+consumption starts, including attempts that throw. Create a new model instance for
+each independent test.
+
+Scripted tool-use blocks still execute the agent's registered tools. Use tools
+with controlled side effects when testing tool calling. Media and JSON blocks do
+not simulate a model provider's multimodal responses.
+
+For exact streaming events or errors between events, use `TestModelProvider` from
+the same subpath. Its constructor accepts an async generator factory, invoked
+afresh for each consumed stream. `setEventGenerator` changes subsequent streams.
+Both helpers support `getConfig` and `updateConfig`; their scripted responses do
+not depend on those settings, messages, or stream options.
+
+The subpath works in Node.js and browser bundles without a test framework. Import
+from `@strands-agents/sdk/testing`; internal test fixtures are not public API.
+
+</Tab>
+</Tabs>
 
 ## Implementation Overview
 

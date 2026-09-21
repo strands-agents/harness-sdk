@@ -84,6 +84,8 @@ jobs:
           cp strands-ts/test/packages/npm-pack/package.json \
              strands-ts/test/packages/npm-pack/tsconfig.json \
              strands-ts/test/packages/npm-pack/verify.ts \
+             strands-ts/test/packages/npm-pack/testing-types.ts \
+             strands-ts/test/packages/npm-pack/tsconfig.testing.json \
              "$WORK/"
           cd "$WORK"
 
@@ -91,6 +93,8 @@ jobs:
           npm install --ignore-scripts --no-audit --no-fund "$TARBALL_PATH"
 
           npx tsc --noEmit
+          # Check the testing subpath's entire declaration closure, including shipped .d.ts files.
+          npx tsc --project tsconfig.testing.json
           npx tsx verify.ts
 
           # Guard against dependency bloat (#4169). Reinstall without the
