@@ -69,7 +69,7 @@ The harness supplies the file tools for this task. Its [Python README](harness-p
 
 ### TypeScript
 
-The npm release is pending. Once available, install the library in a Node.js 22+ project:
+Requires Node.js 22+:
 
 ```bash
 npm install @strands-agents/harness
@@ -87,7 +87,7 @@ Use an ES module with top-level `await`. See the [TypeScript harness README](har
 
 ### Terminal
 
-The CLI wraps the harness for interactive use. Its npm release is pending; once available, install it with Node.js 22+:
+The CLI wraps the harness for interactive use. Requires Node.js 22+:
 
 ```bash
 npm install -g @strands-agents/cli
@@ -144,8 +144,8 @@ Find the implementation or guide you want to work on:
 | Directory | Contents |
 | --- | --- |
 | [`harness-py/`](harness-py/) | Python harness, published as [`strands-harness`](https://pypi.org/project/strands-harness/) |
-| [`harness-ts/`](harness-ts/) | TypeScript harness, package `@strands-agents/harness` |
-| [`strands-cli/`](strands-cli/) | Terminal interface, package `@strands-agents/cli`, command `strands` |
+| [`harness-ts/`](harness-ts/) | TypeScript harness, published as [`@strands-agents/harness`](https://www.npmjs.com/package/@strands-agents/harness) |
+| [`strands-cli/`](strands-cli/) | Terminal interface, published as [`@strands-agents/cli`](https://www.npmjs.com/package/@strands-agents/cli), command `strands` |
 | [`strands-py/`](strands-py/) | Python Harness SDK, published as [`strands-agents`](https://pypi.org/project/strands-agents/) |
 | [`strands-ts/`](strands-ts/) | TypeScript Harness SDK, published as [`@strands-agents/sdk`](https://www.npmjs.com/package/@strands-agents/sdk) |
 | [`strands-mcp/`](strands-mcp/) | MCP server for the Strands documentation |
