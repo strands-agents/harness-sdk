@@ -40,6 +40,7 @@ from mcp.types import (
     CancelledNotification,
     CancelledNotificationParams,
     ClientNotification,
+    CompleteResult,
     ElicitationRequiredErrorData,
     GetPromptResult,
     Implementation,
@@ -47,7 +48,9 @@ from mcp.types import (
     ListResourcesResult,
     ListResourceTemplatesResult,
     PaginatedRequestParams,
+    PromptReference,
     ReadResourceResult,
+    ResourceTemplateReference,
     TextResourceContents,
 )
 from mcp.types import CallToolResult as MCPCallToolResult
@@ -822,6 +825,59 @@ class MCPClient(ToolProvider):
         self._log_debug_with_thread("received prompt from MCP server")
 
         return get_prompt_result
+
+    def complete_sync(
+        self,
+        ref: PromptReference | ResourceTemplateReference,
+        argument: dict[str, str],
+        context_arguments: dict[str, str] | None = None,
+    ) -> CompleteResult:
+        """Synchronously request candidates for a prompt argument or resource template variable.
+
+        Args:
+            ref: Prompt or resource template reference, using the server's unmodified URI template.
+            argument: Argument name and current value, including an empty value for an empty prefix.
+            context_arguments: Already resolved arguments used by the server to narrow candidates.
+
+        Returns:
+            The installed MCP SDK's complete result, including candidate order and optional metadata.
+
+        Raises:
+            MCPClientInitializationError: If the client session is not running.
+            RuntimeError: If the client closes while the request is in progress.
+            MCPError: If the server rejects the request, including unsupported completions.
+        """
+        if not self._is_session_active():
+            raise MCPClientInitializationError(CLIENT_SESSION_NOT_RUNNING_ERROR_MESSAGE)
+        return self._invoke_on_background_thread(self._complete_async(ref, argument, context_arguments)).result()
+
+    async def complete_async(
+        self,
+        ref: PromptReference | ResourceTemplateReference,
+        argument: dict[str, str],
+        context_arguments: dict[str, str] | None = None,
+    ) -> CompleteResult:
+        """Request argument candidates without blocking the caller's event loop.
+
+        Args:
+            ref: Prompt or resource template reference, using the server's unmodified URI template.
+            argument: Argument name and current value, including an empty value for an empty prefix.
+            context_arguments: Already resolved arguments used by the server to narrow candidates.
+
+        Returns:
+            The installed MCP SDK's complete result, including candidate order and optional metadata.
+
+        Raises:
+            MCPClientInitializationError: If the client session is not running.
+            RuntimeError: If the client closes while the request is in progress.
+            MCPError: If the server rejects the request, including unsupported completions.
+            asyncio.CancelledError: If the caller cancels the request.
+        """
+        if not self._is_session_active():
+            raise MCPClientInitializationError(CLIENT_SESSION_NOT_RUNNING_ERROR_MESSAGE)
+        return await asyncio.wrap_future(
+            self._invoke_on_background_thread(self._complete_async(ref, argument, context_arguments))
+        )
 
     def list_resources_sync(self, pagination_token: str | None = None) -> ListResourcesResult:
         """Synchronously retrieves the list of available resources from the MCP server.
@@ -2059,6 +2115,15 @@ class MCPClient(ToolProvider):
             allow_claimed=True,
         )
         return cast(MCPCallToolResult | MCPCreateTaskResult, result)
+
+    async def _complete_async(
+        self,
+        ref: PromptReference | ResourceTemplateReference,
+        argument: dict[str, str],
+        context_arguments: dict[str, str] | None,
+    ) -> CompleteResult:
+        session = cast(ClientSession, self._background_thread_session)
+        return await session.complete(ref, argument, context_arguments=context_arguments)
 
     async def _get_task_async(self, task_id: str, read_timeout_seconds: timedelta | None = None) -> MCPGetTaskResult:
         """Send a finalized ``tasks/get`` request."""
