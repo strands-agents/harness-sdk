@@ -279,4 +279,6 @@ class PythonAgentTool(AgentTool):
             yield ToolResultEvent(result)
         else:
             result = await asyncio.to_thread(self._tool_func, tool_use, **invocation_state)
+            if inspect.isawaitable(result):
+                result = await result
             yield ToolResultEvent(result)
