@@ -275,4 +275,4 @@ If you discover a potential security issue in this project we ask that you notif
 
 ## Licensing
 
-See the [LICENSE.APACHE](./LICENSE.APACHE) and [LICENSE.MIT](./LICENSE.MIT) files for our project's licensing. We will ask you to confirm the licensing of your contribution.
+See the [LICENSE.APACHE](./LICENSE.APACHE) file for our project's licensing. We will ask you to confirm the licensing of your contribution.
