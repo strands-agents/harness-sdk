@@ -307,6 +307,7 @@ For detailed guidance, tutorials, and concept overviews, please visit:
 
 - **[Official Documentation](https://strandsagents.com/)**: Comprehensive guides and tutorials
 - **[API Reference](https://strandsagents.com/docs/api/typescript/)**: Complete API documentation
+- **[Snapshot App Data](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/docs/SNAPSHOT_APP_DATA.md)**: Attach application metadata to automatic and manual session snapshots
 - **[Examples](./examples/)**: Sample applications
   - **[First Agent](./examples/first-agent/)**: Basic Node.js agent
   - **[MCP](./examples/mcp/)**: MCP integration example
@@ -342,4 +343,3 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 ## Security
 
 See [CONTRIBUTING](https://github.com/strands-agents/harness-sdk/blob/main/CONTRIBUTING.md#security-issue-notifications) for more information on reporting security issues.
-
