@@ -125,6 +125,8 @@ class _InterruptState:
 
         Raises:
             TypeError: If in interrupt state but user did not provide responses.
+            ValueError: If a response is None. None marks an interrupt unanswered, so accepting it
+                would re-raise the same interrupt instead of resuming.
         """
         if not self.activated:
             return
@@ -147,6 +149,9 @@ class _InterruptState:
 
             if interrupt_id not in self.interrupts:
                 raise KeyError(f"interrupt_id=<{interrupt_id}> | no interrupt found")
+
+            if interrupt_response is None:
+                raise ValueError(f"interrupt_id=<{interrupt_id}> | interrupt response must not be None")
 
             self.interrupts[interrupt_id].response = interrupt_response
 
