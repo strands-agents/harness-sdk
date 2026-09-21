@@ -297,6 +297,7 @@ For detailed guidance & examples, explore our documentation:
 - [User Guide](https://strandsagents.com/)
 - [Quick Start Guide](https://strandsagents.com/docs/user-guide/quickstart/)
 - [Agent Loop](https://strandsagents.com/docs/user-guide/concepts/agents/agent-loop/)
+- [Client-observed output throughput](docs/OUTPUT_THROUGHPUT.md)
 - [Examples](https://strandsagents.com/docs/examples/)
 - [API Reference](https://strandsagents.com/docs/api/python/strands.agent.agent/)
 - [Production & Deployment Guide](https://strandsagents.com/docs/user-guide/deploy/operating-agents-in-production/)
