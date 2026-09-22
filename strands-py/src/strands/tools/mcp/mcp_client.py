@@ -1534,15 +1534,31 @@ class MCPClient(ToolProvider):
             if not self._init_future.done():
                 self._init_future.set_exception(e)
             else:
+                self._log_debug_with_thread(
+                    "encountered exception on background thread after initialization %s", str(e)
+                )
+
                 # _close_future is automatically cancelled by the framework which doesn't provide us with the useful
                 # exception, so instead we store the exception in a different field where stop() can read it
                 self._close_exception = e
                 if self._close_future and not self._close_future.done():
                     self._close_future.set_result(None)
 
-                self._log_debug_with_thread(
-                    "encountered exception on background thread after initialization %s", str(e)
-                )
+                self._log_debug_with_thread("wait for remaining tasks on background thread to complete")
+
+                deadline = asyncio.get_event_loop().time() + 5
+                while asyncio.get_event_loop().time() < deadline:
+                    await asyncio.sleep(0)
+                    pending = [
+                        t for t in asyncio.all_tasks()
+                        if t is not asyncio.current_task() and not t.done()
+                    ]
+                    if not pending:
+                        break
+                    await asyncio.wait(
+                        pending,
+                        timeout=max(0, deadline - asyncio.get_event_loop().time()),
+                    )
 
     # Raise an exception if the underlying client raises an exception in a message
     # This happens when the underlying client has an http timeout error
@@ -1621,6 +1637,7 @@ class MCPClient(ToolProvider):
         self._background_thread_event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._background_thread_event_loop)
         self._background_thread_event_loop.run_until_complete(self._async_background_thread())
+        self._log_debug_with_thread("background task event loop finished")
 
     def map_mcp_content_to_tool_result_content(
         self,

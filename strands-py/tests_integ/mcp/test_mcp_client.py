@@ -523,7 +523,10 @@ async def test_streamable_http_mcp_client_with_500_error():
         with pytest.raises(RuntimeError, match="Connection to the MCP server was closed"):
             with streamable_http_client:
                 result = await streamable_http_client.call_tool_async(
-                    tool_use_id="123", name="calculator", arguments={"x": 3, "y": 4}
+                    tool_use_id="123",
+                    name="calculator",
+                    arguments={"x": 3, "y": 4},
+                    cancel_signal=threading.Event()
                 )
     finally:
         proxy_process.terminate()
