@@ -1,46 +1,18 @@
-import { OGImageRoute } from 'astro-og-canvas'
+import type { APIRoute, GetStaticPaths } from 'astro'
 import { getCollection } from 'astro:content'
+import { renderOgImage } from '../../../util/og-image'
 
-const posts = await getCollection('blog', ({ data }) => {
-  return import.meta.env.PROD ? !data.draft : true
-})
+export const getStaticPaths: GetStaticPaths = async () => {
+  const posts = await getCollection('blog', ({ data }) => (import.meta.env.PROD ? !data.draft : true))
+  return posts.map((post) => ({
+    params: { slug: post.id },
+    props: { title: post.data.title, description: post.data.description },
+  }))
+}
 
-const pages = Object.fromEntries(
-  posts.map((post) => [
-    post.id,
-    {
-      title: post.data.title,
-      description: post.data.description,
-    },
-  ])
-)
-
-export const { getStaticPaths, GET } = await OGImageRoute({
-  pages,
-  getSlug: (path) => path,
-  getImageOptions: (_path, page) => ({
-    title: page.title,
-    description: page.description,
-    bgGradient: [[14, 14, 14]],
-    font: {
-      title: {
-        families: ['sans-serif'],
-        weight: 'Bold',
-        color: [255, 255, 255],
-        size: 64,
-      },
-      description: {
-        families: ['sans-serif'],
-        weight: 'Normal',
-        color: [160, 168, 176],
-        size: 32,
-      },
-    },
-    border: {
-      color: [0, 204, 95],
-      width: 20,
-      side: 'inline-start',
-    },
-    padding: 80,
-  }),
-})
+export const GET: APIRoute = async ({ props }) => {
+  const png = await renderOgImage({ title: props.title as string, description: props.description as string })
+  return new Response(png, {
+    headers: { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=31536000, immutable' },
+  })
+}
