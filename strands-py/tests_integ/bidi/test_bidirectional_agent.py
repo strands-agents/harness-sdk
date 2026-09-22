@@ -67,13 +67,6 @@ PROVIDER_CONFIGS = {
         "env_vars": ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
         "skip_reason": "AWS credentials not available",
     },
-    "bedrock_nova_sonic_v1": {
-        "model_factory": create_bedrock_nova_sonic_model,
-        "model_kwargs": {"model_id": "amazon.nova-sonic-v1:0", "region": "us-east-1"},
-        "silence_duration": 2.5,  # Nova Sonic v1 needs 2+ seconds of silence
-        "env_vars": ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
-        "skip_reason": "AWS credentials not available",
-    },
     "openai_realtime": {
         "model_factory": OpenAIRealtimeModel,
         "model_kwargs": {
