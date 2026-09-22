@@ -190,7 +190,7 @@ function normalizeDetailText(value: string): string {
 export function formatContext(context: ChatSnapshot['context'], width = 10): string {
   const used = context.projectedTokens ?? context.currentTokens
   if (used === undefined || !context.contextWindow) {
-    return `${'░'.repeat(width)} --`
+    return `${'░'.repeat(width)} 0%`
   }
   const percentage = (used / context.contextWindow) * 100
   const filled = used > 0 ? Math.max(1, Math.round(Math.min(1, used / context.contextWindow) * width)) : 0

@@ -257,7 +257,7 @@ describe('ChatView', () => {
     expect(output.indexOf('answer')).toBeLessThan(output.indexOf('Message Strands harness'))
     expect(output.indexOf('Message Strands harness')).toBeLessThan(output.lastIndexOf('bedrock/test'))
     expect(output.split('\n').some((line) => line.trim() === 'hello')).toBe(true)
-    expect(output).toContain('context ░░░░░░░░░░ --')
+    expect(output).toContain('context ░░░░░░░░░░ 0%')
     expect(output).toContain('Shift+Enter')
     const rows = output.trimEnd().split('\n')
     expect(rows.at(-3)).toContain('context')
@@ -1253,14 +1253,14 @@ describe('voice input', () => {
 describe('panel helpers', () => {
   it('overlays a selection without changing the rendered text', () => {
     const props = {
-      snapshot: snapshot(),
+      snapshot: snapshot({ context: { projectedTokens: 100, contextWindow: 1_000 } }),
       terminalWidth: 80,
       terminalHeight: 16,
     }
     const output = sanitizeTerminalText(renderView(props, { columns: 80 }))
     const lines = output.split('\n')
-    const target = lines.findIndex((line) => line.includes('context ░'))
-    const column = lines[target]!.indexOf('context ░')
+    const target = lines.findIndex((line) => line.includes('context █'))
+    const column = lines[target]!.indexOf('context █')
     const selection = selectScreenText(
       lines,
       { column: column + 1, row: target + 1 },

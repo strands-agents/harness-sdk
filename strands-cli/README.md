@@ -71,19 +71,19 @@ Run from the repository root with:
 
 ```bash
 npm run setup
-strands
+strands-dev
 ```
 
-`npm run setup` installs the workspace and links the `strands` command to this checkout. The linked
-launcher fingerprints `harness-ts` and `strands-cli`, so switching branches or editing source causes one
-silent rebuild before the CLI starts:
+`npm run setup` installs the CLI dependencies and links the `strands-dev` command to this checkout. The
+linked launcher fingerprints the CLI source, so switching branches or editing it causes one silent rebuild
+before the CLI starts:
 
 ```bash
 git switch main
-strands
+strands-dev
 
 git switch another-branch
-strands
+strands-dev
 ```
 
 If a branch changes dependencies, run `npm run setup` again. A packaged npm installation contains

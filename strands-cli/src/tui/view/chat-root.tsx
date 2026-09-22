@@ -123,6 +123,7 @@ export function ChatRoot({
       <ThemeProvider settings={settings}>
         <DnaVortexIntro
           ready={setup || controller !== undefined}
+          setup={setup}
           theme={settings.frogTheme}
           customBase={settings.customTheme.base}
           onComplete={finishIntro}

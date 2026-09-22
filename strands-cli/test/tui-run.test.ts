@@ -313,18 +313,25 @@ describe('runInkChat', () => {
     const controller = new ChatController(backend(), { settings: { animations: false } })
     await controller.submit('hello!')
     let instance: Instance | undefined
+    let incrementalRendering: boolean | undefined
     const running = runInkChat(controller, {
       intro: false,
       input,
       output,
       errorOutput: output,
       renderApp: (element, options) => {
-        instance = render(element, { ...options, interactive: true, patchConsole: false })
+        if (!options || !('incrementalRendering' in options)) {
+          throw new Error('Expected Ink render options.')
+        }
+        incrementalRendering = options.incrementalRendering
+        // Full frames let each write be compared against a fresh render.
+        instance = render(element, { ...options, interactive: true, patchConsole: false, incrementalRendering: false })
         return instance
       },
     })
 
     try {
+      expect(incrementalRendering).toBe(true)
       await vi.waitFor(() => expect(writes.join('')).toContain('Message Test'))
       input.push('draft')
       await vi.waitFor(() => expect(writes.join('')).toContain('draft'))

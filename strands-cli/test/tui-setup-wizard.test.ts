@@ -13,8 +13,13 @@ import { DEFAULT_CHAT_SETTINGS } from '../src/tui/chat/types.js'
 import { settingsRows } from '../src/tui/chat/panels.js'
 import { sanitizeTerminalText } from '../src/tui/terminal/sanitize.js'
 import { SetupWizard } from '../src/tui/view/setup-wizard/index.js'
-import { APPEARANCE_STEP, setupStepProgress, wizardSettingsRows } from '../src/tui/view/setup-wizard/steps.js'
-import { discoverAwsConfiguration, discoverAwsCredentials, discoverLiteLlm } from '../src/tui/provider/discovery.js'
+import { setupStepProgress, wizardSettingsRows } from '../src/tui/view/setup-wizard/steps.js'
+import {
+  discoverAwsConfiguration,
+  discoverAwsCredentials,
+  discoverLiteLlm,
+  discoverProviderModels,
+} from '../src/tui/provider/discovery.js'
 import { discoverAwsConfiguration as readAwsConfiguration } from '../src/tui/provider/aws-config.js'
 import { ttyInput, ttyOutput } from './fixtures/terminal.js'
 
@@ -33,13 +38,16 @@ describe('setup presentation', () => {
       setupStepProgress('quickstart', 1),
       setupStepProgress('quickstart', 2),
       setupStepProgress('quickstart', 3),
-      setupStepProgress('quickstart', APPEARANCE_STEP),
     ]).toEqual([
-      { current: 1, total: 4, instruction: 'Pick a model for your agent' },
-      { current: 2, total: 4, instruction: "Choose your agent's tools" },
-      { current: 3, total: 4, instruction: 'Choose plugins and features' },
-      { current: 4, total: 4, instruction: 'Choose how Strands looks' },
+      { current: 1, total: 3, instruction: 'Pick a model for your agent' },
+      { current: 2, total: 3, instruction: "Choose your agent's tools" },
+      { current: 3, total: 3, instruction: 'Choose plugins and features' },
     ])
+    expect(setupStepProgress('manual', 7)).toEqual({
+      current: 7,
+      total: 7,
+      instruction: 'Review your agent',
+    })
   })
 
   it.each([
@@ -75,7 +83,7 @@ describe('setup presentation', () => {
       await instance.waitUntilRenderFlush()
       input.push('\r')
       await instance.waitUntilRenderFlush()
-      await vi.waitFor(() => expect(frame).toContain('1 of 4'))
+      await vi.waitFor(() => expect(frame).toContain('1 of 3'))
       expect(frame).not.toContain('Step 1:')
       expect(frame).toContain('Pick a model for your agent')
       expect(frame).toContain('Back')
@@ -144,6 +152,69 @@ describe('setup presentation', () => {
     } finally {
       instance.unmount()
       await instance.waitUntilExit()
+    }
+  })
+
+  it.each([
+    ['quickstart', 0],
+    ['manual', 1],
+  ])('keeps a clicked AWS region visible in %s setup', async (_flow, openingMoves) => {
+    vi.mocked(discoverAwsCredentials).mockResolvedValue('missing')
+    const input = ttyInput()
+    const output = ttyOutput(100, 50)
+    let frame = ''
+    output.on('data', (chunk: Buffer) => {
+      if (chunk.toString().includes('\n')) {
+        frame = sanitizeTerminalText(chunk.toString())
+      }
+    })
+    const instance = render(
+      createElement(SetupWizard, {
+        config: CliConfigStore.memory({}, {}, { animations: false }),
+        onComplete: () => {},
+      }),
+      {
+        stdin: input,
+        stdout: output,
+        stderr: output,
+        interactive: true,
+        debug: true,
+        incrementalRendering: false,
+        patchConsole: false,
+        exitOnCtrlC: false,
+      }
+    )
+    const click = async (text: string): Promise<void> => {
+      const lines = frame.split('\n')
+      const row = lines.findIndex((line) => line.includes(text))
+      const column = lines[row]!.indexOf(text)
+      input.push(mouseInputSequence(0, column, row, 'M'))
+      input.push(mouseInputSequence(3, column, row, 'm'))
+      await instance.waitUntilRenderFlush()
+    }
+    try {
+      await instance.waitUntilRenderFlush()
+      for (let index = 0; index < openingMoves; index++) {
+        input.push('\u001b[B')
+        await instance.waitUntilRenderFlush()
+      }
+      input.push('\r')
+      await instance.waitUntilRenderFlush()
+      await vi.waitFor(() => expect(frame).toContain('AWS region'))
+
+      await click('AWS region')
+      await vi.waitFor(() => expect(frame).toContain('us-east-1'))
+      await click('us-east-1')
+
+      expect(frame).toContain('us-east-1  ▾')
+      input.push('\r')
+      await instance.waitUntilRenderFlush()
+      expect(frame).toContain('AWS profile')
+      expect(frame).toContain('Default credential chain')
+    } finally {
+      instance.unmount()
+      await instance.waitUntilExit()
+      vi.mocked(discoverAwsCredentials).mockResolvedValue('valid')
     }
   })
 
@@ -340,7 +411,7 @@ describe('setup presentation', () => {
       input.push('\r')
       await instance.waitUntilRenderFlush()
       await delay(180)
-      await vi.waitFor(() => expect(frame).toContain('1 of 4'))
+      await vi.waitFor(() => expect(frame).toContain('1 of 3'))
       expect(frame).not.toContain('Name and instruct your agent')
     } finally {
       instance.unmount()
@@ -467,7 +538,7 @@ describe('setup refresh', () => {
       await instance.waitUntilRenderFlush()
       await press('\r')
       for (let index = 0; index < 3; index++) await press('\u001b[B')
-      await vi.waitFor(() => expect(frame).toContain('OPENAI_API_KEY was not detected.'))
+      await vi.waitFor(() => expect(frame).toContain('Session only · Add to'))
       expect(frame).not.toContain('Set up OpenAI')
       expect(frame).toContain('Click to enter text')
       expect(frame).toContain('Session only · Add to')
@@ -490,6 +561,13 @@ describe('setup refresh', () => {
       await press('\r')
 
       await vi.waitFor(() => expect(frame).toContain('Models'))
+      expect(vi.mocked(discoverProviderModels).mock.calls).toContainEqual([
+        'openai',
+        expect.objectContaining({
+          OPENAI_API_KEY: { value: 'sk-session-secret', source: 'session' },
+        }),
+        expect.anything(),
+      ])
       expect(config.providerEnvironment().OPENAI_API_KEY).toEqual({
         value: 'sk-session-secret',
         source: 'session',
@@ -648,14 +726,16 @@ describe('setup theme', () => {
     try {
       await instance.waitUntilRenderFlush()
       await press('\r')
-      for (const destination of ['Tools', 'Plugins & features', 'Appearance']) {
+      for (const destination of ['Tools', 'Plugins & features']) {
         await press('\u001b[Z')
         await press('\r')
         await vi.waitFor(() => expect(sanitizeTerminalText(writes.join(''))).toContain(destination))
       }
+      expect(sanitizeTerminalText(writes.join(''))).toMatch(/Save and Launch|Launch Strands harness/)
       await press('\u001b[Z')
       await press('\r')
       await vi.waitFor(() => expect(onComplete).toHaveBeenCalledOnce())
+      expect(sanitizeTerminalText(writes.join(''))).not.toContain('Appearance')
       const change = onComplete.mock.calls[0]?.[0]
       expect(change?.newConversation).not.toBe(true)
       expect(config.snapshot().settings.frogTheme).toBe(expected)

@@ -7,6 +7,29 @@ import { OPENING_CHOICES } from './steps.js'
 
 const HOVER_FADE_DURATION_MS = 180
 
+/** Shared with the setup brand so the lockup starts on the grid's left edge. */
+export function openingGridLayout(width: number): {
+  columns: number
+  columnGap: number
+  rowGap: number
+  cardWidth: number
+  gridWidth: number
+  left: number
+} {
+  const columns = width >= 64 ? 2 : 1
+  const columnGap = columns === 2 ? 4 : 0
+  const cardWidth = columns === 2 ? Math.min(44, Math.floor((width - columnGap) / 2)) : Math.min(48, width)
+  const gridWidth = cardWidth * columns + (columns - 1) * columnGap
+  return {
+    columns,
+    columnGap,
+    rowGap: columns === 2 ? 2 : 1,
+    cardWidth,
+    gridWidth,
+    left: Math.floor((width - gridWidth) / 2),
+  }
+}
+
 export function OpeningMenu({
   width,
   height,
@@ -32,22 +55,18 @@ export function OpeningMenu({
 }): ReactElement {
   const palette = useTheme()
   const hoverProgress = useHoverProgress(hovered, OPENING_CHOICES.length, animate)
-  const columns = width >= 64 ? 2 : 1
-  const columnGap = columns === 2 ? 4 : 0
-  const rowGap = columns === 2 ? 2 : 1
-  const cardWidth = columns === 2 ? Math.min(44, Math.floor((width - columnGap) / 2)) : Math.min(48, width)
-  const gridWidth = cardWidth * columns + (columns - 1) * columnGap
+  const { columnGap, rowGap, cardWidth, gridWidth, left } = openingGridLayout(width)
   return (
     <FadeIn animate={animate} background={palette.background}>
       <Box
         {...(height === undefined ? { flexGrow: 1 } : { height, flexGrow: 0, flexShrink: 0 })}
-        alignItems="center"
+        alignItems="flex-start"
         justifyContent="flex-start"
         flexDirection="column"
         overflow="hidden"
         paddingTop={topGap}
       >
-        <Box width={gridWidth} flexWrap="wrap" columnGap={columnGap} rowGap={rowGap}>
+        <Box width={gridWidth} marginLeft={left} flexWrap="wrap" columnGap={columnGap} rowGap={rowGap}>
           {OPENING_CHOICES.map((choice, index) => {
             const active = showSelection && index === selection
             const hover = hoverProgress[index] ?? 0

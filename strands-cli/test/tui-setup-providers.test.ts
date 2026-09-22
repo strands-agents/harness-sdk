@@ -172,6 +172,68 @@ describe('setup provider credentials', () => {
     expect(rows.find((row) => row.id === 'openai:OPENAI_API_KEY')).toBeUndefined()
   })
 
+  it('offers a replacement field after an API key is rejected', () => {
+    const setEditing = vi.fn()
+    const environment = { OPENAI_API_KEY: { value: 'rejected', source: 'session' as const } }
+    const rows = rowsForStep(
+      1,
+      'quickstart',
+      quickstartDraft('openai', environment),
+      '',
+      {},
+      environment,
+      'openai',
+      [],
+      { profiles: [], regions: [] },
+      undefined,
+      () => {},
+      () => {},
+      setEditing,
+      undefined,
+      'openai'
+    )
+
+    expect(rows.find((row) => row.id === 'openai')).toMatchObject({
+      description: 'Setup required',
+      status: 'error',
+    })
+    const apiKey = rows.find((row) => row.id === 'openai:OPENAI_API_KEY')
+    expect(apiKey).toMatchObject({ input: true, description: 'Rejected · this session' })
+    apiKey?.activate()
+    expect(setEditing).toHaveBeenCalledWith({ field: 'OPENAI_API_KEY', value: '' })
+  })
+
+  it('keeps the credential panel stable while validating an API key', () => {
+    const environment = { GEMINI_API_KEY: { value: 'checking', source: 'session' as const } }
+    const rows = rowsForStep(
+      1,
+      'quickstart',
+      quickstartDraft('google', environment),
+      '',
+      {},
+      environment,
+      'google',
+      [],
+      { profiles: [], regions: [] },
+      undefined,
+      () => {},
+      () => {},
+      () => {},
+      undefined,
+      undefined,
+      'google'
+    )
+
+    expect(rows.find((row) => row.id === 'google')).toMatchObject({
+      description: 'Validating',
+      status: 'warning',
+    })
+    expect(rows.find((row) => row.id === 'google:GEMINI_API_KEY')).toMatchObject({
+      input: false,
+      description: 'Checking API key...',
+    })
+  })
+
   it('keeps missing-credential guidance concise and points to the shell profile', () => {
     vi.stubEnv('SHELL', '/bin/zsh')
     const warning = providerAssessment('openai', {}, { profiles: [], regions: [] }, undefined).warning

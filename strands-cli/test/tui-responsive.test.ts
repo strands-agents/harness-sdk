@@ -12,6 +12,9 @@ import { frogStartupHeight, renderFrogStartupLockup } from '../src/tui/view/frog
 import { SetupWizard } from '../src/tui/view/setup-wizard/index.js'
 import { ttyInput, ttyOutput } from './fixtures/terminal.js'
 
+// Colored output paints solid cells as backgrounds, leaving only the half-block glyphs as text.
+const STRANDS_WORDMARK = /STRANDS|╔════╝|█▀▀ ▀█▀ █▀█ ▄▀█ █▄ █ █▀▄ █▀▀|▀▀ ▀ ▀ {2}▀ {2}▄▀ {3}▄ {4}▀▄ {2}▀▀/
+
 const instances: Instance[] = []
 const controllers: ChatController[] = []
 
@@ -80,9 +83,12 @@ async function mount(element: ReactElement, columns: number, rows: number) {
 describe('responsive welcome art', () => {
   it.each([
     [120, 35, 12],
-    [80, 34, 19],
-    [80, 19, 4],
-    [40, 11, 4],
+    [80, 34, 6],
+    [73, 34, 6],
+    [64, 34, 2],
+    [120, 20, 8],
+    [80, 19, 6],
+    [40, 11, 2],
     [22, 8, 1],
     [80, 4, 1],
   ])('fits %s columns and %s available rows into %s art rows', (width, available, height) => {
@@ -92,7 +98,7 @@ describe('responsive welcome art', () => {
     expect(lines).toHaveLength(height)
     expect(lines.every((line) => stringWidth(line) === width)).toBe(true)
     if (height < 12) {
-      expect(art).toContain('STRANDS')
+      expect(art).toMatch(STRANDS_WORDMARK)
     }
   })
 
@@ -114,7 +120,7 @@ describe('responsive welcome art', () => {
         expect(view.screen().replace(/\s/g, '')).toContain('keepthisdraft')
         expect(view.screen()).toContain('/help')
         if (rows < 30) {
-          expect(view.screen()).toContain('STRANDS')
+          expect(view.screen()).toMatch(STRANDS_WORDMARK)
         } else {
           expect(view.screen()).toContain('╔')
         }
@@ -125,7 +131,7 @@ describe('responsive welcome art', () => {
   it('uses compact art from the first intro frame and handles resize while initialization is pending', async () => {
     const complete = vi.fn()
     const view = await mount(createElement(DnaVortexIntro, { ready: false, onComplete: complete }), 40, 16)
-    expect(view.screen()).toContain('STRANDS')
+    expect(view.screen()).toMatch(STRANDS_WORDMARK)
     for (const [columns, rows] of [
       [120, 40],
       [40, 16],
@@ -135,7 +141,7 @@ describe('responsive welcome art', () => {
       await vi.waitFor(() => {
         view.fits()
         expect(view.screen()).toContain('space to skip')
-        if (columns < 74) expect(view.screen()).toContain('STRANDS')
+        if (columns < 74) expect(view.screen()).toMatch(STRANDS_WORDMARK)
       })
     }
     expect(complete).not.toHaveBeenCalled()
@@ -147,7 +153,7 @@ describe('responsive welcome art', () => {
       40,
       40
     )
-    expect(view.screen()).toContain('STRANDS')
+    expect(view.screen()).toMatch(STRANDS_WORDMARK)
     for (const [columns, rows] of [
       [40, 16],
       [120, 40],

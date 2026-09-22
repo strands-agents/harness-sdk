@@ -229,6 +229,8 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       stderr: errorOutput,
       exitOnCtrlC: false,
       patchConsole: true,
+      // Full-frame repaints flash on terminals that ignore or lack synchronized output.
+      incrementalRendering: true,
       maxFps: 30,
     })
     const setupExit = await setupTask
