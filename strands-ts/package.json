@@ -40,6 +40,10 @@
       "types": "./dist/src/models/google/index.d.ts",
       "default": "./dist/src/models/google/index.js"
     },
+    "./models/ollama": {
+      "types": "./dist/src/models/ollama.d.ts",
+      "default": "./dist/src/models/ollama.js"
+    },
     "./models/vercel": {
       "types": "./dist/src/models/vercel.d.ts",
       "default": "./dist/src/models/vercel.js"
@@ -262,6 +266,7 @@
     "eslint": "^10.6.0",
     "eslint-plugin-tsdoc": "^0.5.0",
     "express": "^5.2.1",
+    "ollama": "^0.6.3",
     "openai": "^6.45.0",
     "playwright": "^1.61.0",
     "tsx": "^4.22.5",
@@ -281,8 +286,8 @@
   },
   "homepage": "https://github.com/strands-agents/harness-sdk#readme",
   "dependencies": {
-    "@smithy/fetch-http-handler": "^5.7.2",
     "@aws-sdk/client-bedrock-runtime": "^3.1112.0",
+    "@smithy/fetch-http-handler": "^5.7.2",
     "@types/json-schema": "^7.0.15",
     "uuid": "^14.0.2",
     "yaml": "^2.8.3"
@@ -309,6 +314,7 @@
     "@smithy/types": "^4.15.1",
     "@tobilu/qmd": "^2.8.0",
     "express": "^5.1.0",
+    "ollama": "^0.6.3",
     "openai": "^6.45.0",
     "turndown": "^7.2.4",
     "zod": "^4.1.12"
@@ -342,6 +348,9 @@
       "optional": true
     },
     "@google/genai": {
+      "optional": true
+    },
+    "ollama": {
       "optional": true
     },
     "openai": {

@@ -277,12 +277,13 @@ async function gemini(modelId: string, effort: string | null, webSearch: boolean
 }
 
 async function ollama(modelId: string, _effort: string | null, _webSearch: boolean, _caching: boolean): Promise<Model> {
-  const { OpenAIModel } = await import('@strands-agents/sdk/models/openai')
-  return new OpenAIModel({
-    api: 'chat',
+  const { OllamaModel } = await import('@strands-agents/sdk/models/ollama')
+  // OLLAMA_API_KEY is sent as a bearer token for proxied hosts, mirroring the Python builder.
+  const apiKey = process.env.OLLAMA_API_KEY
+  return new OllamaModel({
     modelId,
-    apiKey: process.env.OLLAMA_API_KEY ?? 'ollama',
-    clientConfig: { baseURL: openAICompatibleBaseUrl(process.env.OLLAMA_HOST ?? 'http://127.0.0.1:11434') },
+    host: process.env.OLLAMA_HOST ?? 'http://127.0.0.1:11434',
+    ...(apiKey ? { clientConfig: { headers: { Authorization: `Bearer ${apiKey}` } } } : {}),
   })
 }
 

@@ -2,15 +2,15 @@
 title: Ollama
 description: 'Run Strands agents on local models with Ollama. Configure OllamaModel for text generation, image understanding, tool calling, and streaming.'
 tags: [local-models]
-languages: Python
 integrationType: model-provider
 sourceLinks:
   - path: strands-py/src/strands/models/ollama.py
+  - path: strands-ts/src/models/ollama.ts
 ---
 
 Ollama is a framework for running open-source large language models locally. Strands provides native support for Ollama, allowing you to use locally-hosted models in your agents.
 
-The [`OllamaModel`](@api/python/strands.models.ollama) class connects to Ollama's API and supports:
+The `OllamaModel` class connects to Ollama's API and supports:
 
 - Text generation
 - Image understanding
@@ -22,10 +22,22 @@ The [`OllamaModel`](@api/python/strands.models.ollama) class connects to Ollama'
 
 ### Prerequisites
 
-First install the python client into your python environment:
+First install the Strands provider and its Ollama client dependency:
+
+<Tabs>
+<Tab label="Python">
+
 ```bash
 pip install 'strands-agents[ollama]'
 ```
+</Tab>
+<Tab label="TypeScript">
+
+```bash
+npm install @strands-agents/sdk ollama
+```
+</Tab>
+</Tabs>
 
 Next, you'll need to install and setup ollama itself.
 
@@ -69,6 +81,9 @@ Next, you'll need to install and setup ollama itself.
 
 Here's how to create an agent using an Ollama model:
 
+<Tabs>
+<Tab label="Python">
+
 ```python
 from strands import Agent
 from strands.models.ollama import OllamaModel
@@ -85,10 +100,35 @@ agent = Agent(model=ollama_model)
 # Use the agent
 agent("Tell me about Strands agents.") # Prints model output to stdout by default
 ```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+import { Agent } from '@strands-agents/sdk'
+import { OllamaModel } from '@strands-agents/sdk/models/ollama'
+
+// Create an Ollama model instance
+const model = new OllamaModel({
+  host: 'http://localhost:11434', // Ollama server address
+  modelId: 'llama3.1', // Specify which model to use
+})
+
+// Create an agent using the Ollama model
+const agent = new Agent({ model })
+
+// Use the agent
+const response = await agent.invoke('Tell me about Strands agents.')
+console.log(response)
+```
+</Tab>
+</Tabs>
 
 ## Configuration Options
 
-The [`OllamaModel`](@api/python/strands.models.ollama) supports various [configuration parameters](@api/python/strands.models.ollama#OllamaModel.OllamaConfig):
+The `OllamaModel` supports the following configuration parameters:
+
+<Tabs>
+<Tab label="Python">
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
@@ -101,8 +141,27 @@ The [`OllamaModel`](@api/python/strands.models.ollama) supports various [configu
 | `stop_sequences` | List of sequences that stop generation | None |
 | `options` | Additional model parameters (e.g., top_k) | None |
 | `additional_args` | Any additional arguments for the request | None |
+</Tab>
+<Tab label="TypeScript">
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `host` | The address of the Ollama server | `http://127.0.0.1:11434` |
+| `modelId` | The Ollama model identifier | `llama3.1` |
+| `keepAlive` | How long the model stays loaded in memory | "5m" |
+| `maxTokens` | Maximum number of tokens to generate | None |
+| `temperature` | Controls randomness (higher = more random) | None |
+| `topP` | Controls diversity via nucleus sampling | None |
+| `stopSequences` | List of sequences that stop generation | None |
+| `options` | Additional model parameters (e.g., top_k) | None |
+| `additionalArgs` | Any additional arguments for the request | None |
+</Tab>
+</Tabs>
 
 ### Example with Configuration
+
+<Tabs>
+<Tab label="Python">
 
 ```python
 from strands import Agent
@@ -124,12 +183,40 @@ agent = Agent(model=ollama_model)
 # Use the agent
 response = agent("Write a short story about an AI assistant.")
 ```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+import { Agent } from '@strands-agents/sdk'
+import { OllamaModel } from '@strands-agents/sdk/models/ollama'
+
+// Create a configured Ollama model
+const model = new OllamaModel({
+  host: 'http://localhost:11434',
+  modelId: 'llama3.1',
+  temperature: 0.7,
+  keepAlive: '10m',
+  stopSequences: ['###', 'END'],
+  options: { top_k: 40 },
+})
+
+// Create an agent with the configured model
+const agent = new Agent({ model })
+
+// Use the agent
+const response = await agent.invoke('Write a short story about an AI assistant.')
+```
+</Tab>
+</Tabs>
 
 ## Advanced Features
 
 ### Updating Configuration at Runtime
 
 You can update the model configuration during runtime:
+
+<Tabs>
+<Tab label="Python">
 
 ```python
 # Create the model with initial configuration
@@ -174,11 +261,36 @@ def update_temperature(temperature: float, agent: Agent) -> str:
     agent.model.update_config(temperature=temperature)
     return f"Temperature updated to {temperature}"
 ```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+// Create the model with initial configuration
+const model = new OllamaModel({
+  host: 'http://localhost:11434',
+  modelId: 'llama3.1',
+  temperature: 0.7,
+})
+
+// Update configuration later
+model.updateConfig({
+  temperature: 0.9,
+  topP: 0.8,
+})
+```
+
+You can wrap `updateConfig` in a [tool](../tools/index.mdx) so the agent can adjust
+its own configuration at runtime.
+</Tab>
+</Tabs>
 
 ### Using Different Models
 
 Ollama supports many different models. You can switch between them (make sure they are pulled first). See the list of
 available models here: https://ollama.com/search
+
+<Tabs>
+<Tab label="Python">
 
 ```python
 # Create models for different use cases
@@ -198,10 +310,38 @@ factual_model = OllamaModel(
 creative_agent = Agent(model=creative_model)
 factual_agent = Agent(model=factual_model)
 ```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+// Create models for different use cases
+const creativeModel = new OllamaModel({
+  host: 'http://localhost:11434',
+  modelId: 'llama3.1',
+  temperature: 0.8,
+})
+
+const factualModel = new OllamaModel({
+  host: 'http://localhost:11434',
+  modelId: 'mistral',
+  temperature: 0.2,
+})
+
+// Create agents with different models
+const creativeAgent = new Agent({ model: creativeModel })
+const factualAgent = new Agent({ model: factualModel })
+```
+</Tab>
+</Tabs>
 
 ### Structured Output
 
-Ollama supports structured output for models that have tool calling capabilities. When you pass `structured_output_model` parameter to the [agent invocation](@api/python/strands.agent.agent#Agent.__call__), the Strands Harness SDK converts your Pydantic models to tool specifications that compatible Ollama models can understand.
+Ollama supports structured output for models that have tool calling capabilities. Pass a schema to the agent, and Strands converts it to a tool specification that compatible Ollama models can understand and validates the response.
+
+<Tabs>
+<Tab label="Python">
+
+Define a Pydantic model and pass it via `structured_output_model`:
 
 ```python
 from pydantic import BaseModel, Field
@@ -236,10 +376,50 @@ print(f"Author: {book_analysis.author}")
 print(f"Genre: {book_analysis.genre}")
 print(f"Rating: {book_analysis.rating}")
 ```
+</Tab>
+<Tab label="TypeScript">
+
+Define a Zod schema and pass it via `structuredOutputSchema`:
+
+```typescript
+import { Agent } from '@strands-agents/sdk'
+import { OllamaModel } from '@strands-agents/sdk/models/ollama'
+import { z } from 'zod'
+
+const BookAnalysis = z.object({
+  title: z.string().describe("The book's title"),
+  author: z.string().describe("The book's author"),
+  genre: z.string().describe('Primary genre or category'),
+  summary: z.string().describe('Brief summary of the book'),
+  rating: z.number().min(1).max(10).describe('Rating from 1-10'),
+})
+
+const model = new OllamaModel({
+  host: 'http://localhost:11434',
+  modelId: 'llama3.1',
+})
+
+const agent = new Agent({ model, structuredOutputSchema: BookAnalysis })
+
+const result = await agent.invoke(
+  'Analyze this book: "The Hitchhiker\'s Guide to the Galaxy" by Douglas Adams.'
+)
+
+const book = result.structuredOutput as z.infer<typeof BookAnalysis>
+console.log(`Title: ${book.title}`)
+console.log(`Author: ${book.author}`)
+console.log(`Genre: ${book.genre}`)
+console.log(`Rating: ${book.rating}`)
+```
+</Tab>
+</Tabs>
 
 ## Tool Support
 
 [Ollama models that support tool use](https://ollama.com/search?c=tools) can use tools through Strands' tool system:
+
+<Tabs>
+<Tab label="Python">
 
 ```python
 from strands import Agent
@@ -261,6 +441,30 @@ agent = Agent(
 # Use the agent with tools
 response = agent('Create a notebook named "ideas" and add three project ideas.')
 ```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+import { Agent } from '@strands-agents/sdk'
+import { OllamaModel } from '@strands-agents/sdk/models/ollama'
+import { notebook } from '@strands-agents/sdk/vended-tools/notebook'
+
+// Create an Ollama model
+const model = new OllamaModel({
+  host: 'http://localhost:11434',
+  modelId: 'llama3.1',
+})
+
+// Create an agent with tools
+const agent = new Agent({ model, tools: [notebook] })
+
+// Use the agent with tools
+const response = await agent.invoke(
+  'Create a notebook named "ideas" and add three project ideas.'
+)
+```
+</Tab>
+</Tabs>
 
 ## Troubleshooting
 
@@ -276,8 +480,17 @@ response = agent('Create a notebook named "ideas" and add three project ideas.')
     - Check for typos in the model_id
 
 3. **Module Not Found**:
-    - If you encounter the error `ModuleNotFoundError: No module named 'ollama'`, this means you haven't installed the `ollama` dependency in your python environment
-    - To fix, run `pip install 'strands-agents[ollama]'`
+
+<Tabs>
+<Tab label="Python">
+
+If you encounter the error `ModuleNotFoundError: No module named 'ollama'`, you haven't installed the `ollama` dependency in your Python environment. To fix, run `pip install 'strands-agents[ollama]'`.
+</Tab>
+<Tab label="TypeScript">
+
+If you encounter an error resolving `ollama`, you haven't installed the `ollama` client. To fix, run `npm install ollama`.
+</Tab>
+</Tabs>
 
 ## Related Resources
 

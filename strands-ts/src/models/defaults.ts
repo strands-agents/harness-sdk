@@ -20,6 +20,9 @@ export const MODEL_DEFAULTS = {
   gemini: {
     modelId: 'gemini-2.5-flash',
   },
+  ollama: {
+    modelId: 'llama3.1',
+  },
 } as const
 
 /**
