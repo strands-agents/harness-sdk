@@ -1,0 +1,299 @@
+---
+title: Strands harness quickstart
+description: "Get a Strands harness agent running fast: build one in your terminal with the CLI, or install the Python or TypeScript library and write a few lines."
+sourceLinks:
+  - path: harness-py/src/strands_harness/agent.py
+  - path: harness-ts/src/agent.ts
+sidebar:
+  label: "Quickstart"
+---
+
+Strands harness is a state-of-the-art, fully assembled agent harness. You can get started in a few
+different ways:
+
+- **[Set up with your coding agent](#set-up-with-your-coding-agent)** — paste a prompt into
+  Codex, Claude Code, or Kiro and let it guide you through the setup.
+- **[Build an agent with the CLI](#build-an-agent-with-the-cli)** — answer a few questions in
+  the terminal, then export to Python or TypeScript when you're ready.
+- **[Use it as a library](#use-it-as-a-library)** — install the Python or TypeScript package
+  and write a few lines yourself.
+
+## Set up with your coding agent
+
+<CopyPromptButton language="harness" />
+
+## Build an agent with the CLI
+
+The `strands` CLI's setup assistant builds a custom agent by asking you a few questions — no
+code required.
+
+### Install the CLI
+
+```bash
+npm install -g @strands-agents/cli
+```
+
+### Create your agent
+
+Run `strands` (or `/setup` inside a chat) to open the setup assistant. It walks you
+through the creation process, asking:
+
+- **Where to start** — from scratch, or from a configuration it detects in the current directory.
+- **Name and goals** — what the agent is called and what you want it to do.
+- **Capabilities** — it recommends a model, built-in tools, Agent Skills, MCP servers, long-term
+  memory, context management, and a tool-approval mode; accept its picks or adjust each one.
+- **Appearance** — theme and color mode.
+
+It keeps the configuration as a draft until you approve it, then opens your custom agent in
+a fresh chat. For example:
+
+```text
+$ strands
+? Start from scratch, or use the configuration in ./ ?   Start from scratch
+? What should your agent be called?                      release-notes-bot
+? What should it do?                                     Draft release notes from merged PRs
+→ Recommended: Claude Opus 4.8 on Amazon Bedrock · tools: read, web_fetch, web_search · memory on
+? Apply this configuration?                              Yes
+✓ release-notes-bot is ready — opening chat
+```
+
+You can also skip the wizard and set fields with flags, or start from an existing agent file:
+
+```bash
+strands                                                             # full interactive wizard
+strands --name release-notes-bot --model anthropic/claude-sonnet-5  # set fields directly
+strands --agent ./agent.ts                                          # start from an exported agent
+```
+
+### Export it to code
+
+When you're ready to embed the agent in an application, `/export` writes a Python or
+TypeScript project with your choices set directly on `create_harness(...)` /
+`createHarness(...)`. The project exports a ready-to-import `agent`, so the CLI is a fast
+on-ramp to the library below: build interactively, then drop into code.
+
+## Use it as a library
+
+Prefer to write the code yourself? Install the Python or TypeScript package and run your
+first agent in a few lines. The source lives on GitHub:
+
+<Tabs>
+  <Tab label="Python">
+    [`harness-py`](https://github.com/strands-agents/harness-sdk/tree/main/harness-py) — the Python package.
+  </Tab>
+  <Tab label="TypeScript">
+    [`harness-ts`](https://github.com/strands-agents/harness-sdk/tree/main/harness-ts) — the TypeScript package.
+  </Tab>
+</Tabs>
+
+### Install
+
+<Tabs>
+  <Tab label="Python">
+    Requires Python 3.10 or newer.
+
+    ```bash
+    pip install strands-harness
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    Requires Node.js 20 or newer.
+
+    ```bash
+    npm install @strands-agents/harness
+    ```
+  </Tab>
+</Tabs>
+
+### Run your first agent
+
+Strands harness runs on the model of your choice and supports model providers across Amazon
+Bedrock, Anthropic, OpenAI, and Google, plus Ollama for running locally. Amazon Bedrock is
+the default; pass `model="provider/name"` to pick another. See
+[choose a model](../configure/model/) for the full list.
+
+Even a one-line call has a shell, file tools, and web access working out of the box.
+Strands harness can search the web, compare what it finds, and save the results to a file.
+
+<Tabs>
+  <Tab label="Amazon Bedrock">
+    Bedrock is the default, using Claude Opus 4.8 in the region your AWS configuration selects.
+
+    <Tabs>
+      <Tab label="Python">
+        ```python
+        from strands_harness import create_harness
+
+        agent = create_harness()
+        agent("Research the three most common strategies for versioning a REST API, compare their tradeoffs, and write a recommendation to api-versioning.md")
+        ```
+      </Tab>
+      <Tab label="TypeScript">
+        ```typescript
+        import { createHarness } from '@strands-agents/harness'
+
+        const agent = await createHarness()
+        await agent.invoke('Research the three most common strategies for versioning a REST API, compare their tradeoffs, and write a recommendation to api-versioning.md')
+        ```
+      </Tab>
+    </Tabs>
+
+    Give Strands harness AWS credentials with permission to invoke the model, using one of:
+
+    - **Bedrock API key**: set `AWS_BEARER_TOKEN_BEDROCK` to a
+      [Bedrock API key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-key-management.html).
+      Quickest for local development.
+    - **AWS credentials**: `aws configure`, or `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+      and optionally `AWS_SESSION_TOKEN` as environment variables.
+    - **IAM roles**: on AWS services like EC2, ECS, or Lambda.
+
+    Enable access to the models you use in the Amazon Bedrock console; see the
+    [AWS documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access-modify.html).
+  </Tab>
+  <Tab label="Anthropic">
+    ```bash
+    export ANTHROPIC_API_KEY=<your key>
+    ```
+
+    <Tabs>
+      <Tab label="Python">
+        ```python
+        from strands_harness import create_harness
+
+        agent = create_harness(model="anthropic/claude-sonnet-5")
+        agent("Research the three most common strategies for versioning a REST API, compare their tradeoffs, and write a recommendation to api-versioning.md")
+        ```
+      </Tab>
+      <Tab label="TypeScript">
+        ```typescript
+        import { createHarness } from '@strands-agents/harness'
+
+        const agent = await createHarness({ model: 'anthropic/claude-sonnet-5' })
+        await agent.invoke('Research the three most common strategies for versioning a REST API, compare their tradeoffs, and write a recommendation to api-versioning.md')
+        ```
+      </Tab>
+    </Tabs>
+  </Tab>
+  <Tab label="OpenAI">
+    ```bash
+    export OPENAI_API_KEY=<your key>
+    ```
+
+    <Tabs>
+      <Tab label="Python">
+        ```python
+        from strands_harness import create_harness
+
+        agent = create_harness(model="openai/gpt-5.4")
+        agent("Research the three most common strategies for versioning a REST API, compare their tradeoffs, and write a recommendation to api-versioning.md")
+        ```
+      </Tab>
+      <Tab label="TypeScript">
+        ```typescript
+        import { createHarness } from '@strands-agents/harness'
+
+        const agent = await createHarness({ model: 'openai/gpt-5.4' })
+        await agent.invoke('Research the three most common strategies for versioning a REST API, compare their tradeoffs, and write a recommendation to api-versioning.md')
+        ```
+      </Tab>
+    </Tabs>
+  </Tab>
+  <Tab label="Google">
+    ```bash
+    export GEMINI_API_KEY=<your key>
+    ```
+
+    <Tabs>
+      <Tab label="Python">
+        ```python
+        from strands_harness import create_harness
+
+        agent = create_harness(model="google/gemini-2.5-flash")
+        agent("Research the three most common strategies for versioning a REST API, compare their tradeoffs, and write a recommendation to api-versioning.md")
+        ```
+      </Tab>
+      <Tab label="TypeScript">
+        ```typescript
+        import { createHarness } from '@strands-agents/harness'
+
+        const agent = await createHarness({ model: 'google/gemini-2.5-flash' })
+        await agent.invoke('Research the three most common strategies for versioning a REST API, compare their tradeoffs, and write a recommendation to api-versioning.md')
+        ```
+      </Tab>
+    </Tabs>
+  </Tab>
+  <Tab label="Ollama">
+    Runs models locally on your machine. No API key or cloud account needed.
+
+    ```bash
+    ollama serve
+    ollama pull llama3.1
+    ```
+
+    <Tabs>
+      <Tab label="Python">
+        ```python
+        from strands_harness import create_harness
+
+        agent = create_harness(model="ollama/llama3.1")
+        agent("Research the three most common strategies for versioning a REST API, compare their tradeoffs, and write a recommendation to api-versioning.md")
+        ```
+      </Tab>
+      <Tab label="TypeScript">
+        ```typescript
+        import { createHarness } from '@strands-agents/harness'
+
+        const agent = await createHarness({ model: 'ollama/llama3.1' })
+        await agent.invoke('Research the three most common strategies for versioning a REST API, compare their tradeoffs, and write a recommendation to api-versioning.md')
+        ```
+      </Tab>
+    </Tabs>
+  </Tab>
+</Tabs>
+
+### Keep a conversation across runs
+
+Sessions are on by default: Strands harness persists each conversation to disk under
+`./.agent/sessions` with a generated id. Choose the id yourself and a later run rehydrates
+the same conversation:
+
+<Tabs>
+  <Tab label="Python">
+    ```python
+    from strands_harness import create_harness
+
+    agent = create_harness(session={"id": "api-design"})
+    agent("Which of those would you pick for an API with external customers, and why?")
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    import { createHarness } from '@strands-agents/harness'
+
+    const agent = await createHarness({ session: { id: 'api-design' } })
+    await agent.invoke("Which of those would you pick for an API with external customers, and why?")
+    ```
+  </Tab>
+</Tabs>
+
+See [persist sessions](../configure/sessions/) for how session
+storage works and how it differs from long-term memory. The CLI persists sessions the same
+way — resume one with `strands --session-id api-design`.
+
+## The agent you get
+
+However you start it, Strands harness runs on the model of your choice with reasoning on, and it
+follows a tuned system prompt that tells it to explore before changing things, confirm
+before anything irreversible, and verify before calling a task done. It also has prompt
+caching, automatic context management, long-term memory, a `generalist` subagent, and a
+`todos` task tracker enabled by default. See
+[what the default harness does](../#what-the-default-harness-does) for the full set.
+
+## Next steps
+
+- [What the default harness does](../#what-the-default-harness-does): the
+  tools, plugins, and subagents you get out of the box.
+- [Configure the agent](../configure/model/): point Strands harness at another
+  model, add your own tools, or turn defaults off.
+- [Compose with the Strands Harness SDK](../composing-with-sdk/): reach
+  past the defaults into the full Strands Harness SDK.

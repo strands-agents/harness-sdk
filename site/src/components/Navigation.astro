@@ -1,0 +1,1094 @@
+---
+import sun from '../assets/nav/sun.svg?raw';
+import moon from '../assets/nav/moon.svg?raw';
+import github from '../assets/nav/github.svg?raw';
+import discord from '../assets/nav/discord.svg?raw';
+import hamburger from '../assets/nav/hamburger.svg?raw';
+import frogHop from '../assets/nav/frog-hop.svg?raw';
+import wordmark from '../assets/nav/wordmark.svg?raw';
+import NavMenu from './NavMenu.astro';
+import LanguageToggle from './LanguageToggle.astro';
+import { getStarCount } from '../util/github';
+import { products } from '../config/navbar';
+import { pathWithBase } from '../util/links';
+
+const stars = await getStarCount();
+
+// The "Projects" dropdown is organized around products (Strands harness, SDK,
+// Shell, Evals) from navigation.yml, so the dropdown and the docs stay
+// aligned. Each product renders as one entry linking to its hub; `pages` drive
+// the mobile accordion. Labs (experimental projects) has its own docs hub, so
+// it's appended here linking to that page.
+const docsCategories = [
+  ...products.map((p) => ({
+    title: p.slug,
+    description: p.description,
+    href: p.href,
+    pages: p.pages,
+  })),
+  {
+    title: '/labs',
+    description: 'Experimental projects pushing the boundaries of what agents can do.',
+    href: pathWithBase('/docs/labs/'),
+  },
+];
+
+const learnCategories = [
+  {
+    title: 'Courses',
+    description: 'Guided lessons from your first agent to multi-agent systems.',
+    href: pathWithBase('/docs/learning/how-agents-really-work/'),
+  },
+  {
+    title: 'Examples',
+    description: 'Runnable samples you can drop into your own project.',
+    href: pathWithBase('/examples/'),
+  },
+];
+
+---
+
+<nav class="strands-nav" aria-label="Primary">
+  <div class="strands-nav__inner">
+    <div class="strands-nav__left">
+      <a href={pathWithBase('/')} class="strands-nav__logo" aria-label="Strands home">
+        {/* STRANDS wordmark — inlined SVG (fill: currentColor) so it renders
+            crisply at any size and inherits the brand green. */}
+        <span class="strands-nav__wordmark" set:html={wordmark} />
+      </a>
+      <ul class="strands-nav__links" role="list">
+        <li class="strands-nav__item" data-menu-trigger="docs">
+          <button type="button" class="strands-nav__trigger" aria-haspopup="true">Projects</button>
+          <NavMenu id="docs" categories={docsCategories} />
+        </li>
+        <li class="strands-nav__item" data-menu-trigger="learn">
+          <button type="button" class="strands-nav__trigger" aria-haspopup="true">Learn</button>
+          <NavMenu id="learn" categories={learnCategories} />
+        </li>
+        <li><a href={pathWithBase('/integrations/')}>Integrations</a></li>
+        <li><a href={pathWithBase('/docs/contribute/')}>Contribute</a></li>
+        <li><a href={pathWithBase('/blog/')}>Blog</a></li>
+      </ul>
+    </div>
+    <div class="strands-nav__right">
+      {/* Opens Starlight's Pagefind search modal (rendered by Header.astro).
+          Cmd/Ctrl+K opens it too. Hidden by script on pages without the modal. */}
+      <button type="button" class="strands-nav__search" data-nav-search aria-label="Search">
+        <svg class="strands-nav__search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3" stroke-linecap="round"/></svg>
+        <span class="strands-nav__search-label">Search</span>
+      </button>
+      <div class="strands-nav__lang">
+        <LanguageToggle />
+      </div>
+      <div class="strands-nav__socials">
+        <a
+          href="https://github.com/strands-agents"
+          class="strands-nav__icon-link strands-nav__github"
+          aria-label={`GitHub — ${stars} stars`}
+          target="_blank"
+          rel="noopener"
+        >
+          <span class="strands-nav__github-icon" set:html={github} />
+          <span class="strands-nav__github-stars">{stars}</span>
+        </a>
+        <a
+          href="https://discord.gg/strands"
+          class="strands-nav__icon-link"
+          aria-label="Discord"
+          target="_blank"
+          rel="noopener"
+          set:html={discord}
+        />
+      </div>
+      {/* Theme toggle sits at the far right of the header, after the socials. */}
+      <button
+        type="button"
+        class="strands-nav__theme-toggle"
+        data-theme-toggle
+        aria-label="Toggle color theme"
+      >
+        {/* Sun in light mode, moon in dark mode — the current-theme icon is
+            shown, the other is hidden via the root data-theme (see CSS). */}
+        <span class="strands-nav__theme-icon strands-nav__theme-icon--sun" set:html={sun} />
+        <span class="strands-nav__theme-icon strands-nav__theme-icon--moon" set:html={moon} />
+      </button>
+    </div>
+    <button
+      type="button"
+      class="strands-nav__hamburger"
+      aria-label="Open menu"
+      aria-expanded="false"
+      data-hamburger
+    >
+      <span class="strands-nav__hamburger-icon" set:html={hamburger} />
+    </button>
+  </div>
+
+  <!-- Mobile menu panel (Figma 745:13162): Projects / Learn accordions of
+       categories + page links, then plain Integrations / Blog links. -->
+  <div class="strands-nav__mobile" data-mobile-menu>
+    {[
+      { label: 'Projects', categories: docsCategories },
+      { label: 'Learn', categories: learnCategories },
+    ].map((section) => (
+      <div class="mobile-menu__section" data-mobile-section>
+        <button
+          type="button"
+          class="mobile-menu__section-title"
+          data-section-toggle
+          aria-expanded="false"
+        >
+          {section.label}
+        </button>
+        <div class="mobile-menu__section-body">
+          {section.categories.map((cat) =>
+            cat.pages ? (
+              <div class="mobile-menu__cat" data-mobile-cat>
+                <div class="mobile-menu__cat-head">
+                  {cat.href ? (
+                    <>
+                      <a
+                        class="mobile-menu__cat-link"
+                        href={cat.href}
+                        {...(cat.external && cat.href.startsWith('http')
+                          ? { target: '_blank', rel: 'noopener' }
+                          : {})}
+                      >
+                        <span class="mobile-menu__cat-title">{cat.title}</span>
+                        <span class="mobile-menu__cat-desc">{cat.description}</span>
+                      </a>
+                      <button
+                        type="button"
+                        class="mobile-menu__cat-expand"
+                        data-cat-toggle
+                        aria-expanded="false"
+                        aria-label={`Show ${cat.title} pages`}
+                      >
+                        <svg viewBox="0 0 12 8" width="12" height="8" aria-hidden="true"><path d="M1 1.5L6 6.5L11 1.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      class="mobile-menu__cat-link"
+                      data-cat-toggle
+                      aria-expanded="false"
+                    >
+                      <span class="mobile-menu__cat-title">{cat.title}</span>
+                      <span class="mobile-menu__cat-desc">{cat.description}</span>
+                    </button>
+                  )}
+                </div>
+                <ul class="mobile-menu__pages" role="list">
+                  {cat.pages.map((page) => (
+                    <li>
+                      <a
+                        href={page.href}
+                        class="mobile-menu__page"
+                        {...(page.langAware ? { 'data-lang-href': '' } : {})}
+                        {...(page.external && page.href.startsWith('http')
+                          ? { target: '_blank', rel: 'noopener' }
+                          : {})}
+                      >
+                        {page.label}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <a
+                class="mobile-menu__cat mobile-menu__cat--link"
+                href={cat.href}
+                {...(cat.external && cat.href?.startsWith('http')
+                  ? { target: '_blank', rel: 'noopener' }
+                  : {})}
+              >
+                <span class="mobile-menu__cat-title">{cat.title}</span>
+                <span class="mobile-menu__cat-desc">{cat.description}</span>
+              </a>
+            )
+          )}
+        </div>
+      </div>
+    ))}
+    <a href={pathWithBase('/integrations/')} class="mobile-menu__section-title">Integrations</a>
+    <a href={pathWithBase('/docs/contribute/')} class="mobile-menu__section-title">Contribute</a>
+    <a href={pathWithBase('/blog/')} class="mobile-menu__section-title mobile-menu__blog">Blog</a>
+
+    <!-- Controls at the foot of the menu. The desktop right cluster (language,
+         theme, socials) is hidden on mobile, so surface all of it here — as
+         labeled text rows rather than bare icon buttons, to match the menu. -->
+    <div class="mobile-menu__controls">
+      <div class="mobile-menu__control-lang">
+        <LanguageToggle />
+      </div>
+      <button type="button" class="mobile-menu__control-item" data-nav-search>
+        <span class="mobile-menu__control-icon" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3" stroke-linecap="round"/></svg>
+        </span>
+        <span>Search</span>
+      </button>
+      <button
+        type="button"
+        class="mobile-menu__control-item"
+        data-theme-toggle
+        aria-label="Toggle color theme"
+      >
+        <span class="mobile-menu__control-icon" aria-hidden="true">
+          <span class="strands-nav__theme-icon strands-nav__theme-icon--sun" set:html={sun} />
+          <span class="strands-nav__theme-icon strands-nav__theme-icon--moon" set:html={moon} />
+        </span>
+        <span>Theme</span>
+      </button>
+      <a
+        href="https://github.com/strands-agents"
+        class="mobile-menu__control-item"
+        target="_blank"
+        rel="noopener"
+      >
+        <span class="mobile-menu__control-icon" aria-hidden="true" set:html={github} />
+        <span>GitHub</span>
+      </a>
+      <a
+        href="https://discord.gg/strands"
+        class="mobile-menu__control-item"
+        target="_blank"
+        rel="noopener"
+      >
+        <span class="mobile-menu__control-icon" aria-hidden="true" set:html={discord} />
+        <span>Discord</span>
+      </a>
+    </div>
+  </div>
+</nav>
+
+{/* Spacebar easter egg: a pixel frog hops across the bottom of the page,
+    Chrome-dino style. Hidden until triggered (see the script below). */}
+<div class="frog-egg" data-frog-egg aria-hidden="true">
+  <div class="frog-egg__hop" set:html={frogHop} />
+</div>
+
+<style>
+  .strands-nav {
+    background: var(--nav-bg);
+    color: var(--nav-fg);
+    /* Stick to the top as the page scrolls. On docs/blog/changelog the nav
+       lives inside Starlight's already-fixed <header>, so this is a no-op
+       there; on the homepage (rendered straight in <body>) it makes the bar
+       follow the scroll. Sticky reserves its own space, so no content jump. */
+    position: sticky;
+    top: 0;
+    z-index: var(--sl-z-index-navbar, 50);
+    width: 100%;
+    transition: background-color 0.15s ease, color 0.15s ease;
+  }
+
+  /* Only cancel Starlight's header padding when inside its fixed <header>
+     (docs/blog/changelog). The homepage renders straight in <body> with no
+     header padding, so this negative margin must not apply there. */
+  :global(.header) .strands-nav {
+    /* Inside Starlight's fixed, padded <header>, break out to span full width
+       and cancel the header's vertical padding. The header is already fixed,
+       so the base sticky positioning is inert here. */
+    position: relative;
+    left: 50%;
+    right: 50%;
+    margin-left: -50vw;
+    margin-right: -50vw;
+    width: 100vw;
+    margin-top: calc(-1 * var(--sl-nav-pad-y));
+    margin-bottom: calc(-1 * var(--sl-nav-pad-y));
+  }
+
+  .strands-nav__inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    max-width: none;
+    margin: 0 auto;
+    /* Fixed bar height so the header is the same on every page. Vertical
+       padding is baked into the height (content is centered), so a taller
+       child — e.g. the docs-only language toggle, which is bigger than the
+       homepage's right cluster — no longer inflates the bar and pushes the
+       logo down. */
+    height: 84px;
+    padding: 0 39px;
+  }
+
+  .strands-nav__left {
+    display: flex;
+    align-items: center;
+    gap: 93px;
+  }
+
+  @media (min-width: 64rem) {
+    .strands-nav__inner {
+      padding-inline-start: 0;
+    }
+
+    .strands-nav__left {
+      display: grid;
+      grid-template-columns: 300px auto;
+      gap: 60px;
+    }
+
+    .strands-nav__logo {
+      justify-self: center;
+    }
+  }
+
+  .strands-nav__logo {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: auto;
+    gap: 12px;
+    color: var(--nav-fg);
+    text-decoration: none;
+  }
+
+  /* STRANDS wordmark SVG — filled with the brand green. Uses :global() because
+     the SVG is injected via set:html and so carries no scoped-style attribute.
+     Sized by explicit height (see the mobile override below); width auto keeps
+     the aspect ratio. */
+  .strands-nav__wordmark {
+    display: flex;
+  }
+
+  .strands-nav__wordmark :global(svg) {
+    display: block;
+    height: 28px;
+    width: auto;
+    fill: var(--accent-green);
+  }
+
+  .strands-nav__links {
+    display: flex;
+    align-items: center;
+    gap: 40.507px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .strands-nav__item {
+    position: relative;
+    /* Inset of the trigger label from the active-tab's left border. The child
+       .nav-menu inherits this and applies the same padding-left, so the
+       dropdown's items line up directly under the top-nav label. */
+    --nav-tab-pad: 20px;
+  }
+
+  /* Green "tab" outline around the trigger while its mega-menu is open, open
+     at the bottom so it joins the panel below (which has no top border). The
+     :global() must wrap the whole subject — Astro doesn't strip a :global()
+     nested inside :has(), which leaves invalid CSS the browser drops. */
+  :global(.strands-nav__item:has(.nav-menu.is-open))::before {
+    content: '';
+    position: absolute;
+    left: calc(-1 * var(--nav-tab-pad));
+    top: -12px;
+    width: calc(100% + 2 * var(--nav-tab-pad));
+    bottom: 0; /* item bottom == panel top, so the tab flows into the panel */
+    border: 1px solid var(--accent-green);
+    border-bottom: none;
+    z-index: 101; /* above the panel border (z-index 100) for a clean join */
+    pointer-events: none;
+  }
+
+  :global(.strands-nav__item:has(.nav-menu.is-open)) .strands-nav__trigger {
+    color: var(--accent-green);
+    opacity: 1;
+    position: relative;
+    z-index: 102;
+  }
+
+  .strands-nav__links a {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 600;
+    font-size: 18.228px;
+    letter-spacing: 0.9114px;
+    line-height: 1.3;
+    color: var(--nav-fg);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .strands-nav__links a:hover {
+    opacity: 0.7;
+  }
+
+  .strands-nav__trigger {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 600;
+    font-size: 18.228px;
+    letter-spacing: 0.9114px;
+    line-height: 1.3;
+    color: var(--nav-fg);
+    white-space: nowrap;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+  }
+
+  .strands-nav__trigger:hover {
+    opacity: 0.7;
+  }
+
+  .strands-nav__right {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+
+  .strands-nav__lang {
+    display: flex;
+    align-items: center;
+  }
+
+  /* Search entry point: a compact pill that opens the Pagefind modal. */
+  .strands-nav__search {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    background: transparent;
+    border: 1px solid var(--toggle-inactive-border, var(--strands-grey-600));
+    border-radius: 999px;
+    color: var(--nav-fg);
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 14px;
+    cursor: pointer;
+    transition: border-color 0.15s ease, opacity 0.15s ease;
+  }
+
+  .strands-nav__search:hover {
+    opacity: 0.7;
+  }
+
+  .strands-nav__search-icon {
+    flex: none;
+  }
+
+  /* Size the language toggle in the header to match the search pill's height
+     (the homepage code cards keep the default sizing). */
+  .strands-nav__lang :global(.language-toggle) {
+    padding: 2px;
+  }
+
+  .strands-nav__lang :global(.lang-option) {
+    padding: 6px 10px;
+  }
+
+  .strands-nav__socials {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    height: 20px;
+  }
+
+  /* Bare icon, no button chrome — just the sun/moon glyph. */
+  .strands-nav__theme-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--nav-fg);
+    cursor: pointer;
+  }
+
+  .strands-nav__theme-toggle:hover {
+    opacity: 0.7;
+  }
+
+  .strands-nav__theme-icon {
+    display: inline-flex;
+    /* Match the GitHub/Discord social icon height. */
+    width: 20px;
+    height: 20px;
+  }
+
+  .strands-nav__theme-icon :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  /* Show the icon for the active theme, hide the other. Light (default) shows
+     the sun; dark shows the moon. */
+  .strands-nav__theme-icon--moon {
+    display: none;
+  }
+
+  :global(html[data-theme='dark']) .strands-nav__theme-icon--sun {
+    display: none;
+  }
+
+  :global(html[data-theme='dark']) .strands-nav__theme-icon--moon {
+    display: inline-flex;
+  }
+
+  .strands-nav__icon-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--nav-fg);
+    text-decoration: none;
+  }
+
+  .strands-nav__icon-link:hover {
+    opacity: 0.7;
+  }
+
+  .strands-nav__icon-link :global(svg) {
+    width: auto;
+    height: 20px;
+  }
+
+  .strands-nav__github {
+    gap: 6px;
+  }
+
+  .strands-nav__github-icon {
+    display: inline-flex;
+  }
+
+  .strands-nav__github-stars {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 13px;
+    line-height: 1;
+    color: var(--nav-fg);
+    white-space: nowrap;
+  }
+
+  .strands-nav__hamburger {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    color: var(--nav-fg);
+    cursor: pointer;
+  }
+
+  .strands-nav__hamburger-icon {
+    display: inline-flex;
+    width: 32px;
+    height: 24px;
+  }
+
+  .strands-nav__hamburger-icon :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  .strands-nav__mobile {
+    display: none;
+  }
+
+  /* Below Starlight's desktop breakpoint (50rem) our single hamburger is the
+     only menu control. Hide Starlight's own circular mobile menu button and its
+     slide-in sidebar overlay; in-product page navigation is the title selector
+     in the content, and the hamburger carries the product/community menus.
+     Without this the two controls stack in the same corner and read as a broken
+     double hamburger. Above 50rem the sidebar is the static left column. */
+  @media (max-width: 49.9375rem) {
+    :global(.page > .sidebar) {
+      display: none;
+    }
+
+    /* PageFrame reserves padding-inline-end on the header for Starlight's
+       mobile menu button. We hide that button, so cancel the reservation —
+       otherwise the header's charcoal background shows as a strip on the right
+       that our full-bleed nav breakout doesn't cover. */
+    :global([data-has-sidebar]) :global(.header) {
+      padding-inline-end: var(--sl-nav-pad-x);
+    }
+  }
+
+  /* ---------- Mobile (< 50rem, matching Starlight's sidebar breakpoint) ---------- */
+  @media (max-width: 49.9375rem) {
+    .strands-nav__inner {
+      /* Extra top padding so the logo isn't jammed against the viewport top
+         (accounts for notch/status-bar area too). Height is auto on mobile —
+         the desktop fixed bar height doesn't apply here. */
+      height: auto;
+      padding: 16px 19px 12px;
+    }
+
+    .strands-nav__logo {
+      width: auto;
+    }
+
+    .strands-nav__wordmark :global(svg) {
+      height: 21px;
+    }
+
+    /* Desktop-only links + right cluster hide. */
+    .strands-nav__links,
+    .strands-nav__right {
+      display: none;
+    }
+
+    .strands-nav__hamburger {
+      display: inline-flex;
+    }
+
+    /* ----- Mobile menu panel (Figma 745:13483/13489/13507) -----
+       Full-viewport overlay pinned below the header. Fixed positioning (not
+       in-flow) both scrolls independently and covers the full width, so page
+       content can't bleed through on the side — the parent nav is a full-bleed
+       breakout that on docs pages is inset by the sidebar column. */
+    .strands-nav__mobile.is-open {
+      display: flex;
+      flex-direction: column;
+      /* 12px between top-level items in the default state. */
+      gap: 12px;
+      padding: 24px 32px 24px 40px;
+      background: var(--nav-bg);
+      /* Full-viewport overlay pinned below the header. Fixed (viewport-
+         relative) so left:0/right:0 span the full width regardless of the
+         nav's full-bleed breakout offset. The `top` is set in JS on open from
+         the header's rendered bottom, because the mobile header height differs
+         by context (52px docs / 40px home) and doesn't match the reserved
+         --sl-nav-height (84px). */
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: var(--sl-z-index-navbar, 20);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+
+    /* Controls at the foot of the panel — a vertical list of labeled rows that
+       flows with the menu items (the panel's 12px gap spaces it). */
+    .mobile-menu__controls {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 18px;
+      margin-top: 6px;
+    }
+
+    .mobile-menu__control-lang {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .mobile-menu__control-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 14px;
+      padding: 0;
+      background: none;
+      border: none;
+      text-align: left;
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-weight: 500;
+      font-size: 16px;
+      line-height: 1.3;
+      color: var(--nav-fg);
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    .mobile-menu__control-item:hover {
+      color: var(--accent-green);
+    }
+
+    .mobile-menu__control-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      flex: none;
+    }
+
+    .mobile-menu__control-icon :global(svg),
+    .mobile-menu__control-icon .strands-nav__theme-icon {
+      width: 22px;
+      height: 22px;
+    }
+
+    .mobile-menu__section {
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* An open block gets 18px breathing room below it (Figma 13489). */
+    .mobile-menu__section.is-open {
+      margin-bottom: 6px;
+    }
+
+    /* Top-level items: Docs / Community / Blog — 18px JetBrains Mono
+       Medium. Green when the section is expanded. */
+    .mobile-menu__section-title {
+      margin: 0;
+      padding: 0;
+      background: none;
+      border: none;
+      text-align: left;
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-weight: 500;
+      font-size: 18px;
+      line-height: 1.3;
+      color: var(--nav-fg);
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    .mobile-menu__section.is-open > .mobile-menu__section-title {
+      color: var(--accent-green);
+    }
+
+    /* Indent categories under their section header (Projects / Learn) so the
+       hierarchy reads clearly. */
+    .mobile-menu__section-body {
+      display: none;
+      flex-direction: column;
+      gap: 12px;
+      padding-top: 12px;
+      padding-inline-start: 16px;
+    }
+
+    .mobile-menu__section.is-open > .mobile-menu__section-body {
+      display: flex;
+    }
+
+    /* Category: 14px title + 10px grey description. Active category
+       title turns green and reveals its page links. */
+    .mobile-menu__cat {
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Open category (pages visible) gets 18px below it (Figma 13507). */
+    .mobile-menu__cat.is-open {
+      margin-bottom: 6px;
+    }
+
+    /* A category header is a row: the title (a link to the product hub, or a
+       toggle button for hubless sections) plus a chevron that expands pages. */
+    .mobile-menu__cat-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .mobile-menu__cat-link {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex: 1;
+      min-width: 0;
+      margin: 0;
+      padding: 0;
+      background: none;
+      border: none;
+      text-align: left;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    /* Chevron toggle: a comfortable tap target that rotates when its pages
+       are showing. */
+    .mobile-menu__cat-expand {
+      flex: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      margin: -6px -6px 0 0;
+      padding: 0;
+      background: none;
+      border: none;
+      color: var(--nav-fg);
+      cursor: pointer;
+    }
+
+    .mobile-menu__cat-expand svg {
+      transition: transform 0.15s ease;
+    }
+
+    .mobile-menu__cat.is-open .mobile-menu__cat-expand svg {
+      transform: rotate(180deg);
+    }
+
+    .mobile-menu__cat--link {
+      gap: 4px;
+      text-decoration: none;
+    }
+
+    .mobile-menu__cat-title {
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-weight: 500;
+      font-size: 14px;
+      line-height: 1.3;
+      color: var(--nav-fg);
+    }
+
+    .mobile-menu__cat.is-open .mobile-menu__cat-title {
+      color: var(--accent-green);
+    }
+
+    .mobile-menu__cat-desc {
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+      font-weight: 400;
+      font-size: 11px;
+      letter-spacing: 0.14px;
+      line-height: 1.35;
+      /* Derive from --fg so the muted description stays legible in both themes;
+         the fixed grey tokens are too light against the panel background. */
+      color: var(--nav-fg);
+      opacity: 0.75;
+    }
+
+    /* Page links (sub-items): indented under an accent rail and dimmed so they
+       read as children of the category, not siblings of the section titles. */
+    .mobile-menu__pages {
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+      margin: 8px 0 0;
+      padding: 2px 0 2px 14px;
+      list-style: none;
+      border-left: 2px solid var(--accent-green);
+    }
+
+    .mobile-menu__cat.is-open .mobile-menu__pages {
+      display: flex;
+    }
+
+    .mobile-menu__page {
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-weight: 400;
+      font-size: 13px;
+      line-height: 1.3;
+      color: var(--strands-grey-400);
+      text-decoration: none;
+    }
+
+    .mobile-menu__page:hover {
+      color: var(--nav-fg);
+    }
+  }
+  /* ---------- Spacebar frog easter egg ---------- */
+  /* Each spacebar press hops the frog one step forward (the hop arc + forward
+     travel are driven per-press from the script). Hidden until first press. */
+  .frog-egg {
+    position: fixed;
+    bottom: 12px;
+    left: 0;
+    width: 48px;
+    height: 48px;
+    z-index: 9999;
+    /* Pixel frog art is all currentColor — tint it the brand green, which is
+       already theme-aware (darker green on light, brighter on dark). */
+    color: var(--accent-green);
+    /* A soft shadow lifts the frog off whatever it scrolls over — a per-pixel
+       hard outline muddies this thin line art. */
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
+    pointer-events: none;
+    display: none;
+    will-change: transform;
+  }
+
+  .frog-egg.is-active {
+    display: block;
+  }
+
+  .frog-egg__hop {
+    width: 100%;
+    height: 100%;
+    /* Face the hop direction (rightward). Lives on the inner element so it
+       composes with the per-press translate animation on .frog-egg. */
+    transform: scaleX(-1);
+  }
+
+  .frog-egg__hop :global(svg) {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+</style>
+
+<script>
+  // Toggle between light and dark themes via the eye button.
+  // Bind every theme toggle: the header button and the one in the mobile menu.
+  document.querySelectorAll<HTMLButtonElement>('[data-theme-toggle]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const root = document.documentElement;
+      const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
+      root.dataset.theme = next;
+      try {
+        localStorage.setItem('starlight-theme', next);
+      } catch {}
+    });
+  });
+
+  // Search: open Starlight's Pagefind modal (mounted by Header.astro on
+  // Starlight-rendered pages; Cmd/Ctrl+K opens it too). On pages without the
+  // modal (the standalone homepage), hide the trigger rather than leave it dead.
+  const openModalBtn = document.querySelector<HTMLButtonElement>('button[data-open-modal]');
+  document.querySelectorAll<HTMLElement>('[data-nav-search]').forEach((el) => {
+    if (openModalBtn) {
+      el.addEventListener('click', (e) => {
+        // Stop this click from reaching window: Starlight's openModal registers
+        // a window click listener to close on outside-click, and this same click
+        // would bubble up and immediately close the dialog it just opened.
+        e.stopPropagation();
+        openModalBtn.click();
+      });
+    } else {
+      el.hidden = true;
+    }
+  });
+
+  // Open/close dropdown menus on hover with a short close delay so users can
+  // move the cursor from the trigger into the panel without it snapping shut.
+  const allMenus = document.querySelectorAll<HTMLElement>('[data-nav-menu]');
+  document.querySelectorAll<HTMLElement>('[data-menu-trigger]').forEach((item) => {
+    const menu = item.querySelector<HTMLElement>('[data-nav-menu]');
+    if (!menu) return;
+    let closeTimer: number | undefined;
+
+    const open = () => {
+      if (closeTimer) window.clearTimeout(closeTimer);
+      // Snap-close any other menu so only one can be visible at a time.
+      allMenus.forEach((m) => {
+        if (m !== menu) m.classList.remove('is-open');
+      });
+      menu.classList.add('is-open');
+    };
+    const close = () => {
+      closeTimer = window.setTimeout(() => menu.classList.remove('is-open'), 120);
+    };
+
+    item.addEventListener('mouseenter', open);
+    item.addEventListener('mouseleave', close);
+    item.addEventListener('focusin', open);
+    item.addEventListener('focusout', (e) => {
+      if (!item.contains(e.relatedTarget as Node)) close();
+    });
+  });
+  // ---- Mobile menu (Figma 745:13162) ----
+  const hamburgerBtn = document.querySelector<HTMLButtonElement>('[data-hamburger]');
+  const mobileMenu = document.querySelector<HTMLElement>('[data-mobile-menu]');
+  if (hamburgerBtn && mobileMenu) {
+    const sections = mobileMenu.querySelectorAll<HTMLElement>('[data-mobile-section]');
+    const navInner = document.querySelector<HTMLElement>('.strands-nav__inner');
+
+    hamburgerBtn.addEventListener('click', () => {
+      const open = mobileMenu.classList.toggle('is-open');
+      hamburgerBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      hamburgerBtn.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+      // Lock body scroll while the overlay is open so scrolling moves the menu,
+      // not the page behind it (the menu can overflow the viewport).
+      document.body.style.overflow = open ? 'hidden' : '';
+      if (open) {
+        // Pin the fixed overlay directly below the header's rendered bottom
+        // (varies by context: 52px on docs, 40px on the homepage).
+        const bottom = navInner ? Math.round(navInner.getBoundingClientRect().bottom) : 0;
+        mobileMenu.style.top = `${bottom}px`;
+        // Reset to collapsed sections each time the menu opens.
+        sections.forEach((s) => s.classList.remove('is-open'));
+      }
+    });
+
+    // One section open at a time (Docs / Community).
+    sections.forEach((section) => {
+      const toggle = section.querySelector<HTMLButtonElement>('[data-section-toggle]');
+      const cats = section.querySelectorAll<HTMLElement>('[data-mobile-cat]');
+      toggle?.addEventListener('click', () => {
+        const willOpen = !section.classList.contains('is-open');
+        sections.forEach((s) => {
+          s.classList.remove('is-open');
+          s.querySelector('[data-section-toggle]')?.setAttribute('aria-expanded', 'false');
+        });
+        // Categories start collapsed (Figma 745:13489) — pages only
+        // appear once a category is tapped.
+        cats.forEach((c) => c.classList.remove('is-open'));
+        if (willOpen) {
+          section.classList.add('is-open');
+          toggle.setAttribute('aria-expanded', 'true');
+        }
+      });
+
+      // One category open at a time within a section.
+      cats.forEach((cat) => {
+        const catBtn = cat.querySelector<HTMLButtonElement>('[data-cat-toggle]');
+        catBtn?.addEventListener('click', () => {
+          const willOpen = !cat.classList.contains('is-open');
+          cats.forEach((c) => {
+            c.classList.remove('is-open');
+            c.querySelector('[data-cat-toggle]')?.setAttribute('aria-expanded', 'false');
+          });
+          if (willOpen) {
+            cat.classList.add('is-open');
+            catBtn.setAttribute('aria-expanded', 'true');
+          }
+        });
+      });
+    });
+  }
+
+  // Spacebar easter egg: each press hops a pixel frog one step forward along
+  // the bottom of the page, Chrome-dino style. Ignored while typing in a
+  // field; does not block space-to-scroll (the frog is a bonus, not a
+  // takeover). When it reaches the right edge it wraps back to the left.
+  const frogEgg = document.querySelector<HTMLElement>('[data-frog-egg]');
+  if (frogEgg) {
+    const STEP = 90; // px advanced per hop
+    const HOP_MS = 360; // duration of one hop arc
+    const HOP_HEIGHT = 64; // px peak of the arc
+    let x = 0; // current horizontal offset
+    let hopping = false;
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+    const typingInField = () => {
+      const el = document.activeElement as HTMLElement | null;
+      if (!el) return false;
+      const tag = el.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+    };
+
+    window.addEventListener('keydown', (e) => {
+      if (e.code !== 'Space' && e.key !== ' ') return;
+      if (typingInField() || reduce || hopping) return;
+
+      frogEgg.classList.add('is-active');
+      // Wrap back to just off the left edge once the frog runs off the right.
+      if (x > window.innerWidth) {
+        x = -STEP;
+        frogEgg.style.transform = `translateX(${x}px)`;
+      }
+      const from = x;
+      const to = x + STEP;
+      hopping = true;
+      const anim = frogEgg.animate(
+        [
+          { transform: `translateX(${from}px) translateY(0)` },
+          { transform: `translateX(${(from + to) / 2}px) translateY(-${HOP_HEIGHT}px)`, offset: 0.5 },
+          { transform: `translateX(${to}px) translateY(0)` },
+        ],
+        { duration: HOP_MS, easing: 'ease-out' }
+      );
+      anim.onfinish = () => {
+        x = to;
+        frogEgg.style.transform = `translateX(${to}px)`; // persist landing spot
+        hopping = false;
+      };
+    });
+  }
+</script>

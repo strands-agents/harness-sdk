@@ -1,5 +1,5 @@
 from strands import Agent, tool
-from strands_tools import file_read, file_write, editor
+from strands.vended_tools import file_editor
 import json
 
 ENGLISH_ASSISTANT_SYSTEM_PROMPT = """
@@ -47,7 +47,7 @@ def english_assistant(query: str) -> str:
 
         english_agent = Agent(
             system_prompt=ENGLISH_ASSISTANT_SYSTEM_PROMPT,
-            tools=[editor, file_read, file_write],
+            tools=[file_editor],
         )
         agent_response = english_agent(formatted_query)
         text_response = str(agent_response)

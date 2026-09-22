@@ -26,13 +26,13 @@ Traditional retokenization can cause drift in RL training—the same text may to
 Install strands-vllm along with the Strands Agents SDK:
 
 ```bash
-pip install strands-vllm strands-agents-tools
+pip install strands-vllm strands-agents
 ```
 
 For retokenization drift demos (requires HuggingFace tokenizer):
 
 ```bash
-pip install "strands-vllm[drift]" strands-agents-tools
+pip install "strands-vllm[drift]" strands-agents
 ```
 
 ## Requirements
@@ -94,12 +94,12 @@ print(f"Response tokens: {len(recorder.token_ids or [])}")
 
 ### 3. Tool Call Validation (Optional, Recommended for RL)
 
-Strands SDK already handles unknown tools and malformed JSON gracefully. `VLLMToolValidationHooks` adds RL-friendly enhancements:
+Strands Harness SDK already handles unknown tools and malformed JSON gracefully. `VLLMToolValidationHooks` adds RL-friendly enhancements:
 
 ```python
 import os
 from strands import Agent
-from strands_tools.calculator import calculator
+from strands.vended_tools import sleep
 from strands_vllm import VLLMModel, VLLMToolValidationHooks
 
 model = VLLMModel(
@@ -110,11 +110,11 @@ model = VLLMModel(
 
 agent = Agent(
     model=model,
-    tools=[calculator],
+    tools=[sleep],
     hooks=[VLLMToolValidationHooks()],
 )
 
-result = agent("Compute 17 * 19 using the calculator tool.")
+result = agent("Pause for one second using the sleep tool.")
 print(result)
 ```
 
@@ -163,13 +163,9 @@ For building RL-ready trajectories with loss masks:
 ```python
 import asyncio
 import os
-from strands import Agent, tool
-from strands_tools.calculator import calculator as _calculator_impl
+from strands import Agent
+from strands.vended_tools import notebook
 from strands_vllm import TokenManager, VLLMModel, VLLMTokenRecorder, VLLMToolValidationHooks
-
-@tool
-def calculator(expression: str) -> dict:
-    return _calculator_impl(expression=expression)
 
 async def main():
     model = VLLMModel(
@@ -181,12 +177,14 @@ async def main():
     recorder = VLLMTokenRecorder()
     agent = Agent(
         model=model,
-        tools=[calculator],
+        tools=[notebook],
         hooks=[VLLMToolValidationHooks()],
         callback_handler=recorder,
     )
 
-    await agent.invoke_async("What is 25 * 17?")
+    await agent.invoke_async(
+        'Create a notebook named "training" with three RL experiment ideas.'
+    )
 
     # Build RL trajectory with loss mask
     tm = TokenManager()
@@ -237,9 +235,9 @@ The `VLLMModel` accepts the following parameters:
 
 **Example error messages** (more informative than Strands defaults):
 
-- Unknown tool: `Error: unknown tool: fake_tool | allowed_tools=[calculator, search, ...]`
-- Missing argument: `Error: tool_name=<calculator> | missing required argument(s): expression`
-- Unknown argument: `Error: tool_name=<calculator> | unknown argument(s): invalid_param`
+- Unknown tool: `Error: unknown tool: fake_tool | allowed_tools=[sleep, search, ...]`
+- Missing argument: `Error: tool_name=<sleep> | missing required argument(s): duration`
+- Unknown argument: `Error: tool_name=<sleep> | unknown argument(s): invalid_param`
 
 ## Troubleshooting
 

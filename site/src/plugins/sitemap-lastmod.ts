@@ -157,8 +157,8 @@ export function sitemapWithLastmod(contentDir: string = 'src/content') {
   // every release commits a changelog file — its commit date approximates the
   // release date for the matching stream.
   const apiDates: Array<[urlPattern: string, date: string | undefined]> = [
-    ['/api/python/', newestDateUnder(lastModMap, contentPrefix('changelog/harness/python-'))],
-    ['/api/typescript/', newestDateUnder(lastModMap, contentPrefix('changelog/harness/typescript-'))],
+    ['/api/python/', newestDateUnder(lastModMap, contentPrefix('changelog/sdk/python-'))],
+    ['/api/typescript/', newestDateUnder(lastModMap, contentPrefix('changelog/sdk/typescript-'))],
   ]
 
   return sitemap({

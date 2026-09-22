@@ -1,0 +1,106 @@
+---
+title: Add tools to your agent
+description: "Give AI agents the ability to take real-world actions. Strands supports built-in tools, custom Python functions, MCP servers, and community packages."
+sidebar:
+  label: "Overview"
+tags: [tool-authoring, mcp]
+sourceLinks:
+  - path: strands-py/src/strands/tools/decorator.py
+  - path: strands-py/src/strands/tools/registry.py
+  - path: strands-ts/src/tools/tool.ts
+  - path: strands-ts/src/tools/tool-factory.ts
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components'
+
+Give your agent the ability to do things beyond generating text: call an API, read a file, run code, or query a database. You pass tools to an agent, and the agent decides when to call them based on the request. Strands works with tools you write yourself, prebuilt tools the SDK and community ship, and any MCP server.
+
+:::caution[Tool Security]
+All tools, whether custom, community-provided, or included in the Strands tools package, execute code on behalf of your agent with the permissions of the host process. Under the shared responsibility model, you should audit each tool's behavior (file access patterns, network calls, shell execution) and ensure it is appropriate for your deployment environment and threat model. See [Responsible AI](../safety-security/responsible-ai.md) for more details.
+:::
+
+## Give your agent tools
+
+<CardGrid>
+  <LinkCard
+    title="Attach and invoke tools"
+    href="using-tools/"
+    description="Pass tools to an agent, inspect what is loaded, and invoke them by prompt or directly."
+  />
+  <LinkCard
+    title="Create custom tools"
+    href="custom-tools/"
+    description="Turn your own functions into tools the agent can call."
+  />
+  <LinkCard
+    title="Use MCP tools"
+    href="mcp-tools/"
+    description="Connect the agent to any Model Context Protocol server."
+  />
+  <LinkCard
+    title="Agents as tools"
+    href="../multi-agent/agents-as-tools/"
+    description="Give one agent another agent to call as a specialized tool."
+  />
+</CardGrid>
+
+## Prebuilt tools and how they run
+
+<CardGrid>
+  <LinkCard
+    title="Vended tools"
+    href="vended-tools/"
+    description="Ready-made tools included in the SDK for files, HTTP, notebooks, and shell."
+  />
+  <LinkCard
+    title="Community tools package"
+    href="community-tools-package/"
+    description="Migration guidance from the former community tools package."
+  />
+  <LinkCard
+    title="Tool executors"
+    href="executors/"
+    description="Control whether multiple tool calls run concurrently or in sequence."
+  />
+</CardGrid>
+
+## A running agent with a tool
+
+The smallest useful setup is an agent with a single tool it can decide to call. Define the tool, pass it to the agent, and invoke:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent, tool
+
+
+@tool
+def get_weather(city: str) -> str:
+    """Get the current weather for a city."""
+    return f"It's sunny in {city}."
+
+
+agent = Agent(tools=[get_weather])
+agent("What's the weather in Seattle?")
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/tools_imports.ts:hub_agent_imports"
+
+--8<-- "user-guide/sdk/tools/tools.ts:hub_agent"
+```
+
+</Tab>
+</Tabs>
+
+The agent reads the tool's description and decides when to call it. From here you add the tools your application needs and control how they run.
+
+## Where to go next
+
+New to tools? Start with [Attach and invoke tools](using-tools.md) to see how tools load onto an agent and the two ways to call them, then [Create custom tools](custom-tools.md) to build your own.
+
+Bringing in tools that already exist? Reach for [vended tools](vended-tools.md) or the [community tools package](community-tools-package.md), or connect an [MCP server](mcp-tools.md). When a model returns several tool calls at once, [tool executors](executors.md) decide whether they run concurrently or in order.

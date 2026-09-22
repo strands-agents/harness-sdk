@@ -8,152 +8,178 @@ redirectFrom:
 <YouTube id="rDtcfG4aZV4" title="Lesson 13: Evaluating Agents" />
 *[Watch on YouTube](https://www.youtube.com/watch?v=rDtcfG4aZV4&list=PLDzwjhH-4yhU&index=13)*
 
-*Code for this lesson can be found
-[**here**](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/13-evals).*
+:::note[About this lesson]
+The videos in this course are a snapshot in time. Strands is under active development, so the code featured on this page reflects the most up-to-date patterns, but the concepts covered in the video still apply. When in doubt, trust the code.
+:::
 
-### Why Traditional Testing Fails with AI Agents
+*Code for this lesson: [`samples/13-evals`](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/13-evals)*
 
-How do you know your agent actually works? More importantly, how do you measure whether a
-prompt change, model swap, tool update, or harness modification made things better or
-worse?
+## Why Traditional Testing Breaks Down
 
-Traditional software testing breaks down pretty quickly with AI agents because of
-non-determinism. The same exact input can produce different outputs across different runs,
-and a lot of agent failures are incredibly hard to catch. The response could successfully
-come back, yet be low-quality, unsafe, incomplete, off-policy, or subtly incorrect.
+Agents are nondeterministic. The same input can produce a different (but equally valid) response, a different tool ordering, or a different level of detail. `assert output == expected` doesn't work. Instead you need LLM-as-a-judge scoring, trajectory validation, multi-turn simulations, and deterministic assertions, combined into eval suites that catch regressions.
 
-One of the biggest mistakes people make is only evaluating single-turn interactions. Most
-agents look great on turn one. The failures usually appear after longer, multi-turn
-interactions:
-
-* When context accumulates over multiple conversational turns.
-* When summaries compress information incorrectly or miss key details.
-* When tools get repeatedly called in loop patterns.
-* When the model slowly goes "off the rails" over time.
-
-That is why evaluation is a core part of harness engineering. Good agent harnesses need
-structured mechanisms for measuring reliability, detecting regressions, validating
-workflows, and stress-testing behavior over time.
-
-### The "LLM as a Judge" Pattern
-
-One of the most common patterns to use for agent evaluation is **LLM as a Judge**. Under
-this pattern, you run your agent against many simulated test cases, then use another model
-to evaluate the outputs against a rubric you define. The judge model scores the results
-and explains its reasoning.
-
-Strands ships with an evaluation SDK that helps structure these types of evaluations. To
-install it, you run:
+Strands Evals is a separate package:
 
 ```bash
 pip install strands-agents-evals
-
 ```
 
-The SDK provides the essential building blocks for defining test cases, running
-experiments, simulating conversations, generating evaluation datasets, and scoring agent
-behavior.
+## Basic Evaluation Structure
 
-### Setting Up a Simple Multi-Turn Evaluation
+An evaluation has three parts: **cases** (inputs plus expectations), **evaluators** (how to score), and a **task** function that runs your agent and returns what the evaluators need. Here we evaluate the customer service agent from earlier lessons on both its final output and the sequence of tools it called:
 
-To set up a basic evaluation suite in Strands, you define the following components:
+```python
+from strands import Agent, AgentSkills
+from strands_evals import Case, Experiment
+from strands_evals.evaluators import OutputEvaluator, TrajectoryEvaluator
+from strands_evals.extractors import tools_use_extractor
+from strands_evals.types import TaskOutput
 
-#### 1. The Simulation Function
+def create_agent():
+    return Agent(
+        tools=[lookup_customer, get_order_history, process_refund],
+        plugins=[AgentSkills(skills=["./skills"]), RefundWorkflowHandler()],
+        system_prompt=SYSTEM_PROMPT,
+        callback_handler=None,
+    )
 
-We define a task function that creates a conversation simulator. We pass in the specific
-test case to simulate and a configured `max_turns` limit. We then run a multi-turn
-conversation loop to simulate a realistic back-and-forth between a customer and our agent.
-To keep things clean, we suppress the default streaming output during evaluation by
-setting the callback handler to `None`.
+# Trajectory evaluator: validates tool call ordering
+trajectory_evaluator = TrajectoryEvaluator(
+    rubric="Score 1.0 if workflow sequence matches expected trajectory...",
+    include_inputs=True,
+)
 
-#### 2. The Test Cases
+# Output evaluator: scores response quality
+output_evaluator = OutputEvaluator(
+    rubric="Score 1.0 if professional, empathetic, addresses the concern...",
+)
 
-We define multiple test cases to run. Each case includes:
+def get_response(case: Case) -> TaskOutput:
+    agent = create_agent()
+    response = agent(case.input)
+    trajectory = tools_use_extractor.extract_agent_tools_used_from_messages(agent.messages)
+    return TaskOutput(output=str(response), trajectory=trajectory)
 
-* An initial input prompt.
-* Expected outcomes defined within metadata.
+cases = [
+    Case(
+        name="refund-full-workflow",
+        input="I'm customer C-1001. Refund my headphones order ORD-5521 please.",
+        expected_output="Refund processed with 3-5 day timeline.",
+        expected_trajectory=["lookup_customer", "get_order_history", "process_refund"],
+    ),
+    Case(
+        name="missing-customer-id",
+        input="I want a refund.",
+        expected_output="Ask for customer ID before proceeding.",
+        expected_trajectory=["lookup_customer"],
+    ),
+]
 
-#### 3. The Evaluator and Rubrics
+experiment = Experiment(
+    cases=cases,
+    evaluators=[trajectory_evaluator, output_evaluator],
+)
 
-Next, we define an evaluator using a rubric. You can supply your own rubric in plain
-language to tell the judge model exactly how to score the response. Strands also includes
-built-in evaluators that look at core characteristics like:
+report = experiment.run_evaluations(task=get_response)
+```
 
-* **Helpfulness:** Did the agent assist the customer effectively?
-* **Outcome Met:** Did the agent successfully achieve the target objective of the
-  workflow?
+📂 [customer_service_eval.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/13-evals/customer_service_eval.py)
 
-#### 4. The Experiment
+## Evaluation Types
 
-Finally, we bundle the task function, test cases, and evaluators into an "Experiment" and
-execute the suite.
+| Type | What It Checks |
+| --- | --- |
+| **Output evaluation** | Quality, tone, correctness of the final response |
+| **Trajectory evaluation** | Whether the agent followed the correct tool sequence |
+| **Simulation** | Multi-turn stress testing over time |
+| **Deterministic** | JSON schema, response length, format. No LLM needed |
+| **Chaos testing** | Does the agent recover when tools fail? |
+| **Red teaming** | Does the agent resist adversarial attacks? |
+| **Experiment Generator** | Auto-bootstraps test cases from agent capabilities |
 
-When we run our evaluation suite, the output might reveal something like a 66% pass rate
-across our test cases. The CLI output lets us expand each run to inspect the results:
+## Chaos Testing
 
-* **Refund Request (Passed - 83%):** The judge model indicates that the agent successfully
-  checked eligibility and processed the return, providing a clear explanation for its
-  score.
-* **Order Tracking (Failed - 50%):** The agent struggled to follow the expected workflow.
-* **Account Issue (Failed - 0%):** The evaluation highlighted an API or lookup error that
-  caused the turn to fail completely.
+Production isn't ideal. Tools time out, APIs go down, responses come back truncated. Chaos testing verifies your agent handles those failures gracefully. The `ChaosPlugin` intercepts tool calls and injects configurable failures.
 
-This telemetry provides concrete data to help you debug whether your agent prompts, tool
-integrations, or even the evaluation test cases themselves need refinement.
+This snippet evaluates a Pokemon team advisor agent (the full agent lives in the Strands samples repo):
 
-### Advanced Evaluation Strategies
+```python
+from strands import Agent
+from strands_evals.chaos import ChaosCase, ChaosExperiment, ChaosPlugin
+from strands_evals.chaos.effects import Timeout, NetworkError, TruncateFields
+from strands_evals.evaluators.deterministic import Contains
 
-As your system matures, you can leverage more advanced evaluation patterns:
+chaos = ChaosPlugin()
+agent = Agent(
+    tools=[get_pokemon, get_move],
+    context_manager="auto",
+    plugins=[chaos],
+)
 
-* **Experiment Generation (Bootstrapping Coverage):** When you first start, you might not
-  know what test cases you should even run. The Strands Experiment Generator can inspect
-  your agent's tools, workflows, and capabilities to automatically generate candidate
-  evaluation cases. While not a replacement for carefully designed manual test cases, it
-  is great for discovering missing coverage and bootstrapping an initial test suite.
-* **Trajectory Evaluation:** Sometimes, evaluating the final response is not enough. You
-  need to ensure the agent followed a strict protocol. For example, a customer support
-  agent must:
-1. Look up the customer.
-2. Retrieve order history.
-3. Validate refund eligibility.
-4. Process the refund.
+# Define failure scenarios
+effect_maps = {
+    "api_timeout": {"tool_effects": {"get_move": [Timeout()]}},
+    "api_down": {"tool_effects": {"get_pokemon": [NetworkError()]}},
+    "partial_response": {"tool_effects": {"get_pokemon": [TruncateFields(max_length=200)]}},
+}
 
+# Expand cases across all failure modes (+ a no-failure baseline)
+chaos_cases = ChaosCase.expand(
+    [Case(name="earthquake_ice_beam", input="Which Pokemon learns both Earthquake and Ice Beam with the highest Attack?")],
+    effect_maps,
+    include_no_effect_baseline=True,
+)
 
-Trajectory evaluators let you validate whether this specific sequence of actions actually
-occurred by evaluating the step-by-step path the agent took during the execution loop.
-* **Deterministic Evaluators:** Not every evaluation needs to be run through an LLM. You
-  can write fast, inexpensive, deterministic evaluators in pure Python to validate
-  concrete requirements, such as JSON schema correctness, response lengths, or status
-  code presence.
+experiment = ChaosExperiment(
+    cases=chaos_cases,
+    evaluators=[Contains(value="rampardos", case_sensitive=False, name="correct_answer")],
+)
 
-### The Role of Evaluations in Production
+report = experiment.run_evaluations(task=lambda case: {"output": str(agent(case.input))})
+```
 
-In a production lifecycle, these tools fit together to secure system quality:
+📂 [pokemon-team-advisor](https://github.com/strands-agents/samples/tree/main/python/05-technical-use-cases/pokemon-team-advisor) (full agent in the Strands samples repo)
 
-* **CI/CD Integration:** You can wire these evaluation suites directly into your CI/CD
-  pipelines so that code deployments fail automatically if your agent's reliability score
-  falls below an acceptable threshold.
-* **Continuous Evolution:** Your evaluation suite should be a living system. As users
-  interact with the agent in production and expose edge cases you didn't anticipate, you
-  should continuously convert those real-world failure modes into new test cases in your
-  evaluation suite.
+Does the agent recover when `get_move` times out? When `get_pokemon` returns a network error? Chaos testing lets you find out while you build, not after customers do.
 
-#### Evaluating the Trade-offs
+## Red Teaming
 
-The primary trade-off of the LLM-as-a-judge pattern is cost and latency. Running
-large-scale simulations with multiple turns and invoking an evaluator model for every
-single run can consume significant tokens very quickly.
+Red teaming tests whether your agent resists adversarial pressure: jailbreaks, data exfiltration attempts, excessive agency. The generator inspects your agent's tools and system prompt and produces targeted attacks; the strategy controls how those attacks escalate across turns.
 
-However, despite these costs, evaluations are one of the most critical investments you can
-make when building production agent systems. Without them, you are operating in the dark,
-unable to prove whether your changes are making the agent better or worse.
+```python
+from strands_evals.experimental.redteam import RedTeamExperiment
+from strands_evals.experimental.redteam.generators.adversarial import AdversarialCaseGenerator
+from strands_evals.experimental.redteam.strategies import CrescendoStrategy
 
-### What's Next?
+cases = AdversarialCaseGenerator().generate_cases(
+    agent=agent,
+    risk_categories=["data_exfiltration", "excessive_agency"],
+    num_cases=3,
+)
 
-We have covered the foundational components of building, structuring, and evaluating agent
-systems.
+experiment = RedTeamExperiment(
+    cases=cases,
+    agent_factory=create_agent,  # fresh agent per case so attacks don't bleed across runs
+    attack_strategies=[CrescendoStrategy()],
+)
 
-In the final lesson, we'll take everything we have built across this entire course and
-deploy it to a production cloud runtime using **Amazon Bedrock AgentCore**.
+report = experiment.run_evaluations()
+```
 
-*Learn more: [Strands Evaluation Quickstart](/docs/user-guide/evals-sdk/quickstart/)*
+Red teaming validates that your guardrails hold under adversarial conditions, not just happy-path inputs.
+
+## Best Practices
+
+- Evaluate multi-turn interactions, not just single turns
+- Combine LLM judges with deterministic assertions
+- Wire evals into CI/CD to catch regressions automatically
+- Evolve your eval suite as new failure modes emerge
+- Use a different model for evaluation than for generation
+- Use chaos testing to verify resilience before production
+- Run red team experiments to validate guardrails
+
+## Resources
+
+- 📖 [Strands Evals Quickstart](/docs/user-guide/evals-sdk/quickstart/)
+- 📖 [Blog: Reduced cost, better isolation, and more resilience](https://strandsagents.com/blog/reduced-cost-better-isolation-more-resilience/)
+- 🛠️ [Strands Evals on GitHub](https://github.com/strands-agents/evals)

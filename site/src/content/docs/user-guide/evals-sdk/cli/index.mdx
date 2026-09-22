@@ -1,0 +1,99 @@
+---
+title: Command-line interface
+description: 'Run agent evaluations from the command line with strands-evals: execute experiments, generate test cases, render reports, and diagnose failures in CI.'
+sidebar:
+  label: "Overview"
+---
+
+## Overview
+
+Installing `strands-agents-evals` also installs the `strands-evals` console script: a thin wrapper over the public Python API for CI gates and one-off use. It exposes six subcommands that map directly to library calls, so behavior in CI matches what you get from a Python script.
+
+| Command | Purpose |
+| --- | --- |
+| [`strands-evals run`](run.md) | Execute an `Experiment` against an `--agent` factory or `--task` callable, or run a single ad-hoc case via `--input` + `--evaluator`/`--expected-output`/`--rubric`. |
+| [`strands-evals validate`](report.md#validate-schema-check-an-experiment) | Schema-check a serialized `Experiment` JSON file. Useful as a CI gate before `run`. |
+| [`strands-evals report`](report.md) | Render an existing `EvaluationReport` JSON via Rich, or dump it as JSON. |
+| [`strands-evals diagnose`](diagnose.md) | Run `detect_failures`, `analyze_root_cause`, or the full `diagnose_session` pipeline on a `Session` JSON file. |
+| [`strands-evals generate`](generate.md) | Synthesize an `Experiment` via `ExperimentGenerator` from a free-form `--context` or an existing `--experiment` file. |
+| [`strands-evals fetch`](diagnose.md#fetch-pull-a-session-from-a-provider) | Pull traces for a session from a provider (`cloudwatch`, `langfuse`, `opensearch`) and emit a `Session` JSON ready to pipe into `diagnose`. |
+
+Run any subcommand with `--help` for the full flag set.
+
+## Installation
+
+```bash
+pip install strands-agents-evals
+```
+
+The `strands-evals` script is registered as a console entry point and is on your `PATH` after installation.
+
+## Entry point convention
+
+`--agent`, `--task`, `--evaluator`, and `--custom-evaluator` all accept a `MODULE:ATTR` reference. The same convention is used by `pytest --pyargs`, `gunicorn`, and `inspect-ai eval`.
+
+Two forms are accepted:
+
+- **Dotted module**: `pkg.module:attr`, resolved via `importlib.import_module`. The current working directory is added to `sys.path` so a sibling file like `agent.py` works as `agent:build_agent` without `PYTHONPATH=.`.
+- **Path-like**: `./agent.py:build_agent`, `../sibling/agent:build_agent`, or `/abs/path/agent.py:build_agent`. Anything that contains a path separator, starts with `./`/`../`/`~`, or ends in `.py`.
+
+## Global flags
+
+Every subcommand accepts the same global flags from the parent parser:
+
+| Flag | Purpose |
+| --- | --- |
+| `--json` | Emit machine-readable JSON to stdout. |
+| `--rich` | Emit Rich-rendered output to stdout. Default when stdout is a TTY. |
+| `-v`, `--verbose` | Increase log verbosity. Repeat (`-vv`) for `DEBUG`. |
+| `--debug` | `DEBUG` logging plus full tracebacks on errors. |
+
+`--json` and `--rich` are mutually exclusive; without either, the format is auto-detected from whether stdout is a TTY.
+
+## Exit codes
+
+Every subcommand uses the same exit-code scheme, so a non-zero exit fails a CI step for the right reason:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success (for `run`: all cases passed, or `--fail-on=none` / `--exit-zero`). |
+| `1` | Evaluation failures triggered by `run`'s `--fail-on` rule. |
+| `2` | Bad input (invalid flags, missing entry point, schema error). |
+| `3` | Unexpected runtime error. |
+
+See [`run`](run.md#concurrency-caching-and-exit-codes) for the `--fail-on` rules that decide between `0` and `1`.
+
+## CI integration
+
+A typical CI flow combines `validate` (fast schema gate) with `run` (the actual evaluation):
+
+```yaml
+# .github/workflows/evals.yml (excerpt)
+- name: Validate experiments
+  run: strands-evals validate experiments/regression.json
+
+- name: Run evaluations
+  run: |
+    strands-evals run experiments/regression.json \
+      --agent my_pkg.agents:build_agent \
+      --max-workers 8 \
+      --data-store ./.cache/regression \
+      --fail-on threshold:0.85 \
+      -o regression-report.json
+
+- name: Upload report
+  if: always()
+  uses: actions/upload-artifact@v4
+  with:
+    name: eval-report
+    path: regression-report.json
+```
+
+`validate` exits non-zero on schema errors before any agent calls, and `run` exits non-zero on evaluation failures via `--fail-on`. The cached results from `--data-store` make reruns cheap when only the evaluators or the agent change.
+
+## Next steps
+
+- [`run`](run.md): execute an experiment file or a one-off ad-hoc case.
+- [`generate`](generate.md): synthesize an experiment from a context description, with or without topic planning.
+- [`diagnose` and `fetch`](diagnose.md): pull a session from a provider and analyze its failures.
+- [`report` and `validate`](report.md): render reports and schema-check experiment files.

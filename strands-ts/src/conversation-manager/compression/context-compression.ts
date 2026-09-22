@@ -120,7 +120,7 @@ export function findValidTrimPoint(messages: Message[], startIndex: number): num
  * Generate a summary of the provided messages by calling the model.
  *
  * @returns A user-role message containing the model-generated summary
- * @throws If the model fails to produce a response
+ * @throws If the model fails to produce a response, or its reply carries no text
  */
 export async function generateSummary(
   messagesToSummarize: Message[],
@@ -149,10 +149,36 @@ export async function generateSummary(
     throw new Error('Failed to generate summary: no response from model')
   }
 
-  return new Message({
-    role: 'user',
-    content: result.value.message.content,
-  })
+  return asUserSummary(result.value.message)
+}
+
+/**
+ * Re-role a model reply as the user-role summary message kept in history.
+ *
+ * Only the reply's text is kept: providers reject reasoning and tool-use blocks in user
+ * messages (Bedrock: "User messages cannot contain reasoning content").
+ *
+ * @param message - The summarizer's reply
+ * @returns A user-role message holding the reply's text blocks
+ * @throws If the reply carries no text
+ * @internal
+ */
+export function asUserSummary(message: Message): Message {
+  const textBlocks: TextBlock[] = []
+  for (const block of message.content) {
+    if (block.type === 'textBlock') {
+      textBlocks.push(new TextBlock(block.text))
+    } else if (block.type === 'citationsBlock') {
+      // A cited reply carries its text nested inside the citations block; URL citations may carry none.
+      for (const cited of block.content) {
+        if (cited.text) textBlocks.push(new TextBlock(cited.text))
+      }
+    }
+  }
+  if (textBlocks.length === 0) {
+    throw new Error('Failed to generate summary: model response contained no text')
+  }
+  return new Message({ role: 'user', content: textBlocks })
 }
 
 export type MessageTypeFilter = 'tools' | 'messages' | 'all'

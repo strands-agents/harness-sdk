@@ -1,0 +1,96 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "strands-harness"
+dynamic = ["version"]
+description = "Strands harness: a batteries-included agent in one call, built on the Strands Harness SDK"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "AWS", email = "opensource@amazon.com" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+# [otel] pulls the OTLP exporter: telemetry is on by default (wired when a collector endpoint is
+# configured), so the exporter must always be importable, not an optional extra.
+# 1.55.1 is the first release with Background Tasks and its public BackgroundTasksConfig export.
+# pydantic-monty is the sandbox programmatic_tool_caller runs model-authored code in; it is a hard
+# dependency because the tool is on by default. Pinned exactly while Monty is pre-1.0 and its API moves.
+dependencies = [
+    "strands-agents[otel]>=1.56.0,<2.0.0",
+    "pydantic-monty==0.0.23",
+    "pydantic>=2.5,<3",
+]
+
+[project.optional-dependencies]
+openai = ["strands-agents[openai]", "openai>=2.0.0,<3.0.0"]
+anthropic = ["strands-agents[anthropic]"]
+gemini = ["strands-agents[gemini]"]
+ollama = ["strands-agents[ollama]"]
+litellm = ["strands-agents[litellm]"]
+dev = [
+    "pytest>=8.0.0,<9.0.0",
+    "pytest-asyncio>=0.24.0,<1.0.0",
+    "ruff>=0.9.0,<1.0.0",
+    "strands-agents[openai,anthropic,gemini,ollama,litellm]",
+    "openai>=2.0.0,<3.0.0",
+    # The MCP test fixtures use mcp v1's FastMCP API; the SDK allows mcp 2.x, which renamed it.
+    # Pin v1 for tests (within the SDK's supported range) until the fixtures migrate.
+    "mcp>=1.23.0,<2.0.0",
+]
+# End-to-end tests that hit a live model. Self-sufficient (includes the pytest stack) so
+# `pip install -e '.[integ]'` alone can run them; pytest-rerunfailures retries the occasional LLM
+# miss so a non-deterministic model doesn't flake CI — run with e.g. `pytest tests_integ --reruns 2`.
+integ = [
+    "pytest>=8.0.0,<9.0.0",
+    "pytest-asyncio>=0.24.0,<1.0.0",
+    "pytest-rerunfailures>=14.0,<16.0",
+    "strands-agents-mcp-server>=0.2.0,<1.0.0",
+    # See the [dev] note: pin mcp v1 for the MCP-backed integration tests.
+    "mcp>=1.23.0,<2.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/strands-agents/harness-sdk"
+"Source Code" = "https://github.com/strands-agents/harness-sdk/tree/main/harness-py"
+"Bug Tracker" = "https://github.com/strands-agents/harness-sdk/issues"
+Documentation = "https://strandsagents.com"
+
+[tool.hatch.version]
+source = "vcs"
+raw-options.tag_regex = "^harness-python/v(?P<version>.+)$"
+raw-options.git_describe_command = ["git", "describe", "--dirty", "--tags", "--long", "--match", "harness-python/v*"]
+raw-options.search_parent_directories = true
+raw-options.fallback_version = "0.0.0"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/strands_harness"]
+
+[tool.ruff]
+line-length = 120
+# ruff formats Python code blocks inside Markdown; leave prose/doc snippets alone (mirrors the
+# TypeScript side, where prettier only checks src/test, not README).
+extend-exclude = ["*.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

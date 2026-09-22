@@ -1,0 +1,83 @@
+---
+title: Plugins
+tags: [hooks, event-loop]
+description: "Extend agent behavior with plugins. Add steering, guardrails, and custom capabilities that hook into the agent lifecycle."
+sourceLinks:
+  - path: strands-py/src/strands/plugins/plugin.py
+  - path: strands-ts/src/plugins/plugin.ts
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components'
+
+Plugins change the typical behavior of an agent. They let you introduce concepts like [Skills](https://agentskills.io/specification), [steering](../agents/interventions/steering/), or other behavioral modifications into the agent loop by composing on the low-level primitives the Agent class exposes—`model`, <Syntax py="system_prompt" ts="systemPrompt" />, `messages`, `tools`, and `hooks`. Attach the built-in plugins the SDK ships, or write your own.
+
+## Extend your agent
+
+<CardGrid>
+  <LinkCard
+    title="Skills"
+    href="skills/"
+    description="Give the agent on-demand access to specialized instructions, following the AgentSkills specification."
+  />
+  <LinkCard
+    title="Context Offloader"
+    href="context-offloader/"
+    description="Offload oversized tool results to storage, leaving retrievable previews behind."
+  />
+  <LinkCard
+    title="Context Injector"
+    href="context-injector/"
+    description="Fold real-time text into the model input before each call, without persisting it to history."
+  />
+  <LinkCard
+    title="GoalLoop"
+    href="goal-loop/"
+    description="Validate responses against a goal and loop with feedback until they satisfy it."
+  />
+  <LinkCard
+    title="Build a custom plugin"
+    href="custom-plugins/"
+    description="Write your own plugin: register hooks and tools, manage state, and initialize it."
+  />
+</CardGrid>
+
+## Attach a plugin
+
+The smallest useful setup passes a plugin to an agent's `plugins` list. The agent runs the plugin's logic as part of its loop:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from datetime import datetime, timezone
+
+from strands import Agent
+from strands.vended_plugins.context_injector import ContextInjector
+
+agent = Agent(
+    plugins=[
+        ContextInjector(lambda context: f"<now>{datetime.now(timezone.utc).isoformat()}</now>"),
+    ],
+)
+agent("What time is it right now?")
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/plugins/index_imports.ts:hub_agent_imports"
+
+--8<-- "user-guide/sdk/plugins/index.ts:hub_agent"
+```
+
+</Tab>
+</Tabs>
+
+From here you attach the plugins your application needs, or build your own.
+
+## Where to go next
+
+New to plugins? Attach a built-in one from the grid above—[Skills](skills.md), [Context Offloader](context-offloader.md), [Context Injector](context-injector.md), or [GoalLoop](goal-loop.md)—and see it change the agent's behavior.
+
+Ready to write your own? [Build a custom plugin](custom-plugins.md) walks through registering hooks and tools, managing state, and async initialization. [Hooks](../agents/hooks.md) covers how the hook system works, and [Hook events](../agents/hooks-events.md) is the reference for every lifecycle event a plugin can react to.

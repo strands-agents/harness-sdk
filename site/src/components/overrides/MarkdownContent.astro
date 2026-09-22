@@ -9,9 +9,11 @@ import PageTags from '../PageTags.astro';
 const { starlightRoute } = Astro.locals;
 const { languages, community, experimental } = starlightRoute.entry.data;
 // Integration doc pages render without the docs sidebar (see route-middleware.ts);
-// the back strip is their route to the /integrations catalog.
+// the back strip is their route to the /integrations catalog. get-featured is
+// excepted — it renders inside the catalog rail, so the sidebar is its way back.
 const isIntegrationsPage =
-  starlightRoute.id === 'docs/integrations' || starlightRoute.id.startsWith('docs/integrations/');
+  starlightRoute.id !== 'docs/integrations/get-featured' &&
+  (starlightRoute.id === 'docs/integrations' || starlightRoute.id.startsWith('docs/integrations/'));
 
 const ALL_SDK_LANGUAGES = ['python', 'typescript']
 const langArray = languages

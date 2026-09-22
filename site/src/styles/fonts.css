@@ -1,0 +1,156 @@
+@import url('https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400..700&family=JetBrains+Mono:wght@400..700&family=Space+Grotesk:wght@400..700&display=swap');
+
+:root {
+  /* Palette tokens — brand colors constant across themes. Use these only for
+     colors identical in light/dark; otherwise use the semantic tokens below. */
+  --strands-black: #000000;
+  --strands-white: #ffffff;
+  --strands-green: #00cc60;
+  --strands-pink: #ff70eb;
+  --strands-blue: #2708f1;
+  --strands-red: #f7414c;
+  --strands-yellow: #f6bc00;
+  --strands-grey-200: #d9d9d9;
+  --strands-grey-400: #b6b6b6;
+  --strands-grey-600: #999696;
+  --strands-green-3: #02a435;
+  --strands-safari-green: #0d3010;
+  --strands-charcoal-1: #28292a;
+  --strands-charcoal-2: #3d3c3c;
+
+  /* Semantic tokens — theme-aware; light defaults here. Components should
+     reference these, not the palette tokens above. */
+  --bg: #ffffff;
+  --fg: #000000;
+  --border: rgba(0, 0, 0, 0.15);
+  --card-bg: #ffffff;
+  --card-border: #000000;
+  --nav-bg: #ffffff;
+  --nav-fg: #000000;
+  --nav-toggle-bg: var(--strands-grey-200);
+  --nav-toggle-fg: var(--strands-black);
+  --terminal-bg: #f4f4f4;
+  --terminal-header-bg: #e5e5e5;
+  --terminal-fg: #28292a;
+  --terminal-lineno: #666363; /* 5.41:1 on the light terminal bg */
+  --code-string: #007a3d; /* darker green for a11y contrast on light bg */
+  --code-keyword: #b3009e; /* darker pink for a11y contrast on light bg */
+  --divider: rgba(0, 0, 0, 0.15);
+
+  /* Starlight color tokens (light) — mirrors custom.css so standalone pages
+     that only import fonts.css (e.g. /community) resolve them too. */
+  --sl-color-white: var(--strands-black);
+  --sl-color-gray-1: var(--strands-charcoal-1);
+  --sl-color-gray-2: var(--strands-charcoal-2);
+  --sl-color-gray-3: #666464;
+  --sl-color-gray-4: var(--strands-grey-600);
+
+  /* Light-mode accent remaps. green-3 (#02a435) is only 3.29:1 on white — OK
+     as large desktop text, but headings/eyebrows shrink below the large-text
+     threshold on mobile and need 4.5:1, so use #007a3d (5.45:1). Eyebrows are
+     green in light mode (pink is dark-only). */
+  --accent-green: #007a3d;
+  --eyebrow: #007a3d;
+  --banner-headline: var(--strands-black);
+
+  /* Toolkit card accents. The raw brand colors fail WCAG contrast in one
+     theme each (pink/yellow on white, blue on black), so use per-theme
+     variants that clear 3:1 for the large bold card headings. */
+  --card-accent-blue: var(--strands-blue); /* #2708f1 — 8.78:1 on white */
+  --card-accent-pink: #b3009e; /* darker pink, 6.16:1 on white */
+  --card-accent-yellow: #946e00; /* amber, 4.68:1 on white (mobile cards shrink to 15px → need 4.5) */
+  --card-accent-orange: #b35900; /* darker orange, 4.82:1 on white — /harness */
+  --card-accent-teal: #0f766e; /* darker teal, 5.47:1 on white — /harness */
+
+  /* CTA link text on white surfaces: darker green clears AA (5.45:1). */
+  --cta-green: #007a3d;
+
+  /* Muted grey for inactive use-case titles on white. At mobile the title
+     shrinks to 20px normal (needs 4.5:1), so use #767373 (4.7:1). */
+  --use-case-muted: #767373;
+  --surface-green: #e6f6e7; /* Strands Seafoam Green */
+  /* Banner halftone dots on the white light-mode bg — seafoam was nearly
+     invisible, so use a mid brand green that reads clearly yet stays subtle. */
+  --halftone-dot: #9fd9b0;
+  --toggle-bg: var(--strands-white);
+  --toggle-active-bg: var(--strands-green-3);
+  --toggle-inactive-bg: transparent;
+  --toggle-inactive-border: var(--strands-grey-600);
+  /* #999696 is 2.93:1 on white — fails AA for the 14px inactive tab label.
+     #767373 clears it (4.7:1). */
+  --toggle-inactive-fg: #767373;
+  --toggle-hover-fg: var(--strands-black);
+
+  /* Starlight header tweaks: the strands nav is 84px tall. It breaks out
+     of the header container horizontally and cancels the vertical padding
+     itself, so --sl-nav-pad-x/y keep their Starlight defaults (the docs
+     footer and other components derive their padding from them). */
+  --sl-nav-height: 84px;
+}
+
+:root[data-theme='dark'] {
+  --bg: #000000;
+  --fg: #ffffff;
+  --border: rgba(255, 255, 255, 0.2);
+  --card-bg: #000000;
+  --card-border: #ffffff;
+  --nav-bg: #000000;
+  --nav-fg: #ffffff;
+  --nav-toggle-bg: #ffffff;
+  --nav-toggle-fg: #000000;
+  --terminal-bg: #28292a;
+  --terminal-header-bg: #3d3c3c;
+  --terminal-fg: #d9d9d9;
+  --terminal-lineno: var(--strands-grey-600); /* 4.97:1 on dark terminal bg */
+  --code-string: #00cc60;
+  --code-keyword: #ff70eb;
+  --divider: rgba(255, 255, 255, 0.2);
+
+  /* Starlight color tokens (dark) — mirrors custom.css so standalone pages
+     that only import fonts.css (e.g. /community) resolve them too. */
+  --sl-color-white: var(--strands-white);
+  --sl-color-gray-1: var(--strands-grey-200);
+  --sl-color-gray-2: var(--strands-grey-400);
+  --sl-color-gray-3: var(--strands-grey-600);
+  --sl-color-gray-4: #6f6d6d;
+
+  /* Dark-mode values for the light remaps above. */
+  --accent-green: var(--strands-green);
+  --eyebrow: var(--strands-pink);
+  --banner-headline: var(--strands-green);
+
+  /* Dark-mode card accents: blue needs lightening for contrast on black;
+     pink/yellow already clear 3:1 at full saturation. */
+  --card-accent-blue: #6a8bff; /* lighter blue, 6.75:1 on black */
+  --card-accent-pink: var(--strands-pink); /* #ff70eb — 8.77:1 on black */
+  --card-accent-yellow: var(--strands-yellow); /* #f6bc00 — 12.11:1 on black */
+  --card-accent-orange: #ff8a3d; /* warm orange, 8.98:1 on black — /harness */
+  --card-accent-teal: #2dd4bf; /* bright teal, 11.3:1 on black — /harness */
+
+  /* CTA link text on black: bright brand green (6.36:1). */
+  --cta-green: var(--strands-green);
+
+  /* Muted grey on black already passes; keep the brand grey. */
+  --use-case-muted: var(--strands-grey-600);
+  /* Deeper than the full brand green (#00cc60): a full-width footer/CTA block of
+     pure #00cc60 glares against the black page in dark mode. Muted green still
+     clears AA for the black text these surfaces carry. */
+  --surface-green: color-mix(in srgb, var(--strands-green) 74%, #000);
+  --halftone-dot: var(--strands-green); /* dark mode: full brand green */
+  --toggle-bg: var(--strands-charcoal-1);
+  --toggle-active-bg: var(--strands-green);
+  --toggle-inactive-bg: var(--strands-charcoal-2);
+  --toggle-inactive-border: var(--strands-charcoal-1);
+  --toggle-inactive-fg: var(--strands-grey-400);
+  --toggle-hover-fg: var(--strands-white);
+}
+
+/* Mobile: the nav is shorter than the desktop 84px bar, so reserve less space
+   above the content (removes the large gap under the header), and widen the
+   docs content column's horizontal padding for more breathing room. */
+@media (max-width: 50rem) {
+  :root {
+    --sl-nav-height: 3.75rem;
+    --sl-content-pad-x: 1.5rem;
+  }
+}

@@ -1,7 +1,7 @@
 import asyncio
 
 from strands import Agent
-from strands_tools import calculator
+from strands.vended_tools import sleep
 
 from strands_evals import Case, Experiment
 from strands_evals.evaluators import ToolSelectionAccuracyEvaluator
@@ -18,7 +18,7 @@ def user_task_function(case: Case) -> dict:
         # IMPORTANT: trace_attributes with session IDs are required when using StrandsInMemorySessionMapper
         # to prevent spans from different test cases from being mixed together in the memory exporter
         trace_attributes={"gen_ai.conversation.id": case.session_id, "session.id": case.session_id},
-        tools=[calculator],
+        tools=[sleep],
         callback_handler=None,
     )
     agent_response = agent(case.input)
@@ -29,11 +29,15 @@ def user_task_function(case: Case) -> dict:
 
 # 2. Create test cases
 test_cases = [
-    Case[str, str](name="math-1", input="Calculate the square root of 144", metadata={"category": "math"}),
     Case[str, str](
-        name="math-2",
-        input="What is 25 * 4? can you use that output and then divide it by 4, then the final output should be squared. Give me the final value.",
-        metadata={"category": "math"},
+        name="pause-1",
+        input="Pause for 1 second using the sleep tool.",
+        metadata={"category": "timing"},
+    ),
+    Case[str, str](
+        name="pause-2",
+        input="Pause for 2 seconds using the sleep tool.",
+        metadata={"category": "timing"},
     ),
 ]
 

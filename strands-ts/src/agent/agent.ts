@@ -217,6 +217,7 @@ export type AgentConfig = {
    *   with a higher truncation threshold and summarization only on overflow.
    *   This mode may change in future versions.
    * - `ContextManagerConfig` object: Custom strategy pipeline and stash configuration.
+   * - `ContextManager` instance: Used as-is. An instance binds to one agent; construct one per `Agent`.
    * - `false`: Explicitly disable context management (no compression, no offloading).
    *
    * When set (except `false`), any co-provided `conversationManager` is ignored.
@@ -327,7 +328,7 @@ export type AgentConfig = {
  * Resolve the contextManager facade into a concrete ConversationManager.
  *
  * When contextManager is undefined, falls back to the default SlidingWindowConversationManager.
- * When a preset, config object, or false, uses NullConversationManager —
+ * When a preset, config object, instance, or false, uses NullConversationManager —
  * the ContextManager owns overflow recovery and proactive compression.
  */
 function resolveConversationManager(

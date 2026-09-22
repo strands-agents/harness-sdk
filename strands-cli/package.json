@@ -1,0 +1,97 @@
+{
+  "name": "@strands-agents/cli",
+  "version": "0.0.1-development",
+  "description": "Strands CLI: chat with the Strands harness, a batteries-included agent, from your terminal",
+  "type": "module",
+  "bin": {
+    "strands": "bin/strands.js"
+  },
+  "exports": {},
+  "imports": {
+    "#ink-text-cache": "./dist/src/tui/terminal/ink.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "src/tui/voice/sidecar.py",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "build": "tsc --project src/tsconfig.json && node scripts/copy-python-runtime.js",
+    "clean:dist": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "prepack": "npm run clean:dist && npm run build",
+    "clean": "rm -rf dist node_modules",
+    "start": "node bin/strands.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage --exclude test/tui-pty-lifecycle.test.ts && vitest run test/tui-pty-lifecycle.test.ts",
+    "lint": "eslint bin scripts src test",
+    "lint:fix": "eslint bin scripts src test --fix",
+    "format": "prettier --write bin scripts src test",
+    "format:check": "prettier --check bin scripts src test",
+    "type-check": "tsc --noEmit --project src/tsconfig.json",
+    "type-check:test": "tsc --noEmit --project tsconfig.json",
+    "check": "npm run lint && npm run format:check && npm run type-check && npm run type-check:test && npm run test:coverage",
+    "test:integ": "vitest run --config vitest.integration.config.ts"
+  },
+  "keywords": [
+    "agents",
+    "ai",
+    "cli",
+    "typescript",
+    "strands",
+    "harness"
+  ],
+  "author": "AWS",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/strands-agents/harness-sdk.git",
+    "directory": "strands-cli"
+  },
+  "bugs": {
+    "url": "https://github.com/strands-agents/harness-sdk/issues"
+  },
+  "homepage": "https://github.com/strands-agents/harness-sdk#readme",
+  "dependencies": {
+    "@agentclientprotocol/sdk": "1.3.0",
+    "@aws-sdk/client-bedrock": "^3.1102.0",
+    "@aws-sdk/client-sts": "^3.1129.0",
+    "@aws/bedrock-token-generator": "^1.1.0",
+    "@cedar-policy/cedar-wasm": "4.11.2",
+    "@cedar-policy/mcp-schema-generator-wasm": "0.6.0",
+    "@modelcontextprotocol/sdk": "^1.25.2",
+    "@strands-agents/harness": "<1.0.0",
+    "@strands-agents/sdk": ">=1.17.0 <1.18.0",
+    "commander": "^15",
+    "fflate": "^0.8.3",
+    "ink": "7.1.1",
+    "marked": "^18.0.9",
+    "react": "19.2.8",
+    "smol-toml": "1.7.1",
+    "string-width": "^8.2.2",
+    "tsx": "^4.23.13",
+    "typescript": "^6.0.3",
+    "yazl": "^3.3.1"
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^0.109.1",
+    "@eslint/js": "^10.0.1",
+    "@google/genai": "^2.6.0",
+    "@types/node": "^25.9.4",
+    "@types/react": "19.2.18",
+    "@types/yazl": "^3.3.1",
+    "@typescript-eslint/eslint-plugin": "^8.62.1",
+    "@typescript-eslint/parser": "^8.0.0",
+    "@vitest/coverage-v8": "^4.1.10",
+    "eslint": "^10.6.0",
+    "openai": "^6.45.0",
+    "prettier": "^3.9.4",
+    "vitest": "^4.1.10"
+  }
+}

@@ -202,3 +202,18 @@
   name: Ramon Li
   role: "Software Engineer, AWS"
   bio: Ramon Li is a Software Engineer at AWS working on the Strands Agents SDK.
+
+- id: ariel-nabavian
+  name: Ariel Nabavian
+  role: "Software Engineer, AWS"
+  bio: Ariel Nabavian is a software engineer at AWS working on Strands Agents.
+
+- id: murat-kaan-meral
+  name: Murat Kaan Meral
+  role: "Software Engineer, AWS"
+  bio: Murat Kaan Meral is a software engineer at AWS working on Strands Agents.
+
+- id: gautam-sirdeshmukh
+  name: Gautam Sirdeshmukh
+  role: "Software Engineer, AWS"
+  bio: Gautam Sirdeshmukh is a software engineer at AWS working on Strands Agents.

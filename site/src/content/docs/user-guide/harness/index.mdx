@@ -1,0 +1,148 @@
+---
+title: Strands harness
+description: "Strands harness is a state-of-the-art, fully assembled agent harness built on the Strands Harness SDK. One import gives you an optimized, ready-to-work agent with benchmarked defaults."
+sourceLinks:
+  - path: harness-py/src/strands_harness/agent.py
+  - path: harness-ts/src/agent.ts
+  - path: harness-py/src/strands_harness/prompt.py
+sidebar:
+  label: "Overview"
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components'
+
+**Strands harness** is a state-of-the-art, fully assembled harness you can use in one import. It
+comes with benchmarked defaults for tools, context management, sessions, memory, and hooks,
+plus a tuned system prompt, so you start with an optimized agent instead of assembling an
+agent harness yourself piece by piece.
+
+## Get one running
+
+You do not have to pass anything. Import it, instantiate it, then give the agent a task:
+
+<Tabs>
+  <Tab label="Python">
+    ```python
+    # pip install strands-harness
+    from strands_harness import create_harness
+
+    agent = create_harness()
+    agent("Research the top three vector databases, compare pricing and limits, and write it up in comparison.md")
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    // npm install @strands-agents/harness
+    import { createHarness } from '@strands-agents/harness'
+
+    const agent = await createHarness()
+    await agent.invoke("Research the top three vector databases, compare pricing and limits, and write it up in comparison.md")
+    ```
+  </Tab>
+</Tabs>
+
+Amazon Bedrock is the default. See [choose a model](./configure/model/) to run on Anthropic, OpenAI, Google, or Ollama.
+
+Strands harness is open source — browse the source on GitHub:
+
+<Tabs>
+  <Tab label="Python">
+    [`harness-py`](https://github.com/strands-agents/harness-sdk/tree/main/harness-py) — the Python package.
+  </Tab>
+  <Tab label="TypeScript">
+    [`harness-ts`](https://github.com/strands-agents/harness-sdk/tree/main/harness-ts) — the TypeScript package.
+  </Tab>
+</Tabs>
+
+## Make it yours
+
+Strands harness is a powerful general-purpose harness that you can customize. It is opinionated
+in its implementation but not restrictive: every default is overridable, and what you get
+back is a standard Strands `Agent` with no wrapper or hidden abstraction. As your use case
+gets more specific, override the defaults that matter for it and keep the rest.
+
+Strands harness is built on the [Strands Harness SDK](../sdk/). If you
+want to build your own harness from the ground up, you can always use the Strands Harness SDK directly,
+with the same configuration you already have on Strands harness.
+
+## What the default harness does
+
+Without any customization, Strands harness hands you back a fully functional agent. Every default
+below can be narrowed, swapped, or turned off; the linked page shows how:
+
+- Runs on the [model of your choice](./configure/model/), with providers across Amazon
+  Bedrock, Anthropic, OpenAI, and Google, plus Ollama for running locally, and reasoning
+  turned on.
+- Follows a [tuned system prompt](./configure/tools-and-instructions/):
+  explore first, then act, confirm before anything irreversible, and verify before finishing.
+- Has a [shell and file tools](./tools/shell-and-files/) (`read`,
+  `write`, `edit`) and [web access](./tools/web-access/).
+- [Manages its own context window](./configure/context-and-caching/)
+  (the limited span of text the model reads at once), setting bulky tool results aside as a
+  task grows, and caches the reused parts of each request to save time and cost.
+- Keeps [long-term memory](./configure/memory/) across runs, and can
+  pick up an earlier [conversation](./configure/sessions/) when you give
+  it a session id.
+- Hands open-ended subtasks to a [built-in helper agent](./configure/subagents/)
+  and tracks multi-step work with a [checklist](./tools/todos-and-environment/).
+- Loads [Agent Skills](./configure/skills/) when present, and lets the
+  model [orchestrate its own tools in code](./tools/programmatic-tool-calling/).
+
+## Explore Strands harness
+
+<CardGrid>
+  <LinkCard
+    title="Quickstart"
+    href="./quickstart/"
+    description="Install the library or the CLI and run your first Strands harness agent."
+  />
+  <LinkCard
+    title="Configure the agent"
+    href="./configure/model/"
+    description="Point Strands harness at the model of your choice. Add tools and override defaults as needed."
+  />
+  <LinkCard
+    title="Compose with the Strands Harness SDK"
+    href="./composing-with-sdk/"
+    description="How Strands harness builds on the Strands Harness SDK."
+  />
+  <LinkCard
+    title="Configuration reference"
+    href="./reference/configuration/"
+    description="Every factory option in one table: name, default, and purpose."
+  />
+</CardGrid>
+
+## Where Strands harness fits
+
+Strands is an open source toolkit for agent builders. Strands harness is the fastest way to get an
+optimized, pre-configured agent that you can customize to your use case. It is built on top
+of the Strands Harness SDK, and the rest of the toolkit works alongside it:
+
+<CardGrid>
+  <LinkCard
+    title="Strands Harness SDK"
+    href="../sdk/"
+    description="Build your own agent harness from the ground up when you need full control."
+  />
+  <LinkCard
+    title="Strands Shell"
+    href="../shell/"
+    description="A virtual shell designed for AI agents to use safely."
+  />
+  <LinkCard
+    title="Strands Evals"
+    href="../evals-sdk/"
+    description="Validate your agent before you ship."
+  />
+</CardGrid>
+
+## Where to go next
+
+New to Strands harness? Start with the [quickstart](./quickstart/) and have an
+agent running in a few minutes. [What the default harness does](#what-the-default-harness-does)
+above tours everything it ships with before you change anything.
+When you are ready to tune it, [configure the agent](./configure/model/)
+walks each option, the [configuration reference](./reference/configuration/)
+lists them all, and [composing with the Strands Harness SDK](./composing-with-sdk/)
+shows how to reach past the defaults into the full Strands Harness SDK.

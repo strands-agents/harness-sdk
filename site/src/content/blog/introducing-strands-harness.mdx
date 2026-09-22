@@ -1,0 +1,228 @@
+---
+title: "Introducing Strands harness: frontier performance with 28% lower token cost"
+date: 2026-09-21
+description: "Strands harness is a fully assembled, customizable, state-of-the-art agent you run locally or deploy anywhere."
+authors:
+  - arron-bailiss
+  - tim-moreton
+  - albert-zhao
+tags:
+  - Announcement
+  - Strands harness
+  - Harness SDK
+  - Use Cases
+draft: false
+---
+
+import strandsCliExportDemo from './resources/strands-harness/strands-cli-export-demo.mp4'
+import strandsDesktopDemo from './resources/strands-harness/strands-desktop-demo.mp4'
+
+We noticed builders often wished their Claude Code or Codex setup could run in the cloud because locally their agent idea just "worked" with those harnesses.
+
+But the moment you build your own agent, you're on your own. It's tricky wiring up the right primitives just well enough to match that "it just worked" feeling.
+
+Today we're releasing [Strands harness](https://github.com/strands-agents/harness-sdk/tree/main): a fully assembled state-of-the-art agent harness you can easily run locally or deploy to your favorite provider. It's built to be a general-purpose agent rather than a coding agent. All you need is one line of Python or TypeScript to get it working with your choice of model. Strands harness beats other agent harnesses on cost efficiency while maintaining equal or better accuracy. It's available under an Apache 2.0 license.
+
+Strands harness **costs 28% less** when using the same Claude or GPT models across six benchmarks. We found Strands harness showed better token-efficiency and nearly equal benchmark scores compared to Claude Code, Codex, and other popular harnesses. That's important because we never want to sacrifice accuracy for lower cost. Deepseek Harness proved to be the most token-efficient overall, however, it typically reported the lowest accuracy scores. Our testing setup was distributed benchmarking on EC2 with Harbor.
+
+<iframe
+  src={`${import.meta.env.BASE_URL}embeds/strands-harness-benchmarks.html`}
+  title="Strands harness cost and accuracy across six benchmarks"
+  loading="lazy"
+  scrolling="no"
+  style="width: 100%; aspect-ratio: 1320 / 1268; height: auto; border: 0; border-radius: 14px;"
+></iframe>
+
+With Fable 5, Strands harness **cost 77% less** than Claude Code *and* **scored higher** on Terminal Bench 2.1. We're also pleased to see two other open source harnesses perform similarly well on cost/accuracy against Claude Code.
+
+<iframe
+  src={`${import.meta.env.BASE_URL}embeds/strands-harness-terminalbench.html`}
+  title="Strands harness vs Claude Code on Terminal Bench 2.1"
+  loading="lazy"
+  scrolling="no"
+  style="width: 100%; aspect-ratio: 766 / 555; height: auto; border: 0; border-radius: 14px;"
+></iframe>
+
+Strands harness, built on the [Strands Harness SDK](https://github.com/strands-agents/harness-sdk), contains defaults for prompt caching and context management. Our default context management largely drove the token-efficiency and accuracy: tool results over ~1500 tokens get truncated, summarization (compaction) triggers when the context window hits above 85%, and context recovery runs within the loop if there's an overflow.
+
+Keep an eye out for a follow-up paper from our researchers regarding these benchmarks. In the meantime, we're excited everyone gets to use these defaults in Strands harness.
+
+## Easy to get started
+
+Strands harness runs on the latest models across Amazon Bedrock, Anthropic, OpenAI, and Google. Pick one by name, or point it at a local Ollama model:
+
+<Tabs>
+  <Tab label="Amazon Bedrock">
+    <Tabs>
+      <Tab label="Python">
+        ```python wrap
+        from strands_harness import create_harness
+
+        agent = create_harness(model="bedrock/global.anthropic.claude-opus-5")
+        agent("Research the top three vector databases, compare pricing and limits, and write it up in comparison.md")
+        ```
+      </Tab>
+      <Tab label="TypeScript">
+        ```typescript wrap
+        import { createHarness } from "@strands-agents/harness";
+
+        const agent = await createHarness({ model: "bedrock/global.anthropic.claude-opus-5" });
+        await agent("Research the top three vector databases, compare pricing and limits, and write it up in comparison.md");
+        ```
+      </Tab>
+    </Tabs>
+  </Tab>
+  <Tab label="Anthropic">
+    <Tabs>
+      <Tab label="Python">
+        ```python wrap
+        from strands_harness import create_harness
+
+        agent = create_harness(model="anthropic/claude-opus-5")
+        agent("Research the top three vector databases, compare pricing and limits, and write it up in comparison.md")
+        ```
+      </Tab>
+      <Tab label="TypeScript">
+        ```typescript wrap
+        import { createHarness } from "@strands-agents/harness";
+
+        const agent = await createHarness({ model: "anthropic/claude-opus-5" });
+        await agent("Research the top three vector databases, compare pricing and limits, and write it up in comparison.md");
+        ```
+      </Tab>
+    </Tabs>
+  </Tab>
+  <Tab label="OpenAI">
+    <Tabs>
+      <Tab label="Python">
+        ```python wrap
+        from strands_harness import create_harness
+
+        agent = create_harness(model="openai/gpt-5.6-sol")
+        agent("Research the top three vector databases, compare pricing and limits, and write it up in comparison.md")
+        ```
+      </Tab>
+      <Tab label="TypeScript">
+        ```typescript wrap
+        import { createHarness } from "@strands-agents/harness";
+
+        const agent = await createHarness({ model: "openai/gpt-5.6-sol" });
+        await agent("Research the top three vector databases, compare pricing and limits, and write it up in comparison.md");
+        ```
+      </Tab>
+    </Tabs>
+  </Tab>
+  <Tab label="Google">
+    <Tabs>
+      <Tab label="Python">
+        ```python wrap
+        from strands_harness import create_harness
+
+        agent = create_harness(model="google/gemini-3.5-flash")
+        agent("Research the top three vector databases, compare pricing and limits, and write it up in comparison.md")
+        ```
+      </Tab>
+      <Tab label="TypeScript">
+        ```typescript wrap
+        import { createHarness } from "@strands-agents/harness";
+
+        const agent = await createHarness({ model: "google/gemini-3.5-flash" });
+        await agent("Research the top three vector databases, compare pricing and limits, and write it up in comparison.md");
+        ```
+      </Tab>
+    </Tabs>
+  </Tab>
+  <Tab label="Ollama">
+    <Tabs>
+      <Tab label="Python">
+        ```python wrap
+        from strands_harness import create_harness
+        from strands.models.ollama import OllamaModel
+
+        model = OllamaModel(host="http://localhost:11434", model_id="llama3.1")
+        agent = create_harness(model=model)
+        agent("Research the top three vector databases, compare pricing and limits, and write it up in comparison.md")
+        ```
+      </Tab>
+      <Tab label="TypeScript">
+        ```typescript wrap
+        import { createHarness } from "@strands-agents/harness";
+
+        const agent = await createHarness({ model: "ollama/llama3.1" });
+        await agent("Research the top three vector databases, compare pricing and limits, and write it up in comparison.md");
+        ```
+      </Tab>
+    </Tabs>
+  </Tab>
+  <Tab label="LiteLLM">
+    <Tabs>
+      <Tab label="Python">
+        ```python wrap
+        from strands_harness import create_harness
+
+        agent = create_harness(model="litellm/openai/gpt-5.6-sol")
+        agent("Research the top three vector databases, compare pricing and limits, and write it up in comparison.md")
+        ```
+      </Tab>
+      <Tab label="TypeScript">
+        ```typescript wrap
+        import { createHarness } from "@strands-agents/harness";
+
+        const agent = await createHarness({ model: "litellm/openai/gpt-5.6-sol" });
+        await agent("Research the top three vector databases, compare pricing and limits, and write it up in comparison.md");
+        ```
+      </Tab>
+    </Tabs>
+  </Tab>
+</Tabs>
+
+Out of the box, `create_harness()` returns an agent that:
+
+- Runs on a current reasoning model across Amazon Bedrock, Anthropic, OpenAI, Google, Ollama, or LiteLLM.
+- Ships with shell, file (`read` / `write` / `edit`), and web tools: the primitives a model already knows how to use, rather than a bespoke tool per task.
+- Manages its own context window. It offloads bulky tool results to files and caches the reused parts of each request to save time and cost.
+- Keeps long-term memory across runs, and resumes an earlier conversation when you give it a session ID.
+- Delegates open-ended subtasks to a built-in helper agent, and tracks multi-step work with a checklist.
+- Loads skills if they exist.
+
+Strands harness can be deployed on any provider with a linux container, such as Modal, Cloudflare Containers, Azure Container Apps, Google Cloud Run, Amazon ECS, and Amazon Bedrock AgentCore.
+
+We also have the Strands CLI that allows you to prototype your agent in plain English. Wire up your model provider of choice, then add prompts and tools to watch your agent come to life. Afterwards, you can run `/export` in the Strands CLI to get a copy of the code in either TypeScript or Python, a very convenient way to keep iterating on Strands harness with your preferred coding agent.
+
+<video
+  src={strandsCliExportDemo}
+  controls
+  loop
+  muted
+  playsInline
+  width="100%"
+>
+  Your browser does not support the video tag.
+</video>
+
+Here we ask the Strands harness agent to "add the Playwright MCP" and then measure latency when loading a video on a blog post. After seeing the MCP tools accurately work, we simply run `/export` to get the Strands harness code. You can see the Playwright MCP got added to the boilerplate, making it easy to iterate with a coding agent or adding config to deploy.
+
+## What you can build from Strands harness
+
+The Strands CLI is actually built on top of Strands harness. We unlocked a bunch of ambitious ideas because of how easy it is to prototype any agent. Recently our engineer, Gautam Sirdeshmukh, inspired by agent platforms like Grokbot and Muse, built a desktop app that kicks off Strands harness remotely.
+
+<video
+  src={strandsDesktopDemo}
+  controls
+  loop
+  muted
+  playsInline
+  width="100%"
+>
+  Your browser does not support the video tag.
+</video>
+
+When you're ready to go deeper, Strands harness is fully customizable. You can easily override any default, swap models, add tools, or gradually replace components all the way down to the Strands Harness SDK. The code is yours.
+
+We're excited for all kinds of agents that'll come to life with Strands harness.
+
+## Try it out today
+
+You can easily install [Strands harness](https://strandsagents.com/docs/user-guide/harness/) with `pip install strands-harness` for Python or `npm install @strands-agents/harness` for TypeScript. For an interactive experience, download the Strands CLI: `npm install -g @strands-agents/cli`.
+
+We believe quickly prototyping with a batteries included harness will create more useful agents. Our team is also in [Discord](https://discord.gg/strands), so come say hi or ask us any question about agents!
