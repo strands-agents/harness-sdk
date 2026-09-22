@@ -314,6 +314,7 @@ export type { Logger } from './logging/types.js'
 // MCP Client types and implementations
 export {
   type McpClientOptions,
+  type McpListOptions,
   type McpListToolsOptions,
   type McpToolFilterCallback,
   type McpToolFilters,
@@ -322,6 +323,7 @@ export {
   type McpClientCredentials,
   type McpTransport,
   type McpCallToolOptions,
+  type McpRequestTimeouts,
   type TasksConfig,
   type McpConnectionState,
   type McpLoadServersOptions,
