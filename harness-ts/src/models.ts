@@ -247,16 +247,13 @@ async function openai(modelId: string, effort: string | null, webSearch: boolean
 async function bedrockMantle(
   modelId: string,
   effort: string | null,
-  webSearch: boolean,
+  _webSearch: boolean,
   _caching: boolean
 ): Promise<Model> {
   const { OpenAIModel } = await import('@strands-agents/sdk/models/openai')
   const params: Record<string, unknown> = {}
   if (effort !== null) {
     params.reasoning = { effort }
-  }
-  if (webSearch) {
-    params.tools = [{ type: 'web_search', external_web_access: true }]
   }
   return new OpenAIModel({
     modelId,
@@ -313,9 +310,9 @@ interface Provider {
   recommended: string | null
   levels: readonly string[]
   // Native web search is enabled through model config on the providers whose SDK exposes a
-  // non-clobbering seam for it (OpenAI Responses `params.tools` for OpenAI and bedrock-mantle, Gemini
-  // `builtInTools`); `hasWebSearch` narrows bedrock-mantle to its GPT-5/GPT-6 models. Bedrock Converse has no
-  // mechanism. Anthropic-direct gets `anthropicTools` in @strands-agents/sdk 1.19.0; on 1.18.0 a
+  // non-clobbering seam for it (OpenAI Responses `params.tools` for OpenAI and Gemini `builtInTools`).
+  // Bedrock Converse and Mantle have no compatible mechanism. Anthropic-direct gets `anthropicTools`
+  // in @strands-agents/sdk 1.19.0; on 1.18.0 a
   // `params.tools` entry would still overwrite the function tools, so it stays `false` until then
   // (Python already enables it through `anthropic_tools`).
   webSearch: boolean
@@ -332,7 +329,7 @@ const PROVIDERS: Record<string, Provider> = {
     build: bedrockMantle,
     recommended: 'high',
     levels: OPENAI_LEVELS,
-    webSearch: true,
+    webSearch: false,
     caching: true,
   },
   anthropic: { build: anthropic, recommended: 'high', levels: ANTHROPIC_LEVELS, webSearch: false, caching: true },
@@ -440,7 +437,7 @@ export async function resolveModel(
     )
   }
 
-  const nativeSearch = webSearch && hasWebSearch(providerName, name)
+  const nativeSearch = webSearch && hasWebSearch(providerName)
 
   if (caching && !provider.caching) {
     const supported = Object.keys(PROVIDERS)
@@ -540,17 +537,12 @@ export function supportsWebSearch(model: Model | ModelRouter | string | undefine
   if (model instanceof Model || model instanceof ModelRouter) {
     return false
   }
-  const [providerName, name] = splitProvider(model ?? DEFAULT_MODEL)
-  return hasWebSearch(providerName, name)
+  const [providerName] = splitProvider(model ?? DEFAULT_MODEL)
+  return hasWebSearch(providerName)
 }
 
-function hasWebSearch(providerName: string, name: string): boolean {
-  const provider = PROVIDERS[providerName]
-  if (provider === undefined || !provider.webSearch) {
-    return false
-  }
-  // Bedrock Web Search is only served for Mantle's GPT-5/GPT-6 models; other families reject the tool (HTTP 400).
-  return providerName !== 'bedrock-mantle' || name.startsWith('openai.gpt-5.') || name.startsWith('openai.gpt-6-')
+function hasWebSearch(providerName: string): boolean {
+  return PROVIDERS[providerName]?.webSearch ?? false
 }
 
 /**

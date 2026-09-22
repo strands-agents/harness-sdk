@@ -85,8 +85,8 @@ def _builtin_tools(parent_config: dict[str, Any]) -> dict[str, Any]:
     was enabled with (``{}`` for ``True``, see ``_BUILTIN_TOOL_CONFIG_KEYS``); ``web_fetch`` also
     derives its summarizer from the agent's model, ``subagent`` takes the whole parent config so it
     can rebuild a child the way this agent was built. ``subagent``'s own delegation-depth budget
-    lives on ``agent.state``, tracked by the tool itself. ``web_search`` here is the Exa fallback;
-    ``create_harness`` selects it only for a model without native search."""
+    lives on ``agent.state``, tracked by the tool itself. ``web_search`` here is the Exa backend;
+    ``create_harness`` selects it when explicitly requested."""
     enabled = parent_config["builtin_tools"]
     web_fetch_config = _builtin_tool_config(enabled, "web_fetch")
     web_fetch_model = resolve_web_fetch_model(parent_config["model"], web_fetch_config.pop("model", None))
@@ -116,14 +116,14 @@ def _web_search_mode(
     third-party tool, opted into with ``"exa"``), or ``None`` (off)."""
     if setting is False:
         return None
-    if supports_web_search(model):
-        return "native"
     if setting == "exa":
         logger.warning(
             "web_search is opted into Exa (exa.ai), a third-party service: every search query leaves your "
             "environment and is subject to Exa's privacy policy (https://exa.ai/privacy-policy)."
         )
         return "exa"
+    if supports_web_search(model):
+        return "native"
     target = (
         "A pre-built Model instance"
         if isinstance(model, (Model, ModelRouter))
@@ -318,11 +318,11 @@ def create_harness(
             small fast model of the main agent's provider so credentials align), and ``{"web_fetch":
             {"transport": "direct"}}`` fetches from the harness process instead of running ``curl`` in the
             agent's sandbox (the default, ``"curl"``).
-            ``web_search`` turns on the model provider's native web search (OpenAI, Anthropic, Google,
-            GPT-5/GPT-6 models on bedrock-mantle). Elsewhere (Bedrock Converse, other Mantle models,
+            ``web_search`` turns on the model provider's native web search (OpenAI, Anthropic, and
+            Google). Elsewhere (Bedrock Converse, Bedrock Mantle,
             ``Model`` instances) it is off unless ``{"web_search": "exa"}`` opts into a ``web_search``
             tool backed by Exa's hosted search, a third party that receives the queries (keyless;
-            ``EXA_API_KEY`` lifts its rate limit); naming ``web_search`` without the fallback on such a
+            ``EXA_API_KEY`` lifts its rate limit); naming ``web_search`` without ``"exa"`` on such a
             model raises.
             ``programmatic_tool_caller`` lets the model orchestrate its other tools by writing Python
             that runs in a Monty sandbox (no filesystem, network, or process access; only the other

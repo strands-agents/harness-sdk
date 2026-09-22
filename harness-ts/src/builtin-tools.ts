@@ -117,14 +117,14 @@ export function webSearchMode(
   if (setting === false) {
     return undefined
   }
-  if (supportsWebSearch(model)) {
-    return 'native'
-  }
   if (setting === 'exa') {
     logger.warn(
       "web_search is opted into Exa (exa.ai), a third-party service: every search query leaves your environment and is subject to Exa's privacy policy (https://exa.ai/privacy-policy)."
     )
     return 'exa'
+  }
+  if (supportsWebSearch(model)) {
+    return 'native'
   }
   const target =
     typeof model === 'string' || model === undefined ? `Model ${model ?? DEFAULT_MODEL}` : 'A pre-built Model instance'
@@ -142,8 +142,8 @@ export function webSearchMode(
 export type BuildAgent = (options: HarnessAgentOptions) => Promise<Agent>
 
 // `web_fetch` needs the agent's model to pick its default summarizer, and `subagent` the whole
-// parent config to rebuild a child. `web_search` here is the Exa fallback; `createHarness` selects
-// it only for a model without native search.
+// parent config to rebuild a child. `web_search` here is the Exa backend; `createHarness` selects
+// it when explicitly requested.
 export async function buildBuiltinTools(
   buildAgent: BuildAgent,
   parentConfig: HarnessAgentOptions,

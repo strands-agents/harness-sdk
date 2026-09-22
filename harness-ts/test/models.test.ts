@@ -408,27 +408,11 @@ describe('resolveModel', () => {
     await expect(resolve('bedrock-mantle/openai.gpt-oss-120b', 'max')).rejects.toThrow('not supported by this provider')
   })
 
-  it('adds the Bedrock Web Search tool for bedrock-mantle web_search', async () => {
-    const model = await resolve('bedrock-mantle/openai.gpt-5.6-luna', 'auto', true)
-    const params = model.getConfig().params as { reasoning: { effort: string }; tools: unknown }
-    expect(params.reasoning.effort).toBe('high')
-    expect(params.tools).toEqual([{ type: 'web_search', external_web_access: true }])
-  })
-
-  it('adds the Bedrock Web Search tool with effort off', async () => {
-    const model = await resolve('bedrock-mantle/openai.gpt-5.6-luna', 'off', true)
-    expect(model.getConfig().params).toEqual({
-      reasoning: { effort: 'none' },
-      tools: [{ type: 'web_search', external_web_access: true }],
-    })
-  })
-
-  it('adds the Bedrock Web Search tool on GPT-6', async () => {
-    const model = await resolve('bedrock-mantle/openai.gpt-6-astra', 'off', true)
-    expect(model.getConfig().params).toEqual({
-      reasoning: { effort: 'none' },
-      tools: [{ type: 'web_search', external_web_access: true }],
-    })
+  it('never adds native web search tools for bedrock-mantle', async () => {
+    for (const modelId of ['openai.gpt-5.6-luna', 'openai.gpt-6-astra', 'openai.gpt-oss-120b', 'qwen.qwen3-32b-v1:0']) {
+      const model = await resolve(`bedrock-mantle/${modelId}`, 'off', true)
+      expect(model.getConfig().params).toEqual({ reasoning: { effort: 'none' } })
+    }
   })
 
   it('omits bedrock-mantle tools when web_search is off', async () => {
@@ -610,11 +594,11 @@ describe('supportsThinking', () => {
 })
 
 describe('supportsWebSearch', () => {
-  it('is true for openai, google and bedrock-mantle', () => {
+  it('is true for openai and google but false for bedrock-mantle', () => {
     expect(supportsWebSearch('openai/gpt-5.6-sol')).toBe(true)
     expect(supportsWebSearch('google/gemini-3.5-flash')).toBe(true)
-    expect(supportsWebSearch('bedrock-mantle/openai.gpt-5.6-luna')).toBe(true)
-    expect(supportsWebSearch('bedrock-mantle/openai.gpt-6-astra')).toBe(true)
+    expect(supportsWebSearch('bedrock-mantle/openai.gpt-5.6-luna')).toBe(false)
+    expect(supportsWebSearch('bedrock-mantle/openai.gpt-6-astra')).toBe(false)
     expect(supportsWebSearch('bedrock-mantle/openai.gpt-oss-120b')).toBe(false)
     expect(supportsWebSearch('bedrock-mantle/qwen.qwen3-32b-v1:0')).toBe(false)
   })

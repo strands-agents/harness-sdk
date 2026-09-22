@@ -84,7 +84,7 @@ def _normalize_builtin_tools(
 
     A list pins exactly the names given (``[]`` = none). A mapping edits the harness's default set:
     ``False`` removes a tool, ``True`` adds it, a config dict adds and configures it (the keys in
-    ``_BUILTIN_TOOL_CONFIG_KEYS``), and ``"exa"`` opts ``web_search`` into its third-party fallback;
+    ``_BUILTIN_TOOL_CONFIG_KEYS``), and ``"exa"`` opts ``web_search`` into its third-party backend;
     ``"*"`` (default ``True``) is the starting set, written ``False`` to start from nothing. ``None`` is
     The harness's default set. Unknown names, unknown config keys and other values raise. The result is what
     subagents receive, so they never see a list or ``"*"``.

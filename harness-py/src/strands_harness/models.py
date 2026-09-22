@@ -218,13 +218,11 @@ def _openai(model_id: str, effort: str | None, web_search: bool, caching: bool) 
     return OpenAIResponsesModel(model_id=model_id, **({"params": params} if params else {}))
 
 
-def _bedrock_mantle(model_id: str, effort: str | None, web_search: bool, caching: bool) -> Model:
+def _bedrock_mantle(model_id: str, effort: str | None, _web_search: bool, caching: bool) -> Model:
     # ``caching`` is unused: Mantle caches server-side automatically.
     from strands.models.openai_responses import BedrockMantleConfig, OpenAIResponsesModel
 
     params: dict[str, Any] = {} if effort is None else {"reasoning": {"effort": effort}}
-    if web_search:
-        params["tools"] = [{"type": "web_search", "external_web_access": True}]
     return OpenAIResponsesModel(
         model_id=model_id, bedrock_mantle_config=BedrockMantleConfig(), **({"params": params} if params else {})
     )
@@ -274,11 +272,9 @@ class Provider(NamedTuple):
     """How one model provider is built and what reasoning/search/caching it supports.
 
     ``web_search`` is enabled through model config on the providers whose SDK exposes a
-    non-clobbering seam for it (OpenAI Responses ``params.tools`` for OpenAI and bedrock-mantle,
-    Gemini ``gemini_tools``); ``_has_web_search`` narrows bedrock-mantle to its GPT-5/GPT-6 models.
-    Bedrock Converse has no mechanism, and the Anthropic-direct model spreads ``params`` last so a
-    ``tools`` key would overwrite the function tools; both stay ``False`` until the SDK grows a
-    safe seam.
+    non-clobbering seam for it (OpenAI Responses ``params.tools`` for OpenAI, Gemini
+    ``gemini_tools``, and Anthropic ``anthropic_tools``). Bedrock Converse and Mantle have no
+    compatible mechanism.
 
     ``caching`` marks providers where prompt caching is in effect when requested, whether or not
     the harness configures anything: Bedrock and Anthropic direct (the harness sets cache points and tool caching)
@@ -295,7 +291,7 @@ class Provider(NamedTuple):
 
 _PROVIDERS = {
     "bedrock": Provider(_bedrock, "high", _ANTHROPIC_LEVELS, web_search=False, caching=True),
-    "bedrock-mantle": Provider(_bedrock_mantle, "high", _OPENAI_LEVELS, web_search=True, caching=True),
+    "bedrock-mantle": Provider(_bedrock_mantle, "high", _OPENAI_LEVELS, web_search=False, caching=True),
     "anthropic": Provider(_anthropic, "high", _ANTHROPIC_LEVELS, web_search=True, caching=True),
     "openai": Provider(_openai, "high", _OPENAI_LEVELS, web_search=True, caching=True),
     "google": Provider(_gemini, "high", _GOOGLE_LEVELS, web_search=True, caching=True),
@@ -352,12 +348,9 @@ def _require_or_warn(explicit: bool, error: str, warning: str) -> None:
     logger.warning(warning)
 
 
-def _has_web_search(provider_name: str, name: str) -> bool:
+def _has_web_search(provider_name: str) -> bool:
     provider = _PROVIDERS.get(provider_name)
-    if provider is None or not provider.web_search:
-        return False
-    # Bedrock Web Search is only served for Mantle's GPT-5/GPT-6 models; other families reject the tool (HTTP 400).
-    return provider_name != "bedrock-mantle" or name.startswith(("openai.gpt-5.", "openai.gpt-6-"))
+    return provider is not None and provider.web_search
 
 
 def supports_web_search(model: Model | ModelRouter | str | None) -> bool:
@@ -368,7 +361,8 @@ def supports_web_search(model: Model | ModelRouter | str | None) -> bool:
     """
     if isinstance(model, (Model, ModelRouter)):
         return False
-    return _has_web_search(*_split_provider(model or defaults.DEFAULT_MODEL))
+    provider_name, _ = _split_provider(model or defaults.DEFAULT_MODEL)
+    return _has_web_search(provider_name)
 
 
 def supports_thinking(model: Model | str | None) -> bool:
@@ -472,7 +466,7 @@ def resolve_model(
     level = (
         _bedrock_effort(name, effort) if provider_name == "bedrock" else _effort(effort, recommended, levels, subject)
     )
-    native_search = web_search and _has_web_search(provider_name, name)
+    native_search = web_search and _has_web_search(provider_name)
     return provider.build(name, level, native_search, caching and provider.caching and not unsupported_caching)
 
 

@@ -328,23 +328,12 @@ def test_bedrock_mantle_rejects_an_unsupported_thinking_level():
         resolve("bedrock-mantle/openai.gpt-oss-120b", effort="max")
 
 
-def test_bedrock_mantle_web_search_adds_bedrock_web_search_tool():
-    model = resolve("bedrock-mantle/openai.gpt-5.6-luna", web_search=True)
-    assert model.config["params"]["reasoning"]["effort"] == "high"
-    assert model.config["params"]["tools"] == [{"type": "web_search", "external_web_access": True}]
-
-
-def test_bedrock_mantle_web_search_with_effort_off():
-    model = resolve("bedrock-mantle/openai.gpt-5.6-luna", effort="off", web_search=True)
-    assert model.config["params"] == {
-        "reasoning": {"effort": "none"},
-        "tools": [{"type": "web_search", "external_web_access": True}],
-    }
-
-
-def test_bedrock_mantle_web_search_on_gpt_6():
-    model = resolve("bedrock-mantle/openai.gpt-6-astra", effort="off", web_search=True)
-    assert model.config["params"]["tools"] == [{"type": "web_search", "external_web_access": True}]
+@pytest.mark.parametrize(
+    "model_id", ["openai.gpt-5.6-luna", "openai.gpt-6-astra", "openai.gpt-oss-120b", "qwen.qwen3-32b-v1:0"]
+)
+def test_bedrock_mantle_never_adds_native_web_search_tools(model_id):
+    model = resolve(f"bedrock-mantle/{model_id}", effort="off", web_search=True)
+    assert model.config["params"] == {"reasoning": {"effort": "none"}}
 
 
 def test_bedrock_mantle_no_web_search_has_no_tools():
@@ -352,17 +341,11 @@ def test_bedrock_mantle_no_web_search_has_no_tools():
     assert "tools" not in model.config["params"]
 
 
-def test_bedrock_mantle_web_search_is_gpt_5_and_6_only():
-    # The factory only passes web_search for models that have it; the builder never adds the tool elsewhere.
-    for model_id in ("bedrock-mantle/qwen.qwen3-32b-v1:0", "bedrock-mantle/openai.gpt-oss-120b-1:0"):
-        assert "tools" not in resolve(model_id, web_search=True).config["params"]
-
-
 def test_supports_web_search_by_provider():
     assert supports_web_search("openai/gpt-5.6-sol") is True
     assert supports_web_search("google/gemini-3.5-flash") is True
-    assert supports_web_search("bedrock-mantle/openai.gpt-5.6-luna") is True
-    assert supports_web_search("bedrock-mantle/openai.gpt-6-astra") is True
+    assert supports_web_search("bedrock-mantle/openai.gpt-5.6-luna") is False
+    assert supports_web_search("bedrock-mantle/openai.gpt-6-astra") is False
     assert supports_web_search("bedrock-mantle/openai.gpt-oss-120b") is False
     assert supports_web_search("bedrock-mantle/qwen.qwen3-32b-v1:0") is False
     assert supports_web_search("bedrock/global.anthropic.claude-opus-4-8") is False

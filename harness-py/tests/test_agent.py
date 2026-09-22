@@ -487,7 +487,7 @@ def test_web_search_explicit_on_unsupported_provider_raises():
         create_harness(builtin_tools={"web_search": True})
 
 
-def test_web_search_exa_fallback_builds_the_tool_and_warns_about_the_third_party(caplog):
+def test_web_search_exa_backend_builds_the_tool_and_warns_about_the_third_party(caplog):
     import logging
 
     with caplog.at_level(logging.WARNING, logger="strands_harness.agent"):
@@ -497,13 +497,13 @@ def test_web_search_exa_fallback_builds_the_tool_and_warns_about_the_third_party
     assert not any("has no native web search" in r.message for r in caplog.records)
 
 
-def test_web_search_exa_fallback_yields_to_native_search():
+def test_web_search_explicit_exa_overrides_native_search():
     agent = create_harness(model="openai/gpt-5.6-sol", builtin_tools={"web_search": "exa"})
-    assert "web_search" not in agent.tool_names
-    assert agent.model.config["params"]["tools"] == [{"type": "web_search"}]
+    assert "web_search" in agent.tool_names
+    assert "tools" not in agent.model.config["params"]
 
 
-def test_web_search_exa_fallback_works_on_a_model_instance():
+def test_web_search_exa_backend_works_on_a_model_instance():
     agent = create_harness(model=BedrockModel(model_id="x"), builtin_tools={"web_search": "exa"})
     assert "web_search" in agent.tool_names
 
@@ -515,14 +515,13 @@ def test_web_search_setting_is_a_bool_or_exa():
         create_harness(builtin_tools={"web_search": {"fallback": "exa"}})
 
 
-def test_web_search_native_on_anthropic_and_mantle_gpt():
+def test_web_search_native_on_anthropic_but_not_mantle():
     agent = create_harness(model="anthropic/claude-opus-4-8")
     assert "web_search" not in agent.tool_names
     assert agent.model.config["anthropic_tools"][0]["type"] == "web_search_20260318"
     agent = create_harness(model="bedrock-mantle/openai.gpt-5.6-luna")
     assert "web_search" not in agent.tool_names
-    assert agent.model.config["params"]["tools"] == [{"type": "web_search", "external_web_access": True}]
-    # Other Mantle families have no native search: the default warns and drops it.
+    assert "tools" not in agent.model.config["params"]
     agent = create_harness(model="bedrock-mantle/openai.gpt-oss-120b-1:0")
     assert "web_search" not in agent.tool_names
     assert "tools" not in agent.model.config["params"]
@@ -1326,7 +1325,7 @@ def test_subagent_grandchild_narrowing_propagates():
             provider.stop(None, None, None)
 
 
-def test_subagent_child_inherits_exa_fallback():
+def test_subagent_child_inherits_exa_backend():
     from strands_harness.tools import AgentSpec
 
     parent = create_harness(builtin_tools={"web_search": "exa"})

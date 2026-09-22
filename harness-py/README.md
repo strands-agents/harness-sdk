@@ -187,7 +187,7 @@ create_harness(builtin_tools={"*": False, "read": True, "web_fetch": {}})   # pi
 `BUILTIN_TOOL_NAMES` (exported from the package root) is the full list. Prefer the mapping form
 for "the defaults minus X" (`{"subagent": False}`); a list pins every name it contains, so listing
 `web_search` on a model without native search raises instead of quietly staying off (opt into the
-Exa fallback with `{"web_search": "exa"}`).
+Exa backend with `{"web_search": "exa"}`).
 
 `subagent` always runs in the background. By default, the model may also select background
 execution for any other compatible tool. The harness waits for the work to finish and continues the
@@ -302,16 +302,13 @@ create_harness(builtin_tools={"web_fetch": {"model": "anthropic/claude-haiku-4-5
 ```
 
 `web_search` is the other one: it lets the agent look things up on the web mid-answer. Where the
-model provider has its own search (OpenAI, Google, GPT-5/GPT-6 models on `bedrock-mantle` via
-Bedrock Web Search, and Anthropic in Python; TypeScript Anthropic support follows in a coming
+model provider has its own search (OpenAI and Google, plus Anthropic in Python; TypeScript Anthropic support follows in a coming
 `@strands-agents/sdk` release) the harness turns that on and there is no extra service involved. Elsewhere (Amazon Bedrock
-Converse, other Mantle models, a `Model` instance) `web_search` is off by default with a logged
-warning, and naming it explicitly raises. To search there anyway, opt into the Exa fallback with
+Converse, Bedrock Mantle, a `Model` instance) `web_search` is off by default with a logged
+warning, and naming it explicitly raises. To search there anyway, opt into the Exa backend with
 `{"web_search": "exa"}`: the model gets a `web_search` tool backed by Exa's hosted search. It is
-keyless to start; `EXA_API_KEY` in the environment lifts the rate limit. On a model with native
-search the same setting keeps using the provider's search. Bedrock Web Search also needs the
-`bedrock-websearch` IAM actions (in `AmazonBedrockFullAccess`); without them the request succeeds but
-each search fails.
+keyless to start; `EXA_API_KEY` in the environment lifts the rate limit. This explicit setting also
+overrides native search on providers that offer it.
 
 > [!WARNING]
 > Web search through Exa sends every search query the model writes to Exa (exa.ai), a third-party

@@ -56,8 +56,8 @@ export type ToolConfig<K extends BuiltinToolName> = K extends 'read'
 
 /**
  * Edits to the default built-in tool set. `false` disables a tool, `true` enables it, and a
- * per-tool config object enables and configures it (`web_search` takes `'exa'` instead, its
- * third-party fallback). The `'*'` key (default `true`) includes the harness's defaults; write `false` to
+ * per-tool config object enables and configures it (`web_search` takes `'exa'` instead to select its
+ * third-party backend). The `'*'` key (default `true`) includes the harness's defaults; write `false` to
  * start from nothing and enable tools one by one.
  */
 export type BuiltinToolsConfig = { '*'?: boolean } & {

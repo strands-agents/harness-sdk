@@ -1,9 +1,9 @@
 /**
  * web_search: search the web and return the top results as numbered sources.
  *
- * The opt-in fallback for models without native web search (`builtinTools: { web_search: 'exa' }`):
- * on OpenAI, Gemini and Mantle GPT models the name is a model flag and this tool is not built (see
- * `agent.ts`). It is backed by Exa's hosted MCP server, a third party that receives the
+ * The opt-in Exa backend (`builtinTools: { web_search: 'exa' }`) is used whenever selected,
+ * including as an alternative for models without native web search (see `agent.ts`). It is backed
+ * by Exa's hosted MCP server, a third party that receives the
  * queries; the keyless free tier covers getting started and `EXA_API_KEY` lifts the rate limit in
  * place. The tool/backend split keeps the model-facing contract fixed while the search provider
  * behind it can change.
