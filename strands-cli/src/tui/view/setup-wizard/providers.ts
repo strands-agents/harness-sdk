@@ -140,7 +140,7 @@ export function providerAssessment(
     return {
       description: 'Setup required',
       status: 'error',
-      warning: `Requires ${missingPackage} · npm install -g ${missingPackage}`,
+      warning: `CLI installation is missing ${missingPackage} · reinstall @strands-agents/cli`,
     }
   }
   if (provider === 'bedrock' || provider === 'bedrock-mantle') {
