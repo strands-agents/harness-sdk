@@ -268,7 +268,8 @@ Machine-discovered MCP servers and skills are not part of the portable definitio
 
 The CLI does not store provider secrets. Setup detects credentials from the process environment,
 explicitly selected env files, AWS profiles, and other credential sources supported by the
-provider SDK.
+provider SDK. When an optional provider SDK is missing, Setup shows the package and install command;
+its provider controls remain unavailable until the package is installed and configuration is refreshed.
 
 Workspace, saved-profile, and imported-project `.env` and `.env.local` files are not loaded automatically. Select trusted
 files explicitly, in precedence order: `strands --env-file .env --env-file .env.local`.

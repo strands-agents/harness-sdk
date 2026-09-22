@@ -25,6 +25,7 @@ import {
   profileSkillsEnabled,
 } from './profile-fields.js'
 import { canChooseDirectory } from '../../terminal/directory-picker.js'
+import { missingProviderPackage } from '../../provider/packages.js'
 import type { ChatSettings } from '../../chat/types.js'
 import { SETTING_DEFINITIONS, VISUAL_SETTING_DEFINITIONS } from '../../settings.js'
 import { PERMISSION_CHOICES, permissionToolDescription, permissionToolNames } from '../../permissions/settings.js'
@@ -209,7 +210,7 @@ export function rowsForStep(
         activate: noop,
       }
     })
-    if (!readyProviders.includes(selectedProvider)) {
+    if (!readyProviders.includes(selectedProvider) && !missingProviderPackage(selectedProvider)) {
       const fields =
         selectedProvider === 'litellm' && !liteLlmDiscovery?.authenticationRequired
           ? []

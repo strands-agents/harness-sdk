@@ -18,6 +18,7 @@ import {
   type OllamaDiscovery,
   type ProviderModelDiscovery,
 } from '../../provider/discovery.js'
+import { refreshProviderPackages } from '../../provider/packages.js'
 import { effectiveProviderEnvironment, providerAssessment } from './providers.js'
 
 type ProviderModels = ProviderModelDiscovery & { provider?: ProviderId; loading: boolean }
@@ -72,6 +73,7 @@ export function useProviderDiscovery(config: CliConfigStore): ProviderDiscovery 
   )
 
   const recheck = useCallback((): void => {
+    refreshProviderPackages()
     const environment = config.providerEnvironment()
     setDetectedEnvironment(environment)
     setAwsDiscovery(

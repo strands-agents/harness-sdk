@@ -16,6 +16,10 @@ export const PROVIDER_PACKAGES: Readonly<Partial<Record<ProviderId, string>>> = 
 
 const resolvable = new Map<string, boolean>()
 
+export function refreshProviderPackages(): void {
+  resolvable.clear()
+}
+
 export function missingProviderPackage(provider: ProviderId): string | undefined {
   const name = PROVIDER_PACKAGES[provider]
   if (!name) {

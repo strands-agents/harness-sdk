@@ -1,6 +1,12 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { DetectedProviderEnvironment } from '../src/tui/config.js'
+const { missingProviderPackage } = vi.hoisted(() => ({
+  missingProviderPackage: vi.fn<(provider: ProviderId) => string | undefined>(() => undefined),
+}))
+
+vi.mock('../src/tui/provider/packages.js', () => ({ missingProviderPackage }))
+
+import type { DetectedProviderEnvironment, ProviderId } from '../src/tui/config.js'
 import {
   compatibleProfile,
   effectiveProviderEnvironment,
@@ -11,12 +17,42 @@ import {
 import { webSearchFallback, withWebSearchFallback } from '../src/tui/builtin-tools.js'
 import { rowsForStep } from '../src/tui/view/setup-wizard/steps.js'
 
+beforeEach(() => missingProviderPackage.mockReset().mockReturnValue(undefined))
+
 describe('setup provider credentials', () => {
   const aws = {
     profiles: ['default', 'review'],
     regions: ['us-west-2', 'eu-west-1'],
     profileRegions: { default: 'us-west-2', review: 'eu-west-1' },
   }
+
+  it('blocks provider controls and shows the install command when its SDK is missing', () => {
+    missingProviderPackage.mockImplementation((provider) => (provider === 'bedrock-mantle' ? 'openai' : undefined))
+    const rows = rowsForStep(
+      1,
+      'quickstart',
+      quickstartDraft('bedrock-mantle', {}),
+      '',
+      {},
+      {},
+      'bedrock-mantle',
+      [],
+      aws,
+      undefined,
+      () => {},
+      () => {},
+      () => {}
+    )
+
+    expect(rows.find((row) => row.id === 'bedrock-mantle')).toMatchObject({
+      description: 'Requires openai',
+      status: 'error',
+    })
+    expect(rows.some((row) => row.field)).toBe(false)
+    expect(providerAssessment('bedrock-mantle', {}, aws, undefined).warning).toBe(
+      'Install openai next to strands-cli, then choose Refresh:\nnpm install -g openai'
+    )
+  })
 
   it.each([
     ['valid', 'success'],

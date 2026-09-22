@@ -138,9 +138,9 @@ export function providerAssessment(
   const missingPackage = missingProviderPackage(provider)
   if (missingPackage) {
     return {
-      description: 'Setup required',
+      description: `Requires ${missingPackage}`,
       status: 'error',
-      warning: `Requires ${missingPackage} · npm install -g ${missingPackage}`,
+      warning: `Install ${missingPackage} next to strands-cli, then choose Refresh:\nnpm install -g ${missingPackage}`,
     }
   }
   if (provider === 'bedrock' || provider === 'bedrock-mantle') {

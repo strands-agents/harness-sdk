@@ -1,8 +1,25 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { missingProviderPackage, rethrowWithProviderHint } from '../src/tui/provider/packages.js'
+const { resolvePackage } = vi.hoisted(() => ({
+  resolvePackage: vi.fn<(name: string) => string>(),
+}))
+
+vi.mock('node:module', () => ({
+  createRequire: () => ({ resolve: resolvePackage }),
+}))
+
+import {
+  missingProviderPackage,
+  refreshProviderPackages,
+  rethrowWithProviderHint,
+} from '../src/tui/provider/packages.js'
 
 describe('provider packages', () => {
+  beforeEach(() => {
+    refreshProviderPackages()
+    resolvePackage.mockReset().mockImplementation((name) => `/node_modules/${name}`)
+  })
+
   it('treats bedrock as dependency-free', () => {
     expect(missingProviderPackage('bedrock')).toBeUndefined()
   })
@@ -11,6 +28,19 @@ describe('provider packages', () => {
     expect(missingProviderPackage('anthropic')).toBeUndefined()
     expect(missingProviderPackage('openai')).toBeUndefined()
     expect(missingProviderPackage('google')).toBeUndefined()
+  })
+
+  it('rechecks a missing provider SDK after refresh', () => {
+    resolvePackage.mockImplementation(() => {
+      throw new Error('missing')
+    })
+    expect(missingProviderPackage('bedrock-mantle')).toBe('openai')
+
+    resolvePackage.mockReturnValue('/node_modules/openai')
+    expect(missingProviderPackage('bedrock-mantle')).toBe('openai')
+
+    refreshProviderPackages()
+    expect(missingProviderPackage('bedrock-mantle')).toBeUndefined()
   })
 
   it('rewrites a missing provider package error into an install hint', () => {
