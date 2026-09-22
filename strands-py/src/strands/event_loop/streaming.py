@@ -336,13 +336,9 @@ def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
         content.append({"toolUse": tool_use})
         state["current_tool_use"] = {}
 
-    # The remaining branches (text / reasoning / redacted) are independent
-    # siblings of the tool-use branch: a model can stream a short preamble
-    # ("Let me check that for you.") and call a tool in the same assistant
-    # turn, in which case both blocks must land in the assistant message.
-    # Using `elif` here (as before this fix) silently dropped the text and
-    # reasoning when they accompanied a pending toolUse. Same defect class
-    # as #1394, applied to a different branch pair.
+    # Text, reasoning, and redacted blocks are independent of the tool-use branch: a model
+    # can stream a preamble and call a tool in one assistant turn, and every accumulated
+    # block belongs in the assistant message.
     if text:
         if citations_content:
             citations_block: CitationsContentBlock = {"citations": citations_content, "content": [{"text": text}]}

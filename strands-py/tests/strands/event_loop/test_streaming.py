@@ -628,10 +628,8 @@ def test_handle_content_block_delta(event: ContentBlockDeltaEvent, event_type, s
                 "redactedContent": b"",
             },
         ),
-        # Regression: text + pending tool use — both must land in content (issue #4004)
-        # Previously, the `elif text:` chain silently dropped the text when a toolUse
-        # block had also accumulated. Now both are appended and both state fields cleared.
-        # Append order follows the function: toolUse first (its branch runs first), then text.
+        # Regression: text and a pending tool use both land in content (#4004).
+        # Append order follows the function: toolUse first, then text.
         (
             {
                 "content": [],
