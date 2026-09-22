@@ -7,7 +7,7 @@ import pytest_asyncio
 from rich.console import Console
 
 import strands.experimental.bidi.io.transcript as transcript_module
-from strands.experimental.bidi.io.transcript import _BidiTranscriptOutputStream, _UserText
+from strands.experimental.bidi.io.transcript import _TranscriptOutputStream, _UserText
 from strands.experimental.bidi.types import (
     BidiInterruptionEvent,
     BidiResponseCompleteEvent,
@@ -27,7 +27,7 @@ def console(monkeypatch):
 
 @pytest_asyncio.fixture
 async def output(console):
-    output = _BidiTranscriptOutputStream()
+    output = _TranscriptOutputStream()
     await output.start(Mock())
     yield output
     await output.stop()
@@ -134,7 +134,7 @@ def test_user_text_render(monkeypatch, no_color, text, exp_lines):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("started", [False, True])
 async def test_stop_restores_cursor(console, monkeypatch, started):
-    output = _BidiTranscriptOutputStream()
+    output = _TranscriptOutputStream()
     if started:
         await output.start(Mock())
     show_cursor = Mock()

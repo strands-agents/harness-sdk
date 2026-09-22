@@ -158,7 +158,7 @@ class BidiConnectionRestartEvent(TypedEvent):
 
     @property
     def timeout_error(self) -> "ConnectionTimeoutError | None":
-        """Model timeout error on the reactive path; None when scheduled."""
+        """Connection timeout error on the reactive path; None when scheduled."""
         return cast("ConnectionTimeoutError | None", self["timeout_error"])
 
     @property

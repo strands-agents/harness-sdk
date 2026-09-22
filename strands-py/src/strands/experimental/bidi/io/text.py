@@ -17,7 +17,7 @@ from ..types.io import InputStream, OutputStream
 logger = logging.getLogger(__name__)
 
 
-class _BidiTextInputStream(InputStream):
+class _ConsoleInputStream(InputStream):
     """Handle text input from user."""
 
     def __init__(self, config: dict[str, Any]) -> None:
@@ -31,7 +31,7 @@ class _BidiTextInputStream(InputStream):
         return TextBlock(text.strip())
 
 
-class _BidiTextOutputStream(OutputStream):
+class _ConsoleOutputStream(OutputStream):
     """Handle text output from bidi agent."""
 
     async def __call__(self, event: BidiOutputEvent) -> None:
@@ -69,10 +69,10 @@ class ConsoleIO:
         """
         self._config = config
 
-    def input(self) -> _BidiTextInputStream:
+    def input(self) -> _ConsoleInputStream:
         """Return the standard-input stream."""
-        return _BidiTextInputStream(self._config)
+        return _ConsoleInputStream(self._config)
 
-    def output(self) -> _BidiTextOutputStream:
+    def output(self) -> _ConsoleOutputStream:
         """Return the standard-output stream."""
-        return _BidiTextOutputStream()
+        return _ConsoleOutputStream()

@@ -25,10 +25,10 @@ from ..hooks.events import (
     BidiBeforeConnectionRestartEvent,
 )
 from ..hooks.events import (
-    BidiInterruptionEvent as InterruptionHookEvent,
+    BidiInterruptionEvent as BidiInterruptionHookEvent,
 )
 from ..hooks.events import (
-    BidiResponseCompleteEvent as ResponseCompleteHookEvent,
+    BidiResponseCompleteEvent as BidiResponseCompleteHookEvent,
 )
 from ..models import ConnectionTimeoutError, Restartable
 from ..types.content import BidiContentBlock, BidiContentDelta
@@ -633,7 +633,7 @@ class _AgentLoop:
                     self._awaiting_response = False
                     self._update_turn_state()
                     await self._agent.hooks.invoke_callbacks_async(
-                        ResponseCompleteHookEvent(
+                        BidiResponseCompleteHookEvent(
                             agent=self._agent, response_id=event.response_id, stop_reason=event.stop_reason
                         )
                     )
@@ -664,7 +664,7 @@ class _AgentLoop:
                     self._response_active = False
                     self._update_turn_state()
                     await self._agent.hooks.invoke_callbacks_async(
-                        InterruptionHookEvent(
+                        BidiInterruptionHookEvent(
                             agent=self._agent,
                             reason=event["reason"],
                             interrupted_response_id=event.get("interrupted_response_id"),

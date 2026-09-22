@@ -66,7 +66,7 @@ class _UserText(ConsoleRenderable):
         yield erase_to_end
 
 
-class _BidiTranscriptOutputStream(OutputStream):
+class _TranscriptOutputStream(OutputStream):
     """Render transcript events to a terminal stream."""
 
     def __init__(self) -> None:

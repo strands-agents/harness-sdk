@@ -29,7 +29,7 @@ from ..types.events import (
 from ..types.io import InputStream, OutputStream
 from ..types.media import AudioDelta
 from .configs import AudioIOConfig, AudioProcessorConfig
-from .transcript import _BidiTranscriptOutputStream
+from .transcript import _TranscriptOutputStream
 
 if TYPE_CHECKING:
     from .._audio.processor import AudioProcessor
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class _BidiAudioInputStream(InputStream):
+class _AudioInputStream(InputStream):
     """Handle audio input from user.
 
     Attributes:
@@ -66,9 +66,9 @@ class _BidiAudioInputStream(InputStream):
             config: Audio device configuration.
             audio_processor: Shared microphone audio processor.
         """
-        self._buffer_size = config.get("input_buffer_size", _BidiAudioInputStream._BUFFER_SIZE)
-        self._device_index = config.get("input_device_index", _BidiAudioInputStream._DEVICE_INDEX)
-        self._frames_per_buffer = config.get("input_frames_per_buffer", _BidiAudioInputStream._FRAMES_PER_BUFFER)
+        self._buffer_size = config.get("input_buffer_size", _AudioInputStream._BUFFER_SIZE)
+        self._device_index = config.get("input_device_index", _AudioInputStream._DEVICE_INDEX)
+        self._frames_per_buffer = config.get("input_frames_per_buffer", _AudioInputStream._FRAMES_PER_BUFFER)
 
         self._audio_processor = audio_processor
         self._buffer = AudioBuffer(self._buffer_size)
@@ -158,7 +158,7 @@ class _BidiAudioInputStream(InputStream):
             raise ValueError(f"AudioIO requires signed 16-bit PCM, received {config['format']}")
 
 
-class _BidiAudioOutputStream(OutputStream):
+class _AudioOutputStream(OutputStream):
     """Handle audio output from bidi agent.
 
     Attributes:
@@ -186,13 +186,13 @@ class _BidiAudioOutputStream(OutputStream):
             config: Audio device configuration.
             audio_processor: Shared audio processor that receives played audio for echo cancellation.
         """
-        self._buffer_size = config.get("output_buffer_size", _BidiAudioOutputStream._BUFFER_SIZE)
-        self._device_index = config.get("output_device_index", _BidiAudioOutputStream._DEVICE_INDEX)
-        self._frames_per_buffer = config.get("output_frames_per_buffer", _BidiAudioOutputStream._FRAMES_PER_BUFFER)
+        self._buffer_size = config.get("output_buffer_size", _AudioOutputStream._BUFFER_SIZE)
+        self._device_index = config.get("output_device_index", _AudioOutputStream._DEVICE_INDEX)
+        self._frames_per_buffer = config.get("output_frames_per_buffer", _AudioOutputStream._FRAMES_PER_BUFFER)
 
         self._audio_processor = audio_processor
         self._buffer = AudioBuffer(self._buffer_size)
-        self._transcript_output = _BidiTranscriptOutputStream()
+        self._transcript_output = _TranscriptOutputStream()
 
     async def start(self, agent: "BidiAgent") -> None:
         """Start output stream.
@@ -439,16 +439,16 @@ class AudioIO:
                 "frames per buffer are calculated automatically"
             )
 
-    def input(self) -> _BidiAudioInputStream:
+    def input(self) -> _AudioInputStream:
         """Return the microphone input stream."""
-        return _BidiAudioInputStream(
+        return _AudioInputStream(
             self._config,
             audio_processor=self._audio_processor,
         )
 
-    def output(self) -> _BidiAudioOutputStream:
+    def output(self) -> _AudioOutputStream:
         """Return the speaker and transcript output stream."""
-        return _BidiAudioOutputStream(
+        return _AudioOutputStream(
             self._config,
             audio_processor=(
                 self._audio_processor

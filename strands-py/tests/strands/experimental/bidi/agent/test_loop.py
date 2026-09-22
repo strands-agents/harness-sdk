@@ -9,8 +9,8 @@ from strands import ToolContext, tool
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.agent.loop import _ReaderError
 from strands.experimental.bidi.hooks import BidiAgentStopEvent, BidiBeforeConnectionRestartEvent
-from strands.experimental.bidi.hooks import BidiInterruptionEvent as InterruptionHookEvent
-from strands.experimental.bidi.hooks import BidiResponseCompleteEvent as ResponseCompleteHookEvent
+from strands.experimental.bidi.hooks import BidiInterruptionEvent as BidiInterruptionHookEvent
+from strands.experimental.bidi.hooks import BidiResponseCompleteEvent as BidiResponseCompleteHookEvent
 from strands.experimental.bidi.models import BidiModel, ConnectionTimeoutError
 from strands.experimental.bidi.types import (
     BidiConnectionCloseEvent,
@@ -55,7 +55,7 @@ async def loop(agent):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stop_reason", ["complete", "interrupted", "error", "tool_use"])
 async def test_response_complete_hook(agent, agenerator, stop_reason):
-    hooks = MockHookProvider([ResponseCompleteHookEvent])
+    hooks = MockHookProvider([BidiResponseCompleteHookEvent])
     agent.hooks.add_hook(hooks)
     completion = BidiResponseCompleteEvent(response_id="response-1", stop_reason=stop_reason)
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([completion]))
@@ -69,7 +69,7 @@ async def test_response_complete_hook(agent, agenerator, stop_reason):
         await agent.stop()
 
     tru_events = hooks.events_received
-    exp_events = [ResponseCompleteHookEvent(agent=agent, response_id="response-1", stop_reason=stop_reason)]
+    exp_events = [BidiResponseCompleteHookEvent(agent=agent, response_id="response-1", stop_reason=stop_reason)]
     assert tru_events == exp_events
 
 
@@ -78,8 +78,11 @@ async def test_response_complete_hook(agent, agenerator, stop_reason):
 @pytest.mark.parametrize(
     "stream_event,hook_type",
     [
-        (BidiResponseCompleteEvent(response_id="r1", stop_reason="complete"), ResponseCompleteHookEvent),
-        (BidiInterruptionEvent(reason="user_speech"), InterruptionHookEvent),
+        (
+            BidiResponseCompleteEvent(response_id="r1", stop_reason="complete"),
+            BidiResponseCompleteHookEvent,
+        ),
+        (BidiInterruptionEvent(reason="user_speech"), BidiInterruptionHookEvent),
         (BidiTranscriptCompleteEvent(transcript="Hello", role="assistant"), MessageAddedEvent),
     ],
 )
@@ -155,7 +158,7 @@ async def test_tool_starts_after_request_is_queued(loop, agent, superseded):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cleanup_fails", [False, True])
 async def test_agent_stop_hook(agent, agenerator, cleanup_fails):
-    hooks = MockHookProvider([BidiAgentStopEvent, ResponseCompleteHookEvent])
+    hooks = MockHookProvider([BidiAgentStopEvent, BidiResponseCompleteHookEvent])
     agent.hooks.add_hook(hooks)
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([]))
     if cleanup_fails:
