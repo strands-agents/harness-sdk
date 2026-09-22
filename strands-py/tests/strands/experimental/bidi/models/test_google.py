@@ -17,7 +17,7 @@ import pytest
 from google.genai import types as genai_types
 
 import strands.experimental.bidi.agent.loop as loop_module
-from strands.experimental.bidi.models import BidiModelTimeoutError, GoogleGeminiLiveAudioConfig, GoogleGeminiLiveModel
+from strands.experimental.bidi.models import ConnectionTimeoutError, GoogleGeminiLiveAudioConfig, GoogleGeminiLiveModel
 from strands.experimental.bidi.models.google import _TurnState
 from strands.experimental.bidi.types import (
     AudioDelta,
@@ -728,7 +728,7 @@ async def test_receive_timeout(mock_genai_client, model, agenerator, live_messag
 
     await model.start()
 
-    with pytest.raises(BidiModelTimeoutError, match=r"test timeout"):
+    with pytest.raises(ConnectionTimeoutError, match=r"test timeout"):
         async for _ in model.receive():
             pass
 

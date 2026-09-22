@@ -42,7 +42,7 @@ After installing the OpenAI Realtime and local audio extras, create a voice agen
 import asyncio
 
 from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.io import BidiAudioIO
+from strands.experimental.bidi.io import AudioIO
 from strands.experimental.bidi.models import OpenAIRealtimeModel
 from strands.experimental.tools import stop
 from strands.vended_tools import notebook
@@ -57,7 +57,7 @@ async def main() -> None:
     # stop tool allows user to verbally stop agent execution.
     agent = BidiAgent(model=model, tools=[notebook, stop])
 
-    audio_io = BidiAudioIO()
+    audio_io = AudioIO()
     await agent.run(inputs=[audio_io.input()], outputs=[audio_io.output()])
 
 
@@ -83,7 +83,7 @@ if __name__ == "__main__":
 | `model_id` | OpenAI Realtime model identifier. | `"gpt-realtime"` | [OpenAI models](https://platform.openai.com/docs/models) |
 | `voice` | Output voice identifier. Defaults to `"alloy"`. | `"coral"` | [Voice options](https://platform.openai.com/docs/guides/realtime-conversations#voice-options) |
 | `params` | OpenAI Realtime session parameters. Audio must remain mono PCM at 24000 Hz. | `{"max_output_tokens": 4096}` | [`session.update`](https://platform.openai.com/docs/api-reference/realtime-client-events/session/update) |
-| `connection` | Reconnect timing overrides. | `{"auto_reconnect": false}` | [reference](@api/python/strands.experimental.bidi.models#BidiConnectionConfig) |
+| `connection` | Reconnect timing overrides. | `{"auto_reconnect": False}` | [reference](@api/python/strands.experimental.bidi.models#ConnectionConfig) |
 
 ### Additional Provider Options
 

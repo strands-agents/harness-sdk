@@ -23,7 +23,11 @@ from aws_sdk_bedrock_runtime.models import ModelTimeoutException, ValidationExce
 from awscrt.exceptions import from_code
 from smithy_http.aio.crt import AWSCRTHTTPClient
 
-from strands.experimental.bidi.models import BedrockNovaSonicAudioConfig, BedrockNovaSonicModel, BidiModelTimeoutError
+from strands.experimental.bidi.models import (
+    BedrockNovaSonicAudioConfig,
+    BedrockNovaSonicModel,
+    ConnectionTimeoutError,
+)
 from strands.experimental.bidi.models.bedrock import (
     NOVA_SONIC_V1_MODEL_ID,
     NOVA_SONIC_V2_MODEL_ID,
@@ -1439,7 +1443,7 @@ async def test_bidi_nova_sonic_model_receive_timeout(nova_model, mock_stream):
 
     await nova_model.start()
 
-    with pytest.raises(BidiModelTimeoutError, match=r"Connection timeout"):
+    with pytest.raises(ConnectionTimeoutError, match=r"Connection timeout"):
         async for _ in nova_model.receive():
             pass
 
@@ -1452,7 +1456,7 @@ async def test_bidi_nova_sonic_model_receive_timeout_validation(nova_model, mock
 
     await nova_model.start()
 
-    with pytest.raises(BidiModelTimeoutError, match=r"InternalErrorCode=531"):
+    with pytest.raises(ConnectionTimeoutError, match=r"InternalErrorCode=531"):
         async for _ in nova_model.receive():
             pass
 

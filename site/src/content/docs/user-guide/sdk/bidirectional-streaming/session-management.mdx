@@ -36,7 +36,7 @@ Create a `BidiAgent` with a session manager and use it:
 
 ```python
 from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.io import BidiAudioIO
+from strands.experimental.bidi.io import AudioIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 from strands.session.file_session_manager import FileSessionManager
 
@@ -51,7 +51,7 @@ agent = BidiAgent(
 )
 
 # Use the agent - all messages are automatically persisted
-audio_io = BidiAudioIO()
+audio_io = AudioIO()
 await agent.run(
     inputs=[audio_io.input()],
     outputs=[audio_io.output()]
@@ -230,7 +230,8 @@ async for event in agent.receive():
         print(f"Reconnecting (reason={event.reason}) with full history preserved")
 ```
 
-For the reconnect timing and how to tune it with `BidiConnectionConfig`, see [Connection Restart](agent.md#connection-restart).
+For reconnect timing and how to tune it with `ConnectionConfig`, see
+[Connection Restart](agent.md#connection-restart).
 
 ## Integration with Hooks
 

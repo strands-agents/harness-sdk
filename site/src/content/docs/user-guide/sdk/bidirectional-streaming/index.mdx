@@ -81,7 +81,8 @@ loop streams audio both ways until you interrupt it.
 ```python
 import asyncio
 
-from strands.experimental.bidi import BidiAgent, BidiAudioIO
+from strands.experimental.bidi import BidiAgent
+from strands.experimental.bidi.io import AudioIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 model = BedrockNovaSonicModel()
@@ -89,7 +90,7 @@ agent = BidiAgent(
     model=model,
     system_prompt="You are a helpful voice assistant. Keep replies short and natural.",
 )
-audio_io = BidiAudioIO()
+audio_io = AudioIO()
 
 
 async def main():

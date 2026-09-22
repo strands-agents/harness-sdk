@@ -12,10 +12,10 @@ __all__ = [
     "AudioStreamConfig",
     "BedrockNovaSonicAudioConfig",
     "BedrockNovaSonicAudioStreamConfig",
-    "BidiConnectionConfig",
-    "BidiModelConfig",
+    "ConnectionConfig",
     "GoogleGeminiLiveAudioConfig",
     "GoogleGeminiLiveAudioStreamConfig",
+    "ModelConfig",
 ]
 
 
@@ -94,7 +94,7 @@ class GoogleGeminiLiveAudioConfig(TypedDict, total=False):
     input: GoogleGeminiLiveAudioStreamConfig
 
 
-class BidiConnectionConfig(TypedDict, total=False):
+class ConnectionConfig(TypedDict, total=False):
     """Declared reconnect timing for a bidirectional model.
 
     Providers declare this so the agent loop can reconnect proactively, before the provider
@@ -116,7 +116,7 @@ class BidiConnectionConfig(TypedDict, total=False):
     auto_reconnect: bool
 
 
-class BidiModelConfig(TypedDict, total=False):
+class ModelConfig(TypedDict, total=False):
     """Configuration shared by bidirectional model providers.
 
     Attributes:
@@ -127,13 +127,13 @@ class BidiModelConfig(TypedDict, total=False):
 
     model_id: str
     params: dict[str, Any] | None
-    connection: BidiConnectionConfig
+    connection: ConnectionConfig
 
 
 def _validate_model_config(config: Mapping[str, Any]) -> None:
     """Validate shared bidirectional model configuration."""
-    validate_config_keys(config, BidiModelConfig)
-    validate_config_keys(config.get("connection", {}), BidiConnectionConfig)
+    validate_config_keys(config, ModelConfig)
+    validate_config_keys(config.get("connection", {}), ConnectionConfig)
 
 
 def _validate_audio_config(config: AudioConfig) -> None:
