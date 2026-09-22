@@ -45,6 +45,7 @@ from .configs import (
     AudioStreamConfig,
     ConnectionConfig,
     ModelConfig,
+    ModelUpdateConfig,
     _merge_config,
     _validate_audio_config,
     _validate_model_config,
@@ -69,7 +70,6 @@ handle the connection closure. We set the max to 50 minutes to provide enough bu
 # the reactive timeout firing at the same instant.
 OPENAI_PROACTIVE_RECONNECT_MARGIN_S = 300
 OPENAI_REALTIME_URL = "wss://api.openai.com/v1/realtime"
-DEFAULT_MODEL = "gpt-realtime"
 DEFAULT_SAMPLE_RATE = 24000
 
 DEFAULT_SESSION_CONFIG = {
@@ -137,7 +137,6 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         """
         _validate_model_config(model_config)
         self._config = ModelConfig(**model_config)
-        self._config.setdefault("model_id", DEFAULT_MODEL)
         self._config["params"] = dict(self._config.get("params") or {})
 
         # OpenAI reports per-response token usage on response.done, not cumulative session totals.
@@ -178,7 +177,7 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         logger.debug("model=<%s> | openai realtime model initialized", self._config["model_id"])
 
     @override
-    def update_config(self, **model_config: Unpack[ModelConfig]) -> None:  # type: ignore[override]
+    def update_config(self, **model_config: Unpack[ModelUpdateConfig]) -> None:  # type: ignore[override]
         """Update the model configuration with the provided arguments.
 
         Args:

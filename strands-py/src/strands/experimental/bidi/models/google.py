@@ -52,6 +52,7 @@ from .configs import (
     GoogleGeminiLiveAudioConfig,
     GoogleGeminiLiveAudioStreamConfig,
     ModelConfig,
+    ModelUpdateConfig,
     _merge_config,
     _validate_audio_config,
     _validate_model_config,
@@ -105,7 +106,6 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         """
         _validate_model_config(model_config)
         self._config = ModelConfig(**model_config)
-        self._config.setdefault("model_id", "gemini-2.5-flash-native-audio-preview-09-2025")
         self._config["params"] = dict(self._config.get("params") or {})
 
         # Gemini caps a single connection at ~10 min; reconnect before that, resuming the same
@@ -127,7 +127,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         self._connection_id: str | None = None
 
     @override
-    def update_config(self, **model_config: Unpack[ModelConfig]) -> None:  # type: ignore[override]
+    def update_config(self, **model_config: Unpack[ModelUpdateConfig]) -> None:  # type: ignore[override]
         """Update the model configuration with the provided arguments.
 
         Args:

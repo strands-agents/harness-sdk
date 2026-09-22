@@ -50,7 +50,7 @@ from strands.vended_tools import notebook
 
 async def main() -> None:
     model = OpenAIRealtimeModel(
-        model_id="gpt-realtime",
+        model_id="gpt-realtime-2.1",
         voice="coral",
         api_key="<OPENAI_API_KEY>",
     )
@@ -80,7 +80,7 @@ if __name__ == "__main__":
 
 | Parameter | Description | Example | Options |
 | --------- | ----------- | ------- | ------- |
-| `model_id` | OpenAI Realtime model identifier. | `"gpt-realtime"` | [OpenAI models](https://platform.openai.com/docs/models) |
+| `model_id` | OpenAI Realtime model identifier. | `"gpt-realtime-2.1"` | [OpenAI models](https://platform.openai.com/docs/models) |
 | `voice` | Output voice identifier. Defaults to `"alloy"`. | `"coral"` | [Voice options](https://platform.openai.com/docs/guides/realtime-conversations#voice-options) |
 | `params` | OpenAI Realtime session parameters. Audio must remain mono PCM at 24000 Hz. | `{"max_output_tokens": 4096}` | [`session.update`](https://platform.openai.com/docs/api-reference/realtime-client-events/session/update) |
 | `connection` | Reconnect timing overrides. | `{"auto_reconnect": False}` | [reference](@api/python/strands.experimental.bidi.models#ConnectionConfig) |
@@ -94,6 +94,7 @@ Realtime options through `params`.
 from strands.experimental.bidi.models import OpenAIRealtimeModel
 
 model = OpenAIRealtimeModel(
+    model_id="gpt-realtime-2.1",
     api_key="<OPENAI_API_KEY>",
     voice="coral",
     params={"audio": {"input": {"turn_detection": {"threshold": 0.3}}}},

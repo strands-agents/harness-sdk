@@ -42,7 +42,7 @@ from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.io import AudioIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
-model = BedrockNovaSonicModel()
+model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 agent = BidiAgent(model=model)
 audio_io = AudioIO()
 
@@ -72,7 +72,7 @@ from strands.experimental.bidi.types import (
     BidiResponseCompleteEvent
 )
 
-model = BedrockNovaSonicModel()
+model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 agent = BidiAgent(model=model)
 
 async def main():
@@ -147,6 +147,7 @@ from strands.experimental.bidi.models import OpenAIRealtimeModel
 
 # Check VAD configuration (OpenAI)
 model = OpenAIRealtimeModel(
+    model_id="gpt-realtime-2.1",
     params={
         "audio": {
             "input": {
@@ -188,6 +189,7 @@ from strands.experimental.bidi.models import OpenAIRealtimeModel
 
 # Increase VAD threshold (OpenAI)
 model = OpenAIRealtimeModel(
+    model_id="gpt-realtime-2.1",
     params={
         "audio": {
             "input": {

@@ -51,7 +51,7 @@ from strands.vended_tools import notebook
 
 async def main() -> None:
     model = GoogleGeminiLiveModel(
-        model_id="gemini-2.5-flash-native-audio-preview-09-2025",
+        model_id="gemini-3.8-live",
         voice="Kore",
         client_args={"api_key": "<GOOGLE_API_KEY>"},
     )
@@ -77,7 +77,7 @@ the [Google GenAI client reference](https://googleapis.github.io/python-genai/ge
 
 | Parameter | Description | Example | Options |
 | --------- | ----------- | ------- | ------- |
-| `model_id` | Gemini Live model identifier. | `"gemini-2.5-flash-native-audio-preview-09-2025"` | [Gemini models](https://ai.google.dev/gemini-api/docs/models) |
+| `model_id` | Gemini Live model identifier. | `"gemini-3.8-live"` | [Gemini models](https://ai.google.dev/gemini-api/docs/models) |
 | `audio` | Input audio options. | `{"input": {"sample_rate": 48000}}` | [reference](@api/python/strands.experimental.bidi.models#GoogleGeminiLiveAudioConfig) |
 | `voice` | Prebuilt output voice name. Uses the provider default when omitted. | `"Kore"` | [Voices and languages](https://docs.cloud.google.com/text-to-speech/docs/list-voices-and-types) |
 | `params` | Gemini Live session parameters. | `{"temperature": 0.7}` | [`LiveConnectConfig`](https://googleapis.github.io/python-genai/genai.html#genai.types.LiveConnectConfig) |
@@ -92,6 +92,7 @@ options, pass `params` using snake_case field names.
 from strands.experimental.bidi.models import GoogleGeminiLiveModel
 
 model = GoogleGeminiLiveModel(
+    model_id="gemini-3.8-live",
     client_args={"api_key": "<GOOGLE_API_KEY>"},
     voice="Kore",
     params={"temperature": 0.7, "speech_config": {"language_code": "en-US"}},

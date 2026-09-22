@@ -71,16 +71,13 @@ from .configs import (
     BedrockNovaSonicAudioStreamConfig,
     ConnectionConfig,
     ModelConfig,
+    ModelUpdateConfig,
     _validate_audio_config,
     _validate_model_config,
 )
 from .model import AudioCapable, BidiModel, ConnectionTimeoutError
 
 logger = logging.getLogger(__name__)
-
-# Nova Sonic model identifiers
-NOVA_SONIC_V1_MODEL_ID = "amazon.nova-sonic-v1:0"
-NOVA_SONIC_V2_MODEL_ID = "amazon.nova-2-sonic-v1:0"
 
 NOVA_TEXT_CONFIG = {"mediaType": "text/plain"}
 NOVA_TOOL_CONFIG = {"mediaType": "application/json"}
@@ -235,7 +232,6 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
 
         _validate_model_config(model_config)
         self._config = ModelConfig(**model_config)
-        self._config.setdefault("model_id", NOVA_SONIC_V2_MODEL_ID)
         self._config["params"] = dict(self._config.get("params") or {})
 
         # Nova caps a connection at ~8 min; reconnect at 7 min, leaving headroom below the cap.
@@ -261,7 +257,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         logger.debug("model_id=<%s> | nova sonic model initialized", self._config["model_id"])
 
     @override
-    def update_config(self, **model_config: Unpack[ModelConfig]) -> None:  # type: ignore[override]
+    def update_config(self, **model_config: Unpack[ModelUpdateConfig]) -> None:  # type: ignore[override]
         """Update the model configuration with the provided arguments.
 
         Args:

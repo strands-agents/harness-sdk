@@ -158,7 +158,7 @@ from strands.experimental.bidi.io import AudioIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 # Create a bidirectional streaming model
-model = BedrockNovaSonicModel()
+model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 
 # Create the agent
 agent = BidiAgent(
@@ -208,7 +208,7 @@ from strands.experimental.bidi.io import AudioIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 async def main():
-    model = BedrockNovaSonicModel()
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
     agent = BidiAgent(model=model)
     audio_io = AudioIO()
     
@@ -259,7 +259,7 @@ def get_weather(location: str) -> str:
     return f"The weather in {location} is sunny and 72°F"
 
 # Create agent with tools
-model = BedrockNovaSonicModel()
+model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 agent = BidiAgent(
     model=model,
     tools=[notebook, get_weather],
@@ -308,6 +308,7 @@ from strands.experimental.bidi.models import GoogleGeminiLiveModel
 
 # Configure model audio settings
 model = GoogleGeminiLiveModel(
+    model_id="gemini-3.8-live",
     audio={"input": {"sample_rate": 48000}},
     voice="Puck",
 )
@@ -346,7 +347,7 @@ from strands.experimental.bidi.io import AudioIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 from strands.experimental.bidi.types import BidiInterruptionEvent
 
-model = BedrockNovaSonicModel()
+model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 agent = BidiAgent(model=model)
 audio_io = AudioIO()
 
@@ -382,7 +383,7 @@ from strands.experimental.bidi.models import BedrockNovaSonicModel
 from strands.experimental.bidi.types import BidiResponseCompleteEvent
 
 async def main():
-    model = BedrockNovaSonicModel()
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
     agent = BidiAgent(model=model)
     
     # Manually start the agent
@@ -416,7 +417,7 @@ from strands.experimental.bidi.io import AudioIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 from strands.experimental.tools import stop
 
-model = BedrockNovaSonicModel()
+model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 agent = BidiAgent(
     model=model,
     tools=[stop],
@@ -467,7 +468,7 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 
-model = BedrockNovaSonicModel()
+model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 agent = BidiAgent(model=model)
 audio_io = AudioIO()
 
@@ -555,7 +556,10 @@ automatic reconnect with the model's `connection` argument:
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 # Reconnect 60s earlier than the provider default
-model = BedrockNovaSonicModel(connection={"restart_after_s": 360})
+model = BedrockNovaSonicModel(
+    model_id="amazon.nova-2-sonic-v1:0",
+    connection={"restart_after_s": 360},
+)
 ```
 
 For longer sessions on a single connection, OpenAI Realtime allows a larger connection window than Nova Sonic.

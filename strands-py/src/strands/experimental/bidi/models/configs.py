@@ -4,19 +4,10 @@ import copy
 from collections.abc import Mapping
 from typing import Any, Literal, TypedDict
 
+from typing_extensions import Required
+
 from ....models._validation import validate_config_keys
 from ..types.events import AudioChannel, AudioFormat
-
-__all__ = [
-    "AudioConfig",
-    "AudioStreamConfig",
-    "BedrockNovaSonicAudioConfig",
-    "BedrockNovaSonicAudioStreamConfig",
-    "ConnectionConfig",
-    "GoogleGeminiLiveAudioConfig",
-    "GoogleGeminiLiveAudioStreamConfig",
-    "ModelConfig",
-]
 
 
 class AudioStreamConfig(TypedDict):
@@ -118,6 +109,20 @@ class ConnectionConfig(TypedDict, total=False):
 
 class ModelConfig(TypedDict, total=False):
     """Configuration shared by bidirectional model providers.
+
+    Attributes:
+        model_id: Provider model identifier.
+        params: Provider-specific keyword arguments passed to the model request or session.
+        connection: Reconnect timing overrides.
+    """
+
+    model_id: Required[str]
+    params: dict[str, Any] | None
+    connection: ConnectionConfig
+
+
+class ModelUpdateConfig(TypedDict, total=False):
+    """Partial configuration update shared by bidirectional model providers.
 
     Attributes:
         model_id: Provider model identifier.

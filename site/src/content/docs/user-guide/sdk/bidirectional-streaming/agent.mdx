@@ -72,7 +72,7 @@ from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.io import AudioIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
-model = BedrockNovaSonicModel()
+model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 agent = BidiAgent(model=model, tools=[notebook])
 audio_io = AudioIO()
 
@@ -201,7 +201,7 @@ Configure a `BidiAgent` with a model, tools, a system prompt, and optional conve
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
-model = BedrockNovaSonicModel()
+model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 
 agent = BidiAgent(
     model=model,
@@ -380,10 +380,11 @@ opt out of automatic reconnect with the model's `connection` argument:
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 model = BedrockNovaSonicModel(
+    model_id="amazon.nova-2-sonic-v1:0",
     connection={
         "restart_after_s": 360,  # Reconnect this many seconds after a connection opens
         "auto_reconnect": True,  # Set False to disable automatic reconnect
-    }
+    },
 )
 ```
 

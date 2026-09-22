@@ -85,7 +85,7 @@ from strands.experimental.bidi import BidiAgent
 from strands.experimental.bidi.io import AudioIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
-model = BedrockNovaSonicModel()
+model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 agent = BidiAgent(
     model=model,
     system_prompt="You are a helpful voice assistant. Keep replies short and natural.",
