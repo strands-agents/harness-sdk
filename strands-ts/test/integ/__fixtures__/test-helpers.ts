@@ -137,3 +137,14 @@ export const echoTool = tool({
   inputSchema: z.object({ message: z.string().describe('The message to echo') }),
   callback: async ({ message }) => `Echo: ${message}`,
 })
+
+/**
+ * Shape of a raw MCP tool result, for asserting on `McpClient.callTool` pass-through in tests.
+ *
+ * A type alias rather than an interface: the implicit index signature keeps the direct cast from
+ * `callTool`'s `JSONValue` return legal, where an interface would force casting through `unknown`.
+ */
+export type McpCallToolResult = {
+  content: { type: string; text?: string }[]
+  isError?: boolean
+}
