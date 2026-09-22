@@ -199,3 +199,19 @@ html[data-embed] .site-footer,
 html[data-embed] .integrations-back {
 	display: none;
 }
+
+/* Product slug accent. PageFrame sets data-accent from the URL; the sidebar slug
+   matches the product's homepage card color (per-theme values from fonts.css). */
+.page[data-accent='orange'] { --product-accent: #ff8a3d; }
+.page[data-accent='teal'] { --product-accent: #2dd4bf; }
+.page[data-accent='yellow'] { --product-accent: #f6bc00; }
+.page[data-accent='pink'] { --product-accent: #ff70eb; }
+.page[data-accent='blue'] { --product-accent: #6a8bff; }
+:root[data-theme='light'] .page[data-accent='orange'] { --product-accent: #b35900; }
+:root[data-theme='light'] .page[data-accent='teal'] { --product-accent: #0f766e; }
+:root[data-theme='light'] .page[data-accent='yellow'] { --product-accent: #946e00; }
+:root[data-theme='light'] .page[data-accent='pink'] { --product-accent: #b3009e; }
+:root[data-theme='light'] .page[data-accent='blue'] { --product-accent: #2708f1; }
+.page[data-accent] .product-switcher__slug {
+	color: var(--product-accent);
+}
