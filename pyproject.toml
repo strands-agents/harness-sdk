@@ -4,8 +4,9 @@ version = "0.0.0"
 description = "Shared Python tooling for the Strands monorepo. Not published."
 requires-python = ">=3.10"
 dependencies = [
-    # Linter/formatter.
-    "ruff>=0.13.0,<0.15.0",
+    # Linter/formatter. Range matches strands-py and harness-py so the whole monorepo
+    # (and the pre-commit hook) resolves the same ruff.
+    "ruff>=0.13.0,<0.17.0",
     # Type checker.
     "pyright>=1.1.400",
     # Test runner for the shared venv.
