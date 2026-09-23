@@ -109,7 +109,7 @@ dev = [
     "pytest-asyncio>=1.0.0,<1.5.0",
     "pytest-timeout>=2.0.0,<3.0.0",
     "pytest-xdist>=3.0.0,<4.0.0",
-    "ruff>=0.13.0,<0.17.0",
+    "ruff>=0.16.0,<0.17.0",
     "tenacity>=9.0.0,<10.0.0",
 ]
 
@@ -135,7 +135,7 @@ installer = "uv"
 features = ["all"]
 dependencies = [
   "mypy>=1.15.0,<3.0.0",
-  "ruff>=0.13.0,<0.17.0",
+  "ruff>=0.16.0,<0.17.0",
   # Include required package dependencies for mypy
   "boto3-stubs[bedrock-agent,bedrock-agent-runtime,s3]>=1.26.0,<2.0.0",
   "strands-agents @ {root:uri}",

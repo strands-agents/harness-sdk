@@ -6,7 +6,7 @@
 # hook and CI resolve the same ruff.
 set -eu
 
-RUFF_SPEC='ruff>=0.13.0,<0.17.0'
+RUFF_SPEC='ruff>=0.16.0,<0.17.0'
 
 staged_python_files=$(
   git diff --cached --name-only --diff-filter=ACMR -- strands-py harness-py \
