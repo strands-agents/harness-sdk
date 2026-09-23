@@ -53,12 +53,7 @@ export const OPENING_CHOICES = [
   { id: 'import', title: 'Import', description: 'Load in your custom harness from a file or zip.' },
 ] as const
 const SETUP_STEP_INSTRUCTIONS = {
-  quickstart: [
-    'Pick a model for your agent',
-    "Choose your agent's tools",
-    'Choose plugins and features',
-    'Choose how Strands looks',
-  ],
+  quickstart: ['Pick a model for your agent', "Choose your agent's tools", 'Choose plugins and features'],
   agent: ['Pick a model for the assistant'],
   manual: [
     'Pick a model for your agent',
@@ -68,21 +63,19 @@ const SETUP_STEP_INSTRUCTIONS = {
     'Configure context and memory',
     'Set tool permissions',
     'Review your agent',
-    'Choose how Strands looks',
   ],
-  import: ['Choose an agent to import', 'Choose how Strands looks'],
+  import: ['Choose an agent to import'],
 } as const satisfies Record<SetupFlow, readonly string[]>
 
 export function setupStepProgress(
   flow: SetupFlow | undefined,
   step: number
 ): { current: number; total: number; instruction: string } | undefined {
-  if (!flow || step === 0 || (flow === 'import' && step === 1)) {
+  if (!flow || step === 0 || step === APPEARANCE_STEP || (flow === 'import' && step === 1)) {
     return undefined
   }
   const total = SETUP_STEP_INSTRUCTIONS[flow].length
-  const current = step === APPEARANCE_STEP ? total : step
-  return { current, total, instruction: SETUP_STEP_INSTRUCTIONS[flow][current - 1]! }
+  return { current: step, total, instruction: SETUP_STEP_INSTRUCTIONS[flow][step - 1]! }
 }
 
 const BUILTIN_TOOLS = [
@@ -153,7 +146,10 @@ export function rowsForStep(
   setDraft: (update: (current: SetupDraft) => SetupDraft) => void,
   updateProfile: (update: Partial<HarnessAgentConfig>) => void,
   setEditing: (editing: { field: EditableField; value: string }) => void,
-  liteLlmDiscovery?: LiteLlmDiscovery
+  liteLlmDiscovery?: LiteLlmDiscovery,
+  credentialRejectedProvider?: ProviderId,
+  credentialValidationProvider?: ProviderId,
+  credentialRejectionMessage?: string
 ): WizardRow[] {
   const environment = effectiveProviderEnvironment(providerEnvironment, detectedEnvironment, awsDiscovery)
   if ((flow === 'quickstart' && step === 2) || (flow === 'manual' && step === 3)) {
@@ -200,12 +196,18 @@ export function rowsForStep(
     const rows: WizardRow[] = PROVIDER_IDS.map((id) => {
       const enabled = readyProviders.includes(id)
       const assessment = providerAssessment(id, environment, awsDiscovery, ollamaDiscovery, liteLlmDiscovery)
+      const credentialRejected = id === credentialRejectedProvider
+      const credentialValidating = id === credentialValidationProvider
       return {
         id,
         label: PROVIDER_LABELS[id],
-        description: assessment.description,
+        description: credentialRejected
+          ? 'Setup required'
+          : credentialValidating
+            ? 'Validating'
+            : assessment.description,
         active: enabled,
-        status: assessment.status,
+        status: credentialRejected ? 'error' : credentialValidating ? 'warning' : assessment.status,
         activate: noop,
       }
     })
@@ -224,13 +226,20 @@ export function rowsForStep(
             selectedProvider === 'litellm' &&
             field.key === 'LITELLM_API_KEY' &&
             liteLlmDiscovery?.authenticationRequired === true
-          const editable = !credential || !detected || rejectedLiteLlmKey
+          const rejectedCredential =
+            rejectedLiteLlmKey || (selectedProvider === credentialRejectedProvider && credential)
+          const validatingCredential = selectedProvider === credentialValidationProvider && credential
+          const editable = !credential || !detected || rejectedCredential
           return {
             id: `${selectedProvider}:${field.key}`,
             label: field.label,
             description: credential
               ? detected
-                ? `${rejectedLiteLlmKey ? 'Rejected' : 'Detected'} · ${sourceLabel(detected.source)}`
+                ? rejectedCredential && credentialRejectionMessage
+                  ? credentialRejectionMessage
+                  : validatingCredential
+                    ? 'Checking API key...'
+                    : `${rejectedCredential ? 'Rejected' : 'Detected'} · ${sourceLabel(detected.source)}`
                 : credentialSetupDescription()
               : configured
                 ? `${configured}${selectOptions ? '  ▾' : ''}`
@@ -241,7 +250,7 @@ export function rowsForStep(
             field: field.key,
             ...(selectOptions ? { selectOptions } : {}),
             activate: editable
-              ? edit(field.key, configured ?? (rejectedLiteLlmKey ? '' : (detected?.value ?? '')))
+              ? edit(field.key, configured ?? (rejectedCredential ? '' : (detected?.value ?? '')))
               : noop,
           }
         })

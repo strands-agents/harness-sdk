@@ -2,6 +2,9 @@
   "name": "strands",
   "version": "0.0.0",
   "private": true,
+  "bin": {
+    "strands-dev": "strands-cli/bin/strands.js"
+  },
   "workspaces": [
     "strands-ts"
   ],
@@ -12,6 +15,7 @@
   "scripts": {
     "prepare": "husky",
     "build": "npm run build -w strands-ts",
+    "setup": "node strands-cli/scripts/setup-source.js",
     "test": "npm run test -w strands-ts",
     "test:coverage": "npm run test:coverage -w strands-ts",
     "test:all": "npm run test:all -w strands-ts",

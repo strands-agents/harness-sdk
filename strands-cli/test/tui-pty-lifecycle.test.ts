@@ -5,6 +5,9 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { sanitizeTerminalText } from '../src/tui/terminal/sanitize.js'
 
+// Colored output paints solid cells as backgrounds, leaving only the half-block glyphs as text.
+const STRANDS_WORDMARK = /STRANDS|╔════╝|█▀▀ ▀█▀ █▀█ ▄▀█ █▄ █ █▀▄ █▀▀|▀▀ ▀ ▀ {2}▀ {2}▄▀ {3}▄ {4}▀▄ {2}▀▀/
+
 vi.setConfig({ testTimeout: 20_000 })
 
 const execFileAsync = promisify(execFile)
@@ -73,7 +76,7 @@ describe.skipIf(process.platform === 'win32')('TUI PTY lifecycle', () => {
     const beforePrompt = result.output.slice(0, result.output.indexOf('Message Lifecycle Fixture'))
 
     expect(result.returnCode).toBe(0)
-    expect(sanitizeTerminalText(beforePrompt)).toContain('STRANDS')
+    expect(sanitizeTerminalText(beforePrompt)).toMatch(STRANDS_WORDMARK)
     expect(result.output).toMatch(/[▗▖▄▝▐▞▟▘▚▌▙▀▜▛]/u)
     expect(result.output).toContain('Message Lifecycle Fixture')
     expect(beforePrompt.split('\u001b[2J').length - 1).toBe(1)

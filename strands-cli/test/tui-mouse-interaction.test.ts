@@ -62,9 +62,14 @@ describe('TUI mouse input', () => {
     const target = backend()
     target.info = () => ({ model: 'bedrock/test' })
     target.listModels = () => [{ id: 'bedrock/test', name: 'bedrock/test', description: '', active: true }]
+    target.stream = async function* () {
+      yield { type: 'textDelta', text: '' }
+      return { stopReason: 'endTurn', context: { projectedTokens: 100, contextWindow: 1_000 } }
+    }
     const controller = new ChatController(target, {
       runtime: { version: '1.2.3', model: 'bedrock/test', cwd: '/work' },
     })
+    await controller.submit('measure context')
     const instance = render(createElement(ChatApp, { controller }), {
       stdin: input,
       stdout: output,
@@ -76,7 +81,7 @@ describe('TUI mouse input', () => {
     instances.push(instance)
     await instance.waitUntilRenderFlush()
 
-    const contextTarget = findText(frame(), 'context ░')
+    const contextTarget = findText(frame(), 'context █')
     const modelTarget = findText(frame(), 'bedrock/test')
 
     input.write(mouseInputSequence(0, contextTarget.column, contextTarget.row, 'M'))

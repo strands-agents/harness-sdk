@@ -3,6 +3,7 @@ import { Box, useWindowSize } from 'ink'
 
 import type { FrogTheme } from '../chat/types.js'
 import { FROG_INTRO_DURATION_MS, renderFrogSpiralFrame } from './frog-intro-renderer.js'
+import { setupBrandFrame } from './setup-wizard/brand.js'
 import { Text, useTheme } from './theme.js'
 
 const HOLD_MS = 250
@@ -12,9 +13,12 @@ export function DnaVortexIntro({
   ready = true,
   theme = 'green',
   customBase = 'green',
+  setup = false,
 }: {
   onComplete(exitCode: 0 | 130): void
   ready?: boolean
+  /** Ends on the setup wizard's brand frame so the handoff does not move or resize the lockup. */
+  setup?: boolean
   theme?: FrogTheme
   customBase?: Exclude<FrogTheme, 'custom'>
 }): ReactElement {
@@ -41,6 +45,7 @@ export function DnaVortexIntro({
     return (): void => clearInterval(timer)
   }, [onComplete, fps, ready])
 
+  const brandFrame = setup ? setupBrandFrame(terminalWidth - 2, terminalHeight) : undefined
   const artwork = renderFrogSpiralFrame(
     terminalWidth - 2,
     terminalHeight,
@@ -48,7 +53,9 @@ export function DnaVortexIntro({
     elapsedMs,
     true,
     theme,
-    { colorMode: colors.mode, customBase, ...(theme === 'custom' ? { frogColor: colors.frog } : {}) }
+    { colorMode: colors.mode, customBase, ...(theme === 'custom' ? { frogColor: colors.frog } : {}) },
+    brandFrame?.height,
+    brandFrame?.left
   )
 
   return (

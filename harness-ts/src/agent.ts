@@ -186,8 +186,9 @@ export interface HarnessAgentOptions extends Omit<
    * when an explicit `memoryManager` is passed.
    *
    * Extraction is background and turn-triggered, so a short run may end before the first extraction
-   * fires and the latest turns are unsaved when the agent responds. Call
-   * `await agent.memoryManager?.flush()` at your shutdown boundary to persist what's pending.
+   * fires and the latest turns are unsaved when the agent responds. Bind the agent with `await using`
+   * to run its shutdown on scope exit, or call `await agent.shutdown()` at your shutdown boundary,
+   * to persist what's pending.
    */
   memory?: boolean | MemoryConfig | MemoryManager | null
   /**

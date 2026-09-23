@@ -166,3 +166,20 @@ describe('LiteLLM proxy discovery', () => {
     })
   })
 })
+
+describe('provider model discovery errors', () => {
+  it('retains the HTTP failure reason without exposing credential values', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new globalThis.Response('', { status: 401 }))
+
+    await expect(
+      discoverProviderModels('openai', {
+        OPENAI_API_KEY: { value: 'secret-test-key', source: 'session' },
+      })
+    ).resolves.toEqual({
+      models: [],
+      available: false,
+      error: 'API key was rejected (HTTP 401)',
+      credentialRejected: true,
+    })
+  })
+})

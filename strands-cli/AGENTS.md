@@ -32,11 +32,11 @@ strands-cli/
 
 ## Development
 
-Install from the repo root so the workspace links `@strands-agents/harness`:
+Install from the repo root:
 
 ```bash
-npm run setup        # install and link the source-aware `strands` command
-strands                 # builds on first run and whenever source changes
+npm run setup        # install and link the source-aware `strands-dev` command
+strands-dev          # builds on first run and whenever source changes
 ```
 
 Run the checks (from `strands-cli/`, or via `-w strands-cli` from the root):

@@ -44,7 +44,7 @@ export function StartupView({
   const brandElapsedMs = frogBrandElapsedMs ?? FROG_BRAND_EASTER_EGG_DURATION_MS
   const brandProgress = animate ? brandElapsedMs / FROG_BRAND_EASTER_EGG_DURATION_MS : brandElapsedMs < 800 ? 0.54 : 1
   return (
-    <Box flexDirection="column" alignItems="center" paddingTop={lockupHeight >= 12 ? 2 : 1} width="100%" flexShrink={0}>
+    <Box flexDirection="column" alignItems="center" paddingTop={lockupHeight > 2 ? 2 : 1} width="100%" flexShrink={0}>
       <Box width={lockupWidth} height={lockupHeight} overflow="hidden" position="relative">
         <Text>
           {frogBrandElapsedMs === undefined

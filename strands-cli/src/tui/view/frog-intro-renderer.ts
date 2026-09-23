@@ -63,9 +63,21 @@ const GLYPHS = {
   T: ['████████╗', '╚══██╔══╝', '   ██║   ', '   ██║   ', '   ██║   ', '   ╚═╝   '],
 } as const
 
+const SMALL_GLYPHS = {
+  A: ['▄▀█', '█▀█'],
+  D: ['█▀▄', '█▄▀'],
+  N: ['█▄ █', '█ ▀█'],
+  R: ['█▀█', '█▀▄'],
+  S: ['█▀▀', '▀▀█'],
+  T: ['▀█▀', ' █ '],
+} as const
+
 const BRAND_WORD = wordShape('STRANDS')
+const SMALL_BRAND_WORD = wordShape('STRANDS', SMALL_GLYPHS)
+const BRAND_WORD_HEIGHT = GLYPHS.S.length
 
 export const FROG_BRAND_EASTER_EGG_DURATION_MS = 3_200
+export const FROG_FULL_LOCKUP_MIN_WIDTH = BRAND_WORD.width + 26
 
 interface WordPoint extends Point {
   character: string
@@ -106,14 +118,18 @@ export function renderFrogSpiralFrame(
   elapsedMs: number,
   color = false,
   theme: FrogTheme = 'green',
-  options: FrogRenderOptions = {}
+  options: FrogRenderOptions = {},
+  artHeight = frogStartupHeight(Math.max(1, width), Math.max(1, height) - 6),
+  lockupLeft = 0
 ): string {
   const canvas = new Canvas(Math.max(1, width), Math.max(1, height), theme, false, 0, options)
-  const artHeight = frogStartupHeight(canvas.width, canvas.height - 6)
-  const top = artHeight >= 12 ? 2 : 1
+  const top = artHeight > 2 ? 2 : 1
   const value = clamp(progress)
   if (artHeight < 12 || value >= 1) {
-    const artwork = renderFrogStartupLockup(canvas.width, color, 0, theme, false, options, artHeight).split('\n')
+    const indent = ' '.repeat(lockupLeft)
+    const artwork = renderFrogStartupLockup(canvas.width - lockupLeft, color, 0, theme, false, options, artHeight)
+      .split('\n')
+      .map((row) => indent + row)
     return canvas
       .rows(color)
       .map((row, index) => artwork[index - top] ?? row)
@@ -125,7 +141,7 @@ export function renderFrogSpiralFrame(
     return canvas.rows(color).join('\n')
   }
   const local = (value - 0.23) / 0.77
-  drawDanglingLetterAct(canvas, scene, local, elapsedMs)
+  drawDanglingLetterAct(canvas, scene, local, elapsedMs, lockupLeft)
   const wide = canvas.width >= BRAND_WORD.width + 26
   const shift = Math.round((scene.wordY - (wide ? 7 : 9)) * smoothStep((local - 0.51) / 0.17))
   const rows = canvas.rows(color)
@@ -142,8 +158,8 @@ export function renderFrogStartupLockup(
   height = lockupLayout(width).height
 ): string {
   const canvas = new Canvas(Math.max(1, width), Math.max(1, height), theme, party, elapsedMs, options)
-  if (canvas.width < 74 || canvas.height < lockupLayout(canvas.width).height) {
-    drawCompactLockup(canvas, elapsedMs)
+  if (canvas.width < FROG_FULL_LOCKUP_MIN_WIDTH || canvas.height < lockupLayout(canvas.width).height) {
+    drawCompactLockup(canvas)
     return canvas.rows(color).join('\n')
   }
   drawFinalLockup(canvas, elapsedMs)
@@ -199,9 +215,9 @@ export function renderSetupGuideTransitionFrame(
   const layout = lockupLayout(canvas.width)
   const landing = { x: landingX, y: landingY ?? canvas.height * 2 - 12 }
 
-  if (canvas.width < 74 || canvas.height < 12) {
+  if (canvas.width < FROG_FULL_LOCKUP_MIN_WIDTH || canvas.height < 12) {
     if (value < 0.16) {
-      drawCompactLockup(canvas, elapsedMs)
+      drawCompactLockup(canvas)
       return canvas.rows(color).join('\n')
     }
   } else {
@@ -263,8 +279,8 @@ export function renderFrogBrandEasterEggFrame(
   height = lockupLayout(width).height
 ): string {
   const canvas = new Canvas(Math.max(1, width), Math.max(1, height), theme, party, partyElapsedMs, options)
-  if (canvas.width < 74 || canvas.height < lockupLayout(canvas.width).height) {
-    drawCompactLockup(canvas, elapsedMs)
+  if (canvas.width < FROG_FULL_LOCKUP_MIN_WIDTH || canvas.height < lockupLayout(canvas.width).height) {
+    drawCompactLockup(canvas)
     return canvas.rows(color).join('\n')
   }
   drawFrogBrandEasterEgg(canvas, clamp(progress), elapsedMs)
@@ -279,16 +295,26 @@ export interface FrogStartupHitbox {
 }
 
 export function frogStartupHeight(width: number, availableHeight: number): number {
-  if (width >= 74 && availableHeight >= 26) {
+  if (width >= FROG_FULL_LOCKUP_MIN_WIDTH && availableHeight >= 26) {
     return lockupLayout(width).height
   }
-  return width >= 26 && availableHeight >= 8 ? 4 : 1
+  if (width >= BRAND_WORD.width && availableHeight >= wordOnlyHeight(width) + 8) {
+    return wordOnlyHeight(width)
+  }
+  return width >= SMALL_BRAND_WORD.width && availableHeight >= 8 ? 2 : 1
 }
 
 export function frogStartupHitbox(width: number, height = lockupLayout(width).height): FrogStartupHitbox {
   const canvasWidth = Math.max(1, width)
-  if (canvasWidth < 74 || height < lockupLayout(canvasWidth).height) {
-    return { left: Math.max(0, Math.floor((canvasWidth - 24) / 2)), top: 0, width: Math.min(8, canvasWidth), height }
+  if (
+    canvasWidth >= BRAND_WORD.width &&
+    height >= wordOnlyHeight(canvasWidth) &&
+    height < lockupLayout(canvasWidth).height
+  ) {
+    return { left: 0, top: lockupLayout(canvasWidth).wordY, width: BRAND_WORD.width, height: BRAND_WORD_HEIGHT }
+  }
+  if (canvasWidth < FROG_FULL_LOCKUP_MIN_WIDTH || height < lockupLayout(canvasWidth).height) {
+    return { left: 0, top: 0, width: Math.min(SMALL_BRAND_WORD.width, canvasWidth), height }
   }
   const { frogX, frogY } = lockupLayout(canvasWidth)
   const left = Math.max(0, Math.floor(frogX - 7))
@@ -505,13 +531,13 @@ function drawSpiralAct(canvas: Canvas, scene: Scene, progress: number, elapsedMs
   }
 }
 
-function drawDanglingLetterAct(canvas: Canvas, scene: Scene, time: number, elapsedMs: number): void {
+function drawDanglingLetterAct(canvas: Canvas, scene: Scene, time: number, elapsedMs: number, left: number): void {
   const wide = canvas.width >= BRAND_WORD.width + 26
-  const wordX = wide ? Math.floor((canvas.width - BRAND_WORD.width - 26) / 2) + 26 : scene.sourceX
+  const layout = lockupLayout(canvas.width - left)
+  const wordX = left + layout.wordX
+  const frogX = left + layout.frogX
   const restingWordY = scene.wordY - 3
-  const landing = wide
-    ? { x: wordX - 15.5, y: (restingWordY + 3) * 2, scale: 1 }
-    : { x: scene.sourceX + 7.5, y: (restingWordY + 8) * 2, scale: 1 }
+  const landing = { x: frogX, y: (restingWordY + (wide ? 3 : 8)) * 2, scale: 1 }
   const letters = [5, 2, 0]
   const impacts = letters.map((_, index) => (index + 1) * 0.17 - 0.015)
   const presses = impacts.map((impact) => {
@@ -581,20 +607,18 @@ function drawFinalLockup(canvas: Canvas, elapsedMs: number): void {
   drawFrog(canvas, { x: layout.frogX, y: layout.frogY, scale: 1 }, FROG_POSES.settled, elapsedMs)
 }
 
-function drawCompactLockup(canvas: Canvas, elapsedMs: number): void {
-  if (canvas.width < 26 || canvas.height < 4) {
-    const title = 'STRANDS'.slice(0, canvas.width)
-    const left = Math.floor((canvas.width - title.length) / 2)
-    for (const [index, character] of [...title].entries()) {
-      canvas.set(left + index, 0, character, 'green', 68)
+function drawCompactLockup(canvas: Canvas): void {
+  if (canvas.width >= BRAND_WORD.width && canvas.height >= wordOnlyHeight(canvas.width)) {
+    drawSolidWord(canvas, BRAND_WORD, 0, lockupLayout(canvas.width).wordY, 68)
+    return
+  }
+  if (canvas.width < SMALL_BRAND_WORD.width || canvas.height < 2) {
+    for (const [index, character] of [...'STRANDS'.slice(0, canvas.width)].entries()) {
+      canvas.set(index, 0, character, 'green', 68)
     }
     return
   }
-  const left = Math.floor((canvas.width - 24) / 2)
-  drawFrog(canvas, { x: left + 4, y: 4, scale: 0.34 }, FROG_POSES.settled, elapsedMs)
-  for (const [index, character] of [...'STRANDS'].entries()) {
-    canvas.set(left + 10 + index, 1, character, 'green', 68)
-  }
+  drawSolidWord(canvas, SMALL_BRAND_WORD, 0, 0, 68)
 }
 
 function drawFrogBrandEasterEgg(canvas: Canvas, progress: number, elapsedMs: number): void {
@@ -737,11 +761,16 @@ function drawDissolveFront(canvas: Canvas, scene: Scene, wipeX: number, seconds:
   }
 }
 
+/** The full lockup cropped below the wordmark, so dropping the frog keeps the word on the same rows. */
+function wordOnlyHeight(width: number): number {
+  return lockupLayout(width).wordY + BRAND_WORD_HEIGHT
+}
+
 function lockupLayout(width: number): { frogX: number; frogY: number; wordX: number; wordY: number; height: number } {
   const wide = width >= BRAND_WORD.width + 26
-  const wordX = Math.floor((width - BRAND_WORD.width - (wide ? 26 : 0)) / 2) + (wide ? 26 : 0)
+  const wordX = wide ? 26 : 0
   return {
-    frogX: wide ? wordX - 15.5 : wordX + 7.5,
+    frogX: wide ? wordX - 15.5 : 10.5,
     frogY: wide ? 10 : 24,
     wordX,
     wordY: wide ? 2 : 0,
@@ -843,11 +872,11 @@ function spiralPresence(x: number, wipeX: number, seed: number): number {
   return clamp(distance / 6 + (hash01(seed + 97) - 0.5) * 0.28)
 }
 
-function wordShape(word: string): WordShape {
+function wordShape(word: string, glyphs: Record<string, readonly string[]> = GLYPHS): WordShape {
   const points: WordPoint[] = []
   let offset = 0
   for (const [letterIndex, rawLetter] of [...word].entries()) {
-    const glyph = GLYPHS[rawLetter as keyof typeof GLYPHS]
+    const glyph = glyphs[rawLetter]!
     for (let localY = 0; localY < glyph.length; localY++) {
       const row = glyph[localY]!
       for (let localX = 0; localX < row.length; localX++) {

@@ -32,7 +32,6 @@ import { errorMessage, sanitizeTerminalText } from '../../terminal/sanitize.js'
 import { canChooseDirectory, chooseAgentProject, chooseDirectory } from '../../terminal/directory-picker.js'
 import { setTerminalMouseMotion } from '../../terminal/terminal.js'
 import {
-  frogStartupHeight,
   renderSetupGuideTransitionFrame,
   SETUP_GUIDE_TRANSITION_DURATION_MS,
   setupGuideLayout,
@@ -72,7 +71,7 @@ import {
   wizardSettingsRows,
 } from './steps.js'
 import { useBrandAnimation } from '../startup-view.js'
-import { SetupBrand } from './brand.js'
+import { SetupBrand, setupBrandFrame } from './brand.js'
 import { OpeningMenu } from './opening-menu.js'
 import { SetupSettingsPanel, type SetupSettingsChoiceTarget } from './settings-panel.js'
 import { EffortSlider } from '../model-panel.js'
@@ -175,7 +174,6 @@ function SetupWizardContent({
   const [setupTarget, setSetupTarget] = useState<SetupDraft>()
   const [profileBaseDir] = useState<string | null | undefined>(() => config.snapshot().profileBaseDir)
   const [importPath, setImportPath] = useState('')
-  const [importedEntrypoint, setImportedEntrypoint] = useState<string>()
   const [editing, setEditing] = useState<{ field: EditableField; value: string; cursor?: number }>()
   const [pathCompletionIndex, setPathCompletionIndex] = useState(-1)
   const [error, setError] = useState<string>()
@@ -330,13 +328,8 @@ function SetupWizardContent({
     !isSettings && (isProviderSetup || isImport || isCapabilities || isAppearance || flow === 'manual')
   const bubbleWidth = Math.max(1, Math.min(isProviderSetup ? 118 : 112, width - 2))
   const lockupWidth = Math.max(1, width - 2)
-  const minimumContentHeight = step === 0 ? 20 : isProviderSetup ? 24 : 22
-  const brandAvailableHeight = Math.max(1, height - minimumContentHeight)
-  const fullLockupHeight = frogStartupHeight(lockupWidth, Number.POSITIVE_INFINITY)
-  const lockupHeight =
-    lockupWidth >= 74 && brandAvailableHeight >= fullLockupHeight + 2
-      ? fullLockupHeight
-      : frogStartupHeight(lockupWidth, brandAvailableHeight)
+  const brandFrame = setupBrandFrame(lockupWidth, height)
+  const lockupHeight = brandFrame.height
   const showBrand = lockupHeight > 1
   const brandHeight = showBrand ? lockupHeight + 2 : 0
   const openingColumns = lockupWidth >= 64 ? 2 : 1
@@ -381,6 +374,28 @@ function SetupWizardContent({
   const updateProfile = useCallback((update: Partial<HarnessAgentConfig>): void => {
     setDraft((current) => ({ ...current, profile: { ...current.profile, ...update } }))
   }, [])
+  const credentialRejectedProvider =
+    providerModels.provider === quickstartProvider &&
+    !providerModels.loading &&
+    providerModels.credentialRejected === true
+      ? quickstartProvider
+      : undefined
+  const keyCredentialProvider = ['anthropic', 'openai', 'google'].includes(quickstartProvider)
+  const credentialValidationProvider =
+    isProviderSetup &&
+    keyCredentialProvider &&
+    readyProviders.includes(quickstartProvider) &&
+    (providerModels.provider !== quickstartProvider || providerModels.loading)
+      ? quickstartProvider
+      : undefined
+  const unavailableCredentialProvider = credentialRejectedProvider ?? credentialValidationProvider
+  const setupReadyProviders = useMemo(
+    () =>
+      unavailableCredentialProvider
+        ? readyProviders.filter((provider) => provider !== unavailableCredentialProvider)
+        : readyProviders,
+    [readyProviders, unavailableCredentialProvider]
+  )
 
   const rows = useMemo<WizardRow[]>(() => {
     const stepRows = isAppearance
@@ -398,13 +413,16 @@ function SetupWizardContent({
           providerEnvironment,
           detectedEnvironment,
           quickstartProvider,
-          readyProviders,
+          setupReadyProviders,
           awsDiscovery,
           ollamaDiscovery,
           setDraft,
           updateProfile,
           setEditing,
-          liteLlmDiscovery
+          liteLlmDiscovery,
+          credentialRejectedProvider,
+          credentialValidationProvider,
+          providerModels.error
         )
     return isProviderSetup
       ? [
@@ -443,7 +461,10 @@ function SetupWizardContent({
     liteLlmDiscovery,
     providerEnvironment,
     quickstartProvider,
-    readyProviders,
+    setupReadyProviders,
+    credentialRejectedProvider,
+    credentialValidationProvider,
+    providerModels.error,
     recheck,
     step,
     updateProfile,
@@ -454,13 +475,13 @@ function SetupWizardContent({
     (flow === 'import'
       ? importPath.trim().length > 0
       : isProviderSetup
-        ? selectedModelProvider === quickstartProvider && readyProviders.includes(quickstartProvider)
+        ? selectedModelProvider === quickstartProvider && setupReadyProviders.includes(quickstartProvider)
         : draft.providers.some((provider) => readyProviders.includes(provider)))
   const inspectedProvider = isProviderSetup ? quickstartProvider : undefined
   const inspectedAssessment = inspectedProvider
     ? providerAssessment(inspectedProvider, effectiveEnvironment, awsDiscovery, ollamaDiscovery, liteLlmDiscovery)
     : undefined
-  const warning = inspectedAssessment?.warning
+  const warning = keyCredentialProvider ? undefined : inspectedAssessment?.warning
   const assessmentFacts = inspectedAssessment?.facts ?? []
   const bannerWarning = warning
     ? assessmentFacts.length > 0
@@ -475,7 +496,7 @@ function SetupWizardContent({
       ? EXA_WEB_SEARCH_WARNING
       : undefined
   const bannerWarningStatus = warning ? inspectedAssessment!.status : 'warning'
-  const providerReady = isProviderSetup && readyProviders.includes(quickstartProvider)
+  const providerReady = isProviderSetup && setupReadyProviders.includes(quickstartProvider)
   const showProviderConfiguration = isProviderSetup && !providerReady
   const modelPanelVisible = splitQuickstart && providerReady
   const availableBubbleHeight = Math.max(
@@ -757,7 +778,7 @@ function SetupWizardContent({
               backgroundColor={rowBackground(index) ?? COMMAND_DECK_BACKGROUND}
             >
               <EditableText
-                value={activeEditing?.value ?? ''}
+                value={activeEditing?.value ?? (row.selectOptions ? row.description : '')}
                 cursor={activeEditing?.cursor ?? graphemes(activeEditing?.value ?? '').length}
                 width={Math.max(1, fieldWidth - 4)}
                 active={Boolean(activeEditing)}
@@ -830,6 +851,15 @@ function SetupWizardContent({
     setError(undefined)
   }
 
+  function focusNextProviderField(field: ProviderEnvironmentKey): void {
+    const current = rows.findIndex((row) => row.field === field)
+    const next = rows.findIndex((row, index) => index > current && !row.disabled)
+    if (next >= 0) {
+      setSelection(next)
+      setFocusedAction(undefined)
+    }
+  }
+
   function chooseSelectOption(option: SelectOption): void {
     if (!selecting) {
       return
@@ -839,6 +869,7 @@ function SetupWizardContent({
       setEditing({ field: selecting.field, value: current })
     } else {
       setProviderValue(selecting.field, option.value ?? '')
+      focusNextProviderField(selecting.field)
     }
     setSelecting(undefined)
   }
@@ -934,6 +965,55 @@ function SetupWizardContent({
     })
   }
 
+  function completeSetup(completedDraft: SetupDraft = draft, agentProject?: string): void {
+    let saved: Promise<void>
+    setSaving(true)
+    if (appearanceOnly || agentProject) {
+      if (deferred) {
+        onComplete({
+          configuration: {
+            ...configurationFromStore(config),
+            settings: { ...panelSettings, ...completedDraft.settings, ...appearance },
+          },
+          ...(agentProject ? { agentProject } : {}),
+        })
+        return
+      }
+      saved = appearanceOnly
+        ? config.setSettings({ ...panelSettings, ...appearance })
+        : config.useAgentProject(agentProject!, {
+            ...panelSettings,
+            ...completedDraft.settings,
+            ...appearance,
+          })
+    } else {
+      setError(undefined)
+      const configuration: SetupConfiguration = {
+        providers: completedDraft.providers,
+        profile: compatibleProfile(completedDraft.profile),
+        ...(profileBaseDir !== undefined ? { profileBaseDir } : {}),
+        permissionMode: completedDraft.permissionMode,
+        allowedTools:
+          completedDraft.customPermissions || completedDraft.permissionMode === 'bypassPermissions'
+            ? completedDraft.allowedTools
+            : [],
+        providerEnvironment,
+        settings: { ...panelSettings, ...completedDraft.settings, ...appearance },
+      }
+      if (deferred) {
+        onComplete({ configuration })
+        return
+      }
+      saved = config.saveSetup(configuration)
+    }
+    void saved
+      .then(() => onComplete())
+      .catch((cause: unknown) => {
+        setSaving(false)
+        setError(cause instanceof Error ? cause.message : String(cause))
+      })
+  }
+
   function continueFlow(): void {
     if (editing || selecting || saving) {
       return
@@ -943,58 +1023,13 @@ function SetupWizardContent({
       return
     }
     if (isAppearance) {
-      let saved: Promise<void>
-      setSaving(true)
-      if (appearanceOnly || (flow === 'import' && importedEntrypoint)) {
-        if (deferred) {
-          onComplete({
-            configuration: {
-              ...configurationFromStore(config),
-              settings: { ...panelSettings, ...draft.settings, ...appearance },
-            },
-            ...(!appearanceOnly ? { agentProject: importedEntrypoint! } : {}),
-          })
-          return
-        }
-        saved = appearanceOnly
-          ? config.setSettings({ ...panelSettings, ...appearance })
-          : config.useAgentProject(importedEntrypoint!, { ...panelSettings, ...draft.settings, ...appearance })
-      } else {
-        setError(undefined)
-        const configuration: SetupConfiguration = {
-          providers: draft.providers,
-          profile: compatibleProfile(draft.profile),
-          ...(profileBaseDir !== undefined ? { profileBaseDir } : {}),
-          permissionMode: draft.permissionMode,
-          allowedTools:
-            draft.customPermissions || draft.permissionMode === 'bypassPermissions' ? draft.allowedTools : [],
-          providerEnvironment,
-          settings: { ...panelSettings, ...draft.settings, ...appearance },
-        }
-        if (deferred) {
-          onComplete({ configuration })
-          return
-        }
-        saved = config.saveSetup(configuration)
-      }
-      void saved
-        .then(() => onComplete())
-        .catch((cause: unknown) => {
-          setSaving(false)
-          setError(cause instanceof Error ? cause.message : String(cause))
-        })
+      completeSetup()
       return
     }
     if (flow === 'import') {
       try {
         const imported = importAgentProject(importPath)
-        panelTransition.transition(() => {
-          setImportedEntrypoint(imported.entrypoint)
-          setSettingsCategory(DEFAULT_SETTINGS_CATEGORY)
-          setStep(APPEARANCE_STEP)
-          setSelection(0)
-          setFocusedAction(undefined)
-        })
+        completeSetup(draft, imported.entrypoint)
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause))
       }
@@ -1036,15 +1071,17 @@ function SetupWizardContent({
         panelTransition.transition(() => setStep(1))
         return
       }
-      setDraft({
+      const completedDraft = {
         ...draft,
         providers: [provider, ...draft.providers.filter((candidate) => candidate !== provider)],
-      })
+      }
+      setDraft(completedDraft)
+      if (step >= 3) {
+        completeSetup(completedDraft)
+        return
+      }
       panelTransition.transition(() => {
-        if (step >= 3) {
-          setSettingsCategory(DEFAULT_SETTINGS_CATEGORY)
-        }
-        setStep(step < 3 ? step + 1 : APPEARANCE_STEP)
+        setStep(step + 1)
         setSelection(0)
         setFocusedAction(undefined)
         if (step === 1) {
@@ -1072,12 +1109,7 @@ function SetupWizardContent({
       })
       return
     }
-    panelTransition.transition(() => {
-      setSettingsCategory(DEFAULT_SETTINGS_CATEGORY)
-      setStep(APPEARANCE_STEP)
-      setSelection(0)
-      setFocusedAction(undefined)
-    })
+    completeSetup()
   }
 
   function moveBack(): void {
@@ -1099,11 +1131,6 @@ function SetupWizardContent({
       }
       if (appearanceOnly) {
         onCancel?.(0)
-      } else {
-        panelTransition.transition(() => {
-          setStep(flow === 'manual' ? MANUAL_STEPS.length : flow === 'quickstart' ? 3 : 1)
-          setSelection(0)
-        })
       }
       return
     }
@@ -1163,6 +1190,7 @@ function SetupWizardContent({
         }
       } else {
         setProviderValue(editing.field, value)
+        focusNextProviderField(editing.field)
       }
       setEditing(undefined)
       setError(undefined)
@@ -1768,9 +1796,14 @@ function SetupWizardContent({
     }
   })
 
+  const isSetupCompletion =
+    isAppearance ||
+    (flow === 'quickstart' && step === 3) ||
+    (flow === 'manual' && step === MANUAL_STEPS.length) ||
+    (flow === 'import' && step === 1)
   const primaryLabel = saving
     ? 'Saving...'
-    : isAppearance
+    : isSetupCompletion
       ? deferred || !config.needsSetup()
         ? 'Save and Launch'
         : 'Launch Strands harness'
@@ -1876,8 +1909,7 @@ function SetupWizardContent({
     >
       {showBrand ? (
         <SetupBrand
-          width={lockupWidth}
-          height={lockupHeight}
+          frame={brandFrame}
           appearance={appearance}
           animationId={frogAnimationId}
           elapsedMs={frogElapsedMs}
@@ -2131,7 +2163,10 @@ function SetupWizardContent({
                             {providerModels.provider !== quickstartProvider || providerModels.loading ? (
                               <Text dimColor>Loading model catalog...</Text>
                             ) : !providerModels.available ? (
-                              <Text color={palette.warning}>Model catalog unavailable</Text>
+                              <Text color={palette.warning}>
+                                Model catalog unavailable
+                                {providerModels.error ? ` · ${providerModels.error}` : ''}
+                              </Text>
                             ) : visibleProviderModels.length === 0 ? (
                               <Text dimColor>{modelQuery.trim() ? 'No matching models' : 'No models reported'}</Text>
                             ) : (
