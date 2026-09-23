@@ -63,7 +63,7 @@ describe('setup import path completion', () => {
         frame = chunk.toString()
       }
     })
-    const config = CliConfigStore.memory({}, {}, { animations: false })
+    const config = CliConfigStore.memory({}, { animations: false })
     const instance = render(createElement(SetupWizard, { config, onComplete: () => {} }), {
       stdin: input,
       stdout: output,

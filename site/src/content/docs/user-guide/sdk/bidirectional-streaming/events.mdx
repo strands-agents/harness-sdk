@@ -39,7 +39,7 @@ from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 async def main():
-    model = BedrockNovaSonicModel()
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
     
     async with BidiAgent(model=model) as agent:
         # Send input to model
@@ -143,7 +143,7 @@ Emitted when the streaming connection is established and ready for interaction.
 **Properties:**
 
 - `connection_id`: Unique identifier for this streaming connection
-- `model`: Model identifier (e.g., "amazon.nova-2-sonic-v1:0", "gemini-2.0-flash-live")
+- `model`: Model identifier (e.g., "amazon.nova-2-sonic-v1:0", "gemini-3.8-live")
 
 #### BidiConnectionRestartEvent
 
@@ -484,7 +484,7 @@ from strands.experimental.bidi.io import AudioIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 async def main():
-    model = BedrockNovaSonicModel()
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
     agent = BidiAgent(model=model)
     audio_io = AudioIO()
     
@@ -520,7 +520,7 @@ from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 async def main():
-    model = BedrockNovaSonicModel()
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
     
     async with BidiAgent(model=model) as agent:
         await agent.send("Tell me about Python")
@@ -541,7 +541,7 @@ from strands.experimental.bidi.models import BedrockNovaSonicModel
 from strands.vended_tools import notebook
 
 async def main():
-    model = BedrockNovaSonicModel()
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
     agent = BidiAgent(model=model, tools=[notebook])
     
     async with agent as agent:
@@ -573,7 +573,7 @@ from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 async def main():
-    model = BedrockNovaSonicModel()
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
     
     async with BidiAgent(model=model) as agent:
         await agent.send("Tell me a long story about space exploration")
@@ -603,7 +603,7 @@ from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 async def main():
-    model = BedrockNovaSonicModel()  # 8-minute timeout
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")  # 8-minute timeout
     
     async with BidiAgent(model=model) as agent:
         # Continuous conversation that handles restarts

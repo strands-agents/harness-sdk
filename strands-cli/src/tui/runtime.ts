@@ -429,8 +429,6 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
         streamPresentation: DEFAULT_STREAM_PRESENTATION,
         initialMessages: agent.messages,
         ...(request.conversation ? { initialTurns: request.conversation.completedTurns } : {}),
-        pinnedModels: configSnapshot.models.pinned,
-        setModelPinned: (modelId, pinned): Promise<void> => config.setModelPinned(modelId, pinned),
         setSettings: (settings): Promise<void> => config.setSettings(settings),
         ...(options.project ? { project: options.project } : {}),
         exportAgentProject: (language, destination): Promise<string | undefined> =>

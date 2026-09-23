@@ -128,23 +128,28 @@ describe('responsive welcome art', () => {
     }
   })
 
-  it('uses compact art from the first intro frame and handles resize while initialization is pending', async () => {
+  it('skips the intro when the full frog does not fit', async () => {
     const complete = vi.fn()
     const view = await mount(createElement(DnaVortexIntro, { ready: false, onComplete: complete }), 40, 16)
-    expect(view.screen()).toMatch(STRANDS_WORDMARK)
-    for (const [columns, rows] of [
-      [120, 40],
-      [40, 16],
-      [22, 10],
-    ] as const) {
-      await view.resize(columns, rows)
-      await vi.waitFor(() => {
-        view.fits()
-        expect(view.screen()).toContain('space to skip')
-        if (columns < 74) expect(view.screen()).toMatch(STRANDS_WORDMARK)
-      })
-    }
+
+    await vi.waitFor(() => expect(complete).toHaveBeenCalledWith(0))
+    expect(view.screen()).toBe('')
+  })
+
+  it('renders the intro while the full frog fits and skips it after a compact resize', async () => {
+    const complete = vi.fn()
+    const view = await mount(createElement(DnaVortexIntro, { ready: false, onComplete: complete }), 120, 40)
+    const hint = '[ space to skip ]'
+    const rows = view.screen().split('\n')
+    const hintRow = rows.findIndex((row) => row.includes(hint))
+    const hintColumn = rows[hintRow]!.indexOf(hint)
+
+    expect(hintRow).toBe(rows.length - 1)
+    expect(Math.abs(hintColumn + hint.length / 2 - 60)).toBeLessThanOrEqual(1)
     expect(complete).not.toHaveBeenCalled()
+
+    await view.resize(40, 16)
+    await vi.waitFor(() => expect(complete).toHaveBeenCalledWith(0))
   })
 
   it('keeps setup choices visible in a narrow window and after resizing', async () => {

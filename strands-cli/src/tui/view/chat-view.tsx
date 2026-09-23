@@ -77,7 +77,6 @@ function ChatViewContent({
   onPanelRowElement,
   onPanelControlElement,
   onPanelFilterElement,
-  onPanelPinElement,
   onPanelSearchElement,
   onPanelSliderElement,
   onSuggestionElement,
@@ -132,7 +131,6 @@ function ChatViewContent({
   onPanelRowElement?: (index: number, element: DOMElement | null) => void
   onPanelControlElement?: (key: string, element: DOMElement | null) => void
   onPanelFilterElement?: (id: string, element: DOMElement | null) => void
-  onPanelPinElement?: (index: number, element: DOMElement | null) => void
   onPanelSearchElement?: (element: DOMElement | null) => void
   onPanelSliderElement?: (element: DOMElement | null) => void
   onSuggestionElement?: (index: number, element: DOMElement | null) => void
@@ -361,9 +359,9 @@ function ChatViewContent({
               {...(onPanelRowElement ? { onRowElement: onPanelRowElement } : {})}
               {...(onPanelControlElement ? { onControlElement: onPanelControlElement } : {})}
               {...(onPanelFilterElement ? { onFilterElement: onPanelFilterElement } : {})}
-              {...(onPanelPinElement ? { onPinElement: onPanelPinElement } : {})}
               {...(onPanelSearchElement ? { onSearchElement: onPanelSearchElement } : {})}
               {...(onPanelSliderElement ? { onSliderElement: onPanelSliderElement } : {})}
+              commandDeckHeight={commandDeckHeight}
             />
           </PanelHelpContext>
         </FadeIn>

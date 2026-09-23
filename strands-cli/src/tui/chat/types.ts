@@ -340,7 +340,6 @@ export interface ChatPanelRow {
   bold?: boolean
   current?: boolean
   filter?: string
-  pinned?: boolean
   tone?: 'normal' | 'warning' | 'danger'
   control?:
     | {
@@ -380,6 +379,7 @@ export interface ChatPanel {
     | 'context'
     | 'tasks'
     | 'models'
+    | 'effort'
     | 'sessions'
     | 'skills'
     | 'mcp'
@@ -476,8 +476,6 @@ export interface ChatControllerOptions {
   mcp?: LoadedMcp
   initialMessages?: readonly Message[]
   initialTurns?: readonly ChatTurn[]
-  pinnedModels?: readonly string[]
-  setModelPinned?: (modelId: string, pinned: boolean) => Promise<void>
   setSettings?: (settings: Partial<ChatSettings>) => Promise<void>
   requestSetup?: () => void
   exportAgentProject?: (language: 'typescript' | 'python', destination?: string) => Promise<string | undefined>
@@ -510,5 +508,4 @@ export interface ChatControllerApi {
   activatePanelRow(row: ChatPanelRow): Promise<boolean>
   openModelPanel(): Promise<void>
   openContextPanel(): void
-  toggleModelPin(modelId: string): Promise<boolean>
 }

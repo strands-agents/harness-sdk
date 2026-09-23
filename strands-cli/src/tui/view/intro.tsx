@@ -2,11 +2,30 @@ import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { Box, useWindowSize } from 'ink'
 
 import type { FrogTheme } from '../chat/types.js'
-import { FROG_INTRO_DURATION_MS, renderFrogSpiralFrame } from './frog-intro-renderer.js'
+import {
+  FROG_FULL_LOCKUP_MIN_WIDTH,
+  FROG_INTRO_DURATION_MS,
+  frogStartupHeight,
+  renderFrogSpiralFrame,
+} from './frog-intro-renderer.js'
 import { setupBrandFrame } from './setup-wizard/brand.js'
 import { Text, useTheme } from './theme.js'
 
 const HOLD_MS = 250
+
+export function hasRoomForFrogIntro(columns: number, rows: number, setup = false): boolean {
+  const terminalWidth = Math.max(1, columns)
+  const terminalHeight = Math.max(1, rows)
+  const artworkWidth = Math.max(1, terminalWidth - 2)
+  if (setup) {
+    const frame = setupBrandFrame(artworkWidth, terminalHeight)
+    return frame.width >= FROG_FULL_LOCKUP_MIN_WIDTH && frame.height === frogStartupHeight(frame.width, Infinity)
+  }
+  return (
+    artworkWidth >= FROG_FULL_LOCKUP_MIN_WIDTH &&
+    frogStartupHeight(artworkWidth, Math.max(1, terminalHeight - 6)) === frogStartupHeight(artworkWidth, Infinity)
+  )
+}
 
 export function DnaVortexIntro({
   onComplete,
@@ -29,9 +48,17 @@ export function DnaVortexIntro({
   const startedAt = useRef(Date.now())
   const terminalWidth = Math.max(1, columns)
   const terminalHeight = Math.max(1, rows)
+  const hasRoom = hasRoomForFrogIntro(terminalWidth, terminalHeight, setup)
   const fps = terminalWidth * terminalHeight > 8_000 ? 12 : terminalWidth * terminalHeight > 4_500 ? 16 : 20
 
   useEffect(() => {
+    if (!hasRoom) {
+      if (!completed.current) {
+        completed.current = true
+        onComplete(0)
+      }
+      return
+    }
     const tick = (): void => {
       const elapsed = Date.now() - startedAt.current
       setElapsedMs(elapsed)
@@ -43,7 +70,11 @@ export function DnaVortexIntro({
     tick()
     const timer = setInterval(tick, 1_000 / fps)
     return (): void => clearInterval(timer)
-  }, [onComplete, fps, ready])
+  }, [onComplete, fps, hasRoom, ready])
+
+  if (!hasRoom) {
+    return <></>
+  }
 
   const brandFrame = setup ? setupBrandFrame(terminalWidth - 2, terminalHeight) : undefined
   const artwork = renderFrogSpiralFrame(

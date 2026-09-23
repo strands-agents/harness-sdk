@@ -13,6 +13,7 @@ import { DEFAULT_CHAT_SETTINGS } from '../src/tui/chat/types.js'
 import { settingsRows } from '../src/tui/chat/panels.js'
 import { sanitizeTerminalText } from '../src/tui/terminal/sanitize.js'
 import { SetupWizard } from '../src/tui/view/setup-wizard/index.js'
+import { PROVIDERS } from '../src/tui/view/setup-wizard/providers.js'
 import { setupStepProgress, wizardSettingsRows } from '../src/tui/view/setup-wizard/steps.js'
 import {
   discoverAwsConfiguration,
@@ -65,7 +66,7 @@ describe('setup presentation', () => {
     })
     const instance = render(
       createElement(SetupWizard, {
-        config: CliConfigStore.memory({}, {}, { animations: false }),
+        config: CliConfigStore.memory({}, { animations: false }),
         onComplete: () => {},
       }),
       {
@@ -117,7 +118,7 @@ describe('setup presentation', () => {
     })
     const instance = render(
       createElement(SetupWizard, {
-        config: CliConfigStore.memory({}, {}, { animations: false }),
+        config: CliConfigStore.memory({}, { animations: false }),
         onComplete: () => {},
       }),
       {
@@ -155,6 +156,188 @@ describe('setup presentation', () => {
     }
   })
 
+  it('renders discovered models as single-line options with fully qualified identifiers', async () => {
+    const modelDiscovery = vi.mocked(discoverProviderModels)
+    modelDiscovery.mockResolvedValue({
+      available: true,
+      models: [
+        { id: 'model-alpha', name: 'Model Alpha' },
+        { id: 'model-beta', name: 'Model Beta' },
+        { id: 'model-gamma', name: 'Model Gamma' },
+      ],
+    })
+    const input = ttyInput()
+    const output = ttyOutput(100, 36)
+    let frame = ''
+    output.on('data', (chunk: Buffer) => {
+      if (chunk.toString().includes('\n')) {
+        frame = sanitizeTerminalText(chunk.toString())
+      }
+    })
+    const instance = render(
+      createElement(SetupWizard, {
+        config: CliConfigStore.memory({}, { animations: false }),
+        onComplete: () => {},
+      }),
+      {
+        stdin: input,
+        stdout: output,
+        stderr: output,
+        interactive: true,
+        debug: true,
+        incrementalRendering: false,
+        patchConsole: false,
+        exitOnCtrlC: false,
+      }
+    )
+    const clickModel = async (text: string): Promise<void> => {
+      const lines = frame.split('\n')
+      const row = lines.findIndex((line) => line.includes(text))
+      const column = lines[row]!.indexOf(text)
+      input.push(mouseInputSequence(0, column, row, 'M'))
+      input.push(mouseInputSequence(3, column, row, 'm'))
+      await instance.waitUntilRenderFlush()
+    }
+    try {
+      await instance.waitUntilRenderFlush()
+      input.push('\r')
+      await instance.waitUntilRenderFlush()
+      await vi.waitFor(() => expect(frame).toContain('bedrock/model-gamma'))
+
+      expect(frame.split('\n').find((line) => line.includes('Model Alpha'))).toContain('bedrock/model-alpha')
+      expect(frame.split('\n').find((line) => line.includes('Model Beta'))).toContain('bedrock/model-beta')
+      expect(frame).not.toContain(' · bedrock/')
+      expect(frame).not.toContain('○')
+
+      await clickModel('Model Alpha')
+      await vi.waitFor(() => expect(frame).toContain('✓ Model Alpha'))
+      await clickModel('Model Alpha')
+      await vi.waitFor(() => expect(frame).not.toContain('✓ Model Alpha'))
+    } finally {
+      instance.unmount()
+      await instance.waitUntilExit()
+      modelDiscovery.mockResolvedValue({ available: true, models: [] })
+    }
+  })
+
+  it('hides fully qualified model identifiers when the reasoning pane is visible', async () => {
+    const modelDiscovery = vi.mocked(discoverProviderModels)
+    const modelSpecifier = PROVIDERS.bedrock.model({})
+    const modelId = modelSpecifier.slice(modelSpecifier.indexOf('/') + 1)
+    modelDiscovery.mockResolvedValue({
+      available: true,
+      models: [{ id: modelId, name: 'Default reasoning model' }],
+    })
+    const input = ttyInput()
+    const output = ttyOutput(140, 36)
+    let frame = ''
+    output.on('data', (chunk: Buffer) => {
+      if (chunk.toString().includes('\n')) {
+        frame = sanitizeTerminalText(chunk.toString())
+      }
+    })
+    const instance = render(
+      createElement(SetupWizard, {
+        config: CliConfigStore.memory({}, { animations: false }),
+        onComplete: () => {},
+      }),
+      {
+        stdin: input,
+        stdout: output,
+        stderr: output,
+        interactive: true,
+        debug: true,
+        incrementalRendering: false,
+        patchConsole: false,
+        exitOnCtrlC: false,
+      }
+    )
+    try {
+      await instance.waitUntilRenderFlush()
+      input.push('\r')
+      await instance.waitUntilRenderFlush()
+      await vi.waitFor(() => expect(frame).toContain('Reasoning'))
+
+      const modelLine = frame.split('\n').find((line) => line.includes('Default reasoning model'))
+      expect(modelLine).toBeDefined()
+      expect(modelLine).not.toContain(modelSpecifier)
+    } finally {
+      instance.unmount()
+      await instance.waitUntilExit()
+      modelDiscovery.mockResolvedValue({ available: true, models: [] })
+    }
+  })
+
+  it('pages through the model list when the next and previous controls are clicked', async () => {
+    const modelDiscovery = vi.mocked(discoverProviderModels)
+    modelDiscovery.mockResolvedValue({
+      available: true,
+      models: Array.from({ length: 24 }, (_, index) => ({
+        id: `model-${String(index).padStart(2, '0')}`,
+        name: index === 1 ? 'A much longer model name' : `Model ${String(index).padStart(2, '0')}`,
+      })),
+    })
+    const input = ttyInput()
+    const output = ttyOutput(100, 30)
+    let frame = ''
+    output.on('data', (chunk: Buffer) => {
+      if (chunk.toString().includes('\n')) {
+        frame = sanitizeTerminalText(chunk.toString())
+      }
+    })
+    const instance = render(
+      createElement(SetupWizard, {
+        config: CliConfigStore.memory({}, { animations: false }),
+        onComplete: () => {},
+      }),
+      {
+        stdin: input,
+        stdout: output,
+        stderr: output,
+        interactive: true,
+        debug: true,
+        incrementalRendering: false,
+        patchConsole: false,
+        exitOnCtrlC: false,
+      }
+    )
+    const click = async (text: string): Promise<void> => {
+      const lines = frame.split('\n')
+      const row = lines.findIndex((line) => line.includes(text))
+      const column = lines[row]!.indexOf(text)
+      input.push(mouseInputSequence(0, column, row, 'M'))
+      input.push(mouseInputSequence(3, column, row, 'm'))
+      await instance.waitUntilRenderFlush()
+    }
+    try {
+      await instance.waitUntilRenderFlush()
+      input.push('\r')
+      await instance.waitUntilRenderFlush()
+      await vi.waitFor(() => expect(frame).toContain('↓ Next ·'))
+
+      expect(frame.split('\n').find((line) => line.includes('Model 00'))).toContain('bedrock/model-00')
+      expect(frame).toContain('↑ Previous')
+      const initialLines = frame.split('\n')
+      const modelIdColumns = initialLines
+        .filter((line) => line.includes('bedrock/model-'))
+        .map((line) => line.indexOf('bedrock/model-'))
+      expect(new Set(modelIdColumns).size).toBe(1)
+      expect(initialLines.every((line) => stringWidth(line) <= 100)).toBe(true)
+      const nextRow = initialLines.findIndex((line) => line.includes('↓ Next ·'))
+      expect(initialLines[nextRow - 1]!.trim()).not.toBe('')
+      await click('↓ Next ·')
+      await vi.waitFor(() => expect(frame).not.toContain('bedrock/model-00'))
+      expect(frame).toContain('↑ Previous ·')
+
+      await click('↑ Previous ·')
+      await vi.waitFor(() => expect(frame).toContain('bedrock/model-00'))
+    } finally {
+      instance.unmount()
+      await instance.waitUntilExit()
+      modelDiscovery.mockResolvedValue({ available: true, models: [] })
+    }
+  })
+
   it.each([
     ['quickstart', 0],
     ['manual', 1],
@@ -170,7 +353,7 @@ describe('setup presentation', () => {
     })
     const instance = render(
       createElement(SetupWizard, {
-        config: CliConfigStore.memory({}, {}, { animations: false }),
+        config: CliConfigStore.memory({}, { animations: false }),
         onComplete: () => {},
       }),
       {
@@ -204,6 +387,7 @@ describe('setup presentation', () => {
 
       await click('AWS region')
       await vi.waitFor(() => expect(frame).toContain('us-east-1'))
+      expect(frame).not.toContain('AWS profile')
       await click('us-east-1')
 
       expect(frame).toContain('us-east-1  ▾')
@@ -218,6 +402,152 @@ describe('setup presentation', () => {
     }
   })
 
+  it('persists a typed memory directory after leaving and returning to the data step', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 36)
+    let frame = ''
+    output.on('data', (chunk: Buffer) => {
+      if (chunk.toString().includes('\n')) {
+        frame = sanitizeTerminalText(chunk.toString())
+      }
+    })
+    const instance = render(
+      createElement(SetupWizard, {
+        config: CliConfigStore.memory({}, { animations: false }),
+        onComplete: () => {},
+      }),
+      {
+        stdin: input,
+        stdout: output,
+        stderr: output,
+        interactive: true,
+        debug: true,
+        incrementalRendering: false,
+        patchConsole: false,
+        exitOnCtrlC: false,
+      }
+    )
+    const click = async (text: string): Promise<void> => {
+      const lines = frame.split('\n')
+      const row = lines.findIndex((line) => line.includes(text))
+      const column = lines[row]!.indexOf(text)
+      input.push(mouseInputSequence(0, column, row, 'M'))
+      input.push(mouseInputSequence(3, column, row, 'm'))
+      await instance.waitUntilRenderFlush()
+    }
+    try {
+      await instance.waitUntilRenderFlush()
+      input.push('\u001b[B')
+      await instance.waitUntilRenderFlush()
+      input.push('\r')
+      await instance.waitUntilRenderFlush()
+      await vi.waitFor(() => expect(frame).toContain('Pick a model for your agent'))
+
+      for (const instruction of [
+        'Name and instruct your agent',
+        "Choose your agent's tools",
+        'Choose plugins and features',
+        'Configure context and memory',
+      ]) {
+        await click('Continue')
+        await vi.waitFor(() => expect(frame).toContain(instruction))
+      }
+
+      for (const label of [
+        'Context strategy',
+        'Prompt caching',
+        'Long-term memory',
+        'Memory directory',
+        'Agent Skills',
+        'Skill sources',
+      ]) {
+        expect(frame).toContain(label)
+      }
+      expect(frame).not.toMatch(/↓ \d+ more/)
+
+      await click('Memory directory')
+      input.push('\u0015')
+      await instance.waitUntilRenderFlush()
+      input.push('/tmp/custom-memory')
+      await instance.waitUntilRenderFlush()
+      input.push('\r')
+      await instance.waitUntilRenderFlush()
+      await vi.waitFor(() => expect(frame).toContain('/tmp/custom-memory'))
+
+      await click('Continue')
+      await vi.waitFor(() => expect(frame).toContain('Set tool permissions'))
+      await click('Back')
+      await vi.waitFor(() => expect(frame).toContain('Configure context and memory'))
+      expect(frame).toContain('/tmp/custom-memory')
+    } finally {
+      instance.unmount()
+      await instance.waitUntilExit()
+    }
+  })
+
+  it('shows how many manual setup options remain outside a compact viewport', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(80, 20)
+    let frame = ''
+    output.on('data', (chunk: Buffer) => {
+      if (chunk.toString().includes('\n')) {
+        frame = sanitizeTerminalText(chunk.toString())
+      }
+    })
+    const instance = render(
+      createElement(SetupWizard, {
+        config: CliConfigStore.memory({}, { animations: false }),
+        onComplete: () => {},
+      }),
+      {
+        stdin: input,
+        stdout: output,
+        stderr: output,
+        interactive: true,
+        debug: true,
+        incrementalRendering: false,
+        patchConsole: false,
+        exitOnCtrlC: false,
+      }
+    )
+    const click = async (text: string): Promise<void> => {
+      const lines = frame.split('\n')
+      const row = lines.findIndex((line) => line.includes(text))
+      const column = lines[row]!.indexOf(text)
+      input.push(mouseInputSequence(0, column, row, 'M'))
+      input.push(mouseInputSequence(3, column, row, 'm'))
+      await instance.waitUntilRenderFlush()
+    }
+    try {
+      await instance.waitUntilRenderFlush()
+      input.push('\u001b[B')
+      await instance.waitUntilRenderFlush()
+      input.push('\r')
+      await instance.waitUntilRenderFlush()
+      await vi.waitFor(() => expect(frame).toContain('Pick a model for your agent'))
+
+      for (const instruction of [
+        'Name and instruct your agent',
+        "Choose your agent's tools",
+        'Choose plugins and features',
+        'Configure context and memory',
+      ]) {
+        await click('Continue')
+        await vi.waitFor(() => expect(frame).toContain(instruction))
+      }
+
+      expect(frame).toMatch(/↓ \d+ more/)
+      for (let index = 0; index < 5; index++) {
+        input.push('\u001b[B')
+        await instance.waitUntilRenderFlush()
+      }
+      expect(frame).toMatch(/↑ \d+ previous/)
+    } finally {
+      instance.unmount()
+      await instance.waitUntilExit()
+    }
+  })
+
   it('cancels an empty import path on click-away and validates it only on Enter', async () => {
     const input = ttyInput()
     const output = ttyOutput(80, 24)
@@ -229,7 +559,7 @@ describe('setup presentation', () => {
     })
     const instance = render(
       createElement(SetupWizard, {
-        config: CliConfigStore.memory({}, {}, { animations: false }),
+        config: CliConfigStore.memory({}, { animations: false }),
         onComplete: () => {},
       }),
       {
@@ -279,7 +609,7 @@ describe('setup presentation', () => {
     })
     const instance = render(
       createElement(SetupWizard, {
-        config: CliConfigStore.memory({}, {}, { animations: false }),
+        config: CliConfigStore.memory({}, { animations: false }),
         onComplete: () => {},
       }),
       {
@@ -338,7 +668,7 @@ describe('setup presentation', () => {
     })
     const instance = render(
       createElement(SetupWizard, {
-        config: CliConfigStore.memory({}, {}, { animations: false }),
+        config: CliConfigStore.memory({}, { animations: false }),
         onComplete: () => {},
       }),
       {
@@ -390,7 +720,7 @@ describe('setup presentation', () => {
     })
     const instance = render(
       createElement(SetupWizard, {
-        config: CliConfigStore.memory({}, {}, { animations: true }),
+        config: CliConfigStore.memory({}, { animations: true }),
         onComplete: () => {},
       }),
       {
@@ -450,7 +780,7 @@ describe('setup refresh', () => {
     vi.mocked(discoverAwsCredentials).mockImplementation(async (environment) =>
       environment.AWS_BEARER_TOKEN_BEDROCK?.value === 'refreshed-token' ? 'valid' : 'expired'
     )
-    const config = CliConfigStore.memory({}, {}, { animations: false })
+    const config = CliConfigStore.memory({}, { animations: false })
     config.useEnvironmentFiles([path])
     const input = ttyInput()
     const output = ttyOutput(columns, terminalRows)
@@ -511,7 +841,7 @@ describe('setup refresh', () => {
 
   it('sets a masked API key for the running session from the provider panel', async () => {
     vi.stubEnv('OPENAI_API_KEY', undefined)
-    const config = CliConfigStore.memory({}, {}, { animations: false })
+    const config = CliConfigStore.memory({}, { animations: false })
     const input = ttyInput()
     const output = ttyOutput(80, 24)
     let frame = ''
@@ -601,7 +931,7 @@ describe('setup theme', () => {
   })
 
   it('shows and persists non-visual settings from the setup panel', async () => {
-    const config = CliConfigStore.memory({}, {}, { animations: false })
+    const config = CliConfigStore.memory({}, { animations: false })
     const input = ttyInput()
     const output = ttyOutput(120, 44)
     let frame = ''
@@ -647,7 +977,7 @@ describe('setup theme', () => {
   })
 
   it('persists a custom theme applied from setup settings', async () => {
-    const config = CliConfigStore.memory({}, {}, { animations: false })
+    const config = CliConfigStore.memory({}, { animations: false })
     const input = ttyInput()
     const output = ttyOutput(120, 24)
     let frame = ''
@@ -700,7 +1030,6 @@ describe('setup theme', () => {
   ])('$name', async ({ fresh, expected }) => {
     const config = CliConfigStore.memory(
       {},
-      {},
       fresh ? { animations: false } : { frogTheme: 'merlin', animations: false },
       {
         onboardingVersion: fresh ? 0 : 1,
@@ -746,7 +1075,7 @@ describe('setup theme', () => {
   })
 
   it('preserves pending guided setup settings through appearance', async () => {
-    const config = CliConfigStore.memory({}, {}, { animations: false, mcpDiscovery: false, agentMessaging: true })
+    const config = CliConfigStore.memory({}, { animations: false, mcpDiscovery: false, agentMessaging: true })
     const input = ttyInput()
     const output = ttyOutput(80, 24)
     const onComplete = vi.fn<(change?: SetupChange) => void>()

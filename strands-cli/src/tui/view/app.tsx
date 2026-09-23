@@ -155,7 +155,6 @@ export function ChatApp({
   const [panelRowElements, registerPanelRowElement] = useElementMap<number>()
   const [panelControlElements, registerPanelControlElement] = useElementMap<string>()
   const [panelFilterElements, registerPanelFilterElement] = useElementMap<string>()
-  const [panelPinElements, registerPanelPinElement] = useElementMap<number>()
   const panelSearchElement = useRef<DOMElement | undefined>(undefined)
   const panelSliderElement = useRef<DOMElement | undefined>(undefined)
   const [suggestionElements, registerSuggestionElement] = useElementMap<number>()
@@ -402,29 +401,6 @@ export function ChatApp({
     [stdout]
   )
 
-  const toggleModelPin = useCallback(
-    (modelId: string): void => {
-      void controller.toggleModelPin(modelId).then((changed) => {
-        if (!changed) {
-          return
-        }
-        const state = viewPropsRef.current
-        const rows = filterPanelRows(
-          controller.getSnapshot().panel?.rows ?? [],
-          state.panelQuery,
-          state.panelFilter,
-          true
-        )
-        const selection = Math.max(
-          0,
-          rows.findIndex((row) => row.value === modelId)
-        )
-        selectPanelRow(selection, panelRowCapacity('models', state.terminalHeight), rows.length)
-      })
-    },
-    [controller, selectPanelRow]
-  )
-
   const handleMouse = useCallback(
     (mouse: MouseInput): void => {
       if (!shouldProcessMouseInput(mouse, mouseMoveStateRef.current)) {
@@ -494,12 +470,12 @@ export function ChatApp({
           ? elementAtMouse(panelControlElements, mouse)
           : undefined
       const panelFilterId = snapshot.panel ? elementAtMouse(panelFilterElements, mouse) : undefined
-      const panelPinIndex = snapshot.panel?.kind === 'models' ? elementAtMouse(panelPinElements, mouse) : undefined
       const suggestionIndex =
         !snapshot.panel && suggestions.length > 0 ? elementAtMouse(suggestionElements, mouse) : undefined
       const queuedPromptTarget = !snapshot.panel ? elementAtMouse(queuedPromptElements, mouse) : undefined
       const toolGroupTarget = !snapshot.panel ? elementAtMouse(toolGroupElements, mouse) : undefined
-      const sliderElement = snapshot.panel?.kind === 'models' ? panelSliderElement.current : undefined
+      const sliderElement =
+        snapshot.panel?.kind === 'models' || snapshot.panel?.kind === 'effort' ? panelSliderElement.current : undefined
       const sliderHit = sliderElement ? elementContainsMouse(sliderElement, mouse) : false
       const searchElement = snapshot.panel?.kind === 'models' ? panelSearchElement.current : undefined
       const searchHit = searchElement ? elementContainsMouse(searchElement, mouse) : false
@@ -663,11 +639,6 @@ export function ChatApp({
             value: row.control?.kind === 'toggle' ? row.value : `${row.value}=${target.value}`,
           })
         }
-      } else if (panelPinIndex !== undefined) {
-        const row = panelRows?.[panelPinIndex]
-        if (row?.value) {
-          toggleModelPin(row.value)
-        }
       } else if (panelRowIndex !== undefined) {
         panelSelectionRef.current = panelRowIndex
         setPanelSelection(panelRowIndex)
@@ -729,7 +700,6 @@ export function ChatApp({
       metadataElements,
       panelControlElements,
       panelFilterElements,
-      panelPinElements,
       panelRowElements,
       queuedPromptElements,
       resetHover,
@@ -737,7 +707,6 @@ export function ChatApp({
       resetPressed,
       setEditor,
       suggestionElements,
-      toggleModelPin,
       toolGroupElements,
     ]
   )
@@ -864,6 +833,24 @@ export function ChatApp({
           }
           return
         }
+        const slider = snapshot.panel.slider
+        if (slider && (snapshot.panel.kind === 'effort' || modelPanelFocus === 'effort')) {
+          // Arrow keys already apply the effort, so Enter just closes like Escape.
+          if (key.return) {
+            controller.dismissPanel()
+            return
+          }
+          if (key.leftArrow || key.rightArrow) {
+            const option = slider.disabled ? undefined : adjacentSliderOption(slider, key.leftArrow ? -1 : 1)
+            if (option) {
+              void activateRow({ label: slider.label, description: option.label, value: `effort:${option.id}` })
+            }
+            return
+          }
+          if (snapshot.panel.kind === 'effort') {
+            return
+          }
+        }
         if (snapshot.panel.kind === 'models') {
           if (key.tab) {
             setModelPanelFocus(cycleModelPanelFocus(modelPanelFocus, snapshot.panel, key.shift ? -1 : 1, true))
@@ -873,29 +860,6 @@ export function ChatApp({
             const modelId = rows[Math.min(panelSelectionRef.current, rows.length - 1)]?.value
             if (modelId) {
               copyText(modelId)
-            }
-            return
-          }
-          if (character === ' ' && modelPanelFocus === 'models') {
-            const selected = rows[Math.min(panelSelectionRef.current, rows.length - 1)]
-            if (selected?.value) {
-              toggleModelPin(selected.value)
-            }
-            return
-          }
-          if (
-            modelPanelFocus === 'effort' &&
-            snapshot.panel.slider &&
-            !snapshot.panel.slider.disabled &&
-            (key.leftArrow || key.rightArrow)
-          ) {
-            const option = adjacentSliderOption(snapshot.panel.slider, key.leftArrow ? -1 : 1)
-            if (option) {
-              void activateRow({
-                label: snapshot.panel.slider.label,
-                description: option.label,
-                value: `effort:${option.id}`,
-              })
             }
             return
           }
@@ -911,6 +875,17 @@ export function ChatApp({
             }
           }
           if (modelPanelFocus === 'models') {
+            const selected = rows[Math.min(panelSelectionRef.current, rows.length - 1)]
+            if (key.return && selected?.value) {
+              // Choosing a model moves on to its effort; a failed switch leaves its error panel open.
+              void activateRow(selected).then((switched) => {
+                const panel = controller.getSnapshot().panel
+                if (!switched || panel?.kind !== 'models') return
+                if (panel.slider && !panel.slider.disabled) setModelPanelFocus('effort')
+                else controller.dismissPanel()
+              })
+              return
+            }
             if (key.leftArrow && snapshot.panel.filters?.length) {
               setModelPanelFocus('providers')
               return
@@ -1195,7 +1170,6 @@ export function ChatApp({
       resetPanelPosition,
       selectPanelRow,
       setEditor,
-      toggleModelPin,
     ]
   )
   useInput(handleInput)
@@ -1233,7 +1207,6 @@ export function ChatApp({
       onPanelRowElement={registerPanelRowElement}
       onPanelControlElement={registerPanelControlElement}
       onPanelFilterElement={registerPanelFilterElement}
-      onPanelPinElement={registerPanelPinElement}
       onPanelSearchElement={registerPanelSearchElement}
       onPanelSliderElement={registerPanelSliderElement}
       onSuggestionElement={registerSuggestionElement}

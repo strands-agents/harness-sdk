@@ -71,16 +71,13 @@ from .configs import (
     BedrockNovaSonicAudioStreamConfig,
     ConnectionConfig,
     ModelConfig,
+    ModelUpdateConfig,
     _validate_audio_config,
     _validate_model_config,
 )
 from .model import AudioCapable, BidiModel, ConnectionTimeoutError
 
 logger = logging.getLogger(__name__)
-
-# Nova Sonic model identifiers
-NOVA_SONIC_V1_MODEL_ID = "amazon.nova-sonic-v1:0"
-NOVA_SONIC_V2_MODEL_ID = "amazon.nova-2-sonic-v1:0"
 
 NOVA_TEXT_CONFIG = {"mediaType": "text/plain"}
 NOVA_TOOL_CONFIG = {"mediaType": "application/json"}
@@ -227,15 +224,18 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             **model_config: Model configuration.
 
         Raises:
-            ValueError: If audio options or the resolved region are invalid, or both ``boto_session`` and
-                ``region`` are provided.
+            ValueError: If any of the following conditions apply:
+
+                - Required model configuration fields are missing.
+                - ``model_id`` is not a non-empty string.
+                - Audio options or the resolved region are invalid.
+                - Both ``boto_session`` and ``region`` are provided.
         """
         if boto_session is not None and region is not None:
             raise ValueError("Cannot specify both 'boto_session' and 'region'")
 
         _validate_model_config(model_config)
         self._config = ModelConfig(**model_config)
-        self._config.setdefault("model_id", NOVA_SONIC_V2_MODEL_ID)
         self._config["params"] = dict(self._config.get("params") or {})
 
         # Nova caps a connection at ~8 min; reconnect at 7 min, leaving headroom below the cap.
@@ -261,13 +261,19 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         logger.debug("model_id=<%s> | nova sonic model initialized", self._config["model_id"])
 
     @override
-    def update_config(self, **model_config: Unpack[ModelConfig]) -> None:  # type: ignore[override]
+    def update_config(self, **model_config: Unpack[ModelUpdateConfig]) -> None:  # type: ignore[override]
         """Update the model configuration with the provided arguments.
 
         Args:
             **model_config: Configuration overrides.
+
+        Raises:
+            ValueError: If any of the following conditions apply:
+
+                - The resulting configuration is missing required fields.
+                - ``model_id`` is not a non-empty string.
         """
-        _validate_model_config(model_config)
+        _validate_model_config(self._config | model_config)
         self._config.update(model_config)
 
     @override

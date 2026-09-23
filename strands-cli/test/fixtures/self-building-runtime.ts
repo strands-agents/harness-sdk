@@ -54,7 +54,7 @@ const profile = defineHarnessAgentConfig({
   contextManager: false,
   agentConfig: { backgroundTasks: false },
 })
-const config = CliConfigStore.memory({}, {}, {}, { profile, profileBaseDir: root })
+const config = CliConfigStore.memory({}, {}, { profile, profileBaseDir: root })
 
 async function create(): ReturnType<typeof createInteractiveChat> {
   return createInteractiveChat({

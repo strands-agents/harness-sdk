@@ -196,6 +196,7 @@ sidebar:
       - label: Reference
         items:
           - docs/user-guide/harness/reference/configuration
+          - docs/user-guide/harness/versioning
 
   - label: Harness SDK
     items:

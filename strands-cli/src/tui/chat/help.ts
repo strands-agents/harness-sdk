@@ -3,7 +3,7 @@ import type { ChatBackend, ChatPanelRow } from './types.js'
 
 const CONTROLS = [
   ['Send a message', 'Enter', 'Send your message, or queue it while the harness is working.'],
-  ['Add a line', 'Shift+Enter', 'Shift+Enter or Ctrl+J inserts a newline.'],
+  ['Add a line', 'Ctrl+J', 'Ctrl+J inserts a newline without sending.'],
   [
     'Steer running work',
     'Ctrl+G',

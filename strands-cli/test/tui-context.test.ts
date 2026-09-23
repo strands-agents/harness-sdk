@@ -12,18 +12,21 @@ afterEach(() => {
 })
 
 describe('context window limits', () => {
-  it.each(['openai.gpt-6-astra', 'global.openai.gpt-6-astra', 'us.openai.gpt-6-astra'])(
-    'uses the documented Bedrock context window for %s',
-    (modelId) => {
-      expect(contextWindowLimit(new BedrockModel({ modelId }))).toBe(1_050_000)
-    }
-  )
+  it.each([
+    ['openai.gpt-6-astra', 1_050_000],
+    ['global.openai.gpt-6-astra', 1_050_000],
+    ['us.openai.gpt-6-astra', 1_050_000],
+    ['zai.glm-4.7', 203_000],
+  ])('uses the documented Bedrock context window for %s', (modelId, limit) => {
+    expect(contextWindowLimit(new BedrockModel({ modelId }))).toBe(limit)
+  })
 
   it('honors a configured context cap and leaves unknown models unknown', () => {
     expect(contextWindowLimit(new BedrockModel({ modelId: 'openai.gpt-6-astra', contextWindowLimit: 100_000 }))).toBe(
       100_000
     )
     expect(contextWindowLimit(new BedrockModel({ modelId: 'vendor.unknown' }))).toBeUndefined()
+    expect(contextWindowLimit(new BedrockModel({ modelId: 'constructor' }))).toBeUndefined()
   })
 
   it('prefers provider metadata over SDK defaults and caches it per model', async () => {

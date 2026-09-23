@@ -61,7 +61,6 @@ export async function createSetupAssistant(
   })
   const assistantConfig = CliConfigStore.memory(
     { mode: 'default' },
-    {},
     {
       ...config.snapshot().settings,
       mcpDiscovery: false,

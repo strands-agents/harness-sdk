@@ -4,6 +4,8 @@
 
 This document establishes a standardized process for adding new features and deprecating existing functionality in the Strands SDK while maintaining semantic versioning compliance and community trust.
 
+It applies to the SDK packages (`strands-py`, `strands-ts`). Strands harness and the Strands CLI are 0.x and follow a different rule; see [Strands harness versioning](../site/src/content/docs/user-guide/harness/versioning.mdx).
+
 ## Vision for Major Releases
 
 Major releases should be viewed as opportunities to reduce technical debt and remove deprecated features while maintaining a smooth upgrade path for the community. The goal is to enable users to upgrade from version 1.11 to 2.0 with minimal code changes and minimal behavioral differences.

@@ -12,7 +12,7 @@ class SourceReloadModel(Model):
         pass
 
     def get_config(self):
-        return {"model_id": "source-reload-test"}
+        return {"model_id": "source-reload-test", "context_window_limit": 1000}
 
     def structured_output(self, *args, **kwargs):
         raise NotImplementedError

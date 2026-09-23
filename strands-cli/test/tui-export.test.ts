@@ -59,7 +59,6 @@ afterEach(async () => {
 function config(): CliConfigStore {
   return CliConfigStore.memory(
     {},
-    {},
     { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false },
     { profile, profileBaseDir: workspace }
   )

@@ -454,10 +454,16 @@ class Runtime:
                 if result is None:
                     raise RuntimeError("The Python agent finished without a result")
                 if result.stop_reason != "interrupt" or not result.interrupts:
+                    context = {
+                        "currentTokens": result.context_size,
+                        "projectedTokens": result.projected_context_size,
+                        "contextWindow": self.agent.model.context_window_limit,
+                    }
                     self.result(
                         {
                             "stopReason": result.stop_reason,
                             "finalText": str(result),
+                            "context": {key: value for key, value in context.items() if value is not None},
                             "usage": {
                                 "cacheReadInputTokens": 0,
                                 "cacheWriteInputTokens": 0,

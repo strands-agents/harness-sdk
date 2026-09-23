@@ -71,13 +71,13 @@ describe.skipIf(process.platform === 'win32')('TUI PTY lifecycle', () => {
     expectRestoredTerminal(result)
   })
 
-  it('hands the compact frog intro to the TUI and restores the terminal after /exit', async () => {
+  it('bypasses the intro when the full frog does not fit and restores the terminal after /exit', async () => {
     const result = await runPtySmoke(true)
     const beforePrompt = result.output.slice(0, result.output.indexOf('Message Lifecycle Fixture'))
 
     expect(result.returnCode).toBe(0)
     expect(sanitizeTerminalText(beforePrompt)).toMatch(STRANDS_WORDMARK)
-    expect(result.output).toMatch(/[▗▖▄▝▐▞▟▘▚▌▙▀▜▛]/u)
+    expect(sanitizeTerminalText(beforePrompt)).not.toContain('[ space to skip ]')
     expect(result.output).toContain('Message Lifecycle Fixture')
     expect(beforePrompt.split('\u001b[2J').length - 1).toBe(1)
     expectRestoredTerminal(result)

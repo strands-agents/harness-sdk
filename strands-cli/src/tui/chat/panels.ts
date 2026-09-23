@@ -267,7 +267,6 @@ export function sanitizeRows(rows: ChatPanel['rows']): ChatPanelRow[] {
     ...sanitizePanelRow(row),
     ...(row.section ? { section: sanitizeTerminalText(row.section) } : {}),
     ...(row.filter ? { filter: sanitizeTerminalText(row.filter) } : {}),
-    ...(row.pinned ? { pinned: true } : {}),
   }))
 }
 
@@ -323,26 +322,16 @@ export function makePanel(
   }
 }
 
-export function modelRows(
-  models: readonly ChatModelOption[],
-  pinnedModels: ReadonlySet<string>,
-  currentModel: string
-): ChatPanelRow[] {
+export function modelRows(models: readonly ChatModelOption[], currentModel: string): ChatPanelRow[] {
   const orderedModels = [...models].sort((left, right) => {
     if (left.active !== right.active) {
       return left.active ? -1 : 1
-    }
-    const leftPinned = pinnedModels.has(left.value ?? left.id)
-    const rightPinned = pinnedModels.has(right.value ?? right.id)
-    if (leftPinned !== rightPinned) {
-      return leftPinned ? -1 : 1
     }
     return left.name.localeCompare(right.name) || left.id.localeCompare(right.id)
   })
   return orderedModels.length > 0
     ? orderedModels.map((model) => {
         const value = model.value ?? model.id
-        const pinned = pinnedModels.has(value)
         const description = [...(model.name === model.id ? [] : [model.id]), model.description]
           .filter(Boolean)
           .join(' · ')
@@ -350,7 +339,6 @@ export function modelRows(
           label: model.name,
           description,
           value,
-          ...(pinned ? { pinned: true } : {}),
           ...(model.active
             ? {
                 section: 'Current model',

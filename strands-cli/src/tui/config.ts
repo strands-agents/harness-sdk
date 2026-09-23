@@ -60,10 +60,6 @@ interface PermissionConfig {
   allow: readonly string[]
 }
 
-interface ModelConfig {
-  pinned: readonly string[]
-}
-
 export interface CliConfigSnapshot {
   path: string
   onboarding: { version: number }
@@ -72,7 +68,6 @@ export interface CliConfigSnapshot {
   profileBaseDir?: string
   agentProject?: string
   permissions: PermissionConfig
-  models: ModelConfig
   settings: ChatSettings
 }
 
@@ -107,7 +102,6 @@ export class CliConfigStore {
     private _providerEnvironment: ProviderEnvironment,
     private _profile: HarnessAgentConfig,
     private _permissions: PermissionConfig,
-    private _models: ModelConfig,
     private _settings: ChatSettings,
     private readonly _persistent = true
   ) {
@@ -128,7 +122,6 @@ export class CliConfigStore {
       parseProviderEnvironment(document.providers, path),
       parseProfile(document.profile, path),
       parsePermissions(document.permissions, path),
-      parseModels(document.models, path),
       parseSettings(document.settings, path)
     )
     if (document !== loadedDocument) {
@@ -139,7 +132,6 @@ export class CliConfigStore {
 
   static memory(
     permissions: Partial<PermissionConfig> = {},
-    models: Partial<ModelConfig> = {},
     settings: Partial<ChatSettings> = {},
     setup: Partial<{
       onboardingVersion: number
@@ -157,9 +149,6 @@ export class CliConfigStore {
       mode: permissions.mode ?? 'default',
       allow: uniqueSorted((permissions.allow ?? []).map(normalizeToolName)),
     }
-    const resolvedModels = {
-      pinned: uniqueSorted((models.pinned ?? []).map(normalizeModelId)),
-    }
     const resolvedSettings = { ...DEFAULT_CHAT_SETTINGS, ...settings }
     return new CliConfigStore(
       'in-memory',
@@ -169,7 +158,6 @@ export class CliConfigStore {
         profile,
         profileBaseDir: setup.profileBaseDir,
         permissions: resolvedPermissions,
-        models: resolvedModels,
         settings: resolvedSettings,
       },
       onboardingVersion,
@@ -177,7 +165,6 @@ export class CliConfigStore {
       providerEnvironment,
       profile,
       resolvedPermissions,
-      resolvedModels,
       resolvedSettings,
       false
     )
@@ -194,9 +181,6 @@ export class CliConfigStore {
       permissions: {
         mode: this._permissions.mode,
         allow: [...this._permissions.allow],
-      },
-      models: {
-        pinned: [...this._models.pinned],
       },
       settings: globalThis.structuredClone(this._settings),
     }
@@ -355,32 +339,6 @@ export class CliConfigStore {
     })
   }
 
-  setModelPinned(modelId: string, pinned: boolean): Promise<void> {
-    const normalized = normalizeModelId(modelId)
-    return this._enqueueWrite(async () => {
-      const next = {
-        pinned: uniqueSorted(
-          pinned
-            ? [...this._models.pinned, normalized]
-            : this._models.pinned.filter((candidate) => candidate !== normalized)
-        ),
-      }
-      const priorModels = isRecord(this._document.models) ? this._document.models : {}
-      const document = {
-        ...this._document,
-        models: {
-          ...priorModels,
-          pinned: [...next.pinned],
-        },
-      }
-      if (this._persistent) {
-        await writeConfigDocument(this._path, document)
-      }
-      this._document = document
-      this._models = next
-    })
-  }
-
   setSettings(settings: Partial<ChatSettings>): Promise<void> {
     const requested = globalThis.structuredClone(settings)
     return this._enqueueWrite(async () => {
@@ -526,24 +484,6 @@ function parsePermissions(value: unknown, path: string): PermissionConfig {
   }
 }
 
-function parseModels(value: unknown, path: string): ModelConfig {
-  if (value === undefined) {
-    return { pinned: [] }
-  }
-  if (!isRecord(value)) {
-    throw new Error(`Invalid CLI config at ${path}: models must be an object`)
-  }
-  const pinned = value.pinned ?? []
-  if (!Array.isArray(pinned) || pinned.some((modelId) => typeof modelId !== 'string')) {
-    throw new Error(`Invalid CLI config at ${path}: models.pinned must be an array of model IDs`)
-  }
-  try {
-    return { pinned: uniqueSorted(pinned.map(normalizeModelId)) }
-  } catch (error) {
-    throw new Error(`Invalid CLI config at ${path}: ${errorMessage(error)}`, { cause: error })
-  }
-}
-
 async function writeConfigDocument(path: string, document: ConfigDocument): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`
@@ -559,14 +499,6 @@ export function normalizeToolName(toolName: string): string {
   const normalized = toolName.trim()
   if (!normalized || normalized !== toolName || [...normalized].some(isControlCharacter)) {
     throw new Error('permissions.allow entries must be non-empty tool names without surrounding whitespace')
-  }
-  return normalized
-}
-
-function normalizeModelId(modelId: string): string {
-  const normalized = modelId.trim()
-  if (!normalized || normalized !== modelId || [...normalized].some(isControlCharacter)) {
-    throw new Error('models.pinned entries must be non-empty model IDs without surrounding whitespace')
   }
   return normalized
 }

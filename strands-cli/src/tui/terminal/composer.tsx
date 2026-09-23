@@ -70,7 +70,7 @@ export function reduceInput(state: EditorState, character: string, key: Partial<
     return submitted.action === 'submit' ? { ...submitted, action: 'steer' } : submitted
   }
   const characters = graphemes(state.input)
-  if ((key.return && key.shift) || (key.ctrl && character === 'j')) {
+  if (character === '\n' || (key.ctrl && character === 'j')) {
     return edit(state, characters, state.cursor, state.cursor, ['\n'])
   }
   if (key.return && phase === 'running' && (key.ctrl || key.meta || key.super)) {

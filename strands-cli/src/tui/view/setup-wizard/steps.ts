@@ -78,13 +78,16 @@ export function setupStepProgress(
   return { current: step, total, instruction: SETUP_STEP_INSTRUCTIONS[flow][step - 1]! }
 }
 
+// Fits beside the widest capability label in an 80-column terminal.
+export const CAPABILITY_DESCRIPTION_MAX_LENGTH = 44
+
 const BUILTIN_TOOLS = [
   ['shell', 'Run shell commands'],
   ['read', 'Read workspace files'],
   ['write', 'Create files'],
   ['edit', 'Apply targeted file edits'],
   ['web_fetch', 'Fetch and summarize web pages'],
-  ['web_search', 'Use provider-native web search'],
+  ['web_search', 'Search the web'],
   ['programmatic_tool_caller', 'Orchestrate tools with sandboxed Python'],
   ['subagent', 'Delegate focused work to a fresh subagent'],
 ] as const
@@ -517,7 +520,7 @@ function pluginSelectionRows(
     {
       id: 'skills',
       label: 'Skills',
-      description: 'Discover skills from this workspace and your other tools',
+      description: 'Discover skills across workspace and tools',
       active: skillsEnabled,
       activate: (): void =>
         setDraft((current) => ({
@@ -532,7 +535,7 @@ function pluginSelectionRows(
     {
       id: 'mcp',
       label: 'MCP servers',
-      description: 'Auto-discover MCP servers configured on this machine',
+      description: 'Auto-discover MCP servers on this machine',
       active: draft.settings.mcpDiscovery,
       activate: (): void =>
         setDraft((current) => ({
@@ -542,7 +545,7 @@ function pluginSelectionRows(
     },
     {
       id: 'agent-messaging',
-      label: SETTING_DEFINITIONS.find(({ key }) => key === 'agentMessaging')!.label,
+      label: 'Agent messaging',
       description: 'Discover and message other live agents',
       active: draft.settings.agentMessaging,
       activate: (): void =>
@@ -554,14 +557,14 @@ function pluginSelectionRows(
     {
       id: 'memory',
       label: 'Memory',
-      description: 'Recall and retain information between conversations',
+      description: 'Remember information between conversations',
       active: profileMemoryEnabled(draft.profile),
       activate: () => updateProfile({ memory: !profileMemoryEnabled(draft.profile) }),
     },
     {
       id: 'context',
       label: 'Context management',
-      description: 'Offload large tool outputs and manage long conversations',
+      description: 'Manage long conversations and large outputs',
       active: draft.profile.contextManager !== false,
       activate: () =>
         updateProfile({
@@ -571,7 +574,7 @@ function pluginSelectionRows(
     {
       id: 'background-tasks',
       label: 'Background tasks',
-      description: 'Run and manage long-running tools in the background',
+      description: 'Run long-running tools in the background',
       active: draft.profile.agentConfig.backgroundTasks !== false,
       activate: () =>
         updateProfile({
@@ -622,8 +625,7 @@ function toolRows(draft: SetupDraft, updateProfile: (update: Partial<HarnessAgen
     return {
       id,
       label: id,
-      description: exa ? '⚠ Sends every query to Exa (exa.ai), a third party — opt-in' : description,
-      ...(exa ? { descriptionColor: 'yellow' } : {}),
+      description,
       active,
       activate: (): void => {
         updateProfile({

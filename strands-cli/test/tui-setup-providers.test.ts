@@ -9,7 +9,7 @@ import {
   quickstartDraft,
 } from '../src/tui/view/setup-wizard/providers.js'
 import { webSearchFallback, withWebSearchFallback } from '../src/tui/builtin-tools.js'
-import { rowsForStep } from '../src/tui/view/setup-wizard/steps.js'
+import { CAPABILITY_DESCRIPTION_MAX_LENGTH, rowsForStep } from '../src/tui/view/setup-wizard/steps.js'
 
 describe('setup provider credentials', () => {
   const aws = {
@@ -357,7 +357,7 @@ describe('setup web_search availability', () => {
     expect(compatibleProfile(exa)).toBe(exa)
   })
 
-  it('shows the Exa row as a yellow third-party warning, unchecked, on a model without native search', () => {
+  it('leaves the Exa fallback unchecked on a model without native search', () => {
     const noop = (): void => {}
     const toolsRow = (draft: ReturnType<typeof quickstartDraft>): ReturnType<typeof rowsForStep>[number] | undefined =>
       rowsForStep(
@@ -377,11 +377,42 @@ describe('setup web_search availability', () => {
       ).find((row) => row.id === 'web_search')
     const bedrock = toolsRow(quickstartDraft('bedrock', {}))
     expect(bedrock?.active).toBe(false)
-    expect(bedrock?.description).toMatch(/^⚠ .*Exa/)
-    expect(bedrock?.descriptionColor).toBe('yellow')
     const mantle = toolsRow(quickstartDraft('bedrock-mantle', {}))
     expect(mantle?.active).toBe(true)
-    expect(mantle?.descriptionColor).toBeUndefined()
+  })
+
+  it.each([
+    ['tools', 2, 'bedrock'],
+    ['plugins', 3, 'bedrock'],
+  ] as const)('keeps %s descriptions short enough to render on one line', (_, step, provider) => {
+    const noop = (): void => {}
+    const rows = rowsForStep(
+      step,
+      'quickstart',
+      quickstartDraft(provider, {}),
+      '',
+      {},
+      {},
+      provider,
+      [],
+      { profiles: [], regions: [] },
+      undefined,
+      noop,
+      noop,
+      noop
+    )
+    for (const { description } of rows) {
+      expect([...description].length).toBeLessThanOrEqual(CAPABILITY_DESCRIPTION_MAX_LENGTH)
+    }
+  })
+
+  it.each([
+    ['bedrock/zai.glm-4.7', 'high', 'auto'],
+    ['bedrock/zai.glm-4.7', 'off', 'off'],
+    ['bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0', 'high', 'high'],
+  ] as const)('keeps %s on a supported effort (%s → %s)', (model, effort, expected) => {
+    const profile = { ...quickstartDraft('bedrock', {}).profile, model, effort }
+    expect(compatibleProfile(profile).effort).toBe(expected)
   })
 
   it('reports Exa as active only when opted in on a model without native search', () => {

@@ -50,7 +50,7 @@ strands_telemetry.setup_console_exporter()  # Print spans to stdout
 
 async def main():
     agent = BidiAgent(
-        model=BedrockNovaSonicModel(),
+        model=BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0"),
         system_prompt="You are a helpful voice assistant.",
         name="Voice Assistant",
     )

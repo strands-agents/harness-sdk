@@ -249,6 +249,7 @@ describe('ChatView', () => {
             status: 'complete',
           },
         ],
+        context: { contextWindow: 200_000 },
       }),
       terminalWidth: 100,
       terminalHeight: 40,
@@ -258,7 +259,7 @@ describe('ChatView', () => {
     expect(output.indexOf('Message Strands harness')).toBeLessThan(output.lastIndexOf('bedrock/test'))
     expect(output.split('\n').some((line) => line.trim() === 'hello')).toBe(true)
     expect(output).toContain('context ░░░░░░░░░░ 0%')
-    expect(output).toContain('Shift+Enter')
+    expect(output).toContain('Ctrl+J')
     const rows = output.trimEnd().split('\n')
     expect(rows.at(-3)).toContain('context')
     expect(rows.at(-2)?.trim()).toBe('')
@@ -360,6 +361,36 @@ describe('ChatView', () => {
     })
 
     expect(output).toContain(expected)
+  })
+
+  it('hides the context meter when the context window is unknown', () => {
+    const output = renderView({
+      snapshot: snapshot({ context: { projectedTokens: 12_000 } }),
+      terminalWidth: 100,
+      terminalHeight: 40,
+    })
+
+    expect(output).toContain('bedrock/test')
+    expect(output).not.toContain('context ')
+    expect(output).not.toContain('░')
+  })
+
+  it('shows only the token count in the context panel when the context window is unknown', () => {
+    const output = sanitizeTerminalText(
+      renderView({
+        snapshot: snapshot({
+          context: { projectedTokens: 12_000 },
+          panel: { id: 'context', kind: 'context', title: 'Context usage', rows: [] },
+        }),
+        terminalWidth: 100,
+        terminalHeight: 30,
+      })
+    )
+
+    expect(output).toContain('Context usage')
+    expect(output).toContain('12,000 tokens')
+    expect(output).not.toContain('/ —')
+    expect(output).not.toContain('░')
   })
 
   it.each([44, 100])('shows the context meter and last-turn usage at width %i', (terminalWidth) => {
@@ -1168,9 +1199,6 @@ describe('ChatView', () => {
       if (kind === 'settings') {
         expect(purpleText.join('')).toContain('Option B')
         expect(purpleText.join('')).not.toContain('Option A')
-      }
-      if (kind === 'models') {
-        expect(purpleText.join('')).toContain('☆')
       }
     }
   }, 15_000)

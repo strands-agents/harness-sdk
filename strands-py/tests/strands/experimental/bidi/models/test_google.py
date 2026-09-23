@@ -136,7 +136,7 @@ def text_part():
 
 @pytest.fixture
 def model_id():
-    return "models/gemini-2.0-flash-live-preview-04-09"
+    return "models/gemini-3.8-live"
 
 
 @pytest.fixture
@@ -177,13 +177,13 @@ def test_model_initialization(mock_genai_client, model_id, api_key):
     """Test model initialization with various configurations."""
     _ = mock_genai_client
 
-    model_default = GoogleGeminiLiveModel()
-    assert model_default.model_id == "gemini-2.5-flash-native-audio-preview-09-2025"
+    model_default = GoogleGeminiLiveModel(model_id=model_id)
+    assert model_default.model_id == model_id
     assert model_default.client_args == {}
     assert model_default._live_session is None
     tru_config = model_default.get_config()
     exp_config = {
-        "model_id": "gemini-2.5-flash-native-audio-preview-09-2025",
+        "model_id": model_id,
         "params": {},
         "connection": {"restart_after_s": 540},
     }
@@ -335,6 +335,29 @@ def test_update_config_replaces_connection(model, model_id, connection):
     exp_config = {"model_id": model_id, "params": {}, "connection": connection}
     assert tru_config == exp_config
     assert model.get_connection_config() == connection
+
+    model.update_config()
+    assert model.get_config() == exp_config
+    assert model.get_config() is tru_config
+
+
+@pytest.mark.parametrize("model_config", [{}, {"model_id": None}, {"model_id": ""}, {"model_id": 123}])
+def test__init__rejects_invalid_model_id(mock_genai_client, api_key, model_config):
+    with pytest.raises(ValueError, match="model_id"):
+        GoogleGeminiLiveModel(client_args={"api_key": api_key}, **model_config)
+
+
+@pytest.mark.parametrize("invalid_model_id", [None, "", 123])
+def test_update_config_rejects_invalid_model_id(model, invalid_model_id):
+    config = model.get_config()
+    exp_config = dict(config)
+
+    with pytest.raises(ValueError, match="model_id must be a non-empty string"):
+        model.update_config(model_id=invalid_model_id, params={"temperature": 0.7}, connection={})
+
+    tru_config = model.get_config()
+    assert tru_config == exp_config
+    assert tru_config is config
 
 
 @pytest.mark.parametrize(
@@ -1218,8 +1241,8 @@ async def test_interruption_closes_response_without_complete(mock_genai_client, 
 
 
 @pytest.mark.parametrize("audio", [None, {}])
-def test_get_audio_config_defaults(mock_genai_client, api_key, audio):
-    model = GoogleGeminiLiveModel(client_args={"api_key": api_key}, audio=audio)
+def test_get_audio_config_defaults(model_id, mock_genai_client, api_key, audio):
+    model = GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key}, audio=audio)
 
     tru_config = model.get_audio_config()
     exp_config = {
@@ -1231,8 +1254,9 @@ def test_get_audio_config_defaults(mock_genai_client, api_key, audio):
     assert "speech_config" not in model._build_live_config()
 
 
-def test_get_audio_config_custom_input(mock_genai_client, api_key):
+def test_get_audio_config_custom_input(model_id, mock_genai_client, api_key):
     model = GoogleGeminiLiveModel(
+        model_id=model_id,
         client_args={"api_key": api_key},
         audio=GoogleGeminiLiveAudioConfig(input={"sample_rate": 48000}),
         voice="Puck",
@@ -1257,9 +1281,9 @@ def test_get_audio_config_custom_input(mock_genai_client, api_key):
         ({"input": {"sample_rate": 16000, "format": "mp3"}}, "format"),
     ],
 )
-def test__init__warns_on_unknown_audio_keys(mock_genai_client, api_key, audio, invalid_key):
+def test__init__warns_on_unknown_audio_keys(model_id, mock_genai_client, api_key, audio, invalid_key):
     with pytest.warns(UserWarning, match=invalid_key):
-        model = GoogleGeminiLiveModel(client_args={"api_key": api_key}, audio=audio)
+        model = GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key}, audio=audio)
 
     tru_config = model.get_audio_config()
     exp_config = {
@@ -1269,22 +1293,26 @@ def test__init__warns_on_unknown_audio_keys(mock_genai_client, api_key, audio, i
     assert tru_config == exp_config
 
 
-def test__init__requires_audio_sample_rate(mock_genai_client, api_key):
+def test__init__requires_audio_sample_rate(model_id, mock_genai_client, api_key):
     with pytest.raises(KeyError, match="sample_rate"):
-        GoogleGeminiLiveModel(client_args={"api_key": api_key}, audio={"input": {}})
+        GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key}, audio={"input": {}})
 
 
 @pytest.mark.parametrize("rate", [0, -1])
-def test__init__rejects_invalid_audio_sample_rate(mock_genai_client, api_key, rate):
+def test__init__rejects_invalid_audio_sample_rate(model_id, mock_genai_client, api_key, rate):
     with pytest.raises(ValueError, match="positive"):
-        GoogleGeminiLiveModel(client_args={"api_key": api_key}, audio={"input": {"sample_rate": rate}})
+        GoogleGeminiLiveModel(
+            model_id=model_id, client_args={"api_key": api_key}, audio={"input": {"sample_rate": rate}}
+        )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("rate", [32000, 44100, 48000])
-async def test_send_audio_uses_resolved_input_rate(mock_genai_client, api_key, rate):
+async def test_send_audio_uses_resolved_input_rate(model_id, mock_genai_client, api_key, rate):
     _, session, _ = mock_genai_client
-    model = GoogleGeminiLiveModel(client_args={"api_key": api_key}, audio={"input": {"sample_rate": rate}})
+    model = GoogleGeminiLiveModel(
+        model_id=model_id, client_args={"api_key": api_key}, audio={"input": {"sample_rate": rate}}
+    )
     await model.start()
     await model.send(AudioDelta(format="pcm", source={"bytes": b"audio"}))
     session.send_realtime_input.assert_awaited_once_with(
@@ -1326,10 +1354,11 @@ def test_config_building(model, system_prompt, tool_spec):
     assert config_with_messages["history_config"] == {"initial_history_in_client_content": True}
 
 
-def test__build_live_config_passes_through_params(mock_genai_client, api_key):
+def test__build_live_config_passes_through_params(model_id, mock_genai_client, api_key):
     """Test model params are passed through to the live session."""
     _ = mock_genai_client
     model = GoogleGeminiLiveModel(
+        model_id=model_id,
         client_args={"api_key": api_key},
         params={"temperature": 0.7, "proactivity": {"proactive_audio": True}, "future_option": {"enabled": True}},
     )
@@ -1360,7 +1389,7 @@ def test__build_live_config_passes_through_params(mock_genai_client, api_key):
     ],
 )
 def test__build_live_config_params_override_direct_options(
-    mock_genai_client, api_key, system_prompt, tool_spec, speech_config
+    model_id, mock_genai_client, api_key, system_prompt, tool_spec, speech_config
 ):
     params = {
         "system_instruction": "Configured instructions",
@@ -1371,6 +1400,7 @@ def test__build_live_config_params_override_direct_options(
     }
     exp_params = copy.deepcopy(params)
     model = GoogleGeminiLiveModel(
+        model_id=model_id,
         client_args={"api_key": api_key},
         voice="Kore",
         params=params,
@@ -1393,13 +1423,14 @@ def test__build_live_config_params_override_direct_options(
     assert tru_config == exp_config
 
 
-def test__build_live_config_merges_nested_params(mock_genai_client, api_key):
+def test__build_live_config_merges_nested_params(model_id, mock_genai_client, api_key):
     params = {
         "speech_config": {"language_code": "en-US"},
         "context_window_compression": {"trigger_tokens": 10000},
         "session_resumption": {"transparent": True},
     }
     model = GoogleGeminiLiveModel(
+        model_id=model_id,
         client_args={"api_key": api_key},
         voice="Kore",
         params=params,
@@ -1426,9 +1457,10 @@ def test__build_live_config_merges_nested_params(mock_genai_client, api_key):
     assert tru_config == exp_config
 
 
-def test__build_live_config_copies_sdk_objects(mock_genai_client, api_key):
+def test__build_live_config_copies_sdk_objects(model_id, mock_genai_client, api_key):
     speech_config = genai_types.SpeechConfig(language_code="en-US")
     model = GoogleGeminiLiveModel(
+        model_id=model_id,
         client_args={"api_key": api_key},
         params={"speech_config": speech_config},
     )
@@ -1440,9 +1472,10 @@ def test__build_live_config_copies_sdk_objects(mock_genai_client, api_key):
 
 
 @pytest.mark.asyncio
-async def test_start_passes_merged_config_to_genai(mock_genai_client, api_key):
+async def test_start_passes_merged_config_to_genai(model_id, mock_genai_client, api_key):
     mock_client, _, _ = mock_genai_client
     model = GoogleGeminiLiveModel(
+        model_id=model_id,
         client_args={"api_key": api_key},
         voice="Kore",
         params={
@@ -1485,8 +1518,9 @@ async def test_start_passes_merged_config_to_genai(mock_genai_client, api_key):
         ),
     ],
 )
-def test_update_config_replaces_params(mock_genai_client, api_key, params, exp_voice):
+def test_update_config_replaces_params(model_id, mock_genai_client, api_key, params, exp_voice):
     model = GoogleGeminiLiveModel(
+        model_id=model_id,
         client_args={"api_key": api_key},
         voice="Kore",
         params={
@@ -1527,8 +1561,8 @@ def test_tool_formatting(model, tool_spec):
         pytest.param({"input": {"sample_rate": 48000}}, id="custom-input"),
     ],
 )
-def test__convert_gemini_live_event_audio_format(mock_genai_client, api_key, live_message, audio):
-    model = GoogleGeminiLiveModel(client_args={"api_key": api_key}, audio=audio)
+def test__convert_gemini_live_event_audio_format(model_id, mock_genai_client, api_key, live_message, audio):
+    model = GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key}, audio=audio)
     turn_state = _TurnState(response_open=True)
 
     tru_events = model._convert_gemini_live_event(live_message(data=b"audio_data"), turn_state)

@@ -96,7 +96,7 @@ class BidiConnectionStartEvent(TypedEvent):
 
     Parameters:
         connection_id: Unique identifier for this streaming connection.
-        model: Model identifier (e.g., "gpt-realtime", "gemini-2.0-flash-live").
+        model: Model identifier (e.g., "gpt-realtime-2.1", "gemini-3.8-live").
     """
 
     def __init__(self, connection_id: str, model: str):
@@ -116,7 +116,7 @@ class BidiConnectionStartEvent(TypedEvent):
 
     @property
     def model(self) -> str:
-        """Model identifier (e.g., 'gpt-realtime', 'gemini-2.0-flash-live')."""
+        """Model identifier (e.g., 'gpt-realtime-2.1', 'gemini-3.8-live')."""
         return cast(str, self["model"])
 
 

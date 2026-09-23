@@ -129,7 +129,7 @@ describe('createHarness', () => {
       expect(toolNames(agent)).toContain(name)
     }
     expect(agent.systemPrompt).toBe(HARNESS_CONTRACT)
-    expect(conversationManagerName(agent)).toBe('SummarizingConversationManager')
+    expect(agent.contextManager).toBeInstanceOf(ContextManager)
   })
 
   it('attaches a ModelRouter through the model parameter', async () => {
@@ -439,7 +439,7 @@ describe('createHarness', () => {
 
   it('uses the default strategy when contextManager is auto', async () => {
     const agent = await createHarness({ contextManager: 'auto' })
-    expect(conversationManagerName(agent)).toBe('SummarizingConversationManager')
+    expect(agent.contextManager).toBeInstanceOf(ContextManager)
   })
 
   it('disables context management when contextManager is null', async () => {

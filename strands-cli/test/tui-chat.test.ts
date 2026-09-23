@@ -1313,7 +1313,7 @@ describe('ChatController', () => {
     })
   })
 
-  it('sets effort from /effort and opens the model panel focused on the slider without an argument', async () => {
+  it('sets effort from /effort and opens an effort-only panel without an argument', async () => {
     const target = backend()
     let effort = 'high'
     target.info = () => ({ model: 'global.anthropic.claude-opus-4-8', effort: effort === 'low' ? 'Low' : 'High' })
@@ -1338,12 +1338,32 @@ describe('ChatController', () => {
 
     await controller.submit('/effort')
     expect(controller.getSnapshot().panel).toMatchObject({
-      kind: 'models',
+      kind: 'effort',
+      rows: [],
       slider: { focused: true, options: [{ id: 'low', active: true }, { id: 'high' }] },
     })
+    expect(target.listModels).not.toHaveBeenCalled()
+
+    await controller.activatePanelRow({ label: 'Effort', description: 'High', value: 'effort:high' })
+    expect(target.setEffort).toHaveBeenLastCalledWith('high')
+    expect(controller.getSnapshot().panel?.slider?.options).toEqual([
+      { id: 'low', label: 'Low' },
+      expect.objectContaining({ id: 'high', active: true }),
+    ])
 
     await controller.submit('/model')
     expect(controller.getSnapshot().panel?.slider?.focused).toBeUndefined()
+  })
+
+  it('reports /effort as unavailable when the model has no effort levels', async () => {
+    const target = backend()
+    target.info = () => ({ model: 'ollama/llama3.2' })
+    target.listEfforts = () => []
+    const controller = new ChatController(target)
+
+    await controller.submit('/effort')
+
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'error', title: 'effort unavailable' })
   })
 
   it('reports an unsupported /effort level as an error', async () => {

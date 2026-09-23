@@ -111,8 +111,6 @@ export class ChatController implements ChatControllerApi {
   private readonly _mcp: LoadedMcp | undefined
   private _settings: ChatSettings
   private readonly _streamPresentation: StreamPresentationOptions | undefined
-  private readonly _pinnedModels: Set<string>
-  private readonly _setModelPinned: ((modelId: string, pinned: boolean) => Promise<void>) | undefined
   private readonly _setSettings: ((settings: Partial<ChatSettings>) => Promise<void>) | undefined
   private readonly _requestSetup: (() => void) | undefined
   private readonly _exportAgentProject: ChatControllerOptions['exportAgentProject']
@@ -170,8 +168,6 @@ export class ChatController implements ChatControllerApi {
     this._mcp = options.mcp
     this._settings = globalThis.structuredClone({ ...DEFAULT_CHAT_SETTINGS, ...options.settings })
     this._streamPresentation = options.streamPresentation
-    this._pinnedModels = new Set(options.pinnedModels ?? [])
-    this._setModelPinned = options.setModelPinned
     this._setSettings = options.setSettings
     this._requestSetup = options.requestSetup
     this._exportAgentProject = options.exportAgentProject
@@ -816,6 +812,7 @@ export class ChatController implements ChatControllerApi {
         }
         return true
       }
+      case 'effort':
       case 'models':
         return row.value.startsWith('effort:')
           ? this._selectEffort(row.value.slice('effort:'.length))
@@ -852,49 +849,6 @@ export class ChatController implements ChatControllerApi {
 
   openContextPanel(): void {
     this._openPanel('context', 'Context usage', [])
-  }
-
-  async toggleModelPin(modelId: string): Promise<boolean> {
-    const normalized = sanitizeTerminalText(modelId).trim()
-    if (!normalized) {
-      return false
-    }
-    const pinned = !this._pinnedModels.has(normalized)
-    try {
-      await this._setModelPinned?.(normalized, pinned)
-      if (pinned) {
-        this._pinnedModels.add(normalized)
-      } else {
-        this._pinnedModels.delete(normalized)
-      }
-      if (this._panel?.kind === 'models') {
-        const rows = this._panel.rows
-          .map<ChatPanelRow>((row) => {
-            if (row.value !== normalized) {
-              return row
-            }
-            const { pinned: _pinned, ...rest } = row
-            return pinned ? { ...rest, pinned: true } : rest
-          })
-          .sort((left, right) => {
-            const leftCurrent = left.badge?.text === 'current'
-            const rightCurrent = right.badge?.text === 'current'
-            if (leftCurrent !== rightCurrent) {
-              return leftCurrent ? -1 : 1
-            }
-            if (Boolean(left.pinned) !== Boolean(right.pinned)) {
-              return left.pinned ? -1 : 1
-            }
-            return left.label.localeCompare(right.label) || left.description.localeCompare(right.description)
-          })
-        this._panel = { ...this._panel, rows: sanitizeRows(rows) }
-        this._emit()
-      }
-      return true
-    } catch (error) {
-      this._openError('model pin failed', normalized, errorMessage(error))
-      return false
-    }
   }
 
   sessionTarget(reference: string): Promise<SessionTarget | undefined> {
@@ -1047,7 +1001,11 @@ export class ChatController implements ChatControllerApi {
         await (argument ? this._selectModel(argument) : this.openModelPanel())
         break
       case 'effort':
-        await (argument ? this._selectEffort(argument.toLowerCase()) : this.openModelPanel({ focusEffort: true }))
+        if (argument) {
+          await this._selectEffort(argument.toLowerCase())
+        } else {
+          this._openEffortPanel()
+        }
         break
       case 'sessions':
         await (argument ? this._handleSessionsCommand(argument) : this._openSessionsPanel())
@@ -1127,7 +1085,19 @@ export class ChatController implements ChatControllerApi {
     }
   }
 
-  async openModelPanel({ focusEffort = false } = {}): Promise<void> {
+  private _openEffortPanel(): void {
+    const slider = effortSlider(this._backend.listEfforts?.() ?? [])
+    if (!slider || slider.disabled) {
+      this._openError('effort unavailable', this._runtime.model, 'This model does not support reasoning effort.')
+      return
+    }
+    this._openPanel('effort', 'effort', [], {
+      slider: { ...slider, focused: true },
+      body: `${modelDisplayName(this._runtime.model)}\n${this._runtime.model}`,
+    })
+  }
+
+  async openModelPanel(): Promise<void> {
     if (!this._backend.listModels) {
       this._openError('models unavailable', this._runtime.model, 'This backend does not expose model selection.')
       return
@@ -1140,20 +1110,15 @@ export class ChatController implements ChatControllerApi {
       }
       const efforts = this._backend.listEfforts?.() ?? []
       const slider = effortSlider(efforts)
-      this._openPanel(
-        'models',
-        `models (${models.length})`,
-        modelRows(models, this._pinnedModels, this._runtime.model),
-        {
-          searchable: true,
-          filters: modelFilters(
-            models.map((model) => model.catalog).filter((catalog): catalog is string => !!catalog),
-            this._backend.protocol
-          ),
-          ...(slider ? { slider: { ...slider, ...(focusEffort && !slider.disabled ? { focused: true } : {}) } } : {}),
-          body: `${modelDisplayName(this._runtime.model)}\n${this._runtime.model}`,
-        }
-      )
+      this._openPanel('models', `models (${models.length})`, modelRows(models, this._runtime.model), {
+        searchable: true,
+        filters: modelFilters(
+          models.map((model) => model.catalog).filter((catalog): catalog is string => !!catalog),
+          this._backend.protocol
+        ),
+        ...(slider ? { slider } : {}),
+        body: `${modelDisplayName(this._runtime.model)}\n${this._runtime.model}`,
+      })
     } catch (error) {
       if (this._panel?.id === loading.id) {
         this._openError('model discovery failed', this._runtime.model, errorMessage(error))
@@ -1221,7 +1186,7 @@ export class ChatController implements ChatControllerApi {
       const selected = await this._backend.setEffort(effort)
       this._context = {}
       this._refreshRuntime()
-      if (this._panel?.kind === 'models' && this._panel.slider) {
+      if ((this._panel?.kind === 'models' || this._panel?.kind === 'effort') && this._panel.slider) {
         this._panel = {
           ...this._panel,
           slider: {

@@ -106,8 +106,7 @@ export function useProviderDiscovery(config: CliConfigStore): ProviderDiscovery 
 export function useProviderDiscoveryEffects(
   discovery: ProviderDiscovery,
   isProviderSetup: boolean,
-  quickstartProvider: ProviderId,
-  setModelViewportStart: Dispatch<SetStateAction<number>>
+  quickstartProvider: ProviderId
 ): void {
   const {
     effectiveEnvironment,
@@ -188,7 +187,6 @@ export function useProviderDiscoveryEffects(
       return
     }
     if (quickstartProvider === 'litellm' && liteLlmDiscovery) {
-      setModelViewportStart(0)
       setProviderModels({
         provider: 'litellm',
         models: liteLlmDiscovery.models,
@@ -198,7 +196,6 @@ export function useProviderDiscoveryEffects(
       return
     }
     let cancelled = false
-    setModelViewportStart(0)
     setProviderModels({ provider: quickstartProvider, models: [], available: false, loading: true })
     void discoverProviderModels(quickstartProvider, effectiveEnvironment, ollamaDiscovery).then((discovery) => {
       if (!cancelled) {

@@ -22,7 +22,8 @@ import {
   VideoBlock,
   DocumentBlock,
 } from '../../index.js'
-import type { InvokeOptions } from '../../index.js'
+import type { InvokeOptions, MemoryStore } from '../../index.js'
+import { MemoryManager } from '../../index.js'
 import { AgentPrinter } from '../printer.js'
 import {
   AfterInvocationEvent,
@@ -2472,6 +2473,65 @@ describe('normalizeToolUseNames', () => {
 
       const sessionIds = model.receivedOptions.map((options) => options.agentMetadata?.sessionId)
       expect(sessionIds).toEqual(['s1', 's2'])
+    })
+  })
+
+  describe('shutdown and async disposal', () => {
+    const searchOnlyStore = (): MemoryStore => ({
+      name: 'notes',
+      writable: false,
+      search: vi.fn().mockResolvedValue([]),
+    })
+
+    it('flushes the memory manager when shutdown is called directly', async () => {
+      const memoryManager = new MemoryManager({ stores: [searchOnlyStore()] })
+      const flush = vi.spyOn(memoryManager, 'flush')
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+      const agent = new Agent({ model, memoryManager })
+
+      await agent.shutdown()
+
+      expect(flush).toHaveBeenCalledTimes(1)
+    })
+
+    it('flushes the memory manager when an `await using` scope exits', async () => {
+      const memoryManager = new MemoryManager({ stores: [searchOnlyStore()] })
+      const flush = vi.spyOn(memoryManager, 'flush')
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+
+      {
+        await using agent = new Agent({ model, memoryManager })
+        await agent.invoke('Test prompt')
+        expect(flush).not.toHaveBeenCalled()
+      }
+
+      expect(flush).toHaveBeenCalledTimes(1)
+    })
+
+    it('flushes even when the scope exits via a thrown error', async () => {
+      const memoryManager = new MemoryManager({ stores: [searchOnlyStore()] })
+      const flush = vi.spyOn(memoryManager, 'flush')
+
+      await expect(
+        (async () => {
+          await using agent = new Agent({ model: new MockMessageModel(), memoryManager })
+          void agent
+          throw new Error('boom')
+        })()
+      ).rejects.toThrow('boom')
+
+      expect(flush).toHaveBeenCalledTimes(1)
+    })
+
+    it('is a no-op when no memory manager is configured', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+
+      await expect(
+        (async () => {
+          await using agent = new Agent({ model })
+          await agent.invoke('Test prompt')
+        })()
+      ).resolves.toBeUndefined()
     })
   })
 })

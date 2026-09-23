@@ -274,10 +274,6 @@ export class ConversationManager implements ChatControllerApi {
     return this._active.controller.activatePanelRow(row)
   }
 
-  toggleModelPin(modelId: string): Promise<boolean> {
-    return this._active.controller.toggleModelPin(modelId)
-  }
-
   openModelPanel(): Promise<void> {
     this._panel = undefined
     return this._active.controller.openModelPanel()

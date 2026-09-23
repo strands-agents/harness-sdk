@@ -54,7 +54,7 @@ it.each([
     expected: true,
   },
 ])('selects startup setup for $name', async ({ settings, onboardingVersion, args, expected }) => {
-  vi.spyOn(CliConfigStore, 'load').mockResolvedValue(CliConfigStore.memory({}, {}, settings, { onboardingVersion }))
+  vi.spyOn(CliConfigStore, 'load').mockResolvedValue(CliConfigStore.memory({}, settings, { onboardingVersion }))
   const stdinIsTTY = process.stdin.isTTY
   const stdoutIsTTY = process.stdout.isTTY
   process.stdin.isTTY = true

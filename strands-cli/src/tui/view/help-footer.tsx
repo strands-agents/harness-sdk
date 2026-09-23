@@ -15,17 +15,19 @@ export function PanelHelpFooter({ width }: { width: number }): ReactElement | nu
     ? '↑↓ · Enter choose · Esc deny'
     : detail
       ? '↑↓ scroll · Esc back'
-      : !actionable
-        ? 'Esc close'
-        : panel.kind === 'settings'
-          ? width < 42
-            ? '↑↓ move · ←→ change · Esc back'
-            : '↑↓ · ←→ change · Tab category · Esc back'
-          : panel.kind === 'models'
-            ? 'Tab · Enter choose · Esc back'
-            : panel.filters?.length
-              ? 'Tab category · Enter · Esc back'
-              : '↑↓ · Enter open · Esc back'
+      : panel.kind === 'effort'
+        ? '←→ change · Enter done · Esc close'
+        : !actionable
+          ? 'Esc close'
+          : panel.kind === 'settings'
+            ? width < 42
+              ? '↑↓ move · ←→ change · Esc back'
+              : '↑↓ · ←→ change · Tab category · Esc back'
+            : panel.kind === 'models'
+              ? 'Tab · Enter choose · Esc back'
+              : panel.filters?.length
+                ? 'Tab category · Enter · Esc back'
+                : '↑↓ · Enter open · Esc back'
   return (
     <Box width={Math.max(1, width)} height={1} flexShrink={0}>
       <Text dimColor wrap="truncate-end">
@@ -69,7 +71,7 @@ export function ComposerHelpFooter({
               {width >= 86 ? (
                 <>
                   {' · '}
-                  <Text color={foreground}>Shift+Enter</Text> newline
+                  <Text color={foreground}>Ctrl+J</Text> newline
                 </>
               ) : null}
               {width >= 62 ? (

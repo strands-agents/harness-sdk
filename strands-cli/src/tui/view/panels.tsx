@@ -19,7 +19,7 @@ import {
 } from './presentation.js'
 import { AgentsPanel } from './agents-panel.js'
 import { ExportPanel } from './export-panel.js'
-import { ModelPicker } from './model-panel.js'
+import { EffortSlider, ModelPicker } from './model-panel.js'
 import { SessionsPanel } from './sessions-panel.js'
 import { PanelItemHeader, PanelOverlay, PanelTitle } from './panel-components.js'
 import { SettingsControl, SettingsPanel } from './settings-panel.js'
@@ -71,9 +71,9 @@ export function ResourcePanel({
   onRowElement,
   onControlElement,
   onFilterElement,
-  onPinElement,
   onSearchElement,
   onSliderElement,
+  commandDeckHeight,
 }: {
   panel: ChatPanel
   context: ChatContextUsage
@@ -99,9 +99,9 @@ export function ResourcePanel({
   onRowElement?: (index: number, element: DOMElement | null) => void
   onControlElement?: (key: string, element: DOMElement | null) => void
   onFilterElement?: (id: string, element: DOMElement | null) => void
-  onPinElement?: (index: number, element: DOMElement | null) => void
   onSearchElement?: (element: DOMElement | null) => void
   onSliderElement?: (element: DOMElement | null) => void
+  commandDeckHeight?: number
 }): ReactElement {
   const palette = useTheme()
   const { surface, warning, selection, accent } = palette
@@ -116,7 +116,7 @@ export function ResourcePanel({
             ? 112
             : panel.kind === 'permissions'
               ? 96
-              : panel.kind === 'context'
+              : panel.kind === 'context' || panel.kind === 'effort'
                 ? 52
                 : panel.kind === 'permission' && panel.diff
                   ? 100
@@ -220,10 +220,37 @@ export function ResourcePanel({
         {...(hoveredControl ? { hoveredControl } : {})}
         {...(onFilterElement ? { onFilterElement } : {})}
         {...(onControlElement ? { onControlElement } : {})}
-        {...(onPinElement ? { onPinElement } : {})}
         {...(onSearchElement ? { onSearchElement } : {})}
         {...(onSliderElement ? { onSliderElement } : {})}
       />
+    )
+  }
+  if (panel.kind === 'effort' && panel.slider) {
+    const [modelName = '', modelId = ''] = panel.body?.split('\n') ?? []
+    return (
+      <PanelOverlay
+        width={width}
+        {...(commandDeckHeight !== undefined ? { bottomOffset: commandDeckHeight + 1 } : {})}
+        {...(onPanelElement ? { onElement: onPanelElement } : {})}
+      >
+        <Box flexDirection="column" alignItems="center" overflow="hidden">
+          <Text bold color={accent} wrap="truncate-end">
+            Reasoning effort
+          </Text>
+          <Text dimColor wrap="truncate-end">
+            {modelName || modelId}
+          </Text>
+          <EffortSlider
+            slider={panel.slider}
+            width={Math.max(18, Math.min(36, width - 8))}
+            compact={false}
+            pressed={pressedSlider}
+            {...(hoveredSlider !== undefined ? { hovered: hoveredSlider } : {})}
+            focused
+            {...(onSliderElement ? { onElement: onSliderElement } : {})}
+          />
+        </Box>
+      </PanelOverlay>
     )
   }
   if (panel.kind === 'context') {
@@ -237,11 +264,14 @@ export function ResourcePanel({
             </Text>
           </Box>
           <Box marginTop={1} flexDirection="column">
-            <Text color={contextColor(context, palette)} wrap="truncate-end">
-              {formatContext(context, Math.max(1, width - 12))}
-            </Text>
+            {context.contextWindow ? (
+              <Text color={contextColor(context, palette)} wrap="truncate-end">
+                {formatContext(context, Math.max(1, width - 12))}
+              </Text>
+            ) : null}
             <Text dimColor wrap="truncate-end">
-              {used?.toLocaleString() ?? '—'} / {context.contextWindow?.toLocaleString() ?? '—'} tokens
+              {used?.toLocaleString() ?? '—'}
+              {context.contextWindow ? ` / ${context.contextWindow.toLocaleString()}` : ''} tokens
             </Text>
           </Box>
           <Box marginTop={1} flexDirection="column">

@@ -42,7 +42,6 @@ describe('strands_config tool', () => {
   it('captures every setting for rollback without sharing mutable settings with the store', () => {
     const config = CliConfigStore.memory(
       {},
-      {},
       {
         frogTheme: 'circuit',
         transcriptSpacing: 'compact',
@@ -62,7 +61,6 @@ describe('strands_config tool', () => {
 
   it('redacts credentials in inspect and update responses without changing the draft or saved values', async () => {
     const config = CliConfigStore.memory(
-      {},
       {},
       {},
       {
@@ -135,7 +133,6 @@ describe('strands_config tool', () => {
     const config = CliConfigStore.memory(
       {},
       {},
-      {},
       {
         profile: { agentConfig: { apiKey: 'FAKE_EXISTING_TOKEN' } },
       }
@@ -178,7 +175,6 @@ describe('strands_config tool', () => {
     const config = CliConfigStore.memory(
       {},
       {},
-      {},
       // ollama supports no reasoning levels; pin effort to 'auto' so the default 'high' is not
       // rejected by resolveEffort (see #4472).
       { profile: { model: 'ollama/review-model', builtinTools: [], effort: 'auto' } }
@@ -199,7 +195,6 @@ describe('strands_config tool', () => {
     // ollama supports no reasoning levels; pin effort to 'auto' so the default 'high' is not
     // rejected by resolveEffort (see #4472).
     const config = CliConfigStore.memory(
-      {},
       {},
       {},
       { profile: { model: 'ollama/missing', builtinTools: [], effort: 'auto' } }
@@ -230,7 +225,6 @@ describe('strands_config tool', () => {
   it('resets only the setup draft and launches it in a fresh conversation', async () => {
     const config = CliConfigStore.memory(
       { mode: 'bypassPermissions' },
-      {},
       { mcpDiscovery: true },
       {
         profile: { name: 'Existing', instructions: 'Old role', agentConfig: { backgroundTasks: false } },
@@ -259,7 +253,6 @@ describe('strands_config tool', () => {
 
   it('stages a portable patch without changing the saved profile, then validates an apply request', async () => {
     const config = CliConfigStore.memory(
-      {},
       {},
       {},
       {
@@ -316,7 +309,7 @@ describe('strands_config tool', () => {
   })
 
   it('rejects invalid fields, delegated changes, and drafts changed during validation', async () => {
-    const config = CliConfigStore.memory({}, {}, {}, { profile: { builtinTools: ['read'] } })
+    const config = CliConfigStore.memory({}, {}, { profile: { builtinTools: ['read'] } })
     const control = configurationTool(config)
     await expect(control.invoke({ action: 'update', profile: { contextStrategy: 'off' } })).rejects.toThrow(
       'Unknown profile field'

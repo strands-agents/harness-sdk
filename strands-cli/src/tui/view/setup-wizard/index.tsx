@@ -10,6 +10,7 @@ import {
 } from 'react'
 import { Box, useInput, useStdout, useWindowSize, type DOMElement } from 'ink'
 import type { HarnessAgentConfig } from '@strands-agents/harness'
+import stringWidth from 'string-width'
 
 import {
   PROVIDER_CREDENTIAL_KEYS,
@@ -55,6 +56,7 @@ import {
   PROVIDERS,
   compatibleProfile,
   exaWebSearchActive,
+  providerSupportsWebSearch,
   providerAssessment,
   providerFromModel,
   quickstartDraft,
@@ -83,7 +85,14 @@ import { SetupProgress } from './progress.js'
 
 type SetupAction = 'back' | 'next' | 'settings' | `browse:${number}`
 type SetupControl =
-  number | SetupAction | 'search' | `option:${number}` | `completion:${number}` | SetupSettingsChoiceTarget
+  | number
+  | SetupAction
+  | 'search'
+  | 'models-previous'
+  | 'models-next'
+  | `option:${number}`
+  | `completion:${number}`
+  | SetupSettingsChoiceTarget
 
 export function SetupWizard(
   props: Omit<Parameters<typeof SetupWizardContent>[0], 'appearance' | 'setAppearance'>
@@ -196,8 +205,11 @@ function SetupWizardContent({
   const [modelViewportStart, setModelViewportStart] = useState(0)
   const [modelQuery, setModelQuery] = useState('')
   const [modelSearchFocused, setModelSearchFocused] = useState(false)
+  const [deselectedModel, setDeselectedModel] = useState<string>()
   const modelListElement = useRef<DOMElement | null>(null)
   const modelSearchElement = useRef<DOMElement | null>(null)
+  const modelPreviousElement = useRef<DOMElement | null>(null)
+  const modelNextElement = useRef<DOMElement | null>(null)
   const setupEffortSliderElement = useRef<DOMElement | null>(null)
   const [quickstartProvider, setQuickstartProvider] = useState<ProviderId>('bedrock')
   const [selecting, setSelecting] = useState<{
@@ -326,7 +338,7 @@ function SetupWizardContent({
   const isImport = flow === 'import' && step === 1
   const hasExternalActions =
     !isSettings && (isProviderSetup || isImport || isCapabilities || isAppearance || flow === 'manual')
-  const bubbleWidth = Math.max(1, Math.min(isProviderSetup ? 118 : 112, width - 2))
+  const bubbleWidth = Math.max(1, Math.min(isProviderSetup ? 144 : 112, width - 2))
   const lockupWidth = Math.max(1, width - 2)
   const brandFrame = setupBrandFrame(lockupWidth, height)
   const lockupHeight = brandFrame.height
@@ -363,13 +375,15 @@ function SetupWizardContent({
     : isProviderSetup
       ? 4
       : isCapabilities
-        ? 2
+        ? 1
         : isPermissions
           ? 2
           : flow === 'manual'
             ? step === 2
               ? 5
-              : 3
+              : step === 5
+                ? 2
+                : 3
             : 2
   const updateProfile = useCallback((update: Partial<HarnessAgentConfig>): void => {
     setDraft((current) => ({ ...current, profile: { ...current.profile, ...update } }))
@@ -470,12 +484,15 @@ function SetupWizardContent({
     updateProfile,
   ])
   const selectedModelProvider = providerFromModel(draft.profile.model)
+  const hasSelectedModel = deselectedModel !== draft.profile.model
   const canContinue =
     step !== 1 ||
     (flow === 'import'
       ? importPath.trim().length > 0
       : isProviderSetup
-        ? selectedModelProvider === quickstartProvider && setupReadyProviders.includes(quickstartProvider)
+        ? hasSelectedModel &&
+          selectedModelProvider === quickstartProvider &&
+          setupReadyProviders.includes(quickstartProvider)
         : draft.providers.some((provider) => readyProviders.includes(provider)))
   const inspectedProvider = isProviderSetup ? quickstartProvider : undefined
   const inspectedAssessment = inspectedProvider
@@ -503,14 +520,19 @@ function SetupWizardContent({
     1,
     height - brandHeight - progressHeight - (hasExternalActions ? actionHeight + actionGap : 0) - navigationHeight
   )
-  const warningLines =
-    bannerWarning && !splitQuickstart
-      ? wrapLines(`⚠ ${bannerWarning}`, Math.max(1, bubbleWidth - 4)).slice(
-          0,
-          Math.max(0, availableBubbleHeight - rowHeight - 1 - Number(error !== undefined))
-        )
-      : []
-  const extraRows = Number(error !== undefined) + warningLines.length
+  const bannerLines = (text: string): string[] =>
+    wrapLines(`⚠ ${text}`, Math.max(1, bubbleWidth - 4)).slice(
+      0,
+      Math.max(0, availableBubbleHeight - rowHeight - 1 - Number(error !== undefined))
+    )
+  const warningLines = bannerWarning && !splitQuickstart ? bannerLines(bannerWarning) : []
+  // Reserve the Exa banner's space whether or not web_search is on, so toggling it doesn't resize the panel.
+  const warningHeight =
+    isTools && !warning && !providerSupportsWebSearch(draft.profile.model)
+      ? bannerLines(EXA_WEB_SEARCH_WARNING).length
+      : warningLines.length
+  const warningGap = isCapabilities && warningHeight > 0 ? 1 : 0
+  const extraRows = Number(error !== undefined) + warningGap + warningHeight
   const capabilityContentHeight = Math.max(0, rows.length - 1) * rowHeight + 2
   const bubbleHeight = isImport
     ? Math.min(9 + extraRows + importCompletionCapacity, availableBubbleHeight)
@@ -532,6 +554,14 @@ function SetupWizardContent({
   const firstListRow = isCapabilities ? 1 : 0
   const viewportStart = Math.max(firstListRow, Math.min(selection - rowCapacity + 1, rows.length - rowCapacity))
   const visibleRows = rows.slice(viewportStart, viewportStart + rowCapacity)
+  const hiddenRowsBefore = viewportStart
+  const hiddenRowsAfter = Math.max(0, rows.length - viewportStart - visibleRows.length)
+  const manualOverflowLabel = [
+    hiddenRowsBefore > 0 ? `↑ ${hiddenRowsBefore} previous` : '',
+    hiddenRowsAfter > 0 ? `↓ ${hiddenRowsAfter} more` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
   const visibleCapabilityRows = isCapabilities ? visibleRows.filter((row) => row.id !== 'select-all') : []
   const permissionToolCapacity = Math.max(1, Math.floor((bubbleHeight - 9 - extraRows) / rowHeight))
   const permissionViewportStart = Math.max(
@@ -550,6 +580,7 @@ function SetupWizardContent({
     : bannerWarningStatus
   const availableReasoningRow = providerConfigurationRows.find((row) => row.id === 'thinking')
   const selectedModelAvailable =
+    hasSelectedModel &&
     providerModels.provider === quickstartProvider &&
     providerModels.available &&
     !providerModels.loading &&
@@ -632,7 +663,7 @@ function SetupWizardContent({
     quickstartProvider === 'ollama' ? undefined : PROVIDERS[quickstartProvider].model(effectiveEnvironment)
   const quickstartDefaultModel = defaultModel?.slice(defaultModel.indexOf('/') + 1)
   const readyProviderControlsHeight = readyProviderControlRows.length * quickstartFieldRowHeight
-  const quickstartModelRowHeight = 2
+  const quickstartModelRowHeight = 1
   const quickstartModelCapacity = Math.max(
     1,
     Math.floor((quickstartBodyHeight - 5 - readyProviderControlsHeight) / quickstartModelRowHeight)
@@ -645,6 +676,22 @@ function SetupWizardContent({
     quickstartModelViewportStart,
     quickstartModelViewportStart + quickstartModelCapacity
   )
+  const previousModelCount = quickstartModelViewportStart
+  const nextModelCount = Math.max(
+    0,
+    filteredProviderModels.length - quickstartModelViewportStart - visibleProviderModels.length
+  )
+  const showModelPagination =
+    providerModels.provider === quickstartProvider && providerModels.available && visibleProviderModels.length > 0
+  const quickstartModelContentWidth = Math.max(1, quickstartDetailColumnWidth - 4)
+  const quickstartModelNameWidth = Math.min(
+    Math.max(
+      1,
+      ...filteredProviderModels.map((model) => stringWidth(model.name) + (model.id === quickstartDefaultModel ? 2 : 0))
+    ),
+    Math.max(1, quickstartModelContentWidth - 15)
+  )
+  const quickstartModelIdWidth = Math.max(1, quickstartModelContentWidth - quickstartModelNameWidth - 3)
   const quickstartSelectableRows =
     rows.length + (modelPanelVisible && providerModels.available ? filteredProviderModels.length : 0)
   const controlBackground = (control: SetupControl, focused: boolean, disabled = false): string | undefined => {
@@ -671,6 +718,11 @@ function SetupWizardContent({
     palette.mode === 'dark' ? 0.22 : 0.16
   )
 
+  // Sized from every row, not just the visible ones, so descriptions stay aligned while scrolling.
+  const capabilityLabelWidth = Math.max(
+    0,
+    ...rows.filter((row) => row.id !== 'select-all').map((row) => graphemes(row.label).length)
+  )
   const renderCapabilityRows = (capabilityRows: readonly WizardRow[]): ReactElement => (
     <Box flexGrow={1} paddingX={1} flexDirection="column" overflow="hidden">
       {capabilityRows.map((row) => {
@@ -679,20 +731,20 @@ function SetupWizardContent({
           <Box
             key={row.id}
             ref={(element) => registerElement(rowElements.current, index, element)}
-            height={2}
+            height={1}
             paddingX={1}
             flexShrink={0}
-            flexDirection="column"
             backgroundColor={rowBackground(index)}
           >
-            <Text color={row.active ? accent : palette.foreground} bold={index === selection}>
-              {row.active ? '☑' : '☐'} {row.label}
-            </Text>
+            <Box width={capabilityLabelWidth + 4} flexShrink={0}>
+              <Text color={row.active ? accent : palette.foreground} bold={index === selection} wrap="truncate-end">
+                {row.active ? '☑' : '☐'} {row.label}
+              </Text>
+            </Box>
             <Text
               {...(row.descriptionColor ? { color: row.descriptionColor } : { dimColor: true })}
               wrap="truncate-end"
             >
-              {'   '}
               {row.description}
             </Text>
           </Box>
@@ -813,7 +865,14 @@ function SetupWizardContent({
     const capacity = Math.max(1, quickstartBodyHeight - middleDetailHeight - 3)
     const start = Math.max(0, Math.min(state.selection - capacity + 1, state.options.length - capacity))
     return (
-      <Box backgroundColor={PANEL_BACKGROUND} paddingX={1} flexDirection="column" overflow="hidden">
+      <Box
+        width="100%"
+        flexGrow={1}
+        backgroundColor={PANEL_BACKGROUND}
+        paddingX={1}
+        flexDirection="column"
+        overflow="hidden"
+      >
         <Text bold wrap="truncate-end">
           {providerFieldRows.find((row) => row.field === state.field)?.label ?? 'Choose'}
         </Text>
@@ -893,6 +952,7 @@ function SetupWizardContent({
         if (PROVIDER_IDS[index] !== quickstartProvider) {
           setModelQuery('')
           setModelViewportStart(0)
+          setDeselectedModel(undefined)
         }
         setQuickstartProvider(PROVIDER_IDS[index]!)
         setSelecting(undefined)
@@ -909,6 +969,18 @@ function SetupWizardContent({
     setModelViewportStart(0)
     setSelection(quickstartModelOffset)
     setHoveredControl(undefined)
+  }
+
+  function paginateModels(direction: -1 | 1): void {
+    const lastPageStart = Math.max(0, filteredProviderModels.length - quickstartModelCapacity)
+    const nextStart = Math.max(
+      0,
+      Math.min(lastPageStart, quickstartModelViewportStart + direction * quickstartModelCapacity)
+    )
+    setModelViewportStart(nextStart)
+    setSelection(quickstartModelOffset + nextStart)
+    setModelSearchFocused(false)
+    setFocusedAction(undefined)
   }
 
   function browseForDirectory(field: 'importPath' | 'memoryDir' | 'skills'): void {
@@ -1048,7 +1120,7 @@ function SetupWizardContent({
       setAgentHandoffElapsedMs(0)
       setAgentHandoff({
         model: draft.profile.model,
-        effort: draft.profile.effort,
+        effort: compatibleProfile(draft.profile).effort,
         configuration: {
           profile: setupTarget.profile,
           permissionMode: setupTarget.permissionMode,
@@ -1202,6 +1274,8 @@ function SetupWizardContent({
     }
     if (editing.field === 'importPath') {
       setImportPath(value)
+    } else if (editing.field === 'memoryDir') {
+      updateProfile({ memory: memoryForDir(value) })
     } else if (editing.field === 'skills') {
       const paths = value
         .split(',')
@@ -1251,6 +1325,12 @@ function SetupWizardContent({
       }
       const profile = quickstartDraft(quickstartProvider, effectiveEnvironment).profile
       const modelSpecifier = `${quickstartProvider}/${model.id}`
+      if (draft.profile.model === modelSpecifier && deselectedModel !== modelSpecifier) {
+        setDeselectedModel(modelSpecifier)
+        setError(undefined)
+        return
+      }
+      setDeselectedModel(undefined)
       setDraft((current) => ({
         ...current,
         providers: [quickstartProvider, ...current.providers.filter((provider) => provider !== quickstartProvider)],
@@ -1331,7 +1411,7 @@ function SetupWizardContent({
     selectWizardRow,
   ])
 
-  useProviderDiscoveryEffects(discovery, isProviderSetup, quickstartProvider, setModelViewportStart)
+  useProviderDiscoveryEffects(discovery, isProviderSetup, quickstartProvider)
 
   useEffect(() => {
     if (!isProviderSetup || awsDiscovery.credentialStatus === undefined || !ollamaDiscovery) {
@@ -1393,26 +1473,36 @@ function SetupWizardContent({
       const settings = settingsElement.current ? elementContainsMouse(settingsElement.current, mouse) : false
       const frog = frogElement.current ? elementContainsMouse(frogElement.current, mouse) : false
       const search = modelSearchElement.current ? elementContainsMouse(modelSearchElement.current, mouse) : false
+      const modelsPrevious =
+        previousModelCount > 0 && modelPreviousElement.current
+          ? elementContainsMouse(modelPreviousElement.current, mouse)
+          : false
+      const modelsNext =
+        nextModelCount > 0 && modelNextElement.current ? elementContainsMouse(modelNextElement.current, mouse) : false
       const effortSliderHit = setupEffortSliderElement.current
         ? elementContainsMouse(setupEffortSliderElement.current, mouse)
         : false
       const target: SetupControl | undefined =
-        (pathCompletion !== undefined ? `completion:${pathCompletion}` : undefined) ??
-        (directory !== undefined ? `browse:${directory}` : undefined) ??
-        choice ??
-        (selectOption !== undefined
-          ? `option:${selectOption}`
-          : row !== undefined && !rows[row]?.disabled && !(isImport && row === 1 && choosingDirectory)
-            ? row
-            : back
-              ? 'back'
-              : next && canContinue
-                ? 'next'
-                : settings
-                  ? 'settings'
-                  : search
-                    ? 'search'
-                    : undefined)
+        modelsPrevious || modelsNext
+          ? modelsPrevious
+            ? 'models-previous'
+            : 'models-next'
+          : ((pathCompletion !== undefined ? `completion:${pathCompletion}` : undefined) ??
+            (directory !== undefined ? `browse:${directory}` : undefined) ??
+            choice ??
+            (selectOption !== undefined
+              ? `option:${selectOption}`
+              : row !== undefined && !rows[row]?.disabled && !(isImport && row === 1 && choosingDirectory)
+                ? row
+                : back
+                  ? 'back'
+                  : next && canContinue
+                    ? 'next'
+                    : settings
+                      ? 'settings'
+                      : search
+                        ? 'search'
+                        : undefined))
       if (saving || choosingDirectory) {
         return
       }
@@ -1456,6 +1546,10 @@ function SetupWizardContent({
           setModelSearchFocused(true)
           setFocusedAction(undefined)
           setEditing(undefined)
+        } else if (target === 'models-previous' || target === 'models-next') {
+          pressedElement.current = undefined
+          paginateModels(target === 'models-previous' ? -1 : 1)
+          return
         } else if (choice?.startsWith('choice:')) {
           selectWizardRow(Number(choice.split(':')[1]))
         }
@@ -1499,6 +1593,10 @@ function SetupWizardContent({
         } else if (pressed === 'settings' && settings) {
           if (isSettings) moveBack()
           else openSettings()
+        } else if (pressed === 'models-previous' && modelsPrevious) {
+          paginateModels(-1)
+        } else if (pressed === 'models-next' && modelsNext) {
+          paginateModels(1)
         }
       } else if (mouse.action === 'move') {
         setHoveredControl(isCapabilities && row !== undefined ? row : target)
@@ -1571,7 +1669,7 @@ function SetupWizardContent({
       }
       if (key.tab) {
         leaveEdit()
-      } else if (key.return && !(editing.field === 'instructions' && (key.meta || key.shift))) {
+      } else if (key.return) {
         commitEdit()
         return
       } else {
@@ -1579,7 +1677,7 @@ function SetupWizardContent({
         const result = reduceInputSequence(
           { ...emptyEditor(), input: editing.value, cursor: editing.cursor ?? graphemes(editing.value).length },
           multiline ? input : input.replace(/[\r\n]/g, ''),
-          multiline && key.return && key.meta ? { ...key, shift: true } : key,
+          key,
           'idle'
         )
         setEditing({ ...editing, value: result.state.input, cursor: result.state.cursor })
@@ -1815,7 +1913,7 @@ function SetupWizardContent({
     ? [
         width < 32 ? 'Enter save · Tab move' : 'Enter save · Tab/Shift+Tab move',
         editing.field === 'instructions'
-          ? 'Shift+Enter newline · Esc cancel'
+          ? 'Ctrl+J newline · Esc cancel'
           : width < 60
             ? 'Click focus · Esc cancel'
             : 'Mouse click: switch controls · Ctrl+U: clear · Esc: cancel',
@@ -1957,10 +2055,11 @@ function SetupWizardContent({
               backgroundColor={PANEL_BACKGROUND}
             >
               {!isAppearance && flow === 'manual' && !isProviderSetup && !isCapabilities ? (
-                <Box paddingX={1} marginBottom={1} flexShrink={0}>
+                <Box paddingX={1} marginBottom={1} justifyContent="space-between" flexShrink={0}>
                   <Text bold color={accent}>
                     {isSettings ? 'Settings' : isAppearance ? 'Appearance' : MANUAL_STEPS[step - 1]}
                   </Text>
+                  {manualOverflowLabel ? <Text dimColor>{manualOverflowLabel}</Text> : null}
                 </Box>
               ) : null}
               {isCapabilities ? (
@@ -2159,7 +2258,28 @@ function SetupWizardContent({
                               )}
                             </Text>
                           </Box>
-                          <Box flexGrow={1} flexDirection="column" overflow="hidden">
+                          {showModelPagination ? (
+                            <Box
+                              ref={modelPreviousElement}
+                              width="100%"
+                              height={1}
+                              paddingX={1}
+                              flexShrink={0}
+                              backgroundColor={controlBackground('models-previous', false) ?? COMMAND_DECK_BACKGROUND}
+                            >
+                              <Text
+                                {...(previousModelCount > 0
+                                  ? {
+                                      color: hoveredControl === 'models-previous' ? accent : palette.muted,
+                                      bold: hoveredControl === 'models-previous',
+                                    }
+                                  : { dimColor: true })}
+                              >
+                                ↑ Previous{previousModelCount > 0 ? ` · ${previousModelCount}` : ''}
+                              </Text>
+                            </Box>
+                          ) : null}
+                          <Box flexShrink={0} flexDirection="column" overflow="hidden">
                             {providerModels.provider !== quickstartProvider || providerModels.loading ? (
                               <Text dimColor>Loading model catalog...</Text>
                             ) : !providerModels.available ? (
@@ -2171,61 +2291,87 @@ function SetupWizardContent({
                               <Text dimColor>{modelQuery.trim() ? 'No matching models' : 'No models reported'}</Text>
                             ) : (
                               <>
-                                {quickstartModelViewportStart > 0 ? (
-                                  <Text dimColor>↑ {quickstartModelViewportStart} more</Text>
-                                ) : null}
                                 {visibleProviderModels.map((model, visibleIndex) => {
                                   const modelIndex = quickstartModelViewportStart + visibleIndex
                                   const index = quickstartModelOffset + modelIndex
-                                  const active = `${quickstartProvider}/${model.id}` === draft.profile.model
+                                  const active =
+                                    `${quickstartProvider}/${model.id}` === draft.profile.model &&
+                                    deselectedModel !== draft.profile.model
                                   const focused =
                                     focusedAction === undefined && !modelSearchFocused && index === selection
                                   const hovered = hoveredControl === index
                                   const highlighted = focused || hovered
                                   const harnessDefault = model.id === quickstartDefaultModel
+                                  const modelSpecifier = `${quickstartProvider}/${model.id}`
                                   return (
                                     <Box
                                       key={model.id}
                                       ref={(element) => registerElement(rowElements.current, index, element)}
+                                      width="100%"
                                       height={quickstartModelRowHeight}
                                       paddingX={1}
                                       flexShrink={0}
-                                      flexDirection="column"
+                                      overflow="hidden"
                                       backgroundColor={
                                         rowBackground(index) ?? (active ? COMMAND_DECK_BACKGROUND : undefined)
                                       }
                                     >
-                                      <Text
-                                        {...(active || highlighted ? { color: accent, bold: true } : {})}
-                                        wrap="truncate-end"
-                                      >
-                                        {active ? '✓ ' : highlighted ? '› ' : '  '}
-                                        {model.name}
-                                        {harnessDefault ? <Text color={accent}> ★</Text> : null}
-                                      </Text>
-                                      {active || highlighted ? (
-                                        <Text dimColor wrap="truncate-end">
-                                          {'  '}
-                                          {model.id}
+                                      <Box width={2} flexShrink={0}>
+                                        <Text {...(active || highlighted ? { color: accent, bold: true } : {})}>
+                                          {active ? '✓ ' : highlighted ? '› ' : '  '}
                                         </Text>
+                                      </Box>
+                                      <Box
+                                        {...(showReasoningPanel
+                                          ? { flexGrow: 1 }
+                                          : { width: quickstartModelNameWidth, flexShrink: 0 })}
+                                        overflow="hidden"
+                                      >
+                                        <Text
+                                          {...(active || highlighted ? { color: accent, bold: true } : {})}
+                                          wrap="truncate-end"
+                                        >
+                                          {model.name}
+                                          {harnessDefault ? <Text color={accent}> ★</Text> : null}
+                                        </Text>
+                                      </Box>
+                                      {!showReasoningPanel ? (
+                                        <>
+                                          <Box width={1} flexShrink={0} />
+                                          <Box width={quickstartModelIdWidth} flexShrink={0} overflow="hidden">
+                                            <Text dimColor wrap="truncate-end">
+                                              {modelSpecifier}
+                                            </Text>
+                                          </Box>
+                                        </>
                                       ) : null}
                                     </Box>
                                   )
                                 })}
                               </>
                             )}
-                            {providerModels.provider === quickstartProvider &&
-                            quickstartModelViewportStart + visibleProviderModels.length <
-                              filteredProviderModels.length ? (
-                              <Text dimColor>
-                                ↓{' '}
-                                {filteredProviderModels.length -
-                                  quickstartModelViewportStart -
-                                  visibleProviderModels.length}{' '}
-                                more
-                              </Text>
-                            ) : null}
                           </Box>
+                          {showModelPagination ? (
+                            <Box
+                              ref={modelNextElement}
+                              width="100%"
+                              height={1}
+                              paddingX={1}
+                              flexShrink={0}
+                              backgroundColor={controlBackground('models-next', false) ?? COMMAND_DECK_BACKGROUND}
+                            >
+                              <Text
+                                {...(nextModelCount > 0
+                                  ? {
+                                      color: hoveredControl === 'models-next' ? accent : palette.muted,
+                                      bold: hoveredControl === 'models-next',
+                                    }
+                                  : { dimColor: true })}
+                              >
+                                ↓ Next{nextModelCount > 0 ? ` · ${nextModelCount} more` : ''}
+                              </Text>
+                            </Box>
+                          ) : null}
                           {readyProviderControlRows.length > 0 ? (
                             <Box flexShrink={0} flexDirection="column">
                               {readyProviderControlRows.map((row) =>
@@ -2460,8 +2606,8 @@ function SetupWizardContent({
                   })}
                 </Box>
               )}
-              {warningLines.length > 0 ? (
-                <Box paddingX={1} flexShrink={0}>
+              {warningHeight > 0 ? (
+                <Box paddingX={1} marginTop={warningGap} height={warningHeight} flexShrink={0}>
                   <Text color={palette[providerWarningStatus]}>{warningLines.join('\n')}</Text>
                 </Box>
               ) : null}

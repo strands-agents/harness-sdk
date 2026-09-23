@@ -418,11 +418,7 @@ describe('interactive runtime lifecycle', () => {
       const forkAgent = fakeAgent('old', 'fork')
       mocks.createHarness.mockResolvedValueOnce(firstAgent).mockResolvedValueOnce(forkAgent)
       const controller = await createInteractiveChat({
-        config: CliConfigStore.memory(
-          {},
-          {},
-          { agentMessaging: enabled, mcpDiscovery: enabled, skillDiscovery: enabled }
-        ),
+        config: CliConfigStore.memory({}, { agentMessaging: enabled, mcpDiscovery: enabled, skillDiscovery: enabled }),
         agentOptions: { skills: false },
       })
 

@@ -761,6 +761,55 @@ class Agent(AgentBase, LocalAgent):
         """
         return self._concurrency.mode
 
+    def shutdown(self) -> None:
+        """Run the agent's shutdown procedures at end of life.
+
+        Safe to call more than once, and a no-op when there is nothing to release. Call it directly
+        when you own the agent's lifecycle (e.g. draining on a shutdown signal), or scope the agent
+        with ``with`` to run it automatically on exit. From async code use :meth:`shutdown_async` or
+        scope with ``async with``.
+        """
+        if self.memory_manager is None:
+            return
+        run_async(self.shutdown_async)
+
+    async def shutdown_async(self) -> None:
+        """Run the agent's shutdown procedures at end of life.
+
+        Asynchronous variant of :meth:`shutdown`. Safe to call more than once, and a no-op when
+        there is nothing to release.
+        """
+        if self.memory_manager is not None:
+            await self.memory_manager.flush()
+
+    def __enter__(self) -> "Agent":
+        """Enter a ``with`` scope, returning the agent unchanged.
+
+        Pairs with ``__exit__``, which runs :meth:`shutdown` when the scope exits.
+        """
+        return self
+
+    def __exit__(self, *_: Any) -> None:
+        """Run :meth:`shutdown` when leaving a ``with`` scope.
+
+        Runs on normal exit and when the block raises; any exception still propagates.
+        """
+        self.shutdown()
+
+    async def __aenter__(self) -> "Agent":
+        """Enter an ``async with`` scope, returning the agent unchanged.
+
+        Pairs with ``__aexit__``, which runs :meth:`shutdown_async` when the scope exits.
+        """
+        return self
+
+    async def __aexit__(self, *_: Any) -> None:
+        """Run :meth:`shutdown_async` when leaving an ``async with`` scope.
+
+        Runs on normal exit and when the block raises; any exception still propagates.
+        """
+        await self.shutdown_async()
+
     def __call__(
         self,
         prompt: AgentInput = None,

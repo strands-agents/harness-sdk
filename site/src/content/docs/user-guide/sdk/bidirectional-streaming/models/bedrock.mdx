@@ -112,7 +112,10 @@ boto_session = boto3.Session(
     region_name="your_region_name",
     profile_name="your_profile"  # Optional: Use a specific profile
 )
-model = BedrockNovaSonicModel(boto_session=boto_session)
+model = BedrockNovaSonicModel(
+    model_id="amazon.nova-2-sonic-v1:0",
+    boto_session=boto_session,
+)
 ```
 
 For more details on this approach, please refer to the [boto3 session docs](https://boto3.amazonaws.com/v1/documentation/api/latest/reference/core/session.html).

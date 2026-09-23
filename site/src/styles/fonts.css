@@ -14,6 +14,7 @@
   --strands-grey-400: #b6b6b6;
   --strands-grey-600: #999696;
   --strands-green-3: #02a435;
+  --strands-seafoam-green: #e6f6e7;
   --strands-safari-green: #0d3010;
   --strands-charcoal-1: #28292a;
   --strands-charcoal-2: #3d3c3c;
@@ -37,13 +38,34 @@
   --code-keyword: #b3009e; /* darker pink for a11y contrast on light bg */
   --divider: rgba(0, 0, 0, 0.15);
 
-  /* Starlight color tokens (light) — mirrors custom.css so standalone pages
-     that only import fonts.css (e.g. /community) resolve them too. */
+  /* --__sl-font is the internal var Starlight derives from --sl-font; pin both
+     so standalone pages match (Starlight only derives it on its own pages). */
+  --sl-font: 'Space Grotesk', system-ui, sans-serif;
+  --sl-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --__sl-font: 'Space Grotesk', system-ui, sans-serif;
+  --__sl-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  /* Starlight color tokens (light). */
   --sl-color-white: var(--strands-black);
   --sl-color-gray-1: var(--strands-charcoal-1);
   --sl-color-gray-2: var(--strands-charcoal-2);
   --sl-color-gray-3: #666464;
   --sl-color-gray-4: var(--strands-grey-600);
+  --sl-color-gray-5: var(--strands-grey-200);
+  --sl-color-gray-6: #f4f4f4;
+  --sl-color-gray-7: var(--strands-white);
+  --sl-color-black: var(--strands-white);
+  --sl-color-bg: var(--strands-white);
+  --sl-color-hairline-shade: #f4f4f4;
+  --sl-color-accent-low: var(--strands-seafoam-green);
+  --sl-color-accent: var(--strands-green-3);
+  --sl-color-accent-high: #007a3d;
+  --sl-color-link-hover: #007a3d;
+  --sl-color-text: var(--sl-color-gray-2);
+  /* green-3 (#02a435) is 3.3:1 on white — below AA; #007a3d is 5.45:1. */
+  --sl-color-text-accent: #007a3d;
+  --sl-color-text-invert: var(--sl-color-black);
+  --sl-color-backdrop-overlay: hsla(225, 9%, 36%, 0.66);
 
   /* Light-mode accent remaps. green-3 (#02a435) is only 3.29:1 on white — OK
      as large desktop text, but headings/eyebrows shrink below the large-text
@@ -106,13 +128,26 @@
   --code-keyword: #ff70eb;
   --divider: rgba(255, 255, 255, 0.2);
 
-  /* Starlight color tokens (dark) — mirrors custom.css so standalone pages
-     that only import fonts.css (e.g. /community) resolve them too. */
+  /* Starlight color tokens (dark). hairline-shade matches --sl-color-hairline
+     (gray-6) so the search dialog border and docs sidebar edge match. */
   --sl-color-white: var(--strands-white);
   --sl-color-gray-1: var(--strands-grey-200);
   --sl-color-gray-2: var(--strands-grey-400);
   --sl-color-gray-3: var(--strands-grey-600);
   --sl-color-gray-4: #6f6d6d;
+  --sl-color-gray-5: var(--strands-charcoal-2);
+  --sl-color-gray-6: var(--strands-charcoal-1);
+  --sl-color-black: var(--strands-black);
+  --sl-color-bg: var(--strands-black);
+  --sl-color-hairline-shade: var(--strands-charcoal-1);
+  --sl-color-accent-low: var(--strands-safari-green);
+  --sl-color-accent: var(--strands-green);
+  --sl-color-accent-high: var(--strands-green);
+  --sl-color-link-hover: var(--strands-green);
+  --sl-color-text: var(--sl-color-gray-2);
+  --sl-color-text-accent: var(--strands-green);
+  --sl-color-text-invert: var(--sl-color-accent-low);
+  --sl-color-backdrop-overlay: hsla(223, 13%, 10%, 0.66);
 
   /* Dark-mode values for the light remaps above. */
   --accent-green: var(--strands-green);
@@ -143,6 +178,34 @@
   --toggle-inactive-border: var(--strands-charcoal-1);
   --toggle-inactive-fg: var(--strands-grey-400);
   --toggle-hover-fg: var(--strands-white);
+}
+
+/* Starlight's Search component is reused on standalone pages, where its layout,
+   surface override, and sl-flex/md:sl-hidden utilities don't load. Reproduce
+   the dialog surface, frame layout, and mobile-only Cancel button here. */
+site-search dialog {
+  background-color: var(--sl-color-bg) !important;
+  border-color: var(--sl-color-hairline-shade) !important;
+}
+
+@media (min-width: 50rem) {
+  site-search dialog {
+    min-height: 0 !important;
+  }
+}
+
+site-search .dialog-frame {
+  display: flex;
+}
+
+site-search button[data-close-modal] {
+  display: flex;
+}
+
+@media (min-width: 50rem) {
+  site-search button[data-close-modal] {
+    display: none;
+  }
 }
 
 /* Mobile: the nav is shorter than the desktop 84px bar, so reserve less space

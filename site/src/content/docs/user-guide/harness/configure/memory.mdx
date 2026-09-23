@@ -102,18 +102,37 @@ Pass `False`/`null` (or set `memory` off) to disable memory entirely:
 ## Flush before a short run exits
 
 Extraction is background and turn-triggered, so a short run can end with its latest turns
-not yet written. Flush at your shutdown boundary to persist what is pending:
+not yet written. The simplest way to persist what is pending is to scope the agent so its
+shutdown runs when the block exits — on a normal return and on a thrown error alike:
 
 <Tabs>
   <Tab label="Python">
     ```python
-    if agent.memory_manager:
-        await agent.memory_manager.flush()
+    async with create_harness() as agent:
+        await agent.invoke_async(task)
+    # the agent's shutdown runs here as the scope exits, flushing pending memory
     ```
   </Tab>
   <Tab label="TypeScript">
     ```typescript
-    await agent.memoryManager?.flush()
+    await using agent = await createHarness()
+    await agent.invoke(task)
+    // the agent's shutdown runs here as the scope exits, flushing pending memory
+    ```
+  </Tab>
+</Tabs>
+
+If you manage the agent's lifetime yourself, run its shutdown at your shutdown boundary:
+
+<Tabs>
+  <Tab label="Python">
+    ```python
+    agent.shutdown()  # or `await agent.shutdown_async()` from async code
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    await agent.shutdown()
     ```
   </Tab>
 </Tabs>

@@ -52,6 +52,7 @@ from .configs import (
     GoogleGeminiLiveAudioConfig,
     GoogleGeminiLiveAudioStreamConfig,
     ModelConfig,
+    ModelUpdateConfig,
     _merge_config,
     _validate_audio_config,
     _validate_model_config,
@@ -101,11 +102,14 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
             **model_config: Model configuration.
 
         Raises:
-            ValueError: If the input sample rate is not positive.
+            ValueError: If any of the following conditions apply:
+
+                - Required model configuration fields are missing.
+                - ``model_id`` is not a non-empty string.
+                - The input sample rate is not positive.
         """
         _validate_model_config(model_config)
         self._config = ModelConfig(**model_config)
-        self._config.setdefault("model_id", "gemini-2.5-flash-native-audio-preview-09-2025")
         self._config["params"] = dict(self._config.get("params") or {})
 
         # Gemini caps a single connection at ~10 min; reconnect before that, resuming the same
@@ -127,13 +131,19 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         self._connection_id: str | None = None
 
     @override
-    def update_config(self, **model_config: Unpack[ModelConfig]) -> None:  # type: ignore[override]
+    def update_config(self, **model_config: Unpack[ModelUpdateConfig]) -> None:  # type: ignore[override]
         """Update the model configuration with the provided arguments.
 
         Args:
             **model_config: Configuration overrides.
+
+        Raises:
+            ValueError: If any of the following conditions apply:
+
+                - The resulting configuration is missing required fields.
+                - ``model_id`` is not a non-empty string.
         """
-        _validate_model_config(model_config)
+        _validate_model_config(self._config | model_config)
         self._config.update(model_config)
 
     @override
