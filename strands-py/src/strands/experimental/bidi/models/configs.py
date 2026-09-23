@@ -2,9 +2,9 @@
 
 import copy
 from collections.abc import Mapping
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal
 
-from typing_extensions import Required
+from typing_extensions import Required, TypedDict
 
 from ....models._validation import validate_config_keys
 from ..types.events import AudioChannel, AudioFormat
@@ -137,6 +137,14 @@ class ModelUpdateConfig(TypedDict, total=False):
 
 def _validate_model_config(config: Mapping[str, Any]) -> None:
     """Validate shared bidirectional model configuration."""
+    missing_keys = ModelConfig.__required_keys__ - config.keys()
+    if missing_keys:
+        raise ValueError(f"Missing required configuration parameters: {sorted(missing_keys)}.")
+
+    model_id = config["model_id"]
+    if not isinstance(model_id, str) or not model_id:
+        raise ValueError("model_id must be a non-empty string")
+
     validate_config_keys(config, ModelConfig)
     validate_config_keys(config.get("connection", {}), ConnectionConfig)
 

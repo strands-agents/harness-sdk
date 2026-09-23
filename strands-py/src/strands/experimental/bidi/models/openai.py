@@ -132,8 +132,13 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             **model_config: Model configuration.
 
         Raises:
-            ValueError: If the API key is missing, ``timeout_s`` exceeds the maximum,
-                or audio formats are unsupported.
+            ValueError: If any of the following conditions apply:
+
+                - Required model configuration fields are missing.
+                - ``model_id`` is not a non-empty string.
+                - The API key is missing.
+                - ``timeout_s`` exceeds the maximum.
+                - The configured audio formats are unsupported.
         """
         _validate_model_config(model_config)
         self._config = ModelConfig(**model_config)
@@ -184,9 +189,13 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             **model_config: Configuration overrides.
 
         Raises:
-            ValueError: If the configured audio formats are unsupported.
+            ValueError: If any of the following conditions apply:
+
+                - The resulting configuration is missing required fields.
+                - ``model_id`` is not a non-empty string.
+                - The configured audio formats are unsupported.
         """
-        _validate_model_config(model_config)
+        _validate_model_config(self._config | model_config)
         if "params" in model_config:
             self._resolve_audio_config(model_config["params"])
         self._config.update(model_config)

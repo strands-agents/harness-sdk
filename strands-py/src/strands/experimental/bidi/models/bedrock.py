@@ -224,8 +224,12 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             **model_config: Model configuration.
 
         Raises:
-            ValueError: If audio options or the resolved region are invalid, or both ``boto_session`` and
-                ``region`` are provided.
+            ValueError: If any of the following conditions apply:
+
+                - Required model configuration fields are missing.
+                - ``model_id`` is not a non-empty string.
+                - Audio options or the resolved region are invalid.
+                - Both ``boto_session`` and ``region`` are provided.
         """
         if boto_session is not None and region is not None:
             raise ValueError("Cannot specify both 'boto_session' and 'region'")
@@ -262,8 +266,14 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
 
         Args:
             **model_config: Configuration overrides.
+
+        Raises:
+            ValueError: If any of the following conditions apply:
+
+                - The resulting configuration is missing required fields.
+                - ``model_id`` is not a non-empty string.
         """
-        _validate_model_config(model_config)
+        _validate_model_config(self._config | model_config)
         self._config.update(model_config)
 
     @override

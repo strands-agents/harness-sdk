@@ -102,7 +102,11 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
             **model_config: Model configuration.
 
         Raises:
-            ValueError: If the input sample rate is not positive.
+            ValueError: If any of the following conditions apply:
+
+                - Required model configuration fields are missing.
+                - ``model_id`` is not a non-empty string.
+                - The input sample rate is not positive.
         """
         _validate_model_config(model_config)
         self._config = ModelConfig(**model_config)
@@ -132,8 +136,14 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
 
         Args:
             **model_config: Configuration overrides.
+
+        Raises:
+            ValueError: If any of the following conditions apply:
+
+                - The resulting configuration is missing required fields.
+                - ``model_id`` is not a non-empty string.
         """
-        _validate_model_config(model_config)
+        _validate_model_config(self._config | model_config)
         self._config.update(model_config)
 
     @override

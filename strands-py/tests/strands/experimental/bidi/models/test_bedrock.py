@@ -120,6 +120,30 @@ def test_get_config_returns_reference(boto_session):
     assert model.get_config() == exp_config
     assert model.get_config() is config
 
+    model.update_config()
+    assert model.get_config() == exp_config
+    assert model.get_config() is config
+
+
+@pytest.mark.parametrize("model_config", [{}, {"model_id": None}, {"model_id": ""}, {"model_id": 123}])
+def test__init__rejects_invalid_model_id(boto_session, model_config):
+    with pytest.raises(ValueError, match="model_id"):
+        BedrockNovaSonicModel(boto_session=boto_session, **model_config)
+
+
+@pytest.mark.parametrize("invalid_model_id", [None, "", 123])
+def test_update_config_rejects_invalid_model_id(boto_session, invalid_model_id):
+    model = BedrockNovaSonicModel(model_id="test-model", boto_session=boto_session)
+    config = model.get_config()
+    exp_config = dict(config)
+
+    with pytest.raises(ValueError, match="model_id must be a non-empty string"):
+        model.update_config(model_id=invalid_model_id, params={"temperature": 0.7}, connection={})
+
+    tru_config = model.get_config()
+    assert tru_config == exp_config
+    assert tru_config is config
+
 
 @pytest.mark.parametrize(
     ("model_config", "invalid_key"),

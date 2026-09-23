@@ -336,6 +336,29 @@ def test_update_config_replaces_connection(model, model_id, connection):
     assert tru_config == exp_config
     assert model.get_connection_config() == connection
 
+    model.update_config()
+    assert model.get_config() == exp_config
+    assert model.get_config() is tru_config
+
+
+@pytest.mark.parametrize("model_config", [{}, {"model_id": None}, {"model_id": ""}, {"model_id": 123}])
+def test__init__rejects_invalid_model_id(mock_genai_client, api_key, model_config):
+    with pytest.raises(ValueError, match="model_id"):
+        GoogleGeminiLiveModel(client_args={"api_key": api_key}, **model_config)
+
+
+@pytest.mark.parametrize("invalid_model_id", [None, "", 123])
+def test_update_config_rejects_invalid_model_id(model, invalid_model_id):
+    config = model.get_config()
+    exp_config = dict(config)
+
+    with pytest.raises(ValueError, match="model_id must be a non-empty string"):
+        model.update_config(model_id=invalid_model_id, params={"temperature": 0.7}, connection={})
+
+    tru_config = model.get_config()
+    assert tru_config == exp_config
+    assert tru_config is config
+
 
 @pytest.mark.parametrize(
     ("model_config", "invalid_key"),

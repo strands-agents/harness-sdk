@@ -112,6 +112,10 @@ def test_model_initialization(api_key, model_id, monkeypatch):
     assert model_default.get_config() == exp_config
     assert model_default.get_config() is tru_config
 
+    model_default.update_config()
+    assert model_default.get_config() == exp_config
+    assert model_default.get_config() is tru_config
+
     model_custom = OpenAIRealtimeModel(
         model_id=model_id,
         api_key=api_key,
@@ -133,6 +137,27 @@ def test_model_initialization(api_key, model_id, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "env-key")
     model_env = OpenAIRealtimeModel(model_id=model_id)
     assert model_env.api_key == "env-key"
+
+
+@pytest.mark.parametrize("model_config", [{}, {"model_id": None}, {"model_id": ""}, {"model_id": 123}])
+def test__init__rejects_invalid_model_id(api_key, model_config):
+    with pytest.raises(ValueError, match="model_id"):
+        OpenAIRealtimeModel(api_key=api_key, **model_config)
+
+
+@pytest.mark.parametrize("invalid_model_id", [None, "", 123])
+def test_update_config_rejects_invalid_model_id(model, invalid_model_id):
+    config = model.get_config()
+    exp_config = dict(config)
+    audio_config = model.get_audio_config()
+
+    with pytest.raises(ValueError, match="model_id must be a non-empty string"):
+        model.update_config(model_id=invalid_model_id, params={"max_output_tokens": 2048}, connection={})
+
+    tru_config = model.get_config()
+    assert tru_config == exp_config
+    assert tru_config is config
+    assert model.get_audio_config() is audio_config
 
 
 # Audio Configuration Tests
