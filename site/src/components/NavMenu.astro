@@ -8,6 +8,8 @@ type Category = {
   description: string;
   href?: string;
   external?: boolean;
+  /** Homepage card color key (--card-accent-* in fonts.css). */
+  accent?: string;
   pages?: PageLink[];
 };
 
@@ -17,15 +19,6 @@ export interface Props {
 }
 
 const { id, categories } = Astro.props;
-
-// Product entries wear their homepage card color (see --card-accent-* in fonts.css).
-const ACCENT_BY_TITLE: Record<string, string> = {
-  '/harness': 'orange',
-  '/harness-sdk': 'teal',
-  '/shell': 'yellow',
-  '/evals': 'pink',
-  '/labs': 'blue',
-};
 ---
 
 <div class="nav-menu" data-nav-menu={id} role="group" aria-label="Menu">
@@ -33,11 +26,10 @@ const ACCENT_BY_TITLE: Record<string, string> = {
     const href = cat.href || (cat.pages && cat.pages[0]?.href);
     const isExternal = cat.external || (cat.pages?.[0]?.external);
     const langAware = cat.pages?.[0]?.langAware;
-    const accent = ACCENT_BY_TITLE[cat.title];
     return href ? (
       <a
         class="nav-menu__cat"
-        data-accent={accent}
+        data-accent={cat.accent}
         href={href}
         {...(langAware ? { 'data-lang-href': '' } : {})}
         {...(isExternal && href.startsWith('http')
@@ -53,7 +45,7 @@ const ACCENT_BY_TITLE: Record<string, string> = {
         <span class="nav-menu__cat-desc">{cat.description}</span>
       </a>
     ) : (
-      <span class="nav-menu__cat" data-accent={accent}>
+      <span class="nav-menu__cat" data-accent={cat.accent}>
         <span class="nav-menu__cat-title">{cat.title}</span>
         <span class="nav-menu__cat-desc">{cat.description}</span>
       </span>

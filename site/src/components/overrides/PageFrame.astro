@@ -5,20 +5,15 @@
  * focused.
  */
 import MobileMenuToggle from 'virtual:starlight/components/MobileMenuToggle'
+import { currentProduct } from '../../util/current-product'
 
 const { hasSidebar } = Astro.locals.starlightRoute
 
-// Product accent for the docs chrome (styled in custom.css); prefixes mirror the navbar basePaths.
-const ACCENT_BY_PREFIX: Array<[string, string]> = [
-  ['/docs/user-guide/harness/', 'orange'],
-  ['/docs/user-guide/sdk/', 'teal'],
-  ['/docs/user-guide/migrate/', 'teal'],
-  ['/docs/api/', 'teal'],
-  ['/docs/user-guide/shell/', 'yellow'],
-  ['/docs/user-guide/evals-sdk/', 'pink'],
-  ['/docs/labs/', 'blue'],
-]
-const accent = ACCENT_BY_PREFIX.find(([prefix]) => Astro.url.pathname.includes(prefix))?.[1]
+// Product accent for the docs chrome (styled in custom.css). Labs is not a
+// product; the path check mirrors the /labs slug in Sidebar.astro.
+const accent =
+  currentProduct(Astro.url.pathname)?.accent ??
+  (Astro.url.pathname.includes('/docs/labs') ? 'blue' : undefined)
 ---
 
 <div class="page sl-flex" data-accent={accent}>
