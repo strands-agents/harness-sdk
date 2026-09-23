@@ -9,13 +9,6 @@
    src/components/SiteScripts.astro (included by Head.astro) rather than an
    @import here, which would chain a render-blocking fetch. */
 
-/* Match the homepage type system: JetBrains Mono for headings/UI, Space
-   Grotesk for body. Both families load globally via fonts.css. */
-:root {
-	--sl-font: 'Space Grotesk', system-ui, sans-serif;
-	--sl-font-mono: 'JetBrains Mono', ui-monospace, monospace;
-}
-
 /* Skip-to-content link. Starlight's SkipLink ships hide-until-focus styles in
    a component-scoped @layer; the custom PageFrame override drops that scoped
    style from the build, leaving the link permanently visible in the top-left.
@@ -46,20 +39,6 @@
 	box-shadow: var(--sl-shadow-lg);
 }
 
-/* Search modal: drop Starlight's gray card for a surface that matches the page,
-   and let the dialog hug its content so the empty state isn't a tall gray box.
-   !important overrides the component-scoped defaults. */
-site-search dialog {
-	background-color: var(--sl-color-bg) !important;
-	border-color: var(--sl-color-hairline-shade) !important;
-}
-
-@media (min-width: 50rem) {
-	site-search dialog {
-		min-height: 0 !important;
-	}
-}
-
 /* Docs headings use JetBrains Mono to echo the homepage section titles. */
 .sl-markdown-content :is(h1, h2, h3, h4, h5, h6),
 .content-panel h1 {
@@ -70,63 +49,16 @@ site-search dialog {
 	justify-content: center;
 }
 
-/* Dark mode is Starlight's default theme. */
+/* Brand palette and shared Starlight tokens live in fonts.css (loaded on every
+   page). Only docs-specific tokens and rules remain here. */
+
+/* Interaction tokens for custom docs controls (dark is the default theme). */
 :root {
-	/* Homepage palette */
-	--strands-black: #000000;
-	--strands-white: #ffffff;
-	--strands-green: #00cc60;
-	--strands-green-3: #02a435;
-	--strands-seafoam-green: #e6f6e7;
-	--strands-safari-green: #0d3010;
-	--strands-charcoal-1: #28292a;
-	--strands-charcoal-2: #3d3c3c;
-	--strands-grey-200: #d9d9d9;
-	--strands-grey-400: #b6b6b6;
-	--strands-grey-600: #999696;
-
-	/* Starlight dark-theme semantics */
-	--sl-color-accent-low: var(--strands-safari-green);
-	--sl-color-accent: var(--strands-green);
-	--sl-color-accent-high: var(--strands-green);
-	--sl-color-white: var(--strands-white);
-	--sl-color-gray-1: var(--strands-grey-200);
-	--sl-color-gray-2: var(--strands-grey-400);
-	--sl-color-gray-3: var(--strands-grey-600);
-	--sl-color-gray-4: #6f6d6d;
-	--sl-color-gray-5: var(--strands-charcoal-2);
-	--sl-color-gray-6: var(--strands-charcoal-1);
-	--sl-color-black: var(--strands-black);
-	--sl-color-link-hover: var(--strands-green);
-
-	/* Shared interaction tokens for custom docs controls. */
 	--docs-hover-bg: color-mix(in srgb, var(--strands-green) 8%, transparent);
 	--docs-active-fg: var(--strands-black);
 }
-
-/* Light mode: seafoam surfaces and the darker homepage green maintain contrast. */
 :root[data-theme='light'] {
-	--sl-color-accent-low: var(--strands-seafoam-green);
-	--sl-color-accent: var(--strands-green-3);
-	--sl-color-accent-high: #007a3d;
-	--sl-color-white: var(--strands-black);
-	--sl-color-gray-1: var(--strands-charcoal-1);
-	--sl-color-gray-2: var(--strands-charcoal-2);
-	--sl-color-gray-3: #666464;
-	--sl-color-gray-4: var(--strands-grey-600);
-	--sl-color-gray-5: var(--strands-grey-200);
-	--sl-color-gray-6: #f4f4f4;
-	--sl-color-gray-7: var(--strands-white);
-	--sl-color-black: var(--strands-white);
-	--sl-color-link-hover: #007a3d;
 	--docs-hover-bg: color-mix(in srgb, var(--strands-green-3) 10%, transparent);
-
-	/* Body/link text on white: --strands-green-3 (#02a435) is only 3.3:1 —
-	   below the WCAG AA 4.5:1 threshold for normal text. Starlight maps
-	   text-accent to --sl-color-accent in light mode; override it to the
-	   darker brand green (#007a3d, 5.45:1) so links, the "On this page" TOC,
-	   and generated API-table links pass AA. */
-	--sl-color-text-accent: #007a3d;
 }
 
 /* Link hover - green text color (uses same color in light & dark mode) */
@@ -154,13 +86,10 @@ a[aria-current="page"]:hover {
 
 /* Dark-mode sidebar: pure black to blend with the new homepage styling
    (Starlight defaults it to gray-6/charcoal). Light mode keeps its surface.
-   The hairline that separates the sidebar from the main content is #000 by
-   default in dark mode — invisible against a black sidebar. Match it to the
-   same hairline that divides the main content from the right-hand TOC
-   (--sl-color-hairline = charcoal) so both edges read as the same divider. */
+   The sidebar/content edge reads as a divider via --sl-color-hairline-shade,
+   set to charcoal in fonts.css. */
 :root[data-theme='dark'] {
 	--sl-color-bg-sidebar: var(--strands-black);
-	--sl-color-hairline-shade: var(--sl-color-hairline);
 	/* Nav-surface token defaults to charcoal (gray-6). Our chrome (header,
 	   sidebar, footer, page) is all pure black, so the leftover charcoal shows
 	   up on the mobile table-of-contents bar. Match it to black too. */
