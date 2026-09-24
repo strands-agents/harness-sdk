@@ -698,7 +698,8 @@ class _AgentLoop:
                         "metadata": {
                             "custom": {"bidi": BidiTranscriptMetadata(kind="transcript", status="incomplete")}
                         },
-                    }
+                    },
+                    strict=False,
                 )
             if response_span:
                 stop_reason = "error" if model_error else "incomplete"

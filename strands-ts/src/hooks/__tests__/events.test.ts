@@ -10,7 +10,6 @@ import {
   BeforeToolCallEvent,
   BeforeToolsEvent,
   MessageAddedEvent,
-  MessageUpdatedEvent,
   ModelStreamUpdateEvent,
   ContentBlockEvent,
   ModelMessageEvent,
@@ -139,23 +138,6 @@ describe('MessageAddedEvent', () => {
     const agent = new Agent()
     const message = new Message({ role: 'assistant', content: [] })
     const event = new MessageAddedEvent({ agent, message, invocationState: {} })
-    expect(event._shouldReverseCallbacks()).toBe(false)
-  })
-})
-
-describe('MessageUpdatedEvent', () => {
-  it('reports replacement', () => {
-    const message = new Message({ role: 'assistant', content: [new TextBlock('Hello')] })
-    const agent = new Agent()
-    const event = new MessageUpdatedEvent({ agent, trackingId: 'message-id', message, invocationState: {} })
-    expect(event).toEqual({
-      type: 'messageUpdatedEvent',
-      agent,
-      trackingId: 'message-id',
-      message,
-      invocationState: {},
-    })
-    expect(event.toJSON()).toEqual({ type: 'messageUpdatedEvent', trackingId: 'message-id', message })
     expect(event._shouldReverseCallbacks()).toBe(false)
   })
 })

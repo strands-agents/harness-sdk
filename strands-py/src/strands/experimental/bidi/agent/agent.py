@@ -502,13 +502,17 @@ class BidiAgent(LocalAgent):
                 self.messages.append(message)
                 await self.hooks.invoke_callbacks_async(MessageAddedEvent[LocalAgent](agent=self, message=message))
 
-    async def _update_message(self, message: Message) -> None:
+    async def _update_message(self, message: Message, *, strict: bool = True) -> None:
         """Replace a message by its tracking ID and notify hooks.
 
         Search newest messages first.
 
+        Args:
+            message: Replacement message carrying the original tracking ID.
+            strict: Raise if the message is missing. Otherwise, log a warning.
+
         Raises:
-            RuntimeError: If the message is no longer in history.
+            RuntimeError: If the message is missing and strict is True.
         """
         tracking_id = message["tracking_id"]
         async with self._message_lock:
@@ -518,5 +522,8 @@ class BidiAgent(LocalAgent):
                 self.messages[index] = message
                 break
             else:
-                raise RuntimeError(f"tracking_id=<{tracking_id}> | message not found in history")
+                if strict:
+                    raise RuntimeError(f"tracking_id=<{tracking_id}> | message not found in history")
+                logger.warning("tracking_id=<%s> | message not found in history", tracking_id)
+                return
         await self.hooks.invoke_callbacks_async(MessageUpdatedEvent[LocalAgent](self, tracking_id, message))

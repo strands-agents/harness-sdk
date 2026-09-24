@@ -3,6 +3,7 @@
 import asyncio
 import sys
 import unittest.mock
+from contextlib import nullcontext
 from uuid import uuid4
 
 import pytest
@@ -616,7 +617,8 @@ async def test_update_message_finds_copied_message_after_history_edit(agent):
 
 
 @pytest.mark.asyncio
-async def test_update_message_raises_when_message_removed(agent):
+@pytest.mark.parametrize("strict", [False, True])
+async def test_update_message_when_message_removed(agent, caplog, strict):
     hooks = MockHookProvider([MessageUpdatedEvent])
     agent.hooks.add_hook(hooks)
     first = {"role": "user", "content": [{"text": "Earlier"}]}
@@ -625,9 +627,13 @@ async def test_update_message_raises_when_message_removed(agent):
     tracking_id = reserved["tracking_id"]
     agent.messages.remove(reserved)
 
-    with pytest.raises(RuntimeError) as exc_info:
-        await agent._update_message({**reserved, "content": [{"text": "Answer"}]})
+    with pytest.raises(RuntimeError) if strict else nullcontext() as exc_info:
+        await agent._update_message({**reserved, "content": [{"text": "Answer"}]}, strict=strict)
 
-    assert str(exc_info.value) == f"tracking_id=<{tracking_id}> | message not found in history"
+    exp_message = f"tracking_id=<{tracking_id}> | message not found in history"
+    if strict:
+        assert str(exc_info.value) == exp_message
+    else:
+        assert caplog.messages == [exp_message]
     assert agent.messages == [first]
     assert hooks.events_received == []

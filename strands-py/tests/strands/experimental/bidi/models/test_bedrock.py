@@ -15,6 +15,7 @@ import asyncio
 import base64
 import concurrent.futures
 import json
+from dataclasses import asdict
 from unittest.mock import ANY, AsyncMock, Mock, patch
 
 import pytest
@@ -32,6 +33,7 @@ from strands.experimental.bidi.models.bedrock import (
     _BedrockAWSCRTHTTPClient,
     _BedrockAWSCRTHTTPResponse,
     _ResponseState,
+    _Transcript,
 )
 from strands.experimental.bidi.types import (
     AudioDelta,
@@ -609,7 +611,7 @@ def test_response_boundaries_across_content_blocks(nova_model, user_transcript):
 
 
 def test_accumulates_speculative_assistant_transcript_blocks(nova_model):
-    response_state = _ResponseState(role="assistant", response_id="r1", content_id="t1")
+    response_state = _ResponseState(response_id="r1", transcript=_Transcript("t1", "assistant"))
     tru_events = []
     for content_id, text, stop_reason in [
         ("first", "Dragons appear in myths worldwide.", "PARTIAL_TURN"),
@@ -648,16 +650,16 @@ def test_accumulates_speculative_assistant_transcript_blocks(nova_model):
     assert response_state == _ResponseState()
 
 
-def test_barge_in_closes_response_before_next_turn(nova_model):
-    state = _ResponseState(response_id="r1", role="assistant", generation_stage="FINAL")
-    state.transcript = "Partial answer."
-    state.content_id = "t1"
-    content_id = state.content_id
+@pytest.mark.parametrize("role", ["user", "assistant"])
+def test_barge_in_closes_response_before_next_turn(nova_model, role):
+    state = _ResponseState(
+        response_id="r1", generation_stage="FINAL", transcript=_Transcript("t1", role, "Partial answer.")
+    )
 
     tru_events = nova_model._convert_nova_event({"contentEnd": {"type": "TEXT", "stopReason": "INTERRUPTED"}}, state)
     exp_events = [
         BidiBargeInEvent("user_speech"),
-        BidiTranscriptStopEvent("Partial answer.", "assistant", content_id),
+        BidiTranscriptStopEvent("Partial answer.", role, "t1"),
         BidiResponseStopEvent("r1", "barge_in"),
     ]
     assert tru_events == exp_events
@@ -676,7 +678,7 @@ def test_barge_in_closes_response_before_next_turn(nova_model):
     )
     exp_events = [
         BidiResponseStartEvent(state.response_id),
-        BidiTranscriptStartEvent("assistant", state.content_id),
+        BidiTranscriptStartEvent("assistant", "next-speculative"),
     ]
     assert tru_events == exp_events
     assert state.response_id != "r1"
@@ -688,7 +690,7 @@ def test_barge_in_closes_response_before_next_turn(nova_model):
     ids=["no-final-text", "one-final-chunk", "multiple-final-chunks"],
 )
 def test_response_after_barge_in_finishes_before_next_user_transcript(nova_model, final_fragments):
-    response_state = _ResponseState(response_id="r1", role="assistant", content_id="t1", transcript="Planned answer.")
+    response_state = _ResponseState(response_id="r1", transcript=_Transcript("t1", "assistant", "Planned answer."))
     native_events = []
     if final_fragments:
         native_events.extend(
@@ -812,12 +814,10 @@ def test_user_content_without_transcript_text_completes(nova_model):
 @pytest.mark.parametrize("role", [None, "user", "assistant"])
 def test_final_assistant_blocks_do_not_change_pending_transcript(nova_model, role):
     response_state = _ResponseState(
-        role=role,
-        transcript="Pending text." if role else "",
-        content_id="pending" if role else None,
+        transcript=_Transcript("pending", role, "Pending text.") if role else None,
         response_id="r1" if role else None,
     )
-    exp_state = vars(response_state).copy()
+    exp_state = asdict(response_state)
     tru_events = []
     for content_id, stop_reason in [("early-final", "END_TURN"), ("late-final", "PARTIAL_TURN")]:
         native_events = [
@@ -838,7 +838,7 @@ def test_final_assistant_blocks_do_not_change_pending_transcript(nova_model, rol
             for event in nova_model._convert_nova_event(native_event, response_state)
         )
     assert tru_events == []
-    assert vars(response_state) == exp_state
+    assert asdict(response_state) == exp_state
 
 
 def test_completes_accumulated_user_transcript_before_assistant_audio(nova_model):
@@ -1198,7 +1198,7 @@ async def test_event_conversion(nova_model):
 
     # Text chunks become deltas for the transcript opened by contentStart.
     nova_event = {"textOutput": {"content": "Hello, world!", "role": "ASSISTANT"}}
-    tru_events = nova_model._convert_nova_event(nova_event, _ResponseState(content_id="t1"))
+    tru_events = nova_model._convert_nova_event(nova_event, _ResponseState(transcript=_Transcript("t1", "assistant")))
     exp_events = [
         BidiTranscriptDeltaEvent("Hello, world!", "assistant", content_id="t1"),
     ]

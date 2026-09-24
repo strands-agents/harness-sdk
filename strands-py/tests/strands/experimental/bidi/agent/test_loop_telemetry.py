@@ -32,6 +32,7 @@ from strands.experimental.bidi.types import (
     BidiConnectionStopEvent,
     BidiResponseStartEvent,
     BidiResponseStopEvent,
+    BidiTranscriptStartEvent,
     BidiUsageEvent,
 )
 from strands.telemetry.tracer import Tracer
@@ -435,22 +436,29 @@ async def test_usage_accumulation(loop, agent, agenerator, otel_setup):
 
 
 @pytest.mark.asyncio
-async def test_response_span_closed_on_model_error(loop, agent, otel_setup):
-    """Open response spans close with error status when model raises."""
+@pytest.mark.parametrize("remove_message", [False, True])
+async def test_response_span_closed_on_model_error(loop, agent, otel_setup, remove_message):
+    """Transcript cleanup preserves model errors and closes response spans."""
+    model_error = RuntimeError("model crashed")
 
     async def failing_receive():
         yield BidiResponseStartEvent(response_id="resp-err")
-        raise RuntimeError("model crashed")
+        yield BidiTranscriptStartEvent("user", "user-transcript")
+        if remove_message:
+            agent.messages.pop(0)
+        raise model_error
 
     agent.model.receive = unittest.mock.Mock(return_value=failing_receive())
 
     await loop.start()
-
-    with pytest.raises(RuntimeError, match="model crashed"):
-        async for _ in loop.receive():
-            pass
-
-    await loop.stop()
+    try:
+        with pytest.raises(RuntimeError, match="model crashed") as exc_info:
+            async for _ in loop.receive():
+                pass
+        assert exc_info.value is model_error
+        await loop._model_task
+    finally:
+        await loop.stop()
 
     spans = otel_setup.get_finished_spans()
     response_spans = [s for s in spans if "bidi_response" in s.name]
