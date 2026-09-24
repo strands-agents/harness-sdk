@@ -1,10 +1,10 @@
 ---
 /**
- * PageFrame override — adds a full-width site footer with copyright below the main content.
- * All other markup and styles are identical to Starlight's default PageFrame.
+ * PageFrame override — matches Starlight's default PageFrame. The homepage
+ * carries the full site footer; docs pages omit it to keep the reading view
+ * focused.
  */
 import MobileMenuToggle from 'virtual:starlight/components/MobileMenuToggle'
-import Copyright from '../Copyright.astro'
 
 const { hasSidebar } = Astro.locals.starlightRoute
 ---
@@ -22,9 +22,6 @@ const { hasSidebar } = Astro.locals.starlightRoute
     </nav>
   )}
   <div class="main-frame"><slot /></div>
-  <footer class="site-footer print:hidden">
-    <Copyright />
-  </footer>
 </div>
 
 <style>
@@ -73,7 +70,7 @@ const { hasSidebar } = Astro.locals.starlightRoute
       min-height: max-content;
       padding: 1rem var(--sl-sidebar-pad-x) 0;
       flex-direction: column;
-      gap: 1rem;
+      gap: 0;
     }
 
     @media (min-width: 50rem) {
@@ -99,15 +96,6 @@ const { hasSidebar } = Astro.locals.starlightRoute
         background-color: var(--sl-color-bg-sidebar);
         border-inline-end: 1px solid var(--sl-color-hairline-shade);
       }
-    }
-
-    .site-footer {
-      padding-block: 1.25rem;
-      padding-inline-end: var(--sl-nav-pad-x);
-      border-top: 1px solid var(--sl-color-hairline-shade);
-      background-color: var(--sl-color-bg-nav);
-      text-align: left;
-      padding-inline-start: calc(var(--sl-content-inline-start, 0em) + var(--sl-nav-pad-x));
     }
   }
 </style>

@@ -19,13 +19,13 @@ describe('urlToContentPaths', () => {
   })
 
   it('omits the prefix when built from the repo root (empty gitPrefix)', () => {
-    expect(urlToContentPaths('/changelog/harness/python-v1.43.0/', 'src/content', '')).toEqual([
-      'src/content/changelog/harness/python-v1.43.0.mdx',
-      'src/content/changelog/harness/python-v1.43.0.md',
-      'src/content/changelog/harness/python-v1.43.0/index.mdx',
-      'src/content/changelog/harness/python-v1.43.0/index.md',
-      'src/content/changelog/harness/python-v1.43.0/README.mdx',
-      'src/content/changelog/harness/python-v1.43.0/README.md',
+    expect(urlToContentPaths('/changelog/sdk/python-v1.43.0/', 'src/content', '')).toEqual([
+      'src/content/changelog/sdk/python-v1.43.0.mdx',
+      'src/content/changelog/sdk/python-v1.43.0.md',
+      'src/content/changelog/sdk/python-v1.43.0/index.mdx',
+      'src/content/changelog/sdk/python-v1.43.0/index.md',
+      'src/content/changelog/sdk/python-v1.43.0/README.mdx',
+      'src/content/changelog/sdk/python-v1.43.0/README.md',
     ])
   })
 

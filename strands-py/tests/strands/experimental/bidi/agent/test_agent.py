@@ -284,19 +284,21 @@ def test_bidi_agent_session_id_delegates_to_session_manager(mock_model):
 
 
 @pytest.mark.skipif(sys.version_info < (3, 12), reason="BedrockNovaSonicModel is only supported for Python 3.12+")
-def test_bidi_agent_init_with_default_model():
+@pytest.mark.parametrize("options", [{}, {"model": None}])
+def test_bidi_agent_init_with_default_model(options):
     from strands.experimental.bidi.models import BedrockNovaSonicModel
 
-    agent = BidiAgent(model=None)
+    agent = BidiAgent(**options)
 
     assert isinstance(agent.model, BedrockNovaSonicModel)
+    assert agent.model.model_id == "amazon.nova-2-sonic-v1:0"
 
 
 @pytest.mark.skipif(sys.version_info < (3, 12), reason="BedrockNovaSonicModel is only supported for Python 3.12+")
 def test_bidi_agent_init_with_model_id():
     from strands.experimental.bidi.models import BedrockNovaSonicModel
 
-    model_id = "amazon.nova-sonic-v1:0"
+    model_id = "custom-model"
     agent = BidiAgent(model=model_id)
 
     assert isinstance(agent.model, BedrockNovaSonicModel)

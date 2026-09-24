@@ -1,0 +1,109 @@
+---
+title: Web access
+description: "Strands harness's default web tools: web_fetch reads a URL and answers over it with a small summarizer, and web_search turns on the provider's native search."
+sourceLinks:
+  - path: harness-py/src/strands_harness/tools/web_fetch.py
+  - path: harness-py/src/strands_harness/models.py
+  - path: harness-ts/src/tools/web-fetch.ts
+sidebar:
+  label: "Web access"
+---
+
+Two default capabilities put the web within the agent's reach: `web_fetch` reads a
+specific page, and `web_search` looks things up. Both are on by default.
+
+## web_fetch
+
+`web_fetch` performs an HTTP GET on a URL, reduces the response to text (stripping HTML to
+plain content, capped so a huge page does not overwhelm the model), and asks a small, fast
+summarizer model to answer your prompt over that content. It returns the answer, not the
+raw page, so a long article never floods the conversation. Fetched content is cached for
+15 minutes, so repeated fetches of the same URL are fast while each prompt is answered
+fresh.
+
+The tool takes a `url` and an optional `prompt`. With a prompt, the summarizer answers over
+the page; leave the prompt empty and it returns the page text verbatim instead. Only
+`http` and `https` URLs are allowed.
+
+### The summarizer model
+
+By default the summarizer runs on the small, fast model for the main agent's provider, so
+its credentials line up with the main model (on Amazon Bedrock, the summarizer follows the
+main model's family, Anthropic-on-Bedrock or OpenAI-on-Bedrock). Override it with
+`builtin_tools={"web_fetch": {"model": ...}}`, which takes the same forms as `model`:
+
+<Tabs>
+  <Tab label="Strands harness">
+    <Tabs>
+      <Tab label="Python">
+        ```python
+        from strands_harness import create_harness
+
+        agent = create_harness(builtin_tools={"web_fetch": {"model": "bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0"}})
+        ```
+      </Tab>
+      <Tab label="TypeScript">
+        ```typescript
+        import { createHarness } from '@strands-agents/harness'
+
+        const agent = await createHarness({
+          builtinTools: { web_fetch: { model: 'bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0' } },
+        })
+        ```
+      </Tab>
+    </Tabs>
+  </Tab>
+  <Tab label="SDK">
+    <Tabs>
+      <Tab label="Python">
+        ```python
+        # pip install strands-agents
+        from strands import Agent
+        from strands.vended_tools import web_fetch
+
+        # No summarizer-model override in the Strands Harness SDK; web_fetch returns page text
+        agent = Agent(tools=[web_fetch])
+        ```
+      </Tab>
+      <Tab label="TypeScript">
+        ```typescript
+        // npm install @strands-agents/sdk
+        import { Agent } from '@strands-agents/sdk'
+        import { httpRequest } from '@strands-agents/sdk/vended-tools/http-request'
+
+        // No web_fetch or summarizer model; httpRequest returns raw HTTP
+        const agent = new Agent({ tools: [httpRequest] })
+        ```
+      </Tab>
+    </Tabs>
+  </Tab>
+</Tabs>
+
+## web_search
+
+Where the model provider has its own search, `web_search` is a switch, not a tool object. It
+turns on the model provider's own native web search so the agent can look things up
+mid-answer. Native search exists on OpenAI, Anthropic (Python library), Google, and the GPT-5
+and GPT-6 models on `bedrock-mantle`, so `web_search` takes effect there.
+
+On providers without native search (Amazon Bedrock Converse, other `bedrock-mantle` models, and
+`Model` instances), `web_search` is a no-op when it is on only by default: Strands harness logs a
+warning and builds the agent without it. Requesting it explicitly on such a provider (by
+listing `web_search` in your own `builtin_tools`) fails at construction instead, so a
+deliberate request never silently does nothing.
+
+To search on those providers anyway, set `{"web_search": "exa"}` in `builtin_tools`. The
+harness then builds a `web_search` tool backed by [Exa](https://exa.ai)'s hosted search instead
+of relying on the provider. The setting is honoured on every model, so it also replaces native
+search where the provider has one. It needs no setup: the keyless free tier covers getting started.
+Exa is a third party, so every query the agent makes is sent to Exa and handled under its
+terms; weigh that before turning it on for sensitive work. Set `EXA_API_KEY` in the
+environment to lift the free tier's rate limit.
+
+## Selecting them
+
+Both are selected by name through `builtin_tools`. Drop `web_fetch` or `web_search` from
+the list to turn either off; see
+[add tools and instructions](../../configure/tools-and-instructions/) for
+how selection works. To change the summarizer model, see
+[choose a model and reasoning](../../configure/model/).

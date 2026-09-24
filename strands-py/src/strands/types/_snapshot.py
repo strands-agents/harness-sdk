@@ -17,7 +17,8 @@ SnapshotField = Literal[
     "model_state",
 ]
 SnapshotPreset = Literal["session"]
-Scope = Literal["agent"]
+# Persisted scope values match the shared TypeScript on-disk format.
+Scope = Literal["agent", "multiAgent"]
 
 ALL_SNAPSHOT_FIELDS: tuple[SnapshotField, ...] = (
     "messages",
@@ -28,7 +29,7 @@ ALL_SNAPSHOT_FIELDS: tuple[SnapshotField, ...] = (
     "model_state",
 )
 
-VALID_SCOPES: tuple[Scope, ...] = ("agent",)
+VALID_SCOPES: tuple[Scope, ...] = ("agent", "multiAgent")
 
 SNAPSHOT_SCHEMA_VERSION = "1.0"
 

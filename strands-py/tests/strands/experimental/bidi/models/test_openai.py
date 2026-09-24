@@ -17,7 +17,7 @@ import unittest.mock
 import pytest
 
 from strands.experimental.bidi import BidiAgent
-from strands.experimental.bidi.models import BidiModelTimeoutError, OpenAIRealtimeModel
+from strands.experimental.bidi.models import ConnectionTimeoutError, OpenAIRealtimeModel
 from strands.experimental.bidi.models.openai import (
     _RESTART_INSTRUCTION,
     OPENAI_MAX_TIMEOUT_S,
@@ -63,8 +63,8 @@ def mock_websockets_connect(mock_websocket):
 
 
 @pytest.fixture
-def model_name():
-    return "gpt-realtime"
+def model_id():
+    return "gpt-realtime-2.1"
 
 
 @pytest.fixture
@@ -73,9 +73,9 @@ def api_key():
 
 
 @pytest.fixture
-def model(mock_websockets_connect, api_key, model_name):
+def model(mock_websockets_connect, api_key, model_id):
     """Create an OpenAIRealtimeModel instance."""
-    return OpenAIRealtimeModel(transcription_model_id="gpt-4o-transcribe", model_id=model_name, api_key=api_key)
+    return OpenAIRealtimeModel(transcription_model_id="gpt-4o-transcribe", model_id=model_id, api_key=api_key)
 
 
 @pytest.fixture
@@ -98,7 +98,7 @@ def messages():
 
 
 @pytest.mark.asyncio
-async def test_receive_preserves_native_order_with_late_transcription(model, mock_websocket, model_name):
+async def test_receive_preserves_native_order_with_late_transcription(model, mock_websocket, model_id):
     native_events = [
         {"type": "input_audio_buffer.committed", "item_id": "user-1"},
         {"type": "response.created", "response": {"id": "r1"}},
@@ -121,7 +121,7 @@ async def test_receive_preserves_native_order_with_late_transcription(model, moc
     ]
     mock_websocket.recv.side_effect = [json.dumps(event) for event in native_events]
     exp_events = [
-        BidiConnectionStartEvent(connection_id=unittest.mock.ANY, model=model_name),
+        BidiConnectionStartEvent(connection_id=unittest.mock.ANY, model=model_id),
         BidiTranscriptStartEvent("user", content_id="user-1"),
         BidiResponseStartEvent("r1"),
         BidiResponseStopEvent("r1", "interrupt"),
@@ -147,14 +147,16 @@ async def test_receive_preserves_native_order_with_late_transcription(model, moc
 # Initialization Tests
 
 
-def test_model_initialization(api_key, model_name, monkeypatch):
+def test_model_initialization(api_key, model_id, monkeypatch):
     """Test model initialization with various configurations."""
-    model_default = OpenAIRealtimeModel(transcription_model_id="gpt-4o-transcribe", api_key="test-key")
-    assert model_default.model_id == "gpt-realtime"
+    model_default = OpenAIRealtimeModel(
+        model_id=model_id, transcription_model_id="gpt-4o-transcribe", api_key="test-key"
+    )
+    assert model_default.model_id == model_id
     assert model_default.api_key == "test-key"
     tru_config = model_default.get_config()
     exp_config = {
-        "model_id": "gpt-realtime",
+        "model_id": model_id,
         "params": {},
         "connection": {"restart_after_s": OPENAI_MAX_TIMEOUT_S - OPENAI_PROACTIVE_RECONNECT_MARGIN_S},
     }
@@ -164,28 +166,53 @@ def test_model_initialization(api_key, model_name, monkeypatch):
     assert model_default.get_config() == exp_config
     assert model_default.get_config() is tru_config
 
+    model_default.update_config()
+    assert model_default.get_config() == exp_config
+    assert model_default.get_config() is tru_config
+
     model_custom = OpenAIRealtimeModel(
         transcription_model_id="gpt-4o-transcribe",
-        model_id=model_name,
+        model_id=model_id,
         api_key=api_key,
         organization="org-explicit",
         project="proj-explicit",
     )
-    assert model_custom.model_id == model_name
+    assert model_custom.model_id == model_id
     assert model_custom.api_key == api_key
     assert model_custom.organization == "org-explicit"
     assert model_custom.project == "proj-explicit"
 
     monkeypatch.setenv("OPENAI_ORGANIZATION", "org-123")
     monkeypatch.setenv("OPENAI_PROJECT", "proj-456")
-    model_env = OpenAIRealtimeModel(transcription_model_id="gpt-4o-transcribe", model_id=model_name, api_key=api_key)
+    model_env = OpenAIRealtimeModel(transcription_model_id="gpt-4o-transcribe", model_id=model_id, api_key=api_key)
     assert model_env.organization == "org-123"
     assert model_env.project == "proj-456"
 
     # Test with env API key
     monkeypatch.setenv("OPENAI_API_KEY", "env-key")
-    model_env = OpenAIRealtimeModel(transcription_model_id="gpt-4o-transcribe")
+    model_env = OpenAIRealtimeModel(model_id=model_id, transcription_model_id="gpt-4o-transcribe")
     assert model_env.api_key == "env-key"
+
+
+@pytest.mark.parametrize("model_config", [{}, {"model_id": None}, {"model_id": ""}, {"model_id": 123}])
+def test__init__rejects_invalid_model_id(api_key, model_config):
+    with pytest.raises(ValueError, match="model_id"):
+        OpenAIRealtimeModel(transcription_model_id="gpt-4o-transcribe", api_key=api_key, **model_config)
+
+
+@pytest.mark.parametrize("invalid_model_id", [None, "", 123])
+def test_update_config_rejects_invalid_model_id(model, invalid_model_id):
+    config = model.get_config()
+    exp_config = dict(config)
+    audio_config = model.get_audio_config()
+
+    with pytest.raises(ValueError, match="model_id must be a non-empty string"):
+        model.update_config(model_id=invalid_model_id, params={"max_output_tokens": 2048}, connection={})
+
+    tru_config = model.get_config()
+    assert tru_config == exp_config
+    assert tru_config is config
+    assert model.get_audio_config() is audio_config
 
 
 # Audio Configuration Tests
@@ -198,8 +225,10 @@ def test_model_initialization(api_key, model_name, monkeypatch):
         pytest.param({"voice": "echo"}, "echo", id="custom-voice"),
     ],
 )
-def test_get_audio_config(api_key, options, voice):
-    model = OpenAIRealtimeModel(transcription_model_id="gpt-4o-transcribe", api_key=api_key, **options)
+def test_get_audio_config(model_id, api_key, options, voice):
+    model = OpenAIRealtimeModel(
+        model_id=model_id, transcription_model_id="gpt-4o-transcribe", api_key=api_key, **options
+    )
 
     tru_config = model.get_audio_config()
     exp_config = {
@@ -225,9 +254,10 @@ def test_get_audio_config(api_key, options, voice):
         {"type": "audio/mp3"},
     ],
 )
-def test__init__rejects_unsupported_audio_format(api_key, direction, audio_format):
+def test__init__rejects_unsupported_audio_format(model_id, api_key, direction, audio_format):
     with pytest.raises(ValueError, match="Unsupported"):
         OpenAIRealtimeModel(
+            model_id=model_id,
             transcription_model_id="gpt-4o-transcribe",
             api_key=api_key,
             params={"audio": {direction: {"format": audio_format}}},
@@ -242,9 +272,12 @@ def test__init__rejects_unsupported_audio_format(api_key, direction, audio_forma
         {"rate": 16000},
     ],
 )
-def test_update_config_rejects_unsupported_audio_format(api_key, direction, audio_format):
+def test_update_config_rejects_unsupported_audio_format(model_id, api_key, direction, audio_format):
     model = OpenAIRealtimeModel(
-        transcription_model_id="gpt-4o-transcribe", api_key=api_key, params={"max_output_tokens": 2048}
+        model_id=model_id,
+        transcription_model_id="gpt-4o-transcribe",
+        api_key=api_key,
+        params={"max_output_tokens": 2048},
     )
     audio_config = model.get_audio_config()
 
@@ -253,7 +286,7 @@ def test_update_config_rejects_unsupported_audio_format(api_key, direction, audi
 
     tru_config = model.get_config()
     exp_config = {
-        "model_id": "gpt-realtime",
+        "model_id": "gpt-realtime-2.1",
         "params": {"max_output_tokens": 2048},
         "connection": {"restart_after_s": OPENAI_MAX_TIMEOUT_S - OPENAI_PROACTIVE_RECONNECT_MARGIN_S},
     }
@@ -261,11 +294,11 @@ def test_update_config_rejects_unsupported_audio_format(api_key, direction, audi
     assert model.get_audio_config() is audio_config
 
 
-def test_init_without_api_key_raises(monkeypatch):
+def test_init_without_api_key_raises(model_id, monkeypatch):
     """Test that initialization without API key raises error."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     with pytest.raises(ValueError, match="OpenAI API key is required"):
-        OpenAIRealtimeModel(transcription_model_id="gpt-4o-transcribe")
+        OpenAIRealtimeModel(model_id=model_id, transcription_model_id="gpt-4o-transcribe")
 
 
 # Connection Tests
@@ -312,12 +345,12 @@ async def test_connection_lifecycle(mock_websockets_connect, model, system_promp
 
 
 @pytest.mark.asyncio
-async def test_connection_with_org_header(mock_websockets_connect, monkeypatch):
+async def test_connection_with_org_header(model_id, mock_websockets_connect, monkeypatch):
     """Test connection with organization header from environment."""
     mock_connect, mock_ws = mock_websockets_connect
 
     monkeypatch.setenv("OPENAI_ORGANIZATION", "org-123")
-    model_org = OpenAIRealtimeModel(transcription_model_id="gpt-4o-transcribe", api_key="test-key")
+    model_org = OpenAIRealtimeModel(model_id=model_id, transcription_model_id="gpt-4o-transcribe", api_key="test-key")
     await model_org.start()
     call_kwargs = mock_connect.call_args.kwargs
     headers = call_kwargs.get("additional_headers", [])
@@ -392,12 +425,12 @@ async def test_connection_with_message_history(mock_websockets_connect, model):
 
 
 @pytest.mark.asyncio
-async def test_connection_edge_cases(mock_websockets_connect, api_key, model_name):
+async def test_connection_edge_cases(mock_websockets_connect, api_key, model_id):
     """Test connection error handling and edge cases."""
     mock_connect, mock_ws = mock_websockets_connect
 
     # Test connection error
-    model1 = OpenAIRealtimeModel(transcription_model_id="gpt-4o-transcribe", model_id=model_name, api_key=api_key)
+    model1 = OpenAIRealtimeModel(transcription_model_id="gpt-4o-transcribe", model_id=model_id, api_key=api_key)
     mock_connect.side_effect = Exception("Connection failed")
     with pytest.raises(Exception, match="Connection failed"):
         await model1.start()
@@ -409,18 +442,18 @@ async def test_connection_edge_cases(mock_websockets_connect, api_key, model_nam
     mock_connect.side_effect = async_connect
 
     # Test double connection
-    model2 = OpenAIRealtimeModel(transcription_model_id="gpt-4o-transcribe", model_id=model_name, api_key=api_key)
+    model2 = OpenAIRealtimeModel(transcription_model_id="gpt-4o-transcribe", model_id=model_id, api_key=api_key)
     await model2.start()
     with pytest.raises(RuntimeError, match=r"call stop before starting again"):
         await model2.start()
     await model2.stop()
 
     # Test close when not connected
-    model3 = OpenAIRealtimeModel(transcription_model_id="gpt-4o-transcribe", model_id=model_name, api_key=api_key)
+    model3 = OpenAIRealtimeModel(transcription_model_id="gpt-4o-transcribe", model_id=model_id, api_key=api_key)
     await model3.stop()  # Should not raise
 
     # Test close error
-    model4 = OpenAIRealtimeModel(transcription_model_id="gpt-4o-transcribe", model_id=model_name, api_key=api_key)
+    model4 = OpenAIRealtimeModel(transcription_model_id="gpt-4o-transcribe", model_id=model_id, api_key=api_key)
     await model4.start()
     mock_ws.close.side_effect = Exception("Close failed")
     with pytest.raises(Exception, match=r"failed stop sequence"):
@@ -701,7 +734,7 @@ async def test_receive_timeout(mock_time, model):
 
     await model.start()
 
-    with pytest.raises(BidiModelTimeoutError, match=r"timeout_s=<1>"):
+    with pytest.raises(ConnectionTimeoutError, match=r"timeout_s=<1>"):
         async for _ in model.receive():
             pass
 
@@ -874,8 +907,9 @@ def test_convert_openai_event_transcript(model, event, expected):
 
 
 @pytest.mark.parametrize("transcription_model_id", ["custom-transcription-model", None])
-def test__build_session_config_direct_options(api_key, system_prompt, tool_spec, transcription_model_id):
+def test__build_session_config_direct_options(model_id, api_key, system_prompt, tool_spec, transcription_model_id):
     model = OpenAIRealtimeModel(
+        model_id=model_id,
         transcription_model_id=transcription_model_id,
         api_key=api_key,
         voice="coral",
@@ -898,9 +932,10 @@ def test__build_session_config_direct_options(api_key, system_prompt, tool_spec,
     assert config["audio"]["output"] == {"format": {"type": "audio/pcm", "rate": 24000}, "voice": "coral"}
 
 
-def test__build_session_config_passes_through_params(api_key):
+def test__build_session_config_passes_through_params(model_id, api_key):
     """Test model params are passed through to the session."""
     model = OpenAIRealtimeModel(
+        model_id=model_id,
         transcription_model_id="gpt-4o-transcribe",
         api_key=api_key,
         params={"max_output_tokens": 2048, "tracing": "auto", "future_option": {"enabled": True}},
@@ -923,10 +958,11 @@ def test__build_session_config_passes_through_params(api_key):
     ],
 )
 def test__build_session_config_merges_params_last(
-    api_key, system_prompt, tool_spec, transcription_model_id, transcription_override, exp_transcription
+    model_id, api_key, system_prompt, tool_spec, transcription_model_id, transcription_override, exp_transcription
 ):
     """Params override direct options while preserving unspecified nested defaults."""
     model = OpenAIRealtimeModel(
+        model_id=model_id,
         transcription_model_id=transcription_model_id,
         api_key=api_key,
         voice="echo",
@@ -968,9 +1004,10 @@ def test__build_session_config_merges_params_last(
     assert tru_config == exp_config
 
 
-def test__build_session_config_preserves_defaults(model, api_key, system_prompt, tool_spec):
+def test__build_session_config_preserves_defaults(model_id, model, api_key, system_prompt, tool_spec):
     exp_config = model._build_session_config(None, None)
     custom_model = OpenAIRealtimeModel(
+        model_id=model_id,
         transcription_model_id="gpt-4o-transcribe",
         api_key=api_key,
         voice="coral",
@@ -985,10 +1022,11 @@ def test__build_session_config_preserves_defaults(model, api_key, system_prompt,
 
 
 @pytest.mark.asyncio
-async def test_start_preserves_explicit_nulls(api_key, mock_websockets_connect):
+async def test_start_preserves_explicit_nulls(model_id, api_key, mock_websockets_connect):
     """Session updates preserve explicit null overrides."""
     _, mock_ws = mock_websockets_connect
     model = OpenAIRealtimeModel(
+        model_id=model_id,
         transcription_model_id="gpt-4o-transcribe",
         api_key=api_key,
         params={"audio": {"input": {"turn_detection": None, "transcription": None}}, "tracing": None},
@@ -1021,9 +1059,9 @@ async def test_start_preserves_explicit_nulls(api_key, mock_websockets_connect):
 
 @pytest.mark.asyncio
 async def test_disabled_transcription_does_not_associate_audio_with_missing_transcript(
-    api_key, mock_websockets_connect
+    model_id, api_key, mock_websockets_connect
 ):
-    model = OpenAIRealtimeModel(api_key=api_key, transcription_model_id=None)
+    model = OpenAIRealtimeModel(model_id=model_id, api_key=api_key, transcription_model_id=None)
     await model.start()
     native_events = [
         {"type": "input_audio_buffer.speech_started", "item_id": "speech"},
@@ -1057,8 +1095,9 @@ async def test_disabled_transcription_does_not_associate_audio_with_missing_tran
         pytest.param({"audio": {"output": {"voice": "shimmer"}}}, "shimmer", id="replacement"),
     ],
 )
-def test_update_config_replaces_params(api_key, params, exp_voice):
+def test_update_config_replaces_params(model_id, api_key, params, exp_voice):
     model = OpenAIRealtimeModel(
+        model_id=model_id,
         transcription_model_id="gpt-4o-transcribe",
         api_key=api_key,
         voice="coral",
@@ -1107,8 +1146,10 @@ async def test_send_event_helper(mock_websockets_connect, model):
 
 
 @pytest.mark.parametrize("voice", ["alloy", "echo"])
-def test__convert_openai_event_audio_format(api_key, voice):
-    model = OpenAIRealtimeModel(transcription_model_id="gpt-4o-transcribe", api_key=api_key, voice=voice)
+def test__convert_openai_event_audio_format(model_id, api_key, voice):
+    model = OpenAIRealtimeModel(
+        model_id=model_id, transcription_model_id="gpt-4o-transcribe", api_key=api_key, voice=voice
+    )
     audio_base64 = base64.b64encode(b"audio data").decode()
 
     tru_events = model._convert_openai_event({"type": "response.output_audio.delta", "delta": audio_base64})
@@ -1183,10 +1224,10 @@ def test_response_stop_reason_uses_response_output(model, pending_tools, output_
 
 
 @pytest.mark.asyncio
-async def test_tool_result_single_text_content(mock_websockets_connect, api_key):
+async def test_tool_result_single_text_content(model_id, mock_websockets_connect, api_key):
     """Test tool result with single text content block."""
     _, mock_ws = mock_websockets_connect
-    model = OpenAIRealtimeModel(transcription_model_id="gpt-4o-transcribe", api_key=api_key)
+    model = OpenAIRealtimeModel(model_id=model_id, transcription_model_id="gpt-4o-transcribe", api_key=api_key)
     await model.start()
 
     tool_result = ToolResultBlock(tool_use_id="call-123", status="success", content=[{"text": "Simple text result"}])
@@ -1210,10 +1251,10 @@ async def test_tool_result_single_text_content(mock_websockets_connect, api_key)
 
 
 @pytest.mark.asyncio
-async def test_tool_result_single_json_content(mock_websockets_connect, api_key):
+async def test_tool_result_single_json_content(model_id, mock_websockets_connect, api_key):
     """Test tool result with single JSON content block."""
     _, mock_ws = mock_websockets_connect
-    model = OpenAIRealtimeModel(transcription_model_id="gpt-4o-transcribe", api_key=api_key)
+    model = OpenAIRealtimeModel(model_id=model_id, transcription_model_id="gpt-4o-transcribe", api_key=api_key)
     await model.start()
 
     tool_result = ToolResultBlock(
@@ -1238,10 +1279,10 @@ async def test_tool_result_single_json_content(mock_websockets_connect, api_key)
 
 
 @pytest.mark.asyncio
-async def test_tool_result_multiple_content_blocks(mock_websockets_connect, api_key):
+async def test_tool_result_multiple_content_blocks(model_id, mock_websockets_connect, api_key):
     """Test tool result with multiple content blocks (text and json)."""
     _, mock_ws = mock_websockets_connect
-    model = OpenAIRealtimeModel(transcription_model_id="gpt-4o-transcribe", api_key=api_key)
+    model = OpenAIRealtimeModel(model_id=model_id, transcription_model_id="gpt-4o-transcribe", api_key=api_key)
     await model.start()
 
     tool_result = ToolResultBlock(
@@ -1276,10 +1317,10 @@ async def test_tool_result_multiple_content_blocks(mock_websockets_connect, api_
 
 
 @pytest.mark.asyncio
-async def test_tool_result_image_content_raises_error(mock_websockets_connect, api_key):
+async def test_tool_result_image_content_raises_error(model_id, mock_websockets_connect, api_key):
     """Test that tool result with image content raises ValueError."""
     _, mock_ws = mock_websockets_connect
-    model = OpenAIRealtimeModel(transcription_model_id="gpt-4o-transcribe", api_key=api_key)
+    model = OpenAIRealtimeModel(model_id=model_id, transcription_model_id="gpt-4o-transcribe", api_key=api_key)
     await model.start()
 
     tool_result = ToolResultBlock(
@@ -1295,10 +1336,10 @@ async def test_tool_result_image_content_raises_error(mock_websockets_connect, a
 
 
 @pytest.mark.asyncio
-async def test_tool_result_document_content_raises_error(mock_websockets_connect, api_key):
+async def test_tool_result_document_content_raises_error(model_id, mock_websockets_connect, api_key):
     """Test that tool result with document content raises ValueError."""
     _, mock_ws = mock_websockets_connect
-    model = OpenAIRealtimeModel(transcription_model_id="gpt-4o-transcribe", api_key=api_key)
+    model = OpenAIRealtimeModel(model_id=model_id, transcription_model_id="gpt-4o-transcribe", api_key=api_key)
     await model.start()
 
     tool_result = ToolResultBlock(
@@ -1316,9 +1357,9 @@ async def test_tool_result_document_content_raises_error(mock_websockets_connect
 # Restart Tests
 
 
-def test_connection_config_defaults_and_override(api_key, mock_websockets_connect):
+def test_connection_config_defaults_and_override(model_id, api_key, mock_websockets_connect):
     """Proactive reconnect fires a margin below the reactive timeout, and is overridable."""
-    default_model = OpenAIRealtimeModel(transcription_model_id="gpt-4o-transcribe", api_key=api_key)
+    default_model = OpenAIRealtimeModel(model_id=model_id, transcription_model_id="gpt-4o-transcribe", api_key=api_key)
     # Deadline sits below the reactive timeout so a mid-turn swap is not preempted by it.
     assert default_model.get_connection_config() == {
         "restart_after_s": OPENAI_MAX_TIMEOUT_S - OPENAI_PROACTIVE_RECONNECT_MARGIN_S
@@ -1328,11 +1369,16 @@ def test_connection_config_defaults_and_override(api_key, mock_websockets_connec
     assert default_model.usage_is_cumulative is False
 
     # Lowering timeout_s keeps the headroom rather than recreating the tie.
-    lowered_model = OpenAIRealtimeModel(transcription_model_id="gpt-4o-transcribe", api_key=api_key, timeout_s=1000)
+    lowered_model = OpenAIRealtimeModel(
+        model_id=model_id, transcription_model_id="gpt-4o-transcribe", api_key=api_key, timeout_s=1000
+    )
     assert lowered_model.get_connection_config()["restart_after_s"] == 1000 - OPENAI_PROACTIVE_RECONNECT_MARGIN_S
 
     tuned_model = OpenAIRealtimeModel(
-        transcription_model_id="gpt-4o-transcribe", api_key=api_key, connection={"restart_after_s": 25}
+        model_id=model_id,
+        transcription_model_id="gpt-4o-transcribe",
+        api_key=api_key,
+        connection={"restart_after_s": 25},
     )
     assert tuned_model.get_connection_config()["restart_after_s"] == 25
 
@@ -1342,7 +1388,7 @@ def test_update_config_replaces_connection(model, connection):
     model.update_config(connection=connection)
 
     tru_config = model.get_config()
-    exp_config = {"model_id": "gpt-realtime", "params": {}, "connection": connection}
+    exp_config = {"model_id": "gpt-realtime-2.1", "params": {}, "connection": connection}
     assert tru_config == exp_config
     assert model.get_connection_config() == connection
 

@@ -1093,6 +1093,67 @@ def test_format_chunk_metadata_with_zero_cached_tokens(model):
     assert "cacheReadInputTokens" not in result["metadata"]["usage"]
 
 
+@pytest.mark.parametrize(
+    ("cache_write_tokens", "exp_usage"),
+    [
+        # Provider reports a cache write.
+        (
+            4346,
+            {
+                "inputTokens": 100,
+                "outputTokens": 50,
+                "totalTokens": 150,
+                "cacheReadInputTokens": 25,
+                "cacheWriteInputTokens": 4346,
+            },
+        ),
+        # Provider reports no cache write on this call.
+        (
+            0,
+            {
+                "inputTokens": 100,
+                "outputTokens": 50,
+                "totalTokens": 150,
+                "cacheReadInputTokens": 25,
+            },
+        ),
+        # Provider does not expose the field (OpenAI-hosted or an older openai pin).
+        (
+            None,
+            {
+                "inputTokens": 100,
+                "outputTokens": 50,
+                "totalTokens": 150,
+                "cacheReadInputTokens": 25,
+            },
+        ),
+    ],
+)
+def test_format_chunk_metadata_with_cache_write_tokens(cache_write_tokens, exp_usage, model):
+    """Test format_chunk surfaces cache writes only when the provider reports them."""
+    mock_tokens_details = unittest.mock.Mock(spec=["cached_tokens", "cache_write_tokens"])
+    mock_tokens_details.cached_tokens = 25
+    if cache_write_tokens is None:
+        del mock_tokens_details.cache_write_tokens
+    else:
+        mock_tokens_details.cache_write_tokens = cache_write_tokens
+
+    mock_usage = unittest.mock.Mock()
+    mock_usage.prompt_tokens = 100
+    mock_usage.completion_tokens = 50
+    mock_usage.total_tokens = 150
+    mock_usage.prompt_tokens_details = mock_tokens_details
+
+    event = {"chunk_type": "metadata", "data": mock_usage}
+
+    assert model.format_chunk(event) == {
+        "metadata": {
+            "usage": exp_usage,
+            "metrics": {"latencyMs": 0},
+        },
+    }
+
+
 @pytest.mark.asyncio
 async def test_stream(openai_client, model_id, model, agenerator, alist):
     mock_tool_call_1_part_1 = unittest.mock.Mock(index=0)

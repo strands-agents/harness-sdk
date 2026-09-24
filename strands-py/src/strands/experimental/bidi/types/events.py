@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 from ....types._events import ToolUseStreamEvent, TypedEvent
 
 if TYPE_CHECKING:
-    from ..models.model import BidiModelTimeoutError
+    from ..models.model import ConnectionTimeoutError
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ class BidiConnectionStartEvent(TypedEvent):
 
     Parameters:
         connection_id: Unique identifier for this streaming connection.
-        model: Model identifier (e.g., "gpt-realtime", "gemini-2.0-flash-live").
+        model: Model identifier (e.g., "gpt-realtime-2.1", "gemini-3.8-live").
     """
 
     def __init__(self, connection_id: str, model: str):
@@ -112,7 +112,7 @@ class BidiConnectionStartEvent(TypedEvent):
 
     @property
     def model(self) -> str:
-        """Model identifier (e.g., 'gpt-realtime', 'gemini-2.0-flash-live')."""
+        """Model identifier (e.g., 'gpt-realtime-2.1', 'gemini-3.8-live')."""
         return cast(str, self["model"])
 
 
@@ -134,7 +134,7 @@ class BidiConnectionRestartEvent(TypedEvent):
     def __init__(
         self,
         reason: Literal["timeout", "scheduled"],
-        timeout_error: "BidiModelTimeoutError | None" = None,
+        timeout_error: "ConnectionTimeoutError | None" = None,
         turn_interrupted: bool = False,
     ):
         """Initialize connection restart event."""
@@ -153,9 +153,9 @@ class BidiConnectionRestartEvent(TypedEvent):
         return cast(str, self["reason"])
 
     @property
-    def timeout_error(self) -> "BidiModelTimeoutError | None":
-        """Model timeout error on the reactive path; None when scheduled."""
-        return cast("BidiModelTimeoutError | None", self["timeout_error"])
+    def timeout_error(self) -> "ConnectionTimeoutError | None":
+        """Connection timeout error on the reactive path; None when scheduled."""
+        return cast("ConnectionTimeoutError | None", self["timeout_error"])
 
     @property
     def turn_interrupted(self) -> bool:

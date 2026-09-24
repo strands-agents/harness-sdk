@@ -17,7 +17,7 @@ from ..types.events import (
     BidiTranscriptStopEvent,
     Role,
 )
-from ..types.io import BidiOutput
+from ..types.io import OutputStream
 
 if TYPE_CHECKING:
     from ..agent.agent import BidiAgent
@@ -84,7 +84,7 @@ class _Transcript:
         return Text(f"\n{text}\n")
 
 
-class _BidiTranscriptOutput(BidiOutput):
+class _TranscriptOutputStream(OutputStream):
     """Render transcript events to a terminal stream."""
 
     def __init__(self) -> None:

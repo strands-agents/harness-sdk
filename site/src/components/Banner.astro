@@ -1,0 +1,274 @@
+---
+import halftone from '../assets/banner/halftone.svg?raw';
+import arrow from '../assets/banner/arrow.svg?raw';
+import InstallCommand from './InstallCommand.astro';
+import { pathWithBase } from '../util/links';
+---
+
+<section class="banner" aria-label="Introduction">
+  <div class="banner__inner">
+    <div class="banner__halftone" set:html={halftone} aria-hidden="true" />
+    <div class="banner__gradient" aria-hidden="true" />
+    <div class="banner__content">
+    <div class="banner__text">
+      <h1 class="banner__headline">
+        The open source<br />
+        toolkit for building<br />
+        production agents.
+      </h1>
+    </div>
+    <div class="banner__actions">
+      <div class="banner__links">
+        <a href={pathWithBase('/docs/user-guide/harness/quickstart/')} class="banner__link">
+          Quick start
+          <span class="banner__arrow" set:html={arrow} />
+        </a>
+        <a
+          href="https://github.com/strands-agents"
+          class="banner__link"
+          target="_blank"
+          rel="noopener"
+        >
+          GitHub
+          <span class="banner__arrow" set:html={arrow} />
+        </a>
+      </div>
+      <InstallCommand pip="pip install strands-harness" npm="npm install @strands-agents/harness" />
+    </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .banner {
+    width: 100%;
+    background: var(--bg);
+  }
+
+  .banner__inner {
+    position: relative;
+    min-height: 324px;
+    max-width: 1442px;
+    margin: 0 auto;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+  }
+
+  .banner__halftone {
+    position: absolute;
+    top: 44px;
+    left: 55px;
+    right: 55px;
+    height: 280px;
+    /* Rounded to clearly follow the banner card's rounded aesthetic. Needs to
+       be well above the ~20px dot spacing or the corner reads as square (a
+       small radius only clips the single corner dot). */
+    border-radius: 40px;
+    overflow: hidden;
+    /* Decorative only — never intercept taps/clicks meant for content. */
+    pointer-events: none;
+    /* SVG is 750px tall; we show a 280px slice, centered, rotated 180deg. */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .banner__halftone :global(svg) {
+    display: block;
+    width: 1332px;
+    height: 750px;
+    transform: rotate(180deg);
+    flex: none;
+  }
+
+  /* The halftone SVG hardcodes brand green; retint per theme. In light mode
+     the pale seafoam was nearly invisible on white, so use a more saturated
+     green dot token (see --halftone-dot in fonts.css). */
+  .banner__halftone :global([fill='#00CC60']) {
+    fill: var(--halftone-dot);
+  }
+
+  .banner__gradient {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to bottom, transparent 0%, var(--bg) 100%);
+    pointer-events: none;
+  }
+
+  .banner__content {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 32px clamp(24px, 3vw, 48px);
+    padding: 69px clamp(24px, 5vw, 96px) 48px;
+  }
+
+  .banner__text {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .banner__headline {
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 500;
+    font-size: clamp(30px, 3.6vw, 52px);
+    letter-spacing: 0.1em;
+    line-height: 1.2;
+    color: var(--banner-headline);
+    white-space: pre;
+  }
+
+  .banner__actions {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+    /* Hug the widest child (the install command pill) so the Quick start /
+       GitHub links stretch to its width and the column reads as one set. */
+    width: fit-content;
+    max-width: 100%;
+  }
+
+  .banner__links {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .banner__link {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 10px 15px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 600;
+    font-size: 16px;
+    line-height: 1.3;
+    color: var(--fg);
+    text-decoration: none;
+    white-space: nowrap;
+    /* Sit the links on the same pill surface as the language toggle below so
+       they stay legible over the halftone backdrop and read as a set. */
+    background: var(--toggle-bg);
+    border: 1px solid var(--toggle-inactive-border);
+    border-radius: 999px;
+  }
+
+  .banner__link:hover {
+    opacity: 0.75;
+  }
+
+  .banner__arrow {
+    display: inline-flex;
+    width: 11px;
+    height: 9px;
+  }
+
+  .banner__arrow :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  /* The install command is the shared <InstallCommand /> component; its pill
+     styling lives in InstallCommand.astro. */
+
+  /* ---------- Tablet (768–1023px) ----------
+     Side-by-side no longer fits; use the mobile design's centered
+     stacked structure, at larger sizing. */
+  @media (max-width: 1023px) {
+    .banner__content {
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 24px;
+      width: 100%;
+      padding: 69px 33px 48px;
+      text-align: center;
+    }
+
+    .banner__text {
+      align-items: center;
+    }
+
+    .banner__halftone {
+      left: 33px;
+      right: 33px;
+    }
+
+    .banner__links {
+      justify-content: center;
+    }
+  }
+
+  /* ---------- Mobile (< 768px) ---------- */
+  @media (max-width: 767px) {
+    .banner__inner {
+      height: auto;
+      padding: 36px 33px 24px;
+    }
+
+    /* Halftone stays an inset rounded card on mobile (Figma 745:11980):
+       33px side margins, 14px radius, clipped by the section. On mobile the
+       headline is centered directly over the densest dots, so green text on
+       green dots was unreadable — fade the dots to a faint texture so the
+       headline reads clearly. (On desktop the text sits left of the field, so
+       full-strength dots are fine there.) */
+    .banner__halftone {
+      top: 23px;
+      left: 33px;
+      right: 33px;
+      width: auto;
+      height: 280px;
+      border-radius: 14px;
+      align-items: flex-start;
+      justify-content: flex-start;
+      opacity: 0.25;
+    }
+
+    /* Must stay `position: relative` — static content would paint UNDER the
+       absolutely-positioned halftone/gradient overlays, making the toggle
+       untappable and washing out the buttons. */
+    .banner__content {
+      position: relative;
+      flex-direction: column;
+      align-items: center;
+      gap: 13px;
+      padding: 0;
+      width: 100%;
+    }
+
+    .banner__headline {
+      max-width: 374px;
+      font-size: 26px;
+      font-weight: 600;
+      letter-spacing: 2.6px;
+      line-height: 1.2;
+      text-align: center;
+      white-space: normal;
+    }
+
+    .banner__actions {
+      width: fit-content;
+      max-width: 100%;
+      align-items: stretch;
+      gap: 12px;
+    }
+
+    .banner__links {
+      width: 100%;
+      justify-content: center;
+    }
+
+    .banner__link {
+      font-size: 14px;
+    }
+  }
+</style>

@@ -1,7 +1,7 @@
 """Snapshot-based session manager.
 
 Persists an agent as a single versioned :class:`~strands.types._snapshot.Snapshot`
-blob on each lifecycle event, mirroring the TypeScript SDK's ``SessionManager``:
+blob on each lifecycle event:
 
 - A mutable ``snapshot_latest`` is overwritten on each save, for crash/restart resume.
 - Append-only immutable snapshots (time-ordered keys) are written when a ``snapshot_trigger``
@@ -30,7 +30,10 @@ from .._identifier import new_uuid7 as _new_snapshot_id
 from .._identifier import validate as validate_identifier
 from ..hooks.events import (
     AfterInvocationEvent,
+    AfterMultiAgentInvocationEvent,
+    AfterNodeCallEvent,
     AgentInitializedEvent,
+    BeforeMultiAgentInvocationEvent,
     MessageAddedEvent,
     MultiAgentInitializedEvent,
 )
@@ -47,6 +50,7 @@ if TYPE_CHECKING:
     from .._context_manager.stash import Stash
     from ..agent.agent import Agent
     from ..experimental.bidi.agent import BidiAgent
+    from ..multiagent.base import MultiAgentBase
 
 logger = logging.getLogger(__name__)
 
@@ -65,11 +69,21 @@ does not flush redactions under ``"trigger"``; see :meth:`SnapshotSessionManager
 # Derived from the Literal above so the accepted runtime values cannot drift from the type.
 _SAVE_LATEST_STRATEGIES = get_args(SaveLatestStrategy)
 
-# Top-level storage namespace for all session data. Byte-identical to the TypeScript SDK,
-# which namespaces its unified storage under "session" (singular) before the session id, so
-# the on-disk key layout is shared across SDKs. The manager applies this namespace once (unless
-# the caller passed an already-namespaced view) and builds keys relative to it, so a caller who
-# pre-namespaces under "session" does not get a doubled "session/session/..." prefix.
+MultiAgentSaveLatestStrategy = Literal["node", "invocation"]
+"""Controls how often an orchestrator's ``snapshot_latest`` is saved automatically.
+
+- ``"node"``: after every node completes (default; a mid-run crash resumes at the last node).
+- ``"invocation"``: only after the whole orchestrator invocation completes (lower I/O; a crash
+  loses the in-flight run). A large Graph on a remote store can opt down to this.
+
+Orchestrators are latest-only — no immutable history and no ``snapshot_trigger``.
+"""
+
+_MULTI_AGENT_SAVE_LATEST_STRATEGIES = get_args(MultiAgentSaveLatestStrategy)
+
+# Top-level storage namespace for all session data. The manager applies this namespace once
+# unless the caller passed an already-namespaced view, preventing a doubled
+# ``session/session/...`` prefix.
 _SESSIONS_NAMESPACE = "session"
 
 _SNAPSHOT_LATEST = "snapshot_latest.json"
@@ -86,17 +100,15 @@ _DELETE_CONCURRENCY = 100
 #     snapshot_latest.json
 #     immutable_history/snapshot_<id>.json
 #
-# The namespaced storage view prepends "session/", so the full on-disk key is
-# session/<session_id>/... — byte-identical to the TypeScript SDK. These are module-level so the
+# The namespaced storage view prepends ``session/``. These helpers are module-level so the
 # migration utility builds the same keys the manager reads.
 
 
 def _resolve_storage(storage: Storage) -> Storage:
     """Namespace raw storage under ``"session"``; pass an already-namespaced view through.
 
-    Mirrors the TypeScript SDK: a view the caller already scoped (marked with ``_NAMESPACED``)
-    is used as-is so its prefix is not doubled, otherwise raw storage is wrapped under the
-    ``"session"`` namespace. Manager keys are built relative to the result.
+    A view already marked with ``_NAMESPACED`` is used as-is; otherwise raw storage is wrapped
+    under the ``"session"`` namespace. Manager keys are relative to the resolved storage.
     """
     if getattr(storage, "_namespaced", None) is _NAMESPACED:
         return storage
@@ -138,6 +150,11 @@ def _snapshot_key(session_id: str, agent_id: str, *, snapshot_id: str | None) ->
         return f"{prefix}{_SNAPSHOT_LATEST}"
     _validate_snapshot_id(snapshot_id)
     return f"{prefix}{_IMMUTABLE_HISTORY}/snapshot_{snapshot_id}.json"
+
+
+def _multi_agent_latest_key(session_id: str, orchestrator_id: str) -> str:
+    orchestrator_id = validate_identifier(orchestrator_id, Identifier.AGENT)
+    return f"{_session_prefix(session_id)}scopes/multiAgent/{orchestrator_id}/snapshots/{_SNAPSHOT_LATEST}"
 
 
 def _serialize_snapshot(snapshot: Snapshot) -> bytes:
@@ -189,8 +206,10 @@ class SnapshotSessionManager(SessionManager):
     overwritten. When ``snapshot_trigger`` returns True after an invocation, an
     additional immutable snapshot is appended for time-travel restore.
 
-    Single agents only. Attaching this manager to a Graph or Swarm raises
-    ``NotImplementedError``; use a message-log session manager for orchestrators.
+    Single agents get immutable time-travel snapshots via ``snapshot_trigger``. Graph and Swarm
+    orchestrators are persisted latest-only: state is captured after each node (or each invocation,
+    per ``multi_agent_save_latest_on``) and restored lazily on their first invocation. Attaching
+    this manager to a BidiAgent raises ``NotImplementedError``.
 
     Example:
         ```python
@@ -209,6 +228,7 @@ class SnapshotSessionManager(SessionManager):
         *,
         storage: Storage | None = None,
         save_latest_on: SaveLatestStrategy = "invocation",
+        multi_agent_save_latest_on: MultiAgentSaveLatestStrategy = "node",
         snapshot_trigger: SnapshotTrigger | None = None,
         **kwargs: Any,
     ) -> None:
@@ -221,6 +241,8 @@ class SnapshotSessionManager(SessionManager):
                 agent-level storage is available, falls back to
                 :class:`~strands.storage.local_file_storage.LocalFileStorage`.
             save_latest_on: When to overwrite ``snapshot_latest``. See :data:`SaveLatestStrategy`.
+            multi_agent_save_latest_on: For Graph/Swarm orchestrators, when to overwrite the
+                orchestrator's ``snapshot_latest``. See :data:`MultiAgentSaveLatestStrategy`.
             snapshot_trigger: Optional callback invoked after each invocation; when it
                 returns True an immutable snapshot is appended for checkpointing. An immutable
                 snapshot can also be forced at any point via :meth:`save_snapshot`.
@@ -241,10 +263,19 @@ class SnapshotSessionManager(SessionManager):
             # Silently accepting an unknown value would register no save hooks — the session
             # would persist nothing with no error.
             raise ValueError(f"save_latest_on must be one of {_SAVE_LATEST_STRATEGIES}, got {save_latest_on!r}")
+        if multi_agent_save_latest_on not in _MULTI_AGENT_SAVE_LATEST_STRATEGIES:
+            raise ValueError(
+                f"multi_agent_save_latest_on must be one of {_MULTI_AGENT_SAVE_LATEST_STRATEGIES}, "
+                f"got {multi_agent_save_latest_on!r}"
+            )
         self._raw_storage: Storage | None = storage
         self._storage: Storage | None = _resolve_storage(storage) if storage is not None else None
         self._save_latest_on: SaveLatestStrategy = save_latest_on
+        self._multi_agent_save_latest_on: MultiAgentSaveLatestStrategy = multi_agent_save_latest_on
         self._snapshot_trigger = snapshot_trigger
+        # Orchestrator ids restored this process, so restore runs once per orchestrator (lazily,
+        # on its first invocation) rather than on every invocation.
+        self._multi_agent_restored_ids: set[str] = set()
         self._agent_stash: Stash | None = None
 
     @property
@@ -272,16 +303,56 @@ class SnapshotSessionManager(SessionManager):
             registry.add_callback(MessageAddedEvent, self._on_message_added)
         registry.add_callback(AfterInvocationEvent, self._on_after_invocation)
 
-        # Reject orchestrators before any turn runs; multi-agent snapshots are not supported.
-        registry.add_callback(MultiAgentInitializedEvent, self._reject_multi_agent)
+        # An orchestrator has no AgentInitializedEvent to lazily resolve storage from, so its hooks
+        # are wired at its own init event.
+        registry.add_callback(MultiAgentInitializedEvent, self._init_multi_agent)
 
-    def _reject_multi_agent(self, event: MultiAgentInitializedEvent) -> None:
-        """Raise on orchestrator init; multi-agent snapshot persistence is not supported yet."""
-        raise NotImplementedError(
-            f"{type(self).__name__} does not support multi-agent (Graph/Swarm) persistence. "
-            "Use a message-log session manager (FileSessionManager, S3SessionManager) for "
-            "orchestrators."
-        )
+    def _init_multi_agent(self, event: MultiAgentInitializedEvent) -> None:
+        """Wire orchestrator snapshot persistence at init."""
+        orchestrator = event.source
+        if self._storage is None:
+            raise RuntimeError(
+                "SnapshotSessionManager requires a storage backend for multi-agent orchestrators. "
+                "Provide storage in the constructor."
+            )
+        orchestrator.add_hook(self._on_before_multi_agent_invocation, BeforeMultiAgentInvocationEvent)
+        if self._multi_agent_save_latest_on == "node":
+            orchestrator.add_hook(self._on_after_node_call, AfterNodeCallEvent)
+        orchestrator.add_hook(self._on_after_multi_agent_invocation, AfterMultiAgentInvocationEvent)
+
+    async def _on_before_multi_agent_invocation(self, event: BeforeMultiAgentInvocationEvent) -> None:
+        """Restore orchestrator state once, on its first invocation."""
+        orchestrator = event.source
+        if orchestrator.id in self._multi_agent_restored_ids:
+            return
+        self._multi_agent_restored_ids.add(orchestrator.id)
+        await self._restore_multi_agent(orchestrator)
+
+    async def _on_after_node_call(self, event: AfterNodeCallEvent) -> None:
+        """Save latest orchestrator snapshot after each node completes."""
+        await self._save_multi_agent_latest(event.source)
+
+    async def _on_after_multi_agent_invocation(self, event: AfterMultiAgentInvocationEvent) -> None:
+        """Save latest orchestrator snapshot after the invocation completes."""
+        await self._save_multi_agent_latest(event.source)
+
+    async def _restore_multi_agent(self, orchestrator: "MultiAgentBase") -> bool:
+        """Load an orchestrator's latest snapshot into it. Returns False if none exists."""
+        from ..multiagent._snapshot import load_snapshot
+
+        key = _multi_agent_latest_key(self.session_id, orchestrator.id)
+        data = await self._resolved_storage.read(key)
+        if data is None:
+            return False
+        load_snapshot(orchestrator, _deserialize_snapshot(data))
+        return True
+
+    async def _save_multi_agent_latest(self, orchestrator: "MultiAgentBase") -> None:
+        """Capture the orchestrator and overwrite its ``snapshot_latest``."""
+        from ..multiagent._snapshot import take_snapshot
+
+        data = _serialize_snapshot(take_snapshot(orchestrator))
+        await self._resolved_storage.write(_multi_agent_latest_key(self.session_id, orchestrator.id), data)
 
     # -- ABC methods (invoked synchronously by the Agent; bridge to async storage) --
 
@@ -535,7 +606,7 @@ class SnapshotSessionManager(SessionManager):
 
         The shared ``"session"`` preset omits ``system_prompt`` (opt-in for callers like
         the goal plugin); session persistence includes it so a rehydrated agent behaves
-        identically to the original, matching the TypeScript SDK's session preset.
+        identically to the original.
         """
         return agent.take_snapshot(preset="session", include=["system_prompt"])
 

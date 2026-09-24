@@ -1,0 +1,51 @@
+---
+title: Run work in the background
+description: "Strands harness runs the generalist in the background and lets the model run other tools there too. Tune or disable that with backgroundTasks."
+sourceLinks:
+  - path: harness-ts/src/agent.ts
+sidebar:
+  label: "Run work in the background"
+---
+
+Background tasks let a tool run while the agent keeps working, instead of blocking the
+loop until it finishes. This is a Strands Harness SDK capability, exposed through Strands harness's
+`background_tasks` / `backgroundTasks` option.
+
+## What runs in the background by default
+
+The built-in `generalist`
+[delegate](../subagents/) always runs in the background, so
+the main agent can continue while the delegate works through its subtask. By default the
+model may also choose background execution for any other compatible tool; the invocation
+waits for the result and continues with it.
+
+## Tune or disable it
+
+`backgroundTasks` accepts a boolean or a policy object. Pass `false` to disable background
+tasks, or a policy to control which tools may run in the background, along with
+concurrency, completion, and timeouts. With a policy, the `generalist` still runs in
+the background: Strands harness forces it there and merges that into your policy.
+
+```typescript
+import { createHarness } from '@strands-agents/harness'
+
+// Disable background tasks:
+const noBackground = await createHarness({ backgroundTasks: false })
+
+// Or supply a policy for the other tools:
+const scoped = await createHarness({
+  backgroundTasks: { agentic: ['long_running_report'] },
+})
+```
+
+The default policy is equivalent to `{ agentic: ['*'] }`: the model may run any compatible
+tool in the background.
+
+## The CLI
+
+The Strands harness CLI runs on the TypeScript library, so the `generalist` runs in the background
+there too. The CLI does not expose a flag to change the background-tasks policy; use the
+library when you need to tune it.
+
+For the full option list, see the
+[configuration reference](../../reference/configuration/).

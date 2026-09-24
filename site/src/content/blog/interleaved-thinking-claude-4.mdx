@@ -15,15 +15,15 @@ canonicalUrl: "https://aws.amazon.com/blogs/opensource/using-strands-agents-with
 draft: false
 ---
 
-When we [introduced](https://aws.amazon.com/blogs/opensource/introducing-strands-agents-an-open-source-ai-agents-sdk/) the Strands Agents SDK, our goal was to make agentic development simple and flexible by embracing a model-driven approach. Today, we're excited to highlight how you can use Claude 4's interleaved thinking beta feature with Strands to further simplify how you write AI agents to solve complex tasks with tools. With a model-driven approach, developers no longer need to define a rigid workflow to call tools and parse model responses at each step to complete a task. With [Strands Agents](https://github.com/strands-agents/harness-sdk), you equip a model with tools and a prompt, letting it plan, chain thoughts, call tools, and reflect. Strands manages an event loop around model calls until it considers the task completed, returning a response to the client. Let's consider how it works with this simple example (assuming you have completed the [quickstart](/docs/user-guide/quickstart/)):
+When we [introduced](https://aws.amazon.com/blogs/opensource/introducing-strands-agents-an-open-source-ai-agents-sdk/) the Strands Agents SDK, our goal was to make agentic development simple and flexible by embracing a model-driven approach. Today, we're excited to highlight how you can use Claude 4's interleaved thinking beta feature with Strands to further simplify how you write AI agents to solve complex tasks with tools. With a model-driven approach, developers no longer need to define a rigid workflow to call tools and parse model responses at each step to complete a task. With [Strands Agents](https://github.com/strands-agents/harness-sdk), you equip a model with tools and a prompt, letting it plan, chain thoughts, call tools, and reflect. Strands manages an event loop around model calls until it considers the task completed, returning a response to the client. Let's consider how it works with this simple example (assuming you have completed the [quickstart](/docs/user-guide/sdk/quickstart/)):
 
 ```python
 from strands import Agent
-from strands_tools import http_request, python_repl
+from strands.vended_tools import http_request, shell
 
 agent = Agent(
     model="us.anthropic.claude-sonnet-4-20250514-v1:0",
-    tools=[http_request, python_repl]
+    tools=[http_request, shell]
 )
 
 prompt="""
@@ -38,7 +38,11 @@ agent(prompt)
 
 Strands has everything it needs to provide an answer, equipped with Claude 4 Sonnet, its prompt, and tools to generate Python code and make HTTP requests. Here's how the event loop works.
 
-First, Strands structures your prompt and any previous conversation history into a format the language model (like Claude) can understand. Then, Strands automatically loads available tools—these can be MCP Server tools or custom Python functions decorated with @tool. Your Python docstrings become tool descriptions, and type hints define the parameter schemas. In this example, we use two built-in tools from the [strands-agents-tools](/docs/user-guide/concepts/tools/community-tools-package/) package. The SDK manages errors (like rate limiting or context overflows), performs retries when needed, and emits detailed traces and metrics for observability.
+First, Strands structures your prompt and conversation history into a format the
+model can understand. It then loads the available tools, which can include MCP
+tools, custom Python functions decorated with `@tool`, or
+[vended tools](/docs/user-guide/sdk/tools/vended-tools/). The SDK manages
+errors, retries, traces, and metrics around those calls.
 
 With this setup complete, Strands manages an event loop that invokes the model, handles tool calling, and manages the conversation until the model provides a final answer.
 
@@ -46,9 +50,11 @@ With this setup complete, Strands manages an event loop that invokes the model, 
 2. **Tool use detection and execution**: If the model decides it needs to call a tool (to fetch data, perform a calculation, etc.), the event loop detects this request, validates it, and executes the corresponding Python function or MCP Server tool with the parameters provided by the model.
 3. **Context update**: The result of the tool execution is appended to the ongoing conversation, allowing the model to incorporate the new information into its next iteration.
 
-You will see this loop in action when running the ISS example with Python. The model makes a plan to use its tools, including API calls for real-time data about the ISS and using its Python REPL (Read evaluate print loop) to calculate distances and vectors. The agent will respond with an answer to the question, including a statement like "The ISS is currently positioned over the western Pacific Ocean, making the western North American cities (Vancouver, Seattle, Portland) much closer than New York. Vancouver's slightly more northern latitude gives it the advantage over Seattle and Portland."
+You will see this loop in action when running the ISS example. The model uses HTTP
+requests for live ISS data and the shell tool to execute Python calculations for
+distances and vectors.
 
-The model makes a plan to use its tools, involving API calls for real-time data about the ISS and using its Python REPL to calculate distances and vectors. It then generates an answer and shows its work. The following is example output from this agent running locally.
+The following is example output from this agent running locally.
 
 <div style="max-height: 24rem; overflow-y: auto;">
 
@@ -84,7 +90,7 @@ The cities I need coordinates for:
 3. Seattle, Washington
 4. New York, New York
 Let me use Python to calculate these distances. Perfect! Now I have the current ISS data. Let me calculate the distances from each city to the ISS using Python:
-Tool #3: python_repl
+Tool #3: shell
 Current ISS Position:
 Latitude: -24.844251408166°
 Longitude: 14.692696204258°
@@ -112,7 +118,7 @@ Great! Now I have all the distances calculated. New York is the closest city to 
 2. The elevation angle
 3. The distance (which I already have)
 Let me calculate these additional details.Now let me calculate the vector (direction and elevation) from New York to the ISS:
-Tool #4: python_repl
+Tool #4: shell
 ==================================================
 FINAL RESULTS
 ==================================================
@@ -166,7 +172,7 @@ If you're using Amazon Bedrock as your Strands model provider, you can turn on i
 
 ```python
 from strands import Agent
-from strands_tools import http_request, python_repl
+from strands.vended_tools import http_request, shell
 from strands.models import BedrockModel
 
 model = BedrockModel(
@@ -179,11 +185,11 @@ model = BedrockModel(
 
 agent = Agent(
     model=model,
-    tools=[http_request, python_repl]
+    tools=[http_request, shell]
 )
 ```
 
-If you enable [tracing with Strands](/docs/user-guide/observability-evaluation/traces/), you'll see additional blocks of "reasoningContent" in your trace, like in the following image, including reasoning when Claude 4 decides to interleave thinking after tool calls.
+If you enable [tracing with Strands](/docs/user-guide/sdk/observability-evaluation/traces/), you'll see additional blocks of "reasoningContent" in your trace, like in the following image, including reasoning when Claude 4 decides to interleave thinking after tool calls.
 
 ![Reasoning content example showing model invocation with interleaved thinking](./resources/interleaved-thinking/model-invoke-reasoning.png)
 
@@ -196,7 +202,7 @@ City Rankings (closest to farthest):
 3       Portland: 12195.86 km
 4       New York: 15432.29 km
 The calculation for longitude difference looks wrong - it's showing 243.6443° which is more than 180°. This happens because we're dealing with the international date line. Let me correct this calculation to show the actual shortest path. Let me correct the longitude calculation to show the actual shortest path:
-Tool #6: python_repl
+Tool #6: shell
 CORRECTED VECTOR CALCULATION:
 ニニニニニニニニニニニニニニニニニニニニニニニニニニニニニニニニニニニニニニニニニニニニニニニニ
 ISS Current Altitude: 418.15 km above Earth's surface

@@ -1,18 +1,24 @@
 """Bidirectional model interfaces and implementations."""
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .configs import (
     AudioConfig,
     AudioStreamConfig,
     BedrockNovaSonicAudioConfig,
     BedrockNovaSonicAudioStreamConfig,
-    BidiConnectionConfig,
-    BidiModelConfig,
+    ConnectionConfig,
     GoogleGeminiLiveAudioConfig,
     GoogleGeminiLiveAudioStreamConfig,
+    ModelConfig,
+    ModelUpdateConfig,
 )
-from .model import AudioCapable, BidiModel, BidiModelTimeoutError, Restartable
+from .model import AudioCapable, BidiModel, ConnectionTimeoutError, Restartable
+
+if TYPE_CHECKING:
+    from .bedrock import BedrockNovaSonicModel as BedrockNovaSonicModel
+    from .google import GoogleGeminiLiveModel as GoogleGeminiLiveModel
+    from .openai import OpenAIRealtimeModel as OpenAIRealtimeModel
 
 __all__ = [
     "AudioCapable",
@@ -20,12 +26,13 @@ __all__ = [
     "AudioStreamConfig",
     "BedrockNovaSonicAudioConfig",
     "BedrockNovaSonicAudioStreamConfig",
-    "BidiConnectionConfig",
     "BidiModel",
-    "BidiModelConfig",
-    "BidiModelTimeoutError",
+    "ConnectionConfig",
+    "ConnectionTimeoutError",
     "GoogleGeminiLiveAudioConfig",
     "GoogleGeminiLiveAudioStreamConfig",
+    "ModelConfig",
+    "ModelUpdateConfig",
     "Restartable",
 ]
 

@@ -24,7 +24,7 @@ from .events import (
     Role,
     StopReason,
 )
-from .io import BidiInput, BidiOutput
+from .io import InputStream, OutputStream
 from .media import AudioDelta
 
 __all__ = [
@@ -32,28 +32,28 @@ __all__ = [
     "AudioDelta",
     "AudioFormat",
     "BidiAgentInput",
+    "BidiAudioDeltaEvent",
+    "BidiAudioStartEvent",
+    "BidiAudioStopEvent",
     "BidiContentBlock",
     "BidiContentBlockData",
     "BidiContentDelta",
     "BidiContentDeltaData",
-    "BidiInput",
-    "BidiOutput",
-    "BidiAudioDeltaEvent",
-    "BidiAudioStartEvent",
-    "BidiAudioStopEvent",
     "BidiConnectionRestartEvent",
     "BidiConnectionStartEvent",
     "BidiConnectionStopEvent",
     "BidiConnectionWarningEvent",
-    "BidiResponseInterruptEvent",
     "BidiOutputEvent",
+    "BidiResponseInterruptEvent",
     "BidiResponseStartEvent",
     "BidiResponseStopEvent",
     "BidiTranscriptDeltaEvent",
     "BidiTranscriptStartEvent",
     "BidiTranscriptStopEvent",
     "BidiUsageEvent",
+    "InputStream",
     "ModalityUsage",
+    "OutputStream",
     "Role",
     "StopReason",
 ]

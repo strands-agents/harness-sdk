@@ -25,7 +25,7 @@ from strands.experimental.bidi.hooks import (
     BidiAfterConnectionRestartEvent,
     BidiBeforeConnectionRestartEvent,
 )
-from strands.experimental.bidi.models import BidiModel, BidiModelTimeoutError
+from strands.experimental.bidi.models import BidiModel, ConnectionTimeoutError
 from strands.experimental.bidi.types import (
     BidiAudioDeltaEvent,
     BidiConnectionStopEvent,
@@ -302,7 +302,7 @@ async def test_tool_call_span_closed_on_error(loop, agent, agenerator, otel_setu
 @pytest.mark.asyncio
 async def test_connection_restart_span(loop, agent, agenerator, otel_setup):
     """Connection restart creates a span with error message."""
-    timeout_error = BidiModelTimeoutError("8 minute timeout")
+    timeout_error = ConnectionTimeoutError("8 minute timeout")
     close_event = BidiConnectionStopEvent(connection_id="test", reason="complete")
 
     agent.model.receive = unittest.mock.Mock(side_effect=[timeout_error, agenerator([close_event])])
@@ -327,7 +327,7 @@ async def test_connection_restart_span(loop, agent, agenerator, otel_setup):
 @pytest.mark.asyncio
 async def test_before_restart_hook_exception_propagates(loop, agent, agenerator):
     """A raising before-restart hook propagates out of receive() and leaves the send gate closed."""
-    timeout_error = BidiModelTimeoutError("8 minute timeout")
+    timeout_error = ConnectionTimeoutError("8 minute timeout")
     agent.model.receive = unittest.mock.Mock(side_effect=[timeout_error, agenerator([])])
 
     def raise_hook(event: BidiBeforeConnectionRestartEvent) -> None:
@@ -349,7 +349,7 @@ async def test_before_restart_hook_exception_propagates(loop, agent, agenerator)
 @pytest.mark.asyncio
 async def test_restart_failure_propagates_and_reports(loop, agent, agenerator):
     """A failed restart surfaces to receive(), keeps the gate closed, and fires the after-restart hook."""
-    timeout_error = BidiModelTimeoutError("8 minute timeout")
+    timeout_error = ConnectionTimeoutError("8 minute timeout")
     agent.model.receive = unittest.mock.Mock(side_effect=[timeout_error, agenerator([])])
     agent.model.restart = unittest.mock.AsyncMock(side_effect=ConnectionError("restart failed"))
 

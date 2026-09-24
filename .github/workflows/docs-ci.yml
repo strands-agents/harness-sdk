@@ -29,6 +29,10 @@ jobs:
 
       - name: Build
         run: npm run cms:build
+        # The full docs build (~890 pages + generated API reference) peaks above
+        # Node's default heap on the runner; raise the ceiling to avoid an OOM.
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
 
       - name: Typecheck
         run: npm run typecheck

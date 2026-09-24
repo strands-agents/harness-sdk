@@ -22,7 +22,7 @@ languages: Python
 Install strands-mlx along with the Strands Agents SDK:
 
 ```bash
-pip install strands-mlx strands-agents-tools
+pip install strands-mlx
 ```
 
 ## Requirements
@@ -37,12 +37,12 @@ pip install strands-mlx strands-agents-tools
 ```python
 from strands import Agent
 from strands_mlx import MLXModel
-from strands_tools import calculator
+from strands.vended_tools import notebook
 
 model = MLXModel(model_id="mlx-community/Qwen3-1.7B-4bit")
-agent = Agent(model=model, tools=[calculator])
+agent = Agent(model=model, tools=[notebook])
 
-agent("What is 29 * 42?")
+agent('Create a notebook named "ideas" and add three uses for local language models.')
 ```
 
 ### Vision Model

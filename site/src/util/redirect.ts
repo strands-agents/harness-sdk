@@ -4,7 +4,7 @@
  * resolveRedirectFromUrl normalises a versioned URL to a slug, then
  * resolveRedirect applies rename rules for paths that changed structure.
  *
- * Only explicit rules in SLUG_RULES or redirectFromMap may produce external URLs.
+ * Only explicit rename rules or redirectFromMap may produce external URLs.
  * The path-normalization fallback never returns an external URL (prevents open redirects).
  */
 
@@ -21,40 +21,72 @@ import { exactly, startsWith } from './regex'
  * redirect, so these stubs are what preserve backlink equity for renamed pages.
  *
  * Only add enumerable, exact-match renames here. Dynamic rules (regex matches,
- * computed targets) belong in SLUG_RULES below and are handled solely by the
- * client-side 404 fallback.
+ * computed targets) belong in PREFIX_SLUG_RULES below and are handled solely by
+ * the client-side 404 fallback.
  */
 export const STATIC_SLUG_REDIRECTS: Record<string, string> = {
-  // gemini was renamed to google
-  'docs/user-guide/concepts/model-providers/gemini': 'docs/user-guide/concepts/model-providers/google',
+
+  // gemini was renamed to google (concepts/ was later consolidated under harness/)
+  'docs/user-guide/concepts/model-providers/gemini': 'docs/user-guide/sdk/model-providers/google',
+
+  // bidi model providers renamed to match upstream (#3956)
+  'docs/user-guide/concepts/bidirectional-streaming/models/nova_sonic':
+    'docs/user-guide/sdk/bidirectional-streaming/models/bedrock',
+  'docs/user-guide/concepts/bidirectional-streaming/models/gemini_live':
+    'docs/user-guide/sdk/bidirectional-streaming/models/google',
+  'docs/user-guide/concepts/bidirectional-streaming/models/openai_realtime':
+    'docs/user-guide/sdk/bidirectional-streaming/models/openai',
 
   // python-tools was renamed to custom-tools
-  'docs/user-guide/concepts/tools/python-tools': 'docs/user-guide/concepts/tools/custom-tools',
-
-  // multi_agent_example index redirects to the main example page
-  'docs/examples/python/multi_agent_example': 'docs/examples/python/multi_agent_example/multi_agent_example',
+  'docs/user-guide/concepts/tools/python-tools': 'docs/user-guide/sdk/tools/custom-tools',
 
   // Vanity URLs for community links
   discord: 'https://discord.gg/strands',
 
-  // /learn/ hub was renamed to /community/
-  'learn': 'community',
+  // Campaign short-links → tracked landing pages with UTM baked in, so a source
+  // is tracked even when the URL is typed (not clicked). Each emits a build-time
+  // redirect stub at /<slug>/; the destination's canonical is param-free (SEO-safe).
+  // Add a channel by copying a line and changing the slug + utm_source/utm_medium.
+  //
+  // Always-on PAID external channels land on the QuickStart (evergreen — the blog
+  // dates itself, and this traffic wants to start building). utm_medium=paid-social
+  // so they classify under the "Paid Social Media" marketing channel; utm_source
+  // keeps each buy separable within it.
+  newsletter:
+    'https://strandsagents.com/docs/user-guide/harness/quickstart/?utm_source=newsletter&utm_medium=paid-social&utm_campaign=always-on',
+  quora:
+    'https://strandsagents.com/docs/user-guide/harness/quickstart/?utm_source=quora&utm_medium=paid-social&utm_campaign=always-on',
+  reddit:
+    'https://strandsagents.com/docs/user-guide/harness/quickstart/?utm_source=reddit&utm_medium=paid-social&utm_campaign=always-on',
+  bytebytego:
+    'https://strandsagents.com/docs/user-guide/harness/quickstart/?utm_source=bytebytego&utm_medium=paid-social&utm_campaign=always-on',
+  dailydev:
+    'https://strandsagents.com/docs/user-guide/harness/quickstart/?utm_source=dailydev&utm_medium=paid-social&utm_campaign=always-on',
+  // Spotify is a paid audio ad, not social — utm_medium=display so it doesn't
+  // mislabel as Paid Social Media. Adjust if the report suite wants another channel.
+  spotify:
+    'https://strandsagents.com/docs/user-guide/harness/quickstart/?utm_source=spotify&utm_medium=display&utm_campaign=always-on',
+
+  // The /community/ and /learn/ hubs were removed; both now lead to the
+  // start of the learning path (courses).
+  community: 'docs/learning/how-agents-really-work',
+  learn: 'docs/learning/how-agents-really-work',
+
+  // The /docs/examples/ tutorials were replaced by the /examples/ catalog
+  // (pulled from the samples repo). Index gets a static stub; the prefix rule
+  // below covers every individual tutorial URL via the 404 fallback.
+  'docs/examples': 'examples',
 
   // docs/community/learning/ lessons moved to docs/learning/
   // Explicit entries prevent the COMMUNITY_PREFIX_RULE catch-all from sending
   // 404-fallback requests to docs/integrations/learning/* (wrong).
-  'docs/community/learning/lesson1-how-agents-really-work':
-    'docs/learning/how-agents-really-work',
-  'docs/community/learning/lesson2-switching-model-providers':
-    'docs/learning/switching-model-providers',
-  'docs/community/learning/lesson3-give-your-agent-tools-using-mcp':
-    'docs/learning/give-your-agent-tools-using-mcp',
+  'docs/community/learning/lesson1-how-agents-really-work': 'docs/learning/how-agents-really-work',
+  'docs/community/learning/lesson2-switching-model-providers': 'docs/learning/switching-model-providers',
+  'docs/community/learning/lesson3-give-your-agent-tools-using-mcp': 'docs/learning/give-your-agent-tools-using-mcp',
   'docs/community/learning/lesson4-adding-callbacks-and-response-streaming':
     'docs/learning/adding-callbacks-and-response-streaming',
-  'docs/community/learning/lesson5-control-your-agent-with-hooks':
-    'docs/learning/control-your-agent-with-hooks',
-  'docs/community/learning/lesson6-agent-plugins-and-skills':
-    'docs/learning/agent-plugins-and-skills',
+  'docs/community/learning/lesson5-control-your-agent-with-hooks': 'docs/learning/control-your-agent-with-hooks',
+  'docs/community/learning/lesson6-agent-plugins-and-skills': 'docs/learning/agent-plugins-and-skills',
   'docs/community/learning/lesson7-improve-agent-reliability-with-strands-steering':
     'docs/learning/improve-agent-reliability-with-strands-steering',
   'docs/community/learning/lesson8-context-engineering-and-conversation-management':
@@ -67,18 +99,24 @@ export const STATIC_SLUG_REDIRECTS: Record<string, string> = {
     'docs/learning/multi-agent-patterns-graph-workflows',
   'docs/community/learning/lesson12-multi-agent-patterns-agent-swarms':
     'docs/learning/multi-agent-patterns-agent-swarms',
-  'docs/community/learning/lesson13-evaluating-agents':
-    'docs/learning/evaluating-agents',
-  'docs/community/learning/lesson14-deploying-agents-to-the-cloud':
-    'docs/learning/deploying-agents-to-the-cloud',
+  'docs/community/learning/lesson13-evaluating-agents': 'docs/learning/evaluating-agents',
+  'docs/community/learning/lesson14-deploying-agents-to-the-cloud': 'docs/learning/deploying-agents-to-the-cloud',
 
   // cli-reference-agent was archived (strands-agents/agent-builder)
-  'docs/examples/python/cli-reference-agent': 'docs/examples',
+  'docs/examples/python/cli-reference-agent': 'examples',
 
-  // robots-sim was archived (strands-labs/robots-sim); its capabilities are
-  // now covered by Strands Robots' built-in simulation. Point the old page
-  // straight at Strands Robots so backlinks land on the successor project.
-  'docs/labs/robots-sim': 'docs/labs/robots',
+  // Labs project pages were removed: each project now lives in its own
+  // strands-labs GitHub repo, surfaced only from the Labs overview. Labs is
+  // launched, so every removed URL redirects straight to its repo. robots-sim
+  // was archived earlier (capabilities folded into Strands Robots), so it lands
+  // on the Robots repo too.
+  'docs/labs/robots-sim': 'https://github.com/strands-labs/robots',
+  'docs/labs/robots': 'https://github.com/strands-labs/robots',
+  'docs/labs/strands-for-cosmos': 'https://github.com/strands-labs/strands-for-cosmos',
+  'docs/labs/benchmark-harnesses': 'https://github.com/strands-labs/benchmark-harnesses',
+  'docs/labs/harness-optimizer': 'https://github.com/strands-labs/harness-optimizer',
+  'docs/labs/ai-functions': 'https://github.com/strands-labs/ai-functions',
+  'docs/labs/pywebrtc-audio': 'https://github.com/strands-labs/pywebrtc-audio',
 
   // community-packages content lives on the interactive integrations page
   // (an Astro page — buildStaticRedirects validates those targets against
@@ -150,22 +188,55 @@ export const STATIC_SLUG_REDIRECTS: Record<string, string> = {
 
 type SlugRule = { match: RegExp; to: string } | { match: RegExp; to: (m: RegExpMatchArray) => string }
 
-// Exact-match rules generated from STATIC_SLUG_REDIRECTS, plus any dynamic
-// (regex-based) rules. Dynamic rules can't be enumerated into static stubs,
-// so they are only applied by the client-side 404 fallback.
-const SLUG_RULES: SlugRule[] = [
+// Exact-match rules: STATIC_SLUG_REDIRECTS plus the exact dynamic renames
+// (section landing pages). These are the highest-priority rules — they win over
+// a page's frontmatter redirectFrom, because they encode deliberate 1:1 renames.
+const EXACT_SLUG_RULES: SlugRule[] = [
   ...Object.entries(STATIC_SLUG_REDIRECTS).map(([from, to]) => ({
     match: exactly(from),
     to,
   })),
 
-  // Catch-all for the docs/community/ → docs/integrations/ section rename.
-  // Exact static entries above win for pages that existed at rename time;
-  // this covers any other docs/community/ URL (e.g. a page added on a branch
-  // that predates the rename) via the client-side 404 fallback.
+  // The SDK docs were consolidated from scattered top-level prefixes
+  // (concepts/, quickstart/, deploy/, observability-evaluation/, safety-security/,
+  // versioning-and-support) into a single /docs/user-guide/sdk/ tree. The
+  // concepts/ overview became the sdk/ landing, so it needs an exact rule (the
+  // concepts/ prefix rule below would send it to /sdk/harness).
+  { match: exactly('docs/user-guide/concepts/harness'), to: 'docs/user-guide/sdk' },
+  { match: exactly('docs/user-guide/versioning-and-support'), to: 'docs/user-guide/sdk/versioning-and-support' },
+]
+
+// Prefix (catch-all) rules: lowest priority, applied only after a page's
+// frontmatter redirectFrom has had its chance. A blanket section rename like
+// concepts/ → harness/ must not shadow a specific redirectFrom (e.g. a page that
+// moved *within* concepts and then into integrations), so these run last.
+const PREFIX_SLUG_RULES: SlugRule[] = [
+  // docs/community/ → docs/integrations/ section rename.
+  { match: startsWith('docs/community'), to: (m) => `docs/integrations/${m[1]}` },
+
+  // Every legacy docs/examples/ tutorial now resolves to the /examples/ catalog.
+  { match: startsWith('docs/examples'), to: () => 'examples' },
+
+  // Product rebrand: "Harness SDK" → "SDK". Its pages moved from
+  // /docs/user-guide/harness/* to /docs/user-guide/sdk/*. Fires only on 404, so
+  // the Strands harness pages at /harness/* are served normally
+  // and only genuinely-missing old SDK deep links fall through to /sdk/*.
+  { match: startsWith('docs/user-guide/harness'), to: (m) => `docs/user-guide/sdk/${m[1]}` },
+
+  // Changelog stream rename: the former "harness" stream is now the "sdk" stream.
+  { match: startsWith('changelog/harness'), to: (m) => `changelog/sdk/${m[1]}` },
+
+  // SDK consolidation: every old top-level prefix folds under sdk/.
+  { match: startsWith('docs/user-guide/concepts'), to: (m) => `docs/user-guide/sdk/${m[1]}` },
+  { match: startsWith('docs/user-guide/quickstart'), to: (m) => `docs/user-guide/sdk/quickstart/${m[1]}` },
+  { match: startsWith('docs/user-guide/deploy'), to: (m) => `docs/user-guide/sdk/deploy/${m[1]}` },
   {
-    match: startsWith('docs/community'),
-    to: (m) => `docs/integrations/${m[1]}`,
+    match: startsWith('docs/user-guide/observability-evaluation'),
+    to: (m) => `docs/user-guide/sdk/observability-evaluation/${m[1]}`,
+  },
+  {
+    match: startsWith('docs/user-guide/safety-security'),
+    to: (m) => `docs/user-guide/sdk/safety-security/${m[1]}`,
   },
 ]
 
@@ -180,15 +251,23 @@ const SLUG_RULES: SlugRule[] = [
  * @param redirectFromMap - Optional map of source slugs to target slugs (from frontmatter redirectFrom)
  */
 export function resolveRedirect(slug: string, redirectFromMap?: Record<string, string>): string | null {
-  // Check SLUG_RULES first (highest priority)
-  for (const rule of SLUG_RULES) {
+  // 1. Exact renames win first — deliberate 1:1 moves take priority over everything.
+  for (const rule of EXACT_SLUG_RULES) {
     const m = slug.match(rule.match)
     if (m) return typeof rule.to === 'function' ? rule.to(m) : rule.to
   }
 
-  // Then check redirectFromMap (frontmatter-based redirects)
+  // 2. A page's frontmatter redirectFrom beats the blanket prefix rules below, so a
+  //    page that moved to a non-obvious location (e.g. into integrations) is honored
+  //    instead of being swept up by a section-wide prefix rename.
   if (redirectFromMap && slug in redirectFromMap) {
     return redirectFromMap[slug] ?? null
+  }
+
+  // 3. Prefix (catch-all) section renames, lowest priority.
+  for (const rule of PREFIX_SLUG_RULES) {
+    const m = slug.match(rule.match)
+    if (m) return typeof rule.to === 'function' ? rule.to(m) : rule.to
   }
 
   return null

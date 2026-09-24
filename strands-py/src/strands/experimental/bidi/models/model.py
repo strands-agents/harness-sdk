@@ -23,7 +23,7 @@ from ....types.content import Messages
 from ....types.tools import ToolResultBlock, ToolSpec
 from ..types.content import BidiContentBlock, BidiContentDelta
 from ..types.events import BidiOutputEvent
-from .configs import AudioConfig, BidiConnectionConfig
+from .configs import AudioConfig, ConnectionConfig
 
 logger = logging.getLogger(__name__)
 
@@ -71,9 +71,9 @@ class BidiModel(Model, abc.ABC):
         """Get the configured model identifier."""
         return cast(str, self.get_config()["model_id"])
 
-    def get_connection_config(self) -> BidiConnectionConfig:
+    def get_connection_config(self) -> ConnectionConfig:
         """Get the configured reconnect timing, or an empty config if unspecified."""
-        return cast(BidiConnectionConfig, self.get_config().get("connection", {}))
+        return cast(ConnectionConfig, self.get_config().get("connection", {}))
 
     def structured_output(self, *args: Any, **kwargs: Any) -> NoReturn:
         """Raise because bidirectional models do not support structured output."""
@@ -166,8 +166,8 @@ class BidiModel(Model, abc.ABC):
         pass
 
 
-class BidiModelTimeoutError(Exception):
-    """Model timeout error.
+class ConnectionTimeoutError(Exception):
+    """Persistent model connection timeout.
 
     Bidirectional models are often configured with a connection time limit. Bedrock Nova Sonic, for example, keeps the
     connection open for 8 minutes max. Upon receiving a timeout, the agent loop is configured to restart the model

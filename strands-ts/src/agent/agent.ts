@@ -217,6 +217,7 @@ export type AgentConfig = {
    *   with a higher truncation threshold and summarization only on overflow.
    *   This mode may change in future versions.
    * - `ContextManagerConfig` object: Custom strategy pipeline and stash configuration.
+   * - `ContextManager` instance: Used as-is. An instance binds to one agent; construct one per `Agent`.
    * - `false`: Explicitly disable context management (no compression, no offloading).
    *
    * When set (except `false`), any co-provided `conversationManager` is ignored.
@@ -327,7 +328,7 @@ export type AgentConfig = {
  * Resolve the contextManager facade into a concrete ConversationManager.
  *
  * When contextManager is undefined, falls back to the default SlidingWindowConversationManager.
- * When a preset, config object, or false, uses NullConversationManager —
+ * When a preset, config object, instance, or false, uses NullConversationManager —
  * the ContextManager owns overflow recovery and proactive compression.
  */
 function resolveConversationManager(
@@ -1080,6 +1081,32 @@ export class Agent implements LocalAgent, InvokableAgent {
       result = await gen.next()
     }
     return result.value
+  }
+
+  /**
+   * Runs the agent's shutdown procedures at end of life. Safe to call more
+   * than once, and a no-op when there is nothing to release.
+   *
+   * Call it directly when you own the agent's lifecycle (e.g. draining on a shutdown signal), or bind
+   * the agent with `await using` to run it automatically on scope exit.
+   *
+   * @example
+   * ```typescript
+   * await using agent = await createHarness()
+   * await agent.invoke('summarize the repo')
+   * // agent.shutdown() runs here as the scope exits
+   * ```
+   */
+  async shutdown(): Promise<void> {
+    await this.memoryManager?.flush()
+  }
+
+  /**
+   * Runs {@link Agent.shutdown} when the agent leaves an `await using` scope, on normal exit and on
+   * throw, so its shutdown procedures run without a manual `finally`.
+   */
+  async [Symbol.asyncDispose](): Promise<void> {
+    await this.shutdown()
   }
 
   /**

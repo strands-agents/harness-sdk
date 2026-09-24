@@ -54,9 +54,9 @@ from .._async import _TaskGroup, stop_all
 from ..models.model import BidiModel
 from ..types.agent import BidiAgentInput
 from ..types.events import BidiOutputEvent
-from ..types.io import BidiInput, BidiOutput
+from ..types.io import InputStream, OutputStream
 from ..types.media import AudioDelta
-from .loop import _BidiAgentLoop
+from .loop import _AgentLoop
 
 if TYPE_CHECKING:
     from ....session.session_manager import SessionManager
@@ -96,7 +96,7 @@ class BidiAgent(LocalAgent):
         """Initialize bidirectional agent.
 
         Args:
-            model: BidiModel instance, string model_id, or None for default detection.
+            model: BidiModel instance, Bedrock model ID string, or None to use Nova Sonic 2.
             tools: Optional list of tools with flexible format support.
             system_prompt: System prompt for conversations as a string or structured content blocks.
                 Structured blocks are retained, while their text is passed to Bidi models as a string.
@@ -126,7 +126,7 @@ class BidiAgent(LocalAgent):
         elif model is None:
             from ..models.bedrock import BedrockNovaSonicModel
 
-            self.model = BedrockNovaSonicModel()
+            self.model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
         else:
             raise TypeError("model must be a BidiModel, string, or None")
 
@@ -185,7 +185,7 @@ class BidiAgent(LocalAgent):
         else:
             self._session_id = uuid.uuid4().hex[:8]
 
-        self._loop = _BidiAgentLoop(self)
+        self._loop = _AgentLoop(self)
 
         # TODO: Determine if full support is required
         self._interrupt_state = _InterruptState()
@@ -415,22 +415,22 @@ class BidiAgent(LocalAgent):
         await self.stop()
 
     async def run(
-        self, inputs: list[BidiInput], outputs: list[BidiOutput], invocation_state: dict[str, Any] | None = None
+        self, inputs: list[InputStream], outputs: list[OutputStream], invocation_state: dict[str, Any] | None = None
     ) -> None:
-        """Run the agent using provided IO channels for bidirectional communication.
+        """Run the agent using provided I/O streams for bidirectional communication.
 
         Args:
-            inputs: Input callables to read data from a source
-            outputs: Output callables to receive events from the agent
+            inputs: Streams that produce input for the agent.
+            outputs: Streams that consume output events from the agent.
             invocation_state: Optional context shared by reference with tools and hooks for the duration of run(),
                 including across connection restarts. Tools access it through ToolContext.invocation_state.
                 Defaults to a new empty dictionary.
 
         Example:
             ```python
-            # Using model defaults:
-            model = BedrockNovaSonicModel()
-            audio_io = BidiAudioIO()
+            # Using default audio settings:
+            model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
+            audio_io = AudioIO()
             agent = BidiAgent(model=model, tools=[calculator])
             await agent.run(
                 inputs=[audio_io.input()],
@@ -440,12 +440,13 @@ class BidiAgent(LocalAgent):
 
             # Using custom audio config:
             model = BedrockNovaSonicModel(
+                model_id="amazon.nova-2-sonic-v1:0",
                 audio={
                     "input": {"sample_rate": 16000},
                     "output": {"sample_rate": 24000},
                 }
             )
-            audio_io = BidiAudioIO()
+            audio_io = AudioIO()
             agent = BidiAgent(model=model, tools=[calculator])
             await agent.run(
                 inputs=[audio_io.input()],
@@ -455,7 +456,7 @@ class BidiAgent(LocalAgent):
         """
 
         async def run_inputs() -> None:
-            async def task(input_: BidiInput) -> None:
+            async def task(input_: InputStream) -> None:
                 while True:
                     event = await input_()
                     await self.send(event)
@@ -471,8 +472,8 @@ class BidiAgent(LocalAgent):
         try:
             await self.start(invocation_state)
 
-            input_starts = [input_.start for input_ in inputs if isinstance(input_, BidiInput)]
-            output_starts = [output.start for output in outputs if isinstance(output, BidiOutput)]
+            input_starts = [input_.start for input_ in inputs if isinstance(input_, InputStream)]
+            output_starts = [output.start for output in outputs if isinstance(output, OutputStream)]
             for start in [*input_starts, *output_starts]:
                 await start(self)
 
@@ -481,8 +482,8 @@ class BidiAgent(LocalAgent):
                 task_group.create_task(run_outputs(inputs_task))
 
         finally:
-            input_stops = [input_.stop for input_ in inputs if isinstance(input_, BidiInput)]
-            output_stops = [output.stop for output in outputs if isinstance(output, BidiOutput)]
+            input_stops = [input_.stop for input_ in inputs if isinstance(input_, InputStream)]
+            output_stops = [output.stop for output in outputs if isinstance(output, OutputStream)]
 
             await stop_all(*input_stops, *output_stops, self.stop)
 
