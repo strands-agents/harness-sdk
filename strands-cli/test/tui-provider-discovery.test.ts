@@ -15,6 +15,31 @@ afterEach(() => {
 })
 
 describe('AWS credential refresh', () => {
+  // https://github.com/strands-agents/harness-sdk/issues/4481
+  // Model discovery must use the same default region as credential validation.
+  it('defaults Bedrock model discovery to us-east-1 when no region is configured', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'strands-aws-default-region-'))
+    try {
+      for (const key of ['AWS_REGION', 'AWS_DEFAULT_REGION', 'AWS_PROFILE']) {
+        vi.stubEnv(key, undefined)
+      }
+      vi.stubEnv('AWS_CONFIG_FILE', join(directory, 'config'))
+      vi.stubEnv('AWS_SHARED_CREDENTIALS_FILE', join(directory, 'credentials'))
+      const regions: string[] = []
+      vi.spyOn(BedrockClient.prototype, 'send').mockImplementation(async function (this: BedrockClient) {
+        regions.push(await this.config.region())
+        return { modelSummaries: [], inferenceProfileSummaries: [] }
+      })
+
+      const environment = CliConfigStore.memory().providerEnvironment()
+      await expect(discoverProviderModels('bedrock', environment)).resolves.toMatchObject({ available: true })
+      expect(regions).not.toHaveLength(0)
+      expect(new Set(regions)).toEqual(new Set(['us-east-1']))
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('rereads changed profile credentials and updates the shared cache used by later clients', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'strands-aws-refresh-'))
     const clients: STSClient[] = []
