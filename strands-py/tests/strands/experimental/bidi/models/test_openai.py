@@ -712,12 +712,8 @@ async def test_receive_combines_assistant_content_in_one_transcript(
     agent = BidiAgent(model=model)
     await agent.start()
     try:
-        tru_events = []
-        async with asyncio.timeout(2):
-            async for event in agent.receive():
-                tru_events.append(event)
-                if isinstance(event, BidiResponseStopEvent):
-                    break
+        receiver = agent.receive()
+        tru_events = [await asyncio.wait_for(anext(receiver), timeout=2) for _ in exp_events]
         assert tru_events == exp_events
         assert [message["content"] for message in agent.messages] == [
             [{"text": "Let me explain.\n\nHere is the answer."}]
