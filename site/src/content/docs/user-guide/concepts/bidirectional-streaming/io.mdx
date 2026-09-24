@@ -161,7 +161,7 @@ another encoding raises `ValueError`. Use custom I/O for other encodings.
 
 `BidiAudioIO` automatically handles interruptions to create natural conversational flow where users can interrupt the agent mid-response. When an interruption occurs:
 
-1. The agent emits a `BidiInterruptionEvent`
+1. The agent emits a `BidiResponseInterruptEvent`
 3. `BidiAudioIO`'s internal output buffer is cleared to stop playback
 4. The agent begins responding immediately to the new user input
 
@@ -223,7 +223,10 @@ app = FastAPI()
 
 @app.websocket("/text-chat")
 async def text_chat(websocket: WebSocket) -> None:
-    model = OpenAIRealtimeModel(api_key="<OPENAI_API_KEY>")
+    model = OpenAIRealtimeModel(
+        transcription_model_id="gpt-transcribe",
+        api_key="<OPENAI_API_KEY>",
+    )
     agent = BidiAgent(model=model)
 
     try:
@@ -251,7 +254,7 @@ async def main():
 
     while True:
         output_event = json.loads(await websocket.recv())
-        if output_event["type"] == "bidi_transcript_complete":
+        if output_event["type"] == "bidi_transcript_stop":
             print(output_event["transcript"])
             break
 

@@ -43,7 +43,7 @@ class BidiAgentStopEvent(BidiHookEvent):
 
 
 @dataclass
-class BidiResponseCompleteEvent(BidiHookEvent):
+class BidiResponseStopEvent(BidiHookEvent):
     """Event triggered when the model reports that a response has ended.
 
     A connection failure or shutdown without a model-reported completion does not
@@ -59,12 +59,12 @@ class BidiResponseCompleteEvent(BidiHookEvent):
 
 
 @dataclass
-class BidiInterruptionEvent(BidiHookEvent):
-    """Event triggered when model generation is interrupted.
+class BidiResponseInterruptEvent(BidiHookEvent):
+    """Event triggered to interrupt response generation or playback.
 
     This event is fired when the user interrupts the assistant (e.g., by speaking
     during the assistant's response) or when an error causes interruption. This is
-    specific to bidirectional streaming and doesn't exist in standard agents.
+    specific to a response and does not pause the bidirectional session.
 
     Hook providers can use this event to log interruptions, implement custom
     interruption handling, or trigger cleanup logic.

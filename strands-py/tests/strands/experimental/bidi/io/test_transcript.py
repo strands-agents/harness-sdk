@@ -9,10 +9,12 @@ from rich.console import Console
 import strands.experimental.bidi.io.transcript as transcript_module
 from strands.experimental.bidi.io.transcript import _BidiTranscriptOutput, _UserText
 from strands.experimental.bidi.types import (
-    BidiInterruptionEvent,
-    BidiResponseCompleteEvent,
+    BidiResponseInterruptEvent,
     BidiResponseStartEvent,
-    BidiTranscriptStreamEvent,
+    BidiResponseStopEvent,
+    BidiTranscriptDeltaEvent,
+    BidiTranscriptStartEvent,
+    BidiTranscriptStopEvent,
 )
 
 _ANSI_ESCAPE = re.compile(r"\x1b\[[?0-9;]*[ -/]*[@-~]")
@@ -33,13 +35,24 @@ async def output(console):
     await output.stop()
 
 
+def render_live(output, console):
+    with console.capture() as captured:
+        console.print(output._live.renderable)
+    rendered = _ANSI_ESCAPE.sub("", captured.get())
+    return rendered.splitlines()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("user_events", "exp_lines"),
     [
         ([], ["First response", "Second response"]),
         (
-            [BidiTranscriptStreamEvent("Next question", "user")],
+            [
+                BidiTranscriptStartEvent("user", "user-transcript"),
+                BidiTranscriptDeltaEvent("Next question", "user", "user-transcript"),
+                BidiTranscriptStopEvent("Next question", "user", "user-transcript"),
+            ],
             ["First response", "> Next question", "Second response"],
         ),
     ],
@@ -48,12 +61,16 @@ async def test_call_streams_turns(output, console, user_events, exp_lines):
     assert output._live.transient
 
     for event in [
-        BidiTranscriptStreamEvent("First", "assistant"),
-        BidiTranscriptStreamEvent(" response", "assistant"),
-        BidiResponseCompleteEvent("first", "complete"),
+        BidiTranscriptStartEvent("assistant", "first"),
+        BidiTranscriptDeltaEvent("First", "assistant", "first"),
+        BidiTranscriptDeltaEvent(" response", "assistant", "first"),
+        BidiTranscriptStopEvent("First response", "assistant", "first"),
+        BidiResponseStopEvent("first", "end_turn"),
         *user_events,
-        BidiTranscriptStreamEvent("Second response", "assistant"),
-        BidiResponseCompleteEvent("second", "complete"),
+        BidiTranscriptStartEvent("assistant", "second"),
+        BidiTranscriptDeltaEvent("Second response", "assistant", "second"),
+        BidiTranscriptStopEvent("Second response", "assistant", "second"),
+        BidiResponseStopEvent("second", "end_turn"),
     ]:
         await output(event)
 
@@ -66,51 +83,119 @@ async def test_call_streams_turns(output, console, user_events, exp_lines):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "event",
-    [BidiInterruptionEvent("user_speech"), BidiResponseCompleteEvent("first", "interrupted")],
-)
-@pytest.mark.parametrize(
-    ("initial", "exp_transcript"),
     [
-        (None, ""),
-        (BidiTranscriptStreamEvent("Hello", "assistant"), ""),
-        (BidiTranscriptStreamEvent("Wait", "user"), "Wait"),
+        BidiResponseInterruptEvent("user_speech"),
+        BidiResponseStartEvent("first"),
+        BidiResponseStopEvent("first", "end_turn"),
+        BidiResponseStopEvent("first", "interrupt"),
     ],
 )
-async def test_call_interrupts_response(output, event, initial, exp_transcript):
-    if initial is not None:
-        await output(initial)
-    await output(event)
+async def test_call_preserves_transcripts_across_response_events(output, console, event):
+    for transcript_event in [
+        BidiTranscriptStartEvent("user", "user"),
+        BidiTranscriptDeltaEvent("Wait", "user", "user"),
+        BidiTranscriptStartEvent("assistant", "assistant"),
+        BidiTranscriptDeltaEvent("Hello", "assistant", "assistant"),
+        event,
+        BidiTranscriptDeltaEvent(" please", "user", "user"),
+        BidiTranscriptDeltaEvent(" there", "assistant", "assistant"),
+        BidiTranscriptStopEvent("Hello there", "assistant", "assistant"),
+        BidiTranscriptStopEvent("Wait please", "user", "user"),
+    ]:
+        await output(transcript_event)
 
-    tru_state = (output._role, output._transcript, output._live.transient)
-    exp_state = ("user", exp_transcript, False)
-    assert tru_state == exp_state
-
-    user_live = output._live
-    await output(event)
-    await output(BidiTranscriptStreamEvent(" please", "user"))
-
-    assert output._live is user_live
-    assert output._transcript == f"{exp_transcript} please"
+    rendered = _ANSI_ESCAPE.sub("", console.file.getvalue())
+    tru_lines = [line for line in rendered.splitlines() if line]
+    exp_lines = ["> Wait please", "Hello there"]
+    assert tru_lines == exp_lines
 
 
 @pytest.mark.asyncio
-async def test_call_ignores_response_start(output):
-    await output(BidiTranscriptStreamEvent("Wait", "user"))
-    user_live = output._live
+@pytest.mark.parametrize(
+    ("second_role", "exp_lines"),
+    [
+        ("assistant", ["", "> First question", "", "", "Streamed answer", ""]),
+        ("user", ["", "> First question", "", "", "> Streamed answer", ""]),
+    ],
+)
+async def test_call_interleaves_transcripts(output, console, second_role, exp_lines):
+    for event in [
+        BidiTranscriptStartEvent("user", "first"),
+        BidiTranscriptDeltaEvent("First", "user", "first"),
+        BidiTranscriptStartEvent(second_role, "second"),
+        BidiTranscriptDeltaEvent("Streamed answer", second_role, "second"),
+        BidiTranscriptDeltaEvent(" question", "user", "first"),
+        BidiTranscriptStopEvent("Final answer", second_role, "second"),
+    ]:
+        await output(event)
 
-    await output(BidiResponseStartEvent("first"))
-    await output(BidiTranscriptStreamEvent(" please", "user"))
+    tru_lines = render_live(output, console)
+    assert tru_lines == exp_lines
+    assert console.file.getvalue() == ""
 
-    assert output._live is user_live
-    assert output._transcript == "Wait please"
+    await output(BidiTranscriptStartEvent("user", "third"))
+    await output(BidiTranscriptDeltaEvent("Next question", "user", "third"))
+    await output(BidiTranscriptStopEvent("First question", "user", "first"))
+
+    rendered = _ANSI_ESCAPE.sub("", console.file.getvalue())
+    tru_lines = rendered.splitlines()
+    assert tru_lines == exp_lines
+    assert render_live(output, console) == ["", "> Next question", ""]
+
+    await output(BidiTranscriptStopEvent("Next question", "user", "third"))
+    assert render_live(output, console) == ["", "> Start talking ...", ""]
+    assert output._transcripts == {}
+
+
+@pytest.mark.asyncio
+async def test_call_wraps_user_text_above_streaming_assistant(output, console):
+    console.width = 16
+    for event in [
+        BidiTranscriptStartEvent("user", "user"),
+        BidiTranscriptDeltaEvent("alpha beta", "user", "user"),
+        BidiTranscriptStartEvent("assistant", "assistant"),
+        BidiTranscriptDeltaEvent("Answer", "assistant", "assistant"),
+    ]:
+        await output(event)
+
+    tru_lines = render_live(output, console)
+    exp_lines = ["", "> alpha beta", "", "", "Answer", ""]
+    assert tru_lines == exp_lines
+
+    await output(BidiTranscriptDeltaEvent(" gamma delta", "user", "user"))
+    await output(BidiTranscriptDeltaEvent(" growing", "assistant", "assistant"))
+
+    tru_lines = render_live(output, console)
+    exp_lines = ["", "> alpha beta ", "  gamma delta", "", "", "Answer growing", ""]
+    assert tru_lines == exp_lines
+
+
+@pytest.mark.asyncio
+async def test_stop_preserves_unfinished_transcripts(output, console):
+    for event in [
+        BidiTranscriptStartEvent("user", "user"),
+        BidiTranscriptDeltaEvent("Partial question", "user", "user"),
+        BidiTranscriptStartEvent("assistant", "assistant"),
+        BidiTranscriptDeltaEvent("Partial answer", "assistant", "assistant"),
+    ]:
+        await output(event)
+
+    await output.stop()
+    await output.stop()
+
+    rendered = _ANSI_ESCAPE.sub("", console.file.getvalue())
+    tru_lines = [line for line in rendered.splitlines() if line]
+    exp_lines = ["> Partial question", "Partial answer"]
+    assert tru_lines == exp_lines
+    assert output._transcripts == {}
 
 
 @pytest.mark.parametrize("no_color", [False, True])
 @pytest.mark.parametrize(
     ("text", "exp_lines"),
     [
-        ("Hello", ["", "> Hello"]),
-        ("alpha beta gamma delta", ["", "> alpha beta ", "  gamma delta"]),
+        ("Hello", ["", "> Hello", ""]),
+        ("alpha beta gamma delta", ["", "> alpha beta ", "  gamma delta", ""]),
     ],
 )
 def test_user_text_render(monkeypatch, no_color, text, exp_lines):
@@ -143,4 +228,4 @@ async def test_stop_restores_cursor(console, monkeypatch, started):
     await output.stop()
 
     show_cursor.assert_called_with()
-    assert output._role is None
+    assert output._transcripts == {}

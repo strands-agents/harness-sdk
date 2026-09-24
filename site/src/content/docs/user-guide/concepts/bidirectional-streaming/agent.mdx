@@ -321,7 +321,7 @@ agent = BidiAgent(model=model)
 async with agent:
     await agent.send("Hello")
     async for event in agent.receive():
-        if isinstance(event, BidiResponseCompleteEvent):
+        if isinstance(event, BidiResponseStopEvent):
             break
 ```
 
@@ -337,7 +337,7 @@ try:
     await agent.send("Hello")
     
     async for event in agent.receive():
-        if isinstance(event, BidiResponseCompleteEvent):
+        if isinstance(event, BidiResponseStopEvent):
             break
 finally:
     await agent.stop()
@@ -361,18 +361,6 @@ async for event in agent.receive():
 The restart process: Timeout detected → `BidiConnectionRestartEvent` emitted → Sending blocked → Hooks invoked → Model restarted with history → New receiver task spawned → Sending unblocked → Conversation continues seamlessly.
 
 ### Error Handling
-
-#### Handling Errors in Events
-
-```python
-async for event in agent.receive():
-    if isinstance(event, BidiErrorEvent):
-        print(f"Error: {event.message}")
-        # Access original exception
-        original_error = event.error
-        # Decide whether to continue or break
-        break
-```
 
 #### Handling Connection Errors
 

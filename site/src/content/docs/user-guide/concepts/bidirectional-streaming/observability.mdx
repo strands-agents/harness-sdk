@@ -171,14 +171,9 @@ agents. See [Tool-Level Attributes](../../observability-evaluation/traces.md#too
 
 ### Interruption Events
 
-An interruption is recorded as a `bidi_interruption` event on the session span with an
-`interruption.reason` attribute. The interrupted response separately closes with
-`gen_ai.response.finish_reason` set to `interrupted`.
+An interruption is recorded as a `bidi_response_interrupt` event on the session span with an `interruption.reason` attribute. The interrupted response separately closes with `gen_ai.response.finish_reason` set to `interrupt`.
 
-To count interruptions, query the session span's `bidi_interruption` events. To find
-which response ended, query response spans with an `interrupted` finish reason. Keeping
-the event on the session also captures barge-ins between response spans. For detection
-and playback behavior, see [Interruptions](interruption.md).
+To count interruptions, query the session span's `bidi_response_interrupt` events. To find which response ended, query response spans with an `interrupt` finish reason. Keeping the event on the session also captures barge-ins between response spans. For detection and playback behavior, see [Interruptions](interruption.md).
 
 ## Inspecting Spans Locally
 
@@ -219,7 +214,7 @@ span, with the resource block omitted:
     },
     "events": [
         {
-            "name": "bidi_interruption",
+            "name": "bidi_response_interrupt",
             "timestamp": "2026-08-10T13:27:28.100000Z",
             "attributes": {
                 "interruption.reason": "user_speech"
@@ -291,7 +286,7 @@ import logging
 
 from strands.experimental.bidi.hooks import (
     BidiAfterConnectionRestartEvent,
-    BidiInterruptionEvent,
+    BidiResponseInterruptEvent,
 )
 from strands.hooks import HookProvider, HookRegistry
 
@@ -306,10 +301,10 @@ class SessionStats(HookProvider):
         self.restarts = 0
 
     def register_hooks(self, registry: HookRegistry) -> None:
-        registry.add_callback(BidiInterruptionEvent, self.on_interruption)
+        registry.add_callback(BidiResponseInterruptEvent, self.on_interruption)
         registry.add_callback(BidiAfterConnectionRestartEvent, self.on_restart)
 
-    def on_interruption(self, event: BidiInterruptionEvent) -> None:
+    def on_interruption(self, event: BidiResponseInterruptEvent) -> None:
         self.interruptions += 1
         logger.info("reason=<%s> | user interrupted the model", event.reason)
 
@@ -332,7 +327,7 @@ the event stream:
 
 ```python
 from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.types import BidiResponseCompleteEvent, BidiUsageEvent
+from strands.experimental.bidi.types import BidiResponseStopEvent, BidiUsageEvent
 
 
 async def track_session(agent: BidiAgent) -> None:
@@ -347,7 +342,7 @@ async def track_session(agent: BidiAgent) -> None:
                     f"  {modality['modality']}: "
                     f"in={modality['input_tokens']} out={modality['output_tokens']}"
                 )
-        elif isinstance(event, BidiResponseCompleteEvent):
+        elif isinstance(event, BidiResponseStopEvent):
             print(f"response {event.response_id} ended: {event.stop_reason}")
             break
 ```

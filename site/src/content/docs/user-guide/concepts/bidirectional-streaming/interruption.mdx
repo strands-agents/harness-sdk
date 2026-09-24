@@ -18,19 +18,19 @@ Interruptions are detected through Voice Activity Detection (VAD) built into the
 ```mermaid
 flowchart LR
     A[User Starts Speaking] --> B[Model Detects Speech]
-    B --> C[BidiInterruptionEvent]
+    B --> C[BidiResponseInterruptEvent]
     C --> D[Clear Audio Buffer]
     C --> E[Stop Response]
-    E --> F[BidiResponseCompleteEvent]
+    E --> F[BidiResponseStopEvent]
     B --> G[Transcribe Speech]
-    G --> H[BidiTranscriptStreamEvent]
+    G --> H[BidiTranscriptDeltaEvent]
     F --> I[Ready for New Input]
     H --> I
 ```
 
 ## Handling Interruptions
 
-The interruption flow: Model's VAD detects user speech → `BidiInterruptionEvent` sent → Audio buffer cleared → Response terminated → User's speech transcribed → Model ready for new input.
+The interruption flow: Model's VAD detects user speech → `BidiResponseInterruptEvent` sent → Audio buffer cleared → Response terminated → User's speech transcribed → Model ready for new input.
 
 ### Automatic Handling (Default)
 
@@ -67,8 +67,8 @@ import asyncio
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 from strands.experimental.bidi.types import (
-    BidiInterruptionEvent,
-    BidiResponseCompleteEvent
+    BidiResponseInterruptEvent,
+    BidiResponseStopEvent
 )
 
 model = BedrockNovaSonicModel()
@@ -79,15 +79,15 @@ async def main():
     await agent.send("Tell me a long story")
     
     async for event in agent.receive():
-        if isinstance(event, BidiInterruptionEvent):
+        if isinstance(event, BidiResponseInterruptEvent):
             print(f"Interrupted: {event.reason}")
             # Custom handling:
             # - Update UI to show interruption
             # - Log analytics
             # - Clear custom buffers
             
-        elif isinstance(event, BidiResponseCompleteEvent):
-            if event.stop_reason == "interrupted":
+        elif isinstance(event, BidiResponseStopEvent):
+            if event.stop_reason == "interrupt":
                 print("Response was interrupted by user")
             break
     
@@ -100,11 +100,11 @@ asyncio.run(main())
 
 ### Key Events
 
-**BidiInterruptionEvent** - Emitted when interruption detected:
+**BidiResponseInterruptEvent** - Emitted when interruption detected:
 - `reason`: `"user_speech"` (most common) or `"error"`
 
-**BidiResponseCompleteEvent** - Includes interruption status:
-- `stop_reason`: `"complete"`, `"interrupted"`, `"error"`, or `"tool_use"`
+**BidiResponseStopEvent** - Includes interruption status:
+- `stop_reason`: `"end_turn"`, `"interrupt"`, `"error"`, or `"tool_use"`
 
 ## Interruption Hooks
 
@@ -112,13 +112,15 @@ Use hooks to track interruptions across your application:
 
 ```python
 from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.hooks import BidiInterruptionEvent as BidiInterruptionHookEvent
+from strands.experimental.bidi.hooks import (
+    BidiResponseInterruptEvent as BidiResponseInterruptHookEvent,
+)
 
 class InterruptionTracker:
     def __init__(self):
         self.interruption_count = 0
     
-    async def on_interruption(self, event: BidiInterruptionHookEvent):
+    async def on_interruption(self, event: BidiResponseInterruptHookEvent):
         self.interruption_count += 1
         print(f"Interruption #{self.interruption_count}: {event.reason}")
         
@@ -144,6 +146,7 @@ from strands.experimental.bidi.models import OpenAIRealtimeModel
 
 # Check VAD configuration (OpenAI)
 model = OpenAIRealtimeModel(
+    transcription_model_id="gpt-transcribe",
     params={
         "audio": {
             "input": {
@@ -171,7 +174,7 @@ If audio keeps playing after interruption:
 ```python
 # Ensure BidiAudioIO is handling interruptions
 async def __call__(self, event: BidiOutputEvent):
-    if isinstance(event, BidiInterruptionEvent):
+    if isinstance(event, BidiResponseInterruptEvent):
         self._buffer.clear()  # Critical!
         print("Buffer cleared due to interruption")
 ```
@@ -185,6 +188,7 @@ from strands.experimental.bidi.models import OpenAIRealtimeModel
 
 # Increase VAD threshold (OpenAI)
 model = OpenAIRealtimeModel(
+    transcription_model_id="gpt-transcribe",
     params={
         "audio": {
             "input": {

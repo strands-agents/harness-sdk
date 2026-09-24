@@ -9,23 +9,26 @@ from strands import ToolContext, tool
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.agent.loop import _ReaderError
 from strands.experimental.bidi.hooks import BidiAgentStopEvent, BidiBeforeConnectionRestartEvent
-from strands.experimental.bidi.hooks import BidiInterruptionEvent as BidiInterruptionHookEvent
-from strands.experimental.bidi.hooks import BidiResponseCompleteEvent as BidiResponseCompleteHookEvent
+from strands.experimental.bidi.hooks import BidiResponseInterruptEvent as BidiResponseInterruptHookEvent
+from strands.experimental.bidi.hooks import BidiResponseStopEvent as BidiResponseStopHookEvent
 from strands.experimental.bidi.models import BidiModel, BidiModelTimeoutError
 from strands.experimental.bidi.types import (
-    BidiConnectionCloseEvent,
+    BidiAudioDeltaEvent,
     BidiConnectionRestartEvent,
+    BidiConnectionStopEvent,
     BidiConnectionWarningEvent,
-    BidiInterruptionEvent,
-    BidiResponseCompleteEvent,
+    BidiResponseInterruptEvent,
     BidiResponseStartEvent,
-    BidiTranscriptCompleteEvent,
-    BidiTranscriptStreamEvent,
+    BidiResponseStopEvent,
+    BidiTranscriptDeltaEvent,
+    BidiTranscriptStartEvent,
+    BidiTranscriptStopEvent,
     BidiUsageEvent,
 )
-from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent, MessageAddedEvent
+from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent, MessageAddedEvent, MessageUpdatedEvent
 from strands.types._events import ToolResultEvent, ToolResultMessageEvent, ToolUseStreamEvent
 from strands.types.content import TextBlock
+from strands.types.media import ImageBlock
 from strands.types.tools import ToolResultBlock
 from tests.fixtures.mock_hook_provider import MockHookProvider
 
@@ -43,6 +46,7 @@ def time_tool():
 def agent(time_tool):
     model = unittest.mock.AsyncMock(spec=BidiModel)
     model.get_connection_config.return_value = {}
+    model.send.return_value = None
     model.restart = unittest.mock.AsyncMock()
     return BidiAgent(model=model, tools=[time_tool])
 
@@ -52,12 +56,22 @@ async def loop(agent):
     return agent._loop
 
 
+@pytest_asyncio.fixture
+async def streaming_agent(time_tool):
+    agent = BidiAgent(model=_StreamModel(), tools=[time_tool])
+    await agent.start()
+    try:
+        yield agent
+    finally:
+        await agent.stop()
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("stop_reason", ["complete", "interrupted", "error", "tool_use"])
-async def test_response_complete_hook(agent, agenerator, stop_reason):
-    hooks = MockHookProvider([BidiResponseCompleteHookEvent])
+@pytest.mark.parametrize("stop_reason", ["end_turn", "interrupt", "error", "tool_use"])
+async def test_response_stop_hook(agent, agenerator, stop_reason):
+    hooks = MockHookProvider([BidiResponseStopHookEvent])
     agent.hooks.add_hook(hooks)
-    completion = BidiResponseCompleteEvent(response_id="response-1", stop_reason=stop_reason)
+    completion = BidiResponseStopEvent(response_id="response-1", stop_reason=stop_reason)
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([completion]))
 
     await agent.start()
@@ -69,8 +83,349 @@ async def test_response_complete_hook(agent, agenerator, stop_reason):
         await agent.stop()
 
     tru_events = hooks.events_received
-    exp_events = [BidiResponseCompleteHookEvent(agent=agent, response_id="response-1", stop_reason=stop_reason)]
+    exp_events = [BidiResponseStopHookEvent(agent=agent, response_id="response-1", stop_reason=stop_reason)]
     assert tru_events == exp_events
+
+
+@pytest.mark.asyncio
+async def test_response_without_transcripts_does_not_add_transcript_messages(streaming_agent):
+    agent = streaming_agent
+    reader = agent.receive()
+    hooks = MockHookProvider([MessageAddedEvent, MessageUpdatedEvent])
+    agent.hooks.add_hook(hooks)
+    for event in [
+        BidiResponseStartEvent("response"),
+        BidiAudioDeltaEvent("audio", "pcm", 24000, 1),
+    ]:
+        await agent.model.emit(event)
+        assert await anext(reader) == event
+    assert agent.messages == []
+    assert hooks.events_received == []
+
+    call = {"toolUseId": "lookup", "name": "lookup", "input": {}}
+    with unittest.mock.patch.object(agent._loop, "_run_tool", new_callable=unittest.mock.AsyncMock):
+        for event in [
+            ToolUseStreamEvent(current_tool_use=call, delta=""),
+            BidiResponseStopEvent("response", "tool_use"),
+        ]:
+            await agent.model.emit(event)
+            assert await anext(reader) == event
+    assert agent.messages == []
+    assert hooks.events_received == []
+    await reader.aclose()
+
+
+@pytest.mark.asyncio
+async def test_receive_executes_tools_before_late_transcription(agent):
+    hooks = MockHookProvider([MessageAddedEvent])
+    agent.hooks.add_hook(hooks)
+    result_sent = asyncio.Event()
+    tool_use = {"toolUseId": "tool-b", "name": "time_tool", "input": {}}
+    request = ToolUseStreamEvent(current_tool_use=tool_use, delta="")
+    request["response_id"] = "a"
+    audio = BidiAudioDeltaEvent("audio-a", "pcm", 24000, 1)
+    start_a = BidiResponseStartEvent("a")
+    start_b = BidiResponseStartEvent("b")
+    answer_a = BidiTranscriptStopEvent("Checking.", "assistant", content_id="a")
+    answer_b = BidiTranscriptStopEvent("It is noon.", "assistant", content_id="b")
+    complete_a = BidiResponseStopEvent("a", "tool_use")
+    complete_b = BidiResponseStopEvent("b", "end_turn")
+    transcript = BidiTranscriptStopEvent("What time is it?", "user", content_id="speech-a")
+
+    async def send(content, **kwargs):
+        assert content == ToolResultBlock(tool_use_id="tool-b", status="success", content=[{"text": "12:00"}])
+        result_sent.set()
+
+    async def receive():
+        yield BidiTranscriptStartEvent("user", content_id="speech-a")
+        for event in [start_a, audio, BidiTranscriptStartEvent("assistant", content_id="a"), answer_a, request]:
+            yield event
+        await result_sent.wait()
+        for event in [
+            transcript,
+            complete_a,
+            start_b,
+            BidiTranscriptStartEvent("assistant", content_id="b"),
+            answer_b,
+            complete_b,
+        ]:
+            yield event
+
+    agent.model.receive = receive
+    agent.model.send.side_effect = send
+    await agent.start()
+    reader = agent.receive()
+    try:
+        assert await anext(reader) == BidiTranscriptStartEvent("user", content_id="speech-a")
+        assert await anext(reader) == start_a
+        assert await anext(reader) == audio
+        tru_events = []
+
+        async def collect():
+            async for event in reader:
+                tru_events.append(event)
+                if event == complete_b:
+                    break
+
+        await asyncio.wait_for(collect(), 1)
+        result = {"toolUseId": "tool-b", "status": "success", "content": [{"text": "12:00"}]}
+        exp_events = [
+            BidiTranscriptStartEvent("assistant", content_id="a"),
+            answer_a,
+            request,
+            ToolResultEvent(result),
+            ToolResultMessageEvent(
+                {"role": "user", "content": [{"toolResult": result}], "tracking_id": unittest.mock.ANY}
+            ),
+            transcript,
+            complete_a,
+            start_b,
+            BidiTranscriptStartEvent("assistant", content_id="b"),
+            answer_b,
+            complete_b,
+        ]
+        assert tru_events == exp_events
+        assert [message["content"] for message in agent.messages] == [
+            [{"text": "What time is it?"}],
+            [{"text": "Checking."}],
+            [{"toolUse": tool_use}],
+            [{"toolResult": result}],
+            [{"text": "It is noon."}],
+        ]
+        exp_added = []
+        for message in agent.messages:
+            if message.get("metadata", {}).get("custom", {}).get("bidi", {}).get("kind") == "transcript":
+                message = {
+                    **message,
+                    "content": [],
+                    "metadata": {"custom": {"bidi": {"kind": "transcript", "status": "pending"}}},
+                }
+            exp_added.append(MessageAddedEvent(agent=agent, message=message))
+        assert hooks.events_received == exp_added
+    finally:
+        await reader.aclose()
+        await agent.stop()
+
+
+@pytest.mark.asyncio
+async def test_receive_interruption_does_not_wait_for_transcription(agent, agenerator):
+    start_a = BidiResponseStartEvent("a")
+    complete_a = BidiResponseStopEvent("a", "end_turn")
+    start_b = BidiResponseStartEvent("b")
+    audio_b = BidiAudioDeltaEvent("cancelled", "pcm", 24000, 1)
+    interrupted = BidiResponseInterruptEvent("user_speech")
+    complete_b = BidiResponseStopEvent("b", "interrupt")
+    transcript = BidiTranscriptStopEvent("Earlier question.", "user", content_id="speech-a")
+    native_events = [
+        BidiTranscriptStartEvent("user", content_id="speech-a"),
+        start_a,
+        transcript,
+        complete_a,
+        start_b,
+        audio_b,
+        interrupted,
+        complete_b,
+    ]
+    agent.model.receive = lambda: agenerator(native_events)
+    hooks = MockHookProvider([BidiResponseInterruptHookEvent])
+    agent.hooks.add_hook(hooks)
+    await agent.start()
+    reader = agent.receive()
+    try:
+        tru_events = [await asyncio.wait_for(anext(reader), 1) for _ in native_events]
+        assert tru_events == native_events
+        assert hooks.events_received == [BidiResponseInterruptHookEvent(agent=agent, reason="user_speech")]
+    finally:
+        await reader.aclose()
+        await agent.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "transcript,exp_text",
+    [("", "[Transcript unavailable.]"), ("Partial transcript", "Partial transcript")],
+)
+async def test_receive_transcription_failure_marks_message_incomplete(agent, agenerator, transcript, exp_text):
+    start = BidiResponseStartEvent("a")
+    partial = BidiTranscriptDeltaEvent("Incomplete", "user", content_id="speech-a")
+    answer = BidiTranscriptStopEvent("Answer.", "assistant", content_id="a")
+    complete = BidiResponseStopEvent("a", "end_turn")
+    error = BidiTranscriptStopEvent(transcript, "user", "speech-a", error=RuntimeError("Transcription failed."))
+    agent.model.receive = lambda: agenerator(
+        [
+            BidiTranscriptStartEvent("user", content_id="speech-a"),
+            start,
+            partial,
+            BidiTranscriptStartEvent("assistant", content_id="a"),
+            answer,
+            error,
+            complete,
+        ]
+    )
+    await agent.start()
+    reader = agent.receive()
+    try:
+        exp_events = [
+            BidiTranscriptStartEvent("user", content_id="speech-a"),
+            start,
+            partial,
+            BidiTranscriptStartEvent("assistant", content_id="a"),
+            answer,
+            error,
+            complete,
+        ]
+        tru_events = [await anext(reader) for _ in exp_events]
+        assert tru_events == exp_events
+        exp_messages = [
+            {
+                "role": role,
+                "content": [{"text": text}],
+                "tracking_id": unittest.mock.ANY,
+                "metadata": {"custom": {"bidi": {"kind": "transcript", "status": status}}},
+            }
+            for role, text, status in [("user", exp_text, "incomplete"), ("assistant", "Answer.", "complete")]
+        ]
+        assert agent.messages == exp_messages
+    finally:
+        await reader.aclose()
+        await agent.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("restart", [False, True])
+async def test_completed_messages_survive_connection_end(agent, agenerator, restart):
+    start_a = BidiResponseStartEvent("a")
+    answer_a = BidiTranscriptStopEvent("Answer A.", "assistant", content_id="a")
+    warning = BidiConnectionWarningEvent(time_left_s=10)
+    events = [
+        start_a,
+        BidiTranscriptStartEvent("assistant", content_id="a"),
+        answer_a,
+        BidiResponseStopEvent("a", "end_turn"),
+        BidiResponseStartEvent("b"),
+        BidiAudioDeltaEvent("old audio", "pcm", 24000, 1),
+        BidiTranscriptStartEvent("assistant", content_id="b"),
+        BidiTranscriptStopEvent("Answer B.", "assistant", content_id="b"),
+        BidiResponseStopEvent("b", "end_turn"),
+        warning,
+    ]
+    agent.model.receive = lambda: agenerator(events)
+    await agent.start()
+    reader = agent.receive()
+    try:
+        assert [await anext(reader) for _ in events[:3]] == events[:3]
+        await agent.send(TextBlock("Question B."))
+        assert [await anext(reader) for _ in events[3:]] == events[3:]
+        exp_content = [[{"text": "Answer A."}], [{"text": "Question B."}], [{"text": "Answer B."}]]
+        assert [message["content"] for message in agent.messages] == exp_content
+
+        if restart:
+            new_events = [
+                BidiResponseStartEvent("b"),
+                BidiAudioDeltaEvent("new audio", "pcm", 24000, 1),
+                BidiResponseStopEvent("b", "end_turn"),
+            ]
+            agent.model.receive = lambda: agenerator(new_events)
+            await agent._loop._restart_connection(None, agent._loop._generation)
+            assert [await anext(reader) for _ in new_events] == new_events
+        else:
+            await agent.stop()
+
+        assert [message["content"] for message in agent.messages] == exp_content
+    finally:
+        await reader.aclose()
+        if agent._started:
+            await agent.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "content", [TextBlock("Typed question"), ImageBlock(format="jpeg", source={"bytes": b"image"})]
+)
+async def test_send_complete_input_does_not_wait_for_transcripts(streaming_agent, content):
+    agent = streaming_agent
+    start = BidiResponseStartEvent("response")
+    input_start = BidiTranscriptStartEvent("user", content_id="speech")
+    assistant = BidiTranscriptStopEvent("Answer", "assistant", content_id="response")
+    complete = BidiResponseStopEvent("response", "end_turn")
+    user = BidiTranscriptStopEvent("Spoken question", "user", content_id="speech")
+    reader = agent.receive()
+    try:
+        for event in [input_start, start]:
+            await agent.model.emit(event)
+            assert await anext(reader) == event
+        await agent.send(content)
+        exp_messages = [
+            {
+                "role": "user",
+                "content": [],
+                "tracking_id": unittest.mock.ANY,
+                "metadata": {"custom": {"bidi": {"kind": "transcript", "status": "pending"}}},
+            },
+            {"role": "user", "content": [content.to_dict()], "tracking_id": unittest.mock.ANY},
+        ]
+        assert agent.messages == exp_messages
+        assistant_start = BidiTranscriptStartEvent("assistant", content_id="response")
+        await agent.model.emit(assistant_start)
+        assert await anext(reader) == assistant_start
+        for event in [assistant, user]:
+            await agent.model.emit(event)
+            assert await anext(reader) == event
+            exp_message = {
+                "role": event.role,
+                "content": [{"text": event.transcript}],
+                "tracking_id": unittest.mock.ANY,
+                "metadata": {"custom": {"bidi": {"kind": "transcript", "status": "complete"}}},
+            }
+            if event.role == "user":
+                exp_messages[0] = exp_message
+            else:
+                exp_messages.append(exp_message)
+            assert agent.messages == exp_messages
+        await agent.model.emit(complete)
+        assert await anext(reader) == complete
+        assert agent.messages == exp_messages
+    finally:
+        await reader.aclose()
+
+
+@pytest.mark.asyncio
+async def test_model_processes_transcripts_before_consumer_reads(loop, agent, agenerator):
+    question = BidiTranscriptStopEvent("Question", "user", content_id="speech")
+    answer = BidiTranscriptStopEvent("Answer", "assistant", content_id="response")
+    answer_processed = asyncio.Event()
+
+    async def on_update(event: MessageUpdatedEvent):
+        if event.message["role"] == "assistant":
+            answer_processed.set()
+
+    agent.add_hook(on_update)
+    starts = [
+        BidiTranscriptStartEvent("user", content_id="speech"),
+        BidiTranscriptStartEvent("assistant", content_id="response"),
+    ]
+    agent.model.receive = lambda: agenerator([*starts, question, answer])
+    await loop.start()
+    reader = loop.receive()
+    try:
+        assert [await anext(reader) for _ in starts] == starts
+        await asyncio.wait_for(answer_processed.wait(), 2)
+        exp_messages = [
+            {
+                "role": event.role,
+                "content": [{"text": event.transcript}],
+                "tracking_id": unittest.mock.ANY,
+                "metadata": {"custom": {"bidi": {"kind": "transcript", "status": "complete"}}},
+            }
+            for event in (question, answer)
+        ]
+        assert agent.messages == exp_messages
+        assert not loop._model_task.done()
+        assert await anext(reader) == question
+        assert await anext(reader) == answer
+    finally:
+        await reader.aclose()
+        await loop.stop()
 
 
 @pytest.mark.asyncio
@@ -78,9 +433,9 @@ async def test_response_complete_hook(agent, agenerator, stop_reason):
 @pytest.mark.parametrize(
     "stream_event,hook_type",
     [
-        (BidiResponseCompleteEvent(response_id="r1", stop_reason="complete"), BidiResponseCompleteHookEvent),
-        (BidiInterruptionEvent(reason="user_speech"), BidiInterruptionHookEvent),
-        (BidiTranscriptCompleteEvent(transcript="Hello", role="assistant"), MessageAddedEvent),
+        (BidiResponseStopEvent(response_id="r1", stop_reason="end_turn"), BidiResponseStopHookEvent),
+        (BidiResponseInterruptEvent(reason="user_speech"), BidiResponseInterruptHookEvent),
+        (BidiTranscriptStartEvent(role="assistant", content_id="assistant-transcript"), MessageAddedEvent),
     ],
 )
 async def test_model_event_waits_for_hook_and_checks_generation(
@@ -96,26 +451,29 @@ async def test_model_event_waits_for_hook_and_checks_generation(
     agent.hooks.add_callback(hook_type, on_event)
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([stream_event]))
     await loop.start()
+    reader = loop.receive()
+    read_task = asyncio.create_task(anext(reader))
     try:
         await asyncio.wait_for(hook_started.wait(), timeout=2)
-        assert loop._event_queue.empty()
-
+        assert not read_task.done()
         if superseded:
-            # A new connection starts a response while the old reader is awaiting a hook.
             loop._generation += 1
             loop._response_active = True
             loop._update_turn_state()
-
         finish_hook.set()
-        await asyncio.wait_for(loop._model_task, timeout=2)
         if superseded:
-            assert loop._event_queue.empty()
+            closed = BidiConnectionStopEvent(connection_id="c", reason="user_request")
+            await loop._event_queue.put(closed)
+            assert await asyncio.wait_for(read_task, 2) == closed
             assert loop._response_active
             assert not loop._turn_complete.is_set()
         else:
-            assert loop._event_queue.get_nowait() == stream_event
+            assert await asyncio.wait_for(read_task, 2) == stream_event
     finally:
         finish_hook.set()
+        read_task.cancel()
+        await asyncio.gather(read_task, return_exceptions=True)
+        await reader.aclose()
         await loop.stop()
 
 
@@ -124,38 +482,53 @@ async def test_model_event_waits_for_hook_and_checks_generation(
 async def test_tool_starts_after_request_is_queued(loop, agent, superseded):
     tool_use = {"toolUseId": "tool-1", "name": "time_tool", "input": {}}
     request = ToolUseStreamEvent(current_tool_use=tool_use, delta="")
-    first = BidiTranscriptStreamEvent(delta="first", role="assistant")
-    request_received = asyncio.Event()
+    first = BidiTranscriptStartEvent(role="assistant", content_id="assistant-transcript")
+    request_waiting = asyncio.Event()
+    tool_started = asyncio.Event()
 
     async def receive():
         yield first
-        request_received.set()
+        request_waiting.set()
         yield request
 
     agent.model.receive = receive
     with unittest.mock.patch.object(loop, "_run_tool", new_callable=unittest.mock.AsyncMock) as run_tool:
+        run_tool.side_effect = lambda *_: tool_started.set()
         await loop.start()
+        reader = loop.receive()
         try:
-            await asyncio.wait_for(request_received.wait(), timeout=2)
+            await asyncio.wait_for(request_waiting.wait(), 2)
             run_tool.assert_not_called()
             if superseded:
                 loop._generation += 1
-
-            assert loop._event_queue.get_nowait() == first
-            await asyncio.wait_for(loop._model_task, timeout=2)
-            assert loop._event_queue.get_nowait() == request
-            if superseded:
+                loop._event_queue.get_nowait()
+                await asyncio.wait_for(loop._model_task, 2)
+                closed = BidiConnectionStopEvent(connection_id="c", reason="user_request")
+                closing = asyncio.create_task(loop._event_queue.put(closed))
+                assert await asyncio.wait_for(anext(reader), 2) == request
+                assert await asyncio.wait_for(anext(reader), 2) == closed
+                await closing
                 run_tool.assert_not_called()
+                assert [message["content"] for message in agent.messages] == [[{"text": "[Transcript unavailable.]"}]]
             else:
+                assert await anext(reader) == first
+                await asyncio.wait_for(loop._model_task, 2)
+                await asyncio.wait_for(tool_started.wait(), 2)
                 run_tool.assert_awaited_once_with(tool_use, loop._generation)
+
+                assert [message["content"] for message in agent.messages] == [[{"text": "[Transcript unavailable.]"}]]
+                messages = agent.messages.copy()
+                assert await anext(reader) == request
+                assert agent.messages == messages
         finally:
+            await reader.aclose()
             await loop.stop()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cleanup_fails", [False, True])
 async def test_agent_stop_hook(agent, agenerator, cleanup_fails):
-    hooks = MockHookProvider([BidiAgentStopEvent, BidiResponseCompleteHookEvent])
+    hooks = MockHookProvider([BidiAgentStopEvent, BidiResponseStopHookEvent])
     agent.hooks.add_hook(hooks)
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([]))
     if cleanup_fails:
@@ -178,7 +551,7 @@ async def test_agent_stop_hook(agent, agenerator, cleanup_fails):
 @pytest.mark.asyncio
 async def test_bidi_agent_loop_receive_restart_connection(loop, agent, agenerator):
     timeout_error = BidiModelTimeoutError("test timeout", test_restart_config=1)
-    close_event = BidiConnectionCloseEvent(connection_id="test", reason="complete")
+    close_event = BidiConnectionStopEvent(connection_id="test", reason="complete")
 
     agent.model.receive = unittest.mock.Mock(side_effect=[timeout_error, agenerator([close_event])])
 
@@ -234,7 +607,7 @@ async def test_bidi_agent_loop_auto_reconnect_default_on(loop, agent, agenerator
     # An empty connection config uses the default reconnect behavior.
     agent.model.get_connection_config.return_value = {}
     timeout_error = BidiModelTimeoutError("test timeout")
-    close_event = BidiConnectionCloseEvent(connection_id="test", reason="complete")
+    close_event = BidiConnectionStopEvent(connection_id="test", reason="complete")
     agent.model.receive = unittest.mock.Mock(side_effect=[timeout_error, agenerator([close_event])])
 
     await loop.start()
@@ -301,7 +674,9 @@ async def test_bidi_agent_loop_proactive_reconnect_before_deadline(loop, agent, 
 async def test_scheduled_restart_event_emitted_before_model_restart(loop, agent, agenerator):
     """The scheduled restart event precedes provider restart and new-connection output."""
     agent.model.get_connection_config.return_value = {}
-    output = BidiTranscriptStreamEvent(delta="new-connection output", role="assistant")
+    output = BidiTranscriptDeltaEvent(
+        delta="new-connection output", role="assistant", content_id="assistant-transcript"
+    )
     agent.model.receive = unittest.mock.Mock(side_effect=[agenerator([]), agenerator([output])])
     order = []
 
@@ -460,7 +835,7 @@ async def test_reconnect_fences_superseded_reader_stream_close_error():
 
     await loop.start()
 
-    first = BidiConnectionCloseEvent(connection_id="first", reason="complete")
+    first = BidiConnectionStopEvent(connection_id="first", reason="complete")
     await model.emit(first)
     assert await loop._event_queue.get() is first
 
@@ -469,7 +844,7 @@ async def test_reconnect_fences_superseded_reader_stream_close_error():
     await loop._restart_connection(None, loop._generation)
     assert model.restart_calls == 1
 
-    second = BidiConnectionCloseEvent(connection_id="second", reason="complete")
+    second = BidiConnectionStopEvent(connection_id="second", reason="complete")
     await model.emit(second)
     # The new connection's event arrives; a leaked OSError would have surfaced here instead.
     assert await loop._event_queue.get() is second
@@ -530,7 +905,7 @@ async def test_stale_reader_error_is_dropped_not_raised(loop, agent, agenerator)
     # An error raised on a superseded (older) generation.
     await loop._event_queue.put(_ReaderError(loop._generation - 1, OSError("stale connection error")))
 
-    sentinel = BidiConnectionCloseEvent(connection_id="after-stale-error", reason="complete")
+    sentinel = BidiConnectionStopEvent(connection_id="after-stale-error", reason="complete")
     feed = asyncio.create_task(_feed_after_drain(loop, sentinel))
     # receive() must drop the stale error and go on to the next event, not raise it.
     result = await asyncio.wait_for(loop.receive().__anext__(), timeout=2.0)
@@ -570,7 +945,7 @@ async def test_stale_reactive_timeout_dropped_after_proactive_swap(loop, agent, 
     # A timeout tagged with the pre-swap generation is now stale; receive() must drop it.
     await loop._event_queue.put(_ReaderError(stale_generation, BidiModelTimeoutError("stale timeout")))
 
-    sentinel = BidiConnectionCloseEvent(connection_id="after-stale-timeout", reason="complete")
+    sentinel = BidiConnectionStopEvent(connection_id="after-stale-timeout", reason="complete")
     feed = asyncio.create_task(_feed_after_drain(loop, sentinel))
     result = await asyncio.wait_for(loop.receive().__anext__(), timeout=2.0)
     assert result is sentinel
@@ -610,7 +985,9 @@ async def test_reactive_timeout_during_scheduled_restart_emits_no_duplicate(loop
     await asyncio.sleep(0)
     assert not next_event.done()
 
-    sentinel = BidiTranscriptStreamEvent(delta="after duplicate timeout", role="assistant")
+    sentinel = BidiTranscriptDeltaEvent(
+        delta="after duplicate timeout", role="assistant", content_id="assistant-transcript"
+    )
     await loop._event_queue.put(sentinel)
     assert await asyncio.wait_for(next_event, timeout=2.0) is sentinel
 
@@ -628,7 +1005,7 @@ async def test_connection_events_share_bounded_event_queue(loop, agent, agenerat
     await loop.start()
     loop._reconnect_timer.cancel()
 
-    data = BidiTranscriptStreamEvent(delta="new-connection output", role="assistant")
+    data = BidiTranscriptDeltaEvent(delta="new-connection output", role="assistant", content_id="assistant-transcript")
     await loop._event_queue.put(data)
     warning_put = asyncio.create_task(loop._on_reconnect_warning(10))
     await asyncio.sleep(0)
@@ -683,6 +1060,7 @@ async def test_tool_result_not_sent_when_completed_during_reconnect(agenerator):
     model = unittest.mock.AsyncMock(spec=BidiModel)
     model.restart = unittest.mock.AsyncMock(side_effect=lambda *a, **k: order.append("restart"))
     model.get_connection_config.return_value = {}
+    model.send.return_value = "input"
     model.send.side_effect = lambda event: order.append("send")
     model.receive = unittest.mock.Mock(return_value=agenerator([]))
 
@@ -692,8 +1070,8 @@ async def test_tool_result_not_sent_when_completed_during_reconnect(agenerator):
     loop._reconnect_timer.cancel()
 
     async def drain():
-        while True:
-            await loop._event_queue.get()
+        async for _ in loop.receive():
+            pass
 
     drain_task = asyncio.create_task(drain())
     tool_use = {"toolUseId": "t1", "name": "slow_tool", "input": {}}
@@ -771,7 +1149,7 @@ async def test_deadline_callback_does_not_restart_after_stop_while_queue_full(ag
     await loop.start()
     loop._reconnect_timer.cancel()
 
-    queued = BidiTranscriptStreamEvent(delta="queued", role="assistant")
+    queued = BidiTranscriptDeltaEvent(delta="queued", role="assistant", content_id="assistant-transcript")
     await loop._event_queue.put(queued)
     deadline_task = asyncio.create_task(loop._on_reconnect_deadline())
     for _ in range(10):
@@ -789,12 +1167,13 @@ async def test_deadline_callback_does_not_restart_after_stop_while_queue_full(ag
 
 
 @pytest.mark.asyncio
-async def test_send_user_text_marks_turn_awaiting_response(loop, agent, agenerator):
-    """A user text turn owes a reply, so it holds the turn boundary like a finished audio turn."""
+@pytest.mark.parametrize("content", [TextBlock("hello"), ImageBlock(format="jpeg", source={"bytes": b"image"})])
+async def test_send_complete_input_marks_turn_awaiting_response(loop, agent, agenerator, content):
+    """Complete user input keeps scheduled reconnects waiting for a response."""
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([]))
     await loop.start()
 
-    await loop.send(TextBlock("hello"))
+    await loop.send(content)
     assert loop._awaiting_response is True
     assert not loop._turn_complete.is_set()  # a proactive reconnect would now wait
 
@@ -802,26 +1181,47 @@ async def test_send_user_text_marks_turn_awaiting_response(loop, agent, agenerat
 
 
 @pytest.mark.asyncio
-async def test_user_transcript_marks_turn_awaiting_response(loop, agent, agenerator):
-    """An incremental user transcript owes a reply but is not committed to history."""
-    partial = BidiTranscriptStreamEvent(delta="what's the", role="user")
-    agent.model.receive = unittest.mock.Mock(return_value=agenerator([partial]))
+async def test_user_transcript_marks_turn_awaiting_response(loop, agent):
+    """Transcript start reserves history, and its deltas keep the turn awaiting a reply."""
+    start = BidiTranscriptStartEvent(role="user", content_id="speech")
+    partial = BidiTranscriptDeltaEvent(delta="what's the", role="user", content_id="speech")
+    send_delta = asyncio.Event()
+
+    async def receive():
+        yield start
+        await send_delta.wait()
+        yield partial
+        await asyncio.Event().wait()
+
+    agent.model.receive = receive
 
     await loop.start()
-    for _ in range(10):
-        await asyncio.sleep(0)
+    reader = loop.receive()
+    assert await anext(reader) == start
+    assert loop._turn_complete.is_set()
+
+    send_delta.set()
+    assert await anext(reader) == partial
 
     assert loop._awaiting_response is True
     assert not loop._turn_complete.is_set()  # a proactive reconnect would now wait for the reply
-    assert agent.messages == []  # non-final transcript is not committed to history
+    assert agent.messages == [
+        {
+            "role": "user",
+            "content": [],
+            "tracking_id": unittest.mock.ANY,
+            "metadata": {"custom": {"bidi": {"kind": "transcript", "status": "pending"}}},
+        }
+    ]
 
+    await reader.aclose()
     await loop.stop()
 
 
 @pytest.mark.asyncio
 async def test_assistant_transcript_does_not_mark_awaiting_response(loop, agent, agenerator):
     """A model (assistant) transcript is output, not an owed user turn, so it must not hold."""
-    partial = BidiTranscriptStreamEvent(delta="hi there", role="assistant")
+    partial = BidiTranscriptDeltaEvent(delta="hi there", role="assistant", content_id="assistant-transcript")
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([partial]))
 
     await loop.start()
@@ -834,18 +1234,17 @@ async def test_assistant_transcript_does_not_mark_awaiting_response(loop, agent,
 
 
 @pytest.mark.asyncio
-async def test_response_complete_clears_awaiting_response(loop, agent, agenerator):
-    """A completed reply clears the awaited-response latch, so a user transcript that lagged into
-    the reply does not leave the turn falsely open (which would burn the alignment wait and flag a
-    spurious turn_interrupted)."""
+async def test_response_stop_clears_awaiting_response(loop, agent, agenerator):
+    """A completed reply clears the awaited-response latch."""
     events = [
         BidiResponseStartEvent(response_id="r1"),
-        # A lagging user input transcript arrives during the reply and re-latches awaiting.
-        BidiTranscriptStreamEvent(
+        # A lagging user input transcript arrives during the reply.
+        BidiTranscriptDeltaEvent(
             delta="earlier question",
             role="user",
+            content_id="speech",
         ),
-        BidiResponseCompleteEvent(response_id="r1", stop_reason="complete"),
+        BidiResponseStopEvent(response_id="r1", stop_reason="end_turn"),
     ]
     agent.model.receive = unittest.mock.Mock(return_value=agenerator(events))
 
@@ -853,7 +1252,7 @@ async def test_response_complete_clears_awaiting_response(loop, agent, agenerato
     # Drain through the reply so all three events are applied (the event queue has maxsize=1, so a
     # reader with no consumer would stall after the first event).
     async for event in loop.receive():
-        if isinstance(event, BidiResponseCompleteEvent):
+        if isinstance(event, BidiResponseStopEvent):
             break
     assert loop._awaiting_response is False
     assert loop._turn_complete.is_set()  # turn is idle, so a proactive reconnect fires immediately
@@ -862,23 +1261,130 @@ async def test_response_complete_clears_awaiting_response(loop, agent, agenerato
 
 
 @pytest.mark.asyncio
-async def test_transcript_complete_appends_one_message(loop, agent, agenerator):
-    """A complete transcript is committed to history exactly once."""
-    complete = BidiTranscriptCompleteEvent(transcript="Hello there", role="assistant")
-    agent.model.receive = unittest.mock.Mock(return_value=agenerator([complete]))
+@pytest.mark.parametrize("role", ["user", "assistant"])
+@pytest.mark.parametrize("final_text", ["Hello there", ""])
+async def test_transcript_stop_updates_reserved_message(streaming_agent, role, final_text):
+    agent = streaming_agent
+    reader = agent.receive()
+    hooks = MockHookProvider([MessageAddedEvent, MessageUpdatedEvent])
+    agent.hooks.add_hook(hooks)
+    start = BidiTranscriptStartEvent(role, content_id="speech")
+    await agent.model.emit(start)
+    assert await anext(reader) == start
+    placeholder = agent.messages[0]
 
-    await loop.start()
-    async for event in loop.receive():
-        if isinstance(event, BidiTranscriptCompleteEvent):
-            break
-    for _ in range(10):
-        await asyncio.sleep(0)
+    for event in [
+        BidiTranscriptDeltaEvent("Interim text", role, content_id="speech"),
+        BidiTranscriptStopEvent(final_text, role, content_id="speech"),
+    ]:
+        await agent.model.emit(event)
+        assert await anext(reader) == event
 
-    assert len(agent.messages) == 1
-    assert agent.messages[0]["role"] == "assistant"
-    assert agent.messages[0]["content"] == [{"text": "Hello there"}]
+    exp_message = {
+        **placeholder,
+        "content": [{"text": final_text}] if final_text else [],
+        "metadata": {"custom": {"bidi": {"kind": "transcript", "status": "complete"}}},
+    }
+    assert agent.messages == [exp_message]
+    assert placeholder["content"] == []
+    assert hooks.events_received == [
+        MessageAddedEvent(agent, placeholder),
+        MessageUpdatedEvent(agent, placeholder["tracking_id"], exp_message),
+    ]
+    await reader.aclose()
 
-    await loop.stop()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("second_role", ["user", "assistant"])
+async def test_transcripts_finish_in_their_reserved_order(streaming_agent, second_role):
+    agent = streaming_agent
+    reader = agent.receive()
+    starts = [
+        BidiTranscriptStartEvent("user", content_id="speech"),
+        BidiTranscriptStartEvent(second_role, content_id="second"),
+    ]
+    for event in starts:
+        await agent.model.emit(event)
+        assert await anext(reader) == event
+    placeholders = agent.messages.copy()
+    await agent.send("Typed follow-up")
+
+    for event in [
+        BidiTranscriptStopEvent("Second transcript", second_role, content_id="second"),
+        BidiResponseStopEvent("response", "end_turn"),
+        BidiTranscriptStopEvent("Question", "user", content_id="speech"),
+    ]:
+        await agent.model.emit(event)
+        assert await anext(reader) == event
+
+    exp_messages = [
+        {
+            **message,
+            "content": [{"text": text}],
+            "metadata": {"custom": {"bidi": {"kind": "transcript", "status": "complete"}}},
+        }
+        for message, text in zip(placeholders, ("Question", "Second transcript"), strict=True)
+    ]
+    exp_messages.append({"role": "user", "content": [{"text": "Typed follow-up"}], "tracking_id": unittest.mock.ANY})
+    assert agent.messages == exp_messages
+    await reader.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("restart", [False, True])
+async def test_unfinished_transcripts_end_with_the_connection(streaming_agent, restart):
+    agent = streaming_agent
+    reader = agent.receive()
+    start = BidiTranscriptStartEvent("user", content_id="speech")
+    for event in [start, BidiTranscriptDeltaEvent("Unfinished", "user", content_id="speech")]:
+        await agent.model.emit(event)
+        assert await anext(reader) == event
+    placeholder = agent.messages[0]
+
+    if restart:
+        await agent._loop._restart_connection(None, agent._loop._generation)
+    else:
+        await agent.stop()
+
+    exp_message = {
+        **placeholder,
+        "content": [{"text": "[Transcript unavailable.]"}],
+        "metadata": {"custom": {"bidi": {"kind": "transcript", "status": "incomplete"}}},
+    }
+    assert agent.messages == [exp_message]
+    if restart:
+        for event in [start, BidiTranscriptStopEvent("New question", "user", content_id="speech")]:
+            await agent.model.emit(event)
+            assert await anext(reader) == event
+        assert agent.messages == [
+            exp_message,
+            {
+                "role": "user",
+                "content": [{"text": "New question"}],
+                "tracking_id": unittest.mock.ANY,
+                "metadata": {"custom": {"bidi": {"kind": "transcript", "status": "complete"}}},
+            },
+        ]
+        assert agent.messages[1]["tracking_id"] != placeholder["tracking_id"]
+    await reader.aclose()
+
+
+@pytest.mark.asyncio
+async def test_transcript_stop_does_not_restore_removed_message(streaming_agent):
+    agent = streaming_agent
+    reader = agent.receive()
+    hooks = MockHookProvider([MessageUpdatedEvent])
+    agent.hooks.add_hook(hooks)
+    start = BidiTranscriptStartEvent("user", content_id="speech")
+    await agent.model.emit(start)
+    assert await anext(reader) == start
+    agent.messages.clear()
+    stop = BidiTranscriptStopEvent("Question", "user", content_id="speech")
+    await agent.model.emit(stop)
+    assert await anext(reader) == stop
+    assert agent.messages == []
+    assert hooks.events_received == []
+    await reader.aclose()
 
 
 @pytest.mark.asyncio
@@ -1088,20 +1594,19 @@ async def test_bidi_agent_loop_receive_tool_use(loop, agent, agenerator):
     exp_events = [
         tool_use_event,
         tool_result_event,
-        # The message is assigned a durable tracking_id when appended to history.
         ToolResultMessageEvent(
             {"role": "user", "content": [{"toolResult": tool_result}], "tracking_id": unittest.mock.ANY}
         ),
     ]
     assert tru_events == exp_events
 
-    tru_messages = agent.messages
     exp_messages = [
         {"role": "assistant", "content": [{"toolUse": tool_use}], "tracking_id": unittest.mock.ANY},
         {"role": "user", "content": [{"toolResult": tool_result}], "tracking_id": unittest.mock.ANY},
     ]
-    assert tru_messages == exp_messages
+    assert agent.messages == exp_messages
 
+    await asyncio.sleep(0)
     agent.model.send.assert_called_with(
         ToolResultBlock(tool_use_id="t1", status="success", content=tool_result["content"])
     )
@@ -1126,8 +1631,8 @@ async def test_bidi_agent_loop_tool_result_not_sent_after_reconnect(loop, agent,
 
     # Drain the event queue (maxsize=1) so _run_tool's puts do not block.
     async def drain():
-        while True:
-            await loop._event_queue.get()
+        async for _ in loop.receive():
+            pass
 
     drain_task = asyncio.create_task(drain())
     try:
@@ -1137,10 +1642,17 @@ async def test_bidi_agent_loop_tool_result_not_sent_after_reconnect(loop, agent,
         drain_task.cancel()
 
     # The completed exchange is recorded for the provider's reconnect replay...
-    assert len(agent.messages) == 2
-    assert agent.messages[0]["role"] == "assistant"
+    assert [message["role"] for message in agent.messages] == ["assistant", "user"]
     assert agent.messages[0]["content"] == [{"toolUse": tool_use}]
-    assert agent.messages[1]["content"][0]["toolResult"]["toolUseId"] == "t1"
+    assert agent.messages[-1]["content"] == [
+        {
+            "toolResult": {
+                "toolUseId": "t1",
+                "status": "success",
+                "content": [{"text": "12:00"}],
+            }
+        }
+    ]
     # ...but the stale result is not sent to the reconnected connection.
     agent.model.send.assert_not_called()
 
@@ -1199,7 +1711,7 @@ async def test_bidi_agent_loop_stop_event_loop_flag(agent, agenerator):
     async for event in loop.receive():
         tru_events.append(event)
 
-    # Should receive: tool_use_event, tool_result_event, tool_result_message, connection_close
+    # Should receive: tool_use_event, tool_result_event, tool_result_message, connection_stop
     assert len(tru_events) == 4
 
     # Verify tool executed successfully
@@ -1207,10 +1719,10 @@ async def test_bidi_agent_loop_stop_event_loop_flag(agent, agenerator):
     assert isinstance(tool_result_event, ToolResultEvent)
     assert tool_result_event.tool_result["status"] == "success"
 
-    # Verify connection close event was emitted
-    connection_close_event = tru_events[3]
-    assert isinstance(connection_close_event, BidiConnectionCloseEvent)
-    assert connection_close_event["reason"] == "user_request"
+    # Verify connection stop event was emitted
+    connection_stop_event = tru_events[3]
+    assert isinstance(connection_stop_event, BidiConnectionStopEvent)
+    assert connection_stop_event["reason"] == "user_request"
 
     # Verify model.send was NOT called (tool result not sent to model)
     agent.model.send.assert_not_called()
@@ -1240,7 +1752,7 @@ async def test_bidi_agent_loop_stop_conversation_deprecated_but_works(loop, agen
         async for event in loop.receive():
             tru_events.append(event)
 
-    # Should receive: tool_use_event, tool_result_event, tool_result_message, connection_close
+    # Should receive: tool_use_event, tool_result_event, tool_result_message, connection_stop
     assert len(tru_events) == 4
 
     # Verify tool executed successfully
@@ -1249,10 +1761,10 @@ async def test_bidi_agent_loop_stop_conversation_deprecated_but_works(loop, agen
     assert tool_result_event.tool_result["status"] == "success"
     assert "Ending conversation" in tool_result_event.tool_result["content"][0]["text"]
 
-    # Verify connection close event was emitted
-    connection_close_event = tru_events[3]
-    assert isinstance(connection_close_event, BidiConnectionCloseEvent)
-    assert connection_close_event["reason"] == "user_request"
+    # Verify connection stop event was emitted
+    connection_stop_event = tru_events[3]
+    assert isinstance(connection_stop_event, BidiConnectionStopEvent)
+    assert connection_stop_event["reason"] == "user_request"
 
     # Verify model.send was NOT called (tool result not sent to model)
     agent.model.send.assert_not_called()
@@ -1309,13 +1821,17 @@ async def test_tools_share_invocation_state(agent, agenerator, invocation_state)
 
 
 @pytest.mark.asyncio
-async def test_bidi_agent_loop_send_adds_user_text_message(loop, agent):
-    agent.model.start = unittest.mock.AsyncMock()
-    agent.model.send = unittest.mock.AsyncMock()
+async def test_bidi_agent_loop_send_appends_user_text_message(loop, agent, agenerator):
+    agent.model.receive = lambda: agenerator([])
     await loop.start()
-    await loop.send(TextBlock("injected context"))
-    assert agent.messages[-1] == {
-        "role": "user",
-        "content": [{"text": "injected context"}],
-        "tracking_id": unittest.mock.ANY,
-    }
+    try:
+        await loop.send(TextBlock("injected context"))
+        assert agent.messages == [
+            {
+                "role": "user",
+                "content": [{"text": "injected context"}],
+                "tracking_id": unittest.mock.ANY,
+            }
+        ]
+    finally:
+        await loop.stop()

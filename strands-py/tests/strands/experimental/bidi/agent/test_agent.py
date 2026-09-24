@@ -12,15 +12,16 @@ from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import BidiModel
 from strands.experimental.bidi.types import (
     AudioDelta,
-    BidiAudioStreamEvent,
-    BidiConnectionCloseEvent,
+    BidiAudioDeltaEvent,
     BidiConnectionStartEvent,
-    BidiTranscriptStreamEvent,
+    BidiConnectionStopEvent,
+    BidiTranscriptDeltaEvent,
 )
-from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent
+from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent, MessageUpdatedEvent
 from strands.types.content import SystemContentBlock, TextBlock
 from strands.types.media import AudioBlock, ImageBlock
 from strands.types.tools import ToolResultBlock
+from tests.fixtures.mock_hook_provider import MockHookProvider
 
 
 class MockBidiModel(BidiModel):
@@ -73,7 +74,7 @@ class MockBidiModel(BidiModel):
             yield event
 
         # Yield connection end event
-        yield BidiConnectionCloseEvent(connection_id=self._connection_id, reason="complete")
+        yield BidiConnectionStopEvent(connection_id=self._connection_id, reason="complete")
 
     def set_events(self, events):
         """Helper to set events this mock model will yield."""
@@ -356,7 +357,7 @@ async def test_send_normalizes_text(agent, input_data):
     ids=["audio", "image"],
 )
 async def test_send_normalizes_media(agent, content_key, content_type, media_format):
-    """Media dictionaries retain their source without adding history."""
+    """Media dictionaries retain their source, and complete blocks enter history."""
     await agent.start()
     agent.model.send = unittest.mock.AsyncMock()
     source = {"bytes": b"\x00\xff"}
@@ -369,7 +370,12 @@ async def test_send_normalizes_media(agent, content_key, content_type, media_for
 
     agent.model.send.assert_awaited_once_with(exp_content)
     assert agent.model.send.await_args.args[0].source is source
-    assert agent.messages == []
+    exp_messages = (
+        [{"role": "user", "content": [content_data], "tracking_id": unittest.mock.ANY}]
+        if content_key == "image"
+        else []
+    )
+    assert agent.messages == exp_messages
 
 
 @pytest.mark.asyncio
@@ -465,8 +471,8 @@ async def test_bidi_agent_receive_events_from_model(agent):
     """Test receiving events from model."""
     # Configure mock model to yield events
     events = [
-        BidiAudioStreamEvent(audio="dGVzdA==", format="pcm", sample_rate=24000, channels=1),
-        BidiTranscriptStreamEvent(delta="Hello world", role="assistant"),
+        BidiAudioDeltaEvent(audio="dGVzdA==", format="pcm", sample_rate=24000, channels=1),
+        BidiTranscriptDeltaEvent(delta="Hello world", role="assistant", content_id="assistant-transcript"),
     ]
     agent.model.set_events(events)
 
@@ -481,8 +487,8 @@ async def test_bidi_agent_receive_events_from_model(agent):
     # Verify event types and order
     assert len(received_events) >= 3
     assert isinstance(received_events[0], BidiConnectionStartEvent)
-    assert isinstance(received_events[1], BidiAudioStreamEvent)
-    assert isinstance(received_events[2], BidiTranscriptStreamEvent)
+    assert isinstance(received_events[1], BidiAudioDeltaEvent)
+    assert isinstance(received_events[2], BidiTranscriptDeltaEvent)
 
     # Test empty events
     agent.model.set_events([])
@@ -588,3 +594,20 @@ async def test_bidi_agent_state_consistency(agent):
     await agent.stop()
     assert not agent._started
     assert agent.model._connection_id is None
+
+
+@pytest.mark.asyncio
+async def test_update_message_finds_copied_message_after_history_edit(agent):
+    hooks = MockHookProvider([MessageUpdatedEvent])
+    agent.hooks.add_hook(hooks)
+    first = {"role": "user", "content": [{"text": "Earlier"}]}
+    reserved = {"role": "assistant", "content": []}
+    await agent._append_messages(first, reserved)
+    tracking_id = reserved["tracking_id"]
+    replacement = {**reserved, "content": [{"text": "Answer"}]}
+    agent.messages[:] = [reserved.copy()]
+
+    await agent._update_message(replacement)
+
+    assert agent.messages == [replacement]
+    assert hooks.events_received == [MessageUpdatedEvent(agent, tracking_id, replacement)]

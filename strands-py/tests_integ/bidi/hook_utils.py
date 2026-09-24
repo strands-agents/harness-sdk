@@ -3,8 +3,8 @@
 from strands import LocalAgent
 from strands.experimental.bidi.hooks import (
     BidiAgentStopEvent,
-    BidiInterruptionEvent,
-    BidiResponseCompleteEvent,
+    BidiResponseInterruptEvent,
+    BidiResponseStopEvent,
 )
 from strands.hooks import (
     AfterToolCallEvent,
@@ -23,18 +23,18 @@ class HookEventCollector(HookProvider):
 
     def register_hooks(self, registry):
         registry.add_callback(AgentInitializedEvent, self.on_initialized)
-        registry.add_callback(BidiResponseCompleteEvent, self.on_response_complete)
+        registry.add_callback(BidiResponseStopEvent, self.on_response_stop)
         registry.add_callback(BidiAgentStopEvent, self.on_agent_stop)
         registry.add_callback(BeforeToolCallEvent, self.on_before_tool_call)
         registry.add_callback(AfterToolCallEvent, self.on_after_tool_call)
         registry.add_callback(MessageAddedEvent, self.on_message_added)
-        registry.add_callback(BidiInterruptionEvent, self.on_interruption)
+        registry.add_callback(BidiResponseInterruptEvent, self.on_interruption)
 
     def on_initialized(self, event: AgentInitializedEvent[LocalAgent]):
         self.events.append(("initialized", event))
 
-    def on_response_complete(self, event: BidiResponseCompleteEvent):
-        self.events.append(("response_complete", event))
+    def on_response_stop(self, event: BidiResponseStopEvent):
+        self.events.append(("response_stop", event))
 
     def on_agent_stop(self, event: BidiAgentStopEvent):
         self.events.append(("agent_stop", event))
@@ -48,7 +48,7 @@ class HookEventCollector(HookProvider):
     def on_message_added(self, event: MessageAddedEvent[LocalAgent]):
         self.events.append(("message_added", event))
 
-    def on_interruption(self, event: BidiInterruptionEvent):
+    def on_interruption(self, event: BidiResponseInterruptEvent):
         self.events.append(("interruption", event))
 
     def get_event_types(self):

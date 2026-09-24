@@ -15,7 +15,7 @@ from opentelemetry.trace import Span
 
 from ....telemetry.tracer import get_tracer
 from ....types._events import ToolInterruptEvent, ToolResultEvent, ToolResultMessageEvent, ToolUseStreamEvent
-from ....types.content import Message, TextBlock
+from ....types.content import ContentBlock, Message
 from ....types.tools import ToolResult, ToolResultBlock, ToolUse
 from .. import _telemetry
 from .._async import _TaskPool, stop_all
@@ -25,24 +25,25 @@ from ..hooks.events import (
     BidiBeforeConnectionRestartEvent,
 )
 from ..hooks.events import (
-    BidiInterruptionEvent as BidiInterruptionHookEvent,
+    BidiResponseInterruptEvent as BidiResponseInterruptHookEvent,
 )
 from ..hooks.events import (
-    BidiResponseCompleteEvent as BidiResponseCompleteHookEvent,
+    BidiResponseStopEvent as BidiResponseStopHookEvent,
 )
 from ..models import BidiModelTimeoutError, Restartable
 from ..types.content import BidiContentBlock, BidiContentDelta
 from ..types.events import (
-    BidiAudioStreamEvent,
-    BidiConnectionCloseEvent,
+    BidiAudioDeltaEvent,
     BidiConnectionRestartEvent,
+    BidiConnectionStopEvent,
     BidiConnectionWarningEvent,
-    BidiInterruptionEvent,
     BidiOutputEvent,
-    BidiResponseCompleteEvent,
+    BidiResponseInterruptEvent,
     BidiResponseStartEvent,
-    BidiTranscriptCompleteEvent,
-    BidiTranscriptStreamEvent,
+    BidiResponseStopEvent,
+    BidiTranscriptDeltaEvent,
+    BidiTranscriptStartEvent,
+    BidiTranscriptStopEvent,
     BidiUsageEvent,
 )
 from ._reconnect_timer import BidiReconnectTimer, resolve_deadline_s
@@ -231,7 +232,7 @@ class _BidiAgentLoop:
     async def send(self, content: BidiContentBlock | BidiContentDelta | ToolResultBlock) -> None:
         """Send user input or a tool result to the model.
 
-        Text input is also added to the conversation history.
+        Complete content blocks are also added to conversation history.
 
         Args:
             content: User input or tool result to send.
@@ -246,12 +247,11 @@ class _BidiAgentLoop:
             logger.debug("waiting for model send signal")
             await self._send_gate.wait()
 
-        if isinstance(content, TextBlock):
-            message: Message = {"role": "user", "content": [{"text": content.text}]}
+        if isinstance(content, BidiContentBlock):
+            message: Message = {"role": "user", "content": [cast(ContentBlock, content.to_dict())]}
             await self._agent._append_messages(message)
-            # A user text turn owes a response, same as a finished audio turn. Mark it so a
-            # proactive reconnect waits for the reply instead of swapping mid-turn; without
-            # this, a text-driven session always looks idle and the turn can be cut.
+
+            # Let scheduled reconnects wait for the response.
             self._awaiting_response = True
             self._update_turn_state()
 
@@ -306,7 +306,7 @@ class _BidiAgentLoop:
                 raise event
 
             # Check for graceful shutdown event
-            if isinstance(event, BidiConnectionCloseEvent) and event.reason == "user_request":
+            if isinstance(event, BidiConnectionStopEvent) and event.reason == "user_request":
                 yield event
                 break
 
@@ -591,6 +591,7 @@ class _BidiAgentLoop:
         response_start_time: float | None = None
         time_to_first_audio_ms: int | None = None
         model_error: Exception | None = None
+        transcripts: dict[str, Message] = {}
 
         try:
             async for event in self._agent.model.receive():
@@ -602,7 +603,7 @@ class _BidiAgentLoop:
                         _telemetry.end_response_span(
                             self._tracer,
                             response_span,
-                            stop_reason="interrupted",
+                            stop_reason="interrupt",
                             time_to_first_audio_ms=time_to_first_audio_ms,
                         )
                     response_span = _telemetry.start_response_span(
@@ -614,11 +615,52 @@ class _BidiAgentLoop:
                     self._awaiting_response = False
                     self._update_turn_state()
 
-                elif isinstance(event, BidiAudioStreamEvent):
+                elif isinstance(event, BidiTranscriptStartEvent):
+                    message: Message = {
+                        "role": event.role,
+                        "content": [],
+                        "metadata": {"custom": {"bidi": {"kind": "transcript", "status": "pending"}}},
+                    }
+                    await self._agent._append_messages(message)
+                    transcripts[event.content_id] = message
+
+                elif isinstance(event, BidiAudioDeltaEvent):
                     if response_start_time is not None and time_to_first_audio_ms is None:
                         time_to_first_audio_ms = int((time.perf_counter() - response_start_time) * 1000)
 
-                elif isinstance(event, BidiResponseCompleteEvent):
+                elif isinstance(event, BidiTranscriptDeltaEvent):
+                    if event.role == "user":
+                        self._awaiting_response = True
+                        self._update_turn_state()
+
+                elif isinstance(event, BidiTranscriptStopEvent):
+                    message = transcripts.pop(event.content_id)
+                    status = "incomplete" if event.error is not None else "complete"
+                    transcript = event.transcript
+                    if not transcript and event.error is not None:
+                        transcript = "[Transcript unavailable.]"
+                    await self._agent._update_message(
+                        {
+                            **message,
+                            "content": [{"text": transcript}] if transcript else [],
+                            "metadata": {"custom": {"bidi": {"kind": "transcript", "status": status}}},
+                        }
+                    )
+
+                elif isinstance(event, BidiResponseInterruptEvent):
+                    if self._session_span:
+                        _telemetry.add_response_interrupt_event(self._session_span, event["reason"])
+
+                    # A barge-in ends the current response; the user's next turn owes a reply.
+                    self._response_active = False
+                    self._update_turn_state()
+                    await self._agent.hooks.invoke_callbacks_async(
+                        BidiResponseInterruptHookEvent(
+                            self._agent, event["reason"], event.get("interrupted_response_id")
+                        )
+                    )
+
+                elif isinstance(event, BidiResponseStopEvent):
                     if response_span:
                         _telemetry.end_response_span(
                             self._tracer,
@@ -633,49 +675,14 @@ class _BidiAgentLoop:
                     self._awaiting_response = False
                     self._update_turn_state()
                     await self._agent.hooks.invoke_callbacks_async(
-                        BidiResponseCompleteHookEvent(
-                            agent=self._agent, response_id=event.response_id, stop_reason=event.stop_reason
-                        )
+                        BidiResponseStopHookEvent(self._agent, event.response_id, event.stop_reason)
                     )
-                    if generation != self._generation:
-                        return
-
-                elif isinstance(event, BidiTranscriptStreamEvent):
-                    if event["role"] == "user":
-                        # Any user speech opens a turn that owes a model reply, so a proactive
-                        # reconnect holds for the reply (or force-swaps, flagging turn_interrupted)
-                        # instead of dropping a turn spoken near the deadline. Keyed on any user
-                        # transcript, not just the final one: providers differ in whether they flag
-                        # the final user transcript, and the reply is what clears this state.
-                        self._awaiting_response = True
-                        self._update_turn_state()
-
-                elif isinstance(event, BidiTranscriptCompleteEvent):
-                    message: Message = {"role": event.role, "content": [{"text": event.transcript}]}
-                    await self._agent._append_messages(message)
-                    if generation != self._generation:
-                        return
-
-                elif isinstance(event, BidiInterruptionEvent):
-                    if self._session_span:
-                        _telemetry.add_interruption_event(self._session_span, event["reason"])
-
-                    # A barge-in ends the current response; the user's next turn owes a reply.
-                    self._response_active = False
-                    self._update_turn_state()
-                    await self._agent.hooks.invoke_callbacks_async(
-                        BidiInterruptionHookEvent(
-                            agent=self._agent,
-                            reason=event["reason"],
-                            interrupted_response_id=event.get("interrupted_response_id"),
-                        )
-                    )
-                    if generation != self._generation:
-                        return
 
                 elif isinstance(event, BidiUsageEvent):
                     self._record_usage(event)
 
+                if generation != self._generation:
+                    return
                 await self._event_queue.put(event)
                 if generation != self._generation:
                     return
@@ -691,6 +698,14 @@ class _BidiAgentLoop:
             if generation == self._generation:
                 await self._event_queue.put(_ReaderError(generation, error))
         finally:
+            for message in transcripts.values():
+                await self._agent._update_message(
+                    {
+                        **message,
+                        "content": [{"text": "[Transcript unavailable.]"}],
+                        "metadata": {"custom": {"bidi": {"kind": "transcript", "status": "incomplete"}}},
+                    }
+                )
             if response_span:
                 stop_reason = "error" if model_error else "incomplete"
                 _telemetry.end_response_span(
@@ -747,7 +762,7 @@ class _BidiAgentLoop:
             tool_result = tool_result_event.tool_result
 
             tool_use_message: Message = {"role": "assistant", "content": [{"toolUse": tool_use}]}
-            tool_result_message: Message = {"role": "user", "content": [{"toolResult": tool_result_event.tool_result}]}
+            tool_result_message: Message = {"role": "user", "content": [{"toolResult": tool_result}]}
             await self._agent._append_messages(tool_use_message, tool_result_message)
 
             await self._event_queue.put(ToolResultMessageEvent(tool_result_message))
@@ -769,9 +784,7 @@ class _BidiAgentLoop:
             if should_stop:
                 logger.info("stop_event_loop=<True> | stopping conversation")
                 connection_id = getattr(self._agent.model, "_connection_id", "unknown")
-                await self._event_queue.put(
-                    BidiConnectionCloseEvent(connection_id=connection_id, reason="user_request")
-                )
+                await self._event_queue.put(BidiConnectionStopEvent(connection_id=connection_id, reason="user_request"))
                 return  # Skip sending result to model
 
             # Wait out any in-flight reconnect (send() gates on the swap), then re-check: a tool

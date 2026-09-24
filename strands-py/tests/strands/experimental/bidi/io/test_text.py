@@ -3,7 +3,7 @@ import unittest.mock
 import pytest
 
 from strands.experimental.bidi.io import BidiTextIO
-from strands.experimental.bidi.types import BidiInterruptionEvent, BidiTranscriptStreamEvent
+from strands.experimental.bidi.types import BidiResponseInterruptEvent, BidiTranscriptDeltaEvent
 from strands.types.content import TextBlock
 
 
@@ -40,9 +40,12 @@ async def test_bidi_text_io_input(prompt_session, text_input):
 @pytest.mark.parametrize(
     ("event", "exp_print"),
     [
-        (BidiInterruptionEvent(reason="user_speech"), "interrupted"),
-        (BidiTranscriptStreamEvent(delta="test text", role="user"), "test text"),
-        (BidiTranscriptStreamEvent(delta="test text", role="assistant"), "test text"),
+        (BidiResponseInterruptEvent(reason="user_speech"), "interrupted"),
+        (BidiTranscriptDeltaEvent(delta="test text", role="user", content_id="user-transcript"), "test text"),
+        (
+            BidiTranscriptDeltaEvent(delta="test text", role="assistant", content_id="assistant-transcript"),
+            "test text",
+        ),
     ],
 )
 @pytest.mark.asyncio

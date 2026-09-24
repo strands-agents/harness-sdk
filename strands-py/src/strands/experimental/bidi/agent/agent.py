@@ -22,7 +22,15 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 from .... import _identifier
 from ...._middleware import MiddlewareRegistry
 from ....agent.state import AgentState
-from ....hooks import AgentInitializedEvent, HookCallback, HookOrder, HookProvider, HookRegistry, MessageAddedEvent
+from ....hooks import (
+    AgentInitializedEvent,
+    HookCallback,
+    HookOrder,
+    HookProvider,
+    HookRegistry,
+    MessageAddedEvent,
+    MessageUpdatedEvent,
+)
 from ....hooks.registry import TEvent
 from ....interrupt import _InterruptState
 from ....tools._caller import _ToolCaller
@@ -492,3 +500,19 @@ class BidiAgent(LocalAgent):
                 _ensure_tracking_id(message)
                 self.messages.append(message)
                 await self.hooks.invoke_callbacks_async(MessageAddedEvent[LocalAgent](agent=self, message=message))
+
+    async def _update_message(self, message: Message) -> None:
+        """Replace a message by its tracking ID and notify hooks.
+
+        Search newest messages first. Messages removed by context management stay removed.
+        """
+        tracking_id = message["tracking_id"]
+        async with self._message_lock:
+            for index in range(len(self.messages) - 1, -1, -1):
+                if self.messages[index].get("tracking_id") != tracking_id:
+                    continue
+                self.messages[index] = message
+                break
+            else:
+                return
+        await self.hooks.invoke_callbacks_async(MessageUpdatedEvent[LocalAgent](self, tracking_id, message))

@@ -4,14 +4,14 @@ from .events import (
     BidiAfterConnectionRestartEvent,
     BidiAgentStopEvent,
     BidiBeforeConnectionRestartEvent,
-    BidiInterruptionEvent,
-    BidiResponseCompleteEvent,
+    BidiResponseInterruptEvent,
+    BidiResponseStopEvent,
 )
 
 __all__ = [
     "BidiAgentStopEvent",
-    "BidiResponseCompleteEvent",
-    "BidiInterruptionEvent",
+    "BidiResponseStopEvent",
+    "BidiResponseInterruptEvent",
     "BidiBeforeConnectionRestartEvent",
     "BidiAfterConnectionRestartEvent",
 ]

@@ -167,12 +167,14 @@ class BidirectionalTestContext:
             timeout: Maximum time to wait in seconds.
 
         Raises:
-            TimeoutError: If a response completion event is not received before the timeout.
+            TimeoutError: If a response stop event is not received before the timeout.
         """
         try:
-            await asyncio.wait_for(self._response_completions.get(), timeout=timeout)
+            event = await asyncio.wait_for(self._response_completions.get(), timeout=timeout)
         except asyncio.TimeoutError:
-            raise TimeoutError(f"timeout={timeout} | response completion event not received") from None
+            raise TimeoutError(f"timeout={timeout} | response stop event not received") from None
+        if isinstance(event, Exception):
+            raise event
 
     def get_events(self, event_type: str | None = None) -> list[dict]:
         """Get collected events, optionally filtered by type.
@@ -207,12 +209,11 @@ class BidirectionalTestContext:
         """
         texts = []
         for event in self.get_events():  # Drain queue first
-            # Handle new TypedEvent format (bidi_transcript_stream)
-            if event.get("type") == "bidi_transcript_stream":
+            if event.get("type") == "bidi_transcript_delta":
                 text = event.get("delta", "")
                 if text:
                     texts.append(text)
-            elif event.get("type") == "bidi_transcript_complete":
+            elif event.get("type") == "bidi_transcript_stop":
                 text = event.get("transcript", "")
                 if text:
                     texts.append(text)
@@ -238,8 +239,7 @@ class BidirectionalTestContext:
         events = self.get_events()
         audio_data = []
         for event in events:
-            # Handle new TypedEvent format (bidi_audio_stream)
-            if event.get("type") == "bidi_audio_stream":
+            if event.get("type") == "bidi_audio_delta":
                 audio_b64 = event.get("audio")
                 if audio_b64:
                     # Decode base64 to bytes
@@ -329,7 +329,7 @@ class BidirectionalTestContext:
 
                 # Thread-safe: put in queue instead of direct append
                 await self._event_queue.put(event)
-                if event.get("type") == "bidi_response_complete" and event.get("stop_reason") == "complete":
+                if event.get("type") == "bidi_response_stop" and event.get("stop_reason") == "end_turn":
                     self._response_completions.put_nowait(event)
                 logger.debug("event_type=<%s> | event collected", event.get("type", "unknown"))
 
@@ -338,6 +338,7 @@ class BidirectionalTestContext:
             raise  # Re-raise to properly propagate cancellation
         except Exception as e:
             logger.error("error=<%s> | event collection thread error", e)
+            self._response_completions.put_nowait(e)
 
     def _generate_silence_chunk(self) -> dict:
         """Generate silence chunk for background audio.

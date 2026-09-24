@@ -338,7 +338,7 @@ import asyncio
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.io import BidiAudioIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
-from strands.experimental.bidi.types import BidiInterruptionEvent
+from strands.experimental.bidi.types import BidiResponseInterruptEvent
 
 model = BedrockNovaSonicModel()
 agent = BidiAgent(model=model)
@@ -349,7 +349,7 @@ async def main():
     
     # Start receiving events
     async for event in agent.receive():
-        if isinstance(event, BidiInterruptionEvent):
+        if isinstance(event, BidiResponseInterruptEvent):
             print(f"User interrupted: {event.reason}")
             # Audio output automatically cleared
             # Model stops generating
@@ -373,7 +373,7 @@ If you need more control over the agent lifecycle, you can manually call `start(
 import asyncio
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import BedrockNovaSonicModel
-from strands.experimental.bidi.types import BidiResponseCompleteEvent
+from strands.experimental.bidi.types import BidiResponseStopEvent
 
 async def main():
     model = BedrockNovaSonicModel()
@@ -386,7 +386,7 @@ async def main():
         await agent.send("What is Python?")
         
         async for event in agent.receive():
-            if isinstance(event, BidiResponseCompleteEvent):
+            if isinstance(event, BidiResponseStopEvent):
                 break
     finally:
         # Always stop after exiting receive loop
@@ -520,7 +520,7 @@ If you experience frequent disconnections:
 ```python
 # Use OpenAI for longer timeout (60 min vs Nova's 8 min)
 from strands.experimental.bidi.models import OpenAIRealtimeModel
-model = OpenAIRealtimeModel()
+model = OpenAIRealtimeModel(transcription_model_id="gpt-transcribe")
 
 # Or handle restarts gracefully
 from strands.experimental.bidi.types import BidiConnectionRestartEvent

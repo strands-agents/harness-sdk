@@ -16,9 +16,9 @@ from strands.experimental.bidi.io import BidiAudioIO, BidiAudioProcessorConfig
 from strands.experimental.bidi.models import AudioCapable
 from strands.experimental.bidi.types import (
     AudioDelta,
-    BidiAudioStreamEvent,
-    BidiInterruptionEvent,
-    BidiResponseCompleteEvent,
+    BidiAudioDeltaEvent,
+    BidiResponseInterruptEvent,
+    BidiResponseStopEvent,
 )
 
 
@@ -160,7 +160,7 @@ def test_bidi_audio_io_input_configs(pyaudio_module, py_audio, audio_input):
 
 @pytest.mark.asyncio
 async def test_bidi_audio_io_output(audio_output):
-    audio_event = BidiAudioStreamEvent(
+    audio_event = BidiAudioDeltaEvent(
         audio=base64.b64encode(b"test-audio").decode("utf-8"),
         channels=2,
         format="pcm",
@@ -183,7 +183,7 @@ async def test_bidi_audio_io_output(audio_output):
     ],
 )
 async def test_bidi_audio_io_output_rejects_changed_format(audio_output, stream):
-    event = BidiAudioStreamEvent(audio=base64.b64encode(b"audio").decode(), **stream)
+    event = BidiAudioDeltaEvent(audio=base64.b64encode(b"audio").decode(), **stream)
     with pytest.raises(ValueError, match="does not match the playback format"):
         await audio_output(event)
 
@@ -196,14 +196,14 @@ async def test_bidi_audio_io_output_rejects_changed_format(audio_output, stream)
 async def test_bidi_audio_io_output_interrupt(audio_output):
     transcript_output = unittest.mock.AsyncMock()
     audio_output._transcript_output = transcript_output
-    audio_event = BidiAudioStreamEvent(
+    audio_event = BidiAudioDeltaEvent(
         audio=base64.b64encode(b"test-audio").decode("utf-8"),
         channels=2,
         format="pcm",
         sample_rate=16000,
     )
     await audio_output(audio_event)
-    interrupt_event = BidiInterruptionEvent(reason="user_speech")
+    interrupt_event = BidiResponseInterruptEvent(reason="user_speech")
     await audio_output(interrupt_event)
 
     tru_data, _ = audio_output._callback(None, frame_count=1)
@@ -213,11 +213,11 @@ async def test_bidi_audio_io_output_interrupt(audio_output):
 
 
 @pytest.mark.asyncio
-async def test_response_complete_is_forwarded_to_transcript_output(audio_output):
+async def test_response_stop_is_forwarded_to_transcript_output(audio_output):
     transcript_output = unittest.mock.AsyncMock()
     audio_output._transcript_output = transcript_output
     audio_output._buffer.put(b"\x01\x02\x03\x04")
-    event = BidiResponseCompleteEvent(response_id="response-1", stop_reason="complete")
+    event = BidiResponseStopEvent(response_id="response-1", stop_reason="end_turn")
 
     await audio_output(event)
 
@@ -539,7 +539,7 @@ async def test_mixed_rate_reference_matches_mic_frame_length(py_audio, agent_mix
     # End-to-end regression for the output-rate bug: with a correctly sized output buffer, a 10ms speaker
     # frame at 24k resamples to exactly a 10ms mic frame at 16k (320 bytes), so the reference is fully real
     # audio with no zero-padding.
-    from strands.experimental.bidi.types import BidiAudioStreamEvent
+    from strands.experimental.bidi.types import BidiAudioDeltaEvent
 
     processor = mock_audio_processor.return_value
     processor.process.return_value = np.zeros(160, dtype=np.int16)
@@ -552,7 +552,7 @@ async def test_mixed_rate_reference_matches_mic_frame_length(py_audio, agent_mix
     # One 10ms playback frame at 24k = 240 samples = 480 bytes.
     speaker_frame = (np.arange(240, dtype=np.int16)).tobytes()
     await output(
-        BidiAudioStreamEvent(
+        BidiAudioDeltaEvent(
             audio=base64.b64encode(speaker_frame).decode("utf-8"),
             channels=1,
             format="pcm",
@@ -577,7 +577,7 @@ async def test_mixed_rate_reference_matches_mic_frame_length(py_audio, agent_mix
 
 @pytest.mark.asyncio
 async def test_output_records_reference_at_playback(py_audio, aec_agent, mock_audio_processor):
-    from strands.experimental.bidi.types import BidiAudioStreamEvent
+    from strands.experimental.bidi.types import BidiAudioDeltaEvent
 
     audio_io = BidiAudioIO(audio_processor=BidiAudioProcessorConfig())
     input_ = audio_io.input()
@@ -587,7 +587,7 @@ async def test_output_records_reference_at_playback(py_audio, aec_agent, mock_au
 
     audio_data = b"\x10\x20\x30\x40"
     await output(
-        BidiAudioStreamEvent(
+        BidiAudioDeltaEvent(
             audio=base64.b64encode(audio_data).decode("utf-8"),
             channels=1,
             format="pcm",
@@ -609,7 +609,7 @@ async def test_output_records_reference_at_playback(py_audio, aec_agent, mock_au
 
 @pytest.mark.asyncio
 async def test_output_clears_reference_on_interruption(py_audio, aec_agent, mock_audio_processor):
-    from strands.experimental.bidi.types import BidiAudioStreamEvent, BidiInterruptionEvent
+    from strands.experimental.bidi.types import BidiAudioDeltaEvent, BidiResponseInterruptEvent
 
     audio_io = BidiAudioIO(audio_processor=BidiAudioProcessorConfig())
     input_ = audio_io.input()
@@ -619,7 +619,7 @@ async def test_output_clears_reference_on_interruption(py_audio, aec_agent, mock
 
     audio_data = b"\x10\x20\x30\x40"
     await output(
-        BidiAudioStreamEvent(
+        BidiAudioDeltaEvent(
             audio=base64.b64encode(audio_data).decode("utf-8"),
             channels=1,
             format="pcm",
@@ -628,7 +628,7 @@ async def test_output_clears_reference_on_interruption(py_audio, aec_agent, mock
     )
     output._callback(None, frame_count=2)
 
-    await output(BidiInterruptionEvent(reason="user_speech"))
+    await output(BidiResponseInterruptEvent(reason="user_speech"))
 
     assert audio_io._audio_processor._get_far_data() == b""
     await input_.stop()

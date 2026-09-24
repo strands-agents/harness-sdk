@@ -14,9 +14,10 @@ import pytest
 
 from strands import tool
 from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.hooks import BidiResponseCompleteEvent
+from strands.experimental.bidi.hooks import BidiResponseStopEvent
 from strands.experimental.bidi.models import GoogleGeminiLiveModel, OpenAIRealtimeModel
-from strands.experimental.bidi.types import BidiResponseCompleteEvent as BidiResponseCompleteStreamEvent
+from strands.experimental.bidi.types import BidiResponseStartEvent
+from strands.experimental.bidi.types import BidiResponseStopEvent as BidiResponseStopStreamEvent
 
 from .context import BidirectionalTestContext
 from .hook_utils import HookEventCollector
@@ -77,6 +78,7 @@ PROVIDER_CONFIGS = {
     "openai_realtime": {
         "model_factory": OpenAIRealtimeModel,
         "model_kwargs": {
+            "transcription_model_id": "gpt-4o-transcribe",
             "params": {
                 "output_modalities": ["audio"],  # OpenAI only supports audio OR text, not both
                 "audio": {
@@ -185,7 +187,7 @@ async def test_bidirectional_agent(agent_with_calculator, audio_generator, provi
     - Speech-to-text transcription
     - Tool execution (calculator) with hook verification
     - Multi-turn conversation flow
-    - Complete, correctly ordered conversation history
+    - Complete user and assistant transcripts in conversation history
     - Text-to-speech audio output
     """
     provider_name = provider_config["name"]
@@ -222,23 +224,79 @@ async def test_bidirectional_agent(agent_with_calculator, audio_generator, provi
         logger.info("provider=<%s> | turn 2 complete multi-turn conversation works", provider_name)
         logger.info("provider=<%s>, response_count=<%d> | total responses", provider_name, len(text_outputs_turn2))
 
-        # Validate full conversation
+        # User transcription can finish after the assistant response.
+        async def wait_for_user_transcripts():
+            while (
+                sum(
+                    event.get("type") == "bidi_transcript_stop" and event.get("role") == "user"
+                    for event in ctx.get_events()
+                )
+                < 2
+            ):
+                await asyncio.sleep(0.05)
+
+        await asyncio.wait_for(wait_for_user_transcripts(), timeout=10)
         messages = agent_with_calculator.messages
-        assert [message["role"] for message in messages] == ["user", "assistant", "user", "assistant"]
+        assert [message["role"] for message in messages] == ["user", "assistant"] * 2
         for message in messages:
+            assert message["metadata"]["custom"]["bidi"] == {"kind": "transcript", "status": "complete"}
             assert len(message["content"]) == 1
             assert message["content"][0]["text"].strip()
+        assert len({message["tracking_id"] for message in messages}) == len(messages)
 
         # Validate audio outputs
         audio_outputs = ctx.get_audio_outputs()
         assert len(audio_outputs) > 0, f"[{provider_name}] No audio output received"
         total_audio_bytes = sum(len(audio) for audio in audio_outputs)
 
-        response_events = [event for event in ctx.get_events() if isinstance(event, BidiResponseCompleteStreamEvent)]
+        response_events = [event for event in ctx.get_events() if isinstance(event, BidiResponseStopStreamEvent)]
         assert response_events, f"[{provider_name}] No response completion received"
-        tru_events = hook_collector.get_events_by_type("response_complete")
+        response_starts = [event for event in ctx.get_events() if isinstance(event, BidiResponseStartEvent)]
+        tru_response_ids = [event.response_id for event in response_starts]
+        exp_response_ids = [event.response_id for event in response_events]
+        assert tru_response_ids == exp_response_ids
+        assert len(set(tru_response_ids)) == len(tru_response_ids)
+        active_response = None
+        active_transcripts = {}
+        seen_transcripts = set()
+        audio_active = False
+        for event in ctx.get_events():
+            if event.get("type") in ("bidi_transcript_start", "bidi_transcript_delta", "bidi_transcript_stop"):
+                transcript = event["content_id"]
+                if event["type"] == "bidi_transcript_start":
+                    assert transcript not in seen_transcripts
+                    seen_transcripts.add(transcript)
+                    active_transcripts[transcript] = event["role"]
+                else:
+                    assert active_transcripts[transcript] == event["role"]
+                    if event["type"] == "bidi_transcript_stop":
+                        del active_transcripts[transcript]
+            if event.get("type") == "bidi_audio_start":
+                assert active_response is not None
+                assert not audio_active
+                audio_active = True
+            elif event.get("type") in ("bidi_audio_delta", "bidi_audio_stop"):
+                assert audio_active
+                if event["type"] == "bidi_audio_stop":
+                    audio_active = False
+            if isinstance(event, BidiResponseStartEvent):
+                assert active_response is None
+                active_response = event.response_id
+            elif event.get("type") == "bidi_audio_delta" or (
+                event.get("type") in ("bidi_transcript_start", "bidi_transcript_delta", "bidi_transcript_stop")
+                and event.get("role") == "assistant"
+            ):
+                assert active_response is not None
+            elif isinstance(event, BidiResponseStopStreamEvent):
+                assert event.response_id == active_response
+                assert not audio_active
+                active_response = None
+        assert active_response is None
+        assert not audio_active
+        assert not active_transcripts
+        tru_events = hook_collector.get_events_by_type("response_stop")
         exp_events = [
-            BidiResponseCompleteEvent(
+            BidiResponseStopEvent(
                 agent=agent_with_calculator, response_id=event.response_id, stop_reason=event.stop_reason
             )
             for event in response_events
@@ -275,3 +333,54 @@ async def test_bidirectional_agent(agent_with_calculator, audio_generator, provi
             len(tool_calls),
         )
         logger.info("=" * 60)
+
+
+@pytest.mark.asyncio
+async def test_tool_history_and_response_boundaries(agent_with_calculator, audio_generator, provider_config):
+    """Complete tool exchanges remain adjacent while the provider continues its response."""
+    agent = agent_with_calculator
+    agent.system_prompt = "Use the calculator for arithmetic. Answer with the result in one short sentence."
+    async with BidirectionalTestContext(agent, audio_generator) as context:
+        await context.say("Please use the calculator to multiply thirty seven by nineteen.")
+        while True:
+            await context.wait_for_response(timeout=30)
+            results = [
+                (index, block["toolResult"])
+                for index, message in enumerate(agent.messages)
+                for block in message["content"]
+                if "toolResult" in block and "703" in str(block["toolResult"]["content"])
+            ]
+            events = context.get_events()
+            result_index = next(
+                (index for index, event in enumerate(events) if event.get("type") == "tool_result"), len(events)
+            )
+            if results and any(
+                event.get("type") == "bidi_transcript_stop" and event.get("role") == "assistant"
+                for event in events[result_index + 1 :]
+            ):
+                break
+        assert results
+        for index, result in results:
+            assert result["status"] == "success"
+            request = [block for block in agent.messages[index - 1]["content"] if "toolUse" in block]
+            assert request == [
+                {
+                    "toolUse": {
+                        "toolUseId": result["toolUseId"],
+                        "name": "calculator",
+                        "input": {"operation": "multiply", "x": 37, "y": 19},
+                    }
+                }
+            ]
+        events = context.get_events()
+        starts = [event.response_id for event in events if isinstance(event, BidiResponseStartEvent)]
+        completions = [event.response_id for event in events if isinstance(event, BidiResponseStopStreamEvent)]
+        assert starts == completions
+        assert len(starts) == len(set(starts))
+        for index, message in enumerate(agent.messages):
+            for block in message["content"]:
+                if "toolUse" in block:
+                    assert (
+                        agent.messages[index + 1]["content"][0]["toolResult"]["toolUseId"]
+                        == block["toolUse"]["toolUseId"]
+                    )

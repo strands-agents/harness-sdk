@@ -122,9 +122,10 @@ class BidiModel(Model, abc.ABC):
     def receive(self) -> AsyncIterable[BidiOutputEvent]:
         """Receive streaming events from the model.
 
-        Continuously yields events from the model as they arrive over the connection.
-        Events are normalized to a provider-agnostic format for uniform processing.
-        This method should be called in a loop or async task to process model responses.
+        Each transcript has start and stop events, with zero or more deltas between
+        them, sharing a content_id unique within the connection. Transcript streams
+        may interleave, and user transcripts may arrive outside response boundaries.
+        Transcription errors are reported on the stop event without ending the stream.
 
         The stream continues until the connection is closed or an error occurs.
 

@@ -27,11 +27,11 @@ from strands.experimental.bidi.hooks import (
 )
 from strands.experimental.bidi.models import BidiModel, BidiModelTimeoutError
 from strands.experimental.bidi.types import (
-    BidiAudioStreamEvent,
-    BidiConnectionCloseEvent,
-    BidiInterruptionEvent,
-    BidiResponseCompleteEvent,
+    BidiAudioDeltaEvent,
+    BidiConnectionStopEvent,
+    BidiResponseInterruptEvent,
     BidiResponseStartEvent,
+    BidiResponseStopEvent,
     BidiUsageEvent,
 )
 from strands.telemetry.tracer import Tracer
@@ -168,7 +168,7 @@ async def test_response_span_lifecycle(loop, agent, agenerator):
     """Response spans open on ResponseStart and close on ResponseComplete."""
     events = [
         BidiResponseStartEvent(response_id="resp-1"),
-        BidiResponseCompleteEvent(response_id="resp-1", stop_reason="complete"),
+        BidiResponseStopEvent(response_id="resp-1", stop_reason="end_turn"),
     ]
     agent.model.receive = unittest.mock.Mock(return_value=agenerator(events))
 
@@ -177,7 +177,7 @@ async def test_response_span_lifecycle(loop, agent, agenerator):
     received = []
     async for event in loop.receive():
         received.append(event)
-        if isinstance(event, BidiResponseCompleteEvent):
+        if isinstance(event, BidiResponseStopEvent):
             break
 
     assert len(received) == 2
@@ -190,14 +190,14 @@ async def test_response_span_records_stop_reason(loop, agent, agenerator, otel_s
     """Response span captures the stop_reason as finish_reason attribute."""
     events = [
         BidiResponseStartEvent(response_id="resp-2"),
-        BidiResponseCompleteEvent(response_id="resp-2", stop_reason="interrupted"),
+        BidiResponseStopEvent(response_id="resp-2", stop_reason="interrupt"),
     ]
     agent.model.receive = unittest.mock.Mock(return_value=agenerator(events))
 
     await loop.start()
 
     async for event in loop.receive():
-        if isinstance(event, BidiResponseCompleteEvent):
+        if isinstance(event, BidiResponseStopEvent):
             break
 
     await loop.stop()
@@ -205,7 +205,7 @@ async def test_response_span_records_stop_reason(loop, agent, agenerator, otel_s
     spans = otel_setup.get_finished_spans()
     response_spans = [s for s in spans if "bidi_response" in s.name]
     assert len(response_spans) == 1
-    assert response_spans[0].attributes["gen_ai.response.finish_reason"] == "interrupted"
+    assert response_spans[0].attributes["gen_ai.response.finish_reason"] == "interrupt"
 
 
 @pytest.mark.asyncio
@@ -213,15 +213,15 @@ async def test_response_span_records_time_to_first_audio(loop, agent, agenerator
     """Response span records time to first audio when audio is emitted."""
     events = [
         BidiResponseStartEvent(response_id="resp-audio"),
-        BidiAudioStreamEvent(audio="", format="pcm", sample_rate=24000, channels=1),
-        BidiResponseCompleteEvent(response_id="resp-audio", stop_reason="complete"),
+        BidiAudioDeltaEvent(audio="", format="pcm", sample_rate=24000, channels=1),
+        BidiResponseStopEvent(response_id="resp-audio", stop_reason="end_turn"),
     ]
     agent.model.receive = unittest.mock.Mock(return_value=agenerator(events))
 
     await loop.start()
 
     async for event in loop.receive():
-        if isinstance(event, BidiResponseCompleteEvent):
+        if isinstance(event, BidiResponseStopEvent):
             break
 
     await loop.stop()
@@ -237,14 +237,14 @@ async def test_response_span_omits_time_to_first_audio_when_no_audio(loop, agent
     """Response span omits the time-to-first-audio attribute when no audio is emitted."""
     events = [
         BidiResponseStartEvent(response_id="resp-noaudio"),
-        BidiResponseCompleteEvent(response_id="resp-noaudio", stop_reason="complete"),
+        BidiResponseStopEvent(response_id="resp-noaudio", stop_reason="end_turn"),
     ]
     agent.model.receive = unittest.mock.Mock(return_value=agenerator(events))
 
     await loop.start()
 
     async for event in loop.receive():
-        if isinstance(event, BidiResponseCompleteEvent):
+        if isinstance(event, BidiResponseStopEvent):
             break
 
     await loop.stop()
@@ -303,7 +303,7 @@ async def test_tool_call_span_closed_on_error(loop, agent, agenerator, otel_setu
 async def test_connection_restart_span(loop, agent, agenerator, otel_setup):
     """Connection restart creates a span with error message."""
     timeout_error = BidiModelTimeoutError("8 minute timeout")
-    close_event = BidiConnectionCloseEvent(connection_id="test", reason="complete")
+    close_event = BidiConnectionStopEvent(connection_id="test", reason="complete")
 
     agent.model.receive = unittest.mock.Mock(side_effect=[timeout_error, agenerator([close_event])])
 
@@ -374,15 +374,15 @@ async def test_interruption_event_recorded_on_session_span(loop, agent, agenerat
     """Interruption events are added to the session span."""
     events = [
         BidiResponseStartEvent(response_id="resp-3"),
-        BidiInterruptionEvent(reason="user_speech"),
-        BidiResponseCompleteEvent(response_id="resp-3", stop_reason="interrupted"),
+        BidiResponseInterruptEvent(reason="user_speech"),
+        BidiResponseStopEvent(response_id="resp-3", stop_reason="interrupt"),
     ]
     agent.model.receive = unittest.mock.Mock(return_value=agenerator(events))
 
     await loop.start()
 
     async for event in loop.receive():
-        if isinstance(event, BidiResponseCompleteEvent):
+        if isinstance(event, BidiResponseStopEvent):
             break
 
     await loop.stop()
@@ -392,7 +392,7 @@ async def test_interruption_event_recorded_on_session_span(loop, agent, agenerat
     assert len(session_spans) == 1
 
     span_events = session_spans[0].events
-    assert any(ev.name == "bidi_interruption" for ev in span_events)
+    assert any(ev.name == "bidi_response_interrupt" for ev in span_events)
 
 
 @pytest.mark.asyncio
@@ -462,14 +462,14 @@ async def test_no_crash_without_otel_configured(loop, agent, agenerator):
     """Telemetry doesn't crash when OTel is not configured (no-op tracer)."""
     events = [
         BidiResponseStartEvent(response_id="resp-noop"),
-        BidiResponseCompleteEvent(response_id="resp-noop", stop_reason="complete"),
+        BidiResponseStopEvent(response_id="resp-noop", stop_reason="end_turn"),
     ]
     agent.model.receive = unittest.mock.Mock(return_value=agenerator(events))
 
     await loop.start()
 
     async for event in loop.receive():
-        if isinstance(event, BidiResponseCompleteEvent):
+        if isinstance(event, BidiResponseStopEvent):
             break
 
     await loop.stop()
