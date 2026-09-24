@@ -7,11 +7,14 @@ import {
   type ServerCapabilities,
   type Implementation,
   type LoggingMessageNotificationParams,
+  type Tool as McpToolSpec,
 } from '@modelcontextprotocol/client'
+import { v5 as uuidv5 } from 'uuid'
 import { context, propagation, trace } from '@opentelemetry/api'
 import type { JSONSchema, JSONValue } from '../types/json.js'
 import type { ElicitationCallback } from '../types/elicitation.js'
 import { McpTool } from '../tools/mcp-tool.js'
+import { MAX_TOOL_NAME_LENGTH } from '../registry/tool-registry.js'
 import { logger } from '../logging/index.js'
 import { type McpLoadServersOptions, type McpServerConfig, mcpServerLoader } from './config.js'
 
@@ -98,7 +101,7 @@ export interface McpClientOptions extends RuntimeConfig {
   /** Disable OpenTelemetry MCP instrumentation. */
   disableMcpInstrumentation?: boolean
 
-  /** Prefix for agent-facing tool names, applied as `<prefix>_<toolName>`. */
+  /** Prefix applied as `<prefix>_<toolName>`. Overlong names are shortened with a stable suffix. */
   prefix?: string
 
   /** Filters controlling which tools this client exposes. */
@@ -366,7 +369,8 @@ export class McpClient {
    * Lists the tools available on the server and returns them as executable McpTool instances.
    *
    * A prefix renames tools for the agent only; tools are always invoked, and matched by string and
-   * `RegExp` filters, under their server-side name.
+   * `RegExp` filters, under their server-side name. Prefixed names exceeding the registry limit are
+   * shortened deterministically, preserving names that already fit.
    *
    * @param options - Overrides for the prefix and filters set on the client. An omitted field uses
    *                  the client's value; an explicit empty string or empty object disables it.
@@ -379,40 +383,45 @@ export class McpClient {
     const prefix = options?.prefix === undefined ? this._prefix : options.prefix
     const toolFilters = options?.toolFilters === undefined ? this._toolFilters : options.toolFilters
     const tools: McpTool[] = []
+    const toolSpecs: McpToolSpec[] = []
     let cursor: string | undefined
 
     do {
       const result = await this._client.listTools(cursor ? { cursor } : undefined)
-
-      for (const toolSpec of result.tools) {
-        const toolName = prefix ? `${prefix}_${toolSpec.name}` : toolSpec.name
-        if (prefix) {
-          logger.debug(`tool_rename=<${toolSpec.name}->${toolName}> | renamed tool`)
-        }
-
-        const tool = new McpTool({
-          name: toolName,
-          description: toolSpec.description || `Tool which performs ${toolSpec.name}`,
-          inputSchema: toolSpec.inputSchema as JSONSchema,
-          ...(toolSpec.outputSchema !== undefined && { outputSchema: toolSpec.outputSchema as JSONSchema }),
-          // Pass through only the annotation keys the MCP SDK's Zod schema recognizes
-          // (title, readOnlyHint, destructiveHint, idempotentHint, openWorldHint). The SDK strips
-          // unknown keys before this code runs, so new annotation vocabulary won't surface here
-          // until the SDK dependency updates. The MCP spec treats these as untrusted hints.
-          // An empty annotations object is treated the same as no annotations.
-          ...(toolSpec.annotations !== undefined &&
-            Object.keys(toolSpec.annotations).length > 0 && {
-              annotations: toolSpec.annotations,
-            }),
-          client: this,
-        })
-        this._serverToolNames.set(tool, toolSpec.name)
-
-        if (shouldIncludeTool(tool, toolSpec.name, toolFilters)) tools.push(tool)
-      }
-
+      toolSpecs.push(...result.tools)
       cursor = result.nextCursor
     } while (cursor)
+
+    const toolNames = prefixedToolNames(
+      toolSpecs.map((tool) => tool.name),
+      prefix
+    )
+    for (const toolSpec of toolSpecs) {
+      const toolName = toolNames.get(toolSpec.name)!
+      if (prefix) {
+        logger.debug(`tool_rename=<${toolSpec.name}->${toolName}> | renamed tool`)
+      }
+
+      const tool = new McpTool({
+        name: toolName,
+        description: toolSpec.description || `Tool which performs ${toolSpec.name}`,
+        inputSchema: toolSpec.inputSchema as JSONSchema,
+        ...(toolSpec.outputSchema !== undefined && { outputSchema: toolSpec.outputSchema as JSONSchema }),
+        // Pass through only the annotation keys the MCP SDK's Zod schema recognizes
+        // (title, readOnlyHint, destructiveHint, idempotentHint, openWorldHint). The SDK strips
+        // unknown keys before this code runs, so new annotation vocabulary won't surface here
+        // until the SDK dependency updates. The MCP spec treats these as untrusted hints.
+        // An empty annotations object is treated the same as no annotations.
+        ...(toolSpec.annotations !== undefined &&
+          Object.keys(toolSpec.annotations).length > 0 && {
+            annotations: toolSpec.annotations,
+          }),
+        client: this,
+      })
+      this._serverToolNames.set(tool, toolSpec.name)
+
+      if (shouldIncludeTool(tool, toolSpec.name, toolFilters)) tools.push(tool)
+    }
 
     // Per-call overrides are transient, so they must not become the baseline that a later
     // tools-changed refresh reports as the previously registered names.
@@ -498,6 +507,32 @@ export class McpClient {
 
     return (await this._client.callTool({ name: toolName, arguments: toolArgs }, options)) as JSONValue
   }
+}
+
+/** Allocates aliases before filtering so discovery order and filters cannot change tool identities. */
+function prefixedToolNames(serverNames: string[], prefix: string | undefined): Map<string, string> {
+  const names = new Map(serverNames.map((name) => [name, prefix ? `${prefix}_${name}` : name]))
+  if (!prefix) return names
+
+  // Reserve names from every page, including normalized variants accepted by the registry.
+  const usedNames = new Set(
+    [...names.values()].filter((name) => name.length <= MAX_TOOL_NAME_LENGTH).map((name) => name.replaceAll('-', '_'))
+  )
+  for (const serverName of [...names.keys()].sort()) {
+    const name = names.get(serverName)!
+    if (name.length <= MAX_TOOL_NAME_LENGTH) continue
+
+    let attempt = 0
+    let shortenedName: string
+    do {
+      const suffix = uuidv5(JSON.stringify([name, attempt++]), uuidv5.URL).replaceAll('-', '')
+      shortenedName = `${name.slice(0, MAX_TOOL_NAME_LENGTH - suffix.length - 1)}_${suffix}`
+    } while (usedNames.has(shortenedName.replaceAll('-', '_')))
+
+    usedNames.add(shortenedName.replaceAll('-', '_'))
+    names.set(serverName, shortenedName)
+  }
+  return names
 }
 
 /**
