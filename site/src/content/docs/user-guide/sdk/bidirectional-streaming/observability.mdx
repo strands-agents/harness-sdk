@@ -1,6 +1,6 @@
 ---
 title: Bidirectional Streaming Observability
-description: 'Trace, measure, and log BidiAgent sessions: connection lifecycle, time to first audio, interruptions, per-modality token usage, and reconnects.'
+description: 'Trace, measure, and log BidiAgent sessions: connection lifecycle, time to first audio, barge-ins, per-modality token usage, and reconnects.'
 sidebar:
   label: "Observability"
 languages: Python
@@ -12,14 +12,7 @@ sourceLinks:
 ---
 
 
-A `BidiAgent` session is shaped differently from a request/response agent: one
-connection spans multiple model responses, tool calls, and possibly reconnects, and
-a response can end because the user interrupted it rather than because the model
-finished. This page covers the traces, metrics, and logs specific to bidirectional
-streaming. For the tracing, metrics, and logging concepts shared by every Strands
-agent, see [Traces](../observability-evaluation/traces.md),
-[Metrics](../observability-evaluation/metrics.md), and
-[Logs](../observability-evaluation/logs.md).
+A `BidiAgent` session is shaped differently from a request/response agent: one connection spans multiple model responses, tool calls, and possibly reconnects, and a response can end because the user barged in rather than because the model finished. This page covers the traces, metrics, and logs specific to bidirectional streaming. For the tracing, metrics, and logging concepts shared by every Strands agent, see [Traces](../observability-evaluation/traces.md), [Metrics](../observability-evaluation/metrics.md), and [Logs](../observability-evaluation/logs.md).
 
 ## Enabling tracing
 
@@ -164,7 +157,7 @@ text-only response has no such attribute. Response finish reasons are:
 | Value | Meaning |
 |-------|---------|
 | `complete` | The model finished the response on its own |
-| `interrupted` | The user cut in, or a new response began before this one ended |
+| `barge_in` | The user cut in, or a new response began before this one ended |
 | `error` | The model stream raised while the response was open |
 | `incomplete` | The session stopped while the response was still open |
 
@@ -180,22 +173,15 @@ that carries the triggering timeout message.
 Tool calls use the same `execute_tool <tool name>` span and attributes as non-streaming
 agents. See [Tool-Level Attributes](../observability-evaluation/traces.md#tool-level-attributes).
 
-### Interruption events
+### Barge-in events
 
-An interruption is recorded as a `bidi_interruption` event on the session span with an
-`interruption.reason` attribute. The interrupted response separately closes with
-`gen_ai.response.finish_reason` set to `interrupted`.
+A barge-in is recorded as a `bidi_barge_in` event on the session span with a `barge_in.reason` attribute. The affected response separately closes with `gen_ai.response.finish_reason` set to `barge_in`.
 
-To count interruptions, query the session span's `bidi_interruption` events. To find
-which response ended, query response spans with an `interrupted` finish reason. Keeping
-the event on the session also captures barge-ins between response spans. For detection
-and playback behavior, see [Interruptions](interruption.md).
+To count barge-ins, query the session span's `bidi_barge_in` events. To find which response ended, query response spans with a `barge_in` finish reason. Keeping the event on the session also captures barge-ins between response spans. For detection and playback behavior, see [Barge-in](barge-in.md).
 
 ## Inspecting spans locally
 
-The console exporter is the fastest way to confirm spans are being produced. A session
-that registers two tools and is interrupted mid-response produces the following session
-span, with the resource block omitted:
+The console exporter is the fastest way to confirm spans are being produced. A session that registers two tools and includes a barge-in produces the following session span, with the resource block omitted:
 
 <details>
 <summary>Example session span</summary>
@@ -230,10 +216,10 @@ span, with the resource block omitted:
     },
     "events": [
         {
-            "name": "bidi_interruption",
+            "name": "bidi_barge_in",
             "timestamp": "2026-08-10T13:27:28.100000Z",
             "attributes": {
-                "interruption.reason": "user_speech"
+                "barge_in.reason": "user_speech"
             }
         }
     ],
@@ -290,11 +276,9 @@ for other OpenTelemetry-compatible backends.
 
 ## Session metrics
 
-`BidiAgent` does not produce a metrics summary object. Interruption and reconnect counts
-come through hooks, token usage comes through the event stream, and response latency is
-recorded on trace spans.
+`BidiAgent` does not produce a metrics summary object. Barge-in and reconnect counts come through hooks, token usage comes through the event stream, and response latency is recorded on trace spans.
 
-### Counting interruptions and reconnects
+### Counting barge-ins and reconnects
 
 Register a hook provider to accumulate session health counters:
 
@@ -303,7 +287,7 @@ import logging
 
 from strands.experimental.bidi.hooks import (
     BidiAfterConnectionRestartEvent,
-    BidiInterruptionEvent,
+    BidiBargeInEvent,
 )
 from strands.hooks import HookProvider, HookRegistry
 
@@ -314,28 +298,23 @@ class SessionStats(HookProvider):
     """Counts barge-ins and reconnects over the life of a session."""
 
     def __init__(self) -> None:
-        self.interruptions = 0
+        self.barge_ins = 0
         self.restarts = 0
 
     def register_hooks(self, registry: HookRegistry) -> None:
-        registry.add_callback(BidiInterruptionEvent, self.on_interruption)
+        registry.add_callback(BidiBargeInEvent, self.on_barge_in)
         registry.add_callback(BidiAfterConnectionRestartEvent, self.on_restart)
 
-    def on_interruption(self, event: BidiInterruptionEvent) -> None:
-        self.interruptions += 1
-        logger.info("reason=<%s> | user interrupted the model", event.reason)
+    def on_barge_in(self, event: BidiBargeInEvent) -> None:
+        self.barge_ins += 1
+        logger.info("reason=<%s> | user barged in", event.reason)
 
     def on_restart(self, event: BidiAfterConnectionRestartEvent) -> None:
         if event.exception is None:
             self.restarts += 1
 ```
 
-Pass it in with `hooks=[SessionStats()]` when constructing the agent.
-`BidiAfterConnectionRestartEvent.exception` is `None` when the reconnect succeeded, so
-the check above counts successful recoveries. A rising interruption count usually points
-to responses that run long for a voice interface; a rising reconnect count points to
-sessions that frequently reach provider timeout conditions. The full list of lifecycle
-events is in [Hooks](hooks.md).
+Pass it in with `hooks=[SessionStats()]` when constructing the agent. `BidiAfterConnectionRestartEvent.exception` is `None` when the reconnect succeeded, so the check above counts successful recoveries. A rising barge-in count usually points to responses that run long for a voice interface. A rising reconnect count points to sessions that frequently reach provider timeout conditions. The full list of lifecycle events is in [Hooks](hooks.md).
 
 ### Tracking token usage per modality
 
@@ -456,9 +435,9 @@ trace:
 
 | Provider | Response spans | Notes |
 |----------|-----------------|-------|
-| Bedrock Nova Sonic | One per content block | A single spoken turn can produce several `bidi_response` spans. All but the last close as `interrupted`, and time to first audio re-baselines on each. Count spoken turns from interruption events and finish reasons rather than by counting response spans. No cache tokens or modality breakdown reported. |
+| Bedrock Nova Sonic | One per content block | A single spoken turn can produce several `bidi_response` spans. All but the last close as `barge_in`, and time to first audio re-baselines on each. Count spoken turns from barge-in events and finish reasons rather than by counting response spans. No cache tokens or modality breakdown reported. |
 | OpenAI Realtime | One per turn | Reports cache read tokens and a modality breakdown when available. |
-| Google Gemini Live | None | Emits no response lifecycle events, so a session produces no `bidi_response` spans. Interruptions, token usage including cache reads, and the modality breakdown are still reported. |
+| Google Gemini Live | None | Emits no response lifecycle events, so a session produces no `bidi_response` spans. Barge-ins, token usage including cache reads, and the modality breakdown are still reported. |
 
 ## Best practices
 
@@ -469,7 +448,7 @@ trace:
 3. **Track reconnects with hooks.** During a reconnect, sends wait for the connection
    gate to reopen. Monitor reconnect frequency to find sessions that regularly reach
    provider timeout conditions.
-4. **Watch the interruption rate.** A rising rate of barge-ins often points to responses
+4. **Watch the barge-in rate.** A rising rate of barge-ins often points to responses
    that are too long for a voice interface.
 5. **Redact the system prompt in production.** Session spans carry it verbatim unless the
    unredacted allowlist is configured otherwise.
@@ -493,5 +472,5 @@ trace:
 - [Logs](../observability-evaluation/logs.md) - Log levels and handler configuration
 - [Events](events.md) - Complete guide to bidirectional streaming events
 - [Hooks](hooks.md) - Extend agent functionality with hooks
-- [Interruptions](interruption.md) - How barge-in detection works
+- [Barge-in](barge-in.md) - How barge-in detection works
 - [Python API Reference](@api/python/strands.experimental.bidi.agent) - Complete API documentation

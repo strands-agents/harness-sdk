@@ -180,7 +180,7 @@ def test_clear_far_buffer_drains_reference_but_keeps_filter(mock_audio_processor
 
     ref = processor.process.call_args.args[1]
     np.testing.assert_array_equal(ref, np.zeros(2, dtype=np.int16))
-    # Interruption must NOT reset the converged AEC filter.
+    # Barge-in must NOT reset the converged AEC filter.
     processor.reset.assert_not_called()
 
 

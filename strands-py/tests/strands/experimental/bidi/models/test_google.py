@@ -22,8 +22,8 @@ from strands.experimental.bidi.models.google import _TurnState
 from strands.experimental.bidi.types import (
     AudioDelta,
     BidiAudioStreamEvent,
+    BidiBargeInEvent,
     BidiConnectionStartEvent,
-    BidiInterruptionEvent,
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
     BidiTranscriptCompleteEvent,
@@ -866,16 +866,16 @@ async def test_event_conversion(mock_genai_client, model, live_message, server_c
     assert tool_events_multi[1]["delta"]["toolUse"]["input"] == json.dumps({"location": "Seattle"})
     assert tool_events_multi[1]["current_tool_use"]["input"] == {"location": "Seattle"}
 
-    # Test interruption
-    mock_interrupt = live_message(server_content=server_content(interrupted=True))
+    # Test barge-in
+    mock_barge_in = live_message(server_content=server_content(interrupted=True))
 
-    interrupt_events = model._convert_gemini_live_event(mock_interrupt, turn_state)
-    assert isinstance(interrupt_events, list)
-    assert len(interrupt_events) == 1
-    interrupt_event = interrupt_events[0]
-    assert isinstance(interrupt_event, BidiInterruptionEvent)
-    assert interrupt_event.get("type") == "bidi_interruption"
-    assert interrupt_event.reason == "user_speech"
+    barge_in_events = model._convert_gemini_live_event(mock_barge_in, turn_state)
+    assert isinstance(barge_in_events, list)
+    assert len(barge_in_events) == 1
+    barge_in_event = barge_in_events[0]
+    assert isinstance(barge_in_event, BidiBargeInEvent)
+    assert barge_in_event.get("type") == "bidi_barge_in"
+    assert barge_in_event.reason == "user_speech"
 
     await model.stop()
 
@@ -981,10 +981,8 @@ async def test_usage_metadata_modality_details(mock_genai_client, model, live_me
 
 
 @pytest.mark.asyncio
-async def test_interruption_emitted_alongside_other_server_content(
-    mock_genai_client, model, live_message, server_content
-):
-    """An interruption is emitted even when other server content fields are set.
+async def test_barge_in_emitted_alongside_other_server_content(mock_genai_client, model, live_message, server_content):
+    """A barge-in is emitted even when other server content fields are set.
 
     Guards https://github.com/strands-agents/harness-sdk/issues/3745 — interrupted may co-occur with
     other serverContent fields and must not swallow them.
@@ -1000,16 +998,16 @@ async def test_interruption_emitted_alongside_other_server_content(
 
     events = model._convert_gemini_live_event(message, _TurnState())
 
-    assert [type(event) for event in events] == [BidiInterruptionEvent, BidiTranscriptStreamEvent]
+    assert [type(event) for event in events] == [BidiBargeInEvent, BidiTranscriptStreamEvent]
 
     await model.stop()
 
 
 @pytest.mark.asyncio
-async def test_interruption_preserves_user_transcription_already_in_progress(
+async def test_barge_in_preserves_user_transcription_already_in_progress(
     mock_genai_client, model, live_message, server_content
 ):
-    """A delayed interruption marker must not discard earlier fragments from the same utterance."""
+    """A delayed barge-in marker must not discard earlier fragments from the same utterance."""
     _, _, _ = mock_genai_client
     await model.start()
     turn_state = _TurnState(response_open=True)
@@ -1026,7 +1024,7 @@ async def test_interruption_preserves_user_transcription_already_in_progress(
         turn_state,
     )
 
-    assert [type(event) for event in events] == [BidiInterruptionEvent, BidiTranscriptStreamEvent]
+    assert [type(event) for event in events] == [BidiBargeInEvent, BidiTranscriptStreamEvent]
     assert turn_state.input_transcript == "Just one second"
 
     await model.stop()
@@ -1099,14 +1097,14 @@ async def test_transcription_fragments_complete_at_turn_boundary(
         pytest.param(
             True,
             [{"interrupted": True}, {"turn_complete": True}],
-            [BidiInterruptionEvent(reason="user_speech"), BidiTranscriptCompleteEvent("Turn one.", "user")],
-            id="interrupted-then-complete",
+            [BidiBargeInEvent(reason="user_speech"), BidiTranscriptCompleteEvent("Turn one.", "user")],
+            id="barge-in-then-complete",
         ),
         pytest.param(
             True,
             [{"interrupted": True, "turn_complete": True}],
-            [BidiInterruptionEvent(reason="user_speech"), BidiTranscriptCompleteEvent("Turn one.", "user")],
-            id="interrupted-and-complete",
+            [BidiBargeInEvent(reason="user_speech"), BidiTranscriptCompleteEvent("Turn one.", "user")],
+            id="barge-in-and-complete",
         ),
     ],
 )
@@ -1225,15 +1223,15 @@ async def test_turn_complete_without_open_response_emits_nothing(
 
 
 @pytest.mark.asyncio
-async def test_interruption_closes_response_without_complete(mock_genai_client, model, live_message, server_content):
-    """An interruption ends the turn without emitting a response-complete."""
+async def test_barge_in_closes_response_without_complete(mock_genai_client, model, live_message, server_content):
+    """A barge-in ends the turn without emitting a response-complete."""
     _, _, _ = mock_genai_client
     await model.start()
     turn_state = _TurnState(response_open=True)
 
     events = model._convert_gemini_live_event(live_message(server_content=server_content(interrupted=True)), turn_state)
 
-    assert [type(event) for event in events] == [BidiInterruptionEvent]
+    assert [type(event) for event in events] == [BidiBargeInEvent]
     assert turn_state.response_open is False
 
 

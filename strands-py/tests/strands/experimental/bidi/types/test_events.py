@@ -10,10 +10,10 @@ import pytest
 
 from strands.experimental.bidi.types import (
     BidiAudioStreamEvent,
+    BidiBargeInEvent,
     BidiConnectionCloseEvent,
     BidiConnectionStartEvent,
     BidiErrorEvent,
-    BidiInterruptionEvent,
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
     BidiTranscriptCompleteEvent,
@@ -56,7 +56,7 @@ from strands.experimental.bidi.types.events import _normalize_role
             {"transcript": "Hello", "role": "assistant"},
             "bidi_transcript_complete",
         ),
-        (BidiInterruptionEvent, {"reason": "user_speech"}, "bidi_interruption"),
+        (BidiBargeInEvent, {"reason": "user_speech"}, "bidi_barge_in"),
         (
             BidiResponseCompleteEvent,
             {"response_id": "r1", "stop_reason": "complete"},

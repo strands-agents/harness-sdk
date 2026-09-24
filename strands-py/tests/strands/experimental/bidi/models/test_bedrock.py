@@ -36,7 +36,7 @@ from strands.experimental.bidi.models.bedrock import (
 from strands.experimental.bidi.types import (
     AudioDelta,
     BidiAudioStreamEvent,
-    BidiInterruptionEvent,
+    BidiBargeInEvent,
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
     BidiTranscriptCompleteEvent,
@@ -571,12 +571,12 @@ async def test_content_end_end_turn_emits_response_complete(nova_model):
     assert end.stop_reason == "complete"
 
     # A barge-in ends the turn regardless of block/stage.
-    interrupted = nova_model._convert_nova_event(
+    barge_in = nova_model._convert_nova_event(
         {"contentEnd": {"type": "AUDIO", "stopReason": "INTERRUPTED"}},
         response_state,
     )[0]
-    assert isinstance(interrupted, BidiResponseCompleteEvent)
-    assert interrupted.stop_reason == "interrupted"
+    assert isinstance(barge_in, BidiResponseCompleteEvent)
+    assert barge_in.stop_reason == "barge_in"
 
 
 def test_accumulates_final_assistant_transcript_blocks(nova_model):
@@ -1093,14 +1093,14 @@ async def test_event_conversion(nova_model):
     assert tool_use["input"] == json.dumps(tool_input)
     assert result["current_tool_use"]["input"] == tool_input
 
-    # Test interruption (now returns BidiInterruptionEvent)
+    # Test barge-in (now returns BidiBargeInEvent)
     nova_event = {"stopReason": "INTERRUPTED"}
     result = nova_model._convert_nova_event(
         nova_event,
         response_state,
     )[0]
-    assert isinstance(result, BidiInterruptionEvent)
-    assert result.get("type") == "bidi_interruption"
+    assert isinstance(result, BidiBargeInEvent)
+    assert result.get("type") == "bidi_barge_in"
     assert result.get("reason") == "user_speech"
 
     # Test usage metrics (now returns BidiUsageEvent)

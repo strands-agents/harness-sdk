@@ -9,7 +9,7 @@ Key improvements over custom WebSocket implementation:
 - Simplified session management with client.aio.live.connect()
 - Built-in tool integration and event handling
 - Automatic WebSocket connection management and error handling
-- Native support for audio/text streaming and interruption
+- Native support for audio/text streaming and barge-in
 """
 
 import base64
@@ -34,8 +34,8 @@ from .._async import stop_all
 from ..types.content import BidiContentBlock, BidiContentDelta
 from ..types.events import (
     BidiAudioStreamEvent,
+    BidiBargeInEvent,
     BidiConnectionStartEvent,
-    BidiInterruptionEvent,
     BidiOutputEvent,
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
@@ -365,7 +365,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
             a response-complete when it closes.
         """
         server_content = message.server_content
-        interrupted = bool(server_content and server_content.interrupted)
+        barge_in = bool(server_content and server_content.interrupted)
         turn_complete = bool(server_content and server_content.turn_complete)
         produced_model_output = any(
             isinstance(event, (BidiAudioStreamEvent, ToolUseStreamEvent))
@@ -374,15 +374,15 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         )
 
         wrapped: list[BidiOutputEvent] = []
-        # An interruption ends a turn, it does not start one, so it never opens a response.
-        if produced_model_output and not turn_state.response_open and not interrupted:
+        # A barge-in ends a turn, it does not start one, so it never opens a response.
+        if produced_model_output and not turn_state.response_open and not barge_in:
             turn_state.response_open = True
             turn_state.response_id = str(uuid.uuid4())
             wrapped.append(BidiResponseStartEvent(response_id=turn_state.response_id))
 
         wrapped.extend(events)
 
-        if interrupted:
+        if barge_in:
             turn_state.response_open = False
             turn_state.output_transcript = ""
         if turn_complete and turn_state.input_transcript:
@@ -421,7 +421,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         events: list[BidiOutputEvent] = []
 
         if server_content.interrupted:
-            events.append(BidiInterruptionEvent(reason="user_speech"))
+            events.append(BidiBargeInEvent(reason="user_speech"))
 
         input_transcript = server_content.input_transcription
         if input_transcript and input_transcript.text:
@@ -527,7 +527,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         """Internal: Send audio content using Gemini Live API.
 
         Gemini Live expects continuous audio streaming via send_realtime_input.
-        This automatically triggers VAD and can interrupt ongoing responses.
+        This automatically triggers VAD and allows users to barge in during ongoing responses.
         """
         audio_bytes = audio_input.source.get("bytes")
         if audio_bytes is None:
@@ -537,7 +537,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         mime_type = f"audio/pcm;rate={self._audio_config['input']['sample_rate']}"
         audio_blob = genai_types.Blob(data=audio_bytes, mime_type=mime_type)
 
-        # Send real-time audio input - this automatically handles VAD and interruption
+        # Send real-time audio input - this automatically handles VAD and barge-in
         await self._live_session.send_realtime_input(audio=audio_blob)
 
     async def _send_image_content(self, image_input: ImageBlock) -> None:

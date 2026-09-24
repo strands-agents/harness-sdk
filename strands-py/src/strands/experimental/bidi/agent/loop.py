@@ -25,7 +25,7 @@ from ..hooks.events import (
     BidiBeforeConnectionRestartEvent,
 )
 from ..hooks.events import (
-    BidiInterruptionEvent as BidiInterruptionHookEvent,
+    BidiBargeInEvent as BidiBargeInHookEvent,
 )
 from ..hooks.events import (
     BidiResponseCompleteEvent as BidiResponseCompleteHookEvent,
@@ -34,10 +34,10 @@ from ..models import ConnectionTimeoutError, Restartable
 from ..types.content import BidiContentBlock, BidiContentDelta
 from ..types.events import (
     BidiAudioStreamEvent,
+    BidiBargeInEvent,
     BidiConnectionCloseEvent,
     BidiConnectionRestartEvent,
     BidiConnectionWarningEvent,
-    BidiInterruptionEvent,
     BidiOutputEvent,
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
@@ -602,7 +602,7 @@ class _AgentLoop:
                         _telemetry.end_response_span(
                             self._tracer,
                             response_span,
-                            stop_reason="interrupted",
+                            stop_reason="barge_in",
                             time_to_first_audio_ms=time_to_first_audio_ms,
                         )
                     response_span = _telemetry.start_response_span(
@@ -656,18 +656,18 @@ class _AgentLoop:
                     if generation != self._generation:
                         return
 
-                elif isinstance(event, BidiInterruptionEvent):
+                elif isinstance(event, BidiBargeInEvent):
                     if self._session_span:
-                        _telemetry.add_interruption_event(self._session_span, event["reason"])
+                        _telemetry.add_barge_in_event(self._session_span, event["reason"])
 
                     # A barge-in ends the current response; the user's next turn owes a reply.
                     self._response_active = False
                     self._update_turn_state()
                     await self._agent.hooks.invoke_callbacks_async(
-                        BidiInterruptionHookEvent(
+                        BidiBargeInHookEvent(
                             agent=self._agent,
                             reason=event["reason"],
-                            interrupted_response_id=event.get("interrupted_response_id"),
+                            response_id=event.get("response_id"),
                         )
                     )
                     if generation != self._generation:

@@ -3,7 +3,7 @@ import unittest.mock
 import pytest
 
 from strands.experimental.bidi.io import ConsoleIO
-from strands.experimental.bidi.types import BidiInterruptionEvent, BidiTranscriptStreamEvent
+from strands.experimental.bidi.types import BidiBargeInEvent, BidiTranscriptStreamEvent
 from strands.types.content import TextBlock
 
 
@@ -40,7 +40,7 @@ async def test_console_io_input(prompt_session, text_input):
 @pytest.mark.parametrize(
     ("event", "exp_print"),
     [
-        (BidiInterruptionEvent(reason="user_speech"), "interrupted"),
+        (BidiBargeInEvent(reason="user_speech"), "barge-in"),
         (BidiTranscriptStreamEvent(delta="test text", role="user"), "test text"),
         (BidiTranscriptStreamEvent(delta="test text", role="assistant"), "test text"),
     ],

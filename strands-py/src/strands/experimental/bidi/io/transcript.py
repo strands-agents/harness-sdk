@@ -10,7 +10,7 @@ from rich.style import Style
 from rich.text import Text
 
 from ..types.events import (
-    BidiInterruptionEvent,
+    BidiBargeInEvent,
     BidiOutputEvent,
     BidiResponseCompleteEvent,
     BidiTranscriptStreamEvent,
@@ -97,8 +97,8 @@ class _TranscriptOutputStream(OutputStream):
             else:
                 self._update_transcript(event.delta)
 
-        elif isinstance(event, BidiInterruptionEvent):
-            logger.debug("reason=<%s> | transcript interrupted", event.reason)
+        elif isinstance(event, BidiBargeInEvent):
+            logger.debug("reason=<%s> | transcript stopped due to barge-in", event.reason)
 
             if self._role != "user" or self._transcript is None:
                 self._restart_transcript("user", delta="")
@@ -106,7 +106,7 @@ class _TranscriptOutputStream(OutputStream):
         elif isinstance(event, BidiResponseCompleteEvent):
             logger.debug("response_id=<%s>, role=<%s> | transcript complete", event.response_id, self._role)
 
-            if event.stop_reason == "interrupted":
+            if event.stop_reason == "barge_in":
                 if self._role != "user" or self._transcript is None:
                     self._restart_transcript("user", delta="")
             else:

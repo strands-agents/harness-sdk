@@ -10,7 +10,7 @@ Nova Sonic specifics:
 - Base64-encoded audio format with hex encoding
 - Tool execution with content containers and identifier tracking
 - 8-minute connection limits with proper cleanup sequences
-- Interruption detection through stopReason events
+- Barge-in detection through stopReason events
 
 Note, BedrockNovaSonicModel is only supported for Python 3.12+
 """
@@ -54,8 +54,8 @@ from .._async import stop_all
 from ..types.content import BidiContentBlock, BidiContentDelta
 from ..types.events import (
     BidiAudioStreamEvent,
+    BidiBargeInEvent,
     BidiConnectionStartEvent,
-    BidiInterruptionEvent,
     BidiOutputEvent,
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
@@ -737,11 +737,11 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             text_output = nova_event["textOutput"]
             text_content = text_output["content"]
             role = text_output["role"].strip().lower()
-            # Check for Nova Sonic interruption pattern
+            # Check for Nova Sonic barge-in pattern
             if '{ "interrupted" : true }' in text_content:
-                logger.debug("nova interruption detected in text output")
+                logger.debug("nova barge-in detected in text output")
                 response_state.reset()
-                return [BidiInterruptionEvent(reason="user_speech")]
+                return [BidiBargeInEvent(reason="user_speech")]
 
             if role == "user":
                 return [BidiTranscriptStreamEvent(delta=response_state.append_transcript(text_content), role="user")]
@@ -775,11 +775,11 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
                 )
             ]
 
-        # Handle interruption
+        # Handle barge-in
         if nova_event.get("stopReason") == "INTERRUPTED":
-            logger.debug("nova interruption detected via stop reason")
+            logger.debug("nova barge-in detected via stop reason")
             response_state.reset()
-            return [BidiInterruptionEvent(reason="user_speech")]
+            return [BidiBargeInEvent(reason="user_speech")]
 
         # Handle usage events - convert to multimodal usage format
         if "usageEvent" in nova_event:
@@ -826,7 +826,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             if stop_reason == "INTERRUPTED" or (stop_reason == "END_TURN" and is_final_text):
                 response_complete = BidiResponseCompleteEvent(
                     response_id=self._current_completion_id or str(uuid.uuid4()),
-                    stop_reason="interrupted" if stop_reason == "INTERRUPTED" else "complete",
+                    stop_reason="barge_in" if stop_reason == "INTERRUPTED" else "complete",
                 )
                 if stop_reason != "INTERRUPTED" and response_state.transcript:
                     transcript_complete = BidiTranscriptCompleteEvent(response_state.transcript, "assistant")

@@ -17,7 +17,7 @@ from strands.experimental.bidi.models import AudioCapable
 from strands.experimental.bidi.types import (
     AudioDelta,
     BidiAudioStreamEvent,
-    BidiInterruptionEvent,
+    BidiBargeInEvent,
     BidiResponseCompleteEvent,
 )
 
@@ -193,7 +193,7 @@ async def test_audio_io_output_rejects_changed_format(audio_output, stream):
 
 
 @pytest.mark.asyncio
-async def test_audio_io_output_interrupt(audio_output):
+async def test_audio_io_output_barge_in(audio_output):
     transcript_output = unittest.mock.AsyncMock()
     audio_output._transcript_output = transcript_output
     audio_event = BidiAudioStreamEvent(
@@ -203,13 +203,13 @@ async def test_audio_io_output_interrupt(audio_output):
         sample_rate=16000,
     )
     await audio_output(audio_event)
-    interrupt_event = BidiInterruptionEvent(reason="user_speech")
-    await audio_output(interrupt_event)
+    barge_in_event = BidiBargeInEvent(reason="user_speech")
+    await audio_output(barge_in_event)
 
     tru_data, _ = audio_output._callback(None, frame_count=1)
     exp_data = b"\x00\x00\x00\x00"
     assert tru_data == exp_data
-    transcript_output.assert_any_await(interrupt_event)
+    transcript_output.assert_any_await(barge_in_event)
 
 
 @pytest.mark.asyncio
@@ -608,8 +608,8 @@ async def test_output_records_reference_at_playback(py_audio, aec_agent, mock_au
 
 
 @pytest.mark.asyncio
-async def test_output_clears_reference_on_interruption(py_audio, aec_agent, mock_audio_processor):
-    from strands.experimental.bidi.types import BidiAudioStreamEvent, BidiInterruptionEvent
+async def test_output_clears_reference_on_barge_in(py_audio, aec_agent, mock_audio_processor):
+    from strands.experimental.bidi.types import BidiAudioStreamEvent, BidiBargeInEvent
 
     audio_io = AudioIO(audio_processor=AudioProcessorConfig())
     input_ = audio_io.input()
@@ -628,7 +628,7 @@ async def test_output_clears_reference_on_interruption(py_audio, aec_agent, mock
     )
     output._callback(None, frame_count=2)
 
-    await output(BidiInterruptionEvent(reason="user_speech"))
+    await output(BidiBargeInEvent(reason="user_speech"))
 
     assert audio_io._audio_processor._get_far_data() == b""
     await input_.stop()

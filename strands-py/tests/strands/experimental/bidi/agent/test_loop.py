@@ -9,14 +9,14 @@ from strands import ToolContext, tool
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.agent.loop import _ReaderError
 from strands.experimental.bidi.hooks import BidiAgentStopEvent, BidiBeforeConnectionRestartEvent
-from strands.experimental.bidi.hooks import BidiInterruptionEvent as BidiInterruptionHookEvent
+from strands.experimental.bidi.hooks import BidiBargeInEvent as BidiBargeInHookEvent
 from strands.experimental.bidi.hooks import BidiResponseCompleteEvent as BidiResponseCompleteHookEvent
 from strands.experimental.bidi.models import BidiModel, ConnectionTimeoutError
 from strands.experimental.bidi.types import (
+    BidiBargeInEvent,
     BidiConnectionCloseEvent,
     BidiConnectionRestartEvent,
     BidiConnectionWarningEvent,
-    BidiInterruptionEvent,
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
     BidiTranscriptCompleteEvent,
@@ -53,7 +53,7 @@ async def loop(agent):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("stop_reason", ["complete", "interrupted", "error", "tool_use"])
+@pytest.mark.parametrize("stop_reason", ["complete", "barge_in", "error", "tool_use"])
 async def test_response_complete_hook(agent, agenerator, stop_reason):
     hooks = MockHookProvider([BidiResponseCompleteHookEvent])
     agent.hooks.add_hook(hooks)
@@ -82,7 +82,7 @@ async def test_response_complete_hook(agent, agenerator, stop_reason):
             BidiResponseCompleteEvent(response_id="r1", stop_reason="complete"),
             BidiResponseCompleteHookEvent,
         ),
-        (BidiInterruptionEvent(reason="user_speech"), BidiInterruptionHookEvent),
+        (BidiBargeInEvent(reason="user_speech"), BidiBargeInHookEvent),
         (BidiTranscriptCompleteEvent(transcript="Hello", role="assistant"), MessageAddedEvent),
     ],
 )

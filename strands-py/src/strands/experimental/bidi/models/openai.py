@@ -27,8 +27,8 @@ from .._async import stop_all
 from ..types.content import BidiContentBlock, BidiContentDelta
 from ..types.events import (
     BidiAudioStreamEvent,
+    BidiBargeInEvent,
     BidiConnectionStartEvent,
-    BidiInterruptionEvent,
     BidiOutputEvent,
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
@@ -284,11 +284,11 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             role=cast(Role, role),
         )
 
-    def _create_voice_activity_event(self, activity_type: str) -> BidiInterruptionEvent | None:
-        """Create standardized interruption event for voice activity."""
-        # Only speech_started triggers interruption
+    def _create_voice_activity_event(self, activity_type: str) -> BidiBargeInEvent | None:
+        """Create standardized barge-in event for voice activity."""
+        # Only speech_started triggers barge-in
         if activity_type == "speech_started":
-            return BidiInterruptionEvent(reason="user_speech")
+            return BidiBargeInEvent(reason="user_speech")
         # Other voice activity events are logged but don't create events
         return None
 
@@ -554,17 +554,17 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
                     del self._function_call_buffer[call_id]
             return None
 
-        # Voice activity detection - speech_started triggers interruption
+        # Voice activity detection - speech_started triggers barge-in
         elif event_type == "input_audio_buffer.speech_started":
-            # This is the primary interruption signal - handle it first
-            return [BidiInterruptionEvent(reason="user_speech")]
+            # This is the primary barge-in signal - handle it first
+            return [BidiBargeInEvent(reason="user_speech")]
 
-        # Response cancelled - handle interruption
+        # Response cancelled - handle barge-in
         elif event_type == "response.cancelled":
             response = openai_event.get("response", {})
             response_id = response.get("id", "unknown")
             logger.debug("response_id=<%s> | openai response cancelled", response_id)
-            return [BidiResponseCompleteEvent(response_id=response_id, stop_reason="interrupted")]
+            return [BidiResponseCompleteEvent(response_id=response_id, stop_reason="barge_in")]
 
         # Turn complete and usage - response finished
         elif event_type == "response.done":
@@ -576,9 +576,9 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             # Map OpenAI status to our stop_reason
             stop_reason_map = {
                 "completed": "complete",
-                "cancelled": "interrupted",
+                "cancelled": "barge_in",
                 "failed": "error",
-                "incomplete": "interrupted",
+                "incomplete": "barge_in",
             }
 
             # Build list of events to return

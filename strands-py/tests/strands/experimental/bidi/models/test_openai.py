@@ -25,8 +25,8 @@ from strands.experimental.bidi.models.openai import (
 from strands.experimental.bidi.types import (
     AudioDelta,
     BidiAudioStreamEvent,
+    BidiBargeInEvent,
     BidiConnectionStartEvent,
-    BidiInterruptionEvent,
     BidiResponseCompleteEvent,
     BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
@@ -602,16 +602,16 @@ async def test_event_conversion(model):
     assert json.loads(tool_use["input"]) == {"expression": "2+2"}
     assert converted[0]["current_tool_use"]["input"] == {"expression": "2+2"}
 
-    # Test voice activity (now returns list with BidiInterruptionEvent for speech_started)
+    # Test voice activity (now returns list with BidiBargeInEvent for speech_started)
     speech_started = {"type": "input_audio_buffer.speech_started"}
     converted = model._convert_openai_event(speech_started)
     assert isinstance(converted, list)
     assert len(converted) == 1
-    assert isinstance(converted[0], BidiInterruptionEvent)
-    assert converted[0].get("type") == "bidi_interruption"
+    assert isinstance(converted[0], BidiBargeInEvent)
+    assert converted[0].get("type") == "bidi_barge_in"
     assert converted[0].get("reason") == "user_speech"
 
-    # Test response.cancelled event (should return ResponseCompleteEvent with interrupted reason)
+    # Test response.cancelled event (should return ResponseCompleteEvent with barge_in reason)
     response_cancelled = {"type": "response.cancelled", "response": {"id": "resp_123"}}
     converted = model._convert_openai_event(response_cancelled)
     assert isinstance(converted, list)
@@ -619,7 +619,7 @@ async def test_event_conversion(model):
     assert isinstance(converted[0], BidiResponseCompleteEvent)
     assert converted[0].get("type") == "bidi_response_complete"
     assert converted[0].get("response_id") == "resp_123"
-    assert converted[0].get("stop_reason") == "interrupted"
+    assert converted[0].get("stop_reason") == "barge_in"
 
     # Test error handling - response_cancel_not_active should be suppressed
     error_cancel_not_active = {
@@ -895,10 +895,10 @@ def test_helper_methods(model):
     assert text_event.get("role") == "user"
     assert text_event.delta == "Hello"
 
-    # Test _create_voice_activity_event (now returns BidiInterruptionEvent for speech_started)
+    # Test _create_voice_activity_event (now returns BidiBargeInEvent for speech_started)
     voice_event = model._create_voice_activity_event("speech_started")
-    assert isinstance(voice_event, BidiInterruptionEvent)
-    assert voice_event.get("type") == "bidi_interruption"
+    assert isinstance(voice_event, BidiBargeInEvent)
+    assert voice_event.get("type") == "bidi_barge_in"
     assert voice_event.get("reason") == "user_speech"
 
     # Other voice activities return None

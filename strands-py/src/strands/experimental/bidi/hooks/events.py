@@ -51,7 +51,7 @@ class BidiResponseCompleteEvent(_HookEvent):
 
     Attributes:
         response_id: Identifier of the response that ended.
-        stop_reason: Why the response ended, including completion or interruption.
+        stop_reason: Why the response ended, including completion or barge-in.
     """
 
     response_id: str
@@ -59,23 +59,23 @@ class BidiResponseCompleteEvent(_HookEvent):
 
 
 @dataclass
-class BidiInterruptionEvent(_HookEvent):
-    """Event triggered when model generation is interrupted.
+class BidiBargeInEvent(_HookEvent):
+    """Event triggered to stop current response generation or playback.
 
-    This event is fired when the user interrupts the assistant (e.g., by speaking
-    during the assistant's response) or when an error causes interruption. This is
+    This event is fired when the user barges in (e.g., by speaking during the
+    assistant's response) or when an error stops output. This is
     specific to bidirectional streaming and doesn't exist in standard agents.
 
-    Hook providers can use this event to log interruptions, implement custom
-    interruption handling, or trigger cleanup logic.
+    Hook providers can use this event to log barge-ins, implement custom
+    barge-in handling, or trigger cleanup logic.
 
     Attributes:
-        reason: The reason for the interruption ("user_speech" or "error").
-        interrupted_response_id: Optional ID of the response that was interrupted.
+        reason: Why response output should stop ("user_speech" or "error").
+        response_id: Optional ID of the affected response.
     """
 
     reason: Literal["user_speech", "error"]
-    interrupted_response_id: str | None = None
+    response_id: str | None = None
 
 
 @dataclass

@@ -185,7 +185,7 @@ You now have a voice-enabled agent that can:
 - Process speech in real time
 - Respond with natural voice output
 - Display live user and assistant transcripts
-- Handle interruptions when you start speaking
+- Handle barge-ins when you start speaking
 
 :::note[Stopping the Conversation]
 The `run()` method runs indefinitely. See [Controlling Conversation Lifecycle](#controlling-conversation-lifecycle) for proper ways to stop conversations.
@@ -336,16 +336,16 @@ asyncio.run(main())
 `get_audio_config()`. You do not need to repeat rates or channel counts on the I/O
 stream.
 
-## Handling Interruptions
+## Handling Barge-in
 
-Bidirectional agents automatically handle interruptions when users start speaking:
+Bidirectional agents automatically handle barge-ins when users start speaking:
 
 ```python
 import asyncio
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.io import AudioIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
-from strands.experimental.bidi.types import BidiInterruptionEvent
+from strands.experimental.bidi.types import BidiBargeInEvent
 
 model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 agent = BidiAgent(model=model)
@@ -356,8 +356,8 @@ async def main():
     
     # Start receiving events
     async for event in agent.receive():
-        if isinstance(event, BidiInterruptionEvent):
-            print(f"User interrupted: {event.reason}")
+        if isinstance(event, BidiBargeInEvent):
+            print(f"Barge-in: {event.reason}")
             # Audio output automatically cleared
             # Model stops generating
             # Ready for new input
@@ -365,7 +365,7 @@ async def main():
 asyncio.run(main())
 ```
 
-Interruptions are detected via voice activity detection (VAD) and handled automatically:
+Barge-ins are detected via voice activity detection (VAD) and handled automatically:
 
 1. User starts speaking
 2. Model stops generating
@@ -492,9 +492,7 @@ Debug logs show:
 
 ### Audio Feedback Loop in a Python Console
 
-Over open speakers, the agent's own playback can feed back into the microphone and
-interrupt it. Either use a headset, or enable microphone audio processing to cancel
-the echo:
+Over open speakers, the agent's own playback can feed back into the microphone and trigger a barge-in. Either use a headset, or enable microphone audio processing to cancel the echo:
 
 ```bash
 pip install "strands-agents[bidi,bidi-pyaudio,bidi-aec]"
