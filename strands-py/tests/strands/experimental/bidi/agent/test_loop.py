@@ -1371,7 +1371,7 @@ async def test_unfinished_transcripts_end_with_the_connection(streaming_agent, r
 
 
 @pytest.mark.asyncio
-async def test_transcript_stop_does_not_restore_removed_message(streaming_agent):
+async def test_transcript_stop_raises_when_message_removed(streaming_agent):
     agent = streaming_agent
     reader = agent.receive()
     hooks = MockHookProvider([MessageUpdatedEvent])
@@ -1382,7 +1382,8 @@ async def test_transcript_stop_does_not_restore_removed_message(streaming_agent)
     agent.messages.clear()
     stop = BidiTranscriptStopEvent("Question", "user", content_id="speech")
     await agent.model.emit(stop)
-    assert await anext(reader) == stop
+    with pytest.raises(RuntimeError, match="message not found in history"):
+        await anext(reader)
     assert agent.messages == []
     assert hooks.events_received == []
     await reader.aclose()
