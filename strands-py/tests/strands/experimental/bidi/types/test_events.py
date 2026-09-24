@@ -133,10 +133,9 @@ def test_transcript_delta_event_contains_text_delta():
     assert event.delta == "Hello"
 
 
-@pytest.mark.parametrize("error", [None, RuntimeError("Transcription failed.")])
-def test_transcript_stop_event_contains_full_transcript(error):
+def test_transcript_stop_event_contains_full_transcript():
     """Test that a stop event carries one authoritative transcript."""
-    event = BidiTranscriptStopEvent("Hello world", "assistant", "assistant-transcript", error=error)
+    event = BidiTranscriptStopEvent("Hello world", "assistant", "assistant-transcript")
 
     exp_event = {
         "type": "bidi_transcript_stop",
@@ -144,10 +143,7 @@ def test_transcript_stop_event_contains_full_transcript(error):
         "role": "assistant",
         "content_id": "assistant-transcript",
     }
-    if error is not None:
-        exp_event["error"] = {"type": "RuntimeError", "message": "Transcription failed."}
     assert event == exp_event
-    assert event.error is error
     assert json.loads(json.dumps(event)) == exp_event
 
 

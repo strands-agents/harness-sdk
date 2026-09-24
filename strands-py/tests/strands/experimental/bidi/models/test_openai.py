@@ -625,46 +625,25 @@ async def test_receive_lifecycle_events(mock_websocket, model):
 @pytest.mark.parametrize("committed", [False, True])
 async def test_receive_transcription_failure(mock_websocket, model, committed):
     await model.start()
-    assistant_identity = {"response_id": "response-a", "item_id": "assistant-a", "content_index": 0}
     native_events = ([{"type": "input_audio_buffer.committed", "item_id": "speech-a"}] if committed else []) + [
         {
             "type": "conversation.item.input_audio_transcription.failed",
             "item_id": "speech-a",
             "error": {"message": "The audio could not be transcribed."},
         },
-        {"type": "response.created", "response": {"id": "response-a"}},
-        {"type": "response.output_audio_transcript.delta", **assistant_identity, "delta": "Hello."},
-        {"type": "response.output_audio_transcript.done", **assistant_identity, "transcript": "Hello."},
-        {
-            "type": "response.done",
-            "response": {
-                "id": "response-a",
-                "status": "completed",
-                "output": [
-                    {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [{"type": "output_audio", "transcript": "Hello."}],
-                    }
-                ],
-            },
-        },
     ]
     mock_websocket.recv.side_effect = [json.dumps(event) for event in native_events]
     exp_events = [
         BidiConnectionStartEvent(model._connection_id, model.get_config()["model_id"]),
-        BidiTranscriptStartEvent("user", "speech-a"),
-        BidiTranscriptStopEvent("", "user", "speech-a", error=RuntimeError("The audio could not be transcribed.")),
-        BidiResponseStartEvent("response-a"),
-        BidiTranscriptStartEvent("assistant", "response-a"),
-        BidiTranscriptDeltaEvent("Hello.", "assistant", "response-a"),
-        BidiTranscriptStopEvent("Hello.", "assistant", "response-a"),
-        BidiResponseStopEvent("response-a", "end_turn"),
     ]
+    if committed:
+        exp_events.append(BidiTranscriptStartEvent("user", "speech-a"))
     receiver = model.receive()
     try:
         tru_events = [await anext(receiver) for _ in exp_events]
         assert tru_events == exp_events
+        with pytest.raises(RuntimeError, match="The audio could not be transcribed."):
+            await anext(receiver)
     finally:
         await receiver.aclose()
         await model.stop()

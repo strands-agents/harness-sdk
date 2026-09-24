@@ -633,15 +633,11 @@ class _AgentLoop:
 
                 elif isinstance(event, BidiTranscriptStopEvent):
                     message = transcripts.pop(event.content_id)
-                    status = "incomplete" if event.error is not None else "complete"
-                    transcript = event.transcript
-                    if not transcript and event.error is not None:
-                        transcript = "[Transcript unavailable.]"
                     await self._agent._update_message(
                         {
                             **message,
-                            "content": [{"text": transcript}] if transcript else [],
-                            "metadata": {"custom": {"bidi": {"kind": "transcript", "status": status}}},
+                            "content": [{"text": event.transcript}],
+                            "metadata": {"custom": {"bidi": {"kind": "transcript", "status": "complete"}}},
                         }
                     )
 

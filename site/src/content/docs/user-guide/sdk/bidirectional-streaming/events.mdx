@@ -364,7 +364,7 @@ Emitted for each incremental transcript update.
 
 #### BidiTranscriptStopEvent
 
-Emitted once when a user or assistant transcript ends, including on failure.
+Emitted once when a user or assistant transcript finishes successfully.
 
 ```python
 {
@@ -380,9 +380,6 @@ Emitted once when a user or assistant transcript ends, including on failure.
 - `transcript`: The final transcript text
 - `role`: Who spoke (`"user"` or `"assistant"`)
 - `content_id`: Identifier for this transcript
-- `error`: Optional failure details with `type` and `message`
-
-The `event.error` property returns the original exception, or `None` on success. A failure marks the message incomplete without ending the conversation.
 
 **Usage:**
 ```python

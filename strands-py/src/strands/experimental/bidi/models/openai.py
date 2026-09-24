@@ -611,14 +611,7 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
 
         if event_type == "conversation.item.input_audio_transcription.failed":
             error_info = openai_event.get("error", {})
-            return state.transcript_events(
-                BidiTranscriptStopEvent(
-                    transcript="",
-                    role="user",
-                    content_id=openai_event["item_id"],
-                    error=RuntimeError(error_info.get("message", "Transcription failed.")),
-                )
-            )
+            raise RuntimeError(error_info.get("message", "Transcription failed."))
 
         if event_type == "response.function_call_arguments.delta":
             call_id = openai_event.get("call_id")

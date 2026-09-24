@@ -341,10 +341,9 @@ class BidiTranscriptStopEvent(TypedEvent):
         transcript: The final transcript text.
         role: Who spoke ("user" or "assistant").
         content_id: Unique identifier shared by this transcript's events.
-        error: Optional exception indicating transcription failed.
     """
 
-    def __init__(self, transcript: str, role: Role, content_id: str, error: Exception | None = None):
+    def __init__(self, transcript: str, role: Role, content_id: str):
         """Initialize transcript stop event."""
         super().__init__(
             {
@@ -354,14 +353,6 @@ class BidiTranscriptStopEvent(TypedEvent):
                 "content_id": content_id,
             }
         )
-        self._error = error
-        if error is not None:
-            self["error"] = {"type": type(error).__name__, "message": str(error)}
-
-    @property
-    def error(self) -> Exception | None:
-        """Original transcription exception, or None on success."""
-        return self._error
 
     @property
     def content_id(self) -> str:

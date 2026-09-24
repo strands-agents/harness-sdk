@@ -241,49 +241,31 @@ async def test_receive_barge_in_does_not_wait_for_transcription(agent, agenerato
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "transcript,exp_text",
-    [("", "[Transcript unavailable.]"), ("Partial transcript", "Partial transcript")],
-)
-async def test_receive_transcription_failure_marks_message_incomplete(agent, agenerator, transcript, exp_text):
-    start = BidiResponseStartEvent("a")
+async def test_receive_transcription_failure_raises_and_marks_message_incomplete(agent):
+    start = BidiTranscriptStartEvent("user", content_id="speech-a")
     partial = BidiTranscriptDeltaEvent("Incomplete", "user", content_id="speech-a")
-    answer = BidiTranscriptStopEvent("Answer.", "assistant", content_id="a")
-    complete = BidiResponseStopEvent("a", "end_turn")
-    error = BidiTranscriptStopEvent(transcript, "user", "speech-a", error=RuntimeError("Transcription failed."))
-    agent.model.receive = lambda: agenerator(
-        [
-            BidiTranscriptStartEvent("user", content_id="speech-a"),
-            start,
-            partial,
-            BidiTranscriptStartEvent("assistant", content_id="a"),
-            answer,
-            error,
-            complete,
-        ]
-    )
+
+    async def receive():
+        yield start
+        yield partial
+        raise RuntimeError("Transcription failed.")
+
+    agent.model.receive = receive
     await agent.start()
     reader = agent.receive()
     try:
-        exp_events = [
-            BidiTranscriptStartEvent("user", content_id="speech-a"),
-            start,
-            partial,
-            BidiTranscriptStartEvent("assistant", content_id="a"),
-            answer,
-            error,
-            complete,
-        ]
+        exp_events = [start, partial]
         tru_events = [await anext(reader) for _ in exp_events]
         assert tru_events == exp_events
+        with pytest.raises(RuntimeError, match="Transcription failed."):
+            await anext(reader)
         exp_messages = [
             {
-                "role": role,
-                "content": [{"text": text}],
+                "role": "user",
+                "content": [{"text": "[Transcript unavailable.]"}],
                 "tracking_id": unittest.mock.ANY,
-                "metadata": {"custom": {"bidi": {"kind": "transcript", "status": status}}},
+                "metadata": {"custom": {"bidi": {"kind": "transcript", "status": "incomplete"}}},
             }
-            for role, text, status in [("user", exp_text, "incomplete"), ("assistant", "Answer.", "complete")]
         ]
         assert agent.messages == exp_messages
     finally:
@@ -1283,7 +1265,7 @@ async def test_transcript_stop_updates_reserved_message(streaming_agent, role, f
 
     exp_message = {
         **placeholder,
-        "content": [{"text": final_text}] if final_text else [],
+        "content": [{"text": final_text}],
         "metadata": {"custom": {"bidi": {"kind": "transcript", "status": "complete"}}},
     }
     assert agent.messages == [exp_message]
