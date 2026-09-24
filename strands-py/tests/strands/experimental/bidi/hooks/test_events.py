@@ -73,12 +73,11 @@ def test_event_should_reverse_callbacks(agent_stop_event, response_stop_event, b
     assert barge_in_event.should_reverse_callbacks is False
 
 
-def test_barge_in_event_with_response_id(agent):
-    """Verify BidiBargeInEvent can include response ID."""
-    event = BidiBargeInEvent(agent=agent, reason="error", response_id="resp_123")
+def test_barge_in_event_fields(agent):
+    event = BidiBargeInEvent(agent=agent, reason="error")
 
     tru_event = {field.name: getattr(event, field.name) for field in fields(event)}
-    exp_event = {"agent": agent, "reason": "error", "response_id": "resp_123"}
+    exp_event = {"agent": agent, "reason": "error"}
     assert tru_event == exp_event
 
 

@@ -650,9 +650,7 @@ class _AgentLoop:
                     # A barge-in ends the current response; the user's next turn owes a reply.
                     self._response_active = False
                     self._update_turn_state()
-                    await self._agent.hooks.invoke_callbacks_async(
-                        BidiBargeInHookEvent(self._agent, event["reason"], event.get("response_id"))
-                    )
+                    await self._agent.hooks.invoke_callbacks_async(BidiBargeInHookEvent(self._agent, event["reason"]))
 
                 elif isinstance(event, BidiResponseStopEvent):
                     if response_span:
