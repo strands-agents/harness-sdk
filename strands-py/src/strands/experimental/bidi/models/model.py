@@ -125,7 +125,6 @@ class BidiModel(Model, abc.ABC):
         Each transcript has start and stop events, with zero or more deltas between
         them, sharing a content_id unique within the connection. Transcript streams
         may interleave, and user transcripts may arrive outside response boundaries.
-        Transcription errors are reported on the stop event without ending the stream.
 
         The stream continues until the connection is closed or an error occurs.
 

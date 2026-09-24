@@ -31,7 +31,7 @@ from ..hooks.events import (
     BidiResponseStopEvent as BidiResponseStopHookEvent,
 )
 from ..models import ConnectionTimeoutError, Restartable
-from ..types.content import BidiContentBlock, BidiContentDelta
+from ..types.content import BidiContentBlock, BidiContentDelta, BidiTranscriptMetadata
 from ..types.events import (
     BidiAudioDeltaEvent,
     BidiBargeInEvent,
@@ -622,7 +622,7 @@ class _AgentLoop:
                     message: Message = {
                         "role": event.role,
                         "content": [],
-                        "metadata": {"custom": {"bidi": {"kind": "transcript", "status": "pending"}}},
+                        "metadata": {"custom": {"bidi": BidiTranscriptMetadata(kind="transcript", status="pending")}},
                     }
                     await self._agent._append_messages(message)
                     transcripts[event.content_id] = message
@@ -637,7 +637,9 @@ class _AgentLoop:
                         {
                             **message,
                             "content": [{"text": event.transcript}],
-                            "metadata": {"custom": {"bidi": {"kind": "transcript", "status": "complete"}}},
+                            "metadata": {
+                                "custom": {"bidi": BidiTranscriptMetadata(kind="transcript", status="complete")}
+                            },
                         }
                     )
 
@@ -695,7 +697,9 @@ class _AgentLoop:
                     {
                         **message,
                         "content": [{"text": "[Transcript unavailable.]"}],
-                        "metadata": {"custom": {"bidi": {"kind": "transcript", "status": "incomplete"}}},
+                        "metadata": {
+                            "custom": {"bidi": BidiTranscriptMetadata(kind="transcript", status="incomplete")}
+                        },
                     }
                 )
             if response_span:

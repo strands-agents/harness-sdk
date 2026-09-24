@@ -1,6 +1,8 @@
 """Content-related type definitions for bidirectional streaming."""
 
-from typing import TypeAlias
+from typing import Literal, TypeAlias
+
+from typing_extensions import TypedDict
 
 from ....types.content import TextBlock, _TextBlockData
 from ....types.media import ImageBlock, _ImageBlockData
@@ -17,3 +19,15 @@ BidiContentBlockData: TypeAlias = _TextBlockData | _ImageBlockData
 
 BidiContentDeltaData: TypeAlias = _AudioDeltaData
 """Dictionary form of an audio delta."""
+
+
+class BidiTranscriptMetadata(TypedDict):
+    """Transcript metadata stored under a message's metadata.custom.bidi.
+
+    Attributes:
+        kind: Identifies the message as a transcript.
+        status: Whether the transcript is pending, complete, or incomplete.
+    """
+
+    kind: Literal["transcript"]
+    status: Literal["pending", "complete", "incomplete"]
