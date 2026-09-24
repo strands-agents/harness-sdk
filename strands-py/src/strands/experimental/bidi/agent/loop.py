@@ -664,11 +664,7 @@ class _AgentLoop:
                     self._response_active = False
                     self._update_turn_state()
                     await self._agent.hooks.invoke_callbacks_async(
-                        BidiBargeInHookEvent(
-                            agent=self._agent,
-                            reason=event["reason"],
-                            response_id=event.get("response_id"),
-                        )
+                        BidiBargeInHookEvent(agent=self._agent, reason=event["reason"])
                     )
                     if generation != self._generation:
                         return

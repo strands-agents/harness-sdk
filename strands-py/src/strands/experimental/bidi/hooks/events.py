@@ -71,11 +71,9 @@ class BidiBargeInEvent(_HookEvent):
 
     Attributes:
         reason: Why response output should stop ("user_speech" or "error").
-        response_id: Optional ID of the affected response.
     """
 
     reason: Literal["user_speech", "error"]
-    response_id: str | None = None
 
 
 @dataclass
