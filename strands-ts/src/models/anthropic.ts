@@ -15,7 +15,7 @@ import { createEmptyUsage } from '../models/streaming.js'
 import { ContextWindowOverflowError, ModelError, ModelThrottledError, normalizeError } from '../errors.js'
 import type { Citation } from '../types/citations.js'
 import type { ImageBlock, DocumentBlock } from '../types/media.js'
-import { encodeBase64 } from '../types/media.js'
+import { encodeBase64, decodeBase64 } from '../types/media.js'
 import { logger } from '../logging/logger.js'
 import { warnOnce } from '../logging/warn-once.js'
 import { MODEL_DEFAULTS, defaultMaxTokensWarningMessage, defaultModelWarningMessage } from './defaults.js'
@@ -304,7 +304,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
                   type: 'modelContentBlockDeltaEvent',
                   delta: {
                     type: 'reasoningContentDelta',
-                    redactedContent: event.content_block.data as unknown as Uint8Array,
+                    redactedContent: decodeBase64(event.content_block.data),
                   },
                 }
               } else {
@@ -836,7 +836,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         } else if (block.redactedContent) {
           return {
             type: 'redacted_thinking',
-            data: block.redactedContent,
+            data: encodeBase64(block.redactedContent),
           } as unknown as Anthropic.ContentBlockParam
         }
         return undefined
