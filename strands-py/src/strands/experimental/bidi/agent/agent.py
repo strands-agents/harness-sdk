@@ -2,14 +2,14 @@
 
 Provides real-time audio and text interaction through persistent streaming connections.
 Unlike traditional request-response patterns, this agent maintains long-running
-conversations where users can interrupt, provide additional input, and receive
+conversations where users can barge in, provide additional input, and receive
 continuous responses including audio output.
 
 Key capabilities:
 
 - Persistent conversation connections with concurrent processing
 - Real-time audio input/output streaming
-- Automatic interruption detection and tool execution
+- Automatic barge-in detection and tool execution
 - Event-driven communication with model providers
 """
 
@@ -71,7 +71,7 @@ class BidiAgent(LocalAgent):
     """Agent for bidirectional streaming conversations.
 
     Enables real-time audio and text interaction with AI models through persistent
-    connections. Supports concurrent tool execution and interruption handling.
+    connections. Supports concurrent tool execution and barge-in handling.
     """
 
     _is_strands_local_agent: ClassVar[Literal[True]] = True

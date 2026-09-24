@@ -38,7 +38,7 @@ from strands.experimental.bidi.types import (
     BidiAudioDeltaEvent,
     BidiAudioStartEvent,
     BidiAudioStopEvent,
-    BidiResponseInterruptEvent,
+    BidiBargeInEvent,
     BidiResponseStartEvent,
     BidiResponseStopEvent,
     BidiTranscriptDeltaEvent,
@@ -648,7 +648,7 @@ def test_accumulates_speculative_assistant_transcript_blocks(nova_model):
     assert response_state == _ResponseState()
 
 
-def test_interruption_closes_response_before_next_turn(nova_model):
+def test_barge_in_closes_response_before_next_turn(nova_model):
     state = _ResponseState(response_id="r1", role="assistant", generation_stage="FINAL")
     state.transcript = "Partial answer."
     state.content_id = "t1"
@@ -656,9 +656,9 @@ def test_interruption_closes_response_before_next_turn(nova_model):
 
     tru_events = nova_model._convert_nova_event({"contentEnd": {"type": "TEXT", "stopReason": "INTERRUPTED"}}, state)
     exp_events = [
-        BidiResponseInterruptEvent("user_speech"),
+        BidiBargeInEvent("user_speech"),
         BidiTranscriptStopEvent("Partial answer.", "assistant", content_id),
-        BidiResponseStopEvent("r1", "interrupt"),
+        BidiResponseStopEvent("r1", "barge_in"),
     ]
     assert tru_events == exp_events
     assert state == _ResponseState()
@@ -687,7 +687,7 @@ def test_interruption_closes_response_before_next_turn(nova_model):
     [[], ["Spoken answer."], ["Spoken answer.", "More words."]],
     ids=["no-final-text", "one-final-chunk", "multiple-final-chunks"],
 )
-def test_interrupted_response_finishes_before_next_user_transcript(nova_model, final_fragments):
+def test_response_after_barge_in_finishes_before_next_user_transcript(nova_model, final_fragments):
     response_state = _ResponseState(response_id="r1", role="assistant", content_id="t1", transcript="Planned answer.")
     native_events = []
     if final_fragments:
@@ -750,9 +750,9 @@ def test_interrupted_response_finishes_before_next_user_transcript(nova_model, f
             assert response_state.generation_stage == "FINAL"
         elif native_event.get("contentEnd", {}).get("contentId") == "control":
             assert events == [
-                BidiResponseInterruptEvent("user_speech"),
+                BidiBargeInEvent("user_speech"),
                 BidiTranscriptStopEvent("Planned answer.", "assistant", content_id="t1"),
-                BidiResponseStopEvent("r1", "interrupt"),
+                BidiResponseStopEvent("r1", "barge_in"),
             ]
         elif native_event.get("textOutput", {}).get("contentId") == "final":
             assert events == []
@@ -760,9 +760,9 @@ def test_interrupted_response_finishes_before_next_user_transcript(nova_model, f
             assert events == []
     exp_events = [
         *([BidiAudioStartEvent(), BidiAudioStopEvent()] if final_fragments else []),
-        BidiResponseInterruptEvent("user_speech"),
+        BidiBargeInEvent("user_speech"),
         BidiTranscriptStopEvent("Planned answer.", "assistant", content_id="t1"),
-        BidiResponseStopEvent("r1", "interrupt"),
+        BidiResponseStopEvent("r1", "barge_in"),
         BidiResponseStartEvent(response_state.response_id),
         BidiTranscriptStartEvent("user", content_id="user"),
         BidiTranscriptDeltaEvent("Next question.", "user", content_id="user"),
@@ -773,12 +773,12 @@ def test_interrupted_response_finishes_before_next_user_transcript(nova_model, f
     assert response_state.response_id != "r1"
 
 
-def test_interruption_after_response_stop_only_interrupts_playback(nova_model):
+def test_barge_in_after_response_stop_only_stops_playback(nova_model):
     response_state = _ResponseState()
     tru_events = nova_model._convert_nova_event(
         {"contentEnd": {"type": "TEXT", "stopReason": "INTERRUPTED"}}, response_state
     )
-    exp_events = [BidiResponseInterruptEvent("user_speech")]
+    exp_events = [BidiBargeInEvent("user_speech")]
     assert tru_events == exp_events
     assert response_state == _ResponseState()
 

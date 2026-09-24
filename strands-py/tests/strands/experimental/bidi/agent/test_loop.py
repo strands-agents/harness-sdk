@@ -9,15 +9,15 @@ from strands import ToolContext, tool
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.agent.loop import _ReaderError
 from strands.experimental.bidi.hooks import BidiAgentStopEvent, BidiBeforeConnectionRestartEvent
-from strands.experimental.bidi.hooks import BidiResponseInterruptEvent as BidiResponseInterruptHookEvent
+from strands.experimental.bidi.hooks import BidiBargeInEvent as BidiBargeInHookEvent
 from strands.experimental.bidi.hooks import BidiResponseStopEvent as BidiResponseStopHookEvent
 from strands.experimental.bidi.models import BidiModel, ConnectionTimeoutError
 from strands.experimental.bidi.types import (
     BidiAudioDeltaEvent,
+    BidiBargeInEvent,
     BidiConnectionRestartEvent,
     BidiConnectionStopEvent,
     BidiConnectionWarningEvent,
-    BidiResponseInterruptEvent,
     BidiResponseStartEvent,
     BidiResponseStopEvent,
     BidiTranscriptDeltaEvent,
@@ -67,7 +67,7 @@ async def streaming_agent(time_tool):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("stop_reason", ["end_turn", "interrupt", "error", "tool_use"])
+@pytest.mark.parametrize("stop_reason", ["end_turn", "barge_in", "error", "tool_use"])
 async def test_response_stop_hook(agent, agenerator, stop_reason):
     hooks = MockHookProvider([BidiResponseStopHookEvent])
     agent.hooks.add_hook(hooks)
@@ -208,13 +208,13 @@ async def test_receive_executes_tools_before_late_transcription(agent):
 
 
 @pytest.mark.asyncio
-async def test_receive_interruption_does_not_wait_for_transcription(agent, agenerator):
+async def test_receive_barge_in_does_not_wait_for_transcription(agent, agenerator):
     start_a = BidiResponseStartEvent("a")
     complete_a = BidiResponseStopEvent("a", "end_turn")
     start_b = BidiResponseStartEvent("b")
     audio_b = BidiAudioDeltaEvent("cancelled", "pcm", 24000, 1)
-    interrupted = BidiResponseInterruptEvent("user_speech")
-    complete_b = BidiResponseStopEvent("b", "interrupt")
+    barge_in = BidiBargeInEvent("user_speech")
+    complete_b = BidiResponseStopEvent("b", "barge_in")
     transcript = BidiTranscriptStopEvent("Earlier question.", "user", content_id="speech-a")
     native_events = [
         BidiTranscriptStartEvent("user", content_id="speech-a"),
@@ -223,18 +223,18 @@ async def test_receive_interruption_does_not_wait_for_transcription(agent, agene
         complete_a,
         start_b,
         audio_b,
-        interrupted,
+        barge_in,
         complete_b,
     ]
     agent.model.receive = lambda: agenerator(native_events)
-    hooks = MockHookProvider([BidiResponseInterruptHookEvent])
+    hooks = MockHookProvider([BidiBargeInHookEvent])
     agent.hooks.add_hook(hooks)
     await agent.start()
     reader = agent.receive()
     try:
         tru_events = [await asyncio.wait_for(anext(reader), 1) for _ in native_events]
         assert tru_events == native_events
-        assert hooks.events_received == [BidiResponseInterruptHookEvent(agent=agent, reason="user_speech")]
+        assert hooks.events_received == [BidiBargeInHookEvent(agent=agent, reason="user_speech")]
     finally:
         await reader.aclose()
         await agent.stop()
@@ -434,7 +434,7 @@ async def test_model_processes_transcripts_before_consumer_reads(loop, agent, ag
     "stream_event,hook_type",
     [
         (BidiResponseStopEvent(response_id="r1", stop_reason="end_turn"), BidiResponseStopHookEvent),
-        (BidiResponseInterruptEvent(reason="user_speech"), BidiResponseInterruptHookEvent),
+        (BidiBargeInEvent(reason="user_speech"), BidiBargeInHookEvent),
         (BidiTranscriptStartEvent(role="assistant", content_id="assistant-transcript"), MessageAddedEvent),
     ],
 )

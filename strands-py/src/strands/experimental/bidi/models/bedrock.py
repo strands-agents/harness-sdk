@@ -10,7 +10,7 @@ Nova Sonic specifics:
 - Base64-encoded audio format with hex encoding
 - Tool execution with content containers and identifier tracking
 - 8-minute connection limits with proper cleanup sequences
-- Interruption detection through stopReason events
+- Barge-in detection through stopReason events
 
 Note, BedrockNovaSonicModel is only supported for Python 3.12+
 """
@@ -56,9 +56,9 @@ from ..types.events import (
     BidiAudioDeltaEvent,
     BidiAudioStartEvent,
     BidiAudioStopEvent,
+    BidiBargeInEvent,
     BidiConnectionStartEvent,
     BidiOutputEvent,
-    BidiResponseInterruptEvent,
     BidiResponseStartEvent,
     BidiResponseStopEvent,
     BidiTranscriptDeltaEvent,
@@ -819,9 +819,9 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
                 return events
 
             if stop_reason == "INTERRUPTED":
-                events.append(BidiResponseInterruptEvent("user_speech"))
+                events.append(BidiBargeInEvent("user_speech"))
                 if response_state.response_id is not None:
-                    events.extend(self._complete_response(response_state, "interrupt"))
+                    events.extend(self._complete_response(response_state, "barge_in"))
                 return events
 
             if stop_reason == "TOOL_USE":

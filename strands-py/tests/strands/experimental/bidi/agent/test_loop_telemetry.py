@@ -6,7 +6,7 @@ Tests that spans are created, closed, and attributed correctly for:
 - Response lifecycle (ResponseStart/ResponseComplete)
 - Tool call execution
 - Connection restart on timeout
-- Interruption events
+- Barge-in events
 - Usage accumulation
 """
 
@@ -28,8 +28,8 @@ from strands.experimental.bidi.hooks import (
 from strands.experimental.bidi.models import BidiModel, ConnectionTimeoutError
 from strands.experimental.bidi.types import (
     BidiAudioDeltaEvent,
+    BidiBargeInEvent,
     BidiConnectionStopEvent,
-    BidiResponseInterruptEvent,
     BidiResponseStartEvent,
     BidiResponseStopEvent,
     BidiUsageEvent,
@@ -190,7 +190,7 @@ async def test_response_span_records_stop_reason(loop, agent, agenerator, otel_s
     """Response span captures the stop_reason as finish_reason attribute."""
     events = [
         BidiResponseStartEvent(response_id="resp-2"),
-        BidiResponseStopEvent(response_id="resp-2", stop_reason="interrupt"),
+        BidiResponseStopEvent(response_id="resp-2", stop_reason="barge_in"),
     ]
     agent.model.receive = unittest.mock.Mock(return_value=agenerator(events))
 
@@ -205,7 +205,7 @@ async def test_response_span_records_stop_reason(loop, agent, agenerator, otel_s
     spans = otel_setup.get_finished_spans()
     response_spans = [s for s in spans if "bidi_response" in s.name]
     assert len(response_spans) == 1
-    assert response_spans[0].attributes["gen_ai.response.finish_reason"] == "interrupt"
+    assert response_spans[0].attributes["gen_ai.response.finish_reason"] == "barge_in"
 
 
 @pytest.mark.asyncio
@@ -370,12 +370,12 @@ async def test_restart_failure_propagates_and_reports(loop, agent, agenerator):
 
 
 @pytest.mark.asyncio
-async def test_interruption_event_recorded_on_session_span(loop, agent, agenerator, otel_setup):
-    """Interruption events are added to the session span."""
+async def test_barge_in_event_recorded_on_session_span(loop, agent, agenerator, otel_setup):
+    """Barge-in events are added to the session span."""
     events = [
         BidiResponseStartEvent(response_id="resp-3"),
-        BidiResponseInterruptEvent(reason="user_speech"),
-        BidiResponseStopEvent(response_id="resp-3", stop_reason="interrupt"),
+        BidiBargeInEvent(reason="user_speech"),
+        BidiResponseStopEvent(response_id="resp-3", stop_reason="barge_in"),
     ]
     agent.model.receive = unittest.mock.Mock(return_value=agenerator(events))
 
@@ -392,7 +392,9 @@ async def test_interruption_event_recorded_on_session_span(loop, agent, agenerat
     assert len(session_spans) == 1
 
     span_events = session_spans[0].events
-    assert any(ev.name == "bidi_response_interrupt" for ev in span_events)
+    assert any(
+        event.name == "bidi_barge_in" and event.attributes["barge_in.reason"] == "user_speech" for event in span_events
+    )
 
 
 @pytest.mark.asyncio

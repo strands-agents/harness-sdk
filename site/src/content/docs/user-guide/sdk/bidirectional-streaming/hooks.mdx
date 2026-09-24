@@ -1,6 +1,6 @@
 ---
 title: Bidirectional Streaming Hooks
-description: 'Extend BidiAgent with hooks for bidirectional streaming events: connection lifecycle, interruptions, restarts, and real-time conversation logging.'
+description: 'Extend BidiAgent with hooks for bidirectional streaming events: connection lifecycle, barge-ins, restarts, and real-time conversation logging.'
 sidebar:
   label: "Hooks"
 experimental: true
@@ -18,7 +18,7 @@ Hooks extend `BidiAgent` by subscribing to events across the bidirectional strea
 
 ## Overview
 
-The bidirectional streaming hooks system extends the standard agent hooks with additional events specific to real-time streaming conversations, such as connection lifecycle, interruptions, and connection restarts.
+The bidirectional streaming hooks system extends the standard agent hooks with additional events specific to real-time streaming conversations, such as connection lifecycle, barge-ins, and connection restarts.
 
 For an introduction to the hooks concept and general patterns, see the [Hooks documentation](../agents/hooks.md). This guide focuses on events specific to bidirectional streaming.
 
@@ -27,7 +27,7 @@ A **Hook Event** is a specific event in the lifecycle that callbacks can be asso
 Hooks enable use cases such as:
 
 - Monitoring connection state and restarts
-- Tracking interruptions and user behavior
+- Tracking barge-ins and user behavior
 - Logging conversation history in real-time
 - Implementing custom analytics
 - Managing session persistence
@@ -158,7 +158,7 @@ flowchart TB
     Start --> Running[Active conversation]
     Running --> Message[MessageAddedEvent]
     Running --> Response[BidiResponseStopEvent]
-    Running --> Interruption[BidiResponseInterruptEvent]
+    Running --> BargeIn[BidiBargeInEvent]
     Running --> Tools[BeforeToolCallEvent / AfterToolCallEvent]
     Running --> BeforeRestart[BidiBeforeConnectionRestartEvent]
     BeforeRestart --> Restart[Restart connection]
@@ -168,9 +168,7 @@ flowchart TB
     Stop --> Stopped[BidiAgentStopEvent]
 ```
 
-Message, response, interruption, and tool hooks occur as their corresponding events
-arrive. The diagram does not prescribe an order among them. There is no hook for
-agent start or response start.
+Message, response, barge-in, and tool hooks occur as their corresponding events arrive. The diagram does not prescribe an order among them. There is no hook for agent start or response start.
 
 ### Available events
 
@@ -185,7 +183,7 @@ Choose hooks according to the boundary you need to observe:
 | `BidiResponseStopEvent` | When the model reports that a response ended |
 | `BeforeToolCallEvent` | Before executing a tool |
 | `AfterToolCallEvent` | After tool execution; reverse callback ordering |
-| `BidiResponseInterruptEvent` | When the model reports an interruption |
+| `BidiBargeInEvent` | When the model reports a barge-in |
 | `BidiBeforeConnectionRestartEvent` | Before a scheduled or timeout-driven restart |
 | `BidiAfterConnectionRestartEvent` | After a restart attempt, including failures |
 
@@ -202,29 +200,29 @@ from `strands.experimental.bidi.hooks`. Import the streaming event from
 
 This section contains practical hook implementations for common use cases.
 
-### Tracking interruptions
+### Tracking barge-ins
 
-Count interruptions and record their reasons:
+Count barge-ins and record their reasons:
 
 ```python
 from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.hooks import BidiResponseInterruptEvent
+from strands.experimental.bidi.hooks import BidiBargeInEvent
 from strands.hooks import HookRegistry
 
 
-class InterruptionTracker:
+class BargeInTracker:
     def __init__(self):
-        self.interruption_count = 0
+        self.barge_in_count = 0
 
     def register_hooks(self, registry: HookRegistry) -> None:
-        registry.add_callback(BidiResponseInterruptEvent, self.on_interruption)
+        registry.add_callback(BidiBargeInEvent, self.on_barge_in)
 
-    async def on_interruption(self, event: BidiResponseInterruptEvent) -> None:
-        self.interruption_count += 1
-        print(f"Interruption #{self.interruption_count}: {event.reason}")
+    async def on_barge_in(self, event: BidiBargeInEvent) -> None:
+        self.barge_in_count += 1
+        print(f"Barge-in #{self.barge_in_count}: {event.reason}")
 
 
-tracker = InterruptionTracker()
+tracker = BargeInTracker()
 agent = BidiAgent(hooks=[tracker])
 ```
 

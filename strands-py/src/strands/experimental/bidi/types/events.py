@@ -6,7 +6,7 @@ capabilities with real-time audio and persistent connection support.
 Key features:
 
 - Audio output events with standardized formats
-- Interruption detection and handling
+- Barge-in detection and handling
 - Connection lifecycle management
 - Provider-agnostic event types
 - Type-safe discriminated unions with TypedEvent
@@ -77,12 +77,12 @@ def _normalize_role(role: Any, default: Role = "user") -> Role:
     return cast(Role, normalized)
 
 
-StopReason = Literal["end_turn", "error", "interrupt", "tool_use"]
+StopReason = Literal["end_turn", "error", "barge_in", "tool_use"]
 """Reason for the model ending its response generation.
 
 - "end_turn": Model completed its response.
 - "error": Model encountered an error.
-- "interrupt": Model was interrupted by the user.
+- "barge_in": User took over while the model was responding.
 - "tool_use": Model is requesting a tool use.
 """
 
@@ -379,25 +379,25 @@ class BidiTranscriptStopEvent(TypedEvent):
         return cast(Role, self["role"])
 
 
-class BidiResponseInterruptEvent(TypedEvent):
-    """Interrupt response generation or playback while the session continues.
+class BidiBargeInEvent(TypedEvent):
+    """Stop current response generation or playback while the session continues.
 
     Parameters:
-        reason: Why the interruption occurred.
+        reason: Why response output should stop.
     """
 
     def __init__(self, reason: Literal["user_speech", "error"]):
-        """Initialize response interrupt event."""
+        """Initialize barge-in event."""
         super().__init__(
             {
-                "type": "bidi_response_interrupt",
+                "type": "bidi_barge_in",
                 "reason": reason,
             }
         )
 
     @property
     def reason(self) -> str:
-        """Why the interruption occurred."""
+        """Why response output should stop."""
         return cast(str, self["reason"])
 
 
@@ -566,7 +566,7 @@ BidiOutputEvent = (
     | BidiTranscriptStartEvent
     | BidiTranscriptDeltaEvent
     | BidiTranscriptStopEvent
-    | BidiResponseInterruptEvent
+    | BidiBargeInEvent
     | BidiResponseStopEvent
     | BidiUsageEvent
     | BidiConnectionStopEvent

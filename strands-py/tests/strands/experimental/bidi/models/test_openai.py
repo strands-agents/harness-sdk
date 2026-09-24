@@ -28,8 +28,8 @@ from strands.experimental.bidi.types import (
     BidiAudioDeltaEvent,
     BidiAudioStartEvent,
     BidiAudioStopEvent,
+    BidiBargeInEvent,
     BidiConnectionStartEvent,
-    BidiResponseInterruptEvent,
     BidiResponseStartEvent,
     BidiResponseStopEvent,
     BidiTranscriptDeltaEvent,
@@ -124,7 +124,7 @@ async def test_receive_preserves_native_order_with_late_transcription(model, moc
         BidiConnectionStartEvent(connection_id=unittest.mock.ANY, model=model_id),
         BidiTranscriptStartEvent("user", content_id="user-1"),
         BidiResponseStartEvent("r1"),
-        BidiResponseStopEvent("r1", "interrupt"),
+        BidiResponseStopEvent("r1", "barge_in"),
         BidiTranscriptDeltaEvent("Earlier input.", "user", content_id="user-1"),
         BidiResponseStartEvent("r2"),
         BidiResponseStopEvent("r2", "end_turn"),
@@ -673,7 +673,7 @@ async def test_receive_transcription_failure(mock_websocket, model, committed):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("second_item_id,second_content_index", [("item-2", 0), ("item-1", 1)])
 @pytest.mark.parametrize(
-    "status,stop_reason", [("completed", "end_turn"), ("cancelled", "interrupt"), ("failed", "error")]
+    "status,stop_reason", [("completed", "end_turn"), ("cancelled", "barge_in"), ("failed", "error")]
 )
 async def test_receive_combines_assistant_content_in_one_transcript(
     model, mock_websocket, second_item_id, second_content_index, status, stop_reason
@@ -779,14 +779,14 @@ async def test_event_conversion(model):
     speech_started = {"type": "input_audio_buffer.speech_started", "item_id": "speech"}
     tru_events = model._convert_openai_event(speech_started)
     exp_events = [
-        BidiResponseInterruptEvent("user_speech"),
+        BidiBargeInEvent("user_speech"),
         BidiTranscriptStartEvent("user", "speech"),
     ]
     assert tru_events == exp_events
 
     response_cancelled = {"type": "response.done", "response": {"id": "resp_123", "status": "cancelled"}}
     converted = model._convert_openai_event(response_cancelled)
-    assert converted == [BidiResponseStopEvent("resp_123", "interrupt")]
+    assert converted == [BidiResponseStopEvent("resp_123", "barge_in")]
 
     # Test error handling - response_cancel_not_active should be suppressed
     error_cancel_not_active = {
@@ -1075,7 +1075,7 @@ async def test_disabled_transcription_does_not_associate_audio_with_missing_tran
     ]
     tru_events = [event for native in native_events for event in model._convert_openai_event(native) or []]
     exp_events = [
-        BidiResponseInterruptEvent("user_speech"),
+        BidiBargeInEvent("user_speech"),
         BidiResponseStartEvent("a"),
         BidiResponseStartEvent("b"),
     ]
@@ -1159,7 +1159,7 @@ def test__convert_openai_event_audio_format(model_id, api_key, voice):
 @pytest.mark.parametrize("native_start", [False, True])
 @pytest.mark.parametrize("native_stop", [False, True])
 @pytest.mark.parametrize(
-    "status,stop_reason", [("completed", "end_turn"), ("cancelled", "interrupt"), ("failed", "error")]
+    "status,stop_reason", [("completed", "end_turn"), ("cancelled", "barge_in"), ("failed", "error")]
 )
 def test_audio_boundaries(model, native_start, native_stop, status, stop_reason):
     """Each audio stream stops once, including cancelled responses and missing native boundaries."""
@@ -1198,8 +1198,8 @@ def test_audio_boundaries(model, native_start, native_stop, status, stop_reason)
         (["function_call_output"], "completed", "end_turn"),
         (["function_call"], "completed", "tool_use"),
         (["message", "function_call", "function_call"], "completed", "tool_use"),
-        (["function_call"], "cancelled", "interrupt"),
-        (["function_call"], "incomplete", "interrupt"),
+        (["function_call"], "cancelled", "barge_in"),
+        (["function_call"], "incomplete", "barge_in"),
         (["function_call"], "failed", "error"),
     ],
 )
@@ -1666,7 +1666,7 @@ async def test_native_acknowledgments_correlate_inputs_and_late_transcripts(mode
         if event == BidiResponseStopEvent("b", "end_turn"):
             break
     assert tru_events == [
-        BidiResponseInterruptEvent("user_speech"),
+        BidiBargeInEvent("user_speech"),
         BidiTranscriptStartEvent("user", content_id="speech"),
         BidiResponseStartEvent("a"),
         BidiResponseStopEvent("a", "end_turn"),

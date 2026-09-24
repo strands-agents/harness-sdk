@@ -30,9 +30,9 @@ from ..types.events import (
     BidiAudioDeltaEvent,
     BidiAudioStartEvent,
     BidiAudioStopEvent,
+    BidiBargeInEvent,
     BidiConnectionStartEvent,
     BidiOutputEvent,
-    BidiResponseInterruptEvent,
     BidiResponseStartEvent,
     BidiResponseStopEvent,
     BidiTranscriptDeltaEvent,
@@ -537,7 +537,7 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         state = state if state is not None else self._session_state
 
         if event_type == "input_audio_buffer.speech_started":
-            events: list[BidiOutputEvent] = [BidiResponseInterruptEvent(reason="user_speech")]
+            events: list[BidiOutputEvent] = [BidiBargeInEvent(reason="user_speech")]
             if state.transcription_enabled:
                 events.extend(state.start_transcript("user", openai_event["item_id"]))
             return events
@@ -752,9 +752,9 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         has_tool_use = any(item.get("type") == "function_call" for item in output)
         stop_reasons: dict[str, StopReason] = {
             "completed": "tool_use" if has_tool_use else "end_turn",
-            "cancelled": "interrupt",
+            "cancelled": "barge_in",
             "failed": "error",
-            "incomplete": "interrupt",
+            "incomplete": "barge_in",
         }
         stop_reason = stop_reasons.get(response.get("status", "completed"), "end_turn")
         events.append(BidiResponseStopEvent(response_id=response_id, stop_reason=stop_reason))

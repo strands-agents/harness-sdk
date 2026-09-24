@@ -256,7 +256,7 @@ to the model format, and produces `AudioDelta` values. Reads
 
 **Output behavior:** Routes events by type:
 - `BidiAudioStreamEvent` → resample to WebRTC format + `signaling.send_media()`
-- `BidiResponseInterruptEvent` → clear audio buffer + `signaling.send_data()`
+- `BidiBargeInEvent` → clear audio buffer + `signaling.send_data()`
 - All other events (transcripts, tool calls, lifecycle) → `signaling.send_data()` as JSON
 
 ### IVS Integration

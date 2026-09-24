@@ -9,7 +9,7 @@ from strands import LocalAgent
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.hooks import (
     BidiAgentStopEvent,
-    BidiResponseInterruptEvent,
+    BidiBargeInEvent,
     BidiResponseStopEvent,
 )
 from strands.experimental.bidi.models import BidiModel
@@ -62,23 +62,23 @@ def response_stop_event(agent):
 
 
 @pytest.fixture
-def interruption_event(agent):
-    return BidiResponseInterruptEvent(agent=agent, reason="user_speech")
+def barge_in_event(agent):
+    return BidiBargeInEvent(agent=agent, reason="user_speech")
 
 
-def test_event_should_reverse_callbacks(agent_stop_event, response_stop_event, interruption_event):
+def test_event_should_reverse_callbacks(agent_stop_event, response_stop_event, barge_in_event):
     """Verify which events use reverse callback ordering."""
     assert agent_stop_event.should_reverse_callbacks is True
     assert response_stop_event.should_reverse_callbacks is False
-    assert interruption_event.should_reverse_callbacks is False
+    assert barge_in_event.should_reverse_callbacks is False
 
 
-def test_interruption_event_with_response_id(agent):
-    """Verify BidiResponseInterruptEvent can include response ID."""
-    event = BidiResponseInterruptEvent(agent=agent, reason="error", interrupted_response_id="resp_123")
+def test_barge_in_event_with_response_id(agent):
+    """Verify BidiBargeInEvent can include response ID."""
+    event = BidiBargeInEvent(agent=agent, reason="error", response_id="resp_123")
 
     tru_event = {field.name: getattr(event, field.name) for field in fields(event)}
-    exp_event = {"agent": agent, "reason": "error", "interrupted_response_id": "resp_123"}
+    exp_event = {"agent": agent, "reason": "error", "response_id": "resp_123"}
     assert tru_event == exp_event
 
 

@@ -1,6 +1,6 @@
 """Send and receive audio data from devices.
 
-Reads user audio from input device and sends agent audio to output device using PyAudio. If a user interrupts the agent,
+Reads user audio from input device and sends agent audio to output device using PyAudio. If a user barges in,
 the output buffer is cleared to stop playback.
 
 Audio configuration is provided by models that implement ``AudioCapable``.
@@ -23,8 +23,8 @@ from ..models.configs import AudioStreamConfig
 from ..models.model import AudioCapable
 from ..types.events import (
     BidiAudioDeltaEvent,
+    BidiBargeInEvent,
     BidiOutputEvent,
-    BidiResponseInterruptEvent,
 )
 from ..types.io import InputStream, OutputStream
 from ..types.media import AudioDelta
@@ -259,8 +259,8 @@ class _AudioOutputStream(OutputStream):
             self._buffer.put(data)
             logger.debug("audio_bytes=<%d> | audio chunk buffered for playback", len(data))
 
-        elif isinstance(event, BidiResponseInterruptEvent):
-            logger.debug("reason=<%s> | clearing audio buffer due to interruption", event["reason"])
+        elif isinstance(event, BidiBargeInEvent):
+            logger.debug("reason=<%s> | clearing audio buffer due to barge-in", event["reason"])
             self._buffer.clear()
             if self._audio_processor is not None:
                 self._audio_processor.clear_far_data()
@@ -305,7 +305,7 @@ class AudioIO:
     """Send and receive audio data from devices using PyAudio.
 
     Reads microphone audio via ``input()``, plays agent audio via ``output()``, and displays user and assistant
-    transcripts. Interruptions clear the playback buffer to stop the agent mid-response.
+    transcripts. Barge-ins clear the playback buffer to stop the agent mid-response.
 
     When ``audio_processor=True`` or an ``AudioProcessorConfig`` is passed, the microphone signal gets audio
     processing and, when echo cancellation is enabled, the agent's speaker output is used as a reference to

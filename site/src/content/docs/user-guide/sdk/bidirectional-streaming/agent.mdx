@@ -1,6 +1,6 @@
 ---
 title: BidiAgent
-description: 'Build real-time voice conversations with BidiAgent. Stream audio and text over persistent connections with interruptions and concurrent tool calling.'
+description: 'Build real-time voice conversations with BidiAgent. Stream audio and text over persistent connections with barge-ins and concurrent tool calling.'
 experimental: true
 tags: [bidi-streaming]
 sourceLinks:
@@ -9,7 +9,7 @@ sourceLinks:
 ---
 
 
-The `BidiAgent` is a specialized agent designed for real-time bidirectional streaming conversations. Unlike the standard `Agent` that follows a request-response pattern, `BidiAgent` maintains persistent connections that enable continuous audio and text streaming, real-time interruptions, and concurrent tool execution.
+The `BidiAgent` is a specialized agent designed for real-time bidirectional streaming conversations. Unlike the standard `Agent` that follows a request-response pattern, `BidiAgent` maintains persistent connections that enable continuous audio and text streaming, real-time barge-ins, and concurrent tool execution.
 
 ```mermaid
 flowchart TB
@@ -107,7 +107,7 @@ asyncio.run(main())
 
 - Building voice assistants
 - Requiring real-time audio streaming
-- Needing natural conversation interruptions
+- Needing natural conversation barge-ins
 - Implementing live transcription
 - Building interactive, multi-modal applications
 

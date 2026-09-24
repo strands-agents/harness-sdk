@@ -9,7 +9,7 @@ Key improvements over custom WebSocket implementation:
 - Simplified session management with client.aio.live.connect()
 - Built-in tool integration and event handling
 - Automatic WebSocket connection management and error handling
-- Native support for audio/text streaming and interruption
+- Native support for audio/text streaming and barge-in
 """
 
 import base64
@@ -36,9 +36,9 @@ from ..types.events import (
     BidiAudioDeltaEvent,
     BidiAudioStartEvent,
     BidiAudioStopEvent,
+    BidiBargeInEvent,
     BidiConnectionStartEvent,
     BidiOutputEvent,
-    BidiResponseInterruptEvent,
     BidiResponseStartEvent,
     BidiResponseStopEvent,
     BidiTranscriptDeltaEvent,
@@ -352,7 +352,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
             )
 
         if message.tool_call and message.tool_call.function_calls:
-            if turn_state.stop_reason != "interrupt":
+            if turn_state.stop_reason != "barge_in":
                 turn_state.stop_reason = "tool_use"
             for func_call in message.tool_call.function_calls:
                 tool_use_event: ToolUse = {
@@ -384,7 +384,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
     ) -> list[BidiOutputEvent]:
         """Bracket assistant output from its first content through ``turn_complete``."""
         server_content = message.server_content
-        interrupted = bool(server_content and server_content.interrupted)
+        barge_in = bool(server_content and server_content.interrupted)
         turn_complete = bool(server_content and server_content.turn_complete)
         generation_complete = bool(server_content and server_content.generation_complete)
         produced_model_output = any(
@@ -406,9 +406,9 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
             event for event in events if not (isinstance(event, BidiTranscriptStartEvent) and event.role == "user")
         )
 
-        if interrupted and turn_state.response_id is not None:
-            turn_state.stop_reason = "interrupt"
-        if turn_state.audio_started and (interrupted or turn_complete or generation_complete):
+        if barge_in and turn_state.response_id is not None:
+            turn_state.stop_reason = "barge_in"
+        if turn_state.audio_started and (barge_in or turn_complete or generation_complete):
             turn_state.audio_started = False
             wrapped.append(BidiAudioStopEvent())
         if turn_complete:
@@ -460,7 +460,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         events: list[BidiOutputEvent] = []
 
         if server_content.interrupted:
-            events.append(BidiResponseInterruptEvent(reason="user_speech"))
+            events.append(BidiBargeInEvent(reason="user_speech"))
 
         input_transcript = server_content.input_transcription
         if input_transcript and input_transcript.text:
@@ -473,7 +473,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
                 # Without a native activity boundary, finalize late text with the current turn.
                 if (
                     turn_state.response_id is not None
-                    and turn_state.stop_reason != "interrupt"
+                    and turn_state.stop_reason != "barge_in"
                     and not server_content.interrupted
                 ):
                     turn_state.response_input_ids.append(input_id)
@@ -583,7 +583,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         """Internal: Send audio content using Gemini Live API.
 
         Gemini Live expects continuous audio streaming via send_realtime_input.
-        This automatically triggers VAD and can interrupt ongoing responses.
+        This automatically triggers VAD and allows users to barge in during ongoing responses.
         """
         audio_bytes = audio_input.source.get("bytes")
         if audio_bytes is None:
@@ -593,7 +593,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         mime_type = f"audio/pcm;rate={self._audio_config['input']['sample_rate']}"
         audio_blob = genai_types.Blob(data=audio_bytes, mime_type=mime_type)
 
-        # Send real-time audio input - this automatically handles VAD and interruption
+        # Send real-time audio input - this automatically handles VAD and barge-in
         await self._live_session.send_realtime_input(audio=audio_blob)
 
     async def _send_image_content(self, image_input: ImageBlock) -> None:

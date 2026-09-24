@@ -25,7 +25,7 @@ from ..hooks.events import (
     BidiBeforeConnectionRestartEvent,
 )
 from ..hooks.events import (
-    BidiResponseInterruptEvent as BidiResponseInterruptHookEvent,
+    BidiBargeInEvent as BidiBargeInHookEvent,
 )
 from ..hooks.events import (
     BidiResponseStopEvent as BidiResponseStopHookEvent,
@@ -34,11 +34,11 @@ from ..models import ConnectionTimeoutError, Restartable
 from ..types.content import BidiContentBlock, BidiContentDelta
 from ..types.events import (
     BidiAudioDeltaEvent,
+    BidiBargeInEvent,
     BidiConnectionRestartEvent,
     BidiConnectionStopEvent,
     BidiConnectionWarningEvent,
     BidiOutputEvent,
-    BidiResponseInterruptEvent,
     BidiResponseStartEvent,
     BidiResponseStopEvent,
     BidiTranscriptDeltaEvent,
@@ -603,7 +603,7 @@ class _AgentLoop:
                         _telemetry.end_response_span(
                             self._tracer,
                             response_span,
-                            stop_reason="interrupt",
+                            stop_reason="barge_in",
                             time_to_first_audio_ms=time_to_first_audio_ms,
                         )
                     response_span = _telemetry.start_response_span(
@@ -647,17 +647,15 @@ class _AgentLoop:
                         }
                     )
 
-                elif isinstance(event, BidiResponseInterruptEvent):
+                elif isinstance(event, BidiBargeInEvent):
                     if self._session_span:
-                        _telemetry.add_response_interrupt_event(self._session_span, event["reason"])
+                        _telemetry.add_barge_in_event(self._session_span, event["reason"])
 
                     # A barge-in ends the current response; the user's next turn owes a reply.
                     self._response_active = False
                     self._update_turn_state()
                     await self._agent.hooks.invoke_callbacks_async(
-                        BidiResponseInterruptHookEvent(
-                            self._agent, event["reason"], event.get("interrupted_response_id")
-                        )
+                        BidiBargeInHookEvent(self._agent, event["reason"], event.get("response_id"))
                     )
 
                 elif isinstance(event, BidiResponseStopEvent):

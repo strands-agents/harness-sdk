@@ -9,7 +9,7 @@ from rich.console import Console
 import strands.experimental.bidi.io.transcript as transcript_module
 from strands.experimental.bidi.io.transcript import _TranscriptOutputStream, _UserText
 from strands.experimental.bidi.types import (
-    BidiResponseInterruptEvent,
+    BidiBargeInEvent,
     BidiResponseStartEvent,
     BidiResponseStopEvent,
     BidiTranscriptDeltaEvent,
@@ -84,10 +84,10 @@ async def test_call_streams_turns(output, console, user_events, exp_lines):
 @pytest.mark.parametrize(
     "event",
     [
-        BidiResponseInterruptEvent("user_speech"),
+        BidiBargeInEvent("user_speech"),
         BidiResponseStartEvent("first"),
         BidiResponseStopEvent("first", "end_turn"),
-        BidiResponseStopEvent("first", "interrupt"),
+        BidiResponseStopEvent("first", "barge_in"),
     ],
 )
 async def test_call_preserves_transcripts_across_response_events(output, console, event):

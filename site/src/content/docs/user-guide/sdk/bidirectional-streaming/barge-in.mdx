@@ -1,24 +1,27 @@
 ---
-title: Interruptions
-description: 'Handle real-time voice interruptions in BidiAgent. Voice Activity Detection stops responses mid-stream for natural, human-like conversations.'
+title: Barge-in
+description: 'Handle real-time voice barge-ins in BidiAgent. Voice Activity Detection stops responses mid-stream for natural, human-like conversations.'
 experimental: true
 tags: [bidi-streaming]
+redirectFrom:
+  - docs/user-guide/concepts/bidirectional-streaming/interruption
+  - docs/user-guide/sdk/bidirectional-streaming/interruption
 sourceLinks:
   - path: strands-py/src/strands/experimental/bidi/types/events.py
   - path: strands-py/src/strands/experimental/bidi/io/audio.py
 ---
 
 
-When a user starts speaking while the model is still responding, `BidiAgent` detects it and stops the current response, so conversations feel natural instead of forcing the user to wait their turn.
+When a user starts speaking while the model is still responding, `BidiAgent` stops the current response. This behavior, called barge-in, lets the user take the floor without waiting for the assistant to finish.
 
-## How Interruptions Work
+## How Barge-in Works
 
-Interruptions are detected through Voice Activity Detection (VAD) built into the model providers:
+Barge-ins are detected through Voice Activity Detection (VAD) built into the model providers:
 
 ```mermaid
 flowchart LR
     A[User Starts Speaking] --> B[Model Detects Speech]
-    B --> C[BidiResponseInterruptEvent]
+    B --> C[BidiBargeInEvent]
     C --> D[Clear Audio Buffer]
     C --> E[Stop Response]
     E --> F[BidiResponseStopEvent]
@@ -28,13 +31,13 @@ flowchart LR
     H --> I
 ```
 
-## Handling Interruptions
+## Handling Barge-in
 
-The interruption flow: Model's VAD detects user speech → `BidiResponseInterruptEvent` sent → Audio buffer cleared → Response terminated → User's speech transcribed → Model ready for new input.
+The barge-in flow: Model's VAD detects user speech → `BidiBargeInEvent` sent → Audio buffer cleared → Response terminated → User's speech transcribed → Model ready for new input.
 
 ### Automatic Handling (Default)
 
-When using `AudioIO`, interruptions are handled automatically:
+When using `AudioIO`, barge-ins are handled automatically:
 
 ```python
 import asyncio
@@ -47,7 +50,7 @@ agent = BidiAgent(model=model)
 audio_io = AudioIO()
 
 async def main():
-    # Interruptions handled automatically
+    # Barge-ins handled automatically
     await agent.run(
         inputs=[audio_io.input()],
         outputs=[audio_io.output()]
@@ -61,14 +64,14 @@ immediately, and resumes normal operation for the next response.
 
 ### Manual Handling
 
-For custom behavior, process interruption events manually:
+For custom behavior, process barge-in events manually:
 
 ```python
 import asyncio
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 from strands.experimental.bidi.types import (
-    BidiResponseInterruptEvent,
+    BidiBargeInEvent,
     BidiResponseStopEvent
 )
 
@@ -80,16 +83,16 @@ async def main():
     await agent.send("Tell me a long story")
     
     async for event in agent.receive():
-        if isinstance(event, BidiResponseInterruptEvent):
-            print(f"Interrupted: {event.reason}")
+        if isinstance(event, BidiBargeInEvent):
+            print(f"Barge-in: {event.reason}")
             # Custom handling:
-            # - Update UI to show interruption
+            # - Update UI to show barge-in
             # - Log analytics
             # - Clear custom buffers
             
         elif isinstance(event, BidiResponseStopEvent):
-            if event.stop_reason == "interrupt":
-                print("Response was interrupted by user")
+            if event.stop_reason == "barge_in":
+                print("Response stopped due to barge-in")
             break
     
     await agent.stop()
@@ -97,39 +100,39 @@ async def main():
 asyncio.run(main())
 ```
 
-## Interruption Events
+## Barge-in Events
 
 ### Key Events
 
-**BidiResponseInterruptEvent** - Emitted when interruption detected:
+**BidiBargeInEvent** - Emitted when barge-in detected:
 - `reason`: `"user_speech"` (most common) or `"error"`
 
-**BidiResponseStopEvent** - Includes interruption status:
-- `stop_reason`: `"end_turn"`, `"interrupt"`, `"error"`, or `"tool_use"`
+**BidiResponseStopEvent** - Includes barge-in status:
+- `stop_reason`: `"end_turn"`, `"barge_in"`, `"error"`, or `"tool_use"`
 
-## Interruption Hooks
+## Barge-in Hooks
 
-Use hooks to track interruptions across your application:
+Use hooks to track barge-ins across your application:
 
 ```python
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.hooks import (
-    BidiResponseInterruptEvent as BidiResponseInterruptHookEvent,
+    BidiBargeInEvent as BidiBargeInHookEvent,
 )
 
-class InterruptionTracker:
+class BargeInTracker:
     def __init__(self):
-        self.interruption_count = 0
+        self.barge_in_count = 0
     
-    async def on_interruption(self, event: BidiResponseInterruptHookEvent):
-        self.interruption_count += 1
-        print(f"Interruption #{self.interruption_count}: {event.reason}")
+    async def on_barge_in(self, event: BidiBargeInHookEvent):
+        self.barge_in_count += 1
+        print(f"Barge-in #{self.barge_in_count}: {event.reason}")
         
         # Log to analytics
         # Update UI
         # Track user behavior
 
-tracker = InterruptionTracker()
+tracker = BargeInTracker()
 agent = BidiAgent(
     model=model,
     hooks=[tracker]
@@ -138,9 +141,9 @@ agent = BidiAgent(
 
 ## Common Issues
 
-### Interruptions Not Working
+### Barge-in Not Working
 
-If interruptions aren't being detected:
+If barge-ins aren't being detected:
 
 ```python
 from strands.experimental.bidi.models import OpenAIRealtimeModel
@@ -169,21 +172,21 @@ audio_io = AudioIO(input_device_index=1)  # Specify device
 # System Preferences → Security & Privacy → Microphone
 ```
 
-### Audio Continues After Interruption
+### Audio Continues After Barge-in
 
-If audio keeps playing after interruption:
+If audio keeps playing after barge-in:
 
 ```python
-# Ensure AudioIO is handling interruptions
+# Ensure AudioIO is handling barge-ins
 async def __call__(self, event: BidiOutputEvent):
-    if isinstance(event, BidiResponseInterruptEvent):
+    if isinstance(event, BidiBargeInEvent):
         self._buffer.clear()  # Critical!
-        print("Buffer cleared due to interruption")
+        print("Buffer cleared due to barge-in")
 ```
 
-### Frequent False Interruptions
+### Frequent False Barge-ins
 
-If the model is interrupted too easily:
+If barge-in is detected too easily:
 
 ```python
 from strands.experimental.bidi.models import OpenAIRealtimeModel

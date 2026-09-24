@@ -31,7 +31,7 @@ Bidirectional streaming uses a different event model than [standard streaming](.
 - Uses `send()` and `receive()` methods
 - Persistent connection (multiple turns per connection)
 - Events flow in both directions (application ↔ model)
-- Supports real-time audio and interruptions
+- Supports real-time audio and barge-ins
 
 ```python
 import asyncio
@@ -262,7 +262,7 @@ Emitted when response output ends.
 - `response_id`: Unique identifier for this response
 - `stop_reason`: Why the response ended
   - `"end_turn"`: Model completed its response
-  - `"interrupt"`: User interrupted the response
+  - `"barge_in"`: User barged in during the response
   - `"tool_use"`: Model is requesting tool execution
   - `"error"`: Error occurred during generation
 
@@ -314,7 +314,7 @@ async for event in agent.receive():
 
 #### BidiAudioStopEvent
 
-Emitted when the audio stream ends, including when interrupted. Buffered audio may still be playing. This event carries no audio and does not end the response or its transcript.
+Emitted when the audio stream ends, including when stopped due to barge-in. Buffered audio may still be playing. This event carries no audio and does not end the response or its transcript.
 
 ```python
 {
@@ -391,38 +391,38 @@ async for event in agent.receive():
         print(f"{event['role']}: {event['transcript']}")
 ```
 
-### Interruption Events
+### Barge-in Events
 
-Events for handling user interruptions during model responses.
+Events for handling barge-in, when the user starts speaking during a model response.
 
-#### BidiResponseInterruptEvent
+#### BidiBargeInEvent
 
-Signals an interruption to response generation or playback, typically when the user starts speaking. The bidirectional session continues.
+Signals a barge-in that stops response generation or playback, typically when the user starts speaking. The bidirectional session continues.
 
 ```python
 {
-    "type": "bidi_response_interrupt",
+    "type": "bidi_barge_in",
     "reason": "user_speech"
 }
 ```
 
 **Properties:**
 
-- `reason`: Why the interruption occurred
+- `reason`: Why response output should stop
   - `"user_speech"`: User started speaking (most common)
-  - `"error"`: Error caused interruption
+  - `"error"`: Error stopped output
 
 **Usage:**
 ```python
 async for event in agent.receive():
-    if event["type"] == "bidi_response_interrupt":
-        print(f"Interrupted by {event['reason']}")
+    if event["type"] == "bidi_barge_in":
+        print(f"Barge-in: {event['reason']}")
         # Audio output automatically cleared
         # Model ready for new input
 ```
 
-:::note[Response and tool interrupts]
-`BidiResponseInterruptEvent` applies to the current response or its playback. New input typically starts another response. Agent's [human-in-the-loop interrupts](../interrupts.md) pause an invocation to await input before resuming tool execution. BidiAgent does not yet support tool interrupts.
+:::note[Barge-in and tool interrupts]
+`BidiBargeInEvent` applies to the current response or its playback. New input typically starts another response. Agent's [human-in-the-loop interrupts](../interrupts.md) pause an invocation to await input before resuming tool execution. BidiAgent does not yet support tool interrupts.
 :::
 
 ### Tool Events
@@ -575,7 +575,7 @@ async def main():
 asyncio.run(main())
 ```
 
-### Handling Interruptions
+### Handling Barge-in
 
 ```python
 import asyncio
@@ -588,19 +588,19 @@ async def main():
     async with BidiAgent(model=model) as agent:
         await agent.send("Tell me a long story about space exploration")
         
-        interruption_count = 0
+        barge_in_count = 0
         
         async for event in agent.receive():
             if event["type"] == "bidi_transcript_stop":
                 print(f"{event['role']}: {event['transcript']}")
             
-            elif event["type"] == "bidi_response_interrupt":
-                interruption_count += 1
-                print(f"\nInterrupted (#{interruption_count})")
+            elif event["type"] == "bidi_barge_in":
+                barge_in_count += 1
+                print(f"\nBarge-in (#{barge_in_count})")
             
             elif event["type"] == "bidi_response_stop":
-                if event["stop_reason"] == "interrupt":
-                    print(f"Response interrupted {interruption_count} times")
+                if event["stop_reason"] == "barge_in":
+                    print(f"Barge-ins so far: {barge_in_count}")
 
 asyncio.run(main())
 ```
@@ -638,6 +638,6 @@ asyncio.run(main())
 
 ## Hook Events
 
-Hook events are a separate concept from streaming events. While streaming events flow through `agent.receive()` during conversations, hook events are callbacks that trigger at specific lifecycle points (like initialization, message added, or interruption). Hook events allow you to inject custom logic for cross-cutting concerns like logging, analytics, and session persistence without processing the event stream directly.
+Hook events are a separate concept from streaming events. While streaming events flow through `agent.receive()` during conversations, hook events are callbacks that trigger at specific lifecycle points (like initialization, message added, or barge-in). Hook events allow you to inject custom logic for cross-cutting concerns like logging, analytics, and session persistence without processing the event stream directly.
 
 For details on hook events and usage patterns, see the [Hooks](hooks.md) documentation.
