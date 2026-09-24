@@ -19,6 +19,24 @@ on:
         required: false
         type: string
         default: ''
+      # Auto-review (auto-strands-review.yml) passes the exact commit the
+      # pull_request event fired on, so the dispatched run pins it instead of
+      # re-resolving live HEAD. Empty on a manual dispatch.
+      head_sha:
+        description: 'PR head SHA to pin (from the triggering pull_request event)'
+        required: false
+        type: string
+        default: ''
+      head_repo:
+        description: 'PR head repository (owner/name) for fork checkouts'
+        required: false
+        type: string
+        default: ''
+      head_ref:
+        description: 'PR head branch name'
+        required: false
+        type: string
+        default: ''
 
 jobs:
   authorization-check:
@@ -29,6 +47,11 @@ jobs:
     runs-on: strands-agents_ubuntu-latest_4-core
     outputs:
       approval-env: ${{ steps.auth.outputs.approval-env }}
+      # Head resolved once in the authorization job so downstream jobs act on
+      # the same commit the command was issued against.
+      head-sha: ${{ steps.auth.outputs.head-sha }}
+      head-repo: ${{ steps.auth.outputs.head-repo }}
+      head-ref: ${{ steps.auth.outputs.head-ref }}
     steps:
       - name: Check Authorization
         id: auth
@@ -37,7 +60,8 @@ jobs:
           skip-check: ${{ github.event_name == 'workflow_dispatch' }}
           username: ${{ github.event.comment.user.login || 'invalid' }}
           allowed-roles: 'maintain,triage,write,admin'
-  
+          issue-id: ${{ inputs.issue_id || github.event.issue.number }}
+
   setup-and-process:
     needs: [authorization-check]
     environment:
@@ -58,6 +82,13 @@ jobs:
           issue_id: ${{ inputs.issue_id }}
           command: ${{ inputs.command }}
           session_id: ${{ inputs.session_id }}
+          # Auto-review supplies the event SHA via inputs.head_sha; a /strands
+          # comment leaves it empty and uses the head resolved by the
+          # authorization job. Either way the parser uses that commit instead of
+          # re-resolving live HEAD.
+          head_sha: ${{ inputs.head_sha || needs.authorization-check.outputs.head-sha }}
+          head_repo: ${{ inputs.head_repo || needs.authorization-check.outputs.head-repo }}
+          head_ref: ${{ inputs.head_ref || needs.authorization-check.outputs.head-ref }}
 
   execute-readonly-agent:
     needs: [setup-and-process]

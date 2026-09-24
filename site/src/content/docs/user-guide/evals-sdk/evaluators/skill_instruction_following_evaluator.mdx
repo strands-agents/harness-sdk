@@ -1,0 +1,171 @@
+---
+title: Skill instruction following evaluator
+description: 'Measure how fully your agent followed each invoked skill''s steps with SkillInstructionFollowingEvaluator, a five-point rating grounded in per-step evidence.'
+sidebar:
+  label: "Skill instruction following"
+---
+
+## Overview
+
+The `SkillInstructionFollowingEvaluator` measures how fully the agent followed the
+steps of each skill it invoked. Loading a skill is one decision; carrying out its
+instructions is another. This evaluator reads the invoked skill's body, breaks it
+into prescribed steps, and judges the trajectory against them, returning a rating
+grounded in per-step evidence.
+
+Where the [SkillSelectionAccuracyEvaluator](skill_selection_accuracy_evaluator.md)
+asks whether picking a skill was right, this evaluator asks whether the agent then
+did what the skill told it to do.
+
+## When to use
+
+Use the `SkillInstructionFollowingEvaluator` when you need to:
+
+- Verify an agent actually follows a skill's steps after loading it
+- Find skills that were loaded but only partially applied
+- Ground a compliance judgment in concrete, per-step evidence
+- Debug skills whose instructions the agent skips or reorders
+
+## Evaluation level
+
+The evaluator reads the full agent trajectory and returns one `EvaluationOutput`
+per invoked skill. A run that invoked no skill has nothing to follow and returns a
+single not-applicable row, dropped from the aggregated score. A skill whose load
+the harness refused, whose body was not captured, or that prescribes no steps also
+returns a not-applicable row, since there were no instructions to follow.
+
+## Parameters
+
+### `version` (optional)
+- **Type**: `str`
+- **Default**: `"v0"`
+- **Description**: Prompt template version used when no `system_prompt` is supplied.
+
+### `model` (optional)
+- **Type**: `Model | str | None`
+- **Default**: `None` (uses the default Bedrock judge model)
+- **Description**: The model to use as the judge. Can be a model ID string or a `Model` instance.
+
+### `system_prompt` (optional)
+- **Type**: `str | None`
+- **Default**: `None` (uses the built-in template for `version`)
+- **Description**: Custom system prompt to guide the judge model.
+
+### `name` (optional)
+- **Type**: `str | None`
+- **Default**: `None` (falls back to the class name)
+- **Description**: Identifier used as the evaluator's tag in reports.
+
+## Scoring system
+
+The evaluator uses a five-point ordinal rating, one result per invoked skill:
+
+| Label | Score |
+|-------|-------|
+| Fully Followed | 1.0 |
+| Mostly Followed | 0.75 |
+| Partially Followed | 0.5 |
+| Minimally Followed | 0.25 |
+| Not Followed | 0.0 |
+
+A skill's steps are prescriptive, so a case passes at **Mostly Followed** or better
+(`score >= 0.75`), a higher bar than the mid-scale threshold the open-ended quality
+judges use. Each rating is backed by per-step statuses (covered, partial, or
+skipped) with trajectory evidence, preserved in the result's `reason`.
+
+## Basic usage
+
+:::caution[Required: session ID trace attributes]
+When using `StrandsInMemorySessionMapper`, include session ID trace attributes in
+your agent configuration. This keeps spans from different cases from mixing
+together in the memory exporter.
+:::
+
+```python
+import asyncio
+
+from strands import Agent, AgentSkills, Skill
+from strands_evals import Case, Experiment
+from strands_evals.evaluators import SkillInstructionFollowingEvaluator
+from strands_evals.mappers import StrandsInMemorySessionMapper
+from strands_evals.telemetry import StrandsEvalsTelemetry
+
+telemetry = StrandsEvalsTelemetry().setup_in_memory_exporter()
+memory_exporter = telemetry.in_memory_exporter
+
+skills = [
+    Skill(
+        name="pdf-processing",
+        description="Extract text and tables from PDF files.",
+        instructions=(
+            "1. Confirm the file exists.\n"
+            "2. Extract each page's text.\n"
+            "3. Return the text with page numbers."
+        ),
+    ),
+]
+
+
+def user_task_function(case: Case) -> dict:
+    agent = Agent(
+        plugins=[AgentSkills(skills=skills)],
+        trace_attributes={
+            "gen_ai.conversation.id": case.session_id,
+            "session.id": case.session_id,
+        },
+        callback_handler=None,
+    )
+    agent_response = agent(case.input)
+
+    finished_spans = memory_exporter.get_finished_spans()
+    mapper = StrandsInMemorySessionMapper()
+    session = mapper.map_to_session(finished_spans, session_id=case.session_id)
+
+    return {"output": str(agent_response), "trajectory": session}
+
+
+test_cases = [
+    Case[str, str](
+        name="pdf-task",
+        input="Extract the text from quarterly-report.pdf",
+    ),
+]
+
+evaluator = SkillInstructionFollowingEvaluator()
+experiment = Experiment[str, str](cases=test_cases, evaluators=[evaluator])
+
+
+async def main():
+    report = await experiment.run_evaluations_async(user_task_function)
+    report.run_display()
+
+
+asyncio.run(main())
+```
+
+## Evaluation output
+
+Each `EvaluationOutput` carries:
+
+- **score**: `1.0`, `0.75`, `0.5`, `0.25`, or `0.0`
+- **test_pass**: `True` when the score is `0.75` or higher
+- **reason**: the skill's name, the judge's reasoning, a coverage figure, and the per-step statuses with evidence
+- **label**: the five-point rating (for example, `"Mostly Followed"`) or `not_applicable`
+
+## What gets evaluated
+
+For each invoked skill, the judge sees the skill's instructions, the serialized
+trajectory, and the agent's final response. The evaluator strips any YAML
+frontmatter and the runtime block the harness appends after the skill's own text,
+so the judge scores the skill author's steps rather than harness metadata.
+
+Skill signals are recognized for the Strands `AgentSkills` plugin, Claude Code,
+Codex, Gemini CLI, OpenHands, and Google ADK, plus an agent reading a `SKILL.md`
+from disk. Scoring adherence needs the skill body in the trajectory, so confirm the
+trajectory captured the skill's instructions before trusting a rating.
+
+## Related evaluators
+
+- [SkillSelectionAccuracyEvaluator](skill_selection_accuracy_evaluator.md): Whether invoking each skill was the right choice
+- [SkillInvoked](deterministic_evaluators.md): Deterministic check that a named skill was invoked
+- [InstructionFollowingEvaluator](instruction_following_evaluator.md): Compliance with explicit format, length, and content constraints

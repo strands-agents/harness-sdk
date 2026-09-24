@@ -29,7 +29,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from ...agent import Agent
     from ...background_tasks._background_tasks import _BackgroundTasks
     from ...background_tasks.in_process._manager import _MiddlewareInterrupt
-    from ...experimental.bidi import BidiAgent
+    from ...experimental.bidi.agent import BidiAgent
 
 logger = logging.getLogger(__name__)
 

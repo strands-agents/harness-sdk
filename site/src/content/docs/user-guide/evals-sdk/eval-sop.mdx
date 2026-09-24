@@ -1,80 +1,17 @@
 ---
-title: Eval SOP - AI-Powered Evaluation Workflow
-description: 'Follow a structured AI-assisted evaluation workflow with Eval SOP, from planning and test data generation to evaluation execution and reporting.'
+title: Evaluate with AI
+description: 'Point an AI assistant at your agent and it runs the whole evaluation: plan, generate test data, score with the Evals SDK, and write a report.'
 sidebar:
-  label: "Eval SOP"
+  label: "Evaluate with AI"
 ---
 
 ## Overview
 
-Eval SOP is an AI-powered assistant that transforms the complex process of agent evaluation from a manual, error-prone task into a structured, high-quality workflow. Built as an Agent SOP (Standard Operating Procedure), it guides you through the entire evaluation lifecycle—from planning and test data generation to evaluation execution and reporting.
+Point an AI assistant at your agent and it runs the whole evaluation for you: it plans the evaluation, generates test data, scores the agent with the Strands Evals SDK, and writes a report. This is the assistant driving the entire workflow, not an evaluator that happens to use an LLM as its judge. The workflow ships as the Eval SOP, an [Agent SOP](https://github.com/strands-agents/agent-sop): a markdown standard for encoding agent workflows as natural-language instructions with parameterized inputs and RFC 2119 (MUST, SHOULD, MAY) constraints.
 
-## Why Agent Evaluation is Challenging
+Designing agent evaluations by hand is slow and easy to get wrong. Choosing the right evaluators, covering edge cases and failure modes, writing the SDK code, and keeping results consistent across a team all take real effort. Eval SOP structures that work into four phases (Plan, Data, Eval, Report) that run the same way across different AI assistants, and distributes through MCP servers, Anthropic Skills, or direct integration with a Strands agent.
 
-Designing effective agent evaluations is notoriously difficult and time-consuming:
-
-### **Evaluation Design Complexity**
-
-- **Metric Selection**: Choosing appropriate evaluators (output quality, trajectory analysis, helpfulness) requires deep understanding of evaluation theory
-- **Test Case Coverage**: Creating comprehensive test cases that cover edge cases, failure modes, and diverse scenarios is labor-intensive
-- **Evaluation Bias**: Manual evaluation design often reflects creator assumptions rather than real-world usage patterns
-- **Inconsistent Standards**: Different team members create evaluations with varying quality and coverage
-
-### **Technical Implementation Barriers**
-
-- **SDK Learning Curve**: Understanding Strands Evaluation SDK APIs, evaluator configurations, and best practices
-- **Code Generation**: Writing evaluation scripts requires both evaluation expertise and programming skills
-- **Integration Complexity**: Connecting agents, evaluators, test data, and reporting into cohesive workflows
-
-### **Quality and Reliability Issues**
-
-- **Incomplete Coverage**: Manual test case creation often misses critical scenarios
-- **Evaluation Drift**: Ad-hoc evaluation approaches lead to inconsistent results over time
-- **Poor Documentation**: Evaluation rationale and methodology often poorly documented
-- **Reproducibility**: Manual processes are difficult to replicate across teams and projects
-
-## How Eval SOP Solves These Problems
-
-Eval SOP addresses these challenges through AI-powered automation and structured workflows:
-
-### **Intelligent Evaluation Planning**
-
-- **Automated Analysis**: Analyzes your agent architecture and requirements to recommend appropriate evaluation strategies
-- **Comprehensive Coverage**: Generates evaluation plans that systematically cover functionality, edge cases, and failure modes
-- **Best Practice Integration**: Applies evaluation methodology best practices automatically
-- **Stakeholder Alignment**: Creates clear evaluation plans that technical and non-technical stakeholders can understand
-
-### **High-Quality Test Data Generation**
-
-- **Scenario-Based Generation**: Creates realistic test cases aligned with actual usage patterns
-- **Edge Case Discovery**: Automatically identifies and generates tests for boundary conditions and failure scenarios
-- **Diverse Coverage**: Ensures test cases span different difficulty levels, input types, and expected behaviors
-- **Contextual Relevance**: Generates test data specific to your agent's domain and capabilities
-
-### **Expert-Level Implementation**
-
-- **Code Generation**: Automatically writes evaluation scripts using Strands Evaluation SDK best practices
-- **Evaluator Selection**: Intelligently chooses and configures appropriate evaluators for your use case
-- **Integration Handling**: Manages the complexity of connecting agents, evaluators, and test data
-- **Error Recovery**: Provides debugging guidance when evaluation execution encounters issues
-
-### **Professional Reporting**
-
-- **Actionable Insights**: Generates reports with specific recommendations for agent improvement
-- **Trend Analysis**: Identifies patterns in agent performance across different scenarios
-- **Stakeholder Communication**: Creates reports suitable for both technical teams and business stakeholders
-- **Reproducible Results**: Documents methodology and configuration for future reference
-
-## What is Eval SOP?
-
-Eval SOP is implemented as an [Agent SOP](https://github.com/strands-agents/agent-sop)—a markdown-based standard for encoding AI agent workflows as natural language instructions with parameterized inputs and constraint-based execution. This approach provides:
-
-- **Structured Workflow**: Four-phase process (Plan → Data → Eval → Report) with clear entry conditions and success criteria
-- **RFC 2119 Constraints**: Uses MUST, SHOULD, MAY constraints to ensure reliable execution while preserving AI reasoning
-- **Multi-Modal Distribution**: Available through MCP servers, Anthropic Skills, and direct integration
-- **Reproducible Process**: Standardized workflow that produces consistent results across different AI assistants
-
-## Installation and Setup
+## Installation and setup
 
 ### Install strands-agents-sops
 
@@ -86,7 +23,7 @@ pip install strands-agents-sops
 brew install strands-agents-sops
 ```
 
-### Setup Evaluation Project
+### Setup evaluation project
 
 Create a self-contained evaluation workspace:
 
@@ -111,9 +48,9 @@ agent-evaluation-project/
     └── eval-report.md
 ```
 
-## Usage Options
+## Usage options
 
-### Option 1: MCP Integration (Recommended)
+### Option 1: MCP integration (recommended)
 
 Set up MCP server for AI assistant integration:
 
@@ -155,16 +92,16 @@ The workflow proceeds through four phases:
 3. **Evaluation**: `yes` (when prompted) or `/Eval evaluate the agent using strands evals`
 4. **Reporting**: `/Eval generate an evaluation report based on /path/to/results.json`
 
-### Option 2: Direct Strands Agent Integration
+### Option 2: Direct Strands agent integration
 
 ```python
 from strands import Agent
-from strands_tools import editor, shell
+from strands.vended_tools import file_editor, shell
 from strands_agents_sops import eval 
 
 agent = Agent(
     system_prompt=eval,
-    tools=[editor, shell],
+    tools=[file_editor, shell],
 )
 
 # Initial message to start the evaluation
@@ -188,7 +125,7 @@ import os
 os.environ["BYPASS_TOOL_CONSENT"] = "true"
 ```
 
-### Option 3: Anthropic Skills
+### Option 3: Anthropic skills
 
 Convert to Claude Skills format:
 
@@ -198,11 +135,11 @@ strands-agents-sops skills --sop-paths ~/my-sops --output-dir ./skills
 
 Upload the generated `skills/eval/SKILL.md` to Claude.ai or use via Claude API.
 
-## Evaluation Workflow
+## Evaluation workflow
 
-### Phase 1: Intelligent Planning
+### Phase 1: Planning
 
-Eval analyzes your agent and creates a comprehensive evaluation plan:
+Eval analyzes your agent and creates an evaluation plan:
 
 - **Architecture Analysis**: Examines agent code, tools, and capabilities
 - **Use Case Identification**: Determines primary and secondary use cases
@@ -212,9 +149,9 @@ Eval analyzes your agent and creates a comprehensive evaluation plan:
 
 **Output**: `eval/eval-plan.md` with structured evaluation methodology
 
-### Phase 2: Test Data Generation
+### Phase 2: Test data generation
 
-Creates high-quality, diverse test cases:
+Creates diverse test cases:
 
 - **Scenario Coverage**: Generates tests for normal operation, edge cases, and failure modes
 - **Difficulty Gradation**: Creates tests ranging from simple to complex scenarios
@@ -223,9 +160,9 @@ Creates high-quality, diverse test cases:
 
 **Output**: `eval/test-cases.jsonl` with structured test cases
 
-### Phase 3: Evaluation Execution
+### Phase 3: Evaluation execution
 
-Implements and runs comprehensive evaluations:
+Implements and runs the evaluations:
 
 - **Script Generation**: Creates evaluation scripts using Strands Evaluation SDK best practices
 - **Evaluator Configuration**: Properly configures evaluators with appropriate rubrics and parameters
@@ -234,7 +171,7 @@ Implements and runs comprehensive evaluations:
 
 **Output**: `eval/results/` directory with detailed evaluation data
 
-### Phase 4: Actionable Reporting
+### Phase 4: Reporting
 
 Generates insights and recommendations:
 
@@ -243,13 +180,13 @@ Generates insights and recommendations:
 - **Improvement Recommendations**: Provides specific, actionable suggestions for agent enhancement
 - **Stakeholder Communication**: Creates reports suitable for different audiences
 
-**Output**: `eval/eval-report.md` with comprehensive analysis and recommendations
+**Output**: `eval/eval-report.md` with analysis and recommendations
 
-## Example Output
+## Example output
 
-### Generated Evaluation Plan
+### Generated evaluation plan
 
-The evaluation plan follows a comprehensive structured format with detailed analysis and implementation guidance:
+The evaluation plan follows a structured format with analysis and implementation guidance:
 
 ```markdown
 # Evaluation Plan for QA+Search Agent
@@ -295,7 +232,7 @@ The evaluation plan follows a comprehensive structured format with detailed anal
 | 2025-12-01    | eval sop    | Generate evaluation plan... |
 ```
 
-### Generated Test Cases
+### Generated test cases
 Test cases are generated in JSONL format with structured metadata:
 ```json
 {
@@ -306,9 +243,9 @@ Test cases are generated in JSONL format with structured metadata:
 }
 ```
 
-### Generated Evaluation Report
+### Generated evaluation report
 
-The evaluation report provides comprehensive analysis with actionable insights:
+The evaluation report provides analysis and specific recommendations:
 
 ```markdown
 # Agent Evaluation Report for QA+Search Agent
@@ -328,8 +265,8 @@ The evaluation report provides comprehensive analysis with actionable insights:
 ### Results
 | **Metric**              | **Score** | **Target** | **Status** |
 | :---------------------- | :-------- | :--------- | :--------- |
-| Answer Quality Score    | 1.00      | 0.75+      | Pass ✅    |
-| Overall Test Pass Rate  | 100%      | 75%+       | Pass ✅    |
+| Answer Quality Score    | 1.00      | 0.75+      | Pass      |
+| Overall Test Pass Rate  | 100%      | 75%+       | Pass      |
 
 ## Agent Success Analysis
 ### Strengths
@@ -365,19 +302,19 @@ python eval/run_evaluation.py
 - **Recommended Improvements**: Increase test case count to 10-20 cases...
 ```
 
-## Best Practices
+## Best practices
 
-### Evaluation Design
+### Evaluation design
 - **Start Simple**: Begin with basic functionality before testing edge cases
 - **Iterate Frequently**: Run evaluations regularly during development
 - **Document Assumptions**: Clearly document evaluation rationale and limitations
 - **Validate Results**: Manually review a sample of evaluation results for accuracy
 
-### Agent Preparation
+### Agent preparation
 - **Self-Contained Code**: Ensure your agent directory has no external dependencies
 - **Tool Dependencies**: Document all required tools and their purposes
 
-### Result Interpretation
+### Result interpretation
 - **Statistical Significance**: Consider running multiple evaluation rounds for reliability
 - **Failure Analysis**: Focus on understanding why failures occur, not just counting them
 - **Comparative Analysis**: Compare results across different agent configurations
@@ -385,7 +322,7 @@ python eval/run_evaluation.py
 
 ## Troubleshooting
 
-### Common Issues
+### Common issues
 
 **Issue**: "Agent directory not found"
 **Solution**: Ensure agent path is correct and directory is self-contained
@@ -399,12 +336,12 @@ python eval/run_evaluation.py
 **Issue**: "Inconsistent evaluation results"
 **Solution**: Review evaluator configurations and consider multiple evaluation runs
 
-### Getting Help
+### Getting help
 
 - **Agent SOP Repository**: [https://github.com/strands-agents/agent-sop](https://github.com/strands-agents/agent-sop)
 - **Strands Eval SDK**: [Eval SDK Documentation](quickstart.md)
 
-## Related Tools
+## Related tools
 
 - [**Strands Evaluation SDK**](quickstart.md): Core evaluation framework and evaluators
 - [**Experiment Generator**](experiment_generator.md): Automated test case generation

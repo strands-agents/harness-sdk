@@ -8,44 +8,24 @@ import json
 
 import pytest
 
-from strands.experimental.bidi.types.events import (
-    BidiAudioInputEvent,
+from strands.experimental.bidi.types import (
     BidiAudioStreamEvent,
+    BidiBargeInEvent,
     BidiConnectionCloseEvent,
     BidiConnectionStartEvent,
     BidiErrorEvent,
-    BidiImageInputEvent,
-    BidiInterruptionEvent,
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
-    BidiTextInputEvent,
     BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
-    _normalize_role,
 )
+from strands.experimental.bidi.types.events import _normalize_role
 
 
 @pytest.mark.parametrize(
     "event_class,kwargs,expected_type",
     [
-        # Input events
-        (BidiTextInputEvent, {"text": "Hello", "role": "user"}, "bidi_text_input"),
-        (
-            BidiAudioInputEvent,
-            {
-                "audio": base64.b64encode(b"audio").decode("utf-8"),
-                "format": "pcm",
-                "sample_rate": 16000,
-                "channels": 1,
-            },
-            "bidi_audio_input",
-        ),
-        (
-            BidiImageInputEvent,
-            {"image": base64.b64encode(b"image").decode("utf-8"), "mime_type": "image/jpeg"},
-            "bidi_image_input",
-        ),
         # Output events
         (
             BidiConnectionStartEvent,
@@ -76,7 +56,7 @@ from strands.experimental.bidi.types.events import (
             {"transcript": "Hello", "role": "assistant"},
             "bidi_transcript_complete",
         ),
-        (BidiInterruptionEvent, {"reason": "user_speech"}, "bidi_interruption"),
+        (BidiBargeInEvent, {"reason": "user_speech"}, "bidi_barge_in"),
         (
             BidiResponseCompleteEvent,
             {"response_id": "r1", "stop_reason": "complete"},

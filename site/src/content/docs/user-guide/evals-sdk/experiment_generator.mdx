@@ -1,37 +1,26 @@
 ---
-title: Experiment Generator
+title: Experiment generator
 description: 'Generate evaluation experiments automatically with ExperimentGenerator: LLM-created test cases, rubrics, and topic-based coverage for your agent.'
 tags: [simulation]
+sidebar:
+  label: "Generate test cases"
 ---
 
 ## Overview
 
-The `ExperimentGenerator` automatically creates comprehensive evaluation experiments with test cases and rubrics tailored to your agent's specific tasks and domains. It uses LLMs to generate diverse, realistic test scenarios and evaluation criteria, significantly reducing the manual effort required to build evaluation suites.
+When you need an evaluation suite but do not want to hand-author every case, `ExperimentGenerator` writes them for you. Give it a description of your agent's tools and task; it uses an LLM to generate test cases, spreads them across topics and difficulty levels, and can attach a scored rubric for the default evaluators.
 
-## Key Features
+Reach for it when you want to:
 
-- **Automated Test Case Generation**: Creates diverse test cases from context descriptions
-- **Topic-Based Planning**: Uses `TopicPlanner` to ensure comprehensive coverage across multiple topics
-- **Rubric Generation**: Automatically generates evaluation rubrics for default evaluators
-- **Multi-Step Dataset Creation**: Generates test cases across multiple topics with controlled distribution
-- **Flexible Input/Output Types**: Supports custom types for inputs, outputs, and trajectories
-- **Parallel Generation**: Efficiently generates multiple test cases concurrently
-- **Experiment Evolution**: Extends or updates existing experiments with new cases
+- Bootstrap an evaluation experiment without writing cases by hand.
+- Spread cases across multiple topics or scenarios (see [Plan topics for coverage](topic_planning.md)).
+- Generate rubrics automatically for the default evaluators.
+- Expand an existing experiment with new cases, or adapt one task's experiment to a similar task.
+- Support custom input, output, and trajectory types, and generate cases in parallel.
 
-## When to Use
+## Basic usage
 
-Use the `ExperimentGenerator` when you need to:
-
-- Quickly bootstrap evaluation experiments without manual test case creation
-- Generate diverse test cases covering multiple topics or scenarios
-- Create evaluation rubrics automatically for standard evaluators
-- Expand existing experiments with additional test cases
-- Adapt experiments from one task to another similar task
-- Ensure comprehensive coverage across different difficulty levels
-
-## Basic Usage
-
-### Simple Generation from Context
+### Simple generation from context
 
 ```python
 import asyncio
@@ -64,103 +53,40 @@ experiment = asyncio.run(generate_experiment())
 print(f"Generated {len(experiment.cases)} test cases")
 ```
 
-## Topic-Based Multi-Step Generation
+To distribute generated cases across diverse, non-overlapping topics (either by
+passing `num_topics` or by planning topics explicitly with `TopicPlanner`), see
+[Plan topics for coverage](topic_planning.md).
 
-The `TopicPlanner` enables multi-step dataset generation by breaking down your context into diverse topics, ensuring comprehensive coverage:
+### From the command line
 
-```python
-import asyncio
-from strands_evals.generators import ExperimentGenerator
-from strands_evals.evaluators import TrajectoryEvaluator
+The [`strands-evals generate`](cli/generate.md) subcommand wraps the same
+generator, so you can bootstrap an experiment without writing a script:
 
-generator = ExperimentGenerator[str, str](
-    input_type=str,
-    output_type=str,
-    include_expected_trajectory=True
-)
+```bash
+# Without topics: 10 cases from a context description
+strands-evals generate \
+  --context "$(cat tools.txt)" \
+  --task-description "Math and time assistant" \
+  --num-cases 10 \
+  --evaluator OutputEvaluator \
+  -o experiments/generated.json
 
-async def generate_with_topics():
-    experiment = await generator.from_context_async(
-        context="""
-        Customer service agent with tools:
-        - search_knowledge_base(query: str) -> str
-        - create_ticket(issue: str, priority: str) -> str
-        - send_email(to: str, subject: str, body: str) -> str
-        """,
-        task_description="Customer service assistant",
-        num_cases=15,
-        num_topics=3,  # Distribute across 3 topics
-        evaluator=TrajectoryEvaluator
-    )
-    
-    # Cases will be distributed across topics like:
-    # - Topic 1: Knowledge base queries (5 cases)
-    # - Topic 2: Ticket creation scenarios (5 cases)
-    # - Topic 3: Email communication (5 cases)
-    
-    return experiment
-
-experiment = asyncio.run(generate_with_topics())
+# With topics: spread 15 cases across 3 planned topics
+strands-evals generate \
+  --context "$(cat tools.txt)" \
+  --task-description "Customer service assistant" \
+  --num-cases 15 \
+  --num-topics 3 \
+  --evaluator TrajectoryEvaluator \
+  -o experiments/generated.json
 ```
 
-## TopicPlanner
+The CLI can also expand an existing experiment file via `--experiment`; see
+[`strands-evals generate`](cli/generate.md) for the full flag set.
 
-The `TopicPlanner` is a utility class that strategically plans diverse topics for test case generation, ensuring comprehensive coverage across different aspects of your agent's capabilities.
+## Generation methods
 
-### How TopicPlanner Works
-
-1. **Analyzes Context**: Examines your agent's context and task description
-2. **Identifies Topics**: Generates diverse, non-overlapping topics
-3. **Plans Coverage**: Distributes test cases across topics strategically
-4. **Defines Key Aspects**: Specifies 2-5 key aspects per topic for focused testing
-
-### Topic Planning Example
-
-```python
-import asyncio
-from strands_evals.generators import TopicPlanner
-
-planner = TopicPlanner()
-
-async def plan_topics():
-    topic_plan = await planner.plan_topics_async(
-        context="""
-        E-commerce agent with capabilities:
-        - Product search and recommendations
-        - Order management and tracking
-        - Customer support and returns
-        - Payment processing
-        """,
-        task_description="E-commerce assistant",
-        num_topics=4,
-        num_cases=20
-    )
-    
-    # Examine generated topics
-    for topic in topic_plan.topics:
-        print(f"\nTopic: {topic.title}")
-        print(f"Description: {topic.description}")
-        print(f"Key Aspects: {', '.join(topic.key_aspects)}")
-    
-    return topic_plan
-
-topic_plan = asyncio.run(plan_topics())
-```
-
-### Topic Structure
-
-Each topic includes:
-
-```python
-class Topic(BaseModel):
-    title: str  # Brief descriptive title
-    description: str  # Short explanation
-    key_aspects: list[str]  # 2-5 aspects to explore
-```
-
-## Generation Methods
-
-### 1. From Context
+### 1. From context
 
 Generate experiments based on specific context that test cases should reference:
 
@@ -176,7 +102,7 @@ async def generate_from_context():
     return experiment
 ```
 
-### 2. From Scratch
+### 2. From scratch
 
 Generate experiments from topic lists and task descriptions:
 
@@ -191,7 +117,7 @@ async def generate_from_scratch():
     return experiment
 ```
 
-### 3. From Existing Experiment
+### 3. From existing experiment
 
 Create new experiments inspired by existing ones:
 
@@ -210,7 +136,7 @@ async def generate_from_experiment():
     return new_experiment
 ```
 
-### 4. Update Existing Experiment
+### 4. Update existing experiment
 
 Extend experiments with additional test cases:
 
@@ -229,9 +155,9 @@ async def update_experiment():
     return updated_experiment
 ```
 
-## Configuration Options
+## Configuration options
 
-### Input/Output Types
+### Input/output types
 
 Configure the structure of generated test cases:
 
@@ -248,7 +174,7 @@ generator = ExperimentGenerator[Dict[str, str], List[str]](
 )
 ```
 
-### Parallel Generation
+### Parallel generation
 
 Control concurrent test case generation:
 
@@ -260,32 +186,30 @@ generator = ExperimentGenerator[str, str](
 )
 ```
 
-### Custom Prompts
+### Custom prompts
 
 Customize generation behavior with custom prompts:
 
 ```python
-from strands_evals.generators.prompt_template import (
-    generate_case_template,
-    generate_rubric_template
-)
-
 generator = ExperimentGenerator[str, str](
     input_type=str,
     output_type=str,
     case_system_prompt="Custom prompt for case generation...",
-    rubric_system_prompt="Custom prompt for rubric generation..."
+    rubric_system_prompt="Custom prompt for rubric generation...",
 )
 ```
 
-## Complete Example: Multi-Step Dataset Generation
+Both prompts default to the built-in templates in
+`strands_evals.generators.prompt_template.prompt_templates`.
+
+## Complete example: Multi-step dataset generation
 
 ```python
 import asyncio
 from strands_evals.generators import ExperimentGenerator
 from strands_evals.evaluators import OutputEvaluator, TrajectoryEvaluator
 
-async def create_comprehensive_dataset():
+async def build_dataset():
     # Initialize generator with trajectory support
     generator = ExperimentGenerator[str, str](
         input_type=str,
@@ -344,13 +268,13 @@ async def create_comprehensive_dataset():
     # expanded_experiment.evaluators.append(HelpfulnessEvaluator())
 
     # Step 4: Save experiment
-    expanded_experiment.to_file("comprehensive_dataset")
-    print("\nDataset saved to ./comprehensive_dataset.json")
+    expanded_experiment.to_file("research_dataset")
+    print("\nDataset saved to ./research_dataset.json")
 
     return expanded_experiment
 
 # Run the multi-step generation
-experiment = asyncio.run(create_comprehensive_dataset())
+experiment = asyncio.run(build_dataset())
 
 # Examine results
 print(f"\nFinal experiment:")
@@ -359,7 +283,7 @@ print(f"- Evaluators: {len(experiment.evaluators)}")
 print(f"- Categories: {set(c.metadata.get('category', 'unknown') for c in experiment.cases if c.metadata)}")
 ```
 
-## Difficulty Levels
+## Difficulty levels
 
 The generator automatically distributes test cases across difficulty levels:
 
@@ -367,7 +291,7 @@ The generator automatically distributes test cases across difficulty levels:
 - **Medium**: ~50% of cases - Standard complexity
 - **Hard**: ~20% of cases - Complex, edge cases
 
-## Supported Evaluators
+## Supported evaluators
 
 The generator can automatically create rubrics for these default evaluators:
 
@@ -377,9 +301,9 @@ The generator can automatically create rubrics for these default evaluators:
 
 For other evaluators, pass `evaluator=None` or use `Evaluator()` as a placeholder.
 
-## Best Practices
+## Best practices
 
-### 1. Provide Rich Context
+### 1. Provide rich context
 
 ```python
 # Good: Detailed context
@@ -400,7 +324,7 @@ Agent behavior:
 context = "Agent with search and analysis tools"
 ```
 
-### 2. Use Topic Planning for Large Datasets
+### 2. Use topic planning for large datasets
 
 ```python
 # For 15+ cases, use topic planning
@@ -412,7 +336,7 @@ experiment = await generator.from_context_async(
 )
 ```
 
-### 3. Iterate and Expand
+### 3. Iterate and expand
 
 ```python
 # Start small
@@ -434,16 +358,16 @@ expanded = await generator.update_current_experiment_async(
 )
 ```
 
-### 4. Save Intermediate Results
+### 4. Save intermediate results
 
 ```python
 # Save after each generation step
 experiment.to_file(f"experiment_v{version}")
 ```
 
-## Common Patterns
+## Common patterns
 
-### Pattern 1: Bootstrap Evaluation Suite
+### Pattern 1: Bootstrap evaluation suite
 
 ```python
 async def bootstrap_evaluation():
@@ -461,7 +385,7 @@ async def bootstrap_evaluation():
     return experiment
 ```
 
-### Pattern 2: Adapt Existing Experiments
+### Pattern 2: Adapt existing experiments
 
 ```python
 async def adapt_for_new_task():
@@ -478,7 +402,7 @@ async def adapt_for_new_task():
     return adapted
 ```
 
-### Pattern 3: Incremental Expansion
+### Pattern 3: Incremental expansion
 
 ```python
 async def expand_incrementally():
@@ -510,7 +434,7 @@ async def expand_incrementally():
 
 ## Troubleshooting
 
-### Issue: Generated Cases Are Too Similar
+### Issue: Generated cases are too similar
 
 **Solution**: Use topic planning with more topics
 
@@ -523,7 +447,7 @@ experiment = await generator.from_context_async(
 )
 ```
 
-### Issue: Cases Don't Match Expected Complexity
+### Issue: Cases don't match expected complexity
 
 **Solution**: Provide more detailed context and examples
 
@@ -537,7 +461,7 @@ Detailed context with:
 """
 ```
 
-### Issue: Rubric Generation Fails
+### Issue: Rubric generation fails
 
 **Solution**: Use explicit rubric or skip automatic generation
 
@@ -555,9 +479,11 @@ experiment = await generator.from_context_async(
 )
 ```
 
-## Related Documentation
+## Related documentation
 
 - [Quickstart Guide](quickstart.md): Get started with Strands Evals
+- [`strands-evals generate`](cli/generate.md): Generate experiments from the command line
+- [Plan topics for coverage](topic_planning.md): Distribute cases across topics with `TopicPlanner`
 - [Output Evaluator](evaluators/output_evaluator.md): Learn about output evaluation
 - [Trajectory Evaluator](evaluators/trajectory_evaluator.md): Understand trajectory evaluation
 - [Dataset Management](how-to/experiment_management.md): Manage and organize datasets

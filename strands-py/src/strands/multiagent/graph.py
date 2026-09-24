@@ -641,14 +641,13 @@ class Graph(MultiAgentBase):
             - multi_agent_node_stop: When a node stops execution
             - result: Final graph result
         """
-        self._interrupt_state.resume(task)
-
         if invocation_state is None:
             invocation_state = {}
 
         self._current_invocation_state = invocation_state
 
         await self.hooks.invoke_callbacks_async(BeforeMultiAgentInvocationEvent(self, invocation_state))
+        self._interrupt_state.resume(task)
 
         logger.debug("task=<%s> | starting graph execution", task)
 

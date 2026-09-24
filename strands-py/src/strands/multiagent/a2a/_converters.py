@@ -90,6 +90,22 @@ def convert_content_blocks_to_parts(content_blocks: list[ContentBlock]) -> list[
     return parts
 
 
+def _extract_text_parts(parts: list[Part]) -> list[ContentBlock]:
+    """Extract text content blocks from A2A parts.
+
+    Args:
+        parts: List of A2A Part objects.
+
+    Returns:
+        List of ContentBlock dicts for each text part found.
+    """
+    content: list[ContentBlock] = []
+    for part in parts:
+        if hasattr(part, "root") and hasattr(part.root, "text"):
+            content.append({"text": part.root.text})
+    return content
+
+
 def _extract_task_state(response: A2AResponse) -> TaskState | None:
     """Extract the task state from an A2A response.
 
@@ -134,9 +150,7 @@ def convert_response_to_agent_result(response: A2AResponse) -> AgentResult:
         # Handle artifact updates
         if isinstance(update_event, TaskArtifactUpdateEvent):
             if update_event.artifact and hasattr(update_event.artifact, "parts") and update_event.artifact.parts:
-                for part in update_event.artifact.parts:
-                    if hasattr(part, "root") and hasattr(part.root, "text"):
-                        content.append({"text": part.root.text})
+                content.extend(_extract_text_parts(update_event.artifact.parts))
         # Handle status updates with messages
         elif isinstance(update_event, TaskStatusUpdateEvent):
             if (
@@ -145,21 +159,27 @@ def convert_response_to_agent_result(response: A2AResponse) -> AgentResult:
                 and update_event.status.message
                 and update_event.status.message.parts
             ):
-                for part in update_event.status.message.parts:
-                    if hasattr(part, "root") and hasattr(part.root, "text"):
-                        content.append({"text": part.root.text})
+                content.extend(_extract_text_parts(update_event.status.message.parts))
 
         # Use task.artifacts when no content was extracted from the event
         if not content and task and hasattr(task, "artifacts") and task.artifacts is not None:
             for artifact in task.artifacts:
                 if hasattr(artifact, "parts") and artifact.parts:
-                    for part in artifact.parts:
-                        if hasattr(part, "root") and hasattr(part.root, "text"):
-                            content.append({"text": part.root.text})
+                    content.extend(_extract_text_parts(artifact.parts))
+
+        # Use task.status.message when no content was extracted from artifacts
+        if (
+            not content
+            and task
+            and hasattr(task, "status")
+            and task.status
+            and hasattr(task.status, "message")
+            and task.status.message
+            and task.status.message.parts
+        ):
+            content.extend(_extract_text_parts(task.status.message.parts))
     elif isinstance(response, A2AMessage):
-        for part in response.parts:
-            if hasattr(part, "root") and hasattr(part.root, "text"):
-                content.append({"text": part.root.text})
+        content.extend(_extract_text_parts(response.parts))
 
     message: Message = {
         "role": "assistant",

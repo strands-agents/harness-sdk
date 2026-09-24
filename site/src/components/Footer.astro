@@ -1,0 +1,515 @@
+---
+import strandsWordmark from '../assets/footer/strands.svg?raw';
+import awsLogo from '../assets/footer/aws.svg?raw';
+import shape from '../assets/next-steps/shape.svg?raw';
+import shapeMobile from '../assets/next-steps/shape-mobile.svg?raw';
+import InstallCommand from './InstallCommand.astro';
+import { pathWithBase } from '../util/links';
+
+interface Props {
+  // Render the green curved transition above the footer. On by default so every
+  // page's footer has the homepage's curved top edge; the homepage itself opts
+  // out because its NextSteps section already provides the transition.
+  topShape?: boolean
+}
+
+const { topShape = true } = Astro.props
+
+const columns = [
+  {
+    title: 'Get Started',
+    links: [
+      { label: 'Quickstart', href: pathWithBase('/docs/user-guide/sdk/quickstart/python/') },
+      { label: 'Migrate', href: pathWithBase('/docs/user-guide/migrate/choosing-an-agent-foundation/') },
+      { label: 'Tutorials', href: pathWithBase('/examples/') },
+      { label: 'Guides', href: pathWithBase('/docs/user-guide/sdk/') },
+    ],
+  },
+  {
+    title: 'Build',
+    links: [
+      { label: 'Tools', href: pathWithBase('/docs/user-guide/sdk/tools/') },
+      { label: 'Multi-agent', href: pathWithBase('/docs/user-guide/sdk/multi-agent/agents-as-tools/') },
+      { label: 'Models', href: pathWithBase('/docs/user-guide/sdk/model-providers/') },
+      { label: 'Memory', href: pathWithBase('/docs/user-guide/sdk/memory/overview/') },
+    ],
+  },
+  {
+    title: 'Operate',
+    links: [
+      { label: 'Evaluate', href: pathWithBase('/docs/user-guide/evals-sdk/quickstart/') },
+      { label: 'Deploy', href: pathWithBase('/docs/user-guide/sdk/deploy/deploy_to_bedrock_agentcore/') },
+      { label: 'Observability', href: pathWithBase('/docs/user-guide/sdk/observability-evaluation/traces/') },
+      { label: 'Safety', href: pathWithBase('/docs/user-guide/sdk/safety-security/guardrails/') },
+    ],
+  },
+  {
+    title: 'Community',
+    links: [
+      { label: 'Learn', href: pathWithBase('/blog/') },
+      { label: 'Contribute', href: pathWithBase('/docs/contribute/') },
+      { label: 'Integrations', href: pathWithBase('/integrations/') },
+      { label: 'GitHub', href: 'https://github.com/strands-agents', external: true },
+      { label: 'Labs', href: pathWithBase('/docs/labs/') },
+      { label: 'Discord', href: 'https://discord.gg/strands', external: true },
+    ],
+  },
+  {
+    title: 'Resources',
+    links: [
+      { label: 'Docs', href: pathWithBase('/docs/user-guide/sdk/quickstart/overview/') },
+      { label: 'Examples', href: pathWithBase('/examples/') },
+      { label: 'API References', href: pathWithBase('/docs/api/python/') },
+      { label: 'Changelog', href: pathWithBase('/changelog/') },
+      { label: 'Blog', href: pathWithBase('/blog/') },
+    ],
+  },
+];
+
+const legal = [
+  { label: 'Privacy', href: 'https://aws.amazon.com/privacy/' },
+  { label: 'Site terms', href: 'https://aws.amazon.com/terms/' },
+  { label: 'License', href: 'https://github.com/strands-agents/harness-sdk/blob/main/LICENSE.APACHE' },
+  { label: 'Cookies', href: 'https://aws.amazon.com/legal/cookies/' },
+  // Shortbread's click handler (SiteScripts.astro) opens the cookie
+  // customization dialog for the element with this id.
+  { label: 'Preferences', href: '#', id: 'cookie-preferences' },
+];
+---
+
+{
+  topShape && (
+    <div class="footer__transition" aria-hidden="true">
+      <div class="footer__shape footer__shape--desktop" set:html={shape} />
+      <div class="footer__shape footer__shape--mobile" set:html={shapeMobile} />
+    </div>
+  )
+}
+<footer class="footer">
+  <div class="footer__inner">
+    <div class="footer__get-started">
+      <p class="footer__get-started-label">Start building in seconds</p>
+      <InstallCommand />
+    </div>
+    <div class="footer__columns">
+      {columns.map((col) => (
+        <div class="footer__column">
+          <p class="footer__column-title">{col.title}</p>
+          <ul class="footer__column-links" role="list">
+            {col.links.map((link) => (
+              <li>
+                <a
+                  href={link.href}
+                  class="footer__link"
+                  {...(link.external ? { target: '_blank', rel: 'noopener' } : {})}
+                >{link.label}</a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+      <div class="footer__column">
+        <p class="footer__column-title">Preferences</p>
+        <ul class="footer__column-links" role="list">
+          <li>
+            <span class="footer__pref" data-footer-lang>
+              <button type="button" class="footer__pref-opt" data-lang="Python">Python</button>
+              <span class="footer__pref-sep">/</span>
+              <button type="button" class="footer__pref-opt" data-lang="TypeScript">TypeScript</button>
+            </span>
+          </li>
+          <li>
+            <span class="footer__pref" data-footer-theme>
+              <button type="button" class="footer__pref-opt" data-theme-choice="light">Light</button>
+              <span class="footer__pref-sep">/</span>
+              <button type="button" class="footer__pref-opt" data-theme-choice="dark">Dark</button>
+            </span>
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="footer__wordmark" aria-hidden="true" set:html={strandsWordmark} />
+
+    <div class="footer__bottom">
+      <div class="footer__aws" role="img" aria-label="AWS" set:html={awsLogo} />
+      <ul class="footer__legal" role="list">
+        {legal.map((item) => (
+          <li>
+            <a
+              href={item.href}
+              class="footer__legal-link"
+              {...(item.id ? { id: item.id } : {})}
+              {...(item.href.startsWith('http') ? { target: '_blank', rel: 'noopener' } : {})}
+            >{item.label}</a>
+          </li>
+        ))}
+      </ul>
+    </div>
+
+    <p class="footer__copyright">&copy; 2026, Amazon Web Services, Inc. or its affiliates. All rights reserved.</p>
+  </div>
+</footer>
+
+<style>
+  /* Green curved transition into the footer — the same shape the homepage's
+     NextSteps section uses, so every page's footer shares that curved top edge.
+     The green wedges sit on the page background and meet the green footer body
+     below, reading as one green shape with a curved top. */
+  .footer__transition {
+    position: relative;
+    background: var(--bg);
+    height: 370px;
+    overflow: hidden;
+  }
+
+  .footer__shape {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 100%;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* The shape SVGs hardcode the brand green; retint per theme (seafoam in light
+     mode). Works because the SVG is inlined, so selectors reach its paths. */
+  .footer__transition :global([fill='#00CC60']) {
+    fill: var(--surface-green);
+  }
+
+  /* 1px taller than the section so the shape's bottom sub-pixel edge overlaps
+     into the footer, hiding the seam between the two green fills. */
+  .footer__shape--desktop {
+    top: 0;
+    height: 371px;
+  }
+
+  .footer__shape--mobile {
+    display: none;
+    bottom: -1px;
+    height: 113px;
+  }
+
+  .footer__shape :global(svg) {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  .footer {
+    background: var(--surface-green);
+    color: var(--strands-black);
+    padding: 60px 55px 32px;
+    overflow: hidden;
+  }
+
+  .footer__inner {
+    max-width: 1332px;
+    margin: 0 auto;
+    position: relative;
+  }
+
+  .footer__get-started {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-width: 420px;
+    margin-bottom: 48px;
+  }
+
+  .footer__get-started-label {
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--fg);
+  }
+
+  .footer__columns {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 12px;
+    align-items: start;
+  }
+
+  .footer__column {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+  }
+
+  .footer__column-title {
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 600;
+    font-size: 15px;
+    line-height: 1.3;
+    color: var(--strands-black);
+  }
+
+  .footer__column-links {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .footer__link {
+    display: inline-block;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 20px;
+    line-height: 1.4;
+    color: var(--strands-black);
+    text-decoration: none;
+  }
+
+  /* Keep the footer's dark text on hover — the global a:hover turns links
+     green, which is invisible against the green footer. Only underline. */
+  .footer__link:hover {
+    color: var(--strands-black);
+    text-decoration: underline;
+  }
+
+  /* Preference controls: styled like footer links but actually functional.
+     The active option is underlined; the rest are plain until hovered. */
+  .footer__pref {
+    display: inline-flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.35em;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 20px;
+    line-height: 1.4;
+    color: var(--strands-black);
+  }
+
+  .footer__pref-opt {
+    padding: 0;
+    border: none;
+    background: none;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    text-decoration: none;
+  }
+
+  .footer__pref-opt:hover {
+    text-decoration: underline;
+  }
+
+  .footer__pref-opt[aria-pressed='true'] {
+    font-weight: 700;
+    text-decoration: underline;
+  }
+
+  .footer__pref-sep {
+    opacity: 0.5;
+  }
+
+  .footer__wordmark {
+    display: block;
+    margin: 60px 0 40px;
+    line-height: 0;
+  }
+
+  .footer__wordmark :global(svg) {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  .footer__bottom {
+    display: flex;
+    align-items: center;
+    gap: 156px;
+  }
+
+  .footer__aws {
+    display: inline-flex;
+    width: 51px;
+    height: 30px;
+    color: var(--strands-black);
+  }
+
+  .footer__aws :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  .footer__legal {
+    display: flex;
+    align-items: center;
+    gap: 156px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .footer__legal-link {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 600;
+    font-size: 15px;
+    line-height: 1.3;
+    color: var(--strands-black);
+    text-decoration: none;
+  }
+
+  .footer__legal-link:hover {
+    color: var(--strands-black);
+    text-decoration: underline;
+  }
+
+  .footer__copyright {
+    margin: 24px 0 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 13px;
+    color: var(--strands-black);
+  }
+
+  /* Below the desktop shape's aspect, swap to the slim corner-curve strip so
+     the transition stays a thin curved edge rather than a tall band. */
+  @media (max-width: 1023px) {
+    .footer__transition {
+      height: 112px;
+    }
+
+    .footer__shape--desktop {
+      display: none;
+    }
+
+    .footer__shape--mobile {
+      display: block;
+    }
+  }
+
+  /* ---------- Mobile (< 768px) ---------- */
+  @media (max-width: 767px) {
+    .footer {
+      padding: 40px 19px 24px;
+    }
+
+    /* Collapse the 6-column grid to 2 columns on mobile. Flow column-first
+       so Figma's pairing (Get Started/Community, Build/Resources,
+       Operate/Preferences) is preserved. */
+    .footer__columns {
+      grid-template-columns: repeat(2, 1fr);
+      grid-template-rows: repeat(3, auto);
+      grid-auto-flow: column;
+      gap: 32px 16px;
+    }
+
+    .footer__wordmark {
+      margin: 40px 0 24px;
+    }
+
+    /* Reverse order so legal comes above, aws below (matches Figma mobile). */
+    .footer__bottom {
+      flex-direction: column-reverse;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .footer__legal {
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 16px 24px;
+    }
+
+    .footer__link,
+    .footer__pref {
+      font-size: 16px;
+    }
+
+    .footer__legal-link {
+      font-size: 13px;
+    }
+  }
+</style>
+
+<script>
+  // Footer preference controls. These mirror the header's language toggle and
+  // theme selector, but live standalone so they also work on the homepage
+  // (which has no Starlight chrome). They share the same storage keys, so the
+  // header and footer stay in sync.
+  import { LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE_LABEL } from '../util/language-preference'
+  const THEME_KEY = 'starlight-theme'
+
+  // ---- Language ----
+  const langGroup = document.querySelector('[data-footer-lang]')
+  function currentLang() {
+    try {
+      return localStorage.getItem(LANGUAGE_STORAGE_KEY) === 'Python' ? 'Python' : 'TypeScript'
+    } catch {
+      return 'TypeScript'
+    }
+  }
+  function paintLang(lang: string) {
+    langGroup?.querySelectorAll<HTMLButtonElement>('[data-lang]').forEach((b) => {
+      b.setAttribute('aria-pressed', b.dataset.lang === lang ? 'true' : 'false')
+    })
+  }
+  langGroup?.querySelectorAll<HTMLButtonElement>('[data-lang]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const lang = btn.dataset.lang === 'Python' ? 'Python' : 'TypeScript'
+      try {
+        localStorage.setItem(LANGUAGE_STORAGE_KEY, lang)
+      } catch {}
+      // Notify the shared language system (LanguageToggle listens on both).
+      window.dispatchEvent(new CustomEvent('lang-change', { detail: lang }))
+      window.dispatchEvent(new CustomEvent('lang-preference-changed', { detail: { lang } }))
+      paintLang(lang)
+    })
+  })
+  // Keep the footer in sync when language changes elsewhere.
+  window.addEventListener('lang-change', (e: Event) => {
+    const lang = (e as CustomEvent).detail
+    paintLang(lang === 'Python' ? 'Python' : 'TypeScript')
+  })
+  paintLang(currentLang())
+
+  // ---- Theme (light / dark / auto) ----
+  const themeGroup = document.querySelector('[data-footer-theme]')
+  function loadTheme() {
+    try {
+      const t = localStorage.getItem(THEME_KEY)
+      return t === 'light' || t === 'dark' ? t : 'auto'
+    } catch {
+      return 'auto'
+    }
+  }
+  function systemTheme() {
+    return matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+  }
+  function paintTheme(choice: string) {
+    themeGroup?.querySelectorAll<HTMLButtonElement>('[data-theme-choice]').forEach((b) => {
+      b.setAttribute('aria-pressed', b.dataset.themeChoice === choice ? 'true' : 'false')
+    })
+  }
+  function applyTheme(choice: string) {
+    document.documentElement.dataset.theme = choice === 'auto' ? systemTheme() : choice
+    try {
+      // Starlight stores '' for auto.
+      localStorage.setItem(THEME_KEY, choice === 'light' || choice === 'dark' ? choice : '')
+    } catch {}
+    // Sync Starlight's own picker if present (docs pages).
+    ;(window as any).StarlightThemeProvider?.updatePickers?.(choice)
+    paintTheme(choice)
+  }
+  themeGroup?.querySelectorAll<HTMLButtonElement>('[data-theme-choice]').forEach((btn) => {
+    btn.addEventListener('click', () => applyTheme(btn.dataset.themeChoice || 'auto'))
+  })
+  // Follow system changes while in auto.
+  matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+    if (loadTheme() === 'auto') {
+      document.documentElement.dataset.theme = systemTheme()
+      paintTheme(systemTheme())
+    }
+  })
+  // Resolve a stored 'auto' to the system theme so one option always shows
+  // as active.
+  const initialTheme = loadTheme()
+  paintTheme(initialTheme === 'auto' ? systemTheme() : initialTheme)
+</script>

@@ -1,5 +1,7 @@
 """Tests for the HumanInTheLoop vended intervention handler."""
 
+import logging
+
 import pytest
 
 from strands import Agent
@@ -918,6 +920,34 @@ class TestClassifierMode:
         assert result.stop_reason == "interrupt"
         assert executed == []
 
+    @pytest.mark.parametrize("bad_value", [None, 0, "", [], "no"])
+    def test_non_boolean_classifier_decision_fails_closed(self, bad_value, caplog):
+        from strands.vended_interventions.hitl.classifier import ClassifierResult
+
+        executed = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            executed.append(True)
+            return "ran"
+
+        def bad_classifier(event, **kwargs):
+            return ClassifierResult(requires_human_in_the_loop=bad_value)
+
+        agent_model = MockedModelProvider([tool_use_message("my_tool"), text_message("Done")])
+        agent = Agent(
+            model=agent_model,
+            tools=[my_tool],
+            interventions=[HumanInTheLoop(classifier=bad_classifier)],
+        )
+
+        with caplog.at_level(logging.WARNING):
+            result = agent("Go")
+
+        assert result.stop_reason == "interrupt"
+        assert executed == []
+        assert "non-boolean decision" in caplog.text
+
     def test_classifier_not_called_on_resume(self):
         from strands.vended_interventions.hitl.classifier import ClassifierResult
 
@@ -952,8 +982,6 @@ class TestClassifierMode:
         assert len(call_count) == 1
 
     def test_wildcard_with_classifier_warns(self, caplog):
-        import logging
-
         from strands.vended_interventions.hitl.classifier import ClassifierResult
 
         def my_classifier(event, **kwargs):

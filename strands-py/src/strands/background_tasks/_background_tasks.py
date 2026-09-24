@@ -37,7 +37,6 @@ logger = logging.getLogger(__name__)
 _BACKGROUND_TASKS_STATE_KEY = "strands.background_tasks"
 _BACKGROUND_PROPERTY = "_background_execution"
 _MANAGE_TOOL_NAME = "strands_manage_background_task"
-_RESULT_TOOL_NAME = "strands_background_task_result"
 _COMPOSITE_SCHEMA_KEYS = {"$ref", "allOf", "anyOf", "oneOf", "not", "if", "then", "else"}
 _FOREGROUND_TOOL_NAMES = {
     _MANAGE_TOOL_NAME,
@@ -125,8 +124,8 @@ class _BackgroundTasks(Plugin):
     @tool(
         name=_MANAGE_TOOL_NAME,
         description=(
-            "List, inspect, or cancel background tasks. Completed results are delivered automatically; "
-            "do not poll with this tool."
+            "List, get, or cancel background tasks. Results are delivered automatically as synthetic 'get' calls. "
+            "Do not poll for results."
         ),
     )
     async def _manage_background_task(
@@ -143,7 +142,7 @@ class _BackgroundTasks(Plugin):
                 {"task_id": task["task_id"], "tool_name": task["tool_name"], "status": task["status"]}
                 for task in self._task_snapshots()
             ]
-            return _json_tool_result({"tasks": listing})
+            return {"status": "success", "content": [{"json": {"tasks": listing}}]}
         if not task_id:
             raise TypeError(f"Task ID is required for mode '{mode}'")
         with self._tasks_lock:
@@ -151,9 +150,12 @@ class _BackgroundTasks(Plugin):
         if task is None:
             raise BackgroundTaskNotFoundError(task_id)
         if mode == "get":
-            return _json_tool_result(task)
+            return {"status": "success", "content": _task_result_content(task)}
         cancelled = task if is_task_status_terminal(task["status"]) else await self._manager.cancel(task_id)
-        return _json_tool_result({"task_id": cancelled["task_id"], "status": cancelled["status"]})
+        return {
+            "status": "success",
+            "content": [{"json": {"task_id": cancelled["task_id"], "status": cancelled["status"]}}],
+        }
 
     def route_tool_call(
         self,
@@ -372,21 +374,15 @@ class _BackgroundTasks(Plugin):
         task_ids = [task["task_id"] for task in terminal_tasks]
         messages: Messages = []
         for task in terminal_tasks:
-            result = task.get("result")
-            content: list[ToolResultContent] = (
-                result["content"]
-                if result is not None
-                else [{"text": task.get("error", {}).get("message", "Background task cancelled")}]
-            )
             messages.append(
                 {
                     "role": "assistant",
                     "content": [
                         {
                             "toolUse": {
-                                "name": _RESULT_TOOL_NAME,
+                                "name": _MANAGE_TOOL_NAME,
                                 "toolUseId": task["task_id"],
-                                "input": {"tool_name": task["tool_name"]},
+                                "input": {"mode": "get", "task_id": task["task_id"]},
                             }
                         }
                     ],
@@ -399,8 +395,9 @@ class _BackgroundTasks(Plugin):
                         {
                             "toolResult": {
                                 "toolUseId": task["task_id"],
-                                "status": "success" if task["status"] == "completed" else "error",
-                                "content": content,
+                                # The get succeeds even if the task failed; task status and errors are in the metadata.
+                                "status": "success",
+                                "content": _task_result_content(task),
                             }
                         }
                     ],
@@ -518,6 +515,6 @@ def _tool_error(tool_use: ToolUse, message: str) -> ToolResult:
     return {"toolUseId": tool_use["toolUseId"], "status": "error", "content": [{"text": message}]}
 
 
-def _json_tool_result(value: Any) -> dict[str, Any]:
-    # The decorator fills in toolUseId for a result that already carries status and content.
-    return {"status": "success", "content": [{"json": value}]}
+def _task_result_content(task: BackgroundTask) -> list[ToolResultContent]:
+    metadata = {key: value for key, value in task.items() if key != "result"}
+    return [{"json": metadata}, *task.get("result", {"content": []})["content"]]

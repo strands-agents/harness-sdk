@@ -10,7 +10,7 @@ Nova Sonic specifics:
 - Base64-encoded audio format with hex encoding
 - Tool execution with content containers and identifier tracking
 - 8-minute connection limits with proper cleanup sequences
-- Interruption detection through stopReason events
+- Barge-in detection through stopReason events
 
 Note, BedrockNovaSonicModel is only supported for Python 3.12+
 """
@@ -28,7 +28,7 @@ import logging
 import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import Any, Literal, TypedDict, cast
+from typing import Any, cast
 
 import boto3
 from aws_sdk_bedrock_runtime.client import AsyncBedrockRuntimeClient, InvokeModelWithBidirectionalStreamOperationInput
@@ -47,39 +47,37 @@ from smithy_http.aio.crt import AWSCRTHTTPClient, AWSCRTHTTPResponse
 from typing_extensions import Unpack, override
 
 from ....models._validation import validate_config_keys, validate_region
-from ....types._events import ToolResultEvent, ToolUseStreamEvent
-from ....types.content import Messages
-from ....types.tools import ToolResult, ToolSpec, ToolUse
+from ....types._events import ToolUseStreamEvent
+from ....types.content import Messages, TextBlock
+from ....types.tools import ToolResultBlock, ToolSpec, ToolUse
 from .._async import stop_all
+from ..types.content import BidiContentBlock, BidiContentDelta
 from ..types.events import (
-    BidiAudioInputEvent,
     BidiAudioStreamEvent,
+    BidiBargeInEvent,
     BidiConnectionStartEvent,
-    BidiInputEvent,
-    BidiInterruptionEvent,
     BidiOutputEvent,
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
-    BidiTextInputEvent,
     BidiTranscriptCompleteEvent,
     BidiTranscriptStreamEvent,
     BidiUsageEvent,
 )
+from ..types.media import AudioDelta
 from .configs import (
     AudioConfig,
     AudioStreamConfig,
-    BidiConnectionConfig,
-    BidiModelConfig,
+    BedrockNovaSonicAudioConfig,
+    BedrockNovaSonicAudioStreamConfig,
+    ConnectionConfig,
+    ModelConfig,
+    ModelUpdateConfig,
     _validate_audio_config,
     _validate_model_config,
 )
-from .model import AudioCapable, BidiModel, BidiModelTimeoutError
+from .model import AudioCapable, BidiModel, ConnectionTimeoutError
 
 logger = logging.getLogger(__name__)
-
-# Nova Sonic model identifiers
-NOVA_SONIC_V1_MODEL_ID = "amazon.nova-sonic-v1:0"
-NOVA_SONIC_V2_MODEL_ID = "amazon.nova-2-sonic-v1:0"
 
 NOVA_TEXT_CONFIG = {"mediaType": "text/plain"}
 NOVA_TOOL_CONFIG = {"mediaType": "application/json"}
@@ -192,30 +190,6 @@ class _ResponseState:
         self.transcript = ""
 
 
-class BedrockNovaSonicAudioStreamConfig(TypedDict):
-    """Nova Sonic stream options. Audio uses mono PCM.
-
-    Attributes:
-        sample_rate: Sample rate in Hz.
-    """
-
-    sample_rate: Literal[8000, 16000, 24000]
-
-
-class BedrockNovaSonicAudioConfig(TypedDict, total=False):
-    """Nova Sonic input and output audio options.
-
-    Omitted streams use a sample rate of 16000 Hz.
-
-    Attributes:
-        input: Input stream options.
-        output: Output stream options.
-    """
-
-    input: BedrockNovaSonicAudioStreamConfig
-    output: BedrockNovaSonicAudioStreamConfig
-
-
 class BedrockNovaSonicModel(BidiModel, AudioCapable):
     """Amazon Bedrock Nova Sonic implementation for bidirectional streaming.
 
@@ -238,7 +212,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         region: str | None = None,
         audio: BedrockNovaSonicAudioConfig | None = None,
         voice: str = "matthew",
-        **model_config: Unpack[BidiModelConfig],
+        **model_config: Unpack[ModelConfig],
     ) -> None:
         """Initialize Nova Sonic bidirectional model.
 
@@ -250,22 +224,23 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             **model_config: Model configuration.
 
         Raises:
-            ValueError: If audio options or the resolved region are invalid, or both ``boto_session`` and
-                ``region`` are provided.
+            ValueError: If any of the following conditions apply:
+
+                - Required model configuration fields are missing.
+                - ``model_id`` is not a non-empty string.
+                - Audio options or the resolved region are invalid.
+                - Both ``boto_session`` and ``region`` are provided.
         """
         if boto_session is not None and region is not None:
             raise ValueError("Cannot specify both 'boto_session' and 'region'")
 
         _validate_model_config(model_config)
-        self._config = BidiModelConfig(**model_config)
-        self._config.setdefault("model_id", NOVA_SONIC_V2_MODEL_ID)
+        self._config = ModelConfig(**model_config)
         self._config["params"] = dict(self._config.get("params") or {})
 
         # Nova caps a connection at ~8 min; reconnect at 7 min, leaving headroom below the cap.
         # It also reports cumulative usage totals.
-        self._config["connection"] = BidiConnectionConfig(
-            **{"restart_after_s": 420, **self._config.get("connection", {})}
-        )
+        self._config["connection"] = ConnectionConfig(**{"restart_after_s": 420, **self._config.get("connection", {})})
         self.usage_is_cumulative = True
 
         self._resolve_audio_config(audio)
@@ -286,17 +261,23 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         logger.debug("model_id=<%s> | nova sonic model initialized", self._config["model_id"])
 
     @override
-    def update_config(self, **model_config: Unpack[BidiModelConfig]) -> None:  # type: ignore[override]
+    def update_config(self, **model_config: Unpack[ModelUpdateConfig]) -> None:  # type: ignore[override]
         """Update the model configuration with the provided arguments.
 
         Args:
             **model_config: Configuration overrides.
+
+        Raises:
+            ValueError: If any of the following conditions apply:
+
+                - The resulting configuration is missing required fields.
+                - ``model_id`` is not a non-empty string.
         """
-        _validate_model_config(model_config)
+        _validate_model_config(self._config | model_config)
         self._config.update(model_config)
 
     @override
-    def get_config(self) -> BidiModelConfig:
+    def get_config(self) -> ModelConfig:
         """Return the model configuration by reference."""
         return self._config
 
@@ -482,11 +463,11 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             except ValidationException as error:
                 if "InternalErrorCode=531" in error.message:
                     # nova also times out if user is silent for 175 seconds
-                    raise BidiModelTimeoutError(error.message) from error
+                    raise ConnectionTimeoutError(error.message) from error
                 raise
 
             except ModelTimeoutException as error:
-                raise BidiModelTimeoutError(error.message) from error
+                raise ConnectionTimeoutError(error.message) from error
 
             # Per the smithy EventReceiver contract, receive() returns None only at
             # end-of-stream (e.g. the connection closed during reconnect). A closed receiver
@@ -510,13 +491,13 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
                 logger.debug("converted_event_type=<%s> | yielding converted event", event_type)
                 yield model_event
 
-    async def send(self, content: BidiInputEvent | ToolResultEvent) -> None:
+    async def send(self, content: BidiContentBlock | BidiContentDelta | ToolResultBlock) -> None:
         """Unified send method for all content types. Sends the given content to Nova Sonic.
 
         Dispatches to appropriate internal handler based on content type.
 
         Args:
-            content: Input event.
+            content: A TextBlock, AudioDelta, or ToolResultBlock.
 
         Raises:
             ValueError: If content type not supported (e.g., image content).
@@ -524,23 +505,27 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         if not self._connection_id:
             raise RuntimeError("model not started | call start before sending")
 
-        if isinstance(content, BidiTextInputEvent):
-            text_preview = content.text[:100] if len(content.text) > 100 else content.text
-            logger.debug("text_length=<%d>, text_preview=<%s> | sending text content", len(content.text), text_preview)
-            await self._send_text_content(content.text)
-        elif isinstance(content, BidiAudioInputEvent):
-            audio_size = len(base64.b64decode(content.audio)) if content.audio else 0
-            logger.debug("audio_bytes=<%d>, format=<%s> | sending audio content", audio_size, content.format)
+        if isinstance(content, TextBlock):
+            text = content.text
+            text_preview = text[:100] if len(text) > 100 else text
+            logger.debug("text_length=<%d>, text_preview=<%s> | sending text content", len(text), text_preview)
+            await self._send_text_content(text)
+        elif isinstance(content, AudioDelta):
+            audio_bytes = content.source.get("bytes")
+            audio_size = len(audio_bytes) if audio_bytes else 0
+            logger.debug(
+                "audio_bytes=<%d>, format=<%s> | sending audio content",
+                audio_size,
+                content.format,
+            )
             await self._send_audio_content(content)
-        elif isinstance(content, ToolResultEvent):
-            tool_result = content.get("tool_result")
-            if tool_result:
-                logger.debug(
-                    "tool_use_id=<%s>, content_blocks=<%d> | sending tool result",
-                    tool_result.get("toolUseId", "unknown"),
-                    len(tool_result.get("content", [])),
-                )
-                await self._send_tool_result(tool_result)
+        elif isinstance(content, ToolResultBlock):
+            logger.debug(
+                "tool_use_id=<%s>, content_blocks=<%d> | sending tool result",
+                content.tool_use_id,
+                len(content.content),
+            )
+            await self._send_tool_result(content)
         else:
             logger.error("content_type=<%s> | unsupported content type", type(content))
             raise ValueError(f"content_type={type(content)} | content not supported")
@@ -577,21 +562,23 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
 
         await self._send_nova_events([audio_content_start])
 
-    async def _send_audio_content(self, audio_input: BidiAudioInputEvent) -> None:
+    async def _send_audio_content(self, audio_input: AudioDelta) -> None:
         """Internal: Send audio using Nova Sonic protocol-specific format."""
         # Start audio connection if not already active
         if not self._audio_content_name:
             await self._start_audio_connection()
 
-        # Audio is already base64 encoded in the event
-        # Send audio input event
+        audio_bytes = audio_input.source.get("bytes")
+        if audio_bytes is None:
+            raise ValueError("audio source must contain bytes for Nova Sonic")
+        audio = base64.b64encode(audio_bytes).decode("utf-8")
         audio_event = json.dumps(
             {
                 "event": {
                     "audioInput": {
                         "promptName": self._connection_id,
                         "contentName": self._audio_content_name,
-                        "content": audio_input.audio,
+                        "content": audio,
                     }
                 }
             }
@@ -623,14 +610,14 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         ]
         await self._send_nova_events(events)
 
-    async def _send_tool_result(self, tool_result: ToolResult) -> None:
+    async def _send_tool_result(self, tool_result: ToolResultBlock) -> None:
         """Internal: Send tool result using Nova Sonic toolResult format."""
-        tool_use_id = tool_result["toolUseId"]
+        tool_use_id = tool_result.tool_use_id
 
         logger.debug("tool_use_id=<%s> | sending nova tool result", tool_use_id)
 
         # Validate content types and preserve structure
-        content = tool_result.get("content", [])
+        content = tool_result.content
 
         # Validate all content types are supported
         for block in content:
@@ -750,11 +737,11 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             text_output = nova_event["textOutput"]
             text_content = text_output["content"]
             role = text_output["role"].strip().lower()
-            # Check for Nova Sonic interruption pattern
+            # Check for Nova Sonic barge-in pattern
             if '{ "interrupted" : true }' in text_content:
-                logger.debug("nova interruption detected in text output")
+                logger.debug("nova barge-in detected in text output")
                 response_state.reset()
-                return [BidiInterruptionEvent(reason="user_speech")]
+                return [BidiBargeInEvent(reason="user_speech")]
 
             if role == "user":
                 return [BidiTranscriptStreamEvent(delta=response_state.append_transcript(text_content), role="user")]
@@ -788,11 +775,11 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
                 )
             ]
 
-        # Handle interruption
+        # Handle barge-in
         if nova_event.get("stopReason") == "INTERRUPTED":
-            logger.debug("nova interruption detected via stop reason")
+            logger.debug("nova barge-in detected via stop reason")
             response_state.reset()
-            return [BidiInterruptionEvent(reason="user_speech")]
+            return [BidiBargeInEvent(reason="user_speech")]
 
         # Handle usage events - convert to multimodal usage format
         if "usageEvent" in nova_event:
@@ -839,7 +826,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             if stop_reason == "INTERRUPTED" or (stop_reason == "END_TURN" and is_final_text):
                 response_complete = BidiResponseCompleteEvent(
                     response_id=self._current_completion_id or str(uuid.uuid4()),
-                    stop_reason="interrupted" if stop_reason == "INTERRUPTED" else "complete",
+                    stop_reason="barge_in" if stop_reason == "INTERRUPTED" else "complete",
                 )
                 if stop_reason != "INTERRUPTED" and response_state.transcript:
                     transcript_complete = BidiTranscriptCompleteEvent(response_state.transcript, "assistant")

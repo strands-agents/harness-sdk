@@ -14,6 +14,7 @@ from ...types.tools import AgentTool
 from .compression.context_compression import (
     DEFAULT_SUMMARIZATION_PROMPT,
     adjust_split_point_for_tool_pairs,
+    as_user_summary,
     generate_summary,
 )
 from .compression.pin_message import apply_pin_first, partition_pinned
@@ -260,7 +261,7 @@ class SummarizingConversationManager(ConversationManager):
             summarization_agent.messages = messages
 
             result = summarization_agent("Please summarize this conversation.")
-            return cast(Message, {**result.message, "role": "user"})
+            return as_user_summary(result.message)
 
         finally:
             summarization_agent.system_prompt = original_system_prompt

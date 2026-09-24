@@ -1,23 +1,23 @@
 ---
-title: Instruction Following Evaluator
+title: Instruction following evaluator
 description: 'Evaluate whether agent responses comply with explicit prompt instructions using the binary scoring of InstructionFollowingEvaluator.'
 tags: [safety, prompt-authoring]
 sidebar:
-  label: "Instruction Following"
+  label: "Instruction following"
 ---
 
 ## Overview
 
-The `InstructionFollowingEvaluator` assesses whether an agent's response follows all explicit instructions provided in the user's prompt. It focuses strictly on instruction compliance — whether specific constraints, requirements, and directives were satisfied — regardless of response quality or factual accuracy.
+The `InstructionFollowingEvaluator` assesses whether an agent's response follows all explicit instructions provided in the user's prompt. It focuses strictly on instruction compliance (whether specific constraints, requirements, and directives were satisfied), regardless of response quality or factual accuracy.
 
-## Key Features
+## Key features
 
 - **Trace-Level Evaluation**: Evaluates the most recent turn in the conversation
 - **Binary Scoring**: Clear Yes (instructions followed) / No (instructions not followed) classification
 - **Async Support**: Supports both synchronous and asynchronous evaluation
 - **Constraint-Focused**: Evaluates compliance with explicit directives, not overall quality
 
-## When to Use
+## When to use
 
 Use the `InstructionFollowingEvaluator` when you need to:
 
@@ -26,7 +26,7 @@ Use the `InstructionFollowingEvaluator` when you need to:
 - Assess whether agents follow multi-part instructions completely
 - Evaluate instruction adherence independently from correctness
 
-## Evaluation Level
+## Evaluation level
 
 This evaluator operates at the **TRACE_LEVEL**, evaluating the most recent turn in the conversation.
 
@@ -47,7 +47,7 @@ This evaluator operates at the **TRACE_LEVEL**, evaluating the most recent turn 
 - **Default**: `"v0"`
 - **Description**: Prompt template version.
 
-## Scoring System
+## Scoring system
 
 | Rating | Score | Description |
 |--------|-------|-------------|
@@ -56,7 +56,7 @@ This evaluator operates at the **TRACE_LEVEL**, evaluating the most recent turn 
 
 A response passes the evaluation if all explicit instructions are followed (score = 1.0).
 
-## What Counts as Explicit Instructions
+## What counts as explicit instructions
 
 The evaluator checks for compliance with specific directives such as:
 
@@ -68,7 +68,7 @@ The evaluator checks for compliance with specific directives such as:
 - **Style**: "Write an ad for a sports car like it's an obituary"
 - **Content type**: "Write a body for this email" vs "Write a subject line"
 
-## Evaluation Rules
+## Evaluation rules
 
 - If a response includes **more** information than requested, it still passes as long as all requested elements are present
 - If a response is purely evasive without any partial or related answer, it defaults to **Yes**
@@ -76,7 +76,7 @@ The evaluator checks for compliance with specific directives such as:
 - If there are **no explicit instructions** in the input (casual or open-ended requests), defaults to **Yes**
 - The evaluator does **not** assess factual accuracy, writing quality, or response effectiveness
 
-## Basic Usage
+## Basic usage
 
 :::caution[Required: Session ID Trace Attributes]
 When using `StrandsInMemorySessionMapper`, you **must** include session ID trace attributes in your agent configuration. This prevents spans from different test cases from being mixed together in the memory exporter.
@@ -123,7 +123,7 @@ async def main():
 asyncio.run(main())
 ```
 
-## Combining with Other Evaluators
+## Combining with other evaluators
 
 Pair with quality evaluators to assess both compliance and correctness:
 
@@ -135,7 +135,7 @@ evaluators = [
 ]
 ```
 
-## Related Evaluators
+## Related evaluators
 
 - [**CorrectnessEvaluator**](correctness_evaluator.md): Evaluates factual accuracy (complementary to instruction following)
 - [**OutputEvaluator**](output_evaluator.md): Flexible custom rubric evaluation

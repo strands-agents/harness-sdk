@@ -8,154 +8,110 @@ redirectFrom:
 <YouTube id="5rwTCUFV4Ak" title="Lesson 7: Improve Agent Reliability with Strands Steering" />
 *[Watch on YouTube](https://www.youtube.com/watch?v=5rwTCUFV4Ak&list=PLDzwjhH-4yhU&index=7)*
 
-*Code for this lesson can be found
-[**here**](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/07-steering).*
+:::note[About this lesson]
+The videos in this course are a snapshot in time. Strands is under active development, so the code featured on this page reflects the most up-to-date patterns, but the concepts covered in the video still apply. When in doubt, trust the code.
+:::
 
-### Introduction: The Problem of Drift in Agent Systems
+*Code for this lesson: [`samples/07-steering`](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/07-steering)*
 
-In the last lesson, we built a customer service agent with skills for refunds, order
-tracking, and account troubleshooting. It works, but if you run it enough times, you'll
-eventually notice something frustrating: The agent doesn't always follow directions
-consistently.
+## Keep Agents on the Rails
 
-Sometimes it processes a refund without first checking whether the order is actually
-eligible. Other times, it skips looking up the order history entirely and just guesses.
-And sometimes, the response tone is far too casual for a customer support interaction.
+Instructions in prompts aren't always reliably followed, especially as context grows. Steering lets you inspect and influence agent behavior at runtime. A steering handler looks at what the agent is about to do and returns one of three outcomes: **Proceed**, **Guide** (send feedback to the model and let it try again), or **Interrupt** (pause for a human).
 
-This is one of the big challenges when building AI agents. Instructions can be there in
-the prompt and still not reliably be followed. As prompts and conversation history grow,
-important guidance can become less effective or get lost in the context window entirely.
-This is one of the reasons agent systems drift from expected behavior over time,
-especially for long-running tasks.
+In a published benchmark, Strands steering hooks achieved a [100% pass rate across 600 evaluation runs](https://strandsagents.com/blog/steering-accuracy-beats-prompts-workflows/), compared to 82.5% for prompt-based instructions and 80.8% for graph-based workflows.
 
-One option is to abandon the model-driven approach entirely and hardcode every workflow
-into a deterministic graph. That can work for very rigid "happy path" systems, but the
-moment a user asks something unexpected, the workflow starts breaking down because it
-wasn't designed for that scenario.
+## Two Types of Steering
 
-That's one of the reasons Strands takes a model-driven approach. You still want the
-adaptability and reasoning capabilities of the model. But how do you keep that flexibility
-while still having the reliability and control you need for a production system?
+| Type | How It Works | Use Case |
+| --- | --- | --- |
+| **Deterministic** (`SteeringHandler`) | Python logic inspects the events ledger | Enforcing workflow ordering, validating parameters |
+| **LLM-based** (`LLMSteeringHandler`) | A second agent judges the output | Tone/policy compliance, nuanced quality checks |
 
-### What is Steering?
+## Deterministic Steering: Enforce the Refund Workflow
 
-One pattern you can use to improve reliability is steering. Steering gives you a way to
-inspect and influence agent behavior while the agent is running.
+Our customer service agent should never process a refund without first looking up the customer and checking their order history. Rather than hoping the prompt gets followed, a `SteeringHandler` checks the ledger of previous tool calls before `process_refund` is allowed to run:
 
-Steering is implemented as a plugin and relies on hooks under the hood. At specific points
-in the agent loop, steering logic evaluates the agent's behavior and returns one of three
-outcomes:
+```python
+from strands.vended_plugins.steering import (
+    SteeringHandler, Proceed, Guide, ToolSteeringAction, LedgerProvider,
+)
 
-* **Proceed:** Allows execution to continue normally.
-* **Guide:** Injects corrective feedback into the loop so the agent can self-correct.
-* **Interrupt:** Pauses execution entirely and hands control back to your application or a
-  human operator (using the same interrupt system we saw earlier with hooks).
+class RefundWorkflowHandler(SteeringHandler):
+    name = "refund-workflow"
 
-Let's add steering to our customer service agent. We will explore two kinds of steering:
-deterministic steering around tool usage, and LLM-based steering for evaluating model
-responses.
+    def __init__(self):
+        super().__init__(context_providers=[LedgerProvider()])
 
-### Deterministic Steering Around Tool Usage
+    async def steer_before_tool(self, *, agent, tool_use, **kwargs) -> ToolSteeringAction:
+        if tool_use.get("name") != "process_refund":
+            return Proceed(reason="Not a refund operation")
 
-First up is tool steering. We have built a refund workflow handler. This is a
-deterministic steering handler that enforces the order of operations before a refund can
-be processed. It extends the `SteeringHandler` class, and the main logic lives inside
-`steer_before_tool`.
+        ledger = self.steering_context.data.get("ledger", {})
+        tool_calls = ledger.get("tool_calls", [])
 
-Every time the agent attempts to call a tool, this handler runs. For anything other than
-`process_refund`, it simply returns `proceed` and gets out of the way. But when the agent
-attempts to process a refund, the handler starts evaluating what has already happened
-inside the loop.
+        # Must look up customer first
+        customer_verified = any(
+            c["tool_name"] == "lookup_customer" and c["status"] == "success"
+            for c in tool_calls
+        )
+        if not customer_verified:
+            return Guide(reason="You must look up the customer first.")
 
-It does this by using an events ledger provided by Strands. The ledger automatically
-tracks tool calls, inputs, outputs, and execution status throughout the agent lifecycle.
-Steering handlers can inspect that history to make decisions based on the full execution
-context.
+        # Must check order history
+        order_checked = any(
+            c["tool_name"] == "get_order_history" and c["status"] == "success"
+            for c in tool_calls
+        )
+        if not order_checked:
+            return Guide(reason="You must check order history first.")
 
-The handler validates that the required workflow steps happened in the correct order and
-that the refund request actually matches the underlying order data. This gives us a
-deterministic verification layer inside an otherwise model-driven loop. Even if the model
-hallucinates a refund amount or skips steps, the refund tool cannot execute unless the
-requirements are satisfied.
+        return Proceed(reason="Refund workflow validated")
+```
 
-Agents do hallucinate parameters, so this is important. When the handler returns `guide`,
-the tool call gets cancelled, and the feedback is injected back into the loop as
-additional context. The model reads the corrective guidance, adjusts its behavior, and
-tries again. In practice, models respond much more reliably to timely, corrective feedback
-than to large, static prompts filled with instructions that they saw several turns ago.
+When the handler returns `Guide`, the tool call is blocked and the reason is fed back to the model, which then does the missing step and tries again.
 
-### Model Steering and Multi-Agent Evaluation
+## LLM-Based Steering: Tone Guardrail
 
-Now let's look at the second kind of steering, which is model steering. This is useful for
-situations where the rules are difficult to express as deterministic code.
+Some rules can't be expressed as Python conditionals. "Don't overpromise timelines" requires judgment. An `LLMSteeringHandler` uses a second model to evaluate the response against a policy and guide the agent if it falls short:
 
-We have built a tone guardrail handler, which extends the `LLMSteeringHandler` base class.
-Instead of deterministic logic, this handler spins up a second agent that acts as a judge.
-Every time the customer service agent generates a response, the steering agent evaluates
-its communication policies defined in the steering prompt.
+```python
+from strands.vended_plugins.steering import LLMSteeringHandler
 
-This is one of the simplest examples of a multi-agent system. The main customer service
-agent performs the task, while a second agent evaluates the output before it reaches the
-user. The steering agent checks for things like overpromising, failing to acknowledge
-customer frustration, or offering compensation outside of the allowed workflow. These are
-nuanced decisions that are difficult to validate reliably with simple `if/else`
-statements.
+class ToneGuardrailHandler(LLMSteeringHandler):
+    name = "tone-guardrail"
 
-If the steering agent determines the response violates policy, it returns `guide` with
-corrective feedback. The original response gets discarded before the customer ever sees
-it, and the customer service agent gets another opportunity to generate a better response.
-You can also configure retry limits so the system doesn't loop forever trying to
-regenerate responses.
+    def __init__(self):
+        super().__init__(
+            system_prompt="""Evaluate the customer service response against these policies:
+            - Don't overpromise timelines
+            - Acknowledge customer frustration
+            - Don't offer unauthorized compensation
+            - Keep responses concise
+            If violated, provide specific guidance on what to fix."""
+        )
+```
 
-This pattern is powerful because the steering agent doesn't have to use the same model as
-the primary agent. It's a totally separate agent with its own isolated context window. In
-some systems, you might even intentionally use a different model provider for
-verification, so generation and evaluation aren't relying on the same exact model behavior
-or training patterns. You might also choose a model specifically optimized for critique,
-policy enforcement, or structured evaluation tasks.
+## Composing Everything into an Agent
 
-This can be very powerful, but the trade-off for this pattern is token consumption and
-latency because every steering pass adds another model invocation to the loop. But for
-important workflows, the reliability gains are often worth it.
+Steering handlers are plugins, so they stack alongside skills and any other plugin:
 
-### Integrating Steering Handlers into the Agent
+```python
+from strands import Agent
 
-Now, let's wire these steering handlers into our customer service agent. When we create
-the agent, we compose both steering handlers alongside the skills plugin from the previous
-lesson:
+agent = Agent(
+    tools=[lookup_customer, get_order_history, process_refund],
+    plugins=[
+        skills_plugin,              # On-demand workflow instructions
+        RefundWorkflowHandler(),    # Deterministic: enforce refund steps
+        tone_handler,               # LLM-based: enforce communication quality
+    ],
+    system_prompt=SYSTEM_PROMPT,
+)
+```
 
-* The **skills plugin** handles workflow instruction loading.
-* The **refund steering handler** enforces deterministic workflow requirements.
-* The **tone steering handler** evaluates communication quality before responses reach the
-  customer.
+📂 [customer_service_steering.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/07-steering/customer_service_steering.py) · [steering_handlers.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/07-steering/steering_handlers.py)
 
-Let's run it and see what happens.
+## Resources
 
-I'll say, *"Help me return my order for customer order C10001."* We can see the agent is
-calling the tools to look up the customer. It's loading the skills, and then we have some
-output from our tone steering handler. It's evaluating the agent's response, and it comes
-back that it was approved. It does this for every turn of that agent loop. After the
-steering handler is done evaluating, it approves that final response.
-
-I can then follow up and say, *"I want to return the headphones."* It asks me if I want to
-confirm that, and I will say yes. We can again see all of that steering output right here
-in the command line.
-
-And now we can also see that it calls the `process_refund` tool, and it's checking to
-ensure that the order of operations is correct. That's our deterministic steering handler
-executing there.
-
-Now this is done, and I'll just type `exit`.
-
-### What's Next?
-
-If you step back and look at what we've assembled across these last few lessons—models,
-tools, MCP integrations, hooks, plugins, skills, and now steering—we're gradually
-building out a full agent harness around the model.
-
-But there's another problem we still haven't addressed: For long-running tasks or
-conversations, your agent is going to hit the context window limit and throw an error.
-
-In the next lesson, we'll tackle that problem with conversation managers.
-
-*Learn more: [Steering (Plugins)](/docs/user-guide/concepts/plugins/steering/)*
+- 📖 [Steering](/docs/user-guide/sdk/agents/interventions/steering/)
+- 📖 [Blog: Steering accuracy beats prompts and workflows](https://strandsagents.com/blog/steering-accuracy-beats-prompts-workflows/)

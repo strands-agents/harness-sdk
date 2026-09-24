@@ -10,7 +10,7 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from strands.experimental.bidi.agent.agent import BidiAgent
+    from strands.experimental.bidi.agent import BidiAgent
 
     from .generators.audio import AudioGenerator
 
@@ -261,13 +261,13 @@ class BidirectionalTestContext:
         events = self.get_events()
         return [event["toolUse"] for event in events if "toolUse" in event]
 
-    def has_interruption(self) -> bool:
-        """Check if any interruption was detected.
+    def has_barge_in(self) -> bool:
+        """Check if any barge-in was detected.
 
         Returns:
-            True if interruption detected in events.
+            True if barge-in detected in events.
         """
-        return any("interruptionDetected" in event for event in self.events)
+        return any(event.get("type") == "bidi_barge_in" for event in self.events)
 
     def clear_events(self):
         """Clear collected events (useful for multi-turn tests)."""
@@ -343,7 +343,7 @@ class BidirectionalTestContext:
         """Generate silence chunk for background audio.
 
         Returns:
-            BidiAudioInputEvent with silence data.
+            Audio delta with silence data.
         """
         silence = b"\x00" * self.silence_chunk_size
         return self.audio_generator.create_audio_input_event(silence)

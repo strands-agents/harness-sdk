@@ -1,9 +1,9 @@
 """Shared utilities for testing BidiAgent hooks."""
 
 from strands import LocalAgent
-from strands.experimental.bidi.hooks.events import (
+from strands.experimental.bidi.hooks import (
     BidiAgentStopEvent,
-    BidiInterruptionEvent,
+    BidiBargeInEvent,
     BidiResponseCompleteEvent,
 )
 from strands.hooks import (
@@ -28,7 +28,7 @@ class HookEventCollector(HookProvider):
         registry.add_callback(BeforeToolCallEvent, self.on_before_tool_call)
         registry.add_callback(AfterToolCallEvent, self.on_after_tool_call)
         registry.add_callback(MessageAddedEvent, self.on_message_added)
-        registry.add_callback(BidiInterruptionEvent, self.on_interruption)
+        registry.add_callback(BidiBargeInEvent, self.on_barge_in)
 
     def on_initialized(self, event: AgentInitializedEvent[LocalAgent]):
         self.events.append(("initialized", event))
@@ -48,8 +48,8 @@ class HookEventCollector(HookProvider):
     def on_message_added(self, event: MessageAddedEvent[LocalAgent]):
         self.events.append(("message_added", event))
 
-    def on_interruption(self, event: BidiInterruptionEvent):
-        self.events.append(("interruption", event))
+    def on_barge_in(self, event: BidiBargeInEvent):
+        self.events.append(("barge_in", event))
 
     def get_event_types(self):
         """Get list of event type names in order."""

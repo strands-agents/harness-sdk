@@ -1,13 +1,15 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
   adjustSplitPointForToolPairs,
+  asUserSummary,
   findValidTrimPoint,
   generateSummary,
   matchesMessageType,
   DEFAULT_SUMMARIZATION_PROMPT,
 } from '../compression/context-compression.js'
 import { pinMessage, partitionPinned } from '../compression/pin-message.js'
-import { Message, TextBlock, ToolUseBlock, ToolResultBlock } from '../../types/messages.js'
+import { Message, ReasoningBlock, TextBlock, ToolUseBlock, ToolResultBlock } from '../../types/messages.js'
+import { CitationsBlock } from '../../types/citations.js'
 
 function textMsg(role: 'user' | 'assistant', text: string): Message {
   return new Message({ role, content: [new TextBlock(text)] })
@@ -218,5 +220,76 @@ describe('generateSummary', () => {
     await expect(generateSummary([textMsg('user', 'hello')], model as any)).rejects.toThrow(
       'Failed to generate summary'
     )
+  })
+
+  it('drops reasoning blocks from the summary', async () => {
+    // A reasoning model's reply must not leak into the user-role summary;
+    // Bedrock rejects it with "User messages cannot contain reasoning content" (#4402).
+    const message = new Message({
+      role: 'assistant',
+      content: [new ReasoningBlock({ text: 'thinking', signature: 'sig' }), new TextBlock('Summary')],
+    })
+    const model = {
+      streamAggregated: vi.fn(() => ({
+        next: vi.fn().mockResolvedValueOnce({ done: true, value: { message } }),
+        [Symbol.asyncIterator]: vi.fn(),
+      })),
+    }
+
+    const result = await generateSummary([textMsg('user', 'hello')], model as any)
+
+    expect(result.role).toBe('user')
+    expect(result.content).toEqual([new TextBlock('Summary')])
+  })
+})
+
+describe('asUserSummary', () => {
+  it('keeps only text blocks', () => {
+    const message = new Message({
+      role: 'assistant',
+      content: [
+        new ReasoningBlock({ text: 'thinking', signature: 'sig' }),
+        new TextBlock('Summary'),
+        new ToolUseBlock({ toolUseId: 'id-1', name: 'test', input: {} }),
+      ],
+    })
+
+    const result = asUserSummary(message)
+
+    expect(result.role).toBe('user')
+    expect(result.content).toEqual([new TextBlock('Summary')])
+  })
+
+  it('unwraps text from citations blocks', () => {
+    const message = new Message({
+      role: 'assistant',
+      content: [new CitationsBlock({ citations: [], content: [{ text: 'Cited summary' }] })],
+    })
+
+    const result = asUserSummary(message)
+
+    expect(result.role).toBe('user')
+    expect(result.content).toEqual([new TextBlock('Cited summary')])
+  })
+
+  it('skips blank cited text', () => {
+    const message = new Message({
+      role: 'assistant',
+      content: [new CitationsBlock({ citations: [], content: [{ text: 'Cited summary' }, { text: '' }] })],
+    })
+
+    expect(asUserSummary(message).content).toEqual([new TextBlock('Cited summary')])
+  })
+
+  it('throws when the reply has no text', () => {
+    const message = new Message({
+      role: 'assistant',
+      content: [
+        new ReasoningBlock({ text: 'thinking' }),
+        new CitationsBlock({ citations: [], content: [{ text: '' }] }),
+      ],
+    })
+
+    expect(() => asUserSummary(message)).toThrow('no text')
   })
 })

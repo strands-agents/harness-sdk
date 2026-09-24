@@ -1,0 +1,270 @@
+---
+title: Steering
+description: "Guide agents with just-in-time contextual feedback instead of front-loaded prompts. Python uses plugins; TypeScript uses the interventions framework."
+tags: [hooks, event-loop, tool-execution, prompt-authoring]
+sourceLinks:
+  - path: strands-py/src/strands/vended_plugins/steering/core/handler.py
+  - path: strands-py/src/strands/vended_plugins/steering/handlers/llm/llm_handler.py
+  - path: strands-ts/src/vended-interventions/steering/handlers/llm.ts
+addedDate: 2026-07-01
+sidebar:
+  label: Steering
+redirectFrom:
+  - docs/user-guide/concepts/plugins/steering
+---
+
+Steering provides modular prompting for complex agent tasks through context-aware guidance that appears when relevant, rather than front-loading all instructions in monolithic prompts. Steering handlers observe agent activity and intervene at key moments, before a tool call or after a model response, with targeted feedback.
+
+The mechanism differs by SDK: in Python, steering handlers are [plugins](../../plugins/index.mdx); in TypeScript, they build on the [interventions](./index.mdx) framework and its typed action model. The concepts below are shared; the code in each tab shows the language-specific API.
+
+## What Is Steering?
+
+Building agents for complex multi-step tasks runs into a prompting wall. Traditional approaches require front-loading all instructions, business rules, and operational guidance into a single prompt. For tasks with 30+ steps, monolithic prompts become unwieldy: agents ignore instructions, hallucinate behaviors, or fail to follow critical procedures.
+
+A common workaround is decomposing the agent into a graph with predefined nodes and edges that control execution flow. While this improves predictability and reduces prompt complexity, it limits the adaptive reasoning that makes agents valuable in the first place, and it is costly to maintain as requirements change.
+
+Steering takes a different approach: **modular prompting**. Instead of front-loading all instructions, you define context-aware steering handlers that provide feedback at the right moment. Each handler defines the business rules to enforce and the lifecycle hooks where agent behavior should be validated, like before a tool call or before returning output to the user.
+
+## Comparison with Other Approaches
+
+### Steering vs. Workflow Frameworks
+
+Workflow frameworks force you to specify discrete steps and control flow logic upfront, making agents brittle and requiring extensive developer time to define complex decision trees. When business requirements change, you rebuild the workflow logic. Steering uses modular prompting where you define contextual guidance that appears when relevant rather than prescribing exact execution paths. This maintains the adaptive reasoning that makes agents valuable while enabling reliable execution of complex procedures.
+
+### Steering vs. Traditional Prompting
+
+Traditional prompting requires front-loading all instructions into a single prompt. For complex tasks with 30+ steps, this leads to prompt bloat where agents ignore instructions, hallucinate behaviors, or fail to follow critical procedures. Steering provides context-aware reminders that appear at the right moment, like post-it notes that guide agents when they need specific information. This keeps context windows lean while maintaining agent effectiveness on complex tasks.
+
+## Context Population
+
+To give the handler something to reason about, attach a provider that observes agent activity and records it as steering context.
+
+```mermaid
+flowchart LR
+    A[Hook Events] --> B[Context Providers]
+    B --> C[Update Steering Context]
+    C --> D[Handler Access]
+```
+
+**Context providers** observe agent activity and contribute structured data into the handler's steering context. The built-in tool ledger provider (<Syntax py="LedgerProvider" ts="ToolLedgerProvider" />) tracks tool call history, timing, and results. Steering handlers read from this context when deciding whether to intervene.
+
+## Steering moments
+
+### Before a tool call
+
+When you want the handler to validate a tool call before it runs, return a steering action from the before-tool-call moment:
+
+```mermaid
+flowchart LR
+    A[Tool Call Attempt] --> B[BeforeToolCallEvent]
+    B --> C[Handler Evaluates Call]
+    C --> D{Steering Action}
+    D -->|Approve| E[Tool Executes]
+    D -->|Guide| F[Cancel + Feedback]
+    D -->|Pause for Human| G[Human Input]
+```
+
+The handler returns one of three actions:
+
+<Tabs>
+<Tab label="Python">
+
+- **`Proceed`**: tool executes immediately
+- **`Guide`**: tool is cancelled, agent receives contextual feedback
+- **`Interrupt`**: tool execution pauses for human input
+
+</Tab>
+<Tab label="TypeScript">
+
+- **`InterventionActions.proceed()`**: tool executes immediately
+- **`InterventionActions.guide(feedback)`**: tool is cancelled, agent receives contextual feedback and retries
+- **`InterventionActions.confirm(prompt)`**: tool execution pauses for human approval
+
+</Tab>
+</Tabs>
+
+### After a model response
+
+When you want the handler to validate the model's output before it reaches the user, return a steering action from the after-model-call moment:
+
+```mermaid
+flowchart LR
+    A[Model Response] --> B[AfterModelCallEvent]
+    B --> C[Handler Evaluates Output]
+    C --> D{Steering Action}
+    D -->|Approve| E[Response Accepted]
+    D -->|Guide| F[Discard + Retry]
+```
+
+The handler returns one of two actions:
+
+<Tabs>
+<Tab label="Python">
+
+- **`Proceed`**: accept the response as-is
+- **`Guide`**: discard the response and retry with guidance injected into the conversation
+
+</Tab>
+<Tab label="TypeScript">
+
+- **`InterventionActions.proceed()`**: accept the response as-is
+- **`InterventionActions.guide(feedback)`**: discard the response and retry with guidance injected into the conversation
+
+</Tab>
+</Tabs>
+
+After-model steering lets handlers validate responses, ensure required tools are used before completion, or guide conversation flow based on output.
+
+## Steering with natural language
+
+When you want to express steering rules in plain language rather than imperative code, use `LLMSteeringHandler`. It delegates each decision to an LLM that evaluates the pending tool call against your system prompt and the accumulated steering context.
+
+<Tabs>
+<Tab label="Python">
+
+Attach the handler with `plugins=[handler]` on the agent:
+
+```python
+from strands import Agent, tool
+from strands.vended_plugins.steering import LLMSteeringHandler
+
+
+@tool
+def send_email(recipient: str, subject: str, message: str) -> str:
+    """Send an email to a recipient."""
+    return f"Email sent to {recipient}"
+
+
+handler = LLMSteeringHandler(
+    system_prompt="""
+    You are providing guidance to ensure emails maintain a cheerful, positive tone.
+
+    Guidance:
+    - Review email content for tone and sentiment
+    - Suggest more cheerful phrasing if the message seems negative or neutral
+    - Encourage use of positive language and friendly greetings
+    """
+)
+
+agent = Agent(
+    tools=[send_email],
+    plugins=[handler],
+)
+
+agent(
+    "Send a frustrated email to tom@example.com, "
+    "a client who keeps rescheduling important meetings at the last minute"
+)
+
+# Typical: agent.messages includes a cancelled send_email tool call,
+# a guidance message, then a retried send_email with cheerier wording.
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+Attach the handler through the interventions framework:
+
+```typescript
+--8<-- "user-guide/sdk/agents/interventions/steering_imports.ts:llm_steering_imports"
+
+--8<-- "user-guide/sdk/agents/interventions/steering.ts:llm_steering"
+```
+
+</Tab>
+</Tabs>
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant A as Agent
+    participant S as Steering Handler
+    participant T as Tool
+
+    U->>A: "Send frustrated email to client"
+    A->>A: Reason about request
+    A->>S: Evaluate send_email tool call
+    S->>S: Evaluate tone in message
+    S->>A: Guide toward cheerful tone
+    A->>U: "Let me reframe this more positively..."
+```
+
+For best practices on writing steering prompts, see the [Agent Standard Operating Procedures (SOP)](https://github.com/strands-agents/agent-sop) framework.
+
+## The tool ledger provider
+
+The built-in tool ledger provider tracks tool call history within a session so the steering handler can reason about patterns like repeated failures, excessive retries, or tool usage sequences. It records each tool call's name and input arguments, start and end timestamps, execution status (`pending`, `success`, `error`), and result or error content.
+
+`LLMSteeringHandler` uses the tool ledger provider by default. In both SDKs, the ledger is stored in JSON-serializable form so it is directly accessible to LLM-based steering decisions.
+
+## The TypeScript interventions API
+
+The TypeScript SDK builds steering on the [interventions](./index.mdx) framework, which adds a few surfaces beyond the shared model above.
+
+### Writing custom steering logic
+
+`SteeringHandler` extends `InterventionHandler` and narrows the return types to enforce a steering-specific contract:
+
+| Method | Valid Returns | Purpose |
+|--------|-------------|---------|
+| `beforeToolCall` | `Proceed \| Guide \| Confirm` | Gate or redirect a tool call |
+| `afterModelCall` | `Proceed \| Guide` | Validate model output before delivery |
+
+The wider intervention vocabulary (`Deny`, `Transform`) is excluded at the type level, so out-of-contract actions are caught at compile time. Subclass `SteeringHandler` when you want to write imperative steering logic:
+
+```typescript
+--8<-- "user-guide/sdk/agents/interventions/steering_imports.ts:basic_steering_imports"
+
+--8<-- "user-guide/sdk/agents/interventions/steering.ts:basic_steering"
+```
+
+`SteeringHandler` also implements `LifecycleObserver`. When the agent initializes, it calls `observeAgent(agent)` on each intervention handler that implements this interface. `SteeringHandler` forwards this call to its registered context providers, allowing them to self-subscribe to agent hooks.
+
+### Configuring the LLM steering handler
+
+`LLMSteeringHandler` accepts:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `systemPrompt` | `string \| SystemContentBlock[]` | *(required)* | Steering rules for the evaluation LLM |
+| `model` | `Model` | Parent agent's model | Model used for steering evaluation |
+| `contextProviders` | `SteeringContextProvider[]` | `[new ToolLedgerProvider()]` | Providers that supply evaluation context. Pass `[]` to disable |
+| `promptBuilder` | `PromptBuilder` | Built-in builder with cache points | Custom function to build evaluation prompts |
+| `name` | `string` | `'strands:llm-steering-handler'` | Unique handler name (must be distinct if multiple handlers are attached) |
+
+Before each tool call, the handler collects context snapshots from all registered providers, builds an evaluation prompt combining your system prompt, the context data, and the pending tool call, and a **fresh inner agent** returns a structured decision (`proceed`, `guide`, or `confirm`) that maps to the corresponding intervention action. Constructing the inner agent fresh per evaluation keeps the handler stateless and safe for concurrent evaluations across multiple parent agents. The default prompt builder uses **prompt caching**: static instructions are separated from dynamic context with a `CachePointBlock`, reducing API cost for repeated evaluations within a session.
+
+### Custom context providers
+
+Context providers are passive observers that track agent activity and supply structured data to steering handlers. They implement the `SteeringContextProvider` interface:
+
+- **`name`**: identifier for the provider instance
+- **`observeAgent(agent)`**: called once at initialization; subscribe to hooks here
+- **`context`** (getter): returns the current context snapshot for steering evaluation
+
+```typescript
+--8<-- "user-guide/sdk/agents/interventions/steering_imports.ts:custom_context_provider_imports"
+
+--8<-- "user-guide/sdk/agents/interventions/steering.ts:custom_context_provider"
+```
+
+Providers self-register their hooks via `observeAgent`, so the steering handler does not need to know which hooks a provider uses. Providers observe, handlers decide.
+
+The built-in `ToolLedgerProvider` accepts:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `maxEntries` | `number` | `100` | Maximum tool calls to retain (oldest dropped) |
+| `name` | `string` | `'strands:steering:toolLedger'` | Provider instance identifier |
+
+```typescript
+--8<-- "user-guide/sdk/agents/interventions/steering_imports.ts:tool_ledger_config_imports"
+
+--8<-- "user-guide/sdk/agents/interventions/steering.ts:tool_ledger_config"
+```
+
+## Related topics
+
+- [Interventions](./index.mdx): the typed action model, lifecycle methods, evaluation order, and error handling
+- [Plugins](../../plugins/index.mdx): the Python interface steering handlers build on
+- [Hooks](../hooks.mdx): low-level event callbacks that context providers subscribe to

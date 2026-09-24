@@ -10,13 +10,13 @@ from rich.style import Style
 from rich.text import Text
 
 from ..types.events import (
-    BidiInterruptionEvent,
+    BidiBargeInEvent,
     BidiOutputEvent,
     BidiResponseCompleteEvent,
     BidiTranscriptStreamEvent,
     Role,
 )
-from ..types.io import BidiOutput
+from ..types.io import OutputStream
 
 if TYPE_CHECKING:
     from ..agent.agent import BidiAgent
@@ -66,7 +66,7 @@ class _UserText(ConsoleRenderable):
         yield erase_to_end
 
 
-class _BidiTranscriptOutput(BidiOutput):
+class _TranscriptOutputStream(OutputStream):
     """Render transcript events to a terminal stream."""
 
     def __init__(self) -> None:
@@ -97,8 +97,8 @@ class _BidiTranscriptOutput(BidiOutput):
             else:
                 self._update_transcript(event.delta)
 
-        elif isinstance(event, BidiInterruptionEvent):
-            logger.debug("reason=<%s> | transcript interrupted", event.reason)
+        elif isinstance(event, BidiBargeInEvent):
+            logger.debug("reason=<%s> | transcript stopped due to barge-in", event.reason)
 
             if self._role != "user" or self._transcript is None:
                 self._restart_transcript("user", delta="")
@@ -106,7 +106,7 @@ class _BidiTranscriptOutput(BidiOutput):
         elif isinstance(event, BidiResponseCompleteEvent):
             logger.debug("response_id=<%s>, role=<%s> | transcript complete", event.response_id, self._role)
 
-            if event.stop_reason == "interrupted":
+            if event.stop_reason == "barge_in":
                 if self._role != "user" or self._transcript is None:
                     self._restart_transcript("user", delta="")
             else:

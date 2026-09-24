@@ -1,0 +1,70 @@
+---
+title: Stream responses
+description: "Stream AI agent responses in real time. Handle partial results, tool invocations, and token-by-token output as the agent works."
+sidebar:
+  label: "Overview"
+tags: [streaming]
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components'
+
+Stream an agent's output as it happens instead of waiting for the final response: text tokens, tool calls, and lifecycle events, as they occur. This is what drives responsive user interfaces and real-time monitoring.
+
+Strands emits the same set of events regardless of how you consume them; you choose the consumption model that fits your application. Async iterators suit asynchronous server frameworks, and callback handlers suit synchronous Python.
+
+## Stream an agent's response
+
+<CardGrid>
+  <LinkCard
+    title="Async Iterators"
+    href="async-iterators/"
+    description="Consume the event stream with async iterators, for async server frameworks like FastAPI and Express."
+  />
+  <LinkCard
+    title="Callback Handlers"
+    href="callback-handlers/"
+    description="Intercept events with a callback function in synchronous Python."
+  />
+  <LinkCard
+    title="Stream event types"
+    href="events/"
+    description="Reference for every event the stream emits: lifecycle, model, tool, and multi-agent."
+  />
+</CardGrid>
+
+## A running stream
+
+The smallest real thing streaming does is print an agent's answer token by token as the model produces it. Iterate over the stream and forward the text chunks:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+import asyncio
+from strands import Agent
+
+agent = Agent(callback_handler=None)
+
+
+async def main():
+    async for event in agent.stream_async("Tell me about agents in one sentence."):
+        if "data" in event:
+            print(event["data"], end="", flush=True)
+
+
+asyncio.run(main())
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/streaming/overview.ts:quick_example_async_iterator"
+```
+</Tab>
+</Tabs>
+
+Each `data` chunk is one piece of the model's output. The [event reference](./events.md) lists everything else the stream carries: tool calls, lifecycle signals, and multi-agent coordination.
+
+## Where to go next
+
+New to streaming? Start with [Async Iterators](./async-iterators.md) to consume the stream in an async server, or [Callback Handlers](./callback-handlers.md) if your Python application is synchronous. Both receive the same events; the [event reference](./events.md) is the complete list of what you can react to.

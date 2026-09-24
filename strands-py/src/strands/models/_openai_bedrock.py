@@ -1,15 +1,18 @@
-"""Internal helpers for routing OpenAI-compatible clients to Bedrock Mantle.
+"""Internal helpers for routing OpenAI-compatible clients to Amazon Bedrock.
 
 Converts a ``bedrock_mantle_config`` dict into the ``base_url`` and ``api_key`` that the
 OpenAI Python SDK consumes. Tokens are minted on demand via
 ``aws_bedrock_token_generator.provide_token`` so long-running agents survive the
 bearer token's maximum lifetime.
+
+The config's ``endpoint`` key selects which of Bedrock's two OpenAI-compatible endpoint
+families serves the request; see :class:`BedrockMantleConfig`.
 """
 
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
 import boto3
 from botocore.credentials import CredentialProvider
@@ -17,7 +20,13 @@ from botocore.credentials import CredentialProvider
 from ._validation import validate_region
 
 _MANTLE_BASE_URL_TEMPLATE = "https://bedrock-mantle.{region}.api.aws{path}"
+# On bedrock-runtime every OpenAI-compatible API is served from /openai/v1, so the base
+# path is fixed rather than per-model as it is on bedrock-mantle.
+_RUNTIME_BASE_URL_TEMPLATE = "https://bedrock-runtime.{region}.amazonaws.com/openai/v1"
 _MANTLE_DOCS_URL = "https://docs.aws.amazon.com/bedrock/latest/userguide/inference-openai.html"
+_RUNTIME_REGIONS_DOCS_URL = "https://docs.aws.amazon.com/bedrock/latest/userguide/endpoints-region-availability.html"
+_ENDPOINTS_DOCS_URL = "https://docs.aws.amazon.com/bedrock/latest/userguide/endpoints.html"
+_DEFAULT_ENDPOINT: Literal["bedrock-mantle", "bedrock-runtime"] = "bedrock-mantle"
 
 
 # Mantle model lines served from /openai/v1; every other Mantle model uses /v1, and the
@@ -42,10 +51,15 @@ def _resolve_mantle_base_path(model_id: str) -> str:
 
 
 class BedrockMantleConfig(TypedDict, total=False):
-    """Config for routing an OpenAI-compatible client through Bedrock Mantle.
+    """Config for routing an OpenAI-compatible client through Amazon Bedrock.
 
     Attributes:
-        region: AWS region hosting the Bedrock Mantle endpoint. If omitted, resolved
+        endpoint: Which Bedrock endpoint family serves the request: ``"bedrock-mantle"``
+            (the default) or ``"bedrock-runtime"``. Only ``bedrock-runtime`` accepts
+            cross-Region inference profile ids (``us.openai.*``, ``global.openai.*``). See
+            https://docs.aws.amazon.com/bedrock/latest/userguide/endpoints.html for the
+            full comparison.
+        region: AWS region hosting the Bedrock endpoint. If omitted, resolved
             from ``boto_session`` (if provided) or the standard boto3 chain
             (``AWS_REGION`` / ``AWS_DEFAULT_REGION`` / active profile / EC2 metadata).
             A :class:`ValueError` is raised if none resolve.
@@ -60,17 +74,35 @@ class BedrockMantleConfig(TypedDict, total=False):
             omitted.
     """
 
+    endpoint: Literal["bedrock-mantle", "bedrock-runtime"]
     region: str
     boto_session: boto3.Session
     credentials_provider: CredentialProvider
     expiry: timedelta
 
 
+def _resolve_base_url(config: BedrockMantleConfig, region: str, model_id: str) -> str:
+    """Resolve the OpenAI client's ``base_url`` for the configured endpoint family.
+
+    Raises:
+        ValueError: If ``endpoint`` is neither ``"bedrock-mantle"`` nor ``"bedrock-runtime"``.
+    """
+    endpoint = config.get("endpoint", _DEFAULT_ENDPOINT)
+    if endpoint == "bedrock-runtime":
+        return _RUNTIME_BASE_URL_TEMPLATE.format(region=region)
+    if endpoint != "bedrock-mantle":
+        raise ValueError(
+            f"Unknown Bedrock endpoint '{endpoint}' in bedrock_mantle_config. "
+            f"Use 'bedrock-mantle' or 'bedrock-runtime'. See {_ENDPOINTS_DOCS_URL} for the difference."
+        )
+    return _MANTLE_BASE_URL_TEMPLATE.format(region=region, path=_resolve_mantle_base_path(model_id))
+
+
 def _resolve_region(config: BedrockMantleConfig) -> str:
     """Resolve the AWS region, preferring explicit config then falling back to boto3.
 
     The resolved region is validated before it is returned, since it is interpolated
-    into the Mantle endpoint URL by the caller.
+    into the Bedrock endpoint URL by the caller.
 
     Raises:
         ValueError: If no region can be resolved from the config, an attached session,
@@ -92,10 +124,17 @@ def _resolve_region(config: BedrockMantleConfig) -> str:
     if default_region:
         return validate_region(str(default_region))
 
+    # The two endpoint families are available in different Regions, so point at the list
+    # for the one actually being used.
+    regions_docs_url = (
+        _RUNTIME_REGIONS_DOCS_URL
+        if config.get("endpoint", _DEFAULT_ENDPOINT) == "bedrock-runtime"
+        else _MANTLE_DOCS_URL
+    )
     raise ValueError(
-        "Could not resolve an AWS region for Bedrock Mantle. Pass 'region' in "
+        "Could not resolve an AWS region for Amazon Bedrock. Pass 'region' in "
         "bedrock_mantle_config, attach a boto_session with a configured region, or set "
-        f"AWS_REGION in the environment. See {_MANTLE_DOCS_URL} for supported regions."
+        f"AWS_REGION in the environment. See {regions_docs_url} for supported regions."
     )
 
 
@@ -108,14 +147,17 @@ def resolve_bedrock_client_args(
     ``client_args`` does not contain ``base_url`` or ``api_key`` before calling this
     function (typically at ``__init__`` time for fail-fast behavior).
 
-    The ``model_id`` selects the Mantle base path via :func:`_resolve_mantle_base_path`.
+    The ``endpoint`` key selects the endpoint family; on ``bedrock-mantle`` the ``model_id``
+    additionally selects the base path via :func:`_resolve_mantle_base_path`.
 
     Raises:
-        ValueError: If no region can be resolved.
+        ValueError: If no region can be resolved, or ``endpoint`` is not a known value.
         ImportError: If ``aws-bedrock-token-generator`` is not installed.
         RuntimeError: If token minting fails (e.g. missing AWS credentials).
     """
     region = _resolve_region(config)
+    # Resolved before the token is minted so invalid input never costs a token round trip.
+    base_url = _resolve_base_url(config, region, model_id)
 
     # ``aws-bedrock-token-generator`` is included in the ``openai`` extras group but not in
     # ``litellm`` or ``sagemaker`` (which also depend on the ``openai`` package). The lazy
@@ -139,11 +181,11 @@ def resolve_bedrock_client_args(
         token = provide_token(**token_kwargs)
     except Exception as e:
         raise RuntimeError(
-            f"Failed to mint Bedrock Mantle bearer token for region '{region}'. "
+            f"Failed to mint an Amazon Bedrock bearer token for region '{region}'. "
             "Verify your AWS credentials and network connectivity."
         ) from e
 
     resolved: dict[str, Any] = dict(client_args or {})
-    resolved["base_url"] = _MANTLE_BASE_URL_TEMPLATE.format(region=region, path=_resolve_mantle_base_path(model_id))
+    resolved["base_url"] = base_url
     resolved["api_key"] = token
     return resolved

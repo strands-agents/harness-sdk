@@ -1,0 +1,146 @@
+---
+import arrow from '../assets/banner/arrow.svg?raw';
+
+type PageLink = { label: string; href: string; langAware?: boolean; external?: boolean };
+
+type Category = {
+  title: string;
+  description: string;
+  href?: string;
+  external?: boolean;
+  pages?: PageLink[];
+};
+
+export interface Props {
+  id: string;
+  categories: Category[];
+}
+
+const { id, categories } = Astro.props;
+---
+
+<div class="nav-menu" data-nav-menu={id} role="group" aria-label="Menu">
+  {categories.map((cat) => {
+    const href = cat.href || (cat.pages && cat.pages[0]?.href);
+    const isExternal = cat.external || (cat.pages?.[0]?.external);
+    const langAware = cat.pages?.[0]?.langAware;
+    return href ? (
+      <a
+        class="nav-menu__cat"
+        href={href}
+        {...(langAware ? { 'data-lang-href': '' } : {})}
+        {...(isExternal && href.startsWith('http')
+          ? { target: '_blank', rel: 'noopener' }
+          : {})}
+      >
+        <span class="nav-menu__cat-title">
+          {cat.title}
+          {isExternal && (
+            <span class="nav-menu__cat-arrow" set:html={arrow} />
+          )}
+        </span>
+        <span class="nav-menu__cat-desc">{cat.description}</span>
+      </a>
+    ) : (
+      <span class="nav-menu__cat">
+        <span class="nav-menu__cat-title">{cat.title}</span>
+        <span class="nav-menu__cat-desc">{cat.description}</span>
+      </span>
+    );
+  })}
+</div>
+
+<style>
+  .nav-menu {
+    position: absolute;
+    top: 100%;
+    left: calc(-1 * var(--nav-tab-pad, 20px));
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background: var(--bg);
+    border: 1px solid var(--accent-green);
+    border-top: none;
+    padding: 24px 32px 24px var(--nav-tab-pad, 20px);
+    z-index: 100;
+    min-width: 220px;
+    max-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
+    transition: max-height 0.2s ease, opacity 0.15s ease;
+  }
+
+  .nav-menu.is-open {
+    max-height: 600px;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .nav-menu__cat {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 0;
+    text-align: left;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--fg);
+    text-decoration: none;
+  }
+
+  .nav-menu__cat:hover .nav-menu__cat-title {
+    color: var(--accent-green);
+  }
+
+  .nav-menu__cat-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 500;
+    font-size: 18px;
+    line-height: 1.3;
+    color: inherit;
+  }
+
+  .nav-menu__cat-desc {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 12px;
+    letter-spacing: 0.14px;
+    line-height: 1.35;
+    /* Derive from --fg so the muted description keeps legible contrast in both
+       themes; the fixed grey tokens are too light on the near-white panel. */
+    color: var(--fg);
+    opacity: 0.75;
+  }
+
+  .nav-menu__cat-arrow {
+    display: inline-flex;
+    width: 14.66px;
+    height: 12.7px;
+    color: var(--fg);
+  }
+
+  .nav-menu__cat-arrow :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+</style>
+
+<script>
+  import { LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE_LABEL } from '../util/language-preference'
+
+  function updateLangHrefs() {
+    const lang = localStorage.getItem(LANGUAGE_STORAGE_KEY) || DEFAULT_LANGUAGE_LABEL
+    const slug = lang === 'Python' ? 'python' : 'typescript'
+    const base = import.meta.env.BASE_URL.replace(/\/$/, '')
+    document.querySelectorAll<HTMLAnchorElement>('[data-lang-href]').forEach((a) => {
+      a.href = `${base}/docs/api/${slug}/`
+    })
+  }
+
+  updateLangHrefs()
+  window.addEventListener('lang-change', updateLangHrefs)
+</script>

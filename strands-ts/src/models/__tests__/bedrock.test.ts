@@ -7,6 +7,7 @@ import {
 } from '@aws-sdk/client-bedrock-runtime'
 import { isNode } from '../../__fixtures__/environment.js'
 import { BedrockModel } from '../bedrock.js'
+import type { BedrockModelOptions } from '../bedrock.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
 import { Message, ReasoningBlock, ToolUseBlock, ToolResultBlock, JsonBlock } from '../../types/messages.js'
 import type { SystemContentBlock } from '../../types/messages.js'
@@ -282,6 +283,45 @@ describe('BedrockModel', () => {
       const handler = { handle: vi.fn(), updateHttpClientConfig: vi.fn(), httpHandlerConfigs: vi.fn() }
       new BedrockModel({ region: 'us-west-2', clientConfig: { requestHandler: handler } })
       expect(BedrockRuntimeClient).toHaveBeenCalledWith(expect.objectContaining({ requestHandler: handler }))
+    })
+
+    it('applies the requestTimeout option to the default request handler', () => {
+      new BedrockModel({ region: 'us-west-2', requestTimeout: 600_000 })
+      expect(BedrockRuntimeClient).toHaveBeenCalledWith(
+        expect.objectContaining({ requestHandler: { requestTimeout: 600_000 } })
+      )
+    })
+
+    it('lets the requestTimeout option take precedence over clientConfig.requestHandler', () => {
+      new BedrockModel({
+        region: 'us-west-2',
+        requestTimeout: 600_000,
+        clientConfig: { requestHandler: { requestTimeout: 5_000, connectionTimeout: 1_000 } },
+      })
+      expect(BedrockRuntimeClient).toHaveBeenCalledWith(
+        expect.objectContaining({ requestHandler: { requestTimeout: 600_000, connectionTimeout: 1_000 } })
+      )
+    })
+
+    it('falls back to the default when requestTimeout is explicitly undefined', () => {
+      const options = { region: 'us-west-2', requestTimeout: undefined } as unknown as BedrockModelOptions
+      new BedrockModel(options)
+      expect(BedrockRuntimeClient).toHaveBeenCalledWith(
+        expect.objectContaining({ requestHandler: { requestTimeout: 120_000 } })
+      )
+    })
+
+    it('warns and keeps a handler instance untouched when requestTimeout is also given', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const handler = { handle: vi.fn(), updateHttpClientConfig: vi.fn(), httpHandlerConfigs: vi.fn() }
+      new BedrockModel({ region: 'us-west-2', requestTimeout: 600_000, clientConfig: { requestHandler: handler } })
+      expect(BedrockRuntimeClient).toHaveBeenCalledWith(expect.objectContaining({ requestHandler: handler }))
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'request_timeout=<600000> | requestTimeout is ignored when clientConfig.requestHandler is a handler instance'
+        )
+      )
+      warnSpy.mockRestore()
     })
 
     it('adds api key middleware when apiKey is provided', () => {

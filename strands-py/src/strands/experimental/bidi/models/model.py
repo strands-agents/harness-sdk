@@ -19,11 +19,11 @@ from collections.abc import AsyncIterable
 from typing import Any, NoReturn, Protocol, cast, runtime_checkable
 
 from ....models.model import Model
-from ....types._events import ToolResultEvent
 from ....types.content import Messages
-from ....types.tools import ToolSpec
-from ..types.events import BidiInputEvent, BidiOutputEvent
-from .configs import AudioConfig, BidiConnectionConfig
+from ....types.tools import ToolResultBlock, ToolSpec
+from ..types.content import BidiContentBlock, BidiContentDelta
+from ..types.events import BidiOutputEvent
+from .configs import AudioConfig, ConnectionConfig
 
 logger = logging.getLogger(__name__)
 
@@ -71,9 +71,9 @@ class BidiModel(Model, abc.ABC):
         """Get the configured model identifier."""
         return cast(str, self.get_config()["model_id"])
 
-    def get_connection_config(self) -> BidiConnectionConfig:
+    def get_connection_config(self) -> ConnectionConfig:
         """Get the configured reconnect timing, or an empty config if unspecified."""
-        return cast(BidiConnectionConfig, self.get_config().get("connection", {}))
+        return cast(ConnectionConfig, self.get_config().get("connection", {}))
 
     def structured_output(self, *args: Any, **kwargs: Any) -> NoReturn:
         """Raise because bidirectional models do not support structured output."""
@@ -138,7 +138,7 @@ class BidiModel(Model, abc.ABC):
     # pragma: no cover
     async def send(
         self,
-        content: BidiInputEvent | ToolResultEvent,
+        content: BidiContentBlock | BidiContentDelta | ToolResultBlock,
     ) -> None:
         """Send content to the model over the active connection.
 
@@ -147,26 +147,26 @@ class BidiModel(Model, abc.ABC):
         tool execution results. Can be called multiple times during a conversation.
 
         Args:
-            content: The content to send. Must be one of:
-
-                - BidiTextInputEvent: Text message from the user
-                - BidiAudioInputEvent: Audio data for speech input
-                - BidiImageInputEvent: Image data for visual understanding
-                - ToolResultEvent: Result from a tool execution
+            content: A TextBlock, AudioDelta, ImageBlock, or ToolResultBlock.
 
         Example:
             ```
-            await model.send(BidiTextInputEvent(text="Hello", role="user"))
-            await model.send(BidiAudioInputEvent(audio=bytes, format="pcm", sample_rate=16000, channels=1))
-            await model.send(BidiImageInputEvent(image=bytes, mime_type="image/jpeg", encoding="raw"))
-            await model.send(ToolResultEvent(tool_result))
+            from strands.experimental.bidi.types import AudioDelta
+            from strands.types.content import TextBlock
+            from strands.types.media import ImageBlock
+            from strands.types.tools import ToolResultBlock
+
+            await model.send(TextBlock("Hello"))
+            await model.send(AudioDelta(format="pcm", source={"bytes": audio_bytes}))
+            await model.send(ImageBlock(format="jpeg", source={"bytes": image_bytes}))
+            await model.send(ToolResultBlock(tool_use_id="call-1", status="success", content=[{"text": "Done"}]))
             ```
         """
         pass
 
 
-class BidiModelTimeoutError(Exception):
-    """Model timeout error.
+class ConnectionTimeoutError(Exception):
+    """Persistent model connection timeout.
 
     Bidirectional models are often configured with a connection time limit. Bedrock Nova Sonic, for example, keeps the
     connection open for 8 minutes max. Upon receiving a timeout, the agent loop is configured to restart the model

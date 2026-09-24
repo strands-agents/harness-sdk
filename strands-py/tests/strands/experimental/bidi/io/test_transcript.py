@@ -7,9 +7,9 @@ import pytest_asyncio
 from rich.console import Console
 
 import strands.experimental.bidi.io.transcript as transcript_module
-from strands.experimental.bidi.io.transcript import _BidiTranscriptOutput, _UserText
-from strands.experimental.bidi.types.events import (
-    BidiInterruptionEvent,
+from strands.experimental.bidi.io.transcript import _TranscriptOutputStream, _UserText
+from strands.experimental.bidi.types import (
+    BidiBargeInEvent,
     BidiResponseCompleteEvent,
     BidiResponseStartEvent,
     BidiTranscriptStreamEvent,
@@ -27,7 +27,7 @@ def console(monkeypatch):
 
 @pytest_asyncio.fixture
 async def output(console):
-    output = _BidiTranscriptOutput()
+    output = _TranscriptOutputStream()
     await output.start(Mock())
     yield output
     await output.stop()
@@ -66,7 +66,7 @@ async def test_call_streams_turns(output, console, user_events, exp_lines):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "event",
-    [BidiInterruptionEvent("user_speech"), BidiResponseCompleteEvent("first", "interrupted")],
+    [BidiBargeInEvent("user_speech"), BidiResponseCompleteEvent("first", "barge_in")],
 )
 @pytest.mark.parametrize(
     ("initial", "exp_transcript"),
@@ -76,7 +76,7 @@ async def test_call_streams_turns(output, console, user_events, exp_lines):
         (BidiTranscriptStreamEvent("Wait", "user"), "Wait"),
     ],
 )
-async def test_call_interrupts_response(output, event, initial, exp_transcript):
+async def test_call_handles_barge_in(output, event, initial, exp_transcript):
     if initial is not None:
         await output(initial)
     await output(event)
@@ -134,7 +134,7 @@ def test_user_text_render(monkeypatch, no_color, text, exp_lines):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("started", [False, True])
 async def test_stop_restores_cursor(console, monkeypatch, started):
-    output = _BidiTranscriptOutput()
+    output = _TranscriptOutputStream()
     if started:
         await output.start(Mock())
     show_cursor = Mock()

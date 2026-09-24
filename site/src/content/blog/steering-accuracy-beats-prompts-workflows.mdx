@@ -33,19 +33,19 @@ SOPs are a powerful middle ground between flexibility and control. They give age
 
 ### Workflows and graphs
 
-Another approach is to define rigid workflows using graph and multi-agent abstractions, like the [graph](https://strandsagents.com/docs/user-guide/concepts/multi-agent/graph/) and [workflow](https://strandsagents.com/docs/user-guide/concepts/multi-agent/workflow/) patterns in Strands. You decompose the agent's task into discrete nodes with defined edges between them, applying what we know from deterministic programming (if statements, loops, conditional branches) to agent behavior.
+Another approach is to define rigid workflows using graph and multi-agent abstractions, like the [graph](https://strandsagents.com/docs/user-guide/sdk/multi-agent/graph/) and [workflow](https://strandsagents.com/docs/user-guide/sdk/multi-agent/workflow/) patterns in Strands. You decompose the agent's task into discrete nodes with defined edges between them, applying what we know from deterministic programming (if statements, loops, conditional branches) to agent behavior.
 
 This approach can produce predictable behavior for well-defined workflows, but it undermines the flexibility and reasoning ability that makes recent, powerful models valuable in the first place. When a user's request doesn't fit neatly into the predefined graph, the agent fails. The more diverse your inputs, the more uncovered paths you discover, and the more complex and brittle the graph becomes.
 
 ## Enter Strands steering
 
-[Strands steering](https://strandsagents.com/docs/user-guide/concepts/plugins/steering/) takes a different approach. Instead of front-loading all instructions into a monolithic prompt or constraining the agent to a rigid workflow, steering provides **just-in-time guidance** to the agent at the moments that matter.
+[Strands steering](https://strandsagents.com/docs/user-guide/sdk/agents/interventions/steering/) takes a different approach. Instead of front-loading all instructions into a monolithic prompt or constraining the agent to a rigid workflow, steering provides **just-in-time guidance** to the agent at the moments that matter.
 
 The core idea is simple: rather than telling the agent everything upfront and hoping it remembers, you define steering handlers that observe what the agent is doing and provide targeted guidance when it's about to go off track. Rather than a 10-page instruction manual the agent has to keep in mind at all times, steering handlers deliver the right guidance at the right moment, when the agent is actually about to make a decision that matters.
 
 Steering's just-in-time guidance breaks the prompting treadmill: instead of adding more natural language rules to a growing prompt, you add targeted handlers that fire only when needed. Handlers get access to a ledger of all tools the agent has called so far (including their inputs and outputs), so you can enforce rules about tool ordering, parameter validation, and data flow between tools.
 
-Steering handlers can intercept agent behavior at two points via [hooks](https://strandsagents.com/docs/user-guide/concepts/agents/hooks/):
+Steering handlers can intercept agent behavior at two points via [hooks](https://strandsagents.com/docs/user-guide/sdk/agents/hooks/):
 
 1. **Before tool calls**: When the agent is about to call a tool, a steering handler can first inspect the tool name and parameters. It can decide whether to let the call proceed or cancel it with guidance back to the model. For example: "You used the wrong customer ID as input to this tool", or "You must verify the customer's identity before processing this request."
 2. **After model responses**: When the model generates a response to the user, a steering handler can first evaluate the output and either accept it or discard it with feedback, causing the model to try again. For example: "Your response didn't follow the required escalation format. Please revise."
@@ -254,7 +254,7 @@ The right choice for how to guide your agent's behavior depends on what level of
 
 Ready to step off the prompting treadmill? Strands steering is available in the [Strands Agents SDK](https://strandsagents.com). To get started:
 
-- Read the [steering documentation](https://strandsagents.com/docs/user-guide/concepts/plugins/steering/)
+- Read the [steering documentation](https://strandsagents.com/docs/user-guide/sdk/agents/interventions/steering/)
 - Explore the [library book renewal sample agent](https://github.com/strands-agents/samples/tree/main/python/05-technical-use-cases/steering/library-book-renewal-agent) that demonstrates all the approaches discussed in this post
 
 We're also experimenting with different ways to express agents and steering guidance. [AI Functions](https://github.com/strands-labs/ai-functions) is an experimental project in Strands Labs. With AI Functions, you can define regular Python functions powered by AI agents and add post-condition checks on the result, similar to the model response steering handlers I described above.
