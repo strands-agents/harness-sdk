@@ -1,6 +1,7 @@
 """Unit tests for BidiAgent."""
 
 import asyncio
+import logging
 import sys
 import unittest.mock
 from uuid import uuid4
@@ -613,3 +614,26 @@ async def test_update_message_finds_copied_message_after_history_edit(agent):
 
     assert agent.messages == [replacement]
     assert hooks.events_received == [MessageUpdatedEvent(agent, tracking_id, replacement)]
+
+
+@pytest.mark.asyncio
+async def test_update_message_warns_when_message_removed(agent, caplog):
+    hooks = MockHookProvider([MessageUpdatedEvent])
+    agent.hooks.add_hook(hooks)
+    first = {"role": "user", "content": [{"text": "Earlier"}]}
+    reserved = {"role": "assistant", "content": []}
+    await agent._append_messages(first, reserved)
+    tracking_id = reserved["tracking_id"]
+    agent.messages.remove(reserved)
+
+    await agent._update_message({**reserved, "content": [{"text": "Answer"}]})
+
+    assert agent.messages == [first]
+    assert hooks.events_received == []
+    assert caplog.record_tuples == [
+        (
+            "strands.experimental.bidi.agent.agent",
+            logging.WARNING,
+            f"tracking_id=<{tracking_id}> | message not found in history | skipping update",
+        )
+    ]

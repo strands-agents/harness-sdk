@@ -505,7 +505,7 @@ class BidiAgent(LocalAgent):
     async def _update_message(self, message: Message) -> None:
         """Replace a message by its tracking ID and notify hooks.
 
-        Search newest messages first. Messages removed by context management stay removed.
+        Search newest messages first. Warn and skip the update if the message is no longer in history.
         """
         tracking_id = message["tracking_id"]
         async with self._message_lock:
@@ -515,5 +515,6 @@ class BidiAgent(LocalAgent):
                 self.messages[index] = message
                 break
             else:
+                logger.warning("tracking_id=<%s> | message not found in history | skipping update", tracking_id)
                 return
         await self.hooks.invoke_callbacks_async(MessageUpdatedEvent[LocalAgent](self, tracking_id, message))
