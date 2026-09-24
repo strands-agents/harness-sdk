@@ -11,7 +11,7 @@ from strands.experimental.bidi.agent.loop import _ReaderError
 from strands.experimental.bidi.hooks import BidiAgentStopEvent, BidiBeforeConnectionRestartEvent
 from strands.experimental.bidi.hooks import BidiInterruptionEvent as BidiInterruptionHookEvent
 from strands.experimental.bidi.hooks import BidiResponseCompleteEvent as BidiResponseCompleteHookEvent
-from strands.experimental.bidi.models import BidiModel, BidiModelTimeoutError
+from strands.experimental.bidi.models import BidiModel, ConnectionTimeoutError
 from strands.experimental.bidi.types import (
     BidiConnectionCloseEvent,
     BidiConnectionRestartEvent,
@@ -78,7 +78,10 @@ async def test_response_complete_hook(agent, agenerator, stop_reason):
 @pytest.mark.parametrize(
     "stream_event,hook_type",
     [
-        (BidiResponseCompleteEvent(response_id="r1", stop_reason="complete"), BidiResponseCompleteHookEvent),
+        (
+            BidiResponseCompleteEvent(response_id="r1", stop_reason="complete"),
+            BidiResponseCompleteHookEvent,
+        ),
         (BidiInterruptionEvent(reason="user_speech"), BidiInterruptionHookEvent),
         (BidiTranscriptCompleteEvent(transcript="Hello", role="assistant"), MessageAddedEvent),
     ],
@@ -177,7 +180,7 @@ async def test_agent_stop_hook(agent, agenerator, cleanup_fails):
 
 @pytest.mark.asyncio
 async def test_bidi_agent_loop_receive_restart_connection(loop, agent, agenerator):
-    timeout_error = BidiModelTimeoutError("test timeout", test_restart_config=1)
+    timeout_error = ConnectionTimeoutError("test timeout", test_restart_config=1)
     close_event = BidiConnectionCloseEvent(connection_id="test", reason="complete")
 
     agent.model.receive = unittest.mock.Mock(side_effect=[timeout_error, agenerator([close_event])])
@@ -211,7 +214,7 @@ async def test_bidi_agent_loop_receive_restart_connection(loop, agent, agenerato
 @pytest.mark.asyncio
 async def test_reactive_restart_failure_yields_event_before_raising(loop, agent, agenerator):
     """A failed reactive restart still notifies the caller before surfacing the failure."""
-    timeout_error = BidiModelTimeoutError("test timeout")
+    timeout_error = ConnectionTimeoutError("test timeout")
     restart_error = RuntimeError("restart failed")
     agent.model.get_connection_config.return_value = {}
     agent.model.receive = unittest.mock.Mock(side_effect=timeout_error)
@@ -233,7 +236,7 @@ async def test_bidi_agent_loop_auto_reconnect_default_on(loop, agent, agenerator
     """Auto reconnect is the default: a timeout triggers reconnect without any opt-in."""
     # An empty connection config uses the default reconnect behavior.
     agent.model.get_connection_config.return_value = {}
-    timeout_error = BidiModelTimeoutError("test timeout")
+    timeout_error = ConnectionTimeoutError("test timeout")
     close_event = BidiConnectionCloseEvent(connection_id="test", reason="complete")
     agent.model.receive = unittest.mock.Mock(side_effect=[timeout_error, agenerator([close_event])])
 
@@ -252,12 +255,12 @@ async def test_bidi_agent_loop_auto_reconnect_default_on(loop, agent, agenerator
 async def test_bidi_agent_loop_auto_reconnect_opt_out_surfaces_timeout(loop, agent, agenerator):
     """A provider opting out with auto_reconnect=False surfaces the timeout instead of reconnecting."""
     agent.model.get_connection_config.return_value = {"auto_reconnect": False}
-    timeout_error = BidiModelTimeoutError("test timeout")
+    timeout_error = ConnectionTimeoutError("test timeout")
     agent.model.receive = unittest.mock.Mock(side_effect=[timeout_error, agenerator([])])
 
     await loop.start()
 
-    with pytest.raises(BidiModelTimeoutError):
+    with pytest.raises(ConnectionTimeoutError):
         async for _ in loop.receive():
             pass
 
@@ -568,7 +571,7 @@ async def test_stale_reactive_timeout_dropped_after_proactive_swap(loop, agent, 
     restarts = agent.model.restart.call_count
 
     # A timeout tagged with the pre-swap generation is now stale; receive() must drop it.
-    await loop._event_queue.put(_ReaderError(stale_generation, BidiModelTimeoutError("stale timeout")))
+    await loop._event_queue.put(_ReaderError(stale_generation, ConnectionTimeoutError("stale timeout")))
 
     sentinel = BidiConnectionCloseEvent(connection_id="after-stale-timeout", reason="complete")
     feed = asyncio.create_task(_feed_after_drain(loop, sentinel))
@@ -605,7 +608,7 @@ async def test_reactive_timeout_during_scheduled_restart_emits_no_duplicate(loop
     scheduled = await consumer.__anext__()
     assert scheduled == BidiConnectionRestartEvent(reason="scheduled")
 
-    await loop._event_queue.put(_ReaderError(generation, BidiModelTimeoutError("duplicate timeout")))
+    await loop._event_queue.put(_ReaderError(generation, ConnectionTimeoutError("duplicate timeout")))
     next_event = asyncio.create_task(consumer.__anext__())
     await asyncio.sleep(0)
     assert not next_event.done()
@@ -731,7 +734,7 @@ async def test_stale_reactive_restart_ignored_after_proactive_swap(agent, agener
     assert loop._generation == stale_generation + 1
     restarts = agent.model.restart.call_count
 
-    await loop._restart_connection(BidiModelTimeoutError("stale"), stale_generation)
+    await loop._restart_connection(ConnectionTimeoutError("stale"), stale_generation)
     assert agent.model.restart.call_count == restarts  # stale trigger ignored
 
     await loop.stop()
@@ -945,7 +948,7 @@ async def test_bidi_agent_loop_restart_hook_reports_reason(loop, agent, agenerat
 
     await loop.start()
 
-    timeout_error = BidiModelTimeoutError("boom")
+    timeout_error = ConnectionTimeoutError("boom")
     await loop._restart_connection(timeout_error, loop._generation)
     await loop._restart_connection(None, loop._generation)
 

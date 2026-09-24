@@ -6,5 +6,5 @@ languages:
   python: {}
   typescript: {}
 github: https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_memory_stores/bedrock_knowledge_base
-docsPage: docs/user-guide/concepts/memory/bedrock-knowledge-base
+docsPage: docs/user-guide/sdk/memory/bedrock-knowledge-base
 addedDate: 2026-06-09

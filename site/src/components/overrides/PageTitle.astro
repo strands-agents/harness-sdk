@@ -1,0 +1,110 @@
+---
+import { currentProduct } from '../../util/current-product'
+
+// Page title area. Three shapes:
+//  - Product hub (the product's own href): a lightweight hero — product-name
+//    H1, one-line value prop, and a primary Quickstart CTA — with
+//    the hub's cards/prose rendering below and the scoped sidebar alongside.
+//  - Product subpage: the H1 with a small "/shell" slug eyebrow above it.
+//  - Everything else (blog, changelog, non-product): a plain H1.
+const route = Astro.locals.starlightRoute
+const title = route.entry.data.title as string
+const currentPath = Astro.url.pathname
+
+const product = currentProduct(currentPath)
+const onHub = !!product && currentPath === product.href
+
+// Primary CTA for the hub hero: the product's Quickstart page if it has one,
+// else its first page that isn't the hub itself.
+const ctaHref =
+  product?.pages?.find((p) => /quickstart/i.test(p.label))?.href ??
+  product?.pages?.find((p) => p.href !== product.href)?.href ??
+  product?.href
+---
+
+{
+  onHub ? (
+    <div class="hub-hero">
+      <h1 id="_top" class="hub-hero__title">
+        {product!.name}
+      </h1>
+      <p class="hub-hero__tagline">{product!.description}</p>
+      {ctaHref && (
+        <a class="hub-hero__cta" href={ctaHref}>
+          Quickstart
+          <span class="hub-hero__cta-arrow" aria-hidden="true">→</span>
+        </a>
+      )}
+    </div>
+  ) : (
+    <h1 id="_top">{title}</h1>
+  )
+}
+
+<style>
+  h1 {
+    margin-top: 0.15rem;
+    font-size: var(--sl-text-h1);
+    line-height: var(--sl-line-height-headings);
+    font-weight: 600;
+    color: var(--sl-color-white);
+  }
+
+  /* ---------- Product hub hero ---------- */
+  .hub-hero {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin: 0.5rem 0 0.5rem;
+  }
+
+  .hub-hero__title {
+    margin: 0;
+    font-size: var(--sl-text-h1);
+    line-height: var(--sl-line-height-headings);
+    font-weight: 600;
+    color: var(--sl-color-white);
+  }
+
+  .hub-hero__tagline {
+    margin: 0;
+    max-width: 48ch;
+    font-size: var(--sl-text-lg);
+    line-height: 1.4;
+    color: var(--sl-color-gray-2);
+  }
+
+  .hub-hero__cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    align-self: flex-start;
+    margin-top: 0.5rem;
+    padding: 0.6rem 1.1rem;
+    border-radius: 8px;
+    background: var(--accent-green);
+    color: var(--nav-bg);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 600;
+    font-size: 0.9375rem;
+    text-decoration: none;
+  }
+
+  /* Light theme: dark-green button, white text — darken on hover. The explicit
+     color overrides the global green `a:hover` rule, which would otherwise
+     recolor the label green-on-green. */
+  .hub-hero__cta:hover {
+    background: color-mix(in srgb, var(--accent-green) 88%, #000);
+    color: var(--nav-bg);
+  }
+
+  /* Dark theme: bright-green button, black text — darkening sinks the text into
+     the background, so lighten on hover instead to keep the label legible. */
+  :root[data-theme='dark'] .hub-hero__cta:hover {
+    background: color-mix(in srgb, var(--accent-green) 88%, #fff);
+  }
+
+  .hub-hero__cta-arrow {
+    line-height: 1;
+  }
+</style>

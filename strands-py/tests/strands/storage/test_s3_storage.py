@@ -207,7 +207,6 @@ class TestS3Storage:
         second_call_kwargs = mock_client.list_objects_v2.call_args_list[1][1]
         assert second_call_kwargs["ContinuationToken"] == "token_1"
 
-
     @pytest.mark.asyncio
     async def test_write_indexes_with_search_strategy(self, s3_bucket):
         strategy = AsyncMock()

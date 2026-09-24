@@ -46,7 +46,7 @@ const posts = await getPostsByAuthor(author.id)
   }
 
   .back-link {
-    font-family: 'Figtree', sans-serif;
+    font-family: var(--sl-font);
     font-size: 0.875rem;
     color: var(--sl-color-gray-3);
     text-decoration: none;
@@ -55,7 +55,7 @@ const posts = await getPostsByAuthor(author.id)
   }
 
   .back-link:hover {
-    color: #00cc5f;
+    color: #00cc60;
   }
 
   .author-header {
@@ -76,7 +76,7 @@ const posts = await getPostsByAuthor(author.id)
   }
 
   .author-info h1 {
-    font-family: 'Figtree', sans-serif;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-size: 2rem;
     font-weight: 700;
     color: var(--sl-color-white);
@@ -84,14 +84,14 @@ const posts = await getPostsByAuthor(author.id)
   }
 
   .author-role {
-    font-family: 'Figtree', sans-serif;
+    font-family: var(--sl-font);
     font-size: 1rem;
-    color: #00cc5f;
+    color: #00cc60;
     margin: 0 0 0.75rem;
   }
 
   .author-bio {
-    font-family: 'Figtree', sans-serif;
+    font-family: var(--sl-font);
     font-size: 1rem;
     color: var(--sl-color-gray-2);
     line-height: 1.5;
@@ -99,7 +99,7 @@ const posts = await getPostsByAuthor(author.id)
   }
 
   .author-posts h2 {
-    font-family: 'Figtree', sans-serif;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-size: 1.25rem;
     font-weight: 600;
     color: var(--sl-color-gray-2);

@@ -67,6 +67,8 @@ Thumbs.db
 *.backup
 **/mutants.out*/
 bin/
+# strands-cli ships a tracked bin entrypoint; keep it out of the bin/ rule above.
+!strands-cli/bin/
 
 # LLM
 .claude/settings.local.json

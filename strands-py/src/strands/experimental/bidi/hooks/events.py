@@ -7,12 +7,12 @@ from ....hooks.registry import BaseHookEvent
 
 if TYPE_CHECKING:
     from ..agent.agent import BidiAgent
-    from ..models import BidiModelTimeoutError
+    from ..models import ConnectionTimeoutError
     from ..types.events import StopReason
 
 
 @dataclass
-class BidiHookEvent(BaseHookEvent):
+class _HookEvent(BaseHookEvent):
     """Base class for BidiAgent hook events.
 
     Attributes:
@@ -23,7 +23,7 @@ class BidiHookEvent(BaseHookEvent):
 
 
 @dataclass
-class BidiAgentStopEvent(BidiHookEvent):
+class BidiAgentStopEvent(_HookEvent):
     """Event triggered after BidiAgent attempts to stop its streaming session.
 
     This event is fired after background-task and model cleanup have been attempted,
@@ -43,7 +43,7 @@ class BidiAgentStopEvent(BidiHookEvent):
 
 
 @dataclass
-class BidiResponseCompleteEvent(BidiHookEvent):
+class BidiResponseCompleteEvent(_HookEvent):
     """Event triggered when the model reports that a response has ended.
 
     A connection failure or shutdown without a model-reported completion does not
@@ -59,7 +59,7 @@ class BidiResponseCompleteEvent(BidiHookEvent):
 
 
 @dataclass
-class BidiInterruptionEvent(BidiHookEvent):
+class BidiInterruptionEvent(_HookEvent):
     """Event triggered when model generation is interrupted.
 
     This event is fired when the user interrupts the assistant (e.g., by speaking
@@ -79,7 +79,7 @@ class BidiInterruptionEvent(BidiHookEvent):
 
 
 @dataclass
-class BidiBeforeConnectionRestartEvent(BidiHookEvent):
+class BidiBeforeConnectionRestartEvent(_HookEvent):
     """Event emitted before the agent restarts the model connection.
 
     A restart is triggered either reactively, after the model reports a timeout, or
@@ -91,11 +91,11 @@ class BidiBeforeConnectionRestartEvent(BidiHookEvent):
     """
 
     reason: Literal["timeout", "scheduled"]
-    timeout_error: "BidiModelTimeoutError | None" = None
+    timeout_error: "ConnectionTimeoutError | None" = None
 
 
 @dataclass
-class BidiAfterConnectionRestartEvent(BidiHookEvent):
+class BidiAfterConnectionRestartEvent(_HookEvent):
     """Event emitted after the agent attempts to restart the model connection.
 
     Attributes:

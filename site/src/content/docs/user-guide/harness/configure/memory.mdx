@@ -1,0 +1,144 @@
+---
+title: Give long-term memory
+description: "Strands harness keeps long-term memory on by default: distilled facts recalled across sessions. Move the store, swap the backend, or turn memory off."
+sourceLinks:
+  - path: harness-py/src/strands_harness/memory.py
+  - path: harness-ts/src/memory.ts
+  - path: harness-py/src/strands_harness/agent.py
+sidebar:
+  label: "Give long-term memory"
+---
+
+Long-term memory lets the agent recall durable facts across conversations without you
+re-supplying them. Strands harness keeps it on by default: it distills facts into markdown files,
+searches them before each turn, and folds the top matches into context. Persistence is
+plain files, independent of any session, so memory survives across sessions and works with
+sessions off.
+
+## What memory does by default
+
+With memory on, Strands harness runs a memory manager over a file-backed store under
+`./.agent/memory`. Before each turn it searches that store and injects the most relevant
+entries, and the agent also gets a `search_memory` tool for on-demand recall. Extraction,
+distilling durable facts from the conversation, runs in the background every few turns on a
+small, credential-aligned model, so keeping memory costs little.
+
+Memory injection runs on every turn, not only when the user speaks, so an autonomous step
+or a delegate consults memory at each turn of a multi-step task.
+
+## Move the memory files
+
+Set `memory={"dir": ...}` to store the memory files somewhere other than `./.agent/memory`:
+
+<Tabs>
+  <Tab label="Python">
+    ```python
+    from strands_harness import create_harness
+
+    agent = create_harness(memory={"dir": "/var/lib/agent/memory"})
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    import { createHarness } from '@strands-agents/harness'
+
+    const agent = await createHarness({ memory: { dir: '/var/lib/agent/memory' } })
+    ```
+  </Tab>
+</Tabs>
+
+## Swap the memory backend
+
+To keep facts somewhere other than local files, pass your own memory store (or several)
+as `memory={"stores": [...]}`. Strands harness still owns the manager, so its policy holds: injection on,
+`search_memory` on, and no write tool. This is the seam for a non-file backend without
+giving up Strands harness's defaults:
+
+<Tabs>
+  <Tab label="Python">
+    ```python
+    from strands_harness import create_harness
+    from my_stores import PostgresMemoryStore
+
+    agent = create_harness(memory={"stores": [PostgresMemoryStore(dsn="postgres://...")]})
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    import { createHarness } from '@strands-agents/harness'
+    import { PostgresMemoryStore } from './my-stores'
+
+    const agent = await createHarness({ memory: { stores: [new PostgresMemoryStore('postgres://...')] } })
+    ```
+  </Tab>
+</Tabs>
+
+The `generalist` delegate shares these stores read-only, so it recalls the same memory but
+never writes throwaway subtask noise into it. To replace the manager wholesale, pass a full
+`memory_manager` through to the `Agent` instead; that owns its own stores and Strands harness steps
+aside.
+
+## Turn memory off
+
+Pass `False`/`null` (or set `memory` off) to disable memory entirely:
+
+<Tabs>
+  <Tab label="Python">
+    ```python
+    from strands_harness import create_harness
+
+    agent = create_harness(memory=False)
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    import { createHarness } from '@strands-agents/harness'
+
+    const agent = await createHarness({ memory: false })
+    ```
+  </Tab>
+</Tabs>
+
+## Flush before a short run exits
+
+Extraction is background and turn-triggered, so a short run can end with its latest turns
+not yet written. The simplest way to persist what is pending is to scope the agent so its
+shutdown runs when the block exits — on a normal return and on a thrown error alike:
+
+<Tabs>
+  <Tab label="Python">
+    ```python
+    async with create_harness() as agent:
+        await agent.invoke_async(task)
+    # the agent's shutdown runs here as the scope exits, flushing pending memory
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    await using agent = await createHarness()
+    await agent.invoke(task)
+    // the agent's shutdown runs here as the scope exits, flushing pending memory
+    ```
+  </Tab>
+</Tabs>
+
+If you manage the agent's lifetime yourself, run its shutdown at your shutdown boundary:
+
+<Tabs>
+  <Tab label="Python">
+    ```python
+    agent.shutdown()  # or `await agent.shutdown_async()` from async code
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    await agent.shutdown()
+    ```
+  </Tab>
+</Tabs>
+
+The [Strands harness CLI](../../quickstart/#build-an-agent-with-the-cli) already flushes at the process boundary; a
+library consumer should do the same. For the memory manager and stores, see the Strands Harness SDK's
+[long-term memory](../../../sdk/memory/overview/) documentation. For the full
+option list, see the
+[configuration reference](../../reference/configuration/).

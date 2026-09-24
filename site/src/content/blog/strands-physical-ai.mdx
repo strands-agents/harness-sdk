@@ -18,7 +18,7 @@ draft: false
 
 Agentic AI systems are rapidly expanding beyond the digital world and into the physical, where AI agents perceive, reason, and act in real environments. As AI systems increasingly interact with the physical world through robotics, autonomous vehicles, and smart infrastructure, a fundamental question emerges: how do we build agents that leverage massive cloud compute for complex reasoning while maintaining millisecond-level responsiveness for physical sensing and actuation?
 
-This year has been transformative for agentic AI at AWS. We [launched Strands Agents in May 2025](/blog/introducing-strands-agents/), bringing a simple developer experience and [model-driven approach](/blog/strands-agents-model-driven-approach/) to agent development. In July, [we released version 1.0](https://aws.amazon.com/blogs/opensource/introducing-strands-agents-1-0-production-ready-multi-agent-orchestration-made-simple/) with multi-agent orchestration capabilities and [introduced Amazon Bedrock AgentCore](https://aws.amazon.com/blogs/aws/introducing-amazon-bedrock-agentcore-securely-deploy-and-operate-ai-agents-at-any-scale/) to accelerate AI agents to production at scale. At re:Invent 2025, we expanded Strands with the [TypeScript SDK](https://github.com/strands-agents/sdk-typescript), [evaluations](https://github.com/strands-agents/evals), [bidirectional streaming for voice agents](/docs/user-guide/concepts/bidirectional-streaming/quickstart/), and [steering for guiding agents within boundaries](/docs/user-guide/concepts/plugins/steering/). Today, we're exploring how these capabilities extend to the edge and physical AI, where agents don't just process information but work alongside us in the physical world.
+This year has been transformative for agentic AI at AWS. We [launched Strands Agents in May 2025](/blog/introducing-strands-agents/), bringing a simple developer experience and [model-driven approach](/blog/strands-agents-model-driven-approach/) to agent development. In July, [we released version 1.0](https://aws.amazon.com/blogs/opensource/introducing-strands-agents-1-0-production-ready-multi-agent-orchestration-made-simple/) with multi-agent orchestration capabilities and [introduced Amazon Bedrock AgentCore](https://aws.amazon.com/blogs/aws/introducing-amazon-bedrock-agentcore-securely-deploy-and-operate-ai-agents-at-any-scale/) to accelerate AI agents to production at scale. At re:Invent 2025, we expanded Strands with the [TypeScript SDK](https://github.com/strands-agents/sdk-typescript), [evaluations](https://github.com/strands-agents/evals), [bidirectional streaming for voice agents](/docs/user-guide/sdk/bidirectional-streaming/quickstart/), and [steering for guiding agents within boundaries](/docs/user-guide/sdk/agents/interventions/steering/). Today, we're exploring how these capabilities extend to the edge and physical AI, where agents don't just process information but work alongside us in the physical world.
 
 ![Robot demonstration](./physical-ai/edge-ai-1.webp)
 
@@ -53,7 +53,7 @@ ollama pull qwen3-vl:2b
 pip install 'strands-agents[ollama]'
 ```
 
-A simple starting point is running models locally on edge devices. With Strands' [Ollama provider](/docs/user-guide/concepts/model-providers/ollama/), you can run open-source models like Qwen3-VL directly on edge hardware. Strands also supports [llama.cpp](/docs/user-guide/concepts/model-providers/llamacpp/) for high-performance inference with quantized models, and [MLX](https://github.com/cagataycali/strands-mlx) for running models on Apple Silicon:
+A simple starting point is running models locally on edge devices. With Strands' [Ollama provider](/docs/user-guide/sdk/model-providers/ollama/), you can run open-source models like Qwen3-VL directly on edge hardware. Strands also supports [llama.cpp](/docs/user-guide/sdk/model-providers/llamacpp/) for high-performance inference with quantized models, and [MLX](https://github.com/cagataycali/strands-mlx) for running models on Apple Silicon:
 
 ```python
 from strands import Agent
@@ -205,7 +205,7 @@ When asked "I need to inspect your sensors", the agent reasons that sensors are 
 
 ### Bridging edge and cloud
 
-Edge agents can delegate complex reasoning to the cloud when needed. VLA models provide millisecond-level control for physical actions, but when the system encounters situations requiring deeper reasoning – like planning multi-step tasks or making decisions based on historical patterns – it can consult more powerful cloud-based agents using the [agents-as-tools](/docs/user-guide/concepts/multi-agent/agents-as-tools/) pattern:
+Edge agents can delegate complex reasoning to the cloud when needed. VLA models provide millisecond-level control for physical actions, but when the system encounters situations requiring deeper reasoning – like planning multi-step tasks or making decisions based on historical patterns – it can consult more powerful cloud-based agents using the [agents-as-tools](/docs/user-guide/sdk/multi-agent/agents-as-tools/) pattern:
 
 ```python
 from strands import Agent, tool

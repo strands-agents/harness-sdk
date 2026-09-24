@@ -1,47 +1,64 @@
 /**
- * Strands Agents Documentation Theme
- * 
- * Color scheme from strandsagents.com theme-overrides.css:
- * - Logo green: #00cc5f
- * - Bright green: #00FF77
- * - Dark bg: #0E0E0E
+ * Strands documentation theme
+ *
+ * Shared with the redesigned homepage palette. Starlight semantic tokens keep
+ * docs components readable while using the same brand surfaces and accents.
  */
 
 /* The Figtree web font is loaded via preconnect + <link rel="stylesheet"> in
-   src/components/SiteScripts.astro (included by Head.astro and LandingLayout.astro)
-   rather than an @import here, which would chain a render-blocking fetch. */
+   src/components/SiteScripts.astro (included by Head.astro) rather than an
+   @import here, which would chain a render-blocking fetch. */
 
-/* Dark mode colors. */
-:root {
-	--sl-color-accent-low: #0a2e12;
-	--sl-color-accent: #00cc5f;
-	--sl-color-accent-high: #00FF77;
-	--sl-color-white: #ffffff;
-	--sl-color-gray-1: #E0E0E0;
-	--sl-color-gray-2: #c8d0d8;
-	--sl-color-gray-3: #a0a8b0;
-	--sl-color-gray-4: #777777;
-	--sl-color-gray-5: #333333;
-	--sl-color-gray-6: #1F1F1F;
-	--sl-color-black: #0E0E0E;
-	/* Link hover color - same in light & dark mode */
-	--sl-color-link-hover: #00cc5f;
+/* Skip-to-content link. Starlight's SkipLink ships hide-until-focus styles in
+   a component-scoped @layer; the custom PageFrame override drops that scoped
+   style from the build, leaving the link permanently visible in the top-left.
+   Restore the behaviour here (unlayered, so it wins) — hidden until it takes
+   keyboard focus, then shown as a standard skip target. */
+.sl-skip-link {
+	clip: rect(0, 0, 0, 0);
+	position: fixed;
+	top: 0.75rem;
+	inset-inline-start: 0.75rem;
 }
 
-/* Light mode colors. */
+/* :focus-visible (not :focus) so the link appears for keyboard navigation only.
+   Otherwise closing the cookie dialog moves focus here by mouse and the chip
+   flashes over the logo. */
+.sl-skip-link:focus-visible {
+	clip: unset;
+	z-index: var(--sl-z-index-skiplink);
+	display: block;
+	padding: 0.5rem 1rem;
+	/* Brand-green chip with page-bg text — high contrast in both themes. */
+	background-color: var(--accent-green);
+	color: var(--nav-bg);
+	border-radius: 0.5rem;
+	font-family: 'JetBrains Mono', ui-monospace, monospace;
+	font-weight: 600;
+	text-decoration: none;
+	box-shadow: var(--sl-shadow-lg);
+}
+
+/* Docs headings use JetBrains Mono to echo the homepage section titles. */
+.sl-markdown-content :is(h1, h2, h3, h4, h5, h6),
+.content-panel h1 {
+	font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+.interrupt-flow .mermaid {
+	justify-content: center;
+}
+
+/* Brand palette and shared Starlight tokens live in fonts.css (loaded on every
+   page). Only docs-specific tokens and rules remain here. */
+
+/* Interaction tokens for custom docs controls (dark is the default theme). */
+:root {
+	--docs-hover-bg: color-mix(in srgb, var(--strands-green) 8%, transparent);
+	--docs-active-fg: var(--strands-black);
+}
 :root[data-theme='light'] {
-	--sl-color-accent-low: #d4f5e0;
-	--sl-color-accent: #00cc5f;
-	--sl-color-accent-high: #00B353;
-	--sl-color-white: #0E0E0E;
-	--sl-color-gray-1: #1F1F1F;
-	--sl-color-gray-2: #3d4349;
-	--sl-color-gray-3: #555555;
-	--sl-color-gray-4: #777777;
-	--sl-color-gray-5: #d0d7de;
-	--sl-color-gray-6: #E0E0E0;
-	--sl-color-gray-7: #F9F9F9;
-	--sl-color-black: #ffffff;
+	--docs-hover-bg: color-mix(in srgb, var(--strands-green-3) 10%, transparent);
 }
 
 /* Link hover - green text color (uses same color in light & dark mode) */
@@ -49,11 +66,46 @@ a:hover {
 	color: var(--sl-color-link-hover);
 }
 
-/* Don't change color on hover for selected sidebar items (has green background) */
-a[aria-current="page"]:hover {
-	color: var(--sl-color-text-invert);
+/* LinkCards (e.g. the quick-start cards on the Overview pages) are whole-card
+   anchors, so the global green `a:hover` recolors the card title and drops its
+   contrast against the card surface. Keep card text at the standard foreground
+   on hover; the border already signals the hover state. */
+.sl-link-card:hover .title {
+	color: var(--sl-color-white);
+}
+.sl-link-card:hover .description {
+	color: var(--sl-color-gray-2);
 }
 
+/* Selected sidebar items use the homepage control treatment: green surface,
+   dark foreground in both themes for reliable contrast. */
+a[aria-current="page"]:hover {
+	color: var(--docs-active-fg);
+}
+
+
+/* Dark-mode sidebar: pure black to blend with the new homepage styling
+   (Starlight defaults it to gray-6/charcoal). Light mode keeps its surface.
+   The sidebar/content edge reads as a divider via --sl-color-hairline-shade,
+   set to charcoal in fonts.css. */
+:root[data-theme='dark'] {
+	--sl-color-bg-sidebar: var(--strands-black);
+	/* Nav-surface token defaults to charcoal (gray-6). Our chrome (header,
+	   sidebar, footer, page) is all pure black, so the leftover charcoal shows
+	   up on the mobile table-of-contents bar. Match it to black too. */
+	--sl-color-bg-nav: var(--strands-black);
+}
+
+/* "New"/status badges: Starlight's `tip` variant renders purple, which clashes
+   with the brand palette. Retint sidebar + page badges to the brand green. */
+.sl-badge.tip {
+	--sl-color-purple-low: color-mix(in srgb, var(--strands-green) 18%, transparent);
+	--sl-color-purple: var(--strands-green);
+	--sl-color-purple-high: var(--strands-green);
+	background-color: color-mix(in srgb, var(--strands-green) 15%, transparent);
+	border-color: color-mix(in srgb, var(--strands-green) 45%, transparent);
+	color: var(--sl-color-text-accent, var(--strands-green));
+}
 
 /* Layout */
 :root {

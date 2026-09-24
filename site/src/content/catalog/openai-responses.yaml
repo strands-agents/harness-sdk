@@ -6,5 +6,5 @@ languages:
   python: {}
   typescript: {}
 github: https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/openai_responses.py
-docsPage: docs/user-guide/concepts/model-providers/openai-responses
+docsPage: docs/user-guide/sdk/model-providers/openai-responses
 addedDate: 2026-03-04

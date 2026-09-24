@@ -32,23 +32,23 @@ There is no built-in way to connect a browser client to a bidi agent. Users want
 
 ```
 ┌─────────────┐       ┌──────────────┐       ┌──────────────────┐       ┌──────────────┐
-│  BidiInput  │─poll─▶│  BidiAgent   │─send─▶│  _BidiAgentLoop  │─send─▶│  BidiModel   │
+│ InputStream │─poll─▶│  BidiAgent   │─send─▶│    _AgentLoop    │─send─▶│  BidiModel   │
 └─────────────┘       └──────────────┘       └──────────────────┘       └──────────────┘
                              ▲                        │                         │
 ┌─────────────┐              │                   _event_queue                   │
-│ BidiOutput  │◀──yield──────┘                        ▲                         │
+│ OutputStream│◀──yield──────┘                        ▲                         │
 └─────────────┘                            _run_model() consumes ◀──receive─────┘
 ```
 
 **IO Protocols** — pull-based input, push-based output:
 
 ```python
-class BidiInput(Protocol):
+class InputStream(Protocol):
     async def start(self, agent: BidiAgent) -> None: ...
     async def stop(self) -> None: ...
-    async def __call__(self) -> BidiInputEvent: ...
+    async def __call__(self) -> BidiAgentInput: ...
 
-class BidiOutput(Protocol):
+class OutputStream(Protocol):
     async def start(self, agent: BidiAgent) -> None: ...
     async def stop(self) -> None: ...
     async def __call__(self, event: BidiOutputEvent) -> None: ...
@@ -60,12 +60,12 @@ IO adapters are interchangeable. The agent, loop, and model layers are unaware o
 
 ```python
 from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.io import BidiAudioIO, BidiTextIO
+from strands.experimental.bidi.io import AudioIO, ConsoleIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 agent = BidiAgent(model=BedrockNovaSonicModel(), tools=[my_tool], system_prompt="You are a helpful assistant.")
-audio_io = BidiAudioIO()
-text_io = BidiTextIO()
+audio_io = AudioIO()
+text_io = ConsoleIO()
 
 # Mic audio in, speaker audio + transcript text out
 await agent.run(
@@ -157,8 +157,8 @@ Amazon Interactive Video Service (IVS) Real-Time Streaming is a fully managed AW
 │  Browser Client    │            │  Strands Server                       │
 │                    │  WebRTC    │                                       │
 │  getUserMedia()    │◀═media════▶│  BidiWebRtcIO                        │
-│  + IVS/KVS SDK    │  tracks    │    │  input()  → BidiInput            │
-│  + data channel   │◀═data═════▶│    │  output() → BidiOutput           │
+│  + IVS/KVS SDK    │  tracks    │    │  input()  → InputStream          │
+│  + data channel   │◀═data═════▶│    │  output() → OutputStream         │
 │                    │  channel   │    │                                  │
 └────────────────────┘            │    ▼                                  │
                                   │  BidiAgent (any BidiModel)            │
@@ -222,11 +222,13 @@ class SignalingProvider(Protocol):
 
 ### BidiWebRtcIO
 
-Follows the same `input()` / `output()` factory pattern as `BidiAudioIO` and `BidiTextIO`. Contains all shared logic — audio resampling, event routing, buffer management.
+Follows the same `input()` / `output()` factory pattern as `AudioIO` and
+`ConsoleIO`. Contains all shared logic: audio resampling, event routing, and buffer
+management.
 
 ```python
 class BidiWebRtcIO:
-    """Bridges a SignalingProvider to BidiInput/BidiOutput.
+    """Bridges a SignalingProvider to InputStream and OutputStream.
 
     Consumes a SignalingProvider and translates between WebRTC
     media/data and BidiAgent events. Provider-agnostic — the same
@@ -237,18 +239,20 @@ class BidiWebRtcIO:
         self._signaling = signaling
         self._config = config
 
-    def input(self) -> BidiInput:
-        """Returns a BidiInput that reads audio from the media track
+    def input(self) -> InputStream:
+        """Returns an InputStream that reads audio from the media track
         and text/image from the data channel."""
         ...
 
-    def output(self) -> BidiOutput:
-        """Returns a BidiOutput that sends audio to the media track
+    def output(self) -> OutputStream:
+        """Returns an OutputStream that sends audio to the media track
         and events to the data channel."""
         ...
 ```
 
-**Input behavior:** Calls `signaling.receive_media()` to get audio frames, resamples to model format, produces `BidiAudioInputEvent`. Reads `signaling.receive_data()` for text/image input.
+**Input behavior:** Calls `signaling.receive_media()` to get audio frames, resamples
+to the model format, and produces `AudioDelta` values. Reads
+`signaling.receive_data()` for text and image input.
 
 **Output behavior:** Routes events by type:
 - `BidiAudioStreamEvent` → resample to WebRTC format + `signaling.send_media()`
@@ -362,10 +366,10 @@ await agent.run(inputs=[ivs_io.input()], outputs=[ivs_io.output()])
 ### Composable Outputs
 
 ```python
-from strands.experimental.bidi.io import BidiTextIO
+from strands.experimental.bidi.io import ConsoleIO
 
 # Multiple outputs receive the same events — useful for logging or multi-channel delivery
-text_io = BidiTextIO()
+text_io = ConsoleIO()
 await agent.run(
     inputs=[ivs_io.input()],
     outputs=[ivs_io.output(), text_io.output()],
@@ -470,7 +474,8 @@ All lazy-loaded — importing strands bidi without WebRTC dependencies still wor
 1. **Server-as-peer** — The only model-agnostic architecture. Works with all three providers unchanged.
 2. **SignalingProvider is the only extension point** — Swap infrastructure without touching IO logic or agent code.
 3. **Media track for audio, data channel for everything else** — Preserves WebRTC's optimized real-time pipeline for audio; reliable delivery for events.
-4. **BidiInput/BidiOutput unchanged** — WebRTC is purely an IO-layer concern. No core bidi changes.
+4. **InputStream/OutputStream unchanged**: WebRTC is purely an I/O-layer concern. No
+   core bidi changes.
 5. **1:1 signaling provider to client** — Multi-client = multiple agents. Application layer handles routing.
 6. **Client-side code is out of scope** — The SDK provides the server adapter. Browser code uses IVS/KVS SDKs directly.
 

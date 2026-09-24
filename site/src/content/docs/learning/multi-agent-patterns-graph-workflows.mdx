@@ -8,120 +8,87 @@ redirectFrom:
 <YouTube id="jDeV2V5fJUQ" title="Lesson 11: Multi-Agent Patterns: Graph Workflows" />
 *[Watch on YouTube](https://www.youtube.com/watch?v=jDeV2V5fJUQ&list=PLDzwjhH-4yhU&index=11)*
 
-*Code for this lesson can be found
-[**here**](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/11-graphs).*
+:::note[About this lesson]
+The videos in this course are a snapshot in time. Strands is under active development, so the code featured on this page reflects the most up-to-date patterns, but the concepts covered in the video still apply. When in doubt, trust the code.
+:::
 
-### The Limitation of "Agents as Tools"
+*Code for this lesson: [`samples/11-graphs`](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/11-graphs)*
 
-The agent as a tool pattern works well when tasks are completely independent and you want
-the main agent to have the maximum amount of adaptability. However, it is not the best
-choice for every workload.
+## Deterministic Control Over Execution
 
-With that pattern, there is no way to express direct dependencies or ensure agents execute
-in a specific, predictable order.
+Graphs and workflows give you deterministic control over multi-agent execution. Unlike agents-as-tools, where the orchestrator decides the flow dynamically, these patterns let you define the exact execution order, dependencies, and parallel paths upfront. Use them when you can draw the workflow on a whiteboard.
 
-Graphs solve this. You define the execution order of your agents explicitly. In this
-paradigm, each node of the graph is a full agent (which can have its own tools, MCP
-servers, skills, plugins, or whatever else they need), and you connect these agents
-through edges which express dependencies. The graph structure in Strands resolves what can
-run in parallel and what has to wait based on how you define it.
+## Graph
 
-### Building a Graph with Graph Builder
-
-Let's build a graph to see how it works. Imagine we have four agents:
-
-1. A **researcher**
-2. An **analyst**
-3. A **summarizer**
-4. A **report writer**
-
-We want the researcher to run first. When it finishes, we want the analyst and summarizer
-to branch off and run in parallel. Once both of those are finished, the report writer
-should combine everything into the final output.
-
-To enforce that exact order, we use the `GraphBuilder`:
+Each node is a full agent; edges express dependencies. A node executes when all its incoming edges are satisfied, and the graph resolves what runs in parallel and what waits.
 
 ```python
+from strands import Agent
+from strands.multiagent import GraphBuilder
+from strands.vended_tools.web_fetch import web_fetch
+
+researcher = Agent(
+    name="researcher",
+    system_prompt="Gather comprehensive information from the web.",
+    tools=[web_fetch],
+)
+
+analyst = Agent(
+    name="analyst",
+    system_prompt="Identify patterns, trends, and key insights from research.",
+)
+
+summarizer = Agent(
+    name="summarizer",
+    system_prompt="Condense raw research into concise key points.",
+)
+
+report_writer = Agent(
+    name="report_writer",
+    system_prompt="Synthesize analysis and summaries into a final report.",
+)
+
 builder = GraphBuilder()
+builder.add_node(researcher, "research")
+builder.add_node(analyst, "analysis")
+builder.add_node(summarizer, "summarize")
+builder.add_node(report_writer, "report")
 
-# Register each agent as a node in the graph (executor first, node id second)
-builder.add_node(researcher_agent, "researcher")
-builder.add_node(analyst_agent, "analyst")
-builder.add_node(summarizer_agent, "summarizer")
-builder.add_node(writer_agent, "writer")
+builder.add_edge("research", "analysis")
+builder.add_edge("research", "summarize")   # analyst + summarizer run in parallel
+builder.add_edge("analysis", "report")
+builder.add_edge("summarize", "report")      # report waits for both
 
-# Connect them using edges
-builder.add_edge("researcher", "analyst")
-builder.add_edge("researcher", "summarizer")
-builder.add_edge("analyst", "writer")
-builder.add_edge("summarizer", "writer")
+builder.set_execution_timeout(600)
+graph = builder.build()
 
-# Compile into an executable workflow
-workflow = builder.build()
-
+result = graph("Research the impact of AI on healthcare")
 ```
 
-A downstream target node cannot execute until all of its upstream dependencies complete.
-We defined our edges so the researcher runs first, the analyst and summarizer execute in
-parallel, and the report writer waits for both of them before running. Calling `.build()`
-validates the graph structure and returns an executable workflow.
+📂 [basic_graph.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/11-graphs/basic_graph.py)
 
-You can execute the completed graph just like a function, passing in a task string and
-getting back a graph result.
+Data flow: entry nodes receive the original task. Downstream nodes receive the original task plus labeled outputs from their dependencies. Use `invocation_state` for metadata (user IDs, feature flags) that shouldn't be exposed to the models.
 
-### Data Flow and State Management in Graphs
+Common shapes: sequential pipelines, parallel fan-out (as above), conditional branching, and cyclic feedback loops. If you build a cycle, set `set_max_node_executions` so it can't loop forever.
 
-When executing a graph, data flows through the nodes systematically:
+## Key Concepts
 
-* **Entry Points:** Entry point nodes receive the original user task directly.
-* **Downstream Nodes:** Downstream nodes receive the original task *plus* the outputs from
-  their dependency nodes.
-* **Automatic Stitching:** Each dependency result is labeled with its respective node ID
-  and combined into the downstream prompt automatically.
+- **Nodes** are agents (or any callable). They execute when all incoming edges are satisfied.
+- **Edges** define dependencies. An edge from A to B means B waits for A.
+- **Parallel fan-out**: nodes without dependencies on each other run concurrently.
+- **Context passing**: each step receives the output of its predecessors.
+- **When to use**: pipelines with known structure, fan-out/fan-in, workflows that need guaranteed execution order, and processes requiring audit trails.
 
-In our example, the report writer receives the original task, the analyst's output, and
-the summarizer's output all stitched together into one structured input. You can design
-downstream prompts to expect and reason over these multiple labeled inputs.
+## Comparison
 
-Sometimes you need to share information across the graph without exposing it directly to
-the model's prompt. That is where **invocation state** comes in. Invocation state is a
-shared dictionary passed into the graph at runtime that every node can access. This is
-useful for passing user IDs, feature flags, configurations, or metadata that components
-attached to each agent need, but the model itself doesn't need to read.
+| Pattern | Flow Control | Best For |
+|---------|-------------|----------|
+| Agents as Tools | Orchestrator decides | Separable domains, synthesis |
+| Graphs | Defined by edges | Known pipelines, parallelism |
+| Swarms | Agents decide | Unknown sequences, exploration |
 
-### Four Common Graph Patterns
+## Resources
 
-There are four common graph patterns you'll see repeatedly in multi-agent systems:
-
-* **Sequential Pipeline:** One agent runs after another in a strict sequence. This is the
-  simplest graph pattern.
-* **Parallel Fan-Out with Aggregation:** One node fans work out to multiple parallel
-  agents, and an aggregator node waits for all of them to finish before combining the
-  results.
-* **Conditional Branching:** Agents can have conditions attached to them so that different
-  branches execute depending on runtime decisions or outputs.
-* **Feedback Loops:** The graph becomes cyclic. For example, a writer agent produces a
-  draft, a reviewer agent evaluates it, and if revisions are needed, the workflow loops
-  back to the writer before eventually continuing to the publisher.
-
-For cyclic graphs, there are two important safety controls worth knowing about:
-
-1. `set_max_node_executions`: Limits the total number of node runs to prevent infinite
-   loops.
-2. `reset_on_revisit`: Clears a node's conversation history each time it re-enters the
-   cycle so that context doesn't grow uncontrollably across multiple revisions.
-
-Both of these are important for controlling reliability and cost in iterative or
-long-running workflows.
-
-### When to Use Graphs (and Their Trade-offs)
-
-The main trade-off of using graphs is that you have to predefine the structure up front.
-
-If the optimal execution path depends heavily on what the agents discover dynamically
-during runtime, graphs can become too rigid. This is exactly why the next pattern exists:
-**agent swarms**. Instead of predefining the workflow structure, swarms allow the
-execution path to emerge dynamically as the agents collaborate and make decisions in real
-time. We will cover that in the next lesson.
-
-*Learn more: [Graph Multi-Agent Pattern](/docs/user-guide/concepts/multi-agent/graph/)*
+- 📖 [Graph](/docs/user-guide/sdk/multi-agent/graph/)
+- 📖 [Workflow](/docs/user-guide/sdk/multi-agent/workflow/)
+- 📖 [Multi-Agent Patterns Overview](/docs/user-guide/sdk/multi-agent/multi-agent-patterns/)

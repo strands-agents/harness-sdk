@@ -314,7 +314,7 @@ export interface LocalAgent {
   readonly storage?: Storage | undefined
 
   /**
-   * The resolved context manager instance. Present when a preset or config was provided.
+   * The resolved context manager instance. Present when a preset, config, or instance was provided.
    *
    * @internal
    */

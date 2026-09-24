@@ -2,21 +2,12 @@
 
 import copy
 from collections.abc import Mapping
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal
+
+from typing_extensions import Required, TypedDict
 
 from ....models._validation import validate_config_keys
 from ..types.events import AudioChannel, AudioFormat
-
-__all__ = [
-    "AudioConfig",
-    "AudioStreamConfig",
-    "BedrockNovaSonicAudioConfig",
-    "BedrockNovaSonicAudioStreamConfig",
-    "BidiConnectionConfig",
-    "BidiModelConfig",
-    "GoogleGeminiLiveAudioConfig",
-    "GoogleGeminiLiveAudioStreamConfig",
-]
 
 
 class AudioStreamConfig(TypedDict):
@@ -94,7 +85,7 @@ class GoogleGeminiLiveAudioConfig(TypedDict, total=False):
     input: GoogleGeminiLiveAudioStreamConfig
 
 
-class BidiConnectionConfig(TypedDict, total=False):
+class ConnectionConfig(TypedDict, total=False):
     """Declared reconnect timing for a bidirectional model.
 
     Providers declare this so the agent loop can reconnect proactively, before the provider
@@ -116,8 +107,22 @@ class BidiConnectionConfig(TypedDict, total=False):
     auto_reconnect: bool
 
 
-class BidiModelConfig(TypedDict, total=False):
+class ModelConfig(TypedDict, total=False):
     """Configuration shared by bidirectional model providers.
+
+    Attributes:
+        model_id: Provider model identifier.
+        params: Provider-specific keyword arguments passed to the model request or session.
+        connection: Reconnect timing overrides.
+    """
+
+    model_id: Required[str]
+    params: dict[str, Any] | None
+    connection: ConnectionConfig
+
+
+class ModelUpdateConfig(TypedDict, total=False):
+    """Partial configuration update shared by bidirectional model providers.
 
     Attributes:
         model_id: Provider model identifier.
@@ -127,13 +132,21 @@ class BidiModelConfig(TypedDict, total=False):
 
     model_id: str
     params: dict[str, Any] | None
-    connection: BidiConnectionConfig
+    connection: ConnectionConfig
 
 
 def _validate_model_config(config: Mapping[str, Any]) -> None:
     """Validate shared bidirectional model configuration."""
-    validate_config_keys(config, BidiModelConfig)
-    validate_config_keys(config.get("connection", {}), BidiConnectionConfig)
+    missing_keys = ModelConfig.__required_keys__ - config.keys()
+    if missing_keys:
+        raise ValueError(f"Missing required configuration parameters: {sorted(missing_keys)}.")
+
+    model_id = config["model_id"]
+    if not isinstance(model_id, str) or not model_id:
+        raise ValueError("model_id must be a non-empty string")
+
+    validate_config_keys(config, ModelConfig)
+    validate_config_keys(config.get("connection", {}), ConnectionConfig)
 
 
 def _validate_audio_config(config: AudioConfig) -> None:

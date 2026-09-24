@@ -3,7 +3,7 @@
 from typing import TypedDict
 
 
-class BidiAudioProcessorConfig(TypedDict, total=False):
+class AudioProcessorConfig(TypedDict, total=False):
     """Configure microphone audio processing.
 
     Attributes:
@@ -15,10 +15,10 @@ class BidiAudioProcessorConfig(TypedDict, total=False):
     stream_delay_ms: int
 
 
-class BidiAudioIOConfig(TypedDict, total=False):
+class AudioIOConfig(TypedDict, total=False):
     """Configure bidirectional audio input and output."""
 
-    audio_processor: BidiAudioProcessorConfig | bool | None
+    audio_processor: AudioProcessorConfig | bool | None
     input_buffer_size: int | None
     input_device_index: int | None
     input_frames_per_buffer: int
@@ -27,4 +27,4 @@ class BidiAudioIOConfig(TypedDict, total=False):
     output_frames_per_buffer: int
 
 
-__all__ = ["BidiAudioIOConfig", "BidiAudioProcessorConfig"]
+__all__ = ["AudioIOConfig", "AudioProcessorConfig"]

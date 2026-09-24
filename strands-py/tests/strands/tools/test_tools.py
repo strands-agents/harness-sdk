@@ -1,3 +1,5 @@
+import copy
+
 import pytest
 
 import strands
@@ -322,6 +324,62 @@ def test_normalize_tool_spec_raises_value_error_when_too_deeply_nested():
 
     with pytest.raises(ValueError, match="nesting exceeds"):
         normalize_tool_spec(tool_spec)
+
+
+def test_normalize_schema_does_not_mutate_input():
+    """Normalization is returned to the caller and never written into the input it was given.
+
+    Guards https://github.com/strands-agents/harness-sdk/issues/3910.
+    """
+    schema = {"type": "object", "properties": {"name": {}, "user": {"type": "object", "properties": {"id": {}}}}}
+    exp_schema = copy.deepcopy(schema)
+
+    tru_normalized = normalize_schema(schema)
+
+    assert schema == exp_schema
+    exp_normalized = {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Property name"},
+            "user": {
+                "type": "object",
+                "properties": {"id": {"type": "string", "description": "Property id"}},
+                "required": [],
+            },
+        },
+        "required": [],
+    }
+    assert tru_normalized == exp_normalized
+
+
+def test_normalize_tool_spec_does_not_mutate_input():
+    """Normalizing a tool spec leaves the caller's spec and its nested schema untouched.
+
+    Guards https://github.com/strands-agents/harness-sdk/issues/3910.
+    """
+    tool_spec = {
+        "name": "test_tool",
+        "description": "A test tool",
+        "inputSchema": {"json": {"type": "object", "properties": {"query": {}}}, "extra": "keep"},
+    }
+    exp_tool_spec = copy.deepcopy(tool_spec)
+
+    tru_normalized = normalize_tool_spec(tool_spec)
+
+    assert tool_spec == exp_tool_spec
+    exp_normalized = {
+        "name": "test_tool",
+        "description": "A test tool",
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {"query": {"type": "string", "description": "Property query"}},
+                "required": [],
+            },
+            "extra": "keep",
+        },
+    }
+    assert tru_normalized == exp_normalized
 
 
 def test_normalize_schema_with_const_constraint():
