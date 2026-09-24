@@ -1645,6 +1645,9 @@ class MCPClient(ToolProvider):
         elif isinstance(content, MCPImageContent):
             image_mime = cast(str, mime_type(content))
             self._log_debug_with_thread("mapping MCP image content with mime type: %s", image_mime)
+            if image_mime not in MIME_TO_FORMAT:
+                logger.warning("mime_type=<%s> | unsupported mcp image mime type, falling back to json", image_mime)
+                return {"json": content.model_dump()}
             return {
                 "image": {
                     "format": MIME_TO_FORMAT[image_mime],
