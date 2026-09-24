@@ -26,6 +26,7 @@ from strands.experimental.bidi.types import (
     AudioDelta,
     BidiAudioStreamEvent,
     BidiConnectionStartEvent,
+    BidiErrorEvent,
     BidiInterruptionEvent,
     BidiResponseCompleteEvent,
     BidiTranscriptCompleteEvent,
@@ -629,11 +630,68 @@ async def test_event_conversion(model):
     converted = model._convert_openai_event(error_cancel_not_active)
     assert converted is None  # Should be suppressed
 
-    # Test error handling - other errors should be logged but return None
-    error_other = {"type": "error", "error": {"code": "some_other_error", "message": "Something went wrong"}}
+    # Test error handling - other errors should be visible to consumers
+    error_other = {
+        "type": "error",
+        "event_id": "event-123",
+        "error": {
+            "type": "invalid_request_error",
+            "code": "some_other_error",
+            "message": "Something went wrong",
+            "event_id": "client-event-123",
+            "param": "response",
+        },
+    }
     converted = model._convert_openai_event(error_other)
-    assert converted is None
+    assert isinstance(converted, list)
+    assert len(converted) == 1
+    assert isinstance(converted[0], BidiErrorEvent)
+    assert isinstance(converted[0].error, RuntimeError)
+    assert converted[0].message == "Something went wrong"
+    assert converted[0].details == {
+        "type": "invalid_request_error",
+        "code": "some_other_error",
+        "message": "Something went wrong",
+        "event_id": "client-event-123",
+        "param": "response",
+        "server_event_id": "event-123",
+    }
 
+    await model.stop()
+
+
+@pytest.mark.asyncio
+async def test_receive_continues_after_openai_error(mock_websockets_connect, model):
+    """A recoverable provider error is emitted without terminating the reader."""
+    _, websocket = mock_websockets_connect
+    websocket.recv.side_effect = [
+        json.dumps(
+            {
+                "type": "error",
+                "error": {
+                    "type": "invalid_request_error",
+                    "code": "invalid_value",
+                    "message": "Invalid request",
+                },
+            }
+        ),
+        json.dumps({"type": "response.output_text.delta", "delta": "Still connected"}),
+    ]
+
+    await model.start()
+    receiver = model.receive()
+
+    connection_event = await receiver.__anext__()
+    error_event = await receiver.__anext__()
+    transcript_event = await receiver.__anext__()
+
+    assert isinstance(connection_event, BidiConnectionStartEvent)
+    assert isinstance(error_event, BidiErrorEvent)
+    assert error_event.message == "Invalid request"
+    assert transcript_event == BidiTranscriptStreamEvent("Still connected", "assistant")
+    assert websocket.recv.await_count == 2
+
+    await receiver.aclose()
     await model.stop()
 
 

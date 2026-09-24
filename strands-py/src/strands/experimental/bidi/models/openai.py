@@ -28,6 +28,7 @@ from ..types.content import BidiContentBlock, BidiContentDelta
 from ..types.events import (
     BidiAudioStreamEvent,
     BidiConnectionStartEvent,
+    BidiErrorEvent,
     BidiInterruptionEvent,
     BidiOutputEvent,
     BidiResponseCompleteEvent,
@@ -291,6 +292,21 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             return BidiInterruptionEvent(reason="user_speech")
         # Other voice activity events are logged but don't create events
         return None
+
+    def _create_error_event(self, openai_event: dict[str, Any]) -> BidiErrorEvent | None:
+        """Convert an OpenAI error without terminating a recoverable session."""
+        error_data = openai_event.get("error", {})
+        if error_data.get("code") == "response_cancel_not_active":
+            logger.debug("openai response cancel attempted when no response active")
+            return None
+
+        logger.error("error=<%s> | openai realtime error", error_data)
+        error_message = error_data.get("message") or "OpenAI Realtime API error"
+        error_details = dict(error_data)
+        if server_event_id := openai_event.get("event_id"):
+            error_details["server_event_id"] = server_event_id
+
+        return BidiErrorEvent(RuntimeError(error_message), details=error_details)
 
     def _build_session_config(self, system_prompt: str | None, tools: list[ToolSpec] | None) -> dict[str, Any]:
         """Build session configuration for OpenAI Realtime API.
@@ -691,19 +707,8 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             return None
 
         elif event_type == "error":
-            error_data = openai_event.get("error", {})
-            error_code = error_data.get("code", "")
-
-            # Suppress expected errors that don't affect session state
-            if error_code == "response_cancel_not_active":
-                # This happens when trying to cancel a response that's not active
-                # It's safe to ignore as the session remains functional
-                logger.debug("openai response cancel attempted when no response active")
-                return None
-
-            # Log other errors
-            logger.error("error=<%s> | openai realtime error", error_data)
-            return None
+            error_event = self._create_error_event(openai_event)
+            return [error_event] if error_event else None
 
         else:
             logger.debug("event_type=<%s> | unhandled openai event type", event_type)
