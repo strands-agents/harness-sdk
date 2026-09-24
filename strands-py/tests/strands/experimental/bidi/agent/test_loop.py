@@ -1181,8 +1181,8 @@ async def test_send_complete_input_marks_turn_awaiting_response(loop, agent, age
 
 
 @pytest.mark.asyncio
-async def test_user_transcript_marks_turn_awaiting_response(loop, agent):
-    """Transcript start reserves history, and its deltas keep the turn awaiting a reply."""
+async def test_user_transcript_start_marks_turn_awaiting_response(loop, agent):
+    """User transcript start keeps scheduled reconnects waiting before any text arrives."""
     start = BidiTranscriptStartEvent(role="user", content_id="speech")
     partial = BidiTranscriptDeltaEvent(delta="what's the", role="user", content_id="speech")
     send_delta = asyncio.Event()
@@ -1198,7 +1198,8 @@ async def test_user_transcript_marks_turn_awaiting_response(loop, agent):
     await loop.start()
     reader = loop.receive()
     assert await anext(reader) == start
-    assert loop._turn_complete.is_set()
+    assert loop._awaiting_response is True
+    assert not loop._turn_complete.is_set()
 
     send_delta.set()
     assert await anext(reader) == partial
@@ -1221,42 +1222,42 @@ async def test_user_transcript_marks_turn_awaiting_response(loop, agent):
 @pytest.mark.asyncio
 async def test_assistant_transcript_does_not_mark_awaiting_response(loop, agent, agenerator):
     """A model (assistant) transcript is output, not an owed user turn, so it must not hold."""
+    start = BidiTranscriptStartEvent(role="assistant", content_id="assistant-transcript")
     partial = BidiTranscriptDeltaEvent(delta="hi there", role="assistant", content_id="assistant-transcript")
-    agent.model.receive = unittest.mock.Mock(return_value=agenerator([partial]))
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([start, partial]))
 
     await loop.start()
-    for _ in range(10):
-        await asyncio.sleep(0)
+    reader = loop.receive()
+    assert [await anext(reader) for _ in range(2)] == [start, partial]
 
     assert loop._awaiting_response is False
+    assert loop._turn_complete.is_set()
 
+    await reader.aclose()
     await loop.stop()
 
 
 @pytest.mark.asyncio
-async def test_response_stop_clears_awaiting_response(loop, agent, agenerator):
-    """A completed reply clears the awaited-response latch."""
+@pytest.mark.parametrize("delta_after_response", [False, True])
+async def test_response_stop_clears_awaiting_response(loop, agent, agenerator, delta_after_response):
+    """User transcript deltas do not reopen a completed turn."""
+    partial = BidiTranscriptDeltaEvent(delta="earlier question", role="user", content_id="speech")
+    response_stop = BidiResponseStopEvent(response_id="r1", stop_reason="end_turn")
     events = [
         BidiResponseStartEvent(response_id="r1"),
-        # A lagging user input transcript arrives during the reply.
-        BidiTranscriptDeltaEvent(
-            delta="earlier question",
-            role="user",
-            content_id="speech",
-        ),
-        BidiResponseStopEvent(response_id="r1", stop_reason="end_turn"),
+        BidiTranscriptStartEvent(role="user", content_id="speech"),
+        *([response_stop, partial] if delta_after_response else [partial, response_stop]),
+        BidiTranscriptStopEvent(transcript="earlier question", role="user", content_id="speech"),
     ]
     agent.model.receive = unittest.mock.Mock(return_value=agenerator(events))
 
     await loop.start()
-    # Drain through the reply so all three events are applied (the event queue has maxsize=1, so a
-    # reader with no consumer would stall after the first event).
-    async for event in loop.receive():
-        if isinstance(event, BidiResponseStopEvent):
-            break
+    reader = loop.receive()
+    assert [await anext(reader) for _ in events] == events
     assert loop._awaiting_response is False
     assert loop._turn_complete.is_set()  # turn is idle, so a proactive reconnect fires immediately
 
+    await reader.aclose()
     await loop.stop()
 
 

@@ -41,7 +41,6 @@ from ..types.events import (
     BidiOutputEvent,
     BidiResponseStartEvent,
     BidiResponseStopEvent,
-    BidiTranscriptDeltaEvent,
     BidiTranscriptStartEvent,
     BidiTranscriptStopEvent,
     BidiUsageEvent,
@@ -616,6 +615,10 @@ class _AgentLoop:
                     self._update_turn_state()
 
                 elif isinstance(event, BidiTranscriptStartEvent):
+                    if event.role == "user":
+                        self._awaiting_response = True
+                        self._update_turn_state()
+
                     message: Message = {
                         "role": event.role,
                         "content": [],
@@ -627,11 +630,6 @@ class _AgentLoop:
                 elif isinstance(event, BidiAudioDeltaEvent):
                     if response_start_time is not None and time_to_first_audio_ms is None:
                         time_to_first_audio_ms = int((time.perf_counter() - response_start_time) * 1000)
-
-                elif isinstance(event, BidiTranscriptDeltaEvent):
-                    if event.role == "user":
-                        self._awaiting_response = True
-                        self._update_turn_state()
 
                 elif isinstance(event, BidiTranscriptStopEvent):
                     message = transcripts.pop(event.content_id)
