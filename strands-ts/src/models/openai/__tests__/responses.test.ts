@@ -4,11 +4,12 @@ import { isNode } from '../../../__fixtures__/environment.js'
 import { OpenAIModel } from '../index.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../../errors.js'
 import { collectIterator } from '../../../__fixtures__/model-test-helpers.js'
-import { Message, TextBlock, ToolUseBlock, ToolResultBlock } from '../../../types/messages.js'
+import { Message, TextBlock, ToolUseBlock, ToolResultBlock, ReasoningBlock } from '../../../types/messages.js'
 import { ImageBlock, DocumentBlock } from '../../../types/media.js'
 import { CitationsBlock } from '../../../types/citations.js'
 import { StateStore } from '../../../state-store.js'
 import { logger } from '../../../logging/logger.js'
+import type { ModelContentBlockDeltaEvent } from '../../../models/streaming.js'
 
 /**
  * Build a mock OpenAI client whose `responses.create` returns the given async generator.
@@ -920,6 +921,253 @@ describe("OpenAIModel (api: 'responses')", () => {
       const stops = events.filter((e: any) => e.type === 'modelContentBlockStopEvent')
       expect(starts).toHaveLength(5)
       expect(stops).toHaveLength(5)
+    })
+
+    describe('reasoning support', () => {
+      it('handles Kimi K3 response.reasoning.delta streaming', async () => {
+        const client = createMockClient(async function* () {
+          yield { type: 'response.created', response: { id: 'r' } }
+          yield { type: 'response.reasoning.delta', delta: 'Let me think step by step...' }
+          yield { type: 'response.reasoning.delta', delta: ' First, I need to add the numbers.' }
+          yield { type: 'response.reasoning.done' }
+          yield { type: 'response.output_text.delta', delta: 'The answer is 42.' }
+          yield { type: 'response.completed', response: {} }
+        })
+        const model = new OpenAIModel({ api: 'responses', client })
+        const events = await collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('x')] })]))
+
+        const deltaEvents = events.filter((e: any) => e.type === 'modelContentBlockDeltaEvent') as ModelContentBlockDeltaEvent[]
+        const reasoningDeltas = deltaEvents.filter((e) => e.delta.type === 'reasoningContentDelta') as Array<ModelContentBlockDeltaEvent & { delta: { type: 'reasoningContentDelta'; text: string } }>
+        expect(reasoningDeltas).toHaveLength(2)
+        expect(reasoningDeltas[0]!.delta.text).toBe('Let me think step by step...')
+        expect(reasoningDeltas[1]!.delta.text).toBe(' First, I need to add the numbers.')
+
+        const types = events.map((e: any) => e.type)
+        // Should have: messageStart, reasoningStart, reasoningDelta, reasoningDelta, reasoningStop, textStart, textDelta, textStop, messageStop
+        expect(types).toContain('modelContentBlockStartEvent')
+        expect(types).toContain('modelContentBlockStopEvent')
+      })
+
+      it('handles GPT-6-astra response.output_item.done with encrypted_content', async () => {
+        // Base64 encoded "opaque-reasoning-data"
+        const encryptedContent = 'b3BhcXVlLXJlYXNvbmluZy1kYXRh'
+        const client = createMockClient(async function* () {
+          yield { type: 'response.created', response: { id: 'r' } }
+          yield {
+            type: 'response.output_item.done',
+            item: {
+              type: 'reasoning',
+              encrypted_content: encryptedContent,
+            },
+          }
+          yield { type: 'response.output_text.delta', delta: 'The answer is 42.' }
+          yield { type: 'response.completed', response: {} }
+        })
+        const model = new OpenAIModel({ api: 'responses', client })
+        const events = await collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('x')] })]))
+
+        const deltaEvents = events.filter((e: any) => e.type === 'modelContentBlockDeltaEvent') as ModelContentBlockDeltaEvent[]
+        const reasoningDeltas = deltaEvents.filter((e) => e.delta.type === 'reasoningContentDelta' && 'redactedContent' in e.delta) as Array<ModelContentBlockDeltaEvent & { delta: { type: 'reasoningContentDelta'; redactedContent: Uint8Array } }>
+        expect(reasoningDeltas).toHaveLength(1)
+        // The redactedContent should be the decoded Uint8Array
+        expect(reasoningDeltas[0]!.delta.redactedContent).toBeInstanceOf(Uint8Array)
+        const decoded = new TextDecoder().decode(reasoningDeltas[0]!.delta.redactedContent!)
+        expect(decoded).toBe('opaque-reasoning-data')
+
+        // Should have separate block for the encrypted reasoning
+        const starts = events.filter((e: any) => e.type === 'modelContentBlockStartEvent')
+        const stops = events.filter((e: any) => e.type === 'modelContentBlockStopEvent')
+        // At least 2 blocks: one for encrypted reasoning, one for text
+        expect(starts.length).toBeGreaterThanOrEqual(2)
+        expect(stops.length).toBeGreaterThanOrEqual(2)
+      })
+
+      it('handles multiple GPT-6-astra reasoning items in one response', async () => {
+        const encryptedContent1 = 'b3BhcXVlLXJlYXNvbmluZy1kYXRhLTE='
+        const encryptedContent2 = 'b3BhcXVlLXJlYXNvbmluZy1kYXRhLTI='
+        const client = createMockClient(async function* () {
+          yield { type: 'response.created', response: { id: 'r' } }
+          yield {
+            type: 'response.output_item.done',
+            item: { type: 'reasoning', encrypted_content: encryptedContent1 },
+          }
+          yield {
+            type: 'response.output_item.done',
+            item: { type: 'reasoning', encrypted_content: encryptedContent2 },
+          }
+          yield { type: 'response.output_text.delta', delta: 'The answer is 42.' }
+          yield { type: 'response.completed', response: {} }
+        })
+        const model = new OpenAIModel({ api: 'responses', client })
+        const events = await collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('x')] })]))
+
+        const deltaEvents = events.filter((e: any) => e.type === 'modelContentBlockDeltaEvent') as ModelContentBlockDeltaEvent[]
+        const reasoningDeltas = deltaEvents.filter((e) => e.delta.type === 'reasoningContentDelta' && 'redactedContent' in e.delta) as Array<ModelContentBlockDeltaEvent & { delta: { type: 'reasoningContentDelta'; redactedContent: Uint8Array } }>
+        expect(reasoningDeltas).toHaveLength(2)
+        const decoded1 = new TextDecoder().decode(reasoningDeltas[0]!.delta.redactedContent!)
+        const decoded2 = new TextDecoder().decode(reasoningDeltas[1]!.delta.redactedContent!)
+        expect(decoded1).toBe('opaque-reasoning-data-1')
+        expect(decoded2).toBe('opaque-reasoning-data-2')
+
+        // Should have 3 blocks: 2 for encrypted reasoning, 1 for text
+        const starts = events.filter((e: any) => e.type === 'modelContentBlockStartEvent')
+        const stops = events.filter((e: any) => e.type === 'modelContentBlockStopEvent')
+        expect(starts.length).toBeGreaterThanOrEqual(3)
+        expect(stops.length).toBeGreaterThanOrEqual(3)
+      })
+    })
+
+    describe('request formatting with reasoning blocks', () => {
+      const mkUserMessage = () => new Message({ role: 'user', content: [new TextBlock('Hi')] })
+      const mkAssistantMessage = (content: any[]) => new Message({ role: 'assistant', content })
+
+      async function runFormat(
+        modelOptions: { modelId?: string } = {},
+        messages: Message[] = [mkUserMessage()],
+      ): Promise<any> {
+        const capture: { request?: any } = {}
+        const client = createMockClient(async function* () {
+          yield { type: 'response.created', response: { id: 'resp_123' } }
+          yield { type: 'response.completed', response: { usage: undefined } }
+        }, capture)
+        const model = new OpenAIModel({ api: 'responses', client, ...modelOptions })
+        await collectIterator(model.stream(messages))
+        return capture.request
+      }
+
+      it('emits Kimi K3 text reasoning as reasoning input item before function_call', async () => {
+        const messages = [
+          mkUserMessage(),
+          mkAssistantMessage([
+            new ReasoningBlock({
+              text: 'Let me think step by step...',
+              provider: 'openai',
+              modelId: 'global.moonshotai.kimi-k3',
+            }),
+            new TextBlock('The answer is 42.'),
+          ]),
+          mkUserMessage(),
+        ]
+        const req = await runFormat({ modelId: 'global.moonshotai.kimi-k3' }, messages)
+
+        // Find the reasoning item (should be before function_call if any)
+        const reasoningItem = req.input.find((i: any) => i.type === 'reasoning')
+        expect(reasoningItem).toBeDefined()
+        expect(reasoningItem).toMatchObject({
+          type: 'reasoning',
+          summary: [],
+          content: [{ type: 'reasoning_text', text: 'Let me think step by step...' }],
+        })
+      })
+
+      it('emits GPT-6-astra encrypted_content as reasoning input item', async () => {
+        const messages = [
+          mkUserMessage(),
+          mkAssistantMessage([
+            new ReasoningBlock({
+              encryptedContent: 'b3BhcXVlLXJlYXNvbmluZy1kYXRh',
+              provider: 'openai',
+              modelId: 'gpt-6-astra',
+            }),
+            new TextBlock('The answer is 42.'),
+          ]),
+          mkUserMessage(),
+        ]
+        const req = await runFormat({ modelId: 'gpt-6-astra' }, messages)
+
+        const reasoningItem = req.input.find((i: any) => i.type === 'reasoning')
+        expect(reasoningItem).toBeDefined()
+        expect(reasoningItem).toMatchObject({
+          type: 'reasoning',
+          summary: [],
+          encrypted_content: 'b3BhcXVlLXJlYXNvbmluZy1kYXRh',
+        })
+      })
+
+      it('drops reasoning from different provider', async () => {
+        const warnSpy = vi.spyOn(logger, 'warn')
+        const debugSpy = vi.spyOn(logger, 'debug')
+        const messages = [
+          mkUserMessage(),
+          mkAssistantMessage([
+            new ReasoningBlock({
+              text: 'Anthropic reasoning',
+              provider: 'anthropic',
+              modelId: 'claude-opus-4',
+            }),
+            new TextBlock('The answer is 42.'),
+          ]),
+          mkUserMessage(),
+        ]
+        const req = await runFormat({ modelId: 'gpt-4o' }, messages)
+
+        const reasoningItem = req.input.find((i: any) => i.type === 'reasoning')
+        expect(reasoningItem).toBeUndefined()
+        expect(debugSpy).toHaveBeenCalledWith(expect.stringContaining('dropping reasoning from different provider'))
+        debugSpy.mockRestore()
+        warnSpy.mockRestore()
+      })
+
+      it('drops reasoning from different model', async () => {
+        const debugSpy = vi.spyOn(logger, 'debug')
+        const messages = [
+          mkUserMessage(),
+          mkAssistantMessage([
+            new ReasoningBlock({
+              text: 'Kimi K3 reasoning',
+              provider: 'openai',
+              modelId: 'global.moonshotai.kimi-k3',
+            }),
+            new TextBlock('The answer is 42.'),
+          ]),
+          mkUserMessage(),
+        ]
+        const req = await runFormat({ modelId: 'gpt-4o' }, messages)
+
+        const reasoningItem = req.input.find((i: any) => i.type === 'reasoning')
+        expect(reasoningItem).toBeUndefined()
+        expect(debugSpy).toHaveBeenCalledWith(expect.stringContaining('dropping reasoning from different model'))
+        debugSpy.mockRestore()
+      })
+
+      it('drops reasoning with only signature (Anthropic-style)', async () => {
+        const messages = [
+          mkUserMessage(),
+          mkAssistantMessage([
+            new ReasoningBlock({
+              signature: 'anthropic-signature',
+              provider: 'anthropic',
+              modelId: 'claude-opus-4',
+            }),
+            new TextBlock('The answer is 42.'),
+          ]),
+          mkUserMessage(),
+        ]
+        const req = await runFormat({ modelId: 'gpt-4o' }, messages)
+
+        const reasoningItem = req.input.find((i: any) => i.type === 'reasoning')
+        expect(reasoningItem).toBeUndefined()
+      })
+
+      it('replays reasoning when provider and model match', async () => {
+        const messages = [
+          mkUserMessage(),
+          mkAssistantMessage([
+            new ReasoningBlock({
+              text: 'Same model reasoning',
+              provider: 'openai',
+              modelId: 'gpt-4o',
+            }),
+            new TextBlock('The answer is 42.'),
+          ]),
+          mkUserMessage(),
+        ]
+        const req = await runFormat({ modelId: 'gpt-4o' }, messages)
+
+        const reasoningItem = req.input.find((i: any) => i.type === 'reasoning')
+        expect(reasoningItem).toBeDefined()
+        expect(reasoningItem.content).toEqual([{ type: 'reasoning_text', text: 'Same model reasoning' }])
+      })
     })
   })
 

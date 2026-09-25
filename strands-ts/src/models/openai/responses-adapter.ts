@@ -21,8 +21,32 @@ import type {
   ResponseFunctionCallOutputItem,
   ResponseCreateParamsStreaming,
   ResponseUsage,
+  ResponseOutputItemDoneEvent,
+  ResponseReasoningItem,
 } from 'openai/resources/responses/responses'
-import type { Message, StopReason, ToolResultBlock } from '../../types/messages.js'
+import type { Message, StopReason, ToolResultBlock, ReasoningBlock } from '../../types/messages.js'
+
+/** Bedrock-specific reasoning streaming events not in the official OpenAI SDK types. */
+interface BedrockReasoningDeltaEvent {
+  type: 'response.reasoning.delta'
+  delta: string
+  item_id: string
+  output_index: number
+  sequence_number: number
+}
+
+interface BedrockReasoningDoneEvent {
+  type: 'response.reasoning.done'
+  item_id: string
+  output_index: number
+  sequence_number: number
+}
+
+/** Extended stream event type including Bedrock-specific events. */
+type ExtendedResponseStreamEvent =
+  | ResponseStreamEvent
+  | BedrockReasoningDeltaEvent
+  | BedrockReasoningDoneEvent
 import type { ImageBlock, DocumentBlock } from '../../types/media.js'
 import { encodeBase64 } from '../../types/media.js'
 import { toMimeType } from '../../mime.js'
@@ -59,7 +83,7 @@ export function formatResponsesRequest(
   options: StreamOptions | undefined,
   stateful: boolean
 ): ResponseCreateParamsStreaming {
-  const input = formatResponsesMessages(messages)
+  const input = formatResponsesMessages(messages, config)
 
   // User `params` are spread first so provider-managed fields (asserted
   // required by `ResponseCreateParamsStreaming` below) always win. The
@@ -139,7 +163,7 @@ export function formatResponsesRequest(
  * - Tool calls → separate `{ type: 'function_call', ... }` items
  * - Tool results → separate `{ type: 'function_call_output', ... }` items
  */
-function formatResponsesMessages(messages: Message[]): ResponseInputItem[] {
+function formatResponsesMessages(messages: Message[], config: OpenAIResponsesConfig): ResponseInputItem[] {
   const input: ResponseInputItem[] = []
 
   for (const message of messages) {
@@ -203,9 +227,42 @@ function formatResponsesMessages(messages: Message[]): ResponseInputItem[] {
         }
 
         case 'reasoningBlock': {
-          logger.warn(
-            'block_type=<reasoningBlock> | reasoning content is not yet supported in multi-turn conversations with the responses api'
-          )
+          const reasoningBlock = block as ReasoningBlock
+          // Only replay reasoning to the same provider/model for safety
+          const currentProvider = 'openai'
+          const currentModelId = config.modelId
+          if (reasoningBlock.provider && reasoningBlock.provider !== currentProvider) {
+            logger.debug(
+              `reasoning_provenance=<${reasoningBlock.provider}> current=<${currentProvider}> | dropping reasoning from different provider`
+            )
+            break
+          }
+          if (reasoningBlock.modelId && reasoningBlock.modelId !== currentModelId) {
+            logger.debug(
+              `reasoning_model=<${reasoningBlock.modelId}> current=<${currentModelId}> | dropping reasoning from different model`
+            )
+            break
+          }
+
+          if (role === 'assistant') {
+            // Emit reasoning as top-level input item BEFORE text and function_call items
+            if (reasoningBlock.encryptedContent) {
+              // Opaque reasoning (GPT-6-astra style)
+              input.push({
+                type: 'reasoning',
+                summary: [],
+                encrypted_content: reasoningBlock.encryptedContent,
+              } as unknown as ResponseInputItem)
+            } else if (reasoningBlock.text) {
+              // Text reasoning (Kimi K3 style)
+              input.push({
+                type: 'reasoning',
+                summary: [],
+                content: [{ type: 'reasoning_text', text: reasoningBlock.text }],
+              } as unknown as ResponseInputItem)
+            }
+            // If only signature (Anthropic-style), drop - can't replay to OpenAI
+          }
           break
         }
 
@@ -417,7 +474,7 @@ function createResponsesStreamError(
  * @internal
  */
 export function mapResponsesEventToSDK(
-  event: ResponseStreamEvent,
+  event: ExtendedResponseStreamEvent,
   state: ResponsesStreamState,
   stateful: boolean,
   modelState: StateStore | undefined
@@ -451,6 +508,57 @@ export function mapResponsesEventToSDK(
         type: 'modelContentBlockDeltaEvent',
         delta: { type: 'reasoningContentDelta', text: event.delta },
       })
+      break
+    }
+
+    case 'response.reasoning.delta': {
+      // Bedrock-specific event for Kimi K3 streaming reasoning
+      const bedrockEvent = event as BedrockReasoningDeltaEvent
+      events.push(...switchContent('reasoning', state.dataType))
+      state.dataType = 'reasoning'
+      events.push({
+        type: 'modelContentBlockDeltaEvent',
+        delta: { type: 'reasoningContentDelta', text: bedrockEvent.delta },
+      })
+      break
+    }
+
+    case 'response.reasoning.done': {
+      // Bedrock-specific event for Kimi K3 reasoning completion
+      // Close the reasoning block when the reasoning item is done
+      if (state.dataType === 'reasoning') {
+        events.push({ type: 'modelContentBlockStopEvent' })
+        state.dataType = null
+      }
+      break
+    }
+
+    case 'response.output_item.done': {
+      // Handle GPT-6-astra opaque reasoning items with encrypted_content
+      const outputItemDoneEvent = event as ResponseOutputItemDoneEvent
+      if (outputItemDoneEvent.item.type === 'reasoning') {
+        const item = outputItemDoneEvent.item as ResponseReasoningItem
+        // Close any open reasoning block first
+        if (state.dataType === 'reasoning') {
+          events.push({ type: 'modelContentBlockStopEvent' })
+          state.dataType = null
+        }
+        // If encrypted_content present, emit as separate block with redactedContent
+        if (item.encrypted_content) {
+          events.push({ type: 'modelContentBlockStartEvent' })
+          // Convert base64 string to Uint8Array for redactedContent
+          const redactedBytes = Uint8Array.from(atob(item.encrypted_content), (c) => c.charCodeAt(0))
+          events.push({
+            type: 'modelContentBlockDeltaEvent',
+            delta: {
+              type: 'reasoningContentDelta',
+              redactedContent: redactedBytes,
+            },
+          })
+          events.push({ type: 'modelContentBlockStopEvent' })
+        }
+        // If content (reasoning_text) present, it was already streamed via reasoning_text.delta
+      }
       break
     }
 

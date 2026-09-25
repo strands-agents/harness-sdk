@@ -488,6 +488,24 @@ export interface ReasoningBlockData {
    * The redacted content of the reasoning process.
    */
   redactedContent?: Uint8Array
+
+  /**
+   * The provider that produced this reasoning block (e.g., 'openai', 'bedrock', 'anthropic').
+   * Used for provenance tracking to safely replay reasoning only to the same provider.
+   */
+  provider?: string
+
+  /**
+   * The model ID that produced this reasoning block (e.g., 'global.moonshotai.kimi-k3', 'gpt-6-astra').
+   * Used for provenance tracking to safely replay reasoning only to the same model.
+   */
+  modelId?: string
+
+  /**
+   * The opaque encrypted content from the provider (e.g., OpenAI Responses API encrypted_content).
+   * Stored separately from signature for cross-provider round-tripping.
+   */
+  encryptedContent?: string
 }
 
 /**
@@ -516,6 +534,24 @@ export class ReasoningBlock
    */
   readonly redactedContent?: Uint8Array
 
+  /**
+   * The provider that produced this reasoning block (e.g., 'openai', 'bedrock', 'anthropic').
+   * Used for provenance tracking to safely replay reasoning only to the same provider.
+   */
+  readonly provider?: string
+
+  /**
+   * The model ID that produced this reasoning block (e.g., 'global.moonshotai.kimi-k3', 'gpt-6-astra').
+   * Used for provenance tracking to safely replay reasoning only to the same model.
+   */
+  readonly modelId?: string
+
+  /**
+   * The opaque encrypted content from the provider (e.g., OpenAI Responses API encrypted_content).
+   * Stored separately from signature for cross-provider round-tripping.
+   */
+  readonly encryptedContent?: string
+
   constructor(data: ReasoningBlockData) {
     if (data.text !== undefined) {
       this.text = data.text
@@ -525,6 +561,15 @@ export class ReasoningBlock
     }
     if (data.redactedContent !== undefined) {
       this.redactedContent = data.redactedContent
+    }
+    if (data.provider !== undefined) {
+      this.provider = data.provider
+    }
+    if (data.modelId !== undefined) {
+      this.modelId = data.modelId
+    }
+    if (data.encryptedContent !== undefined) {
+      this.encryptedContent = data.encryptedContent
     }
   }
 
@@ -539,6 +584,9 @@ export class ReasoningBlock
         text: this.text,
         signature: this.signature,
         redactedContent: this.redactedContent ? encodeBase64(this.redactedContent) : undefined,
+        provider: this.provider,
+        modelId: this.modelId,
+        encryptedContent: this.encryptedContent,
       }),
     }
   }
@@ -564,6 +612,15 @@ export class ReasoningBlock
         typeof reasoning.redactedContent === 'string'
           ? decodeBase64(reasoning.redactedContent)
           : reasoning.redactedContent
+    }
+    if (reasoning.provider !== undefined) {
+      result.provider = reasoning.provider
+    }
+    if (reasoning.modelId !== undefined) {
+      result.modelId = reasoning.modelId
+    }
+    if (reasoning.encryptedContent !== undefined) {
+      result.encryptedContent = reasoning.encryptedContent
     }
     return new ReasoningBlock(result)
   }
