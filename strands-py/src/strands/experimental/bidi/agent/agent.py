@@ -78,6 +78,10 @@ _DEFAULT_AGENT_NAME = "Strands Agents"
 _DEFAULT_AGENT_ID = "default"
 
 
+class _AgentStoppedDuringInput(Exception):
+    """Signal that an input send ended because the agent stopped."""
+
+
 class BidiAgent(LocalAgent):
     """Agent for bidirectional streaming conversations.
 
@@ -343,6 +347,9 @@ class BidiAgent(LocalAgent):
             RuntimeError: If start has not been called.
             TypeError: If the input has an unsupported type or invalid input arguments.
             ValueError: If the input dictionary does not contain exactly one text, audio_delta, or image key.
+            TimeoutError: If the provider does not accept the event within the send timeout.
+                Timed-out text remains in message history because delivery has an unknown
+                outcome and reconnect replay must be able to converge provider context.
 
         Example:
             await agent.send("Hello")
@@ -550,9 +557,23 @@ class BidiAgent(LocalAgent):
             async def task(input_: InputStream) -> None:
                 while True:
                     event = await input_()
-                    await self.send(event)
+                    try:
+                        await self.send(event)
+                    except TimeoutError:
+                        if not isinstance(event, AudioDelta):
+                            raise
+                        logger.warning(
+                            "event_type=<%s> | input event delivery timed out",
+                            type(event).__name__,
+                        )
+                    except RuntimeError:
+                        if self._started:
+                            raise
+                        raise _AgentStoppedDuringInput from None
 
-            await asyncio.gather(*[task(input_) for input_ in inputs])
+            async with _TaskGroup() as task_group:
+                for input_ in inputs:
+                    task_group.create_task(task(input_))
 
         async def run_outputs(inputs_task: asyncio.Task) -> None:
             async for event in self.receive():
@@ -568,9 +589,12 @@ class BidiAgent(LocalAgent):
             for start in [*input_starts, *output_starts]:
                 await start(self)
 
-            async with _TaskGroup() as task_group:
-                inputs_task = task_group.create_task(run_inputs())
-                task_group.create_task(run_outputs(inputs_task))
+            try:
+                async with _TaskGroup() as task_group:
+                    inputs_task = task_group.create_task(run_inputs())
+                    task_group.create_task(run_outputs(inputs_task))
+            except _AgentStoppedDuringInput:
+                pass
 
         finally:
             input_stops = [input_.stop for input_ in inputs if isinstance(input_, InputStream)]

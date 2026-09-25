@@ -1,6 +1,7 @@
 """Unit tests for BidiAgent."""
 
 import asyncio
+import logging
 import sys
 import unittest.mock
 from contextlib import nullcontext
@@ -336,6 +337,108 @@ async def test_bidi_agent_start_stop_lifecycle(agent):
     await agent.start()
     assert agent._started
     assert agent.model._connection_id != connection_id
+
+
+@pytest.mark.asyncio
+async def test_bidi_agent_run_drops_timed_out_input_without_ending_session(agent, monkeypatch, caplog):
+    """A transient input-send timeout does not terminate the managed run loop."""
+    monkeypatch.setattr("strands.experimental.bidi.agent.loop._MODEL_SEND_TIMEOUT_S", 0.01)
+    send_started = asyncio.Event()
+    input_count = 0
+
+    async def stalled_send(_event):
+        send_started.set()
+        await asyncio.Event().wait()
+
+    async def input_():
+        nonlocal input_count
+        input_count += 1
+        if input_count == 1:
+            return AudioDelta(format="pcm", source={"bytes": b"test"})
+        await asyncio.Event().wait()
+
+    async def output(_event):
+        return
+
+    agent.model.send = stalled_send
+    with caplog.at_level(logging.WARNING, logger="strands.experimental.bidi.agent.agent"):
+        run_task = asyncio.create_task(agent.run(inputs=[input_], outputs=[output]))
+        await asyncio.wait_for(send_started.wait(), timeout=0.5)
+        await asyncio.sleep(0.05)
+
+    assert not run_task.done()
+    assert "event_type=<AudioDelta> | input event delivery timed out" in caplog.text
+
+    run_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run_task
+
+
+@pytest.mark.asyncio
+async def test_bidi_agent_run_surfaces_timed_out_text_input(agent, monkeypatch):
+    """Managed non-audio input is not silently discarded after a send timeout."""
+    monkeypatch.setattr("strands.experimental.bidi.agent.loop._MODEL_SEND_TIMEOUT_S", 0.01)
+    send_started = asyncio.Event()
+
+    async def stalled_send(_event):
+        send_started.set()
+        await asyncio.Event().wait()
+
+    async def input_():
+        return TextBlock("important request")
+
+    async def output(_event):
+        return
+
+    agent.model.send = stalled_send
+    run_task = asyncio.create_task(agent.run(inputs=[input_], outputs=[output]))
+    await asyncio.wait_for(send_started.wait(), timeout=0.5)
+
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(run_task, timeout=0.5)
+    assert agent.messages[0]["content"] == [{"text": "important request"}]
+
+
+@pytest.mark.asyncio
+async def test_bidi_agent_send_surfaces_provider_timeout(agent, monkeypatch):
+    """Direct callers are notified when an event cannot be delivered."""
+    monkeypatch.setattr("strands.experimental.bidi.agent.loop._MODEL_SEND_TIMEOUT_S", 0.01)
+
+    async def stalled_send(_event):
+        await asyncio.Event().wait()
+
+    agent.model.send = stalled_send
+    await agent.start()
+
+    event = AudioDelta(format="pcm", source={"bytes": b"test"})
+    with pytest.raises(TimeoutError):
+        await agent.send(event)
+
+    await agent.stop()
+
+
+@pytest.mark.asyncio
+async def test_bidi_agent_run_exits_cleanly_when_stop_wakes_blocked_input(agent):
+    """Stopping during reconnect ends the managed run loop without surfacing RuntimeError."""
+    release_input = asyncio.Event()
+
+    async def input_():
+        await release_input.wait()
+        return AudioDelta(format="pcm", source={"bytes": b"test"})
+
+    async def output(_event):
+        return
+
+    run_task = asyncio.create_task(agent.run(inputs=[input_], outputs=[output]))
+    while not agent._started:
+        await asyncio.sleep(0)
+
+    agent._loop._send_gate.clear()
+    release_input.set()
+    await asyncio.sleep(0)
+    await agent.stop()
+
+    await asyncio.wait_for(run_task, timeout=0.5)
 
 
 @pytest.mark.asyncio
