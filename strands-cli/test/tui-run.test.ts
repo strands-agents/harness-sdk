@@ -38,7 +38,7 @@ function backend(): ChatBackend {
 }
 
 describe('runInkChat', () => {
-  it('retains chat on reload or failed setup and starts fresh after Q&A', async () => {
+  it('retains chat on reload or failed setup', async () => {
     const config = CliConfigStore.memory(
       {},
       { toolOutput: 'full', animations: false, showReasoning: false, frogTheme: 'merlin' },
@@ -139,18 +139,6 @@ describe('runInkChat', () => {
       current.dismissPanel()
       await current.submit('Continue.')
       expect(current.getSnapshot().completedTurns).toHaveLength(2)
-      const beforeFreshChat = current
-      source.mockImplementationOnce(async () => {
-        current = new ChatController(backend())
-        return current
-      })
-      root.props.onSetupComplete(0, true, { newConversation: true })
-      await vi.waitFor(() => {
-        expect(root.props.controller).toBeDefined()
-        expect(root.props.controller).not.toBe(beforeFreshChat)
-      })
-      expect(source.mock.calls.at(-1)?.[2]).toBeUndefined()
-      expect(current.getSnapshot().completedTurns).toEqual([])
     } finally {
       finish()
       await running

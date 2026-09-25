@@ -6,6 +6,7 @@ import {
   agentGridCapacity,
   agentGridColumns,
   detailPageSize,
+  panelControlTarget,
   panelRowCapacity,
   type ModelPanelFocus,
 } from './interaction.js'
@@ -105,6 +106,8 @@ export function ResourcePanel({
 }): ReactElement {
   const palette = useTheme()
   const { surface, warning, selection, accent } = palette
+  // Tool lists render as a checklist with a warning-colored body.
+  const checklist = panel.kind === 'permissions' || panel.kind === 'tools'
   const preferredWidth =
     panel.kind === 'detail'
       ? 100
@@ -114,7 +117,7 @@ export function ResourcePanel({
           ? 112
           : panel.kind === 'agents'
             ? 112
-            : panel.kind === 'permissions'
+            : checklist
               ? 96
               : panel.kind === 'context' || panel.kind === 'effort'
                 ? 52
@@ -199,7 +202,7 @@ export function ResourcePanel({
     ...(onRowElement ? { onRowElement } : {}),
   }
   const searchable = panel.searchable === true
-  const compactList = ['help', 'skills', 'mcp', 'tasks', 'permissions'].includes(panel.kind)
+  const compactList = ['help', 'skills', 'mcp', 'tasks', 'permissions', 'tools'].includes(panel.kind)
   const wrapLongContent = panel.kind === 'error' || allRows.length === 0
   const errorHeight = panel.kind === 'error' ? compactErrorPanelHeight(rows, width, terminalHeight) : undefined
   if (panel.kind === 'models') {
@@ -333,7 +336,7 @@ export function ResourcePanel({
       <Box flexDirection="column" overflow="hidden">
         <Box paddingX={1} justifyContent="space-between">
           <PanelTitle title={panel.title} color={color} />
-          {allRows.length > capacity ? (
+          {panel.kind !== 'permissions' && allRows.length > capacity ? (
             <Text dimColor>
               {selected + 1}/{allRows.length}
             </Text>
@@ -342,14 +345,14 @@ export function ResourcePanel({
         {panel.body || (panel.kind === 'permission' && panel.diff) ? (
           panel.kind === 'permission' ? (
             <PermissionPreview panel={panel} width={width - 6} terminalHeight={terminalHeight} scroll={detailScroll} />
-          ) : wrapLongContent || panel.kind === 'permissions' ? (
+          ) : wrapLongContent || checklist ? (
             <Box paddingX={1} flexDirection="column">
               {wrapLines(panel.body ?? '', Math.max(10, width - 5)).map((line, index) => (
-                <Text key={`${panel.id}-body-${index}`} {...(panel.kind === 'permissions' ? { color: warning } : {})}>
+                <Text key={`${panel.id}-body-${index}`} {...(checklist ? { color: warning } : {})}>
                   {line || ' '}
                 </Text>
               ))}
-              {panel.kind === 'permissions' ? <Text> </Text> : null}
+              {checklist ? <Text> </Text> : null}
             </Box>
           ) : (
             <Box paddingX={1}>
@@ -410,21 +413,21 @@ export function ResourcePanel({
                 {row.section &&
                 row.section !== rows[visibleIndex - 1]?.section &&
                 (panel.kind !== 'help' || filter === 'all') ? (
-                  <Box paddingX={panel.kind === 'permissions' ? 2 : 1} marginTop={panel.kind === 'permissions' ? 1 : 0}>
-                    <Text {...(panel.kind === 'permissions' ? { color: accent } : {})} dimColor bold>
+                  <Box paddingX={checklist ? 2 : 1} marginTop={checklist ? 1 : 0}>
+                    <Text {...(checklist ? { color: accent } : {})} dimColor bold>
                       {row.section}
                     </Text>
                   </Box>
                 ) : null}
                 <Box
                   ref={(element) => onRowElement?.(index, element)}
-                  paddingX={panel.kind === 'permissions' ? 2 : 1}
+                  paddingX={checklist ? 2 : 1}
                   flexDirection="column"
                   backgroundColor={
                     index === hoveredRow || rowPressed || selectedRow ? selection : row.current ? surface : undefined
                   }
                 >
-                  <Box justifyContent="space-between">
+                  <Box justifyContent={panel.kind === 'tools' ? 'flex-start' : 'space-between'}>
                     <PanelItemHeader
                       label={row.label}
                       active={selectedRow}
@@ -435,12 +438,25 @@ export function ResourcePanel({
                       wrap={wrapLongContent ? 'wrap' : 'truncate-end'}
                     />
                     {row.control ? (
-                      <SettingsControl
-                        {...(pressedControl ? { pressedControl } : {})}
-                        control={row.control}
-                        rowIndex={index}
-                        {...(onControlElement ? { onControlElement } : {})}
-                      />
+                      <Box marginLeft={panel.kind === 'tools' ? 2 : 0}>
+                        {panel.kind === 'tools' && row.control.kind === 'toggle' ? (
+                          <Box
+                            ref={(element) => onControlElement?.(panelControlTarget(index, 'toggle'), element)}
+                            width={1}
+                          >
+                            <Text {...(row.control.checked ? { color: accent } : {})} dimColor={!row.control.checked}>
+                              {row.control.checked ? '☑' : '☐'}
+                            </Text>
+                          </Box>
+                        ) : (
+                          <SettingsControl
+                            {...(pressedControl ? { pressedControl } : {})}
+                            control={row.control}
+                            rowIndex={index}
+                            {...(onControlElement ? { onControlElement } : {})}
+                          />
+                        )}
+                      </Box>
                     ) : panel.kind === 'help' && row.section === 'Controls' ? (
                       <Text dimColor wrap="truncate-end">
                         {' '}
@@ -466,7 +482,9 @@ export function ResourcePanel({
             )
           })
         )}
-        {(compactList || panel.kind === 'permission') && allRows[selected]?.description ? (
+        {panel.kind !== 'permissions' &&
+        (compactList || panel.kind === 'permission') &&
+        allRows[selected]?.description ? (
           <Box paddingX={1} flexDirection="column">
             {wrapLines(
               panel.kind === 'help' && allRows[selected]!.section === 'Controls'

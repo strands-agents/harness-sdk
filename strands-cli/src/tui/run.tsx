@@ -23,14 +23,13 @@ interface RunInkChatOptions {
 type ChatControllerFactory = (
   signal: AbortSignal,
   requestSetup: RequestSetup,
-  conversation?: ChatConversation,
-  launch?: ChatLaunch
+  conversation: ChatConversation | undefined,
+  launch: ChatLaunch | undefined,
+  confirmMcp: SetupBridge['confirmMcp']
 ) => Promise<ChatControllerApi>
 
 type ChatControllerSource = ChatControllerApi | ChatControllerFactory
 
-const AGENT_SETUP_FIRST_REQUEST =
-  'Help me set up a custom agent. Welcome me, then ask whether to start from scratch or use the detected configuration.'
 const SYNCHRONIZED_OUTPUT_START = '\u001b[?2026h'
 const SYNCHRONIZED_OUTPUT_END = '\u001b[?2026l'
 
@@ -73,7 +72,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
   let pendingExitCode: number | undefined
   let replacementTask: Promise<void> | undefined
   let launchOptions: ChatLaunch | undefined
-  const setupBridge: SetupBridge = { request: (): void => {} }
+  const setupBridge: SetupBridge = { request: (): void => {}, confirmMcp: async (): Promise<boolean> => false }
   let resolveSetup: (exitCode: 0 | 130) => void = () => {}
   const setupTask = options.setup
     ? new Promise<0 | 130>((resolve) => {
@@ -89,10 +88,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       controller = undefined
       instance.rerender(chatRoot())
       replacementTask = (async (): Promise<void> => {
-        const conversation =
-          launch?.assistant || launch?.newConversation
-            ? undefined
-            : await previousController.captureConversation?.(launch?.conversationId)
+        const conversation = await previousController.captureConversation?.(launch?.conversationId)
         const replacement = await initializeController(launch, conversation)
         await Promise.allSettled([previousController.dispose()])
         if (pendingExitCode !== undefined) {
@@ -121,11 +117,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
           if (pendingExitCode === undefined && controller) {
             instance!.rerender(chatRoot())
             if (controller !== previousController) {
-              startTasks.push(
-                launch?.assistant
-                  ? controller.start(AGENT_SETUP_FIRST_REQUEST, { hidePrompt: true })
-                  : controller.start()
-              )
+              startTasks.push(controller.start())
             }
             resumeVoiceInput?.(controller)
           }
@@ -152,7 +144,8 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
         startupAbort.signal,
         (change) => setupBridge.request(change),
         conversation,
-        launch
+        launch,
+        (workspace, paths) => setupBridge.confirmMcp(workspace, paths)
       )
       startupAbort.signal.throwIfAborted()
       if (launch?.configuration) {
@@ -270,11 +263,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       await instance.waitUntilExit()
       return introState.exitCode
     }
-    startTasks.push(
-      launchOptions?.assistant
-        ? controller.start(AGENT_SETUP_FIRST_REQUEST, { hidePrompt: true })
-        : controller.start(options.firstRequest)
-    )
+    startTasks.push(controller.start(options.firstRequest))
     const introExit = await introTask
     if (introExit !== 0) {
       controller.close(introExit)

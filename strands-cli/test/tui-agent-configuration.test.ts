@@ -2,7 +2,7 @@ import { Agent, type JSONValue, type ToolContext } from '@strands-agents/sdk'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createConfigurationTool, configurationFromStore } from '../src/tui/agent-configuration.js'
-import { CliConfigStore, type SetupConfiguration } from '../src/tui/config.js'
+import { CliConfigStore } from '../src/tui/config.js'
 import { discoverProviderModels } from '../src/tui/provider/discovery.js'
 
 vi.mock('../src/tui/provider/discovery.js', async (original) => ({
@@ -14,14 +14,13 @@ afterEach(() => {
   vi.unstubAllEnvs()
 })
 
-function configurationTool(config: CliConfigStore, source?: string, draft?: SetupConfiguration) {
+function configurationTool(config: CliConfigStore, source?: string) {
   const agent = new Agent()
   const control = createConfigurationTool({
     config,
     profile: () => config.snapshot().profile,
     agent: () => agent,
     ...(source ? { source } : {}),
-    ...(draft ? { draft } : {}),
   })
   const tool = control.tool as unknown as { invoke(input: unknown, context: ToolContext): Promise<string> }
   return {
@@ -222,35 +221,6 @@ describe('strands_config tool', () => {
     expect(config.snapshot().profile.model).toBe('ollama/missing')
   })
 
-  it('resets only the setup draft and launches it in a fresh conversation', async () => {
-    const config = CliConfigStore.memory(
-      { mode: 'bypassPermissions' },
-      { mcpDiscovery: true },
-      {
-        profile: { name: 'Existing', instructions: 'Old role', agentConfig: { backgroundTasks: false } },
-        profileBaseDir: '/tmp/existing',
-        providerEnvironment: { AWS_REGION: 'us-west-2' },
-      }
-    )
-    const original = configurationFromStore(config)
-    const control = configurationTool(config, undefined, original)
-    await control.invoke({ action: 'reset' })
-    expect(control.profile()).toMatchObject({ name: 'Strands harness', instructions: '', agentConfig: {} })
-    expect(config.snapshot().profile).toEqual(original.profile)
-    await control.invoke({ action: 'apply', revision: 1 })
-    expect(control.takePending()).toMatchObject({
-      newConversation: true,
-      configuration: {
-        permissionMode: 'default',
-        profileBaseDir: null,
-        settings: { mcpDiscovery: true },
-        providerEnvironment: original.providerEnvironment,
-        providers: original.providers,
-      },
-    })
-    expect(configurationFromStore(config)).toEqual(original)
-  })
-
   it('stages a portable patch without changing the saved profile, then validates an apply request', async () => {
     const config = CliConfigStore.memory(
       {},
@@ -295,7 +265,6 @@ describe('strands_config tool', () => {
     expect(additions).toContain('mcp-server.js')
     await control.invoke({ action: 'apply', revision: 1 })
     const pending = control.takePending()
-    expect(pending?.newConversation).toBeUndefined()
     expect(pending?.configuration).toMatchObject({
       profileBaseDir: '/tmp',
       profile: { name: 'Code Guide', skills: ['./skills'], contextManager: 'agentic' },

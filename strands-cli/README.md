@@ -61,7 +61,7 @@ npx @strands-agents/cli
 
 On the first interactive launch, the intro animation plays before the setup panel opens. Quickstart
 lets you choose providers and a model, then select tools, skills, MCP, and other capabilities before
-launching. Select or deselect all, or toggle individual capabilities. Manual setup also
+launching. Select or deselect all, or toggle individual capabilities. Customize setup also
 exposes the agent instructions, data paths, and approval controls. The CLI detects standard credential
 sources but never writes API keys to its config.
 
@@ -91,16 +91,13 @@ compiled output and skips all source-build behavior.
 
 ## Customize the agent
 
-Run `strands` or use `/setup` in chat to reopen the saved configuration. Quickstart and Manual
-edit the same profile. Agent Q&A first asks which model should guide the setup conversation, then
-opens the regular chat UI. This assistant model is independent of the model chosen for your custom
-agent. Setup Assistant first asks whether to start from scratch or use the detected configuration, then
-asks for your agent's name and goals. It recommends settings and keeps a draft until you agree to apply
-it. After choosing appearance preferences, your custom agent opens in a fresh chat.
+Run `strands` or use `/setup` in chat to reopen the saved configuration. Quickstart and Customize
+edit the same profile. Import loads a harness from a file or zip, and Export saves the saved agent as a
+TypeScript or Python project.
 
 In interactive chat, the agent can also inspect and change its own configuration with `strands_config`.
 For example: “Use high reasoning, disable shell and delegation, and keep responses concise.”
-Changes are validated and applied after the turn; the conversation is retained. Quickstart, Manual,
+Changes are validated and applied after the turn; the conversation is retained. Quickstart, Customize,
 and TypeScript/Python exports use the updated profile. A failed rebuild restores the previous profile.
 For TypeScript agents loaded from source, the CLI edits the source definition and reloads it instead;
 source exports retain that code.

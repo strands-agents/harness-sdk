@@ -1059,6 +1059,11 @@ describe('ChatView', () => {
     expect(output).toContain('write')
     expect(output).toContain('━━●')
     expect(output).toContain('●━━')
+    expect(output).toContain('Enter toggle · Esc save')
+    expect(output).not.toContain('Runs without a permission prompt.')
+    expect(output).not.toContain('Uses Cedar policy')
+    const bashLine = output.split('\n').find((line) => line.includes('bash'))
+    expect(bashLine).toMatch(/bash\s{2,}━━●/)
   })
 
   it('uses provider nodes on both wide and narrow terminals', () => {

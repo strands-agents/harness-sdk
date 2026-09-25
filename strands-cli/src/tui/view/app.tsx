@@ -763,19 +763,6 @@ export function ChatApp({
         return
       }
 
-      if (
-        snapshot.setupGuide &&
-        snapshot.panel?.kind === 'question' &&
-        editsSetupAnswer(character, key, currentEditor.input)
-      ) {
-        const result = reduceInputSequence(currentEditor, character, key, 'idle')
-        setEditor(result.state)
-        if (result.action === 'submit') {
-          void controller.submit(result.prompt)
-        }
-        return
-      }
-
       if (snapshot.panel) {
         if (snapshot.panel.kind === 'detail') {
           if (key.escape || key.return || key.backspace || key.delete || character === '\u007f') {
@@ -984,7 +971,8 @@ export function ChatApp({
         if (
           (snapshot.panel.kind === 'settings' ||
             snapshot.panel.kind === 'voice' ||
-            snapshot.panel.kind === 'permissions') &&
+            snapshot.panel.kind === 'permissions' ||
+            snapshot.panel.kind === 'tools') &&
           character === ' '
         ) {
           const selected = rows[Math.min(panelSelectionRef.current, rows.length - 1)]
@@ -1232,16 +1220,6 @@ export function ChatApp({
       onToolGroupElement={registerToolGroupElement}
     />
   )
-}
-
-function editsSetupAnswer(character: string, key: Key, input: string): boolean {
-  if (key.return) {
-    return input.trim().length > 0
-  }
-  if (key.escape || key.tab || key.upArrow || key.downArrow || key.pageUp || key.pageDown) {
-    return false
-  }
-  return Boolean(character || key.backspace || key.delete || key.leftArrow || key.rightArrow || key.home || key.end)
 }
 
 function useElementMap<K>(): [Map<K, DOMElement>, (key: K, element: DOMElement | null) => void] {

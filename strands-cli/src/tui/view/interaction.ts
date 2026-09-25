@@ -323,7 +323,7 @@ export function panelRowCapacity(
     }
     return capacity
   }
-  if (kind === 'permissions') {
+  if (kind === 'permissions' || kind === 'tools') {
     const sections = new Set(rows.map((row) => row.section).filter(Boolean)).size
     return Math.max(1, Math.min(10, terminalHeight - 15 - sections * 2))
   }

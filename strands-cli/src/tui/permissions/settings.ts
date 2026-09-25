@@ -1,15 +1,15 @@
 export const PERMISSION_CHOICES = {
   default: {
-    label: 'Default (HITL)',
-    description: 'Ask before protected tool calls.',
+    label: 'Ask when needed (HITL)',
+    description: 'Safe actions run automatically; sensitive actions ask first.',
   },
   bypassPermissions: {
-    label: 'Bypass',
-    description: 'Run tools without approval prompts.',
+    label: 'Allow all tools',
+    description: 'Run every tool without asking first.',
   },
   custom: {
-    label: 'Custom',
-    description: 'Configure each tool.',
+    label: 'Choose by tool',
+    description: 'Choose which tools can run without asking.',
   },
 } as const
 
@@ -17,6 +17,7 @@ export function permissionToolNames(tools: readonly string[], allowedTools: read
   return [...new Set([...tools, ...allowedTools])].sort((left, right) => left.localeCompare(right))
 }
 
-export function permissionToolDescription(allowed: boolean): string {
-  return allowed ? 'Always allow · skips the approval prompt' : 'Default policy · asks only when approval is required'
+export function permissionToolDescription(allowed: boolean, toolDescription?: string): string {
+  const behavior = allowed ? 'On: runs without asking' : 'Off: asks when approval is required'
+  return toolDescription ? `${behavior} · ${toolDescription}` : behavior
 }

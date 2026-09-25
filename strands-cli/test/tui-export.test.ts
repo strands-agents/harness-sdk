@@ -24,6 +24,7 @@ import {
 } from '../src/tui/chat/controller.js'
 import { CliConfigStore } from '../src/tui/config.js'
 import { createInteractiveChat } from '../src/tui/runtime.js'
+import { exportSavedAgent } from '../src/tui/project/export.js'
 
 const model = 'bedrock/anthropic.claude-haiku-4-5-20251001-v1:0'
 const profile = defineHarnessAgentConfig({
@@ -223,4 +224,18 @@ describe('export completion', () => {
       expect(controller.busy).toBe(false)
     }
   )
+})
+
+describe('exportSavedAgent', () => {
+  it('writes the saved profile to a path relative to the working directory', async () => {
+    const archive = await exportSavedAgent({ profile }, 'typescript', 'saved-agent', workspace)
+    expect(archive).toBe(join(workspace, 'saved-agent.zip'))
+    expect(Object.keys(unzipSync(await readFile(archive)))).toContain('package.json')
+  })
+
+  it('sends agents authored in code to /export', async () => {
+    await expect(
+      exportSavedAgent({ profile, agentProject: join(workspace, 'agent.ts') }, 'typescript', 'agent.zip', workspace)
+    ).rejects.toThrow('/export')
+  })
 })

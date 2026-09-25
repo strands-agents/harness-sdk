@@ -4,6 +4,7 @@ import type {
   HarnessAgentOptions,
   HarnessModuleReference,
 } from '@strands-agents/harness'
+import { supportsWebSearch } from '@strands-agents/harness'
 import { enabledBuiltinTools, resolveBuiltinTools } from '@strands-agents/harness/internal'
 
 type AnyBuiltinTools = HarnessAgentConfig['builtinTools'] | HarnessAgentOptions['builtinTools']
@@ -83,4 +84,46 @@ export function mapWebFetchModelModule(
   if (module === null) return builtinTools
   const mapping = builtinTools as Exclude<HarnessAgentConfig['builtinTools'], readonly BuiltinToolName[]>
   return { ...mapping, web_fetch: { ...(mapping.web_fetch as object), model: { ...map(module), kind: module.kind } } }
+}
+
+export const BUILTIN_TOOLS = [
+  ['shell', 'Run shell commands'],
+  ['read', 'Read workspace files'],
+  ['write', 'Create files'],
+  ['edit', 'Apply targeted file edits'],
+  ['web_fetch', 'Fetch and summarize web pages'],
+  ['web_search', 'Search the web'],
+  ['programmatic_tool_caller', 'Orchestrate tools with sandboxed Python'],
+  ['subagent', 'Delegate focused work to a fresh subagent'],
+] as const
+
+export interface BuiltinToolChoice {
+  id: BuiltinToolName
+  description: string
+  active: boolean
+  /** Enabling it sends queries to Exa, the third-party search fallback. */
+  thirdParty: boolean
+}
+
+export function builtinToolChoices(profile: HarnessAgentConfig): BuiltinToolChoice[] {
+  const nativeSearch = supportsWebSearch(profile.model)
+  return BUILTIN_TOOLS.map(([id, description]) => {
+    // Without native search, web_search is the third-party Exa fallback: off unless opted into.
+    const thirdParty = id === 'web_search' && !nativeSearch
+    const active = thirdParty
+      ? webSearchFallback(profile.builtinTools) === 'exa'
+      : profileToolEnabled(profile.builtinTools, id)
+    return { id, description, active, thirdParty }
+  })
+}
+
+export function withBuiltinToolChoice(
+  profile: HarnessAgentConfig,
+  choice: BuiltinToolChoice,
+  enabled: boolean
+): HarnessAgentConfig['builtinTools'] {
+  if (!enabled) return withoutProfileTool(profile.builtinTools, choice.id)
+  return choice.thirdParty
+    ? withWebSearchFallback(profile.builtinTools)
+    : withProfileTool(profile.builtinTools, choice.id)
 }
