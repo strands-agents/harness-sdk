@@ -128,3 +128,14 @@ html[data-embed] .site-footer,
 html[data-embed] .integrations-back {
 	display: none;
 }
+
+/* Product slug accent. PageFrame sets data-accent from the current product; the
+   sidebar slug matches the product's homepage card color (theme-scoped in fonts.css). */
+.page[data-accent='orange'] { --product-accent: var(--card-accent-orange); }
+.page[data-accent='teal'] { --product-accent: var(--card-accent-teal); }
+.page[data-accent='yellow'] { --product-accent: var(--card-accent-yellow); }
+.page[data-accent='pink'] { --product-accent: var(--card-accent-pink); }
+.page[data-accent='blue'] { --product-accent: var(--card-accent-blue); }
+.page[data-accent] .product-switcher__slug {
+	color: var(--product-accent);
+}
