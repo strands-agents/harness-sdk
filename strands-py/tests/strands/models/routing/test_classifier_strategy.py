@@ -271,6 +271,28 @@ def test_latest_request_sentinel_respects_tiny_character_limit():
     assert tru_request == _NO_REQUEST_TEXT[:1]
 
 
+def test_latest_request_labels_audio_only_request():
+    messages = [
+        {"role": "user", "content": [{"audio": {"format": "mp3", "source": {"bytes": b"audio-secret"}}}]},
+    ]
+
+    assert _latest_request_text(messages) == "[Audio]"
+
+
+def test_latest_request_labels_audio_alongside_other_media():
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"image": {"format": "png", "source": {"bytes": b"image-secret"}}},
+                {"audio": {"format": "mp3", "source": {"bytes": b"audio-secret"}}},
+            ],
+        }
+    ]
+
+    assert _latest_request_text(messages) == "[Image]\n[Audio]"
+
+
 def test_request_detection_ignores_malformed_guard_content():
     messages = [{"role": "user", "content": [{"guardContent": {"text": "raw string, not a text block"}}]}]
 
