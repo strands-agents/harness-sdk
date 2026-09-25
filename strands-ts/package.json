@@ -56,6 +56,14 @@
       "types": "./dist/src/experimental/index.d.ts",
       "default": "./dist/src/experimental/index.js"
     },
+    "./experimental/bidi": {
+      "types": "./dist/src/experimental/bidi/index.d.ts",
+      "default": "./dist/src/experimental/bidi/index.js"
+    },
+    "./experimental/bidi/models/openai": {
+      "types": "./dist/src/experimental/bidi/models/openai.d.ts",
+      "default": "./dist/src/experimental/bidi/models/openai.js"
+    },
     "./vended-tools/notebook": {
       "types": "./dist/src/vended-tools/notebook/index.d.ts",
       "default": "./dist/src/vended-tools/notebook/index.js"

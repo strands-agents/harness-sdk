@@ -5,6 +5,7 @@ experimental: true
 tags: [bidi-streaming]
 sourceLinks:
   - path: strands-py/src/strands/experimental/bidi/models/openai.py
+  - path: strands-ts/src/experimental/bidi/models/openai.ts
 redirectFrom:
   - docs/user-guide/concepts/bidirectional-streaming/models/openai_realtime
 ---
@@ -17,6 +18,9 @@ The [OpenAI Realtime API](https://platform.openai.com/docs/guides/realtime) is a
 - **Multimodal Streaming**: The API supports streaming of text and audio data.
 - **Tool Use and Function Calling**: Can use external tools to perform actions and get context while maintaining a real-time connection.
 - **Secure Authentication**: Uses tokens for secure client-side authentication.
+
+The agent examples below use the Python SDK. For a native TypeScript model connection,
+see [TypeScript model transport](#typescript-model-transport).
 
 ## Installation
 
@@ -125,6 +129,35 @@ If you encounter the error `ModuleNotFoundError: No module named 'websockets'`, 
 ### Authentication Errors
 
 Set the `OPENAI_API_KEY` environment variable or pass the key through `api_key`.
+
+## TypeScript model transport
+
+To exchange audio directly from TypeScript, use the experimental `OpenAIRealtimeModel`
+from `@strands-agents/sdk/experimental/bidi/models/openai` with the optional `openai`
+peer dependency. The [runnable example][ts-example] sends a text question, handles tool
+requests, and prints transcripts and audio chunk sizes without opening audio devices.
+
+Call `start()` to configure the connection, send input through `send()`, and consume
+events through `receive()`. Supply `cancelSignal` to cancel startup or the live session.
+Input and output use mono PCM16 at 24 kHz. The caller executes tools and returns
+`ToolResultBlock` values with the original call IDs. Continuation waits for every result
+in a completed response; cancelled responses do not dispatch tools.
+
+On `bidiBargeIn`, stop playback and clear queued audio. The model suppresses stale audio,
+but does not track how much audio the listener heard or truncate provider history to
+that playback position. Audio generation ending does not mean playback has finished.
+
+Startup defaults to a 30-second deadline. Receive queues default to 256 events and
+1 MiB; overflow fails the connection. `stop()` initiates socket closure without waiting
+for a remote acknowledgement. Locally accepted writes can still take effect remotely
+after cancellation. Set application-level session and tool deadlines as needed.
+
+This model layer does not include `BidiAgent`, agent hooks, device I/O, automatic
+reconnect, or session persistence. Browser applications need a server-issued short-lived
+token; keep long-lived API keys on the server. See the example's README for configuration
+and failure behavior.
+
+[ts-example]: https://github.com/strands-agents/harness-sdk/tree/main/strands-ts/examples/realtime
 
 ## References
 
