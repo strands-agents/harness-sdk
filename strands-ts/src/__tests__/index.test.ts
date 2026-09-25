@@ -5,6 +5,7 @@ describe('index', () => {
   describe('when importing from main entry point', () => {
     it('exports error classes', () => {
       expect(SDK.ContextWindowOverflowError).toBeDefined()
+      expect(SDK.InterruptError).toBeDefined()
     })
 
     it('exports BedrockModel', () => {
