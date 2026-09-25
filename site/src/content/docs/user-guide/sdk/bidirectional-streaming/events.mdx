@@ -250,19 +250,13 @@ Emitted when response output ends.
 ```python
 {
     "type": "bidi_response_stop",
-    "response_id": "resp_xyz789",
-    "stop_reason": "end_turn"
+    "response_id": "resp_xyz789"
 }
 ```
 
 **Properties:**
 
 - `response_id`: Unique identifier for this response
-- `stop_reason`: Why the response ended
-  - `"end_turn"`: Model completed its response
-  - `"barge_in"`: User barged in during the response
-  - `"tool_use"`: Model is requesting tool execution
-  - `"error"`: Error occurred during generation
 
 ### Audio Events
 
@@ -510,7 +504,7 @@ async def main():
             print(f"{event['role']}: {event['transcript']}")
         
         elif event["type"] == "bidi_response_stop":
-            print(f"Response complete: {event['stop_reason']}")
+            print(f"Response complete: {event['response_id']}")
     
     await agent.stop()
 
@@ -588,10 +582,6 @@ async def main():
             elif event["type"] == "bidi_barge_in":
                 barge_in_count += 1
                 print(f"\nBarge-in (#{barge_in_count})")
-            
-            elif event["type"] == "bidi_response_stop":
-                if event["stop_reason"] == "barge_in":
-                    print(f"Barge-ins so far: {barge_in_count}")
 
 asyncio.run(main())
 ```

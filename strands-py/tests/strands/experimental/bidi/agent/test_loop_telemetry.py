@@ -169,7 +169,7 @@ async def test_response_span_lifecycle(loop, agent, agenerator):
     """Response spans open on ResponseStart and close on ResponseComplete."""
     events = [
         BidiResponseStartEvent(response_id="resp-1"),
-        BidiResponseStopEvent(response_id="resp-1", stop_reason="end_turn"),
+        BidiResponseStopEvent(response_id="resp-1"),
     ]
     agent.model.receive = unittest.mock.Mock(return_value=agenerator(events))
 
@@ -187,11 +187,11 @@ async def test_response_span_lifecycle(loop, agent, agenerator):
 
 
 @pytest.mark.asyncio
-async def test_response_span_records_stop_reason(loop, agent, agenerator, otel_setup):
-    """Response span captures the stop_reason as finish_reason attribute."""
+async def test_response_span_records_response_id(loop, agent, agenerator, otel_setup):
+    """Response spans identify the response."""
     events = [
         BidiResponseStartEvent(response_id="resp-2"),
-        BidiResponseStopEvent(response_id="resp-2", stop_reason="barge_in"),
+        BidiResponseStopEvent(response_id="resp-2"),
     ]
     agent.model.receive = unittest.mock.Mock(return_value=agenerator(events))
 
@@ -206,7 +206,7 @@ async def test_response_span_records_stop_reason(loop, agent, agenerator, otel_s
     spans = otel_setup.get_finished_spans()
     response_spans = [s for s in spans if "bidi_response" in s.name]
     assert len(response_spans) == 1
-    assert response_spans[0].attributes["gen_ai.response.finish_reason"] == "barge_in"
+    assert response_spans[0].attributes["gen_ai.response.id"] == "resp-2"
 
 
 @pytest.mark.asyncio
@@ -215,7 +215,7 @@ async def test_response_span_records_time_to_first_audio(loop, agent, agenerator
     events = [
         BidiResponseStartEvent(response_id="resp-audio"),
         BidiAudioDeltaEvent(audio="", format="pcm", sample_rate=24000, channels=1),
-        BidiResponseStopEvent(response_id="resp-audio", stop_reason="end_turn"),
+        BidiResponseStopEvent(response_id="resp-audio"),
     ]
     agent.model.receive = unittest.mock.Mock(return_value=agenerator(events))
 
@@ -238,7 +238,7 @@ async def test_response_span_omits_time_to_first_audio_when_no_audio(loop, agent
     """Response span omits the time-to-first-audio attribute when no audio is emitted."""
     events = [
         BidiResponseStartEvent(response_id="resp-noaudio"),
-        BidiResponseStopEvent(response_id="resp-noaudio", stop_reason="end_turn"),
+        BidiResponseStopEvent(response_id="resp-noaudio"),
     ]
     agent.model.receive = unittest.mock.Mock(return_value=agenerator(events))
 
@@ -376,7 +376,7 @@ async def test_barge_in_event_recorded_on_session_span(loop, agent, agenerator, 
     events = [
         BidiResponseStartEvent(response_id="resp-3"),
         BidiBargeInEvent(reason="user_speech"),
-        BidiResponseStopEvent(response_id="resp-3", stop_reason="barge_in"),
+        BidiResponseStopEvent(response_id="resp-3"),
     ]
     agent.model.receive = unittest.mock.Mock(return_value=agenerator(events))
 
@@ -464,7 +464,6 @@ async def test_response_span_closed_on_model_error(loop, agent, otel_setup, remo
     response_spans = [s for s in spans if "bidi_response" in s.name]
     assert len(response_spans) == 1
     assert response_spans[0].status.status_code == StatusCode.ERROR
-    assert response_spans[0].attributes["gen_ai.response.finish_reason"] == "error"
 
 
 @pytest.mark.asyncio
@@ -472,7 +471,7 @@ async def test_no_crash_without_otel_configured(loop, agent, agenerator):
     """Telemetry doesn't crash when OTel is not configured (no-op tracer)."""
     events = [
         BidiResponseStartEvent(response_id="resp-noop"),
-        BidiResponseStopEvent(response_id="resp-noop", stop_reason="end_turn"),
+        BidiResponseStopEvent(response_id="resp-noop"),
     ]
     agent.model.receive = unittest.mock.Mock(return_value=agenerator(events))
 

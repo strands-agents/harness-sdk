@@ -128,7 +128,6 @@ latest semantic conventions, `gen_ai.provider.name` replaces `gen_ai.system`.
 | Connection | `gen_ai.request.model` | Model ID, when the provider exposes one |
 | Response | `gen_ai.operation.name` | `bidi_response` |
 | Response | `gen_ai.response.id` | Provider-assigned response identifier |
-| Response | `gen_ai.response.finish_reason` | Why the response ended |
 | Response | `gen_ai.server.time_to_first_audio` | Milliseconds from response start to first audio chunk |
 | Restart | `gen_ai.operation.name` | `bidi_connection_restart` |
 | Restart | `gen_ai.bidi.restart_reason` | `timeout` on the reactive path, `scheduled` on the proactive path |
@@ -152,17 +151,9 @@ connection and session spans close with error status and the exception surfaces 
 caller.
 
 `gen_ai.server.time_to_first_audio` is recorded once, on the first audio chunk. A
-text-only response has no such attribute. Response finish reasons are:
-
-| Value | Meaning |
-|-------|---------|
-| `end_turn` | The model finished the response on its own |
-| `barge_in` | The user cut in, or a new response began before this one ended |
-| `tool_use` | The model handed off to a tool |
-| `error` | The response or model stream ended with an error |
-| `incomplete` | The session stopped while the response was still open |
-
-`incomplete` is expected when a session ends mid-turn and is not itself an error.
+text-only response has no such attribute. A model stream error closes the response
+span with error status. Ending a session mid-turn also closes the response span
+and is not itself an error.
 
 A restart span covers the reconnect operation. During this interval, sends wait for the
 connection gate to reopen. Check span status, rather than the presence of
@@ -175,9 +166,12 @@ agents. See [Tool-Level Attributes](../observability-evaluation/traces.md#tool-l
 
 ### Barge-in events
 
-A barge-in is recorded as a `bidi_barge_in` event on the session span with a `barge_in.reason` attribute. The affected response separately closes with `gen_ai.response.finish_reason` set to `barge_in`.
+A barge-in is recorded as a `bidi_barge_in` event on the session span with a
+`barge_in.reason` attribute.
 
-To count barge-ins, query the session span's `bidi_barge_in` events. To find which response ended, query response spans with a `barge_in` finish reason. Keeping the event on the session also captures barge-ins between response spans. For detection and playback behavior, see [Barge-in](barge-in.md).
+To count barge-ins, query the session span's `bidi_barge_in` events. Keeping the
+event on the session also captures barge-ins between response spans. For detection
+and playback behavior, see [Barge-in](barge-in.md).
 
 ## Inspecting spans locally
 
@@ -258,7 +252,6 @@ same session produces the following child response span:
         "gen_ai.system": "strands-agents",
         "gen_ai.response.id": "resp_01",
         "gen_ai.event.end_time": "2026-08-10T13:27:26.830133+00:00",
-        "gen_ai.response.finish_reason": "end_turn",
         "gen_ai.server.time_to_first_audio": 120
     },
     "events": [],
@@ -339,7 +332,7 @@ async def track_session(agent: BidiAgent) -> None:
                     f"in={modality['input_tokens']} out={modality['output_tokens']}"
                 )
         elif isinstance(event, BidiResponseStopEvent):
-            print(f"response {event.response_id} ended: {event.stop_reason}")
+            print(f"response {event.response_id} ended")
             break
 ```
 
@@ -349,7 +342,7 @@ Typical output for one turn:
 input=120 output=64 total=184
   text: in=20 out=0
   audio: in=100 out=64
-response resp_01 ended: complete
+response resp_01 ended
 ```
 
 `modality_details` is an empty list when the provider does not report a breakdown, so

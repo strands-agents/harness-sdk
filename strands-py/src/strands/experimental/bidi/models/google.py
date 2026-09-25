@@ -46,7 +46,6 @@ from ..types.events import (
     BidiTranscriptStopEvent,
     BidiUsageEvent,
     ModalityUsage,
-    StopReason,
 )
 from ..types.media import AudioDelta
 from .configs import (
@@ -79,7 +78,7 @@ class _TurnState:
     output_transcript: str = ""
     output_transcript_id: str | None = None
     audio_started: bool = False
-    stop_reason: StopReason = "end_turn"
+    interrupted: bool = False
     input_id: str | None = None
     transcripts: dict[str, str] = field(default_factory=dict)
     response_input_ids: list[str] = field(default_factory=list)
@@ -352,8 +351,6 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
             )
 
         if message.tool_call and message.tool_call.function_calls:
-            if turn_state.stop_reason != "barge_in":
-                turn_state.stop_reason = "tool_use"
             for func_call in message.tool_call.function_calls:
                 tool_use_event: ToolUse = {
                     "toolUseId": cast(str, func_call.id),
@@ -407,7 +404,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         )
 
         if barge_in and turn_state.response_id is not None:
-            turn_state.stop_reason = "barge_in"
+            turn_state.interrupted = True
         if turn_state.audio_started and (barge_in or turn_complete or generation_complete):
             turn_state.audio_started = False
             wrapped.append(BidiAudioStopEvent())
@@ -433,12 +430,12 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
                     turn_state.output_transcript, "assistant", content_id=turn_state.output_transcript_id
                 )
             )
-        events.append(BidiResponseStopEvent(turn_state.response_id, turn_state.stop_reason))
+        events.append(BidiResponseStopEvent(turn_state.response_id))
         turn_state.response_id = None
         turn_state.response_input_ids = []
         turn_state.output_transcript = ""
         turn_state.output_transcript_id = None
-        turn_state.stop_reason = "end_turn"
+        turn_state.interrupted = False
         return events
 
     def _convert_server_content(
@@ -471,11 +468,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
                 events.append(start_event)
                 input_id = start_event.content_id
                 # Without a native activity boundary, finalize late text with the current turn.
-                if (
-                    turn_state.response_id is not None
-                    and turn_state.stop_reason != "barge_in"
-                    and not server_content.interrupted
-                ):
+                if turn_state.response_id is not None and not turn_state.interrupted and not server_content.interrupted:
                     turn_state.response_input_ids.append(input_id)
             turn_state.transcripts[input_id] += text
             logger.debug("text_length=<%d> | gemini input transcription detected", len(text))

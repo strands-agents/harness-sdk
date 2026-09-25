@@ -602,7 +602,6 @@ class _AgentLoop:
                         _telemetry.end_response_span(
                             self._tracer,
                             response_span,
-                            stop_reason="barge_in",
                             time_to_first_audio_ms=time_to_first_audio_ms,
                         )
                     response_span = _telemetry.start_response_span(
@@ -657,7 +656,6 @@ class _AgentLoop:
                         _telemetry.end_response_span(
                             self._tracer,
                             response_span,
-                            stop_reason=event.stop_reason,
                             time_to_first_audio_ms=time_to_first_audio_ms,
                         )
                         response_span = None
@@ -667,7 +665,7 @@ class _AgentLoop:
                     self._awaiting_response = False
                     self._update_turn_state()
                     await self._agent.hooks.invoke_callbacks_async(
-                        BidiResponseStopHookEvent(self._agent, event.response_id, event.stop_reason)
+                        BidiResponseStopHookEvent(self._agent, event.response_id)
                     )
 
                 elif isinstance(event, BidiUsageEvent):
@@ -702,11 +700,9 @@ class _AgentLoop:
                     strict=False,
                 )
             if response_span:
-                stop_reason = "error" if model_error else "incomplete"
                 _telemetry.end_response_span(
                     self._tracer,
                     response_span,
-                    stop_reason=stop_reason,
                     time_to_first_audio_ms=time_to_first_audio_ms,
                     error=model_error,
                 )

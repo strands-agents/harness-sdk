@@ -66,7 +66,6 @@ from ..types.events import (
     BidiTranscriptStopEvent,
     BidiUsageEvent,
     Role,
-    StopReason,
 )
 from ..types.media import AudioDelta
 from .configs import (
@@ -191,14 +190,14 @@ class _ResponseState:
         generation_stage: Generation stage of the current text block.
         transcript: Open user or speculative assistant transcript.
         response_id: Identifier of the open response, including its user transcript.
-        stop_reason: Stop reason retained while the response remains open.
+        tool_use: Whether the response requested a tool.
         audio_started: Whether the response's audio stream is open.
     """
 
     generation_stage: str | None = None
     transcript: _Transcript | None = None
     response_id: str | None = None
-    stop_reason: StopReason | None = None
+    tool_use: bool = False
     audio_started: bool = False
 
     def reset(self) -> None:
@@ -206,7 +205,7 @@ class _ResponseState:
         self.generation_stage = None
         self.transcript = None
         self.response_id = None
-        self.stop_reason = None
+        self.tool_use = False
         self.audio_started = False
 
 
@@ -744,9 +743,9 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             role = content_start["role"].strip().lower()
 
             events: list[BidiOutputEvent] = []
-            if role == "user" and response_state.stop_reason == "tool_use":
+            if role == "user" and response_state.tool_use:
                 # A tool-only response may have no audio END_TURN before the next user content.
-                events.extend(self._complete_response(response_state, "end_turn"))
+                events.extend(self._complete_response(response_state))
 
             generation_stage = None
             if content_type == "TEXT":
@@ -829,17 +828,17 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             events = []
             if content_type == "AUDIO":
                 if stop_reason == "END_TURN":
-                    events.extend(self._complete_response(response_state, "end_turn"))
+                    events.extend(self._complete_response(response_state))
                 return events
 
             if stop_reason == "INTERRUPTED":
                 events.append(BidiBargeInEvent("user_speech"))
                 if response_state.response_id is not None:
-                    events.extend(self._complete_response(response_state, "barge_in"))
+                    events.extend(self._complete_response(response_state))
                 return events
 
             if stop_reason == "TOOL_USE":
-                response_state.stop_reason = "tool_use"
+                response_state.tool_use = True
 
             return events
 
@@ -858,7 +857,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
 
         return []
 
-    def _complete_response(self, response_state: _ResponseState, stop_reason: StopReason) -> list[BidiOutputEvent]:
+    def _complete_response(self, response_state: _ResponseState) -> list[BidiOutputEvent]:
         """Close audio, transcript, and response, then clear their state."""
         events: list[BidiOutputEvent] = []
         if response_state.audio_started:
@@ -866,7 +865,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         transcript = response_state.transcript
         if transcript is not None:
             events.append(BidiTranscriptStopEvent(transcript.text, transcript.role, transcript.content_id))
-        events.append(BidiResponseStopEvent(cast(str, response_state.response_id), stop_reason))
+        events.append(BidiResponseStopEvent(cast(str, response_state.response_id)))
         response_state.reset()
         return events
 

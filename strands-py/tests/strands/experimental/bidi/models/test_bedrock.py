@@ -581,7 +581,7 @@ def test_response_boundaries_across_content_blocks(nova_model, user_transcript):
                 assert events == [
                     BidiAudioStopEvent(),
                     BidiTranscriptStopEvent("Hello.", "assistant", "speculative"),
-                    BidiResponseStopEvent(tru_events[0].response_id, "end_turn"),
+                    BidiResponseStopEvent(tru_events[0].response_id),
                 ]
             tru_events.extend(events)
         response_id = tru_events[0].response_id
@@ -604,7 +604,7 @@ def test_response_boundaries_across_content_blocks(nova_model, user_transcript):
             BidiAudioDeltaEvent("Yg==", format="pcm", sample_rate=16000, channels=1),
             BidiAudioStopEvent(),
             BidiTranscriptStopEvent("Hello.", "assistant", content_id="speculative"),
-            BidiResponseStopEvent(response_id, "end_turn"),
+            BidiResponseStopEvent(response_id),
         ]
         assert tru_events == exp_events
     assert response_ids[0] != response_ids[1]
@@ -645,7 +645,7 @@ def test_accumulates_speculative_assistant_transcript_blocks(nova_model):
         BidiAudioDeltaEvent("YQ==", format="pcm", sample_rate=16000, channels=1),
         BidiAudioStopEvent(),
         BidiTranscriptStopEvent("Dragons appear in myths worldwide. Would you like to hear more?", "assistant", "t1"),
-        BidiResponseStopEvent("r1", "end_turn"),
+        BidiResponseStopEvent("r1"),
     ]
     assert tru_events == exp_events
     assert response_state == _ResponseState()
@@ -661,7 +661,7 @@ def test_barge_in_closes_response_before_next_turn(nova_model, role):
     exp_events = [
         BidiBargeInEvent("user_speech"),
         BidiTranscriptStopEvent("Partial answer.", role, "t1"),
-        BidiResponseStopEvent("r1", "barge_in"),
+        BidiResponseStopEvent("r1"),
     ]
     assert tru_events == exp_events
     assert state == _ResponseState()
@@ -756,7 +756,7 @@ def test_response_after_barge_in_finishes_before_next_user_transcript(nova_model
                 BidiBargeInEvent("user_speech"),
                 *([BidiAudioStopEvent()] if final_fragments else []),
                 BidiTranscriptStopEvent("Planned answer.", "assistant", content_id="t1"),
-                BidiResponseStopEvent("r1", "barge_in"),
+                BidiResponseStopEvent("r1"),
             ]
         elif native_event.get("textOutput", {}).get("contentId") == "final":
             assert events == []
@@ -767,7 +767,7 @@ def test_response_after_barge_in_finishes_before_next_user_transcript(nova_model
         BidiBargeInEvent("user_speech"),
         *([BidiAudioStopEvent()] if final_fragments else []),
         BidiTranscriptStopEvent("Planned answer.", "assistant", content_id="t1"),
-        BidiResponseStopEvent("r1", "barge_in"),
+        BidiResponseStopEvent("r1"),
         BidiResponseStartEvent(response_state.response_id),
         BidiTranscriptStartEvent("user", content_id="user"),
         BidiTranscriptDeltaEvent("Next question.", "user", content_id="user"),
@@ -1812,7 +1812,7 @@ def test_tool_calls_keep_response_open_until_audio_ends(nova_model, assistant_tr
         BidiTranscriptStopEvent(
             "Let me check. It is noon." if assistant_transcript else "It is noon.", "assistant", content_id
         ),
-        BidiResponseStopEvent(response_id, "end_turn"),
+        BidiResponseStopEvent(response_id),
     ]
     assert tru_events == exp_events
     assert state == _ResponseState()
@@ -1863,7 +1863,7 @@ def test_user_transcript_closes_response_after_tool_use(nova_model, assistant_tr
             else []
         ),
         *([BidiTranscriptStopEvent("Let me check.", "assistant", "assistant")] if assistant_transcript else []),
-        BidiResponseStopEvent("previous", "end_turn"),
+        BidiResponseStopEvent("previous"),
         BidiResponseStartEvent(state.response_id),
         BidiTranscriptStartEvent("user", "user-1"),
         BidiTranscriptDeltaEvent("Next", "user", "user-1"),

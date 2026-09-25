@@ -69,7 +69,7 @@ from strands.experimental.bidi.types.events import _normalize_role
         (BidiBargeInEvent, {"reason": "user_speech"}, "bidi_barge_in"),
         (
             BidiResponseStopEvent,
-            {"response_id": "r1", "stop_reason": "end_turn"},
+            {"response_id": "r1"},
             "bidi_response_stop",
         ),
         (
@@ -113,6 +113,13 @@ def test_transcript_start_contains_metadata(role):
     event = BidiTranscriptStartEvent(role, "t1")
     assert event == {"type": "bidi_transcript_start", "role": role, "content_id": "t1"}
     assert (event.role, event.content_id) == (role, "t1")
+
+
+def test_response_stop_contains_id():
+    tru_event = BidiResponseStopEvent("r1")
+    exp_event = {"type": "bidi_response_stop", "response_id": "r1"}
+    assert tru_event == exp_event
+    assert tru_event.response_id == "r1"
 
 
 def test_audio_start_is_marker():

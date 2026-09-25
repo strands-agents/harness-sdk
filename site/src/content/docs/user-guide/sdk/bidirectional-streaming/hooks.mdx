@@ -61,7 +61,7 @@ class ConversationLogger:
         print(f"{event.message['role']}: {event.message['content']}")
 
     async def on_response_stop(self, event: BidiResponseStopEvent) -> None:
-        print(f"Response {event.response_id} ended: {event.stop_reason}")
+        print(f"Response {event.response_id} ended")
 
     async def on_stop(self, event: BidiAgentStopEvent) -> None:
         print(f"Agent {event.agent.name} stopped")
@@ -190,7 +190,10 @@ Choose hooks according to the boundary you need to observe:
 `BidiAgentStopEvent` carries `agent` and uses reverse callback ordering for cleanup.
 The session manager uses this event for its final state sync.
 
-`BidiResponseStopEvent` carries `agent`, `response_id`, and `stop_reason`. Hooks run in registration order and finish before the corresponding streaming event reaches the consumer. The hook mirrors model-reported completion: shutdown or a connection failure without a stop event does not emit it.
+`BidiResponseStopEvent` carries `agent` and `response_id`. Hooks run in registration
+order and finish before the corresponding streaming event reaches the consumer.
+The hook mirrors model-reported completion: shutdown or a connection failure without
+a stop event does not emit it.
 
 The hook and streaming event share a name but are separate classes. Import the hook
 from `strands.experimental.bidi.hooks`. Import the streaming event from
@@ -281,7 +284,7 @@ class ConversationAnalytics:
 
     async def on_response_stop(self, event: BidiResponseStopEvent) -> None:
         self.response_count += 1
-        print(f"Response {event.response_id}: {event.stop_reason}")
+        print(f"Response {event.response_id} ended")
 
     async def on_stop(self, event: BidiAgentStopEvent) -> None:
         print(f"Agent {event.agent.agent_id}: {self.response_count} responses ended")

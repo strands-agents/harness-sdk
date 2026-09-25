@@ -1030,7 +1030,7 @@ def test_barge_in_emitted_alongside_other_server_content(model, complete_with_ou
         BidiTranscriptStartEvent("assistant", content_id=unittest.mock.ANY),
         BidiTranscriptDeltaEvent("partial reply", "assistant", content_id=unittest.mock.ANY),
         BidiTranscriptStopEvent("partial reply", "assistant", content_id=unittest.mock.ANY),
-        BidiResponseStopEvent(unittest.mock.ANY, "barge_in"),
+        BidiResponseStopEvent(unittest.mock.ANY),
     ]
     assert tru_events == exp_events
     assert tru_events[0].response_id == tru_events[-1].response_id
@@ -1047,7 +1047,7 @@ def test_barge_in_emitted_alongside_other_server_content(model, complete_with_ou
         BidiTranscriptStartEvent("assistant", content_id=unittest.mock.ANY),
         BidiTranscriptDeltaEvent("Next reply.", "assistant", content_id=unittest.mock.ANY),
         BidiTranscriptStopEvent("Next reply.", "assistant", content_id=unittest.mock.ANY),
-        BidiResponseStopEvent(unittest.mock.ANY, "end_turn"),
+        BidiResponseStopEvent(unittest.mock.ANY),
     ]
     assert tru_events == exp_events
     assert tru_events[0].response_id != response_id
@@ -1128,7 +1128,7 @@ async def test_transcription_fragments_complete_at_turn_boundary(
     assert completed == [
         BidiTranscriptStopEvent("how are you?", "user", content_id=unittest.mock.ANY),
         BidiTranscriptStopEvent("I am doing well.", "assistant", content_id=unittest.mock.ANY),
-        BidiResponseStopEvent(response_id=unittest.mock.ANY, stop_reason="end_turn"),
+        BidiResponseStopEvent(response_id=unittest.mock.ANY),
     ]
     assert turn_state.transcripts == {}
     assert turn_state.output_transcript == ""
@@ -1153,7 +1153,7 @@ async def test_transcription_fragments_complete_at_turn_boundary(
             [
                 BidiBargeInEvent(reason="user_speech"),
                 BidiTranscriptStopEvent("Turn one.", "user", content_id=unittest.mock.ANY),
-                BidiResponseStopEvent("r1", "barge_in"),
+                BidiResponseStopEvent("r1"),
             ],
             id="barge-in-then-complete",
         ),
@@ -1163,7 +1163,7 @@ async def test_transcription_fragments_complete_at_turn_boundary(
             [
                 BidiBargeInEvent(reason="user_speech"),
                 BidiTranscriptStopEvent("Turn one.", "user", content_id=unittest.mock.ANY),
-                BidiResponseStopEvent("r1", "barge_in"),
+                BidiResponseStopEvent("r1"),
             ],
             id="barge-in-and-complete",
         ),
@@ -1273,12 +1273,12 @@ async def test_turn_complete_closes_response(mock_genai_client, model, live_mess
     await model.start()
     turn_state = _TurnState(response_id="r1")
 
-    events = model._convert_gemini_live_event(
+    tru_events = model._convert_gemini_live_event(
         live_message(server_content=server_content(turn_complete=True)), turn_state
     )
 
-    assert [type(event) for event in events] == [BidiResponseStopEvent]
-    assert events[0].stop_reason == "end_turn"
+    exp_events = [BidiResponseStopEvent("r1")]
+    assert tru_events == exp_events
     assert turn_state.response_id is None
 
 
@@ -1301,7 +1301,7 @@ def test_audio_stops_once_at_generation_boundary(model, live_message, server_con
         [
             BidiAudioDeltaEvent("bGFzdA==", format="pcm", sample_rate=24000, channels=1),
             BidiAudioStopEvent(),
-            BidiResponseStopEvent("r1", "barge_in" if ending == "interrupted" else "end_turn"),
+            BidiResponseStopEvent("r1"),
         ]
     )
     assert tru_events == exp_events
@@ -1354,11 +1354,11 @@ async def test_barge_in_completes_at_turn_boundary(
     )
     exp_events = [
         BidiTranscriptStopEvent("Spoken answer.", "assistant", content_id=unittest.mock.ANY),
-        BidiResponseStopEvent("r1", "barge_in"),
+        BidiResponseStopEvent("r1"),
     ]
     assert tru_events == exp_events
     assert turn_state.response_id is None
-    assert turn_state.stop_reason == "end_turn"
+    assert turn_state.interrupted is False
     assert (
         model._convert_gemini_live_event(live_message(server_content=server_content(turn_complete=True)), turn_state)
         == []
@@ -1408,12 +1408,12 @@ def test_tool_handoff_and_continuation_have_separate_responses(model, complete_w
             current_tool_use={"toolUseId": "tool-1", "name": "time_tool", "input": {}},
         ),
         BidiTranscriptStopEvent("What time is it?", "user", content_id=input_id),
-        BidiResponseStopEvent(response_id, "tool_use"),
+        BidiResponseStopEvent(response_id),
         BidiResponseStartEvent(continuation_id),
         BidiTranscriptStartEvent("assistant", content_id=content_id),
         BidiTranscriptDeltaEvent("It is noon.", "assistant", content_id=content_id),
         BidiTranscriptStopEvent("It is noon.", "assistant", content_id=content_id),
-        BidiResponseStopEvent(continuation_id, "end_turn"),
+        BidiResponseStopEvent(continuation_id),
     ]
     assert tru_events == exp_events
 
@@ -1872,7 +1872,7 @@ def test_completion_after_barge_in_preserves_new_utterance(model):
     assert convert(server_content={"turn_complete": True}) == [
         BidiTranscriptStopEvent("First question", "user", content_id=first_id),
         BidiTranscriptStopEvent("First answer", "assistant", content_id=unittest.mock.ANY),
-        BidiResponseStopEvent(first_response_id, "barge_in"),
+        BidiResponseStopEvent(first_response_id),
     ]
     assert state.input_id == second_id
     assert state.transcripts == {second_id: "Second question"}
@@ -1948,7 +1948,7 @@ def test_first_transcript_after_assistant_output_keeps_receive_order(model, fini
     assert convert(turn_complete=True) == [
         *([] if finished else [user_complete]),
         BidiTranscriptStopEvent("Answer", "assistant", content_id=unittest.mock.ANY),
-        BidiResponseStopEvent(response_id, "end_turn"),
+        BidiResponseStopEvent(response_id),
     ]
     assert state.transcripts == {}
     assert state.input_id is None

@@ -77,16 +77,6 @@ def _normalize_role(role: Any, default: Role = "user") -> Role:
     return cast(Role, normalized)
 
 
-StopReason = Literal["end_turn", "error", "barge_in", "tool_use"]
-"""Reason for the model ending its response generation.
-
-- "end_turn": Model completed its response.
-- "error": Model encountered an error.
-- "barge_in": User took over while the model was responding.
-- "tool_use": Model is requesting a tool use.
-"""
-
-
 class BidiConnectionStartEvent(TypedEvent):
     """Streaming connection established and ready for interaction.
 
@@ -397,20 +387,14 @@ class BidiResponseStopEvent(TypedEvent):
 
     Parameters:
         response_id: ID of the response that ended (matches BidiResponseStartEvent).
-        stop_reason: Why the response ended.
     """
 
-    def __init__(
-        self,
-        response_id: str,
-        stop_reason: StopReason,
-    ):
+    def __init__(self, response_id: str):
         """Initialize response stop event."""
         super().__init__(
             {
                 "type": "bidi_response_stop",
                 "response_id": response_id,
-                "stop_reason": stop_reason,
             }
         )
 
@@ -418,11 +402,6 @@ class BidiResponseStopEvent(TypedEvent):
     def response_id(self) -> str:
         """Unique identifier for this response."""
         return cast(str, self["response_id"])
-
-    @property
-    def stop_reason(self) -> StopReason:
-        """Why the response ended."""
-        return cast(StopReason, self["stop_reason"])
 
 
 class ModalityUsage(dict):

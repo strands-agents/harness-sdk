@@ -123,10 +123,10 @@ async def test_receive_preserves_native_order_with_late_transcription(model, moc
         BidiConnectionStartEvent(connection_id=unittest.mock.ANY, model=model_id),
         BidiTranscriptStartEvent("user", content_id="user-1"),
         BidiResponseStartEvent("r1"),
-        BidiResponseStopEvent("r1", "barge_in"),
+        BidiResponseStopEvent("r1"),
         BidiTranscriptDeltaEvent("Earlier input.", "user", content_id="user-1"),
         BidiResponseStartEvent("r2"),
-        BidiResponseStopEvent("r2", "end_turn"),
+        BidiResponseStopEvent("r2"),
         BidiTranscriptStartEvent("user", content_id="user-2"),
         BidiTranscriptDeltaEvent("Hi", "user", content_id="user-2"),
         BidiTranscriptStopEvent("Hi", "user", content_id="user-2"),
@@ -652,11 +652,9 @@ async def test_receive_transcription_failure(mock_websocket, model, committed):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("second_item_id,second_content_index", [("item-2", 0), ("item-1", 1)])
-@pytest.mark.parametrize(
-    "status,stop_reason", [("completed", "end_turn"), ("cancelled", "barge_in"), ("failed", "error")]
-)
+@pytest.mark.parametrize("status", ["completed", "cancelled", "failed"])
 async def test_receive_combines_assistant_content_in_one_transcript(
-    model, mock_websocket, second_item_id, second_content_index, status, stop_reason
+    model, mock_websocket, second_item_id, second_content_index, status
 ):
     """Native content parts stream immediately and complete one assistant transcript."""
     native_events = [{"type": "response.created", "response": {"id": "r1"}}]
@@ -682,7 +680,7 @@ async def test_receive_combines_assistant_content_in_one_transcript(
         BidiTranscriptDeltaEvent("Let me explain.", "assistant", "r1"),
         BidiTranscriptDeltaEvent("\n\nHere is the answer.", "assistant", "r1"),
         BidiTranscriptStopEvent("Let me explain.\n\nHere is the answer.", "assistant", "r1"),
-        BidiResponseStopEvent("r1", stop_reason),
+        BidiResponseStopEvent("r1"),
     ]
     incoming = asyncio.Queue()
     for event in native_events:
@@ -767,7 +765,7 @@ async def test_event_conversion(model):
 
     response_cancelled = {"type": "response.done", "response": {"id": "resp_123", "status": "cancelled"}}
     converted = model._convert_openai_event(response_cancelled)
-    assert converted == [BidiResponseStopEvent("resp_123", "barge_in")]
+    assert converted == [BidiResponseStopEvent("resp_123")]
 
     # Test error handling - response_cancel_not_active should be suppressed
     error_cancel_not_active = {
@@ -1139,10 +1137,8 @@ def test__convert_openai_event_audio_format(model_id, api_key, voice):
 
 @pytest.mark.parametrize("native_start", [False, True])
 @pytest.mark.parametrize("native_stop", [False, True])
-@pytest.mark.parametrize(
-    "status,stop_reason", [("completed", "end_turn"), ("cancelled", "barge_in"), ("failed", "error")]
-)
-def test_audio_boundaries(model, native_start, native_stop, status, stop_reason):
+@pytest.mark.parametrize("status", ["completed", "cancelled", "failed"])
+def test_audio_boundaries(model, native_start, native_stop, status):
     """Each audio stream stops once, including cancelled responses and missing native boundaries."""
     native_events = [{"type": "response.created", "response": {"id": "r1"}}]
     if native_start:
@@ -1164,7 +1160,7 @@ def test_audio_boundaries(model, native_start, native_stop, status, stop_reason)
         BidiAudioDeltaEvent("YQ==", format="pcm", sample_rate=24000, channels=1),
         BidiAudioDeltaEvent("Yg==", format="pcm", sample_rate=24000, channels=1),
         BidiAudioStopEvent(),
-        BidiResponseStopEvent("r1", stop_reason),
+        BidiResponseStopEvent("r1"),
     ]
     assert tru_events == exp_events
     assert model._convert_openai_event({"type": "response.output_audio.done", "response_id": "r1"}) is None
@@ -1173,20 +1169,20 @@ def test_audio_boundaries(model, native_start, native_stop, status, stop_reason)
 
 @pytest.mark.parametrize("pending_tools", [set(), {"other-call"}])
 @pytest.mark.parametrize(
-    "output_types,status,stop_reason",
+    "output_types,status",
     [
-        ([], "completed", "end_turn"),
-        (["message"], "completed", "end_turn"),
-        (["function_call_output"], "completed", "end_turn"),
-        (["function_call"], "completed", "tool_use"),
-        (["message", "function_call", "function_call"], "completed", "tool_use"),
-        (["function_call"], "cancelled", "barge_in"),
-        (["function_call"], "incomplete", "barge_in"),
-        (["function_call"], "failed", "error"),
+        ([], "completed"),
+        (["message"], "completed"),
+        (["function_call_output"], "completed"),
+        (["function_call"], "completed"),
+        (["message", "function_call", "function_call"], "completed"),
+        (["function_call"], "cancelled"),
+        (["function_call"], "incomplete"),
+        (["function_call"], "failed"),
     ],
 )
-def test_response_stop_reason_uses_response_output(model, pending_tools, output_types, status, stop_reason):
-    """Classify the finished response independently of outstanding tool executions."""
+def test_response_stop_with_tools(model, pending_tools, output_types, status):
+    """Response completion is independent of tool calls and provider status."""
     model._session_state.pending_tools.update(pending_tools)
     native_event = {
         "type": "response.done",
@@ -1194,7 +1190,7 @@ def test_response_stop_reason_uses_response_output(model, pending_tools, output_
     }
 
     tru_events = model._convert_openai_event(native_event)
-    exp_events = [BidiResponseStopEvent("r1", stop_reason)]
+    exp_events = [BidiResponseStopEvent("r1")]
     assert tru_events == exp_events
 
 
@@ -1591,7 +1587,7 @@ async def test_tool_results_wait_for_response_and_entire_group(model, mock_webso
     await anext(reader)  # Connection start.
 
     await model.send(result_b)
-    assert await anext(reader) == BidiResponseStopEvent("response-a", "tool_use")
+    assert await anext(reader) == BidiResponseStopEvent("response-a")
     await model._flush_response_request(state)
     assert [json.loads(call.args[0]) for call in mock_websocket.send.call_args_list] == [
         {
@@ -1613,7 +1609,7 @@ async def test_tool_results_wait_for_response_and_entire_group(model, mock_webso
         {"type": "response.create"},
     ]
     assert await anext(reader) == BidiResponseStartEvent("response-b")
-    assert await anext(reader) == BidiResponseStopEvent("response-b", "end_turn")
+    assert await anext(reader) == BidiResponseStopEvent("response-b")
     await reader.aclose()
     await model.stop()
 
@@ -1645,16 +1641,16 @@ async def test_native_acknowledgments_correlate_inputs_and_late_transcripts(mode
     async for event in model.receive():
         if not isinstance(event, BidiConnectionStartEvent):
             tru_events.append(event)
-        if event == BidiResponseStopEvent("b", "end_turn"):
+        if event == BidiResponseStopEvent("b"):
             break
     assert tru_events == [
         BidiBargeInEvent("user_speech"),
         BidiTranscriptStartEvent("user", content_id="speech"),
         BidiResponseStartEvent("a"),
-        BidiResponseStopEvent("a", "end_turn"),
+        BidiResponseStopEvent("a"),
         BidiResponseStartEvent("b"),
         BidiTranscriptStopEvent("Earlier speech", "user", content_id="speech"),
-        BidiResponseStopEvent("b", "end_turn"),
+        BidiResponseStopEvent("b"),
     ]
     await model.stop()
 

@@ -8,7 +8,6 @@ from ....hooks.registry import BaseHookEvent
 if TYPE_CHECKING:
     from ..agent.agent import BidiAgent
     from ..models import ConnectionTimeoutError
-    from ..types.events import StopReason
 
 
 @dataclass
@@ -51,11 +50,9 @@ class BidiResponseStopEvent(_HookEvent):
 
     Attributes:
         response_id: Identifier of the response that ended.
-        stop_reason: Why the response ended, including completion or barge-in.
     """
 
     response_id: str
-    stop_reason: "StopReason"
 
 
 @dataclass

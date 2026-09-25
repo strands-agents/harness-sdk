@@ -70,10 +70,7 @@ For custom behavior, process barge-in events manually:
 import asyncio
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import BedrockNovaSonicModel
-from strands.experimental.bidi.types import (
-    BidiBargeInEvent,
-    BidiResponseStopEvent
-)
+from strands.experimental.bidi.types import BidiBargeInEvent
 
 model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 agent = BidiAgent(model=model)
@@ -89,11 +86,6 @@ async def main():
             # - Update UI to show barge-in
             # - Log analytics
             # - Clear custom buffers
-            
-        elif isinstance(event, BidiResponseStopEvent):
-            if event.stop_reason == "barge_in":
-                print("Response stopped due to barge-in")
-            break
     
     await agent.stop()
 
@@ -106,9 +98,6 @@ asyncio.run(main())
 
 **BidiBargeInEvent** - Emitted when barge-in detected:
 - `reason`: `"user_speech"` (most common) or `"error"`
-
-**BidiResponseStopEvent** - Includes barge-in status:
-- `stop_reason`: `"end_turn"`, `"barge_in"`, `"error"`, or `"tool_use"`
 
 ## Barge-in Hooks
 

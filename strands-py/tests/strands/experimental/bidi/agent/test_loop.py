@@ -67,11 +67,10 @@ async def streaming_agent(time_tool):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("stop_reason", ["end_turn", "barge_in", "error", "tool_use"])
-async def test_response_stop_hook(agent, agenerator, stop_reason):
+async def test_response_stop_hook(agent, agenerator):
     hooks = MockHookProvider([BidiResponseStopHookEvent])
     agent.hooks.add_hook(hooks)
-    completion = BidiResponseStopEvent(response_id="response-1", stop_reason=stop_reason)
+    completion = BidiResponseStopEvent(response_id="response-1")
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([completion]))
 
     await agent.start()
@@ -83,7 +82,7 @@ async def test_response_stop_hook(agent, agenerator, stop_reason):
         await agent.stop()
 
     tru_events = hooks.events_received
-    exp_events = [BidiResponseStopHookEvent(agent=agent, response_id="response-1", stop_reason=stop_reason)]
+    exp_events = [BidiResponseStopHookEvent(agent=agent, response_id="response-1")]
     assert tru_events == exp_events
 
 
@@ -106,7 +105,7 @@ async def test_response_without_transcripts_does_not_add_transcript_messages(str
     with unittest.mock.patch.object(agent._loop, "_run_tool", new_callable=unittest.mock.AsyncMock):
         for event in [
             ToolUseStreamEvent(current_tool_use=call, delta=""),
-            BidiResponseStopEvent("response", "tool_use"),
+            BidiResponseStopEvent("response"),
         ]:
             await agent.model.emit(event)
             assert await anext(reader) == event
@@ -128,8 +127,8 @@ async def test_receive_executes_tools_before_late_transcription(agent):
     start_b = BidiResponseStartEvent("b")
     answer_a = BidiTranscriptStopEvent("Checking.", "assistant", content_id="a")
     answer_b = BidiTranscriptStopEvent("It is noon.", "assistant", content_id="b")
-    complete_a = BidiResponseStopEvent("a", "tool_use")
-    complete_b = BidiResponseStopEvent("b", "end_turn")
+    complete_a = BidiResponseStopEvent("a")
+    complete_b = BidiResponseStopEvent("b")
     transcript = BidiTranscriptStopEvent("What time is it?", "user", content_id="speech-a")
 
     async def send(content, **kwargs):
@@ -210,11 +209,11 @@ async def test_receive_executes_tools_before_late_transcription(agent):
 @pytest.mark.asyncio
 async def test_receive_barge_in_does_not_wait_for_transcription(agent, agenerator):
     start_a = BidiResponseStartEvent("a")
-    complete_a = BidiResponseStopEvent("a", "end_turn")
+    complete_a = BidiResponseStopEvent("a")
     start_b = BidiResponseStartEvent("b")
     audio_b = BidiAudioDeltaEvent("cancelled", "pcm", 24000, 1)
     barge_in = BidiBargeInEvent("user_speech")
-    complete_b = BidiResponseStopEvent("b", "barge_in")
+    complete_b = BidiResponseStopEvent("b")
     transcript = BidiTranscriptStopEvent("Earlier question.", "user", content_id="speech-a")
     native_events = [
         BidiTranscriptStartEvent("user", content_id="speech-a"),
@@ -283,12 +282,12 @@ async def test_completed_messages_survive_connection_end(agent, agenerator, rest
         start_a,
         BidiTranscriptStartEvent("assistant", content_id="a"),
         answer_a,
-        BidiResponseStopEvent("a", "end_turn"),
+        BidiResponseStopEvent("a"),
         BidiResponseStartEvent("b"),
         BidiAudioDeltaEvent("old audio", "pcm", 24000, 1),
         BidiTranscriptStartEvent("assistant", content_id="b"),
         BidiTranscriptStopEvent("Answer B.", "assistant", content_id="b"),
-        BidiResponseStopEvent("b", "end_turn"),
+        BidiResponseStopEvent("b"),
         warning,
     ]
     agent.model.receive = lambda: agenerator(events)
@@ -305,7 +304,7 @@ async def test_completed_messages_survive_connection_end(agent, agenerator, rest
             new_events = [
                 BidiResponseStartEvent("b"),
                 BidiAudioDeltaEvent("new audio", "pcm", 24000, 1),
-                BidiResponseStopEvent("b", "end_turn"),
+                BidiResponseStopEvent("b"),
             ]
             agent.model.receive = lambda: agenerator(new_events)
             await agent._loop._restart_connection(None, agent._loop._generation)
@@ -329,7 +328,7 @@ async def test_send_complete_input_does_not_wait_for_transcripts(streaming_agent
     start = BidiResponseStartEvent("response")
     input_start = BidiTranscriptStartEvent("user", content_id="speech")
     assistant = BidiTranscriptStopEvent("Answer", "assistant", content_id="response")
-    complete = BidiResponseStopEvent("response", "end_turn")
+    complete = BidiResponseStopEvent("response")
     user = BidiTranscriptStopEvent("Spoken question", "user", content_id="speech")
     reader = agent.receive()
     try:
@@ -415,7 +414,7 @@ async def test_model_processes_transcripts_before_consumer_reads(loop, agent, ag
 @pytest.mark.parametrize(
     "stream_event,hook_type",
     [
-        (BidiResponseStopEvent(response_id="r1", stop_reason="end_turn"), BidiResponseStopHookEvent),
+        (BidiResponseStopEvent(response_id="r1"), BidiResponseStopHookEvent),
         (BidiBargeInEvent(reason="user_speech"), BidiBargeInHookEvent),
         (BidiTranscriptStartEvent(role="assistant", content_id="assistant-transcript"), MessageAddedEvent),
     ],
@@ -1224,7 +1223,7 @@ async def test_assistant_transcript_does_not_mark_awaiting_response(loop, agent,
 async def test_response_stop_clears_awaiting_response(loop, agent, agenerator, delta_after_response):
     """User transcript deltas do not reopen a completed turn."""
     partial = BidiTranscriptDeltaEvent(delta="earlier question", role="user", content_id="speech")
-    response_stop = BidiResponseStopEvent(response_id="r1", stop_reason="end_turn")
+    response_stop = BidiResponseStopEvent(response_id="r1")
     events = [
         BidiResponseStartEvent(response_id="r1"),
         BidiTranscriptStartEvent(role="user", content_id="speech"),
@@ -1294,7 +1293,7 @@ async def test_transcripts_finish_in_their_reserved_order(streaming_agent, secon
 
     for event in [
         BidiTranscriptStopEvent("Second transcript", second_role, content_id="second"),
-        BidiResponseStopEvent("response", "end_turn"),
+        BidiResponseStopEvent("response"),
         BidiTranscriptStopEvent("Question", "user", content_id="speech"),
     ]:
         await agent.model.emit(event)

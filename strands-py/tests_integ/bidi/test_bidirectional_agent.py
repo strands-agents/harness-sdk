@@ -290,9 +290,7 @@ async def test_bidirectional_agent(agent_with_calculator, audio_generator, provi
         assert not active_transcripts
         tru_events = hook_collector.get_events_by_type("response_stop")
         exp_events = [
-            BidiResponseStopEvent(
-                agent=agent_with_calculator, response_id=event.response_id, stop_reason=event.stop_reason
-            )
+            BidiResponseStopEvent(agent=agent_with_calculator, response_id=event.response_id)
             for event in response_events
         ]
         assert tru_events == exp_events

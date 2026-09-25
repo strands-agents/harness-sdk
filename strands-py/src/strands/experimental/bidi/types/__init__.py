@@ -22,7 +22,6 @@ from .events import (
     BidiUsageEvent,
     ModalityUsage,
     Role,
-    StopReason,
 )
 from .io import InputStream, OutputStream
 from .media import AudioDelta
@@ -55,5 +54,4 @@ __all__ = [
     "ModalityUsage",
     "OutputStream",
     "Role",
-    "StopReason",
 ]

@@ -58,7 +58,7 @@ def agent_stop_event(agent):
 
 @pytest.fixture
 def response_stop_event(agent):
-    return BidiResponseStopEvent(agent=agent, response_id="response-1", stop_reason="end_turn")
+    return BidiResponseStopEvent(agent=agent, response_id="response-1")
 
 
 @pytest.fixture
@@ -81,7 +81,7 @@ def test_barge_in_event_fields(agent):
     assert tru_event == exp_event
 
 
-@pytest.mark.parametrize("name", ["agent", "response_id", "stop_reason"])
+@pytest.mark.parametrize("name", ["agent", "response_id"])
 def test_response_stop_event_cannot_write_properties(response_stop_event, name):
     with pytest.raises(AttributeError, match=f"Property {name} is not writable"):
         setattr(response_stop_event, name, None)

@@ -41,7 +41,6 @@ from ..types.events import (
     BidiUsageEvent,
     ModalityUsage,
     Role,
-    StopReason,
 )
 from ..types.media import AudioDelta
 from .configs import (
@@ -743,15 +742,7 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             )
         state.assistant_parts.pop(response_id, None)
 
-        has_tool_use = any(item.get("type") == "function_call" for item in output)
-        stop_reasons: dict[str, StopReason] = {
-            "completed": "tool_use" if has_tool_use else "end_turn",
-            "cancelled": "barge_in",
-            "failed": "error",
-            "incomplete": "barge_in",
-        }
-        stop_reason = stop_reasons.get(response.get("status", "completed"), "end_turn")
-        events.append(BidiResponseStopEvent(response_id=response_id, stop_reason=stop_reason))
+        events.append(BidiResponseStopEvent(response_id=response_id))
 
         if usage := response.get("usage"):
             events.append(self._convert_usage_metadata(usage))

@@ -65,12 +65,12 @@ async def test_call_streams_turns(output, console, user_events, exp_lines):
         BidiTranscriptDeltaEvent("First", "assistant", "first"),
         BidiTranscriptDeltaEvent(" response", "assistant", "first"),
         BidiTranscriptStopEvent("First response", "assistant", "first"),
-        BidiResponseStopEvent("first", "end_turn"),
+        BidiResponseStopEvent("first"),
         *user_events,
         BidiTranscriptStartEvent("assistant", "second"),
         BidiTranscriptDeltaEvent("Second response", "assistant", "second"),
         BidiTranscriptStopEvent("Second response", "assistant", "second"),
-        BidiResponseStopEvent("second", "end_turn"),
+        BidiResponseStopEvent("second"),
     ]:
         await output(event)
 
@@ -86,8 +86,7 @@ async def test_call_streams_turns(output, console, user_events, exp_lines):
     [
         BidiBargeInEvent("user_speech"),
         BidiResponseStartEvent("first"),
-        BidiResponseStopEvent("first", "end_turn"),
-        BidiResponseStopEvent("first", "barge_in"),
+        BidiResponseStopEvent("first"),
     ],
 )
 async def test_call_preserves_transcripts_across_response_events(output, console, event):

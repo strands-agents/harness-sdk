@@ -329,7 +329,7 @@ class BidirectionalTestContext:
 
                 # Thread-safe: put in queue instead of direct append
                 await self._event_queue.put(event)
-                if event.get("type") == "bidi_response_stop" and event.get("stop_reason") == "end_turn":
+                if event.get("type") == "bidi_response_stop":
                     self._response_completions.put_nowait(event)
                 logger.debug("event_type=<%s> | event collected", event.get("type", "unknown"))
 

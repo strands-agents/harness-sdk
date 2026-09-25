@@ -217,7 +217,7 @@ async def test_response_stop_is_forwarded_to_transcript_output(audio_output):
     transcript_output = unittest.mock.AsyncMock()
     audio_output._transcript_output = transcript_output
     audio_output._buffer.put(b"\x01\x02\x03\x04")
-    event = BidiResponseStopEvent(response_id="response-1", stop_reason="end_turn")
+    event = BidiResponseStopEvent(response_id="response-1")
 
     await audio_output(event)
 
