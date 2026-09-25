@@ -341,8 +341,60 @@ describe('AnthropicModel', () => {
 
       expect(events).toContainEqual({
         type: 'modelContentBlockDeltaEvent',
-        delta: { type: 'reasoningContentDelta', redactedContent: 'data' },
+        delta: { type: 'reasoningContentDelta', redactedContent: new Uint8Array([117, 171, 90]) },
       })
+    })
+
+    // Regression for #4587: redacted thinking data arrives as a base64 string and must
+    // reach the next request as that verbatim string across any toJSON/fromJSON round-trip
+    // (Message.clone(), session save/restore).
+    it('preserves redacted thinking data through stream, serialization, and request round-trips', async () => {
+      const redactedData = 'EmwKAgIBc2VjcmV0LWRhdGE='
+      const decodedBytes = new Uint8Array([18, 108, 10, 2, 2, 1, 115, 101, 99, 114, 101, 116, 45, 100, 97, 116, 97])
+
+      const mockClient = createMockClient(async function* () {
+        yield { type: 'message_start', message: { role: 'assistant', usage: { input_tokens: 10 } } }
+        yield {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'redacted_thinking', data: redactedData },
+        }
+        yield { type: 'content_block_stop', index: 0 }
+        yield { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } }
+        yield { type: 'message_stop' }
+      })
+
+      const provider = new AnthropicModel({ client: mockClient })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      const aggregated = (await collectGenerator(provider.streamAggregated(messages))).result
+      const streamedBlock = aggregated.message.content[0] as ReasoningBlock
+
+      // The streamed block holds the decoded bytes its declared type promises
+      expect(streamedBlock.type).toBe('reasoningBlock')
+      expect(streamedBlock.redactedContent).toEqual(decodedBytes)
+
+      // Session save/restore (toJSON/fromJSON) must not alter the value
+      const restored = Message.fromJSON(JSON.parse(JSON.stringify(aggregated.message)))
+      const restoredBlock = restored.content[0] as ReasoningBlock
+      expect(restoredBlock.redactedContent).toEqual(decodedBytes)
+
+      // Sending the restored block back must carry the verbatim base64 string
+      const captured: { request: any } = { request: null }
+      const captureClient = {
+        messages: {
+          stream: vi.fn((req: any) => {
+            captured.request = req
+            return (async function* () {
+              yield { type: 'ping' }
+            })()
+          }),
+        },
+      } as unknown as Anthropic
+      const sendBack = new AnthropicModel({ client: captureClient })
+      await collectIterator(sendBack.stream([restored]))
+
+      expect(captured.request.messages[0].content).toEqual([{ type: 'redacted_thinking', data: redactedData }])
     })
 
     it('handles text payload directly in content_block_start (optimization)', async () => {
