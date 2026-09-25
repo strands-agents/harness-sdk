@@ -693,6 +693,37 @@ describe('Model', () => {
           new CitationsBlock({ citations: [citation], content: [{ text: 'cited' }] }),
         ])
       })
+
+      // https://github.com/strands-agents/harness-sdk/issues/4588
+      it('keeps each block to its own text when the provider sends no block start events', async () => {
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelMessageStartEvent', role: 'assistant' }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'Based on ' } }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'the documents, ' } }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield {
+            type: 'modelContentBlockDeltaEvent',
+            delta: { type: 'citationsDelta', citations: [citation], content: [] },
+          }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'Atlas automates ' } }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'invoices.' } }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'Anything ' } }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'else?' } }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+        })
+
+        const { result } = await collectGenerator(
+          provider.streamAggregated([new Message({ role: 'user', content: [new TextBlock('Hi')] })])
+        )
+
+        expect(result.message.content).toEqual([
+          new TextBlock('Based on the documents, '),
+          new CitationsBlock({ citations: [citation], content: [{ text: 'Atlas automates invoices.' }] }),
+          new TextBlock('Anything else?'),
+        ])
+      })
     })
 
     describe('when a content block emits no text deltas alongside reasoning and tool use', () => {
