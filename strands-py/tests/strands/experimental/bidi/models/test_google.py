@@ -743,13 +743,21 @@ async def test_send_message_completes_one_user_turn(mock_genai_client, model, bl
 
 
 @pytest.mark.asyncio
-async def test_send_message_rejects_missing_image_bytes_before_sending(mock_genai_client, model):
+@pytest.mark.parametrize(
+    ("block", "error_message"),
+    [
+        (ImageBlock(format="jpeg", source={}), "image source must contain bytes"),
+        (AudioDelta(format="pcm", source={"bytes": b"audio"}), "content not supported"),
+    ],
+    ids=["missing-image-bytes", "unsupported-block"],
+)
+async def test_send_message_rejects_invalid_blocks_before_sending(mock_genai_client, model, block, error_message):
     _, mock_live_session, _ = mock_genai_client
     await model.start()
     mock_live_session.reset_mock()
     try:
-        with pytest.raises(ValueError, match="image source must contain bytes"):
-            await model.send(BidiMessage(content=[TextBlock("Hello"), ImageBlock(format="jpeg", source={})]))
+        with pytest.raises(ValueError, match=error_message):
+            await model.send(BidiMessage(content=[TextBlock("Hello"), block]))
         assert mock_live_session.mock_calls == []
     finally:
         await model.stop()

@@ -583,6 +583,8 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
                 )
             elif isinstance(block, ToolResultBlock):
                 await self._send_tool_result(block)
+            else:
+                raise ValueError(f"content_type={type(block)} | content not supported by Gemini Live")
 
         if parts:
             await self._live_session.send_client_content(

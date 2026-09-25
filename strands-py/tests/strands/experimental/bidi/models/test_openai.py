@@ -509,13 +509,21 @@ async def test_send_message_creates_one_message_and_response(mock_websockets_con
 
 
 @pytest.mark.asyncio
-async def test_send_message_rejects_missing_image_bytes_before_sending(mock_websockets_connect, model):
+@pytest.mark.parametrize(
+    ("block", "error_message"),
+    [
+        (ImageBlock(format="jpeg", source={}), "image source must contain bytes"),
+        (AudioDelta(format="pcm", source={"bytes": b"audio"}), "content not supported"),
+    ],
+    ids=["missing-image-bytes", "unsupported-block"],
+)
+async def test_send_message_rejects_invalid_blocks_before_sending(mock_websockets_connect, model, block, error_message):
     _, mock_ws = mock_websockets_connect
     await model.start()
     mock_ws.send.reset_mock()
     try:
-        with pytest.raises(ValueError, match="image source must contain bytes"):
-            await model.send(BidiMessage(content=[TextBlock("Hello"), ImageBlock(format="jpeg", source={})]))
+        with pytest.raises(ValueError, match=error_message):
+            await model.send(BidiMessage(content=[TextBlock("Hello"), block]))
         mock_ws.send.assert_not_awaited()
     finally:
         await model.stop()

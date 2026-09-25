@@ -60,7 +60,7 @@ from ....types.content import (
 )
 from ....types.exceptions import SnapshotException
 from ....types.media import AudioContent, ImageBlock, ImageContent
-from ....types.tools import AgentTool, ToolResultBlock
+from ....types.tools import AgentTool
 from .._async import _TaskGroup, stop_all
 from ..models.model import BidiModel
 from ..types.agent import BidiAgentInput
@@ -338,15 +338,15 @@ class BidiAgent(LocalAgent):
 
                 - str: Text message from user
                 - TextBlock, AudioDelta, or ImageBlock: Text, streaming audio, or image input
-                - BidiContentBlockData: A dictionary containing one text or image key
+                - BidiUserContentBlockData: A dictionary containing one text or image key
                 - BidiContentDeltaData: A dictionary containing one audio_delta key
                 - list: A non-empty list of strings, text or image blocks, or their dictionary forms
 
         Raises:
             RuntimeError: If start has not been called.
             TypeError: If the input has an unsupported type or invalid input arguments.
-            ValueError: If the input contains a tool result, the input list is empty,
-                or an input dictionary does not contain exactly one supported key.
+            ValueError: If the input list is empty or an input dictionary does not contain
+                exactly one supported key.
 
         Example:
             await agent.send("Hello")
@@ -369,8 +369,6 @@ class BidiAgent(LocalAgent):
         message = BidiMessage(content=[])
         for item in inputs:
             match item:
-                case ToolResultBlock() | {"toolResult": _}:
-                    raise ValueError("invalid input | tool results cannot be sent through BidiAgent.send")
                 case TextBlock() | ImageBlock():
                     message.content.append(item)
                 case str():

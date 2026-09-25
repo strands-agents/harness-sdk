@@ -5,14 +5,14 @@ This module defines the types used for BidiAgent.
 
 from typing import TypeAlias
 
-from .content import BidiContentBlock, BidiContentBlockData, BidiContentDelta, BidiContentDeltaData
+from .content import BidiContentDelta, BidiContentDeltaData, BidiUserContentBlock, BidiUserContentBlockData
 
 BidiAgentInput: TypeAlias = (
     str
-    | BidiContentBlock
-    | BidiContentBlockData
+    | BidiUserContentBlock
+    | BidiUserContentBlockData
     | BidiContentDelta
     | BidiContentDeltaData
-    | list[str | BidiContentBlock | BidiContentBlockData]
+    | list[str | BidiUserContentBlock | BidiUserContentBlockData]
 )
-"""A single input or block list. Tool results are rejected by BidiAgent.send."""
+"""A single user input or list of user content blocks."""

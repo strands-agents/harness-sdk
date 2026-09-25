@@ -22,7 +22,6 @@ from strands.experimental.bidi.types import (
 from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent, MessageAddedEvent, MessageUpdatedEvent
 from strands.types.content import SystemContentBlock, TextBlock
 from strands.types.media import AudioBlock, ImageBlock
-from strands.types.tools import ToolResultBlock
 from tests.fixtures.mock_hook_provider import MockHookProvider
 
 
@@ -459,26 +458,6 @@ async def test_send_list_preserves_order_and_history(agent, image):
     assert tru_messages == exp_messages
     assert [event.message for event in hooks.events_received] == exp_messages
     assert inputs == [image, {"text": "Describe this image"}, "Thanks"]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("as_list", [False, True], ids=["single", "list"])
-@pytest.mark.parametrize(
-    "input_data",
-    [
-        ToolResultBlock(tool_use_id="call-1", status="success", content=[]),
-        {"toolResult": {"toolUseId": "call-1", "status": "success", "content": []}},
-    ],
-    ids=["block", "dictionary"],
-)
-async def test_send_rejects_tool_results(agent, input_data, as_list):
-    agent.model.send = unittest.mock.AsyncMock()
-    async with agent:
-        with pytest.raises(ValueError, match="tool results cannot be sent"):
-            await agent.send([TextBlock("Hello"), input_data] if as_list else input_data)
-
-    agent.model.send.assert_not_awaited()
-    assert agent.messages == []
 
 
 @pytest.mark.asyncio

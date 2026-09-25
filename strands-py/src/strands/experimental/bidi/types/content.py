@@ -10,13 +10,19 @@ from ....types.media import ImageBlock, _ImageBlockData
 from ....types.tools import ToolResultBlock, _ToolResultBlockData
 from .media import AudioDelta, _AudioDeltaData
 
-BidiContentBlock: TypeAlias = TextBlock | ImageBlock | ToolResultBlock
+BidiUserContentBlock: TypeAlias = TextBlock | ImageBlock
+"""A complete text or image block supplied by a user."""
+
+BidiContentBlock: TypeAlias = BidiUserContentBlock | ToolResultBlock
 """A complete text, image, or tool result block."""
 
 BidiContentDelta: TypeAlias = AudioDelta
 """An audio delta for the live input stream."""
 
-BidiContentBlockData: TypeAlias = _TextBlockData | _ImageBlockData | _ToolResultBlockData
+BidiUserContentBlockData: TypeAlias = _TextBlockData | _ImageBlockData
+"""Dictionary form of one user content block."""
+
+BidiContentBlockData: TypeAlias = BidiUserContentBlockData | _ToolResultBlockData
 """Dictionary form of one text, image, or tool result block."""
 
 BidiContentDeltaData: TypeAlias = _AudioDeltaData
@@ -25,13 +31,13 @@ BidiContentDeltaData: TypeAlias = _AudioDeltaData
 
 @dataclass
 class BidiMessage:
-    """A complete input message containing ordered content blocks.
+    """An input message containing ordered content blocks.
 
-    A message contains either user text and images or tool results. Tool results
-    cannot be mixed with user content. Send streaming deltas individually.
+    Callers must supply at least one block when sending and must not mix tool
+    results with user text or images. Send streaming deltas individually.
 
     Attributes:
-        content: Non-empty list of complete content blocks.
+        content: Ordered list of complete content blocks.
     """
 
     content: list[BidiContentBlock]

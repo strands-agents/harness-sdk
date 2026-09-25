@@ -812,6 +812,8 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
                 content.append({"type": "input_image", "image_url": f"data:image/{block.format};base64,{image}"})
             elif isinstance(block, ToolResultBlock):
                 await self._send_tool_result(block)
+            else:
+                raise ValueError(f"content_type={type(block)} | content not supported by OpenAI Realtime")
 
         if content:
             await self._send_event(
