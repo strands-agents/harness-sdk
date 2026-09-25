@@ -68,6 +68,32 @@ When you're ready to embed the agent in an application, run `/export` in a chat,
 `createHarness(...)`. The project exports a ready-to-import `agent`, so the CLI is a fast
 on-ramp to the library below: build interactively, then drop into code.
 
+### Usage telemetry
+
+Each time the interactive TUI starts with the built-in profile, `strands` sends one anonymous
+ping to `https://telemetry.strandsagents.com/ping` so we can see which versions, providers,
+built-in tools, and plugins are actually in use. The whole payload is:
+
+```json
+{
+  "v": 1,
+  "cli_version": "0.1.0",
+  "provider": "bedrock",
+  "builtin_tools": ["shell", "read"],
+  "builtin_plugins": ["todos"]
+}
+```
+
+`provider` is one of the shipped provider names and is omitted for a custom model module. The
+payload carries no identifiers of any kind and no prompts, model ids, paths, or environment
+details, and the ping is fire-and-forget: startup never waits on it and failures are silent.
+Nothing is sent from `--print`, piped, plain, or `--acp-server` runs, or when running an
+authored agent (`--agent`, imported projects).
+
+Turn it off with `STRANDS_CLI_TELEMETRY=off` (or `DO_NOT_TRACK=1`), the **Usage ping** toggle
+in `/settings` (takes effect at the next launch), or `"settings": { "telemetry": false }` in
+`~/.strands/cli/config.json`.
+
 ## Use it as a library
 
 Prefer to write the code yourself? Install the Python or TypeScript package and run your
