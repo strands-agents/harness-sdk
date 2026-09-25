@@ -106,14 +106,17 @@ export async function loadTypescriptProject(
   }
 }
 
-function projectOptions(input: HarnessAgentOptions, root: string): HarnessAgentOptions {
+/** @internal */
+export function projectOptions(input: HarnessAgentOptions, root: string): HarnessAgentOptions {
   const path = (value: string): string =>
     value.startsWith('~/') ? join(homedir(), value.slice(2)) : resolve(root, value)
   const options = { ...input }
   if (typeof options.skills === 'string') {
-    options.skills = path(options.skills)
+    options.skills = options.skills.startsWith('https://') ? options.skills : path(options.skills)
   } else if (Array.isArray(options.skills)) {
-    options.skills = options.skills.map((skill) => (typeof skill === 'string' ? path(skill) : skill))
+    options.skills = options.skills.map((skill) =>
+      typeof skill === 'string' && !skill.startsWith('https://') ? path(skill) : skill
+    )
   }
   const policy = (value: unknown): unknown =>
     typeof value === 'string' && value.trim().endsWith('.cedar') ? path(value.trim()) : value
