@@ -30,6 +30,7 @@ import {
   type ReasoningContentBlockDelta,
   type Tool,
   type ToolConfiguration,
+  type TokenUsage as BedrockTokenUsage,
   type ToolUseBlockDelta,
   type AudioSource as BedrockAudioSource,
   type ImageSource as BedrockImageSource,
@@ -1518,6 +1519,25 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     }
   }
 
+  /**
+   * Maps a Bedrock `TokenUsage` to the SDK's `Usage`. Shared by the streaming and non-streaming
+   * paths so the cache counters they surface cannot drift apart.
+   */
+  private _mapBedrockUsage(usage: BedrockTokenUsage): Usage {
+    const mapped: Usage = {
+      inputTokens: ensureDefined(usage.inputTokens, 'usage.inputTokens'),
+      outputTokens: ensureDefined(usage.outputTokens, 'usage.outputTokens'),
+      totalTokens: ensureDefined(usage.totalTokens, 'usage.totalTokens'),
+    }
+    if (usage.cacheReadInputTokens !== undefined) {
+      mapped.cacheReadInputTokens = usage.cacheReadInputTokens
+    }
+    if (usage.cacheWriteInputTokens !== undefined) {
+      mapped.cacheWriteInputTokens = usage.cacheWriteInputTokens
+    }
+    return mapped
+  }
+
   private _mapBedrockEventToSDKEvent(event: ConverseCommandOutput): ModelStreamEvent[] {
     const events: ModelStreamEvent[] = []
 
@@ -1613,11 +1633,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     const usage = ensureDefined(event.usage, 'output.usage')
     const metadataEvent: ModelStreamEvent = {
       type: 'modelMetadataEvent',
-      usage: {
-        inputTokens: ensureDefined(usage.inputTokens, 'usage.inputTokens'),
-        outputTokens: ensureDefined(usage.outputTokens, 'usage.outputTokens'),
-        totalTokens: ensureDefined(usage.totalTokens, 'usage.totalTokens'),
-      },
+      usage: this._mapBedrockUsage(usage),
     }
 
     if (event.metrics) {
@@ -1796,22 +1812,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         }
 
         if (data.usage) {
-          const usage = data.usage
-
-          const usageInfo: Usage = {
-            inputTokens: ensureDefined(usage.inputTokens, 'usage.inputTokens'),
-            outputTokens: ensureDefined(usage.outputTokens, 'usage.outputTokens'),
-            totalTokens: ensureDefined(usage.totalTokens, 'usage.totalTokens'),
-          }
-
-          if (usage.cacheReadInputTokens !== undefined) {
-            usageInfo.cacheReadInputTokens = usage.cacheReadInputTokens
-          }
-          if (usage.cacheWriteInputTokens !== undefined) {
-            usageInfo.cacheWriteInputTokens = usage.cacheWriteInputTokens
-          }
-
-          event.usage = usageInfo
+          event.usage = this._mapBedrockUsage(data.usage)
         }
 
         if (data.metrics) {

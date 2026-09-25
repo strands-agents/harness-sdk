@@ -211,6 +211,13 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
             if (typeof cached === 'number' && cached > 0) {
               bufferedUsage.usage.cacheReadInputTokens = cached
             }
+            // GPT-5.6 reports cache writes here; the openai package's PromptTokensDetails
+            // does not type the field yet, so read it through a narrow cast.
+            const cacheWrite = (chunk.usage.prompt_tokens_details as { cache_write_tokens?: number } | undefined)
+              ?.cache_write_tokens
+            if (typeof cacheWrite === 'number' && cacheWrite > 0) {
+              bufferedUsage.usage.cacheWriteInputTokens = cacheWrite
+            }
           }
           continue
         }

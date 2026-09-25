@@ -358,6 +358,7 @@ export interface ResponsesStreamState {
     outputTokens: number
     totalTokens: number
     cacheReadInputTokens?: number
+    cacheWriteInputTokens?: number
   } | null
   stopReason: StopReason
 }
@@ -378,9 +379,10 @@ export function createResponsesStreamState(): ResponsesStreamState {
 
 /**
  * Maps a Responses API `usage` object to the SDK's usage shape, including
- * prompt-cache reads. The Responses API reports cache hits via
- * `usage.input_tokens_details.cached_tokens`; surfacing it as
- * `cacheReadInputTokens` keeps the Responses path consistent with the Bedrock,
+ * prompt-cache reads and writes. The Responses API reports cache hits via
+ * `usage.input_tokens_details.cached_tokens` and cache writes via
+ * `cache_write_tokens`; surfacing them as `cacheReadInputTokens` /
+ * `cacheWriteInputTokens` keeps the Responses path consistent with the Bedrock,
  * Anthropic, and Vercel model adapters (and lets `telemetry/tracer.ts` emit
  * `gen_ai.usage.cache_read.input_tokens`).
  *
@@ -395,6 +397,12 @@ function mapResponsesUsage(usage: ResponseUsage): NonNullable<ResponsesStreamSta
   const cached = usage.input_tokens_details?.cached_tokens
   if (typeof cached === 'number' && cached > 0) {
     mapped.cacheReadInputTokens = cached
+  }
+  // GPT-5.6 reports cache writes here; the openai package's InputTokensDetails
+  // does not type the field yet, so read it through a narrow cast.
+  const cacheWrite = (usage.input_tokens_details as { cache_write_tokens?: number } | undefined)?.cache_write_tokens
+  if (typeof cacheWrite === 'number' && cacheWrite > 0) {
+    mapped.cacheWriteInputTokens = cacheWrite
   }
   return mapped
 }
