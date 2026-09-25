@@ -12,6 +12,7 @@ import logging
 import os
 import time
 import uuid
+from collections import deque
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from typing import Any, cast
@@ -111,7 +112,7 @@ class _SessionState:
     assistant_parts: dict[str, tuple[str, int]] = field(default_factory=dict)
     audio_responses: set[str | None] = field(default_factory=set)
     active_responses: set[str] = field(default_factory=set)
-    seen_responses: set[str] = field(default_factory=set)
+    seen_responses: deque[str] = field(default_factory=lambda: deque(maxlen=256))
     pending_tools: set[str] = field(default_factory=set)
     response_pending: bool = False
     response_requested: bool = False
@@ -141,7 +142,10 @@ class _SessionState:
 
     def transcript_events(self, event: BidiTranscriptDeltaEvent | BidiTranscriptStopEvent) -> list[BidiOutputEvent]:
         """Ensure the transcript starts before emitting its delta or stop."""
-        return [*self.start_transcript(event.role, event.content_id), event]
+        events = [*self.start_transcript(event.role, event.content_id), event]
+        if isinstance(event, BidiTranscriptStopEvent):
+            self.started_transcripts.remove(event.content_id)
+        return events
 
 
 class OpenAIRealtimeModel(BidiModel, AudioCapable):
@@ -504,9 +508,9 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             event_type = openai_event.get("type")
             if event_type == "response.created":
                 response_id = openai_event["response"]["id"]
-                if response_id in state.seen_responses:
+                if response_id in state.active_responses or response_id in state.seen_responses:
                     continue
-                state.seen_responses.add(response_id)
+                state.seen_responses.append(response_id)
                 state.active_responses.add(response_id)
                 state.response_requested = False
             elif event_type == "response.done":

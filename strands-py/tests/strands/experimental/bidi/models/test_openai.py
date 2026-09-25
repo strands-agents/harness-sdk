@@ -139,6 +139,47 @@ async def test_receive_preserves_native_order_with_late_transcription(model, moc
     try:
         tru_events = [await anext(reader) for _ in exp_events]
         assert tru_events == exp_events
+        assert model._session_state.started_transcripts == set()
+    finally:
+        await reader.aclose()
+        await model.stop()
+
+
+@pytest.mark.asyncio
+async def test_receive_bounds_seen_responses(model, mock_websocket):
+    """Evict old response IDs while suppressing recent and active duplicates."""
+    await model.start()
+    state = model._session_state
+    assert state.seen_responses.maxlen is not None
+    response_ids = [f"r{index}" for index in range(state.seen_responses.maxlen + 1)]
+    native_events = [{"type": "response.created", "response": {"id": "active"}}]
+    exp_events = [
+        BidiConnectionStartEvent(model._connection_id, model.model_id),
+        BidiResponseStartEvent("active"),
+    ]
+    for response_id in response_ids:
+        native_events.extend(
+            [
+                {"type": "response.created", "response": {"id": response_id}},
+                {"type": "response.done", "response": {"id": response_id, "status": "completed"}},
+            ]
+        )
+        exp_events.extend([BidiResponseStartEvent(response_id), BidiResponseStopEvent(response_id, "end_turn")])
+    native_events.extend(
+        [
+            {"type": "response.created", "response": {"id": response_ids[-1]}},
+            {"type": "response.created", "response": {"id": "active"}},
+            {"type": "response.done", "response": {"id": "active", "status": "completed"}},
+        ]
+    )
+    exp_events.append(BidiResponseStopEvent("active", "end_turn"))
+    mock_websocket.recv.side_effect = [json.dumps(event) for event in native_events]
+    reader = model.receive()
+    try:
+        tru_events = [await anext(reader) for _ in exp_events]
+        assert tru_events == exp_events
+        assert list(state.seen_responses) == response_ids[1:]
+        assert state.active_responses == set()
     finally:
         await reader.aclose()
         await model.stop()
@@ -697,6 +738,7 @@ async def test_receive_combines_assistant_content_in_one_transcript(
         assert [message["content"] for message in agent.messages] == [
             [{"text": "Let me explain.\n\nHere is the answer."}]
         ]
+        assert model._session_state.started_transcripts == set()
     finally:
         await agent.stop()
 
@@ -1166,6 +1208,7 @@ def test_audio_boundaries(model, native_start, native_stop, status, stop_reason)
     ]
     assert tru_events == exp_events
     assert model._convert_openai_event({"type": "response.output_audio.done", "response_id": "r1"}) is None
+    assert model._session_state.audio_responses == set()
 
 
 @pytest.mark.parametrize("pending_tools", [set(), {"other-call"}])
