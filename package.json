@@ -10,7 +10,7 @@
   ],
   "devDependencies": {
     "husky": "^9.1.7",
-    "prettier": "^3.9.4"
+    "prettier": "^3.9.8"
   },
   "scripts": {
     "prepare": "husky",
