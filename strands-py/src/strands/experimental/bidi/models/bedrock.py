@@ -330,43 +330,47 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
 
         self._connection_id = str(uuid.uuid4())
 
-        # Get credentials from boto3 session (full credential chain)
-        credentials = self._session.get_credentials()
+        try:
+            # Get credentials from boto3 session (full credential chain)
+            credentials = self._session.get_credentials()
 
-        if not credentials:
-            raise ValueError(
-                "no AWS credentials found. configure credentials via environment variables, "
-                "credential files, IAM roles, or SSO."
+            if not credentials:
+                raise ValueError(
+                    "no AWS credentials found. configure credentials via environment variables, "
+                    "credential files, IAM roles, or SSO."
+                )
+
+            # Use static resolver with credentials configured as properties
+            resolver = StaticCredentialsResolver()
+
+            config = await AsyncBedrockRuntimeConfig.resolve(
+                endpoint_uri=f"https://bedrock-runtime.{self.region}.amazonaws.com",
+                region=self.region,
+                aws_credentials_identity_resolver=resolver,
+                auth_scheme_resolver=HTTPAuthSchemeResolver(),
+                auth_schemes={ShapeID("aws.auth#sigv4"): SigV4AuthScheme(service="bedrock")},
+                # Configure static credentials as properties
+                aws_access_key_id=credentials.access_key,
+                aws_secret_access_key=credentials.secret_key,
+                aws_session_token=credentials.token,
+                transport=_BedrockAWSCRTHTTPClient(),
+                user_agent_extra=_STRANDS_USER_AGENT_EXTRA,
             )
 
-        # Use static resolver with credentials configured as properties
-        resolver = StaticCredentialsResolver()
+            self._client = AsyncBedrockRuntimeClient(config=config)
+            logger.debug("region=<%s> | nova sonic client initialized", self.region)
 
-        config = await AsyncBedrockRuntimeConfig.resolve(
-            endpoint_uri=f"https://bedrock-runtime.{self.region}.amazonaws.com",
-            region=self.region,
-            aws_credentials_identity_resolver=resolver,
-            auth_scheme_resolver=HTTPAuthSchemeResolver(),
-            auth_schemes={ShapeID("aws.auth#sigv4"): SigV4AuthScheme(service="bedrock")},
-            # Configure static credentials as properties
-            aws_access_key_id=credentials.access_key,
-            aws_secret_access_key=credentials.secret_key,
-            aws_session_token=credentials.token,
-            transport=_BedrockAWSCRTHTTPClient(),
-            user_agent_extra=_STRANDS_USER_AGENT_EXTRA,
-        )
+            self._stream = await self._client.invoke_model_with_bidirectional_stream(
+                InvokeModelWithBidirectionalStreamOperationInput(model_id=self._config["model_id"])
+            )
+            logger.debug("region=<%s> | nova sonic bidirectional stream established", self.region)
 
-        self._client = AsyncBedrockRuntimeClient(config=config)
-        logger.debug("region=<%s> | nova sonic client initialized", self.region)
-
-        self._stream = await self._client.invoke_model_with_bidirectional_stream(
-            InvokeModelWithBidirectionalStreamOperationInput(model_id=self._config["model_id"])
-        )
-        logger.debug("region=<%s> | nova sonic bidirectional stream established", self.region)
-
-        init_events = self._build_initialization_events(system_prompt, tools, messages)
-        logger.debug("event_count=<%d> | sending nova sonic initialization events", len(init_events))
-        await self._send_nova_events(init_events)
+            init_events = self._build_initialization_events(system_prompt, tools, messages)
+            logger.debug("event_count=<%d> | sending nova sonic initialization events", len(init_events))
+            await self._send_nova_events(init_events)
+        except (Exception, asyncio.CancelledError):
+            await self._cleanup_failed_start()
+            raise
 
         logger.info("connection_id=<%s> | nova sonic connection established", self._connection_id)
 
@@ -643,6 +647,37 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         ]
         await self._send_nova_events(events)
 
+    async def _close_stream(self) -> None:
+        """Close and discard the active stream, if any."""
+        if not hasattr(self, "_stream"):
+            return
+
+        try:
+            await self._stream.close()
+        finally:
+            del self._stream
+
+    async def _close_client(self) -> None:
+        """Close and discard the active client, if any."""
+        if not hasattr(self, "_client"):
+            return
+
+        try:
+            await self._client.close()
+        finally:
+            del self._client
+
+    async def _clear_connection(self) -> None:
+        """Clear the connection marker."""
+        self._connection_id = None
+
+    async def _cleanup_failed_start(self) -> None:
+        """Release resources acquired by an unsuccessful start."""
+        try:
+            await stop_all(self._close_stream, self._close_client, self._clear_connection)
+        except (Exception, asyncio.CancelledError) as cleanup_error:
+            logger.warning("error=<%s> | failed to clean up nova sonic startup", cleanup_error)
+
     async def stop(self) -> None:
         """Close Nova Sonic connection with proper cleanup sequence."""
         logger.debug("nova connection cleanup starting")
@@ -655,28 +690,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             cleanup_events = [self._get_prompt_end_event(), self._get_connection_end_event()]
             await self._send_nova_events(cleanup_events)
 
-        async def stop_stream() -> None:
-            if not hasattr(self, "_stream"):
-                return
-
-            try:
-                await self._stream.close()
-            finally:
-                del self._stream
-
-        async def stop_client() -> None:
-            if not hasattr(self, "_client"):
-                return
-
-            try:
-                await self._client.close()
-            finally:
-                del self._client
-
-        async def stop_connection() -> None:
-            self._connection_id = None
-
-        await stop_all(stop_events, stop_stream, stop_client, stop_connection)
+        await stop_all(stop_events, self._close_stream, self._close_client, self._clear_connection)
 
         logger.debug("nova connection closed")
 

@@ -932,7 +932,88 @@ async def test_proactive_reconnect_end_to_end_through_agent(model_id, boto_sessi
 
 
 @pytest.mark.asyncio
-async def test_model_stop_after_start_failure(model_id, boto_session):
+async def test_start_failure_before_client_creation_allows_retry(model_id, boto_session, mock_client):
+    """A startup failure before client creation leaves the model ready to retry."""
+    credentials = Mock(access_key="key", secret_key="secret", token="token")
+    boto_session.get_credentials.side_effect = [None, credentials]
+    model = BedrockNovaSonicModel(model_id=model_id, boto_session=boto_session)
+
+    with pytest.raises(ValueError, match="no AWS credentials found"):
+        await model.start()
+
+    assert model._connection_id is None
+    assert not hasattr(model, "_client")
+    assert not hasattr(model, "_stream")
+
+    await model.start()
+
+    assert model._connection_id is not None
+    await model.stop()
+    mock_client.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "start_error",
+    [
+        pytest.param(ConnectionError("initialization failed"), id="error"),
+        pytest.param(asyncio.CancelledError(), id="cancelled"),
+    ],
+)
+async def test_start_failure_after_stream_creation_cleans_up_and_allows_retry(
+    nova_model, mock_client, mock_stream, start_error
+):
+    """A failed initialization closes acquired resources and leaves the model ready to retry."""
+    failed = False
+
+    async def fail_once(_events):
+        nonlocal failed
+        if not failed:
+            failed = True
+            raise start_error
+
+    nova_model._send_nova_events = AsyncMock(side_effect=fail_once)
+
+    with pytest.raises(type(start_error)):
+        await nova_model.start()
+
+    assert nova_model._connection_id is None
+    assert not hasattr(nova_model, "_client")
+    assert not hasattr(nova_model, "_stream")
+    mock_stream.close.assert_awaited_once()
+    mock_client.close.assert_awaited_once()
+
+    await nova_model.start()
+
+    assert nova_model._connection_id is not None
+    await nova_model.stop()
+    assert mock_stream.close.await_count == 2
+    assert mock_client.close.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_start_cleanup_failure_preserves_start_error_and_allows_retry(
+    nova_model, mock_client, mock_stream, caplog
+):
+    """Cleanup errors are reported without replacing the startup error or poisoning the model."""
+    nova_model._send_nova_events = AsyncMock(side_effect=[ConnectionError("initialization failed"), None, None])
+    mock_stream.close.side_effect = [RuntimeError("stream close failed"), None]
+    mock_client.close.side_effect = [RuntimeError("client close failed"), None]
+
+    with caplog.at_level("WARNING"), pytest.raises(ConnectionError, match="initialization failed"):
+        await nova_model.start()
+
+    assert "failed to clean up nova sonic startup" in caplog.text
+    assert nova_model._connection_id is None
+    assert not hasattr(nova_model, "_client")
+    assert not hasattr(nova_model, "_stream")
+
+    await nova_model.start()
+    await nova_model.stop()
+
+
+@pytest.mark.asyncio
+async def test_start_failure_during_stream_creation_cleans_up(model_id, boto_session):
     with patch("strands.experimental.bidi.models.bedrock.AsyncBedrockRuntimeClient") as mock_cls:
         mock_instance = AsyncMock()
         mock_instance.invoke_model_with_bidirectional_stream.side_effect = RuntimeError("connection failed")
@@ -943,10 +1024,10 @@ async def test_model_stop_after_start_failure(model_id, boto_session):
         with pytest.raises(RuntimeError, match="connection failed"):
             await model.start()
 
-        await model.stop()
-
         mock_instance.close.assert_awaited_once()
         assert model._connection_id is None
+        assert not hasattr(model, "_client")
+        assert not hasattr(model, "_stream")
 
 
 @pytest.mark.asyncio

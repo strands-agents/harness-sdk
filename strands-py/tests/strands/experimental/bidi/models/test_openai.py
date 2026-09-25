@@ -392,6 +392,81 @@ async def test_connection_edge_cases(mock_websockets_connect, api_key, model_id)
         await model4.stop()
 
 
+@pytest.mark.asyncio
+async def test_start_failure_connecting_websocket_allows_retry(mock_websocket, api_key, model_name):
+    """A WebSocket connection failure leaves the model ready to retry."""
+    connect = unittest.mock.AsyncMock(side_effect=[ConnectionError("connect failed"), mock_websocket])
+    with unittest.mock.patch("strands.experimental.bidi.models.openai.websockets.connect", new=connect):
+        model = OpenAIRealtimeModel(model_id=model_name, api_key=api_key)
+
+        with pytest.raises(ConnectionError, match="connect failed"):
+            await model.start()
+
+        assert model._connection_id is None
+        assert not hasattr(model, "_websocket")
+
+        await model.start()
+
+        assert model._connection_id is not None
+        await model.stop()
+        mock_websocket.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "start_error",
+    [
+        pytest.param(ConnectionError("session configuration failed"), id="error"),
+        pytest.param(asyncio.CancelledError(), id="cancelled"),
+    ],
+)
+async def test_start_failure_after_websocket_connection_cleans_up_and_allows_retry(
+    mock_websockets_connect, model, start_error
+):
+    """A failed session update closes the WebSocket and leaves the model ready to retry."""
+    _, mock_websocket = mock_websockets_connect
+    failed = False
+
+    async def fail_once(_message):
+        nonlocal failed
+        if not failed:
+            failed = True
+            raise start_error
+
+    mock_websocket.send.side_effect = fail_once
+
+    with pytest.raises(type(start_error)):
+        await model.start()
+
+    assert model._connection_id is None
+    assert not hasattr(model, "_websocket")
+    mock_websocket.close.assert_awaited_once()
+
+    await model.start()
+
+    assert model._connection_id is not None
+    await model.stop()
+    assert mock_websocket.close.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_start_cleanup_failure_preserves_start_error_and_allows_retry(mock_websockets_connect, model, caplog):
+    """Cleanup errors are reported without replacing the startup error or poisoning the model."""
+    _, mock_websocket = mock_websockets_connect
+    mock_websocket.send.side_effect = [ConnectionError("session configuration failed"), None]
+    mock_websocket.close.side_effect = [RuntimeError("websocket close failed"), None]
+
+    with caplog.at_level("WARNING"), pytest.raises(ConnectionError, match="session configuration failed"):
+        await model.start()
+
+    assert "failed to clean up openai realtime startup" in caplog.text
+    assert model._connection_id is None
+    assert not hasattr(model, "_websocket")
+
+    await model.start()
+    await model.stop()
+
+
 # Send Method Tests
 
 

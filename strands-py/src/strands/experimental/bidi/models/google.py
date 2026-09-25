@@ -12,6 +12,7 @@ Key improvements over custom WebSocket implementation:
 - Native support for audio/text streaming and barge-in
 """
 
+import asyncio
 import base64
 import json
 import logging
@@ -199,25 +200,29 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
 
         self._connection_id = str(uuid.uuid4())
 
-        # Build live config — only enable initial-history mode when text content exists
-        # (tool-only history is dropped by _send_message_history and would leave the server
-        # stuck waiting for turn_complete that never arrives)
-        has_messages = (
-            messages is not None
-            and any("text" in block for message in messages for block in message["content"])
-            and "live_session_handle" not in kwargs
-        )
-        live_config = self._build_live_config(system_prompt, tools, has_messages=has_messages, **kwargs)
+        try:
+            # Build live config — only enable initial-history mode when text content exists
+            # (tool-only history is dropped by _send_message_history and would leave the server
+            # stuck waiting for turn_complete that never arrives)
+            has_messages = (
+                messages is not None
+                and any("text" in block for message in messages for block in message["content"])
+                and "live_session_handle" not in kwargs
+            )
+            live_config = self._build_live_config(system_prompt, tools, has_messages=has_messages, **kwargs)
 
-        # Create the context manager and session
-        self._live_session_context_manager = self._client.aio.live.connect(
-            model=self._config["model_id"], config=cast(LiveConnectConfigOrDict, live_config)
-        )
-        self._live_session = await self._live_session_context_manager.__aenter__()
+            # Create the context manager and session
+            self._live_session_context_manager = self._client.aio.live.connect(
+                model=self._config["model_id"], config=cast(LiveConnectConfigOrDict, live_config)
+            )
+            self._live_session = await self._live_session_context_manager.__aenter__()
 
-        # Gemini itself restores message history when resuming from session
-        if messages and "live_session_handle" not in kwargs:
-            await self._send_message_history(messages)
+            # Gemini itself restores message history when resuming from session
+            if messages and "live_session_handle" not in kwargs:
+                await self._send_message_history(messages)
+        except (Exception, asyncio.CancelledError):
+            await self._cleanup_failed_start()
+            raise
 
     async def _send_message_history(self, messages: Messages) -> None:
         """Send conversation history to Gemini Live API.
@@ -598,25 +603,30 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         # Send tool response
         await self._live_session.send_tool_response(function_responses=[func_response])
 
+    async def _close_live_session(self) -> None:
+        """Close and discard the entered live session, if any."""
+        context_manager = self._live_session_context_manager
+        session = self._live_session
+        self._live_session_context_manager = None
+        self._live_session = None
+
+        if context_manager is not None and session is not None:
+            await context_manager.__aexit__(None, None, None)
+
+    async def _clear_connection(self) -> None:
+        """Clear the connection marker."""
+        self._connection_id = None
+
+    async def _cleanup_failed_start(self) -> None:
+        """Release resources acquired by an unsuccessful start."""
+        try:
+            await stop_all(self._close_live_session, self._clear_connection)
+        except (Exception, asyncio.CancelledError) as cleanup_error:
+            logger.warning("error=<%s> | failed to clean up gemini startup", cleanup_error)
+
     async def stop(self) -> None:
         """Close Gemini Live API connection."""
-
-        async def stop_session() -> None:
-            if not self._live_session_context_manager:
-                return
-
-            try:
-                await self._live_session_context_manager.__aexit__(None, None, None)
-            finally:
-                # Clear so a second stop() during restart does not
-                # re-exit an already-exited context manager.
-                self._live_session_context_manager = None
-                self._live_session = None
-
-        async def stop_connection() -> None:
-            self._connection_id = None
-
-        await stop_all(stop_session, stop_connection)
+        await stop_all(self._close_live_session, self._clear_connection)
 
     async def restart(
         self,
@@ -674,19 +684,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         except Exception as error:
             logger.warning("error=<%s> | gemini resume failed | falling back to fresh session", error)
             self._live_session_handle = None
-            await self._teardown_after_failed_resume()
             return False
-
-    async def _teardown_after_failed_resume(self) -> None:
-        """Tear down the half-started connection so the caller can start fresh.
-
-        Best-effort: a failing ``__aexit__`` on the half-entered context manager must not mask the
-        resume failure or block the fresh-start fallback (stop() still clears the connection id).
-        """
-        try:
-            await self.stop()
-        except Exception as stop_error:
-            logger.debug("error=<%s> | teardown after failed resume", stop_error)
 
     def _build_live_config(
         self, system_prompt: str | None = None, tools: list[ToolSpec] | None = None, **kwargs: Any

@@ -96,7 +96,9 @@ class BidiModel(Model, abc.ABC):
 
         Opens a bidirectional connection that remains active for real-time communication.
         The connection supports concurrent sending and receiving of events until explicitly
-        closed. Must be called before any send() or receive() operations.
+        closed. Must be called before any send() or receive() operations. If startup fails,
+        implementations must release any acquired resources and leave the model ready for
+        another call to ``start()``.
 
         Args:
             system_prompt: System instructions to configure model behavior.

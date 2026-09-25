@@ -257,25 +257,29 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
 
         self._function_call_buffer = {}
 
-        # Establish WebSocket connection
-        url = f"{OPENAI_REALTIME_URL}?model={self._config['model_id']}"
+        try:
+            # Establish WebSocket connection
+            url = f"{OPENAI_REALTIME_URL}?model={self._config['model_id']}"
 
-        headers = [("Authorization", f"Bearer {self.api_key}")]
-        if self.organization:
-            headers.append(("OpenAI-Organization", self.organization))
-        if self.project:
-            headers.append(("OpenAI-Project", self.project))
+            headers = [("Authorization", f"Bearer {self.api_key}")]
+            if self.organization:
+                headers.append(("OpenAI-Organization", self.organization))
+            if self.project:
+                headers.append(("OpenAI-Project", self.project))
 
-        self._websocket = await websockets.connect(url, additional_headers=headers)
-        logger.debug("connection_id=<%s> | websocket connected successfully", self._connection_id)
+            self._websocket = await websockets.connect(url, additional_headers=headers)
+            logger.debug("connection_id=<%s> | websocket connected successfully", self._connection_id)
 
-        # Configure session
-        session_config = self._build_session_config(system_prompt, tools)
-        await self._send_event({"type": "session.update", "session": session_config})
+            # Configure session
+            session_config = self._build_session_config(system_prompt, tools)
+            await self._send_event({"type": "session.update", "session": session_config})
 
-        # Add conversation history if provided
-        if messages:
-            await self._add_conversation_history(messages)
+            # Add conversation history if provided
+            if messages:
+                await self._add_conversation_history(messages)
+        except (Exception, asyncio.CancelledError):
+            await self._cleanup_failed_start()
+            raise
 
     def _create_text_event(self, text: str, role: str) -> BidiTranscriptStreamEvent:
         """Create an incremental transcript event."""
@@ -791,20 +795,32 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         await self._send_event({"type": "conversation.item.create", "item": item_data})
         await self._send_event({"type": "response.create"})
 
+    async def _close_websocket(self) -> None:
+        """Close and discard the active WebSocket, if any."""
+        if not hasattr(self, "_websocket"):
+            return
+
+        try:
+            await self._websocket.close()
+        finally:
+            del self._websocket
+
+    async def _clear_connection(self) -> None:
+        """Clear the connection marker."""
+        self._connection_id = None
+
+    async def _cleanup_failed_start(self) -> None:
+        """Release resources acquired by an unsuccessful start."""
+        try:
+            await stop_all(self._close_websocket, self._clear_connection)
+        except (Exception, asyncio.CancelledError) as cleanup_error:
+            logger.warning("error=<%s> | failed to clean up openai realtime startup", cleanup_error)
+
     async def stop(self) -> None:
         """Close session and cleanup resources."""
         logger.debug("openai realtime connection cleanup starting")
 
-        async def stop_websocket() -> None:
-            if not hasattr(self, "_websocket"):
-                return
-
-            await self._websocket.close()
-
-        async def stop_connection() -> None:
-            self._connection_id = None
-
-        await stop_all(stop_websocket, stop_connection)
+        await stop_all(self._close_websocket, self._clear_connection)
 
         logger.debug("openai realtime connection closed")
 

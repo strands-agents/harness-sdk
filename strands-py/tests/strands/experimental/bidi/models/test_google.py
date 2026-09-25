@@ -275,6 +275,84 @@ async def test_connection_edge_cases(mock_genai_client, api_key, model_id):
 
 
 @pytest.mark.asyncio
+async def test_start_failure_entering_session_allows_retry(mock_genai_client, model):
+    """A session entry failure leaves the model ready to retry without exiting an unentered context."""
+    _, mock_live_session, mock_live_session_cm = mock_genai_client
+    mock_live_session_cm.__aenter__.side_effect = [ConnectionError("connect failed"), mock_live_session]
+
+    with pytest.raises(ConnectionError, match="connect failed"):
+        await model.start()
+
+    assert model._connection_id is None
+    assert model._live_session_context_manager is None
+    assert model._live_session is None
+    mock_live_session_cm.__aexit__.assert_not_awaited()
+
+    await model.start()
+
+    assert model._connection_id is not None
+    await model.stop()
+    mock_live_session_cm.__aexit__.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "start_error",
+    [
+        pytest.param(ConnectionError("history failed"), id="error"),
+        pytest.param(asyncio.CancelledError(), id="cancelled"),
+    ],
+)
+async def test_start_failure_after_session_entry_cleans_up_and_allows_retry(
+    mock_genai_client, model, messages, start_error
+):
+    """A failed history send exits the entered session and leaves the model ready to retry."""
+    _, mock_live_session, mock_live_session_cm = mock_genai_client
+    failed = False
+
+    async def fail_once(**_kwargs):
+        nonlocal failed
+        if not failed:
+            failed = True
+            raise start_error
+
+    mock_live_session.send_client_content.side_effect = fail_once
+
+    with pytest.raises(type(start_error)):
+        await model.start(messages=messages)
+
+    assert model._connection_id is None
+    assert model._live_session_context_manager is None
+    assert model._live_session is None
+    mock_live_session_cm.__aexit__.assert_awaited_once()
+
+    await model.start(messages=messages)
+
+    assert model._connection_id is not None
+    await model.stop()
+    assert mock_live_session_cm.__aexit__.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_start_cleanup_failure_preserves_start_error_and_allows_retry(mock_genai_client, model, messages, caplog):
+    """Cleanup errors are reported without replacing the startup error or poisoning the model."""
+    _, mock_live_session, mock_live_session_cm = mock_genai_client
+    mock_live_session.send_client_content.side_effect = [ConnectionError("history failed"), None]
+    mock_live_session_cm.__aexit__.side_effect = [RuntimeError("session close failed"), None]
+
+    with caplog.at_level("WARNING"), pytest.raises(ConnectionError, match="history failed"):
+        await model.start(messages=messages)
+
+    assert "failed to clean up gemini startup" in caplog.text
+    assert model._connection_id is None
+    assert model._live_session_context_manager is None
+    assert model._live_session is None
+
+    await model.start(messages=messages)
+    await model.stop()
+
+
+@pytest.mark.asyncio
 async def test_stop_is_idempotent(mock_genai_client, model):
     """Calling stop() twice on a started model does not re-exit the context manager or raise."""
     _, _, mock_live_session_cm = mock_genai_client
