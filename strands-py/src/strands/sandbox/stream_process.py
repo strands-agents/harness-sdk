@@ -12,6 +12,7 @@ is wall-clock: measured from spawn and not reset by ongoing output.
 """
 
 import asyncio
+import codecs
 import contextlib
 import os
 import signal
@@ -37,6 +38,21 @@ def _kill_tree(proc: asyncio.subprocess.Process) -> None:
             os.killpg(proc.pid, signal.SIGKILL)
         else:
             proc.kill()
+
+
+async def _read_text(stream: asyncio.StreamReader) -> AsyncGenerator[str, None]:
+    """Yield a stream's output as UTF-8 text.
+
+    Reads are size-bounded, so a multibyte character can straddle two of them.
+    The incremental decoder holds its leading bytes until the rest arrives
+    instead of turning each half into U+FFFD.
+    """
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    while data := await stream.read(_READ_CHUNK_SIZE):
+        if text := decoder.decode(data):
+            yield text
+    if text := decoder.decode(b"", final=True):
+        yield text
 
 
 async def _stream_process(
@@ -89,8 +105,7 @@ async def _stream_process(
     timed_out = False
 
     async def pump(stream: asyncio.StreamReader, stream_type: StreamType, buf: list[str]) -> None:
-        while data := await stream.read(_READ_CHUNK_SIZE):
-            text = data.decode(errors="replace")
+        async for text in _read_text(stream):
             buf.append(text)
             await queue.put(StreamChunk(data=text, stream_type=stream_type))
 
