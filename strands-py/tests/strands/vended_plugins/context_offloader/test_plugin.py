@@ -933,7 +933,7 @@ class TestActionableReferences:
     """Tests that storage-specific references appear in the offloaded preview."""
 
     @pytest.mark.asyncio
-    async def test_file_storage_path_in_preview(self, tmp_path, mock_agent):
+    async def test_file_storage_bare_filename_in_preview(self, tmp_path, mock_agent):
         storage = FileStorage(artifact_dir=str(tmp_path / "artifacts"))
         plugin = ContextOffloader(storage=storage, max_result_tokens=25, preview_tokens=10)
         event = _make_event(mock_agent, "a" * 200)
@@ -941,10 +941,15 @@ class TestActionableReferences:
         await plugin._handle_tool_result(event)
 
         result_text = event.result["content"][0]["text"]
-        assert str(tmp_path / "artifacts") in result_text
+        assert str(tmp_path / "artifacts") not in result_text
+        assert ".txt" in result_text
+        ref_section = result_text.split("[Stored references:]")[1].strip()
+        ref = ref_section.split()[0]
+        assert ref.endswith(".txt"), f"expected .txt reference, got {ref!r}"
+        assert "/" not in ref and "\\" not in ref, f"reference should be a bare filename, got {ref!r}"
 
     @pytest.mark.asyncio
-    async def test_file_storage_image_placeholder_has_path(self, tmp_path, mock_agent):
+    async def test_file_storage_image_placeholder_has_bare_filename(self, tmp_path, mock_agent):
         storage = FileStorage(artifact_dir=str(tmp_path / "artifacts"))
         plugin = ContextOffloader(storage=storage, max_result_tokens=25, preview_tokens=10)
         img_bytes = b"\x89PNG" + b"\x00" * 100
@@ -957,7 +962,8 @@ class TestActionableReferences:
         await plugin._handle_tool_result(event)
 
         placeholder = event.result["content"][1]["text"]
-        assert str(tmp_path / "artifacts") in placeholder
+        assert str(tmp_path / "artifacts") not in placeholder
+        assert ".png" in placeholder
 
     @pytest.mark.asyncio
     async def test_inmemory_storage_opaque_reference_in_preview(self, mock_agent):

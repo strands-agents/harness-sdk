@@ -299,18 +299,19 @@ class TestFileStorage:
         assert "/" not in Path(ref).name
 
     @pytest.mark.asyncio
-    async def test_reference_includes_artifact_dir(self, tmp_path):
+    async def test_reference_is_bare_filename(self, tmp_path):
         artifact_dir = str(tmp_path / "artifacts")
         storage = FileStorage(artifact_dir=artifact_dir)
         ref = await storage.store("key_1", b"content")
-        assert Path(ref).parent == Path(artifact_dir)
+        assert "/" not in ref and "\\" not in ref
+        assert ref == Path(ref).name
 
     @pytest.mark.asyncio
-    async def test_relative_artifact_dir_gives_relative_reference(self, tmp_path, monkeypatch):
+    async def test_relative_artifact_dir_round_trips(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         storage = FileStorage(artifact_dir="./artifacts")
         ref = await storage.store("key_1", b"content")
-        assert Path(ref).parent == Path("artifacts")
+        assert "/" not in ref and "\\" not in ref
         content, content_type = await storage.retrieve(ref)
         assert content == b"content"
         assert content_type == "text/plain"
@@ -319,8 +320,7 @@ class TestFileStorage:
     async def test_retrieve_accepts_bare_filename(self, tmp_path):
         storage = FileStorage(artifact_dir=str(tmp_path))
         ref = await storage.store("key_1", b"hello world")
-        filename = Path(ref).name
-        content, content_type = await storage.retrieve(filename)
+        content, content_type = await storage.retrieve(ref)
         assert content == b"hello world"
         assert content_type == "text/plain"
 
@@ -331,6 +331,15 @@ class TestFileStorage:
         stem = Path(ref).stem
         content, content_type = await storage.retrieve(stem)
         assert content == b"hello world"
+        assert content_type == "text/plain"
+
+    @pytest.mark.asyncio
+    async def test_retrieve_accepts_full_path_for_backward_compat(self, tmp_path):
+        storage = FileStorage(artifact_dir=str(tmp_path))
+        ref = await storage.store("key_1", b"content")
+        full_path = str(tmp_path / ref)
+        content, content_type = await storage.retrieve(full_path)
+        assert content == b"content"
         assert content_type == "text/plain"
 
     @pytest.mark.asyncio
@@ -520,23 +529,22 @@ class TestFileStorageWithSandbox:
         assert content_type == "image/png"
 
     @pytest.mark.asyncio
-    async def test_reference_under_artifact_dir(self, storage, tmp_path):
+    async def test_reference_is_bare_filename(self, storage, tmp_path):
         ref = await storage.store("key_1", b"data")
-        assert ref.startswith(f"{tmp_path / 'artifacts'}/")
+        assert "/" not in ref and "\\" not in ref
+        assert ref == Path(ref).name
 
     @pytest.mark.asyncio
     async def test_retrieve_accepts_bare_filename(self, storage):
         ref = await storage.store("key_1", b"hello sandbox", "text/plain")
-        filename = ref.split("/")[-1]
-        content, content_type = await storage.retrieve(filename)
+        content, content_type = await storage.retrieve(ref)
         assert content == b"hello sandbox"
         assert content_type == "text/plain"
 
     @pytest.mark.asyncio
     async def test_retrieve_accepts_stem_without_extension(self, storage):
         ref = await storage.store("key_1", b"hello sandbox", "text/plain")
-        filename = ref.split("/")[-1]
-        stem = filename.rsplit(".", 1)[0]
+        stem = Path(ref).stem
         content, content_type = await storage.retrieve(stem)
         assert content == b"hello sandbox"
         assert content_type == "text/plain"

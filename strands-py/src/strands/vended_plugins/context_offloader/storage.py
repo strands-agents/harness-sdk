@@ -207,11 +207,7 @@ class FileStorage:
         raise KeyError(f"Reference not found: {reference}")
 
     async def store(self, key: str, content: bytes, content_type: str = "text/plain") -> str:
-        """Store content as a file and return the path as reference.
-
-        The returned path preserves the form of ``artifact_dir`` passed to
-        the constructor: a relative ``artifact_dir`` yields a relative
-        reference, an absolute one yields an absolute reference.
+        """Store content as a file and return a portable filename as reference.
 
         Args:
             key: A unique key for this content block.
@@ -219,7 +215,7 @@ class FileStorage:
             content_type: MIME type of the content.
 
         Returns:
-            The file path (e.g., ``./artifacts/1234_1_key.txt``).
+            The bare filename (e.g., ``1234_1_key.txt``).
         """
         sanitized_key = _sanitize_id(key)
         timestamp_ms = int(time.time() * 1000)
@@ -235,7 +231,7 @@ class FileStorage:
             await self._sandbox.write_text(self._artifact_path(self._METADATA_FILE), json.dumps(self._content_types))
             file_path = self._artifact_path(filename)
             await self._sandbox.write_file(file_path, content)
-            return file_path
+            return filename
 
         self._artifact_dir.mkdir(parents=True, exist_ok=True)
         with self._lock:
@@ -246,7 +242,7 @@ class FileStorage:
 
         host_path = self._artifact_dir / filename
         host_path.write_bytes(content)
-        return str(host_path)
+        return filename
 
     def _resolve_from_path(self, reference: str) -> str:
         """Validate a reference as a path within the artifact directory.
