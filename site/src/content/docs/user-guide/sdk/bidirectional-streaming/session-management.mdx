@@ -9,6 +9,7 @@ sourceLinks:
   - path: strands-py/src/strands/experimental/bidi/agent/agent.py
   - path: strands-py/src/strands/session/session_manager.py
   - path: strands-py/src/strands/session/repository_session_manager.py
+  - path: strands-py/src/strands/session/snapshot_session_manager.py
   - path: strands-py/src/strands/types/session.py
   - path: strands-py/src/strands/session/file_session_manager.py
   - path: strands-py/src/strands/session/s3_session_manager.py
@@ -23,8 +24,10 @@ A bidirectional streaming session represents all stateful information needed by 
 
 - Conversation history (messages with audio transcripts)
 - Agent state (key-value storage)
-- Connection state and configuration
 - Tool execution history
+
+Live connection state, in-progress responses, and pending tool calls are not persisted. A
+restored agent opens a new model connection and replays the saved history into it.
 
 Built-in session persistence captures and restores this information automatically, so `BidiAgent` continues conversations where they left off, even after connection restarts or application restarts.
 
@@ -78,15 +81,97 @@ When using Gemini Live with connection restarts, the model leverages Google's bu
 
 ## Built-in Session Managers
 
-Strands offers two built-in session managers for persisting bidirectional streaming sessions:
+Strands offers three built-in session managers for persisting bidirectional streaming
+sessions:
 
-1. **FileSessionManager**: Stores sessions in the local filesystem
-2. **S3SessionManager**: Stores sessions in Amazon S3 buckets
+1. **SnapshotSessionManager**: Stores each save as one snapshot in a `Storage` backend and
+   keeps immutable checkpoints you can restore later
+2. **FileSessionManager**: Stores each message in the local filesystem
+3. **S3SessionManager**: Stores each message in Amazon S3 buckets
 
-Both inherit the shared `RepositorySessionManager` implementation. For a custom backend,
-implement a
+Use `SnapshotSessionManager` for new sessions. `FileSessionManager` and `S3SessionManager`
+inherit the shared `RepositorySessionManager` implementation and remain the path for
+existing repository-format sessions. For a custom backend, implement a
 [session repository](../agents/session-management.md#custom-session-repositories).
-`SnapshotSessionManager` does not support `BidiAgent`.
+
+### SnapshotSessionManager
+
+Restore a voice session from its latest snapshot and capture a new one when the
+conversation ends:
+
+```python
+from strands import LocalAgent
+from strands.experimental.bidi.agent import BidiAgent
+from strands.experimental.bidi.models import BedrockNovaSonicModel
+from strands.session import SnapshotSessionManager
+from strands.storage import LocalFileStorage
+
+session_manager = SnapshotSessionManager[LocalAgent](
+    session_id="user_123_session",
+    storage=LocalFileStorage("./sessions/"),
+)
+
+agent = BidiAgent(
+    model=BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0"),
+    agent_id="voice-assistant",
+    session_manager=session_manager,
+)
+await agent.start()
+await agent.send("My name is Alice")
+await agent.stop()  # Captures messages, state, and system prompt
+```
+
+The manager restores the latest snapshot while the agent is constructed, before `start()`
+opens the model connection, and captures a new one when `stop()` completes. The end of a
+model response is not a save point: a streaming session spans many responses, so the
+manager saves on `BidiAgentStopEvent`, not `BidiResponseStopEvent`.
+
+`SnapshotSessionManager` defaults to `Agent`. Subscript it as
+`SnapshotSessionManager[LocalAgent]` to attach it to a `BidiAgent`; a `snapshot_trigger`
+whose `agent_data` is annotated `LocalAgent` infers the same type.
+
+To keep a checkpoint at each stop, pass a `snapshot_trigger`. Restore a checkpoint with
+`restore_snapshot` while the agent is stopped; restoring a started agent raises
+`RuntimeError`, because the open connection already holds the earlier history.
+
+```python
+from strands import LocalAgent
+from strands.experimental.bidi.agent import BidiAgent
+from strands.experimental.bidi.models import BedrockNovaSonicModel
+from strands.session import SnapshotSessionManager
+from strands.storage import LocalFileStorage
+
+session_manager = SnapshotSessionManager[LocalAgent](
+    session_id="user_123_session",
+    storage=LocalFileStorage("./sessions/"),
+    snapshot_trigger=lambda *, agent_data, **_: True,
+)
+agent = BidiAgent(
+    model=BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0"),
+    agent_id="voice-assistant",
+    session_manager=session_manager,
+)
+await agent.start()
+await agent.send("Let's plan a trip to Lisbon")
+await agent.stop()
+
+# Rewind to the most recent checkpoint; ids are ordered oldest first
+snapshot_ids = await session_manager.list_snapshot_ids(agent)
+await session_manager.restore_snapshot(agent, snapshot_id=snapshot_ids[-1])
+await agent.start()  # Replays the restored history into a new connection
+await agent.stop()
+```
+
+Snapshots hold `messages`, `state`, and `system_prompt`. See
+[Snapshots](../agents/snapshots.mdx) for the field model and
+[Immutable snapshots](../agents/session-management.md#immutable-snapshots) for the
+checkpoint APIs.
+
+**Use cases:**
+
+- New voice assistants
+- Rewinding a conversation to an earlier checkpoint
+- Sharing one `Storage` backend across sessions, memory, and other subsystems
 
 ### FileSessionManager
 
@@ -200,7 +285,7 @@ await agent.stop()
 
 ### Session Updates
 
-Messages are persisted automatically as they're added:
+The repository-based managers persist each message as it is added:
 
 ```python
 agent = BidiAgent(model=model, session_manager=session_manager)
@@ -212,6 +297,10 @@ await agent.send("Hello")  # Saved
 # Tool execution saved
 # All transcripts saved
 ```
+
+`SnapshotSessionManager` saves when the agent stops. To also save after every message,
+pass `save_latest_on="message"`; to save only when a `snapshot_trigger` fires, pass
+`save_latest_on="trigger"`.
 
 ## Connection Restart Behavior
 

@@ -78,7 +78,7 @@ agent("Hello!")  # This conversation is persisted
 
 Strands persists the conversation and its state to the underlying storage backend.
 
-In Python, `SnapshotSessionManager` is the recommended manager for new single-agent sessions. `FileSessionManager` and `S3SessionManager` remain supported as the [compatibility path](#storage-backends) for Graph, Swarm, bidirectional streaming, and existing repository-format sessions. TypeScript uses a single `SessionManager` for both.
+In Python, `SnapshotSessionManager` is the recommended manager for new single-agent sessions, including [bidirectional streaming](../bidirectional-streaming/session-management.mdx). `FileSessionManager` and `S3SessionManager` remain supported as the [compatibility path](#storage-backends) for Graph, Swarm, and existing repository-format sessions. TypeScript uses a single `SessionManager` for both.
 
 `FileSessionManager` and `S3SessionManager` remain supported in Python, but use
 `SnapshotSessionManager` for new single-agent sessions.
