@@ -1,11 +1,12 @@
 name: neo4j-agent-memory
 description: Neo4j graph memory for Strands agents — session persistence, entity and relationship extraction, and reasoning traces, on hosted NAMS or self-hosted Neo4j.
 integrationType: session-manager
+maintainedBy: partner
 languages:
   python:
     package: neo4j-agent-memory[strands]
   typescript:
     package: "@neo4j-labs/agent-memory"
 github: https://github.com/neo4j-labs/agent-memory
-docsUrl: https://neo4j.com/labs/agent-memory/how-to/integrations/aws-strands/
+docsUrl: https://neo4j.com/labs/agent-memory/how-to/integrations/aws-strands/#_session_manager_push_based
 addedDate: 2026-08-11
