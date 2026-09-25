@@ -191,17 +191,23 @@ class _ResponseState:
         generation_stage: Generation stage of the current text block.
         transcript: Open user or speculative assistant transcript.
         response_id: Identifier of the open response, including its user transcript.
+        stop_reason: Stop reason retained while the response remains open.
+        audio_started: Whether the response's audio stream is open.
     """
 
     generation_stage: str | None = None
     transcript: _Transcript | None = None
     response_id: str | None = None
+    stop_reason: StopReason | None = None
+    audio_started: bool = False
 
     def reset(self) -> None:
         """Reset the response state."""
         self.generation_stage = None
         self.transcript = None
         self.response_id = None
+        self.stop_reason = None
+        self.audio_started = False
 
 
 class BedrockNovaSonicModel(BidiModel, AudioCapable):
@@ -736,6 +742,12 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             content_start = nova_event["contentStart"]
             content_type = content_start["type"]
             role = content_start["role"].strip().lower()
+
+            events: list[BidiOutputEvent] = []
+            if role == "user" and response_state.stop_reason == "tool_use":
+                # A tool-only response may have no audio END_TURN before the next user content.
+                events.extend(self._complete_response(response_state, "end_turn"))
+
             generation_stage = None
             if content_type == "TEXT":
                 generation_stage = json.loads(content_start.get("additionalModelFields", "{}")).get("generationStage")
@@ -744,7 +756,6 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
                 # FINAL text can continue after END_TURN; use speculative text and audio boundaries.
                 return []
 
-            events: list[BidiOutputEvent] = []
             transcript = response_state.transcript
             if transcript is not None and transcript.role == "user" and role != "user":
                 # Nova uses PARTIAL_TURN for user text, so a role change closes the transcript.
@@ -760,7 +771,8 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
                     transcript = _Transcript(content_start["contentId"], cast(Role, role))
                     response_state.transcript = transcript
                     events.append(BidiTranscriptStartEvent(transcript.role, transcript.content_id))
-            elif role == "assistant" and content_type == "AUDIO":
+            elif role == "assistant" and content_type == "AUDIO" and not response_state.audio_started:
+                response_state.audio_started = True
                 events.append(BidiAudioStartEvent())
             return events
 
@@ -816,7 +828,6 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
 
             events = []
             if content_type == "AUDIO":
-                events.append(BidiAudioStopEvent())
                 if stop_reason == "END_TURN":
                     events.extend(self._complete_response(response_state, "end_turn"))
                 return events
@@ -828,7 +839,8 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
                 return events
 
             if stop_reason == "TOOL_USE":
-                return self._complete_response(response_state, "tool_use")
+                response_state.stop_reason = "tool_use"
+
             return events
 
         if "usageEvent" in nova_event:
@@ -847,8 +859,10 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         return []
 
     def _complete_response(self, response_state: _ResponseState, stop_reason: StopReason) -> list[BidiOutputEvent]:
-        """Close the transcript and response, then clear their state."""
+        """Close audio, transcript, and response, then clear their state."""
         events: list[BidiOutputEvent] = []
+        if response_state.audio_started:
+            events.append(BidiAudioStopEvent())
         transcript = response_state.transcript
         if transcript is not None:
             events.append(BidiTranscriptStopEvent(transcript.text, transcript.role, transcript.content_id))

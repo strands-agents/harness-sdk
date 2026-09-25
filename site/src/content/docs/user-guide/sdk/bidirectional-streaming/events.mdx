@@ -228,8 +228,6 @@ Emitted when the streaming connection is closed.
 
 Response start and stop events bracket the assistant's audio, transcript, and tool requests. User transcription is independent and may arrive outside these boundaries.
 
-A tool handoff stops the response with `tool_use`. Sending the result can trigger another response.
-
 #### BidiResponseStartEvent
 
 Emitted before a response's assistant audio, transcript, and tool-use events.
@@ -564,10 +562,6 @@ async def main():
                 tool_use = event["current_tool_use"]
                 print(f"Using tool: {tool_use['name']}")
                 print(f"   Input: {tool_use['input']}")
-            
-            elif event_type == "bidi_response_stop":
-                if event["stop_reason"] == "tool_use":
-                    print("   Tool executing in background...")
 
 asyncio.run(main())
 ```

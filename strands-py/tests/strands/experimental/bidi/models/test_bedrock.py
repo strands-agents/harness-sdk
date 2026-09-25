@@ -629,6 +629,7 @@ def test_accumulates_speculative_assistant_transcript_blocks(nova_model):
             {"textOutput": {"role": "ASSISTANT", "contentId": content_id, "content": text}},
             {"contentEnd": {"type": "TEXT", "contentId": content_id, "stopReason": "PARTIAL_TURN"}},
             {"contentStart": {"role": "ASSISTANT", "type": "AUDIO", "contentId": f"{content_id}-audio"}},
+            {"audioOutput": {"contentId": f"{content_id}-audio", "content": "YQ=="}},
             {"contentEnd": {"type": "AUDIO", "contentId": f"{content_id}-audio", "stopReason": stop_reason}},
         ]
         tru_events.extend(
@@ -639,9 +640,9 @@ def test_accumulates_speculative_assistant_transcript_blocks(nova_model):
     exp_events = [
         BidiTranscriptDeltaEvent("Dragons appear in myths worldwide.", "assistant", "t1"),
         BidiAudioStartEvent(),
-        BidiAudioStopEvent(),
+        BidiAudioDeltaEvent("YQ==", format="pcm", sample_rate=16000, channels=1),
         BidiTranscriptDeltaEvent(" Would you like to hear more?", "assistant", "t1"),
-        BidiAudioStartEvent(),
+        BidiAudioDeltaEvent("YQ==", format="pcm", sample_rate=16000, channels=1),
         BidiAudioStopEvent(),
         BidiTranscriptStopEvent("Dragons appear in myths worldwide. Would you like to hear more?", "assistant", "t1"),
         BidiResponseStopEvent("r1", "end_turn"),
@@ -753,6 +754,7 @@ def test_response_after_barge_in_finishes_before_next_user_transcript(nova_model
         elif native_event.get("contentEnd", {}).get("contentId") == "control":
             assert events == [
                 BidiBargeInEvent("user_speech"),
+                *([BidiAudioStopEvent()] if final_fragments else []),
                 BidiTranscriptStopEvent("Planned answer.", "assistant", content_id="t1"),
                 BidiResponseStopEvent("r1", "barge_in"),
             ]
@@ -761,8 +763,9 @@ def test_response_after_barge_in_finishes_before_next_user_transcript(nova_model
         elif native_event.get("contentEnd", {}).get("contentId") == "final":
             assert events == []
     exp_events = [
-        *([BidiAudioStartEvent(), BidiAudioStopEvent()] if final_fragments else []),
+        *([BidiAudioStartEvent()] if final_fragments else []),
         BidiBargeInEvent("user_speech"),
+        *([BidiAudioStopEvent()] if final_fragments else []),
         BidiTranscriptStopEvent("Planned answer.", "assistant", content_id="t1"),
         BidiResponseStopEvent("r1", "barge_in"),
         BidiResponseStartEvent(response_state.response_id),
@@ -1725,10 +1728,20 @@ async def test_tool_result_unsupported_content_type(nova_model):
 
 
 @pytest.mark.parametrize("assistant_transcript", [False, True])
-def test_tool_handoff_opens_and_completes_response_before_continuation(nova_model, assistant_transcript):
+@pytest.mark.parametrize("tool_count", [1, 3])
+def test_tool_calls_keep_response_open_until_audio_ends(nova_model, assistant_transcript, tool_count):
     from strands.types._events import ToolUseStreamEvent
 
     state = _ResponseState()
+    tool_events = []
+    for index in range(tool_count):
+        tool_events.extend(
+            [
+                {"contentStart": {"role": "TOOL", "type": "TOOL", "contentId": f"tool-{index}"}},
+                {"toolUse": {"toolUseId": f"call-{index}", "toolName": "time_tool", "content": "{}"}},
+                {"contentEnd": {"type": "TOOL", "contentId": f"tool-{index}", "stopReason": "TOOL_USE"}},
+            ]
+        )
     assistant_events = [
         {
             "contentStart": {
@@ -1753,15 +1766,26 @@ def test_tool_handoff_opens_and_completes_response_before_continuation(nova_mode
         {"textOutput": {"role": "USER", "contentId": "user", "content": "What time is it?"}},
         {"contentEnd": {"type": "TEXT", "contentId": "user", "stopReason": "PARTIAL_TURN"}},
         *(assistant_events if assistant_transcript else []),
-        {"contentStart": {"role": "TOOL", "type": "TOOL", "contentId": "tool"}},
-        {"toolUse": {"toolUseId": "call", "toolName": "time_tool", "content": "{}"}},
-        {"contentEnd": {"type": "TOOL", "contentId": "tool", "stopReason": "TOOL_USE"}},
-        {"contentStart": {"role": "ASSISTANT", "type": "TEXT", "contentId": "answer"}},
+        *tool_events,
+        {
+            "contentStart": {
+                "role": "ASSISTANT",
+                "type": "TEXT",
+                "contentId": "answer",
+                "additionalModelFields": '{"generationStage":"SPECULATIVE"}',
+            }
+        },
+        {"textOutput": {"role": "ASSISTANT", "contentId": "answer", "content": "It is noon."}},
+        {"contentEnd": {"type": "TEXT", "contentId": "answer", "stopReason": "PARTIAL_TURN"}},
+        {"contentStart": {"role": "ASSISTANT", "type": "AUDIO", "contentId": "audio"}},
+        {"audioOutput": {"contentId": "audio", "content": "YQ=="}},
+        {"contentEnd": {"type": "AUDIO", "contentId": "audio", "stopReason": "END_TURN"}},
     ]
-    events = [event for native in native_events for event in nova_model._convert_nova_event(native, state)]
-    first_id = events[0].response_id
-    assert events == [
-        BidiResponseStartEvent(first_id),
+    tru_events = [event for native in native_events for event in nova_model._convert_nova_event(native, state)]
+    response_id = tru_events[0].response_id
+    content_id = "assistant" if assistant_transcript else "answer"
+    exp_events = [
+        BidiResponseStartEvent(response_id),
         BidiTranscriptStartEvent("user", content_id="user"),
         BidiTranscriptDeltaEvent("What time is it?", "user", content_id="user"),
         BidiTranscriptStopEvent("What time is it?", "user", content_id="user"),
@@ -1773,12 +1797,80 @@ def test_tool_handoff_opens_and_completes_response_before_continuation(nova_mode
             if assistant_transcript
             else []
         ),
-        ToolUseStreamEvent(
-            delta={"toolUse": {"toolUseId": "call", "name": "time_tool", "input": "{}"}},
-            current_tool_use={"toolUseId": "call", "name": "time_tool", "input": {}},
+        *[
+            ToolUseStreamEvent(
+                delta={"toolUse": {"toolUseId": f"call-{index}", "name": "time_tool", "input": "{}"}},
+                current_tool_use={"toolUseId": f"call-{index}", "name": "time_tool", "input": {}},
+            )
+            for index in range(tool_count)
+        ],
+        *([] if assistant_transcript else [BidiTranscriptStartEvent("assistant", content_id)]),
+        BidiTranscriptDeltaEvent(" It is noon." if assistant_transcript else "It is noon.", "assistant", content_id),
+        BidiAudioStartEvent(),
+        BidiAudioDeltaEvent("YQ==", format="pcm", sample_rate=16000, channels=1),
+        BidiAudioStopEvent(),
+        BidiTranscriptStopEvent(
+            "Let me check. It is noon." if assistant_transcript else "It is noon.", "assistant", content_id
+        ),
+        BidiResponseStopEvent(response_id, "end_turn"),
+    ]
+    assert tru_events == exp_events
+    assert state == _ResponseState()
+
+
+@pytest.mark.parametrize("assistant_transcript", [False, True])
+@pytest.mark.parametrize("partial_audio", [False, True])
+def test_user_transcript_closes_response_after_tool_use(nova_model, assistant_transcript, partial_audio):
+    state = _ResponseState(
+        response_id="previous",
+        transcript=_Transcript("assistant", "assistant", "Let me check.") if assistant_transcript else None,
+    )
+    native_events = [
+        {"contentEnd": {"type": "TOOL", "contentId": "tool", "stopReason": "TOOL_USE"}},
+    ]
+    if partial_audio:
+        native_events.extend(
+            [
+                {"contentStart": {"role": "ASSISTANT", "type": "AUDIO", "contentId": "audio"}},
+                {"audioOutput": {"contentId": "audio", "content": "YQ=="}},
+                {"contentEnd": {"type": "AUDIO", "contentId": "audio", "stopReason": "PARTIAL_TURN"}},
+            ]
+        )
+    tru_events = [event for native in native_events for event in nova_model._convert_nova_event(native, state)]
+    for content_id, text in [("user-1", "Next"), ("user-2", "question.")]:
+        native_events = [
+            {
+                "contentStart": {
+                    "role": "USER",
+                    "type": "TEXT",
+                    "contentId": content_id,
+                    "additionalModelFields": '{"generationStage":"FINAL"}',
+                }
+            },
+            {"textOutput": {"role": "USER", "contentId": content_id, "content": text}},
+            {"contentEnd": {"type": "TEXT", "contentId": content_id, "stopReason": "PARTIAL_TURN"}},
+        ]
+        tru_events.extend(event for native in native_events for event in nova_model._convert_nova_event(native, state))
+
+    exp_events = [
+        *(
+            [
+                BidiAudioStartEvent(),
+                BidiAudioDeltaEvent("YQ==", format="pcm", sample_rate=16000, channels=1),
+                BidiAudioStopEvent(),
+            ]
+            if partial_audio
+            else []
         ),
         *([BidiTranscriptStopEvent("Let me check.", "assistant", "assistant")] if assistant_transcript else []),
-        BidiResponseStopEvent(first_id, "tool_use"),
+        BidiResponseStopEvent("previous", "end_turn"),
         BidiResponseStartEvent(state.response_id),
+        BidiTranscriptStartEvent("user", "user-1"),
+        BidiTranscriptDeltaEvent("Next", "user", "user-1"),
+        BidiTranscriptDeltaEvent(" question.", "user", "user-1"),
     ]
-    assert first_id != state.response_id
+    assert tru_events == exp_events
+    assert state == _ResponseState(
+        response_id=state.response_id, transcript=_Transcript("user-1", "user", "Next question.")
+    )
+    assert state.response_id != "previous"
