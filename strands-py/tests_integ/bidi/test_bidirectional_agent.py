@@ -18,6 +18,7 @@ from strands.experimental.bidi.hooks import BidiResponseStopEvent
 from strands.experimental.bidi.models import GoogleGeminiLiveModel, OpenAIRealtimeModel
 from strands.experimental.bidi.types import BidiResponseStartEvent
 from strands.experimental.bidi.types import BidiResponseStopEvent as BidiResponseStopStreamEvent
+from strands.types._events import ToolResultEvent
 
 from .context import BidirectionalTestContext
 from .hook_utils import HookEventCollector
@@ -354,6 +355,20 @@ async def test_tool_history_and_response_boundaries(agent_with_calculator, audio
         assert results
         for index, result in results:
             assert result["status"] == "success"
+            tool_use_id = result["toolUseId"]
+            assert agent.messages[index]["metadata"]["custom"]["bidi"] == {
+                "kind": "tool_result",
+                "tool_use_id": tool_use_id,
+            }
+            dispatch_index, dispatch = next(
+                (position, message)
+                for position, message in enumerate(agent.messages)
+                if message.get("metadata", {}).get("custom", {}).get("bidi")
+                == {"kind": "tool_dispatch", "tool_use_id": tool_use_id}
+            )
+            assert dispatch_index < index
+            assert dispatch["content"][0]["toolResult"]["toolUseId"] == tool_use_id
+            assert ToolResultEvent(result) in events
             request = [block for block in agent.messages[index - 1]["content"] if "toolUse" in block]
             assert request == [
                 {
@@ -364,6 +379,7 @@ async def test_tool_history_and_response_boundaries(agent_with_calculator, audio
                     }
                 }
             ]
+            assert agent.messages[dispatch_index - 1]["content"] == request
         events = context.get_events()
         starts = [event.response_id for event in events if isinstance(event, BidiResponseStartEvent)]
         completions = [event.response_id for event in events if isinstance(event, BidiResponseStopStreamEvent)]

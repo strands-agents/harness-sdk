@@ -168,10 +168,13 @@ Dequeues events from internal queue, yields to user code, and continues until st
 
 Tools execute concurrently without blocking the conversation. When a tool is invoked:
 
-1. The tool executor streams events as the tool runs
-2. Tool events are queued to the event loop
-3. Tool use and result messages are added atomically to conversation history
-4. Results are automatically sent back to the model
+1. The tool use and a dispatch acknowledgement are appended together to conversation history before execution.
+2. The tool executor streams events as the tool runs.
+3. The tool use is appended again alongside the actual result, which is sent to the model.
+
+Each tool use stays adjacent to its result even when conversation continues or tools finish out of order. Both pairs retain the original tool-use ID, and the repeated tool use does not execute again. Dispatch acknowledgements stay in history and are not sent to the model.
+
+Tool-result messages identify their purpose in `metadata["custom"]["bidi"]`: `kind` is `tool_dispatch` or `tool_result`, and `tool_use_id` links to the original request.
 
 The agent loop checks for `request_state["stop_event_loop"]` to trigger graceful
 shutdown instead of sending tool results back to the model. Any tool can set this

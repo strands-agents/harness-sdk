@@ -440,7 +440,7 @@ Emitted when the model requests tool execution. See [Tools Overview](../tools/in
   - `name`: Name of the tool
   - `input`: Tool input parameters
 
-Tools execute in the background. When execution finishes, the tool request and its result are appended together in conversation history.
+Tools execute in the background. `ToolResultEvent` carries the actual result, and `ToolResultMessageEvent` carries its history message. Both retain the original tool-use ID. Dispatch acknowledgements emit `MessageAddedEvent` hooks when appended to history.
 
 ### Usage Events
 
