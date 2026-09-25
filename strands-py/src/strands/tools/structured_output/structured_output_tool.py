@@ -122,6 +122,7 @@ class StructuredOutputTool(AgentTool):
             yield ToolResultEvent(result)
 
         except ValidationError as e:
+            context.validation_failure_count += 1
             error_details = []
             for error in e.errors():
                 field_path = " -> ".join(str(loc) for loc in error["loc"]) if error["loc"] else "root"
@@ -146,6 +147,7 @@ class StructuredOutputTool(AgentTool):
             yield ToolResultEvent(validation_error_result)
 
         except Exception as e:
+            context.validation_failure_count += 1
             error_message = f"Unexpected error validating {self._tool_name}: {str(e)}"
             logger.exception(error_message)
 
