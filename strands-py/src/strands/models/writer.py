@@ -285,8 +285,9 @@ class WriterModel(Model):
         Returns:
             The formatted request.
         """
+        # Config keys the SDK consumes itself; the Writer chat API accepts neither.
         request = {
-            **{k: v for k, v in self.config.items() if k != "cache_config"},
+            **{k: v for k, v in self.config.items() if k not in ("cache_config", "context_window_limit")},
             "messages": self._format_request_messages(messages, system_prompt),
             "stream": True,
         }
