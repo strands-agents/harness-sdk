@@ -22,7 +22,6 @@ import type {
   ChatTask,
 } from './chat/controller.js'
 import { projectAgentEvent, projectAgentResult } from './chat/sdk-projector.js'
-import { SetupQuestionTextStream } from './setup/questions.js'
 import { sanitizeTerminalText } from './terminal/sanitize.js'
 import type { BackgroundAgentActivity, BackgroundAgentActivityStore } from './background/activity.js'
 import { readBackgroundTasks } from './background/tasks.js'
@@ -321,7 +320,6 @@ export class StrandsChatBackend implements ChatBackend {
 
     try {
       const stream = this._runtime.stream(args)
-      const setupQuestionText = new SetupQuestionTextStream()
       const runUsage = RunUsage.start(this._runtime.agent)
       let latestModelUsage: Usage | undefined
       let next = await stream.next()
@@ -329,10 +327,6 @@ export class StrandsChatBackend implements ChatBackend {
         const event = next.value
         const rootEvent = !('agent' in event) || event.agent === this._runtime.agent
         if (rootEvent) {
-          const setupQuestionDelta = setupQuestionText.project(event)
-          if (setupQuestionDelta) {
-            yield { type: 'textDelta', text: setupQuestionDelta }
-          }
           latestModelUsage = latestRootModelUsage(this._runtime.agent, event) || latestModelUsage
           for (const projected of projectAgentEvent(event, projectionOptions)) {
             yield projected

@@ -10,6 +10,7 @@ import { sanitizeTerminalText } from '../terminal/sanitize.js'
 import { isActiveTask } from './controller-helpers.js'
 import {
   type ChatBackend,
+  type ChatBuiltinToolChoice,
   type ChatEffortOption,
   type ChatModelOption,
   type ChatPanel,
@@ -25,7 +26,6 @@ import {
   type SettingsCategory,
 } from './types.js'
 import { SETTINGS_CATEGORIES, SETTING_DEFINITIONS, settingDescription } from '../settings.js'
-import type { SetupQuestionRequest } from '../setup/questions.js'
 
 export const BACKGROUND_TASK_WAIT_TOGGLE = 'background-tasks:toggle-wait-for-completion'
 
@@ -41,14 +41,6 @@ export function permissionRequestRows(request: ChatPermissionRequest): ChatPanel
           : 'Block this call and return the denial to the agent'),
     value: `permission:${encodeURIComponent(request.id)}:${encodeURIComponent(option.id)}`,
     tone: option.kind.startsWith('reject') ? 'danger' : 'normal',
-  }))
-}
-
-export function setupQuestionRows(request: SetupQuestionRequest): ChatPanelRow[] {
-  return request.choices.map((choice) => ({
-    label: choice.label,
-    description: '',
-    value: `question:${encodeURIComponent(request.id)}:${encodeURIComponent(choice.id)}`,
   }))
 }
 
@@ -403,6 +395,8 @@ export function skillDetailRows(skill: SkillInfo): ChatPanelRow[] {
 
 export function permissionSettingsRows(status: ChatPermissionStatus, tools: ChatRuntimeInfo['tools']): ChatPanelRow[] {
   const allowedTools = new Set(status.allowedTools)
+  const allToolsAllowed = status.mode === 'bypassPermissions'
+  const toolDescriptions = new Map(tools.map((tool) => [tool.name, tool.description]))
   const toolNames = permissionToolNames(
     tools.map((tool) => tool.name),
     status.allowedTools
@@ -424,12 +418,15 @@ export function permissionSettingsRows(status: ChatPermissionStatus, tools: Chat
       ...(status.mode === 'bypassPermissions' ? { badge: { text: 'Active', tone: 'danger' } as const } : {}),
     },
     ...toolNames.map((toolName): ChatPanelRow => {
-      const allowed = allowedTools.has(toolName)
+      const allowed = allToolsAllowed || allowedTools.has(toolName)
+      const toolDescription = toolDescriptions.get(toolName)
       return {
         label: toolName,
-        description: permissionToolDescription(allowed),
-        value: `permissions:tool:${encodeURIComponent(toolName)}`,
-        section: 'Tool overrides',
+        description: allToolsAllowed
+          ? `Allowed by “Allow all tools”${toolDescription ? ` · ${toolDescription}` : ''}`
+          : permissionToolDescription(allowed, toolDescription),
+        ...(!allToolsAllowed ? { value: `permissions:tool:${encodeURIComponent(toolName)}` } : {}),
+        section: 'Run without asking',
         control: { kind: 'toggle', checked: allowed },
       }
     }),
@@ -439,6 +436,22 @@ export function permissionSettingsRows(status: ChatPermissionStatus, tools: Chat
       section: 'Configuration',
     },
   ]
+}
+
+export function builtinToolRows(
+  choices: readonly ChatBuiltinToolChoice[],
+  selection: ReadonlySet<string>
+): ChatPanelRow[] {
+  return choices.map((choice) => ({
+    label: choice.name,
+    // A footer description, so the Exa note never resizes the panel.
+    description: choice.thirdParty
+      ? '⚠ Third-party search via Exa · https://exa.ai/privacy-policy'
+      : choice.description,
+    ...(choice.thirdParty ? { tone: 'warning' as const } : {}),
+    value: `tools:toggle:${encodeURIComponent(choice.name)}`,
+    control: { kind: 'toggle', checked: selection.has(choice.name) },
+  }))
 }
 
 export function mcpRows(servers: Awaited<ReturnType<LoadedMcp['list']>>): ChatPanelRow[] {

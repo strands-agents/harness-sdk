@@ -9,11 +9,13 @@ const PROGRESS_DURATION_MS = 240
 export function SetupProgress({
   current,
   total,
+  label = `${current} of ${total}`,
   width,
   animate,
 }: {
   current: number
   total: number
+  label?: string
   width: number
   animate: boolean
 }): ReactElement {
@@ -45,7 +47,6 @@ export function SetupProgress({
     return (): void => clearInterval(timer)
   }, [enabled, target])
 
-  const label = `${current} of ${total}`
   const barWidth = Math.max(3, width - label.length - 2)
   const eighths = Math.round(progress * barWidth * 8)
   const fullBlocks = Math.floor(eighths / 8)

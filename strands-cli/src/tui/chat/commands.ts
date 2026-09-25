@@ -21,6 +21,7 @@ export const LOCAL_COMMANDS: readonly LocalCommandSpec[] = [
     usage: '/sessions [rename <name>]',
     description: 'Browse, resume, or rename the current saved conversation',
   },
+  { name: 'tools', usage: '/tools', description: 'Choose the built-in tools the agent has' },
   { name: 'skills', usage: '/skills', description: 'Browse available and active skills' },
   { name: 'mcp', usage: '/mcp', description: 'Show configured MCP servers and connection state' },
   { name: 'permissions', usage: '/permissions [default|bypass]', description: 'Configure tool approvals' },

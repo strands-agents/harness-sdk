@@ -159,8 +159,8 @@ export class ConversationManager implements ChatControllerApi {
     return this._active.controller.actionableCommandToken(input)
   }
 
-  start(firstRequest?: string, options?: { hidePrompt?: boolean }): Promise<void> {
-    return this._active.controller.start(firstRequest, options)
+  start(firstRequest?: string): Promise<void> {
+    return this._active.controller.start(firstRequest)
   }
 
   async submit(input: string): Promise<ChatTurn | undefined> {

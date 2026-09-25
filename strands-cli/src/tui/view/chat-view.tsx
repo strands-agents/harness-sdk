@@ -24,7 +24,6 @@ import { useSpinner } from './use-spinner.js'
 import { Box, Text, ThemeProvider, useTheme } from './theme.js'
 import { ComposerHelpFooter, PanelHelpContext } from './help-footer.js'
 import { FadeIn } from './fade-in.js'
-import { SetupQuestion } from './setup-question.js'
 
 const MAX_VISIBLE_BACKGROUND_TASKS = 4
 
@@ -153,9 +152,6 @@ function ChatViewContent({
     commandAssistance ?? (suggestions === undefined ? commandAssistanceForInput(input) : undefined)
   const resolvedSuggestions = suggestions ?? resolvedCommandAssistance?.completions ?? []
   const hasActivity = snapshot.completedTurns.length > 0 || snapshot.activeTurn !== undefined
-  const setupGuide = snapshot.setupGuide === true
-  const setupQuestion = setupGuide && snapshot.panel?.kind === 'question' ? snapshot.panel : undefined
-  const setupGuideContent = setupGuideMessage(snapshot, setupQuestion)
   const startupCovered = Boolean(snapshot.panel) || resolvedCommandAssistance !== undefined
   const showQueueStatus = snapshot.queuedPrompts.length > 0 || snapshot.status === 'interrupting'
   const showVoiceStatus = snapshot.voice !== undefined && snapshot.voice.status !== 'off'
@@ -179,10 +175,10 @@ function ChatViewContent({
       cursor,
       editorWidth,
       editorMaxRows,
-      Boolean(snapshot.composerStatus || (snapshot.panel && !setupGuide)),
+      Boolean(snapshot.composerStatus || snapshot.panel),
       party
     ) +
-    (setupGuide ? 1 : 3)
+    3
   // A stable header element keeps the memoized transcript from re-rendering on spinner ticks.
   const { settings } = snapshot
   const frogBrandElapsedMs = useBrandAnimation(frogBrandAnimationId, settings.animations)
@@ -225,24 +221,7 @@ function ChatViewContent({
       backgroundColor={background}
     >
       <Box flexDirection="column" flexGrow={1} overflowY="hidden">
-        {setupGuide ? (
-          <SetupQuestion
-            message={setupGuideContent}
-            working={snapshot.status === 'running' && !snapshot.panel}
-            animate={settings.animations}
-            {...(snapshot.setupGuideAnswer ? { answer: snapshot.setupGuideAnswer } : {})}
-            {...(setupQuestion ? { panel: setupQuestion } : {})}
-            rows={setupQuestion ? (panelRows ?? setupQuestion.rows) : []}
-            selected={panelSelection}
-            terminalWidth={terminalWidth}
-            terminalHeight={Math.max(1, terminalHeight - commandDeckHeight)}
-            frogTheme={settings.frogTheme}
-            customBase={settings.customTheme.base}
-            {...(hoveredPanelRow !== undefined ? { hoveredRow: hoveredPanelRow } : {})}
-            {...(onPanelElement ? { onPanelElement } : {})}
-            {...(onPanelRowElement ? { onRowElement: onPanelRowElement } : {})}
-          />
-        ) : hasActivity ? (
+        {hasActivity ? (
           <TranscriptViewport
             header={startupView}
             turns={snapshot.completedTurns}
@@ -260,7 +239,7 @@ function ChatViewContent({
           startupView
         )}
       </Box>
-      {resolvedCommandAssistance && !snapshot.panel && !snapshot.activeTurn && !setupGuide ? (
+      {resolvedCommandAssistance && !snapshot.panel && !snapshot.activeTurn ? (
         <FadeIn animate={settings.animations} background={background}>
           <CommandPalette
             commands={resolvedSuggestions}
@@ -304,34 +283,20 @@ function ChatViewContent({
             maxRows={editorMaxRows}
             {...(actionableCommandToken ? { actionableCommandToken } : {})}
             {...(snapshot.composerStatus ? { busyStatus: `${composerSpinner} ${snapshot.composerStatus}` } : {})}
-            {...(snapshot.panel && !setupGuide ? { panelStatus: panelEditorStatus(snapshot.panel) } : {})}
+            {...(snapshot.panel ? { panelStatus: panelEditorStatus(snapshot.panel) } : {})}
             party={party}
             partyFrame={partyFrame}
           />
-          {setupGuide ? (
-            <Box height={1} paddingX={1} flexShrink={0}>
-              <Text dimColor wrap="truncate-end">
-                Click to enter text · Enter to send
-              </Text>
-            </Box>
-          ) : (
-            <RuntimeMetadata
-              snapshot={snapshot}
-              terminalWidth={terminalWidth - 2}
-              {...(pressedMetadata ? { pressed: pressedMetadata } : {})}
-              {...(onMetadataElement ? { onElement: onMetadataElement } : {})}
-            />
-          )}
-        </Box>
-        {setupGuide ? null : (
-          <ComposerHelpFooter
+          <RuntimeMetadata
             snapshot={snapshot}
-            width={editorWidth}
-            {...(onActionElement ? { onActionElement } : {})}
+            terminalWidth={terminalWidth - 2}
+            {...(pressedMetadata ? { pressed: pressedMetadata } : {})}
+            {...(onMetadataElement ? { onElement: onMetadataElement } : {})}
           />
-        )}
+        </Box>
+        <ComposerHelpFooter snapshot={snapshot} width={editorWidth} {...(onActionElement ? { onActionElement } : {})} />
       </FadeIn>
-      {snapshot.panel && !setupQuestion ? (
+      {snapshot.panel ? (
         <FadeIn key={snapshot.panel.kind} animate={settings.animations} background={background}>
           <PanelHelpContext value={snapshot.panel}>
             <ResourcePanel
@@ -586,42 +551,6 @@ function panelEditorStatus(panel: ChatPanel): string {
     return 'Esc to dismiss'
   }
   return panel.kind === 'permission' ? 'Permission required' : `Viewing ${panel.title}`
-}
-
-function setupGuideMessage(snapshot: ChatSnapshot, panel: ChatPanel | undefined): string {
-  const question = panel?.body?.trim()
-  if (question) {
-    const assistantText = snapshot.activeTurn?.entries
-      .filter((entry) => entry.type === 'assistant')
-      .at(-1)
-      ?.text.trim()
-    if (!assistantText) {
-      return question
-    }
-    return assistantText.includes(question) ? assistantText : `${assistantText}\n\n${question}`
-  }
-  if (snapshot.activeTurn) {
-    let lastTool = -1
-    for (const [index, entry] of snapshot.activeTurn.entries.entries()) {
-      if (entry.type === 'tool') {
-        lastTool = index
-      }
-    }
-    return (
-      snapshot.activeTurn.entries
-        .slice(lastTool + 1)
-        .filter((entry) => entry.type === 'assistant')
-        .at(-1)
-        ?.text.trim() ?? ''
-    )
-  }
-  return (
-    snapshot.completedTurns
-      .flatMap((turn) => turn.entries)
-      .filter((entry) => entry.type === 'assistant')
-      .at(-1)
-      ?.text.trim() ?? ''
-  )
 }
 
 function RuntimeMetadata({

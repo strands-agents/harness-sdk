@@ -25,9 +25,11 @@ export function PanelHelpFooter({ width }: { width: number }): ReactElement | nu
               : '↑↓ · ←→ change · Tab category · Esc back'
             : panel.kind === 'models'
               ? 'Tab · Enter choose · Esc back'
-              : panel.filters?.length
-                ? 'Tab category · Enter · Esc back'
-                : '↑↓ · Enter open · Esc back'
+              : panel.kind === 'tools' || panel.kind === 'permissions'
+                ? '↑↓ · Enter toggle · Esc save'
+                : panel.filters?.length
+                  ? 'Tab category · Enter · Esc back'
+                  : '↑↓ · Enter open · Esc back'
   return (
     <Box width={Math.max(1, width)} height={1} flexShrink={0}>
       <Text dimColor wrap="truncate-end">

@@ -80,9 +80,7 @@ describe('setup import path completion', () => {
 
     try {
       await instance.waitUntilRenderFlush()
-      for (let index = 0; index < 3; index++) {
-        await press('\u001b[B')
-      }
+      await press('\u001b[B')
       await press('\r')
 
       const placeholderFrame = sanitizeTerminalText(frame)

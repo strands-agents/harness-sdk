@@ -53,7 +53,7 @@ describe('CedarPermissions', () => {
         broker.respond(request.id, requests.length === 1 ? 'allow-once' : 'deny')
       }
     })
-    for (const action of ['inspect', 'models', 'update', 'reset']) {
+    for (const action of ['inspect', 'models', 'update']) {
       await expect(permissions.beforeToolCall(toolEvent('strands_config', { action }))).resolves.toMatchObject({
         type: 'proceed',
       })

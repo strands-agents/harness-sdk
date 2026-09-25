@@ -213,17 +213,21 @@ describe('interactive runtime lifecycle', () => {
           kind: 'permissions',
           body: expect.stringContaining('WARNING'),
           rows: [
-            { label: 'Default (HITL)' },
-            { label: 'Bypass', badge: { text: 'Active' } },
+            { label: 'Ask when needed (HITL)' },
+            { label: 'Allow all tools', badge: { text: 'Active' } },
             { label: 'bash', control: { kind: 'toggle', checked: true } },
-            { label: 'write', control: { kind: 'toggle', checked: false } },
+            { label: 'write', control: { kind: 'toggle', checked: true } },
             { label: 'config', description: configPath },
           ],
         },
       })
       const writePermission = controller.getSnapshot().panel?.rows.find((row) => row.label === 'write')
       expect(writePermission).toBeDefined()
-      await controller.activatePanelRow(writePermission!)
+      expect(writePermission?.value).toBeUndefined()
+      await controller.activatePanelRow(controller.getSnapshot().panel!.rows[0]!)
+      const configurableWritePermission = controller.getSnapshot().panel?.rows.find((row) => row.label === 'write')
+      expect(configurableWritePermission?.value).toBeDefined()
+      await controller.activatePanelRow(configurableWritePermission!)
       expect(JSON.parse(await readFile(configPath, 'utf8')).permissions.allow).toEqual(['bash', 'write'])
     } finally {
       await controller.dispose()

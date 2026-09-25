@@ -68,7 +68,7 @@
     "@cedar-policy/mcp-schema-generator-wasm": "0.6.0",
     "@google/genai": "^2.6.0",
     "@modelcontextprotocol/sdk": "^1.25.2",
-    "@strands-agents/harness": "~0.1.0",
+    "@strands-agents/harness": "~0.1.1",
     "@strands-agents/sdk": ">=1.19.0 <2.0.0",
     "commander": "^15",
     "fflate": "^0.8.3",
