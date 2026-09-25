@@ -831,5 +831,5 @@ Only fields present in snapshot.data are restored; absent fields are left unchan
 
 **Raises**:
 
--   `SnapshotException` - If snapshot.schema\_version is not “1.0”.
+-   `SnapshotException` - If snapshot.schema\_version is not “1.0” or snapshot.scope is not “agent”.
 -   `RuntimeError` - If background tasks are still tracked.

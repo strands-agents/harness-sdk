@@ -116,7 +116,7 @@ asyncio.run(main())
 
 This creates a voice-enabled agent that captures audio from your microphone, streams it to the model as `AudioDelta` inputs, and plays responses through your speakers.
 
-Audio output also displays live transcripts, with user speech in shaded `>` blocks and assistant speech as plain text. The next user prompt appears when response generation finishes or is interrupted.
+Audio output also displays live transcripts, with user speech in shaded `>` blocks and assistant speech as plain text. The next user prompt appears when response generation finishes or stops due to barge-in.
 
 ### Configurations
 
@@ -134,7 +134,7 @@ Audio output also displays live transcripts, with user speech in shaded `>` bloc
 
 ### Audio Processing
 
-To run a voice agent over open speakers without a headset, enable microphone audio processing. It applies acoustic echo cancellation, noise suppression, and automatic gain control so the agent’s own playback does not feed back into the microphone as an interruption.
+To run a voice agent over open speakers without a headset, enable microphone audio processing. It applies acoustic echo cancellation, noise suppression, and automatic gain control so the agent’s own playback does not feed back into the microphone and trigger a barge-in.
 
 Audio processing depends on `pywebrtc-audio`, installed through the `bidi-aec` extra:
 
@@ -167,11 +167,11 @@ Configure voice and supported sample rates on the model. `AudioIO` reads `model.
 
 `AudioIO` requires signed 16-bit little-endian PCM. Starting a device stream with another encoding raises `ValueError`. Use custom I/O for other encodings.
 
-### Interruption Handling
+### Barge-in Handling
 
-`AudioIO` automatically handles interruptions so users can interrupt the agent mid-response. When an interruption occurs:
+`AudioIO` automatically handles barge-in when users start speaking mid-response:
 
-1.  The agent emits a `BidiInterruptionEvent`.
+1.  The agent emits a `BidiBargeInEvent`.
 2.  `AudioIO` clears its output buffer to stop playback.
 3.  The agent responds to the new user input.
 
@@ -234,7 +234,11 @@ app = FastAPI()
 
 @app.websocket("/text-chat")
 async def text_chat(websocket: WebSocket) -> None:
-    model = OpenAIRealtimeModel(api_key="<OPENAI_API_KEY>")
+    model = OpenAIRealtimeModel(
+        model_id="gpt-realtime-2.1",
+        transcription_model_id="gpt-transcribe",
+        api_key="<OPENAI_API_KEY>",
+    )
     agent = BidiAgent(model=model)
 
     try:
@@ -263,7 +267,7 @@ async def main():
 
     while True:
         output_event = json.loads(await websocket.recv())
-        if output_event["type"] == "bidi_transcript_complete":
+        if output_event["type"] == "bidi_transcript_stop":
             print(output_event["transcript"])
             break
 
@@ -276,11 +280,11 @@ if __name__ == "__main__":
 
 ## Related pages
 
+- [Barge-in](/docs/user-guide/sdk/bidirectional-streaming/barge-in/index.md) (1 shared tag)
 - [BidiAgent](/docs/user-guide/sdk/bidirectional-streaming/agent/index.md) (1 shared tag)
 - [Build a realtime voice agent](/docs/user-guide/sdk/bidirectional-streaming/index.md) (1 shared tag)
 - [Events](/docs/user-guide/sdk/bidirectional-streaming/events/index.md) (1 shared tag)
 - [Google Gemini Live](/docs/user-guide/sdk/bidirectional-streaming/models/google/index.md) (1 shared tag)
-- [Interruptions](/docs/user-guide/sdk/bidirectional-streaming/interruption/index.md) (1 shared tag)
 - [OpenAI Realtime](/docs/user-guide/sdk/bidirectional-streaming/models/openai/index.md) (1 shared tag)
 - [Bidirectional Streaming Observability](/docs/user-guide/sdk/bidirectional-streaming/observability/index.md) (1 shared tag)
 - [Bidirectional Streaming Hooks](/docs/user-guide/sdk/bidirectional-streaming/hooks/index.md) (1 shared tag)

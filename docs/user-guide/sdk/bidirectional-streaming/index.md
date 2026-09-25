@@ -20,7 +20,7 @@ A voice agent listens and talks at the same time: audio streams in while the mod
 
 [Streaming events](events/index.md)Handle the events the agent emits as audio, transcripts, and tool calls arrive.
 
-[Interruptions](interruption/index.md)Let a user cut in mid-response and have the agent stop and listen.
+[Barge-in](barge-in/index.md)Let a user cut in mid-response and have the agent stop and listen.
 
 ## A streaming voice agent
 
@@ -33,7 +33,7 @@ from strands.experimental.bidi import BidiAgent
 from strands.experimental.bidi.io import AudioIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
-model = BedrockNovaSonicModel()
+model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 agent = BidiAgent(
     model=model,
     system_prompt="You are a helpful voice assistant. Keep replies short and natural.",
@@ -55,15 +55,15 @@ Bidirectional streaming is a Python-only experimental feature; install it with `
 
 New here? Start with the [quickstart](/docs/user-guide/sdk/bidirectional-streaming/quickstart/index.md) to get a voice conversation running, then read [BidiAgent](/docs/user-guide/sdk/bidirectional-streaming/agent/index.md) to configure tools, prompts, and the connection lifecycle. Pick a [model provider](/docs/user-guide/sdk/bidirectional-streaming/models/bedrock/index.md) based on the provider you use and the session length you need.
 
-Building for a server rather than a local machine? Read [I/O channels](/docs/user-guide/sdk/bidirectional-streaming/io/index.md) to replace microphone-and-speaker I/O with your own transport, then [streaming events](/docs/user-guide/sdk/bidirectional-streaming/events/index.md) and [interruptions](/docs/user-guide/sdk/bidirectional-streaming/interruption/index.md) to drive the conversation from your own event loop.
+Building for a server rather than a local machine? Read [I/O channels](/docs/user-guide/sdk/bidirectional-streaming/io/index.md) to replace microphone-and-speaker I/O with your own transport, then [streaming events](/docs/user-guide/sdk/bidirectional-streaming/events/index.md) and [barge-ins](/docs/user-guide/sdk/bidirectional-streaming/barge-in/index.md) to drive the conversation from your own event loop.
 
 ## Related pages
 
+- [Barge-in](/docs/user-guide/sdk/bidirectional-streaming/barge-in/index.md) (1 shared tag)
 - [BidiAgent](/docs/user-guide/sdk/bidirectional-streaming/agent/index.md) (1 shared tag)
 - [Events](/docs/user-guide/sdk/bidirectional-streaming/events/index.md) (1 shared tag)
 - [Google Gemini Live](/docs/user-guide/sdk/bidirectional-streaming/models/google/index.md) (1 shared tag)
 - [I/O Streams](/docs/user-guide/sdk/bidirectional-streaming/io/index.md) (1 shared tag)
-- [Interruptions](/docs/user-guide/sdk/bidirectional-streaming/interruption/index.md) (1 shared tag)
 - [OpenAI Realtime](/docs/user-guide/sdk/bidirectional-streaming/models/openai/index.md) (1 shared tag)
 - [Bidirectional Streaming Observability](/docs/user-guide/sdk/bidirectional-streaming/observability/index.md) (1 shared tag)
 - [Bidirectional Streaming Hooks](/docs/user-guide/sdk/bidirectional-streaming/hooks/index.md) (1 shared tag)

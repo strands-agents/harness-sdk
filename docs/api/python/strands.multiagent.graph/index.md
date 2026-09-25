@@ -492,7 +492,7 @@ Dictionary events during graph execution, such as:
 def serialize_state() -> dict[str, Any]
 ```
 
-Defined in: [src/strands/multiagent/graph.py:1273](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/graph.py#L1273)
+Defined in: [src/strands/multiagent/graph.py:1270](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/graph.py#L1270)
 
 Serialize the current graph state to a dictionary.
 
@@ -502,7 +502,7 @@ Serialize the current graph state to a dictionary.
 def deserialize_state(payload: dict[str, Any]) -> None
 ```
 
-Defined in: [src/strands/multiagent/graph.py:1297](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/graph.py#L1297)
+Defined in: [src/strands/multiagent/graph.py:1294](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/multiagent/graph.py#L1294)
 
 Restore graph state from a session dict and prepare for execution.
 

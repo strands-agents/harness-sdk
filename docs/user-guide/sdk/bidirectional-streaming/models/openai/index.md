@@ -1,7 +1,7 @@
 The [OpenAI Realtime API](https://platform.openai.com/docs/guides/realtime) is a speech-to-speech interface that enables low-latency, natural voice conversations with AI. Key features include:
 
 -   **Bidirectional Interaction**: The user and the model can provide input and output at the same time.
--   **Interruptibility**: Allows users to interrupt the AI mid-response, like in human conversations.
+-   **Barge-in**: Users can speak while the model is responding, like in human conversations.
 -   **Multimodal Streaming**: The API supports streaming of text and audio data.
 -   **Tool Use and Function Calling**: Can use external tools to perform actions and get context while maintaining a real-time connection.
 -   **Secure Authentication**: Uses tokens for secure client-side authentication.
@@ -38,7 +38,8 @@ from strands.vended_tools import notebook
 
 async def main() -> None:
     model = OpenAIRealtimeModel(
-        model_id="gpt-realtime",
+        transcription_model_id="gpt-transcribe",
+        model_id="gpt-realtime-2.1",
         voice="coral",
         api_key="<OPENAI_API_KEY>",
     )
@@ -68,19 +69,22 @@ if __name__ == "__main__":
 
 | Parameter | Description | Example | Options |
 | --- | --- | --- | --- |
-| `model_id` | OpenAI Realtime model identifier. | `"gpt-realtime"` | [OpenAI models](https://platform.openai.com/docs/models) |
+| `model_id` | OpenAI Realtime model identifier. | `"gpt-realtime-2.1"` | [OpenAI models](https://platform.openai.com/docs/models) |
+| `transcription_model_id` | Required input transcription model identifier. Pass `None` to disable user transcription. | `"gpt-transcribe"` | [GPT-Transcribe](https://developers.openai.com/api/docs/models/gpt-transcribe) |
 | `voice` | Output voice identifier. Defaults to `"alloy"`. | `"coral"` | [Voice options](https://platform.openai.com/docs/guides/realtime-conversations#voice-options) |
 | `params` | OpenAI Realtime session parameters. Audio must remain mono PCM at 24000 Hz. | `{"max_output_tokens": 4096}` | [`session.update`](https://platform.openai.com/docs/api-reference/realtime-client-events/session/update) |
 | `connection` | Reconnect timing overrides. | `{"auto_reconnect": False}` | [reference](/docs/api/python/strands.experimental.bidi.models#ConnectionConfig) |
 
 ### Additional Provider Options
 
-Use direct options such as `voice` for common settings, and pass additional OpenAI Realtime options through `params`.
+Use direct options such as `voice` and `transcription_model_id` for common settings, and pass additional OpenAI Realtime options through `params`.
 
 ```python
 from strands.experimental.bidi.models import OpenAIRealtimeModel
 
 model = OpenAIRealtimeModel(
+    model_id="gpt-realtime-2.1",
+    transcription_model_id="gpt-transcribe",
     api_key="<OPENAI_API_KEY>",
     voice="coral",
     params={"audio": {"input": {"turn_detection": {"threshold": 0.3}}}},
@@ -115,12 +119,12 @@ Set the `OPENAI_API_KEY` environment variable or pass the key through `api_key`.
 
 ## Related pages
 
+- [Barge-in](/docs/user-guide/sdk/bidirectional-streaming/barge-in/index.md) (1 shared tag)
 - [BidiAgent](/docs/user-guide/sdk/bidirectional-streaming/agent/index.md) (1 shared tag)
 - [Build a realtime voice agent](/docs/user-guide/sdk/bidirectional-streaming/index.md) (1 shared tag)
 - [Events](/docs/user-guide/sdk/bidirectional-streaming/events/index.md) (1 shared tag)
 - [Google Gemini Live](/docs/user-guide/sdk/bidirectional-streaming/models/google/index.md) (1 shared tag)
 - [I/O Streams](/docs/user-guide/sdk/bidirectional-streaming/io/index.md) (1 shared tag)
-- [Interruptions](/docs/user-guide/sdk/bidirectional-streaming/interruption/index.md) (1 shared tag)
 - [Bidirectional Streaming Observability](/docs/user-guide/sdk/bidirectional-streaming/observability/index.md) (1 shared tag)
 - [Bidirectional Streaming Hooks](/docs/user-guide/sdk/bidirectional-streaming/hooks/index.md) (1 shared tag)
 - [Build a voice agent](/docs/user-guide/sdk/bidirectional-streaming/quickstart/index.md) (1 shared tag)

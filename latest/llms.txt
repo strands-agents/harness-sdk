@@ -28,6 +28,7 @@
 - [Take Strands harness to production](https://strandsagents.com/docs/user-guide/harness/production/index.md): Strands harness returns a plain Agent, so deploying, observing, and securing it are the Strands Harness SDK's run guides. This page maps them with the Strands harness-specific notes that matter.
 - Reference
   - [configuration](https://strandsagents.com/docs/user-guide/harness/reference/configuration/index.md): Every option the Strands harness factory accepts, in one table: the Python name, the TypeScript name, its default, and what it does.
+  - [versioning](https://strandsagents.com/docs/user-guide/harness/versioning/index.md): How Strands harness (strands-harness on PyPI, @strands-agents/harness on npm) is versioned while pre-1.0: what patch and minor mean, what counts as breaking, and how it relates to the Strands Harness SDK.
 
 ## Harness SDK
 
@@ -163,17 +164,17 @@
     - [callback-handlers](https://strandsagents.com/docs/user-guide/sdk/streaming/callback-handlers/index.md): Intercept Strands agent events in Python with callback handlers. Monitor streaming text and tool usage in real time or format custom output.
     - [events](https://strandsagents.com/docs/user-guide/sdk/streaming/events/index.md): Reference for every event a Strands agent stream emits: lifecycle, model output, tool activity, and multi-agent coordination events, plus how to serialize them.
   - Realtime
-    - [Overview](https://strandsagents.com/docs/user-guide/sdk/bidirectional-streaming/index.md): Build a realtime agent that streams audio in and out: a persistent BidiAgent connection, a realtime model provider, and the events, I/O, and interruptions a live conversation needs.
-    - [agent](https://strandsagents.com/docs/user-guide/sdk/bidirectional-streaming/agent/index.md): Build real-time voice conversations with BidiAgent. Stream audio and text over persistent connections with interruptions and concurrent tool calling.
-    - [bedrock](https://strandsagents.com/docs/user-guide/sdk/bidirectional-streaming/models/bedrock/index.md): Build real-time speech-to-speech agents with Amazon Bedrock Nova Sonic and Strands. Bidirectional audio streaming with interruption handling and tool calling.
-    - [google](https://strandsagents.com/docs/user-guide/sdk/bidirectional-streaming/models/google/index.md): Build real-time voice agents with Google's Gemini Live API and Strands. Stream audio and text over WebSocket with interruptions and tool calling.
-    - [openai](https://strandsagents.com/docs/user-guide/sdk/bidirectional-streaming/models/openai/index.md): Build low-latency voice agents with the OpenAI Realtime API and Strands. Configure speech-to-speech streaming, interruptions, and tool calling.
+    - [Overview](https://strandsagents.com/docs/user-guide/sdk/bidirectional-streaming/index.md): Build a realtime agent that streams audio in and out: a persistent BidiAgent connection, a realtime model provider, and the events, I/O, and barge-ins a live conversation needs.
+    - [agent](https://strandsagents.com/docs/user-guide/sdk/bidirectional-streaming/agent/index.md): Build real-time voice conversations with BidiAgent. Stream audio and text over persistent connections with barge-ins and concurrent tool calling.
+    - [bedrock](https://strandsagents.com/docs/user-guide/sdk/bidirectional-streaming/models/bedrock/index.md): Build real-time speech-to-speech agents with Amazon Bedrock Nova Sonic and Strands. Bidirectional audio streaming with barge-in handling and tool calling.
+    - [google](https://strandsagents.com/docs/user-guide/sdk/bidirectional-streaming/models/google/index.md): Build real-time voice agents with Google's Gemini Live API and Strands. Stream audio and text over WebSocket with barge-ins and tool calling.
+    - [openai](https://strandsagents.com/docs/user-guide/sdk/bidirectional-streaming/models/openai/index.md): Build low-latency voice agents with the OpenAI Realtime API and Strands. Configure speech-to-speech streaming, barge-ins, and tool calling.
     - [io](https://strandsagents.com/docs/user-guide/sdk/bidirectional-streaming/io/index.md): Connect microphones, speakers, consoles, and WebSockets to a Strands bidi-agent with input and output streams for audio and text.
     - [events](https://strandsagents.com/docs/user-guide/sdk/bidirectional-streaming/events/index.md): Send and receive bidirectional streaming events in Strands agents. Process audio, text, and tool activity in real time over persistent connections.
-    - [interruption](https://strandsagents.com/docs/user-guide/sdk/bidirectional-streaming/interruption/index.md): Handle real-time voice interruptions in BidiAgent. Voice Activity Detection stops responses mid-stream for natural, human-like conversations.
-    - [hooks](https://strandsagents.com/docs/user-guide/sdk/bidirectional-streaming/hooks/index.md): Extend BidiAgent with hooks for bidirectional streaming events: connection lifecycle, interruptions, restarts, and real-time conversation logging.
+    - [barge-in](https://strandsagents.com/docs/user-guide/sdk/bidirectional-streaming/barge-in/index.md): Handle real-time voice barge-ins in BidiAgent. Voice Activity Detection stops responses mid-stream for natural, human-like conversations.
+    - [hooks](https://strandsagents.com/docs/user-guide/sdk/bidirectional-streaming/hooks/index.md): Extend BidiAgent with hooks for bidirectional streaming events: connection lifecycle, barge-ins, restarts, and real-time conversation logging.
     - [session-management](https://strandsagents.com/docs/user-guide/sdk/bidirectional-streaming/session-management/index.md): Persist BidiAgent conversation history and state across bidirectional streaming sessions so voice assistants resume where they left off.
-    - [observability](https://strandsagents.com/docs/user-guide/sdk/bidirectional-streaming/observability/index.md): Trace, measure, and log BidiAgent sessions: connection lifecycle, time to first audio, interruptions, per-modality token usage, and reconnects.
+    - [observability](https://strandsagents.com/docs/user-guide/sdk/bidirectional-streaming/observability/index.md): Trace, measure, and log BidiAgent sessions: connection lifecycle, time to first audio, barge-ins, per-modality token usage, and reconnects.
   - Experimental
     - [agent-config](https://strandsagents.com/docs/user-guide/sdk/experimental/agent-config/index.md): Create Strands agents from JSON files or dictionaries with the experimental config_to_agent function, including tool loading and model settings.
 - Reference
@@ -448,6 +449,7 @@
 - [strands.vended_plugins.steering.core.handler](https://strandsagents.com/docs/api/python/strands.vended_plugins.steering.core.handler/index.md)
 - [strands.vended_plugins.steering.handlers.llm.llm_handler](https://strandsagents.com/docs/api/python/strands.vended_plugins.steering.handlers.llm.llm_handler/index.md)
 - [strands.vended_plugins.steering.handlers.llm.mappers](https://strandsagents.com/docs/api/python/strands.vended_plugins.steering.handlers.llm.mappers/index.md)
+- [strands.vended_tools.a2a_client.a2a_client](https://strandsagents.com/docs/api/python/strands.vended_tools.a2a_client.a2a_client/index.md)
 - [strands.vended_tools.file_editor.file_editor](https://strandsagents.com/docs/api/python/strands.vended_tools.file_editor.file_editor/index.md)
 - [strands.vended_tools.handoff_to_user.handoff_to_user](https://strandsagents.com/docs/api/python/strands.vended_tools.handoff_to_user.handoff_to_user/index.md)
 - [strands.vended_tools.handoff_to_user.types](https://strandsagents.com/docs/api/python/strands.vended_tools.handoff_to_user.types/index.md)
@@ -826,6 +828,7 @@
 
 - [Changelog](https://strandsagents.com/changelog/index.md): All releases across the SDK and Evals SDK
 - SDK Python
+  - [v1.57.1](https://strandsagents.com/changelog/sdk/python-v1.57.1/index.md): SDK Python v1.57.1 (2026-09-25)
   - [v1.57.0](https://strandsagents.com/changelog/sdk/python-v1.57.0/index.md): SDK Python v1.57.0 (2026-09-22)
   - [v1.56.0](https://strandsagents.com/changelog/sdk/python-v1.56.0/index.md): SDK Python v1.56.0 (2026-09-15)
   - [v1.55.1](https://strandsagents.com/changelog/sdk/python-v1.55.1/index.md): SDK Python v1.55.1 (2026-09-09)
@@ -948,6 +951,7 @@
   - [v0.1.1](https://strandsagents.com/changelog/sdk/typescript-v0.1.1/index.md): SDK TypeScript v0.1.1 (2025-12-03)
   - [v0.1.0](https://strandsagents.com/changelog/sdk/typescript-v0.1.0/index.md): SDK TypeScript v0.1.0 (2025-12-03)
 - Evals
+  - [v1.4.0](https://strandsagents.com/changelog/evals/v1.4.0/index.md): Evals v1.4.0 (2026-09-22)
   - [v1.3.0](https://strandsagents.com/changelog/evals/v1.3.0/index.md): Evals v1.3.0 (2026-09-15)
   - [v1.2.0](https://strandsagents.com/changelog/evals/v1.2.0/index.md): Evals v1.2.0 (2026-08-21)
   - [v1.1.1](https://strandsagents.com/changelog/evals/v1.1.1/index.md): Evals v1.1.1 (2026-08-12)

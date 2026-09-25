@@ -27,7 +27,7 @@ from strands.session.file_session_manager import FileSessionManager
 session_manager = FileSessionManager(session_id="user_123_voice_session")
 
 # Create the agent with session management
-model = BedrockNovaSonicModel()
+model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 agent = BidiAgent(
     model=model,
     session_manager=session_manager
@@ -136,7 +136,7 @@ from strands.session import FileSessionManager
 
 session_manager = FileSessionManager(session_id="user_123", storage_dir="./sessions/")
 agent = BidiAgent(
-    model=BedrockNovaSonicModel(),
+    model=BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0"),
     agent_id="voice-assistant",
     session_manager=session_manager,
 )
@@ -154,7 +154,7 @@ from strands.session import FileSessionManager
 # First conversation
 session_manager = FileSessionManager(session_id="user_123", storage_dir="./sessions/")
 agent = BidiAgent(
-    model=BedrockNovaSonicModel(),
+    model=BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0"),
     agent_id="voice-assistant",
     session_manager=session_manager,
 )
@@ -166,7 +166,7 @@ await agent.stop()
 # Later: constructing a new agent restores the saved messages and state.
 session_manager = FileSessionManager(session_id="user_123", storage_dir="./sessions/")
 agent = BidiAgent(
-    model=BedrockNovaSonicModel(),
+    model=BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0"),
     agent_id="voice-assistant",
     session_manager=session_manager,
 )
@@ -248,12 +248,12 @@ For best practices on session ID management, session cleanup, error handling, st
 - [Persist state across sessions](/docs/user-guide/sdk/agents/session-management/index.md) (2 shared tags)
 - [State Management](/docs/user-guide/sdk/agents/state/index.md) (2 shared tags)
 - [Storage](/docs/user-guide/sdk/storage/index.md) (1 shared tag)
+- [Barge-in](/docs/user-guide/sdk/bidirectional-streaming/barge-in/index.md) (1 shared tag)
 - [BidiAgent](/docs/user-guide/sdk/bidirectional-streaming/agent/index.md) (1 shared tag)
 - [Build a realtime voice agent](/docs/user-guide/sdk/bidirectional-streaming/index.md) (1 shared tag)
 - [Events](/docs/user-guide/sdk/bidirectional-streaming/events/index.md) (1 shared tag)
 - [Google Gemini Live](/docs/user-guide/sdk/bidirectional-streaming/models/google/index.md) (1 shared tag)
 - [I/O Streams](/docs/user-guide/sdk/bidirectional-streaming/io/index.md) (1 shared tag)
-- [Interruptions](/docs/user-guide/sdk/bidirectional-streaming/interruption/index.md) (1 shared tag)
 - [OpenAI Realtime](/docs/user-guide/sdk/bidirectional-streaming/models/openai/index.md) (1 shared tag)
 
 

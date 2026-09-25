@@ -1,12 +1,12 @@
 Bidirectional Agent for real-time streaming conversations.
 
-Provides real-time audio and text interaction through persistent streaming connections. Unlike traditional request-response patterns, this agent maintains long-running conversations where users can interrupt, provide additional input, and receive continuous responses including audio output.
+Provides real-time audio and text interaction through persistent streaming connections. Unlike traditional request-response patterns, this agent maintains long-running conversations where users can barge in, provide additional input, and receive continuous responses including audio output.
 
 Key capabilities:
 
 -   Persistent conversation connections with concurrent processing
 -   Real-time audio input/output streaming
--   Automatic interruption detection and tool execution
+-   Automatic barge-in detection and tool execution
 -   Event-driven communication with model providers
 
 ## BidiAgent
@@ -15,11 +15,11 @@ Key capabilities:
 class BidiAgent(LocalAgent)
 ```
 
-Defined in: [src/strands/experimental/bidi/agent/agent.py:62](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L62)
+Defined in: [src/strands/experimental/bidi/agent/agent.py:82](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L82)
 
 Agent for bidirectional streaming conversations.
 
-Enables real-time audio and text interaction with AI models through persistent connections. Supports concurrent tool execution and interruption handling.
+Enables real-time audio and text interaction with AI models through persistent connections. Supports concurrent tool execution and barge-in handling.
 
 #### \_\_init\_\_
 
@@ -40,13 +40,13 @@ def __init__(model: BidiModel | str | None = None,
              **kwargs: Any)
 ```
 
-Defined in: [src/strands/experimental/bidi/agent/agent.py:71](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L71)
+Defined in: [src/strands/experimental/bidi/agent/agent.py:91](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L91)
 
 Initialize bidirectional agent.
 
 **Arguments**:
 
--   `model` - BidiModel instance, string model\_id, or None for default detection.
+-   `model` - BidiModel instance, Bedrock model ID string, or None to use Nova Sonic 2.
 -   `tools` - Optional list of tools with flexible format support.
 -   `system_prompt` - System prompt for conversations as a string or structured content blocks. Structured blocks are retained, while their text is passed to Bidi models as a string.
 -   `messages` - Optional conversation history to initialize with.
@@ -73,7 +73,7 @@ Initialize bidirectional agent.
 def tool() -> _ToolCaller
 ```
 
-Defined in: [src/strands/experimental/bidi/agent/agent.py:198](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L198)
+Defined in: [src/strands/experimental/bidi/agent/agent.py:218](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L218)
 
 Call tool as a function.
 
@@ -95,7 +95,7 @@ agent.tool.calculator(expression="2+2")
 def tool_names() -> list[str]
 ```
 
-Defined in: [src/strands/experimental/bidi/agent/agent.py:213](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L213)
+Defined in: [src/strands/experimental/bidi/agent/agent.py:233](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L233)
 
 Get a list of all registered tool names.
 
@@ -110,7 +110,7 @@ Names of all tools available to this agent.
 def system_prompt() -> str | None
 ```
 
-Defined in: [src/strands/experimental/bidi/agent/agent.py:223](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L223)
+Defined in: [src/strands/experimental/bidi/agent/agent.py:243](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L243)
 
 Get the system prompt as a string.
 
@@ -121,7 +121,7 @@ Get the system prompt as a string.
 def system_prompt(value: str | list[SystemContentBlock] | None) -> None
 ```
 
-Defined in: [src/strands/experimental/bidi/agent/agent.py:228](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L228)
+Defined in: [src/strands/experimental/bidi/agent/agent.py:248](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L248)
 
 Set the system prompt and retain its structured content representation.
 
@@ -132,7 +132,7 @@ Set the system prompt and retain its structured content representation.
 def system_prompt_content() -> list[SystemContentBlock] | None
 ```
 
-Defined in: [src/strands/experimental/bidi/agent/agent.py:233](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L233)
+Defined in: [src/strands/experimental/bidi/agent/agent.py:253](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L253)
 
 Get the system prompt as structured content blocks.
 
@@ -143,7 +143,7 @@ Get the system prompt as structured content blocks.
 def session_id() -> str
 ```
 
-Defined in: [src/strands/experimental/bidi/agent/agent.py:238](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L238)
+Defined in: [src/strands/experimental/bidi/agent/agent.py:258](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L258)
 
 Get the conversation session identifier.
 
@@ -156,7 +156,7 @@ def add_hook(callback: HookCallback[TEvent],
              order: float = HookOrder.DEFAULT) -> None
 ```
 
-Defined in: [src/strands/experimental/bidi/agent/agent.py:242](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L242)
+Defined in: [src/strands/experimental/bidi/agent/agent.py:262](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L262)
 
 Register a callback function for a specific event type.
 
@@ -186,7 +186,7 @@ Callbacks can be either synchronous or asynchronous functions.
 async def start(invocation_state: dict[str, Any] | None = None) -> None
 ```
 
-Defined in: [src/strands/experimental/bidi/agent/agent.py:277](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L277)
+Defined in: [src/strands/experimental/bidi/agent/agent.py:297](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L297)
 
 Start a persistent bidirectional conversation connection.
 
@@ -216,11 +216,11 @@ await agent.start(invocation_state=\{
 async def send(input_data: BidiAgentInput) -> None
 ```
 
-Defined in: [src/strands/experimental/bidi/agent/agent.py:308](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L308)
+Defined in: [src/strands/experimental/bidi/agent/agent.py:328](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L328)
 
-Send content to the model.
+Send user content to the model.
 
-A string is shorthand for a text block. Image blocks contain complete images. Audio deltas append samples to the live input stream without explicitly ending the user’s turn.
+Strings are shorthand for text blocks. Lists of text and image blocks form one user message, preserving block order. Audio deltas are sent individually and are not added to conversation history. Tool results are sent by the agent’s tool runner.
 
 **Arguments**:
 
@@ -228,18 +228,19 @@ A string is shorthand for a text block. Image blocks contain complete images. Au
     
     -   str: Text message from user
     -   TextBlock, AudioDelta, or ImageBlock: Text, streaming audio, or image input
-    -   BidiContentBlockData: A dictionary containing one text or image key
+    -   BidiUserContentBlockData: A dictionary containing one text or image key
     -   BidiContentDeltaData: A dictionary containing one audio\_delta key
+    -   list: A non-empty list of strings, text or image blocks, or their dictionary forms
 
 **Raises**:
 
 -   `RuntimeError` - If start has not been called.
 -   `TypeError` - If the input has an unsupported type or invalid input arguments.
--   `ValueError` - If the input dictionary does not contain exactly one text, audio\_delta, or image key.
+-   `ValueError` - If the input list is empty or an input dictionary does not contain exactly one supported key.
 
 **Example**:
 
-await agent.send(“Hello”) await agent.send(AudioDelta(format=“pcm”, source={“bytes”: audio\_bytes})) await agent.send({“audio\_delta”: {“format”: “pcm”, “source”: {“bytes”: audio\_bytes}}})
+await agent.send(“Hello”) await agent.send(AudioDelta(format=“pcm”, source={“bytes”: audio\_bytes})) await agent.send({“audio\_delta”: {“format”: “pcm”, “source”: {“bytes”: audio\_bytes}}}) await agent.send(\[TextBlock(“Use these details.”), TextBlock(“Order number: 123.”)\])
 
 #### receive
 
@@ -247,7 +248,7 @@ await agent.send(“Hello”) await agent.send(AudioDelta(format=“pcm”, sour
 async def receive() -> AsyncGenerator[BidiOutputEvent, None]
 ```
 
-Defined in: [src/strands/experimental/bidi/agent/agent.py:358](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L358)
+Defined in: [src/strands/experimental/bidi/agent/agent.py:390](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L390)
 
 Receive events from the model including audio, text, and tool calls.
 
@@ -265,11 +266,63 @@ Model output events processed by background tasks including audio output, text r
 async def stop() -> None
 ```
 
-Defined in: [src/strands/experimental/bidi/agent/agent.py:374](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L374)
+Defined in: [src/strands/experimental/bidi/agent/agent.py:406](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L406)
 
 End the conversation connection and cleanup all resources.
 
 Terminates the streaming connection, cancels background tasks, and closes the connection to the model provider.
+
+#### take\_snapshot
+
+```python
+def take_snapshot(*,
+                  preset: SnapshotPreset | None = None,
+                  include: list[SnapshotField] | None = None,
+                  exclude: list[SnapshotField] | None = None,
+                  app_data: dict[str, Any] | None = None) -> Snapshot
+```
+
+Defined in: [src/strands/experimental/bidi/agent/agent.py:415](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L415)
+
+Capture current agent state as an in-memory snapshot.
+
+Captures committed conversation history and application state. Live connection state, in-progress responses, and pending tool calls are not included.
+
+**Arguments**:
+
+-   `preset` - Named preset of fields to capture. Currently only “session” is supported, which captures messages and state.
+-   `include` - Additional fields to capture on top of the preset.
+-   `exclude` - Fields to remove after applying preset and include.
+-   `app_data` - Application-owned arbitrary JSON stored verbatim in the snapshot.
+
+**Returns**:
+
+A Snapshot containing the captured agent state.
+
+**Raises**:
+
+-   `SnapshotException` - If no fields are resolved or a field is invalid or unsupported.
+
+#### load\_snapshot
+
+```python
+def load_snapshot(snapshot: Snapshot) -> None
+```
+
+Defined in: [src/strands/experimental/bidi/agent/agent.py:466](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L466)
+
+Restore agent state from a previously captured snapshot.
+
+Only fields present in snapshot.data are restored; absent fields are left unchanged and fields this agent does not support are ignored. The restored history is sent to the model on the next start().
+
+**Arguments**:
+
+-   `snapshot` - The snapshot to restore from.
+
+**Raises**:
+
+-   `SnapshotException` - If snapshot.schema\_version is not “1.0” or snapshot.scope is not “agent”.
+-   `RuntimeError` - If the agent is started.
 
 #### \_\_aenter\_\_
 
@@ -278,7 +331,7 @@ async def __aenter__(
         invocation_state: dict[str, Any] | None = None) -> "BidiAgent"
 ```
 
-Defined in: [src/strands/experimental/bidi/agent/agent.py:383](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L383)
+Defined in: [src/strands/experimental/bidi/agent/agent.py:495](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L495)
 
 Async context manager entry point.
 
@@ -298,7 +351,7 @@ Self for use in the context.
 async def __aexit__(*_: Any) -> None
 ```
 
-Defined in: [src/strands/experimental/bidi/agent/agent.py:400](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L400)
+Defined in: [src/strands/experimental/bidi/agent/agent.py:512](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L512)
 
 Async context manager exit point.
 
@@ -312,7 +365,7 @@ async def run(inputs: list[InputStream],
               invocation_state: dict[str, Any] | None = None) -> None
 ```
 
-Defined in: [src/strands/experimental/bidi/agent/agent.py:409](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L409)
+Defined in: [src/strands/experimental/bidi/agent/agent.py:521](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/agent/agent.py#L521)
 
 Run the agent using provided I/O streams for bidirectional communication.
 
@@ -325,8 +378,8 @@ Run the agent using provided I/O streams for bidirectional communication.
 **Example**:
 
 ```python
-# Using model defaults:
-model = BedrockNovaSonicModel()
+# Using default audio settings:
+model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 audio_io = AudioIO()
 agent = BidiAgent(model=model, tools=[calculator])
 await agent.run(
@@ -337,6 +390,7 @@ await agent.run(
 
 # Using custom audio config:
 model = BedrockNovaSonicModel(
+    model_id="amazon.nova-2-sonic-v1:0",
     audio=\{
         "input": \{"sample_rate": 16000},
         "output": \{"sample_rate": 24000},

@@ -1,6 +1,33 @@
+Configuration types for bidirectional I/O.
+
+## AudioProcessorConfig
+
+```python
+class AudioProcessorConfig(TypedDict)
+```
+
+Defined in: [src/strands/experimental/bidi/io/configs.py:6](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/io/configs.py#L6)
+
+Configure microphone audio processing.
+
+**Attributes**:
+
+-   `echo_cancellation` - Cancel the agent’s own speaker audio from the mic input.
+-   `stream_delay_ms` - Playback-to-capture delay hint in milliseconds for AEC.
+
+## AudioIOConfig
+
+```python
+class AudioIOConfig(TypedDict)
+```
+
+Defined in: [src/strands/experimental/bidi/io/configs.py:18](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/io/configs.py#L18)
+
+Configure bidirectional audio input and output.
+
 Send and receive audio data from devices.
 
-Reads user audio from input device and sends agent audio to output device using PyAudio. If a user interrupts the agent, the output buffer is cleared to stop playback.
+Reads user audio from input device and sends agent audio to output device using PyAudio. If a user barges in, the output buffer is cleared to stop playback.
 
 Audio configuration is provided by models that implement `AudioCapable`.
 
@@ -16,7 +43,7 @@ Defined in: [src/strands/experimental/bidi/io/audio.py:304](https://github.com/s
 
 Send and receive audio data from devices using PyAudio.
 
-Reads microphone audio via `input()`, plays agent audio via `output()`, and displays user and assistant transcripts. Interruptions clear the playback buffer to stop the agent mid-response.
+Reads microphone audio via `input()`, plays agent audio via `output()`, and displays user and assistant transcripts. Barge-ins clear the playback buffer to stop the agent mid-response.
 
 When `audio_processor=True` or an `AudioProcessorConfig` is passed, the microphone signal gets audio processing and, when echo cancellation is enabled, the agent’s speaker output is used as a reference to cancel echo from the mic input. A shared processor coordinates the input and output channels, so echo cancellation only works when both come from the *same* `AudioIO` instance.
 
@@ -92,33 +119,6 @@ def output() -> _AudioOutputStream
 Defined in: [src/strands/experimental/bidi/io/audio.py:449](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/io/audio.py#L449)
 
 Return the speaker and transcript output stream.
-
-Configuration types for bidirectional I/O.
-
-## AudioProcessorConfig
-
-```python
-class AudioProcessorConfig(TypedDict)
-```
-
-Defined in: [src/strands/experimental/bidi/io/configs.py:6](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/io/configs.py#L6)
-
-Configure microphone audio processing.
-
-**Attributes**:
-
--   `echo_cancellation` - Cancel the agent’s own speaker audio from the mic input.
--   `stream_delay_ms` - Playback-to-capture delay hint in milliseconds for AEC.
-
-## AudioIOConfig
-
-```python
-class AudioIOConfig(TypedDict)
-```
-
-Defined in: [src/strands/experimental/bidi/io/configs.py:18](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/io/configs.py#L18)
-
-Configure bidirectional audio input and output.
 
 Handle text input and output to and from bidi agent.
 

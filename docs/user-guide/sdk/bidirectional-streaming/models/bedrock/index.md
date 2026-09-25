@@ -1,7 +1,7 @@
 [Amazon Nova Sonic](https://docs.aws.amazon.com/nova/latest/nova2-userguide/using-conversational-speech.html) provides real-time, conversational interactions through bidirectional audio streaming. Amazon Nova Sonic processes and responds to real-time speech as it occurs, enabling natural, human-like conversational experiences. Key capabilities and features include:
 
 -   Adaptive speech response that dynamically adjusts delivery based on the prosody of the input speech.
--   Graceful handling of user interruptions without dropping conversational context.
+-   Graceful handling of user barge-ins without dropping conversational context.
 -   Function calling and agentic workflow support for building complex AI applications.
 -   Robustness to background noise for real-world deployment scenarios.
 -   Multilingual support with expressive voices and speaking styles. Expressive voices are offered, including both masculine-sounding and feminine sounding, in seven languages: English (US, UK, AU, IN), French, Italian, German, Spanish (US), Portuguese (BR), and Hindi.
@@ -95,7 +95,10 @@ boto_session = boto3.Session(
     region_name="your_region_name",
     profile_name="your_profile"  # Optional: Use a specific profile
 )
-model = BedrockNovaSonicModel(boto_session=boto_session)
+model = BedrockNovaSonicModel(
+    model_id="amazon.nova-2-sonic-v1:0",
+    boto_session=boto_session,
+)
 ```
 
 For more details on this approach, please refer to the [boto3 session docs](https://boto3.amazonaws.com/v1/documentation/api/latest/reference/core/session.html).
@@ -160,9 +163,9 @@ As a reminder, Nova Sonic is only available in us-east-1, us-west-2, eu-north-1,
 - [Python Deployment to Amazon Bedrock AgentCore Runtime](/docs/user-guide/sdk/deploy/deploy_to_bedrock_agentcore/python/index.md) (2 shared tags)
 - [TypeScript Deployment to Amazon Bedrock AgentCore Runtime](/docs/user-guide/sdk/deploy/deploy_to_bedrock_agentcore/typescript/index.md) (2 shared tags)
 - [AgentCore evaluations](/docs/user-guide/evals-sdk/how-to/agentcore_evaluation_dashboard/index.md) (2 shared tags)
+- [Barge-in](/docs/user-guide/sdk/bidirectional-streaming/barge-in/index.md) (1 shared tag)
 - [BidiAgent](/docs/user-guide/sdk/bidirectional-streaming/agent/index.md) (1 shared tag)
 - [Build a realtime voice agent](/docs/user-guide/sdk/bidirectional-streaming/index.md) (1 shared tag)
-- [Events](/docs/user-guide/sdk/bidirectional-streaming/events/index.md) (1 shared tag)
 
 
 ## Implementation

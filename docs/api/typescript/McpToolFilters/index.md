@@ -1,4 +1,4 @@
-Defined in: [src/mcp/client.ts:88](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L88)
+Defined in: [src/mcp/client.ts:81](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L81)
 
 Filters controlling which MCP tools a client exposes.
 
@@ -10,7 +10,7 @@ Filters controlling which MCP tools a client exposes.
 optional allowed?: McpToolMatcher[];
 ```
 
-Defined in: [src/mcp/client.ts:90](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L90)
+Defined in: [src/mcp/client.ts:83](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L83)
 
 When present, only tools matching at least one matcher are exposed.
 
@@ -22,6 +22,6 @@ When present, only tools matching at least one matcher are exposed.
 optional rejected?: McpToolMatcher[];
 ```
 
-Defined in: [src/mcp/client.ts:92](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L92)
+Defined in: [src/mcp/client.ts:85](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L85)
 
 Tools matching at least one matcher are excluded, even when also allowed.

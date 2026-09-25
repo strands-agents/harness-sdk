@@ -15,7 +15,7 @@ Bidirectional streaming uses a different event model than [standard streaming](/
 -   Uses `send()` and `receive()` methods
 -   Persistent connection (multiple turns per connection)
 -   Events flow in both directions (application ↔ model)
--   Supports real-time audio and interruptions
+-   Supports real-time audio and barge-ins
 
 ```python
 import asyncio
@@ -23,7 +23,7 @@ from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 async def main():
-    model = BedrockNovaSonicModel()
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 
     async with BidiAgent(model=model) as agent:
         # Send input to model
@@ -122,7 +122,7 @@ Emitted when the streaming connection is established and ready for interaction.
 **Properties:**
 
 -   `connection_id`: Unique identifier for this streaming connection
--   `model`: Model identifier (e.g., “amazon.nova-2-sonic-v1:0”, “gemini-2.0-flash-live”)
+-   `model`: Model identifier (e.g., “amazon.nova-2-sonic-v1:0”, “gemini-3.8-live”)
 
 #### BidiConnectionRestartEvent
 
@@ -182,13 +182,13 @@ async for event in agent.receive():
         print(f"Reconnecting in ~{event['time_left_s']:.0f}s")
 ```
 
-#### BidiConnectionCloseEvent
+#### BidiConnectionStopEvent
 
 Emitted when the streaming connection is closed.
 
 ```python
 {
-    "type": "bidi_connection_close",
+    "type": "bidi_connection_stop",
     "connection_id": "conn_abc123",
     "reason": "user_request"
 }
@@ -206,11 +206,11 @@ Emitted when the streaming connection is closed.
 
 ### Response Lifecycle Events
 
-Events that track individual model responses within the conversation.
+Response start and stop events bracket the assistant’s audio, transcript, and tool requests. User transcription is independent and may arrive outside these boundaries.
 
 #### BidiResponseStartEvent
 
-Emitted when the model begins generating a response.
+Emitted before a response’s assistant audio, transcript, and tool-use events.
 
 ```python
 {
@@ -221,40 +221,44 @@ Emitted when the model begins generating a response.
 
 **Properties:**
 
--   `response_id`: Unique identifier for this response (matches `BidiResponseCompleteEvent`)
+-   `response_id`: Unique identifier for this response (matches `BidiResponseStopEvent`)
 
-#### BidiResponseCompleteEvent
+#### BidiResponseStopEvent
 
-Emitted when the model finishes generating a response.
+Emitted when response output ends.
 
 ```python
 {
-    "type": "bidi_response_complete",
-    "response_id": "resp_xyz789",
-    "stop_reason": "complete"
+    "type": "bidi_response_stop",
+    "response_id": "resp_xyz789"
 }
 ```
 
 **Properties:**
 
 -   `response_id`: Unique identifier for this response
--   `stop_reason`: Why the response ended
-    -   `"complete"`: Model completed its response
-    -   `"interrupted"`: User interrupted the response
-    -   `"tool_use"`: Model is requesting tool execution
-    -   `"error"`: Error occurred during generation
 
 ### Audio Events
 
-Events for streaming audio input and output.
+Assistant audio follows start, delta, and stop events. A response can contain multiple audio streams. Each stream stops before the next starts.
 
-#### BidiAudioStreamEvent
+#### BidiAudioStartEvent
 
-Emitted when the model generates audio output. Audio is base64-encoded for JSON compatibility.
+Marks the beginning of an audio stream before chunks arrive.
 
 ```python
 {
-    "type": "bidi_audio_stream",
+    "type": "bidi_audio_start"
+}
+```
+
+#### BidiAudioDeltaEvent
+
+Emitted for each chunk of audio output. Audio is base64-encoded for JSON compatibility.
+
+```python
+{
+    "type": "bidi_audio_delta",
     "audio": "base64_encoded_audio_data...",
     "format": "pcm",
     "sample_rate": 16000,
@@ -264,7 +268,7 @@ Emitted when the model generates audio output. Audio is base64-encoded for JSON 
 
 **Properties:**
 
--   `audio`: Base64-encoded audio string
+-   `audio`: Base64-encoded audio chunk
 -   `format`: Audio encoding format (`"pcm"`, `"wav"`, `"opus"`, `"mp3"`)
 -   `sample_rate`: Sample rate in Hz (`16000`, `24000`, `48000`)
 -   `channels`: Number of audio channels (`1` = mono, `2` = stereo)
@@ -275,25 +279,53 @@ Emitted when the model generates audio output. Audio is base64-encoded for JSON 
 import base64
 
 async for event in agent.receive():
-    if event["type"] == "bidi_audio_stream":
+    if event["type"] == "bidi_audio_delta":
         # Decode and play audio
         audio_bytes = base64.b64decode(event["audio"])
         play_audio(audio_bytes, sample_rate=event["sample_rate"])
 ```
 
+#### BidiAudioStopEvent
+
+Emitted when the audio stream ends, including when stopped due to barge-in. Buffered audio may still be playing. This event carries no audio and does not end the response or its transcript.
+
+```python
+{
+    "type": "bidi_audio_stop"
+}
+```
+
 ### Transcript Events
 
-Events for speech-to-text transcription of both user and assistant speech.
+Each user or assistant transcript has start and stop events, with zero or more text deltas between them. Match events by `content_id`, since transcripts can overlap even for the same role.
 
-#### BidiTranscriptStreamEvent
+#### BidiTranscriptStartEvent
+
+Identifies a transcript and reserves its message in conversation history. It contains no text and may arrive after speech has begun.
+
+```python
+{
+    "type": "bidi_transcript_start",
+    "role": "user",
+    "content_id": "content_123"
+}
+```
+
+**Properties:**
+
+-   `role`: Who is speaking (`"user"` or `"assistant"`)
+-   `content_id`: Identifier for this transcript
+
+#### BidiTranscriptDeltaEvent
 
 Emitted for each incremental transcript update.
 
 ```python
 {
-    "type": "bidi_transcript_stream",
+    "type": "bidi_transcript_delta",
     "delta": "Hello",
-    "role": "assistant"
+    "role": "user",
+    "content_id": "content_123"
 }
 ```
 
@@ -301,68 +333,69 @@ Emitted for each incremental transcript update.
 
 -   `delta`: The incremental transcript text
 -   `role`: Who is speaking (`"user"` or `"assistant"`)
+-   `content_id`: Identifier for this transcript
 
-#### BidiTranscriptCompleteEvent
+#### BidiTranscriptStopEvent
 
-Emitted once with the complete transcript for a user or assistant turn.
+Emitted once when a user or assistant transcript finishes successfully.
 
 ```python
 {
-    "type": "bidi_transcript_complete",
+    "type": "bidi_transcript_stop",
     "transcript": "Hello world",
-    "role": "assistant"
+    "role": "user",
+    "content_id": "content_123"
 }
 ```
 
 **Properties:**
 
--   `transcript`: The complete transcript text
+-   `transcript`: The final transcript text
 -   `role`: Who spoke (`"user"` or `"assistant"`)
+-   `content_id`: Identifier for this transcript
 
 **Usage:**
 
 ```python
 async for event in agent.receive():
-    if event["type"] == "bidi_transcript_stream":
-        print(event["delta"], end="", flush=True)
-    elif event["type"] == "bidi_transcript_complete":
-        print(f"\n{event['role']}: {event['transcript']}")
+    if event["type"] == "bidi_transcript_stop":
+        print(f"{event['role']}: {event['transcript']}")
 ```
 
-### Interruption Events
+### Barge-in Events
 
-Events for handling user interruptions during model responses.
+Events for handling barge-in, when the user starts speaking during a model response.
 
-#### BidiInterruptionEvent
+#### BidiBargeInEvent
 
-Emitted when the model’s response is interrupted, typically by user speech detected via voice activity detection.
+Signals a barge-in that stops response generation or playback, typically when the user starts speaking. The bidirectional session continues.
 
 ```python
 {
-    "type": "bidi_interruption",
+    "type": "bidi_barge_in",
     "reason": "user_speech"
 }
 ```
 
 **Properties:**
 
--   `reason`: Why the interruption occurred
+-   `reason`: Why response output should stop
     -   `"user_speech"`: User started speaking (most common)
-    -   `"error"`: Error caused interruption
+    -   `"error"`: Error stopped output
 
 **Usage:**
 
 ```python
 async for event in agent.receive():
-    if event["type"] == "bidi_interruption":
-        print(f"Interrupted by {event['reason']}")
+    if event["type"] == "bidi_barge_in":
+        print(f"Barge-in: {event['reason']}")
         # Audio output automatically cleared
         # Model ready for new input
 ```
 
-BidiInterruptionEvent vs Human-in-the-Loop Interrupts
+Barge-in and tool interrupts
 
-`BidiInterruptionEvent` is different from [human-in-the-loop (HIL) interrupts](/docs/user-guide/sdk/interrupts/index.md). BidiInterruptionEvent is emitted when the model detects user speech during audio conversations and automatically stops generating the current response. HIL interrupts pause agent execution to request human approval or input before continuing, typically used for tool execution approval. BidiInterruptionEvent is automatic and audio-specific, while HIL interrupts are programmatic and require explicit handling.
+`BidiBargeInEvent` applies to the current response or its playback. New input typically starts another response. Agent’s [human-in-the-loop interrupts](/docs/user-guide/sdk/interrupts/index.md) pause an invocation to await input before resuming tool execution. BidiAgent does not yet support tool interrupts.
 
 ### Tool Events
 
@@ -390,7 +423,7 @@ Emitted when the model requests tool execution. See [Tools Overview](/docs/user-
     -   `name`: Name of the tool
     -   `input`: Tool input parameters
 
-Tools execute automatically in the background and results are sent back to the model without blocking the conversation.
+Tools execute in the background. `ToolResultEvent` carries the actual result, and `ToolResultMessageEvent` carries its history message. Both retain the original tool-use ID. Dispatch acknowledgements emit `MessageAddedEvent` hooks when appended to history.
 
 ### Usage Events
 
@@ -422,41 +455,6 @@ Emitted periodically to report token usage with modality breakdown.
 -   `cacheReadInputTokens`: Optional tokens read from cache
 -   `cacheWriteInputTokens`: Optional tokens written to cache
 
-### Error Events
-
-Events for error handling during conversations.
-
-#### BidiErrorEvent
-
-Emitted when an error occurs during the session.
-
-```python
-{
-    "type": "bidi_error",
-    "message": "Connection failed",
-    "code": "ConnectionError",
-    "details": {"retry_after": 5}
-}
-```
-
-**Properties:**
-
--   `message`: Human-readable error message
--   `code`: Error code (exception class name)
--   `details`: Optional additional error context
--   `error`: The original exception (accessible via property, not in JSON)
-
-**Usage:**
-
-```python
-async for event in agent.receive():
-    if event["type"] == "bidi_error":
-        print(f"Error: {event['message']}")
-        # Access original exception if needed
-        if hasattr(event, 'error'):
-            raise event.error
-```
-
 ## Event Flow Examples
 
 ### Basic Audio Conversation
@@ -468,7 +466,7 @@ from strands.experimental.bidi.io import AudioIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 async def main():
-    model = BedrockNovaSonicModel()
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
     agent = BidiAgent(model=model)
     audio_io = AudioIO()
 
@@ -482,14 +480,14 @@ async def main():
         elif event["type"] == "bidi_response_start":
             print(f"Response starting: {event['response_id']}")
 
-        elif event["type"] == "bidi_audio_stream":
+        elif event["type"] == "bidi_audio_delta":
             print(f"Audio chunk: {len(event['audio'])} bytes")
 
-        elif event["type"] == "bidi_transcript_complete":
+        elif event["type"] == "bidi_transcript_stop":
             print(f"{event['role']}: {event['transcript']}")
 
-        elif event["type"] == "bidi_response_complete":
-            print(f"Response complete: {event['stop_reason']}")
+        elif event["type"] == "bidi_response_stop":
+            print(f"Response complete: {event['response_id']}")
 
     await agent.stop()
 
@@ -504,13 +502,13 @@ from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 async def main():
-    model = BedrockNovaSonicModel()
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 
     async with BidiAgent(model=model) as agent:
         await agent.send("Tell me about Python")
 
         async for event in agent.receive():
-            if event["type"] == "bidi_transcript_complete":
+            if event["type"] == "bidi_transcript_stop":
                 print(f"{event['role']}: {event['transcript']}")
 
 asyncio.run(main())
@@ -525,7 +523,7 @@ from strands.experimental.bidi.models import BedrockNovaSonicModel
 from strands.vended_tools import notebook
 
 async def main():
-    model = BedrockNovaSonicModel()
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
     agent = BidiAgent(model=model, tools=[notebook])
 
     async with agent as agent:
@@ -534,7 +532,7 @@ async def main():
         async for event in agent.receive():
             event_type = event["type"]
 
-            if event_type == "bidi_transcript_complete":
+            if event_type == "bidi_transcript_stop":
                 print(f"{event['role']}: {event['transcript']}")
 
             elif event_type == "tool_use_stream":
@@ -542,14 +540,10 @@ async def main():
                 print(f"Using tool: {tool_use['name']}")
                 print(f"   Input: {tool_use['input']}")
 
-            elif event_type == "bidi_response_complete":
-                if event["stop_reason"] == "tool_use":
-                    print("   Tool executing in background...")
-
 asyncio.run(main())
 ```
 
-### Handling Interruptions
+### Handling Barge-in
 
 ```python
 import asyncio
@@ -557,24 +551,20 @@ from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 async def main():
-    model = BedrockNovaSonicModel()
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 
     async with BidiAgent(model=model) as agent:
         await agent.send("Tell me a long story about space exploration")
 
-        interruption_count = 0
+        barge_in_count = 0
 
         async for event in agent.receive():
-            if event["type"] == "bidi_transcript_complete":
+            if event["type"] == "bidi_transcript_stop":
                 print(f"{event['role']}: {event['transcript']}")
 
-            elif event["type"] == "bidi_interruption":
-                interruption_count += 1
-                print(f"\nInterrupted (#{interruption_count})")
-
-            elif event["type"] == "bidi_response_complete":
-                if event["stop_reason"] == "interrupted":
-                    print(f"Response interrupted {interruption_count} times")
+            elif event["type"] == "bidi_barge_in":
+                barge_in_count += 1
+                print(f"\nBarge-in (#{barge_in_count})")
 
 asyncio.run(main())
 ```
@@ -587,7 +577,7 @@ from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 async def main():
-    model = BedrockNovaSonicModel()  # 8-minute timeout
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")  # 8-minute timeout
 
     async with BidiAgent(model=model) as agent:
         # Continuous conversation that handles restarts
@@ -604,7 +594,7 @@ async def main():
             elif event["type"] == "bidi_connection_start":
                 print(f"Connected to {event['model']}")
 
-            elif event["type"] == "bidi_transcript_complete":
+            elif event["type"] == "bidi_transcript_stop":
                 print(f"{event['role']}: {event['transcript']}")
 
 asyncio.run(main())
@@ -612,17 +602,17 @@ asyncio.run(main())
 
 ## Hook Events
 
-Hook events are a separate concept from streaming events. While streaming events flow through `agent.receive()` during conversations, hook events are callbacks that trigger at specific lifecycle points (like initialization, message added, or interruption). Hook events allow you to inject custom logic for cross-cutting concerns like logging, analytics, and session persistence without processing the event stream directly.
+Hook events are a separate concept from streaming events. While streaming events flow through `agent.receive()` during conversations, hook events are callbacks that trigger at specific lifecycle points (like initialization, message added, or barge-in). Hook events allow you to inject custom logic for cross-cutting concerns like logging, analytics, and session persistence without processing the event stream directly.
 
 For details on hook events and usage patterns, see the [Hooks](/docs/user-guide/sdk/bidirectional-streaming/hooks/index.md) documentation.
 
 ## Related pages
 
+- [Barge-in](/docs/user-guide/sdk/bidirectional-streaming/barge-in/index.md) (1 shared tag)
 - [BidiAgent](/docs/user-guide/sdk/bidirectional-streaming/agent/index.md) (1 shared tag)
 - [Build a realtime voice agent](/docs/user-guide/sdk/bidirectional-streaming/index.md) (1 shared tag)
 - [Google Gemini Live](/docs/user-guide/sdk/bidirectional-streaming/models/google/index.md) (1 shared tag)
 - [I/O Streams](/docs/user-guide/sdk/bidirectional-streaming/io/index.md) (1 shared tag)
-- [Interruptions](/docs/user-guide/sdk/bidirectional-streaming/interruption/index.md) (1 shared tag)
 - [OpenAI Realtime](/docs/user-guide/sdk/bidirectional-streaming/models/openai/index.md) (1 shared tag)
 - [Bidirectional Streaming Observability](/docs/user-guide/sdk/bidirectional-streaming/observability/index.md) (1 shared tag)
 - [Bidirectional Streaming Hooks](/docs/user-guide/sdk/bidirectional-streaming/hooks/index.md) (1 shared tag)

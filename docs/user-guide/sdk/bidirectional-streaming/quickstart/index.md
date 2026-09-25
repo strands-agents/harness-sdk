@@ -131,7 +131,7 @@ from strands.experimental.bidi.io import AudioIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 # Create a bidirectional streaming model
-model = BedrockNovaSonicModel()
+model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 
 # Create the agent
 agent = BidiAgent(
@@ -158,7 +158,7 @@ You now have a voice-enabled agent that can:
 -   Process speech in real time
 -   Respond with natural voice output
 -   Display live user and assistant transcripts
--   Handle interruptions when you start speaking
+-   Handle barge-ins when you start speaking
 
 Stopping the Conversation
 
@@ -179,7 +179,7 @@ from strands.experimental.bidi.io import AudioIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 async def main():
-    model = BedrockNovaSonicModel()
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
     agent = BidiAgent(model=model)
     audio_io = AudioIO()
 
@@ -230,7 +230,7 @@ def get_weather(location: str) -> str:
     return f"The weather in {location} is sunny and 72°F"
 
 # Create agent with tools
-model = BedrockNovaSonicModel()
+model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 agent = BidiAgent(
     model=model,
     tools=[notebook, get_weather],
@@ -279,6 +279,7 @@ from strands.experimental.bidi.models import GoogleGeminiLiveModel
 
 # Configure model audio settings
 model = GoogleGeminiLiveModel(
+    model_id="gemini-3.8-live",
     audio={"input": {"sample_rate": 48000}},
     voice="Puck",
 )
@@ -304,18 +305,18 @@ asyncio.run(main())
 
 `AudioIO` reads the model’s resolved input and output formats through `get_audio_config()`. You do not need to repeat rates or channel counts on the I/O stream.
 
-## Handling Interruptions
+## Handling Barge-in
 
-Bidirectional agents automatically handle interruptions when users start speaking:
+Bidirectional agents automatically handle barge-ins when users start speaking:
 
 ```python
 import asyncio
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.io import AudioIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
-from strands.experimental.bidi.types import BidiInterruptionEvent
+from strands.experimental.bidi.types import BidiBargeInEvent
 
-model = BedrockNovaSonicModel()
+model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 agent = BidiAgent(model=model)
 audio_io = AudioIO()
 
@@ -324,8 +325,8 @@ async def main():
 
     # Start receiving events
     async for event in agent.receive():
-        if isinstance(event, BidiInterruptionEvent):
-            print(f"User interrupted: {event.reason}")
+        if isinstance(event, BidiBargeInEvent):
+            print(f"Barge-in: {event.reason}")
             # Audio output automatically cleared
             # Model stops generating
             # Ready for new input
@@ -333,7 +334,7 @@ async def main():
 asyncio.run(main())
 ```
 
-Interruptions are detected via voice activity detection (VAD) and handled automatically:
+Barge-ins are detected via voice activity detection (VAD) and handled automatically:
 
 1.  User starts speaking
 2.  Model stops generating
@@ -348,10 +349,10 @@ If you need more control over the agent lifecycle, you can manually call `start(
 import asyncio
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import BedrockNovaSonicModel
-from strands.experimental.bidi.types import BidiResponseCompleteEvent
+from strands.experimental.bidi.types import BidiResponseStopEvent
 
 async def main():
-    model = BedrockNovaSonicModel()
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
     agent = BidiAgent(model=model)
 
     # Manually start the agent
@@ -361,7 +362,7 @@ async def main():
         await agent.send("What is Python?")
 
         async for event in agent.receive():
-            if isinstance(event, BidiResponseCompleteEvent):
+            if isinstance(event, BidiResponseStopEvent):
                 break
     finally:
         # Always stop after exiting receive loop
@@ -383,7 +384,7 @@ from strands.experimental.bidi.io import AudioIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 from strands.experimental.tools import stop
 
-model = BedrockNovaSonicModel()
+model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 agent = BidiAgent(
     model=model,
     tools=[stop],
@@ -433,7 +434,7 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 
-model = BedrockNovaSonicModel()
+model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 agent = BidiAgent(model=model)
 audio_io = AudioIO()
 
@@ -457,7 +458,7 @@ Debug logs show:
 
 ### Audio Feedback Loop in a Python Console
 
-Over open speakers, the agent’s own playback can feed back into the microphone and interrupt it. Either use a headset, or enable microphone audio processing to cancel the echo:
+Over open speakers, the agent’s own playback can feed back into the microphone and trigger a barge-in. Either use a headset, or enable microphone audio processing to cancel the echo:
 
 ```bash
 pip install "strands-agents[bidi,bidi-pyaudio,bidi-aec]"
@@ -518,7 +519,10 @@ Providers declare reconnect timing through `ConnectionConfig`. Tune it, or opt o
 from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 # Reconnect 60s earlier than the provider default
-model = BedrockNovaSonicModel(connection={"restart_after_s": 360})
+model = BedrockNovaSonicModel(
+    model_id="amazon.nova-2-sonic-v1:0",
+    connection={"restart_after_s": 360},
+)
 ```
 
 For longer sessions on a single connection, OpenAI Realtime allows a larger connection window than Nova Sonic.
@@ -542,7 +546,7 @@ For longer sessions on a single connection, OpenAI Realtime allows a larger conn
 - [Strands evaluation quickstart](/docs/user-guide/evals-sdk/quickstart/index.md) (1 shared tag)
 - [Strands Shell quickstart](/docs/user-guide/shell/quickstart/index.md) (1 shared tag)
 - [TypeScript Quickstart](/docs/user-guide/sdk/quickstart/typescript/index.md) (1 shared tag)
+- [Barge-in](/docs/user-guide/sdk/bidirectional-streaming/barge-in/index.md) (1 shared tag)
 - [BidiAgent](/docs/user-guide/sdk/bidirectional-streaming/agent/index.md) (1 shared tag)
 - [Build a realtime voice agent](/docs/user-guide/sdk/bidirectional-streaming/index.md) (1 shared tag)
 - [Events](/docs/user-guide/sdk/bidirectional-streaming/events/index.md) (1 shared tag)
-- [Google Gemini Live](/docs/user-guide/sdk/bidirectional-streaming/models/google/index.md) (1 shared tag)

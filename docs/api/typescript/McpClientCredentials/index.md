@@ -1,4 +1,4 @@
-Defined in: [src/mcp/client.ts:71](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L71)
+Defined in: [src/mcp/client.ts:64](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L64)
 
 OAuth client credentials for machine-to-machine authentication.
 
@@ -10,7 +10,7 @@ OAuth client credentials for machine-to-machine authentication.
 clientId: string;
 ```
 
-Defined in: [src/mcp/client.ts:72](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L72)
+Defined in: [src/mcp/client.ts:65](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L65)
 
 ---
 
@@ -20,7 +20,7 @@ Defined in: [src/mcp/client.ts:72](https://github.com/strands-agents/harness-sdk
 clientSecret: string;
 ```
 
-Defined in: [src/mcp/client.ts:73](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L73)
+Defined in: [src/mcp/client.ts:66](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L66)
 
 ---
 
@@ -30,6 +30,6 @@ Defined in: [src/mcp/client.ts:73](https://github.com/strands-agents/harness-sdk
 optional scopes?: string[];
 ```
 
-Defined in: [src/mcp/client.ts:75](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L75)
+Defined in: [src/mcp/client.ts:68](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L68)
 
 OAuth scopes to request. Joined with spaces before sending to the token endpoint.

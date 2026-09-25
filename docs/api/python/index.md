@@ -172,6 +172,8 @@
                 -   [Llm Handler](/docs/api/python/strands.vended_plugins.steering.handlers.llm.llm_handler)
                 -   [Mappers](/docs/api/python/strands.vended_plugins.steering.handlers.llm.mappers)
 -   **Vended Tools**
+    -   **A2a Client**
+        -   [A2a Client](/docs/api/python/strands.vended_tools.a2a_client.a2a_client)
     -   **File Editor**
         -   [File Editor](/docs/api/python/strands.vended_tools.file_editor.file_editor)
     -   **Handoff To User**

@@ -1,7 +1,7 @@
 Strands harness is a state-of-the-art, fully assembled agent harness. You can get started in a few different ways:
 
 -   **[Set up with your coding agent](#set-up-with-your-coding-agent)** — paste a prompt into Codex, Claude Code, or Kiro and let it guide you through the setup.
--   **[Build an agent with the CLI](#build-an-agent-with-the-cli)** — answer a few questions in the terminal, then export to Python or TypeScript when you’re ready.
+-   **[Build an agent with the CLI](#build-an-agent-with-the-cli)** — connect a model provider in the terminal and start chatting, then export to Python or TypeScript when you’re ready.
 -   **[Use it as a library](#use-it-as-a-library)** — install the Python or TypeScript package and write a few lines yourself.
 
 ## Set up with your coding agent
@@ -12,7 +12,7 @@ Copy prompt
 
 ## Build an agent with the CLI
 
-The `strands` CLI’s setup assistant builds a custom agent by asking you a few questions — no code required.
+The `strands` CLI gets you chatting with a harness agent in your terminal, with no code required.
 
 ### Install the CLI
 
@@ -22,36 +22,26 @@ npm install -g @strands-agents/cli
 
 ### Create your agent
 
-Run `strands` (or `/setup` inside a chat) to open the setup assistant. It walks you through the creation process, asking:
+Run `strands` to open setup, then choose **Quickstart**. The only thing you set up is a model provider:
 
--   **Where to start** — from scratch, or from a configuration it detects in the current directory.
--   **Name and goals** — what the agent is called and what you want it to do.
--   **Capabilities** — it recommends a model, built-in tools, Agent Skills, MCP servers, long-term memory, context management, and a tool-approval mode; accept its picks or adjust each one.
--   **Appearance** — theme and color mode.
+1.  **Pick a provider.** Choose Amazon Bedrock, Anthropic, OpenAI, Google Gemini, Ollama, or LiteLLM. The CLI detects credentials you already have, such as an AWS profile or an `OPENAI_API_KEY` in your environment. If a provider needs a key, paste it in. The CLI keeps a pasted key for the current session only, so add it to your shell profile to reuse it.
+2.  **Pick a model.** Search the provider’s models, or keep the default. You can also set the reasoning effort and turn on web search here.
+3.  **Choose Save and Launch.** Your agent opens in a chat.
 
-It keeps the configuration as a draft until you approve it, then opens your custom agent in a fresh chat. For example:
+Everything else comes from the default harness: file and shell tools, prompt caching, context management, long-term memory, and more. See [the agent you get](#the-agent-you-get).
 
-```text
-$ strands
-? Start from scratch, or use the configuration in ./ ?   Start from scratch
-? What should your agent be called?                      release-notes-bot
-? What should it do?                                     Draft release notes from merged PRs
-→ Recommended: Claude Opus 4.8 on Amazon Bedrock · tools: read, web_fetch, web_search · memory on
-? Apply this configuration?                              Yes
-✓ release-notes-bot is ready — opening chat
-```
+To change more than the model, choose **Customize** instead. It walks you through the agent’s name and instructions, tools, plugins, context and memory, and tool permissions. Run `/setup` in a chat to reopen setup later.
 
-You can also skip the wizard and set fields with flags, or start from an existing agent file:
+You can also start from an existing agent file, which skips setup, or override the saved configuration for a single run with flags:
 
 ```bash
-strands                                                             # full interactive wizard
-strands --name release-notes-bot --model anthropic/claude-sonnet-5  # set fields directly
-strands --agent ./agent.ts                                          # start from an exported agent
+strands --agent ./agent.ts                     # start from an exported agent
+strands --model anthropic/claude-sonnet-5      # use a different model for this run
 ```
 
 ### Export it to code
 
-When you’re ready to embed the agent in an application, `/export` writes a Python or TypeScript project with your choices set directly on `create_harness(...)` / `createHarness(...)`. The project exports a ready-to-import `agent`, so the CLI is a fast on-ramp to the library below: build interactively, then drop into code.
+When you’re ready to embed the agent in an application, run `/export` in a chat. The command writes a Python or TypeScript project with your choices set directly on `create_harness(...)``createHarness(...)`. The project exports a ready-to-import `agent`, so the CLI is a fast on-ramp to the library below: build interactively, then drop into code.
 
 ## Use it as a library
 

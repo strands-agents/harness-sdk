@@ -1,4 +1,4 @@
-Defined in: [src/mcp/client.ts:104](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L104)
+Defined in: [src/mcp/client.ts:97](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L97)
 
 Behavioral options shared by all MCP client configurations.
 
@@ -14,7 +14,7 @@ Behavioral options shared by all MCP client configurations.
 optional applicationName?: string;
 ```
 
-Defined in: [src/mcp/client.ts:33](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L33)
+Defined in: [src/mcp/client.ts:32](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L32)
 
 #### Inherited from
 
@@ -30,7 +30,7 @@ RuntimeConfig.applicationName
 optional applicationVersion?: string;
 ```
 
-Defined in: [src/mcp/client.ts:34](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L34)
+Defined in: [src/mcp/client.ts:33](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L33)
 
 #### Inherited from
 
@@ -46,7 +46,7 @@ RuntimeConfig.applicationVersion
 optional disableMcpInstrumentation?: boolean;
 ```
 
-Defined in: [src/mcp/client.ts:106](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L106)
+Defined in: [src/mcp/client.ts:99](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L99)
 
 Disable OpenTelemetry MCP instrumentation.
 
@@ -58,7 +58,7 @@ Disable OpenTelemetry MCP instrumentation.
 optional prefix?: string;
 ```
 
-Defined in: [src/mcp/client.ts:109](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L109)
+Defined in: [src/mcp/client.ts:102](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L102)
 
 Prefix for agent-facing tool names, applied as `<prefix>_<toolName>`.
 
@@ -70,7 +70,7 @@ Prefix for agent-facing tool names, applied as `<prefix>_<toolName>`.
 optional toolFilters?: McpToolFilters;
 ```
 
-Defined in: [src/mcp/client.ts:112](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L112)
+Defined in: [src/mcp/client.ts:105](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L105)
 
 Filters controlling which tools this client exposes.
 
@@ -82,9 +82,11 @@ Filters controlling which tools this client exposes.
 optional tasksConfig?: TasksConfig;
 ```
 
-Defined in: [src/mcp/client.ts:119](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L119)
+Defined in: [src/mcp/client.ts:113](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L113)
 
-Configuration for task-augmented tool execution (experimental). When provided (even as empty object), enables MCP task-based tool invocation. When undefined, tools are called directly without task management.
+Configuration for task-augmented tool execution (experimental).
+
+Temporarily unavailable while task support is rebuilt on the MCP tasks extension ([https://github.com/strands-agents/harness-sdk/issues/1659](https://github.com/strands-agents/harness-sdk/issues/1659)). When set, `callTool` throws.
 
 ---
 
@@ -94,7 +96,7 @@ Configuration for task-augmented tool execution (experimental). When provided (e
 optional elicitationCallback?: ElicitationCallback;
 ```
 
-Defined in: [src/mcp/client.ts:126](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L126)
+Defined in: [src/mcp/client.ts:120](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L120)
 
 Callback to handle server-initiated elicitation requests. When provided, the client advertises elicitation support (form + url modes) and routes incoming elicitation requests to this callback.
 
@@ -106,7 +108,7 @@ Callback to handle server-initiated elicitation requests. When provided, the cli
 optional continueOnError?: boolean;
 ```
 
-Defined in: [src/mcp/client.ts:129](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L129)
+Defined in: [src/mcp/client.ts:123](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L123)
 
 When true, connection failures are logged as warnings instead of throwing.
 
@@ -118,7 +120,7 @@ When true, connection failures are logged as warnings instead of throwing.
 optional logHandler?: (params) => void;
 ```
 
-Defined in: [src/mcp/client.ts:132](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L132)
+Defined in: [src/mcp/client.ts:126](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L126)
 
 Called when the server emits a log message. Defaults to routing through the Strands logger.
 

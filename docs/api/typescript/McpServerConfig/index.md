@@ -156,6 +156,8 @@ When true, config or connection failures skip this server instead of throwing.
 optional tasksConfig?: TasksConfig;
 ```
 
-Defined in: [src/mcp/config.ts:48](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/config.ts#L48)
+Defined in: [src/mcp/config.ts:53](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/config.ts#L53)
 
 Task-augmented tool execution configuration (experimental).
+
+Temporarily unavailable while task support is rebuilt on the MCP tasks extension ([https://github.com/strands-agents/harness-sdk/issues/1659](https://github.com/strands-agents/harness-sdk/issues/1659)). When set, tool calls throw.

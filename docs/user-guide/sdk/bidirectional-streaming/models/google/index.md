@@ -1,8 +1,8 @@
-The [Gemini Live API](https://ai.google.dev/gemini-api/docs/live) lets developers create natural conversations by enabling a two-way WebSocket connection with the Gemini models. The Live API processes data streams in real time. Users can interrupt the AI’s responses with new input, similar to a real conversation. Key features include:
+The [Gemini Live API](https://ai.google.dev/gemini-api/docs/live) lets developers create natural conversations by enabling a two-way WebSocket connection with the Gemini models. The Live API processes data streams in real time. Users can barge in with new input while the model is responding, similar to a real conversation. Key features include:
 
 -   **Multimodal Streaming**: The API supports streaming of text, audio, and video data.
 -   **Bidirectional Interaction**: The user and the model can provide input and output at the same time.
--   **Interruptibility**: Users can interrupt the model’s response, and the model adjusts its response.
+-   **Barge-in**: Users can speak during the model’s response, and the model adjusts its response.
 -   **Tool Use and Function Calling**: The API can use external tools to perform actions and get context while maintaining a real-time connection.
 -   **Session Management**: Supports managing long conversations through sessions, providing context and continuity.
 -   **Secure Authentication**: Uses tokens for secure client-side authentication.
@@ -39,7 +39,7 @@ from strands.vended_tools import notebook
 
 async def main() -> None:
     model = GoogleGeminiLiveModel(
-        model_id="gemini-2.5-flash-native-audio-preview-09-2025",
+        model_id="gemini-3.8-live",
         voice="Kore",
         client_args={"api_key": "<GOOGLE_API_KEY>"},
     )
@@ -64,7 +64,7 @@ Pass Google GenAI client options through `client_args`. For the supported fields
 
 | Parameter | Description | Example | Options |
 | --- | --- | --- | --- |
-| `model_id` | Gemini Live model identifier. | `"gemini-2.5-flash-native-audio-preview-09-2025"` | [Gemini models](https://ai.google.dev/gemini-api/docs/models) |
+| `model_id` | Gemini Live model identifier. | `"gemini-3.8-live"` | [Gemini models](https://ai.google.dev/gemini-api/docs/models) |
 | `audio` | Input audio options. | `{"input": {"sample_rate": 48000}}` | [reference](/docs/api/python/strands.experimental.bidi.models#GoogleGeminiLiveAudioConfig) |
 | `voice` | Prebuilt output voice name. Uses the provider default when omitted. | `"Kore"` | [Voices and languages](https://docs.cloud.google.com/text-to-speech/docs/list-voices-and-types) |
 | `params` | Gemini Live session parameters. | `{"temperature": 0.7}` | [`LiveConnectConfig`](https://googleapis.github.io/python-genai/genai.html#genai.types.LiveConnectConfig) |
@@ -78,6 +78,7 @@ Use direct options such as `voice` for common settings. For additional Google Ge
 from strands.experimental.bidi.models import GoogleGeminiLiveModel
 
 model = GoogleGeminiLiveModel(
+    model_id="gemini-3.8-live",
     client_args={"api_key": "<GOOGLE_API_KEY>"},
     voice="Kore",
     params={"temperature": 0.7, "speech_config": {"language_code": "en-US"}},
@@ -110,11 +111,11 @@ Set your Google AI API key through `client_args` or the `GOOGLE_API_KEY` environ
 
 ## Related pages
 
+- [Barge-in](/docs/user-guide/sdk/bidirectional-streaming/barge-in/index.md) (1 shared tag)
 - [BidiAgent](/docs/user-guide/sdk/bidirectional-streaming/agent/index.md) (1 shared tag)
 - [Build a realtime voice agent](/docs/user-guide/sdk/bidirectional-streaming/index.md) (1 shared tag)
 - [Events](/docs/user-guide/sdk/bidirectional-streaming/events/index.md) (1 shared tag)
 - [I/O Streams](/docs/user-guide/sdk/bidirectional-streaming/io/index.md) (1 shared tag)
-- [Interruptions](/docs/user-guide/sdk/bidirectional-streaming/interruption/index.md) (1 shared tag)
 - [OpenAI Realtime](/docs/user-guide/sdk/bidirectional-streaming/models/openai/index.md) (1 shared tag)
 - [Bidirectional Streaming Observability](/docs/user-guide/sdk/bidirectional-streaming/observability/index.md) (1 shared tag)
 - [Bidirectional Streaming Hooks](/docs/user-guide/sdk/bidirectional-streaming/hooks/index.md) (1 shared tag)

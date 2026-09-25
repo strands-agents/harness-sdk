@@ -99,6 +99,22 @@ Note: This event is only triggered for messages added by the framework itself, n
 
 -   `message` - The message that was added to the conversation history.
 
+## MessageUpdatedEvent
+
+```python
+@dataclass
+class MessageUpdatedEvent(HookEvent[_LocalAgentT])
+```
+
+Defined in: [src/strands/hooks/events.py:137](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L137)
+
+Event triggered after the framework replaces a message.
+
+**Attributes**:
+
+-   `tracking_id` - Stable identifier of the replaced message.
+-   `message` - Replacement message.
+
 ## BeforeToolsEvent
 
 ```python
@@ -106,7 +122,7 @@ Note: This event is only triggered for messages added by the framework itself, n
 class BeforeToolsEvent(HookEvent, _Interruptible)
 ```
 
-Defined in: [src/strands/hooks/events.py:137](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L137)
+Defined in: [src/strands/hooks/events.py:150](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L150)
 
 Event triggered before executing tools.
 
@@ -125,7 +141,7 @@ This event is fired when the model returns tool use blocks that need to be execu
 class AfterToolsEvent(HookEvent)
 ```
 
-Defined in: [src/strands/hooks/events.py:173](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L173)
+Defined in: [src/strands/hooks/events.py:186](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L186)
 
 Event triggered after all tools complete execution.
 
@@ -146,7 +162,7 @@ Note: This event uses reverse callback ordering, meaning callbacks registered la
 def should_reverse_callbacks() -> bool
 ```
 
-Defined in: [src/strands/hooks/events.py:202](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L202)
+Defined in: [src/strands/hooks/events.py:215](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L215)
 
 True to invoke callbacks in reverse order.
 
@@ -157,7 +173,7 @@ True to invoke callbacks in reverse order.
 class BeforeToolCallEvent(HookEvent[_LocalAgentT], _Interruptible)
 ```
 
-Defined in: [src/strands/hooks/events.py:208](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L208)
+Defined in: [src/strands/hooks/events.py:221](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L221)
 
 Event triggered before a tool is invoked.
 
@@ -177,7 +193,7 @@ This event is fired just before the agent executes a tool, allowing hook provide
 class AfterToolCallEvent(HookEvent[_LocalAgentT])
 ```
 
-Defined in: [src/strands/hooks/events.py:248](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L248)
+Defined in: [src/strands/hooks/events.py:261](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L261)
 
 Event triggered after a tool invocation completes.
 
@@ -207,7 +223,7 @@ Tool Retrying: When `retry` is set to True by a hook callback, the tool executor
 def should_reverse_callbacks() -> bool
 ```
 
-Defined in: [src/strands/hooks/events.py:299](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L299)
+Defined in: [src/strands/hooks/events.py:312](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L312)
 
 True to invoke callbacks in reverse order.
 
@@ -218,7 +234,7 @@ True to invoke callbacks in reverse order.
 class BeforeModelCallEvent(HookEvent)
 ```
 
-Defined in: [src/strands/hooks/events.py:305](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L305)
+Defined in: [src/strands/hooks/events.py:318](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L318)
 
 Event triggered before the model is invoked.
 
@@ -239,7 +255,7 @@ Note: This event is not fired for invocations to structured\_output.
 class AfterModelCallEvent(HookEvent)
 ```
 
-Defined in: [src/strands/hooks/events.py:335](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L335)
+Defined in: [src/strands/hooks/events.py:348](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L348)
 
 Event triggered after the model invocation completes.
 
@@ -268,7 +284,7 @@ Model Retrying: When `retry` is set to True by a hook callback, the agent will d
 class ModelStopResponse()
 ```
 
-Defined in: [src/strands/hooks/events.py:371](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L371)
+Defined in: [src/strands/hooks/events.py:384](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L384)
 
 Model response data from successful invocation.
 
@@ -284,7 +300,7 @@ Model response data from successful invocation.
 def should_reverse_callbacks() -> bool
 ```
 
-Defined in: [src/strands/hooks/events.py:391](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L391)
+Defined in: [src/strands/hooks/events.py:404](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L404)
 
 True to invoke callbacks in reverse order.
 
@@ -295,7 +311,7 @@ True to invoke callbacks in reverse order.
 class MultiAgentInitializedEvent(BaseHookEvent)
 ```
 
-Defined in: [src/strands/hooks/events.py:398](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L398)
+Defined in: [src/strands/hooks/events.py:411](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L411)
 
 Event triggered when multi-agent orchestrator initialized.
 
@@ -311,7 +327,7 @@ Event triggered when multi-agent orchestrator initialized.
 class BeforeNodeCallEvent(BaseHookEvent, _Interruptible)
 ```
 
-Defined in: [src/strands/hooks/events.py:411](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L411)
+Defined in: [src/strands/hooks/events.py:424](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L424)
 
 Event triggered before individual node execution starts.
 
@@ -329,7 +345,7 @@ Event triggered before individual node execution starts.
 class AfterNodeCallEvent(BaseHookEvent)
 ```
 
-Defined in: [src/strands/hooks/events.py:447](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L447)
+Defined in: [src/strands/hooks/events.py:460](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L460)
 
 Event triggered after individual node execution completes.
 
@@ -346,7 +362,7 @@ Event triggered after individual node execution completes.
 def should_reverse_callbacks() -> bool
 ```
 
-Defined in: [src/strands/hooks/events.py:461](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L461)
+Defined in: [src/strands/hooks/events.py:474](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L474)
 
 True to invoke callbacks in reverse order.
 
@@ -357,7 +373,7 @@ True to invoke callbacks in reverse order.
 class BeforeMultiAgentInvocationEvent(BaseHookEvent)
 ```
 
-Defined in: [src/strands/hooks/events.py:467](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L467)
+Defined in: [src/strands/hooks/events.py:480](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L480)
 
 Event triggered before orchestrator execution starts.
 
@@ -373,7 +389,7 @@ Event triggered before orchestrator execution starts.
 class AfterMultiAgentInvocationEvent(BaseHookEvent)
 ```
 
-Defined in: [src/strands/hooks/events.py:480](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L480)
+Defined in: [src/strands/hooks/events.py:493](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L493)
 
 Event triggered after orchestrator execution completes.
 
@@ -389,6 +405,6 @@ Event triggered after orchestrator execution completes.
 def should_reverse_callbacks() -> bool
 ```
 
-Defined in: [src/strands/hooks/events.py:492](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L492)
+Defined in: [src/strands/hooks/events.py:505](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/hooks/events.py#L505)
 
 True to invoke callbacks in reverse order.

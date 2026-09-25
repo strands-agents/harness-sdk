@@ -1,0 +1,921 @@
+<!DOCTYPE html><html lang="en" dir="ltr" data-theme="dark" data-has-toc data-has-sidebar class="astro-vdxcvpsm"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>strands.vended_tools.a2a_client.a2a_client | Strands Agents</title><link rel="canonical" href="https://strandsagents.com/docs/api/python/strands.vended_tools.a2a_client.a2a_client/"/><link rel="sitemap" href="/sitemap-index.xml"/><link rel="shortcut icon" href="/favicon.svg" type="image/svg+xml"/><meta name="generator" content="Astro v7.3.3"/><meta name="generator" content="Starlight v0.41.9"/><meta property="og:title" content="strands.vended_tools.a2a_client.a2a_client"/><meta property="og:type" content="article"/><meta property="og:url" content="https://strandsagents.com/docs/api/python/strands.vended_tools.a2a_client.a2a_client/"/><meta property="og:locale" content="en"/><meta property="og:description" content="The open source toolkit for building production agents."/><meta property="og:site_name" content="Strands Agents"/><meta name="twitter:card" content="summary_large_image"/><meta name="description" content="The open source toolkit for building production agents."/><meta property="og:image" content="https://strandsagents.com/og-image.png"/><meta property="og:image:width" content="1200"/><meta property="og:image:height" content="630"/><meta property="og:image:alt" content="Strands Agents — open source AI agent SDK"/><meta name="twitter:image" content="https://strandsagents.com/og-image.png"/><!-- Favicon: an SVG that adapts to light/dark mode via prefers-color-scheme. --><link rel="icon" type="image/svg+xml" href="/favicon.svg"><!-- Raw markdown twin of this page, for LLMs and tooling --><link rel="alternate" type="text/markdown" href="/docs/api/python/strands.vended_tools.a2a_client.a2a_client/index.md"><!-- AWS Shortbread cookie consent --><!-- Web fonts: preconnect + a direct stylesheet link, rather than a CSS @import in
+     custom.css, which would chain the fetch (the font CSS request couldn't start until
+     the bundled stylesheet was parsed). Render-blocking deliberately, to avoid FOUT. --><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap"><link rel="preconnect" href="https://prod.assets.shortbread.aws.dev" crossorigin><link rel="stylesheet" href="https://prod.assets.shortbread.aws.dev/shortbread.css"><script defer src="https://prod.assets.shortbread.aws.dev/shortbread.js"></script><script>
+  /**
+   * Shortbread Cookie Consent and AWS Analytics WebSDK Initialization
+   * CRITICAL: Site must operate even if Shortbread is unavailable.
+   */
+  ;(function () {
+    'use strict'
+
+    function initShortbread() {
+      // The /integrations drawer embeds pages with `?embed`. Consent is handled
+      // by the top-level page, so skip the banner inside the iframe — otherwise
+      // it renders over the drawer's content.
+      if (new URLSearchParams(window.location.search).has('embed')) return
+
+      const hostname = window.location.hostname
+      const isLocal = hostname === 'localhost' || hostname === '127.0.0.1'
+      const isCloudFrontPreview = hostname === 'd3ehv1nix5p99z.cloudfront.net'
+      const isProduction = hostname.endsWith('.strandsagents.com') || hostname === 'strandsagents.com'
+
+      const domain = isLocal || isCloudFrontPreview ? hostname : '.strandsagents.com'
+
+      let webSdkStage, webSdkDomain
+      if (isProduction) {
+        webSdkStage = 'prod'
+        webSdkDomain = 'https://d0.m.awsstatic.com'
+      } else if (isLocal) {
+        webSdkStage = 'alpha'
+        webSdkDomain = 'https://da0.m.awsstatic.com'
+      } else {
+        webSdkStage = 'gamma'
+        webSdkDomain = 'https://dg0.m.awsstatic.com'
+      }
+
+      if (typeof AWSCShortbread === 'undefined') {
+        console.warn('Shortbread unavailable. Using essential cookies only.')
+        return
+      }
+
+      try {
+        const existingShortbreadEl = document.getElementById('awsccc-sb-ux-c')
+        if (existingShortbreadEl) existingShortbreadEl.remove()
+
+        const shortbread = AWSCShortbread({
+          domain,
+          registry: {
+            GitHubRepoCache: { category: 'essential' },
+          },
+          language: AWSCShortbread.Locale?.getLocaleIdShortbread(
+            AWSCShortbread.Locale.getCurrentLocale()
+          ),
+        })
+
+        shortbread.checkForCookieConsent()
+        window.strandsShortbread = shortbread
+
+        document.addEventListener('click', function (e) {
+          if (e.target.id === 'cookie-preferences') {
+            e.preventDefault()
+            shortbread.customizeCookies()
+          }
+        })
+
+        loadWebSDK(webSdkStage, webSdkDomain)
+      } catch (error) {
+        console.error('Shortbread error:', error)
+      }
+    }
+
+    function loadWebSDK(stage, sdkDomain) {
+      try {
+        const script = document.createElement('script')
+        script.type = 'module'
+        script.id = 'awsm-csa'
+        script.src = sdkDomain + '/awsm-acslibs/1.0.0/bundle/slim/wsdk.js'
+        script.setAttribute('data-awsm-csa-meta', JSON.stringify({ env: { stage } }))
+        document.head.appendChild(script)
+      } catch (error) {
+        console.error('WebSDK loading error:', error)
+      }
+    }
+
+    // shortbread.js loads with `defer`, so AWSCShortbread is not defined at parse time.
+    // Deferred scripts are guaranteed to execute before DOMContentLoaded fires.
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initShortbread)
+    } else {
+      initShortbread()
+    }
+  })()
+</script><!--
+  Restyle the AWS Shortbread cookie consent UI to match the Strands site.
+  Content, layout, and button behavior stay Shortbread's — these rules only
+  change color, font, border, and radius so the banner and its Customize modal
+  don't read as stock AWS console chrome.
+
+  The selectors are intentionally broad (every `.awsccc-u-btn`, the shared
+  `#awsccc-cb-c` container, the modal) so the same styling also covers the
+  confirmation banner Shortbread shows after Accept/Decline and the Customize
+  save flow — all of which reuse these same elements.
+
+  Site tokens are theme-aware, so the banner follows the site's light/dark
+  toggle. `!important` + the full ID chain are required to win over
+  Shortbread's own stylesheet, which ships its own OS-preference dark mode.
+--><!-- Analytics instrumentation (site sections, anchors, search, scroll, nav) --><script>
+;(function () {
+  'use strict'
+
+  // Guard against this inline script running more than once on a page.
+  if (window.__strandsAnalyticsInit) return
+  window.__strandsAnalyticsInit = true
+
+  // The AWS WebSDK listens on this single event name and reads event content from the
+  // XDM `_aws` namespace (detail.xdm._aws.<namespace>). Events sent in any other shape are
+  // rejected by its validators and silently dropped. Values verified against the upstream
+  // source: AWSMarketingAdobeWebSDKHelpers (constants + helpers/*-event.ts).
+  var ANALYTICS_EVENT_LISTENER = 'custom-awsm-acs-event-listener'
+
+  var scrollData = { initial: 0, max: 0, latest: 0 }
+  var scrollSent = false
+
+  // --- Helpers ---
+
+  // Pipe-delimited page hierarchy from the URL path, used to label code-copy events.
+  // Anchors on the 'docs' segment and takes everything after it, so any leading base
+  // path (e.g. a "/pr-xxxx/" preview deploy) is ignored:
+  // /pr-x/docs/user-guide/quickstart/ -> "user-guide|quickstart".
+  function pageHierarchy(pathname) {
+    var segments = pathname.replace(/^\/|\/$/g, '').split('/').filter(Boolean)
+    var docsIndex = segments.indexOf('docs')
+    var start = docsIndex >= 0 ? docsIndex + 1 : 0
+    return segments.slice(start).join('|') || 'home'
+  }
+
+  // First line of copied text, for code-copy labels — enough to tell an
+  // `npm install …` from a `pip install …` or a `from strands import …` without
+  // logging an entire snippet. Expressive Code stores its code in a data-code
+  // attribute with newlines encoded as U+007F; normalize those first. Capped so
+  // a long first line can't bloat the analytics label.
+  function firstLine(text) {
+    if (!text) return ''
+    var line = String(text).replace(/\u007f/g, '\n').split('\n')[0].trim()
+    return line.length > 120 ? line.slice(0, 119) + '…' : line
+  }
+
+  // Consent is enforced by the WebSDK listener itself - events dispatched here
+  // are silently dropped if the user has not accepted performance cookies via Shortbread.
+  function dispatchXdmEvent(eventType, awsContent, useBeacon) {
+    var detail = {
+      eventType: eventType,
+      xdm: { _aws: awsContent },
+      useBeacon: !!useBeacon,
+    }
+    window.dispatchEvent(new CustomEvent(ANALYTICS_EVENT_LISTENER, { detail: detail }))
+  }
+
+  // navigates: pass true for clicks that take the user to another page (links, toggles that
+  // redirect). Those are dispatched via beacon so the request isn't cancelled on unload - the
+  // same reason scroll depth uses the beacon path. In-page clicks (tabs, copy) pass false.
+  function dispatchCTAClick(name, type, navigates) {
+    // Collapse whitespace so labels stay clean regardless of the source (textContent from
+    // elements with icons/SVG/newlines, hrefs, etc.) - keeps every caller consistent.
+    var cleanName = String(name).replace(/\s+/g, ' ').trim()
+    dispatchXdmEvent(
+      'web.awsm.customCTAClick',
+      {
+        pageInteraction: {
+          click: { name: cleanName, type: type || 'customClick' },
+        },
+      },
+      !!navigates
+    )
+  }
+
+  function dispatchSearchEvent(searchTerm, resultCount) {
+    dispatchXdmEvent('web.awsm.search', {
+      searchOperations: {
+        searchTerm: searchTerm,
+        searchFilter: [],
+        resultCount: resultCount,
+      },
+    })
+  }
+
+  // --- 1. Click Tracking (anchors, nav tabs, code copy, outbound, UI controls) ---
+
+  function setupClickTracking() {
+    document.addEventListener('click', function (e) {
+      if (!e.target || !e.target.closest) return
+
+      // Anchor / TOC clicks
+      var anchorLink = e.target.closest('a[href^="#"]')
+      if (anchorLink) {
+        var anchor = anchorLink.getAttribute('href').replace('#', '')
+        if (!anchor) return
+        var isToc = !!anchorLink.closest('nav.right-sidebar, [class*="toc"], starlight-toc')
+        var prefix = isToc ? 'toc-click' : 'anchor-click'
+        dispatchCTAClick(prefix + ':' + anchor, 'linkClick')
+        return
+      }
+
+      // Nav tab clicks
+      var navTab = e.target.closest('.nav-tab, .mobile-nav-link')
+      if (navTab) {
+        var label = navTab.textContent.trim().replace(/\s*↗$/, '')
+        dispatchCTAClick('nav-tab:' + label, 'click', true)
+        return
+      }
+
+      // Language toggle (Python / TypeScript) - language-toggle > button.lang-option[data-lang]
+      var langControl = e.target.closest('.language-toggle .lang-option')
+      if (langControl) {
+        var lang = (langControl.getAttribute('data-lang') || '').trim()
+        // The toggle navigates to the paired page in the other language, so beacon it.
+        dispatchCTAClick('lang-toggle:' + lang, 'click', true)
+        return
+      }
+
+      // GitHub dropdown menu links (.github-dropdown .github-link, label in .github-link-text)
+      var ghLink = e.target.closest('.github-dropdown a.github-link')
+      if (ghLink) {
+        var ghTextEl = ghLink.querySelector('.github-link-text')
+        var ghLabel = (ghTextEl ? ghTextEl.textContent : ghLink.textContent).trim().replace(/\s*↗$/, '')
+        dispatchCTAClick('github-menu:' + ghLabel, 'linkClick', true)
+        return
+      }
+
+      // Sidebar collapsible group expand/collapse (nav.sidebar > details > summary).
+      // Skip the inner group-link anchor so its navigation is tracked as a normal link, not an expand.
+      var sidebarSummary = e.target.closest('nav.sidebar summary')
+      if (sidebarSummary && !e.target.closest('.group-link')) {
+        var groupLabelEl = sidebarSummary.querySelector('.group-label, .section-label')
+        var groupLabel = (groupLabelEl ? groupLabelEl.textContent : sidebarSummary.textContent).trim()
+        dispatchCTAClick('sidebar-expand:' + groupLabel, 'click')
+        return
+      }
+
+      // Tab clicks (npm/yarn, OS, etc.). AutoSyncTabs hides the Python/TypeScript language
+      // tablists (display:none) and routes language switching through the header toggle, so a
+      // real click only lands on a visible tablist - which excludes those redundant language tabs.
+      var tab = e.target.closest('[role="tab"]')
+      if (tab) {
+        dispatchCTAClick('tab:' + tab.textContent.trim(), 'click')
+        return
+      }
+
+      // Landing page CTAs. Buttons have short text labels; the Labs/Evals cards wrap a
+      // large block of text, so use their href (stable, concise) instead of textContent.
+      var homeCta = e.target.closest('a.cta-button, a.le-card')
+      if (homeCta) {
+        var ctaLabel = homeCta.matches('a.le-card') ? homeCta.getAttribute('href') : homeCta.textContent
+        dispatchCTAClick('home-cta:' + ctaLabel, 'linkClick', true)
+        return
+      }
+
+      // Blog post cards and navigation
+      var blogCard = e.target.closest('a.blog-card')
+      if (blogCard) {
+        dispatchCTAClick('blog-card:' + blogCard.getAttribute('href'), 'linkClick', true)
+        return
+      }
+      var blogNav = e.target.closest('a.blog-post-author, a.blog-back-link')
+      if (blogNav) {
+        dispatchCTAClick('blog-nav:' + blogNav.textContent.trim(), 'linkClick', true)
+        return
+      }
+
+      // Code copy button (docs Starlight + landing CodeBlock + install commands)
+      var copyBtn = e.target.closest(
+        '.copy button, button.copy, [data-code] button, button.copy-button, button.copy-button-floating, button.install-copy'
+      )
+      if (copyBtn) {
+        var copyLabel
+        var copyText = ''
+        if (copyBtn.matches('button.install-copy')) {
+          var installEl = copyBtn.closest('[data-copy]')
+          var cmd = installEl && installEl.getAttribute('data-copy')
+          copyLabel = cmd ? 'install:' + cmd : 'install'
+          copyText = cmd || ''
+        } else {
+          copyLabel = pageHierarchy(window.location.pathname)
+          // Expressive Code stores the block's raw code on the copy button's
+          // data-code attribute; fall back to the rendered <code> text.
+          copyText = copyBtn.getAttribute('data-code') || ''
+          if (!copyText) {
+            var pre = copyBtn.closest('figure, .expressive-code, pre')
+            var codeEl = pre && pre.querySelector('code')
+            copyText = codeEl ? codeEl.textContent : ''
+          }
+        }
+        var snippet = firstLine(copyText)
+        dispatchCTAClick('code-copy:' + copyLabel + (snippet ? ' | ' + snippet : ''), 'customClick')
+        return
+      }
+
+      // Outbound links
+      var link = e.target.closest('a[href]')
+      if (link && link.hostname && link.hostname !== window.location.hostname) {
+        dispatchCTAClick('outbound:' + link.hostname + link.pathname, 'linkClick', true)
+        return
+      }
+    })
+  }
+
+  // --- 2. Search Events ---
+
+  function setupSearchTracking() {
+    var searchTimeout = null
+
+    document.addEventListener('input', function (e) {
+      var input = e.target
+      if (!input || !input.matches || !input.matches('[data-pagefind-ui] input')) return
+
+      clearTimeout(searchTimeout)
+      // 800ms debounce captures user intent; result count may lag if Pagefind
+      // hasn't responded yet, but this is acceptable for analytics purposes.
+      searchTimeout = setTimeout(function () {
+        var term = input.value
+        if (!term) return
+        var results = document.querySelectorAll('[data-pagefind-ui] .pagefind-ui__result')
+        dispatchSearchEvent(term, results.length)
+      }, 800)
+    })
+  }
+
+  // --- 3. Scroll Depth ---
+
+  function updateScroll() {
+    var scrollTop = window.scrollY || document.documentElement.scrollTop
+    var docHeight = document.documentElement.scrollHeight - window.innerHeight
+    var depth = docHeight > 0 ? Math.round((scrollTop / docHeight) * 100) : 0
+    scrollData.latest = depth
+    if (depth > scrollData.max) scrollData.max = depth
+  }
+
+  function sendScrollDepth() {
+    if (scrollSent) return
+    scrollSent = true
+    updateScroll()
+    dispatchXdmEvent(
+      'web.awsm.pageInteraction',
+      {
+        pageInteraction: {
+          name: 'scroll',
+          scrollDepths: {
+            initial: scrollData.initial,
+            max: scrollData.max,
+            latest: scrollData.latest,
+          },
+        },
+      },
+      true
+    )
+  }
+
+  function setupScrollTracking() {
+    var debounceTimer
+    window.addEventListener('scroll', function () {
+      clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(updateScroll, 200)
+    }, { passive: true })
+
+    window.addEventListener('beforeunload', sendScrollDepth)
+
+    // visibilitychange is more reliable on mobile (iOS Safari doesn't always fire beforeunload)
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'hidden') {
+        sendScrollDepth()
+      }
+    })
+  }
+
+  function resetScrollData() {
+    scrollData.initial = 0
+    scrollData.max = 0
+    scrollData.latest = 0
+    scrollSent = false
+    setTimeout(function () {
+      updateScroll()
+      scrollData.initial = scrollData.latest
+    }, 500)
+  }
+
+  // --- 4. Setup ---
+  // The WebSDK auto-fires the standard page view (web.webpagedetails.pageViews) and derives
+  // Base URL, entry/exit, and section data from the URL server-side, so no page-view event is
+  // sent here. Each full page load re-runs this IIFE, so setup below runs fresh per page.
+  setupClickTracking()
+  setupSearchTracking()
+  setupScrollTracking()
+
+  // Copy-to-clipboard events from the shared helper (src/util/clipboard.ts fires
+  // `strands:copy` with detail.label, e.g. 'install:pip', 'install:npm',
+  // 'code:use-cases:Python', and detail.text with the exact copied string).
+  // Routed through the one consent-gated pipeline; the first line of the text is
+  // appended so we can tell which command/snippet a reader copied.
+  window.addEventListener('strands:copy', function (e) {
+    var detail = (e && e.detail) || {}
+    if (!detail.label) return
+    var snippet = firstLine(detail.text)
+    dispatchCTAClick('code-copy:' + detail.label + (snippet ? ' | ' + snippet : ''), 'customClick')
+  })
+
+  // If view transitions (ClientRouter) are enabled later, navigations won't reload the page,
+  // so reset the per-page scroll baseline on astro:page-load. No-op while full reloads are used.
+  document.addEventListener('astro:page-load', resetScrollData)
+})()
+</script><!-- Structured Data --><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"Organization","name":"Strands Agents","url":"https://strandsagents.com","logo":"https://strandsagents.com/favicon.svg","sameAs":["https://github.com/strands-agents"],"parentOrganization":{"@type":"Organization","name":"Amazon Web Services","url":"https://aws.amazon.com"}},{"@type":"WebSite","name":"Strands Agents SDK","url":"https://strandsagents.com","publisher":{"@type":"Organization","name":"Strands Agents","url":"https://strandsagents.com"}},{"@type":"SoftwareApplication","name":"Strands Agents SDK","applicationCategory":"DeveloperApplication","operatingSystem":"Cross-platform","programmingLanguage":["Python","TypeScript"],"license":"https://github.com/strands-agents/harness-sdk/blob/main/LICENSE.APACHE","url":"https://strandsagents.com","author":{"@type":"Organization","name":"Strands Agents"},"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Docs","item":"https://strandsagents.com/docs/"},{"@type":"ListItem","position":2,"name":"API Reference","item":"https://strandsagents.com/docs/api/"},{"@type":"ListItem","position":3,"name":"Python","item":"https://strandsagents.com/docs/api/python/"},{"@type":"ListItem","position":4,"name":"strands.vended_tools.a2a_client.a2a_client"}]}]}</script><!-- Embed mode: with `?embed` in the URL the page renders chromeless (no site
+     header/sidebar/TOC/footers) for the /integrations docs drawer iframe. The
+     site is statically built, so the switch must run client-side: this inline
+     script sets `data-embed` on <html> before first paint and CSS in
+     custom.css hides the chrome. Without JS the page renders normally. --><script>
+  if (new URLSearchParams(location.search).has('embed')) {
+    document.documentElement.dataset.embed = ''
+    // The full page URL is canonical; keep embed views out of search indexes.
+    const meta = document.createElement('meta')
+    meta.name = 'robots'
+    meta.content = 'noindex'
+    document.head.appendChild(meta)
+    // In-article links navigate the embedding page, not the iframe (same-page
+    // anchor links keep scrolling inside the embed).
+    addEventListener('DOMContentLoaded', () => {
+      for (const a of document.querySelectorAll('a[href]')) {
+        const href = a.getAttribute('href') || ''
+        if (!href.startsWith('#') && !a.target) a.target = '_parent'
+      }
+    })
+  }
+</script><script type="module" src="/_astro/Head.astro_astro_type_script_index_0_lang.Fz2dDi4Z.js"></script><script type="module">var e=()=>{let e=document.querySelectorAll(`pre, .sl-markdown-content table, [class*="terminal__code"], .expressive-code figure > pre`);for(let t of e){if(t.hasAttribute(`tabindex`))continue;let e=t.scrollWidth>t.clientWidth+1||t.scrollHeight>t.clientHeight+1,n=t.querySelector(`a, button, input, textarea, select, [tabindex]`);e&&!n&&(t.setAttribute(`tabindex`,`0`),t.hasAttribute(`role`)||t.setAttribute(`role`,`region`),t.hasAttribute(`aria-label`)||t.setAttribute(`aria-label`,`Scrollable content`))}};document.readyState===`complete`?e():window.addEventListener(`load`,e);</script><script>
+	window.StarlightThemeProvider = (() => {
+		const storedTheme =
+			typeof localStorage !== 'undefined' && localStorage.getItem('starlight-theme');
+		const theme =
+			storedTheme ||
+			(window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+		document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+		return {
+			updatePickers(theme = storedTheme || 'auto') {
+				document.querySelectorAll('starlight-theme-select').forEach((picker) => {
+					const select = picker.querySelector('select');
+					if (select) select.value = theme;
+					/** @type {HTMLTemplateElement | null} */
+					const tmpl = document.querySelector(`#theme-icons`);
+					const newIcon = tmpl && tmpl.content.querySelector('.' + theme);
+					if (newIcon) {
+						const oldIcon = picker.querySelector('svg.label-icon');
+						if (oldIcon) {
+							oldIcon.replaceChildren(...newIcon.cloneNode(true).childNodes);
+						}
+					}
+				});
+			},
+		};
+	})();
+</script><template id="theme-icons"><svg aria-hidden="true" class="light astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M5 12a1 1 0 0 0-1-1H3a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Zm.64 5-.71.71a1 1 0 0 0 0 1.41 1 1 0 0 0 1.41 0l.71-.71A1 1 0 0 0 5.64 17ZM12 5a1 1 0 0 0 1-1V3a1 1 0 0 0-2 0v1a1 1 0 0 0 1 1Zm5.66 2.34a1 1 0 0 0 .7-.29l.71-.71a1 1 0 1 0-1.41-1.41l-.66.71a1 1 0 0 0 0 1.41 1 1 0 0 0 .66.29Zm-12-.29a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.71-.71a1.004 1.004 0 1 0-1.43 1.41l.73.71ZM21 11h-1a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2Zm-2.64 6A1 1 0 0 0 17 18.36l.71.71a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.76-.66ZM12 6.5a5.5 5.5 0 1 0 5.5 5.5A5.51 5.51 0 0 0 12 6.5Zm0 9a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Zm0 3.5a1 1 0 0 0-1 1v1a1 1 0 0 0 2 0v-1a1 1 0 0 0-1-1Z"/></svg><svg aria-hidden="true" class="dark astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.64 13a1 1 0 0 0-1.05-.14 8.049 8.049 0 0 1-3.37.73 8.15 8.15 0 0 1-8.14-8.1 8.59 8.59 0 0 1 .25-2A1 1 0 0 0 8 2.36a10.14 10.14 0 1 0 14 11.69 1 1 0 0 0-.36-1.05Zm-9.5 6.69A8.14 8.14 0 0 1 7.08 5.22v.27a10.15 10.15 0 0 0 10.14 10.14 9.784 9.784 0 0 0 2.1-.22 8.11 8.11 0 0 1-7.18 4.32v-.04Z"/></svg><svg aria-hidden="true" class="auto astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg></template><link rel="stylesheet" href="/_astro/print.ehPL0gv-.css" media="print"><link rel="stylesheet" href="/_astro/middleware.Bo_jRRde.css"><link rel="stylesheet" href="/_astro/Search.Bq3KY1zN.css"><style>@layer starlight.components{.card-grid:where(.astro-lmor3ela){grid-template-columns:100%;gap:1rem;display:grid}.card-grid:where(.astro-lmor3ela)>*{margin-top:0!important}@media (width>=50rem){.card-grid:where(.astro-lmor3ela){grid-template-columns:1fr 1fr;gap:1.5rem}.stagger:where(.astro-lmor3ela){--stagger-height:5rem;padding-bottom:var(--stagger-height)}.stagger:where(.astro-lmor3ela)>:nth-child(2n){transform:translateY(var(--stagger-height))}}.sl-link-card:where(.astro-vodiqeol){border:1px solid var(--sl-color-gray-5);box-shadow:var(--sl-shadow-sm);border-radius:.5rem;grid-template-columns:1fr auto;gap:.5rem;padding:1rem;display:grid;position:relative}a:where(.astro-vodiqeol){line-height:var(--sl-line-height-headings);text-decoration:none}a:where(.astro-vodiqeol):before{content:"";position:absolute;inset:0}.stack:where(.astro-vodiqeol){flex-direction:column;gap:.5rem}.title:where(.astro-vodiqeol){color:var(--sl-color-white);font-weight:600;font-size:var(--sl-text-lg)}.description:where(.astro-vodiqeol){color:var(--sl-color-gray-3);line-height:1.5}.icon:where(.astro-vodiqeol){color:var(--sl-color-gray-3)}.sl-link-card:where(.astro-vodiqeol):hover{background:var(--sl-color-gray-7,var(--sl-color-gray-6));border-color:var(--sl-color-gray-2)}.sl-link-card:where(.astro-vodiqeol):hover .icon:where(.astro-vodiqeol){color:var(--sl-color-white)}}
+@layer starlight.components{svg:where(.astro-n5k4ipy7){color:var(--sl-icon-color);font-size:var(--sl-icon-size,1em);width:1em;height:1em}}
+</style><link rel="stylesheet" href="/_astro/PageLink.BeV9O5YJ.css"><script type="module" src="/_astro/page.Dwipeu-R.js"></script></head><body class="astro-vdxcvpsm"><a class="sl-skip-link astro-vxeigawq" href="#_top">Skip to content</a><div class="page sl-flex astro-oiou2loo"><header class="header astro-oiou2loo"><nav class="strands-nav astro-yxete6jp" aria-label="Primary"><div class="strands-nav__inner astro-yxete6jp"><div class="strands-nav__left astro-yxete6jp"><a href="/" class="strands-nav__logo astro-yxete6jp" aria-label="Strands home"><span class="strands-nav__wordmark astro-yxete6jp"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1512 217" fill="currentColor" role="img" aria-label="STRANDS">
+  <!-- Each glyph is shifted right by 30px * its index to widen the inter-letter
+       spacing (the raw paths sit ~37px apart, which reads as squished at nav
+       size). Bump the 30 to loosen further, or the viewBox width with it. -->
+  <g transform="translate(0 0)"><path d="M30.2558 216.833V186.914H0V148.926H36.9794V179.182H121.023V127.075H30.2558V97.1548H0V29.9197H30.2558V0H127.747V29.9197H158.339V67.5714H121.023V37.9879H36.9794V89.759H127.747V119.006H158.339V186.914H127.747V216.833H30.2558Z"/></g>
+  <g transform="translate(30 0)"><path d="M252.894 216.833V37.9879H229.361V67.5714H192.382V29.9197H222.638V0H320.129V29.9197H350.721V67.5714H313.405V37.9879H289.873V216.833H252.894Z"/></g>
+  <g transform="translate(60 0)"><path d="M377.87 216.833V29.9197H408.125V0H505.617V29.9197H536.208V127.075H505.617V156.994H490.825V179.182H520.744V216.833H484.101V186.914H453.509V156.994H414.849V216.833H377.87ZM414.849 119.006H498.893V37.9879H414.849V119.006Z"/></g>
+  <g transform="translate(90 0)"><path d="M576.818 216.833V59.5031H607.073V29.9197H637.329V0H674.309V29.9197H704.564V59.5031H735.156V216.833H697.841V156.994H613.797V216.833H576.818ZM613.797 119.006H697.841V67.5714H667.921V37.9879H643.717V67.5714H613.797V119.006Z"/></g>
+  <g transform="translate(120 0)"><path d="M775.765 216.833V0H812.745V29.9197H842.664V59.5031H873.256V148.926H896.789V0H934.104V216.833H896.789V186.914H866.869V156.994H836.277V67.5714H812.745V216.833H775.765Z"/></g>
+  <g transform="translate(150 0)"><path d="M974.713 216.833V0H1072.2V29.9197H1102.46V59.5031H1133.05V156.994H1102.46V186.914H1072.2V216.833H974.713ZM1011.69 179.182H1065.82V148.926H1095.74V67.5714H1065.82V37.9879H1011.69V179.182Z"/></g>
+  <g transform="translate(180 0)"><path d="M1203.92 216.833V186.914H1173.66V148.926H1210.64V179.182H1294.68V127.075H1203.92V97.1548H1173.66V29.9197H1203.92V0H1301.41V29.9197H1332V67.5714H1294.68V37.9879H1210.64V89.759H1301.41V119.006H1332V186.914H1301.41V216.833H1203.92Z"/></g>
+</svg>
+</span></a><ul class="strands-nav__links astro-yxete6jp" role="list"><li class="strands-nav__item astro-yxete6jp" data-menu-trigger="docs"><button type="button" class="strands-nav__trigger astro-yxete6jp" aria-haspopup="true">Projects</button><div class="nav-menu astro-ksnnumvq" data-nav-menu="docs" role="group" aria-label="Menu"><a class="nav-menu__cat astro-ksnnumvq" href="/docs/user-guide/harness/"><span class="nav-menu__cat-title astro-ksnnumvq">/harness</span><span class="nav-menu__cat-desc astro-ksnnumvq">Strands harness is a state-of-the-art, fully assembled agent harness.</span></a><a class="nav-menu__cat astro-ksnnumvq" href="/docs/user-guide/sdk/"><span class="nav-menu__cat-title astro-ksnnumvq">/harness-sdk</span><span class="nav-menu__cat-desc astro-ksnnumvq">The Strands Harness SDK for building an agent harness from the ground up.</span></a><a class="nav-menu__cat astro-ksnnumvq" href="/docs/user-guide/shell/"><span class="nav-menu__cat-title astro-ksnnumvq">/shell</span><span class="nav-menu__cat-desc astro-ksnnumvq">A virtual shell designed for AI agents to use safely.</span></a><a class="nav-menu__cat astro-ksnnumvq" href="/docs/user-guide/evals-sdk/"><span class="nav-menu__cat-title astro-ksnnumvq">/evals</span><span class="nav-menu__cat-desc astro-ksnnumvq">Validate your agent before you ship.</span></a><a class="nav-menu__cat astro-ksnnumvq" href="/docs/labs/"><span class="nav-menu__cat-title astro-ksnnumvq">/labs</span><span class="nav-menu__cat-desc astro-ksnnumvq">Experimental projects pushing the boundaries of what agents can do.</span></a></div><script type="module" src="/_astro/NavMenu.astro_astro_type_script_index_0_lang.BXywjzwY.js"></script></li><li class="strands-nav__item astro-yxete6jp" data-menu-trigger="learn"><button type="button" class="strands-nav__trigger astro-yxete6jp" aria-haspopup="true">Learn</button><div class="nav-menu astro-ksnnumvq" data-nav-menu="learn" role="group" aria-label="Menu"><a class="nav-menu__cat astro-ksnnumvq" href="/docs/learning/how-agents-really-work/"><span class="nav-menu__cat-title astro-ksnnumvq">Courses</span><span class="nav-menu__cat-desc astro-ksnnumvq">Guided lessons from your first agent to multi-agent systems.</span></a><a class="nav-menu__cat astro-ksnnumvq" href="/examples/"><span class="nav-menu__cat-title astro-ksnnumvq">Examples</span><span class="nav-menu__cat-desc astro-ksnnumvq">Runnable samples you can drop into your own project.</span></a></div></li><li class="astro-yxete6jp"><a href="/integrations/" class="astro-yxete6jp">Integrations</a></li><li class="astro-yxete6jp"><a href="/docs/contribute/" class="astro-yxete6jp">Contribute</a></li><li class="astro-yxete6jp"><a href="/blog/" class="astro-yxete6jp">Blog</a></li></ul></div><div class="strands-nav__right astro-yxete6jp"><button type="button" class="strands-nav__search astro-yxete6jp" data-nav-search aria-label="Search"><svg class="strands-nav__search-icon astro-yxete6jp" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7" class="astro-yxete6jp"></circle><path d="M21 21l-4.3-4.3" stroke-linecap="round" class="astro-yxete6jp"></path></svg><span class="strands-nav__search-label astro-yxete6jp">Search</span></button><div class="strands-nav__lang astro-yxete6jp"><language-toggle class="language-toggle astro-ra2rg4ph" role="radiogroup" aria-label="Preferred language"><button class="lang-option astro-ra2rg4ph" role="radio" aria-checked="false" aria-label="TypeScript" data-lang="TypeScript" data-switch-href="/docs/api/typescript/"><span class="lang-icon astro-ra2rg4ph"><svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true">
+  <rect x="1.25" y="1.25" width="29.5" height="29.5" rx="6" fill="none" stroke="currentColor" stroke-width="2" />
+  <text x="16.5" y="22.5" text-anchor="middle" font-family="ui-monospace, 'JetBrains Mono', monospace" font-weight="700" font-size="14" letter-spacing="-0.5" fill="currentColor">TS</text>
+</svg>
+</span><span class="lang-label astro-ra2rg4ph">TypeScript</span></button><button class="lang-option astro-ra2rg4ph" role="radio" aria-checked="false" aria-label="Python" data-lang="Python"><span class="lang-icon astro-ra2rg4ph"><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true">
+  <path fill="currentColor" d="M11.914 0C5.82 0 6.2 2.656 6.2 2.656l.007 2.752h5.814v.826H3.9S0 5.789 0 11.969c0 6.18 3.403 5.96 3.403 5.96h2.03v-2.867s-.109-3.42 3.35-3.42h5.766s3.24.052 3.24-3.148V3.202S18.28 0 11.914 0zM8.708 1.85a1.06 1.06 0 110 2.12 1.06 1.06 0 010-2.12z" />
+  <path fill="currentColor" d="M12.086 24c6.094 0 5.714-2.656 5.714-2.656l-.007-2.752H11.98v-.826h8.121S24 18.211 24 12.031c0-6.18-3.403-5.96-3.403-5.96h-2.03v2.867s.109 3.42-3.35 3.42H9.451s-3.24-.052-3.24 3.148v5.292S5.72 24 12.086 24zm3.206-1.85a1.06 1.06 0 110-2.12 1.06 1.06 0 010 2.12z" />
+</svg>
+</span><span class="lang-label astro-ra2rg4ph">Python</span></button></language-toggle><script>(function(){const STORAGE_KEY = "starlight-synced-tabs__jarkqt";
+const DEFAULT_LANG = "TypeScript";
+
+  (function () {
+    // Idempotency guard: multiple instances on one page, run logic once.
+    if (window.__strandsLanguageToggleInit) return;
+    window.__strandsLanguageToggleInit = true;
+    // STORAGE_KEY + DEFAULT_LANG injected via define:vars from language-preference.ts.
+
+    function getPreference() {
+      try {
+        return localStorage.getItem(STORAGE_KEY) || DEFAULT_LANG;
+      } catch (e) {
+        if (typeof console !== 'undefined') console.debug('[LanguageToggle] localStorage read error:', e);
+        return DEFAULT_LANG;
+      }
+    }
+
+    function setPreference(lang) {
+      try {
+        localStorage.setItem(STORAGE_KEY, lang);
+      } catch (e) {
+        if (typeof console !== 'undefined') console.debug('[LanguageToggle] localStorage write error:', e);
+      }
+    }
+
+    /** Sync Starlight tab groups by clicking the matching tab. */
+    function syncStarlightTabs(lang) {
+      document.querySelectorAll('starlight-tabs').forEach(function (tabGroup) {
+        var tabs = tabGroup.querySelectorAll('[role="tab"]');
+        tabs.forEach(function (tab) {
+          if (tab.textContent.trim() === lang && tab.getAttribute('aria-selected') !== 'true') {
+            tab.click();
+          }
+        });
+      });
+    }
+
+    /** On single-language pages, resolve to the available language (stored pref untouched). */
+    function effectiveLanguage(lang) {
+      var enabled = Array.prototype.filter.call(
+        document.querySelectorAll('language-toggle .lang-option'),
+        function (btn) { return !btn.disabled; }
+      );
+      // No toggle rendered on this page: the preference stands.
+      if (enabled.length === 0) return lang;
+      var match = enabled.some(function (btn) { return btn.dataset.lang === lang; });
+      return match ? lang : enabled[0].dataset.lang;
+    }
+
+    function updateToggle(lang) {
+      // Exactly one radio is always checked: `lang` is already the effective
+      // language, so it always names an enabled button when one exists.
+      document.querySelectorAll('language-toggle .lang-option').forEach(function (btn) {
+        if (btn.disabled) return;
+        btn.setAttribute('aria-checked', btn.dataset.lang === lang ? 'true' : 'false');
+      });
+    }
+
+    /** Full UI sync: toggle state + inline tabs. */
+    function syncAll(lang) {
+      var effective = effectiveLanguage(lang);
+      updateToggle(effective);
+      syncStarlightTabs(effective);
+    }
+
+    // Guard against feedback loops.
+    var applying = false;
+
+    function applyLanguage(lang, notify) {
+      if (applying) return;
+      applying = true;
+      setPreference(lang);
+      syncAll(lang);
+      if (notify) {
+        window.dispatchEvent(new CustomEvent('lang-change', { detail: lang }));
+        window.dispatchEvent(new CustomEvent('lang-preference-changed', { detail: { lang: lang } }));
+      }
+      applying = false;
+    }
+
+    var current = getPreference();
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function () { applyLanguage(current, false); });
+    } else {
+      applyLanguage(current, false);
+    }
+
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest('.lang-option');
+      if (!btn || btn.disabled) return;
+      var lang = btn.dataset.lang;
+      if (!lang) return;
+      applyLanguage(lang, true);
+
+      var switchHref = btn.dataset.switchHref;
+      if (switchHref) {
+        window.location.href = switchHref;
+      }
+    });
+
+    window.addEventListener('storage', function (e) {
+      if (e.key === STORAGE_KEY && e.newValue) {
+        applyLanguage(e.newValue, false);
+      }
+    });
+
+    window.addEventListener('lang-change', function (e) {
+      var lang = e && e.detail;
+      if (lang) applyLanguage(lang, false);
+    });
+    window.addEventListener('lang-preference-changed', function (e) {
+      var lang = e && e.detail && e.detail.lang;
+      if (lang) applyLanguage(lang, false);
+    });
+  })();
+})();</script></div><div class="strands-nav__socials astro-yxete6jp"><a href="https://github.com/strands-agents" class="strands-nav__icon-link strands-nav__github astro-yxete6jp" aria-label="GitHub — 13,800+ stars" target="_blank" rel="noopener"><span class="strands-nav__github-icon astro-yxete6jp"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 31.0442 29.9737" fill="none" aria-hidden="true">
+  <path fill="currentColor" d="M13.1271 21.9088C9.12527 21.4253 6.30585 18.5545 6.30585 14.8376C6.30585 13.3266 6.85154 11.6948 7.76104 10.6069C7.36691 9.60966 7.42754 7.49433 7.88231 6.61799C9.09497 6.46688 10.7321 7.1015 11.7022 7.97783C12.8542 7.61521 14.0669 7.43389 15.5524 7.43389C17.0379 7.43389 18.2506 7.61521 19.342 7.94763C20.2818 7.1015 21.9492 6.46688 23.1619 6.61799C23.5863 7.43389 23.6469 9.54923 23.2528 10.5767C24.2229 11.725 24.7383 13.2662 24.7383 14.8376C24.7383 18.5545 21.9189 21.3649 17.8564 21.8786C18.8872 22.5434 19.5845 23.9939 19.5845 25.656V28.7989C19.5845 29.7053 20.3424 30.2191 21.2519 29.8564C26.7392 27.7712 31.0442 22.3017 31.0442 15.5326C31.0442 6.98062 24.0714 0 15.4917 0C6.91218 0 0 6.98059 0 15.5326C0 22.2412 4.27462 27.8015 10.0348 29.8867C10.8533 30.1888 11.6416 29.645 11.6416 28.8292V26.4115C11.2171 26.5928 10.6714 26.7137 10.1864 26.7137C8.18547 26.7137 7.00311 25.6258 6.15425 23.6011C5.82078 22.7852 5.45698 22.3017 4.75968 22.211C4.39589 22.1808 4.27462 22.0297 4.27462 21.8484C4.27462 21.4858 4.88095 21.2138 5.48728 21.2138C6.36648 21.2138 7.12438 21.7577 7.91261 22.8759C8.51894 23.7522 9.1556 24.1451 9.9135 24.1451C10.6714 24.1451 11.1565 23.8731 11.8538 23.178C12.3692 22.6643 12.7633 22.211 13.1271 21.9088Z"/>
+</svg>
+</span><span class="strands-nav__github-stars astro-yxete6jp">13,800+</span></a><a href="https://discord.gg/strands" class="strands-nav__icon-link astro-yxete6jp" aria-label="Discord" target="_blank" rel="noopener"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 39.286 29.8956" fill="none" aria-hidden="true">
+  <path fill="currentColor" d="M35.1149 5.76135C33.8847 3.50928 31.842 1.80737 29.4003 1.00026C27.9512 0.477106 26.441 0.140955 24.9064 0L23.9029 2.04384C20.9179 1.58746 17.8805 1.58746 14.8954 2.04384C14.5888 1.34561 14.2466 0.663443 13.8702 0C12.3848 0.161461 10.9211 0.490287 9.50871 0.978604C7.05026 1.78951 4.99741 3.50894 3.77229 5.78301C0.53898 11.6107 -0.780368 18.302 -0.00046875 24.916C2.9722 27.1183 6.29851 28.8015 9.83661 29.8937C10.8389 28.9221 11.5876 27.7209 12.0174 26.3947C10.9507 25.997 9.92352 25.5087 8.9418 24.9377C8.766 24.6974 9.44351 24.3076 9.66081 24.2406C12.7633 25.69 16.1477 26.4413 19.574 26.4413C22.9994 26.4413 26.3841 25.69 29.4869 24.2406C29.6844 24.2406 30.3817 24.6974 30.2059 24.9377C29.3348 25.6111 27.393 26.0895 27.0651 26.568C27.6367 27.7714 28.3712 28.8911 29.2479 29.8956C32.7922 28.802 36.125 27.1176 39.1047 24.914C39.8155 18.271 38.4201 11.573 35.1146 5.76135ZM12.9534 20.2632C11.9392 20.2513 10.9711 19.8397 10.2604 19.1184C9.5498 18.3971 9.15436 17.4247 9.16072 16.4138C9.17764 15.4182 9.58328 14.4684 10.2914 13.7662C10.9996 13.0639 11.9545 12.6646 12.9534 12.6529C13.4595 12.6552 13.9601 12.7574 14.4265 12.9534C14.8928 13.1494 15.3156 13.4355 15.6706 13.7952C16.0255 14.1548 16.3055 14.5809 16.4945 15.0489C16.6835 15.5169 16.7777 16.0176 16.7717 16.5221C16.7496 17.5186 16.3381 18.4672 15.625 19.1659C14.9119 19.8646 13.9533 20.2583 12.9534 20.2632ZM26.0399 20.2632C25.0254 20.2575 24.0545 19.8516 23.3393 19.1343C22.6242 18.417 22.223 17.4467 22.2236 16.4354C22.228 15.9357 22.3311 15.4418 22.527 14.9818C22.7229 14.5218 23.0078 14.1048 23.3654 13.7546C23.723 13.4044 24.1463 13.1278 24.6111 12.9406C25.0759 12.7535 25.5732 12.6594 26.0745 12.6638C26.5758 12.6682 27.0713 12.7709 27.5328 12.9662C27.9942 13.1615 28.4126 13.4455 28.764 13.8019C29.1153 14.1584 29.3927 14.5803 29.5805 15.0437C29.7683 15.507 29.8626 16.0027 29.8582 16.5024C29.8411 17.5003 29.4312 18.4516 28.7170 19.1511C28.0027 19.8506 27.0412 20.2422 26.0399 20.2415V20.2632Z"/>
+</svg>
+</a></div><button type="button" class="strands-nav__theme-toggle astro-yxete6jp" data-theme-toggle aria-label="Toggle color theme"><span class="strands-nav__theme-icon strands-nav__theme-icon--sun astro-yxete6jp"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <circle cx="12" cy="12" r="4" />
+  <path d="M12 2v2" />
+  <path d="M12 20v2" />
+  <path d="m4.93 4.93 1.41 1.41" />
+  <path d="m17.66 17.66 1.41 1.41" />
+  <path d="M2 12h2" />
+  <path d="M20 12h2" />
+  <path d="m6.34 17.66-1.41 1.41" />
+  <path d="m19.07 4.93-1.41 1.41" />
+</svg>
+</span><span class="strands-nav__theme-icon strands-nav__theme-icon--moon astro-yxete6jp"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+</svg>
+</span></button></div><button type="button" class="strands-nav__hamburger astro-yxete6jp" aria-label="Open menu" aria-expanded="false" data-hamburger><span class="strands-nav__hamburger-icon astro-yxete6jp"><svg
+  aria-hidden="true"
+  focusable="false"
+  width="32"
+  height="24"
+  viewBox="0 0 32 24"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <path
+    d="M3 4H29M3 12H29M3 20H29"
+    stroke="currentColor"
+    stroke-width="2.5"
+    stroke-linecap="square"
+  />
+</svg>
+</span></button></div><!-- Mobile menu panel (Figma 745:13162): Projects / Learn accordions of
+       categories + page links, then plain Integrations / Blog links. --><div class="strands-nav__mobile astro-yxete6jp" data-mobile-menu><div class="mobile-menu__section astro-yxete6jp" data-mobile-section><button type="button" class="mobile-menu__section-title astro-yxete6jp" data-section-toggle aria-expanded="false">Projects</button><div class="mobile-menu__section-body astro-yxete6jp"><div class="mobile-menu__cat astro-yxete6jp" data-mobile-cat><div class="mobile-menu__cat-head astro-yxete6jp"><a class="mobile-menu__cat-link astro-yxete6jp" href="/docs/user-guide/harness/"><span class="mobile-menu__cat-title astro-yxete6jp">/harness</span><span class="mobile-menu__cat-desc astro-yxete6jp">Strands harness is a state-of-the-art, fully assembled agent harness.</span></a><button type="button" class="mobile-menu__cat-expand astro-yxete6jp" data-cat-toggle aria-expanded="false" aria-label="Show /harness pages"><svg viewBox="0 0 12 8" width="12" height="8" aria-hidden="true" class="astro-yxete6jp"><path d="M1 1.5L6 6.5L11 1.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" class="astro-yxete6jp"></path></svg></button></div><ul class="mobile-menu__pages astro-yxete6jp" role="list"><li class="astro-yxete6jp"><a href="/docs/user-guide/harness/" class="mobile-menu__page astro-yxete6jp">Overview</a></li><li class="astro-yxete6jp"><a href="/docs/user-guide/harness/quickstart/" class="mobile-menu__page astro-yxete6jp">Quickstart</a></li><li class="astro-yxete6jp"><a href="/docs/user-guide/harness/reference/configuration/" class="mobile-menu__page astro-yxete6jp">Configuration reference</a></li></ul></div><div class="mobile-menu__cat astro-yxete6jp" data-mobile-cat><div class="mobile-menu__cat-head astro-yxete6jp"><a class="mobile-menu__cat-link astro-yxete6jp" href="/docs/user-guide/sdk/"><span class="mobile-menu__cat-title astro-yxete6jp">/harness-sdk</span><span class="mobile-menu__cat-desc astro-yxete6jp">The Strands Harness SDK for building an agent harness from the ground up.</span></a><button type="button" class="mobile-menu__cat-expand astro-yxete6jp" data-cat-toggle aria-expanded="false" aria-label="Show /harness-sdk pages"><svg viewBox="0 0 12 8" width="12" height="8" aria-hidden="true" class="astro-yxete6jp"><path d="M1 1.5L6 6.5L11 1.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" class="astro-yxete6jp"></path></svg></button></div><ul class="mobile-menu__pages astro-yxete6jp" role="list"><li class="astro-yxete6jp"><a href="/docs/user-guide/sdk/" class="mobile-menu__page astro-yxete6jp">Overview</a></li><li class="astro-yxete6jp"><a href="/docs/user-guide/sdk/quickstart/python/" class="mobile-menu__page astro-yxete6jp">Quickstart: Python</a></li><li class="astro-yxete6jp"><a href="/docs/user-guide/sdk/tools/" class="mobile-menu__page astro-yxete6jp">Add tools</a></li><li class="astro-yxete6jp"><a href="/docs/user-guide/sdk/memory/overview/" class="mobile-menu__page astro-yxete6jp">Long-term memory</a></li><li class="astro-yxete6jp"><a href="/docs/user-guide/sdk/deploy/operating-agents-in-production/" class="mobile-menu__page astro-yxete6jp">Deploy to production</a></li></ul></div><div class="mobile-menu__cat astro-yxete6jp" data-mobile-cat><div class="mobile-menu__cat-head astro-yxete6jp"><a class="mobile-menu__cat-link astro-yxete6jp" href="/docs/user-guide/shell/"><span class="mobile-menu__cat-title astro-yxete6jp">/shell</span><span class="mobile-menu__cat-desc astro-yxete6jp">A virtual shell designed for AI agents to use safely.</span></a><button type="button" class="mobile-menu__cat-expand astro-yxete6jp" data-cat-toggle aria-expanded="false" aria-label="Show /shell pages"><svg viewBox="0 0 12 8" width="12" height="8" aria-hidden="true" class="astro-yxete6jp"><path d="M1 1.5L6 6.5L11 1.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" class="astro-yxete6jp"></path></svg></button></div><ul class="mobile-menu__pages astro-yxete6jp" role="list"><li class="astro-yxete6jp"><a href="/docs/user-guide/shell/" class="mobile-menu__page astro-yxete6jp">Overview</a></li><li class="astro-yxete6jp"><a href="/docs/user-guide/shell/quickstart/" class="mobile-menu__page astro-yxete6jp">Quickstart</a></li><li class="astro-yxete6jp"><a href="/docs/user-guide/shell/configuration/" class="mobile-menu__page astro-yxete6jp">Configure the sandbox</a></li><li class="astro-yxete6jp"><a href="/docs/user-guide/shell/security/" class="mobile-menu__page astro-yxete6jp">Security model</a></li><li class="astro-yxete6jp"><a href="/docs/user-guide/shell/reference/" class="mobile-menu__page astro-yxete6jp">Reference</a></li></ul></div><div class="mobile-menu__cat astro-yxete6jp" data-mobile-cat><div class="mobile-menu__cat-head astro-yxete6jp"><a class="mobile-menu__cat-link astro-yxete6jp" href="/docs/user-guide/evals-sdk/"><span class="mobile-menu__cat-title astro-yxete6jp">/evals</span><span class="mobile-menu__cat-desc astro-yxete6jp">Validate your agent before you ship.</span></a><button type="button" class="mobile-menu__cat-expand astro-yxete6jp" data-cat-toggle aria-expanded="false" aria-label="Show /evals pages"><svg viewBox="0 0 12 8" width="12" height="8" aria-hidden="true" class="astro-yxete6jp"><path d="M1 1.5L6 6.5L11 1.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" class="astro-yxete6jp"></path></svg></button></div><ul class="mobile-menu__pages astro-yxete6jp" role="list"><li class="astro-yxete6jp"><a href="/docs/user-guide/evals-sdk/" class="mobile-menu__page astro-yxete6jp">Overview</a></li><li class="astro-yxete6jp"><a href="/docs/user-guide/evals-sdk/quickstart/" class="mobile-menu__page astro-yxete6jp">Quickstart</a></li><li class="astro-yxete6jp"><a href="/docs/user-guide/evals-sdk/how-evaluation-works/" class="mobile-menu__page astro-yxete6jp">How evaluation works</a></li><li class="astro-yxete6jp"><a href="/docs/user-guide/evals-sdk/evaluators/" class="mobile-menu__page astro-yxete6jp">Evaluators</a></li><li class="astro-yxete6jp"><a href="/docs/user-guide/evals-sdk/cli/" class="mobile-menu__page astro-yxete6jp">CLI reference</a></li></ul></div><a class="mobile-menu__cat mobile-menu__cat--link astro-yxete6jp" href="/docs/labs/"><span class="mobile-menu__cat-title astro-yxete6jp">/labs</span><span class="mobile-menu__cat-desc astro-yxete6jp">Experimental projects pushing the boundaries of what agents can do.</span></a></div></div><div class="mobile-menu__section astro-yxete6jp" data-mobile-section><button type="button" class="mobile-menu__section-title astro-yxete6jp" data-section-toggle aria-expanded="false">Learn</button><div class="mobile-menu__section-body astro-yxete6jp"><a class="mobile-menu__cat mobile-menu__cat--link astro-yxete6jp" href="/docs/learning/how-agents-really-work/"><span class="mobile-menu__cat-title astro-yxete6jp">Courses</span><span class="mobile-menu__cat-desc astro-yxete6jp">Guided lessons from your first agent to multi-agent systems.</span></a><a class="mobile-menu__cat mobile-menu__cat--link astro-yxete6jp" href="/examples/"><span class="mobile-menu__cat-title astro-yxete6jp">Examples</span><span class="mobile-menu__cat-desc astro-yxete6jp">Runnable samples you can drop into your own project.</span></a></div></div><a href="/integrations/" class="mobile-menu__section-title astro-yxete6jp">Integrations</a><a href="/docs/contribute/" class="mobile-menu__section-title astro-yxete6jp">Contribute</a><a href="/blog/" class="mobile-menu__section-title mobile-menu__blog astro-yxete6jp">Blog</a><!-- Controls at the foot of the menu. The desktop right cluster (language,
+         theme, socials) is hidden on mobile, so surface all of it here — as
+         labeled text rows rather than bare icon buttons, to match the menu. --><div class="mobile-menu__controls astro-yxete6jp"><div class="mobile-menu__control-lang astro-yxete6jp"><language-toggle class="language-toggle astro-ra2rg4ph" role="radiogroup" aria-label="Preferred language"><button class="lang-option astro-ra2rg4ph" role="radio" aria-checked="false" aria-label="TypeScript" data-lang="TypeScript" data-switch-href="/docs/api/typescript/"><span class="lang-icon astro-ra2rg4ph"><svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true">
+  <rect x="1.25" y="1.25" width="29.5" height="29.5" rx="6" fill="none" stroke="currentColor" stroke-width="2" />
+  <text x="16.5" y="22.5" text-anchor="middle" font-family="ui-monospace, 'JetBrains Mono', monospace" font-weight="700" font-size="14" letter-spacing="-0.5" fill="currentColor">TS</text>
+</svg>
+</span><span class="lang-label astro-ra2rg4ph">TypeScript</span></button><button class="lang-option astro-ra2rg4ph" role="radio" aria-checked="false" aria-label="Python" data-lang="Python"><span class="lang-icon astro-ra2rg4ph"><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true">
+  <path fill="currentColor" d="M11.914 0C5.82 0 6.2 2.656 6.2 2.656l.007 2.752h5.814v.826H3.9S0 5.789 0 11.969c0 6.18 3.403 5.96 3.403 5.96h2.03v-2.867s-.109-3.42 3.35-3.42h5.766s3.24.052 3.24-3.148V3.202S18.28 0 11.914 0zM8.708 1.85a1.06 1.06 0 110 2.12 1.06 1.06 0 010-2.12z" />
+  <path fill="currentColor" d="M12.086 24c6.094 0 5.714-2.656 5.714-2.656l-.007-2.752H11.98v-.826h8.121S24 18.211 24 12.031c0-6.18-3.403-5.96-3.403-5.96h-2.03v2.867s.109 3.42-3.35 3.42H9.451s-3.24-.052-3.24 3.148v5.292S5.72 24 12.086 24zm3.206-1.85a1.06 1.06 0 110-2.12 1.06 1.06 0 010 2.12z" />
+</svg>
+</span><span class="lang-label astro-ra2rg4ph">Python</span></button></language-toggle><script>(function(){const STORAGE_KEY = "starlight-synced-tabs__jarkqt";
+const DEFAULT_LANG = "TypeScript";
+
+  (function () {
+    // Idempotency guard: multiple instances on one page, run logic once.
+    if (window.__strandsLanguageToggleInit) return;
+    window.__strandsLanguageToggleInit = true;
+    // STORAGE_KEY + DEFAULT_LANG injected via define:vars from language-preference.ts.
+
+    function getPreference() {
+      try {
+        return localStorage.getItem(STORAGE_KEY) || DEFAULT_LANG;
+      } catch (e) {
+        if (typeof console !== 'undefined') console.debug('[LanguageToggle] localStorage read error:', e);
+        return DEFAULT_LANG;
+      }
+    }
+
+    function setPreference(lang) {
+      try {
+        localStorage.setItem(STORAGE_KEY, lang);
+      } catch (e) {
+        if (typeof console !== 'undefined') console.debug('[LanguageToggle] localStorage write error:', e);
+      }
+    }
+
+    /** Sync Starlight tab groups by clicking the matching tab. */
+    function syncStarlightTabs(lang) {
+      document.querySelectorAll('starlight-tabs').forEach(function (tabGroup) {
+        var tabs = tabGroup.querySelectorAll('[role="tab"]');
+        tabs.forEach(function (tab) {
+          if (tab.textContent.trim() === lang && tab.getAttribute('aria-selected') !== 'true') {
+            tab.click();
+          }
+        });
+      });
+    }
+
+    /** On single-language pages, resolve to the available language (stored pref untouched). */
+    function effectiveLanguage(lang) {
+      var enabled = Array.prototype.filter.call(
+        document.querySelectorAll('language-toggle .lang-option'),
+        function (btn) { return !btn.disabled; }
+      );
+      // No toggle rendered on this page: the preference stands.
+      if (enabled.length === 0) return lang;
+      var match = enabled.some(function (btn) { return btn.dataset.lang === lang; });
+      return match ? lang : enabled[0].dataset.lang;
+    }
+
+    function updateToggle(lang) {
+      // Exactly one radio is always checked: `lang` is already the effective
+      // language, so it always names an enabled button when one exists.
+      document.querySelectorAll('language-toggle .lang-option').forEach(function (btn) {
+        if (btn.disabled) return;
+        btn.setAttribute('aria-checked', btn.dataset.lang === lang ? 'true' : 'false');
+      });
+    }
+
+    /** Full UI sync: toggle state + inline tabs. */
+    function syncAll(lang) {
+      var effective = effectiveLanguage(lang);
+      updateToggle(effective);
+      syncStarlightTabs(effective);
+    }
+
+    // Guard against feedback loops.
+    var applying = false;
+
+    function applyLanguage(lang, notify) {
+      if (applying) return;
+      applying = true;
+      setPreference(lang);
+      syncAll(lang);
+      if (notify) {
+        window.dispatchEvent(new CustomEvent('lang-change', { detail: lang }));
+        window.dispatchEvent(new CustomEvent('lang-preference-changed', { detail: { lang: lang } }));
+      }
+      applying = false;
+    }
+
+    var current = getPreference();
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function () { applyLanguage(current, false); });
+    } else {
+      applyLanguage(current, false);
+    }
+
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest('.lang-option');
+      if (!btn || btn.disabled) return;
+      var lang = btn.dataset.lang;
+      if (!lang) return;
+      applyLanguage(lang, true);
+
+      var switchHref = btn.dataset.switchHref;
+      if (switchHref) {
+        window.location.href = switchHref;
+      }
+    });
+
+    window.addEventListener('storage', function (e) {
+      if (e.key === STORAGE_KEY && e.newValue) {
+        applyLanguage(e.newValue, false);
+      }
+    });
+
+    window.addEventListener('lang-change', function (e) {
+      var lang = e && e.detail;
+      if (lang) applyLanguage(lang, false);
+    });
+    window.addEventListener('lang-preference-changed', function (e) {
+      var lang = e && e.detail && e.detail.lang;
+      if (lang) applyLanguage(lang, false);
+    });
+  })();
+})();</script></div><button type="button" class="mobile-menu__control-item astro-yxete6jp" data-nav-search><span class="mobile-menu__control-icon astro-yxete6jp" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="astro-yxete6jp"><circle cx="11" cy="11" r="7" class="astro-yxete6jp"></circle><path d="M21 21l-4.3-4.3" stroke-linecap="round" class="astro-yxete6jp"></path></svg></span><span class="astro-yxete6jp">Search</span></button><button type="button" class="mobile-menu__control-item astro-yxete6jp" data-theme-toggle aria-label="Toggle color theme"><span class="mobile-menu__control-icon astro-yxete6jp" aria-hidden="true"><span class="strands-nav__theme-icon strands-nav__theme-icon--sun astro-yxete6jp"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <circle cx="12" cy="12" r="4" />
+  <path d="M12 2v2" />
+  <path d="M12 20v2" />
+  <path d="m4.93 4.93 1.41 1.41" />
+  <path d="m17.66 17.66 1.41 1.41" />
+  <path d="M2 12h2" />
+  <path d="M20 12h2" />
+  <path d="m6.34 17.66-1.41 1.41" />
+  <path d="m19.07 4.93-1.41 1.41" />
+</svg>
+</span><span class="strands-nav__theme-icon strands-nav__theme-icon--moon astro-yxete6jp"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+</svg>
+</span></span><span class="astro-yxete6jp">Theme</span></button><a href="https://github.com/strands-agents" class="mobile-menu__control-item astro-yxete6jp" target="_blank" rel="noopener"><span class="mobile-menu__control-icon astro-yxete6jp" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 31.0442 29.9737" fill="none" aria-hidden="true">
+  <path fill="currentColor" d="M13.1271 21.9088C9.12527 21.4253 6.30585 18.5545 6.30585 14.8376C6.30585 13.3266 6.85154 11.6948 7.76104 10.6069C7.36691 9.60966 7.42754 7.49433 7.88231 6.61799C9.09497 6.46688 10.7321 7.1015 11.7022 7.97783C12.8542 7.61521 14.0669 7.43389 15.5524 7.43389C17.0379 7.43389 18.2506 7.61521 19.342 7.94763C20.2818 7.1015 21.9492 6.46688 23.1619 6.61799C23.5863 7.43389 23.6469 9.54923 23.2528 10.5767C24.2229 11.725 24.7383 13.2662 24.7383 14.8376C24.7383 18.5545 21.9189 21.3649 17.8564 21.8786C18.8872 22.5434 19.5845 23.9939 19.5845 25.656V28.7989C19.5845 29.7053 20.3424 30.2191 21.2519 29.8564C26.7392 27.7712 31.0442 22.3017 31.0442 15.5326C31.0442 6.98062 24.0714 0 15.4917 0C6.91218 0 0 6.98059 0 15.5326C0 22.2412 4.27462 27.8015 10.0348 29.8867C10.8533 30.1888 11.6416 29.645 11.6416 28.8292V26.4115C11.2171 26.5928 10.6714 26.7137 10.1864 26.7137C8.18547 26.7137 7.00311 25.6258 6.15425 23.6011C5.82078 22.7852 5.45698 22.3017 4.75968 22.211C4.39589 22.1808 4.27462 22.0297 4.27462 21.8484C4.27462 21.4858 4.88095 21.2138 5.48728 21.2138C6.36648 21.2138 7.12438 21.7577 7.91261 22.8759C8.51894 23.7522 9.1556 24.1451 9.9135 24.1451C10.6714 24.1451 11.1565 23.8731 11.8538 23.178C12.3692 22.6643 12.7633 22.211 13.1271 21.9088Z"/>
+</svg>
+</span><span class="astro-yxete6jp">GitHub</span></a><a href="https://discord.gg/strands" class="mobile-menu__control-item astro-yxete6jp" target="_blank" rel="noopener"><span class="mobile-menu__control-icon astro-yxete6jp" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 39.286 29.8956" fill="none" aria-hidden="true">
+  <path fill="currentColor" d="M35.1149 5.76135C33.8847 3.50928 31.842 1.80737 29.4003 1.00026C27.9512 0.477106 26.441 0.140955 24.9064 0L23.9029 2.04384C20.9179 1.58746 17.8805 1.58746 14.8954 2.04384C14.5888 1.34561 14.2466 0.663443 13.8702 0C12.3848 0.161461 10.9211 0.490287 9.50871 0.978604C7.05026 1.78951 4.99741 3.50894 3.77229 5.78301C0.53898 11.6107 -0.780368 18.302 -0.00046875 24.916C2.9722 27.1183 6.29851 28.8015 9.83661 29.8937C10.8389 28.9221 11.5876 27.7209 12.0174 26.3947C10.9507 25.997 9.92352 25.5087 8.9418 24.9377C8.766 24.6974 9.44351 24.3076 9.66081 24.2406C12.7633 25.69 16.1477 26.4413 19.574 26.4413C22.9994 26.4413 26.3841 25.69 29.4869 24.2406C29.6844 24.2406 30.3817 24.6974 30.2059 24.9377C29.3348 25.6111 27.393 26.0895 27.0651 26.568C27.6367 27.7714 28.3712 28.8911 29.2479 29.8956C32.7922 28.802 36.125 27.1176 39.1047 24.914C39.8155 18.271 38.4201 11.573 35.1146 5.76135ZM12.9534 20.2632C11.9392 20.2513 10.9711 19.8397 10.2604 19.1184C9.5498 18.3971 9.15436 17.4247 9.16072 16.4138C9.17764 15.4182 9.58328 14.4684 10.2914 13.7662C10.9996 13.0639 11.9545 12.6646 12.9534 12.6529C13.4595 12.6552 13.9601 12.7574 14.4265 12.9534C14.8928 13.1494 15.3156 13.4355 15.6706 13.7952C16.0255 14.1548 16.3055 14.5809 16.4945 15.0489C16.6835 15.5169 16.7777 16.0176 16.7717 16.5221C16.7496 17.5186 16.3381 18.4672 15.625 19.1659C14.9119 19.8646 13.9533 20.2583 12.9534 20.2632ZM26.0399 20.2632C25.0254 20.2575 24.0545 19.8516 23.3393 19.1343C22.6242 18.417 22.223 17.4467 22.2236 16.4354C22.228 15.9357 22.3311 15.4418 22.527 14.9818C22.7229 14.5218 23.0078 14.1048 23.3654 13.7546C23.723 13.4044 24.1463 13.1278 24.6111 12.9406C25.0759 12.7535 25.5732 12.6594 26.0745 12.6638C26.5758 12.6682 27.0713 12.7709 27.5328 12.9662C27.9942 13.1615 28.4126 13.4455 28.764 13.8019C29.1153 14.1584 29.3927 14.5803 29.5805 15.0437C29.7683 15.507 29.8626 16.0027 29.8582 16.5024C29.8411 17.5003 29.4312 18.4516 28.7170 19.1511C28.0027 19.8506 27.0412 20.2422 26.0399 20.2415V20.2632Z"/>
+</svg>
+</span><span class="astro-yxete6jp">Discord</span></a></div></div></nav><div class="frog-egg astro-yxete6jp" data-frog-egg aria-hidden="true"><div class="frog-egg__hop astro-yxete6jp"><svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M32 15.2402H30.48V25.9102H32V15.2402Z" fill="currentColor"/>
+<path d="M30.4802 25.9102H28.9502V27.4302H30.4802V25.9102Z" fill="currentColor"/>
+<path d="M30.4802 12.1899H28.9502V15.2399H30.4802V12.1899Z" fill="currentColor"/>
+<path d="M28.9502 27.4302H27.4302V28.9602H28.9502V27.4302Z" fill="currentColor"/>
+<path d="M28.9502 9.1499H27.4302V12.1899H28.9502V9.1499Z" fill="currentColor"/>
+<path d="M27.4302 28.96H25.9102V30.48H27.4302V28.96Z" fill="currentColor"/>
+<path d="M27.4302 7.62012H25.9102V9.15012H27.4302V7.62012Z" fill="currentColor"/>
+<path d="M25.9099 3.0498H24.3799V7.6198H25.9099V3.0498Z" fill="currentColor"/>
+<path d="M16.7601 30.4802V28.9602H19.8101V27.4302H15.2401V28.9602H7.62012V30.4802H15.2401V32.0002H25.9101V30.4802H16.7601Z" fill="currentColor"/>
+<path d="M24.3799 1.52979H22.8599V3.04979H24.3799V1.52979Z" fill="currentColor"/>
+<path d="M22.8601 15.2402H19.8101V16.7602H22.8601V15.2402Z" fill="currentColor"/>
+<path d="M21.3401 25.9102H19.8101V27.4302H21.3401V25.9102Z" fill="currentColor"/>
+<path d="M22.86 0H18.29V1.53H22.86V0Z" fill="currentColor"/>
+<path d="M19.81 24.3799H18.29V25.9099H19.81V24.3799Z" fill="currentColor"/>
+<path d="M19.81 16.7598H18.29V18.2898H19.81V16.7598Z" fill="currentColor"/>
+<path d="M21.34 3.0498H18.29V6.0998H21.34V3.0498Z" fill="currentColor"/>
+<path d="M18.2898 18.29H16.7598V24.38H18.2898V18.29Z" fill="currentColor"/>
+<path d="M18.2898 1.52979H16.7598V3.04979H18.2898V1.52979Z" fill="currentColor"/>
+<path d="M16.7602 3.0498H15.2402V6.0998H16.7602V3.0498Z" fill="currentColor"/>
+<path d="M15.2402 25.9102H13.7202V27.4302H15.2402V25.9102Z" fill="currentColor"/>
+<path d="M13.7199 21.3398H12.1899V25.9098H13.7199V21.3398Z" fill="currentColor"/>
+<path d="M15.2399 6.1001H12.1899V7.6201H15.2399V6.1001Z" fill="currentColor"/>
+<path d="M12.1899 19.8101H10.6699V21.3401H12.1899V19.8101Z" fill="currentColor"/>
+<path d="M12.1899 9.1499H10.6699V10.6699H12.1899V9.1499Z" fill="currentColor"/>
+<path d="M12.1899 3.0498H10.6699V6.0998H12.1899V3.0498Z" fill="currentColor"/>
+<path d="M10.6699 1.52979H9.1499V3.04979H10.6699V1.52979Z" fill="currentColor"/>
+<path d="M10.6701 10.6699H6.1001V12.1899H10.6701V10.6699Z" fill="currentColor"/>
+<path d="M7.6201 27.4302H6.1001V28.9602H7.6201V27.4302Z" fill="currentColor"/>
+<path d="M9.14982 0H4.56982V1.53H9.14982V0Z" fill="currentColor"/>
+<path d="M1.53 30.48V28.96H0V32H7.62V30.48H1.53Z" fill="currentColor"/>
+<path d="M10.6698 18.29H3.0498V19.81H10.6698V18.29Z" fill="currentColor"/>
+<path d="M7.61982 3.0498H4.56982V6.0998H7.61982V3.0498Z" fill="currentColor"/>
+<path d="M4.56979 27.4302H6.09978V25.9102H3.04979V27.4302H1.52979V28.9602H4.56979V27.4302Z" fill="currentColor"/>
+<path d="M4.5698 7.62012H3.0498V10.6701H4.5698V7.62012Z" fill="currentColor"/>
+<path d="M4.5698 1.52979H3.0498V3.04979H4.5698V1.52979Z" fill="currentColor"/>
+<path d="M3.04979 24.3799H1.52979V25.9099H3.04979V24.3799Z" fill="currentColor"/>
+<path d="M3.04979 10.6699H1.52979V13.7199H3.04979V10.6699Z" fill="currentColor"/>
+<path d="M3.04979 3.0498H1.52979V7.6198H3.04979V3.0498Z" fill="currentColor"/>
+<path d="M3.05 21.3402V19.8102H1.53V13.7202H0V24.3802H1.53V21.3402H3.05Z" fill="currentColor"/>
+</svg>
+</div></div><script type="module">document.querySelectorAll(`[data-theme-toggle]`).forEach(e=>{e.addEventListener(`click`,()=>{let e=document.documentElement,t=e.dataset.theme===`dark`?`light`:`dark`;e.dataset.theme=t;try{localStorage.setItem(`starlight-theme`,t)}catch{}})});var e=document.querySelector(`button[data-open-modal]`);document.querySelectorAll(`[data-nav-search]`).forEach(t=>{e?t.addEventListener(`click`,t=>{t.stopPropagation(),e.click()}):t.hidden=!0});var t=document.querySelectorAll(`[data-nav-menu]`);document.querySelectorAll(`[data-menu-trigger]`).forEach(e=>{let n=e.querySelector(`[data-nav-menu]`);if(!n)return;let r,i=()=>{r&&window.clearTimeout(r),t.forEach(e=>{e!==n&&e.classList.remove(`is-open`)}),n.classList.add(`is-open`)},a=()=>{r=window.setTimeout(()=>n.classList.remove(`is-open`),120)};e.addEventListener(`mouseenter`,i),e.addEventListener(`mouseleave`,a),e.addEventListener(`focusin`,i),e.addEventListener(`focusout`,t=>{e.contains(t.relatedTarget)||a()})});var n=document.querySelector(`[data-hamburger]`),r=document.querySelector(`[data-mobile-menu]`);if(n&&r){let e=r.querySelectorAll(`[data-mobile-section]`),t=document.querySelector(`.strands-nav__inner`);n.addEventListener(`click`,()=>{let i=r.classList.toggle(`is-open`);if(n.setAttribute(`aria-expanded`,i?`true`:`false`),n.setAttribute(`aria-label`,i?`Close menu`:`Open menu`),document.body.style.overflow=i?`hidden`:``,i){let n=t?Math.round(t.getBoundingClientRect().bottom):0;r.style.top=`${n}px`,e.forEach(e=>e.classList.remove(`is-open`))}}),e.forEach(t=>{let n=t.querySelector(`[data-section-toggle]`),r=t.querySelectorAll(`[data-mobile-cat]`);n?.addEventListener(`click`,()=>{let i=!t.classList.contains(`is-open`);e.forEach(e=>{e.classList.remove(`is-open`),e.querySelector(`[data-section-toggle]`)?.setAttribute(`aria-expanded`,`false`)}),r.forEach(e=>e.classList.remove(`is-open`)),i&&(t.classList.add(`is-open`),n.setAttribute(`aria-expanded`,`true`))}),r.forEach(e=>{let t=e.querySelector(`[data-cat-toggle]`);t?.addEventListener(`click`,()=>{let n=!e.classList.contains(`is-open`);r.forEach(e=>{e.classList.remove(`is-open`),e.querySelector(`[data-cat-toggle]`)?.setAttribute(`aria-expanded`,`false`)}),n&&(e.classList.add(`is-open`),t.setAttribute(`aria-expanded`,`true`))})})})}var i=document.querySelector(`[data-frog-egg]`);if(i){let e=0,t=!1,n=window.matchMedia?.(`(prefers-reduced-motion: reduce)`).matches,r=()=>{let e=document.activeElement;if(!e)return!1;let t=e.tagName;return t===`INPUT`||t===`TEXTAREA`||t===`SELECT`||e.isContentEditable};window.addEventListener(`keydown`,a=>{if(a.code!==`Space`&&a.key!==` `||r()||n||t)return;i.classList.add(`is-active`),e>window.innerWidth&&(e=-90,i.style.transform=`translateX(${e}px)`);let o=e,s=e+90;t=!0;let c=i.animate([{transform:`translateX(${o}px) translateY(0)`},{transform:`translateX(${(o+s)/2}px) translateY(-64px)`,offset:.5},{transform:`translateX(${s}px) translateY(0)`}],{duration:360,easing:`ease-out`});c.onfinish=()=>{e=s,i.style.transform=`translateX(${s}px)`,t=!1}})}</script><div class="site-search-host astro-nen7h5rs"><site-search class="astro-nen7h5rs astro-r5ar4xm7" data-translations="{&quot;placeholder&quot;:&quot;Search&quot;}"><button data-open-modal disabled aria-label="Search" aria-keyshortcuts="Control+K" class="astro-r5ar4xm7"><svg aria-hidden="true" class="astro-r5ar4xm7 astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.71 20.29 18 16.61A9 9 0 1 0 16.61 18l3.68 3.68a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.39ZM11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z"/></svg><span class="sl-hidden md:sl-block astro-r5ar4xm7" aria-hidden="true">Search</span><kbd class="sl-hidden md:sl-flex astro-r5ar4xm7" style="display: none;"><kbd class="astro-r5ar4xm7">Ctrl</kbd><kbd class="astro-r5ar4xm7">K</kbd></kbd></button><dialog style="padding:0" aria-label="Search" class="astro-r5ar4xm7"><div class="dialog-frame sl-flex astro-r5ar4xm7"><button data-close-modal class="sl-flex md:sl-hidden astro-r5ar4xm7">Cancel</button><div class="search-container astro-r5ar4xm7"><div id="starlight__search" class="astro-r5ar4xm7"></div></div></div></dialog></site-search><script>
+	(() => {
+		const openBtn = document.querySelector('button[data-open-modal]');
+		const shortcut = openBtn?.querySelector('kbd');
+		if (!openBtn || !(shortcut instanceof HTMLElement)) return;
+		const platformKey = shortcut.querySelector('kbd');
+		if (platformKey && /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform)) {
+			platformKey.textContent = '⌘';
+			openBtn.setAttribute('aria-keyshortcuts', 'Meta+K');
+		}
+		shortcut.style.display = '';
+	})();
+</script><script type="module" src="/_astro/Search.astro_astro_type_script_index_0_lang.BuGLwjLu.js"></script></div></header><nav class="sidebar print:hidden astro-oiou2loo" aria-label="Main"><starlight-menu-button class="print:hidden astro-vvx7mffu"><button aria-expanded="false" aria-label="Menu" aria-controls="starlight__sidebar" class="sl-flex md:sl-hidden astro-vvx7mffu"><svg aria-hidden="true" class="open-menu astro-vvx7mffu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M3 8h18a1 1 0 1 0 0-2H3a1 1 0 0 0 0 2Zm18 8H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Zm0-5H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Z"/></svg><svg aria-hidden="true" class="close-menu astro-vvx7mffu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="m13.41 12 6.3-6.29a1.004 1.004 0 1 0-1.42-1.42L12 10.59l-6.29-6.3a1.004 1.004 0 0 0-1.42 1.42l6.3 6.29-6.3 6.29a1 1 0 0 0 0 1.42.998.998 0 0 0 1.42 0l6.29-6.3 6.29 6.3a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.42L13.41 12Z"/></svg></button></starlight-menu-button><script type="module">var e=class extends HTMLElement{btn=this.querySelector(`button`);constructor(){super(),this.btn.addEventListener(`click`,()=>this.toggleExpanded());let e=this.closest(`nav`);e&&e.addEventListener(`keyup`,e=>this.closeOnEscape(e)),matchMedia(`(min-width: 50em)`).addEventListener(`change`,()=>this.setExpanded(!1))}setExpanded(e){this.setAttribute(`aria-expanded`,String(e)),document.body.toggleAttribute(`data-mobile-menu-expanded`,e),document.querySelectorAll(`.main-frame, .sl-skip-link`).forEach(t=>{t.toggleAttribute(`inert`,e)})}toggleExpanded(){this.setExpanded(this.getAttribute(`aria-expanded`)!==`true`)}closeOnEscape(e){e.code===`Escape`&&(this.setExpanded(!1),this.btn.focus())}};customElements.define(`starlight-menu-button`,e);</script><div id="starlight__sidebar" class="sidebar-pane astro-oiou2loo"><div class="sidebar-content sl-flex astro-oiou2loo"><script>
+  // Language-scoped sidebar entries (Quickstart / API reference) collapse to a
+  // single row that follows the header language toggle. Mirror the stored
+  // language onto <html data-lang-pref> so CSS can hide the other language's
+  // row before the list paints, then keep it in sync as the toggle changes.
+  // Key + label values mirror src/util/language-preference.ts + LanguageToggle.astro.
+  ;(function () {
+    var KEY = 'starlight-synced-tabs__jarkqt'
+    function set(label) {
+      document.documentElement.dataset.langPref = label === 'Python' ? 'python' : 'typescript'
+    }
+    try {
+      set(localStorage.getItem(KEY) || 'TypeScript')
+    } catch (e) {
+      set('TypeScript')
+    }
+    window.addEventListener('lang-change', function (e) {
+      if (e && e.detail) set(e.detail)
+    })
+    window.addEventListener('lang-preference-changed', function (e) {
+      if (e && e.detail && e.detail.lang) set(e.detail.lang)
+    })
+    window.addEventListener('storage', function (e) {
+      if (e.key === KEY && e.newValue) set(e.newValue)
+    })
+  })()
+</script><div class="product-switcher astro-er3kzsrm"><a class="product-switcher__btn astro-er3kzsrm" href="/docs/user-guide/sdk/"><span class="product-switcher__slug astro-er3kzsrm">/harness-sdk</span></a></div><div class="sidebar-search astro-er3kzsrm"><svg class="sidebar-search__icon astro-er3kzsrm" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15.5 14h-.8l-.3-.3a6.5 6.5 0 1 0-.7.7l.3.3v.8l5 5 1.5-1.5-5-5zm-6 0a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9z" class="astro-er3kzsrm"></path></svg><input type="search" class="sidebar-search__input astro-er3kzsrm" data-sidebar-search placeholder="Search…" aria-label="Search"></div><sl-sidebar-state-persist data-hash="0yoy4pl" class="astro-f5yvicm7"><script aria-hidden="true">
+		(() => {
+			try {
+				if (!matchMedia('(min-width: 50em)').matches) return;
+				/** @type {HTMLElement | null} */
+				const target = document.querySelector('sl-sidebar-state-persist');
+				const state = JSON.parse(sessionStorage.getItem('sl-sidebar-state') || '0');
+				if (!target || !state || target.dataset.hash !== state.hash) return;
+				window._starlightScrollRestore = state.scroll;
+				customElements.define(
+					'sl-sidebar-restore',
+					class SidebarRestore extends HTMLElement {
+						connectedCallback() {
+							try {
+								const idx = parseInt(this.dataset.index || '');
+								const details = this.closest('details');
+								if (details && typeof state.open[idx] === 'boolean') details.open = state.open[idx];
+							} catch {}
+						}
+					}
+				);
+			} catch {}
+		})();
+	</script><ul class="top-level astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/" class="large astro-yx5zzamv"><span class="astro-yx5zzamv">Overview</span></a></li><li class="astro-yx5zzamv"><div class="section-group astro-yx5zzamv"><span class="section-label astro-yx5zzamv">Agent</span><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.agent.a2a_agent/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">A2a Agent</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.agent.agent/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Agent</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.agent.agent_metadata/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Agent Metadata</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.agent.agent_result/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Agent Result</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.agent.base/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Base</span></a></li><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Conversation Manager</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Compression</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.agent.conversation_manager.compression.context_compression/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Context Compression</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.agent.conversation_manager.compression.pin_message/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Pin Message</span></a></li></ul></details></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.agent.conversation_manager.conversation_manager/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Conversation Manager</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.agent.conversation_manager.null_conversation_manager/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Null Conversation Manager</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.agent.conversation_manager.sliding_window_conversation_manager/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Sliding Window Conversation Manager</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.agent.conversation_manager.summarizing_conversation_manager/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Summarizing Conversation Manager</span></a></li></ul></details></li></ul></div></li><li class="astro-yx5zzamv"><div class="section-group astro-yx5zzamv"><span class="section-label astro-yx5zzamv">Event Loop</span><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.event_loop.event_loop/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Event Loop</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.event_loop.streaming/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Streaming</span></a></li></ul></div></li><li class="astro-yx5zzamv"><div class="section-group astro-yx5zzamv"><span class="section-label astro-yx5zzamv">Handlers</span><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.handlers.callback_handler/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Callback Handler</span></a></li></ul></div></li><li class="astro-yx5zzamv"><div class="section-group astro-yx5zzamv"><span class="section-label astro-yx5zzamv">Hooks</span><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.hooks.events/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Events</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.hooks.registry/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Registry</span></a></li></ul></div></li><li class="astro-yx5zzamv"><div class="section-group astro-yx5zzamv"><span class="section-label astro-yx5zzamv">Injection</span><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.injection.types/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Types</span></a></li></ul></div></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.interrupt/" class="large astro-yx5zzamv"><span class="astro-yx5zzamv">Interrupt</span></a></li><li class="astro-yx5zzamv"><div class="section-group astro-yx5zzamv"><span class="section-label astro-yx5zzamv">Interventions</span><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.interventions.actions/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Actions</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.interventions.handler/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Handler</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.interventions.registry/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Registry</span></a></li></ul></div></li><li class="astro-yx5zzamv"><div class="section-group astro-yx5zzamv"><span class="section-label astro-yx5zzamv">Memory</span><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Extraction</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.memory.extraction.coordinator/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Coordinator</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.memory.extraction.model_extractor/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Model Extractor</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.memory.extraction.triggers/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Triggers</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.memory.extraction.types/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Types</span></a></li></ul></details></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.memory.memory_manager/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Memory Manager</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.memory.types/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Types</span></a></li></ul></div></li><li class="astro-yx5zzamv"><div class="section-group astro-yx5zzamv"><span class="section-label astro-yx5zzamv">Models</span><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.models/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Overview</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.models.anthropic/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Anthropic</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.models.bedrock/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Bedrock</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.models.gemini/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Gemini</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.models.litellm/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Litellm</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.models.llamaapi/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Llamaapi</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.models.llamacpp/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Llamacpp</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.models.mistral/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Mistral</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.models.model/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Model</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.models.ollama/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Ollama</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.models.openai/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Openai</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.models.openai_responses/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Openai Responses</span></a></li><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Routing</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.models.routing.classifier_strategy/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Classifier Strategy</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.models.routing.fallback_strategy/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Fallback Strategy</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.models.routing.router/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Router</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.models.routing.strategy/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Strategy</span></a></li></ul></details></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.models.sagemaker/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Sagemaker</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.models.writer/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Writer</span></a></li></ul></div></li><li class="astro-yx5zzamv"><div class="section-group astro-yx5zzamv"><span class="section-label astro-yx5zzamv">Multiagent</span><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">A2a</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.multiagent.a2a.executor/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Executor</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.multiagent.a2a.server/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Server</span></a></li></ul></details></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.multiagent.base/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Base</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.multiagent.graph/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Graph</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.multiagent.swarm/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Swarm</span></a></li></ul></div></li><li class="astro-yx5zzamv"><div class="section-group astro-yx5zzamv"><span class="section-label astro-yx5zzamv">Plugins</span><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.plugins.decorator/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Decorator</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.plugins.multiagent_plugin/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Multiagent Plugin</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.plugins.multiagent_registry/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Multiagent Registry</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.plugins.plugin/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Plugin</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.plugins.registry/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Registry</span></a></li></ul></div></li><li class="astro-yx5zzamv"><div class="section-group astro-yx5zzamv"><span class="section-label astro-yx5zzamv">Sandbox</span><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.sandbox.base/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Base</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.sandbox.constants/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Constants</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.sandbox.docker/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Docker</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.sandbox.errors/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Errors</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.sandbox.not_a_sandbox_local_environment/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Not A Sandbox Local Environment</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.sandbox.posix_shell/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Posix Shell</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.sandbox.ssh/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Ssh</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.sandbox.types/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Types</span></a></li></ul></div></li><li class="astro-yx5zzamv"><div class="section-group astro-yx5zzamv"><span class="section-label astro-yx5zzamv">Session</span><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.session.file_session_manager/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">File Session Manager</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.session.repository_session_manager/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Repository Session Manager</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.session.s3_session_manager/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">S3 Session Manager</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.session.session_manager/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Session Manager</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.session.session_repository/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Session Repository</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.session.snapshot_session_manager/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Snapshot Session Manager</span></a></li></ul></div></li><li class="astro-yx5zzamv"><div class="section-group astro-yx5zzamv"><span class="section-label astro-yx5zzamv">Storage</span><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.storage.in_memory_storage/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">In Memory Storage</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.storage.local_file_storage/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Local File Storage</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.storage.s3_storage/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">S3 Storage</span></a></li><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Search</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.storage.search.bm25/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Bm25</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.storage.search.keyword/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Keyword</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.storage.search.types/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Types</span></a></li></ul></details></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.storage.storage/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Storage</span></a></li></ul></div></li><li class="astro-yx5zzamv"><div class="section-group astro-yx5zzamv"><span class="section-label astro-yx5zzamv">Telemetry</span><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.telemetry.config/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Config</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.telemetry.metrics/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Metrics</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.telemetry.tracer/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Tracer</span></a></li></ul></div></li><li class="astro-yx5zzamv"><div class="section-group astro-yx5zzamv"><span class="section-label astro-yx5zzamv">Tools</span><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.tools.decorator/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Decorator</span></a></li><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Executors</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.tools.executors.concurrent/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Concurrent</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.tools.executors.sequential/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Sequential</span></a></li></ul></details></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.tools.loader/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Loader</span></a></li><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Mcp</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.tools.mcp.mcp_agent_tool/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Mcp Agent Tool</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.tools.mcp.mcp_client/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Mcp Client</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.tools.mcp.mcp_instrumentation/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Mcp Instrumentation</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.tools.mcp.mcp_tasks/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Mcp Tasks</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.tools.mcp.mcp_types/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Mcp Types</span></a></li></ul></details></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.tools.registry/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Registry</span></a></li><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Structured Output</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.tools.structured_output.structured_output_tool/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Structured Output Tool</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.tools.structured_output.structured_output_utils/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Structured Output Utils</span></a></li></ul></details></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.tools.tool_provider/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Tool Provider</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.tools.tools/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Tools</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.tools.watcher/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Watcher</span></a></li></ul></div></li><li class="astro-yx5zzamv"><div class="section-group astro-yx5zzamv"><span class="section-label astro-yx5zzamv">Types</span><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.types.a2a/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">A2a</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.types.agent/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Agent</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.types.citations/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Citations</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.types.collections/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Collections</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.types.content/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Content</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.types.event_loop/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Event Loop</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.types.exceptions/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Exceptions</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.types.guardrails/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Guardrails</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.types.interrupt/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Interrupt</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.types.json_dict/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Json Dict</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.types.media/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Media</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.types.session/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Session</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.types.streaming/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Streaming</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.types.tools/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Tools</span></a></li></ul></div></li><li class="astro-yx5zzamv"><div class="section-group astro-yx5zzamv"><span class="section-label astro-yx5zzamv">Vended Interventions</span><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Cedar</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_interventions.cedar.cedar_authorization/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Cedar Authorization</span></a></li></ul></details></li><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Hitl</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_interventions.hitl.classifier/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Classifier</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_interventions.hitl.hitl/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Hitl</span></a></li></ul></details></li></ul></div></li><li class="astro-yx5zzamv"><div class="section-group astro-yx5zzamv"><span class="section-label astro-yx5zzamv">Vended Memory Stores</span><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_memory_stores/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Overview</span></a></li><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Bedrock Knowledge Base</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_memory_stores.bedrock_knowledge_base.store/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Store</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_memory_stores.bedrock_knowledge_base.types/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Types</span></a></li></ul></details></li><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">File Memory Store</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_memory_stores.file_memory_store.store/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Store</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_memory_stores.file_memory_store.types/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Types</span></a></li></ul></details></li><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Test Memory Store</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_memory_stores.test_memory_store.store/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Store</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_memory_stores.test_memory_store.types/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Types</span></a></li></ul></details></li></ul></div></li><li class="astro-yx5zzamv"><div class="section-group astro-yx5zzamv"><span class="section-label astro-yx5zzamv">Vended Plugins</span><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Context Injector</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_plugins.context_injector.plugin/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Plugin</span></a></li></ul></details></li><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Context Offloader</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_plugins.context_offloader.plugin/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Plugin</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_plugins.context_offloader.storage/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Storage</span></a></li></ul></details></li><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Goal</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_plugins.goal.judge/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Judge</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_plugins.goal.plugin/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Plugin</span></a></li></ul></details></li><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Skills</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_plugins.skills.agent_skills/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Agent Skills</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_plugins.skills.skill/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Skill</span></a></li></ul></details></li><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Steering</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Context Providers</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_plugins.steering.context_providers.ledger_provider/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Ledger Provider</span></a></li></ul></details></li><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Core</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_plugins.steering.core.action/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Action</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_plugins.steering.core.context/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Context</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_plugins.steering.core.handler/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Handler</span></a></li></ul></details></li><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Handlers</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Llm</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_plugins.steering.handlers.llm.llm_handler/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Llm Handler</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_plugins.steering.handlers.llm.mappers/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Mappers</span></a></li></ul></details></li></ul></details></li></ul></details></li></ul></div></li><li class="astro-yx5zzamv"><div class="section-group astro-yx5zzamv"><span class="section-label astro-yx5zzamv">Vended Tools</span><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><details class="astro-yx5zzamv" open><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">A2a Client</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_tools.a2a_client.a2a_client/" aria-current="page" class="astro-yx5zzamv"><span class="astro-yx5zzamv">A2a Client</span></a></li></ul></details></li><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">File Editor</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_tools.file_editor.file_editor/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">File Editor</span></a></li></ul></details></li><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Handoff To User</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_tools.handoff_to_user.handoff_to_user/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Handoff To User</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_tools.handoff_to_user.types/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Types</span></a></li></ul></details></li><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Http Request</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_tools.http_request.http_request/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Http Request</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_tools.http_request.types/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Types</span></a></li></ul></details></li><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Mcp Router</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_tools.mcp_router.mcp_router/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Mcp Router</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_tools.mcp_router.types/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Types</span></a></li></ul></details></li><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Notebook</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_tools.notebook.notebook/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Notebook</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_tools.notebook.types/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Types</span></a></li></ul></details></li><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Shell</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_tools.shell.shell/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Shell</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_tools.shell.types/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Types</span></a></li></ul></details></li><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Sleep</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_tools.sleep.sleep/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Sleep</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_tools.sleep.types/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Types</span></a></li></ul></details></li><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Web Fetch</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_tools.web_fetch.types/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Types</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.vended_tools.web_fetch.web_fetch/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Web Fetch</span></a></li></ul></details></li></ul></div></li><li class="astro-yx5zzamv"><div class="section-group astro-yx5zzamv"><span class="section-label astro-yx5zzamv">Experimental</span><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.experimental.agent_config/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Agent Config</span></a></li><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Bidi</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.experimental.bidi.agent/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Agent</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.experimental.bidi.hooks/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Hooks</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.experimental.bidi.io/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Io</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.experimental.bidi.models/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Models</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.experimental.bidi.tools/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Tools</span></a></li><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.experimental.bidi.types/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Types</span></a></li></ul></details></li><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Checkpoint</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.experimental.checkpoint.checkpoint/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Checkpoint</span></a></li></ul></details></li><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Tools</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><details class="astro-yx5zzamv"><summary class="astro-yx5zzamv"><span class="group-label astro-yx5zzamv">Stop</span><svg aria-hidden="true" class="caret astro-yx5zzamv astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><ul class="astro-yx5zzamv"><li class="astro-yx5zzamv"><a href="/docs/api/python/strands.experimental.tools.stop.stop/" class="astro-yx5zzamv"><span class="astro-yx5zzamv">Stop</span></a></li></ul></details></li></ul></details></li></ul></div></li></ul><script aria-hidden="true">
+		(() => {
+			const scroller = document.getElementById('starlight__sidebar');
+			if (!window._starlightScrollRestore || !scroller) return;
+			scroller.scrollTop = window._starlightScrollRestore;
+			delete window._starlightScrollRestore;
+		})();
+	</script></sl-sidebar-state-persist><div class="md:sl-hidden astro-er3kzsrm"><div class="mobile-preferences sl-flex astro-b5gddk54"><div class="social-icons astro-b5gddk54"></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-r2p65idu"><span class="sr-only astro-r2p65idu">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-r2p65idu"><option value="dark" class="astro-r2p65idu">Dark</option><option value="light" class="astro-r2p65idu">Light</option><option value="auto" selected class="astro-r2p65idu">Auto</option></select><svg aria-hidden="true" class="icon caret astro-r2p65idu astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script><script type="module">var e=`starlight-theme`,t=e=>e===`auto`||e===`dark`||e===`light`?e:`auto`,n=()=>t(typeof localStorage<`u`&&localStorage.getItem(e));function r(t){typeof localStorage<`u`&&localStorage.setItem(e,t===`light`||t===`dark`?t:``)}var i=()=>matchMedia(`(prefers-color-scheme: light)`).matches?`light`:`dark`;function a(e){StarlightThemeProvider.updatePickers(e),document.documentElement.dataset.theme=e===`auto`?i():e,r(e)}matchMedia(`(prefers-color-scheme: light)`).addEventListener(`change`,()=>{n()===`auto`&&a(`auto`)});var o=class extends HTMLElement{constructor(){super(),a(n()),this.querySelector(`select`)?.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&a(t(e.currentTarget.value))})}};customElements.define(`starlight-theme-select`,o);</script><script type="module">var e=class extends HTMLElement{constructor(){super();let e=this.querySelector(`select`);e&&(e.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&(window.location.pathname=e.currentTarget.value)}),window.addEventListener(`pageshow`,t=>{if(!t.persisted)return;let n=e.querySelector(`option[selected]`)?.index;n!==e.selectedIndex&&(e.selectedIndex=n??0)}))}};customElements.define(`starlight-lang-select`,e);</script></div></div><script type="module">var e=document.querySelector(`[data-sidebar-search]`),t=!!document.querySelector(`.cat-grid`),n=document.querySelector(`.sidebar-content`);if(e&&!t&&n){let t=Array.from(n.querySelectorAll(`a`)).filter(e=>!e.closest(`.product-switcher`)),r=e=>e.closest(`li`)??e,i=Array.from(n.querySelectorAll(`details, .section-group`)).filter(e=>!e.closest(`.product-switcher`)),a=new Map(i.filter(e=>e.tagName===`DETAILS`).map(e=>[e,e.open]));e.addEventListener(`input`,()=>{let n=e.value.trim().toLowerCase();if(!n){for(let e of t)r(e).hidden=!1;for(let e of i)e.hidden=!1,e instanceof HTMLDetailsElement&&(e.open=a.get(e)??!1);return}let o=new Set;for(let e of t){let t=(e.textContent||``).toLowerCase().includes(n);if(r(e).hidden=!t,!t)continue;let i=e;for(;i=i.parentElement;)o.add(i)}for(let e of i)e.hidden=!o.has(e),e instanceof HTMLDetailsElement&&(e.open=o.has(e))})}</script></div></div></nav><div class="main-frame astro-oiou2loo"><script type="module">var e=document.getElementById(`starlight__sidebar`),t=e?.querySelector(`sl-sidebar-state-persist`),n=`sl-sidebar-state`,r=()=>{let r=[],i=t?.dataset.hash||``;try{let e=sessionStorage.getItem(n),t=JSON.parse(e||`{}`);Array.isArray(t.open)&&t.hash===i&&(r=t.open)}catch{}return{hash:i,open:r,scroll:e?.scrollTop||0}},i=e=>{try{sessionStorage.setItem(n,JSON.stringify(e))}catch{}},a=()=>i(r()),o=(e,t)=>{let n=r();n.open[t]=e,i(n)};t?.addEventListener(`click`,e=>{if(!(e.target instanceof Element))return;let t=e.target.closest(`summary`)?.closest(`details`);if(!t)return;let n=t.querySelector(`sl-sidebar-restore`),r=parseInt(n?.dataset.index||``);isNaN(r)||o(!t.open,r)}),addEventListener(`visibilitychange`,()=>{document.visibilityState===`hidden`&&a()});</script><div class="lg:sl-flex astro-abfeecmu"><aside class="right-sidebar-container print:hidden astro-abfeecmu"><div class="right-sidebar astro-abfeecmu"><div class="lg:sl-hidden astro-q5mffni3"><mobile-starlight-toc data-min-h="2" data-max-h="3" class="astro-5ulgm6bh"><nav aria-labelledby="starlight__on-this-page--mobile" class="astro-5ulgm6bh"><details id="starlight__mobile-toc" class="astro-5ulgm6bh"><summary id="starlight__on-this-page--mobile" class="sl-flex astro-5ulgm6bh"><span class="toggle sl-flex astro-5ulgm6bh">On this page<svg aria-hidden="true" class="caret astro-5ulgm6bh astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></span><span class="display-current astro-5ulgm6bh"></span></summary><div class="dropdown astro-5ulgm6bh"><ul class="isMobile astro-cxyftcne" style="--depth: 0;"><li style="--depth: 0;" class="astro-cxyftcne"><a href="#_top" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Overview</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#a2aclienterror" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">A2AClientError</span></a></li></ul></div></details></nav></mobile-starlight-toc><script type="module" src="/_astro/MobileTableOfContents.astro_astro_type_script_index_0_lang.BcSo_yiZ.js"></script></div><div class="right-sidebar-panel sl-hidden lg:sl-block astro-q5mffni3"><div class="sl-container astro-q5mffni3"><starlight-toc data-min-h="2" data-max-h="3"><nav aria-labelledby="starlight__on-this-page"><h2 id="starlight__on-this-page">On this page</h2><ul class="astro-cxyftcne" style="--depth: 0;"><li style="--depth: 0;" class="astro-cxyftcne"><a href="#_top" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">Overview</span></a></li><li style="--depth: 0;" class="astro-cxyftcne"><a href="#a2aclienterror" style="--depth: 0;" class="astro-cxyftcne"><span style="--depth: 0;" class="astro-cxyftcne">A2AClientError</span></a></li></ul></nav></starlight-toc><script type="module" src="/_astro/TableOfContents.astro_astro_type_script_index_0_lang.Csloo1VZ.js"></script></div></div></div></aside><div class="main-pane astro-abfeecmu"><main data-pagefind-body class="astro-vdxcvpsm" lang="en" dir="ltr"><div class="content-panel astro-oil7k7jf"><div class="sl-container astro-oil7k7jf"><h1 id="_top" class="astro-xrbnetbz">strands.vended_tools.a2a_client.a2a_client</h1></div></div><div class="content-panel astro-oil7k7jf"><div class="sl-container astro-oil7k7jf"><div class="sl-markdown-content"><p>A2A client tool for communicating with remote A2A-protocol agents.</p>
+<p>Provides :func:<code dir="auto">make_a2a_client</code>, a factory that requires an explicit mapping of
+permitted endpoints to their :class:<code dir="auto">~a2a.client.ClientConfig</code>, plus optional size limits.</p>
+<p>The tool is a stateless shim over :class:<code dir="auto">~strands.agent.a2a_agent.A2AAgent</code>.
+A fresh <code dir="auto">A2AAgent</code> is constructed on every call so the tool carries no session
+state between invocations.  Each endpoint may carry its own
+:class:<code dir="auto">~a2a.client.ClientConfig</code> to support per-endpoint authentication
+(bearer tokens, SigV4, OAuth).</p>
+<a id="strands.vended_tools.a2a_client.a2a_client.A2AClientError"></a>
+<div class="sl-heading-wrapper level-h2"><h2 id="a2aclienterror">A2AClientError</h2><a href="#a2aclienterror" class="sl-anchor-link"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="true">Section titled “A2AClientError”</span></a></div>
+<div class="expressive-code"><link rel="stylesheet" href="/_astro/ec.lgrc4.css"/><script type="module" src="/_astro/ec.0vx5m.js"></script><figure class="frame"><figcaption class="header"></figcaption><pre data-language="python" dir="ltr"><code><div class="ec-line"><div class="code"><span style="--0:#BF3441;--1:#F97583">class</span><span style="--0:#24292E;--1:#E1E4E8"> </span><span style="--0:#6F42C1;--1:#B392F0">A2AClientError</span><span style="--0:#24292E;--1:#E1E4E8">(</span><span style="--0:#005CC5;--1:#79B8FF">RuntimeError</span><span style="--0:#24292E;--1:#E1E4E8">)</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="class A2AClientError(RuntimeError)"><div></div></button></div></figure></div>
+<p>Defined in: <a href="https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/a2a_client/a2a_client.py#L41">src/strands/vended_tools/a2a_client/a2a_client.py:41</a></p>
+<p>Raised when an A2A operation fails.</p>
+<a id="strands.vended_tools.a2a_client.a2a_client.make_a2a_client"></a>
+<div class="sl-heading-wrapper level-h4"><h4 id="make_a2a_client">make_a2a_client</h4><a href="#make_a2a_client" class="sl-anchor-link"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="true">Section titled “make_a2a_client”</span></a></div>
+<div class="expressive-code"><figure class="frame"><figcaption class="header"></figcaption><pre data-language="python" dir="ltr"><code><div class="ec-line"><div class="code"><span style="--0:#BF3441;--1:#F97583">def</span><span style="--0:#24292E;--1:#E1E4E8"> </span><span style="--0:#6F42C1;--1:#B392F0">make_a2a_client</span><span style="--0:#24292E;--1:#E1E4E8">(</span></div></div><div class="ec-line"><div class="code"><span class="indent">        </span><span style="--0:#BF3441;--1:#F97583">*</span><span style="--0:#24292E;--1:#E1E4E8">,</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#24292E;--1:#E1E4E8">        </span></span><span style="--0:#24292E;--1:#E1E4E8">name: </span><span style="--0:#005CC5;--1:#79B8FF">str</span><span style="--0:#24292E;--1:#E1E4E8"> </span><span style="--0:#BF3441;--1:#F97583">=</span><span style="--0:#24292E;--1:#E1E4E8"> </span><span style="--0:#032F62;--1:#9ECBFF">&quot;a2a_client&quot;</span><span style="--0:#24292E;--1:#E1E4E8">,</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#24292E;--1:#E1E4E8">        </span></span><span style="--0:#24292E;--1:#E1E4E8">description: </span><span style="--0:#005CC5;--1:#79B8FF">str</span><span style="--0:#24292E;--1:#E1E4E8"> </span><span style="--0:#BF3441;--1:#F97583">|</span><span style="--0:#24292E;--1:#E1E4E8"> </span><span style="--0:#005CC5;--1:#79B8FF">None</span><span style="--0:#24292E;--1:#E1E4E8"> </span><span style="--0:#BF3441;--1:#F97583">=</span><span style="--0:#24292E;--1:#E1E4E8"> </span><span style="--0:#005CC5;--1:#79B8FF">None</span><span style="--0:#24292E;--1:#E1E4E8">,</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#24292E;--1:#E1E4E8">        </span></span><span style="--0:#24292E;--1:#E1E4E8">allowed_endpoints: dict[</span><span style="--0:#005CC5;--1:#79B8FF">str</span><span style="--0:#24292E;--1:#E1E4E8">, ClientConfig </span><span style="--0:#BF3441;--1:#F97583">|</span><span style="--0:#24292E;--1:#E1E4E8"> </span><span style="--0:#005CC5;--1:#79B8FF">None</span><span style="--0:#24292E;--1:#E1E4E8">],</span></div></div><div class="ec-line"><div class="code"><span class="indent"><span style="--0:#24292E;--1:#E1E4E8">        </span></span><span style="--0:#24292E;--1:#E1E4E8">max_bytes: </span><span style="--0:#005CC5;--1:#79B8FF">int</span><span style="--0:#24292E;--1:#E1E4E8"> </span><span style="--0:#BF3441;--1:#F97583">=</span><span style="--0:#24292E;--1:#E1E4E8"> </span><span style="--0:#005CC5;--1:#79B8FF">_DEFAULT_MAX_BYTES</span><span style="--0:#24292E;--1:#E1E4E8">) -&gt; DecoratedFunctionTool</span></div></div></code></pre><div class="copy"><div aria-live="polite"></div><button title="Copy to clipboard" data-copied="Copied!" data-code="def make_a2a_client(        *,        name: str = &quot;a2a_client&quot;,        description: str | None = None,        allowed_endpoints: dict[str, ClientConfig | None],        max_bytes: int = _DEFAULT_MAX_BYTES) -> DecoratedFunctionTool"><div></div></button></div></figure></div>
+<p>Defined in: <a href="https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/a2a_client/a2a_client.py#L45">src/strands/vended_tools/a2a_client/a2a_client.py:45</a></p>
+<p>Create an A2A client tool.</p>
+<p><strong>Arguments</strong>:</p>
+<ul>
+<li><code dir="auto">name</code> - Tool name shown to the model.</li>
+<li><code dir="auto">description</code> - Tool description shown to the model. When <code dir="auto">None</code>,
+generated from <code dir="auto">DEFAULT_A2A_CLIENT_DESCRIPTION</code> plus the
+permitted endpoints list.</li>
+<li><code dir="auto">allowed_endpoints</code> - Mapping of permitted base URLs to their
+:class:<code dir="auto">~a2a.client.ClientConfig</code>.  Use <code dir="auto">None</code> as the value for
+endpoints that need no custom configuration. Any endpoint not in this
+mapping is rejected before a network connection is made.</li>
+<li><code dir="auto">max_bytes</code> - Maximum size in bytes of the result dict returned to the model.
+Does not cap the network transfer or binary parts.
+Results larger than this cap are rejected with an error.</li>
+</ul>
+<p><strong>Returns</strong>:</p>
+<p>A decorated tool that communicates with A2A agents.</p><script type="module">function e(){document.querySelectorAll(`aside.page-tags`).forEach(e=>{let t=e.querySelectorAll(`.page-tags__pill`),n=e.querySelectorAll(`.page-tags__panel`),r=e.querySelectorAll(`[data-action="close"]`);function i(e){t.forEach(t=>{let n=t.dataset.tag===e;t.setAttribute(`aria-expanded`,String(n)),t.classList.toggle(`is-active`,n)}),n.forEach(t=>{t.hidden=t.dataset.tag!==e})}t.forEach(e=>{e.addEventListener(`click`,()=>{i(e.classList.contains(`is-active`)?null:e.dataset.tag??null)})}),r.forEach(e=>e.addEventListener(`click`,()=>i(null)))})}document.readyState===`loading`?document.addEventListener(`DOMContentLoaded`,e):e();</script></div><footer class="sl-flex astro-xhxjzfa7"><div class="meta sl-flex astro-xhxjzfa7"></div><div class="pagination-links print:hidden astro-jgq3vlii" dir="ltr"><a href="/docs/api/python/strands.vended_plugins.steering.handlers.llm.mappers/" rel="prev" class="astro-jgq3vlii"><svg aria-hidden="true" class="astro-jgq3vlii astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.5rem;"><path d="M17 11H9.41l3.3-3.29a1.004 1.004 0 1 0-1.42-1.42l-5 5a1 1 0 0 0-.21.33 1 1 0 0 0 0 .76 1 1 0 0 0 .21.33l5 5a1.002 1.002 0 0 0 1.639-.325 1 1 0 0 0-.219-1.095L9.41 13H17a1 1 0 0 0 0-2Z"/></svg><span class="astro-jgq3vlii">Previous<br class="astro-jgq3vlii"><span class="link-title astro-jgq3vlii">strands.vended_plugins.steering.handlers.llm.mappers</span></span></a><a href="/docs/api/python/strands.vended_tools.file_editor.file_editor/" rel="next" class="astro-jgq3vlii"><svg aria-hidden="true" class="astro-jgq3vlii astro-n5k4ipy7" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.5rem;"><path d="M17.92 11.62a1.001 1.001 0 0 0-.21-.33l-5-5a1.003 1.003 0 1 0-1.42 1.42l3.3 3.29H7a1 1 0 0 0 0 2h7.59l-3.3 3.29a1.002 1.002 0 0 0 .325 1.639 1 1 0 0 0 1.095-.219l5-5a1 1 0 0 0 .21-.33 1 1 0 0 0 0-.76Z"/></svg><span class="astro-jgq3vlii">Next<br class="astro-jgq3vlii"><span class="link-title astro-jgq3vlii">strands.vended_tools.file_editor.file_editor</span></span></a></div></footer></div></div></main></div></div></div></div></body></html>

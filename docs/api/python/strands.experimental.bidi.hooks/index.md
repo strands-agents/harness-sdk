@@ -7,7 +7,7 @@ Hook events emitted by bidirectional agents.
 class BidiAgentStopEvent(_HookEvent)
 ```
 
-Defined in: [src/strands/experimental/bidi/hooks/events.py:26](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/hooks/events.py#L26)
+Defined in: [src/strands/experimental/bidi/hooks/events.py:25](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/hooks/events.py#L25)
 
 Event triggered after BidiAgent attempts to stop its streaming session.
 
@@ -24,18 +24,18 @@ This event is triggered at the end of agent.stop().
 def should_reverse_callbacks() -> bool
 ```
 
-Defined in: [src/strands/experimental/bidi/hooks/events.py:40](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/hooks/events.py#L40)
+Defined in: [src/strands/experimental/bidi/hooks/events.py:39](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/hooks/events.py#L39)
 
 True to invoke callbacks in reverse order.
 
-## BidiResponseCompleteEvent
+## BidiResponseStopEvent
 
 ```python
 @dataclass
-class BidiResponseCompleteEvent(_HookEvent)
+class BidiResponseStopEvent(_HookEvent)
 ```
 
-Defined in: [src/strands/experimental/bidi/hooks/events.py:46](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/hooks/events.py#L46)
+Defined in: [src/strands/experimental/bidi/hooks/events.py:45](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/hooks/events.py#L45)
 
 Event triggered when the model reports that a response has ended.
 
@@ -44,27 +44,25 @@ A connection failure or shutdown without a model-reported completion does not em
 **Attributes**:
 
 -   `response_id` - Identifier of the response that ended.
--   `stop_reason` - Why the response ended, including completion or interruption.
 
-## BidiInterruptionEvent
+## BidiBargeInEvent
 
 ```python
 @dataclass
-class BidiInterruptionEvent(_HookEvent)
+class BidiBargeInEvent(_HookEvent)
 ```
 
-Defined in: [src/strands/experimental/bidi/hooks/events.py:62](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/hooks/events.py#L62)
+Defined in: [src/strands/experimental/bidi/hooks/events.py:59](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/hooks/events.py#L59)
 
-Event triggered when model generation is interrupted.
+Event triggered to stop current response generation or playback.
 
-This event is fired when the user interrupts the assistant (e.g., by speaking during the assistant’s response) or when an error causes interruption. This is specific to bidirectional streaming and doesn’t exist in standard agents.
+This event is fired when the user barges in (e.g., by speaking during the assistant’s response) or when an error stops output. This is specific to a response and does not pause the bidirectional session.
 
-Hook providers can use this event to log interruptions, implement custom interruption handling, or trigger cleanup logic.
+Hook providers can use this event to log barge-ins, stop playback, or trigger cleanup.
 
 **Attributes**:
 
--   `reason` - The reason for the interruption (“user\_speech” or “error”).
--   `interrupted_response_id` - Optional ID of the response that was interrupted.
+-   `reason` - Why response output should stop (“user\_speech” or “error”).
 
 ## BidiBeforeConnectionRestartEvent
 
@@ -73,7 +71,7 @@ Hook providers can use this event to log interruptions, implement custom interru
 class BidiBeforeConnectionRestartEvent(_HookEvent)
 ```
 
-Defined in: [src/strands/experimental/bidi/hooks/events.py:82](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/hooks/events.py#L82)
+Defined in: [src/strands/experimental/bidi/hooks/events.py:76](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/hooks/events.py#L76)
 
 Event emitted before the agent restarts the model connection.
 
@@ -91,7 +89,7 @@ A restart is triggered either reactively, after the model reports a timeout, or 
 class BidiAfterConnectionRestartEvent(_HookEvent)
 ```
 
-Defined in: [src/strands/experimental/bidi/hooks/events.py:98](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/hooks/events.py#L98)
+Defined in: [src/strands/experimental/bidi/hooks/events.py:92](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/bidi/hooks/events.py#L92)
 
 Event emitted after the agent attempts to restart the model connection.
 
