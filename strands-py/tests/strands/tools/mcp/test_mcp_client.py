@@ -1174,6 +1174,25 @@ def test_call_tool_sync_image_content(mock_transport, mock_session):
         }
 
 
+def test_call_tool_sync_image_content_unsupported_mime_falls_back_to_json(mock_transport, mock_session):
+    """A top-level ImageContent block with an unsupported image MIME type should map to json content, not fail."""
+    image_content = MCPImageContent(
+        type="image", data=base64.b64encode(b"<svg></svg>").decode(), mimeType="image/svg+xml"
+    )
+    text_content = MCPTextContent(type="text", text="chart rendered")
+    mock_session.call_tool.return_value = MCPCallToolResult(isError=False, content=[text_content, image_content])
+
+    with MCPClient(mock_transport["transport_callable"]) as client:
+        result = client.call_tool_sync(tool_use_id="img-svg", name="get_image", arguments={})
+
+    assert result == {
+        "status": "success",
+        "toolUseId": "img-svg",
+        "content": [{"text": "chart rendered"}, {"json": image_content.model_dump()}],
+        "isError": False,
+    }
+
+
 def test_call_tool_sync_embedded_nested_text(mock_transport, mock_session):
     """EmbeddedResource.resource (uri + text) should map to plain text content."""
     embedded_resource = {
