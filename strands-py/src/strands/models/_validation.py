@@ -144,4 +144,6 @@ def _has_location_source(content: ContentBlock) -> bool:
         return "location" in content["document"].get("source", {})
     if "video" in content:
         return "location" in content["video"].get("source", {})
+    if "audio" in content:
+        return "location" in content["audio"].get("source", {})
     return False

@@ -949,6 +949,36 @@ def test_format_request_filters_location_source_document(caplog) -> None:
     assert "Location sources are not supported by llama.cpp" in caplog.text
 
 
+def test_format_request_filters_location_source_audio(caplog) -> None:
+    """Test that audio with Location sources is filtered out with warning."""
+    model = LlamaCppModel()
+    caplog.set_level(logging.WARNING, logger="strands.models.llamacpp")
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"text": "transcribe this audio"},
+                {
+                    "audio": {
+                        "format": "wav",
+                        "source": {"location": {"type": "s3", "uri": "s3://my-bucket/audio.wav"}},
+                    },
+                },
+            ],
+        },
+    ]
+
+    request = model._format_request(messages)
+
+    # Audio with S3 source should be filtered, text should remain
+    formatted_messages = request["messages"]
+    user_content = formatted_messages[0]["content"]
+    assert len(user_content) == 1
+    assert user_content[0]["type"] == "text"
+    assert "Location sources are not supported by llama.cpp" in caplog.text
+
+
 class TestCountTokens:
     """Tests for LlamaCppModel.count_tokens native token counting."""
 
