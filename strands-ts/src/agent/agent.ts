@@ -485,6 +485,7 @@ export class Agent implements LocalAgent, InvokableAgent {
   private _mcpClients: McpClient[]
   private _initialized: boolean
   private _isInvoking: boolean = false
+  private _isRecordingDirectToolCall: boolean = false
   private _abortController = new AbortController()
   private _abortSignal: AbortSignal = this._abortController.signal
   private _printer?: Printer
@@ -659,8 +660,10 @@ export class Agent implements LocalAgent, InvokableAgent {
     this._checkpointing = config?.checkpointing ?? false
     // Pass a private helper into ToolCaller so message append + hook firing
     // remains an internal concern of Agent (not exposed as a public method).
-    this._toolCaller = ToolCaller.create(this, (message, invocationState) =>
-      this._appendMessageAndFireHooks(message, invocationState)
+    this._toolCaller = ToolCaller.create(
+      this,
+      (message, invocationState) => this._appendMessageAndFireHooks(message, invocationState),
+      () => this._acquireDirectToolCallLock()
     )
 
     this._initialized = false
@@ -852,12 +855,25 @@ export class Agent implements LocalAgent, InvokableAgent {
    * Callers must release via try/finally with `this._isInvoking = false`.
    */
   private acquireLock(): void {
-    if (this._isInvoking) {
+    if (this._isInvoking || this._isRecordingDirectToolCall) {
       throw new ConcurrentInvocationError(
-        'Agent is already processing an invocation. Wait for the current invoke() or stream() call to complete before invoking again.'
+        'Agent is already processing an invocation or recorded direct tool call. Wait for it to complete before invoking again.'
       )
     }
     this._isInvoking = true
+  }
+
+  private _acquireDirectToolCallLock(): () => void {
+    if (this.isInvoking || this._isRecordingDirectToolCall) {
+      throw new ConcurrentInvocationError(
+        'Direct tool call cannot be made while the agent is in the middle of an invocation or another recorded direct tool call. ' +
+          'Set recordDirectToolCall: false to allow direct tool calls during agent invocation.'
+      )
+    }
+    this._isRecordingDirectToolCall = true
+    return () => {
+      this._isRecordingDirectToolCall = false
+    }
   }
 
   /**
