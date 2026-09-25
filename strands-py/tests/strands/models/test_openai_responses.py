@@ -740,7 +740,7 @@ def test_format_chunk_metadata_with_cache_tokens(model):
 def test_format_chunk_metadata_with_cache_write_tokens(model):
     """cache_write_tokens maps to cacheWriteInputTokens.
 
-    GPT-5.6 reports cache writes alongside reads 
+    GPT-5.6 reports cache writes alongside reads
     """
     mock_usage = unittest.mock.Mock()
     mock_usage.input_tokens = 100
