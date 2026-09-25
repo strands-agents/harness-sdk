@@ -41,6 +41,7 @@ from strands.experimental.bidi.types import (
     BidiAudioStartEvent,
     BidiAudioStopEvent,
     BidiBargeInEvent,
+    BidiMessage,
     BidiResponseStartEvent,
     BidiResponseStopEvent,
     BidiTranscriptDeltaEvent,
@@ -1135,12 +1136,64 @@ async def test_connection_with_message_history(nova_model, mock_client, mock_str
 
 
 @pytest.mark.asyncio
+async def test_send_message_creates_one_text_input(nova_model, mock_stream):
+    await nova_model.start()
+    mock_stream.input_stream.send.reset_mock()
+    try:
+        await nova_model.send(BidiMessage(content=[TextBlock("First"), TextBlock("Second")]))
+
+        tru_events = [json.loads(call.args[0].value.bytes_) for call in mock_stream.input_stream.send.await_args_list]
+        content_name = tru_events[0]["event"]["contentStart"]["contentName"]
+        exp_events = [
+            {
+                "event": {
+                    "contentStart": {
+                        "promptName": nova_model._connection_id,
+                        "contentName": content_name,
+                        "type": "TEXT",
+                        "role": "USER",
+                        "interactive": True,
+                        "textInputConfiguration": {"mediaType": "text/plain"},
+                    }
+                }
+            },
+            {
+                "event": {
+                    "textInput": {
+                        "promptName": nova_model._connection_id,
+                        "contentName": content_name,
+                        "content": "First\nSecond",
+                    }
+                }
+            },
+            {"event": {"contentEnd": {"promptName": nova_model._connection_id, "contentName": content_name}}},
+        ]
+        assert tru_events == exp_events
+    finally:
+        await nova_model.stop()
+
+
+@pytest.mark.asyncio
+async def test_send_message_rejects_images_before_sending(nova_model, mock_stream):
+    await nova_model.start()
+    mock_stream.input_stream.send.reset_mock()
+    try:
+        with pytest.raises(ValueError, match="content not supported"):
+            await nova_model.send(
+                BidiMessage(content=[TextBlock("Hello"), ImageBlock(format="jpeg", source={"bytes": b"image"})])
+            )
+        mock_stream.input_stream.send.assert_not_awaited()
+    finally:
+        await nova_model.stop()
+
+
+@pytest.mark.asyncio
 async def test_send_all_content_types(nova_model, mock_stream):
     """Test sending all content types through unified send() method."""
     await nova_model.start()
 
     # Test text content
-    assert await nova_model.send(TextBlock("Hello, Nova!")) is None
+    assert await nova_model.send(BidiMessage(content=[TextBlock("Hello, Nova!")])) is None
     # Should send contentStart, textInput, and contentEnd
     assert mock_stream.input_stream.send.call_count >= 3
 
@@ -1154,7 +1207,7 @@ async def test_send_all_content_types(nova_model, mock_stream):
     tool_result_single = ToolResultBlock(
         tool_use_id="tool-123", status="success", content=[{"text": "Weather is sunny"}]
     )
-    await nova_model.send(tool_result_single)
+    await nova_model.send(BidiMessage(content=[tool_result_single]))
     # Should send contentStart, toolResult, and contentEnd
     assert mock_stream.input_stream.send.called
 
@@ -1162,7 +1215,7 @@ async def test_send_all_content_types(nova_model, mock_stream):
     tool_result_multi = ToolResultBlock(
         tool_use_id="tool-456", status="success", content=[{"text": "Part 1"}, {"json": {"data": "value"}}]
     )
-    await nova_model.send(tool_result_multi)
+    await nova_model.send(BidiMessage(content=[tool_result_multi]))
     assert mock_stream.input_stream.send.called
 
     await nova_model.stop()
@@ -1176,7 +1229,7 @@ async def test_send_edge_cases(nova_model):
     await nova_model.start()
 
     with pytest.raises(ValueError, match=r"content not supported"):
-        await nova_model.send(ImageBlock(format="jpeg", source={"bytes": b"image data"}))
+        await nova_model.send(BidiMessage(content=[ImageBlock(format="jpeg", source={"bytes": b"image data"})]))
 
     await nova_model.stop()
 
@@ -1597,7 +1650,7 @@ async def test_tool_result_single_content_unwrapped(nova_model, mock_stream):
 
     tool_result = ToolResultBlock(tool_use_id="tool-123", status="success", content=[{"text": "Single result"}])
 
-    await nova_model.send(tool_result)
+    await nova_model.send(BidiMessage(content=[tool_result]))
 
     # Verify events were sent
     assert mock_stream.input_stream.send.called
@@ -1630,7 +1683,7 @@ async def test_tool_result_multiple_content_as_array(nova_model, mock_stream):
         tool_use_id="tool-456", status="success", content=[{"text": "Part 1"}, {"json": {"data": "value"}}]
     )
 
-    await nova_model.send(tool_result)
+    await nova_model.send(BidiMessage(content=[tool_result]))
 
     # Verify events were sent
     assert mock_stream.input_stream.send.called
@@ -1665,7 +1718,7 @@ async def test_tool_result_empty_content(nova_model, mock_stream):
 
     tool_result = ToolResultBlock(tool_use_id="tool-789", status="success", content=[])
 
-    await nova_model.send(tool_result)
+    await nova_model.send(BidiMessage(content=[tool_result]))
 
     # Verify events were sent
     assert mock_stream.input_stream.send.called
@@ -1702,7 +1755,7 @@ async def test_tool_result_unsupported_content_type(nova_model):
     )
 
     with pytest.raises(ValueError, match=r"Content type not supported by Nova Sonic"):
-        await nova_model.send(tool_result_image)
+        await nova_model.send(BidiMessage(content=[tool_result_image]))
 
     # Test with document content (unsupported)
     tool_result_doc = ToolResultBlock(
@@ -1712,7 +1765,7 @@ async def test_tool_result_unsupported_content_type(nova_model):
     )
 
     with pytest.raises(ValueError, match=r"Content type not supported by Nova Sonic"):
-        await nova_model.send(tool_result_doc)
+        await nova_model.send(BidiMessage(content=[tool_result_doc]))
 
     # Test with mixed content (one unsupported)
     tool_result_mixed = ToolResultBlock(
@@ -1722,7 +1775,7 @@ async def test_tool_result_unsupported_content_type(nova_model):
     )
 
     with pytest.raises(ValueError, match=r"Content type not supported by Nova Sonic"):
-        await nova_model.send(tool_result_mixed)
+        await nova_model.send(BidiMessage(content=[tool_result_mixed]))
 
     await nova_model.stop()
 

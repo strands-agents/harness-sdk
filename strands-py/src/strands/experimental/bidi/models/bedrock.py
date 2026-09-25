@@ -51,7 +51,7 @@ from ....types._events import ToolUseStreamEvent
 from ....types.content import Messages, TextBlock
 from ....types.tools import ToolResultBlock, ToolSpec, ToolUse
 from .._async import stop_all
-from ..types.content import BidiContentBlock, BidiContentDelta
+from ..types.content import BidiContentDelta, BidiMessage
 from ..types.events import (
     BidiAudioDeltaEvent,
     BidiAudioStartEvent,
@@ -510,13 +510,13 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
                 logger.debug("converted_event_type=<%s> | yielding converted event", event_type)
                 yield model_event
 
-    async def send(self, content: BidiContentBlock | BidiContentDelta | ToolResultBlock) -> None:
+    async def send(self, content: BidiMessage | BidiContentDelta) -> None:
         """Unified send method for all content types. Sends the given content to Nova Sonic.
 
         Dispatches to appropriate internal handler based on content type.
 
         Args:
-            content: A TextBlock, AudioDelta, or ToolResultBlock.
+            content: A complete BidiMessage or an individual AudioDelta.
 
         Raises:
             ValueError: If content type not supported (e.g., image content).
@@ -524,11 +524,8 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         if not self._connection_id:
             raise RuntimeError("model not started | call start before sending")
 
-        if isinstance(content, TextBlock):
-            text = content.text
-            text_preview = text[:100] if len(text) > 100 else text
-            logger.debug("text_length=<%d>, text_preview=<%s> | sending text content", len(text), text_preview)
-            await self._send_text_content(text)
+        if isinstance(content, BidiMessage):
+            await self._send_message(content)
         elif isinstance(content, AudioDelta):
             audio_bytes = content.source.get("bytes")
             audio_size = len(audio_bytes) if audio_bytes else 0
@@ -538,16 +535,22 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
                 content.format,
             )
             await self._send_audio_content(content)
-        elif isinstance(content, ToolResultBlock):
-            logger.debug(
-                "tool_use_id=<%s>, content_blocks=<%d> | sending tool result",
-                content.tool_use_id,
-                len(content.content),
-            )
-            await self._send_tool_result(content)
         else:
-            logger.error("content_type=<%s> | unsupported content type", type(content))
             raise ValueError(f"content_type={type(content)} | content not supported")
+
+    async def _send_message(self, message: BidiMessage) -> None:
+        """Send text blocks as one text input or tool results as native events."""
+        texts = []
+        for block in message.content:
+            if isinstance(block, TextBlock):
+                texts.append(block.text)
+            elif isinstance(block, ToolResultBlock):
+                await self._send_tool_result(block)
+            else:
+                raise ValueError(f"content_type={type(block)} | content not supported by Nova Sonic")
+
+        if texts:
+            await self._send_text_content("\n".join(texts))
 
     async def _start_audio_connection(self) -> None:
         """Internal: Start audio input connection (call once before sending audio chunks)."""

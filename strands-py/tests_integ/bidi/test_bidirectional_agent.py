@@ -16,9 +16,10 @@ from strands import tool
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.hooks import BidiResponseStopEvent
 from strands.experimental.bidi.models import GoogleGeminiLiveModel, OpenAIRealtimeModel
-from strands.experimental.bidi.types import BidiResponseStartEvent
+from strands.experimental.bidi.types import BidiResponseStartEvent, BidiTranscriptStopEvent
 from strands.experimental.bidi.types import BidiResponseStopEvent as BidiResponseStopStreamEvent
 from strands.types._events import ToolResultEvent
+from strands.types.media import ImageBlock
 
 from .context import BidirectionalTestContext
 from .hook_utils import HookEventCollector
@@ -326,6 +327,33 @@ async def test_bidirectional_agent(agent_with_calculator, audio_generator, provi
             len(tool_calls),
         )
         logger.info("=" * 60)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_config", ["openai_realtime", "google_gemini_live"], indirect=True)
+async def test_send_image_and_text(provider_config, yellow_img):
+    """An image and its question form one user message and receive a visual answer."""
+    model = provider_config["model_factory"](**provider_config["model_kwargs"])
+    agent = BidiAgent(model=model)
+    image = ImageBlock(format="png", source={"bytes": yellow_img})
+    question = "What is the main color in this image? Answer with just the color name."
+
+    async with BidirectionalTestContext(agent) as context:
+        await agent.send([image, question])
+        await context.wait_for_response(timeout=30)
+
+        tru_response = " ".join(
+            event.transcript
+            for event in context.get_events()
+            if isinstance(event, BidiTranscriptStopEvent) and event.role == "assistant"
+        )
+        assert "yellow" in tru_response.lower()
+
+        user_messages = [message for message in agent.messages if message["role"] == "user"]
+        assert len(user_messages) == 1
+        tru_content = user_messages[0]["content"]
+        exp_content = [image.to_dict(), {"text": question}]
+        assert tru_content == exp_content
 
 
 @pytest.mark.asyncio

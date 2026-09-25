@@ -25,7 +25,7 @@ from ....types.content import Messages, TextBlock
 from ....types.media import ImageBlock
 from ....types.tools import ToolResultBlock, ToolSpec, ToolUse
 from .._async import stop_all
-from ..types.content import BidiContentBlock, BidiContentDelta
+from ..types.content import BidiContentDelta, BidiMessage
 from ..types.events import (
     BidiAudioDeltaEvent,
     BidiAudioStartEvent,
@@ -776,14 +776,14 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
 
     async def send(
         self,
-        content: BidiContentBlock | BidiContentDelta | ToolResultBlock,
+        content: BidiMessage | BidiContentDelta,
     ) -> None:
         """Unified send method for all content types. Sends the given content to OpenAI.
 
         Dispatches to appropriate internal handler based on content type.
 
         Args:
-            content: A TextBlock, AudioDelta, ImageBlock, or ToolResultBlock.
+            content: A complete BidiMessage or an individual AudioDelta.
 
         Raises:
             ValueError: If content type not supported.
@@ -791,16 +791,33 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         if not self._connection_id:
             raise RuntimeError("model not started | call start before sending")
 
-        if isinstance(content, TextBlock):
-            await self._send_text_content(content.text)
+        if isinstance(content, BidiMessage):
+            await self._send_message(content)
         elif isinstance(content, AudioDelta):
             await self._send_audio_content(content)
-        elif isinstance(content, ImageBlock):
-            await self._send_image_content(content)
-        elif isinstance(content, ToolResultBlock):
-            await self._send_tool_result(content)
         else:
             raise ValueError(f"content_type={type(content)} | content not supported")
+
+    async def _send_message(self, message: BidiMessage) -> None:
+        """Send one user message or tool results."""
+        content = []
+        for block in message.content:
+            if isinstance(block, TextBlock):
+                content.append({"type": "input_text", "text": block.text})
+            elif isinstance(block, ImageBlock):
+                image_bytes = block.source.get("bytes")
+                if image_bytes is None:
+                    raise ValueError("image source must contain bytes for OpenAI Realtime")
+                image = base64.b64encode(image_bytes).decode("utf-8")
+                content.append({"type": "input_image", "image_url": f"data:image/{block.format};base64,{image}"})
+            elif isinstance(block, ToolResultBlock):
+                await self._send_tool_result(block)
+
+        if content:
+            await self._send_event(
+                {"type": "conversation.item.create", "item": {"type": "message", "role": "user", "content": content}}
+            )
+            await self._request_response()
 
     async def _send_audio_content(self, audio_input: AudioDelta) -> None:
         """Internal: Send audio content to OpenAI for processing."""
@@ -809,30 +826,6 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             raise ValueError("audio source must contain bytes for OpenAI Realtime")
         audio = base64.b64encode(audio_bytes).decode("utf-8")
         await self._send_event({"type": "input_audio_buffer.append", "audio": audio})
-
-    async def _send_image_content(self, image_input: ImageBlock) -> None:
-        """Internal: Send image content to OpenAI for processing.
-
-        Image data is encoded as a ``data:`` URL using the image format and base64
-        payload, matching OpenAI's Realtime API image input format.
-        """
-        image_bytes = image_input.source.get("bytes")
-        if image_bytes is None:
-            raise ValueError("image source must contain bytes for OpenAI Realtime")
-        image = base64.b64encode(image_bytes).decode("utf-8")
-        data_url = f"data:image/{image_input.format};base64,{image}"
-        item_data = {
-            "type": "message",
-            "role": "user",
-            "content": [{"type": "input_image", "image_url": data_url}],
-        }
-        await self._send_event({"type": "conversation.item.create", "item": item_data})
-
-    async def _send_text_content(self, text: str) -> None:
-        """Internal: Send text content to OpenAI for processing."""
-        item_data = {"type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]}
-        await self._send_event({"type": "conversation.item.create", "item": item_data})
-        await self._request_response()
 
     async def _send_tool_result(self, tool_result: ToolResultBlock) -> None:
         """Internal: Send tool result back to OpenAI."""

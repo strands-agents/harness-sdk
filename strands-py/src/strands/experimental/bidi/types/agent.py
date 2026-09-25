@@ -7,5 +7,12 @@ from typing import TypeAlias
 
 from .content import BidiContentBlock, BidiContentBlockData, BidiContentDelta, BidiContentDeltaData
 
-BidiAgentInput: TypeAlias = str | BidiContentBlock | BidiContentBlockData | BidiContentDelta | BidiContentDeltaData
-"""Input accepted by a bidirectional agent."""
+BidiAgentInput: TypeAlias = (
+    str
+    | BidiContentBlock
+    | BidiContentBlockData
+    | BidiContentDelta
+    | BidiContentDeltaData
+    | list[str | BidiContentBlock | BidiContentBlockData]
+)
+"""A single input or block list. Tool results are rejected by BidiAgent.send."""

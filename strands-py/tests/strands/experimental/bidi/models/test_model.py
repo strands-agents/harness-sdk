@@ -7,10 +7,10 @@ import pytest
 from pydantic import BaseModel
 
 from strands.experimental.bidi.models import AudioCapable, AudioConfig, BidiModel, Restartable
-from strands.experimental.bidi.types import BidiContentBlock, BidiContentDelta, BidiOutputEvent
+from strands.experimental.bidi.types import BidiContentDelta, BidiMessage, BidiOutputEvent
 from strands.models import Model
 from strands.types.content import Messages
-from strands.types.tools import ToolResultBlock, ToolSpec
+from strands.types.tools import ToolSpec
 
 
 class _Output(BaseModel):
@@ -47,7 +47,7 @@ class _TestBidiModel(BidiModel):
 
         return events()
 
-    async def send(self, content: BidiContentBlock | BidiContentDelta | ToolResultBlock) -> None:
+    async def send(self, content: BidiMessage | BidiContentDelta) -> None:
         pass
 
 

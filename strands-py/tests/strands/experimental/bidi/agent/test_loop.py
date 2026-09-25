@@ -18,6 +18,7 @@ from strands.experimental.bidi.types import (
     BidiConnectionRestartEvent,
     BidiConnectionStopEvent,
     BidiConnectionWarningEvent,
+    BidiMessage,
     BidiResponseStartEvent,
     BidiResponseStopEvent,
     BidiTranscriptDeltaEvent,
@@ -149,7 +150,9 @@ async def test_receive_executes_tools_before_late_transcription(agent):
     transcript = BidiTranscriptStopEvent("What time is it?", "user", content_id="speech-a")
 
     async def send(content, **kwargs):
-        assert content == ToolResultBlock(tool_use_id="tool-b", status="success", content=[{"text": "12:00"}])
+        assert content == BidiMessage(
+            content=[ToolResultBlock(tool_use_id="tool-b", status="success", content=[{"text": "12:00"}])]
+        )
         result_sent.set()
 
     async def receive():
@@ -1196,13 +1199,20 @@ async def test_deadline_callback_does_not_restart_after_stop_while_queue_full(ag
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("content", [TextBlock("hello"), ImageBlock(format="jpeg", source={"bytes": b"image"})])
+@pytest.mark.parametrize(
+    "content",
+    [
+        [TextBlock("hello")],
+        [ImageBlock(format="jpeg", source={"bytes": b"image"})],
+        [TextBlock("hello"), TextBlock("world")],
+    ],
+)
 async def test_send_complete_input_marks_turn_awaiting_response(loop, agent, agenerator, content):
     """Complete user input keeps scheduled reconnects waiting for a response."""
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([]))
     await loop.start()
 
-    await loop.send(content)
+    await loop.send(BidiMessage(content=content))
     assert loop._awaiting_response is True
     assert not loop._turn_complete.is_set()  # a proactive reconnect would now wait
 
@@ -1659,7 +1669,7 @@ async def test_bidi_agent_loop_receive_tool_use(loop, agent, agenerator):
 
     await asyncio.sleep(0)
     agent.model.send.assert_awaited_once_with(
-        ToolResultBlock(tool_use_id="t1", status="success", content=tool_result["content"])
+        BidiMessage(content=[ToolResultBlock(tool_use_id="t1", status="success", content=tool_result["content"])])
     )
 
 
@@ -1920,7 +1930,7 @@ async def test_bidi_agent_loop_send_appends_user_text_message(loop, agent, agene
     agent.model.receive = lambda: agenerator([])
     await loop.start()
     try:
-        await loop.send(TextBlock("injected context"))
+        await loop.send(BidiMessage(content=[TextBlock("injected context")]))
         assert agent.messages == [
             {
                 "role": "user",

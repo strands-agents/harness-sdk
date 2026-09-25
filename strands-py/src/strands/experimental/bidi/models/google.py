@@ -31,7 +31,7 @@ from ....types.content import Messages, TextBlock
 from ....types.media import ImageBlock
 from ....types.tools import ToolResultBlock, ToolSpec, ToolUse
 from .._async import stop_all
-from ..types.content import BidiContentBlock, BidiContentDelta
+from ..types.content import BidiContentDelta, BidiMessage
 from ..types.events import (
     BidiAudioDeltaEvent,
     BidiAudioStartEvent,
@@ -546,14 +546,14 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
 
     async def send(
         self,
-        content: BidiContentBlock | BidiContentDelta | ToolResultBlock,
+        content: BidiMessage | BidiContentDelta,
     ) -> None:
         """Unified send method for all content types. Sends the given inputs to the Gemini Live API.
 
         Dispatches to appropriate internal handler based on content type.
 
         Args:
-            content: A TextBlock, AudioDelta, ImageBlock, or ToolResultBlock.
+            content: A complete BidiMessage or an individual AudioDelta.
 
         Raises:
             ValueError: If content type not supported.
@@ -561,16 +561,33 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         if not self._connection_id:
             raise RuntimeError("model not started | call start before sending")
 
-        if isinstance(content, TextBlock):
-            await self._send_text_content(content.text)
+        if isinstance(content, BidiMessage):
+            await self._send_message(content)
         elif isinstance(content, AudioDelta):
             await self._send_audio_content(content)
-        elif isinstance(content, ImageBlock):
-            await self._send_image_content(content)
-        elif isinstance(content, ToolResultBlock):
-            await self._send_tool_result(content)
         else:
             raise ValueError(f"content_type={type(content)} | content not supported")
+
+    async def _send_message(self, message: BidiMessage) -> None:
+        """Send one user turn or tool results."""
+        parts = []
+        for block in message.content:
+            if isinstance(block, TextBlock):
+                parts.append(genai_types.Part(text=block.text))
+            elif isinstance(block, ImageBlock):
+                image_bytes = block.source.get("bytes")
+                if image_bytes is None:
+                    raise ValueError("image source must contain bytes for Gemini Live")
+                parts.append(
+                    genai_types.Part(inline_data=genai_types.Blob(data=image_bytes, mime_type=f"image/{block.format}"))
+                )
+            elif isinstance(block, ToolResultBlock):
+                await self._send_tool_result(block)
+
+        if parts:
+            await self._live_session.send_client_content(
+                turns=genai_types.Content(role="user", parts=parts), turn_complete=True
+            )
 
     async def _send_audio_content(self, audio_input: AudioDelta) -> None:
         """Internal: Send audio content using Gemini Live API.
@@ -588,33 +605,6 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
 
         # Send real-time audio input - this automatically handles VAD and barge-in
         await self._live_session.send_realtime_input(audio=audio_blob)
-
-    async def _send_image_content(self, image_input: ImageBlock) -> None:
-        """Internal: Send image content using Gemini Live API.
-
-        Sends image frames following the same pattern as the GitHub example.
-        Images are sent as base64-encoded data with MIME type.
-        """
-        image_bytes = image_input.source.get("bytes")
-        if image_bytes is None:
-            raise ValueError("image source must contain bytes for Gemini Live")
-        msg = {
-            "mime_type": f"image/{image_input.format}",
-            "data": base64.b64encode(image_bytes).decode("utf-8"),
-        }
-
-        # Send using the same method as the GitHub example
-        await self._live_session.send(input=msg)
-
-    async def _send_text_content(self, text: str) -> None:
-        """Internal: Send text content using Gemini Live API.
-
-        Uses send_realtime_input for mid-session text input. Turn completion
-        is handled by Gemini's automatic activity detection rather than
-        explicit turn boundaries. send_client_content is reserved for
-        seeding initial history at session start (see _send_message_history).
-        """
-        await self._live_session.send_realtime_input(text=text)
 
     async def _send_tool_result(self, tool_result: ToolResultBlock) -> None:
         """Internal: Send tool result using Gemini Live API."""

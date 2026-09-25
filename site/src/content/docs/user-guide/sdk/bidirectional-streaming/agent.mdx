@@ -6,6 +6,7 @@ tags: [bidi-streaming]
 sourceLinks:
   - path: strands-py/src/strands/experimental/bidi/agent/agent.py
   - path: strands-py/src/strands/experimental/bidi/agent/loop.py
+  - path: strands-py/src/strands/experimental/bidi/types/content.py
 ---
 
 
@@ -349,6 +350,26 @@ finally:
 ```
 
 Explicit control with custom error handling and flexible timing.
+
+### Sending Multiple Content Blocks
+
+Send a list to group text and images into one user message, preserving block order.
+With a running OpenAI or Gemini agent:
+
+```python
+from strands.experimental.bidi.agent import BidiAgent
+from strands.types.media import ImageBlock
+
+async def describe_image(agent: BidiAgent, image_bytes: bytes) -> None:
+    await agent.send([
+        ImageBlock(format="jpeg", source={"bytes": image_bytes}),
+        "What is in this image?",
+    ])
+```
+
+Lists accept strings, `TextBlock`, `ImageBlock`, and their dictionary forms.
+Send audio deltas individually; tool results are managed by the agent.
+Nova Sonic supports text only and joins blocks with newlines.
 
 ### Connection Restart
 

@@ -31,7 +31,7 @@ from ..hooks.events import (
     BidiResponseStopEvent as BidiResponseStopHookEvent,
 )
 from ..models import ConnectionTimeoutError, Restartable
-from ..types.content import BidiContentBlock, BidiContentDelta, BidiToolMetadata, BidiTranscriptMetadata
+from ..types.content import BidiContentDelta, BidiMessage, BidiToolMetadata, BidiTranscriptMetadata
 from ..types.events import (
     BidiAudioDeltaEvent,
     BidiBargeInEvent,
@@ -228,10 +228,11 @@ class _AgentLoop:
 
             await self._agent.hooks.invoke_callbacks_async(BidiAgentStopEvent(agent=self._agent))
 
-    async def send(self, content: BidiContentBlock | BidiContentDelta | ToolResultBlock) -> None:
-        """Send user input or a tool result to the model.
+    async def send(self, content: BidiMessage | BidiContentDelta) -> None:
+        """Send a complete message or an individual delta to the model.
 
-        Complete content blocks are also added to conversation history.
+        User messages are recorded in history. The tool runner records tool
+        results with their corresponding tool uses. Deltas are not recorded.
 
         Args:
             content: User input or tool result to send.
@@ -246,8 +247,11 @@ class _AgentLoop:
             logger.debug("waiting for model send signal")
             await self._send_gate.wait()
 
-        if isinstance(content, BidiContentBlock):
-            message: Message = {"role": "user", "content": [cast(ContentBlock, content.to_dict())]}
+        if isinstance(content, BidiMessage) and not isinstance(content.content[0], ToolResultBlock):
+            message: Message = {
+                "role": "user",
+                "content": [cast(ContentBlock, block.to_dict()) for block in content.content],
+            }
             await self._agent._append_messages(message)
 
             # Let scheduled reconnects wait for the response.
@@ -820,10 +824,14 @@ class _AgentLoop:
 
             # Send result to model
             await self.send(
-                ToolResultBlock(
-                    tool_use_id=tool_result["toolUseId"],
-                    status=tool_result["status"],
-                    content=tool_result["content"],
+                BidiMessage(
+                    content=[
+                        ToolResultBlock(
+                            tool_use_id=tool_result["toolUseId"],
+                            status=tool_result["status"],
+                            content=tool_result["content"],
+                        )
+                    ]
                 )
             )
 

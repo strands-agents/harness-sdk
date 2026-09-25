@@ -59,11 +59,12 @@ from ....types.content import (
     split_system_prompt,
 )
 from ....types.exceptions import SnapshotException
-from ....types.media import ImageBlock
-from ....types.tools import AgentTool
+from ....types.media import AudioContent, ImageBlock, ImageContent
+from ....types.tools import AgentTool, ToolResultBlock
 from .._async import _TaskGroup, stop_all
 from ..models.model import BidiModel
 from ..types.agent import BidiAgentInput
+from ..types.content import BidiMessage
 from ..types.events import BidiOutputEvent
 from ..types.io import InputStream, OutputStream
 from ..types.media import AudioDelta
@@ -325,11 +326,12 @@ class BidiAgent(LocalAgent):
         self._started = True
 
     async def send(self, input_data: BidiAgentInput) -> None:
-        """Send content to the model.
+        """Send user content to the model.
 
-        A string is shorthand for a text block. Image blocks contain complete
-        images. Audio deltas append samples to the live input stream without
-        explicitly ending the user's turn.
+        Strings are shorthand for text blocks. Lists of text and image blocks
+        form one user message, preserving block order. Audio deltas are sent
+        individually and are not added to conversation history. Tool results
+        are sent by the agent's tool runner.
 
         Args:
             input_data: Can be:
@@ -338,41 +340,54 @@ class BidiAgent(LocalAgent):
                 - TextBlock, AudioDelta, or ImageBlock: Text, streaming audio, or image input
                 - BidiContentBlockData: A dictionary containing one text or image key
                 - BidiContentDeltaData: A dictionary containing one audio_delta key
+                - list: A non-empty list of strings, text or image blocks, or their dictionary forms
 
         Raises:
             RuntimeError: If start has not been called.
             TypeError: If the input has an unsupported type or invalid input arguments.
-            ValueError: If the input dictionary does not contain exactly one text, audio_delta, or image key.
+            ValueError: If the input contains a tool result, the input list is empty,
+                or an input dictionary does not contain exactly one supported key.
 
         Example:
             await agent.send("Hello")
             await agent.send(AudioDelta(format="pcm", source={"bytes": audio_bytes}))
             await agent.send({"audio_delta": {"format": "pcm", "source": {"bytes": audio_bytes}}})
+            await agent.send([TextBlock("Use these details."), TextBlock("Order number: 123.")])
         """
         if not self._started:
             raise RuntimeError("agent not started | call start before sending")
 
-        if isinstance(input_data, str):
-            input_data = TextBlock(input_data)
-        elif isinstance(input_data, dict):
-            if len(input_data) != 1:
-                raise ValueError("invalid input | must contain exactly one of text, audio_delta, or image")
-            content_data = cast(dict[str, Any], input_data)
-            if "text" in content_data:
-                input_data = TextBlock(content_data["text"])
-            elif "audio_delta" in content_data:
-                input_data = AudioDelta(**content_data["audio_delta"])
-            elif "image" in content_data:
-                input_data = ImageBlock(**content_data["image"])
-            else:
-                raise ValueError("invalid input | must contain exactly one of text, audio_delta, or image")
-        elif not isinstance(input_data, (TextBlock, AudioDelta, ImageBlock)):
-            raise TypeError(
-                "invalid input | must be str, TextBlock, AudioDelta, ImageBlock, "
-                "BidiContentBlockData, or BidiContentDeltaData"
-            )
+        match input_data:
+            case AudioDelta():
+                await self._loop.send(input_data)
+                return
+            case {"audio_delta": audio, **rest} if not rest:
+                await self._loop.send(AudioDelta(**cast(AudioContent, audio)))
+                return
 
-        await self._loop.send(input_data)
+        inputs = input_data if isinstance(input_data, list) else [input_data]
+        message = BidiMessage(content=[])
+        for item in inputs:
+            match item:
+                case ToolResultBlock() | {"toolResult": _}:
+                    raise ValueError("invalid input | tool results cannot be sent through BidiAgent.send")
+                case TextBlock() | ImageBlock():
+                    message.content.append(item)
+                case str():
+                    message.content.append(TextBlock(item))
+                case {"text": text, **rest} if not rest:
+                    message.content.append(TextBlock(cast(str, text)))
+                case {"image": image, **rest} if not rest:
+                    message.content.append(ImageBlock(**cast(ImageContent, image)))
+                case dict():
+                    raise ValueError("invalid input | expected one text or image key")
+                case _:
+                    raise TypeError("invalid input | expected a string, TextBlock, or ImageBlock")
+
+        if not message.content:
+            raise ValueError("invalid input | input list cannot be empty")
+
+        await self._loop.send(message)
 
     async def receive(self) -> AsyncGenerator[BidiOutputEvent, None]:
         """Receive events from the model including audio, text, and tool calls.

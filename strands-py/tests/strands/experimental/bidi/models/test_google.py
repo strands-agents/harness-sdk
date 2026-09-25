@@ -26,6 +26,7 @@ from strands.experimental.bidi.types import (
     BidiAudioStopEvent,
     BidiBargeInEvent,
     BidiConnectionStartEvent,
+    BidiMessage,
     BidiResponseStartEvent,
     BidiResponseStopEvent,
     BidiTranscriptDeltaEvent,
@@ -705,16 +706,65 @@ async def test_history_skipped_when_session_handle_provided(mock_genai_client, a
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("blocks", "exp_parts"),
+    [
+        (
+            [TextBlock("First"), TextBlock("Second")],
+            [genai_types.Part(text="First"), genai_types.Part(text="Second")],
+        ),
+        (
+            [
+                TextBlock("Describe this image"),
+                ImageBlock(format="jpeg", source={"bytes": b"image"}),
+                TextBlock("Be brief"),
+            ],
+            [
+                genai_types.Part(text="Describe this image"),
+                genai_types.Part(inline_data=genai_types.Blob(data=b"image", mime_type="image/jpeg")),
+                genai_types.Part(text="Be brief"),
+            ],
+        ),
+    ],
+    ids=["text", "mixed"],
+)
+async def test_send_message_completes_one_user_turn(mock_genai_client, model, blocks, exp_parts):
+    _, mock_live_session, _ = mock_genai_client
+    await model.start()
+    mock_live_session.reset_mock()
+    try:
+        await model.send(BidiMessage(content=blocks))
+
+        mock_live_session.send_client_content.assert_awaited_once_with(
+            turns=genai_types.Content(role="user", parts=exp_parts), turn_complete=True
+        )
+    finally:
+        await model.stop()
+
+
+@pytest.mark.asyncio
+async def test_send_message_rejects_missing_image_bytes_before_sending(mock_genai_client, model):
+    _, mock_live_session, _ = mock_genai_client
+    await model.start()
+    mock_live_session.reset_mock()
+    try:
+        with pytest.raises(ValueError, match="image source must contain bytes"):
+            await model.send(BidiMessage(content=[TextBlock("Hello"), ImageBlock(format="jpeg", source={})]))
+        assert mock_live_session.mock_calls == []
+    finally:
+        await model.stop()
+
+
+@pytest.mark.asyncio
 async def test_send_all_content_types(mock_genai_client, model):
     """Test sending all content types through unified send() method."""
     _, mock_live_session, _ = mock_genai_client
     await model.start()
 
-    # Test text input — uses send_realtime_input for mid-session text
-    assert await model.send(TextBlock("Hello")) is None
-    mock_live_session.send_realtime_input.assert_called_once()
-    call_args = mock_live_session.send_realtime_input.call_args
-    assert call_args.kwargs.get("text") == "Hello"
+    assert await model.send(BidiMessage(content=[TextBlock("Hello")])) is None
+    mock_live_session.send_client_content.assert_awaited_once_with(
+        turns=genai_types.Content(role="user", parts=[genai_types.Part(text="Hello")]), turn_complete=True
+    )
 
     # Test audio input
     mock_live_session.send_realtime_input.reset_mock()
@@ -722,12 +772,19 @@ async def test_send_all_content_types(mock_genai_client, model):
     mock_live_session.send_realtime_input.assert_called_once()
 
     # Test image input
-    assert await model.send(ImageBlock(format="jpeg", source={"bytes": b"image_bytes"})) is None
-    mock_live_session.send.assert_called_once()
+    mock_live_session.send_client_content.reset_mock()
+    assert await model.send(BidiMessage(content=[ImageBlock(format="jpeg", source={"bytes": b"image_bytes"})])) is None
+    mock_live_session.send_client_content.assert_awaited_once_with(
+        turns=genai_types.Content(
+            role="user",
+            parts=[genai_types.Part(inline_data=genai_types.Blob(data=b"image_bytes", mime_type="image/jpeg"))],
+        ),
+        turn_complete=True,
+    )
 
     # Test tool result
     tool_result = ToolResultBlock(tool_use_id="tool-123", status="success", content=[{"text": "Result: 42"}])
-    assert await model.send(tool_result) is None
+    assert await model.send(BidiMessage(content=[tool_result])) is None
     mock_live_session.send_tool_response.assert_called_once()
 
     await model.stop()
@@ -740,7 +797,7 @@ async def test_send_edge_cases(mock_genai_client, model):
 
     # Test send when inactive
     with pytest.raises(RuntimeError, match=r"call start before sending"):
-        await model.send(TextBlock("Hello"))
+        await model.send(BidiMessage(content=[TextBlock("Hello")]))
     mock_live_session.send_realtime_input.assert_not_called()
 
     # Test unknown content type
@@ -1770,7 +1827,7 @@ async def test_tool_result_single_content_unwrapped(mock_genai_client, model):
 
     tool_result = ToolResultBlock(tool_use_id="tool-123", status="success", content=[{"text": "Single result"}])
 
-    await model.send(tool_result)
+    await model.send(BidiMessage(content=[tool_result]))
 
     # Verify the tool response was sent
     mock_live_session.send_tool_response.assert_called_once()
@@ -1796,7 +1853,7 @@ async def test_tool_result_multiple_content_as_array(mock_genai_client, model):
         tool_use_id="tool-456", status="success", content=[{"text": "Part 1"}, {"json": {"data": "value"}}]
     )
 
-    await model.send(tool_result)
+    await model.send(BidiMessage(content=[tool_result]))
 
     # Verify the tool response was sent
     mock_live_session.send_tool_response.assert_called_once()
@@ -1830,7 +1887,7 @@ async def test_tool_result_unsupported_content_type(mock_genai_client, model):
     )
 
     with pytest.raises(ValueError, match=r"Content type not supported by Gemini Live API"):
-        await model.send(tool_result_image)
+        await model.send(BidiMessage(content=[tool_result_image]))
 
     # Test with document content (unsupported)
     tool_result_doc = ToolResultBlock(
@@ -1840,7 +1897,7 @@ async def test_tool_result_unsupported_content_type(mock_genai_client, model):
     )
 
     with pytest.raises(ValueError, match=r"Content type not supported by Gemini Live API"):
-        await model.send(tool_result_doc)
+        await model.send(BidiMessage(content=[tool_result_doc]))
 
     # Test with mixed content (one unsupported)
     tool_result_mixed = ToolResultBlock(
@@ -1850,7 +1907,7 @@ async def test_tool_result_unsupported_content_type(mock_genai_client, model):
     )
 
     with pytest.raises(ValueError, match=r"Content type not supported by Gemini Live API"):
-        await model.send(tool_result_mixed)
+        await model.send(BidiMessage(content=[tool_result_mixed]))
 
     await model.stop()
 
