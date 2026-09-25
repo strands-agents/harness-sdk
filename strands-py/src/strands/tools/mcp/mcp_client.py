@@ -226,13 +226,20 @@ class MCPClient(ToolProvider):
     """
 
     @classmethod
-    def load_servers(cls, config: "str | dict[str, Any]") -> "list[MCPClient]":
+    def load_servers(
+        cls,
+        config: "str | dict[str, Any]",
+        *,
+        continue_on_error: bool = False,
+        prefix_with_server_name: bool = False,
+    ) -> "list[MCPClient]":
         """Create MCPClient instances from an ``mcpServers`` JSON config (file path or mapping).
 
         Returns one client per enabled server. Accepts either a flat mapping of server name to
         config, or that mapping nested under an ``mcpServers`` key. Servers marked
-        ``"disabled": true`` are skipped. When a server sets ``"continue_on_error": true``, a
-        failure resolving its config (e.g. a missing env var) skips that server instead of raising.
+        ``"disabled": true`` are skipped. When a server has ``"continue_on_error": true`` (or the
+        ``continue_on_error`` default is set), a failure resolving its config (e.g. a missing env
+        var) skips that server instead of raising.
 
         Transport is auto-detected from the fields present: ``command`` selects stdio and ``url``
         selects streamable-http. Set ``transport`` explicitly (``"stdio"``, ``"sse"``, or
@@ -243,6 +250,12 @@ class MCPClient(ToolProvider):
         Args:
             config: A file path (with optional ``file://`` prefix) to a JSON config, or a
                 dictionary mapping server names to configs (optionally under an ``mcpServers`` key).
+            continue_on_error: Default ``continue_on_error`` for every server; a server's own
+                ``continue_on_error`` key overrides it.
+            prefix_with_server_name: When True, servers without an explicit ``prefix`` use their config
+                key as the tool name prefix, so same-named tools from different servers no longer
+                collide. Characters outside ``[A-Za-z0-9_-]`` in the key (e.g. the dot in
+                ``awslabs.foo``) are replaced with ``_``. A server can still opt out with ``"prefix": ""``.
 
         Returns:
             One MCPClient per enabled server, ready to pass to ``Agent(tools=...)``.
@@ -253,8 +266,8 @@ class MCPClient(ToolProvider):
             ValueError: If the overall config shape is invalid or a server entry is not a mapping.
                 These are malformed-config errors and always raise, regardless of
                 ``continue_on_error``. A failure building an individual server (e.g. a missing env
-                var) also raises unless that server set ``continue_on_error``, in which case it is
-                skipped.
+                var) also raises unless ``continue_on_error`` applies to that server, in which case
+                it is skipped.
         """
         servers = _load_servers_mapping(config)
 
@@ -272,9 +285,16 @@ class MCPClient(ToolProvider):
                 logger.debug("server_name=<%s> | skipping disabled MCP server", name)
                 continue
             try:
-                clients.append(_build_client_from_config(name, server))
+                clients.append(
+                    _build_client_from_config(
+                        name,
+                        server,
+                        continue_on_error=continue_on_error,
+                        prefix_with_server_name=prefix_with_server_name,
+                    )
+                )
             except Exception as e:
-                if not server.get("continue_on_error", False):
+                if not server.get("continue_on_error", continue_on_error):
                     raise
                 logger.warning("server_name=<%s>, error=<%s> | MCP server config failed, skipping", name, e)
 
@@ -454,6 +474,14 @@ class MCPClient(ToolProvider):
             self.stop(None, None, None)
             raise MCPClientInitializationError(f"the client initialization failed: {e}") from e
         return self
+
+    @property
+    def client_name(self) -> str | None:
+        """The ``application_name`` reported to the server, or ``None`` when unset (see ``__init__``).
+
+        Defaults to the config key for ``load_servers`` clients.
+        """
+        return self._application_name
 
     @property
     def continue_on_error(self) -> bool:
@@ -2556,7 +2584,9 @@ def _load_servers_mapping(config: str | dict[str, Any]) -> dict[str, Any]:
     return servers
 
 
-def _build_client_from_config(name: str, server: dict[str, Any]) -> MCPClient:
+def _build_client_from_config(
+    name: str, server: dict[str, Any], continue_on_error: bool, prefix_with_server_name: bool
+) -> MCPClient:
     """Build a single MCPClient from one server entry.
 
     Interpolates ``${VAR}`` references first so secrets can live in the environment, then detects
@@ -2580,11 +2610,16 @@ def _build_client_from_config(name: str, server: dict[str, Any]) -> MCPClient:
         transport_callable,
         startup_timeout=server.get("startup_timeout", 30),
         tool_filters=_parse_config_tool_filters(name, server.get("tool_filters")),
-        prefix=server.get("prefix"),
+        prefix=server.get("prefix", _sanitize_prefix(name) if prefix_with_server_name else None),
         application_name=server.get("application_name", name),
         application_version=server.get("application_version"),
-        continue_on_error=server.get("continue_on_error", False),
+        continue_on_error=server.get("continue_on_error", continue_on_error),
     )
+
+
+def _sanitize_prefix(name: str) -> str:
+    """Replace characters that model providers reject in tool names (e.g. the dot in ``awslabs.foo``) with ``_``."""
+    return re.sub(r"[^A-Za-z0-9_-]", "_", name)
 
 
 def _config_transport_callable(name: str, transport: str, server: dict[str, Any]) -> Callable[[], MCPTransport]:

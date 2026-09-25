@@ -6,6 +6,7 @@ import type { Storage } from '../storage/storage.js'
 import type { Stash } from './stash.js'
 import type { LocalAgent } from '../types/agent.js'
 import type { Message } from '../types/messages.js'
+import type { StrategyPresetName } from './presets.js'
 
 /**
  * A context reduction strategy that can offload, summarize, or otherwise
@@ -13,6 +14,8 @@ import type { Message } from '../types/messages.js'
  *
  * Strategies are applied in order during `apply()`. Each decides whether
  * to act based on the current context state (utilization, message count, etc.).
+ *
+ * @experimental
  */
 export interface ContextStrategy {
   /** Stable identifier for logging and observability. */
@@ -33,6 +36,8 @@ export interface ContextStrategy {
 
 /**
  * State passed to strategies during apply().
+ *
+ * @experimental
  */
 export interface ContextState {
   /** The agent's current message array (the context window). Strategies mutate this in place. */
@@ -44,12 +49,21 @@ export interface ContextState {
   /** Current context utilization ratio (0-1+). Above 1.0 means overflow. */
   utilization: number
 
+  /**
+   * Set when running in response to a `ContextWindowOverflowError`.
+   * Strategies should bypass utilization gates when true — the provider
+   * already rejected the request, so the estimate is not trustworthy.
+   */
+  overflow?: boolean
+
   /** L1 stash for persisting offloaded content. Present when storage is configured. */
   stash?: Stash
 }
 
 /**
  * Configuration for the L1 stash (offloaded content persistence).
+ *
+ * @experimental
  */
 export interface StashConfig {
   /** Storage backend. Defaults to InMemoryStorage when omitted. */
@@ -65,6 +79,8 @@ export interface StashConfig {
 
 /**
  * Full configuration for a ContextManager instance.
+ *
+ * @experimental
  */
 export interface ContextManagerConfig {
   /**
@@ -72,8 +88,11 @@ export interface ContextManagerConfig {
    * sees the output of the previous. Order determines priority — if two strategies
    * target the same content, the first one to shrink it below the next strategy's
    * threshold wins. When omitted, uses the default pipeline.
+   *
+   * Accepts raw `ContextStrategy` objects, preset name strings (e.g. `'largeToolOffloading'`),
+   * or a mix of both. Preset strings are resolved to their default strategy configurations.
    */
-  strategies?: ContextStrategy[]
+  strategies?: (ContextStrategy | StrategyPresetName)[]
 
   /**
    * L1 stash configuration. The stash persists offloaded content so the agent can

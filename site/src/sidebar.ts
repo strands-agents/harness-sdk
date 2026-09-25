@@ -17,6 +17,8 @@ interface NavConfigItem {
   label?: string
   items?: NavConfigItem[]
   slug?: string // For labeled leaf items "Adding Tools"
+  href?: string // For link items pointing outside the docs collection (e.g. a project repo)
+  external?: boolean // Opens the href in a new tab
   collapsed?: boolean // Explicit collapse state for groups (overrides auto-collapse)
   badge?: SidebarBadge // Badge on a group label (leaf badges come from page frontmatter)
   addedDate?: string | Date // Derives a "New" badge on a group for NEW_BADGE_DAYS; never hand-write one
@@ -41,9 +43,33 @@ export interface GitHubSection {
   links: GitHubLink[]
 }
 
+/** A page link shown under a product in the Docs dropdown / mobile menu. */
+export interface ProductLink {
+  label: string
+  href: string
+}
+
+/**
+ * A top-level product (Shell, Strands harness, Box, Evals, …). The single source of
+ * truth for the Docs dropdown and — going forward — the scoped sidebar, so the
+ * nav and the docs stay aligned. Add a product here and it appears everywhere.
+ */
+export interface Product {
+  /** Internal key; must match the navbar entry's label so scoping and lookup line up. */
+  label: string
+  /** Full product name shown in the hub hero and the sidebar box, e.g. "Strands harness". */
+  name: string
+  /** Short brand slug used in URLs and the Projects dropdown, e.g. "/shell". */
+  slug: string
+  href: string
+  description: string
+  pages?: ProductLink[]
+}
+
 interface NavigationConfig {
   navbar: NavbarLink[]
   sidebar: NavConfigItem[]
+  products?: Product[]
   github: {
     sections: GitHubSection[]
   }
@@ -111,6 +137,15 @@ function convertConfigItem(item: NavConfigEntry, ctx: ConvertContext): Starlight
       if (!contentExists(item.slug, ctx.contentDir)) return null
       return { slug: item.slug, label: item.label }
     }
+
+    // Object with label and href (link outside the docs collection)
+    if (item.label && item.href) {
+      return {
+        label: item.label,
+        link: item.href,
+        ...(item.external && { attrs: { target: '_blank', rel: 'noopener noreferrer' } }),
+      }
+    }
   }
 
   return null
@@ -158,4 +193,12 @@ export function loadNavbarFromConfig(configPath: string): NavbarLink[] {
 export function loadGitHubSectionsFromConfig(configPath: string): GitHubSection[] {
   const config = loadNavigationConfig(configPath)
   return config.github?.sections || []
+}
+
+/**
+ * Load the product list from navigation.yml config.
+ */
+export function loadProductsFromConfig(configPath: string): Product[] {
+  const config = loadNavigationConfig(configPath)
+  return config.products || []
 }

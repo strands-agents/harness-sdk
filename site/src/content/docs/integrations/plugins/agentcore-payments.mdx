@@ -18,7 +18,7 @@ The [AgentCore payments plugin](https://github.com/aws/bedrock-agentcore-sdk-pyt
 - **Automatic x402 Payment Handling** — intercepts HTTP 402 responses from tools, processes payment requirements, and retries requests with payment headers
 - **Payment Query Tools** — built-in tools for agents to query payment instruments and sessions at runtime
 - **Multi-Protocol Support** — handles x402 v1 and v2 payment protocols
-- **Interrupt-Based Error Handling** — raises Strands SDK interrupts on payment failures so the agent (or application) can respond dynamically
+- **Interrupt-Based Error Handling** — raises Strands Harness SDK interrupts on payment failures so the agent (or application) can respond dynamically
 - **Configurable Auto-Payment** — enable or disable automatic payment processing per plugin instance
 
 ## Installation
@@ -32,7 +32,7 @@ pip install 'bedrock-agentcore[strands-agents]'
 ```python
 import os
 from strands import Agent
-from strands_tools import http_request
+from strands.vended_tools import http_request
 from bedrock_agentcore.payments.integrations.strands import (
     AgentCorePaymentsPlugin,
     AgentCorePaymentsPluginConfig,
@@ -310,4 +310,4 @@ See the [AgentCore SDK documentation](https://github.com/aws/bedrock-agentcore-s
 ## References
 
 - [AgentCore SDK](https://github.com/aws/bedrock-agentcore-sdk-python)
-- [Strands Plugins documentation](/docs/user-guide/concepts/plugins/)
+- [Strands Plugins documentation](/docs/user-guide/sdk/plugins/)

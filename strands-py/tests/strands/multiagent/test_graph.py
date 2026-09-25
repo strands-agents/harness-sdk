@@ -2175,8 +2175,7 @@ def test_graph_serialize_deserialize_serialize_preserves_cumulative_state():
 async def test_graph_execution_time_reflects_active_invocation(mock_strands_tracer, mock_use_span):
     """The final GraphResult includes the current invocation's interval on top of restored prior time.
 
-    execution_time is committed to state once, at finalization. GraphResult is built before that
-    commit, so it must fold in the in-flight interval itself — and finalization must not double-count.
+    Finalization commits execution_time to state exactly once before building GraphResult.
     """
     # Monotonic fake clock advanced explicitly; robust to how many times time.time() is called.
     clock = {"now": 1000.0}

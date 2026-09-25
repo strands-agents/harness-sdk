@@ -1,6 +1,6 @@
 import { readFile, writeFile } from "fs/promises";
 
-const QUICKSTART_PATH = "src/content/docs/user-guide/quickstart/overview.mdx";
+const QUICKSTART_PATH = "src/content/docs/user-guide/sdk/quickstart/overview.mdx";
 
 /**
  * Convert the quickstart overview page to use Starlight cards

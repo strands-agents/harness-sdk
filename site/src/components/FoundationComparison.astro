@@ -1,0 +1,311 @@
+---
+/**
+ * Comparison matrix backing the "Choosing an Agent Foundation" page. Each cell
+ * carries a support level (full / partial / diy) that drives a colored marker,
+ * plus the specific detail text — so the table is scannable at a glance while
+ * keeping the per-framework nuance. Strands and the row-label column are pinned
+ * for orientation; the whole grid scrolls horizontally on narrow screens.
+ *
+ * Levels: `full` = ships as a first-class API; `part` = via a companion
+ * product, adapter, or partial/experimental support; `diy` = you write it.
+ */
+
+type Level = 'full' | 'part' | 'diy'
+type Cell = { level: Level; text: string }
+
+const options = [
+  'Strands',
+  'Hand-written loop',
+  'OpenAI Agents SDK',
+  'LangGraph',
+  'Vercel AI SDK',
+  'Pydantic AI',
+]
+
+// Order matches `options`. `diy` cells default their text to "DIY".
+const cell = (level: Level, text?: string): Cell => ({
+  level,
+  text: text ?? (level === 'diy' ? 'DIY' : level === 'full' ? 'Built-in' : ''),
+})
+
+const rows: { job: string; detail: string; cells: Cell[] }[] = [
+  {
+    job: 'Loop controls',
+    detail: 'turn/token limits, cancellation, stop reasons',
+    cells: [
+      cell('full'),
+      cell('diy'),
+      cell('part', 'Turn cap; cancel via abort'),
+      cell('part', 'Recursion cap; budgets DIY'),
+      cell('part', 'Step cap + abort'),
+      cell('full', 'Usage limits (turns/tokens)'),
+    ],
+  },
+  {
+    job: 'Tools & structured output',
+    detail: '',
+    cells: [
+      cell('full'),
+      cell('diy'),
+      cell('full'),
+      cell('part', 'Via LangChain'),
+      cell('full'),
+      cell('full'),
+    ],
+  },
+  {
+    job: 'MCP',
+    detail: '',
+    cells: [
+      cell('full', 'Built-in client'),
+      cell('diy'),
+      cell('full'),
+      cell('part', 'Via adapter'),
+      cell('part', 'Experimental'),
+      cell('full'),
+    ],
+  },
+  {
+    job: 'Multi-agent',
+    detail: '',
+    cells: [
+      cell('full', 'Graph, swarm, agents as tools'),
+      cell('diy'),
+      cell('full', 'Handoffs, agents as tools'),
+      cell('full', 'Built-in (graphs)'),
+      cell('diy'),
+      cell('part', 'Delegation; graph library'),
+    ],
+  },
+  {
+    job: 'Memory & sessions',
+    detail: '',
+    cells: [
+      cell('full'),
+      cell('diy'),
+      cell('full', 'Sessions'),
+      cell('full', 'Checkpointers'),
+      cell('diy'),
+      cell('part', 'Message history (DIY)'),
+    ],
+  },
+  {
+    job: 'Model providers',
+    detail: 'portability',
+    cells: [
+      cell('full', 'Built-in (many)'),
+      cell('diy', 'Per provider'),
+      cell('part', 'OpenAI-first; others via LiteLLM'),
+      cell('part', 'Via LangChain'),
+      cell('full', 'Built-in (many)'),
+      cell('full', 'Built-in (many)'),
+    ],
+  },
+  {
+    job: 'Streaming',
+    detail: '',
+    cells: [
+      cell('full'),
+      cell('diy'),
+      cell('full'),
+      cell('full'),
+      cell('full'),
+      cell('full'),
+    ],
+  },
+  {
+    job: 'Guardrails / interventions',
+    detail: '',
+    cells: [
+      cell('full'),
+      cell('diy'),
+      cell('full'),
+      cell('diy', 'DIY (nodes)'),
+      cell('diy'),
+      cell('part', 'Output validators'),
+    ],
+  },
+  {
+    job: 'Tracing / observability',
+    detail: '',
+    cells: [
+      cell('full', 'OpenTelemetry-native'),
+      cell('diy'),
+      cell('full', 'Built-in tracing'),
+      cell('part', 'Via LangSmith'),
+      cell('full', 'OpenTelemetry'),
+      cell('part', 'Via Logfire (OTel)'),
+    ],
+  },
+  {
+    job: 'Evaluation',
+    detail: '',
+    cells: [
+      cell('part', 'Companion Evals SDK'),
+      cell('diy'),
+      cell('part', 'Via OpenAI platform'),
+      cell('part', 'Via LangSmith'),
+      cell('part', 'Third-party'),
+      cell('part', 'pydantic-evals'),
+    ],
+  },
+]
+---
+
+<figure class="fc">
+  <figcaption class="fc__legend" aria-hidden="true">
+    <span class="fc__key"><span class="fc__dot fc__dot--full"></span>Built-in</span>
+    <span class="fc__key"><span class="fc__dot fc__dot--part"></span>Partial / via add-on</span>
+    <span class="fc__key"><span class="fc__dot fc__dot--diy"></span>DIY</span>
+  </figcaption>
+
+  <div class="fc__scroll">
+    <table class="fc__table">
+      <thead>
+        <tr>
+          <th scope="col" class="fc__rowhead">Job</th>
+          {options.map((opt, i) => (
+            <th scope="col" class:list={['fc__col', i === 0 && 'fc__col--strands']}>
+              {opt}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr>
+            <th scope="row" class="fc__rowhead">
+              <span class="fc__job">{row.job}</span>
+              {row.detail && <span class="fc__detail">{row.detail}</span>}
+            </th>
+            {row.cells.map((c, i) => (
+              <td class:list={['fc__cell', `fc__cell--${c.level}`, i === 0 && 'fc__col--strands']}>
+                <span class:list={['fc__dot', `fc__dot--${c.level}`]} aria-hidden="true"></span>
+                <span class="fc__text">{c.text}</span>
+              </td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+</figure>
+
+<style>
+  .fc {
+    margin: 1.5rem 0;
+  }
+
+  .fc__legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem 1.25rem;
+    margin-bottom: 0.75rem;
+    font-size: 0.8125rem;
+    color: var(--sl-color-gray-2);
+  }
+
+  .fc__key {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  /* Horizontal scroll keeps all six columns legible on narrow screens instead
+     of crushing them. */
+  .fc__scroll {
+    overflow-x: auto;
+    border: 1px solid var(--sl-color-hairline);
+    border-radius: 0.5rem;
+  }
+
+  .fc__table {
+    width: 100%;
+    min-width: 52rem;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    line-height: 1.35;
+  }
+
+  .fc__table th,
+  .fc__table td {
+    padding: 0.6rem 0.85rem;
+    text-align: left;
+    vertical-align: top;
+    border-bottom: 1px solid var(--sl-color-hairline);
+  }
+
+  .fc__table thead th {
+    font-weight: 600;
+    color: var(--sl-color-white);
+    white-space: nowrap;
+    background: var(--sl-color-bg);
+  }
+
+  /* Pin the row-label column so the job stays visible while scrolling across
+     frameworks. */
+  .fc__rowhead {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--sl-color-bg);
+    min-width: 12rem;
+  }
+
+  tbody .fc__rowhead {
+    font-weight: 600;
+  }
+
+  .fc__job {
+    display: block;
+    color: var(--sl-color-white);
+  }
+
+  .fc__detail {
+    display: block;
+    margin-top: 0.15rem;
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: var(--sl-color-gray-3);
+  }
+
+  /* Strands is the subject of the page — tint its column so the reader can
+     anchor on it. */
+  .fc__col--strands {
+    background: var(--sl-color-accent-low) !important;
+  }
+
+  thead .fc__col--strands {
+    color: var(--sl-color-white);
+  }
+
+  .fc__cell {
+    color: var(--sl-color-gray-1);
+  }
+
+  .fc__cell--diy .fc__text {
+    color: var(--sl-color-gray-3);
+  }
+
+  .fc__dot {
+    display: inline-block;
+    width: 0.55rem;
+    height: 0.55rem;
+    margin-right: 0.45rem;
+    border-radius: 50%;
+    vertical-align: baseline;
+    flex: none;
+  }
+
+  .fc__dot--full {
+    background: #2f9e44;
+  }
+
+  .fc__dot--part {
+    background: #f08c00;
+  }
+
+  .fc__dot--diy {
+    background: var(--sl-color-gray-4);
+  }
+</style>

@@ -1,0 +1,124 @@
+---
+title: Context management
+description: "How the ContextManager keeps your agent's context window in bounds as conversations grow and tool results accumulate."
+experimental: true
+tags: [conversation-management, token-management]
+sourceLinks:
+  - path: strands-py/src/strands/_context_manager/context_manager.py
+  - path: strands-ts/src/context-manager/context-manager.ts
+addedDate: 2026-06-12
+---
+
+As conversations grow, your agent's context window fills with messages, tool results, and system prompts. Without management, this leads to token limit errors, degraded performance, and loss of relevant information.
+
+The SDK ships context management that works out of the box. Pick a mode and the SDK wires up an ordered strategy pipeline with tuned defaults.
+
+You can continue using [conversation managers](./agents/conversation-management) and [ContextOffloader](./plugins/context-offloader) while evaluating the experimental `ContextManager` strategy API. See [Migrating to the strategy API](#migrating-to-the-strategy-api) for optional migration examples.
+
+## Quick start
+
+Pass <Syntax py='context_manager="auto"' ts='contextManager: "auto"' /> and the SDK manages context in the background:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+
+agent = Agent(context_manager="auto")
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/context-management_imports.ts:basic_imports"
+
+--8<-- "user-guide/sdk/context-management.ts:basic"
+```
+</Tab>
+</Tabs>
+
+## How it works
+
+The <Syntax py="context_manager" ts="contextManager" /> parameter is a first-class agent parameter, not a plugin. It creates a `ContextManager` that owns all context reduction for the agent.
+
+The ContextManager runs strategies as an ordered pipeline. Each strategy sees the output of the previous one. The SDK always appends an emergency truncation strategy as the final step, which only fires when the window is still overflowing after all other strategies have run.
+
+A stash stores all message content on arrival as JSON, before any strategy acts. Truncated or summarized content is preserved and retrievable on demand through the `retrieve_context` tool, registered by default.
+
+When <Syntax py="context_manager" ts="contextManager" /> is set, any co-provided <Syntax py="conversation_manager" ts="conversationManager" /> is ignored. The ContextManager owns overflow recovery and proactive compression internally.
+
+## Choosing a mode
+
+| Value | Behavior |
+|-------|----------|
+| `"auto"` | Background compression with tuned defaults. No model involvement. |
+| `"agentic"` | Model-driven: the model manages its own context. |
+| Custom config | Full control over the strategy pipeline, targets, and conditions. |
+| `false` | No context management. Overflow errors propagate directly. |
+
+See [Built-in Modes](./context-management/built-in-modes) for details on `"auto"` and `"agentic"`. See [Custom Strategies](./context-management/custom-strategies) to build your own pipeline. See [Strategy Presets](./context-management/presets) for named shorthand configurations.
+
+## Storage backends
+
+The `ContextManager` uses in-memory stash storage by default. Content does not persist across process restarts. Provide a durable storage backend when the stash needs to survive restarts:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands.storage import LocalFileStorage, S3Storage
+
+# Local filesystem
+stash = {"storage": LocalFileStorage("./artifacts/")}
+
+# S3, using ambient AWS credentials
+stash = {
+    "storage": S3Storage(
+        "my-bucket", prefix="agent-stash/",
+    ),
+}
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/context-management_imports.ts:storage_backends_imports"
+
+--8<-- "user-guide/sdk/context-management.ts:storage_backends"
+```
+</Tab>
+</Tabs>
+
+Pass one of these <Syntax py="stash" ts="stash" /> values in your context manager configuration. See [Storage](./storage) for the full storage backend reference.
+
+## Limitations
+
+**Stateful models.** Stateful models manage conversation state server-side. Setting <Syntax py="context_manager" ts="contextManager" /> with a stateful model raises an error.
+
+## Migrating to the strategy API
+
+If you currently use `SummarizingConversationManager`, `ContextOffloader`, or `conversation_manager`, use these examples as starting points. Review the strategy conditions and preservation settings for your workload because the strategy API does not map one-to-one to every existing option.
+
+<Tabs>
+<Tab label="Python">
+
+| Before | After |
+|--------|-------|
+| `SummarizingConversationManager(...)` | `Offload.summarize("*").when(utilization=0.85, preserve_recent=4)` |
+| `ContextOffloader(max_result_tokens=2500, preview_tokens=500)` | `Offload.truncate("tool_results", {"preview_tokens": 500}).when(threshold=2500)` |
+| `SlidingWindowConversationManager(...)` | No exact equivalent. Use `Offload.drop` or `Offload.truncate` with utilization and preservation conditions. |
+| `context_manager="auto"` | Unchanged |
+
+</Tab>
+<Tab label="TypeScript">
+
+| Before | After |
+|--------|-------|
+| `new SummarizingConversationManager(...)` | `Offload.summarize("*").when({ utilization: 0.85, preserveRecent: 4 })` |
+| `new ContextOffloader({ maxResultTokens: 2500, previewTokens: 500 })` | `Offload.truncate("toolResults", { previewTokens: 500 }).when({ threshold: 2500 })` |
+| `new SlidingWindowConversationManager(...)` | No exact equivalent. Use `Offload.drop` or `Offload.truncate` with utilization and preservation conditions. |
+| `contextManager: "auto"` | Unchanged |
+
+</Tab>
+</Tabs>

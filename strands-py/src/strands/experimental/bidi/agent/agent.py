@@ -2,27 +2,36 @@
 
 Provides real-time audio and text interaction through persistent streaming connections.
 Unlike traditional request-response patterns, this agent maintains long-running
-conversations where users can interrupt, provide additional input, and receive
+conversations where users can barge in, provide additional input, and receive
 continuous responses including audio output.
 
 Key capabilities:
 
 - Persistent conversation connections with concurrent processing
 - Real-time audio input/output streaming
-- Automatic interruption detection and tool execution
+- Automatic barge-in detection and tool execution
 - Event-driven communication with model providers
 """
 
 import asyncio
+import copy
 import logging
 import uuid
 from collections.abc import AsyncGenerator
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
 from .... import _identifier
 from ...._middleware import MiddlewareRegistry
 from ....agent.state import AgentState
-from ....hooks import HookCallback, HookOrder, HookProvider, HookRegistry
+from ....hooks import (
+    AgentInitializedEvent,
+    HookCallback,
+    HookOrder,
+    HookProvider,
+    HookRegistry,
+    MessageAddedEvent,
+    MessageUpdatedEvent,
+)
 from ....hooks.registry import TEvent
 from ....interrupt import _InterruptState
 from ....tools._caller import _ToolCaller
@@ -31,22 +40,35 @@ from ....tools.executors._executor import ToolExecutor
 from ....tools.registry import ToolRegistry
 from ....tools.tool_provider import ToolProvider
 from ....tools.watcher import ToolWatcher
+from ....types._snapshot import (
+    BIDI_SNAPSHOT_FIELDS,
+    BIDI_SNAPSHOT_PRESETS,
+    SNAPSHOT_SCHEMA_VERSION,
+    Snapshot,
+    SnapshotField,
+    SnapshotPreset,
+    resolve_snapshot_fields,
+)
 from ....types.agent import LocalAgent
-from ....types.content import Message, Messages, SystemContentBlock, _ensure_tracking_id, split_system_prompt
+from ....types.content import (
+    Message,
+    Messages,
+    SystemContentBlock,
+    TextBlock,
+    _ensure_tracking_id,
+    split_system_prompt,
+)
+from ....types.exceptions import SnapshotException
+from ....types.media import AudioContent, ImageBlock, ImageContent
 from ....types.tools import AgentTool
-from ...hooks.events import BidiAgentInitializedEvent, BidiMessageAddedEvent
 from .._async import _TaskGroup, stop_all
 from ..models.model import BidiModel
 from ..types.agent import BidiAgentInput
-from ..types.events import (
-    BidiAudioInputEvent,
-    BidiImageInputEvent,
-    BidiInputEvent,
-    BidiOutputEvent,
-    BidiTextInputEvent,
-)
-from ..types.io import BidiInput, BidiOutput
-from .loop import _BidiAgentLoop
+from ..types.content import BidiMessage
+from ..types.events import BidiOutputEvent
+from ..types.io import InputStream, OutputStream
+from ..types.media import AudioDelta
+from .loop import _AgentLoop
 
 if TYPE_CHECKING:
     from ....session.session_manager import SessionManager
@@ -61,7 +83,7 @@ class BidiAgent(LocalAgent):
     """Agent for bidirectional streaming conversations.
 
     Enables real-time audio and text interaction with AI models through persistent
-    connections. Supports concurrent tool execution and interruption handling.
+    connections. Supports concurrent tool execution and barge-in handling.
     """
 
     _is_strands_local_agent: ClassVar[Literal[True]] = True
@@ -79,14 +101,14 @@ class BidiAgent(LocalAgent):
         description: str | None = None,
         hooks: list[HookProvider] | None = None,
         state: AgentState | dict | None = None,
-        session_manager: "SessionManager | None" = None,
+        session_manager: "SessionManager[LocalAgent] | None" = None,
         tool_executor: ToolExecutor | None = None,
         **kwargs: Any,
     ):
         """Initialize bidirectional agent.
 
         Args:
-            model: BidiModel instance, string model_id, or None for default detection.
+            model: BidiModel instance, Bedrock model ID string, or None to use Nova Sonic 2.
             tools: Optional list of tools with flexible format support.
             system_prompt: System prompt for conversations as a string or structured content blocks.
                 Structured blocks are retained, while their text is passed to Bidi models as a string.
@@ -116,12 +138,12 @@ class BidiAgent(LocalAgent):
         elif model is None:
             from ..models.bedrock import BedrockNovaSonicModel
 
-            self.model = BedrockNovaSonicModel()
+            self.model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
         else:
             raise TypeError("model must be a BidiModel, string, or None")
 
-        self._system_prompt, self._system_prompt_content = split_system_prompt(system_prompt)
-        self.messages = messages or []
+        _, self._system_prompt_content = split_system_prompt(system_prompt)
+        self.messages = messages if messages is not None else []
 
         # Agent identification
         self.agent_id = _identifier.validate(agent_id or _DEFAULT_AGENT_ID, _identifier.Identifier.AGENT)
@@ -175,10 +197,7 @@ class BidiAgent(LocalAgent):
         else:
             self._session_id = uuid.uuid4().hex[:8]
 
-        self._loop = _BidiAgentLoop(self)
-
-        # Emit initialization event
-        self.hooks.invoke_callbacks(BidiAgentInitializedEvent(agent=self))
+        self._loop = _AgentLoop(self)
 
         # TODO: Determine if full support is required
         self._interrupt_state = _InterruptState()
@@ -192,6 +211,8 @@ class BidiAgent(LocalAgent):
         self._message_lock = asyncio.Lock()
 
         self._started = False
+
+        self.hooks.invoke_callbacks(AgentInitializedEvent[LocalAgent](agent=self))
 
     @property
     def tool(self) -> _ToolCaller:
@@ -221,12 +242,12 @@ class BidiAgent(LocalAgent):
     @property
     def system_prompt(self) -> str | None:
         """Get the system prompt as a string."""
-        return self._system_prompt
+        return split_system_prompt(self._system_prompt_content)[0]
 
     @system_prompt.setter
     def system_prompt(self, value: str | list[SystemContentBlock] | None) -> None:
         """Set the system prompt and retain its structured content representation."""
-        self._system_prompt, self._system_prompt_content = split_system_prompt(value)
+        _, self._system_prompt_content = split_system_prompt(value)
 
     @property
     def system_prompt_content(self) -> list[SystemContentBlock] | None:
@@ -280,9 +301,9 @@ class BidiAgent(LocalAgent):
         model events, tool execution, and connection management.
 
         Args:
-            invocation_state: Optional context to pass to tools during execution.
-                This allows passing custom data (user_id, session_id, database connections, etc.)
-                that tools can access via their invocation_state parameter.
+            invocation_state: Optional context shared by reference with tools and hooks until stop(),
+                including across connection restarts. Tools access it through ToolContext.invocation_state.
+                Defaults to a new empty dictionary.
 
         Raises:
             RuntimeError:
@@ -304,56 +325,67 @@ class BidiAgent(LocalAgent):
         await self._loop.start(invocation_state)
         self._started = True
 
-    async def send(self, input_data: BidiAgentInput | dict[str, Any]) -> None:
-        """Send input to the model (text, audio, image, or event dict).
+    async def send(self, input_data: BidiAgentInput) -> None:
+        """Send user content to the model.
 
-        Unified method for sending text, audio, and image input to the model during
-        an active conversation session. Accepts TypedEvent instances or plain dicts
-        (e.g., from WebSocket clients) which are automatically reconstructed.
+        Strings are shorthand for text blocks. Lists of text and image blocks
+        form one user message, preserving block order. Audio deltas are sent
+        individually and are not added to conversation history. Tool results
+        are sent by the agent's tool runner.
 
         Args:
             input_data: Can be:
 
                 - str: Text message from user
-                - BidiInputEvent: TypedEvent
-                - dict: Event dictionary (will be reconstructed to TypedEvent)
+                - TextBlock, AudioDelta, or ImageBlock: Text, streaming audio, or image input
+                - BidiUserContentBlockData: A dictionary containing one text or image key
+                - BidiContentDeltaData: A dictionary containing one audio_delta key
+                - list: A non-empty list of strings, text or image blocks, or their dictionary forms
 
         Raises:
             RuntimeError: If start has not been called.
-            ValueError: If invalid input type.
+            TypeError: If the input has an unsupported type or invalid input arguments.
+            ValueError: If the input list is empty or an input dictionary does not contain
+                exactly one supported key.
 
         Example:
             await agent.send("Hello")
-            await agent.send(BidiAudioInputEvent(audio="base64...", format="pcm", ...))
-            await agent.send({"type": "bidirectional_text_input", "text": "Hello", "role": "user"})
+            await agent.send(AudioDelta(format="pcm", source={"bytes": audio_bytes}))
+            await agent.send({"audio_delta": {"format": "pcm", "source": {"bytes": audio_bytes}}})
+            await agent.send([TextBlock("Use these details."), TextBlock("Order number: 123.")])
         """
         if not self._started:
             raise RuntimeError("agent not started | call start before sending")
 
-        input_event: BidiInputEvent
+        match input_data:
+            case AudioDelta():
+                await self._loop.send(input_data)
+                return
+            case {"audio_delta": audio, **rest} if not rest:
+                await self._loop.send(AudioDelta(**cast(AudioContent, audio)))
+                return
 
-        if isinstance(input_data, str):
-            input_event = BidiTextInputEvent(text=input_data)
+        inputs = input_data if isinstance(input_data, list) else [input_data]
+        message = BidiMessage(content=[])
+        for item in inputs:
+            match item:
+                case TextBlock() | ImageBlock():
+                    message.content.append(item)
+                case str():
+                    message.content.append(TextBlock(item))
+                case {"text": text, **rest} if not rest:
+                    message.content.append(TextBlock(cast(str, text)))
+                case {"image": image, **rest} if not rest:
+                    message.content.append(ImageBlock(**cast(ImageContent, image)))
+                case dict():
+                    raise ValueError("invalid input | expected one text or image key")
+                case _:
+                    raise TypeError("invalid input | expected a string, TextBlock, or ImageBlock")
 
-        elif isinstance(input_data, BidiInputEvent):
-            input_event = input_data
+        if not message.content:
+            raise ValueError("invalid input | input list cannot be empty")
 
-        elif isinstance(input_data, dict) and "type" in input_data:
-            input_type = input_data["type"]
-            input_data = {key: value for key, value in input_data.items() if key != "type"}
-            if input_type == "bidi_text_input":
-                input_event = BidiTextInputEvent(**input_data)
-            elif input_type == "bidi_audio_input":
-                input_event = BidiAudioInputEvent(**input_data)
-            elif input_type == "bidi_image_input":
-                input_event = BidiImageInputEvent(**input_data)
-            else:
-                raise ValueError(f"input_type=<{input_type}> | input type not supported")
-
-        else:
-            raise ValueError("invalid input | must be str, BidiInputEvent, or event dict")
-
-        await self._loop.send(input_event)
+        await self._loop.send(message)
 
     async def receive(self) -> AsyncGenerator[BidiOutputEvent, None]:
         """Receive events from the model including audio, text, and tool calls.
@@ -379,6 +411,86 @@ class BidiAgent(LocalAgent):
         """
         self._started = False
         await self._loop.stop()
+
+    def take_snapshot(
+        self,
+        *,
+        preset: SnapshotPreset | None = None,
+        include: list[SnapshotField] | None = None,
+        exclude: list[SnapshotField] | None = None,
+        app_data: dict[str, Any] | None = None,
+    ) -> Snapshot:
+        """Capture current agent state as an in-memory snapshot.
+
+        Captures committed conversation history and application state. Live connection
+        state, in-progress responses, and pending tool calls are not included.
+
+        Args:
+            preset: Named preset of fields to capture. Currently only "session" is supported,
+                which captures messages and state.
+            include: Additional fields to capture on top of the preset.
+            exclude: Fields to remove after applying preset and include.
+            app_data: Application-owned arbitrary JSON stored verbatim in the snapshot.
+
+        Returns:
+            A Snapshot containing the captured agent state.
+
+        Raises:
+            SnapshotException: If no fields are resolved or a field is invalid or unsupported.
+        """
+        for snapshot_field in [*(include or []), *(exclude or [])]:
+            if snapshot_field not in BIDI_SNAPSHOT_FIELDS:
+                raise SnapshotException(
+                    f"Invalid snapshot field: {snapshot_field!r}. Valid fields: {sorted(BIDI_SNAPSHOT_FIELDS)}"
+                )
+        preset_fields = BIDI_SNAPSHOT_PRESETS[preset] if preset is not None else ()
+        fields = resolve_snapshot_fields(include=[*preset_fields, *(include or [])], exclude=exclude)
+
+        data: dict[str, Any] = {}
+        if "messages" in fields:
+            data["messages"] = copy.deepcopy(self.messages)
+        if "state" in fields:
+            data["state"] = self.state.get()
+        if "system_prompt" in fields:
+            # Store the content-block representation so round-trips preserve caching hints and
+            # other block-level metadata.
+            data["system_prompt"] = copy.deepcopy(self._system_prompt_content)
+
+        return Snapshot(
+            scope="agent",
+            schema_version=SNAPSHOT_SCHEMA_VERSION,
+            data=data,
+            app_data=copy.deepcopy(app_data) if app_data else {},
+        )
+
+    def load_snapshot(self, snapshot: Snapshot) -> None:
+        """Restore agent state from a previously captured snapshot.
+
+        Only fields present in snapshot.data are restored; absent fields are left unchanged and
+        fields this agent does not support are ignored. The restored history is sent to the model
+        on the next start().
+
+        Args:
+            snapshot: The snapshot to restore from.
+
+        Raises:
+            SnapshotException: If snapshot.schema_version is not "1.0" or snapshot.scope is not "agent".
+            RuntimeError: If the agent is started.
+        """
+        if self._started:
+            raise RuntimeError("agent started | call stop before loading a snapshot")
+        snapshot.validate()
+        if snapshot.scope != "agent":
+            raise SnapshotException(f"Expected snapshot scope 'agent', got {snapshot.scope!r}")
+
+        data = snapshot.data
+
+        if "messages" in data:
+            self.messages = copy.deepcopy(data["messages"])
+        if "state" in data:
+            self.state = AgentState(data["state"])
+        if "system_prompt" in data:
+            self.system_prompt = copy.deepcopy(data["system_prompt"])
 
     async def __aenter__(self, invocation_state: dict[str, Any] | None = None) -> "BidiAgent":
         """Async context manager entry point.
@@ -407,38 +519,38 @@ class BidiAgent(LocalAgent):
         await self.stop()
 
     async def run(
-        self, inputs: list[BidiInput], outputs: list[BidiOutput], invocation_state: dict[str, Any] | None = None
+        self, inputs: list[InputStream], outputs: list[OutputStream], invocation_state: dict[str, Any] | None = None
     ) -> None:
-        """Run the agent using provided IO channels for bidirectional communication.
+        """Run the agent using provided I/O streams for bidirectional communication.
 
         Args:
-            inputs: Input callables to read data from a source
-            outputs: Output callables to receive events from the agent
-            invocation_state: Optional context to pass to tools during execution.
-                This allows passing custom data (user_id, session_id, database connections, etc.)
-                that tools can access via their invocation_state parameter.
+            inputs: Streams that produce input for the agent.
+            outputs: Streams that consume output events from the agent.
+            invocation_state: Optional context shared by reference with tools and hooks for the duration of run(),
+                including across connection restarts. Tools access it through ToolContext.invocation_state.
+                Defaults to a new empty dictionary.
 
         Example:
             ```python
-            # Using model defaults:
-            model = BedrockNovaSonicModel()
-            audio_io = BidiAudioIO()
-            text_io = BidiTextIO()
+            # Using default audio settings:
+            model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
+            audio_io = AudioIO()
             agent = BidiAgent(model=model, tools=[calculator])
             await agent.run(
                 inputs=[audio_io.input()],
-                outputs=[audio_io.output(), text_io.output()],
+                outputs=[audio_io.output()],
                 invocation_state={"user_id": "user_123"}
             )
 
             # Using custom audio config:
             model = BedrockNovaSonicModel(
+                model_id="amazon.nova-2-sonic-v1:0",
                 audio={
-                    "input_rate": 48000,
-                    "output_rate": 24000,
+                    "input": {"sample_rate": 16000},
+                    "output": {"sample_rate": 24000},
                 }
             )
-            audio_io = BidiAudioIO()
+            audio_io = AudioIO()
             agent = BidiAgent(model=model, tools=[calculator])
             await agent.run(
                 inputs=[audio_io.input()],
@@ -448,7 +560,7 @@ class BidiAgent(LocalAgent):
         """
 
         async def run_inputs() -> None:
-            async def task(input_: BidiInput) -> None:
+            async def task(input_: InputStream) -> None:
                 while True:
                     event = await input_()
                     await self.send(event)
@@ -464,8 +576,8 @@ class BidiAgent(LocalAgent):
         try:
             await self.start(invocation_state)
 
-            input_starts = [input_.start for input_ in inputs if isinstance(input_, BidiInput)]
-            output_starts = [output.start for output in outputs if isinstance(output, BidiOutput)]
+            input_starts = [input_.start for input_ in inputs if isinstance(input_, InputStream)]
+            output_starts = [output.start for output in outputs if isinstance(output, OutputStream)]
             for start in [*input_starts, *output_starts]:
                 await start(self)
 
@@ -474,8 +586,8 @@ class BidiAgent(LocalAgent):
                 task_group.create_task(run_outputs(inputs_task))
 
         finally:
-            input_stops = [input_.stop for input_ in inputs if isinstance(input_, BidiInput)]
-            output_stops = [output.stop for output in outputs if isinstance(output, BidiOutput)]
+            input_stops = [input_.stop for input_ in inputs if isinstance(input_, InputStream)]
+            output_stops = [output.stop for output in outputs if isinstance(output, OutputStream)]
 
             await stop_all(*input_stops, *output_stops, self.stop)
 
@@ -492,4 +604,30 @@ class BidiAgent(LocalAgent):
             for message in messages:
                 _ensure_tracking_id(message)
                 self.messages.append(message)
-                await self.hooks.invoke_callbacks_async(BidiMessageAddedEvent(agent=self, message=message))
+                await self.hooks.invoke_callbacks_async(MessageAddedEvent[LocalAgent](agent=self, message=message))
+
+    async def _update_message(self, message: Message, *, strict: bool = True) -> None:
+        """Replace a message by its tracking ID and notify hooks.
+
+        Search newest messages first.
+
+        Args:
+            message: Replacement message carrying the original tracking ID.
+            strict: Raise if the message is missing. Otherwise, log a warning.
+
+        Raises:
+            RuntimeError: If the message is missing and strict is True.
+        """
+        tracking_id = message["tracking_id"]
+        async with self._message_lock:
+            for index in range(len(self.messages) - 1, -1, -1):
+                if self.messages[index].get("tracking_id") != tracking_id:
+                    continue
+                self.messages[index] = message
+                break
+            else:
+                if strict:
+                    raise RuntimeError(f"tracking_id=<{tracking_id}> | message not found in history")
+                logger.warning("tracking_id=<%s> | message not found in history", tracking_id)
+                return
+        await self.hooks.invoke_callbacks_async(MessageUpdatedEvent[LocalAgent](self, tracking_id, message))

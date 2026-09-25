@@ -64,7 +64,7 @@ Strands Agents' http_request tool provides:
 """
 
 from strands import Agent
-from strands_tools import http_request
+from strands.vended_tools import http_request
 
 # Define a weather-focused system prompt
 WEATHER_SYSTEM_PROMPT = """You are a weather assistant with HTTP capabilities. You can:

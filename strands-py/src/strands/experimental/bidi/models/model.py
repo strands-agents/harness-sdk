@@ -16,30 +16,16 @@ Features:
 import abc
 import logging
 from collections.abc import AsyncIterable
-from typing import Any, NoReturn, Protocol, TypedDict, cast, runtime_checkable
+from typing import Any, NoReturn, Protocol, cast, runtime_checkable
 
 from ....models.model import Model
-from ....types._events import ToolResultEvent
 from ....types.content import Messages
 from ....types.tools import ToolSpec
-from ..types.events import BidiInputEvent, BidiOutputEvent
-from ..types.model import AudioConfig, BidiConnectionConfig
+from ..types.content import BidiContentDelta, BidiMessage
+from ..types.events import BidiOutputEvent
+from .configs import AudioConfig, ConnectionConfig
 
 logger = logging.getLogger(__name__)
-
-
-class BidiModelConfig(TypedDict, total=False):
-    """Configuration shared by bidirectional model providers.
-
-    Attributes:
-        model_id: Provider model identifier.
-        params: Provider-specific keyword arguments passed to the model request or session.
-        connection: Reconnect timing overrides.
-    """
-
-    model_id: str
-    params: dict[str, Any] | None
-    connection: BidiConnectionConfig
 
 
 @runtime_checkable
@@ -72,32 +58,22 @@ class BidiModel(Model, abc.ABC):
     provider-specific protocols while exposing a standardized event-based API.
 
     Attributes:
-        config: Configuration dictionary with provider-specific settings.
         model_id: Provider model identifier.
-        connection_config: Declared connection limit and reconnect timing. Providers that
-            support proactive reconnect populate this; an empty config means reactive-only
-            behavior.
         usage_is_cumulative: Whether the provider reports cumulative connection token totals
             (True) rather than per-response deltas (False, the default when absent). Providers
             reporting deltas may omit it.
     """
 
-    config: Any
-    model_id: str
-    connection_config: BidiConnectionConfig
     usage_is_cumulative: bool
 
-    def update_config(self, **model_config: Any) -> None:
-        """Update the model configuration with the provided arguments.
+    @property
+    def model_id(self) -> str:
+        """Get the configured model identifier."""
+        return cast(str, self.get_config()["model_id"])
 
-        Args:
-            **model_config: Configuration overrides.
-        """
-        self.config.update(model_config)
-
-    def get_config(self) -> dict[str, Any]:
-        """Return a copy of the model configuration."""
-        return cast(dict[str, Any], self.config).copy()
+    def get_connection_config(self) -> ConnectionConfig:
+        """Get the configured reconnect timing, or an empty config if unspecified."""
+        return cast(ConnectionConfig, self.get_config().get("connection", {}))
 
     def structured_output(self, *args: Any, **kwargs: Any) -> NoReturn:
         """Raise because bidirectional models do not support structured output."""
@@ -146,9 +122,9 @@ class BidiModel(Model, abc.ABC):
     def receive(self) -> AsyncIterable[BidiOutputEvent]:
         """Receive streaming events from the model.
 
-        Continuously yields events from the model as they arrive over the connection.
-        Events are normalized to a provider-agnostic format for uniform processing.
-        This method should be called in a loop or async task to process model responses.
+        Each transcript has start and stop events, with zero or more deltas between
+        them, sharing a content_id unique within the connection. Transcript streams
+        may interleave, and user transcripts may arrive outside response boundaries.
 
         The stream continues until the connection is closed or an error occurs.
 
@@ -160,37 +136,40 @@ class BidiModel(Model, abc.ABC):
 
     @abc.abstractmethod
     # pragma: no cover
-    async def send(
-        self,
-        content: BidiInputEvent | ToolResultEvent,
-    ) -> None:
-        """Send content to the model over the active connection.
-
-        Transmits user input or tool results to the model during an active streaming
-        session. Supports multiple content types including text, audio, images, and
-        tool execution results. Can be called multiple times during a conversation.
+    async def send(self, content: BidiMessage | BidiContentDelta) -> None:
+        """Send a complete message or an individual delta over the active connection.
 
         Args:
-            content: The content to send. Must be one of:
+            content: A message of text and image blocks, a message of tool results,
+                or a streaming audio delta. Complete messages preserve block order
+                and request a response after delivery, subject to provider turn and
+                tool scheduling. A message may require several provider events.
 
-                - BidiTextInputEvent: Text message from the user
-                - BidiAudioInputEvent: Audio data for speech input
-                - BidiImageInputEvent: Image data for visual understanding
-                - ToolResultEvent: Result from a tool execution
+        Raises:
+            ValueError: If the content is unsupported by the provider.
 
         Example:
             ```
-            await model.send(BidiTextInputEvent(text="Hello", role="user"))
-            await model.send(BidiAudioInputEvent(audio=bytes, format="pcm", sample_rate=16000, channels=1))
-            await model.send(BidiImageInputEvent(image=bytes, mime_type="image/jpeg", encoding="raw"))
-            await model.send(ToolResultEvent(tool_result))
+            from strands.experimental.bidi.types import AudioDelta, BidiMessage
+            from strands.types.content import TextBlock
+            from strands.types.media import ImageBlock
+            from strands.types.tools import ToolResultBlock
+
+            await model.send(BidiMessage(content=[
+                ImageBlock(format="jpeg", source={"bytes": image_bytes}),
+                TextBlock("What is in this image?"),
+            ]))
+            await model.send(AudioDelta(format="pcm", source={"bytes": audio_bytes}))
+            await model.send(BidiMessage(content=[
+                ToolResultBlock(tool_use_id="call-1", status="success", content=[{"text": "Done"}]),
+            ]))
             ```
         """
         pass
 
 
-class BidiModelTimeoutError(Exception):
-    """Model timeout error.
+class ConnectionTimeoutError(Exception):
+    """Persistent model connection timeout.
 
     Bidirectional models are often configured with a connection time limit. Bedrock Nova Sonic, for example, keeps the
     connection open for 8 minutes max. Upon receiving a timeout, the agent loop is configured to restart the model
@@ -213,7 +192,6 @@ class BidiModelTimeoutError(Exception):
 class AudioCapable(Protocol):
     """Protocol for models that support audio input and output."""
 
-    @property
-    def audio_config(self) -> AudioConfig:
+    def get_audio_config(self) -> AudioConfig:
         """Get the resolved audio configuration."""
         ...

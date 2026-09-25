@@ -8,6 +8,8 @@ import { Interrupt } from '../../interrupt.js'
 import { ExecuteToolStage, InvokeModelStage } from '../../middleware/index.js'
 import { tool } from '../../tools/tool-factory.js'
 import { InterruptResponseContent } from '../../types/interrupt.js'
+import { ImageBlock } from '../../types/media.js'
+import { TextBlock } from '../../types/messages.js'
 import type { ToolUseBlock } from '../../types/messages.js'
 import type { ToolSpec } from '../../tools/types.js'
 import type { BackgroundTask } from '../types.js'
@@ -17,7 +19,7 @@ const BACKGROUND_TASKS_STATE_KEY = 'strands.backgroundTasks'
 function deliveries(agent: Agent): ToolUseBlock[] {
   const blocks = agent.messages.flatMap((message) => message.content)
   return blocks.filter(
-    (block): block is ToolUseBlock => block.type === 'toolUseBlock' && block.name === 'strands_background_task_result'
+    (block): block is ToolUseBlock => block.type === 'toolUseBlock' && block.name === 'strands_manage_background_task'
   )
 }
 
@@ -75,15 +77,29 @@ describe('BackgroundTasks', () => {
     const [delivery] = deliveries(agent)
     expect(delivery).toEqual({
       type: 'toolUseBlock',
-      name: 'strands_background_task_result',
+      name: 'strands_manage_background_task',
       toolUseId: expect.any(String),
-      input: { toolName: 'work' },
+      input: { mode: 'get', taskId: delivery!.toolUseId },
     })
+    expect(toolSpecs?.map((spec) => spec.name)).toContain(delivery!.name)
     expect(agent.messages.flatMap((message) => message.content)).toContainEqual({
       type: 'toolResultBlock',
       toolUseId: delivery!.toolUseId,
       status: 'success',
-      content: [{ type: 'textBlock', text: 'done:background' }],
+      content: [
+        {
+          type: 'jsonBlock',
+          json: {
+            taskId: delivery!.toolUseId,
+            toolUseId: 'work-use',
+            toolName: 'work',
+            status: 'completed',
+            createdAt: expect.any(String),
+            lastUpdatedAt: expect.any(String),
+          },
+        },
+        { type: 'textBlock', text: 'done:background' },
+      ],
     })
   })
 
@@ -156,9 +172,9 @@ describe('BackgroundTasks', () => {
     expect(deliveries(agent)).toEqual([
       {
         type: 'toolUseBlock',
-        name: 'strands_background_task_result',
+        name: 'strands_manage_background_task',
         toolUseId: expect.any(String),
-        input: { toolName: 'background' },
+        input: { mode: 'get', taskId: expect.any(String) },
       },
     ])
     for (const name of ['background', 'foreground']) {
@@ -187,6 +203,7 @@ describe('BackgroundTasks', () => {
   })
 
   it('delivers work that finishes between invocations', async () => {
+    const image = new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } })
     let release!: () => void
     const released = new Promise<void>((resolve) => {
       release = resolve
@@ -197,7 +214,7 @@ describe('BackgroundTasks', () => {
       inputSchema: z.object({}),
       callback: async () => {
         await released
-        return 'done'
+        return [new TextBlock('done'), image]
       },
     })
     const model = new MockMessageModel()
@@ -232,9 +249,15 @@ describe('BackgroundTasks', () => {
           status: 'completed',
           createdAt: expect.any(String),
           lastUpdatedAt: expect.any(String),
-          result: { content: [{ text: 'done' }] },
+          result: { content: [{ text: 'done' }, image.toJSON()] },
         },
       ])
+    const taskId = persistedTasks(agent)![0]!.taskId
+    const inspected = await agent.tool.strands_manage_background_task!.invoke(
+      { mode: 'get', taskId },
+      { recordDirectToolCall: false }
+    )
+    expect(inspected.content.slice(1)).toEqual([new TextBlock('done'), image])
     const snapshot = agent.takeSnapshot({ preset: 'session' })
     const restored = new Agent({
       model: new MockMessageModel().addTurn({ type: 'textBlock', text: 'Result received.' }),
@@ -246,6 +269,12 @@ describe('BackgroundTasks', () => {
     await restored.invoke('Continue.')
 
     expect(deliveries(restored)).toHaveLength(1)
+    expect(restored.messages.flatMap((message) => message.content)).toContainEqual({
+      type: 'toolResultBlock',
+      toolUseId: taskId,
+      status: 'success',
+      content: inspected.content,
+    })
     expect(persistedTasks(restored)).toBeUndefined()
   })
 
@@ -308,9 +337,9 @@ describe('BackgroundTasks', () => {
     expect(deliveries(agent)).toEqual([
       {
         type: 'toolUseBlock',
-        name: 'strands_background_task_result',
+        name: 'strands_manage_background_task',
         toolUseId: 'working',
-        input: { toolName: 'working-work' },
+        input: { mode: 'get', taskId: 'working' },
       },
     ])
   })

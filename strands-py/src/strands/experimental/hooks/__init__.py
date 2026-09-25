@@ -2,22 +2,12 @@
 
 from typing import Any
 
-from .events import (
-    BidiAfterConnectionRestartEvent,
-    BidiAfterInvocationEvent,
-    BidiAgentInitializedEvent,
-    BidiBeforeConnectionRestartEvent,
-    BidiBeforeInvocationEvent,
-    BidiInterruptionEvent,
-    BidiMessageAddedEvent,
-)
+from . import events
 
 # Deprecated aliases are accessed via __getattr__ to emit warnings only on use
 
 
 def __getattr__(name: str) -> Any:
-    from . import events
-
     return getattr(events, name)
 
 
@@ -26,12 +16,4 @@ __all__ = [
     "AfterToolInvocationEvent",
     "BeforeModelInvocationEvent",
     "AfterModelInvocationEvent",
-    # BidiAgent hooks
-    "BidiAgentInitializedEvent",
-    "BidiBeforeInvocationEvent",
-    "BidiAfterInvocationEvent",
-    "BidiMessageAddedEvent",
-    "BidiInterruptionEvent",
-    "BidiBeforeConnectionRestartEvent",
-    "BidiAfterConnectionRestartEvent",
 ]

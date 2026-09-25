@@ -17,6 +17,18 @@ describe('sandbox errors', () => {
       const error = new SandboxTimeoutError(30)
       expect(error).toBeInstanceOf(Error)
     })
+
+    it('carries the partial output captured before the kill', () => {
+      const error = new SandboxTimeoutError(30, 'so far', 'warn')
+      expect(error.stdout).toBe('so far')
+      expect(error.stderr).toBe('warn')
+    })
+
+    it('defaults to empty output when no partial output is given', () => {
+      const error = new SandboxTimeoutError(30)
+      expect(error.stdout).toBe('')
+      expect(error.stderr).toBe('')
+    })
   })
 
   describe('SandboxAbortError', () => {

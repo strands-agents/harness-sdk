@@ -6,6 +6,7 @@
   "plugin": ["typedoc-plugin-markdown"],
   "skipErrorChecking": true,
   "basePath": "../strands-ts",
+  "sourceLinkTemplate": "https://github.com/strands-agents/harness-sdk/blob/main/{path}#L{line}",
   "name": "Strands Agents TypeScript SDK",
   "readme": "none",
   "hideGenerator": true,

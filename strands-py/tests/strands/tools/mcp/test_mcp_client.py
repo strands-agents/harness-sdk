@@ -2012,6 +2012,12 @@ def test_mcp_client_client_info_passed(
             assert expected_version_check(call_kwargs["client_info"].version)
 
 
+def test_mcp_client_client_name_property(mock_transport):
+    """Test that client_name exposes the configured application_name."""
+    assert MCPClient(mock_transport["transport_callable"]).client_name is None
+    assert MCPClient(mock_transport["transport_callable"], application_name="my-agent").client_name == "my-agent"
+
+
 @pytest.mark.parametrize(
     "application_name",
     [None, ""],

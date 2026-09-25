@@ -12,7 +12,7 @@ import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
 import {
   flattenMessagesToContent,
-  SUMMARIZED_PREFIX,
+  formatSummarized,
   summarizeContent,
   toolResultToContentBlocks,
   type SummarizeConfig,
@@ -59,12 +59,9 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     const eligible = await this._getEligibleMessages(context)
     if (eligible.length === 0) return false
 
-    const summarizeCount = Math.max(1, Math.floor(eligible.length * this._removalRatio))
-    const toSummarize = eligible.slice(0, summarizeCount)
-
     // Expand to include paired messages so we don't orphan tool pairs
     const safeSet = new Set<Message>()
-    for (const message of toSummarize) {
+    for (const message of eligible) {
       const index = messages.indexOf(message)
       if (index === -1) continue
       for (const removable of collectRemovableWithPair(messages, index)) {
@@ -81,11 +78,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     const totalTokens = await model.countTokens(safe)
     const summaryMessage = new Message({
       role: 'user',
-      content: [
-        new TextBlock(
-          `${SUMMARIZED_PREFIX} ${safe.length} messages, ~${totalTokens.toLocaleString()} tokens]\n\n${summary}`
-        ),
-      ],
+      content: [new TextBlock(formatSummarized(`${safe.length} messages`, totalTokens, summary))],
     })
 
     const { lowestIndex } = spliceWithPairs(messages, safe)
@@ -116,11 +109,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
       return new ToolResultBlock({
         toolUseId: block.toolUseId,
         status: block.status,
-        content: [
-          new TextBlock(
-            `${SUMMARIZED_PREFIX} ~${tokens.toLocaleString()} tokens |${formatStashRefs(stashRefs)}]\n\n${summary}`
-          ),
-        ],
+        content: [new TextBlock(`${formatSummarized('tool result', tokens, summary)}${formatStashRefs(stashRefs)}`)],
       })
     }
 
@@ -129,13 +118,17 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
       if (!summary) return null
 
       logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | summarized text block`)
-      return new TextBlock(
-        `${SUMMARIZED_PREFIX} ~${tokens.toLocaleString()} tokens |${formatStashRefs(stashRefs)}]\n\n${summary}`
-      )
+      return new TextBlock(`${formatSummarized('text block', tokens, summary)}${formatStashRefs(stashRefs)}`)
+    }
+
+    const summary = await summarizeContent([block], model, this._config)
+    if (summary) {
+      logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | summarized media block`)
+      return new TextBlock(`${formatSummarized('media block', tokens, summary)}${formatStashRefs(stashRefs)}`)
     }
 
     logger.debug(`trackingId=<${message.trackingId}>, tokens=<${tokens}> | offloaded media block`)
-    return new TextBlock(`[Offloaded: ~${tokens} tokens${formatStashRefs(stashRefs)}]`)
+    return new TextBlock(`[Offloaded: ~${tokens} tokens]${formatStashRefs(stashRefs)}`)
   }
 
   private _resolveModel(agent: LocalAgent): Model | undefined {

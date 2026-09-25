@@ -518,7 +518,7 @@ class ContextOffloader(Plugin):
         # Store each content block individually
         storage = self._storage_for_agent(event.agent)
         cycle = event.agent.event_loop_metrics.cycle_count
-        references: list[tuple[str, str, str]] = []  # (ref, content_type, description)
+        references: list[tuple[str, str, str] | None] = []  # (ref, content_type, description) or None
         try:
             for i, block in enumerate(content):
                 key = f"{tool_use_id}_{i}"
@@ -540,7 +540,7 @@ class ContextOffloader(Plugin):
                         references.append((ref, f"image/{img_format}", f"image/{img_format}, {len(img_bytes):,} bytes"))
                         self._track_stored_cycle(event.agent, ref, cycle)
                     else:
-                        references.append(("", f"image/{img_format}", f"image/{img_format}, 0 bytes"))
+                        references.append(None)
                 elif "document" in block:
                     doc = block["document"]
                     doc_format = doc.get("format", "unknown")
@@ -551,7 +551,7 @@ class ContextOffloader(Plugin):
                         references.append((ref, f"application/{doc_format}", f"{doc_name}, {len(doc_bytes):,} bytes"))
                         self._track_stored_cycle(event.agent, ref, cycle)
                     else:
-                        references.append(("", f"application/{doc_format}", f"{doc_name}, 0 bytes"))
+                        references.append(None)
         except Exception:
             logger.warning(
                 "tool_use_id=<%s> | failed to offload tool result, keeping original",
@@ -569,7 +569,10 @@ class ContextOffloader(Plugin):
 
         # Build preview text — use tiktoken for exact slicing when available
         preview = self._slice_preview(full_text) if full_text else ""
-        ref_lines = "\n".join(f"  {ref} ({desc})" for ref, _, desc in references if ref)
+        # Skip None: non-bytes image/document sources were left unstored (#4017).
+        ref_lines = "\n".join(
+            f"  {ref} ({desc})" for entry in references if entry is not None for ref, _, desc in [entry] if ref
+        )
 
         guidance = (
             "Tool result was offloaded to external storage due to size.\n"
@@ -595,7 +598,12 @@ class ContextOffloader(Plugin):
         # Build new content with preview + placeholders for non-text blocks
         new_content: list[ToolResultContent] = [ToolResultContent(text=preview_text)]
         for i, block in enumerate(content):
-            ref = references[i][0] if i < len(references) else ""
+            # None = unstored non-bytes source; keep the original block (#4017).
+            ref_entry = references[i] if i < len(references) else None
+            if ref_entry is None:
+                new_content.append(block)
+                continue
+            ref = ref_entry[0]
             if "text" in block or "json" in block:
                 continue
             elif "image" in block:

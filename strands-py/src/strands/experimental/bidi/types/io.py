@@ -1,25 +1,24 @@
-"""Protocol for bidirectional streaming IO channels.
+"""Protocols for bidirectional input and output streams.
 
-Defines callable protocols for input and output channels that can be used
-with BidiAgent. This approach provides better typing and flexibility
-by separating input and output concerns into independent callables.
+The protocols separate input and output concerns into independent callables
+with lifecycle methods managed by ``BidiAgent``.
 """
 
 from collections.abc import Awaitable
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from ..types.events import BidiInputEvent, BidiOutputEvent
+from .agent import BidiAgentInput
+from .events import BidiOutputEvent
 
 if TYPE_CHECKING:
     from ..agent.agent import BidiAgent
 
 
 @runtime_checkable
-class BidiInput(Protocol):
-    """Protocol for bidirectional input callables.
+class InputStream(Protocol):
+    """Callable input stream managed by a bidirectional agent.
 
-    Input callables read data from a source (microphone, camera, websocket, etc.)
-    and return events to be sent to the agent.
+    An input stream reads one value from a source each time the agent calls it.
     """
 
     async def start(self, agent: "BidiAgent") -> None:
@@ -30,21 +29,20 @@ class BidiInput(Protocol):
         """Stop input."""
         return
 
-    def __call__(self) -> Awaitable[BidiInputEvent]:
+    def __call__(self) -> Awaitable[BidiAgentInput]:
         """Read input data from the source.
 
         Returns:
-            Awaitable that resolves to an input event (audio, text, image, etc.)
+            Awaitable that resolves to input content (audio, text, image, etc.)
         """
         ...
 
 
 @runtime_checkable
-class BidiOutput(Protocol):
-    """Protocol for bidirectional output callables.
+class OutputStream(Protocol):
+    """Callable output stream managed by a bidirectional agent.
 
-    Output callables receive events from the agent and handle them appropriately
-    (play audio, display text, send over websocket, etc.).
+    An output stream handles one event each time the agent calls it.
     """
 
     async def start(self, agent: "BidiAgent") -> None:

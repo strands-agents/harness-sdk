@@ -1,0 +1,220 @@
+---
+title: MCP Transports
+description: "How a Strands agent reaches an MCP server: stdio for local processes, Streamable HTTP and SSE for remote servers, with OAuth and AWS IAM authentication."
+tags: [tool-authoring, mcp]
+sourceLinks:
+  - path: strands-py/src/strands/tools/mcp/mcp_client.py
+  - path: strands-ts/src/mcp/client.ts
+---
+
+A transport carries messages between the agent and an MCP server. Which one you use
+depends on where the server runs: a local process reachable over standard I/O, or a
+remote server reachable over HTTP. This page covers each transport Strands supports
+and how to configure it, including authentication for HTTP servers.
+
+To connect an agent to a server and use its tools, see
+[Connect your agent to MCP tools](mcp-tools.md). The connection pattern is the same
+for every transport; only the transport object you hand to the client changes.
+
+## Standard I/O (stdio)
+
+For command-line tools and local processes that speak MCP over stdin and stdout:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from mcp import stdio_client, StdioServerParameters
+from strands import Agent
+from strands.tools.mcp import MCPClient
+
+# For macOS/Linux:
+stdio_mcp_client = MCPClient(lambda: stdio_client(
+    StdioServerParameters(
+        command="uvx",
+        args=["awslabs.aws-documentation-mcp-server@latest"]
+    )
+))
+
+# For Windows:
+stdio_mcp_client = MCPClient(lambda: stdio_client(
+    StdioServerParameters(
+        command="uvx",
+        args=[
+            "--from",
+            "awslabs.aws-documentation-mcp-server@latest",
+            "awslabs.aws-documentation-mcp-server.exe"
+        ]
+    )
+))
+
+with stdio_mcp_client:
+    tools = stdio_mcp_client.list_tools_sync()
+    agent = Agent(tools=tools)
+    response = agent("What is AWS Lambda?")
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/mcp-transports.ts:stdio_transport"
+```
+</Tab>
+</Tabs>
+
+## Streamable HTTP
+
+For HTTP-based MCP servers that use the Streamable HTTP transport:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from mcp.client.streamable_http import streamablehttp_client
+from strands import Agent
+from strands.tools.mcp import MCPClient
+
+streamable_http_mcp_client = MCPClient(
+    lambda: streamablehttp_client("http://localhost:8000/mcp")
+)
+
+with streamable_http_mcp_client:
+    tools = streamable_http_mcp_client.list_tools_sync()
+    agent = Agent(tools=tools)
+```
+
+Pass `headers` to send authentication or other request headers:
+
+```python
+import os
+from mcp.client.streamable_http import streamablehttp_client
+from strands.tools.mcp import MCPClient
+
+github_mcp_client = MCPClient(
+    lambda: streamablehttp_client(
+        url="https://api.githubcopilot.com/mcp/",
+        headers={"Authorization": f"Bearer {os.getenv('MCP_PAT')}"}
+    )
+)
+```
+
+#### OAuth Authentication
+
+For servers protected by OAuth, pass the server `url` directly with an `auth`
+credential. `MCPClient` builds the Streamable HTTP transport internally and
+authenticates with the OAuth client_credentials grant, which suits
+machine-to-machine deployments where no user is present to complete a browser flow.
+
+```python
+import os
+from strands.tools.mcp import MCPClient
+
+oauth_mcp_client = MCPClient(
+    url="https://api.example.com/mcp/",
+    auth={
+        "client_id": os.environ["OAUTH_CLIENT_ID"],
+        "client_secret": os.environ["OAUTH_CLIENT_SECRET"],
+        "scopes": ["mcp:tools"],  # optional
+    },
+)
+```
+
+`scopes` is joined with spaces and is advisory only: if the server advertises its
+own scopes (via the `WWW-Authenticate` header or its protected-resource or
+authorization-server metadata), those scopes are used instead and this value is
+ignored. Token acquisition and refresh happen automatically. Combine `headers` with
+`auth` when the server also expects custom headers.
+
+For advanced flows such as the interactive authorization_code grant, pass any
+`httpx.Auth` implementation as `auth_provider` instead. The `mcp` package's
+`OAuthClientProvider` is one such implementation:
+
+```python
+from mcp.client.auth import OAuthClientProvider
+
+oauth_mcp_client = MCPClient(
+    url="https://api.example.com/mcp/",
+    auth_provider=OAuthClientProvider(...),
+)
+```
+
+`auth` and `auth_provider` are mutually exclusive, both require `url`, and OAuth is
+supported for Streamable HTTP only. Set the same `auth` credential on a server entry
+in a [`load_servers`](mcp-tools.md#using-multiple-mcp-servers) config, where `${VAR}`
+interpolation keeps secrets in the environment:
+
+```json
+{
+  "mcpServers": {
+    "protected-server": {
+      "url": "https://api.example.com/mcp/",
+      "auth": {
+        "client_id": "${OAUTH_CLIENT_ID}",
+        "client_secret": "${OAUTH_CLIENT_SECRET}"
+      }
+    }
+  }
+}
+```
+
+#### AWS IAM
+
+For MCP servers on AWS that use SigV4 authentication with IAM credentials, the
+[`mcp-proxy-for-aws`](https://pypi.org/project/mcp-proxy-for-aws/) package handles
+AWS credential management and request signing. See the
+[detailed guide](https://dev.to/aws/no-oauth-required-an-mcp-client-for-aws-iam-k1o)
+for background.
+
+First, install the package:
+
+```bash
+pip install mcp-proxy-for-aws
+```
+
+Then use it like any other transport:
+
+```python
+from mcp_proxy_for_aws.client import aws_iam_streamablehttp_client
+from strands.tools.mcp import MCPClient
+
+mcp_client = MCPClient(lambda: aws_iam_streamablehttp_client(
+    endpoint="https://your-service.us-east-1.amazonaws.com/mcp",
+    aws_region="us-east-1",
+    aws_service="bedrock-agentcore"
+))
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/mcp-transports.ts:streamable_http"
+```
+</Tab>
+</Tabs>
+
+## Server-Sent Events (SSE)
+
+For HTTP-based MCP servers that use the older Server-Sent Events transport:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from mcp.client.sse import sse_client
+from strands import Agent
+from strands.tools.mcp import MCPClient
+
+sse_mcp_client = MCPClient(lambda: sse_client("http://localhost:8000/sse"))
+
+with sse_mcp_client:
+    tools = sse_mcp_client.list_tools_sync()
+    agent = Agent(tools=tools)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/mcp-transports.ts:sse_transport"
+```
+</Tab>
+</Tabs>

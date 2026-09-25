@@ -7,6 +7,7 @@ SDK. These types are modeled after the Bedrock API.
 """
 
 import uuid
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from typing_extensions import NotRequired, TypedDict
@@ -104,6 +105,25 @@ class ContentBlock(TypedDict, total=False):
     toolUse: ToolUse
     video: VideoContent
     citationsContent: CitationsContentBlock
+
+
+class _TextBlockData(TypedDict):
+    text: str
+
+
+@dataclass
+class TextBlock:
+    """Text content for a message.
+
+    Attributes:
+        text: Text to send.
+    """
+
+    text: str
+
+    def to_dict(self) -> _TextBlockData:
+        """Return the dictionary form of this block."""
+        return {"text": self.text}
 
 
 class SystemContentBlock(TypedDict, total=False):

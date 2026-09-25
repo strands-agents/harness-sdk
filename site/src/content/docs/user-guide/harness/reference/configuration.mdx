@@ -1,0 +1,71 @@
+---
+title: Configuration reference
+description: "Every option the Strands harness factory accepts, in one table: the Python name, the TypeScript name, its default, and what it does."
+sourceLinks:
+  - path: harness-py/src/strands_harness/agent.py
+  - path: harness-py/src/strands_harness/defaults.py
+  - path: harness-ts/src/agent.ts
+sidebar:
+  label: "Configuration reference"
+---
+
+This is the lookup layer for the Strands harness factory (`create_harness` in Python, `createHarness`
+in TypeScript). Every argument is optional. The two libraries expose the same surface, each
+spelled for its language (`snake_case` in Python, `camelCase` in TypeScript). For how each
+option is used in practice, follow the links into the configure and tools guides.
+
+## Options
+
+| Python | TypeScript | Default | Purpose |
+|---|---|---|---|
+| `model` | `model` | `bedrock/global.anthropic.claude-opus-4-8` | A `provider/name` string, a bare Amazon Bedrock id, or a `Model` instance. See [choose a model](../../configure/model/). |
+| `effort` | `effort` | `"auto"` | Reasoning effort: `"auto"`, `"low"`, `"medium"`, `"high"`, or off. Ignored for a `Model` instance. |
+| `instructions` | `instructions` | none | A domain block appended after the harness contract. Ignored when a full system prompt is passed. |
+| `tools` | `tools` | none | Consumer tools, added alongside the built-ins. See [add tools](../../configure/tools-and-instructions/). |
+| `plugins` | `plugins` | none | Consumer Strands Harness SDK plugins, added alongside the built-in plugins. |
+| `mcp_servers` | `mcpServers` | none | MCP servers to connect: a JSON file path or a mapping. See [MCP servers](../../configure/mcp-servers/). |
+| `builtin_tools` | `builtinTools` | `shell`, `read`, `write`, `edit`, `web_fetch`, `web_search`, `programmatic_tool_caller`, `subagent` | Built-in tools to enable, or `[]` for none. |
+| `builtin_tools={"web_fetch": {"model": ...}}` | `builtinTools: { web_fetch: { model } }` | provider default | The summarizer model `web_fetch` runs on. See [web access](../../tools/web-access/). |
+| `caching` | `caching` | `"auto"` (on) | Prompt caching where the provider supports it; off disables what Strands harness configures. |
+| `context_manager` | `contextManager` | `"auto"` | `"auto"`, `"agentic"`, or off. Enables context management and offloading. |
+| `session={"id": ...}` | `session: { id }` | none | Persist and resume this conversation by id. |
+| `session={"dir": ...}` | `session: { dir }` | `./.agent/sessions` | Where session state and offloaded artifacts live. |
+| `skills` | `skills` | `./.agent/skills` | Directory (or list) scanned for Agent Skills; off to disable. |
+| `builtin_plugins` | `builtinPlugins` | `["todos", "environment"]` | Built-in feature plugins to enable, or `[]` for none. |
+| `memory` | `memory` | on | File-based long-term memory; off to disable. |
+| `memory={"dir": ...}` | `memory: { dir }` | `./.agent/memory` | Where the default memory store's files live. |
+| `memory={"stores": [...]}` | `memory: { stores }` | none | Swap the memory backend while keeping Strands harness's policy. |
+| `interventions` | `interventions` | none | Gate tool calls behind approval or a policy. See [interventions](../../configure/interventions/). |
+| `background_tasks` | `backgroundTasks` | `{ agentic: ['*'] }` | Background-tasks policy. See [background tasks](../../configure/background-tasks/). |
+
+## Value notes
+
+- **`effort`** accepts `"auto"` (provider recommended), `"low"`/`"medium"`/`"high"`
+  (explicit; some providers accept finer levels), and `"off"`. A level the
+  resolved provider rejects fails at construction.
+- **`caching`** accepts `"auto"`/`True` (on), `False`/`None` (off). Off has no effect where
+  caching is automatic (OpenAI, Google, bedrock-mantle). Enabling it explicitly on a
+  `Model` instance is ignored with a warning.
+- **`context_manager`** accepts `"auto"`, `"agentic"`, and `False`/`None`. Off
+  also disables context offloading.
+- **`memory`** accepts `True` (on) and `False`/`None` (off). Ignored when a
+  `memory_manager` is passed through.
+- **`builtin_tools`**, **`builtin_plugins`** each take a list of
+  names; an unknown name fails at construction with the valid names.
+
+## Passthrough to the Agent
+
+Any keyword the factory does not name is forwarded to the underlying `Agent` constructor.
+An explicit passthrough value takes precedence over the default it corresponds to (for
+example, passing `system_prompt` overrides the prompt Strands harness would build from
+`instructions`, and passing `memory_manager` overrides `memory`). In
+TypeScript, `HarnessAgentOptions` extends the Strands Harness SDK's `AgentConfig` (minus the fields Strands harness
+manages), so any other `AgentConfig` field, such as `retryStrategy`, passes through
+verbatim. See [compose with the Strands Harness SDK](../../composing-with-sdk/).
+
+## Exported building blocks
+
+Beyond the factory, Strands harness exports the pieces it composes: `HARNESS_CONTRACT`,
+`build_system_prompt` / `buildSystemPrompt`, `resolve_memory`, and
+`resolve_interventions` (Python only). These are documented in
+[compose with the Strands Harness SDK](../../composing-with-sdk/).

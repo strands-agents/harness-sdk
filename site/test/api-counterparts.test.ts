@@ -85,13 +85,12 @@ describe('buildApiCounterpartMap', () => {
   })
 
   it('prefers the stable module over an experimental one for shared symbols', () => {
-    // Role is documented by both a stable and an experimental module (as in
-    // types.content vs experimental.bidi.types.events); the TS page must link
-    // to the stable one regardless of entry order.
+    // Role is documented by both a stable and an experimental module; the TS
+    // page must link to the stable one regardless of entry order.
     const sharedEntries: ApiDocEntry[] = [
       {
-        id: 'docs/api/python/strands.experimental.bidi.types.events',
-        body: '<a id="strands.experimental.bidi.types.events.Role"></a>',
+        id: 'docs/api/python/strands.experimental.bidi.types',
+        body: '<a id="strands.experimental.bidi.types.Role"></a>',
       },
       {
         id: 'docs/api/python/strands.types.content.role_definitions',
