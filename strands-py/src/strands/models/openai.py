@@ -16,6 +16,7 @@ from openai.types.chat.parsed_chat_completion import ParsedChatCompletion
 from pydantic import BaseModel
 from typing_extensions import Unpack, override
 
+from ..agent.agent_metadata import AgentMetadata
 from ..types.content import ContentBlock, Messages, SystemContentBlock
 from ..types.event_loop import Usage
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException
@@ -93,10 +94,12 @@ class OpenAIModel(Model):
                 May be combined with ``bedrock_mantle_config``; when both are set,
                 ``bedrock_mantle_config`` derives ``base_url`` and ``api_key`` (which must not
                 appear in ``client_args``).
-            bedrock_mantle_config: Route requests through Amazon Bedrock's Mantle
-                (OpenAI-compatible) endpoint. See :class:`BedrockMantleConfig` for accepted
-                keys. When set, a fresh bearer token is minted on every request. Cannot be
-                combined with a pre-built ``client``.
+            bedrock_mantle_config: Route requests through one of Amazon Bedrock's
+                OpenAI-compatible endpoints, ``bedrock-mantle`` (the default) or
+                ``bedrock-runtime`` via the config's ``endpoint`` key. See
+                :class:`BedrockMantleConfig` for accepted keys. When set, a fresh bearer
+                token is minted on every request. Cannot be combined with a pre-built
+                ``client``.
             **model_config: Configuration options for the OpenAI model.
 
         Raises:
@@ -486,6 +489,7 @@ class OpenAIModel(Model):
         tool_choice: ToolChoice | None = None,
         *,
         system_prompt_content: list[SystemContentBlock] | None = None,
+        agent_metadata: AgentMetadata | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Format an OpenAI compatible chat streaming request.
@@ -496,6 +500,7 @@ class OpenAIModel(Model):
             system_prompt: System prompt to provide context to the model.
             tool_choice: Selection strategy for tool invocation.
             system_prompt_content: System prompt content blocks to provide context to the model.
+            agent_metadata: Invoking agent's metadata.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Returns:
@@ -533,7 +538,7 @@ class OpenAIModel(Model):
         if stream:
             request["stream_options"] = stream_options
 
-        apply_cache_config(request, cast(CacheConfig | None, self.config.get("cache_config")))
+        apply_cache_config(request, cast(CacheConfig | None, self.config.get("cache_config")), agent_metadata)
 
         return request
 
@@ -603,6 +608,13 @@ class OpenAIModel(Model):
                 if tokens_details := getattr(event["data"], "prompt_tokens_details", None):
                     if cached := getattr(tokens_details, "cached_tokens", None):
                         usage_data["cacheReadInputTokens"] = cached
+
+                    # Reported first-party from GPT-5.6, where cache writes are billed at 1.25x the
+                    # uncached input rate. Dropping it leaves cacheWriteInputTokens structurally absent,
+                    # so the write premium is invisible to any cost consumer.
+                    cache_write = getattr(tokens_details, "cache_write_tokens", None)
+                    if isinstance(cache_write, int) and cache_write:
+                        usage_data["cacheWriteInputTokens"] = cache_write
 
                 return {
                     "metadata": {
@@ -689,6 +701,7 @@ class OpenAIModel(Model):
         system_prompt: str | None = None,
         *,
         tool_choice: ToolChoice | None = None,
+        agent_metadata: AgentMetadata | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamEvent, None]:
         """Stream conversation with the OpenAI model.
@@ -698,6 +711,7 @@ class OpenAIModel(Model):
             tool_specs: List of tool specifications to make available to the model.
             system_prompt: System prompt to provide context to the model.
             tool_choice: Selection strategy for tool invocation.
+            agent_metadata: Invoking agent's identity, used to derive a prompt-cache routing key.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Yields:
@@ -708,7 +722,7 @@ class OpenAIModel(Model):
             ModelThrottledException: If the request is throttled by OpenAI (rate limits).
         """
         logger.debug("formatting request")
-        request = self.format_request(messages, tool_specs, system_prompt, tool_choice)
+        request = self.format_request(messages, tool_specs, system_prompt, tool_choice, agent_metadata=agent_metadata)
         logger.debug("formatted request=<%s>", request)
 
         logger.debug("invoking model")

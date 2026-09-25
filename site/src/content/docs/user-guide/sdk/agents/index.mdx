@@ -1,0 +1,131 @@
+---
+title: Anatomy of an agent
+description: "The parts you compose into a Strands agent: the loop that reasons and calls tools, the prompts and state that shape it, and the hooks and interventions that control it."
+sidebar:
+  label: Overview
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components'
+
+An agent in Strands is a model wrapped in a loop that reasons, calls your tools,
+and works toward a goal across as many turns as the task needs. You build one by
+composing a few parts on that loop: the prompts that shape how it behaves, the
+state it carries between turns, the tools it can reach for, and the hooks and
+interventions that let you control it while it runs. Each part is its own page in
+this section; this is the map of how they fit together.
+
+## The agent core
+
+<CardGrid>
+  <LinkCard
+    title="Agent loop"
+    href="agent-loop/"
+    description="How the agent reasons, calls tools, and decides when a task is done."
+  />
+  <LinkCard
+    title="Prompts"
+    href="prompts/"
+    description="Shape behavior with a system prompt and structure what you send each turn."
+  />
+  <LinkCard
+    title="Structured output"
+    href="structured-output/"
+    description="Get typed, schema-validated results back instead of free-form text."
+  />
+</CardGrid>
+
+## State it carries
+
+<CardGrid>
+  <LinkCard
+    title="State"
+    href="state/"
+    description="Hold data the agent reads and writes across the turns of a single run."
+  />
+  <LinkCard
+    title="Conversation management"
+    href="conversation-management/"
+    description="Control what stays in the context window as the conversation grows."
+  />
+  <LinkCard
+    title="Session management"
+    href="session-management/"
+    description="Persist the conversation so an agent resumes where it left off."
+  />
+  <LinkCard
+    title="Snapshots"
+    href="snapshots/"
+    description="Capture and restore agent state to pause, branch, or recover a run."
+  />
+</CardGrid>
+
+## Control at runtime
+
+<CardGrid>
+  <LinkCard
+    title="Hooks"
+    href="hooks/"
+    description="Run your own code at each step of the loop to observe or change behavior."
+  />
+  <LinkCard
+    title="Interventions"
+    href="interventions/"
+    description="Gate, steer, and pause the agent while it runs, with a human or a policy."
+  />
+  <LinkCard
+    title="Retry strategies"
+    href="retry-strategies/"
+    description="Recover from model and tool errors without failing the whole run."
+  />
+</CardGrid>
+
+## A composed agent
+
+The smallest agent that shows the composition: a model with a system prompt, a
+tool it can call, and the loop that decides when to use it.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent, tool
+
+
+@tool
+def word_count(text: str) -> str:
+    """Count the words in a piece of text."""
+    return f"{len(text.split())} words"
+
+
+agent = Agent(
+    system_prompt="You are a concise writing assistant.",
+    tools=[word_count],
+)
+agent("How many words are in this sentence?")
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/agents/index_imports.ts:agent_anatomy_imports"
+
+--8<-- "user-guide/sdk/agents/index.ts:agent_anatomy"
+```
+
+</Tab>
+</Tabs>
+
+The loop, the prompt, and the tool are the whole agent here. Every other part in
+this section adds to that same core rather than replacing it.
+
+## Where to go next
+
+New to the SDK? Start with the [Python quickstart](/docs/user-guide/sdk/quickstart/python/)
+or [TypeScript quickstart](/docs/user-guide/sdk/quickstart/typescript/), then read the
+[agent loop](agent-loop/) to understand the cycle everything else builds on.
+
+Building a feature? Give the agent capabilities with [tools](../tools/), then reach
+for the part of the anatomy your task needs: [session management](session-management/)
+to persist a conversation, [hooks](hooks/) to run code at each step, or
+[interventions](interventions/) to keep a human or a policy in the loop.

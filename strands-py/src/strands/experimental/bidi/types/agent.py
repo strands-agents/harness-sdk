@@ -5,6 +5,14 @@ This module defines the types used for BidiAgent.
 
 from typing import TypeAlias
 
-from .events import BidiAudioInputEvent, BidiImageInputEvent, BidiTextInputEvent
+from .content import BidiContentDelta, BidiContentDeltaData, BidiUserContentBlock, BidiUserContentBlockData
 
-BidiAgentInput: TypeAlias = str | BidiTextInputEvent | BidiAudioInputEvent | BidiImageInputEvent
+BidiAgentInput: TypeAlias = (
+    str
+    | BidiUserContentBlock
+    | BidiUserContentBlockData
+    | BidiContentDelta
+    | BidiContentDeltaData
+    | list[str | BidiUserContentBlock | BidiUserContentBlockData]
+)
+"""A single user input or list of user content blocks."""

@@ -62,7 +62,7 @@ export type ChangelogEntry = z.infer<typeof changelogEntrySchema>
 
 export const changelogFrontmatterSchema = z
   .object({
-    sdk: z.enum(['harness', 'evals']),
+    sdk: z.enum(['sdk', 'evals']),
     language: z.enum(['python', 'typescript']).optional(),
     version: z.string(),
     tag: z.string(),
@@ -74,14 +74,14 @@ export const changelogFrontmatterSchema = z
     newContributors: z.array(z.object({ login: z.string(), pr: z.number() })).default([]),
   })
   // Tie `language` to `sdk` so bad data can't create bogus streams/routes:
-  // harness releases are per-language (python|typescript); evals is python-only
+  // sdk releases are per-language (python|typescript); evals is python-only
   // and omits the field entirely.
   .superRefine((d, ctx) => {
-    if (d.sdk === 'harness' && d.language === undefined) {
+    if (d.sdk === 'sdk' && d.language === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['language'],
-        message: 'harness releases require a language (python or typescript)',
+        message: 'sdk releases require a language (python or typescript)',
       })
     }
     if (d.sdk === 'evals' && d.language !== undefined) {

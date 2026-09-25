@@ -8,76 +8,134 @@ redirectFrom:
 <YouTube id="PtdHZBbm1Ys" title="Lesson 4: Adding Callbacks &amp; Response Streaming" />
 *[Watch on YouTube](https://www.youtube.com/watch?v=PtdHZBbm1Ys&list=PLDzwjhH-4yhU&index=4)*
 
-*Code for this lesson can be found
-[**here**](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/04-callbacks-streaming).*
+:::note[About this lesson]
+The videos in this course are a snapshot in time. Strands is under active development, so the code featured on this page reflects the most up-to-date patterns, but the concepts covered in the video still apply. When in doubt, trust the code.
+:::
 
-### Controlling the Output Flow
+*Code for this lesson: [`samples/04-callbacks-streaming`](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/04-callbacks-streaming)*
 
-Every agent we've built so far has been streaming text to the terminal as the model
-generates it. But we didn't configure that. It just works out of the box that way. But how
-does this work under the hood?
+## Callbacks Control What the User Sees
 
-Strands provides a callback handler, which is a function that gets called for every event
-the agent produces, like text chunks, tool calls, lifecycle signals, and the final result.
-The default callback handler prints text to standard out and shows the tool usage
-information inline. That's what you've been seeing when we run Python files from the
-command line.
+Callbacks control how agent output surfaces to users. The default handler streams text to stdout, which is fine for a terminal demo but not for a UI, an API, or a sub-agent running behind the scenes. You can replace the default with a custom handler, silence output entirely, or use `stream_async()` for async servers.
 
-But callbacks are actually one of the main ways you can control how an agent's output
-surfaces into a user interface, an API server, or any sort of orchestration system.
+## Custom Callback Handler
 
-### Building a Custom Callback Handler
+A callback handler is a function that accepts `**kwargs`. It fires for every agent event: text chunks, tool calls, and complete messages. This handler ignores streaming chunks and only prints complete assistant messages:
 
-Let's create a simple callback function so you can see how it's done. A callback handler
-is just a function that accepts arguments.
+```python
+from strands import Agent, tool
 
-This is a custom one that buffers text and only shows it when a complete message is
-generated. This pattern is useful when you want tighter control over how responses are
-presented to users. To use it, you can just pass it to the agent through the
-`callback_handler` parameter. You can also set the callback to be none, and then nothing
-prints when you run it. The agent runs, then you get the result back as a variable, and
-you can do whatever
-you want with that, like print it out.
+@tool
+def calculator(a: float, b: float, operation: str = "add") -> str:
+    """Perform a math operation on two numbers.
 
-This will be more important when we get to multi-agent systems and you'll have sub-agents
-running behind the scenes.
+    Args:
+        a: First number
+        b: Second number
+        operation: One of "add", "subtract", "multiply", "divide", "power"
+    """
+    if operation == "add":
+        result = a + b
+    elif operation == "subtract":
+        result = a - b
+    elif operation == "multiply":
+        result = a * b
+    elif operation == "divide":
+        result = a / b if b != 0 else "Error: division by zero"
+    elif operation == "power":
+        result = a ** b
+    else:
+        result = f"Unknown operation: {operation}"
+    return str(result)
 
-Let's run this so we can see how each agent behaves differently.
+def buffered_handler(**kwargs):
+    # Only show complete messages, not individual streaming chunks
+    if "message" in kwargs and kwargs["message"].get("role") == "assistant":
+        content = kwargs["message"].get("content", [])
+        for block in content:
+            if "text" in block:
+                print(block["text"])
 
-So we can see the default streaming coming back here, printing out which tools are being
-called and then the final result. And then for our custom callback handler, we really
-don't want to see those tools being called, so you can see it just gives us the result
-that comes back. And then for silent mode, this is us just simply printing out the result
-that we've captured in this variable, but it doesn't print out those tool calls or
-anything in between.
+agent = Agent(tools=[calculator], callback_handler=buffered_handler)
+agent("What is 2 to the power of 16, minus 1?")
+```
 
-### Asynchronous Streaming with FastAPI
+📂 [callbacks_streaming.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/04-callbacks-streaming/callbacks_streaming.py)
 
-So these are callback handlers, and you should know that they're synchronous. They work
-great for CLI tools and scripts, but if you're building a server with something like
-FastAPI, AIOHTTP, or anything async, you'll want to use the async iterator pattern
-instead. This gives you programmatic access to the same events but using a different
-execution model.
+Useful event keys you'll see in `kwargs`:
 
-Here's what that looks like in practice: We define a FastAPI endpoint that accepts a
-prompt, creates an agent, and then streams the response back to the client. The generate
-function yields only the data chunks to stream back, so the user sees text appearing in
-real time just like a chat interface.
+- `data`: a streamed text chunk
+- `current_tool_use`: the tool the model is invoking, including its input
+- `message`: a complete message once a turn finishes
 
-You set the callback handler to be none on the agent itself because you don't want the
-default handler also printing to your server's standard out. The async iterator is your
-output channel.
+## Silent Mode
 
-Time to give this a run and see how it works in practice. To do that, I will start up the
-FastAPI server, and then in another terminal tab we can run this curl command, and we can
-see the result coming back from the agent.
+Set `callback_handler=None` to suppress all output. The agent runs and returns a result you can use programmatically:
 
-### What's Next?
+```python
+agent = Agent(tools=[calculator], callback_handler=None)
+result = agent("What is 42 * 42?")
+print(f"Captured result: {result}")
+```
 
-Now you can control how output reaches the user, but you still can't control what the
-agent does before it produces that output.
+This is essential for sub-agents in multi-agent systems that run behind the scenes. Only the orchestrator should be streaming to the user.
 
-That's hooks, and that's what's coming up in the next lesson.
+## Async Streaming (FastAPI)
 
-*Learn more: [Callback Handlers](/docs/user-guide/concepts/streaming/callback-handlers/) ·
-[Async Iterators](/docs/user-guide/concepts/streaming/async-iterators/)*
+For async servers, use `agent.stream_async()`, an async generator that yields events as they happen. Here it powers a FastAPI streaming endpoint:
+
+```python
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from strands import Agent, tool
+
+@tool
+def calculator(a: float, b: float, operation: str = "add") -> str:
+    """Perform a math operation on two numbers.
+
+    Args:
+        a: First number
+        b: Second number
+        operation: One of "add", "subtract", "multiply", "divide", "power"
+    """
+    if operation == "add":
+        result = a + b
+    elif operation == "subtract":
+        result = a - b
+    elif operation == "multiply":
+        result = a * b
+    elif operation == "divide":
+        result = a / b if b != 0 else "Error: division by zero"
+    elif operation == "power":
+        result = a ** b
+    else:
+        result = f"Unknown operation: {operation}"
+    return str(result)
+
+app = FastAPI()
+
+
+class PromptRequest(BaseModel):
+    prompt: str
+
+
+@app.post("/stream")
+async def stream_response(request: PromptRequest):
+    async def generate():
+        agent = Agent(tools=[calculator], callback_handler=None)
+        async for event in agent.stream_async(request.prompt):
+            if "data" in event:
+                yield event["data"]
+
+    return StreamingResponse(generate(), media_type="text/plain")
+```
+
+📂 [fastapi_streaming.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/04-callbacks-streaming/fastapi_streaming.py) · [async_streaming.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/04-callbacks-streaming/async_streaming.py)
+
+Run it with `pip install fastapi uvicorn` and `uvicorn fastapi_streaming:app --reload`, then POST to `/stream`.
+
+## Resources
+
+- 📖 [Callback Handlers](/docs/user-guide/sdk/streaming/callback-handlers/)
+- 📖 [Tools Overview](/docs/user-guide/sdk/tools/)

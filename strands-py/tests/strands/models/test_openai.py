@@ -8,6 +8,7 @@ import pydantic
 import pytest
 
 import strands
+from strands.agent import AgentMetadata
 from strands.models import CacheConfig
 from strands.models.openai import OpenAIModel
 from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
@@ -737,6 +738,60 @@ def test_cache_key_absent_when_unset(openai_client, model_id, messages):
     assert "prompt_cache_key" not in model.format_request(messages)
 
 
+def test_cache_key_derived_from_agent_metadata_session(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig())
+
+    request = model.format_request(messages, agent_metadata=AgentMetadata(session_id="s1"))
+
+    assert request["prompt_cache_key"] == "strands-s1"
+
+
+def test_configured_cache_key_wins_over_agent_metadata(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig(cache_key="tenant-42"))
+
+    request = model.format_request(messages, agent_metadata=AgentMetadata(session_id="s1"))
+
+    assert request["prompt_cache_key"] == "tenant-42"
+
+
+def test_false_cache_key_opts_out_of_agent_metadata(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig(cache_key=False))
+
+    request = model.format_request(messages, agent_metadata=AgentMetadata(session_id="s1"))
+
+    assert "prompt_cache_key" not in request
+
+
+def test_agent_metadata_without_session_yields_no_cache_key(openai_client, model_id, messages):
+    _ = openai_client
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig())
+
+    request = model.format_request(messages, agent_metadata=AgentMetadata(session_id=None))
+
+    assert "prompt_cache_key" not in request
+
+
+@pytest.mark.asyncio
+async def test_stream_derives_prompt_cache_key_from_agent_session(openai_client, model_id, agenerator, alist):
+    """stream threads agent_metadata so the outbound request carries the derived routing key."""
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig())
+    mock_delta = unittest.mock.Mock(content=None, tool_calls=None, reasoning_content=None)
+    mock_event_1 = unittest.mock.Mock(choices=[unittest.mock.Mock(finish_reason="stop", delta=mock_delta)])
+    mock_event_2 = unittest.mock.Mock()
+    mock_event_3 = unittest.mock.Mock(usage=None)
+    openai_client.chat.completions.create = unittest.mock.AsyncMock(
+        return_value=agenerator([mock_event_1, mock_event_2, mock_event_3]),
+    )
+
+    await alist(model.stream([{"role": "user", "content": []}], agent_metadata=AgentMetadata(session_id="s1")))
+
+    _, call_kwargs = openai_client.chat.completions.create.call_args
+    assert call_kwargs["prompt_cache_key"] == "strands-s1"
+
+
 def test_explicit_prompt_cache_key_in_params_wins(openai_client, model_id, messages):
     _ = openai_client
     model = OpenAIModel(
@@ -1036,6 +1091,67 @@ def test_format_chunk_metadata_with_zero_cached_tokens(model):
     result = model.format_chunk(event)
 
     assert "cacheReadInputTokens" not in result["metadata"]["usage"]
+
+
+@pytest.mark.parametrize(
+    ("cache_write_tokens", "exp_usage"),
+    [
+        # Provider reports a cache write.
+        (
+            4346,
+            {
+                "inputTokens": 100,
+                "outputTokens": 50,
+                "totalTokens": 150,
+                "cacheReadInputTokens": 25,
+                "cacheWriteInputTokens": 4346,
+            },
+        ),
+        # Provider reports no cache write on this call.
+        (
+            0,
+            {
+                "inputTokens": 100,
+                "outputTokens": 50,
+                "totalTokens": 150,
+                "cacheReadInputTokens": 25,
+            },
+        ),
+        # Provider does not expose the field (OpenAI-hosted or an older openai pin).
+        (
+            None,
+            {
+                "inputTokens": 100,
+                "outputTokens": 50,
+                "totalTokens": 150,
+                "cacheReadInputTokens": 25,
+            },
+        ),
+    ],
+)
+def test_format_chunk_metadata_with_cache_write_tokens(cache_write_tokens, exp_usage, model):
+    """Test format_chunk surfaces cache writes only when the provider reports them."""
+    mock_tokens_details = unittest.mock.Mock(spec=["cached_tokens", "cache_write_tokens"])
+    mock_tokens_details.cached_tokens = 25
+    if cache_write_tokens is None:
+        del mock_tokens_details.cache_write_tokens
+    else:
+        mock_tokens_details.cache_write_tokens = cache_write_tokens
+
+    mock_usage = unittest.mock.Mock()
+    mock_usage.prompt_tokens = 100
+    mock_usage.completion_tokens = 50
+    mock_usage.total_tokens = 150
+    mock_usage.prompt_tokens_details = mock_tokens_details
+
+    event = {"chunk_type": "metadata", "data": mock_usage}
+
+    assert model.format_chunk(event) == {
+        "metadata": {
+            "usage": exp_usage,
+            "metrics": {"latencyMs": 0},
+        },
+    }
 
 
 @pytest.mark.asyncio
@@ -2078,6 +2194,7 @@ class TestOpenAIModelBedrockMantleConfig:
             ("google.gemma-4-26b-a4b", "/openai/v1"),
             ("google.gemma-4-e2b", "/openai/v1"),
             ("openai.gpt-5.6-terra", "/openai/v1"),
+            ("openai.gpt-6-astra", "/openai/v1"),
             # Gemma 3 is served from /v1 while Gemma 4 is not, so `google.` cannot be a prefix.
             ("google.gemma-3-27b-it", "/v1"),
             ("google.gemma-3-4b-it", "/v1"),
@@ -2110,6 +2227,7 @@ class TestOpenAIModelBedrockMantleConfig:
             # Point releases within a verified line, beyond the verified catalog.
             ("xai.grok-4.9", "/openai/v1"),
             ("openai.gpt-5.9-unreleased", "/openai/v1"),
+            ("openai.gpt-6-nova", "/openai/v1"),
             # New lines the prefixes deliberately do not cover.
             ("xai.grok-5", "/v1"),
             ("xai.grok-5-preview", "/v1"),
@@ -2272,5 +2390,95 @@ class TestOpenAIModelBedrockMantleConfig:
         _ = openai_client
         mock_provide_token.side_effect = RuntimeError("no credentials in chain")
         model = OpenAIModel(model_id="openai.gpt-oss-120b", bedrock_mantle_config={"region": "us-east-1"})
-        with pytest.raises(RuntimeError, match="Bedrock Mantle bearer token.*us-east-1"):
+        with pytest.raises(RuntimeError, match="Amazon Bedrock bearer token.*us-east-1"):
             model._resolve_client_args()
+
+    @pytest.mark.parametrize(
+        "model_id",
+        [
+            # Cross-Region inference profile ids.
+            "global.openai.gpt-5.6-luna",
+            "us.openai.gpt-5.6-sol",
+            "us-gov.openai.gpt-5.6-terra",
+            # A foundation-model id resolves to the same fixed path.
+            "openai.gpt-oss-120b",
+        ],
+    )
+    def test_bedrock_mantle_config_endpoint_runtime_base_url(self, model_id, openai_client, mock_provide_token):
+        """endpoint='bedrock-runtime' resolves to the fixed /openai/v1 base path."""
+        _ = openai_client
+        model = OpenAIModel(
+            model_id=model_id,
+            bedrock_mantle_config={"endpoint": "bedrock-runtime", "region": "ap-northeast-1"},
+        )
+
+        resolved = model._resolve_client_args()
+
+        assert resolved["base_url"] == "https://bedrock-runtime.ap-northeast-1.amazonaws.com/openai/v1"
+        assert resolved["api_key"] == "bedrock-api-key-deadbeef&Version=1"
+        mock_provide_token.assert_called_once_with(region="ap-northeast-1")
+
+    @pytest.mark.parametrize(
+        ("model_id", "expected_url"),
+        [
+            ("openai.gpt-oss-120b", "https://bedrock-mantle.us-east-1.api.aws/v1"),
+            ("openai.gpt-5.6-luna", "https://bedrock-mantle.us-east-1.api.aws/openai/v1"),
+        ],
+    )
+    def test_bedrock_mantle_config_endpoint_mantle_is_the_default(
+        self, model_id, expected_url, openai_client, mock_provide_token
+    ):
+        """An explicit endpoint='bedrock-mantle' resolves exactly like omitting the key."""
+        _ = openai_client
+        _ = mock_provide_token
+        explicit = OpenAIModel(
+            model_id=model_id, bedrock_mantle_config={"endpoint": "bedrock-mantle", "region": "us-east-1"}
+        )
+        default = OpenAIModel(model_id=model_id, bedrock_mantle_config={"region": "us-east-1"})
+
+        assert explicit._resolve_client_args()["base_url"] == expected_url
+        assert default._resolve_client_args()["base_url"] == expected_url
+
+    @pytest.mark.parametrize("endpoint", ["bedrock-runtime ", "runtime", "Bedrock-Runtime", "", None])
+    def test_bedrock_mantle_config_endpoint_rejects_unknown_value(self, endpoint, openai_client, mock_provide_token):
+        """An unknown endpoint fails loudly, before a token is minted."""
+        _ = openai_client
+        model = OpenAIModel(
+            model_id="openai.gpt-oss-120b",
+            bedrock_mantle_config={"endpoint": endpoint, "region": "us-east-1"},
+        )
+
+        with pytest.raises(ValueError, match="Unknown Bedrock endpoint"):
+            model._resolve_client_args()
+        mock_provide_token.assert_not_called()
+
+    def test_bedrock_mantle_config_endpoint_runtime_merges_with_client_args(self, openai_client, mock_provide_token):
+        """endpoint='bedrock-runtime' composes with client_args the same way Mantle does."""
+        _ = openai_client
+        _ = mock_provide_token
+        model = OpenAIModel(
+            model_id="global.openai.gpt-5.6-luna",
+            client_args={"timeout": 42},
+            bedrock_mantle_config={"endpoint": "bedrock-runtime", "region": "us-west-2"},
+        )
+
+        resolved = model._resolve_client_args()
+
+        assert resolved["base_url"] == "https://bedrock-runtime.us-west-2.amazonaws.com/openai/v1"
+        assert resolved["timeout"] == 42
+
+    def test_bedrock_mantle_config_endpoint_runtime_requires_region(self, openai_client, mock_provide_token):
+        """A missing region is rejected on bedrock-runtime too, before a token is minted."""
+        _ = openai_client
+        with (
+            unittest.mock.patch("boto3.Session") as mock_session_cls,
+            unittest.mock.patch.dict(os.environ, {}, clear=True),
+        ):
+            mock_session_cls.return_value.region_name = None
+            model = OpenAIModel(
+                model_id="global.openai.gpt-5.6-luna", bedrock_mantle_config={"endpoint": "bedrock-runtime"}
+            )
+            # The Region lists differ per endpoint, so the message points at the right one.
+            with pytest.raises(ValueError, match="Could not resolve an AWS region.*endpoints-region-availability"):
+                model._resolve_client_args()
+        mock_provide_token.assert_not_called()

@@ -80,6 +80,14 @@ async def test_timeout_kills_child_processes_that_outlive_the_parent():
 
 
 @pytest.mark.asyncio
+async def test_timeout_error_carries_output_captured_before_the_kill():
+    with pytest.raises(SandboxTimeoutError) as exc_info:
+        await _collect(_stream_process("sh", ["-c", "echo partial; echo warn >&2; sleep 5"], timeout=0.3))
+    assert exc_info.value.stdout == "partial\n"
+    assert exc_info.value.stderr == "warn\n"
+
+
+@pytest.mark.asyncio
 async def test_fast_command_completes_under_timeout():
     _, result = await _collect(_stream_process("sh", ["-c", "echo fast"], timeout=5))
     assert result.exit_code == 0

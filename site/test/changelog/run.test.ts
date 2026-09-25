@@ -43,10 +43,10 @@ describe('run', () => {
     })
     // python-wasm is out of scope; v1.41.0 is the first in-scope release (no prior
     // tag -- no entries) but still gets a file; v1.42.0 gets the derived entry.
-    expect(written['site/src/content/changelog/harness/python-v1.42.0.md']).toBeTruthy()
-    expect(written['site/src/content/changelog/harness/python-v1.42.0.md']).toMatch(/title: "a"/)
+    expect(written['site/src/content/changelog/sdk/python-v1.42.0.md']).toBeTruthy()
+    expect(written['site/src/content/changelog/sdk/python-v1.42.0.md']).toMatch(/title: "a"/)
     // enrichment landed: area-model label -> areas: [model]
-    expect(written['site/src/content/changelog/harness/python-v1.42.0.md']).toMatch(/areas: \[model\]/)
+    expect(written['site/src/content/changelog/sdk/python-v1.42.0.md']).toMatch(/areas: \[model\]/)
     expect(Object.keys(written).some((p) => p.includes('wasm'))).toBe(false)
   })
 
@@ -63,7 +63,7 @@ describe('run', () => {
       mode: 'backfill',
       skipExisting: true,
       client,
-      readExisting: async () => '---\nsdk: harness\n---\n', // every file already exists
+      readExisting: async () => '---\nsdk: sdk\n---\n', // every file already exists
       writeFile: async () => {},
     })
     expect(res.written).toEqual([])
@@ -82,7 +82,7 @@ describe('run', () => {
         written[p] = c
       },
     })
-    expect(Object.keys(written)).toEqual(['site/src/content/changelog/harness/python-v1.42.0.md'])
+    expect(Object.keys(written)).toEqual(['site/src/content/changelog/sdk/python-v1.42.0.md'])
   })
 
   it('single mode with unknown tag writes nothing and warns', async () => {
@@ -143,7 +143,7 @@ describe('run', () => {
         written[p] = c
       },
     })
-    expect(written['site/src/content/changelog/harness/typescript-v1.7.0-rc.0.md']).toBeTruthy()
+    expect(written['site/src/content/changelog/sdk/typescript-v1.7.0-rc.0.md']).toBeTruthy()
   })
 
   it('drops a flagged prerelease whose tag is not a recognized version', async () => {

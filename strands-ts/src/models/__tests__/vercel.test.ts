@@ -716,6 +716,46 @@ describe('VercelModel', () => {
         expect(warnSpy).toHaveBeenCalled()
         warnSpy.mockRestore()
       })
+
+      // Regression: an everyTurn context injector folds rendered text onto a tool-result turn, making a
+      // mixed turn. Tool results must lead the split regardless of source-block order so each one stays
+      // adjacent to the assistant tool call it answers once an adapter re-merges the messages (#4138).
+      it.each([
+        { name: 'tool result then text', order: ['tu1', 'text'], roles: ['user', 'assistant', 'tool', 'user'] },
+        { name: 'text then tool result', order: ['text', 'tu1'], roles: ['user', 'assistant', 'tool', 'user'] },
+        {
+          name: 'text between parallel tool results',
+          order: ['tu1', 'text', 'tu2'],
+          roles: ['user', 'assistant', 'tool', 'tool', 'user'],
+        },
+      ])('keeps tool results ahead of injected text for $name', async ({ order, roles }) => {
+        const toolUseIds = order.filter((entry) => entry !== 'text')
+        const { collect, callArgs } = setupCaptureTest()
+        await collect([
+          new Message({ role: 'user', content: [new TextBlock('task')] }),
+          new Message({
+            role: 'assistant',
+            content: toolUseIds.map((toolUseId) => new ToolUseBlock({ name: 'calc', toolUseId, input: {} })),
+          }),
+          new Message({
+            role: 'user',
+            content: order.map((entry) =>
+              entry === 'text'
+                ? new TextBlock('\n\nNOTE')
+                : new ToolResultBlock({ toolUseId: entry, status: 'success', content: [new TextBlock('42')] })
+            ),
+          }),
+        ])
+
+        const prompt = callArgs().prompt
+        expect(prompt.map((message) => message.role)).toEqual(roles)
+        expect((prompt[2] as any).content[0]).toMatchObject({
+          type: 'tool-result',
+          toolCallId: 'tu1',
+          toolName: 'calc',
+        })
+        expect((prompt.at(-1) as any).content[0]).toEqual({ type: 'text', text: '\n\nNOTE' })
+      })
     })
 
     describe('assistant messages', () => {

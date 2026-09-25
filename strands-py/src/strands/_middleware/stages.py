@@ -13,7 +13,7 @@ from .types import MiddlewareStage
 
 if TYPE_CHECKING:
     from ..agent.agent import Agent
-    from ..experimental.bidi import BidiAgent
+    from ..experimental.bidi.agent import BidiAgent
     from ..interrupt import _InterruptState
     from ..models.model import Model
     from ..types._events import EventLoopStopEvent, ModelStopReason, ToolResultEvent, TypedEvent

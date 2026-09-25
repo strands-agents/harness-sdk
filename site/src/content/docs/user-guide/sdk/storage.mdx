@@ -1,0 +1,270 @@
+---
+title: Storage
+description: "Choose a storage backend and pass it to the Agent
+  for automatic subsystem resolution, or to individual plugins
+  for fine-grained control."
+tags: [session-management]
+sourceLinks:
+  - path: strands-py/src/strands/storage/storage.py
+  - path: strands-py/src/strands/storage/in_memory_storage.py
+  - path: strands-py/src/strands/storage/local_file_storage.py
+  - path: strands-py/src/strands/storage/s3_storage.py
+  - path: strands-ts/src/storage/storage.ts
+  - path: strands-ts/src/storage/in-memory-storage.ts
+  - path: strands-ts/src/storage/local-file-storage.ts
+  - path: strands-ts/src/storage/s3-storage.ts
+addedDate: 2026-07-24
+---
+
+To persist agent state between restarts, pass a Storage backend
+to the plugins that need it. You pick the backend once, and
+consumers like [Context Offloader](./plugins/context-offloader.mdx)
+and [Memory](./memory/overview.mdx) handle the rest. This is the
+single place persistence backends are documented.
+
+[Session Management](./agents/session-management.mdx) composes a
+Storage backend the same way in both SDKs: TypeScript's
+`SessionManager` and Python's recommended `SnapshotSessionManager`
+both persist snapshots through a Storage backend you pass them.
+Python's repository-based managers (`FileSessionManager`,
+`S3SessionManager`) are the exception: they configure storage
+directly rather than through a Storage backend, a difference the
+session management page documents.
+
+The SDK ships three backends. Pick one based on where you need
+your data to live:
+
+| Backend | Where data lives | Best for |
+|---------|-----------------|----------|
+| `InMemoryStorage` | Process memory | Tests, short-lived agents |
+| `LocalFileStorage` | Local filesystem | Development, single-machine |
+| `S3Storage` | Amazon S3 | Production, multi-instance |
+
+## Agent-level storage
+
+The simplest approach: pass a single storage backend to the
+Agent and let subsystems resolve from it.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+--8<-- "user-guide/sdk/storage.py:agent_level"
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/storage_imports.ts:agent_level_imports"
+
+--8<-- "user-guide/sdk/storage.ts:agent_level"
+```
+
+</Tab>
+</Tabs>
+
+Both the session manager and context offloader read from the
+same backend without extra wiring. Each subsystem
+auto-namespaces its keys (`session/` for sessions,
+`offloader/` for offloaded content), so data never collides.
+
+## Per-plugin storage
+
+When different subsystems need different backends, pass storage
+directly to the plugin. This overrides the agent-level default
+for that plugin only.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+--8<-- "user-guide/sdk/storage.py:per_plugin"
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/storage_imports.ts:per_plugin_imports"
+
+--8<-- "user-guide/sdk/storage.ts:per_plugin"
+```
+
+</Tab>
+</Tabs>
+
+## Precedence
+
+Storage resolves in this order for each subsystem:
+
+1. **Explicit**: storage passed directly to the plugin
+2. **Agent-level**: the agent's
+   <Syntax py="storage" ts="storage" /> parameter
+   (namespaced automatically)
+3. **Fallback**: `InMemoryStorage` for Context Offloader;
+   `LocalFileStorage` for Session Manager in Python, or an
+   error in TypeScript
+
+:::note
+Python `SessionManager` is deprecated, and does not use
+the provided `Storage` parameter. Use
+`SnapshotSessionManager` in Python or `SessionManager` in
+TypeScript to take advantage of agent-level storage.
+:::
+
+## Built-in backends
+
+### InMemoryStorage
+
+Data lives in process memory. No constructor arguments. Fast,
+zero-config, gone when the process exits.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+--8<-- "user-guide/sdk/storage.py:in_memory"
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/storage_imports.ts:in_memory_imports"
+
+--8<-- "user-guide/sdk/storage.ts:in_memory"
+```
+
+</Tab>
+</Tabs>
+
+### LocalFileStorage
+
+Each key becomes a file under a base directory. Writes are atomic
+(temp file + rename).
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| <Syntax py="base_dir" ts="baseDir" /> | `"./.strands/"` | Root directory |
+| <Syntax py="sandbox" ts="sandbox" /> | `None`/`undefined` | Optional [Sandbox](./sandbox/index.mdx) |
+
+<Tabs>
+<Tab label="Python">
+
+```python
+--8<-- "user-guide/sdk/storage.py:local_file"
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/storage_imports.ts:local_file_imports"
+
+--8<-- "user-guide/sdk/storage.ts:local_file"
+```
+
+</Tab>
+</Tabs>
+
+You can also bind a sandbox after construction with
+<Syntax py="for_sandbox(sandbox)" ts="forSandbox(sandbox)" />,
+which returns a new instance routed through the sandbox.
+
+### S3Storage
+
+Stores data as objects in an S3 bucket. The AWS SDK loads lazily,
+so applications that never construct an `S3Storage` pay nothing.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `bucket` | *(required)* | S3 bucket name |
+| `prefix` | `""` | Key prefix (namespace within the bucket) |
+| <Syntax py="region_name" ts="region" /> | `None`/`undefined` | AWS region override |
+| <Syntax py="boto_session" ts="s3Client" /> | `None`/`undefined` | Pre-configured client |
+
+<Tabs>
+<Tab label="Python">
+
+```python
+--8<-- "user-guide/sdk/storage.py:s3"
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/storage_imports.ts:s3_imports"
+
+--8<-- "user-guide/sdk/storage.ts:s3"
+```
+
+</Tab>
+</Tabs>
+
+#### Required S3 permissions
+
+The credentials used by `S3Storage` need these permissions:
+
+- `s3:PutObject` to create and update data
+- `s3:GetObject` to retrieve data
+- `s3:DeleteObject` to delete data
+- `s3:ListBucket` to list keys under the configured prefix
+
+This policy grants the required permissions for one bucket:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:PutObject", "s3:GetObject", "s3:DeleteObject"],
+      "Resource": "arn:aws:s3:::my-agent-sessions/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::my-agent-sessions"
+    }
+  ]
+}
+```
+
+You cannot pass both a region and a pre-configured client; pick
+one or the other.
+
+## Custom backends
+
+Implement four async methods
+(<Syntax py="write, read, delete, list" ts="write, read, delete, list" />)
+and pass your class anywhere a `Storage` is accepted. In Python,
+`Storage` is a
+[protocol](@api/python/strands.storage.storage#Storage); in
+TypeScript, implement the
+[interface](@api/typescript/Storage).
+
+Community backends can add methods beyond the core four (e.g.
+`search` for vector similarity, or structured queries for
+databases like DynamoDB). Plugins that only need basic
+persistence use the four standard methods; plugins that need
+richer access can check for and use the extra surface your
+backend provides.
+
+When using agent-level storage, each subsystem scopes its keys
+under its own prefix automatically (`session/`, `offloader/`),
+so you never need to worry about collisions. If you write a
+custom plugin that consumes agent-level storage, call
+<Syntax py="storage.namespace('my-prefix/')" ts="storage.namespace('my-prefix/')" />
+to claim your own prefix and avoid overlapping with other
+subsystems.
+
+## Next steps
+
+- [Context Offloader](./plugins/context-offloader.mdx): offload
+  large tool results
+- [Session Management](./agents/session-management.mdx): persist
+  conversations across restarts
+- [Sandbox](./sandbox/index.mdx): route Storage I/O through a
+  sandboxed environment

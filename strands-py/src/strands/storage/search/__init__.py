@@ -6,10 +6,13 @@ Storage backends use :class:`KeywordSearchStrategy` by default; consumers
 """
 
 from ..storage import StorageSearchResult
+from .bm25 import Bm25SearchStrategy, Bm25SearchStrategyConfig
 from .keyword import KeywordSearchStrategy
 from .types import SearchStrategy
 
 __all__ = [
+    "Bm25SearchStrategy",
+    "Bm25SearchStrategyConfig",
     "KeywordSearchStrategy",
     "SearchStrategy",
     "StorageSearchResult",

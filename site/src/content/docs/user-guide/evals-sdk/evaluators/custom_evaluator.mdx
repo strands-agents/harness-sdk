@@ -1,5 +1,5 @@
 ---
-title: Custom Evaluator
+title: Custom evaluator
 description: 'Build domain-specific evaluation logic by extending the Evaluator base class: custom scoring, external services, and specialized data analysis.'
 sidebar:
   label: "Custom"
@@ -9,7 +9,7 @@ sidebar:
 
 The Strands Evals SDK allows you to create custom evaluators by extending the base `Evaluator` class. This enables you to implement domain-specific evaluation logic tailored to your unique requirements. A complete example can be found [here](https://github.com/strands-agents/harness-sdk/blob/main/site/docs/examples/evals-sdk/custom_evaluator.py).
 
-## When to Create a Custom Evaluator
+## When to create a custom evaluator
 
 Create a custom evaluator when:
 
@@ -19,9 +19,9 @@ Create a custom evaluator when:
 - You need custom scoring algorithms
 - You require specific data processing or analysis
 
-## Base Evaluator Class
+## Base evaluator class
 
-All evaluators inherit from the base `Evaluator` class, which provides the structure for evaluation:
+All evaluators inherit from the base `Evaluator` class, which provides the structure for evaluation. Implement `evaluate`; the base class supplies a default `evaluate_async` that runs `evaluate` in a thread via `asyncio.to_thread`, so override `evaluate_async` only when you have a native async path (for example, an async LLM call):
 
 ```python
 from strands_evals.evaluators import Evaluator
@@ -35,22 +35,17 @@ class CustomEvaluator(Evaluator[InputT, OutputT]):
     def __init__(self, custom_param: str):
         super().__init__()
         self.custom_param = custom_param
-    
+
     def evaluate(self, evaluation_case: EvaluationData[InputT, OutputT]) -> list[EvaluationOutput]:
-        """Synchronous evaluation implementation"""
+        """Synchronous evaluation implementation."""
         # Your evaluation logic here
-        pass
-    
-    async def evaluate_async(self, evaluation_case: EvaluationData[InputT, OutputT]) -> list[EvaluationOutput]:
-        """Asynchronous evaluation implementation"""
-        # Your async evaluation logic here
         pass
 ```
 
-## Required Methods
+## Required methods
 
 ### `evaluate(evaluation_case: EvaluationData) -> list[EvaluationOutput]`
-Synchronous evaluation method that must be implemented.
+The only method a subclass must implement. The base `evaluate` raises `NotImplementedError`.
 
 **Parameters:**
 
@@ -61,7 +56,7 @@ Synchronous evaluation method that must be implemented.
 - List of `EvaluationOutput` objects with scores and reasoning
 
 ### `evaluate_async(evaluation_case: EvaluationData) -> list[EvaluationOutput]`
-Asynchronous evaluation method that must be implemented.
+Optional. The base class provides a default that delegates to `evaluate` through `asyncio.to_thread`, so an evaluator with only a synchronous `evaluate` works in the async path unchanged. Override it to run genuinely asynchronous work, such as an async LLM call.
 
 **Parameters:**
 
@@ -71,7 +66,7 @@ Asynchronous evaluation method that must be implemented.
 
 - Same as `evaluate()`
 
-## EvaluationData Structure
+## EvaluationData structure
 
 The `evaluation_case` parameter provides:
 
@@ -83,7 +78,7 @@ The `evaluation_case` parameter provides:
 - `actual_interactions`: Interactions between agents (if applicable)
 - `expected_interactions`: Expected interactions (if provided)
 
-## EvaluationOutput Structure
+## EvaluationOutput structure
 
 Your evaluator should return `EvaluationOutput` objects with:
 
@@ -92,7 +87,7 @@ Your evaluator should return `EvaluationOutput` objects with:
 - `reason`: String explaining the evaluation
 - `label`: Optional categorical label
 
-## Example: Simple Custom Evaluator
+## Example: Simple custom evaluator
 
 ```python
 from strands_evals.evaluators import Evaluator
@@ -130,7 +125,7 @@ class LengthEvaluator(Evaluator[InputT, OutputT]):
         return self.evaluate(evaluation_case)
 ```
 
-## Example: LLM-Based Custom Evaluator
+## Example: LLM-based custom evaluator
 
 ```python
 from strands import Agent
@@ -144,7 +139,7 @@ OutputT = TypeVar("OutputT")
 class ToneEvaluator(Evaluator[InputT, OutputT]):
     """Evaluates the tone of agent responses."""
     
-    def __init__(self, expected_tone: str, model: str = None):
+    def __init__(self, expected_tone: str, model: str | None = None):
         super().__init__()
         self.expected_tone = expected_tone
         self.model = model
@@ -194,7 +189,7 @@ class ToneEvaluator(Evaluator[InputT, OutputT]):
         return [agent_result.structured_output]
 ```
 
-## Example: Metric-Based Custom Evaluator
+## Example: Metric-based custom evaluator
 
 ```python
 from strands_evals.evaluators import Evaluator
@@ -243,7 +238,7 @@ class KeywordPresenceEvaluator(Evaluator[InputT, OutputT]):
         return self.evaluate(evaluation_case)
 ```
 
-## Using Custom Evaluators
+## Using custom evaluators
 
 ```python
 import asyncio
@@ -272,10 +267,10 @@ async def main():
 asyncio.run(main())
 ```
 
-## Best Practices
+## Best practices
 
 1. **Inherit from Base Evaluator**: Always extend the `Evaluator` class
-2. **Implement Both Methods**: Provide both sync and async implementations
+2. **Implement `evaluate`**: Override `evaluate_async` only when you have a native async path; otherwise the inherited default covers it
 3. **Return List**: Always return a list of `EvaluationOutput` objects
 4. **Provide Clear Reasoning**: Include detailed explanations in the `reason` field
 5. **Use Appropriate Scores**: Keep scores between 0.0 and 1.0
@@ -283,7 +278,7 @@ asyncio.run(main())
 7. **Document Parameters**: Clearly document what your evaluator expects
 8. **Test Thoroughly**: Validate your evaluator with diverse test cases
 
-## Advanced: Multi-Level Evaluation
+## Advanced: Multi-level evaluation
 
 ```python
 class MultiLevelEvaluator(Evaluator[InputT, OutputT]):
@@ -310,7 +305,7 @@ class MultiLevelEvaluator(Evaluator[InputT, OutputT]):
         return 1.0
 ```
 
-## Related Documentation
+## Related documentation
 
 - [**OutputEvaluator**](output_evaluator.md): LLM-based output evaluation with custom rubrics
 - [**TrajectoryEvaluator**](trajectory_evaluator.md): Sequence-based evaluation

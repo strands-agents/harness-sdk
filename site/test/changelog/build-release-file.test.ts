@@ -44,8 +44,8 @@ describe('build-release-file', () => {
       deriveEntries: bodyDerive,
       readExisting: async () => null,
     } as any)
-    expect(result!.path).toBe('site/src/content/changelog/harness/python-v1.42.0.md')
-    expect(result!.contents).toMatch(/sdk: harness/)
+    expect(result!.path).toBe('site/src/content/changelog/sdk/python-v1.42.0.md')
+    expect(result!.contents).toMatch(/sdk: sdk/)
     expect(result!.contents).toMatch(/title: "plumb cache tokens"/)
     expect(result!.contents).toMatch(/areas: \[model\]/)
     // prUrl/commitUrl use the PR's own repo (sdk-python), not harness-sdk

@@ -33,7 +33,7 @@ const hasEntries = d.entries.length > 0
 // Stable deep-link anchor, e.g. #harness-python-v1.43.0, #evals-v0.2.1
 const anchorId = [d.sdk, d.language, `v${d.version}`].filter(Boolean).join('-')
 
-// Canonical per-release page URL (e.g. /changelog/harness/python-v1.43.0/).
+// Canonical per-release page URL (e.g. /changelog/sdk/python-v1.43.0/).
 const detailUrl = pathWithBase(`/changelog/${releaseSlug(release)}/`)
 
 // Render the optional curated highlights string as inline markdown (code,

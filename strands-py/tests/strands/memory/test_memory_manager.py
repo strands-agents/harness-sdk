@@ -53,7 +53,12 @@ from strands.memory.types import (
     MemoryEntry,
     MemoryInjectionConfig,
     MemorySearchOptions,
+    MemoryStore,
     MemoryToolConfig,
+    Metadata,
+    SearchOptions,
+    _has_method,
+    _has_write_sink,
 )
 from strands.tools.decorator import tool
 
@@ -260,6 +265,100 @@ def test_constructor_raises_when_writable_without_write_sink():
     broken = _store("broken", writable=True, sinks=set())
     with pytest.raises(Exception, match="no add or add_messages"):
         MemoryManager(stores=[broken])
+
+
+@pytest.mark.asyncio
+async def test_memory_store_subclass_inherited_defaults_are_not_capabilities():
+    """A ``MemoryStore`` subclass implementing only ``search`` is a read-only store.
+
+    Guards https://github.com/strands-agents/harness-sdk/issues/3965: the optional
+    protocol methods carry default bodies so explicit subclasses are instantiable
+    under static type checkers, and an inherited default must not register as an
+    implemented capability.
+    """
+
+    class SearchOnlyStore(MemoryStore):
+        def __init__(self) -> None:
+            self.name = "search-only"
+            self.description = None
+            self.max_search_results = None
+            self.writable = False
+            self.extraction = None
+
+        async def search(self, query: str, options: SearchOptions | None = None) -> list[MemoryEntry]:
+            return []
+
+    store = SearchOnlyStore()
+    for method in ("add", "add_messages", "initialize", "get_tools"):
+        assert not _has_method(store, method)
+    assert not _has_write_sink(store)
+
+    mm = MemoryManager(stores=[store])
+    assert "add_memory" not in _tool_names(mm)
+    with pytest.raises(Exception, match="no writable store matched"):
+        await mm.add("fact")
+
+
+@pytest.mark.asyncio
+async def test_memory_store_subclass_detects_only_overridden_optional_methods():
+    """A subclass overriding some optional methods exposes only those it overrides.
+
+    Guards https://github.com/strands-agents/harness-sdk/issues/3965: a store that
+    implements ``add`` but inherits ``add_messages`` / ``initialize`` / ``get_tools``
+    is a writable ``add`` sink that contributes no store-specific tools -- the
+    inherited defaults must not be mistaken for overrides.
+    """
+    added: list[str] = []
+
+    class AddOnlyStore(MemoryStore):
+        def __init__(self) -> None:
+            self.name = "add-only"
+            self.description = None
+            self.max_search_results = None
+            self.writable = True
+            self.extraction = None
+
+        async def search(self, query: str, options: SearchOptions | None = None) -> list[MemoryEntry]:
+            return []
+
+        async def add(self, content: str, metadata: Metadata | None = None) -> None:
+            added.append(content)
+
+    store = AddOnlyStore()
+    assert _has_method(store, "add")
+    assert _has_write_sink(store)
+    for method in ("add_messages", "initialize", "get_tools"):
+        assert not _has_method(store, method)
+
+    mm = MemoryManager(stores=[store], add_tool_config=True)
+    assert "add_memory" in _tool_names(mm)
+    # The inherited ``get_tools`` default must not be invoked, so no store tools appear.
+    assert _tool_names(mm) == ["search_memory", "add_memory"]
+
+    await mm.add("user likes tea")
+    assert added == ["user likes tea"]
+
+
+@pytest.mark.asyncio
+async def test_inherited_optional_method_defaults_are_callable_and_inert():
+    """The inherited default bodies are safe to call directly.
+
+    ``initialize`` is a no-op and ``get_tools`` yields nothing; the write sinks
+    raise ``NotImplementedError`` naming the store, since the manager filters them
+    out via ``_has_method`` and only a direct call reaches the default.
+    """
+
+    class SearchOnlyStore(MemoryStore):
+        async def search(self, query: str, options: SearchOptions | None = None) -> list[MemoryEntry]:
+            return []
+
+    store = SearchOnlyStore()
+    assert await store.initialize() is None
+    assert store.get_tools() == []
+    with pytest.raises(NotImplementedError, match="SearchOnlyStore does not implement add"):
+        await store.add("fact")
+    with pytest.raises(NotImplementedError, match="SearchOnlyStore does not implement add_messages"):
+        await store.add_messages([])
 
 
 def test_constructor_raises_when_add_tool_enabled_but_no_store_implements_add():

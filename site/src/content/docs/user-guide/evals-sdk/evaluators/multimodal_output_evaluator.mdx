@@ -1,25 +1,25 @@
 ---
-title: Multimodal Output Evaluator
+title: Multimodal output evaluator
 description: 'Evaluate agent outputs on image and document tasks with MultimodalOutputEvaluator, which judges responses against a custom rubric using an MLLM.'
 tags: [multimodal-evaluation, vision]
 sidebar:
-  label: "Multimodal Output"
+  label: "Multimodal output"
 ---
 
 ## Overview
 
 The `MultimodalOutputEvaluator` assesses the quality of agent outputs for tasks that involve images or documents alongside text. It uses an MLLM as the judge and evaluates responses against a user-defined rubric, extending [`OutputEvaluator`](output_evaluator.md) with multimodal input support. A complete example can be found [here](https://github.com/strands-agents/harness-sdk/blob/main/site/docs/examples/evals-sdk/multimodal_output_evaluator.py).
 
-## Key Features
+## Key features
 
 - **MLLM-as-a-Judge**: Uses a multimodal judge model to evaluate responses against the rubric and the media
-- **Data-Driven Dispatch**: Emits Strands SDK content blocks when the input carries media; falls back to a plain text prompt otherwise
+- **Data-Driven Dispatch**: Emits Strands Harness SDK content blocks when the input carries media; falls back to a plain text prompt otherwise
 - **Automatic Reference Comparison**: Appends a reference suffix to the rubric when `expected_output` is provided on the case
 - **Multiple Media Sources**: Accepts file paths, base64 strings, data URLs, HTTP(S) URLs (auto-fetched via the stdlib), raw bytes, and PIL Images
 - **Built-in Subclasses**: `MultimodalOverallQualityEvaluator`, `MultimodalCorrectnessEvaluator`, `MultimodalFaithfulnessEvaluator`, and `MultimodalInstructionFollowingEvaluator` each default to a built-in rubric
 - **Async Support**: Supports both synchronous and asynchronous evaluation
 
-## When to Use
+## When to use
 
 Use the `MultimodalOutputEvaluator` when you need to:
 
@@ -29,7 +29,7 @@ Use the `MultimodalOutputEvaluator` when you need to:
 - Compare multimodal agent configurations or prompts
 - Benchmark MLLM judges against text-only LLM judges on the same tasks
 
-## Evaluation Level
+## Evaluation level
 
 This evaluator operates at the **OUTPUT_LEVEL**, scoring a single agent response per case.
 
@@ -64,7 +64,7 @@ This evaluator operates at the **OUTPUT_LEVEL**, scoring a single agent response
 - **Default**: `False`
 - **Description**: Whether to include environment state in the evaluation prompt, enabling assessment of agent side effects alongside the output.
 
-## Data-Driven Dispatch
+## Data-driven dispatch
 
 The evaluator decides whether to call the judge as a multimodal or text-only model based on the shape of `case.input`:
 
@@ -98,7 +98,7 @@ This means the same evaluator can grade a mixed experiment containing both multi
 
 HTTP(S) URLs are auto-fetched via `urllib.request` from the standard library, so no extra dependencies are required. The `format` field (`"jpeg"`, `"png"`, `"gif"`, `"webp"`) is auto-detected from the extension or data URL when omitted. S3 URIs and boto3 auto-fetch are not supported; pre-download S3 objects to bytes or a local path before constructing `ImageData`.
 
-## Built-in Rubrics
+## Built-in rubrics
 
 The following rubric constants are available from `strands_evals.evaluators.prompt_templates.multimodal`:
 
@@ -109,7 +109,7 @@ The following rubric constants are available from `strands_evals.evaluators.prom
 
 Each built-in rubric is the default for the matching subclass (see [Related Evaluators](#related-evaluators)).
 
-## Scoring System
+## Scoring system
 
 The score is a float between `0.0` and `1.0`; the granularity is determined by the rubric:
 
@@ -117,9 +117,9 @@ The score is a float between `0.0` and `1.0`; the granularity is determined by t
 - **Likert-5** (`OVERALL_QUALITY_RUBRIC_V0`): `0.0`, `0.25`, `0.5`, `0.75`, or `1.0`. A response typically passes if the score is `>= 0.75`.
 - **Custom rubric**: any granularity you define in the rubric text. Specify the pass threshold in the rubric itself (e.g., "Score 1.0 if ...").
 
-## Basic Usage
+## Basic usage
 
-### Reference-Free Evaluation
+### Reference-free evaluation
 
 ```python
 import asyncio
@@ -157,7 +157,7 @@ async def main():
 asyncio.run(main())
 ```
 
-### Reference-Based Evaluation
+### Reference-based evaluation
 
 Setting `expected_output` on a case switches the evaluator into reference-based mode. The configured `reference_suffix` is appended to the rubric so the judge compares the response against the reference answer.
 
@@ -189,7 +189,7 @@ async def main():
 asyncio.run(main())
 ```
 
-### Multiple Images per Case
+### Multiple images per case
 
 Pass a list of `ImageData` (or a list of source strings) to evaluate responses that reason over several images at once:
 
@@ -207,7 +207,7 @@ Case(
 )
 ```
 
-## Evaluation Output
+## Evaluation output
 
 Like `OutputEvaluator`, `MultimodalOutputEvaluator` returns `EvaluationOutput` objects with:
 
@@ -216,7 +216,7 @@ Like `OutputEvaluator`, `MultimodalOutputEvaluator` returns `EvaluationOutput` o
 - **reason**: String containing the judge's reasoning for the score
 - **label**: Optional label categorizing the result
 
-## Best Practices
+## Best practices
 
 1. **Use a Multimodal-Capable Judge**: The default Bedrock model must support image input. If you override `model`, confirm the model ID accepts image content blocks.
 2. **Keep Images at Reasonable Resolution**: Very large images increase latency and cost without improving judgment; resize to the minimum resolution needed for the task.
@@ -224,7 +224,7 @@ Like `OutputEvaluator`, `MultimodalOutputEvaluator` returns `EvaluationOutput` o
 4. **Use Reference Mode for Ground-Truth Tasks**: Chart QA and VQA benchmarks with known answers benefit from `expected_output` and the reference suffix.
 5. **Start with a Built-in Rubric**: The four built-in rubrics are the defaults that come with Strands Evals; customize only once you see where they fall short on your data.
 
-## Related Evaluators
+## Related evaluators
 
 - [**MultimodalOverallQualityEvaluator**](multimodal_overall_quality_evaluator.md): Likert-5 quality scoring
 - [**MultimodalCorrectnessEvaluator**](multimodal_correctness_evaluator.md): Strict binary factual correctness

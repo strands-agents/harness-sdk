@@ -125,3 +125,7 @@ class TestKeywordSearch:
         await storage.write("note.md", b"completely unrelated content")
         results = await KeywordSearchStrategy().search(storage, "kubernetes deployment")
         assert results == []
+
+    @pytest.mark.asyncio
+    async def test_index_is_noop(self, storage):
+        await KeywordSearchStrategy().index(storage, "key", b"data")

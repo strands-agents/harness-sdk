@@ -32,6 +32,14 @@ describe.skipIf(process.platform === 'win32')('makeShell', () => {
 
     expect((result as ShellOutput).output).toContain('hello sandbox')
     expect((result as ShellOutput).error).toBe('')
+    expect((result as ShellOutput).exit_code).toBe(0)
+  })
+
+  it('reports a non-zero exit code', async () => {
+    const { sandboxShell, context } = createSandboxShell()
+    const result = await sandboxShell.invoke({ command: 'exit 42' }, context)
+
+    expect((result as ShellOutput).exit_code).toBe(42)
   })
 
   it('captures stderr via sandbox', async () => {
@@ -39,6 +47,7 @@ describe.skipIf(process.platform === 'win32')('makeShell', () => {
     const result = await sandboxShell.invoke({ command: 'echo "oops" >&2' }, context)
 
     expect((result as ShellOutput).error).toContain('oops')
+    expect((result as ShellOutput).exit_code).toBe(0)
   })
 
   it('does not persist state between calls (stateless)', async () => {
@@ -59,6 +68,34 @@ describe.skipIf(process.platform === 'win32')('makeShell', () => {
     await expect(sandboxShell.invoke({ command: 'sleep 10', timeout: 0.1 }, context)).rejects.toThrow(ShellTimeoutError)
   })
 
+  it('timeout error carries the partial output with the same field names as a success result', async () => {
+    const { sandboxShell, context } = createSandboxShell()
+    const error = await sandboxShell
+      .invoke({ command: 'echo partial; echo warn >&2; sleep 5', timeout: 0.3 }, context)
+      .catch((e) => e)
+
+    expect(error).toBeInstanceOf(ShellTimeoutError)
+    expect(error.partial).toStrictEqual({ output: 'partial\n', error: 'warn\n', exit_code: 124 })
+    expect(error.message).toBe(`Execution timed out after 0.3 seconds\n${JSON.stringify(error.partial)}`)
+  })
+
+  it('timeout surfaces as a failed tool result that still includes the partial output', async () => {
+    const { sandboxShell, context } = createSandboxShell()
+    const toolContext = {
+      ...context,
+      toolUse: { name: 'shell', toolUseId: 'test-id', input: { command: 'echo partial; sleep 5', timeout: 0.3 } },
+    }
+    const generator = sandboxShell.stream(toolContext)
+    let next = await generator.next()
+    while (!next.done) next = await generator.next()
+
+    const result = next.value
+    expect(result.status).toBe('error')
+    const text = (result.content[0] as { text: string }).text
+    expect(text).toMatch(/^Error: Execution timed out after 0.3 seconds\n/)
+    expect(JSON.parse(text.split('\n')[1]!)).toStrictEqual({ output: 'partial\n', error: '', exit_code: 124 })
+  })
+
   it('timeout error still matches the pre-rename BashTimeoutError', async () => {
     const { sandboxShell, context } = createSandboxShell()
     await expect(sandboxShell.invoke({ command: 'sleep 10', timeout: 0.1 }, context)).rejects.toThrow(BashTimeoutError)
@@ -71,7 +108,7 @@ describe.skipIf(process.platform === 'win32')('makeShell', () => {
 
 describe('deprecated makeBash alias', () => {
   // Consumers key registries, hooks, and defaults lists on the runtime name, so an
-  // alias that returned a tool named 'shell' would still break them (see awsarron/stan#6).
+  // alias that returned a tool named 'shell' would still break them.
   it('keeps the pre-rename tool name', () => {
     expect(makeBash().name).toBe('bash')
   })
