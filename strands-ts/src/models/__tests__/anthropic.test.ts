@@ -2476,7 +2476,7 @@ describe('AnthropicModel', () => {
         usage: {
           inputTokens: 11768,
           outputTokens: 115,
-          totalTokens: 11883,
+          totalTokens: 11990,
           cacheReadInputTokens: 100,
           cacheWriteInputTokens: 7,
         },
