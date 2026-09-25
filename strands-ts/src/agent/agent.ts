@@ -1307,7 +1307,6 @@ export class Agent implements LocalAgent, InvokableAgent {
           )
           const continuationApplied = combinedArgs !== ctx.args
           const middlewareReplacedArgs = ctx.args !== args
-          // Preserve stage order: middleware replacements override hook-modified input; continuation input is added last.
           const streamArgs =
             continuationApplied && !middlewareReplacedArgs
               ? continuations.combine(continuationEvent, inputMessages, (continuationArgs) =>
