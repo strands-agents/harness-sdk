@@ -130,6 +130,11 @@ Run fast, code-based checks with no LLM judge, for regression tests and CI. The
 `Contains`, `StartsWith`, `ToolCalled`, `StateEquals`, and `SkillInvoked`. They
 operate at OUTPUT_LEVEL or SESSION_LEVEL.
 
+[StructuredOutputSimilarity](structured_output_evaluator.md) is deterministic too, but scores a
+structured output field by field rather than comparing whole objects, so a partially
+correct extraction reports which field to fix. It operates at OUTPUT_LEVEL and needs
+the `stickler` extra.
+
 ## Custom
 
 When no built-in fits, extend the base `Evaluator` class to implement your own
