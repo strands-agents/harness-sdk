@@ -1021,7 +1021,7 @@ async def test_add_tool_wait_for_writes_false_returns_accepted_count():
     result = await _tool_named(mm, "add_memory")(entries=["a", "b"])
 
     assert result == {"accepted": 2}
-    await asyncio.sleep(0.05)  # let fire-and-forget writes drain
+    await mm.flush()
 
 
 @pytest.mark.asyncio
@@ -1032,7 +1032,81 @@ async def test_add_tool_wait_for_writes_false_returns_accepted_even_when_a_write
     result = await _tool_named(mm, "add_memory")(entries=["a", "b"])
 
     assert result == {"accepted": 2}
-    await asyncio.sleep(0.05)  # let the (swallowed) failing writes drain
+    assert await mm.flush() is None
+
+
+@pytest.mark.asyncio
+async def test_flush_waits_for_fire_and_forget_add_tool_writes():
+    """A shutdown flush drains accepted fire-and-forget writes (#4418)."""
+    started = asyncio.Event()
+    release = asyncio.Event()
+    completed = False
+
+    async def add_impl(content: str, _metadata: Any = None) -> None:
+        nonlocal completed
+        started.set()
+        await release.wait()
+        completed = True
+
+    store = _store("notes", writable=True)
+    store.add.side_effect = add_impl
+    mm = MemoryManager(stores=[store], add_tool_config=MemoryAddToolConfig(wait_for_writes=False))
+
+    tru_result = await _tool_named(mm, "add_memory")(entries=["fact"])
+    await started.wait()
+    write_task = next(iter(mm._background_tasks))
+    flush_task = asyncio.create_task(mm.flush())
+    await asyncio.sleep(0)
+    tru_flush_pending = not flush_task.done()
+
+    release.set()
+    await write_task
+    await flush_task
+
+    exp_result = {"accepted": 1}
+    assert tru_result == exp_result
+    assert tru_flush_pending is True
+    assert completed is True
+
+
+@pytest.mark.asyncio
+async def test_flush_waits_for_fire_and_forget_add_tool_writes_started_while_flushing():
+    """A flush also drains writes scheduled while its first snapshot is pending (#4418)."""
+    started = {content: asyncio.Event() for content in ("first", "second")}
+    release = {content: asyncio.Event() for content in ("first", "second")}
+    completed: list[str] = []
+
+    async def add_impl(content: str, _metadata: Any = None) -> None:
+        started[content].set()
+        await release[content].wait()
+        completed.append(content)
+
+    store = _store("notes", writable=True)
+    store.add.side_effect = add_impl
+    mm = MemoryManager(stores=[store], add_tool_config=MemoryAddToolConfig(wait_for_writes=False))
+    add_tool = _tool_named(mm, "add_memory")
+
+    await add_tool(entries=["first"])
+    await started["first"].wait()
+    first_task = next(iter(mm._background_tasks))
+    flush_task = asyncio.create_task(mm.flush())
+    await asyncio.sleep(0)
+
+    await add_tool(entries=["second"])
+    await started["second"].wait()
+    second_task = next(task for task in mm._background_tasks if task is not first_task)
+    release["first"].set()
+    await first_task
+    await asyncio.sleep(0)
+    tru_flush_pending = not flush_task.done()
+
+    release["second"].set()
+    await second_task
+    await flush_task
+
+    exp_completed = ["first", "second"]
+    assert tru_flush_pending is True
+    assert completed == exp_completed
 
 
 # --------------------------------------------------------------------------- #

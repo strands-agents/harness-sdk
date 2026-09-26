@@ -765,11 +765,21 @@ class MemoryManager(Plugin):
         return fire
 
     async def flush(self) -> None:
-        """Save every store's remaining messages and wait for all saves to finish.
+        """Save remaining messages and wait for all tracked memory writes to finish.
 
-        A no-op when no store has extraction configured. Drains automatic
-        extraction only; ``add_memory`` fire-and-forget writes are not awaited
-        here.
+        Drains automatic extraction and fire-and-forget ``add_memory`` writes,
+        including writes scheduled while the drain is in progress. Per-write
+        failures remain logged and swallowed.
         """
         if self._coordinator is not None:
             await self._coordinator.flush()
+
+        await self._flush_background_tasks()
+
+    async def _flush_background_tasks(self) -> None:
+        """Wait for tracked add-tool writes owned by the current event loop."""
+        loop = asyncio.get_running_loop()
+
+        while snapshot := [task for task in self._background_tasks if task.get_loop() is loop]:
+            await asyncio.gather(*snapshot, return_exceptions=True)
+            self._background_tasks.difference_update(snapshot)
