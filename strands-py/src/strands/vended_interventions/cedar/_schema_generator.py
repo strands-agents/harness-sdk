@@ -30,14 +30,15 @@ class ToolDefinition(TypedDict, total=False):
     description: str
 
 
-def generate_cedar_schema(tools: list[ToolDefinition]) -> str:
+def generate_cedar_schema(tools: list[ToolDefinition], namespace: str | None = None) -> str:
     """Generate a Cedar schema from tool definitions using cedar-policy-mcp-schema-generator.
 
     Args:
         tools: List of MCP-format tool definitions.
+        namespace: Optional Cedar namespace to preserve in the generated schema.
 
     Returns:
-        Cedar schema text with namespace wrapper stripped.
+        Cedar schema text. The namespace wrapper is preserved when ``namespace`` is set.
 
     Raises:
         ImportError: If cedar-policy-mcp-schema-generator is not installed.
@@ -52,15 +53,17 @@ def generate_cedar_schema(tools: list[ToolDefinition]) -> str:
         ) from e
 
     try:
-        result = generate_schema_or_raise(
-            DEFAULT_STUB, cast(list[dict[str, Any]], tools), config={"flattenNamespaces": True}
-        )
+        stub = DEFAULT_STUB.replace("namespace Agent", f"namespace {namespace or 'Agent'}", 1)
+        result = generate_schema_or_raise(stub, cast(list[dict[str, Any]], tools), config={"flattenNamespaces": True})
     except SchemaGeneratorError as e:
         raise RuntimeError(f"Schema generation failed: {e}") from e
 
-    schema = result["schema"]
+    schema = cast(str | None, result["schema"])
     if not schema:
         raise RuntimeError("Schema generation returned empty schema")
+
+    if namespace:
+        return schema
 
     # The generator wraps output in "namespace Agent { ... }" with prefixed types (Agent::User).
     # Cedar evaluation uses a flat schema, so strip the wrapper and namespace prefixes.

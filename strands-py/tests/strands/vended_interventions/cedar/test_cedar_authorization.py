@@ -130,6 +130,72 @@ class TestPrincipalResolution:
         assert "Tool name" in result.reason
 
 
+class TestNamespace:
+    def test_namespaces_default_principal_action_and_resource(self):
+        cedar = CedarAuthorization(
+            namespace="Agent",
+            policies=(
+                'permit(principal == Agent::User::"anonymous", '
+                'action == Agent::Action::"search", '
+                'resource == Agent::Resource::"default");'
+            ),
+        )
+
+        result = cedar.before_tool_call(_make_event("search"))
+
+        assert result.type == "proceed"
+
+    def test_namespaced_policy_denies_other_action(self):
+        cedar = CedarAuthorization(
+            namespace="Agent",
+            policies='permit(principal, action == Agent::Action::"search", resource);',
+        )
+
+        result = cedar.before_tool_call(_make_event("delete"))
+
+        assert result.type == "deny"
+
+    @pytest.mark.parametrize(
+        "namespace",
+        ['Agent"Injected', "Agent'Injected", "Org::App", " Agent ", "Agent\n", "Agent\t", "Agent-App", "1Agent"],
+    )
+    def test_invalid_namespace_is_rejected(self, namespace):
+        with pytest.raises(ValueError, match="Namespace must be a single Cedar identifier"):
+            CedarAuthorization(
+                namespace=namespace,
+                policies="permit(principal, action, resource);",
+            )
+
+    def test_namespace_with_tools_generates_and_validates_namespaced_schema(self):
+        pytest.importorskip("cedar_mcp_schema_generator")
+        cedar = CedarAuthorization(
+            namespace="MyApp",
+            policies='permit(principal, action == MyApp::Action::"search", resource);',
+            tools=[
+                {
+                    "name": "search",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                    },
+                }
+            ],
+        )
+
+        result = cedar.before_tool_call(_make_event("search", {"query": "x"}))
+
+        assert result.type == "proceed"
+
+    def test_namespace_with_tools_rejects_unknown_action(self):
+        pytest.importorskip("cedar_mcp_schema_generator")
+        with pytest.raises(ValueError, match="unrecognized action"):
+            CedarAuthorization(
+                namespace="MyApp",
+                policies='permit(principal, action == MyApp::Action::"serach", resource);',
+                tools=[{"name": "search", "inputSchema": {"type": "object"}}],
+            )
+
+
 class TestRateLimiting:
     def test_call_count_increments(self):
         cedar = CedarAuthorization(
@@ -560,6 +626,27 @@ class TestReload:
         cedar.reload()
 
         assert cedar.before_tool_call(_make_event("delete")).type == "proceed"
+
+    def test_reload_preserves_namespace_for_auto_generated_schema(self, monkeypatch):
+        from strands.vended_interventions.cedar import cedar_authorization
+
+        generated_namespaces = []
+
+        def generate_schema(tools, namespace=None):
+            generated_namespaces.append(namespace)
+            return "generated schema"
+
+        monkeypatch.setattr(cedar_authorization, "generate_cedar_schema", generate_schema)
+        monkeypatch.setattr(cedar_authorization, "_validate_policies", lambda *args: None)
+
+        cedar = CedarAuthorization(
+            namespace="Agent",
+            policies="permit(principal, action, resource);",
+            tools=[{"name": "search", "inputSchema": {"type": "object"}}],
+        )
+        cedar.reload()
+
+        assert generated_namespaces == ["Agent", "Agent"]
 
 
 class TestEntities:
