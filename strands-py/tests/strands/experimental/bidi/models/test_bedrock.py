@@ -580,8 +580,8 @@ def test_response_boundaries_across_content_blocks(nova_model, user_transcript):
             events = nova_model._convert_nova_event(native_event, response_state)
             if native_event.get("contentEnd", {}).get("contentId") == "audio":
                 assert events == [
-                    BidiAudioStopEvent(),
-                    BidiTranscriptStopEvent("Hello.", "assistant", "speculative"),
+                    BidiAudioStopEvent("audio"),
+                    BidiTranscriptStopEvent("assistant", "speculative"),
                     BidiResponseStopEvent(tru_events[0].response_id),
                 ]
             tru_events.extend(events)
@@ -593,25 +593,25 @@ def test_response_boundaries_across_content_blocks(nova_model, user_transcript):
                 [
                     BidiTranscriptStartEvent("user", "user"),
                     BidiTranscriptDeltaEvent("Hi.", "user", "user"),
-                    BidiTranscriptStopEvent("Hi.", "user", "user"),
+                    BidiTranscriptStopEvent("user", "user"),
                 ]
                 if user_transcript
                 else []
             ),
             BidiTranscriptStartEvent("assistant", content_id="speculative"),
             BidiTranscriptDeltaEvent("Hello.", "assistant", content_id="speculative"),
-            BidiAudioStartEvent(),
-            BidiAudioDeltaEvent("YQ==", format="pcm", sample_rate=16000, channels=1),
-            BidiAudioDeltaEvent("Yg==", format="pcm", sample_rate=16000, channels=1),
-            BidiAudioStopEvent(),
-            BidiTranscriptStopEvent("Hello.", "assistant", content_id="speculative"),
+            BidiAudioStartEvent("audio"),
+            BidiAudioDeltaEvent("YQ==", format="pcm", sample_rate=16000, channels=1, content_id="audio"),
+            BidiAudioDeltaEvent("Yg==", format="pcm", sample_rate=16000, channels=1, content_id="audio"),
+            BidiAudioStopEvent("audio"),
+            BidiTranscriptStopEvent("assistant", content_id="speculative"),
             BidiResponseStopEvent(response_id),
         ]
         assert tru_events == exp_events
     assert response_ids[0] != response_ids[1]
 
 
-def test_accumulates_speculative_assistant_transcript_blocks(nova_model):
+def test_speculative_text_blocks_share_one_transcript(nova_model):
     response_state = _ResponseState(response_id="r1", transcript=_Transcript("t1", "assistant"))
     tru_events = []
     for content_id, text, stop_reason in [
@@ -640,12 +640,12 @@ def test_accumulates_speculative_assistant_transcript_blocks(nova_model):
         )
     exp_events = [
         BidiTranscriptDeltaEvent("Dragons appear in myths worldwide.", "assistant", "t1"),
-        BidiAudioStartEvent(),
-        BidiAudioDeltaEvent("YQ==", format="pcm", sample_rate=16000, channels=1),
+        BidiAudioStartEvent("first-audio"),
+        BidiAudioDeltaEvent("YQ==", format="pcm", sample_rate=16000, channels=1, content_id="first-audio"),
         BidiTranscriptDeltaEvent(" Would you like to hear more?", "assistant", "t1"),
-        BidiAudioDeltaEvent("YQ==", format="pcm", sample_rate=16000, channels=1),
-        BidiAudioStopEvent(),
-        BidiTranscriptStopEvent("Dragons appear in myths worldwide. Would you like to hear more?", "assistant", "t1"),
+        BidiAudioDeltaEvent("YQ==", format="pcm", sample_rate=16000, channels=1, content_id="first-audio"),
+        BidiAudioStopEvent("first-audio"),
+        BidiTranscriptStopEvent("assistant", "t1"),
         BidiResponseStopEvent("r1"),
     ]
     assert tru_events == exp_events
@@ -655,13 +655,13 @@ def test_accumulates_speculative_assistant_transcript_blocks(nova_model):
 @pytest.mark.parametrize("role", ["user", "assistant"])
 def test_barge_in_closes_response_before_next_turn(nova_model, role):
     state = _ResponseState(
-        response_id="r1", generation_stage="FINAL", transcript=_Transcript("t1", role, "Partial answer.")
+        response_id="r1", generation_stage="FINAL", transcript=_Transcript("t1", role, last_character=".")
     )
 
     tru_events = nova_model._convert_nova_event({"contentEnd": {"type": "TEXT", "stopReason": "INTERRUPTED"}}, state)
     exp_events = [
         BidiBargeInEvent("user_speech"),
-        BidiTranscriptStopEvent("Partial answer.", role, "t1"),
+        BidiTranscriptStopEvent(role, "t1"),
         BidiResponseStopEvent("r1"),
     ]
     assert tru_events == exp_events
@@ -692,12 +692,12 @@ def test_barge_in_closes_response_before_next_turn(nova_model, role):
     ids=["no-final-text", "one-final-chunk", "multiple-final-chunks"],
 )
 def test_response_after_barge_in_finishes_before_next_user_transcript(nova_model, final_fragments):
-    response_state = _ResponseState(response_id="r1", transcript=_Transcript("t1", "assistant", "Planned answer."))
+    response_state = _ResponseState(response_id="r1", transcript=_Transcript("t1", "assistant", last_character="."))
     native_events = []
     if final_fragments:
         native_events.extend(
             [
-                {"contentStart": {"role": "ASSISTANT", "type": "AUDIO"}},
+                {"contentStart": {"role": "ASSISTANT", "type": "AUDIO", "contentId": "audio"}},
                 {"contentEnd": {"type": "AUDIO", "stopReason": "PARTIAL_TURN"}},
             ]
         )
@@ -755,8 +755,8 @@ def test_response_after_barge_in_finishes_before_next_user_transcript(nova_model
         elif native_event.get("contentEnd", {}).get("contentId") == "control":
             assert events == [
                 BidiBargeInEvent("user_speech"),
-                *([BidiAudioStopEvent()] if final_fragments else []),
-                BidiTranscriptStopEvent("Planned answer.", "assistant", content_id="t1"),
+                *([BidiAudioStopEvent(content_id=ANY)] if final_fragments else []),
+                BidiTranscriptStopEvent("assistant", content_id="t1"),
                 BidiResponseStopEvent("r1"),
             ]
         elif native_event.get("textOutput", {}).get("contentId") == "final":
@@ -764,16 +764,16 @@ def test_response_after_barge_in_finishes_before_next_user_transcript(nova_model
         elif native_event.get("contentEnd", {}).get("contentId") == "final":
             assert events == []
     exp_events = [
-        *([BidiAudioStartEvent()] if final_fragments else []),
+        *([BidiAudioStartEvent(content_id=ANY)] if final_fragments else []),
         BidiBargeInEvent("user_speech"),
-        *([BidiAudioStopEvent()] if final_fragments else []),
-        BidiTranscriptStopEvent("Planned answer.", "assistant", content_id="t1"),
+        *([BidiAudioStopEvent(content_id=ANY)] if final_fragments else []),
+        BidiTranscriptStopEvent("assistant", content_id="t1"),
         BidiResponseStopEvent("r1"),
         BidiResponseStartEvent(response_state.response_id),
         BidiTranscriptStartEvent("user", content_id="user"),
         BidiTranscriptDeltaEvent("Next question.", "user", content_id="user"),
-        BidiTranscriptStopEvent("Next question.", "user", content_id="user"),
-        BidiAudioStartEvent(),
+        BidiTranscriptStopEvent("user", content_id="user"),
+        BidiAudioStartEvent(content_id=ANY),
     ]
     assert tru_events == exp_events
     assert response_state.response_id != "r1"
@@ -809,7 +809,7 @@ def test_user_content_without_transcript_text_completes(nova_model):
     exp_events = [
         BidiResponseStartEvent(state.response_id),
         BidiTranscriptStartEvent("user", content_id="user"),
-        BidiTranscriptStopEvent("", "user", content_id="user"),
+        BidiTranscriptStopEvent("user", content_id="user"),
         BidiTranscriptStartEvent("assistant", content_id="assistant"),
     ]
     assert tru_events == exp_events
@@ -818,7 +818,7 @@ def test_user_content_without_transcript_text_completes(nova_model):
 @pytest.mark.parametrize("role", [None, "user", "assistant"])
 def test_final_assistant_blocks_do_not_change_pending_transcript(nova_model, role):
     response_state = _ResponseState(
-        transcript=_Transcript("pending", role, "Pending text.") if role else None,
+        transcript=_Transcript("pending", role, last_character=".") if role else None,
         response_id="r1" if role else None,
     )
     exp_state = asdict(response_state)
@@ -845,7 +845,7 @@ def test_final_assistant_blocks_do_not_change_pending_transcript(nova_model, rol
     assert asdict(response_state) == exp_state
 
 
-def test_completes_accumulated_user_transcript_before_assistant_audio(nova_model):
+def test_user_transcript_stops_before_assistant_audio(nova_model):
     response_state = _ResponseState()
 
     def start_user_text(content_id: str) -> None:
@@ -920,8 +920,8 @@ def test_completes_accumulated_user_transcript_before_assistant_audio(nova_model
     )
 
     assert completed == [
-        BidiTranscriptStopEvent("Let me think for a second", "user", content_id="user-content-1"),
-        BidiAudioStartEvent(),
+        BidiTranscriptStopEvent("user", content_id="user-content-1"),
+        BidiAudioStartEvent("assistant-audio"),
     ]
 
 
@@ -1246,11 +1246,13 @@ async def test_event_conversion(nova_model):
     audio_bytes = b"test audio data"
     audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
     nova_event = {"audioOutput": {"content": audio_base64}}
+    response_state.audio_content_id = "audio"
     tru_events = nova_model._convert_nova_event(nova_event, response_state)
     exp_events = [
-        BidiAudioDeltaEvent(audio_base64, format="pcm", sample_rate=16000, channels=1),
+        BidiAudioDeltaEvent(audio_base64, format="pcm", sample_rate=16000, channels=1, content_id="audio"),
     ]
     assert tru_events == exp_events
+    response_state.audio_content_id = None
 
     # Text chunks become deltas for the transcript opened by contentStart.
     nova_event = {"textOutput": {"content": "Hello, world!", "role": "ASSISTANT"}}
@@ -1319,7 +1321,7 @@ async def test_event_conversion(nova_model):
         nova_event,
         response_state,
     )
-    assert result == [BidiAudioStartEvent()]
+    assert result == [BidiAudioStartEvent(content_id=ANY)]
 
     # Test TOOL type contentStart
     nova_event = {"contentStart": {"role": "TOOL", "type": "TOOL", "contentId": "content-789"}}
@@ -1480,6 +1482,36 @@ async def test_message_history_empty_and_edge_cases(nova_model):
 # Audio Event Tests
 
 
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_audio_stream_preserves_content_id(nova_model, interrupted):
+    state = _ResponseState()
+    for content_id in ("first-audio", "second-audio"):
+        native_events = [
+            {"contentStart": {"role": "ASSISTANT", "type": "AUDIO", "contentId": content_id}},
+            {"audioOutput": {"contentId": content_id, "content": "YQ=="}},
+            {"audioOutput": {"contentId": content_id, "content": "Yg=="}},
+            {
+                "contentEnd": {
+                    "type": "TEXT" if interrupted else "AUDIO",
+                    "contentId": "control" if interrupted else content_id,
+                    "stopReason": "INTERRUPTED" if interrupted else "END_TURN",
+                }
+            },
+        ]
+        tru_events = [event for native in native_events for event in nova_model._convert_nova_event(native, state)]
+        exp_events = [
+            BidiResponseStartEvent(ANY),
+            BidiAudioStartEvent(content_id),
+            BidiAudioDeltaEvent("YQ==", "pcm", 16000, 1, content_id),
+            BidiAudioDeltaEvent("Yg==", "pcm", 16000, 1, content_id),
+            *([BidiBargeInEvent("user_speech")] if interrupted else []),
+            BidiAudioStopEvent(content_id),
+            BidiResponseStopEvent(ANY),
+        ]
+        assert tru_events == exp_events
+        assert state.audio_content_id is None
+
+
 @pytest.mark.parametrize(
     ("audio", "rate"),
     [
@@ -1491,9 +1523,11 @@ def test__convert_nova_event_audio_format(boto_session, audio, rate):
     model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0", boto_session=boto_session, audio=audio)
     audio_base64 = base64.b64encode(b"audio data").decode()
 
-    tru_events = model._convert_nova_event({"audioOutput": {"content": audio_base64}}, _ResponseState())
+    tru_events = model._convert_nova_event(
+        {"audioOutput": {"content": audio_base64}}, _ResponseState(audio_content_id="audio")
+    )
     exp_events = [
-        BidiAudioDeltaEvent(audio=audio_base64, format="pcm", sample_rate=rate, channels=1),
+        BidiAudioDeltaEvent(audio=audio_base64, format="pcm", sample_rate=rate, channels=1, content_id="audio"),
     ]
     assert tru_events == exp_events
 
@@ -1841,7 +1875,7 @@ def test_tool_calls_keep_response_open_until_audio_ends(nova_model, assistant_tr
         BidiResponseStartEvent(response_id),
         BidiTranscriptStartEvent("user", content_id="user"),
         BidiTranscriptDeltaEvent("What time is it?", "user", content_id="user"),
-        BidiTranscriptStopEvent("What time is it?", "user", content_id="user"),
+        BidiTranscriptStopEvent("user", content_id="user"),
         *(
             [
                 BidiTranscriptStartEvent("assistant", "assistant"),
@@ -1859,12 +1893,10 @@ def test_tool_calls_keep_response_open_until_audio_ends(nova_model, assistant_tr
         ],
         *([] if assistant_transcript else [BidiTranscriptStartEvent("assistant", content_id)]),
         BidiTranscriptDeltaEvent(" It is noon." if assistant_transcript else "It is noon.", "assistant", content_id),
-        BidiAudioStartEvent(),
-        BidiAudioDeltaEvent("YQ==", format="pcm", sample_rate=16000, channels=1),
-        BidiAudioStopEvent(),
-        BidiTranscriptStopEvent(
-            "Let me check. It is noon." if assistant_transcript else "It is noon.", "assistant", content_id
-        ),
+        BidiAudioStartEvent(content_id=ANY),
+        BidiAudioDeltaEvent("YQ==", format="pcm", sample_rate=16000, channels=1, content_id=ANY),
+        BidiAudioStopEvent(content_id=ANY),
+        BidiTranscriptStopEvent("assistant", content_id),
         BidiResponseStopEvent(response_id),
     ]
     assert tru_events == exp_events
@@ -1876,7 +1908,7 @@ def test_tool_calls_keep_response_open_until_audio_ends(nova_model, assistant_tr
 def test_user_transcript_closes_response_after_tool_use(nova_model, assistant_transcript, partial_audio):
     state = _ResponseState(
         response_id="previous",
-        transcript=_Transcript("assistant", "assistant", "Let me check.") if assistant_transcript else None,
+        transcript=_Transcript("assistant", "assistant", last_character=".") if assistant_transcript else None,
     )
     native_events = [
         {"contentEnd": {"type": "TOOL", "contentId": "tool", "stopReason": "TOOL_USE"}},
@@ -1908,14 +1940,14 @@ def test_user_transcript_closes_response_after_tool_use(nova_model, assistant_tr
     exp_events = [
         *(
             [
-                BidiAudioStartEvent(),
-                BidiAudioDeltaEvent("YQ==", format="pcm", sample_rate=16000, channels=1),
-                BidiAudioStopEvent(),
+                BidiAudioStartEvent(content_id=ANY),
+                BidiAudioDeltaEvent("YQ==", format="pcm", sample_rate=16000, channels=1, content_id=ANY),
+                BidiAudioStopEvent(content_id=ANY),
             ]
             if partial_audio
             else []
         ),
-        *([BidiTranscriptStopEvent("Let me check.", "assistant", "assistant")] if assistant_transcript else []),
+        *([BidiTranscriptStopEvent("assistant", "assistant")] if assistant_transcript else []),
         BidiResponseStopEvent("previous"),
         BidiResponseStartEvent(state.response_id),
         BidiTranscriptStartEvent("user", "user-1"),
@@ -1924,6 +1956,6 @@ def test_user_transcript_closes_response_after_tool_use(nova_model, assistant_tr
     ]
     assert tru_events == exp_events
     assert state == _ResponseState(
-        response_id=state.response_id, transcript=_Transcript("user-1", "user", "Next question.")
+        response_id=state.response_id, transcript=_Transcript("user-1", "user", last_character=".")
     )
     assert state.response_id != "previous"

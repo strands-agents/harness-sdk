@@ -213,7 +213,7 @@ class BidirectionalTestContext:
                 text = event.get("delta", "")
                 if text:
                     texts.append(text)
-            elif event.get("type") == "bidi_transcript_stop":
+            elif event.get("type") == "bidi_transcript_block":
                 text = event.get("transcript", "")
                 if text:
                     texts.append(text)

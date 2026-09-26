@@ -122,9 +122,9 @@ class BidiModel(Model, abc.ABC):
     def receive(self) -> AsyncIterable[BidiOutputEvent]:
         """Receive streaming events from the model.
 
-        Each transcript has start and stop events, with zero or more deltas between
-        them, sharing a content_id unique within the connection. Transcript streams
-        may interleave, and user transcripts may arrive outside response boundaries.
+        Text, reasoning, and transcript streams emit start, delta, and stop events.
+        Each stream shares a content_id unique within the connection. Transcript
+        streams may interleave, and user transcripts may arrive outside response boundaries.
 
         The stream continues until the connection is closed or an error occurs.
 

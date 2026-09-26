@@ -195,11 +195,16 @@ class BidiResponseStartEvent(TypedEvent):
 
 
 class BidiAudioStartEvent(TypedEvent):
-    """Beginning of an assistant audio stream, before its chunks arrive."""
+    """Beginning of an assistant audio stream, identified by ``content_id``."""
 
-    def __init__(self) -> None:
+    def __init__(self, content_id: str) -> None:
         """Initialize audio start event."""
-        super().__init__({"type": "bidi_audio_start"})
+        super().__init__({"type": "bidi_audio_start", "content_id": content_id})
+
+    @property
+    def content_id(self) -> str:
+        """Identifier shared by this audio stream's events."""
+        return cast(str, self["content_id"])
 
 
 class BidiAudioDeltaEvent(TypedEvent):
@@ -210,6 +215,7 @@ class BidiAudioDeltaEvent(TypedEvent):
         format: Audio encoding format.
         sample_rate: Number of audio samples per second in Hz.
         channels: Number of audio channels (1=mono, 2=stereo).
+        content_id: Unique identifier shared by this audio stream's events.
     """
 
     def __init__(
@@ -218,6 +224,7 @@ class BidiAudioDeltaEvent(TypedEvent):
         format: AudioFormat,
         sample_rate: int,
         channels: AudioChannel,
+        content_id: str,
     ):
         """Initialize audio delta event."""
         super().__init__(
@@ -227,8 +234,14 @@ class BidiAudioDeltaEvent(TypedEvent):
                 "format": format,
                 "sample_rate": sample_rate,
                 "channels": channels,
+                "content_id": content_id,
             }
         )
+
+    @property
+    def content_id(self) -> str:
+        """Identifier shared by this audio stream's events."""
+        return cast(str, self["content_id"])
 
     @property
     def audio(self) -> str:
@@ -254,9 +267,138 @@ class BidiAudioDeltaEvent(TypedEvent):
 class BidiAudioStopEvent(TypedEvent):
     """End of an assistant audio stream, which may still be playing."""
 
-    def __init__(self) -> None:
+    def __init__(self, content_id: str) -> None:
         """Initialize audio stop event."""
-        super().__init__({"type": "bidi_audio_stop"})
+        super().__init__({"type": "bidi_audio_stop", "content_id": content_id})
+
+    @property
+    def content_id(self) -> str:
+        """Identifier shared by this audio stream's events."""
+        return cast(str, self["content_id"])
+
+
+class BidiTextStartEvent(TypedEvent):
+    """Beginning of assistant text output, identified by ``content_id``."""
+
+    def __init__(self, content_id: str):
+        """Initialize text start event."""
+        super().__init__({"type": "bidi_text_start", "content_id": content_id})
+
+    @property
+    def content_id(self) -> str:
+        """Identifier shared by this text block's events."""
+        return cast(str, self["content_id"])
+
+
+class BidiTextDeltaEvent(TypedEvent):
+    """Incremental assistant text output, separate from speech transcripts."""
+
+    def __init__(self, delta: str, content_id: str):
+        """Initialize text delta event."""
+        super().__init__({"type": "bidi_text_delta", "delta": delta, "content_id": content_id})
+
+    @property
+    def content_id(self) -> str:
+        """Identifier shared by this text block's events."""
+        return cast(str, self["content_id"])
+
+    @property
+    def delta(self) -> str:
+        """Incremental text."""
+        return cast(str, self["delta"])
+
+
+class BidiTextStopEvent(TypedEvent):
+    """End of an assistant text stream, before its completed block is emitted."""
+
+    def __init__(self, content_id: str):
+        """Initialize text stop event."""
+        super().__init__({"type": "bidi_text_stop", "content_id": content_id})
+
+    @property
+    def content_id(self) -> str:
+        """Identifier shared by this text block's events."""
+        return cast(str, self["content_id"])
+
+
+class BidiTextBlockEvent(TypedEvent):
+    """Complete assistant text, emitted after its stop event by the agent."""
+
+    def __init__(self, text: str, content_id: str):
+        """Initialize text block event."""
+        super().__init__({"type": "bidi_text_block", "text": text, "content_id": content_id})
+
+    @property
+    def content_id(self) -> str:
+        """Identifier shared by this text block's events."""
+        return cast(str, self["content_id"])
+
+    @property
+    def text(self) -> str:
+        """Complete text."""
+        return cast(str, self["text"])
+
+
+class BidiReasoningStartEvent(TypedEvent):
+    """Beginning of model-provided reasoning text, identified by ``content_id``."""
+
+    def __init__(self, content_id: str):
+        """Initialize reasoning start event."""
+        super().__init__({"type": "bidi_reasoning_start", "content_id": content_id})
+
+    @property
+    def content_id(self) -> str:
+        """Identifier shared by this reasoning block's events."""
+        return cast(str, self["content_id"])
+
+
+class BidiReasoningDeltaEvent(TypedEvent):
+    """Incremental reasoning text or thought summary exposed by the model."""
+
+    def __init__(self, delta: str, content_id: str):
+        """Initialize reasoning delta event."""
+        super().__init__({"type": "bidi_reasoning_delta", "delta": delta, "content_id": content_id})
+
+    @property
+    def content_id(self) -> str:
+        """Identifier shared by this reasoning block's events."""
+        return cast(str, self["content_id"])
+
+    @property
+    def delta(self) -> str:
+        """Incremental reasoning text."""
+        return cast(str, self["delta"])
+
+
+class BidiReasoningStopEvent(TypedEvent):
+    """End of a reasoning stream, before its completed block is emitted."""
+
+    def __init__(self, content_id: str):
+        """Initialize reasoning stop event."""
+        super().__init__({"type": "bidi_reasoning_stop", "content_id": content_id})
+
+    @property
+    def content_id(self) -> str:
+        """Identifier shared by this reasoning block's events."""
+        return cast(str, self["content_id"])
+
+
+class BidiReasoningBlockEvent(TypedEvent):
+    """Complete reasoning text, emitted after its stop event by the agent."""
+
+    def __init__(self, text: str, content_id: str):
+        """Initialize reasoning block event."""
+        super().__init__({"type": "bidi_reasoning_block", "text": text, "content_id": content_id})
+
+    @property
+    def content_id(self) -> str:
+        """Identifier shared by this reasoning block's events."""
+        return cast(str, self["content_id"])
+
+    @property
+    def text(self) -> str:
+        """Complete reasoning text or thought summary."""
+        return cast(str, self["text"])
 
 
 class BidiTranscriptStartEvent(TypedEvent):
@@ -325,7 +467,36 @@ class BidiTranscriptDeltaEvent(TypedEvent):
 
 
 class BidiTranscriptStopEvent(TypedEvent):
-    """End of a user or assistant transcript, carrying its final text.
+    """End of a transcript stream, before its completed block is emitted.
+
+    Parameters:
+        role: Who spoke ("user" or "assistant").
+        content_id: Unique identifier shared by this transcript's events.
+    """
+
+    def __init__(self, role: Role, content_id: str):
+        """Initialize transcript stop event."""
+        super().__init__(
+            {
+                "type": "bidi_transcript_stop",
+                "role": _normalize_role(role, default="user"),
+                "content_id": content_id,
+            }
+        )
+
+    @property
+    def content_id(self) -> str:
+        """Identifier shared by this transcript's events."""
+        return cast(str, self["content_id"])
+
+    @property
+    def role(self) -> Role:
+        """The role of the speaker."""
+        return cast(Role, self["role"])
+
+
+class BidiTranscriptBlockEvent(TypedEvent):
+    """Complete transcript, emitted after its stop event by the agent.
 
     Parameters:
         transcript: The final transcript text.
@@ -334,10 +505,10 @@ class BidiTranscriptStopEvent(TypedEvent):
     """
 
     def __init__(self, transcript: str, role: Role, content_id: str):
-        """Initialize transcript stop event."""
+        """Initialize transcript block event."""
         super().__init__(
             {
-                "type": "bidi_transcript_stop",
+                "type": "bidi_transcript_block",
                 "transcript": transcript,
                 "role": _normalize_role(role, default="user"),
                 "content_id": content_id,
@@ -533,9 +704,18 @@ BidiOutputEvent = (
     | BidiAudioStartEvent
     | BidiAudioDeltaEvent
     | BidiAudioStopEvent
+    | BidiTextStartEvent
+    | BidiTextDeltaEvent
+    | BidiTextStopEvent
+    | BidiTextBlockEvent
+    | BidiReasoningStartEvent
+    | BidiReasoningDeltaEvent
+    | BidiReasoningStopEvent
+    | BidiReasoningBlockEvent
     | BidiTranscriptStartEvent
     | BidiTranscriptDeltaEvent
     | BidiTranscriptStopEvent
+    | BidiTranscriptBlockEvent
     | BidiBargeInEvent
     | BidiResponseStopEvent
     | BidiUsageEvent

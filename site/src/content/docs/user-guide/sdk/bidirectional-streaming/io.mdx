@@ -225,12 +225,17 @@ import asyncio
 
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.io import ConsoleIO
+from strands.experimental.bidi.models import OpenAIRealtimeModel
 from strands.experimental.tools import stop
 
 
 async def main():
-    # stop tool allows user to verbally stop agent execution.
-    agent = BidiAgent(tools=[stop])
+    model = OpenAIRealtimeModel(
+        model_id="gpt-realtime-2.1",
+        transcription_model_id=None,
+        params={"output_modalities": ["text"]},
+    )
+    agent = BidiAgent(model=model, tools=[stop])
     text_io = ConsoleIO(input_prompt="> You: ")
 
     await agent.run(
@@ -242,8 +247,8 @@ async def main():
 asyncio.run(main())
 ```
 
-This creates a text-based agent that reads user input from the terminal and prints
-transcripts and responses to the console.
+Set `OPENAI_API_KEY` before running this example. It reads user input from the terminal
+and prints text responses to the console.
 
 ### Configurations
 
@@ -300,7 +305,7 @@ async def main():
 
     while True:
         output_event = json.loads(await websocket.recv())
-        if output_event["type"] == "bidi_transcript_stop":
+        if output_event["type"] == "bidi_transcript_block":
             print(output_event["transcript"])
             break
 

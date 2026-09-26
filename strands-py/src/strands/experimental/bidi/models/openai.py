@@ -35,6 +35,9 @@ from ..types.events import (
     BidiOutputEvent,
     BidiResponseStartEvent,
     BidiResponseStopEvent,
+    BidiTextDeltaEvent,
+    BidiTextStartEvent,
+    BidiTextStopEvent,
     BidiTranscriptDeltaEvent,
     BidiTranscriptStartEvent,
     BidiTranscriptStopEvent,
@@ -106,9 +109,10 @@ _RESTART_INSTRUCTION = (
 class _SessionState:
     """Connection-local transcript identities and response creation state."""
 
-    started_transcripts: set[str] = field(default_factory=set)
+    # Open transcript IDs mapped to whether they have emitted deltas.
+    started_transcripts: dict[str, bool] = field(default_factory=dict)
     assistant_parts: dict[str, tuple[str, int]] = field(default_factory=dict)
-    audio_responses: set[str | None] = field(default_factory=set)
+    audio_content_ids: dict[str | None, str] = field(default_factory=dict)
     active_responses: set[str] = field(default_factory=set)
     pending_tools: set[str] = field(default_factory=set)
     response_pending: bool = False
@@ -118,30 +122,39 @@ class _SessionState:
 
     def start_audio(self, response_id: str | None) -> list[BidiOutputEvent]:
         """Open an audio stream before its first chunk."""
-        if response_id in self.audio_responses:
+        if response_id in self.audio_content_ids:
             return []
-        self.audio_responses.add(response_id)
-        return [BidiAudioStartEvent()]
+        content_id = str(uuid.uuid4())
+        self.audio_content_ids[response_id] = content_id
+        return [BidiAudioStartEvent(content_id)]
 
     def stop_audio(self, response_id: str | None) -> list[BidiOutputEvent]:
         """Close an open audio stream once."""
-        if response_id not in self.audio_responses:
+        content_id = self.audio_content_ids.pop(response_id, None)
+        if content_id is None:
             return []
-        self.audio_responses.remove(response_id)
-        return [BidiAudioStopEvent()]
+        return [BidiAudioStopEvent(content_id)]
 
     def start_transcript(self, role: Role, content_id: str) -> list[BidiOutputEvent]:
         """Open a transcript once, when speech or its first text arrives."""
         if content_id in self.started_transcripts:
             return []
-        self.started_transcripts.add(content_id)
+        self.started_transcripts[content_id] = False
         return [BidiTranscriptStartEvent(role, content_id=content_id)]
 
-    def transcript_events(self, event: BidiTranscriptDeltaEvent | BidiTranscriptStopEvent) -> list[BidiOutputEvent]:
-        """Ensure the transcript starts before emitting its delta or stop."""
+    def transcript_events(self, event: BidiTranscriptDeltaEvent) -> list[BidiOutputEvent]:
+        """Ensure the transcript starts before emitting its delta."""
         events = [*self.start_transcript(event.role, event.content_id), event]
-        if isinstance(event, BidiTranscriptStopEvent):
-            self.started_transcripts.remove(event.content_id)
+        self.started_transcripts[event.content_id] = True
+        return events
+
+    def stop_transcript(self, transcript: str, role: Role, content_id: str) -> list[BidiOutputEvent]:
+        """Close a transcript, emitting final-only text as a delta."""
+        events = self.start_transcript(role, content_id)
+        has_deltas = self.started_transcripts.pop(content_id)
+        if transcript and not has_deltas:
+            events.append(BidiTranscriptDeltaEvent(transcript, role, content_id))
+        events.append(BidiTranscriptStopEvent(role, content_id))
         return events
 
 
@@ -562,10 +575,12 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             return state.start_audio(openai_event.get("response_id")) or None
 
         if event_type == "response.output_audio.delta":
+            response_id = openai_event.get("response_id")
             return [
-                *state.start_audio(openai_event.get("response_id")),
+                *state.start_audio(response_id),
                 BidiAudioDeltaEvent(
                     audio=openai_event["delta"],
+                    content_id=state.audio_content_ids[response_id],
                     **self._audio_config["output"],
                 ),
             ]
@@ -578,15 +593,23 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             if not text:
                 return None
             response_id = openai_event["response_id"]
+            is_text = event_type == "response.output_text.delta"
+            content_id = f"{response_id}:text" if is_text else response_id
             part_id = (openai_event["item_id"], openai_event["content_index"])
-            previous_part = state.assistant_parts.get(response_id)
+            previous_part = state.assistant_parts.get(content_id)
             if previous_part is not None and previous_part != part_id:
                 text = "\n\n" + text
-            state.assistant_parts[response_id] = part_id
-            return state.transcript_events(BidiTranscriptDeltaEvent(text, "assistant", content_id=response_id))
+            state.assistant_parts[content_id] = part_id
+            if is_text:
+                events = []
+                if previous_part is None:
+                    events.append(BidiTextStartEvent(content_id))
+                events.append(BidiTextDeltaEvent(text, content_id))
+                return events
+            return state.transcript_events(BidiTranscriptDeltaEvent(text, "assistant", content_id=content_id))
 
         if event_type in ("response.output_text.done", "response.output_audio_transcript.done"):
-            # Response completion closes the combined assistant transcript.
+            # Response completion closes the assistant's text and transcript streams.
             return None
 
         if event_type in (
@@ -605,9 +628,7 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             return state.transcript_events(BidiTranscriptDeltaEvent(text, role, content_id=openai_event["item_id"]))
 
         if event_type == "conversation.item.input_audio_transcription.completed":
-            return state.transcript_events(
-                BidiTranscriptStopEvent(openai_event["transcript"], "user", content_id=openai_event["item_id"])
-            )
+            return state.stop_transcript(openai_event["transcript"], "user", content_id=openai_event["item_id"])
 
         if event_type == "conversation.item.input_audio_transcription.failed":
             error_info = openai_event.get("error", {})
@@ -723,24 +744,35 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         return None
 
     def _complete_response(self, response: dict[str, Any], state: _SessionState) -> list[BidiOutputEvent]:
-        """Close audio and the combined assistant transcript before stopping the response."""
+        """Close audio, text, and transcripts before stopping the response."""
         response_id = response.get("id", "unknown")
         output = response.get("output", [])
         events = state.stop_audio(response.get("id"))
         transcript_parts = [
-            part.get("transcript", part.get("text", ""))
+            part.get("transcript", "")
             for item in output
             if item.get("type") == "message" and item.get("role") == "assistant"
             for part in item.get("content", [])
-            if part.get("type") in ("output_audio", "output_text")
+            if part.get("type") == "output_audio"
         ]
         if transcript_parts or response_id in state.assistant_parts:
-            events.extend(
-                state.transcript_events(
-                    BidiTranscriptStopEvent("\n\n".join(transcript_parts), "assistant", content_id=response_id)
-                )
-            )
+            events.extend(state.stop_transcript("\n\n".join(transcript_parts), "assistant", content_id=response_id))
         state.assistant_parts.pop(response_id, None)
+
+        text_parts = [
+            part.get("text", "")
+            for item in output
+            if item.get("type") == "message" and item.get("role") == "assistant"
+            for part in item.get("content", [])
+            if part.get("type") == "output_text"
+        ]
+        content_id = f"{response_id}:text"
+        if text_parts or content_id in state.assistant_parts:
+            if content_id not in state.assistant_parts:
+                events.append(BidiTextStartEvent(content_id))
+                events.append(BidiTextDeltaEvent("\n\n".join(text_parts), content_id))
+            events.append(BidiTextStopEvent(content_id))
+        state.assistant_parts.pop(content_id, None)
 
         events.append(BidiResponseStopEvent(response_id=response_id))
 

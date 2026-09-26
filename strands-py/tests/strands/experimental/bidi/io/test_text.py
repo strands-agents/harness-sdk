@@ -3,7 +3,12 @@ import unittest.mock
 import pytest
 
 from strands.experimental.bidi.io import ConsoleIO
-from strands.experimental.bidi.types import BidiBargeInEvent, BidiTranscriptDeltaEvent
+from strands.experimental.bidi.types import (
+    BidiBargeInEvent,
+    BidiReasoningDeltaEvent,
+    BidiTextDeltaEvent,
+    BidiTranscriptDeltaEvent,
+)
 from strands.types.content import TextBlock
 
 
@@ -41,10 +46,12 @@ async def test_console_io_input(prompt_session, text_input):
     ("event", "exp_print"),
     [
         (BidiBargeInEvent(reason="user_speech"), "barge-in"),
-        (BidiTranscriptDeltaEvent(delta="test text", role="user", content_id="user-transcript"), "test text"),
+        (BidiTextDeltaEvent("Written answer", "text"), "Written answer"),
+        (BidiReasoningDeltaEvent("Thought summary", "reasoning"), ""),
+        (BidiTranscriptDeltaEvent(delta="test text", role="user", content_id="user-transcript"), ""),
         (
             BidiTranscriptDeltaEvent(delta="test text", role="assistant", content_id="assistant-transcript"),
-            "test text",
+            "",
         ),
     ],
 )
