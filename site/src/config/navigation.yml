@@ -337,6 +337,7 @@ sidebar:
               - docs/user-guide/sdk/model-providers
               - docs/user-guide/sdk/model-providers/model-routing
               - docs/user-guide/sdk/model-providers/amazon-bedrock
+              - docs/user-guide/sdk/model-providers/amazon-bedrock-invoke
               - docs/user-guide/sdk/model-providers/amazon-bedrock-prompt-caching
               - docs/user-guide/sdk/model-providers/amazon-nova
               - docs/user-guide/sdk/model-providers/anthropic

@@ -325,8 +325,8 @@ class SnapshotSessionManager(SessionManager):
         orchestrator = event.source
         if orchestrator.id in self._multi_agent_restored_ids:
             return
-        self._multi_agent_restored_ids.add(orchestrator.id)
         await self._restore_multi_agent(orchestrator)
+        self._multi_agent_restored_ids.add(orchestrator.id)
 
     async def _on_after_node_call(self, event: AfterNodeCallEvent) -> None:
         """Save latest orchestrator snapshot after each node completes."""

@@ -36,7 +36,7 @@ from strands.storage import LocalFileStorage
 from strands.storage.in_memory_storage import InMemoryStorage
 from strands.types._snapshot import Snapshot
 from strands.types.content import ContentBlock
-from strands.types.exceptions import ContextWindowOverflowException, SnapshotException
+from strands.types.exceptions import ContextWindowOverflowException, SnapshotException, StorageError
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 
@@ -345,6 +345,33 @@ def test_completed_orchestrator_reinvokes_from_scratch(storage):
     assert result.status == Status.COMPLETED
     assert restored.state.task == "go again"
     assert "User Request: go again" in "\n".join(_texts(restored_agent))
+
+
+@pytest.mark.asyncio
+async def test_multi_agent_restore_retries_after_storage_error(storage, monkeypatch):
+    """A failed read leaves the saved checkpoint recoverable on the next invocation (#1217)."""
+    manager = SnapshotSessionManager("mm", storage=storage)
+    exp_state = {"current_task": "resume saved work", "completed_nodes": ["n1"]}
+    orchestrator = Mock(id="g1")
+    orchestrator.serialize_state.return_value = exp_state
+    await manager._save_multi_agent_latest(orchestrator)
+    key = "session/mm/scopes/multiAgent/g1/snapshots/snapshot_latest.json"
+    raw = await storage.read(key)
+    read = AsyncMock(side_effect=[StorageError("transient read failure"), raw])
+    monkeypatch.setattr(storage, "read", read)
+    event = BeforeMultiAgentInvocationEvent(orchestrator)
+
+    with pytest.raises(StorageError, match="transient read failure"):
+        await manager._on_before_multi_agent_invocation(event)
+    orchestrator.deserialize_state.assert_not_called()
+
+    await manager._on_before_multi_agent_invocation(event)
+    orchestrator.deserialize_state.assert_called_once_with(exp_state)
+    assert read.await_count == 2
+
+    await manager._on_before_multi_agent_invocation(event)
+    orchestrator.deserialize_state.assert_called_once_with(exp_state)
+    assert read.await_count == 2
 
 
 def test_invocation_strategy_does_not_register_node_hook(storage):

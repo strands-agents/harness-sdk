@@ -1,0 +1,272 @@
+---
+title: Amazon Bedrock Invoke
+description: >-
+  Use Amazon Bedrock Invoke with Claude or compatible imported models. Configure
+  request dialects, streaming, tools, structured output, and prompt caching.
+languages: [python]
+integrationType: model-provider
+tags: [bedrock, aws, caching]
+sourceLinks:
+  - path: strands-py/src/strands/models/bedrock_invoke.py
+  - path: strands-py/src/strands/models/bedrock.py
+  - path: strands-py/src/strands/models/model.py
+---
+
+Use `BedrockInvokeModel` when your Amazon Bedrock endpoint requires `InvokeModel`
+or `InvokeModelWithResponseStream`, including compatible models deployed through
+Custom Model Import. This guide covers Anthropic Messages and OpenAI Chat
+Completions request formats.
+
+For models that support Converse, use [`BedrockModel`](./amazon-bedrock.mdx).
+It provides the standard Amazon Bedrock integration and integrated guardrails.
+**`BedrockInvokeModel` does not support guardrails.** Neither Converse guardrail
+configuration options nor entries in `params` enable them. Use `BedrockModel`
+when you need integrated Amazon Bedrock guardrails.
+
+## Prerequisites
+
+To run these examples, install `strands-agents` and configure AWS credentials
+through the standard Boto3 credential chain, such as an AWS profile or IAM role.
+You need model access in your chosen AWS Region and permission for
+`bedrock:InvokeModel` and, for streaming, `bedrock:InvokeModelWithResponseStream`.
+See [Amazon Bedrock setup](./amazon-bedrock.mdx#getting-started) for setup details.
+
+The examples use `us-west-2`; select the Region where your model is available.
+You can supply a `boto_session` for a specific profile instead of `region_name`.
+Do not pass both.
+
+## Invoke Claude
+
+To use Claude Sonnet 4.6 through the native Anthropic Messages API, pass an
+explicit model ID:
+
+```python
+from strands import Agent
+from strands.models import BedrockInvokeModel
+
+model = BedrockInvokeModel(
+    model_id="global.anthropic.claude-sonnet-4-6",
+    region_name="us-west-2",
+    max_tokens=1024,
+)
+agent = Agent(model=model, callback_handler=None)
+print(agent("Explain when to use an agent tool in two sentences."))
+```
+
+The provider selects the Anthropic dialect when the model ID contains
+`anthropic` or `claude`. It sends the request to Amazon Bedrock using your AWS
+credentials; you don't need an Anthropic API key.
+
+## Invoke an imported model
+
+To call an imported model that accepts OpenAI Chat Completions requests, set
+`STRANDS_BEDROCK_INVOKE_IMPORTED_MODEL_ARN` to its Amazon Bedrock imported-model
+ARN. Use the Region that contains the imported model:
+
+```python
+import os
+
+from strands import Agent
+from strands.models import BedrockInvokeModel
+
+model = BedrockInvokeModel(
+    model_id=os.environ["STRANDS_BEDROCK_INVOKE_IMPORTED_MODEL_ARN"],
+    model_family="openai",
+    region_name="us-west-2",
+    streaming=False,
+)
+agent = Agent(model=model, callback_handler=None)
+print(agent("Summarize the purpose of a code review in one sentence."))
+```
+
+This example requires an imported model that accepts that exact request format.
+Validate request-format and tool-calling compatibility against your deployed
+model. An imported-model ARN alone does not establish that compatibility.
+
+Use `model_family="anthropic"` for an ARN whose target accepts Anthropic Messages,
+including inference-profile ARNs that don't identify Claude by name. The override
+selects the request and response dialect; it does not change model capabilities.
+
+Without an override, other IDs fall back to the OpenAI dialect, except IDs starting
+with `amazon.`, `meta.`, `mistral.`, `cohere.`, or `ai21.`, which raise `ValueError`.
+Those foundation-model families require other native request formats. Use
+`BedrockModel` for Converse access to supported models. Override the dialect only
+when the target accepts it.
+
+The OpenAI dialect rejects images and other unsupported content with `TypeError`.
+The Anthropic dialect supports image blocks backed by bytes. Neither dialect
+supports nontext tool results, such as JSON or image content blocks; return text
+from your tools.
+
+## Stream responses
+
+To display text as it arrives, consume the agent's asynchronous stream:
+
+```python
+import asyncio
+
+from strands import Agent
+from strands.models import BedrockInvokeModel
+
+async def main() -> None:
+    model = BedrockInvokeModel(
+        model_id="global.anthropic.claude-sonnet-4-6",
+        region_name="us-west-2",
+    )
+    agent = Agent(model=model, callback_handler=None)
+    async for event in agent.stream_async("Explain prompt caching briefly."):
+        if "data" in event:
+            print(event["data"], end="", flush=True)
+    print()
+
+asyncio.run(main())
+```
+
+Streaming defaults to `True` and uses `InvokeModelWithResponseStream`. Set
+`streaming=False` to use `InvokeModel`, as in the imported-model example. The
+agent API stays the same, but model events arrive after the full response.
+
+Text chunks can arrive before a later service error. Handle exceptions around
+the entire iteration; partial text does not mean the response completed. See
+[async iterators](../streaming/async-iterators.mdx) for other agent events.
+
+## Use tools
+
+To let an agent use your application code, register tools with `@tool` and pass
+them to `Agent`. Both dialects translate the minimal client `toolUse`/`toolResult`
+protocol. Your target model must support tool calling; deferred tools and
+server-side tools beyond that protocol are not supported.
+
+## Return structured output
+
+To receive a result that matches a schema, pass a Pydantic model with
+`structured_output_model`. The agent can use the tool below to count characters:
+
+```python
+from pydantic import BaseModel
+
+from strands import Agent, tool
+from strands.models import BedrockInvokeModel
+
+@tool
+def count_characters(text: str) -> str:
+    """Return the number of characters in the supplied text."""
+    return str(len(text))
+
+class TextSummary(BaseModel):
+    text: str
+    character_count: int
+
+model = BedrockInvokeModel(
+    model_id="global.anthropic.claude-sonnet-4-6",
+    region_name="us-west-2",
+)
+agent = Agent(model=model, tools=[count_characters], callback_handler=None)
+result = agent(
+    "Count the characters in 'Strands' using the tool.",
+    structured_output_model=TextSummary,
+)
+print(result.structured_output)
+```
+
+The provider's structured-output method forces a tool call and validates the
+returned arguments against the Pydantic schema. It requires tool-calling support
+from the target model. On the Anthropic path, the provider removes `thinking`
+when the effective tool choice forces tool use, including structured output.
+See [structured output](../agents/structured-output.mdx) for the agent workflow.
+
+## Configure generation
+
+To control response length, set `max_tokens`. The default is **4096** when you
+omit it or set it to `None`. Both dialects send this limit. Sampling fields
+`temperature` and `top_p` are optional; use values your target model accepts.
+`top_k` applies only to the Anthropic dialect and has no effect on OpenAI requests.
+The provider maps `stop_sequences` to `stop` for the OpenAI dialect.
+
+For native request fields without a named configuration option, pass `params`.
+For example, `params={"thinking": {"type": "enabled", "budget_tokens": 1024}}`
+requests extended thinking from a compatible Claude model; set `max_tokens`
+above the thinking budget.
+
+`params` merges into the JSON request body last and can override generated fields,
+including messages and tools. Use the target model's native field names. It does
+not pass Boto3 request arguments or enable unsupported provider features.
+The `streaming` option still controls the transport: `params["stream"]` cannot
+change it, and nonstreaming OpenAI requests omit `stream_options`.
+Streaming OpenAI requests ask for usage with `stream_options={"include_usage": True}`.
+If your endpoint rejects that field, set `params={"stream_options": None}` to omit
+it. The provider still reports measured latency when the endpoint omits token usage.
+
+## Cache a stable prompt prefix
+
+To reuse a stable prompt prefix with a compatible Claude model, configure
+`CacheConfig`. Caching is available only on the Anthropic dialect. The OpenAI
+dialect rejects `cache_config`, `cache_prompt`, `cache_tools`, and explicit
+`cachePoint` blocks; these options do not enable OpenAI prompt caching.
+Automatic cache selection follows the effective dialect, including a
+`model_family` override. The target still needs to support prompt caching.
+
+```python
+from strands import Agent, tool
+from strands.models import BedrockInvokeModel, CacheConfig
+
+@tool
+def count_characters(text: str) -> str:
+    """Return the number of characters in the supplied text."""
+    return str(len(text))
+
+model = BedrockInvokeModel(
+    model_id="global.anthropic.claude-sonnet-4-6",
+    region_name="us-west-2",
+    cache_config=CacheConfig(
+        strategy="auto",
+        ttl="5m",
+        system_prompt_ttl=True,
+        tools_ttl=True,
+    ),
+)
+agent = Agent(
+    model=model,
+    system_prompt="Use the character-counting tool for exact counts.",
+    tools=[count_characters],
+    callback_handler=None,
+)
+print(agent("Count the characters in 'Strands'."))
+print(agent("Now count the characters in 'Amazon Bedrock'."))
+```
+
+This configuration places breakpoints after the system prompt and tool definitions,
+and maintains a rolling breakpoint in the last user message. The short example
+shows placement; it does not guarantee a cache hit. Amazon Bedrock enforces
+model-specific minimum token counts and cache limits.
+
+Keep content before each breakpoint stable. Changing tool definitions, their
+order, or earlier messages can invalidate the prefix. Cache configuration does
+not automatically preserve a reusable prefix when your tool list changes.
+
+Explicit system and message `cachePoint` blocks also work on the Anthropic path.
+Tool results must precede other user content. The provider orders them within a
+cache boundary; if that would require moving a result across the boundary, it
+raises `ValueError`. Place tool results before the cached prefix, including when
+using a dynamic tail, so excluded content stays outside the cache.
+With automatic message placement, the provider keeps one valid caller-placed
+breakpoint in the last user message and removes earlier message breakpoints.
+Place the breakpoint before content that changes on every call. For direct
+provider calls, `stream(..., dynamic_trailing_blocks=n)` places the automatic
+breakpoint before the last `n` blocks. It skips placement if no stable prefix
+remains. A valid explicit breakpoint takes precedence.
+
+Use `cachePoint` type `"default"` after cacheable content. A breakpoint at the
+start of a message has no prefix to cache; automatic placement removes it and
+chooses a valid boundary. Without automatic placement, an invalid boundary raises
+`ValueError`.
+
+Cache placement and time-to-live (TTL) follow `BedrockModel` semantics. Section
+TTLs override the shared `ttl`; `True` inherits it, and `False` disables automatic
+placement for that section. `tools_ttl` defaults to unset, so enable it explicitly.
+Longer TTLs must precede shorter ones in tools, system, then messages order.
+See [prompt caching](./amazon-bedrock-prompt-caching.mdx) for placement and TTL details.
+
+Prefer `CacheConfig` over deprecated `cache_prompt: str` and
+`cache_tools: str | CacheToolsConfig`. An explicit `CacheConfig.tools_ttl` takes
+precedence over `cache_tools`.
