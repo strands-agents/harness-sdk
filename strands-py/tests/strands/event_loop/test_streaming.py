@@ -628,6 +628,79 @@ def test_handle_content_block_delta(event: ContentBlockDeltaEvent, event_type, s
                 "redactedContent": b"",
             },
         ),
+        # Regression: text and a pending tool use both land in content (#4004).
+        # Append order follows the function: toolUse first, then text.
+        (
+            {
+                "content": [],
+                "current_tool_use": {"toolUseId": "t1", "name": "read_file", "input": "{}"},
+                "text": "Let me check that for you.",
+                "reasoningText": "",
+                "citationsContent": [],
+                "redactedContent": b"",
+            },
+            {
+                "content": [
+                    {"toolUse": {"toolUseId": "t1", "name": "read_file", "input": {}}},
+                    {"text": "Let me check that for you."},
+                ],
+                "current_tool_use": {},
+                "text": "",
+                "reasoningText": "",
+                "citationsContent": [],
+                "redactedContent": b"",
+            },
+        ),
+        # Regression: reasoning text + pending tool use — both must land (issue #4004)
+        (
+            {
+                "content": [],
+                "current_tool_use": {"toolUseId": "t1", "name": "lookup", "input": '{"k": "v"}'},
+                "text": "",
+                "reasoningText": "thinking...",
+                "signature": "sig-123",
+                "citationsContent": [],
+                "redactedContent": b"",
+            },
+            {
+                "content": [
+                    {"toolUse": {"toolUseId": "t1", "name": "lookup", "input": {"k": "v"}}},
+                    {
+                        "reasoningContent": {
+                            "reasoningText": {"text": "thinking...", "signature": "sig-123"},
+                        },
+                    },
+                ],
+                "current_tool_use": {},
+                "text": "",
+                "reasoningText": "",
+                "citationsContent": [],
+                "redactedContent": b"",
+            },
+        ),
+        # Regression: text + reasoning + pending tool use — all three blocks land (issue #4004)
+        (
+            {
+                "content": [],
+                "current_tool_use": {"toolUseId": "t1", "name": "multi", "input": "{}"},
+                "text": "ok",
+                "reasoningText": "hmm",
+                "citationsContent": [],
+                "redactedContent": b"",
+            },
+            {
+                "content": [
+                    {"toolUse": {"toolUseId": "t1", "name": "multi", "input": {}}},
+                    {"text": "ok"},
+                    {"reasoningContent": {"reasoningText": {"text": "hmm"}}},
+                ],
+                "current_tool_use": {},
+                "text": "",
+                "reasoningText": "",
+                "citationsContent": [],
+                "redactedContent": b"",
+            },
+        ),
     ],
 )
 def test_handle_content_block_stop(state, exp_updated_state):
