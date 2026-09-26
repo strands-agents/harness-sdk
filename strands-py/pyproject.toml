@@ -46,7 +46,7 @@ dependencies = [
 
 
 [project.optional-dependencies]
-anthropic = ["anthropic>=0.21.0,<1.0.0"]
+anthropic = ["anthropic>=0.21.0,<2.0.0"]
 gemini = ["google-genai>=1.67.0,<3.0.0"]
 # The latest litellm v1.92.0 do not support python 3.14, for the short term we will keep 
 # the version lower than 1.92.0 until litellm has the python 3.14 supported version.
