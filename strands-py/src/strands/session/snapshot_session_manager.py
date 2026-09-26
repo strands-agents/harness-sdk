@@ -688,7 +688,6 @@ class SnapshotSessionManager(SessionManager):
         """
         try:
             if self._agent_stash is not None:
-                await self._agent_stash.clear()
                 await self._agent_stash.clear_session()
             elif self._raw_storage is not None:
                 from .._context_manager.stash import STASH_PREFIX

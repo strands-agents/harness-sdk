@@ -11,7 +11,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from ..storage.storage import _NamespacedStorage
+from ..storage.storage import _NAMESPACED, _NamespacedStorage
 from ..types.content import ContentBlock
 
 if TYPE_CHECKING:
@@ -54,13 +54,20 @@ def _format_stash_refs(refs: list[str]) -> str:
     return f" [refs: {', '.join(refs)}]"
 
 
+def _resolve_namespace(storage: Storage, session_id: str, agent_id: str, *, scoped_view_is_root: bool) -> Storage:
+    """Use a caller-scoped view as the exact stash root when allowed; otherwise namespace per session and agent."""
+    if scoped_view_is_root and getattr(storage, "_namespaced", None) is _NAMESPACED:
+        return storage
+    return _NamespacedStorage(storage, f"{STASH_PREFIX}/{session_id}/scopes/agent/{agent_id}")
+
+
 class Stash:
     """Namespaced storage wrapper for persisting offloaded content blocks."""
 
-    def __init__(self, storage: Storage, session_id: str, agent_id: str) -> None:
+    def __init__(self, storage: Storage, session_id: str, agent_id: str, *, scoped_view_is_root: bool = False) -> None:
         self._base_storage = storage
         self._session_id = session_id
-        self._storage = _NamespacedStorage(storage, f"{STASH_PREFIX}/{session_id}/scopes/agent/{agent_id}")
+        self._storage = _resolve_namespace(storage, session_id, agent_id, scoped_view_is_root=scoped_view_is_root)
 
     @property
     def storage_type_name(self) -> str:
@@ -151,8 +158,12 @@ class Stash:
 
         Unlike :meth:`clear`, which is scoped to this agent's namespace, this
         scans ``context/<session_id>/`` on the base storage to remove data from
-        every agent that wrote to the session.
+        every agent that wrote to the session. A stash rooted at a caller-scoped
+        view is shared beyond this session, so its data is left to the caller.
         """
+        if self._storage is self._base_storage:
+            logger.debug("session_id=<%s> | skipping stash deletion, stash is caller-scoped", self._session_id)
+            return
         prefix = f"{STASH_PREFIX}/{self._session_id}/"
         keys = await self._base_storage.list(prefix)
         for key in keys:

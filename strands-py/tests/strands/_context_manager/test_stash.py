@@ -343,3 +343,42 @@ class TestClearSession:
 
         assert await stash_s1.list() == []
         assert await stash_s10.list() == ["tool-1_0"]
+
+
+class TestCallerScopedRoot:
+    """Tests for stashes rooted at a caller-scoped storage view."""
+
+    @pytest.mark.asyncio
+    async def test_view_is_exact_root(self):
+        storage = InMemoryStorage()
+        stash = Stash(storage.namespace("tenants/t1/research"), "sess-1", "agent-a", scoped_view_is_root=True)
+        await stash.store("tool-1", 0, json.dumps({"text": "test"}).encode("utf-8"))
+
+        assert await storage.list("") == ["tenants/t1/research/tool-1_0"]
+
+    @pytest.mark.asyncio
+    async def test_view_uses_per_agent_root_unless_allowed(self):
+        storage = InMemoryStorage()
+        stash = Stash(storage.namespace("tenant"), "sess-1", "agent-a")
+        await stash.store("tool-1", 0, json.dumps({"text": "test"}).encode("utf-8"))
+
+        assert await storage.list("") == ["tenant/context/sess-1/scopes/agent/agent-a/tool-1_0"]
+
+    @pytest.mark.asyncio
+    async def test_agents_in_different_sessions_sharing_a_view_read_each_others_entries(self):
+        storage = InMemoryStorage()
+        stash_a = Stash(storage.namespace("team"), "sess-1", "agent-a", scoped_view_is_root=True)
+        stash_b = Stash(storage.namespace("team"), "sess-2", "agent-b", scoped_view_is_root=True)
+        await stash_a.store("tool-1", 0, json.dumps({"text": "from a"}).encode("utf-8"))
+
+        assert await stash_b.retrieve("tool-1_0") == {"text": "from a"}
+
+    @pytest.mark.asyncio
+    async def test_clear_session_keeps_shared_view(self):
+        storage = InMemoryStorage()
+        stash = Stash(storage.namespace("team"), "sess-1", "agent-a", scoped_view_is_root=True)
+        await stash.store("tool-1", 0, json.dumps({"text": "shared"}).encode("utf-8"))
+
+        await stash.clear_session()
+
+        assert await storage.list("") == ["team/tool-1_0"]

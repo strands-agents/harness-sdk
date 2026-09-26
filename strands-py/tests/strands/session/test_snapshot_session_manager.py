@@ -1241,6 +1241,41 @@ class TestSnapshotStashIntegration:
 
         assert await shared_storage.list("context/s1/") == []
 
+    @pytest.mark.asyncio
+    async def test_delete_session_keeps_shared_stash(self, temp_dir):
+        """delete_session leaves a stash rooted at an explicitly configured scoped view in place."""
+        team = InMemoryStorage().namespace("team")
+        context_manager = ContextManager(stash={"storage": team})
+        manager = SnapshotSessionManager("s1", storage=LocalFileStorage(f"{temp_dir}/session"))
+        agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
+        agent("go")
+        await team.write("from-another-session_0", b'{"text": "keep"}')
+
+        await manager.delete_session()
+
+        assert "from-another-session_0" in await team.list("")
+
+    @pytest.mark.asyncio
+    async def test_delete_session_with_scoped_agent_storage_keeps_other_data(self, temp_dir):
+        """A scoped agent.storage is shared with other subsystems, so delete_session removes only this session."""
+        root = LocalFileStorage(temp_dir)
+        tenant = root.namespace("tenant")
+        await tenant.write("memory/prefs.json", b"{}")
+        manager = SnapshotSessionManager("s1")
+        agent = Agent(
+            model=_model("hi"),
+            storage=tenant,
+            session_manager=manager,
+            context_manager=ContextManager(),
+            agent_id="a1",
+        )
+        agent("go")
+        assert await tenant.list("context/s1/scopes/agent/a1/") != []
+
+        await manager.delete_session()
+
+        assert await root.list("") == ["tenant/memory/prefs.json"]
+
     def test_no_context_manager_save_restore_works(self, storage):
         """Save/restore works normally when no ContextManager is present."""
         manager = SnapshotSessionManager("s1", storage=storage)
