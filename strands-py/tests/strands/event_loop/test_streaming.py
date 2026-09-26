@@ -8,6 +8,7 @@ import strands
 import strands.event_loop
 from strands.types._events import ModelStopReason, TypedEvent
 from strands.types.content import Message, Messages
+from strands.types.exceptions import IncompleteStreamError
 from strands.types.streaming import (
     ContentBlockDeltaEvent,
     ContentBlockStartEvent,
@@ -1335,6 +1336,53 @@ async def test_process_stream_signature_does_not_leak_into_later_empty_block(age
     tru_content = message["content"]
     exp_content = [{"reasoningContent": {"reasoningText": {"text": "thinking", "signature": "SIG1"}}}]
     assert tru_content == exp_content
+
+
+@pytest.mark.asyncio
+async def test_process_stream_raises_when_a_truncated_stream_leaves_an_unsigned_reasoning_block(agenerator, alist):
+    """A stream that ends without messageStop, leaving a reasoningContent block whose signature
+    never arrived, was aborted mid-response. Only the model can mint that signature and Bedrock
+    rejects any later turn that replays the block — so reporting a completed end_turn (the old
+    behavior) persists an unusable message and wedges the conversation. process_stream must raise."""
+    response = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "thinking..."}}}},
+        {"contentBlockStop": {}},
+    ]
+
+    stream = strands.event_loop.streaming.process_stream(agenerator(response))
+
+    with pytest.raises(IncompleteStreamError):
+        await alist(stream)
+
+
+@pytest.mark.asyncio
+async def test_process_stream_truncated_without_reasoning_still_reports_end_turn(agenerator, alist):
+    """The raise is scoped to the unreplayable case: a stream that ends without messageStop but
+    carries only ordinary text is left as end_turn, unchanged, so existing callers are unaffected."""
+    response = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockDelta": {"delta": {"text": "partial answer"}}},
+        {"contentBlockStop": {}},
+    ]
+
+    stream = strands.event_loop.streaming.process_stream(agenerator(response))
+
+    last_event = cast(ModelStopReason, (await alist(stream))[-1])
+    assert last_event["stop"][0] == "end_turn"
+
+
+@pytest.mark.asyncio
+async def test_process_stream_reports_cancelled_not_error_when_aborted_with_a_cancel_signal(agenerator, alist):
+    """When the stream ends without messageStop AND a cancel signal is set, the abort is a
+    cancellation, not a truncation: report `cancelled` rather than raising."""
+    cancel_signal = threading.Event()
+    cancel_signal.set()
+
+    stream = strands.event_loop.streaming.process_stream(agenerator([]), cancel_signal=cancel_signal)
+
+    last_event = cast(ModelStopReason, (await alist(stream))[-1])
+    assert last_event["stop"][0] == "cancelled"
 
 
 @pytest.mark.asyncio
