@@ -2013,6 +2013,31 @@ async def test_graph_nested_multiagent_failed_status_routed_to_failed_nodes(mock
 
 
 @pytest.mark.asyncio
+async def test_graph_cancelled_agent_result_fails_closed(mock_strands_tracer, mock_use_span):
+    """A cancelled child fails the Graph without routing downstream (#3798)."""
+    cancelled_agent = create_mock_agent("cancelled_agent", "Cancelled")
+    cancelled_agent.return_value.stop_reason = "cancelled"
+    downstream_agent = create_mock_agent("downstream_agent", "Should not execute")
+
+    builder = GraphBuilder()
+    builder.add_node(cancelled_agent, "cancelled")
+    builder.add_node(downstream_agent, "downstream")
+    builder.add_edge("cancelled", "downstream")
+    builder.set_entry_point("cancelled")
+    graph = builder.build()
+
+    tru_result = await graph.invoke_async("Test cancelled child result")
+    tru_downstream_calls = downstream_agent.stream_async.call_count
+    exp_result_status = Status.FAILED
+    exp_node_status = Status.FAILED
+    exp_downstream_calls = 0
+
+    assert tru_result.status == exp_result_status
+    assert tru_result.results["cancelled"].status == exp_node_status
+    assert tru_downstream_calls == exp_downstream_calls
+
+
+@pytest.mark.asyncio
 async def test_graph_persisted(mock_strands_tracer, mock_use_span):
     """Test graph persistence functionality with multimodal input containing binary bytes."""
     import base64
