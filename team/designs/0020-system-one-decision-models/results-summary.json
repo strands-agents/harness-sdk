@@ -1,0 +1,224 @@
+{
+  "banking77::jev": {
+    "arm": "jev",
+    "task": "banking77",
+    "n": 200,
+    "errors": 0,
+    "accuracy": 0.79,
+    "p50_s": 0.506,
+    "p95_s": 0.568,
+    "mean_in_tokens": 1694.7,
+    "mean_out_tokens": 828.1,
+    "usd_per_1k": 0.07118,
+    "answered_by": [
+      "jev-1.13.0"
+    ],
+    "selective": [
+      {
+        "min_conf": 0.0,
+        "coverage": 1.0,
+        "accuracy": 0.79
+      },
+      {
+        "min_conf": 0.3,
+        "coverage": 0.99,
+        "accuracy": 0.7929
+      },
+      {
+        "min_conf": 0.5,
+        "coverage": 0.95,
+        "accuracy": 0.8158
+      },
+      {
+        "min_conf": 0.7,
+        "coverage": 0.82,
+        "accuracy": 0.8537
+      },
+      {
+        "min_conf": 0.9,
+        "coverage": 0.66,
+        "accuracy": 0.9242
+      }
+    ]
+  },
+  "clinc_oos::jev": {
+    "arm": "jev",
+    "task": "clinc_oos",
+    "n": 200,
+    "errors": 0,
+    "accuracy": 0.88,
+    "p50_s": 0.516,
+    "p95_s": 0.582,
+    "mean_in_tokens": 2527.6,
+    "mean_out_tokens": 1301.4,
+    "usd_per_1k": 0.10616,
+    "answered_by": [
+      "jev-1.13.0"
+    ],
+    "selective": [
+      {
+        "min_conf": 0.0,
+        "coverage": 1.0,
+        "accuracy": 0.88
+      },
+      {
+        "min_conf": 0.3,
+        "coverage": 1.0,
+        "accuracy": 0.88
+      },
+      {
+        "min_conf": 0.5,
+        "coverage": 0.98,
+        "accuracy": 0.8929
+      },
+      {
+        "min_conf": 0.7,
+        "coverage": 0.895,
+        "accuracy": 0.9385
+      },
+      {
+        "min_conf": 0.9,
+        "coverage": 0.735,
+        "accuracy": 0.9796
+      }
+    ]
+  },
+  "prompt_injection::jev": {
+    "arm": "jev",
+    "task": "prompt_injection",
+    "n": 116,
+    "errors": 0,
+    "accuracy": 0.7586,
+    "p50_s": 0.504,
+    "p95_s": 0.559,
+    "mean_in_tokens": 378.4,
+    "mean_out_tokens": 20.0,
+    "usd_per_1k": 0.01589,
+    "answered_by": [
+      "jev-1.13.0"
+    ],
+    "precision": 1.0,
+    "recall": 0.5333,
+    "selective": [
+      {
+        "min_conf": 0.0,
+        "coverage": 1.0,
+        "accuracy": 0.7586
+      },
+      {
+        "min_conf": 0.3,
+        "coverage": 0.905,
+        "accuracy": 0.7619
+      },
+      {
+        "min_conf": 0.5,
+        "coverage": 0.879,
+        "accuracy": 0.7843
+      },
+      {
+        "min_conf": 0.7,
+        "coverage": 0.81,
+        "accuracy": 0.8191
+      },
+      {
+        "min_conf": 0.9,
+        "coverage": 0.621,
+        "accuracy": 0.9167
+      }
+    ]
+  },
+  "banking77::us.anthropic.claude-haiku-4-5-20251001-v1:0": {
+    "arm": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "task": "banking77",
+    "n": 200,
+    "errors": 0,
+    "accuracy": 0.76,
+    "p50_s": 0.851,
+    "p95_s": 0.955,
+    "mean_in_tokens": 2259.0,
+    "mean_out_tokens": 37.3,
+    "usd_per_1k": 2.69032,
+    "answered_by": [
+      "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    ]
+  },
+  "clinc_oos::us.anthropic.claude-haiku-4-5-20251001-v1:0": {
+    "arm": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "task": "clinc_oos",
+    "n": 200,
+    "errors": 0,
+    "accuracy": 0.88,
+    "p50_s": 0.832,
+    "p95_s": 0.907,
+    "mean_in_tokens": 2682.7,
+    "mean_out_tokens": 34.8,
+    "usd_per_1k": 3.1422,
+    "answered_by": [
+      "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    ]
+  },
+  "prompt_injection::us.anthropic.claude-haiku-4-5-20251001-v1:0": {
+    "arm": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "task": "prompt_injection",
+    "n": 116,
+    "errors": 0,
+    "accuracy": 0.8707,
+    "p50_s": 0.758,
+    "p95_s": 0.832,
+    "mean_in_tokens": 775.8,
+    "mean_out_tokens": 33.0,
+    "usd_per_1k": 1.0349,
+    "answered_by": [
+      "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    ],
+    "precision": 1.0,
+    "recall": 0.75
+  },
+  "banking77::us.amazon.nova-micro-v1:0": {
+    "arm": "us.amazon.nova-micro-v1:0",
+    "task": "banking77",
+    "n": 200,
+    "errors": 0,
+    "accuracy": 0.61,
+    "p50_s": 0.484,
+    "p95_s": 0.586,
+    "mean_in_tokens": 1995.2,
+    "mean_out_tokens": 18.5,
+    "usd_per_1k": 0.07242,
+    "answered_by": [
+      "us.amazon.nova-micro-v1:0"
+    ]
+  },
+  "clinc_oos::us.amazon.nova-micro-v1:0": {
+    "arm": "us.amazon.nova-micro-v1:0",
+    "task": "clinc_oos",
+    "n": 200,
+    "errors": 0,
+    "accuracy": 0.625,
+    "p50_s": 0.478,
+    "p95_s": 0.583,
+    "mean_in_tokens": 2493.8,
+    "mean_out_tokens": 15.7,
+    "usd_per_1k": 0.08947,
+    "answered_by": [
+      "us.amazon.nova-micro-v1:0"
+    ]
+  },
+  "prompt_injection::us.amazon.nova-micro-v1:0": {
+    "arm": "us.amazon.nova-micro-v1:0",
+    "task": "prompt_injection",
+    "n": 116,
+    "errors": 0,
+    "accuracy": 0.75,
+    "p50_s": 0.432,
+    "p95_s": 0.534,
+    "mean_in_tokens": 504.0,
+    "mean_out_tokens": 15.0,
+    "usd_per_1k": 0.01974,
+    "answered_by": [
+      "us.amazon.nova-micro-v1:0"
+    ],
+    "precision": 0.9697,
+    "recall": 0.5333
+  }
+}

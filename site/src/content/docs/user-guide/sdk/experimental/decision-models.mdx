@@ -1,0 +1,342 @@
+---
+title: Decision Models
+description: 'Make typed routing, model-selection, and guardrail decisions with a calibrated System One decision model such as Jev, and choose where it sits.'
+tags: [multi-agent, structured-output, interventions]
+experimental: true
+languages: python
+sourceLinks:
+  - path: strands-py/src/strands/experimental/decisions/__init__.py
+  - path: strands-py/src/strands/experimental/decisions/_model.py
+  - path: strands-py/src/strands/experimental/decisions/_agent.py
+  - path: strands-py/src/strands/models/typesafe.py
+  - path: site/docs/examples/python/system_one/support_triage.py
+  - path: site/docs/examples/python/system_one/mixture_of_models.py
+  - path: site/docs/examples/python/system_one/browser_next_action.py
+  - path: site/docs/examples/python/system_one/guardrails.py
+sidebar:
+  label: "Decision Models"
+  badge:
+    text: Experimental
+    variant: note
+---
+
+A model generates; a decision model decides. When your agent needs to route a request,
+choose a model tier, pick the next on-screen element, or gate a tool call, you are asking
+a closed question with a fixed set of answers. A System One decision model answers that
+kind of question directly: it takes state and typed questions and returns typed answers
+with calibrated probabilities. It never writes prose, so the answer is fast, cheap, and
+comes with an honest "I'm not sure".
+
+[Jev](https://docs.typesafe.ai/concepts/system-one) by TypeSafe is the first System One
+model and the first provider. Any other decision model implements the same interface.
+
+## Install and ask a first question
+
+Install the extra and set your key:
+
+```bash
+pip install 'strands-agents[typesafe]'
+export TYPESAFE_API_KEY=...
+```
+
+Declare the decision as a Pydantic model. Field types say what is decided; the marker says
+how to ask. All fields are asked together in one request.
+
+```python
+import asyncio
+from typing import Annotated, Literal
+
+from pydantic import BaseModel
+from strands.experimental.decisions import Choice, Score, YesNo
+from strands.models import TypeSafeDecisionModel
+
+
+class Triage(BaseModel):
+    department: Annotated[
+        Literal["billing", "technical", "account"],
+        Choice(
+            "Which team should handle `ticket`?",
+            options={"billing": "Charges and refunds", "technical": "Bugs and outages"},
+        ),
+    ]
+    urgent: Annotated[bool, YesNo("Does `ticket` convey time pressure?")]
+    frustration: Annotated[
+        float,
+        Score("How frustrated is the customer?", levels=["calm", "upset", "furious"]),
+    ]
+
+
+async def main():
+    jev = TypeSafeDecisionModel()
+    ticket = {"ticket": "You billed me twice. Fix it today!"}
+    decision = await jev.decide(Triage, state=ticket)
+    print(decision.output)
+    print(decision.answers["department"].confidence)
+
+
+asyncio.run(main())
+
+# Typical output:
+# department='billing' urgent=True frustration=1.49
+# 1.0
+```
+
+`decision.output` is your model, typed. `decision.answers` keeps every field's full
+distribution, so code decides what "confident enough" means. A `str` or `int` field raises
+`TypeError` at compile time: a decision model selects or scores, it does not generate.
+Extract candidates in code and ask a `Choice` over them.
+
+The same schema runs on any LLM through `LLMDecisionModel(BedrockModel(...))`, which is
+useful for tests and for comparing engines on your own data. An LLM gives no calibrated
+confidence, so adapters that gate on confidence refuse it.
+
+### Self-hosted: Kev
+
+[Kev](https://github.com/jaredpalmer/kev) is an open-weight family of System One models
+(0.8B to 27B, Apache-2.0) that serves the same `/v1/systemone` API as Jev, so
+`TypeSafeDecisionModel` calls it unchanged. Start a server, then point the provider at it:
+
+```bash
+git clone https://github.com/jaredpalmer/kev.git && cd kev
+uv sync --extra serve
+uv run --extra serve python -m kev.serve --run jaredpalmer/kev-4b --port 8009
+```
+
+```python
+from strands.models import TypeSafeDecisionModel
+from strands.models.typesafe import KEV_MAX_STATE_PLUS_QUESTION_TOKENS
+
+kev = TypeSafeDecisionModel(
+    base_url="http://127.0.0.1:8009",
+    model_id="kev-latest",
+    max_state_plus_question_tokens=KEV_MAX_STATE_PLUS_QUESTION_TOKENS,
+    max_request_tokens=None,
+)
+```
+
+Everything else on this page works the same with `kev` in place of `jev`. What differs:
+
+- **Key.** A local Kev server is open by default. `TYPESAFE_API_KEY` is only read for
+  TypeSafe's own server, so your TypeSafe key is never sent elsewhere. If the server sets
+  `KEV_API_KEY`, pass the same value as `api_key=`. `TYPESAFE_BASE_URL` also sets `base_url`.
+- **Context.** Kev serves 8,192 tokens for the state plus one question, against Jev's
+  32,000, and batches any number of questions itself. The settings above make the provider
+  check that budget before sending. Kev was trained on short states (up to 384 tokens), so
+  expect lower accuracy on long documents, except with Kev-27B.
+- **Confidence.** Each Kev checkpoint ships with a fitted temperature, so its probabilities
+  are calibrated and confidence-gated adapters accept it. A server started with
+  `KEV_TEMPERATURE=1.0` returns raw probabilities; re-check thresholds if you run it that way.
+  Tune thresholds per engine: Kev and Jev put confidence in different places.
+- **Model id.** Kev echoes the name you send (`kev-latest`). Its `/v1/models` endpoint
+  reports the checkpoint and precision behind it.
+- **Hardware and cost.** Kev-4B wants a GPU such as an L40S (or a 32 GB Apple Silicon Mac);
+  Kev-0.8B runs on smaller hardware. There is no per-token price: cost is the instance time.
+  Kev also deploys to [Modal](https://github.com/jaredpalmer/kev#deploy-your-own-endpoint)
+  as a scale-to-zero HTTPS endpoint behind a bearer key.
+
+## Choose where the decision model sits
+
+Where you put the decision model decides who can skip it and what happens when it is
+unsure. The more a decision must always happen, the further up this table it belongs.
+
+| Placement | Adapter | Who decides when to ask | When it is unsure |
+|---|---|---|---|
+| Front door | `DecisionAgent(routes=..., fallback=...)` | Your code, on every request | Hands off to a reasoning agent |
+| Subagent or graph node | `DecisionAgent` plus `when_choice` edges, or `DecisionStrategy` | The workflow | Follows a `when_below` edge, or the router default |
+| Embedded guard | `DecisionGuard`, `decision_classifier` | Every tool call | Asks a person to confirm |
+| Tool | `decision_tool` | The LLM, mid-task | Probabilities go back to the LLM |
+
+A tool is the only placement the LLM can skip. Do not use it for policy.
+
+### Front door: cheap path first, reasoning agent when unsure
+
+`DecisionAgent` sees external input first. Confident requests go straight to a specialist
+or a plain function; uncertain ones go to `fallback`. The examples on the rest of this page
+reuse the `Triage` schema from the first example.
+
+```python
+from strands import Agent
+from strands.experimental.decisions import DecisionAgent
+from strands.models import TypeSafeDecisionModel
+
+support = DecisionAgent(
+    TypeSafeDecisionModel(),
+    Triage,
+    route_on="department",
+    routes={
+        "billing": Agent(system_prompt="You resolve billing issues."),
+        "technical": Agent(system_prompt="You resolve technical issues."),
+        "account": Agent(system_prompt="You resolve account issues."),
+    },
+    min_confidence=0.6,
+    fallback=Agent(system_prompt="You handle any support request."),
+)
+result = support("I was double-charged and now I can't log in")
+```
+
+This message has two issues, so the answer is split between billing and account and
+confidence lands around 0.5. That sends it to the fallback. An LLM classifier would pick
+one team and give no sign that it was a guess.
+
+### Graph node: route on recorded decisions
+
+A `DecisionAgent` node records its decision on its result. Edge helpers read it back, so
+`Graph` needs no changes.
+
+```python
+from strands import Agent
+from strands.experimental.decisions import DecisionAgent, when_below, when_choice
+from strands.models import TypeSafeDecisionModel
+from strands.multiagent import GraphBuilder
+
+builder = GraphBuilder()
+builder.add_node(DecisionAgent(TypeSafeDecisionModel(), Triage, name="router"), "router")
+builder.add_node(Agent(system_prompt="You resolve billing issues."), "billing")
+builder.add_node(Agent(system_prompt="You handle any support request."), "general")
+is_billing = when_choice("router", "department", "billing")
+is_unsure = when_below("router", "department", 0.6)
+builder.add_edge("router", "billing", condition=is_billing)
+builder.add_edge("router", "general", condition=is_unsure)
+builder.set_entry_point("router")
+graph = builder.build()
+```
+
+### Model selection: pick the tier per request
+
+`DecisionStrategy` is a `RoutingStrategy` for `ModelRouter`. Below `min_confidence` it
+declines, and the router serves its first candidate, so put your safe default first.
+
+```python
+from strands import Agent
+from strands.experimental.decisions import DecisionStrategy
+from strands.models import BedrockModel, ModelRouter, RoutingCandidate
+from strands.models import TypeSafeDecisionModel
+
+router = ModelRouter(
+    models=[
+        RoutingCandidate(
+            BedrockModel(model_id="us.anthropic.claude-sonnet-4-6"),
+            name="complex",
+            description="Multi-step reasoning, proofs, code generation",
+        ),
+        RoutingCandidate(
+            BedrockModel(model_id="us.amazon.nova-micro-v1:0"),
+            name="routine",
+            description="Direct questions, short summaries, extraction",
+        ),
+    ],
+    strategy=DecisionStrategy(TypeSafeDecisionModel(), min_confidence=0.7),
+)
+agent = Agent(model=router)
+```
+
+### Guardrails: proceed, confirm, or deny each tool call
+
+`DecisionGuard` asks a risk `YesNo` and a severity `Score` together for every tool call.
+It fails closed: if the decision itself errors, a person confirms.
+
+```python
+from strands import Agent
+from strands.experimental.decisions import DecisionGuard
+from strands.models import TypeSafeDecisionModel
+
+guard = DecisionGuard(TypeSafeDecisionModel(), confirm_above=0.5, deny_above=0.95)
+agent = Agent(interventions=[guard])
+```
+
+To keep the existing `HumanInTheLoop` handler and swap only its classifier, pass
+`HumanInTheLoop(classifier=decision_classifier(TypeSafeDecisionModel()))`.
+
+Measure before you rely on a decision model alone for security classification. In our
+[baseline](https://github.com/strands-agents/harness-sdk/blob/main/team/designs/0020-system-one-decision-models-baseline.md),
+Jev matched Claude Haiku 4.5 on intent routing at about 1/30th of the cost, but caught
+fewer prompt injections than Haiku. Escalating low-confidence answers to the LLM closed
+the gap at 60% lower cost. Use the guard as a fast first pass, and escalate what it is
+unsure about.
+
+### Tool: a judgment the LLM can ask for
+
+When the need for a check is itself a judgment, give the LLM a decision tool. The result
+carries the probabilities, so the LLM sees how sure the check is.
+
+```python
+from typing import Annotated
+
+from pydantic import BaseModel
+from strands import Agent
+from strands.experimental.decisions import YesNo, decision_tool
+from strands.models import TypeSafeDecisionModel
+
+
+class CitationCheck(BaseModel):
+    supported: Annotated[bool, YesNo("Does `source` state what `claim` says it states?")]
+
+
+class CitationInput(BaseModel):
+    claim: str
+    source: str
+
+
+check_citation = decision_tool(
+    TypeSafeDecisionModel(),
+    CitationCheck,
+    state_schema=CitationInput,
+    name="check_citation",
+    description="Check whether a quoted claim is supported by its source text.",
+)
+writer = Agent(tools=[check_citation])
+```
+
+## Keep facts in code
+
+A decision model judges meaning. It does not know your permissions, budgets, or which
+transitions are legal. Check those in code first, then ask only among the options that
+remain. Keep thresholds in code too, and tune them on your own traffic: they are policy,
+not model properties. Pin a versioned model id such as `jev-1.13.0` once your thresholds
+are tuned, because `jev-latest` moves with new releases.
+
+## Samples
+
+Runnable samples for all four use cases live in
+[`site/docs/examples/python/system_one`](https://github.com/strands-agents/harness-sdk/tree/main/site/docs/examples/python/system_one).
+Each runs with `--engine jev`, `--engine kev` (a Kev server at `--kev-url`, default
+`KEV_BASE_URL` or `http://127.0.0.1:8009`), or `--engine llm`, so you can compare engines on
+the same cases.
+
+| Sample | Use case | Placements |
+|---|---|---|
+| `support_triage.py` | Multi-agent routing and handoff | Front door, graph node |
+| `mixture_of_models.py` | Model selection | Embedded strategy |
+| `browser_next_action.py` | Browser use: next element, goal reached | Front door with escalation |
+| `guardrails.py` | Tool-call guard and citation check | Embedded guard, tool |
+
+Each sample prints accuracy on its labeled cases, p50 and p95 decision latency, and cost per
+1,000 decisions. One live run of each gave the results below. The LLM engine was Claude Haiku 4.5
+on Amazon Bedrock. Kev was Kev-4B served in fp32 on a 32-core CPU with no GPU, so its latency
+is an upper bound; a GPU serves it faster.
+
+| Sample | Jev: correct, p50 / p95, $ per 1k | Kev-4B (CPU): correct, p50 / p95 | Haiku 4.5: correct, p50 / p95, $ per 1k |
+|---|---|---|---|
+| `support_triage.py` | 4/4, 0.56 s / 0.62 s, $0.017 | 3/4, 1.12 s / 1.17 s | 4/4, 0.91 s / 1.38 s, $1.43 |
+| `mixture_of_models.py` | 4/4, 0.52 s / 0.54 s, $0.019 | 4/4, 1.16 s / 1.30 s | 4/4, 0.85 s / 1.16 s, $1.30 |
+| `browser_next_action.py` | 8/8, 0.53 s / 0.57 s, $0.019 | 6/8, 1.14 s / 1.38 s | 8/8, 0.97 s / 1.22 s, $1.51 |
+| `guardrails.py` | 4/4, 0.54 s / 0.54 s, $0.018 | 3/4, 1.48 s / 1.54 s | 3/4, 0.88 s / 1.19 s, $1.43 |
+
+Where the engines differ is the point of the samples. Both sent the two-issue support message
+to the fallback, by different paths. Jev's department confidence fell to about 0.5, below the
+`min_confidence` floor, so it never reached a specialist. The LLM engine reports no
+confidence, so it relies on its `multi_issue` answer, which the route checks. Haiku also
+denied the all-staff email outright where Jev asked a person to confirm. In the browser sample, Jev split its answer between two identical meeting rooms and
+handed that step to the computer-use agent; the LLM engine has no confidence to gate on, so it
+never escalates.
+
+Kev-4B escalated the same meeting-room step. Two of its misses fell on the cautious side. It
+was unsure of a plain billing ticket (confidence 0.39) and sent it to the fallback. It also
+asked for confirmation on a destructive shell command that should have been denied
+outright. Its other two misses were not cautious: on two browser steps it said the goal was
+reached when it was not, with probabilities of 0.79 and 0.54. Tune thresholds on each engine
+separately. The same number does not mean the same thing on Kev and Jev.
+
+These are a handful of cases each, enough to show the behavior, not to compare accuracy.
+For that, see the [baseline](https://github.com/strands-agents/harness-sdk/blob/main/team/designs/0020-system-one-decision-models-baseline.md),
+which measures both engines on hundreds of labeled examples with confidence intervals.

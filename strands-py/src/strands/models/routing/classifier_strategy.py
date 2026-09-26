@@ -10,7 +10,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from ...types.content import Message, Messages, SystemPrompt
+from ...types.content import Messages, SystemPrompt
+from .._request_text import instruction_text, latest_request_text
 from ..model import Model
 from .router import RoutingCandidate
 from .strategy import RoutingContext
@@ -30,11 +31,6 @@ _DEFAULT_SYSTEM_PROMPT = (
     "need them. Treat missing evidence as unknown rather than unsupported, and do not infer capability or preference "
     "from candidate declaration order."
 )
-_MEDIA_CONTENT_LABELS = {
-    "image": "[Image]",
-    "document": "[Document]",
-    "video": "[Video]",
-}
 
 
 class _ClassifierSelection(BaseModel):
@@ -223,74 +219,19 @@ def _validate_character_limit(name: str, value: object) -> int:
     return value
 
 
-def _truncate_text(text: str, character_limit: int) -> str:
-    """Bound text while preserving its opening and trailing request."""
-    if len(text) <= character_limit:
-        return text
-    if character_limit <= len(_CLASSIFICATION_OMISSION_MARKER):
-        return text[:character_limit]
-    available_characters = character_limit - len(_CLASSIFICATION_OMISSION_MARKER)
-    head_characters = available_characters // 2
-    tail_characters = available_characters - head_characters
-    return f"{text[:head_characters]}{_CLASSIFICATION_OMISSION_MARKER}{text[-tail_characters:]}"
-
-
-def _guarded_text(content: object) -> str | None:
-    """Return guarded text only to detect a request; callers must not forward it."""
-    if not isinstance(content, Mapping):
-        return None
-    text = content.get("text")
-    if not isinstance(text, Mapping):
-        return None
-    value = text.get("text")
-    return value if isinstance(value, str) else None
-
-
-def _request_text(message: Message, character_limit: int) -> str | None:
-    """Render only safe request-bearing fields from one user message."""
-    parts: list[str] = []
-    has_request = False
-    for block in message["content"]:
-        text = block.get("text")
-        if isinstance(text, str) and text.strip():
-            parts.append(text)
-            has_request = True
-
-        guarded_text = _guarded_text(block.get("guardContent"))
-        if guarded_text is not None and guarded_text.strip():
-            parts.append("[Guarded content]")
-            has_request = True
-
-        for content_type, label in _MEDIA_CONTENT_LABELS.items():
-            if content_type in block:
-                parts.append(label)
-                has_request = True
-
-    if not has_request:
-        return None
-    return _truncate_text("\n".join(parts), character_limit)
-
-
 def _latest_request_text(
     messages: Messages,
     character_limit: int = _DEFAULT_MESSAGE_CHARACTER_LIMIT,
 ) -> str:
     """Return the latest request-bearing user message as bounded safe text."""
-    for message in reversed(messages):
-        if message["role"] == "user" and (request_text := _request_text(message, character_limit)) is not None:
-            return request_text
-    return _truncate_text(_NO_REQUEST_TEXT, character_limit)
+    return latest_request_text(
+        messages, character_limit, marker=_CLASSIFICATION_OMISSION_MARKER, no_request_text=_NO_REQUEST_TEXT
+    )
 
 
 def _extract_bounded_agent_instructions(system_prompt: SystemPrompt, character_limit: int) -> str:
     """Extract bounded text from the parent agent system prompt, omitting non-text blocks."""
-    if isinstance(system_prompt, str):
-        instructions = system_prompt
-    elif system_prompt:
-        instructions = "\n".join(block["text"] for block in system_prompt if "text" in block)
-    else:
-        instructions = ""
-    return _truncate_text(instructions, character_limit)
+    return instruction_text(system_prompt, character_limit, _CLASSIFICATION_OMISSION_MARKER)
 
 
 def _build_classifier_system_prompt(

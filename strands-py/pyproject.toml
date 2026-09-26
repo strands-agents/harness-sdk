@@ -56,6 +56,7 @@ mistral = ["mistralai>=2.0.0,<3.0.0"]
 ollama = ["ollama>=0.4.8,<1.0.0"]
 web-fetch = ["markdownify>=1.1.0,<2.0.0", "beautifulsoup4>=4.9.0,<5.0.0"]
 openai = ["openai>=1.68.0,<3.0.0", "aws-bedrock-token-generator>=1.1.0,<2.0.0"]
+typesafe = ["typesafe-sdk>=0.7.1,<1.0.0"]
 writer = ["writer-sdk>=2.2.0,<4.0.0"]
 sagemaker = [
     "boto3-stubs[sagemaker-runtime]>=1.26.0,<2.0.0",
@@ -97,7 +98,7 @@ bidi-pyaudio = ["pyaudio>=0.2.0,<0.3.0"]
 bidi-all = ["strands-agents[a2a,bidi,bidi-aec,bidi-google,bidi-io,bidi-openai,docs,otel]"]
 
 all = [
-    "strands-agents[a2a,anthropic,bidi-all,cedar,docs,gemini,litellm,llamaapi,mistral,ollama,openai,writer,sagemaker,otel,web-fetch]"
+    "strands-agents[a2a,anthropic,bidi-all,cedar,docs,gemini,litellm,llamaapi,mistral,ollama,openai,typesafe,writer,sagemaker,otel,web-fetch]"
 ]
 
 dev = [

@@ -420,6 +420,7 @@ sidebar:
           - label: Experimental
             items:
               - docs/user-guide/sdk/experimental/agent-config
+              - docs/user-guide/sdk/experimental/decision-models
       - label: Reference
         items:
           # Both API references carry the same label; the sidebar shows only the
