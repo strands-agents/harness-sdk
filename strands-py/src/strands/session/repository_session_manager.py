@@ -87,6 +87,20 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
         """
         # Calculate the next index (0 if this is the first message, otherwise increment the previous index)
         latest_agent_message = self._latest_agent_message[agent.agent_id]
+        tracking_id = message.get("tracking_id")
+        if latest_agent_message is not None:
+            latest_message = latest_agent_message.to_message()
+            if (
+                tracking_id
+                and latest_message.get("tracking_id") == tracking_id
+                and latest_message["role"] == message["role"]
+            ):
+                session_message = SessionMessage.from_message(message, latest_agent_message.message_id)
+                session_message.created_at = latest_agent_message.created_at
+                self.session_repository.update_message(self.session_id, agent.agent_id, session_message)
+                self._latest_agent_message[agent.agent_id] = session_message
+                return
+
         if latest_agent_message:
             next_index = latest_agent_message.message_id + 1
         else:

@@ -17,7 +17,7 @@ from strands.hooks import AfterInvocationEvent
 from strands.interrupt import _InterruptState
 from strands.session.file_session_manager import FileSessionManager
 from strands.session.repository_session_manager import RepositorySessionManager
-from strands.types.content import ContentBlock
+from strands.types.content import ContentBlock, Message
 from strands.types.exceptions import SessionException
 from strands.types.session import Session, SessionAgent, SessionMessage, SessionType
 from tests.fixtures.mock_session_repository import MockedSessionRepository
@@ -207,6 +207,84 @@ def test_append_message(session_manager):
     assert len(messages) == 1
     assert messages[0].message["role"] == "user"
     assert messages[0].message["content"][0]["text"] == "Hello"
+
+
+def test_append_message_replaces_latest_matching_tracked_message(session_manager):
+    """Replace a merged message in place. See https://github.com/strands-agents/harness-sdk/issues/4420."""
+    agent = Agent(agent_id="test-agent", session_manager=session_manager)
+    original: Message = {
+        "role": "user",
+        "content": [{"text": "start"}],
+        "tracking_id": "durable-1",
+    }
+    session_manager.append_message(original, agent)
+    stored = session_manager.session_repository.read_message("test-session", "test-agent", 0)
+    stored.created_at = "2020-01-01T00:00:00+00:00"
+    stored.updated_at = "2020-01-02T00:00:00+00:00"
+    session_manager.redact_latest_message(
+        {
+            "role": "user",
+            "content": [{"text": "redacted"}],
+            "tracking_id": "durable-1",
+        },
+        agent,
+    )
+    replacement: Message = {
+        "role": "user",
+        "content": [{"text": "start"}, {"text": "guidance"}],
+        "tracking_id": "durable-1",
+    }
+
+    session_manager.append_message(replacement, agent)
+
+    messages = session_manager.session_repository.list_messages("test-session", "test-agent")
+    assert messages == [
+        SessionMessage(
+            message=replacement,
+            message_id=0,
+            created_at="2020-01-01T00:00:00+00:00",
+            updated_at=messages[0].updated_at,
+        )
+    ]
+    assert messages[0].updated_at != "2020-01-02T00:00:00+00:00"
+
+
+@pytest.mark.parametrize(
+    ("original", "next_message"),
+    [
+        (
+            {"role": "user", "content": [{"text": "first"}], "tracking_id": "message-1"},
+            {"role": "user", "content": [{"text": "second"}], "tracking_id": "message-2"},
+        ),
+        (
+            {"role": "user", "content": [{"text": "first"}]},
+            {"role": "user", "content": [{"text": "second"}]},
+        ),
+        (
+            {"role": "user", "content": [{"text": "first"}], "tracking_id": ""},
+            {"role": "user", "content": [{"text": "second"}], "tracking_id": ""},
+        ),
+        (
+            {"role": "user", "content": [{"text": "first"}], "tracking_id": "message-1"},
+            {"role": "assistant", "content": [{"text": "second"}], "tracking_id": "message-1"},
+        ),
+    ],
+)
+def test_append_message_retains_append_semantics_without_compatible_tracking_ids(
+    session_manager,
+    original: Message,
+    next_message: Message,
+):
+    agent = Agent(agent_id="test-agent", session_manager=session_manager)
+
+    session_manager.append_message(original, agent)
+    session_manager.append_message(next_message, agent)
+
+    messages = session_manager.session_repository.list_messages("test-session", "test-agent")
+    assert [(message.message_id, message.to_message()) for message in messages] == [
+        (0, original),
+        (1, next_message),
+    ]
 
 
 def test_sync_multi_agent(session_manager, mock_multi_agent):
