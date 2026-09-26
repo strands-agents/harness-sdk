@@ -24,6 +24,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _pin_message_inline(messages: list[Message], index: int) -> None:
+    """Pin a message so it is protected from eviction during context reduction.
+
+    Mutates the message in place by setting metadata.custom.pinned = True.
+    """
+    message = messages[index]
+    metadata = message.get("metadata", {})
+    custom = metadata.get("custom", {})
+    custom["pinned"] = True
+    metadata["custom"] = custom
+    message["metadata"] = metadata
+
+
 class RepositorySessionManager(SessionManager[LocalAgent]):
     """Session manager for persisting agents in a SessionRepository.
 
@@ -267,22 +280,49 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
             # Restore the conversation manager to its previous state, and get the optional prepend messages
             prepend_messages = []
             offset = 0
+            pinned_head_count = 0
             if isinstance(agent, Agent):
                 prepend_messages = (
                     agent.conversation_manager.restore_from_session(session_agent.conversation_manager_state) or []
                 )
                 offset = agent.conversation_manager.removed_message_count
+                # The pinned head count is persisted in the base ConversationManager and restored above.
+                pinned_head_count = agent.conversation_manager.pinned_head_count
+
+            pinned_messages: list[Message] = []
+            if pinned_head_count > 0:
+                pinned_session_messages = self.session_repository.list_messages(
+                    session_id=self.session_id,
+                    agent_id=agent.agent_id,
+                    limit=pinned_head_count,
+                    offset=0,
+                )
+                pinned_messages = [session_message.to_message() for session_message in pinned_session_messages]
+                # Re-apply pin markers to the restored head so the next compaction respects them.
+                for i in range(len(pinned_messages)):
+                    _pin_message_inline(pinned_messages, i)
 
             # List the messages currently in the session, using an offset of the messages previously removed
-            # by the conversation manager.
+            # by the conversation manager. The offset must also skip past the still-live pinned head so the
+            # tail does not overlap with the messages reattached as ``pinned_messages`` above.
             session_messages = self.session_repository.list_messages(
                 session_id=self.session_id,
                 agent_id=agent.agent_id,
-                offset=offset,
+                offset=pinned_head_count + offset,
             )
             self._held_records[agent.agent_id] = list(session_messages)
+
+            # When the tail comes back empty but the store is not, seed the append cursor from the
+            # last stored message so appending never restarts at 0 on a non-empty store.
             if len(session_messages) > 0:
                 self._latest_agent_message[agent.agent_id] = session_messages[-1]
+            elif pinned_head_count > 0 or offset > 0:
+                all_messages = self.session_repository.list_messages(
+                    session_id=self.session_id,
+                    agent_id=agent.agent_id,
+                )
+                if all_messages:
+                    self._latest_agent_message[agent.agent_id] = all_messages[-1]
 
             # Skip restoring messages when conversation is managed server-side
             if isinstance(agent, Agent) and agent.model.stateful:
@@ -292,10 +332,13 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
                     self.session_id,
                 )
             else:
-                # Restore the agents messages array including the optional prepend messages
-                agent.messages = prepend_messages + [
-                    session_message.to_message() for session_message in session_messages
-                ]
+                # Restore the agents messages array including the optional prepend messages and the
+                # still-live pinned head that compaction pushed back to the front.
+                agent.messages = (
+                    pinned_messages
+                    + prepend_messages
+                    + [session_message.to_message() for session_message in session_messages]
+                )
 
                 # Fix broken session histories: https://github.com/strands-agents/harness-sdk/issues/859
                 agent.messages = self._fix_broken_tool_use(agent.messages)
