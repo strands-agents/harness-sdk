@@ -92,6 +92,10 @@
       "types": "./dist/src/vended-tools/web-fetch/index.d.ts",
       "default": "./dist/src/vended-tools/web-fetch/index.js"
     },
+    "./vended-tools/mcp-router": {
+      "types": "./dist/src/vended-tools/mcp-router/index.d.ts",
+      "default": "./dist/src/vended-tools/mcp-router/index.js"
+    },
     "./a2a": {
       "types": "./dist/src/a2a/index.d.ts",
       "default": "./dist/src/a2a/index.js"
