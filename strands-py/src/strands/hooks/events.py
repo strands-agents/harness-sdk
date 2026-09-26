@@ -134,6 +134,19 @@ class MessageAddedEvent(HookEvent[_LocalAgentT]):
 
 
 @dataclass
+class MessageUpdatedEvent(HookEvent[_LocalAgentT]):
+    """Event triggered after the framework replaces a message.
+
+    Attributes:
+        tracking_id: Stable identifier of the replaced message.
+        message: Replacement message.
+    """
+
+    tracking_id: str
+    message: Message
+
+
+@dataclass
 class BeforeToolsEvent(HookEvent, _Interruptible):
     """Event triggered before executing tools.
 

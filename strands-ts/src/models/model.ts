@@ -542,7 +542,13 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
               } else if (accumulatedCitations.hasData()) {
                 block = new CitationsBlock({
                   citations: accumulatedCitations.citations,
-                  content: accumulatedCitations.content,
+                  // Citations deltas that ground already-streamed text carry no content of their own.
+                  content:
+                    accumulatedCitations.content.length > 0
+                      ? accumulatedCitations.content
+                      : accumulatedText
+                        ? [{ text: accumulatedText }]
+                        : [],
                 })
                 accumulatedCitations.reset()
               } else {

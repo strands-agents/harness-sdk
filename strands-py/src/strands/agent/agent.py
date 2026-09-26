@@ -87,7 +87,7 @@ from ..tools.registry import ToolRegistry
 from ..tools.structured_output._structured_output_context import StructuredOutputContext
 from ..tools.watcher import ToolWatcher
 from ..types._events import AgentResultEvent, EventLoopStopEvent, InitEventLoopEvent, ModelStreamChunkEvent, TypedEvent
-from ..types.agent import AgentInput, ConcurrentInvocationMode, Limits, LocalAgent
+from ..types.agent import _LIMITS_KEYS, AgentInput, ConcurrentInvocationMode, Limits, LocalAgent
 from ..types.content import (
     ContentBlock,
     Message,
@@ -96,7 +96,7 @@ from ..types.content import (
     _ensure_tracking_id,
     split_system_prompt,
 )
-from ..types.exceptions import ConcurrencyException, ContextWindowOverflowException
+from ..types.exceptions import ConcurrencyException, ContextWindowOverflowException, SnapshotException
 from ..types.tools import AgentTool
 from ..types.traces import AttributeValue
 from . import _continuation
@@ -761,6 +761,55 @@ class Agent(AgentBase, LocalAgent):
         """
         return self._concurrency.mode
 
+    def shutdown(self) -> None:
+        """Run the agent's shutdown procedures at end of life.
+
+        Safe to call more than once, and a no-op when there is nothing to release. Call it directly
+        when you own the agent's lifecycle (e.g. draining on a shutdown signal), or scope the agent
+        with ``with`` to run it automatically on exit. From async code use :meth:`shutdown_async` or
+        scope with ``async with``.
+        """
+        if self.memory_manager is None:
+            return
+        run_async(self.shutdown_async)
+
+    async def shutdown_async(self) -> None:
+        """Run the agent's shutdown procedures at end of life.
+
+        Asynchronous variant of :meth:`shutdown`. Safe to call more than once, and a no-op when
+        there is nothing to release.
+        """
+        if self.memory_manager is not None:
+            await self.memory_manager.flush()
+
+    def __enter__(self) -> "Agent":
+        """Enter a ``with`` scope, returning the agent unchanged.
+
+        Pairs with ``__exit__``, which runs :meth:`shutdown` when the scope exits.
+        """
+        return self
+
+    def __exit__(self, *_: Any) -> None:
+        """Run :meth:`shutdown` when leaving a ``with`` scope.
+
+        Runs on normal exit and when the block raises; any exception still propagates.
+        """
+        self.shutdown()
+
+    async def __aenter__(self) -> "Agent":
+        """Enter an ``async with`` scope, returning the agent unchanged.
+
+        Pairs with ``__aexit__``, which runs :meth:`shutdown_async` when the scope exits.
+        """
+        return self
+
+    async def __aexit__(self, *_: Any) -> None:
+        """Run :meth:`shutdown_async` when leaving an ``async with`` scope.
+
+        Runs on normal exit and when the block raises; any exception still propagates.
+        """
+        await self.shutdown_async()
+
     def __call__(
         self,
         prompt: AgentInput = None,
@@ -826,7 +875,7 @@ class Agent(AgentBase, LocalAgent):
             ConcurrencyException: If another invocation is already in progress on this agent instance.
             IdempotencyAbortedError: If this call is a duplicate of an inflight ``idempotency_token``
                 whose primary invocation was aborted before producing a result.
-            TypeError: If a value in ``limits`` is not a positive integer.
+            TypeError: If ``limits`` contains an unrecognized key or a value that is not a positive integer.
             Exception: Any exceptions from the agent invocation will be propagated to the caller.
         """
         return run_async(
@@ -919,7 +968,7 @@ class Agent(AgentBase, LocalAgent):
             ConcurrencyException: If another invocation is already in progress on this agent instance.
             IdempotencyAbortedError: If this call is a duplicate of an inflight ``idempotency_token``
                 whose primary invocation was aborted before producing a result.
-            TypeError: If a value in ``limits`` is not a positive integer.
+            TypeError: If ``limits`` contains an unrecognized key or a value that is not a positive integer.
             Exception: Any exceptions from the agent invocation will be propagated to the caller.
         """
         events = self.stream_async(
@@ -1263,7 +1312,7 @@ class Agent(AgentBase, LocalAgent):
             ConcurrencyException: If another invocation is already in progress on this agent instance.
             IdempotencyAbortedError: If this call is a duplicate of an inflight ``idempotency_token``
                 whose primary invocation was aborted before producing a result.
-            TypeError: If a value in ``limits`` is not a positive integer.
+            TypeError: If ``limits`` contains an unrecognized key or a value that is not a positive integer.
             Exception: Any exceptions from the agent invocation will be propagated to the caller.
 
         Example:
@@ -1853,20 +1902,25 @@ class Agent(AgentBase, LocalAgent):
         Each cap, when set, must be a positive ``int``. Booleans are rejected because
         ``bool`` is a subclass of ``int`` in Python and ``True``/``False`` would
         otherwise pass through as ``1``/``0``, silently no-op'ing or tripping
-        immediately.
+        immediately. Unrecognized keys are rejected for the same reason: a mistyped
+        cap name would otherwise silently apply no limit at all.
 
         Args:
             limits: The caps to validate, or ``None`` to skip.
 
         Raises:
-            TypeError: If any value is not a positive int.
+            TypeError: If any key is not a recognized cap or any value is not a
+                positive int.
         """
         if not limits:
             return
-        for key in ("turns", "output_tokens", "total_tokens"):
-            if key not in limits:
-                continue
-            value = limits[key]
+        unrecognized_keys = sorted(key for key in limits if key not in _LIMITS_KEYS)
+        if unrecognized_keys:
+            raise TypeError(
+                f"limits keys {unrecognized_keys} are not recognized caps, "
+                f"expected one of {', '.join(repr(key) for key in _LIMITS_KEYS)}"
+            )
+        for key, value in limits.items():
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise TypeError(f"limits[{key!r}] must be a positive int, got {value!r}")
 
@@ -1965,12 +2019,14 @@ class Agent(AgentBase, LocalAgent):
             snapshot: The snapshot to restore from.
 
         Raises:
-            SnapshotException: If snapshot.schema_version is not "1.0".
+            SnapshotException: If snapshot.schema_version is not "1.0" or snapshot.scope is not "agent".
             RuntimeError: If background tasks are still tracked.
         """
         if self._background_tasks is not None:
             self._background_tasks.assert_can_load_snapshot()
         snapshot.validate()
+        if snapshot.scope != "agent":
+            raise SnapshotException(f"Expected snapshot scope 'agent', got {snapshot.scope!r}")
 
         data = snapshot.data
 

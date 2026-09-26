@@ -5,6 +5,7 @@ import {
   type InvokableAgent,
   type InvokeArgs,
   type InvokeOptions,
+  LIMITS_KEYS,
   type LocalAgent,
   type localAgentSymbol,
 } from '../types/agent.js'
@@ -216,6 +217,7 @@ export type AgentConfig = {
    *   with a higher truncation threshold and summarization only on overflow.
    *   This mode may change in future versions.
    * - `ContextManagerConfig` object: Custom strategy pipeline and stash configuration.
+   * - `ContextManager` instance: Used as-is. An instance binds to one agent; construct one per `Agent`.
    * - `false`: Explicitly disable context management (no compression, no offloading).
    *
    * When set (except `false`), any co-provided `conversationManager` is ignored.
@@ -326,7 +328,7 @@ export type AgentConfig = {
  * Resolve the contextManager facade into a concrete ConversationManager.
  *
  * When contextManager is undefined, falls back to the default SlidingWindowConversationManager.
- * When a preset, config object, or false, uses NullConversationManager —
+ * When a preset, config object, instance, or false, uses NullConversationManager —
  * the ContextManager owns overflow recovery and proactive compression.
  */
 function resolveConversationManager(
@@ -876,18 +878,28 @@ export class Agent implements LocalAgent, InvokableAgent {
    *
    * Each cap, when set, must be a positive finite number. Fractional values
    * are accepted — harmless, and useful for token budgets derived from
-   * arithmetic.
+   * arithmetic. Unrecognized keys are rejected for the same reason: a
+   * mistyped cap name would otherwise silently apply no limit at all.
    */
   private _validateLimits(options: InvokeOptions | undefined): void {
     if (!options?.limits) return
-    const assertPositive = (name: string, value: number | undefined): void => {
+    const { limits } = options
+    const recognizedKeys = new Set<string>(LIMITS_KEYS)
+    const unrecognizedKeys = Object.keys(limits)
+      .filter((key) => !recognizedKeys.has(key))
+      .sort()
+    if (unrecognizedKeys.length > 0) {
+      throw new TypeError(
+        `limits keys [${unrecognizedKeys.join(', ')}] are not recognized caps, ` +
+          `expected one of ${LIMITS_KEYS.map((key) => `'${key}'`).join(', ')}`
+      )
+    }
+    for (const key of LIMITS_KEYS) {
+      const value = limits[key]
       if (value !== undefined && (!Number.isFinite(value) || value <= 0)) {
-        throw new TypeError(`${name} must be a positive finite number, got ${value}`)
+        throw new TypeError(`limits.${key} must be a positive finite number, got ${value}`)
       }
     }
-    assertPositive('limits.turns', options.limits.turns)
-    assertPositive('limits.outputTokens', options.limits.outputTokens)
-    assertPositive('limits.totalTokens', options.limits.totalTokens)
   }
 
   /**
@@ -1069,6 +1081,32 @@ export class Agent implements LocalAgent, InvokableAgent {
       result = await gen.next()
     }
     return result.value
+  }
+
+  /**
+   * Runs the agent's shutdown procedures at end of life. Safe to call more
+   * than once, and a no-op when there is nothing to release.
+   *
+   * Call it directly when you own the agent's lifecycle (e.g. draining on a shutdown signal), or bind
+   * the agent with `await using` to run it automatically on scope exit.
+   *
+   * @example
+   * ```typescript
+   * await using agent = await createHarness()
+   * await agent.invoke('summarize the repo')
+   * // agent.shutdown() runs here as the scope exits
+   * ```
+   */
+  async shutdown(): Promise<void> {
+    await this.memoryManager?.flush()
+  }
+
+  /**
+   * Runs {@link Agent.shutdown} when the agent leaves an `await using` scope, on normal exit and on
+   * throw, so its shutdown procedures run without a manual `finally`.
+   */
+  async [Symbol.asyncDispose](): Promise<void> {
+    await this.shutdown()
   }
 
   /**
@@ -2053,6 +2091,8 @@ export class Agent implements LocalAgent, InvokableAgent {
 
     let attemptCount = 1
     while (true) {
+      // An abort during retry backoff must stop before another model attempt begins.
+      this._throwIfCancelled()
       const selectedModel = this._modelForAttempt(invocationState)
       let projectedInputTokens: number | undefined
       try {

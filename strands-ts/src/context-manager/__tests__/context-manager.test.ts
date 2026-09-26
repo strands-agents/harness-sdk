@@ -61,6 +61,13 @@ describe('ContextManager', () => {
     })
   })
 
+  describe('from', () => {
+    it('returns a ContextManager instance as-is', () => {
+      const cm = new ContextManager({ strategies: [{ name: 'custom', apply: async () => false }] })
+      expect(ContextManager.from(cm)).toBe(cm)
+    })
+  })
+
   describe('initAgent', () => {
     it('registers AfterModelCallEvent hook', async () => {
       const cm = new ContextManager()

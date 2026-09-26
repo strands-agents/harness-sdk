@@ -1,0 +1,295 @@
+---
+import { getCollection } from 'astro:content';
+import arrow from '../assets/banner/arrow.svg?raw';
+import { pathWithBase } from '../util/links';
+import { getPublishedPosts } from '../util/blog';
+import { formatEventDate, upcomingEvents } from '../util/learn';
+
+// The old /community/ hub is gone; its "what's new" and events feed now lives
+// here on the homepage. Events are filtered to upcoming ones at build time.
+const events = (await getCollection('events')).map((e) => e.data);
+const posts = await getPublishedPosts();
+const today = new Date();
+
+const upcoming = upcomingEvents(events, today);
+const newestPost = posts[0];
+
+// External event hrefs pass through; internal ones get the base prefix.
+const eventHref = (href?: string) =>
+  href && (href.startsWith('http') ? href : pathWithBase(href));
+
+const learnHref = pathWithBase('/docs/learning/how-agents-really-work/');
+const upcomingList = upcoming.slice(0, 4);
+---
+
+<section class="community" aria-label="Community & learning hub">
+  <div class="community__card">
+    <div class="community__main">
+      <div class="community__header">
+        <h2 class="community__title">Community &amp; learning hub</h2>
+        <p class="community__lede">
+          Tutorials, deep-dive articles, and community projects to help you go
+          from your first agent to production, and connect with others building
+          on Strands.
+        </p>
+        <a href={learnHref} class="community__cta">
+          Start learning
+          <span class="community__cta-arrow" set:html={arrow} />
+        </a>
+      </div>
+
+      {newestPost && (
+        <div class="community__panel community__panel--divided">
+          <h3 class="community__panel-title community__panel-title--accent">
+            What's new on the blog
+          </h3>
+          <a class="community__blog-link" href={pathWithBase(`/blog/${newestPost.id}/`)}>
+            {newestPost.data.title}
+          </a>
+        </div>
+      )}
+    </div>
+
+    {upcomingList.length > 0 && (
+      <div class="community__panel community__panel--events">
+        <h3 class="community__panel-title community__panel-title--accent">Events</h3>
+        <ul class="community__list" role="list">
+          {upcomingList.map((event) => (
+            <li class="community__row">
+              <a
+                class="community__row-link"
+                href={eventHref(event.href)}
+                {...(event.href?.startsWith('http') ? { target: '_blank', rel: 'noopener' } : {})}
+              >
+                <span class="community__row-kicker">{formatEventDate(event)}</span>
+                <span class="community__row-title">{event.title}</span>
+                <span class="community__row-meta">{event.location}</span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      </div>
+    )}
+  </div>
+</section>
+
+<style>
+  .community {
+    background: var(--bg);
+    padding: 42px 80px;
+  }
+
+  /* Two-column card: the intro and What's new stack in the left column; Events
+     fills the right column at full height, since it carries more rows. */
+  .community__card {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 40px;
+    align-items: stretch;
+    max-width: 1282px;
+    margin: 0 auto;
+    padding: 40px;
+    background: var(--bg);
+    border: 1px solid var(--fg);
+    border-radius: 32px;
+  }
+
+  .community__main {
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+    min-width: 0;
+  }
+
+  .community__header {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .community__title {
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 600;
+    font-size: 36px;
+    letter-spacing: 3.6px;
+    line-height: 1.12;
+    color: var(--fg);
+  }
+
+  .community__lede {
+    margin: 0;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 20px;
+    letter-spacing: 2px;
+    line-height: 1.3;
+    color: var(--fg);
+  }
+
+  .community__cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 18px 4px 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 600;
+    font-size: 19.25px;
+    line-height: 1.3;
+    color: var(--fg);
+    text-decoration: none;
+    width: max-content;
+  }
+
+  .community__cta:hover {
+    opacity: 0.8;
+  }
+
+  .community__cta-arrow {
+    display: inline-flex;
+    width: 12px;
+    height: 11px;
+  }
+
+  .community__cta-arrow :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  /* ---------- What's new + Events panels ---------- */
+  .community__panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  /* What's new sits below the intro, separated by a divider. */
+  .community__panel--divided {
+    padding-top: 32px;
+    border-top: 1px solid var(--card-border);
+  }
+
+  /* Events sit on a subtly tinted, rounded panel filling the right column. */
+  .community__panel--events {
+    padding: 32px;
+    border-radius: 20px;
+    background: color-mix(in srgb, var(--accent-green) 5%, var(--bg));
+  }
+
+  /* Softer rules between event rows so they read within the tinted panel. */
+  .community__panel--events .community__row + .community__row {
+    border-top-color: color-mix(in srgb, var(--fg) 12%, transparent);
+  }
+
+  .community__panel-title {
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 700;
+    font-size: 16px;
+    letter-spacing: 1.6px;
+    text-transform: uppercase;
+    line-height: 1.3;
+    color: var(--fg);
+  }
+
+  .community__panel-title--accent {
+    color: var(--accent-green);
+  }
+
+  /* The single "what's new" blog headline, styled like a row title. */
+  .community__blog-link {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.3;
+    color: var(--fg);
+    text-decoration: none;
+    transition: color 0.15s ease;
+  }
+
+  .community__blog-link:hover {
+    color: var(--accent-green);
+  }
+
+  .community__list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .community__row + .community__row {
+    border-top: 1px solid var(--card-border);
+  }
+
+  .community__row-link {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 12px 0;
+    text-decoration: none;
+  }
+
+  .community__row-link:hover .community__row-title {
+    color: var(--accent-green);
+  }
+
+  .community__row-kicker {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 600;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: var(--accent-green);
+  }
+
+  .community__row-title {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.3;
+    color: var(--fg);
+    transition: color 0.15s ease;
+  }
+
+  .community__row-meta {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.3;
+    color: var(--strands-grey-400);
+  }
+
+  /* ---------- Narrow layouts (< 1024px) ----------
+     Collapse to one column: intro, then What's new, then Events. */
+  @media (max-width: 1023px) {
+    .community {
+      padding: 24px 19px;
+    }
+
+    .community__card {
+      grid-template-columns: 1fr;
+      gap: 24px;
+      max-width: 560px;
+      padding: 24px;
+      border-radius: 24px;
+    }
+
+    .community__main {
+      gap: 24px;
+    }
+
+    .community__panel--divided {
+      padding-top: 24px;
+    }
+
+    .community__title {
+      font-size: 24px;
+      letter-spacing: 2.4px;
+    }
+
+    .community__lede {
+      font-size: 16px;
+      letter-spacing: 1.6px;
+    }
+  }
+</style>

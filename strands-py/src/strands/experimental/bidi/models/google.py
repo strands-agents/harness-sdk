@@ -9,7 +9,7 @@ Key improvements over custom WebSocket implementation:
 - Simplified session management with client.aio.live.connect()
 - Built-in tool integration and event handling
 - Automatic WebSocket connection management and error handling
-- Native support for audio/text streaming and interruption
+- Native support for audio/text streaming and barge-in
 """
 
 import base64
@@ -17,7 +17,7 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncGenerator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 from google import genai
@@ -25,35 +25,42 @@ from google.genai import types as genai_types
 from google.genai.types import LiveConnectConfigOrDict, LiveServerContent, LiveServerMessage, UsageMetadata
 from typing_extensions import Unpack, override
 
-from ....types._events import ToolResultEvent, ToolUseStreamEvent
-from ....types.content import Messages
-from ....types.tools import ToolResult, ToolSpec, ToolUse
+from ....models._validation import validate_config_keys
+from ....types._events import ToolUseStreamEvent
+from ....types.content import Messages, TextBlock
+from ....types.media import ImageBlock
+from ....types.tools import ToolResultBlock, ToolSpec, ToolUse
 from .._async import stop_all
+from ..types.content import BidiContentDelta, BidiMessage
 from ..types.events import (
-    BidiAudioInputEvent,
-    BidiAudioStreamEvent,
+    BidiAudioDeltaEvent,
+    BidiAudioStartEvent,
+    BidiAudioStopEvent,
+    BidiBargeInEvent,
     BidiConnectionStartEvent,
-    BidiImageInputEvent,
-    BidiInputEvent,
-    BidiInterruptionEvent,
     BidiOutputEvent,
-    BidiResponseCompleteEvent,
     BidiResponseStartEvent,
-    BidiTextInputEvent,
-    BidiTranscriptCompleteEvent,
-    BidiTranscriptStreamEvent,
+    BidiResponseStopEvent,
+    BidiTranscriptDeltaEvent,
+    BidiTranscriptStartEvent,
+    BidiTranscriptStopEvent,
     BidiUsageEvent,
     ModalityUsage,
 )
+from ..types.media import AudioDelta
 from .configs import (
     AudioConfig,
-    BidiConnectionConfig,
-    BidiModelConfig,
+    AudioStreamConfig,
+    ConnectionConfig,
+    GoogleGeminiLiveAudioConfig,
+    GoogleGeminiLiveAudioStreamConfig,
+    ModelConfig,
+    ModelUpdateConfig,
     _merge_config,
     _validate_audio_config,
     _validate_model_config,
 )
-from .model import AudioCapable, BidiModel, BidiModelTimeoutError
+from .model import AudioCapable, BidiModel, ConnectionTimeoutError
 
 logger = logging.getLogger(__name__)
 
@@ -67,10 +74,28 @@ class _TurnState:
     flip the replacing connection's turn state.
     """
 
-    response_open: bool = False
     response_id: str | None = None
-    input_transcript: str = ""
     output_transcript: str = ""
+    output_transcript_id: str | None = None
+    audio_started: bool = False
+    interrupted: bool = False
+    input_id: str | None = None
+    transcripts: dict[str, str] = field(default_factory=dict)
+    response_input_ids: list[str] = field(default_factory=list)
+    last_activity_input_id: str | None = None
+
+    def start_input_transcript(self) -> BidiTranscriptStartEvent:
+        """Open a user transcript when speech or its first text arrives."""
+        self.input_id = str(uuid.uuid4())
+        self.transcripts[self.input_id] = ""
+        return BidiTranscriptStartEvent("user", content_id=self.input_id)
+
+    def stop_input_transcript(self, input_id: str) -> BidiTranscriptStopEvent:
+        """Close one user transcript without disturbing a newer utterance."""
+        transcript = self.transcripts.pop(input_id, "")
+        if self.input_id == input_id:
+            self.input_id = None
+        return BidiTranscriptStopEvent(transcript, "user", content_id=input_id)
 
 
 class GoogleGeminiLiveModel(BidiModel, AudioCapable):
@@ -85,40 +110,37 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         self,
         *,
         client_args: dict[str, Any] | None = None,
-        audio: AudioConfig | None = None,
-        **model_config: Unpack[BidiModelConfig],
+        audio: GoogleGeminiLiveAudioConfig | None = None,
+        voice: str | None = None,
+        **model_config: Unpack[ModelConfig],
     ) -> None:
         """Initialize the Google Gemini Live bidirectional model.
 
         Args:
             client_args: Arguments for the underlying Google GenAI client.
             audio: Audio configuration.
+            voice: Prebuilt output voice name. Omit to use the provider's default.
             **model_config: Model configuration.
+
+        Raises:
+            ValueError: If any of the following conditions apply:
+
+                - Required model configuration fields are missing.
+                - ``model_id`` is not a non-empty string.
+                - The input sample rate is not positive.
         """
         _validate_model_config(model_config)
-        _validate_audio_config(audio)
-        self._config = BidiModelConfig(**model_config)
-        self._config.setdefault("model_id", "gemini-2.5-flash-native-audio-preview-09-2025")
+        self._config = ModelConfig(**model_config)
+        self._config["params"] = dict(self._config.get("params") or {})
 
         # Gemini caps a single connection at ~10 min; reconnect before that, resuming the same
         # session via its handle. The GoAway message remains the reactive backstop.
-        self._config["connection"] = BidiConnectionConfig(
-            **{"restart_after_s": 540, **self._config.get("connection", {})}
-        )
+        self._config["connection"] = ConnectionConfig(**{"restart_after_s": 540, **self._config.get("connection", {})})
         # Gemini reports per-response token deltas, not cumulative session totals.
         self.usage_is_cumulative = False
 
-        self._audio_config = AudioConfig(
-            **{
-                "input_rate": 16000,
-                "output_rate": 24000,
-                "channels": 1,
-                "format": "pcm",
-                **(audio or {}),
-            }
-        )
-
-        self._config["params"] = dict(self._config.get("params") or {})
+        self._resolve_audio_config(audio)
+        self._voice = voice
 
         self.client_args = dict(client_args or {})
         self._client = genai.Client(**self.client_args)
@@ -130,17 +152,23 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         self._connection_id: str | None = None
 
     @override
-    def update_config(self, **model_config: Unpack[BidiModelConfig]) -> None:  # type: ignore[override]
+    def update_config(self, **model_config: Unpack[ModelUpdateConfig]) -> None:  # type: ignore[override]
         """Update the model configuration with the provided arguments.
 
         Args:
             **model_config: Configuration overrides.
+
+        Raises:
+            ValueError: If any of the following conditions apply:
+
+                - The resulting configuration is missing required fields.
+                - ``model_id`` is not a non-empty string.
         """
-        _validate_model_config(model_config)
+        _validate_model_config(self._config | model_config)
         self._config.update(model_config)
 
     @override
-    def get_config(self) -> BidiModelConfig:
+    def get_config(self) -> ModelConfig:
         """Return the model configuration by reference."""
         return self._config
 
@@ -148,6 +176,23 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
     def get_audio_config(self) -> AudioConfig:
         """Get the resolved audio configuration."""
         return self._audio_config
+
+    def _resolve_audio_config(self, config: GoogleGeminiLiveAudioConfig | None) -> None:
+        """Resolve and validate input and output audio settings."""
+        config = config or {}
+        validate_config_keys(config, GoogleGeminiLiveAudioConfig)
+
+        input_config = config.get("input", {"sample_rate": 16000})
+        validate_config_keys(input_config, GoogleGeminiLiveAudioStreamConfig)
+        sample_rate = input_config["sample_rate"]
+        if sample_rate <= 0:
+            raise ValueError(f"Unsupported sample rate: {sample_rate}. Expected a positive value.")
+
+        self._audio_config = AudioConfig(
+            input=AudioStreamConfig(sample_rate=sample_rate, channels=1, format="pcm"),
+            output=AudioStreamConfig(sample_rate=24000, channels=1, format="pcm"),
+        )
+        _validate_audio_config(self._audio_config)
 
     async def start(
         self,
@@ -260,10 +305,10 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
             List of event dicts (empty list if no events to emit).
 
         Raises:
-            BidiModelTimeoutError: If gemini responds with go away message.
+            ConnectionTimeoutError: If Gemini responds with a go-away message.
         """
         if message.go_away:
-            raise BidiModelTimeoutError(
+            raise ConnectionTimeoutError(
                 message.go_away.model_dump_json(), live_session_handle=self._live_session_handle
             )
 
@@ -277,6 +322,12 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
 
         audio_data = message.data
 
+        activity = message.voice_activity
+        if activity and activity.voice_activity_type == genai_types.VoiceActivityType.ACTIVITY_START:
+            if turn_state.input_id is None or turn_state.input_id == turn_state.last_activity_input_id:
+                events.append(turn_state.start_input_transcript())
+            turn_state.last_activity_input_id = turn_state.input_id
+
         if message.server_content:
             events.extend(
                 self._convert_server_content(
@@ -287,14 +338,15 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
             )
 
         if audio_data:
+            if not turn_state.audio_started:
+                turn_state.audio_started = True
+                events.append(BidiAudioStartEvent())
             # Convert bytes to base64 string for JSON serializability
             audio_b64 = base64.b64encode(audio_data).decode("utf-8")
             events.append(
-                BidiAudioStreamEvent(
+                BidiAudioDeltaEvent(
                     audio=audio_b64,
-                    format="pcm",
-                    sample_rate=self._audio_config["output_rate"],
-                    channels=self._audio_config["channels"],
+                    **self._audio_config["output"],
                 )
             )
 
@@ -327,58 +379,64 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
     def _wrap_turn_events(
         self, message: LiveServerMessage, events: list[BidiOutputEvent], turn_state: _TurnState
     ) -> list[BidiOutputEvent]:
-        """Bracket a turn's content with response start/complete events.
-
-        Gemini has no explicit response-start signal, so a model turn is inferred as open from its
-        first model output until ``turn_complete``. This surfaces the turn boundary the agent loop
-        needs to align a proactive reconnect (and to know when a swap cut a turn short).
-
-        Args:
-            message: The server message being converted.
-            events: Content events already derived from ``message``.
-            turn_state: The calling reader's turn bracketing state, mutated as the turn opens/closes.
-
-        Returns:
-            The content events, prefixed with a response-start when a turn opens and suffixed with
-            a response-complete when it closes.
-        """
+        """Bracket assistant output from its first content through ``turn_complete``."""
         server_content = message.server_content
-        interrupted = bool(server_content and server_content.interrupted)
+        barge_in = bool(server_content and server_content.interrupted)
         turn_complete = bool(server_content and server_content.turn_complete)
+        generation_complete = bool(server_content and server_content.generation_complete)
         produced_model_output = any(
-            isinstance(event, (BidiAudioStreamEvent, ToolUseStreamEvent))
-            or (isinstance(event, BidiTranscriptStreamEvent) and event.role == "assistant")
+            isinstance(event, (BidiAudioDeltaEvent, ToolUseStreamEvent))
+            or (isinstance(event, BidiTranscriptDeltaEvent) and event.role == "assistant")
             for event in events
         )
 
-        wrapped: list[BidiOutputEvent] = []
-        # An interruption ends a turn, it does not start one, so it never opens a response.
-        if produced_model_output and not turn_state.response_open and not interrupted:
-            turn_state.response_open = True
+        # Start user transcripts before assistant output in the same native message.
+        wrapped: list[BidiOutputEvent] = [
+            event for event in events if isinstance(event, BidiTranscriptStartEvent) and event.role == "user"
+        ]
+        if produced_model_output and turn_state.response_id is None:
             turn_state.response_id = str(uuid.uuid4())
+            turn_state.response_input_ids = [turn_state.input_id] if turn_state.input_id is not None else []
             wrapped.append(BidiResponseStartEvent(response_id=turn_state.response_id))
 
-        wrapped.extend(events)
+        wrapped.extend(
+            event for event in events if not (isinstance(event, BidiTranscriptStartEvent) and event.role == "user")
+        )
 
-        if interrupted:
-            turn_state.response_open = False
-            turn_state.output_transcript = ""
-        if turn_complete and turn_state.input_transcript:
-            wrapped.append(BidiTranscriptCompleteEvent(turn_state.input_transcript, "user"))
-            turn_state.input_transcript = ""
-        if turn_complete and turn_state.response_open:
-            if turn_state.output_transcript:
-                wrapped.append(BidiTranscriptCompleteEvent(turn_state.output_transcript, "assistant"))
-            wrapped.append(
-                BidiResponseCompleteEvent(
-                    response_id=turn_state.response_id or str(uuid.uuid4()), stop_reason="complete"
+        if barge_in and turn_state.response_id is not None:
+            turn_state.interrupted = True
+        if turn_state.audio_started and (barge_in or turn_complete or generation_complete):
+            turn_state.audio_started = False
+            wrapped.append(BidiAudioStopEvent())
+        if turn_complete:
+            wrapped.extend(self._complete_response(turn_state))
+        return wrapped
+
+    def _complete_response(self, turn_state: _TurnState) -> list[BidiOutputEvent]:
+        """Close the turn's transcripts and response, preserving any newer user activity."""
+        events: list[BidiOutputEvent] = []
+        input_ids_to_complete = turn_state.response_input_ids
+        if turn_state.response_id is None:
+            input_ids_to_complete = [turn_state.input_id] if turn_state.input_id is not None else []
+        for input_id in input_ids_to_complete:
+            if input_id in turn_state.transcripts:
+                events.append(turn_state.stop_input_transcript(input_id))
+        if turn_state.response_id is None:
+            return events
+
+        if turn_state.output_transcript_id is not None:
+            events.append(
+                BidiTranscriptStopEvent(
+                    turn_state.output_transcript, "assistant", content_id=turn_state.output_transcript_id
                 )
             )
-            turn_state.response_open = False
-            turn_state.response_id = None
-            turn_state.output_transcript = ""
-
-        return wrapped
+        events.append(BidiResponseStopEvent(turn_state.response_id))
+        turn_state.response_id = None
+        turn_state.response_input_ids = []
+        turn_state.output_transcript = ""
+        turn_state.output_transcript_id = None
+        turn_state.interrupted = False
+        return events
 
     def _convert_server_content(
         self,
@@ -399,34 +457,47 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         events: list[BidiOutputEvent] = []
 
         if server_content.interrupted:
-            events.append(BidiInterruptionEvent(reason="user_speech"))
+            events.append(BidiBargeInEvent(reason="user_speech"))
 
         input_transcript = server_content.input_transcription
         if input_transcript and input_transcript.text:
             text = input_transcript.text
-            turn_state.input_transcript += text
+            input_id = turn_state.input_id
+            if input_id is None:
+                start_event = turn_state.start_input_transcript()
+                events.append(start_event)
+                input_id = start_event.content_id
+                # Without a native activity boundary, finalize late text with the current turn.
+                if turn_state.response_id is not None and not turn_state.interrupted and not server_content.interrupted:
+                    turn_state.response_input_ids.append(input_id)
+            turn_state.transcripts[input_id] += text
             logger.debug("text_length=<%d> | gemini input transcription detected", len(text))
-            events.append(BidiTranscriptStreamEvent(delta=text, role="user"))
+            events.append(BidiTranscriptDeltaEvent(delta=text, role="user", content_id=input_id))
 
+        if input_transcript and input_transcript.finished is True and turn_state.input_id is not None:
+            events.append(turn_state.stop_input_transcript(turn_state.input_id))
+
+        output_text: list[str] = []
         output_transcript = server_content.output_transcription
         if output_transcript and output_transcript.text:
             text = output_transcript.text
-            turn_state.output_transcript += text
             logger.debug("text_length=<%d> | gemini output transcription detected", len(text))
-            events.append(BidiTranscriptStreamEvent(delta=text, role="assistant"))
+            output_text.append(text)
 
         if not has_audio and server_content.model_turn and server_content.model_turn.parts:
             # Concatenate all text parts (Gemini may send multiple parts)
             text_parts = [part.text for part in server_content.model_turn.parts if part.text]
             if text_parts:
-                full_text = " ".join(text_parts)
-                turn_state.output_transcript += full_text
-                events.append(
-                    BidiTranscriptStreamEvent(
-                        delta=full_text,
-                        role="assistant",
-                    )
-                )
+                output_text.append(" ".join(text_parts))
+
+        for text in output_text:
+            if turn_state.output_transcript_id is None:
+                turn_state.output_transcript_id = str(uuid.uuid4())
+                events.append(BidiTranscriptStartEvent("assistant", content_id=turn_state.output_transcript_id))
+            turn_state.output_transcript += text
+            events.append(
+                BidiTranscriptDeltaEvent(delta=text, role="assistant", content_id=turn_state.output_transcript_id)
+            )
 
         return events
 
@@ -475,76 +546,72 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
 
     async def send(
         self,
-        content: BidiInputEvent | ToolResultEvent,
+        content: BidiMessage | BidiContentDelta,
     ) -> None:
         """Unified send method for all content types. Sends the given inputs to the Gemini Live API.
 
         Dispatches to appropriate internal handler based on content type.
 
         Args:
-            content: Typed event (BidiTextInputEvent, BidiAudioInputEvent, BidiImageInputEvent, or ToolResultEvent).
+            content: A complete BidiMessage or an individual AudioDelta.
 
         Raises:
-            ValueError: If content type not supported (e.g., image content).
+            ValueError: If content type not supported.
         """
         if not self._connection_id:
             raise RuntimeError("model not started | call start before sending")
 
-        if isinstance(content, BidiTextInputEvent):
-            await self._send_text_content(content.text)
-        elif isinstance(content, BidiAudioInputEvent):
+        if isinstance(content, BidiMessage):
+            await self._send_message(content)
+        elif isinstance(content, AudioDelta):
             await self._send_audio_content(content)
-        elif isinstance(content, BidiImageInputEvent):
-            await self._send_image_content(content)
-        elif isinstance(content, ToolResultEvent):
-            tool_result = content.get("tool_result")
-            if tool_result:
-                await self._send_tool_result(tool_result)
         else:
             raise ValueError(f"content_type={type(content)} | content not supported")
 
-    async def _send_audio_content(self, audio_input: BidiAudioInputEvent) -> None:
+    async def _send_message(self, message: BidiMessage) -> None:
+        """Send one user turn or tool results."""
+        parts = []
+        for block in message.content:
+            if isinstance(block, TextBlock):
+                parts.append(genai_types.Part(text=block.text))
+            elif isinstance(block, ImageBlock):
+                image_bytes = block.source.get("bytes")
+                if image_bytes is None:
+                    raise ValueError("image source must contain bytes for Gemini Live")
+                parts.append(
+                    genai_types.Part(inline_data=genai_types.Blob(data=image_bytes, mime_type=f"image/{block.format}"))
+                )
+            elif isinstance(block, ToolResultBlock):
+                await self._send_tool_result(block)
+            else:
+                raise ValueError(f"content_type={type(block)} | content not supported by Gemini Live")
+
+        if parts:
+            await self._live_session.send_client_content(
+                turns=genai_types.Content(role="user", parts=parts), turn_complete=True
+            )
+
+    async def _send_audio_content(self, audio_input: AudioDelta) -> None:
         """Internal: Send audio content using Gemini Live API.
 
         Gemini Live expects continuous audio streaming via send_realtime_input.
-        This automatically triggers VAD and can interrupt ongoing responses.
+        This automatically triggers VAD and allows users to barge in during ongoing responses.
         """
-        # Decode base64 audio to bytes for SDK
-        audio_bytes = base64.b64decode(audio_input.audio)
+        audio_bytes = audio_input.source.get("bytes")
+        if audio_bytes is None:
+            raise ValueError("audio source must contain bytes for Gemini Live")
 
         # Create audio blob for the SDK
-        mime_type = f"audio/pcm;rate={self._audio_config['input_rate']}"
+        mime_type = f"audio/pcm;rate={self._audio_config['input']['sample_rate']}"
         audio_blob = genai_types.Blob(data=audio_bytes, mime_type=mime_type)
 
-        # Send real-time audio input - this automatically handles VAD and interruption
+        # Send real-time audio input - this automatically handles VAD and barge-in
         await self._live_session.send_realtime_input(audio=audio_blob)
 
-    async def _send_image_content(self, image_input: BidiImageInputEvent) -> None:
-        """Internal: Send image content using Gemini Live API.
-
-        Sends image frames following the same pattern as the GitHub example.
-        Images are sent as base64-encoded data with MIME type.
-        """
-        # Image is already base64 encoded in the event
-        msg = {"mime_type": image_input.mime_type, "data": image_input.image}
-
-        # Send using the same method as the GitHub example
-        await self._live_session.send(input=msg)
-
-    async def _send_text_content(self, text: str) -> None:
-        """Internal: Send text content using Gemini Live API.
-
-        Uses send_realtime_input for mid-session text input. Turn completion
-        is handled by Gemini's automatic activity detection rather than
-        explicit turn boundaries. send_client_content is reserved for
-        seeding initial history at session start (see _send_message_history).
-        """
-        await self._live_session.send_realtime_input(text=text)
-
-    async def _send_tool_result(self, tool_result: ToolResult) -> None:
+    async def _send_tool_result(self, tool_result: ToolResultBlock) -> None:
         """Internal: Send tool result using Gemini Live API."""
-        tool_use_id = tool_result.get("toolUseId")
-        content = tool_result.get("content", [])
+        tool_use_id = tool_result.tool_use_id
+        content = tool_result.content
 
         # Validate all content types are supported
         for block in content:
@@ -696,10 +763,8 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         if tools:
             config_dict["tools"] = self._format_tools_for_live_api(tools)
 
-        if "voice" in self._audio_config:
-            config_dict.setdefault("speech_config", {}).setdefault("voice_config", {}).setdefault(
-                "prebuilt_voice_config", {}
-            )["voice_name"] = self._audio_config["voice"]
+        if self._voice is not None:
+            config_dict["speech_config"] = {"voice_config": {"prebuilt_voice_config": {"voice_name": self._voice}}}
 
         return _merge_config(config_dict, self._config.get("params") or {})
 
@@ -714,7 +779,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
                     genai_types.FunctionDeclaration(
                         description=tool_spec["description"],
                         name=tool_spec["name"],
-                        parameters_json_schema=tool_spec["inputSchema"]["json"],
+                        parameters=genai_types.Schema.model_validate(tool_spec["inputSchema"]["json"]),
                     )
                     for tool_spec in tool_specs
                 ],

@@ -1,0 +1,72 @@
+---
+title: 'diagnose and fetch: Analyze session failures'
+description: 'Detect failures and analyze root causes from the command line: strands-evals diagnose scores a Session JSON, and fetch pulls one from a trace provider.'
+sidebar:
+  label: "diagnose & fetch"
+---
+
+`strands-evals diagnose` runs the [detectors](../detectors/index.md) pipeline on a serialized `Session`, and `strands-evals fetch` produces that `Session` JSON from a remote trace provider. Together they diagnose a production session in one pipe.
+
+## `diagnose`: Detect failures and analyze root causes
+
+`diagnose` operates on a serialized `Session` (the same `Session` object trace-based evaluators consume). Three modes:
+
+```bash
+# Full pipeline: detect failures and analyze root causes
+strands-evals diagnose session.json --confidence medium
+
+# Detection only
+strands-evals diagnose session.json --detect-only --confidence high
+
+# Root cause analysis only
+strands-evals diagnose session.json --rca-only
+
+# Read from stdin, write JSON to a file
+cat session.json | strands-evals diagnose - --output diagnosis.json
+```
+
+- `--confidence` is the minimum confidence threshold for failure detection (`low` | `medium` | `high`, default `low`).
+- `--model MODEL_ID` overrides the judge model used for detection and RCA.
+- `--detect-only` and `--rca-only` are mutually exclusive; omit both for the full pipeline.
+- A one-line summary is always written to stderr (`diagnosis: N failure(s), M root cause(s)`), so the command is scriptable even when the rich output goes to a TTY.
+
+See [Detectors](../detectors/index.md) for the underlying API.
+
+## `fetch`: Pull a Session from a provider
+
+`fetch` wraps a `TraceProvider` and writes a `Session` JSON for a single session id, ready to pipe into `strands-evals diagnose -`. Each provider is its own sub-subcommand; credentials come from environment variables rather than flags.
+
+```bash
+# CloudWatch: either --log-group or --agent-name (not both)
+strands-evals fetch cloudwatch \
+  --session-id abc123 \
+  --agent-name customer-service \
+  --region us-east-1 \
+  -o session.json
+
+# Langfuse (requires the langfuse extra)
+strands-evals fetch langfuse --session-id abc123 -o session.json
+
+# OpenSearch (requires the opensearch extra)
+strands-evals fetch opensearch \
+  --session-id abc123 \
+  --host https://localhost:9200 \
+  --username admin --password "$OS_PASSWORD" \
+  -o session.json
+
+# Fetch and diagnose in one pipe
+strands-evals fetch cloudwatch --session-id abc123 --agent-name customer-service \
+  | strands-evals diagnose - --confidence medium
+```
+
+- `cloudwatch` is always available (boto3 is a runtime dependency). Supply exactly one of `--log-group` or `--agent-name`; `--agent-name` discovers the log group via `describe_log_groups`. `--lookback-days` defaults to `30`.
+- `langfuse` requires `pip install strands-agents-evals[langfuse]` and reads `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` from the environment.
+- `opensearch` requires `pip install strands-agents-evals[opensearch]`. Pass `--username` and `--password` together for basic auth, or `--no-verify-certs` for local endpoints.
+
+Output is always JSON. Without `-o`, the `Session` JSON goes to stdout.
+
+## Next steps
+
+- [Detectors](../detectors/index.md): the API behind `strands-evals diagnose` and the `Session` shape `fetch` produces.
+- [Evaluating remote traces](../how-to/trace_providers.md): the providers behind `fetch` and how to score remote traces with evaluators.
+- [`run`](run.md#diagnosis-during-a-run): run diagnosis automatically on failing cases during an experiment.

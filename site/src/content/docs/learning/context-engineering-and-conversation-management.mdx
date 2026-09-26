@@ -1,5 +1,5 @@
 ---
-title: "Lesson 8: Context Engineering & Conversation Management"
+title: "Lesson 8: Context Engineering & Context Management"
 description: "Every turn, the model receives the full conversation history plus system prompt plus tool results. That window fills up fast. Once it does, you either hit token limits, start paying significantly more per request, or the model starts missing information buried in the middle."
 redirectFrom:
   - docs/community/learning/lesson8-context-engineering-and-conversation-management
@@ -8,177 +8,192 @@ redirectFrom:
 <YouTube id="6zbbYm902MQ" title="Lesson 8: Context Engineering &amp; Conversation Management" />
 *[Watch on YouTube](https://www.youtube.com/watch?v=6zbbYm902MQ&list=PLDzwjhH-4yhU&index=8)*
 
-*Code for this lesson can be found
-[**here**](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/08-conversation-management).*
+:::note[About this lesson]
+The videos in this course are a snapshot in time. Strands is under active development, so the code featured on this page reflects the most up-to-date patterns, but the concepts covered in the video still apply. When in doubt, trust the code.
 
-### Introduction: The Core Architectural Challenge of Context
+In particular, this video demonstrates `SummarizingConversationManager` and the `ContextOffloader` plugin. Those have been superseded by the unified `ContextManager` and `Offload` strategies shown below. The ideas (summarize old history, offload large tool results, compress proactively) are the same; the API is now one system instead of two.
+:::
 
-Let's talk about context management. Managing context is one of the core responsibilities
-of an agent harness. Every tool call, tool result, correction, summary, user message, and
-model response consumes tokens and takes up space in the context window.
+*Code for this lesson: [`samples/08-context-management`](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/08-context-management)*
 
-Even before you hit the hard context limit, oversized contexts increase latency and cost,
-and they often reduce reasoning quality. As agents become longer running and more capable,
-context engineering starts becoming one of the main architectural problems that you need
-to solve.
+## What Context Engineering Is
 
-There are a few common strategies you'll see repeatedly:
+Context engineering is the discipline of deciding **what information enters the model's context window, when, and in what form**. Unlike prompt engineering (which focuses on instructions), context engineering ensures the model has the right data at the right time without overflowing the window or wasting tokens.
 
-* You can **externalize context** into files, databases, or memory systems instead of
-  keeping everything in the prompt.
-* You can **dynamically select relevant information** for the current task using tools.
-* You can **compress context** through summarization or compaction.
-* You can **isolate context** between agents so each one only sees what's relevant to its
-  role.
+It breaks down into four categories:
 
-Strands ships with a few different out-of-the-box components that make context engineering
-a lot easier to implement so you can save tokens. We will explore the basics first, and
-then look at the single line of code that gives you everything you need out of the box.
-This way, you'll understand what you're getting when you use built-in context management
-features and have the ability to select what makes sense for you.
+| Category | What It Does | Strands Primitive |
+| --- | --- | --- |
+| **Select** | Choose what enters context, inject relevant info, filter out noise | `ContextInjector` plugin |
+| **Compress** | Shrink what's already in context, summarize history, truncate results | `ContextManager` strategies (truncate, summarize, drop) |
+| **Isolate** | Separate concerns, give sub-agents their own context windows | Multi-agent patterns, `context_manager="agentic"` |
+| **Externalize** | Move large data out of context, store externally, keep a compact reference | `ContextManager` stash + retrieval tool |
 
-### Reactive Compaction: The Sliding Window Conversation Manager
+## The One-Line Default: `context_manager="auto"`
 
-For compaction, Strands ships with built-in conversation managers to help manage this
-automatically.
-
-The first is the sliding window conversation manager. This one is straightforward: it
-keeps only the *N* most recent messages and removes older history as the conversation
-grows.
-
-Let's add it to our customer service agent. We create a sliding window conversation
-manager with a window size of 20 and pass it into the agent during creation. The
-conversation manager handles trimming automatically during the agent loop.
-
-Importantly, it trims intelligently. It won't split tool calls from their results, and it
-trims along conversation boundaries so history remains structurally valid.
-
-There's also an option called `should_truncate_results`. When enabled, large tool outputs
-get compacted automatically:
-
-* Long results are shortened while preserving the beginning and end of the output.
-* Large image blocks can be replaced with lightweight placeholders.
-
-This helps control context growth from especially large tool responses. The sliding window
-approach is simple, fast, and predictable—and honestly, it's where most people start.
-But it's also naive because eventually, you lose older information entirely, which might
-actually be desired depending on your use case. But for a lot of longer-running workflows,
-losing important context from the beginning of the conversation can become a problem.
-
-### Lossy Compression: The Summarizing Conversation Manager
-
-That's where the second built-in option comes in: the summarizing conversation manager.
-Instead of dropping older messages completely, this manager compresses them into
-summaries.
-
-The setup looks very similar, but we use the summarizing conversation manager instead of
-the sliding window. When the context window starts approaching its limit, the manager
-takes older portions of the conversation, summarizes them, replaces them with a compressed
-summary message, and retries the request with the reduced context.
-
-There are a few important configurations here:
-
-* **Summary Ratio:** Controls how much of the older conversation gets summarized during
-  compaction.
-* **Preserve Recent Messages:** Ensures the most recent messages remain untouched so the
-  active work in context stays intact.
-
-You can also customize how summarization happens. For example, for a customer support
-agent, you might provide a summarization prompt that tells the summarizer to focus on
-customer identity, issue history, actions already taken, and unresolved problems.
-
-Importantly, the summarization step itself can use a separate summarization agent or a
-cheaper model provider entirely. Simple summarization tasks usually don't need your most
-expensive reasoning model. That's another example of a harness engineering design decision
-that shapes system cost and performance.
-
-Summarization is useful, but it's important to understand that summarization is lossy
-compression. Sometimes important details disappear, especially after repeated compression
-cycles. In long-running agent systems, you might need more sophisticated strategies
-depending on your use case, such as:
-
-* Extracting structured state as a list of facts instead of summarizing.
-* Retrieving information dynamically from external memory stores like short-term and
-  long-term memory.
-* Splitting workflows across multiple isolated agents with different contexts to work on
-  different parts of the problem, each having its own conversation management strategy.
-
-### Proactive vs. Reactive Compression
-
-The conversation managers we just saw are reactive; they kick in when you hit the limit.
-But Strands also supports proactive compression.
-
-You can set a compression threshold, and the manager will start compressing before you
-overflow the context window. This is how you add it to your agent: just include the
-proactive compression parameter and set your threshold, and you're all set.
-
-There are many different ways you can tackle context engineering, but there usually is no
-single perfect strategy. You experiment, evaluate behavior, tune compaction approaches,
-and evolve the harness over time based on the workloads that you actually observe. The
-good news is that Strands gives you extension points for this, allowing you to build
-custom conversation managers when the built-in approaches stop being sufficient.
-
-### Handling Enormous Tool Outputs: Context Offloading
-
-There's a separate problem that you might run into with context that we haven't talked
-about yet, but is super common for agents that use many different tools. Individual tool
-results can be enormous and consume a ton of tokens. A single verbose tool response or
-file read could be tens of thousands of tokens, and that's sent to the model on every
-single turn of the conversation, driving up costs and reducing performance.
-
-You're going to want a way to solve for that. The **Context Offloader Plugin** solves
-this. It intercepts large tool results, stores the full context externally, and keeps a
-compact preview in context for the agent. The agent still knows what the result contained;
-it just doesn't bloat the window with the full thing. This is all driven using hooks and
-tools—concepts you already understand.
-
-In this example, we're bringing in the context offloader plugin, which stacks on top of
-the other plugins we're already using. We then set the storage for the offloaded tool
-results to go to a local directory, set the max result tokens, and set preview tokens to
-be the first 2,000 tokens. This reduces the amount of tokens in the context window for
-tool calls but still gives a fair amount in the preview. You can tune these numbers for
-your specific use case to see what works best.
-
-These two mechanisms—conversation management for history and context offloading for
-individual tool results—work together.
-
-### One-Line Out-of-the-Box Setup: `context_manager=auto`
-
-Now let's see the built-in context management configurations you can give to your agent so
-you can get context offloading, summarization, and proactive compression all with one line
-of code.
-
-You can drop this into your agent:
+For most use cases, start here:
 
 ```python
-context_manager="auto"
+from strands import Agent
 
+agent = Agent(context_manager="auto")
 ```
 
-This gives you the default behavior:
+This single parameter enables:
 
-* Large tool results are offloaded to external storage and replaced with a truncated
-  preview.
-* Old messages are automatically compressed into structured summaries rather than dropped.
-* Proactive compression fires at 85% context usage to stay ahead of overflow.
+- **Offloading** large tool results to a stash, replaced with truncated previews
+- **Summarization** of old messages into structured summaries (not dropped)
+- **Proactive compression** firing at 85% context usage to stay ahead of overflow
 
-In Strands' benchmarks on real code investigation tasks, cost dropped by 55% while
-accuracy went from 68% to 98%. You end up using about half the tokens, but you get way
-better results.
+In benchmarks on real code investigation tasks, costs dropped 55% while accuracy went from 68% to 98%. Half the tokens, better results.
 
-There is also `context_manager="agentic"` for when the model is better positioned to
-decide what stays in context. The model gets tools to summarize, truncate, or pin
-messages—it trades tokens for judgment. We recommend you start with `auto` by default,
-and use `agentic` when your agent needs to protect specific context across long
-conversations.
+For agents that need to protect specific context across long conversations, use `context_manager="agentic"`. The model gets tools to summarize, truncate, or pin messages itself, trading some tokens for judgment.
 
-### What's Next?
+## Context Injector
 
-We've spent some time here talking about memory systems, but everything we've done so far
-hasn't used memory. If the agent restarts at any point, the conversation history, the
-summaries, and the agent state all go away, and there is no way to bring back up
-conversation history for a given session across different runs.
+The `ContextInjector` plugin folds ephemeral text into the model input before each call. The text is never written to conversation history; it augments one call only. Use it for context the agent should always have but that doesn't belong in stored history: current time, environment facts, retrieval lookups.
 
-In the next lesson, we'll solve that by giving our agent persistent memory.
+```python
+from datetime import datetime, timezone
+from strands import Agent
+from strands.vended_plugins.context_injector import ContextInjector
 
-*Learn more: [Context Management](/docs/user-guide/concepts/context-management/)*
+agent = Agent(
+    plugins=[
+        ContextInjector(
+            lambda context: f"<now>{datetime.now(timezone.utc).isoformat()}</now>"
+        ),
+    ],
+)
+```
+
+Control when injection fires:
+
+- `trigger="userTurn"` (default): only on fresh user messages
+- `trigger="everyTurn"`: before every model call, including mid-task tool-result turns
+- Custom predicate: `trigger=lambda context: context.state.get("recall_enabled") is True`
+
+## ContextManager and Offload Strategies
+
+The `ContextManager` is the engine behind `context_manager="auto"`. When you need custom control over how context is managed, build your own strategy pipeline using `Offload` strategies.
+
+:::caution[Experimental]
+`ContextManager` and `Offload` are currently exported from `strands.experimental.context_manager`. They are fully functional and will move to the main namespace in an upcoming release.
+:::
+
+There are three types of Offload strategies:
+
+| Strategy | What stays in context |
+| --- | --- |
+| `Offload.truncate(...)` | A head/tail preview of the original |
+| `Offload.summarize(...)` | An LLM-generated summary of the original |
+| `Offload.drop(...)` | Nothing (original goes to stash only) |
+
+Each strategy takes a **target** that controls what content it operates on:
+
+```python
+from strands.experimental.context_manager import Offload
+
+Offload.summarize("*")                   # everything: all message types
+Offload.truncate("tool_results")         # only successful tool results
+Offload.drop("tool_result_errors")       # only errored tool results
+Offload.summarize("assistant_text")      # only assistant text blocks
+Offload.truncate(["bash", "read_file"])  # only results from specific tools
+Offload.truncate(["!read_file"])         # everything except read_file
+```
+
+And `.when(...)` sets the conditions:
+
+- `threshold=N`: fire on individual blocks exceeding N tokens (per-block mode)
+- `utilization=0.85`: fire when the context window is 85% full (per-message mode)
+- `preserve_recent=N`: skip the N most recent matching messages
+
+### Truncate Strategy (Drop Oldest)
+
+The simplest approach. Remove old messages when context gets full:
+
+```python
+from strands import Agent
+from strands.experimental.context_manager import ContextManager, Offload
+
+agent = Agent(
+    tools=[...],
+    context_manager=ContextManager(
+        strategies=[
+            Offload.truncate("tool_results").when(threshold=2500),
+            Offload.truncate("*").when(utilization=0.9, preserve_recent=10),
+        ],
+    ),
+)
+```
+
+📂 [sliding_window.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/08-context-management/sliding_window.py)
+
+### Summarize Strategy
+
+Instead of dropping old messages, compress them into summaries. Preserves more information, but summaries are lossy:
+
+```python
+from strands.experimental.context_manager import ContextManager, Offload
+
+agent = Agent(
+    tools=[...],
+    context_manager=ContextManager(
+        strategies=[
+            Offload.truncate("tool_results").when(threshold=2500),
+            Offload.summarize("*").when(utilization=0.85, preserve_recent=10),
+        ],
+    ),
+)
+```
+
+📂 [summarizing.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/08-context-management/summarizing.py)
+
+### Custom Summarizer (Cheaper Model)
+
+Summarizing history doesn't require your most capable model. Pass a cheaper one, and a domain-specific prompt, via the config dict:
+
+```python
+from strands.models import BedrockModel
+from strands.experimental.context_manager import ContextManager, Offload
+
+summarizer_model = BedrockModel(model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0")
+
+agent = Agent(
+    tools=[...],
+    context_manager=ContextManager(
+        strategies=[
+            Offload.truncate("tool_results").when(threshold=2500),
+            Offload.summarize(
+                "*",
+                {
+                    "model": summarizer_model,
+                    "system_prompt": "Summarize the customer service conversation...",
+                },
+            ).when(utilization=0.85, preserve_recent=8),
+        ],
+        stash=False,
+    ),
+)
+```
+
+`stash=False` turns off the stash entirely: offloaded content isn't kept anywhere and the agent gets no retrieval tool. That's fine for pure summarization where you don't need to pull anything back. Leave it on (the default) when you want the agent to be able to recover offloaded tool results.
+
+📂 [custom_summarizer.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/08-context-management/custom_summarizer.py)
+
+## Strategy Comparison
+
+| Strategy | Tradeoff |
+| --- | --- |
+| `context_manager="auto"` | Best default. Offloading + summarization + proactive compression |
+| `context_manager="agentic"` | Model self-manages context. Trades tokens for judgment |
+| `Offload.truncate(...)` | Simple, predictable. Loses old info entirely |
+| `Offload.summarize(...)` | Preserves more info. Lossy compression, costs an LLM call |
+| `Offload.drop(...)` | Most aggressive. Content goes to stash only |
+| Context injection | Ephemeral per-call data. Never persisted to history |
+
+## Resources
+
+- 📖 [Context Management](/docs/user-guide/sdk/context-management/)
+- 📖 [Context Injector](/docs/user-guide/sdk/plugins/context-injector/)
+- 📖 [Blog: Reduced cost, better isolation, and more resilience](https://strandsagents.com/blog/reduced-cost-better-isolation-more-resilience/)

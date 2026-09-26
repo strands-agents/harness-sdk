@@ -6,5 +6,5 @@ languages:
   python: {}
   typescript: {}
 github: https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/anthropic.py
-docsPage: docs/user-guide/concepts/model-providers/anthropic
+docsPage: docs/user-guide/sdk/model-providers/anthropic
 addedDate: 2025-05-16

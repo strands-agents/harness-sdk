@@ -2,40 +2,90 @@
 
 import copy
 from collections.abc import Mapping
-from typing import Any, TypedDict
+from typing import Any, Literal
+
+from typing_extensions import Required, TypedDict
 
 from ....models._validation import validate_config_keys
-from ..types.events import AudioChannel, AudioFormat, AudioSampleRate
-
-__all__ = ["AudioConfig", "BidiConnectionConfig", "BidiModelConfig"]
+from ..types.events import AudioChannel, AudioFormat
 
 
-class AudioConfig(TypedDict, total=False):
-    """Audio configuration for bidirectional streaming models.
-
-    Defines common audio parameters supported by bidirectional model providers.
-    All fields are optional to support models that only need specific parameters.
-
-    Model providers build this configuration by merging user-provided values
-    with their own defaults. Audio I/O implementations use the stream settings
-    to configure hardware, while model providers apply settings such as voice.
+class AudioStreamConfig(TypedDict):
+    """Resolved format of an audio stream.
 
     Attributes:
-        input_rate: Input sample rate in Hz (e.g., 8000, 16000, 24000, 48000)
-        output_rate: Output sample rate in Hz (e.g., 8000, 16000, 24000, 48000)
-        channels: Number of audio channels (1=mono, 2=stereo)
-        format: Audio encoding format
-        voice: Voice used for model audio output.
+        sample_rate: Sample rate in Hz.
+        channels: Number of audio channels.
+        format: Audio encoding.
     """
 
-    input_rate: AudioSampleRate
-    output_rate: AudioSampleRate
+    sample_rate: int
     channels: AudioChannel
     format: AudioFormat
-    voice: str
 
 
-class BidiConnectionConfig(TypedDict, total=False):
+class AudioConfig(TypedDict):
+    """Resolved input and output formats consumed by audio I/O.
+
+    Pass provider-specific audio options to the model constructor and use
+    ``get_audio_config()`` to obtain the resulting stream formats.
+
+    Attributes:
+        input: Audio format configured for model input.
+        output: Audio format produced by the model.
+    """
+
+    input: AudioStreamConfig
+    output: AudioStreamConfig
+
+
+class BedrockNovaSonicAudioStreamConfig(TypedDict):
+    """Nova Sonic stream options. Audio uses mono PCM.
+
+    Attributes:
+        sample_rate: Sample rate in Hz.
+    """
+
+    sample_rate: Literal[8000, 16000, 24000]
+
+
+class BedrockNovaSonicAudioConfig(TypedDict, total=False):
+    """Nova Sonic input and output audio options.
+
+    Omitted streams use a sample rate of 16000 Hz.
+
+    Attributes:
+        input: Input stream options.
+        output: Output stream options.
+    """
+
+    input: BedrockNovaSonicAudioStreamConfig
+    output: BedrockNovaSonicAudioStreamConfig
+
+
+class GoogleGeminiLiveAudioStreamConfig(TypedDict):
+    """Gemini Live input stream options. Audio uses mono PCM.
+
+    Attributes:
+        sample_rate: Input sample rate in Hz.
+    """
+
+    sample_rate: int
+
+
+class GoogleGeminiLiveAudioConfig(TypedDict, total=False):
+    """Gemini Live audio options. Output is mono PCM at 24000 Hz.
+
+    Omitting the input stream uses a sample rate of 16000 Hz.
+
+    Attributes:
+        input: Input stream options.
+    """
+
+    input: GoogleGeminiLiveAudioStreamConfig
+
+
+class ConnectionConfig(TypedDict, total=False):
     """Declared reconnect timing for a bidirectional model.
 
     Providers declare this so the agent loop can reconnect proactively, before the provider
@@ -57,8 +107,22 @@ class BidiConnectionConfig(TypedDict, total=False):
     auto_reconnect: bool
 
 
-class BidiModelConfig(TypedDict, total=False):
+class ModelConfig(TypedDict, total=False):
     """Configuration shared by bidirectional model providers.
+
+    Attributes:
+        model_id: Provider model identifier.
+        params: Provider-specific keyword arguments passed to the model request or session.
+        connection: Reconnect timing overrides.
+    """
+
+    model_id: Required[str]
+    params: dict[str, Any] | None
+    connection: ConnectionConfig
+
+
+class ModelUpdateConfig(TypedDict, total=False):
+    """Partial configuration update shared by bidirectional model providers.
 
     Attributes:
         model_id: Provider model identifier.
@@ -68,18 +132,28 @@ class BidiModelConfig(TypedDict, total=False):
 
     model_id: str
     params: dict[str, Any] | None
-    connection: BidiConnectionConfig
+    connection: ConnectionConfig
 
 
 def _validate_model_config(config: Mapping[str, Any]) -> None:
     """Validate shared bidirectional model configuration."""
-    validate_config_keys(config, BidiModelConfig)
-    validate_config_keys(config.get("connection", {}), BidiConnectionConfig)
+    missing_keys = ModelConfig.__required_keys__ - config.keys()
+    if missing_keys:
+        raise ValueError(f"Missing required configuration parameters: {sorted(missing_keys)}.")
+
+    model_id = config["model_id"]
+    if not isinstance(model_id, str) or not model_id:
+        raise ValueError("model_id must be a non-empty string")
+
+    validate_config_keys(config, ModelConfig)
+    validate_config_keys(config.get("connection", {}), ConnectionConfig)
 
 
-def _validate_audio_config(config: Mapping[str, Any] | None) -> None:
+def _validate_audio_config(config: AudioConfig) -> None:
     """Validate shared audio configuration."""
-    validate_config_keys(config or {}, AudioConfig)
+    validate_config_keys(config, AudioConfig)
+    validate_config_keys(config["input"], AudioStreamConfig)
+    validate_config_keys(config["output"], AudioStreamConfig)
 
 
 def _merge_config(config: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:

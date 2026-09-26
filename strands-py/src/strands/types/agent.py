@@ -6,7 +6,7 @@ This module defines the types used for an Agent.
 from __future__ import annotations
 
 from enum import Enum
-from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeAlias, TypeVar
 
 from typing_extensions import TypedDict
 
@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from ..models.model import Model
     from ..tools._caller import _ToolCaller
     from ..tools.registry import ToolRegistry
+    from ._snapshot import Snapshot, SnapshotField, SnapshotPreset
 
 AgentInput: TypeAlias = str | list[ContentBlock] | list[InterruptResponseContent] | Messages | None
 
@@ -86,6 +87,28 @@ class LocalAgent(Protocol):
         """Register a hook callback."""
         ...
 
+    def take_snapshot(
+        self,
+        *,
+        preset: SnapshotPreset | None = None,
+        include: list[SnapshotField] | None = None,
+        exclude: list[SnapshotField] | None = None,
+        app_data: dict[str, Any] | None = None,
+    ) -> Snapshot:
+        """Capture current agent state as an in-memory snapshot.
+
+        The fields a preset captures, and the fields accepted by include and exclude, are
+        implementation-defined.
+        """
+        ...
+
+    def load_snapshot(self, snapshot: Snapshot) -> None:
+        """Restore agent state from a previously captured snapshot.
+
+        Only fields present in snapshot.data are restored; absent fields are left unchanged.
+        """
+        ...
+
 
 class Limits(TypedDict, total=False):
     """Per-invocation budget caps for the agent loop.
@@ -120,6 +143,13 @@ class Limits(TypedDict, total=False):
     turns: int
     output_tokens: int
     total_tokens: int
+
+
+_LIMITS_KEYS = tuple(Limits.__annotations__)
+"""The recognized cap names, in declaration order.
+
+Derived from ``Limits`` so validation and the type it validates against cannot drift apart.
+"""
 
 
 class ConcurrentInvocationMode(str, Enum):

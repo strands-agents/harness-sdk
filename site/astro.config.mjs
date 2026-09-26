@@ -81,9 +81,14 @@ export default defineConfig({
       title: 'Strands Agents',
       description: 'The open source toolkit for building production agents.',
       sidebar: sidebar,
+      tableOfContents: {
+        minHeadingLevel: 2,
+        maxHeadingLevel: 3,
+      },
       routeMiddleware: './src/route-middleware.ts',
       customCss: [
         './src/styles/custom.css',
+        './src/styles/fonts.css',
       ],
       logo: {
         light: './src/assets/logo-light.svg',
@@ -95,9 +100,10 @@ export default defineConfig({
       },
       components: {
         Head: './src/components/overrides/Head.astro',
-        Header: './src/components/overrides/Header.astro',
+        Header: './src/components/Header.astro',
         Hero: './src/components/overrides/Hero.astro',
         MarkdownContent: './src/components/overrides/MarkdownContent.astro',
+        PageTitle: './src/components/overrides/PageTitle.astro',
         Sidebar: './src/components/overrides/Sidebar.astro',
         PageFrame: './src/components/overrides/PageFrame.astro',
       },
@@ -119,6 +125,9 @@ export default defineConfig({
           ],
           './src/components/Syntax.astro': [
             ['default', 'Syntax']
+          ],
+          './src/components/CopyPromptButton.astro': [
+            ['default', 'CopyPromptButton']
           ],
           '@astro-community/astro-embed-youtube': [
             ['YouTube', 'YouTube']

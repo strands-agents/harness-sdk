@@ -1,22 +1,23 @@
 """Terminal transcript output for bidirectional streaming."""
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from rich.console import Console, ConsoleOptions, ConsoleRenderable, RenderableType, RenderResult
+from rich.console import Console, ConsoleOptions, ConsoleRenderable, Group, RenderableType, RenderResult
 from rich.live import Live
 from rich.segment import ControlType, Segment
 from rich.style import Style
 from rich.text import Text
 
 from ..types.events import (
-    BidiInterruptionEvent,
     BidiOutputEvent,
-    BidiResponseCompleteEvent,
-    BidiTranscriptStreamEvent,
+    BidiTranscriptDeltaEvent,
+    BidiTranscriptStartEvent,
+    BidiTranscriptStopEvent,
     Role,
 )
-from ..types.io import BidiOutput
+from ..types.io import OutputStream
 
 if TYPE_CHECKING:
     from ..agent.agent import BidiAgent
@@ -64,104 +65,89 @@ class _UserText(ConsoleRenderable):
             yield Segment.line()
 
         yield erase_to_end
+        yield Segment.line()
 
 
-class _BidiTranscriptOutput(BidiOutput):
+@dataclass
+class _Transcript:
+    """Text and completion state for one transcript."""
+
+    role: Role
+    text: str = ""
+    complete: bool = False
+
+    def __rich__(self) -> RenderableType:
+        """Render the transcript using its speaker's style."""
+        text = " ".join(self.text.split())
+        if self.role == "user":
+            return _UserText(text)
+        return Text(f"\n{text}\n")
+
+
+class _TranscriptOutputStream(OutputStream):
     """Render transcript events to a terminal stream."""
 
     def __init__(self) -> None:
         """Initialize transcript output."""
         self._console = Console()
         self._live: Live
-        self._role: Role | None = None
-        self._transcript: str | None = None
+        self._transcripts: dict[str, _Transcript] = {}
 
     async def start(self, _agent: "BidiAgent") -> None:
         """Start transcript output."""
-        self._start_transcript("user")
-
-    async def stop(self) -> None:
-        """Finish pending transcript output and restore the terminal cursor."""
-        try:
-            self._stop_transcript()
-        finally:
-            self._console.show_cursor()
-
-    async def __call__(self, event: BidiOutputEvent) -> None:
-        """Render transcript lifecycle events."""
-        if isinstance(event, BidiTranscriptStreamEvent):
-            logger.debug("role=<%s> | transcript streamed", event.role)
-
-            if self._role != event.role or self._transcript is None:
-                self._restart_transcript(event.role, delta=event.delta)
-            else:
-                self._update_transcript(event.delta)
-
-        elif isinstance(event, BidiInterruptionEvent):
-            logger.debug("reason=<%s> | transcript interrupted", event.reason)
-
-            if self._role != "user" or self._transcript is None:
-                self._restart_transcript("user", delta="")
-
-        elif isinstance(event, BidiResponseCompleteEvent):
-            logger.debug("response_id=<%s>, role=<%s> | transcript complete", event.response_id, self._role)
-
-            if event.stop_reason == "interrupted":
-                if self._role != "user" or self._transcript is None:
-                    self._restart_transcript("user", delta="")
-            else:
-                self._restart_transcript("user")
-
-    def _start_transcript(
-        self,
-        role: Role,
-        *,
-        delta: str | None = None,
-    ) -> None:
-        """Start a mutable transcript."""
-        self._role = role
-        self._transcript = delta
-
         self._live = Live(
-            self._build_renderable(),
+            self,
             console=self._console,
             auto_refresh=False,
-            transient=delta is None,
+            transient=True,
             redirect_stdout=False,
             redirect_stderr=False,
         )
         self._live.start(refresh=True)
 
-    def _restart_transcript(
-        self,
-        role: Role,
-        *,
-        delta: str | None = None,
-    ) -> None:
-        """Stop the active transcript and start a new one."""
-        self._stop_transcript()
-        self._start_transcript(role, delta=delta)
+    async def stop(self) -> None:
+        """Print remaining transcripts and restore the terminal cursor."""
+        try:
+            remaining = list(self._transcripts.values())
+            self._transcripts.clear()
+            if hasattr(self, "_live"):
+                self._live.stop()
+            if remaining:
+                self._console.print(Group(*remaining))
+        finally:
+            self._console.show_cursor()
 
-    def _update_transcript(self, delta: str) -> None:
-        """Update the active transcript."""
-        self._transcript = f"{self._transcript or ''}{delta}"
-        self._live.update(self._build_renderable(), refresh=True)
+    async def __call__(self, event: BidiOutputEvent) -> None:
+        """Update the transcript identified by its start, delta, or stop event."""
+        if isinstance(event, BidiTranscriptStartEvent):
+            self._transcripts[event.content_id] = _Transcript(event.role)
+        elif isinstance(event, BidiTranscriptDeltaEvent):
+            self._transcripts[event.content_id].text += event.delta
+        elif isinstance(event, BidiTranscriptStopEvent):
+            self._transcripts[event.content_id].complete = True
+        else:
+            return
 
-    def _stop_transcript(self) -> None:
-        """Stop the active transcript."""
-        if self._role is not None:
-            self._live.stop()
+        logger.debug("content_id=<%s>, event_type=<%s> | transcript received", event.content_id, event["type"])
+        self._refresh()
 
-        self._role = None
-        self._transcript = None
+    def _refresh(self) -> None:
+        """Print completed entries in order and redraw the remaining transcripts."""
+        completed = []
+        while self._transcripts:
+            content_id = next(iter(self._transcripts))
+            if not self._transcripts[content_id].complete:
+                break
+            # Later entries stay live until every preceding transcript has finished.
+            completed.append(self._transcripts.pop(content_id))
 
-    def _build_renderable(self) -> RenderableType:
-        """Build the current Rich transcript block."""
-        transcript = " ".join(self._transcript.split()) if self._transcript is not None else None
-        match self._role:
-            case "assistant":
-                return Text(f"\n{transcript}\n")
-            case "user":
-                return _UserText(transcript)
-            case None:
-                raise RuntimeError("cannot render an inactive transcript")
+        if completed:
+            self._console.print(Group(*completed))
+        else:
+            self._live.refresh()
+
+    def __rich__(self) -> RenderableType:
+        """Group the live transcripts, or prompt for speech when none remain."""
+        if self._transcripts:
+            return Group(*self._transcripts.values())
+        return _UserText()

@@ -8,111 +8,102 @@ redirectFrom:
 <YouTube id="_QcD5KBe3ZQ" title="Lesson 10: Multi-Agent Patterns: Agents as Tools" />
 *[Watch on YouTube](https://www.youtube.com/watch?v=_QcD5KBe3ZQ&list=PLDzwjhH-4yhU&index=10)*
 
-*Code for this lesson can be found
-[**here**](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/10-agents-as-tools).*
+:::note[About this lesson]
+The videos in this course are a snapshot in time. Strands is under active development, so the code featured on this page reflects the most up-to-date patterns, but the concepts covered in the video still apply. When in doubt, trust the code.
+:::
 
-### Why Use Multi-Agent Architectures?
+*Code for this lesson: [`samples/10-agents-as-tools`](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/10-agents-as-tools)*
 
-Multi-agent architectures are useful for many different things:
+## Three Multi-Agent Patterns
 
-* **Isolating noisy tools:** You can prevent large, verbose tool results from cluttering
-  your main agent's context.
-* **Specialized expertise:** You can partition tasks that require different kinds of
-  expertise, such as research versus writing versus code generation.
-* **Optimizing cost and capabilities:** You can use different models for different parts
-  of the workflow, utilizing cheaper models for simple tasks and premium models only where
-  specialized reasoning is required.
+Strands provides three composable multi-agent patterns. Each solves a different coordination problem, and they can nest inside each other. This lesson covers the first; the next two lessons cover graphs and swarms.
 
-Multi-agent architectures let you decompose a complex problem so that each agent does one
-thing well, resulting in a system that performs better and more reliably overall.
+| Pattern | Structure | Use When |
+| --- | --- | --- |
+| **Agents as Tools** | Hub-and-spoke. Orchestrator calls specialists | Clear manager-specialist relationship, isolated context |
+| **Graph** | DAG with explicit edges | You can draw the workflow on a whiteboard |
+| **Swarm** | Autonomous handoffs, no predefined structure | The team needs to figure it out together |
 
-Let's say you want to create an agent that does trends research and writes technical
-summaries. To do this, it will need to be able to search the web. You could give one
-single agent both capabilities along with a massive system prompt explaining when to use
-each. Or, you could create specialized agents and chain them together: the writer agent
-calls the researcher agent as a tool when it needs information.
+## Agents as Tools
 
-This is an excellent context engineering pattern. For noisy tools like web search, instead
-of letting distracting or irrelevant information fill up the main agent's context window,
-you use the "agent as a tool" pattern. Each agent maintains its own isolated context
-window. The researcher agent does all of the searching and filtering, and then relays back
-only the highly relevant, synthesized information to the writer agent. This keeps the
-orchestrator's context window clean and focused.
+The simplest multi-agent pattern: one orchestrator agent calls specialist agents as tools. The orchestrator stays in control, decides when to delegate, and synthesizes the results.
 
-### Implementation Patterns: Direct Delegation vs. Functional Wrapping
+Each specialist gets its own isolated context window. That's the key benefit: a specialist can run noisy tools (log readers, web fetchers, verbose APIs) and process thousands of tokens of raw output, then hand back only a short conclusion. The orchestrator's context stays clean.
 
-There are two primary ways to provide an agent as a tool within Strands.
+### Pass the Agent Directly
 
-#### 1. Direct Agent Delegation
-
-This is the simplest version where you create both agents and then directly pass the
-sub-agent to the orchestrator agent as a tool.
-
-In this setup, we define the `researcher_agent` (which has its own system prompt and
-utilizes the HTTP request tool). Then, we create the `writer_agent` with a different
-system prompt, passing the `researcher_agent` directly into its tool list:
+The quickest way. Put the agent in another agent's `tools` list and Strands wraps it automatically, using the agent's `name` and `description` as the tool spec:
 
 ```python
-writer_agent = Agent(
-    system_prompt="...",
-    tools=[researcher_agent]
+from strands import Agent
+from strands.vended_tools.web_fetch import web_fetch
+
+researcher = Agent(
+    name="researcher",
+    system_prompt="You are a research specialist. Find factual information.",
+    tools=[web_fetch],
 )
 
+writer = Agent(
+    name="writer",
+    system_prompt="You are a technical writer. Use the researcher to gather facts.",
+    tools=[researcher],  # Pass agent directly as a tool
+)
+
+writer("Research the FastAPI GitHub repo and write a 3-sentence summary.")
 ```
 
-You can pass multiple agents and traditional tools into this list simultaneously.
+### Wrap with `@tool`
 
-#### 2. Functional Wrapping with the Tool Decorator
+For full control over the prompt, model selection, and how results are returned, wrap the specialist in a `@tool` function:
 
-Another way to do this is to wrap the sub-agent inside a Python function decorated with
-`@tool`.
+```python
+from strands import Agent, tool
+from strands.models.bedrock import BedrockModel
+from strands.vended_tools.web_fetch import web_fetch
 
-Inside the function, you instantiate the agent with its respective tools and system
-prompt. This method allows you to accept explicit parameters (such as `query` and `depth`)
-so the orchestrator can control how the researcher works. Because the agent is created
-inside the function, it starts completely fresh on every call. This is a deliberate design
-choice to guarantee a clean context window every time the tool is invoked.
+orchestrator_model = BedrockModel(model_id="us.anthropic.claude-opus-5")
+specialist_model = BedrockModel(model_id="us.anthropic.claude-sonnet-5")
 
-Additionally, in this functional wrapper, you can set the sub-agent's callback handler to
-`None`. This suppresses its default streaming output to standard out, allowing the
-sub-agent to run silently while the orchestrator programmatically captures and processes
-the final result string.
+@tool
+def research_assistant(query: str, depth: str = "normal") -> str:
+    """Research a topic and return sourced findings.
 
-### How Data Flows Between Agents
+    Args:
+        query: The research question
+        depth: How thorough - "quick", "normal", or "deep"
+    """
+    research_agent = Agent(
+        model=specialist_model,
+        system_prompt=f"You are a research specialist. Research depth: {depth}.",
+        tools=[web_fetch],
+        callback_handler=None,  # Run silently
+    )
+    response = research_agent(query)
+    return str(response)
 
-When implementing this pattern, it is important to understand how data is passed:
+writer = Agent(
+    model=orchestrator_model,
+    system_prompt="You are a technical writer. Use the research assistant.",
+    tools=[research_assistant],
+)
+```
 
-* **The Interface is a String:** When the orchestrator calls a specialist agent, it sends
-  a string payload. The specialist receives this string as a new user message, runs its
-  own independent agent loop (using its own system prompt and tools), and returns a
-  string response back to the orchestrator.
-* **Strict Context Isolation:** The specialist agent has absolutely no access to the
-  orchestrator's conversation history.
-* **Stateless by Default:** By default, the specialist's context resets between calls. If
-  the orchestrator calls the researcher agent twice during a conversation, the researcher
-  does not remember the first call.
+📂 [agent_as_tool.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/10-agents-as-tools/agent_as_tool.py)
 
-When running this setup, you can see the orchestrator invoke the researcher, which
-silently executes its web search tasks, and then hands the clean, condensed research data
-back to the writer to compile the final report.
+Data flow: the orchestrator sends a string, the specialist runs its own loop, and returns a string. Context resets between calls, so each delegation starts clean.
 
-### When to Use This Pattern (and Its Limitations)
+## Key Concepts
 
-The **agents as tools** pattern is the right choice when:
+- **The docstring is the routing logic.** It tells the orchestrator when to delegate. The model routes based on tool descriptions; you never write an `if` statement.
+- **Agent isolation.** Each sub-agent has its own context window, model, and tools. One agent's context doesn't leak into another's.
+- **Orchestrator control.** The orchestrator decides when to call the specialist, what to ask, and how to use the response. It's a function call, not a handoff.
+- **Model heterogeneity.** Use a stronger model for the orchestrator (which reasons about what to delegate) and a cheaper model for specialists (which do focused work).
+- **Silent sub-agents.** `callback_handler=None` on sub-agents suppresses their streaming output so only the orchestrator streams to the user.
 
-* You have clearly separable domains.
-* You want one central orchestrator maintaining absolute control over the final response.
-* The orchestrator needs to dynamically decide who to talk to and when.
+Use this pattern when you have clearly separable domains, when you want one agent synthesizing everything, or when you need request/response semantics between agents.
 
-However, there are a few limitations to keep in mind:
+## Resources
 
-* **The Orchestrator is a Bottleneck:** Every specialist agent must report back to the
-  central coordinator; specialists cannot communicate directly with one another.
-* **Model-Driven Execution:** Because the coordination is model-driven, you cannot
-  guarantee a strict execution order between specialists.
-
-If your workflow requires a guaranteed execution order, parallel fan-out, or agents that
-build directly on each other's work without routing through a central coordinator, you
-will need to use a graph. We will cover that in the next lesson.
-
-*Learn more: [Agents as Tools with Strands Agents SDK](/docs/user-guide/concepts/multi-agent/agents-as-tools/)*
+- 📖 [Agents as Tools](/docs/user-guide/sdk/multi-agent/agents-as-tools/)
+- 📖 [Multi-Agent Patterns Overview](/docs/user-guide/sdk/multi-agent/multi-agent-patterns/)

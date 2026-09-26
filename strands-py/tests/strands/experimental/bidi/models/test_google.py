@@ -16,24 +16,28 @@ import unittest.mock
 import pytest
 from google.genai import types as genai_types
 
-from strands.experimental.bidi.agent import loop as loop_module
-from strands.experimental.bidi.models.google import GoogleGeminiLiveModel, _TurnState
-from strands.experimental.bidi.models.model import BidiModelTimeoutError
-from strands.experimental.bidi.types.events import (
-    BidiAudioInputEvent,
-    BidiAudioStreamEvent,
+import strands.experimental.bidi.agent.loop as loop_module
+from strands.experimental.bidi.models import ConnectionTimeoutError, GoogleGeminiLiveAudioConfig, GoogleGeminiLiveModel
+from strands.experimental.bidi.models.google import _TurnState
+from strands.experimental.bidi.types import (
+    AudioDelta,
+    BidiAudioDeltaEvent,
+    BidiAudioStartEvent,
+    BidiAudioStopEvent,
+    BidiBargeInEvent,
     BidiConnectionStartEvent,
-    BidiImageInputEvent,
-    BidiInterruptionEvent,
-    BidiResponseCompleteEvent,
+    BidiMessage,
     BidiResponseStartEvent,
-    BidiTextInputEvent,
-    BidiTranscriptCompleteEvent,
-    BidiTranscriptStreamEvent,
+    BidiResponseStopEvent,
+    BidiTranscriptDeltaEvent,
+    BidiTranscriptStartEvent,
+    BidiTranscriptStopEvent,
     BidiUsageEvent,
 )
-from strands.types._events import ToolResultEvent
-from strands.types.tools import ToolResult
+from strands.types._events import ToolUseStreamEvent
+from strands.types.content import TextBlock
+from strands.types.media import ImageBlock
+from strands.types.tools import ToolResultBlock
 
 
 @pytest.fixture
@@ -70,6 +74,7 @@ def live_message():
         message.go_away = None
         message.session_resumption_update = None
         message.tool_call = None
+        message.voice_activity = None
         message.server_content = None
         message.usage_metadata = None
 
@@ -137,7 +142,7 @@ def text_part():
 
 @pytest.fixture
 def model_id():
-    return "models/gemini-2.0-flash-live-preview-04-09"
+    return "models/gemini-3.8-live"
 
 
 @pytest.fixture
@@ -178,13 +183,13 @@ def test_model_initialization(mock_genai_client, model_id, api_key):
     """Test model initialization with various configurations."""
     _ = mock_genai_client
 
-    model_default = GoogleGeminiLiveModel()
-    assert model_default.model_id == "gemini-2.5-flash-native-audio-preview-09-2025"
+    model_default = GoogleGeminiLiveModel(model_id=model_id)
+    assert model_default.model_id == model_id
     assert model_default.client_args == {}
     assert model_default._live_session is None
     tru_config = model_default.get_config()
     exp_config = {
-        "model_id": "gemini-2.5-flash-native-audio-preview-09-2025",
+        "model_id": model_id,
         "params": {},
         "connection": {"restart_after_s": 540},
     }
@@ -337,6 +342,29 @@ def test_update_config_replaces_connection(model, model_id, connection):
     assert tru_config == exp_config
     assert model.get_connection_config() == connection
 
+    model.update_config()
+    assert model.get_config() == exp_config
+    assert model.get_config() is tru_config
+
+
+@pytest.mark.parametrize("model_config", [{}, {"model_id": None}, {"model_id": ""}, {"model_id": 123}])
+def test__init__rejects_invalid_model_id(mock_genai_client, api_key, model_config):
+    with pytest.raises(ValueError, match="model_id"):
+        GoogleGeminiLiveModel(client_args={"api_key": api_key}, **model_config)
+
+
+@pytest.mark.parametrize("invalid_model_id", [None, "", 123])
+def test_update_config_rejects_invalid_model_id(model, invalid_model_id):
+    config = model.get_config()
+    exp_config = dict(config)
+
+    with pytest.raises(ValueError, match="model_id must be a non-empty string"):
+        model.update_config(model_id=invalid_model_id, params={"temperature": 0.7}, connection={})
+
+    tru_config = model.get_config()
+    assert tru_config == exp_config
+    assert tru_config is config
+
 
 @pytest.mark.parametrize(
     ("model_config", "invalid_key"),
@@ -375,13 +403,23 @@ async def test_restart_uses_updated_config(mock_genai_client, model):
 
 
 @pytest.mark.asyncio
-async def test_restart_resumes_via_session_handle(mock_genai_client, model):
+async def test_restart_resumes_via_session_handle(mock_genai_client, model, agenerator):
     """restart() tears down the old connection and resumes the session via the tracked handle."""
-    mock_client, _, mock_live_session_cm = mock_genai_client
+    mock_client, mock_live_session, mock_live_session_cm = mock_genai_client
     await model.start()
     model._live_session_handle = "handle-abc"
+    mock_live_session.receive = unittest.mock.Mock(
+        return_value=agenerator(
+            [genai_types.LiveServerMessage(server_content={"input_transcription": {"text": "Before restart"}})]
+        )
+    )
+    old_reader = model.receive()
+    await anext(old_reader)
+    old_start = await anext(old_reader)
+    assert await anext(old_reader) == BidiTranscriptDeltaEvent("Before restart", "user", old_start.content_id)
 
     await model.restart(system_prompt="hi")
+    await old_reader.aclose()
 
     assert mock_live_session_cm.__aexit__.called  # old connection torn down
     assert model._connection_id is not None  # new connection established
@@ -390,6 +428,27 @@ async def test_restart_resumes_via_session_handle(mock_genai_client, model):
     config = mock_client.aio.live.connect.call_args.kwargs["config"]
     assert config["session_resumption"]["handle"] == "handle-abc"
 
+    mock_live_session.receive.return_value = agenerator(
+        [
+            genai_types.LiveServerMessage(
+                server_content={"input_transcription": {"text": "After restart"}, "turn_complete": True}
+            )
+        ]
+    )
+    reader = model.receive()
+    try:
+        await anext(reader)
+        new_start = await asyncio.wait_for(anext(reader), 1)
+        assert isinstance(new_start, BidiTranscriptStartEvent)
+        assert new_start.content_id != old_start.content_id
+        exp_events = [
+            BidiTranscriptDeltaEvent("After restart", "user", new_start.content_id),
+            BidiTranscriptStopEvent("After restart", "user", new_start.content_id),
+        ]
+        tru_events = [await asyncio.wait_for(anext(reader), 1) for _ in exp_events]
+        assert tru_events == exp_events
+    finally:
+        await reader.aclose()
     await model.stop()
 
 
@@ -492,12 +551,12 @@ async def test_turn_state_is_per_reader(mock_genai_client, model, live_message):
 
     # The superseded reader drains a model output from its closing session, opening its own turn.
     model._convert_gemini_live_event(live_message(data=b"stale_audio"), old_reader)
-    assert old_reader.response_open is True
+    assert old_reader.response_id is not None
 
     # The new reader's state is untouched, so its first output still opens a response.
     events = model._convert_gemini_live_event(live_message(data=b"fresh_audio"), new_reader)
-    assert [type(event) for event in events] == [BidiResponseStartEvent, BidiAudioStreamEvent]
-    assert new_reader.response_open is True
+    assert [type(event) for event in events] == [BidiResponseStartEvent, BidiAudioStartEvent, BidiAudioDeltaEvent]
+    assert new_reader.response_id is not None
 
     await model.stop()
 
@@ -511,8 +570,8 @@ async def test_proactive_reconnect_end_to_end_through_agent(mock_genai_client, m
     through Gemini's own restart() before the deadline, resuming the session via its handle. No
     live network calls are made.
     """
-    from strands.experimental.bidi.agent.agent import BidiAgent
-    from strands.experimental.bidi.types.events import BidiConnectionWarningEvent
+    from strands.experimental.bidi.agent import BidiAgent
+    from strands.experimental.bidi.types import BidiConnectionWarningEvent
 
     mock_client, mock_live_session, _ = mock_genai_client
 
@@ -647,46 +706,93 @@ async def test_history_skipped_when_session_handle_provided(mock_genai_client, a
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("blocks", "exp_parts"),
+    [
+        (
+            [TextBlock("First"), TextBlock("Second")],
+            [genai_types.Part(text="First"), genai_types.Part(text="Second")],
+        ),
+        (
+            [
+                TextBlock("Describe this image"),
+                ImageBlock(format="jpeg", source={"bytes": b"image"}),
+                TextBlock("Be brief"),
+            ],
+            [
+                genai_types.Part(text="Describe this image"),
+                genai_types.Part(inline_data=genai_types.Blob(data=b"image", mime_type="image/jpeg")),
+                genai_types.Part(text="Be brief"),
+            ],
+        ),
+    ],
+    ids=["text", "mixed"],
+)
+async def test_send_message_completes_one_user_turn(mock_genai_client, model, blocks, exp_parts):
+    _, mock_live_session, _ = mock_genai_client
+    await model.start()
+    mock_live_session.reset_mock()
+    try:
+        await model.send(BidiMessage(content=blocks))
+
+        mock_live_session.send_client_content.assert_awaited_once_with(
+            turns=genai_types.Content(role="user", parts=exp_parts), turn_complete=True
+        )
+    finally:
+        await model.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("block", "error_message"),
+    [
+        (ImageBlock(format="jpeg", source={}), "image source must contain bytes"),
+        (AudioDelta(format="pcm", source={"bytes": b"audio"}), "content not supported"),
+    ],
+    ids=["missing-image-bytes", "unsupported-block"],
+)
+async def test_send_message_rejects_invalid_blocks_before_sending(mock_genai_client, model, block, error_message):
+    _, mock_live_session, _ = mock_genai_client
+    await model.start()
+    mock_live_session.reset_mock()
+    try:
+        with pytest.raises(ValueError, match=error_message):
+            await model.send(BidiMessage(content=[TextBlock("Hello"), block]))
+        assert mock_live_session.mock_calls == []
+    finally:
+        await model.stop()
+
+
+@pytest.mark.asyncio
 async def test_send_all_content_types(mock_genai_client, model):
     """Test sending all content types through unified send() method."""
     _, mock_live_session, _ = mock_genai_client
     await model.start()
 
-    # Test text input — uses send_realtime_input for mid-session text
-    text_input = BidiTextInputEvent(text="Hello", role="user")
-    await model.send(text_input)
-    mock_live_session.send_realtime_input.assert_called_once()
-    call_args = mock_live_session.send_realtime_input.call_args
-    assert call_args.kwargs.get("text") == "Hello"
+    assert await model.send(BidiMessage(content=[TextBlock("Hello")])) is None
+    mock_live_session.send_client_content.assert_awaited_once_with(
+        turns=genai_types.Content(role="user", parts=[genai_types.Part(text="Hello")]), turn_complete=True
+    )
 
-    # Test audio input (base64 encoded)
+    # Test audio input
     mock_live_session.send_realtime_input.reset_mock()
-    audio_b64 = base64.b64encode(b"audio_bytes").decode("utf-8")
-    audio_input = BidiAudioInputEvent(
-        audio=audio_b64,
-        format="pcm",
-        sample_rate=16000,
-        channels=1,
-    )
-    await model.send(audio_input)
+    assert await model.send(AudioDelta(format="pcm", source={"bytes": b"audio_bytes"})) is None
     mock_live_session.send_realtime_input.assert_called_once()
 
-    # Test image input (base64 encoded, no encoding parameter)
-    image_b64 = base64.b64encode(b"image_bytes").decode("utf-8")
-    image_input = BidiImageInputEvent(
-        image=image_b64,
-        mime_type="image/jpeg",
+    # Test image input
+    mock_live_session.send_client_content.reset_mock()
+    assert await model.send(BidiMessage(content=[ImageBlock(format="jpeg", source={"bytes": b"image_bytes"})])) is None
+    mock_live_session.send_client_content.assert_awaited_once_with(
+        turns=genai_types.Content(
+            role="user",
+            parts=[genai_types.Part(inline_data=genai_types.Blob(data=b"image_bytes", mime_type="image/jpeg"))],
+        ),
+        turn_complete=True,
     )
-    await model.send(image_input)
-    mock_live_session.send.assert_called_once()
 
     # Test tool result
-    tool_result: ToolResult = {
-        "toolUseId": "tool-123",
-        "status": "success",
-        "content": [{"text": "Result: 42"}],
-    }
-    await model.send(ToolResultEvent(tool_result))
+    tool_result = ToolResultBlock(tool_use_id="tool-123", status="success", content=[{"text": "Result: 42"}])
+    assert await model.send(BidiMessage(content=[tool_result])) is None
     mock_live_session.send_tool_response.assert_called_once()
 
     await model.stop()
@@ -698,9 +804,8 @@ async def test_send_edge_cases(mock_genai_client, model):
     _, mock_live_session, _ = mock_genai_client
 
     # Test send when inactive
-    text_input = BidiTextInputEvent(text="Hello", role="user")
     with pytest.raises(RuntimeError, match=r"call start before sending"):
-        await model.send(text_input)
+        await model.send(BidiMessage(content=[TextBlock("Hello")]))
     mock_live_session.send_realtime_input.assert_not_called()
 
     # Test unknown content type
@@ -747,7 +852,7 @@ async def test_receive_timeout(mock_genai_client, model, agenerator, live_messag
 
     await model.start()
 
-    with pytest.raises(BidiModelTimeoutError, match=r"test timeout"):
+    with pytest.raises(ConnectionTimeoutError, match=r"test timeout"):
         async for _ in model.receive():
             pass
 
@@ -763,22 +868,19 @@ async def test_event_conversion(mock_genai_client, model, live_message, server_c
     await model.start()
     # Simulate a response already in flight so these cases assert pure content conversion,
     # not the response-start that a turn's first model output would otherwise prepend.
-    turn_state = _TurnState(response_open=True)
+    turn_state = _TurnState(response_id="r1")
 
     # Test text output (converted to transcript via model_turn.parts)
     mock_model_turn = unittest.mock.Mock()
     mock_model_turn.parts = [text_part("Hello from Gemini")]
     mock_text = live_message(server_content=server_content(model_turn=mock_model_turn))
 
-    text_events = model._convert_gemini_live_event(mock_text, turn_state)
-    assert isinstance(text_events, list)
-    assert len(text_events) == 1
-    text_event = text_events[0]
-    assert isinstance(text_event, BidiTranscriptStreamEvent)
-    assert text_event.get("type") == "bidi_transcript_stream"
-    assert text_event.delta == "Hello from Gemini"
-    assert text_event.role == "assistant"
-    assert text_event.delta == "Hello from Gemini"
+    tru_events = model._convert_gemini_live_event(mock_text, turn_state)
+    exp_events = [
+        BidiTranscriptStartEvent("assistant", content_id=unittest.mock.ANY),
+        BidiTranscriptDeltaEvent("Hello from Gemini", "assistant", content_id=unittest.mock.ANY),
+    ]
+    assert tru_events == exp_events
 
     # Test multiple text parts (should concatenate)
     mock_model_turn_multi = unittest.mock.Mock()
@@ -789,21 +891,17 @@ async def test_event_conversion(mock_genai_client, model, live_message, server_c
     assert isinstance(multi_text_events, list)
     assert len(multi_text_events) == 1
     multi_text_event = multi_text_events[0]
-    assert isinstance(multi_text_event, BidiTranscriptStreamEvent)
+    assert isinstance(multi_text_event, BidiTranscriptDeltaEvent)
     assert multi_text_event.delta == "Hello from Gemini"  # Concatenated with space
     # Test audio output (base64 encoded)
     mock_audio = live_message(data=b"audio_data")
 
     audio_events = model._convert_gemini_live_event(mock_audio, turn_state)
-    assert isinstance(audio_events, list)
-    assert len(audio_events) == 1
-    audio_event = audio_events[0]
-    assert isinstance(audio_event, BidiAudioStreamEvent)
-    assert audio_event.get("type") == "bidi_audio_stream"
-    # Audio is now base64 encoded
     expected_b64 = base64.b64encode(b"audio_data").decode("utf-8")
-    assert audio_event.audio == expected_b64
-    assert audio_event.format == "pcm"
+    assert audio_events == [
+        BidiAudioStartEvent(),
+        BidiAudioDeltaEvent(expected_b64, format="pcm", sample_rate=24000, channels=1),
+    ]
 
     # Test single tool call (returns list with one event)
     mock_func_call = unittest.mock.Mock()
@@ -862,16 +960,14 @@ async def test_event_conversion(mock_genai_client, model, live_message, server_c
     assert tool_events_multi[1]["delta"]["toolUse"]["input"] == json.dumps({"location": "Seattle"})
     assert tool_events_multi[1]["current_tool_use"]["input"] == {"location": "Seattle"}
 
-    # Test interruption
-    mock_interrupt = live_message(server_content=server_content(interrupted=True))
+    # Test barge-in
+    mock_barge_in = live_message(server_content=server_content(interrupted=True))
 
-    interrupt_events = model._convert_gemini_live_event(mock_interrupt, turn_state)
-    assert isinstance(interrupt_events, list)
-    assert len(interrupt_events) == 1
-    interrupt_event = interrupt_events[0]
-    assert isinstance(interrupt_event, BidiInterruptionEvent)
-    assert interrupt_event.get("type") == "bidi_interruption"
-    assert interrupt_event.reason == "user_speech"
+    barge_in_events = model._convert_gemini_live_event(mock_barge_in, turn_state)
+    assert barge_in_events == [
+        BidiBargeInEvent(reason="user_speech"),
+        BidiAudioStopEvent(),
+    ]
 
     await model.stop()
 
@@ -888,14 +984,14 @@ async def test_usage_metadata_emitted_alongside_audio(mock_genai_client, model, 
     """
     _, _, _ = mock_genai_client
     await model.start()
-    turn_state = _TurnState(response_open=True)  # mid-response, so no response-start is prepended
+    turn_state = _TurnState(response_id="r1")  # mid-response, so no response-start is prepended
 
     message = live_message(data=b"audio_data", usage_metadata=usage_metadata())
 
     events = model._convert_gemini_live_event(message, turn_state)
 
-    assert [type(event) for event in events] == [BidiAudioStreamEvent, BidiUsageEvent]
-    assert events[1] == BidiUsageEvent(
+    assert [type(event) for event in events] == [BidiAudioStartEvent, BidiAudioDeltaEvent, BidiUsageEvent]
+    assert events[2] == BidiUsageEvent(
         input_tokens=10,
         output_tokens=20,
         total_tokens=30,
@@ -976,39 +1072,61 @@ async def test_usage_metadata_modality_details(mock_genai_client, model, live_me
     await model.stop()
 
 
+@pytest.mark.parametrize("complete_with_output", [False, True])
+def test_barge_in_emitted_alongside_other_server_content(model, complete_with_output):
+    """Assistant output stopped by barge-in has complete boundaries and does not leak into the next turn."""
+    turn_state = _TurnState()
+    messages = [
+        genai_types.LiveServerMessage(
+            server_content={
+                "interrupted": True,
+                "output_transcription": {"text": "partial reply"},
+                "turn_complete": complete_with_output,
+            }
+        )
+    ]
+    if not complete_with_output:
+        messages.append(genai_types.LiveServerMessage(server_content={"turn_complete": True}))
+
+    tru_events = [event for message in messages for event in model._convert_gemini_live_event(message, turn_state)]
+    exp_events = [
+        BidiResponseStartEvent(unittest.mock.ANY),
+        BidiBargeInEvent("user_speech"),
+        BidiTranscriptStartEvent("assistant", content_id=unittest.mock.ANY),
+        BidiTranscriptDeltaEvent("partial reply", "assistant", content_id=unittest.mock.ANY),
+        BidiTranscriptStopEvent("partial reply", "assistant", content_id=unittest.mock.ANY),
+        BidiResponseStopEvent(unittest.mock.ANY),
+    ]
+    assert tru_events == exp_events
+    assert tru_events[0].response_id == tru_events[-1].response_id
+    response_id = tru_events[0].response_id
+
+    tru_events = model._convert_gemini_live_event(
+        genai_types.LiveServerMessage(
+            server_content={"output_transcription": {"text": "Next reply."}, "turn_complete": True}
+        ),
+        turn_state,
+    )
+    exp_events = [
+        BidiResponseStartEvent(unittest.mock.ANY),
+        BidiTranscriptStartEvent("assistant", content_id=unittest.mock.ANY),
+        BidiTranscriptDeltaEvent("Next reply.", "assistant", content_id=unittest.mock.ANY),
+        BidiTranscriptStopEvent("Next reply.", "assistant", content_id=unittest.mock.ANY),
+        BidiResponseStopEvent(unittest.mock.ANY),
+    ]
+    assert tru_events == exp_events
+    assert tru_events[0].response_id != response_id
+    assert tru_events[0].response_id == tru_events[-1].response_id
+
+
 @pytest.mark.asyncio
-async def test_interruption_emitted_alongside_other_server_content(
+async def test_barge_in_preserves_user_transcription_already_in_progress(
     mock_genai_client, model, live_message, server_content
 ):
-    """An interruption is emitted even when other server content fields are set.
-
-    Guards https://github.com/strands-agents/harness-sdk/issues/3745 — interrupted may co-occur with
-    other serverContent fields and must not swallow them.
-    """
+    """A delayed barge-in marker must not discard earlier fragments from the same utterance."""
     _, _, _ = mock_genai_client
     await model.start()
-
-    mock_output_transcript = unittest.mock.Mock()
-    mock_output_transcript.text = "partial reply"
-    mock_output_transcript.finished = False
-
-    message = live_message(server_content=server_content(interrupted=True, output_transcription=mock_output_transcript))
-
-    events = model._convert_gemini_live_event(message, _TurnState())
-
-    assert [type(event) for event in events] == [BidiInterruptionEvent, BidiTranscriptStreamEvent]
-
-    await model.stop()
-
-
-@pytest.mark.asyncio
-async def test_interruption_preserves_user_transcription_already_in_progress(
-    mock_genai_client, model, live_message, server_content
-):
-    """A delayed interruption marker must not discard earlier fragments from the same utterance."""
-    _, _, _ = mock_genai_client
-    await model.start()
-    turn_state = _TurnState(response_open=True)
+    turn_state = _TurnState(response_id="r1")
 
     first = unittest.mock.Mock(text="Just one", finished=False)
     second = unittest.mock.Mock(text=" second", finished=False)
@@ -1022,8 +1140,8 @@ async def test_interruption_preserves_user_transcription_already_in_progress(
         turn_state,
     )
 
-    assert [type(event) for event in events] == [BidiInterruptionEvent, BidiTranscriptStreamEvent]
-    assert turn_state.input_transcript == "Just one second"
+    assert [type(event) for event in events] == [BidiBargeInEvent, BidiTranscriptDeltaEvent]
+    assert turn_state.transcripts == {turn_state.input_id: "Just one second"}
 
     await model.stop()
 
@@ -1052,7 +1170,7 @@ async def test_transcription_fragments_complete_at_turn_boundary(
         turn_state,
     )
 
-    assert turn_state.input_transcript == "how are you?"
+    assert turn_state.transcripts == {turn_state.input_id: "how are you?"}
 
     first_output = unittest.mock.Mock(text="I am ", finished=False)
     second_output = unittest.mock.Mock(text="doing well.", finished=False)
@@ -1073,11 +1191,11 @@ async def test_transcription_fragments_complete_at_turn_boundary(
         turn_state,
     )
     assert completed == [
-        BidiTranscriptCompleteEvent("how are you?", "user"),
-        BidiTranscriptCompleteEvent("I am doing well.", "assistant"),
-        BidiResponseCompleteEvent(response_id=unittest.mock.ANY, stop_reason="complete"),
+        BidiTranscriptStopEvent("how are you?", "user", content_id=unittest.mock.ANY),
+        BidiTranscriptStopEvent("I am doing well.", "assistant", content_id=unittest.mock.ANY),
+        BidiResponseStopEvent(response_id=unittest.mock.ANY),
     ]
-    assert turn_state.input_transcript == ""
+    assert turn_state.transcripts == {}
     assert turn_state.output_transcript == ""
 
     await model.stop()
@@ -1089,32 +1207,42 @@ async def test_transcription_fragments_complete_at_turn_boundary(
         pytest.param(
             False,
             [{"turn_complete": True}],
-            [BidiTranscriptCompleteEvent("Turn one.", "user")],
+            [
+                BidiTranscriptStopEvent("Turn one.", "user", content_id=unittest.mock.ANY),
+            ],
             id="input-only",
         ),
         pytest.param(
             True,
             [{"interrupted": True}, {"turn_complete": True}],
-            [BidiInterruptionEvent(reason="user_speech"), BidiTranscriptCompleteEvent("Turn one.", "user")],
-            id="interrupted-then-complete",
+            [
+                BidiBargeInEvent(reason="user_speech"),
+                BidiTranscriptStopEvent("Turn one.", "user", content_id=unittest.mock.ANY),
+                BidiResponseStopEvent("r1"),
+            ],
+            id="barge-in-then-complete",
         ),
         pytest.param(
             True,
             [{"interrupted": True, "turn_complete": True}],
-            [BidiInterruptionEvent(reason="user_speech"), BidiTranscriptCompleteEvent("Turn one.", "user")],
-            id="interrupted-and-complete",
+            [
+                BidiBargeInEvent(reason="user_speech"),
+                BidiTranscriptStopEvent("Turn one.", "user", content_id=unittest.mock.ANY),
+                BidiResponseStopEvent("r1"),
+            ],
+            id="barge-in-and-complete",
         ),
     ],
 )
-def test_convert_gemini_live_event_completes_user_transcript_without_open_response(
-    model, response_open, endings, exp_events
-):
-    """Keep user transcripts separate across turns without assistant completion."""
-    turn_state = _TurnState(response_open=response_open)
+def test_convert_gemini_live_event_completes_user_transcript_at_turn_end(model, response_open, endings, exp_events):
+    """Keep user transcripts separate across input-only turns and turns with barge-in."""
+    turn_state = _TurnState(response_id="r1" if response_open else None)
     model._convert_gemini_live_event(
         genai_types.LiveServerMessage(server_content={"input_transcription": {"text": "Turn one."}}),
         turn_state,
     )
+    if response_open:
+        turn_state.response_input_ids = [turn_state.input_id]
 
     tru_events = []
     for ending in endings:
@@ -1122,7 +1250,7 @@ def test_convert_gemini_live_event_completes_user_transcript_without_open_respon
             model._convert_gemini_live_event(genai_types.LiveServerMessage(server_content=ending), turn_state)
         )
     assert tru_events == exp_events
-    assert turn_state.input_transcript == ""
+    assert turn_state.transcripts == {}
 
     tru_events = model._convert_gemini_live_event(
         genai_types.LiveServerMessage(
@@ -1131,11 +1259,12 @@ def test_convert_gemini_live_event_completes_user_transcript_without_open_respon
         turn_state,
     )
     exp_events = [
-        BidiTranscriptStreamEvent(delta="Turn two.", role="user"),
-        BidiTranscriptCompleteEvent("Turn two.", "user"),
+        BidiTranscriptStartEvent("user", content_id=unittest.mock.ANY),
+        BidiTranscriptDeltaEvent(delta="Turn two.", role="user", content_id=unittest.mock.ANY),
+        BidiTranscriptStopEvent("Turn two.", "user", content_id=unittest.mock.ANY),
     ]
     assert tru_events == exp_events
-    assert turn_state.input_transcript == ""
+    assert turn_state.transcripts == {}
 
 
 @pytest.mark.asyncio
@@ -1145,7 +1274,7 @@ async def test_audio_takes_precedence_over_model_turn_text(
     """Audio output suppresses model_turn text, avoiding a duplicate event for one response."""
     _, _, _ = mock_genai_client
     await model.start()
-    turn_state = _TurnState(response_open=True)  # mid-response, so no response-start is prepended
+    turn_state = _TurnState(response_id="r1")  # mid-response, so no response-start is prepended
 
     mock_model_turn = unittest.mock.Mock()
     mock_model_turn.parts = [text_part("Hello from Gemini")]
@@ -1153,7 +1282,7 @@ async def test_audio_takes_precedence_over_model_turn_text(
 
     events = model._convert_gemini_live_event(message, turn_state)
 
-    assert [type(event) for event in events] == [BidiAudioStreamEvent]
+    assert [type(event) for event in events] == [BidiAudioStartEvent, BidiAudioDeltaEvent]
 
     await model.stop()
 
@@ -1173,125 +1302,269 @@ async def test_empty_message_emits_nothing(mock_genai_client, model, live_messag
 
 
 @pytest.mark.asyncio
-async def test_first_model_output_opens_response(mock_genai_client, model, live_message):
+@pytest.mark.parametrize("input_text", [None, "Question"])
+async def test_first_model_output_opens_response(mock_genai_client, model, live_message, server_content, input_text):
     """The first model output of a turn is bracketed by a response-start event."""
     _, _, _ = mock_genai_client
     await model.start()
     turn_state = _TurnState()
 
-    events = model._convert_gemini_live_event(live_message(data=b"audio_data"), turn_state)
-    assert [type(event) for event in events] == [BidiResponseStartEvent, BidiAudioStreamEvent]
-    assert turn_state.response_open is True
+    message = live_message(
+        data=b"audio_data",
+        server_content=server_content(
+            input_transcription=genai_types.Transcription(text=input_text) if input_text is not None else None
+        ),
+    )
+    events = model._convert_gemini_live_event(message, turn_state)
+    exp_types = [BidiResponseStartEvent]
+    if input_text is not None:
+        exp_types.insert(0, BidiTranscriptStartEvent)
+        exp_types.append(BidiTranscriptDeltaEvent)
+    exp_types.extend([BidiAudioStartEvent, BidiAudioDeltaEvent])
+    assert [type(event) for event in events] == exp_types
+    assert turn_state.response_id is not None
 
     # A later output in the same turn does not re-open the response.
     more = model._convert_gemini_live_event(live_message(data=b"more_audio"), turn_state)
-    assert [type(event) for event in more] == [BidiAudioStreamEvent]
+    assert [type(event) for event in more] == [BidiAudioDeltaEvent]
 
     await model.stop()
 
 
 @pytest.mark.asyncio
 async def test_turn_complete_closes_response(mock_genai_client, model, live_message, server_content):
-    """turn_complete closes an open response with a response-complete event."""
+    """turn_complete closes an open response with a response-stop event."""
     _, _, _ = mock_genai_client
     await model.start()
-    turn_state = _TurnState(response_open=True, response_id="r1")
+    turn_state = _TurnState(response_id="r1")
 
-    events = model._convert_gemini_live_event(
+    tru_events = model._convert_gemini_live_event(
         live_message(server_content=server_content(turn_complete=True)), turn_state
     )
 
-    assert [type(event) for event in events] == [BidiResponseCompleteEvent]
-    assert events[0].stop_reason == "complete"
-    assert turn_state.response_open is False
+    exp_events = [BidiResponseStopEvent("r1")]
+    assert tru_events == exp_events
+    assert turn_state.response_id is None
 
 
-@pytest.mark.asyncio
-async def test_turn_complete_without_open_response_emits_nothing(
-    mock_genai_client, model, live_message, server_content
-):
-    """turn_complete with no response in flight does not emit a spurious complete event."""
-    _, _, _ = mock_genai_client
-    await model.start()
-
-    events = model._convert_gemini_live_event(
-        live_message(server_content=server_content(turn_complete=True)), _TurnState()
+@pytest.mark.parametrize("ending", ["generation_complete", "interrupted", "turn_complete"])
+def test_audio_stops_once_at_generation_boundary(model, live_message, server_content, ending):
+    state = _TurnState(response_id="r1")
+    messages = [
+        live_message(data=b"first"),
+        live_message(data=b"last", server_content=server_content(**{ending: True})),
+        live_message(server_content=server_content(turn_complete=True)),
+    ]
+    tru_events = [event for message in messages for event in model._convert_gemini_live_event(message, state)]
+    exp_events = [
+        BidiAudioStartEvent(),
+        BidiAudioDeltaEvent("Zmlyc3Q=", format="pcm", sample_rate=24000, channels=1),
+    ]
+    if ending == "interrupted":
+        exp_events.append(BidiBargeInEvent(reason="user_speech"))
+    exp_events.extend(
+        [
+            BidiAudioDeltaEvent("bGFzdA==", format="pcm", sample_rate=24000, channels=1),
+            BidiAudioStopEvent(),
+            BidiResponseStopEvent("r1"),
+        ]
     )
-    assert events == []
+    assert tru_events == exp_events
 
 
 @pytest.mark.asyncio
-async def test_interruption_closes_response_without_complete(mock_genai_client, model, live_message, server_content):
-    """An interruption ends the turn without emitting a response-complete."""
+@pytest.mark.parametrize("interrupted", [False, True])
+async def test_turn_complete_without_open_response_emits_nothing(
+    mock_genai_client, model, live_message, server_content, interrupted
+):
+    """A barge-in without assistant output does not open a response."""
     _, _, _ = mock_genai_client
     await model.start()
-    turn_state = _TurnState(response_open=True)
+    turn_state = _TurnState()
+
+    tru_events = model._convert_gemini_live_event(
+        live_message(server_content=server_content(interrupted=interrupted)), turn_state
+    )
+    tru_events.extend(
+        model._convert_gemini_live_event(live_message(server_content=server_content(turn_complete=True)), turn_state)
+    )
+    exp_events = [BidiBargeInEvent("user_speech")] if interrupted else []
+    assert tru_events == exp_events
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_tool_call", [False, True])
+async def test_barge_in_completes_at_turn_boundary(
+    mock_genai_client, model, live_message, server_content, with_tool_call
+):
+    """A response stopped by barge-in stays open until its native turn boundary."""
+    _, _, _ = mock_genai_client
+    await model.start()
+    turn_state = _TurnState(response_id="r1", output_transcript="Spoken answer.", output_transcript_id="t1")
+    if with_tool_call:
+        model._convert_gemini_live_event(
+            genai_types.LiveServerMessage(
+                tool_call={"function_calls": [{"id": "tool-1", "name": "time_tool", "args": {}}]}
+            ),
+            turn_state,
+        )
 
     events = model._convert_gemini_live_event(live_message(server_content=server_content(interrupted=True)), turn_state)
 
-    assert [type(event) for event in events] == [BidiInterruptionEvent]
-    assert turn_state.response_open is False
+    assert events == [BidiBargeInEvent(reason="user_speech")]
+    assert turn_state.response_id is not None
+
+    tru_events = model._convert_gemini_live_event(
+        live_message(server_content=server_content(turn_complete=True)), turn_state
+    )
+    exp_events = [
+        BidiTranscriptStopEvent("Spoken answer.", "assistant", content_id=unittest.mock.ANY),
+        BidiResponseStopEvent("r1"),
+    ]
+    assert tru_events == exp_events
+    assert turn_state.response_id is None
+    assert turn_state.interrupted is False
+    assert (
+        model._convert_gemini_live_event(live_message(server_content=server_content(turn_complete=True)), turn_state)
+        == []
+    )
+
+
+@pytest.mark.parametrize("complete_with_tool_call", [False, True])
+def test_tool_handoff_and_continuation_have_separate_responses(model, complete_with_tool_call):
+    turn_state = _TurnState()
+    messages = [
+        genai_types.LiveServerMessage(server_content={"input_transcription": {"text": "What time is it?"}}),
+        genai_types.LiveServerMessage(
+            tool_call={"function_calls": [{"id": "tool-1", "name": "time_tool", "args": {}}]},
+            server_content={"turn_complete": True} if complete_with_tool_call else None,
+        ),
+    ]
+    if not complete_with_tool_call:
+        messages.append(genai_types.LiveServerMessage(server_content={"turn_complete": True}))
+    messages.extend(
+        [
+            genai_types.LiveServerMessage(server_content={"output_transcription": {"text": "It is noon."}}),
+            genai_types.LiveServerMessage(server_content={"turn_complete": True}),
+        ]
+    )
+
+    tru_events = []
+    for message in messages:
+        tru_events.extend(model._convert_gemini_live_event(message, turn_state))
+    response_id = tru_events[2].response_id
+    continuation_id = next(
+        event.response_id
+        for event in tru_events
+        if isinstance(event, BidiResponseStartEvent) and event.response_id != response_id
+    )
+    input_id = tru_events[0].content_id
+    content_id = next(
+        event.content_id
+        for event in tru_events
+        if isinstance(event, BidiTranscriptStartEvent) and event.role == "assistant"
+    )
+    exp_events = [
+        BidiTranscriptStartEvent("user", content_id=input_id),
+        BidiTranscriptDeltaEvent("What time is it?", "user", content_id=input_id),
+        BidiResponseStartEvent(response_id),
+        ToolUseStreamEvent(
+            delta={"toolUse": {"toolUseId": "tool-1", "name": "time_tool", "input": "{}"}},
+            current_tool_use={"toolUseId": "tool-1", "name": "time_tool", "input": {}},
+        ),
+        BidiTranscriptStopEvent("What time is it?", "user", content_id=input_id),
+        BidiResponseStopEvent(response_id),
+        BidiResponseStartEvent(continuation_id),
+        BidiTranscriptStartEvent("assistant", content_id=content_id),
+        BidiTranscriptDeltaEvent("It is noon.", "assistant", content_id=content_id),
+        BidiTranscriptStopEvent("It is noon.", "assistant", content_id=content_id),
+        BidiResponseStopEvent(continuation_id),
+    ]
+    assert tru_events == exp_events
 
 
 # Audio Configuration Tests
 
 
-def test_audio_config_defaults(mock_genai_client, model_id, api_key):
-    """Test default audio configuration."""
-    _ = mock_genai_client
+@pytest.mark.parametrize("audio", [None, {}])
+def test_get_audio_config_defaults(model_id, mock_genai_client, api_key, audio):
+    model = GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key}, audio=audio)
 
-    model = GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key})
-
-    assert model.get_audio_config() == {
-        "input_rate": 16000,
-        "output_rate": 24000,
-        "channels": 1,
-        "format": "pcm",
+    tru_config = model.get_audio_config()
+    exp_config = {
+        "input": {"sample_rate": 16000, "channels": 1, "format": "pcm"},
+        "output": {"sample_rate": 24000, "channels": 1, "format": "pcm"},
     }
+    assert tru_config == exp_config
+    assert model.get_audio_config() is tru_config
+    assert "speech_config" not in model._build_live_config()
 
 
-def test_audio_config_partial_override(mock_genai_client, model_id, api_key):
-    """Test partial audio configuration override."""
-    _ = mock_genai_client
-
+def test_get_audio_config_custom_input(model_id, mock_genai_client, api_key):
     model = GoogleGeminiLiveModel(
         model_id=model_id,
         client_args={"api_key": api_key},
-        audio={"output_rate": 48000, "voice": "Puck"},
+        audio=GoogleGeminiLiveAudioConfig(input={"sample_rate": 48000}),
+        voice="Puck",
     )
 
-    assert model.get_audio_config() == {
-        "input_rate": 16000,
-        "output_rate": 48000,
-        "channels": 1,
-        "format": "pcm",
-        "voice": "Puck",
+    tru_config = model.get_audio_config()
+    exp_config = {
+        "input": {"sample_rate": 48000, "channels": 1, "format": "pcm"},
+        "output": {"sample_rate": 24000, "channels": 1, "format": "pcm"},
     }
+    assert tru_config == exp_config
+    tru_speech = model._build_live_config()["speech_config"]
+    exp_speech = {"voice_config": {"prebuilt_voice_config": {"voice_name": "Puck"}}}
+    assert tru_speech == exp_speech
 
 
-def test_audio_config_full_override(mock_genai_client, model_id, api_key):
-    """Test full audio configuration override."""
-    _ = mock_genai_client
+@pytest.mark.parametrize(
+    ("audio", "invalid_key"),
+    [
+        ({"output": {"sample_rate": 48000}}, "output"),
+        ({"input": {"sample_rate": 16000, "channels": 2}}, "channels"),
+        ({"input": {"sample_rate": 16000, "format": "mp3"}}, "format"),
+    ],
+)
+def test__init__warns_on_unknown_audio_keys(model_id, mock_genai_client, api_key, audio, invalid_key):
+    with pytest.warns(UserWarning, match=invalid_key):
+        model = GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key}, audio=audio)
 
+    tru_config = model.get_audio_config()
+    exp_config = {
+        "input": {"sample_rate": 16000, "channels": 1, "format": "pcm"},
+        "output": {"sample_rate": 24000, "channels": 1, "format": "pcm"},
+    }
+    assert tru_config == exp_config
+
+
+def test__init__requires_audio_sample_rate(model_id, mock_genai_client, api_key):
+    with pytest.raises(KeyError, match="sample_rate"):
+        GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key}, audio={"input": {}})
+
+
+@pytest.mark.parametrize("rate", [0, -1])
+def test__init__rejects_invalid_audio_sample_rate(model_id, mock_genai_client, api_key, rate):
+    with pytest.raises(ValueError, match="positive"):
+        GoogleGeminiLiveModel(
+            model_id=model_id, client_args={"api_key": api_key}, audio={"input": {"sample_rate": rate}}
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rate", [32000, 44100, 48000])
+async def test_send_audio_uses_resolved_input_rate(model_id, mock_genai_client, api_key, rate):
+    _, session, _ = mock_genai_client
     model = GoogleGeminiLiveModel(
-        model_id=model_id,
-        client_args={"api_key": api_key},
-        audio={
-            "input_rate": 48000,
-            "output_rate": 48000,
-            "channels": 2,
-            "format": "pcm",
-            "voice": "Aoede",
-        },
+        model_id=model_id, client_args={"api_key": api_key}, audio={"input": {"sample_rate": rate}}
     )
-
-    assert model.get_audio_config() == {
-        "input_rate": 48000,
-        "output_rate": 48000,
-        "channels": 2,
-        "format": "pcm",
-        "voice": "Aoede",
-    }
+    await model.start()
+    await model.send(AudioDelta(format="pcm", source={"bytes": b"audio"}))
+    session.send_realtime_input.assert_awaited_once_with(
+        audio=genai_types.Blob(data=b"audio", mime_type=f"audio/pcm;rate={rate}")
+    )
+    await model.stop()
 
 
 # Helper Method Tests
@@ -1327,10 +1600,11 @@ def test_config_building(model, system_prompt, tool_spec):
     assert config_with_messages["history_config"] == {"initial_history_in_client_content": True}
 
 
-def test__build_live_config_passes_through_params(mock_genai_client, api_key):
+def test__build_live_config_passes_through_params(model_id, mock_genai_client, api_key):
     """Test model params are passed through to the live session."""
     _ = mock_genai_client
     model = GoogleGeminiLiveModel(
+        model_id=model_id,
         client_args={"api_key": api_key},
         params={"temperature": 0.7, "proactivity": {"proactive_audio": True}, "future_option": {"enabled": True}},
     )
@@ -1361,7 +1635,7 @@ def test__build_live_config_passes_through_params(mock_genai_client, api_key):
     ],
 )
 def test__build_live_config_params_override_direct_options(
-    mock_genai_client, api_key, system_prompt, tool_spec, speech_config
+    model_id, mock_genai_client, api_key, system_prompt, tool_spec, speech_config
 ):
     params = {
         "system_instruction": "Configured instructions",
@@ -1372,8 +1646,9 @@ def test__build_live_config_params_override_direct_options(
     }
     exp_params = copy.deepcopy(params)
     model = GoogleGeminiLiveModel(
+        model_id=model_id,
         client_args={"api_key": api_key},
-        audio={"voice": "Kore"},
+        voice="Kore",
         params=params,
     )
 
@@ -1394,15 +1669,16 @@ def test__build_live_config_params_override_direct_options(
     assert tru_config == exp_config
 
 
-def test__build_live_config_merges_nested_params(mock_genai_client, api_key):
+def test__build_live_config_merges_nested_params(model_id, mock_genai_client, api_key):
     params = {
         "speech_config": {"language_code": "en-US"},
         "context_window_compression": {"trigger_tokens": 10000},
         "session_resumption": {"transparent": True},
     }
     model = GoogleGeminiLiveModel(
+        model_id=model_id,
         client_args={"api_key": api_key},
-        audio={"voice": "Kore"},
+        voice="Kore",
         params=params,
     )
 
@@ -1427,9 +1703,10 @@ def test__build_live_config_merges_nested_params(mock_genai_client, api_key):
     assert tru_config == exp_config
 
 
-def test__build_live_config_copies_sdk_objects(mock_genai_client, api_key):
+def test__build_live_config_copies_sdk_objects(model_id, mock_genai_client, api_key):
     speech_config = genai_types.SpeechConfig(language_code="en-US")
     model = GoogleGeminiLiveModel(
+        model_id=model_id,
         client_args={"api_key": api_key},
         params={"speech_config": speech_config},
     )
@@ -1441,11 +1718,12 @@ def test__build_live_config_copies_sdk_objects(mock_genai_client, api_key):
 
 
 @pytest.mark.asyncio
-async def test_start_passes_merged_config_to_genai(mock_genai_client, api_key):
+async def test_start_passes_merged_config_to_genai(model_id, mock_genai_client, api_key):
     mock_client, _, _ = mock_genai_client
     model = GoogleGeminiLiveModel(
+        model_id=model_id,
         client_args={"api_key": api_key},
-        audio={"voice": "Kore"},
+        voice="Kore",
         params={
             "speech_config": {
                 "language_code": "en-US",
@@ -1486,10 +1764,11 @@ async def test_start_passes_merged_config_to_genai(mock_genai_client, api_key):
         ),
     ],
 )
-def test_update_config_replaces_params(mock_genai_client, api_key, params, exp_voice):
+def test_update_config_replaces_params(model_id, mock_genai_client, api_key, params, exp_voice):
     model = GoogleGeminiLiveModel(
+        model_id=model_id,
         client_args={"api_key": api_key},
-        audio={"voice": "Kore"},
+        voice="Kore",
         params={
             "system_instruction": "Configured instructions",
             "speech_config": {"voice_config": {"prebuilt_voice_config": {"voice_name": "Aoede"}}},
@@ -1518,60 +1797,31 @@ def test_tool_formatting(model, tool_spec):
     assert formatted_empty == []
 
 
-# Tool Result Content Tests
+# Audio Event Tests
 
 
-@pytest.mark.asyncio
-async def test_custom_audio_rates_in_events(mock_genai_client, model_id, api_key, live_message):
-    """Test that audio events use configured sample rates and channels."""
-    _, _, _ = mock_genai_client
+@pytest.mark.parametrize(
+    "audio",
+    [
+        pytest.param(None, id="defaults"),
+        pytest.param({"input": {"sample_rate": 48000}}, id="custom-input"),
+    ],
+)
+def test__convert_gemini_live_event_audio_format(model_id, mock_genai_client, api_key, live_message, audio):
+    model = GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key}, audio=audio)
+    turn_state = _TurnState(response_id="r1")
 
-    model = GoogleGeminiLiveModel(
-        model_id=model_id,
-        client_args={"api_key": api_key},
-        audio={"output_rate": 48000, "channels": 2},
-    )
-    await model.start()
-    turn_state = _TurnState(response_open=True)  # mid-response, so no response-start is prepended
-
-    # Test audio output event uses custom configuration
-    mock_audio = live_message(data=b"audio_data")
-
-    audio_events = model._convert_gemini_live_event(mock_audio, turn_state)
-    assert len(audio_events) == 1
-    audio_event = audio_events[0]
-    assert isinstance(audio_event, BidiAudioStreamEvent)
-    # Should use configured rates, not constants
-    assert audio_event.sample_rate == 48000  # Custom config
-    assert audio_event.channels == 2  # Custom config
-    assert audio_event.format == "pcm"
-
-    await model.stop()
-
-
-@pytest.mark.asyncio
-async def test_default_audio_rates_in_events(mock_genai_client, model_id, api_key, live_message):
-    """Test that audio events use default sample rates when no custom config."""
-    _, _, _ = mock_genai_client
-
-    # Create model without custom audio configuration
-    model = GoogleGeminiLiveModel(model_id=model_id, client_args={"api_key": api_key})
-    await model.start()
-    turn_state = _TurnState(response_open=True)  # mid-response, so no response-start is prepended
-
-    # Test audio output event uses defaults
-    mock_audio = live_message(data=b"audio_data")
-
-    audio_events = model._convert_gemini_live_event(mock_audio, turn_state)
-    assert len(audio_events) == 1
-    audio_event = audio_events[0]
-    assert isinstance(audio_event, BidiAudioStreamEvent)
-    # Should use default rates
-    assert audio_event.sample_rate == 24000  # Default output rate
-    assert audio_event.channels == 1  # Default channels
-    assert audio_event.format == "pcm"
-
-    await model.stop()
+    tru_events = model._convert_gemini_live_event(live_message(data=b"audio_data"), turn_state)
+    exp_events = [
+        BidiAudioStartEvent(),
+        BidiAudioDeltaEvent(
+            audio=base64.b64encode(b"audio_data").decode(),
+            format="pcm",
+            sample_rate=24000,
+            channels=1,
+        ),
+    ]
+    assert tru_events == exp_events
 
 
 # Tool Result Content Tests
@@ -1583,13 +1833,9 @@ async def test_tool_result_single_content_unwrapped(mock_genai_client, model):
     _, mock_live_session, _ = mock_genai_client
     await model.start()
 
-    tool_result: ToolResult = {
-        "toolUseId": "tool-123",
-        "status": "success",
-        "content": [{"text": "Single result"}],
-    }
+    tool_result = ToolResultBlock(tool_use_id="tool-123", status="success", content=[{"text": "Single result"}])
 
-    await model.send(ToolResultEvent(tool_result))
+    await model.send(BidiMessage(content=[tool_result]))
 
     # Verify the tool response was sent
     mock_live_session.send_tool_response.assert_called_once()
@@ -1611,13 +1857,11 @@ async def test_tool_result_multiple_content_as_array(mock_genai_client, model):
     _, mock_live_session, _ = mock_genai_client
     await model.start()
 
-    tool_result: ToolResult = {
-        "toolUseId": "tool-456",
-        "status": "success",
-        "content": [{"text": "Part 1"}, {"json": {"data": "value"}}],
-    }
+    tool_result = ToolResultBlock(
+        tool_use_id="tool-456", status="success", content=[{"text": "Part 1"}, {"json": {"data": "value"}}]
+    )
 
-    await model.send(ToolResultEvent(tool_result))
+    await model.send(BidiMessage(content=[tool_result]))
 
     # Verify the tool response was sent
     mock_live_session.send_tool_response.assert_called_once()
@@ -1644,33 +1888,150 @@ async def test_tool_result_unsupported_content_type(mock_genai_client, model):
     await model.start()
 
     # Test with image content (unsupported)
-    tool_result_image: ToolResult = {
-        "toolUseId": "tool-999",
-        "status": "success",
-        "content": [{"image": {"format": "jpeg", "source": {"bytes": b"image_data"}}}],
-    }
+    tool_result_image = ToolResultBlock(
+        tool_use_id="tool-999",
+        status="success",
+        content=[{"image": {"format": "jpeg", "source": {"bytes": b"image_data"}}}],
+    )
 
     with pytest.raises(ValueError, match=r"Content type not supported by Gemini Live API"):
-        await model.send(ToolResultEvent(tool_result_image))
+        await model.send(BidiMessage(content=[tool_result_image]))
 
     # Test with document content (unsupported)
-    tool_result_doc: ToolResult = {
-        "toolUseId": "tool-888",
-        "status": "success",
-        "content": [{"document": {"format": "pdf", "source": {"bytes": b"doc_data"}}}],
-    }
+    tool_result_doc = ToolResultBlock(
+        tool_use_id="tool-888",
+        status="success",
+        content=[{"document": {"format": "pdf", "source": {"bytes": b"doc_data"}}}],
+    )
 
     with pytest.raises(ValueError, match=r"Content type not supported by Gemini Live API"):
-        await model.send(ToolResultEvent(tool_result_doc))
+        await model.send(BidiMessage(content=[tool_result_doc]))
 
     # Test with mixed content (one unsupported)
-    tool_result_mixed: ToolResult = {
-        "toolUseId": "tool-777",
-        "status": "success",
-        "content": [{"text": "Valid text"}, {"image": {"format": "jpeg", "source": {"bytes": b"image_data"}}}],
-    }
+    tool_result_mixed = ToolResultBlock(
+        tool_use_id="tool-777",
+        status="success",
+        content=[{"text": "Valid text"}, {"image": {"format": "jpeg", "source": {"bytes": b"image_data"}}}],
+    )
 
     with pytest.raises(ValueError, match=r"Content type not supported by Gemini Live API"):
-        await model.send(ToolResultEvent(tool_result_mixed))
+        await model.send(BidiMessage(content=[tool_result_mixed]))
 
     await model.stop()
+
+
+def test_completion_after_barge_in_preserves_new_utterance(model):
+    """A new native activity owns its transcript even while the old response closes."""
+    state = _TurnState()
+
+    def convert(**data):
+        return model._convert_gemini_live_event(genai_types.LiveServerMessage(**data), state)
+
+    first_id = convert(voice_activity={"voice_activity_type": "ACTIVITY_START"})[0].content_id
+    convert(server_content={"input_transcription": {"text": "First question"}})
+    convert(server_content={"output_transcription": {"text": "First answer"}})
+    first_response_id = state.response_id
+    convert(voice_activity={"voice_activity_type": "ACTIVITY_END"})
+    second_id = convert(voice_activity={"voice_activity_type": "ACTIVITY_START"})[0].content_id
+    convert(server_content={"input_transcription": {"text": "Second question"}, "interrupted": True})
+    assert convert(server_content={"turn_complete": True}) == [
+        BidiTranscriptStopEvent("First question", "user", content_id=first_id),
+        BidiTranscriptStopEvent("First answer", "assistant", content_id=unittest.mock.ANY),
+        BidiResponseStopEvent(first_response_id),
+    ]
+    assert state.input_id == second_id
+    assert state.transcripts == {second_id: "Second question"}
+    assert convert(server_content={"output_transcription": {"text": "Second answer"}})[0] == (
+        BidiResponseStartEvent(state.response_id)
+    )
+
+
+def test_activity_without_transcript_text_completes(model):
+    state = _TurnState()
+    started = model._convert_gemini_live_event(
+        genai_types.LiveServerMessage(voice_activity={"voice_activity_type": "ACTIVITY_START"}), state
+    )
+    input_id = state.input_id
+    completed = model._convert_gemini_live_event(
+        genai_types.LiveServerMessage(server_content={"turn_complete": True}), state
+    )
+    tru_events = [*started, *completed]
+    exp_events = [
+        BidiTranscriptStartEvent("user", content_id=input_id),
+        BidiTranscriptStopEvent("", "user", content_id=input_id),
+    ]
+    assert tru_events == exp_events
+    assert state.input_id is None
+
+
+def test_finished_transcription_is_emitted_before_turn_complete(model):
+    state = _TurnState()
+    events = model._convert_gemini_live_event(
+        genai_types.LiveServerMessage(server_content={"input_transcription": {"text": "Question", "finished": True}}),
+        state,
+    )
+    input_id = events[0].content_id
+    assert events == [
+        BidiTranscriptStartEvent("user", content_id=input_id),
+        BidiTranscriptDeltaEvent("Question", "user", content_id=input_id),
+        BidiTranscriptStopEvent("Question", "user", content_id=input_id),
+    ]
+    events = model._convert_gemini_live_event(
+        genai_types.LiveServerMessage(server_content={"output_transcription": {"text": "Answer"}}), state
+    )
+    assert events == [
+        BidiResponseStartEvent(state.response_id),
+        BidiTranscriptStartEvent("assistant", content_id=unittest.mock.ANY),
+        BidiTranscriptDeltaEvent("Answer", "assistant", content_id=unittest.mock.ANY),
+    ]
+
+
+@pytest.mark.parametrize("finished", [False, True])
+def test_first_transcript_after_assistant_output_keeps_receive_order(model, finished):
+    """Late user text belongs to the current turn without moving ahead of assistant output."""
+    state = _TurnState()
+
+    def convert(**content):
+        return model._convert_gemini_live_event(genai_types.LiveServerMessage(server_content=content), state)
+
+    assistant_events = convert(output_transcription={"text": "Answer"})
+    response_id = state.response_id
+    assert assistant_events == [
+        BidiResponseStartEvent(response_id),
+        BidiTranscriptStartEvent("assistant", content_id=unittest.mock.ANY),
+        BidiTranscriptDeltaEvent("Answer", "assistant", content_id=unittest.mock.ANY),
+    ]
+
+    user_events = convert(input_transcription={"text": "Question", "finished": finished})
+    input_id = user_events[0].content_id
+    user_complete = BidiTranscriptStopEvent("Question", "user", content_id=input_id)
+    assert user_events == [
+        BidiTranscriptStartEvent("user", content_id=input_id),
+        BidiTranscriptDeltaEvent("Question", "user", content_id=input_id),
+        *([user_complete] if finished else []),
+    ]
+    assert convert(turn_complete=True) == [
+        *([] if finished else [user_complete]),
+        BidiTranscriptStopEvent("Answer", "assistant", content_id=unittest.mock.ANY),
+        BidiResponseStopEvent(response_id),
+    ]
+    assert state.transcripts == {}
+    assert state.input_id is None
+
+
+def test_live_tool_uses_structured_parameter_schema(model):
+    tool = {
+        "name": "multiply",
+        "description": "Multiply numbers.",
+        "inputSchema": {"json": {"type": "object", "properties": {"x": {"type": "number"}}, "required": ["x"]}},
+    }
+    formatted = model._format_tools_for_live_api([tool])
+    assert formatted[0].model_dump(mode="json", exclude_none=True) == {
+        "function_declarations": [
+            {
+                "name": "multiply",
+                "description": "Multiply numbers.",
+                "parameters": {"type": "OBJECT", "properties": {"x": {"type": "NUMBER"}}, "required": ["x"]},
+            }
+        ],
+    }

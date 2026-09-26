@@ -65,5 +65,21 @@ head.push(...extraHead)
   frontmatter={{ title, description, template: 'splash', pagefind: false, head, hero: { actions: [] } }}
   hasSidebar={false}
 >
-  <slot />
+  {/* Splash pages omit the `id="_top"` that Starlight puts on doc-page h1s,
+      leaving the "Skip to content" link (href="#_top") with no target. Anchor
+      it here so the skip link works on blog/changelog pages. */}
+  <div id="_top" class="blog-layout-root">
+    <slot />
+  </div>
 </StarlightPage>
+
+<style is:global>
+  /* Starlight's splash `.sl-container` has max-width but margin-inline: 0, so
+     blog content hugged the left with dead space on the right. Center it (and
+     its content panel) so the blog reads as a centered column like the rest of
+     the site. Scoped to pages that render .blog-layout-root (blog only). */
+  .content-panel:has(.blog-layout-root) .sl-container,
+  .content-panel:has(.blog-layout-root) {
+    margin-inline: auto;
+  }
+</style>

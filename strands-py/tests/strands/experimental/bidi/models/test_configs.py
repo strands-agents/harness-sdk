@@ -4,7 +4,13 @@ import copy
 
 import pytest
 
-from strands.experimental.bidi.models.configs import _merge_config, _validate_audio_config, _validate_model_config
+from strands.experimental.bidi.models import AudioConfig, AudioStreamConfig, ModelConfig
+from strands.experimental.bidi.models import configs as configs_module
+from strands.experimental.bidi.models.configs import (
+    _merge_config,
+    _validate_audio_config,
+    _validate_model_config,
+)
 
 
 @pytest.mark.parametrize(
@@ -16,12 +22,44 @@ from strands.experimental.bidi.models.configs import _merge_config, _validate_au
 )
 def test__validate_model_config_warns_invalid_keys(model_config, invalid_key):
     with pytest.warns(UserWarning, match=invalid_key):
-        _validate_model_config(model_config)
+        _validate_model_config({"model_id": "test-model"} | model_config)
 
 
-def test__validate_audio_config_warns_invalid_keys():
-    with pytest.warns(UserWarning, match="input_rte"):
-        _validate_audio_config({"input_rte": 48000})
+def test__validate_model_config_requires_all_declared_keys(monkeypatch):
+    class ExtendedConfig(ModelConfig):
+        retries: int
+        enabled: bool
+
+    monkeypatch.setattr(configs_module, "ModelConfig", ExtendedConfig)
+
+    with pytest.raises(ValueError) as error:
+        _validate_model_config({})
+
+    tru_message = str(error.value)
+    exp_message = "Missing required configuration parameters: ['enabled', 'model_id', 'retries']."
+    assert tru_message == exp_message
+
+    _validate_model_config({"model_id": "test-model", "retries": 0, "enabled": False})
+
+
+@pytest.mark.parametrize(
+    ("direction", "invalid_key"),
+    [
+        (None, "input_rate"),
+        ("input", "rate"),
+        ("output", "encoding"),
+    ],
+)
+def test__validate_audio_config_warns_invalid_keys(direction, invalid_key):
+    config = AudioConfig(
+        input=AudioStreamConfig(sample_rate=16000, channels=1, format="pcm"),
+        output=AudioStreamConfig(sample_rate=24000, channels=1, format="pcm"),
+    )
+    target = config if direction is None else config[direction]
+    target[invalid_key] = "invalid"
+
+    with pytest.warns(UserWarning, match=invalid_key):
+        _validate_audio_config(config)
 
 
 @pytest.mark.parametrize(

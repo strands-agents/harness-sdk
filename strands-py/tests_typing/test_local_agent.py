@@ -2,8 +2,8 @@ from typing import Any
 
 from typing_extensions import assert_type
 
-from strands import Agent, LocalAgent, ToolContext, tool
-from strands.experimental.bidi import BidiAgent
+from strands import Agent, LocalAgent, Snapshot, ToolContext, tool
+from strands.experimental.bidi.agent import BidiAgent
 from strands.hooks import AfterToolCallEvent, AgentInitializedEvent, BeforeToolCallEvent, MessageAddedEvent
 from strands.session.repository_session_manager import RepositorySessionManager
 from strands.session.session_manager import SessionManager
@@ -95,6 +95,14 @@ def register_hooks(agent: Agent, bidi_agent: BidiAgent, local_agent: LocalAgent)
 
 def local_agent_excludes_agent_only_members(local_agent: LocalAgent) -> None:
     local_agent.cleanup()  # type: ignore[attr-defined]
+
+
+def snapshot_local_agent(agent: Agent, bidi_agent: BidiAgent, local_agent: LocalAgent) -> None:
+    for shared in (agent, bidi_agent, local_agent):
+        snapshot = shared.take_snapshot(preset="session")
+        assert_type(snapshot, Snapshot)
+        shared.take_snapshot(include=["messages", "state"], exclude=["state"], app_data={"key": "value"})
+        shared.load_snapshot(snapshot)
 
 
 def persist_local_agent(manager: RepositorySessionManager, agent: LocalAgent, message: Message) -> None:

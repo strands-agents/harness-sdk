@@ -7,12 +7,11 @@ from ....hooks.registry import BaseHookEvent
 
 if TYPE_CHECKING:
     from ..agent.agent import BidiAgent
-    from ..models import BidiModelTimeoutError
-    from ..types.events import StopReason
+    from ..models import ConnectionTimeoutError
 
 
 @dataclass
-class BidiHookEvent(BaseHookEvent):
+class _HookEvent(BaseHookEvent):
     """Base class for BidiAgent hook events.
 
     Attributes:
@@ -23,7 +22,7 @@ class BidiHookEvent(BaseHookEvent):
 
 
 @dataclass
-class BidiAgentStopEvent(BidiHookEvent):
+class BidiAgentStopEvent(_HookEvent):
     """Event triggered after BidiAgent attempts to stop its streaming session.
 
     This event is fired after background-task and model cleanup have been attempted,
@@ -43,7 +42,7 @@ class BidiAgentStopEvent(BidiHookEvent):
 
 
 @dataclass
-class BidiResponseCompleteEvent(BidiHookEvent):
+class BidiResponseStopEvent(_HookEvent):
     """Event triggered when the model reports that a response has ended.
 
     A connection failure or shutdown without a model-reported completion does not
@@ -51,35 +50,30 @@ class BidiResponseCompleteEvent(BidiHookEvent):
 
     Attributes:
         response_id: Identifier of the response that ended.
-        stop_reason: Why the response ended, including completion or interruption.
     """
 
     response_id: str
-    stop_reason: "StopReason"
 
 
 @dataclass
-class BidiInterruptionEvent(BidiHookEvent):
-    """Event triggered when model generation is interrupted.
+class BidiBargeInEvent(_HookEvent):
+    """Event triggered to stop current response generation or playback.
 
-    This event is fired when the user interrupts the assistant (e.g., by speaking
-    during the assistant's response) or when an error causes interruption. This is
-    specific to bidirectional streaming and doesn't exist in standard agents.
+    This event is fired when the user barges in (e.g., by speaking during the
+    assistant's response) or when an error stops output. This is
+    specific to a response and does not pause the bidirectional session.
 
-    Hook providers can use this event to log interruptions, implement custom
-    interruption handling, or trigger cleanup logic.
+    Hook providers can use this event to log barge-ins, stop playback, or trigger cleanup.
 
     Attributes:
-        reason: The reason for the interruption ("user_speech" or "error").
-        interrupted_response_id: Optional ID of the response that was interrupted.
+        reason: Why response output should stop ("user_speech" or "error").
     """
 
     reason: Literal["user_speech", "error"]
-    interrupted_response_id: str | None = None
 
 
 @dataclass
-class BidiBeforeConnectionRestartEvent(BidiHookEvent):
+class BidiBeforeConnectionRestartEvent(_HookEvent):
     """Event emitted before the agent restarts the model connection.
 
     A restart is triggered either reactively, after the model reports a timeout, or
@@ -91,11 +85,11 @@ class BidiBeforeConnectionRestartEvent(BidiHookEvent):
     """
 
     reason: Literal["timeout", "scheduled"]
-    timeout_error: "BidiModelTimeoutError | None" = None
+    timeout_error: "ConnectionTimeoutError | None" = None
 
 
 @dataclass
-class BidiAfterConnectionRestartEvent(BidiHookEvent):
+class BidiAfterConnectionRestartEvent(_HookEvent):
     """Event emitted after the agent attempts to restart the model connection.
 
     Attributes:

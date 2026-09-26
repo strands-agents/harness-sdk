@@ -6,12 +6,9 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from strands.experimental.bidi import Restartable
-from strands.experimental.bidi.models.configs import AudioConfig
-from strands.experimental.bidi.models.model import AudioCapable, BidiModel
-from strands.experimental.bidi.types.events import BidiInputEvent, BidiOutputEvent
+from strands.experimental.bidi.models import AudioCapable, AudioConfig, BidiModel, Restartable
+from strands.experimental.bidi.types import BidiContentDelta, BidiMessage, BidiOutputEvent
 from strands.models import Model
-from strands.types._events import ToolResultEvent
 from strands.types.content import Messages
 from strands.types.tools import ToolSpec
 
@@ -50,17 +47,15 @@ class _TestBidiModel(BidiModel):
 
         return events()
 
-    async def send(self, content: BidiInputEvent | ToolResultEvent) -> None:
+    async def send(self, content: BidiMessage | BidiContentDelta) -> None:
         pass
 
 
 class _AudioBidiModel(_TestBidiModel):
     def get_audio_config(self) -> AudioConfig:
         return {
-            "input_rate": 16000,
-            "output_rate": 24000,
-            "channels": 1,
-            "format": "pcm",
+            "input": {"sample_rate": 16000, "channels": 1, "format": "pcm"},
+            "output": {"sample_rate": 24000, "channels": 1, "format": "pcm"},
         }
 
 

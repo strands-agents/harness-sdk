@@ -1,0 +1,38 @@
+---
+sdk: sdk
+language: python
+version: "0.2.0"
+tag: python/v0.2.0
+date: 2025-07-02
+releaseUrl: https://github.com/strands-agents/harness-sdk/releases/tag/python/v0.2.0
+packageUrl: https://pypi.org/project/strands-agents/0.2.0/
+entries:
+  - { type: other, breaking: false, scope: null, areas: [], title: "iterative event loop", pr: 268, prUrl: "https://github.com/strands-agents/sdk-python/pull/268", commit: "3ae8d77", commitUrl: "https://github.com/strands-agents/sdk-python/commit/3ae8d77", author: pgrayy }
+  - { type: other, breaking: false, scope: null, areas: [model], title: "Add additional exception information for common bedrock errors", pr: 290, prUrl: "https://github.com/strands-agents/sdk-python/pull/290", commit: "7cfbad3", commitUrl: "https://github.com/strands-agents/sdk-python/commit/7cfbad3", author: zastrowm }
+  - { type: other, breaking: false, scope: null, areas: [structured-output], title: "iterative structured output", pr: 291, prUrl: "https://github.com/strands-agents/sdk-python/pull/291", commit: "6e6064f", commitUrl: "https://github.com/strands-agents/sdk-python/commit/6e6064f", author: pgrayy }
+  - { type: fix, breaking: false, scope: null, areas: [], title: "correcting incorrect docstring in tracer.py - non-existing argument documented", pr: 293, prUrl: "https://github.com/strands-agents/sdk-python/pull/293", commit: "5a69a12", commitUrl: "https://github.com/strands-agents/sdk-python/commit/5a69a12", author: didier-durand }
+  - { type: other, breaking: false, scope: null, areas: [tool], title: "tools - do not remove $defs", pr: 294, prUrl: "https://github.com/strands-agents/sdk-python/pull/294", commit: "38c4f78", commitUrl: "https://github.com/strands-agents/sdk-python/commit/38c4f78", author: pgrayy }
+  - { type: feat, breaking: false, scope: null, areas: [model], title: "Add reasoning content for openai model provider", pr: 187, prUrl: "https://github.com/strands-agents/sdk-python/pull/187", commit: "2ba7459", commitUrl: "https://github.com/strands-agents/sdk-python/commit/2ba7459", author: xiehust }
+  - { type: chore, breaking: false, scope: null, areas: [], title: "refactor tracer", pr: 286, prUrl: "https://github.com/strands-agents/sdk-python/pull/286", commit: "6a1ccea", commitUrl: "https://github.com/strands-agents/sdk-python/commit/6a1ccea", author: poshinchen }
+  - { type: other, breaking: false, scope: null, areas: [agent], title: "iterative agent", pr: 295, prUrl: "https://github.com/strands-agents/sdk-python/pull/295", commit: "568b097", commitUrl: "https://github.com/strands-agents/sdk-python/commit/568b097", author: pgrayy }
+  - { type: feat, breaking: false, scope: a2a, areas: [a2a], title: "tools as skills", pr: 287, prUrl: "https://github.com/strands-agents/sdk-python/pull/287", commit: "dd8b562", commitUrl: "https://github.com/strands-agents/sdk-python/commit/dd8b562", author: jer96 }
+  - { type: feat, breaking: false, scope: null, areas: [model], title: "Add Mistral model support to strands", pr: 284, prUrl: "https://github.com/strands-agents/sdk-python/pull/284", commit: "3712ace", commitUrl: "https://github.com/strands-agents/sdk-python/commit/3712ace", author: siddhantwaghjale }
+  - { type: fix, breaking: false, scope: null, areas: [], title: "Fix docs warnings", pr: 303, prUrl: "https://github.com/strands-agents/sdk-python/pull/303", commit: "0bd01d6", commitUrl: "https://github.com/strands-agents/sdk-python/commit/0bd01d6", author: Unshure }
+  - { type: other, breaking: false, scope: null, areas: [sessions], title: "Use region from boto3 session when possible", pr: 299, prUrl: "https://github.com/strands-agents/sdk-python/pull/299", commit: "94b99eb", commitUrl: "https://github.com/strands-agents/sdk-python/commit/94b99eb", author: zastrowm }
+  - { type: chore, breaking: false, scope: null, areas: [], title: "update spanKind and attributes for tokens", pr: 296, prUrl: "https://github.com/strands-agents/sdk-python/pull/296", commit: "7f41d79", commitUrl: "https://github.com/strands-agents/sdk-python/commit/7f41d79", author: poshinchen }
+  - { type: fix, breaking: false, scope: null, areas: [model], title: "Migrate Mistral structured_output to an iterator", pr: 305, prUrl: "https://github.com/strands-agents/sdk-python/pull/305", commit: "13d7b81", commitUrl: "https://github.com/strands-agents/sdk-python/commit/13d7b81", author: zastrowm }
+  - { type: feat, breaking: false, scope: null, areas: [], title: "add debug logging for model converse requests", pr: 297, prUrl: "https://github.com/strands-agents/sdk-python/pull/297", commit: "91fd7f1", commitUrl: "https://github.com/strands-agents/sdk-python/commit/91fd7f1", author: RingoIngo2 }
+  - { type: refactor, breaking: false, scope: null, areas: [agent], title: "remove kwargs spread after agent call", pr: 289, prUrl: "https://github.com/strands-agents/sdk-python/pull/289", commit: "a392509", commitUrl: "https://github.com/strands-agents/sdk-python/commit/a392509", author: Unshure }
+  - { type: chore, breaking: false, scope: null, areas: [], title: "allow custom tracer_provider and chain setup", pr: 316, prUrl: "https://github.com/strands-agents/sdk-python/pull/316", commit: "824c21e", commitUrl: "https://github.com/strands-agents/sdk-python/commit/824c21e", author: poshinchen }
+  - { type: feat, breaking: false, scope: null, areas: [], title: "Add reproduction test for #320", pr: 322, prUrl: "https://github.com/strands-agents/sdk-python/pull/322", commit: "66b4aef", commitUrl: "https://github.com/strands-agents/sdk-python/commit/66b4aef", author: zastrowm }
+  - { type: feat, breaking: false, scope: null, areas: [agent], title: "Agent State", pr: 292, prUrl: "https://github.com/strands-agents/sdk-python/pull/292", commit: "bd36b95", commitUrl: "https://github.com/strands-agents/sdk-python/commit/bd36b95", author: Unshure }
+  - { type: other, breaking: false, scope: null, areas: [], title: "stop passing around callback handler", pr: 323, prUrl: "https://github.com/strands-agents/sdk-python/pull/323", commit: "75dbbad", commitUrl: "https://github.com/strands-agents/sdk-python/commit/75dbbad", author: pgrayy }
+  - { type: refactor, breaking: false, scope: null, areas: [], title: "Remove unused code", pr: 326, prUrl: "https://github.com/strands-agents/sdk-python/pull/326", commit: "49461e5", commitUrl: "https://github.com/strands-agents/sdk-python/commit/49461e5", author: Unshure }
+  - { type: chore, breaking: false, scope: null, areas: [], title: "updated semantic conventions on Generative AI spans", pr: 319, prUrl: "https://github.com/strands-agents/sdk-python/pull/319", commit: "f20a405", commitUrl: "https://github.com/strands-agents/sdk-python/commit/f20a405", author: poshinchen }
+  - { type: refactor, breaking: false, scope: null, areas: [agent], title: "Consolidate agent state unit tests", pr: 334, prUrl: "https://github.com/strands-agents/sdk-python/pull/334", commit: "954c492", commitUrl: "https://github.com/strands-agents/sdk-python/commit/954c492", author: Unshure }
+  - { type: other, breaking: false, scope: null, areas: [], title: "Remove FunctionTool as a breaking change", pr: 325, prUrl: "https://github.com/strands-agents/sdk-python/pull/325", commit: "dacdf10", commitUrl: "https://github.com/strands-agents/sdk-python/commit/dacdf10", author: zastrowm }
+  - { type: other, breaking: false, scope: null, areas: [tool], title: "executor - run tools - yield", pr: 328, prUrl: "https://github.com/strands-agents/sdk-python/pull/328", commit: "d601615", commitUrl: "https://github.com/strands-agents/sdk-python/commit/d601615", author: pgrayy }
+newContributors:
+  - { login: siddhantwaghjale, pr: 284 }
+  - { login: RingoIngo2, pr: 297 }
+---

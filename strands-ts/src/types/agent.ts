@@ -192,6 +192,13 @@ export interface InvokeOptions {
 }
 
 /**
+ * The cap names recognized by {@link InvokeOptions.limits}.
+ *
+ * @internal
+ */
+export const LIMITS_KEYS = ['turns', 'outputTokens', 'totalTokens'] as const
+
+/**
  * Interface for agents that support request-response invocation.
  *
  * Both `Agent` (full orchestration agent) and `A2AAgent` (remote agent proxy)
@@ -307,7 +314,7 @@ export interface LocalAgent {
   readonly storage?: Storage | undefined
 
   /**
-   * The resolved context manager instance. Present when a preset or config was provided.
+   * The resolved context manager instance. Present when a preset, config, or instance was provided.
    *
    * @internal
    */

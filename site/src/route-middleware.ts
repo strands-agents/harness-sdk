@@ -1,9 +1,16 @@
 import { defineRouteMiddleware, type StarlightRouteData } from '@astrojs/starlight/route-data'
 import { getCollection } from 'astro:content'
-import { buildPythonApiSidebar, buildTypeScriptApiSidebar, buildCourseSidebar, getPrevNextLinks, type DocInfo } from './dynamic-sidebar'
+import {
+  buildPythonApiSidebar,
+  buildTypeScriptApiSidebar,
+  buildCourseSidebar,
+  getPrevNextLinks,
+  type DocInfo,
+} from './dynamic-sidebar'
 import { pathWithBase } from './util/links'
 import { navLinks, type NavLink } from './config/navbar'
 import { isNew, NEW_BADGE } from './util/new-badge'
+import { buildIntegrationsSidebar } from './util/integrations-sidebar'
 
 type SidebarEntry = StarlightRouteData['sidebar'][number]
 type SidebarGroup = Extract<SidebarEntry, { type: 'group' }>
@@ -43,11 +50,22 @@ export function filterSidebarByBasePath(entries: SidebarEntry[], basePath: strin
   const basePaths = Array.isArray(basePath) ? basePath : [basePath]
 
   const matchesAnyBase = (href: string) => basePaths.some((bp) => href.startsWith(bp))
+  const isExternal = (href: string) => /^https?:\/\//.test(href)
+
+  // Whether this level has any base-path match (directly or in a subgroup).
+  // External links (a project repo, say) never match a docs base path; they ride
+  // along only when a sibling anchors this level, so they can't keep an unrelated
+  // group alive in every section.
+  const hasBaseMatch = (items: SidebarEntry[]): boolean =>
+    items.some((e) =>
+      e.type === 'link' ? matchesAnyBase(e.href) : e.type === 'group' ? hasBaseMatch(e.entries) : false,
+    )
+  const anchored = hasBaseMatch(entries)
 
   const filtered = entries
     .map((entry) => {
       if (entry.type === 'link') {
-        return matchesAnyBase(entry.href) ? entry : null
+        return matchesAnyBase(entry.href) || (anchored && isExternal(entry.href)) ? entry : null
       }
       if (entry.type === 'group') {
         const filteredEntries = filterSidebarByBasePath(entry.entries, basePaths)
@@ -141,10 +159,37 @@ export const onRequest = defineRouteMiddleware(async (context) => {
   const currentPath = context.url.pathname
   const currentSlug = starlightRoute.id
 
+  // "Add Your Integration" renders inside the /integrations catalog rail (its own
+  // browse sidebar) rather than sidebar-less, so it reads as part of that section.
+  if (currentSlug === 'docs/integrations/get-featured') {
+    starlightRoute.sidebar = applyCollapse(await buildIntegrationsSidebar(currentSlug))
+    starlightRoute.pagination = { prev: undefined, next: undefined }
+    return
+  }
+
   // Integration pages hide the sidebar so they render at Starlight's sidebar-less width.
   if (currentSlug === 'docs/integrations' || currentSlug.startsWith('docs/integrations/')) {
     starlightRoute.hasSidebar = false
     starlightRoute.sidebar = []
+    starlightRoute.pagination = { prev: undefined, next: undefined }
+    return
+  }
+
+  // Examples read as a self-contained gallery — hide the sidebar (overview and
+  // every example page) so they render full-width like the integrations page.
+  if (currentSlug === 'docs/examples' || currentSlug.startsWith('docs/examples/')) {
+    starlightRoute.hasSidebar = false
+    starlightRoute.sidebar = []
+    starlightRoute.pagination = { prev: undefined, next: undefined }
+    return
+  }
+
+  // The /integrations/ catalog page supplies its own sidebar: a single group of
+  // type filters. Keep that group intact (skipping the base-path filter that
+  // would otherwise unwrap a lone top-level group into headerless links) so it
+  // renders with a section header and indented items like the product rails.
+  if (currentPath === pathWithBase('/integrations/')) {
+    starlightRoute.sidebar = applyCollapse(sidebar)
     starlightRoute.pagination = { prev: undefined, next: undefined }
     return
   }
@@ -185,9 +230,7 @@ export const onRequest = defineRouteMiddleware(async (context) => {
 
     if (matchedCourse) {
       const docInfos = await loadDocInfos()
-      const lessonIds = (matchedCourse.lessons ?? []).map((lesson) =>
-        lesson.href.replace(/^\/|\/$/g, ''),
-      )
+      const lessonIds = (matchedCourse.lessons ?? []).map((lesson) => lesson.href.replace(/^\/|\/$/g, ''))
 
       const courseSidebar = buildCourseSidebar(docInfos, currentSlug, {
         title: matchedCourse.title,
@@ -215,6 +258,8 @@ export const onRequest = defineRouteMiddleware(async (context) => {
   const bp = currentNav.basePath || currentNav.href
   const allBasePaths = Array.isArray(bp) ? bp : [bp]
 
+  // Otherwise filter it down to the major section that we're in. The scoped
+  // result renders as the left sidebar (Starlight's normal rail).
   const filteredSidebar = filterSidebarByBasePath(sidebar, allBasePaths)
   starlightRoute.sidebar = applyNewBadges(applyCollapse(filteredSidebar), await buildNewPageHrefs(new Date()))
 

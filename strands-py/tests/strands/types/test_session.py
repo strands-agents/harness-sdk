@@ -7,7 +7,7 @@ import pytest
 from strands import Agent
 from strands.agent.conversation_manager.null_conversation_manager import NullConversationManager
 from strands.agent.state import AgentState
-from strands.experimental.bidi import BidiAgent
+from strands.experimental.bidi.agent import BidiAgent
 from strands.interrupt import _InterruptState
 from strands.types.session import (
     Session,

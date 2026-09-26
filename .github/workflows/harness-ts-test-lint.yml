@@ -1,0 +1,44 @@
+name: "Harness TypeScript: Test and Lint"
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+
+jobs:
+  test-lint:
+    name: Test and Lint
+    runs-on: strands-agents_ubuntu-latest_4-core
+    # Build + check runs in ~2 min; 20 min caps a hung step instead of the 6-hour default.
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    # harness-ts installs standalone against the published @strands-agents/sdk (pinned in its own
+    # package-lock.json), NOT the sibling strands-ts source, so it is not a member of the repo-root
+    # npm workspace. Building against the local SDK is tracked as follow-up monorepo work.
+    defaults:
+      run:
+        working-directory: harness-ts
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Lint, format, type-check, and test
+        run: npm run check

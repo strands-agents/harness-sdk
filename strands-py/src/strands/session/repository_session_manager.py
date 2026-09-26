@@ -87,6 +87,9 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
         # Track the previously synced internal state for each agent to detect changes.
         self._last_synced_internal_state: dict[str, dict[str, Any]] = {}
 
+        # Held records per agent, used by redact_latest_message to find alias records.
+        self._held_records: dict[str, list[SessionMessage]] = {}
+
     def append_message(self, message: Message, agent: "LocalAgent", **kwargs: Any) -> None:
         """Append a message to the agent's session.
 
@@ -105,6 +108,7 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
         session_message = SessionMessage.from_message(message, next_index)
         self._latest_agent_message[agent.agent_id] = session_message
         self.session_repository.create_message(self.session_id, agent.agent_id, session_message)
+        self._held_records.setdefault(agent.agent_id, []).append(session_message)
 
     def redact_latest_message(self, redact_message: Message, agent: "LocalAgent", **kwargs: Any) -> None:
         """Redact the latest message appended to the session.
@@ -118,7 +122,12 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
         if latest_agent_message is None:
             raise SessionException("No message to redact.")
         latest_agent_message.redact_message = redact_message
-        return self.session_repository.update_message(self.session_id, agent.agent_id, latest_agent_message)
+        self.session_repository.update_message(self.session_id, agent.agent_id, latest_agent_message)
+
+        # A retried prompt may have stored the same dict in an earlier record; rewrite those too.
+        for r in self._held_records.get(agent.agent_id, []):
+            if r is not latest_agent_message and r.to_message() is redact_message:
+                self.session_repository.update_message(self.session_id, agent.agent_id, r)
 
     def sync_agent(self, agent: "LocalAgent", **kwargs: Any) -> None:
         """Serialize and update the agent into the session repository.
@@ -133,6 +142,8 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
         from ..agent.agent import Agent
 
         if not isinstance(agent, Agent):
+            # Prune held records so tracking state stays bounded for long-lived BidiAgent sessions.
+            self._prune_held_records(agent)
             self.session_repository.update_agent(self.session_id, SessionAgent.from_agent(agent))
             return
 
@@ -141,6 +152,9 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
         current_interrupt_state_version = agent._interrupt_state._get_version()
         current_conversation_manager_state = agent.conversation_manager.get_state()
         current_model_state = agent._model_state
+
+        # Prune held records so tracking state stays bounded.
+        self._prune_held_records(agent)
 
         # Check if we have a previous state to compare against
         last_synced = self._last_synced_internal_state.get(agent.agent_id)
@@ -192,6 +206,20 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
             "model_state": copy.deepcopy(current_model_state),
         }
 
+    def _prune_held_records(self, agent: "LocalAgent") -> None:
+        """Drop held records whose message is no longer in ``agent.messages``.
+
+        A record is held while its message (matched by tracking id, or by identity for messages
+        without one) is in ``agent.messages``.
+        """
+        held_ids = {message.get("tracking_id") for message in agent.messages} - {None}
+        held_objects = {id(message) for message in agent.messages}
+        self._held_records[agent.agent_id] = [
+            record
+            for record in self._held_records.get(agent.agent_id, [])
+            if record.to_message().get("tracking_id") in held_ids or id(record.to_message()) in held_objects
+        ]
+
     def initialize(self, agent: "LocalAgent", **kwargs: Any) -> None:
         """Initialize an agent with a session.
 
@@ -233,9 +261,11 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
             self.session_repository.create_agent(self.session_id, session_agent)
             # Initialize messages with sequential indices
             session_message = None
+            self._held_records[agent.agent_id] = []
             for i, message in enumerate(agent.messages):
                 session_message = SessionMessage.from_message(message, i)
                 self.session_repository.create_message(self.session_id, agent.agent_id, session_message)
+                self._held_records[agent.agent_id].append(session_message)
             self._latest_agent_message[agent.agent_id] = session_message
         else:
             logger.debug(
@@ -280,6 +310,7 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
                 agent_id=agent.agent_id,
                 offset=pinned_head_count + offset,
             )
+            self._held_records[agent.agent_id] = list(session_messages)
 
             # When the tail comes back empty but the store is not, seed the append cursor from the
             # last stored message so appending never restarts at 0 on a non-empty store.

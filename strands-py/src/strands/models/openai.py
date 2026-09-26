@@ -94,10 +94,12 @@ class OpenAIModel(Model):
                 May be combined with ``bedrock_mantle_config``; when both are set,
                 ``bedrock_mantle_config`` derives ``base_url`` and ``api_key`` (which must not
                 appear in ``client_args``).
-            bedrock_mantle_config: Route requests through Amazon Bedrock's Mantle
-                (OpenAI-compatible) endpoint. See :class:`BedrockMantleConfig` for accepted
-                keys. When set, a fresh bearer token is minted on every request. Cannot be
-                combined with a pre-built ``client``.
+            bedrock_mantle_config: Route requests through one of Amazon Bedrock's
+                OpenAI-compatible endpoints, ``bedrock-mantle`` (the default) or
+                ``bedrock-runtime`` via the config's ``endpoint`` key. See
+                :class:`BedrockMantleConfig` for accepted keys. When set, a fresh bearer
+                token is minted on every request. Cannot be combined with a pre-built
+                ``client``.
             **model_config: Configuration options for the OpenAI model.
 
         Raises:
@@ -606,6 +608,13 @@ class OpenAIModel(Model):
                 if tokens_details := getattr(event["data"], "prompt_tokens_details", None):
                     if cached := getattr(tokens_details, "cached_tokens", None):
                         usage_data["cacheReadInputTokens"] = cached
+
+                    # Reported first-party from GPT-5.6, where cache writes are billed at 1.25x the
+                    # uncached input rate. Dropping it leaves cacheWriteInputTokens structurally absent,
+                    # so the write premium is invisible to any cost consumer.
+                    cache_write = getattr(tokens_details, "cache_write_tokens", None)
+                    if isinstance(cache_write, int) and cache_write:
+                        usage_data["cacheWriteInputTokens"] = cache_write
 
                 return {
                     "metadata": {

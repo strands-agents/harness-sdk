@@ -3,23 +3,26 @@
 import asyncio
 import sys
 import unittest.mock
+from contextlib import nullcontext
 from uuid import uuid4
 
 import pytest
 
 from strands import LocalAgent, ToolContext, tool
-from strands.experimental.bidi.agent.agent import BidiAgent
-from strands.experimental.bidi.models.model import BidiModel
-from strands.experimental.bidi.types.events import (
-    BidiAudioInputEvent,
-    BidiAudioStreamEvent,
-    BidiConnectionCloseEvent,
+from strands.experimental.bidi.agent import BidiAgent
+from strands.experimental.bidi.models import BidiModel
+from strands.experimental.bidi.types import (
+    AudioDelta,
+    BidiAudioDeltaEvent,
     BidiConnectionStartEvent,
-    BidiTextInputEvent,
-    BidiTranscriptStreamEvent,
+    BidiConnectionStopEvent,
+    BidiMessage,
+    BidiTranscriptDeltaEvent,
 )
-from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent
-from strands.types.content import SystemContentBlock
+from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent, MessageAddedEvent, MessageUpdatedEvent
+from strands.types.content import SystemContentBlock, TextBlock
+from strands.types.media import AudioBlock, ImageBlock
+from tests.fixtures.mock_hook_provider import MockHookProvider
 
 
 class MockBidiModel(BidiModel):
@@ -72,7 +75,7 @@ class MockBidiModel(BidiModel):
             yield event
 
         # Yield connection end event
-        yield BidiConnectionCloseEvent(connection_id=self._connection_id, reason="complete")
+        yield BidiConnectionStopEvent(connection_id=self._connection_id, reason="complete")
 
     def set_events(self, events):
         """Helper to set events this mock model will yield."""
@@ -282,19 +285,21 @@ def test_bidi_agent_session_id_delegates_to_session_manager(mock_model):
 
 
 @pytest.mark.skipif(sys.version_info < (3, 12), reason="BedrockNovaSonicModel is only supported for Python 3.12+")
-def test_bidi_agent_init_with_default_model():
-    from strands.experimental.bidi.models.bedrock import BedrockNovaSonicModel
+@pytest.mark.parametrize("options", [{}, {"model": None}])
+def test_bidi_agent_init_with_default_model(options):
+    from strands.experimental.bidi.models import BedrockNovaSonicModel
 
-    agent = BidiAgent(model=None)
+    agent = BidiAgent(**options)
 
     assert isinstance(agent.model, BedrockNovaSonicModel)
+    assert agent.model.model_id == "amazon.nova-2-sonic-v1:0"
 
 
 @pytest.mark.skipif(sys.version_info < (3, 12), reason="BedrockNovaSonicModel is only supported for Python 3.12+")
 def test_bidi_agent_init_with_model_id():
-    from strands.experimental.bidi.models.bedrock import BedrockNovaSonicModel
+    from strands.experimental.bidi.models import BedrockNovaSonicModel
 
-    model_id = "amazon.nova-sonic-v1:0"
+    model_id = "custom-model"
     agent = BidiAgent(model=model_id)
 
     assert isinstance(agent.model, BedrockNovaSonicModel)
@@ -334,35 +339,185 @@ async def test_bidi_agent_start_stop_lifecycle(agent):
 
 
 @pytest.mark.asyncio
-async def test_bidi_agent_send_with_input_types(agent):
-    """Test sending various input types through agent.send()."""
+@pytest.mark.parametrize("as_list", [False, True], ids=["single", "list"])
+@pytest.mark.parametrize("input_data", ["Hello", {"text": "Hello"}], ids=["string", "dictionary"])
+async def test_send_normalizes_text(agent, input_data, as_list):
+    """Text inputs become text blocks and user messages."""
     await agent.start()
+    agent.model.send = unittest.mock.AsyncMock()
 
-    # Test text input with TypedEvent
-    text_input = BidiTextInputEvent(text="Hello", role="user")
-    await agent.send(text_input)
-    assert len(agent.messages) == 1
-    assert agent.messages[0]["content"][0]["text"] == "Hello"
+    await agent.send([input_data] if as_list else input_data)
 
-    # Test string input (shorthand)
-    await agent.send("World")
-    assert len(agent.messages) == 2
-    assert agent.messages[1]["content"][0]["text"] == "World"
+    agent.model.send.assert_awaited_once_with(BidiMessage(content=[TextBlock("Hello")]))
+    tru_messages = agent.messages
+    exp_messages = [{"role": "user", "content": [{"text": "Hello"}], "tracking_id": unittest.mock.ANY}]
+    assert tru_messages == exp_messages
 
-    # Test audio input (doesn't add to messages)
-    audio_input = BidiAudioInputEvent(
-        audio="dGVzdA==",  # base64 "test"
-        format="pcm",
-        sample_rate=16000,
-        channels=1,
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("content_key", "content_type", "media_format"),
+    [("audio_delta", AudioDelta, "pcm"), ("image", ImageBlock, "jpeg")],
+    ids=["audio", "image"],
+)
+async def test_send_normalizes_media(agent, content_key, content_type, media_format):
+    """Media dictionaries retain their source, and complete blocks enter history."""
+    await agent.start()
+    agent.model.send = unittest.mock.AsyncMock()
+    source = {"bytes": b"\x00\xff"}
+
+    content_data = {content_key: {"format": media_format, "source": source}}
+    exp_content = content_type(format=media_format, source=source)
+    assert exp_content.to_dict() == content_data
+
+    await agent.send(content_data)
+
+    agent.model.send.assert_awaited_once_with(
+        BidiMessage(content=[exp_content]) if content_key == "image" else exp_content
     )
-    await agent.send(audio_input)
-    assert len(agent.messages) == 2  # Still 2, audio doesn't add
+    sent_content = agent.model.send.await_args.args[0]
+    assert (sent_content.content[0] if content_key == "image" else sent_content).source is source
+    exp_messages = (
+        [{"role": "user", "content": [content_data], "tracking_id": unittest.mock.ANY}]
+        if content_key == "image"
+        else []
+    )
+    assert agent.messages == exp_messages
 
-    # Test concurrent sends
-    sends = [agent.send(BidiTextInputEvent(text=f"Message {i}", role="user")) for i in range(3)]
-    await asyncio.gather(*sends)
-    assert len(agent.messages) == 5  # 2 + 3 new messages
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "content",
+    [
+        TextBlock("Hello"),
+        AudioDelta(format="pcm", source={"bytes": b"audio"}),
+        ImageBlock(format="jpeg", source={"bytes": b"image"}),
+    ],
+    ids=["text", "audio", "image"],
+)
+async def test_send_preserves_input_identity(agent, content):
+    """Input objects are passed through by reference."""
+    await agent.start()
+    agent.model.send = unittest.mock.AsyncMock()
+
+    await agent.send(content)
+
+    agent.model.send.assert_awaited_once_with(
+        content if isinstance(content, AudioDelta) else BidiMessage(content=[content])
+    )
+    sent_content = agent.model.send.await_args.args[0]
+    assert (sent_content if isinstance(content, AudioDelta) else sent_content.content[0]) is content
+
+
+@pytest.mark.asyncio
+async def test_send_concurrent_text(agent):
+    """Concurrent sends each reach the model and add one user message."""
+    await agent.start()
+    agent.model.send = unittest.mock.AsyncMock()
+    texts = ["Hello", "World", "Again"]
+
+    await asyncio.gather(*(agent.send({"text": text}) for text in texts))
+
+    tru_calls = agent.model.send.await_args_list
+    exp_calls = [unittest.mock.call(BidiMessage(content=[TextBlock(text)])) for text in texts]
+    assert tru_calls == exp_calls
+    tru_messages = agent.messages
+    exp_messages = [{"role": "user", "content": [{"text": text}], "tracking_id": unittest.mock.ANY} for text in texts]
+    assert tru_messages == exp_messages
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "image",
+    [
+        ImageBlock(format="jpeg", source={"bytes": b"image"}),
+        {"image": {"format": "jpeg", "source": {"bytes": b"image"}}},
+    ],
+    ids=["block", "dictionary"],
+)
+async def test_send_list_preserves_order_and_history(agent, image):
+    """Grouped blocks form one model call, history entry, and message hook."""
+    inputs = [image, {"text": "Describe this image"}, "Thanks"]
+    hooks = MockHookProvider([MessageAddedEvent])
+    agent.hooks.add_hook(hooks)
+
+    agent.model.send = unittest.mock.AsyncMock()
+    async with agent:
+        await agent.send(inputs)
+
+    exp_contents = [
+        ImageBlock(format="jpeg", source={"bytes": b"image"}),
+        TextBlock("Describe this image"),
+        TextBlock("Thanks"),
+    ]
+    agent.model.send.assert_awaited_once_with(BidiMessage(content=exp_contents))
+    tru_messages = agent.messages
+    exp_messages = [
+        {"role": "user", "content": [content.to_dict() for content in exp_contents], "tracking_id": unittest.mock.ANY}
+    ]
+    assert tru_messages == exp_messages
+    assert [event.message for event in hooks.events_received] == exp_messages
+    assert inputs == [image, {"text": "Describe this image"}, "Thanks"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("input_data", "error_type"),
+    [
+        (None, TypeError),
+        (123, TypeError),
+        ([], ValueError),
+        (BidiMessage(content=[TextBlock("Hello")]), TypeError),
+        ([TextBlock("Hello"), BidiMessage(content=[TextBlock("Hello")])], TypeError),
+        ([TextBlock("Hello"), [TextBlock("Nested")]], TypeError),
+        ([TextBlock("Hello"), AudioDelta(format="pcm", source={"bytes": b"audio"})], TypeError),
+        ([TextBlock("Hello"), {"audio_delta": {"format": "pcm", "source": {"bytes": b"audio"}}}], ValueError),
+        (AudioBlock(format="pcm", source={"bytes": b"audio"}), TypeError),
+        ({"audio": {"format": "pcm", "source": {"bytes": b"audio"}}}, ValueError),
+        ({"format": "pcm", "source": {"bytes": b"audio"}}, ValueError),
+        ({"format": "jpeg", "source": {"bytes": b"image"}}, ValueError),
+        ({"audio_delta": None}, TypeError),
+        ({"image": b"image"}, TypeError),
+        ({}, ValueError),
+        ({"document": {"format": "txt", "name": "test", "source": {"bytes": b"test"}}}, ValueError),
+        ({"text": "Hello", "image": {"format": "jpeg", "source": {"bytes": b"image"}}}, ValueError),
+        ({"audio_delta": {"format": "pcm"}}, TypeError),
+        ({"audio_delta": {"format": "pcm", "source": {"bytes": b"audio"}, "extra": True}}, TypeError),
+        ({"image": {"format": "jpeg"}}, TypeError),
+        ({"image": {"format": "jpeg", "source": {"bytes": b"image"}, "extra": True}}, TypeError),
+    ],
+)
+async def test_send_rejects_invalid_input(agent, input_data, error_type):
+    """Invalid input types and malformed content fail before reaching the model."""
+    await agent.start()
+    agent.model.send = unittest.mock.AsyncMock()
+
+    with pytest.raises(error_type):
+        await agent.send(input_data)
+
+    agent.model.send.assert_not_awaited()
+    assert agent.messages == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "input_data",
+    [
+        {"audio_delta": {"format": "pcm", "source": {"bytes": b"audio"}}},
+        [TextBlock("First"), TextBlock("Second")],
+    ],
+    ids=["audio-delta", "block-list"],
+)
+async def test_send_preserves_model_type_error(agent, input_data):
+    """Model errors pass through without being reclassified as invalid input."""
+    await agent.start()
+    error = TypeError("model failure")
+    agent.model.send = unittest.mock.AsyncMock(side_effect=error)
+
+    with pytest.raises(TypeError) as exc_info:
+        await agent.send(input_data)
+
+    assert exc_info.value is error
 
 
 @pytest.mark.asyncio
@@ -370,8 +525,8 @@ async def test_bidi_agent_receive_events_from_model(agent):
     """Test receiving events from model."""
     # Configure mock model to yield events
     events = [
-        BidiAudioStreamEvent(audio="dGVzdA==", format="pcm", sample_rate=24000, channels=1),
-        BidiTranscriptStreamEvent(delta="Hello world", role="assistant"),
+        BidiAudioDeltaEvent(audio="dGVzdA==", format="pcm", sample_rate=24000, channels=1),
+        BidiTranscriptDeltaEvent(delta="Hello world", role="assistant", content_id="assistant-transcript"),
     ]
     agent.model.set_events(events)
 
@@ -386,8 +541,8 @@ async def test_bidi_agent_receive_events_from_model(agent):
     # Verify event types and order
     assert len(received_events) >= 3
     assert isinstance(received_events[0], BidiConnectionStartEvent)
-    assert isinstance(received_events[1], BidiAudioStreamEvent)
-    assert isinstance(received_events[2], BidiTranscriptStreamEvent)
+    assert isinstance(received_events[1], BidiAudioDeltaEvent)
+    assert isinstance(received_events[2], BidiTranscriptDeltaEvent)
 
     # Test empty events
     agent.model.set_events([])
@@ -426,7 +581,7 @@ async def test_bidi_agent_send_receive_error_before_start(agent):
     """Test error handling in various scenarios."""
     # Test send before start
     with pytest.raises(RuntimeError, match="call start before"):
-        await agent.send(BidiTextInputEvent(text="Hello", role="user"))
+        await agent.send({"text": "Hello"})
 
     # Test receive before start
     with pytest.raises(RuntimeError, match="call start before"):
@@ -437,7 +592,7 @@ async def test_bidi_agent_send_receive_error_before_start(agent):
     await agent.start()
     await agent.stop()
     with pytest.raises(RuntimeError, match="call start before"):
-        await agent.send(BidiTextInputEvent(text="Hello", role="user"))
+        await agent.send({"text": "Hello"})
 
     # Test receive after stop
     with pytest.raises(RuntimeError, match="call start before"):
@@ -485,7 +640,7 @@ async def test_bidi_agent_state_consistency(agent):
     connection_id = agent.model._connection_id
 
     # Send operations shouldn't change connection state
-    await agent.send(BidiTextInputEvent(text="Hello", role="user"))
+    await agent.send({"text": "Hello"})
     assert agent._started
     assert agent.model._connection_id == connection_id
 
@@ -493,3 +648,43 @@ async def test_bidi_agent_state_consistency(agent):
     await agent.stop()
     assert not agent._started
     assert agent.model._connection_id is None
+
+
+@pytest.mark.asyncio
+async def test_update_message_finds_copied_message_after_history_edit(agent):
+    hooks = MockHookProvider([MessageUpdatedEvent])
+    agent.hooks.add_hook(hooks)
+    first = {"role": "user", "content": [{"text": "Earlier"}]}
+    reserved = {"role": "assistant", "content": []}
+    await agent._append_messages(first, reserved)
+    tracking_id = reserved["tracking_id"]
+    replacement = {**reserved, "content": [{"text": "Answer"}]}
+    agent.messages[:] = [reserved.copy()]
+
+    await agent._update_message(replacement)
+
+    assert agent.messages == [replacement]
+    assert hooks.events_received == [MessageUpdatedEvent(agent, tracking_id, replacement)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("strict", [False, True])
+async def test_update_message_when_message_removed(agent, caplog, strict):
+    hooks = MockHookProvider([MessageUpdatedEvent])
+    agent.hooks.add_hook(hooks)
+    first = {"role": "user", "content": [{"text": "Earlier"}]}
+    reserved = {"role": "assistant", "content": []}
+    await agent._append_messages(first, reserved)
+    tracking_id = reserved["tracking_id"]
+    agent.messages.remove(reserved)
+
+    with pytest.raises(RuntimeError) if strict else nullcontext() as exc_info:
+        await agent._update_message({**reserved, "content": [{"text": "Answer"}]}, strict=strict)
+
+    exp_message = f"tracking_id=<{tracking_id}> | message not found in history"
+    if strict:
+        assert str(exc_info.value) == exp_message
+    else:
+        assert caplog.messages == [exp_message]
+    assert agent.messages == [first]
+    assert hooks.events_received == []

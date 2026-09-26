@@ -36,9 +36,11 @@ export type ContextManagerPreset = (typeof CONTEXT_MANAGER_PRESETS)[number]
  * - `"auto"`: Managed context with proactive compression + offloading.
  * - `"agentic"`: Model-driven context management via injected tools.
  * - {@link ContextManagerConfig}: Custom strategy pipeline and stash configuration.
+ * - {@link ContextManager}: A pre-built instance, used as-is. An instance binds to one agent;
+ *   construct one per `Agent`.
  * - `false`: Explicitly disable all context management (no compression, no offloading).
  */
-export type ContextManagerStrategy = ContextManagerPreset | ContextManagerConfig | false
+export type ContextManagerStrategy = ContextManagerPreset | ContextManagerConfig | ContextManager | false
 
 /**
  * Manages context reduction for an agent's conversation.
@@ -48,8 +50,8 @@ export type ContextManagerStrategy = ContextManagerPreset | ContextManagerConfig
  * utilization and only fires if the window is still overflowing after user strategies.
  *
  * Configured through the Agent's `contextManager` parameter — pass a preset
- * string (`'auto'`, `'agentic'`) or a `ContextManagerConfig`; the Agent
- * constructs and registers the manager. When present, it owns overflow
+ * string (`'auto'`, `'agentic'`), a `ContextManagerConfig`, or a `ContextManager`
+ * instance; the Agent registers the manager. When present, it owns overflow
  * recovery and proactive compression — no separate ConversationManager is needed.
  *
  * @experimental
@@ -84,11 +86,12 @@ export class ContextManager implements Plugin {
   /**
    * Resolves a `ContextManagerStrategy` value into a `ContextManager` instance.
    *
-   * @param strategy - A preset string, config object, false, or undefined
-   * @returns A ContextManager for preset strings and configs; undefined for false/undefined
+   * @param strategy - A preset string, config object, ContextManager instance, false, or undefined
+   * @returns The instance as-is; a new ContextManager for preset strings and configs; undefined for false/undefined
    */
   static from(strategy: ContextManagerStrategy | undefined): ContextManager | undefined {
     if (strategy === false || strategy === undefined) return undefined
+    if (strategy instanceof ContextManager) return strategy
     if (strategy === 'auto') {
       return new ContextManager()
     }

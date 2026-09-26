@@ -21,7 +21,7 @@
 - id: belle-guttman
   name: Belle Guttman
   role: "Engineering Leader, AWS"
-  bio: Belle Guttman leads the Agentic AI Engineering teams at AWS responsible for the Strands SDK and agentic chat in Q Developer products.
+  bio: Belle Guttman leads the Agentic AI Engineering teams at AWS responsible for the Strands Harness SDK and agentic chat in Q Developer products.
 
 - id: clare-liguori
   name: Clare Liguori
@@ -46,7 +46,7 @@
 - id: nicholas-clegg
   name: Nicholas Clegg
   role: "Senior Software Engineer, AWS Agentic AI"
-  bio: Nick is a Senior Software Engineer at AWS Agentic AI, developing the Strands Agents SDK. He combines his experience building agentic coding products with a focus on empowering developers to create the next generation of AI agent applications.
+  bio: Nick is a Senior Software Engineer at AWS Agentic AI, developing the Strands Harness SDK. He combines his experience building agentic coding products with a focus on empowering developers to create the next generation of AI agent applications.
 
 - id: jawhny-cooke
   name: Jawhny Cooke
@@ -66,12 +66,12 @@
 - id: albert-zhao
   name: Albert Zhao
   role: "Developer Experience Engineer, AWS"
-  bio: Albert Zhao is a DX Engineer at AWS focused on agentic AI, robotics, and developer experience.
+  bio: Albert Zhao is a DX Engineer at AWS focused on the Strands Harness SDK, robotics, and developer experience.
 
 - id: strands-team
   name: Strands Agents Team
   role: Core Team
-  bio: The team behind the Strands Agents SDK.
+  bio: The team behind the Strands Harness SDK.
 
 - id: cagatay-cali
   name: Cagatay Cali
@@ -91,7 +91,7 @@
 - id: pgrayy
   name: Patrick Gray
   role: "Software Engineer, AWS Agentic AI"
-  bio: Patrick is a Software Engineer at AWS Agentic AI working on the Strands Agents SDK.
+  bio: Patrick is a Senior Software Engineer at AWS Agentic AI working on the Strands Harness SDK.
 
 - id: ishan-singh
   name: Ishan Singh
@@ -201,4 +201,19 @@
 - id: ramon-li
   name: Ramon Li
   role: "Software Engineer, AWS"
-  bio: Ramon Li is a Software Engineer at AWS working on the Strands Agents SDK.
+  bio: Ramon Li is a Software Engineer at AWS working on the Strands Harness SDK.
+
+- id: ariel-nabavian
+  name: Ariel Nabavian
+  role: "Software Engineer, AWS Agentic AI"
+  bio: Ariel is a software engineer at AWS Agentic AI working on the Strands Harness SDK.
+
+- id: murat-kaan-meral
+  name: Murat Kaan Meral
+  role: "Software Engineer, AWS Agentic AI"
+  bio: Murat is a software engineer at AWS Agentic AI working on the Strands Harness SDK.
+
+- id: gautam-sirdeshmukh
+  name: Gautam Sirdeshmukh
+  role: "Software Engineer, AWS Agentic AI"
+  bio: Gautam is a software engineer at AWS Agentic AI working on the Strands Harness SDK.

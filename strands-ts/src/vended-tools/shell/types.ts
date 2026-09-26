@@ -19,9 +19,13 @@ export const SANDBOX_SHELL_DESCRIPTION =
  * type keep working; new code should catch this instead.
  */
 export class ShellTimeoutError extends BashTimeoutError {
-  constructor(message: string) {
+  /** Output captured before the command was killed, when the sandbox reported it. */
+  readonly partial?: ShellOutput
+
+  constructor(message: string, partial?: ShellOutput) {
     super(message)
     this.name = 'ShellTimeoutError'
+    if (partial) this.partial = partial
   }
 }
 

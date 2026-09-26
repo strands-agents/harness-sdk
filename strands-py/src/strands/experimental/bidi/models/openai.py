@@ -5,6 +5,7 @@ with WebSocket connections, voice activity detection, and function calling.
 """
 
 import asyncio
+import base64
 import copy
 import json
 import logging
@@ -12,44 +13,47 @@ import os
 import time
 import uuid
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 import websockets
 from typing_extensions import Unpack, override
 from websockets import ClientConnection
 
-from ....types._events import ToolResultEvent, ToolUseStreamEvent
-from ....types.content import Messages
-from ....types.tools import ToolResult, ToolSpec, ToolUse
+from ....types._events import ToolUseStreamEvent
+from ....types.content import Messages, TextBlock
+from ....types.media import ImageBlock
+from ....types.tools import ToolResultBlock, ToolSpec, ToolUse
 from .._async import stop_all
+from ..types.content import BidiContentDelta, BidiMessage
 from ..types.events import (
-    AudioSampleRate,
-    BidiAudioInputEvent,
-    BidiAudioStreamEvent,
+    BidiAudioDeltaEvent,
+    BidiAudioStartEvent,
+    BidiAudioStopEvent,
+    BidiBargeInEvent,
     BidiConnectionStartEvent,
-    BidiImageInputEvent,
-    BidiInputEvent,
-    BidiInterruptionEvent,
     BidiOutputEvent,
-    BidiResponseCompleteEvent,
     BidiResponseStartEvent,
-    BidiTextInputEvent,
-    BidiTranscriptCompleteEvent,
-    BidiTranscriptStreamEvent,
+    BidiResponseStopEvent,
+    BidiTranscriptDeltaEvent,
+    BidiTranscriptStartEvent,
+    BidiTranscriptStopEvent,
     BidiUsageEvent,
     ModalityUsage,
     Role,
-    StopReason,
 )
+from ..types.media import AudioDelta
 from .configs import (
     AudioConfig,
-    BidiConnectionConfig,
-    BidiModelConfig,
+    AudioStreamConfig,
+    ConnectionConfig,
+    ModelConfig,
+    ModelUpdateConfig,
     _merge_config,
     _validate_audio_config,
     _validate_model_config,
 )
-from .model import AudioCapable, BidiModel, BidiModelTimeoutError
+from .model import AudioCapable, BidiModel, ConnectionTimeoutError
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +73,6 @@ handle the connection closure. We set the max to 50 minutes to provide enough bu
 # the reactive timeout firing at the same instant.
 OPENAI_PROACTIVE_RECONNECT_MARGIN_S = 300
 OPENAI_REALTIME_URL = "wss://api.openai.com/v1/realtime"
-DEFAULT_MODEL = "gpt-realtime"
 DEFAULT_SAMPLE_RATE = 24000
 
 DEFAULT_SESSION_CONFIG = {
@@ -79,7 +82,6 @@ DEFAULT_SESSION_CONFIG = {
     "audio": {
         "input": {
             "format": {"type": "audio/pcm", "rate": DEFAULT_SAMPLE_RATE},
-            "transcription": {"model": "gpt-4o-transcribe"},
             "turn_detection": {
                 "type": "server_vad",
                 "threshold": 0.5,
@@ -87,7 +89,7 @@ DEFAULT_SESSION_CONFIG = {
                 "silence_duration_ms": 500,
             },
         },
-        "output": {"format": {"type": "audio/pcm", "rate": DEFAULT_SAMPLE_RATE}, "voice": "alloy"},
+        "output": {"format": {"type": "audio/pcm", "rate": DEFAULT_SAMPLE_RATE}},
     },
 }
 
@@ -98,6 +100,49 @@ _RESTART_INSTRUCTION = (
     "The connection was re-established mid-conversation. Continue seamlessly from the prior "
     "context: do not greet or re-introduce yourself, and keep replying in the language already in use."
 )
+
+
+@dataclass
+class _SessionState:
+    """Connection-local transcript identities and response creation state."""
+
+    started_transcripts: set[str] = field(default_factory=set)
+    assistant_parts: dict[str, tuple[str, int]] = field(default_factory=dict)
+    audio_responses: set[str | None] = field(default_factory=set)
+    active_responses: set[str] = field(default_factory=set)
+    pending_tools: set[str] = field(default_factory=set)
+    response_pending: bool = False
+    response_requested: bool = False
+    transcription_enabled: bool = True
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    def start_audio(self, response_id: str | None) -> list[BidiOutputEvent]:
+        """Open an audio stream before its first chunk."""
+        if response_id in self.audio_responses:
+            return []
+        self.audio_responses.add(response_id)
+        return [BidiAudioStartEvent()]
+
+    def stop_audio(self, response_id: str | None) -> list[BidiOutputEvent]:
+        """Close an open audio stream once."""
+        if response_id not in self.audio_responses:
+            return []
+        self.audio_responses.remove(response_id)
+        return [BidiAudioStopEvent()]
+
+    def start_transcript(self, role: Role, content_id: str) -> list[BidiOutputEvent]:
+        """Open a transcript once, when speech or its first text arrives."""
+        if content_id in self.started_transcripts:
+            return []
+        self.started_transcripts.add(content_id)
+        return [BidiTranscriptStartEvent(role, content_id=content_id)]
+
+    def transcript_events(self, event: BidiTranscriptDeltaEvent | BidiTranscriptStopEvent) -> list[BidiOutputEvent]:
+        """Ensure the transcript starts before emitting its delta or stop."""
+        events = [*self.start_transcript(event.role, event.content_id), event]
+        if isinstance(event, BidiTranscriptStopEvent):
+            self.started_transcripts.remove(event.content_id)
+        return events
 
 
 class OpenAIRealtimeModel(BidiModel, AudioCapable):
@@ -114,30 +159,37 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
     def __init__(
         self,
         *,
+        transcription_model_id: str | None,
         api_key: str | None = None,
         organization: str | None = None,
         project: str | None = None,
         timeout_s: int = OPENAI_MAX_TIMEOUT_S,
-        audio: AudioConfig | None = None,
-        **model_config: Unpack[BidiModelConfig],
+        voice: str = "alloy",
+        **model_config: Unpack[ModelConfig],
     ) -> None:
         """Initialize OpenAI Realtime bidirectional model.
 
         Args:
+            transcription_model_id: Input transcription model identifier. Pass ``None`` to disable user transcription.
             api_key: OpenAI API key. Defaults to ``OPENAI_API_KEY``.
             organization: OpenAI organization. Defaults to ``OPENAI_ORGANIZATION``.
             project: OpenAI project. Defaults to ``OPENAI_PROJECT``.
             timeout_s: Maximum connection duration in seconds.
-            audio: Audio configuration.
+            voice: Output voice identifier. Defaults to ``alloy``.
             **model_config: Model configuration.
 
         Raises:
-            ValueError: If the API key is missing or ``timeout_s`` exceeds the maximum.
+            ValueError: If any of the following conditions apply:
+
+                - Required model configuration fields are missing.
+                - ``model_id`` is not a non-empty string.
+                - The API key is missing.
+                - ``timeout_s`` exceeds the maximum.
+                - The configured audio formats are unsupported.
         """
         _validate_model_config(model_config)
-        _validate_audio_config(audio)
-        self._config = BidiModelConfig(**model_config)
-        self._config.setdefault("model_id", DEFAULT_MODEL)
+        self._config = ModelConfig(**model_config)
+        self._config["params"] = dict(self._config.get("params") or {})
 
         # OpenAI reports per-response token usage on response.done, not cumulative session totals.
         self.usage_is_cumulative = False
@@ -159,44 +211,46 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         # OpenAI emits no approaching-limit warning, so reconnect proactively a margin below the
         # reader's reactive timeout: the swap can then align to a turn boundary before the reactive
         # path fires. Deriving from timeout_s keeps that headroom when a caller lowers it.
-        self._config["connection"] = BidiConnectionConfig(
+        self._config["connection"] = ConnectionConfig(
             **{
                 "restart_after_s": timeout_s - OPENAI_PROACTIVE_RECONNECT_MARGIN_S,
                 **self._config.get("connection", {}),
             }
         )
 
-        self._audio_config = AudioConfig(
-            **{
-                "input_rate": cast(AudioSampleRate, DEFAULT_SAMPLE_RATE),
-                "output_rate": cast(AudioSampleRate, DEFAULT_SAMPLE_RATE),
-                "channels": 1,
-                "format": "pcm",
-                "voice": "alloy",
-                **(audio or {}),
-            }
-        )
-        self._config["params"] = dict(self._config.get("params") or {})
+        self._transcription_model_id = transcription_model_id
+        self._voice = voice
+        self._resolve_audio_config(self._config.get("params"))
 
         # Connection state (initialized in start())
         self._connection_id: str | None = None
 
         self._function_call_buffer: dict[str, Any] = {}
+        self._session_state = _SessionState()
 
         logger.debug("model=<%s> | openai realtime model initialized", self._config["model_id"])
 
     @override
-    def update_config(self, **model_config: Unpack[BidiModelConfig]) -> None:  # type: ignore[override]
+    def update_config(self, **model_config: Unpack[ModelUpdateConfig]) -> None:  # type: ignore[override]
         """Update the model configuration with the provided arguments.
 
         Args:
             **model_config: Configuration overrides.
+
+        Raises:
+            ValueError: If any of the following conditions apply:
+
+                - The resulting configuration is missing required fields.
+                - ``model_id`` is not a non-empty string.
+                - The configured audio formats are unsupported.
         """
-        _validate_model_config(model_config)
+        _validate_model_config(self._config | model_config)
+        if "params" in model_config:
+            self._resolve_audio_config(model_config["params"])
         self._config.update(model_config)
 
     @override
-    def get_config(self) -> BidiModelConfig:
+    def get_config(self) -> ModelConfig:
         """Return the model configuration by reference."""
         return self._config
 
@@ -204,6 +258,27 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
     def get_audio_config(self) -> AudioConfig:
         """Get the resolved audio configuration."""
         return self._audio_config
+
+    def _resolve_audio_config(self, params: dict[str, Any] | None) -> None:
+        """Resolve audio settings and validate native format overrides."""
+        audio = (params or {}).get("audio", {})
+        for direction in ("input", "output"):
+            stream = audio.get(direction, {})
+            audio_format = stream.get("format", {})
+
+            format_type = audio_format.get("type", "audio/pcm")
+            if format_type != "audio/pcm":
+                raise ValueError(f"Unsupported audio format: {format_type}. Expected audio/pcm.")
+
+            sample_rate = audio_format.get("rate", DEFAULT_SAMPLE_RATE)
+            if sample_rate != DEFAULT_SAMPLE_RATE:
+                raise ValueError(f"Unsupported sample rate: {sample_rate}. Expected {DEFAULT_SAMPLE_RATE}.")
+
+        self._audio_config = AudioConfig(
+            input=AudioStreamConfig(sample_rate=DEFAULT_SAMPLE_RATE, channels=1, format="pcm"),
+            output=AudioStreamConfig(sample_rate=DEFAULT_SAMPLE_RATE, channels=1, format="pcm"),
+        )
+        _validate_audio_config(self._audio_config)
 
     async def start(
         self,
@@ -230,6 +305,7 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         self._start_time = int(time.time())
 
         self._function_call_buffer = {}
+        self._session_state = _SessionState()
 
         # Establish WebSocket connection
         url = f"{OPENAI_REALTIME_URL}?model={self._config['model_id']}"
@@ -245,26 +321,12 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
 
         # Configure session
         session_config = self._build_session_config(system_prompt, tools)
+        self._session_state.transcription_enabled = session_config["audio"]["input"].get("transcription") is not None
         await self._send_event({"type": "session.update", "session": session_config})
 
         # Add conversation history if provided
         if messages:
             await self._add_conversation_history(messages)
-
-    def _create_text_event(self, text: str, role: str) -> BidiTranscriptStreamEvent:
-        """Create an incremental transcript event."""
-        return BidiTranscriptStreamEvent(
-            delta=text,
-            role=cast(Role, role),
-        )
-
-    def _create_voice_activity_event(self, activity_type: str) -> BidiInterruptionEvent | None:
-        """Create standardized interruption event for voice activity."""
-        # Only speech_started triggers interruption
-        if activity_type == "speech_started":
-            return BidiInterruptionEvent(reason="user_speech")
-        # Other voice activity events are logged but don't create events
-        return None
 
     def _build_session_config(self, system_prompt: str | None, tools: list[ToolSpec] | None) -> dict[str, Any]:
         """Build session configuration for OpenAI Realtime API.
@@ -279,20 +341,10 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         if tools:
             config["tools"] = self._convert_tools_to_openai_format(tools)
 
-        audio_config = self._audio_config
-
-        if "voice" in audio_config:
-            config.setdefault("audio", {}).setdefault("output", {})["voice"] = audio_config["voice"]
-
-        if "input_rate" in audio_config:
-            config.setdefault("audio", {}).setdefault("input", {}).setdefault("format", {})["rate"] = audio_config[
-                "input_rate"
-            ]
-
-        if "output_rate" in audio_config:
-            config.setdefault("audio", {}).setdefault("output", {}).setdefault("format", {})["rate"] = audio_config[
-                "output_rate"
-            ]
+        config["audio"]["input"]["transcription"] = (
+            {"model": self._transcription_model_id} if self._transcription_model_id is not None else None
+        )
+        config["audio"]["output"]["voice"] = self._voice
 
         return _merge_config(config, self._config.get("params") or {})
 
@@ -437,11 +489,12 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         # stealing messages from the connection that replaced it.
         websocket = self._websocket
         start_time = self._start_time
+        state = self._session_state
 
         while True:
             duration = time.time() - start_time
             if duration >= self.timeout_s:
-                raise BidiModelTimeoutError(f"timeout_s=<{self.timeout_s}>")
+                raise ConnectionTimeoutError(f"timeout_s=<{self.timeout_s}>")
 
             try:
                 message = await asyncio.wait_for(websocket.recv(), timeout=10)
@@ -449,67 +502,118 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
                 continue
 
             openai_event = json.loads(message)
+            event_type = openai_event.get("type")
+            if event_type == "response.created":
+                response_id = openai_event["response"]["id"]
+                if response_id in state.active_responses:
+                    continue
+                state.active_responses.add(response_id)
+                state.response_requested = False
+            elif event_type == "response.done":
+                response_id = openai_event["response"]["id"]
+                if response_id not in state.active_responses:
+                    continue
+                state.active_responses.remove(response_id)
 
-            for event in self._convert_openai_event(openai_event) or []:
+            if event_type == "error" and openai_event.get("error", {}).get("code") == (
+                "conversation_already_has_active_response"
+            ):
+                state.response_requested = False
+                state.response_pending = True
+                continue
+
+            for event in self._convert_openai_event(openai_event, state) or []:
+                if isinstance(event, ToolUseStreamEvent):
+                    state.pending_tools.add(event["current_tool_use"]["toolUseId"])
                 yield event
+            if state is self._session_state and event_type == "response.done":
+                await self._flush_response_request(state)
 
-    def _convert_openai_event(self, openai_event: dict[str, Any]) -> list[BidiOutputEvent] | None:
+    def _convert_openai_event(
+        self, openai_event: dict[str, Any], state: _SessionState | None = None
+    ) -> list[BidiOutputEvent] | None:
         """Convert OpenAI events to Strands TypedEvent format."""
         event_type = openai_event.get("type")
+        state = state if state is not None else self._session_state
 
-        # Turn start - response begins
+        if event_type == "input_audio_buffer.speech_started":
+            events: list[BidiOutputEvent] = [BidiBargeInEvent(reason="user_speech")]
+            if state.transcription_enabled:
+                events.extend(state.start_transcript("user", openai_event["item_id"]))
+            return events
+
+        input_id = None
+        if event_type == "input_audio_buffer.committed" and state.transcription_enabled:
+            input_id = openai_event.get("item_id")
+        elif event_type == "conversation.item.added" and openai_event.get("item", {}).get("role") == "user":
+            item = openai_event["item"]
+            is_audio = any(content.get("type") == "input_audio" for content in item.get("content", []))
+            if state.transcription_enabled and is_audio:
+                input_id = item["id"]
+        if input_id is not None:
+            return state.start_transcript("user", input_id) or None
+
         if event_type == "response.created":
             response = openai_event.get("response", {})
             response_id = response.get("id", str(uuid.uuid4()))
             return [BidiResponseStartEvent(response_id=response_id)]
 
-        # Audio output
-        elif event_type == "response.output_audio.delta":
-            # Audio is already base64 string from OpenAI
-            # Use the resolved output sample rate from our merged configuration
-            sample_rate = self._audio_config["output_rate"]
+        if event_type == "response.content_part.added" and openai_event.get("part", {}).get("type") == "audio":
+            return state.start_audio(openai_event.get("response_id")) or None
 
-            # Channels from config is guaranteed to be 1 or 2
-            channels = self._audio_config["channels"]
+        if event_type == "response.output_audio.delta":
             return [
-                BidiAudioStreamEvent(
+                *state.start_audio(openai_event.get("response_id")),
+                BidiAudioDeltaEvent(
                     audio=openai_event["delta"],
-                    format="pcm",
-                    sample_rate=sample_rate,
-                    channels=channels,
-                )
+                    **self._audio_config["output"],
+                ),
             ]
 
-        # Assistant transcript
-        elif event_type in ("response.output_text.delta", "response.output_audio_transcript.delta"):
+        if event_type == "response.output_audio.done":
+            return state.stop_audio(openai_event.get("response_id")) or None
+
+        if event_type in ("response.output_text.delta", "response.output_audio_transcript.delta"):
             text = openai_event.get("delta", "")
-            return [self._create_text_event(text, "assistant")] if text else None
+            if not text:
+                return None
+            response_id = openai_event["response_id"]
+            part_id = (openai_event["item_id"], openai_event["content_index"])
+            previous_part = state.assistant_parts.get(response_id)
+            if previous_part is not None and previous_part != part_id:
+                text = "\n\n" + text
+            state.assistant_parts[response_id] = part_id
+            return state.transcript_events(BidiTranscriptDeltaEvent(text, "assistant", content_id=response_id))
 
-        elif event_type in ("response.output_text.done", "response.output_audio_transcript.done"):
-            text_key = "text" if event_type == "response.output_text.done" else "transcript"
-            return [BidiTranscriptCompleteEvent(openai_event[text_key], "assistant")]
-
-        # User transcript
-        elif event_type == "conversation.item.input_audio_transcription.delta":
-            text = openai_event.get("delta", "")
-            return [self._create_text_event(text, "user")] if text else None
-
-        elif event_type == "conversation.item.input_audio_transcription.completed":
-            return [BidiTranscriptCompleteEvent(openai_event["transcript"], "user")]
-
-        elif event_type == "conversation.item.input_audio_transcription.segment":
-            segment_data = openai_event.get("segment", {})
-            text = segment_data.get("text", "")
-            role = segment_data.get("role", "user")
-            return [self._create_text_event(text, role)] if text else None
-
-        elif event_type == "conversation.item.input_audio_transcription.failed":
-            error_info = openai_event.get("error", {})
-            logger.warning("error=<%s> | openai transcription failed", error_info.get("message", "unknown error"))
+        if event_type in ("response.output_text.done", "response.output_audio_transcript.done"):
+            # Response completion closes the combined assistant transcript.
             return None
 
-        # Function call processing
-        elif event_type == "response.function_call_arguments.delta":
+        if event_type in (
+            "conversation.item.input_audio_transcription.delta",
+            "conversation.item.input_audio_transcription.segment",
+        ):
+            if event_type == "conversation.item.input_audio_transcription.segment":
+                segment = openai_event.get("segment", {})
+                text = segment.get("text", "")
+                role = cast(Role, segment.get("role", "user"))
+            else:
+                text = openai_event.get("delta", "")
+                role = "user"
+            if not text:
+                return None
+            return state.transcript_events(BidiTranscriptDeltaEvent(text, role, content_id=openai_event["item_id"]))
+
+        if event_type == "conversation.item.input_audio_transcription.completed":
+            return state.transcript_events(
+                BidiTranscriptStopEvent(openai_event["transcript"], "user", content_id=openai_event["item_id"])
+            )
+
+        if event_type == "conversation.item.input_audio_transcription.failed":
+            error_info = openai_event.get("error", {})
+            raise RuntimeError(error_info.get("message", "Transcription failed."))
+
+        if event_type == "response.function_call_arguments.delta":
             call_id = openai_event.get("call_id")
             delta = openai_event.get("delta", "")
             if call_id:
@@ -519,7 +623,7 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
                     self._function_call_buffer[call_id]["arguments"] += delta
             return None
 
-        elif event_type == "response.function_call_arguments.done":
+        if event_type == "response.function_call_arguments.done":
             call_id = openai_event.get("call_id")
             if call_id and call_id in self._function_call_buffer:
                 function_call = self._function_call_buffer[call_id]
@@ -543,113 +647,30 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
                             current_tool_use=dict(tool_use),
                         )
                     ]
-                except (json.JSONDecodeError, KeyError) as e:
-                    logger.warning("call_id=<%s>, error=<%s> | error parsing function arguments", call_id, e)
+                except (json.JSONDecodeError, KeyError) as error:
+                    logger.warning("call_id=<%s>, error=<%s> | error parsing function arguments", call_id, error)
                     del self._function_call_buffer[call_id]
             return None
 
-        # Voice activity detection - speech_started triggers interruption
-        elif event_type == "input_audio_buffer.speech_started":
-            # This is the primary interruption signal - handle it first
-            return [BidiInterruptionEvent(reason="user_speech")]
+        if event_type == "response.done":
+            return self._complete_response(openai_event.get("response", {}), state)
 
-        # Response cancelled - handle interruption
-        elif event_type == "response.cancelled":
-            response = openai_event.get("response", {})
-            response_id = response.get("id", "unknown")
-            logger.debug("response_id=<%s> | openai response cancelled", response_id)
-            return [BidiResponseCompleteEvent(response_id=response_id, stop_reason="interrupted")]
-
-        # Turn complete and usage - response finished
-        elif event_type == "response.done":
-            response = openai_event.get("response", {})
-            response_id = response.get("id", "unknown")
-            status = response.get("status", "completed")
-            usage = response.get("usage")
-
-            # Map OpenAI status to our stop_reason
-            stop_reason_map = {
-                "completed": "complete",
-                "cancelled": "interrupted",
-                "failed": "error",
-                "incomplete": "interrupted",
-            }
-
-            # Build list of events to return
-            events: list[Any] = []
-
-            # Always add response complete event
-            events.append(
-                BidiResponseCompleteEvent(
-                    response_id=response_id,
-                    stop_reason=cast(StopReason, stop_reason_map.get(status, "complete")),
-                ),
-            )
-
-            # Add usage event if available
-            if usage:
-                input_details = usage.get("input_token_details", {})
-                output_details = usage.get("output_token_details", {})
-
-                # Build modality details
-                modality_details = []
-
-                # Text modality
-                text_input = input_details.get("text_tokens", 0)
-                text_output = output_details.get("text_tokens", 0)
-                if text_input > 0 or text_output > 0:
-                    modality_details.append(
-                        {"modality": "text", "input_tokens": text_input, "output_tokens": text_output}
-                    )
-
-                # Audio modality
-                audio_input = input_details.get("audio_tokens", 0)
-                audio_output = output_details.get("audio_tokens", 0)
-                if audio_input > 0 or audio_output > 0:
-                    modality_details.append(
-                        {"modality": "audio", "input_tokens": audio_input, "output_tokens": audio_output}
-                    )
-
-                # Image modality
-                image_input = input_details.get("image_tokens", 0)
-                if image_input > 0:
-                    modality_details.append({"modality": "image", "input_tokens": image_input, "output_tokens": 0})
-
-                # Cached tokens
-                cached_tokens = input_details.get("cached_tokens", 0)
-
-                # Add usage event
-                events.append(
-                    BidiUsageEvent(
-                        input_tokens=usage.get("input_tokens", 0),
-                        output_tokens=usage.get("output_tokens", 0),
-                        total_tokens=usage.get("total_tokens", 0),
-                        modality_details=cast(list[ModalityUsage], modality_details) if modality_details else None,
-                        cache_read_input_tokens=cached_tokens if cached_tokens > 0 else None,
-                    )
-                )
-
-            # Return list of events
-            return events
-
-        # Lifecycle events (log only) - combine multiple similar events
-        elif event_type in ["conversation.item.retrieve", "conversation.item.added"]:
+        if event_type in ("conversation.item.retrieve", "conversation.item.added"):
             item = openai_event.get("item", {})
             action = "retrieved" if "retrieve" in event_type else "added"
             logger.debug("action=<%s>, item_id=<%s> | openai conversation item event", action, item.get("id"))
             return None
 
-        elif event_type == "conversation.item.done":
+        if event_type == "conversation.item.done":
             logger.debug("item_id=<%s> | openai conversation item done", openai_event.get("item", {}).get("id"))
             return None
 
-        # Response output events - combine similar events
-        elif event_type in [
+        if event_type in (
             "response.output_item.added",
             "response.output_item.done",
             "response.content_part.added",
             "response.content_part.done",
-        ]:
+        ):
             item_data = openai_event.get("item") or openai_event.get("part")
             logger.debug(
                 "event_type=<%s>, item_id=<%s> | openai output event",
@@ -674,17 +695,16 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
                             self._function_call_buffer[call_id]["name"] = function_name
             return None
 
-        # Session/buffer events - combine simple log-only events
-        elif event_type in [
+        if event_type in (
             "input_audio_buffer.committed",
             "input_audio_buffer.cleared",
             "session.created",
             "session.updated",
-        ]:
+        ):
             logger.debug("event_type=<%s> | openai event received", event_type)
             return None
 
-        elif event_type == "error":
+        if event_type == "error":
             error_data = openai_event.get("error", {})
             error_code = error_data.get("code", "")
 
@@ -699,20 +719,71 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             logger.error("error=<%s> | openai realtime error", error_data)
             return None
 
-        else:
-            logger.debug("event_type=<%s> | unhandled openai event type", event_type)
-            return None
+        logger.debug("event_type=<%s> | unhandled openai event type", event_type)
+        return None
+
+    def _complete_response(self, response: dict[str, Any], state: _SessionState) -> list[BidiOutputEvent]:
+        """Close audio and the combined assistant transcript before stopping the response."""
+        response_id = response.get("id", "unknown")
+        output = response.get("output", [])
+        events = state.stop_audio(response.get("id"))
+        transcript_parts = [
+            part.get("transcript", part.get("text", ""))
+            for item in output
+            if item.get("type") == "message" and item.get("role") == "assistant"
+            for part in item.get("content", [])
+            if part.get("type") in ("output_audio", "output_text")
+        ]
+        if transcript_parts or response_id in state.assistant_parts:
+            events.extend(
+                state.transcript_events(
+                    BidiTranscriptStopEvent("\n\n".join(transcript_parts), "assistant", content_id=response_id)
+                )
+            )
+        state.assistant_parts.pop(response_id, None)
+
+        events.append(BidiResponseStopEvent(response_id=response_id))
+
+        if usage := response.get("usage"):
+            events.append(self._convert_usage_metadata(usage))
+        return events
+
+    def _convert_usage_metadata(self, usage: dict[str, Any]) -> BidiUsageEvent:
+        """Convert response token counts and modality details into a usage event."""
+        input_details = usage.get("input_token_details", {})
+        output_details = usage.get("output_token_details", {})
+        modality_details: list[dict[str, Any]] = []
+        for modality in ("text", "audio"):
+            input_tokens = input_details.get(f"{modality}_tokens", 0)
+            output_tokens = output_details.get(f"{modality}_tokens", 0)
+            if input_tokens > 0 or output_tokens > 0:
+                modality_details.append(
+                    {"modality": modality, "input_tokens": input_tokens, "output_tokens": output_tokens}
+                )
+
+        image_tokens = input_details.get("image_tokens", 0)
+        if image_tokens > 0:
+            modality_details.append({"modality": "image", "input_tokens": image_tokens, "output_tokens": 0})
+
+        cached_tokens = input_details.get("cached_tokens", 0)
+        return BidiUsageEvent(
+            input_tokens=usage.get("input_tokens", 0),
+            output_tokens=usage.get("output_tokens", 0),
+            total_tokens=usage.get("total_tokens", 0),
+            modality_details=cast(list[ModalityUsage], modality_details) if modality_details else None,
+            cache_read_input_tokens=cached_tokens if cached_tokens > 0 else None,
+        )
 
     async def send(
         self,
-        content: BidiInputEvent | ToolResultEvent,
+        content: BidiMessage | BidiContentDelta,
     ) -> None:
         """Unified send method for all content types. Sends the given content to OpenAI.
 
         Dispatches to appropriate internal handler based on content type.
 
         Args:
-            content: Typed event (BidiTextInputEvent, BidiAudioInputEvent, BidiImageInputEvent, or ToolResultEvent).
+            content: A complete BidiMessage or an individual AudioDelta.
 
         Raises:
             ValueError: If content type not supported.
@@ -720,71 +791,85 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         if not self._connection_id:
             raise RuntimeError("model not started | call start before sending")
 
-        # Note: TypedEvent inherits from dict, so isinstance checks for TypedEvent must come first
-        if isinstance(content, BidiTextInputEvent):
-            await self._send_text_content(content.text)
-        elif isinstance(content, BidiAudioInputEvent):
+        if isinstance(content, BidiMessage):
+            await self._send_message(content)
+        elif isinstance(content, AudioDelta):
             await self._send_audio_content(content)
-        elif isinstance(content, BidiImageInputEvent):
-            await self._send_image_content(content)
-        elif isinstance(content, ToolResultEvent):
-            tool_result = content.get("tool_result")
-            if tool_result:
-                await self._send_tool_result(tool_result)
         else:
             raise ValueError(f"content_type={type(content)} | content not supported")
 
-    async def _send_audio_content(self, audio_input: BidiAudioInputEvent) -> None:
+    async def _send_message(self, message: BidiMessage) -> None:
+        """Send one user message or tool results."""
+        content = []
+        for block in message.content:
+            if isinstance(block, TextBlock):
+                content.append({"type": "input_text", "text": block.text})
+            elif isinstance(block, ImageBlock):
+                image_bytes = block.source.get("bytes")
+                if image_bytes is None:
+                    raise ValueError("image source must contain bytes for OpenAI Realtime")
+                image = base64.b64encode(image_bytes).decode("utf-8")
+                content.append({"type": "input_image", "image_url": f"data:image/{block.format};base64,{image}"})
+            elif isinstance(block, ToolResultBlock):
+                await self._send_tool_result(block)
+            else:
+                raise ValueError(f"content_type={type(block)} | content not supported by OpenAI Realtime")
+
+        if content:
+            await self._send_event(
+                {"type": "conversation.item.create", "item": {"type": "message", "role": "user", "content": content}}
+            )
+            await self._request_response()
+
+    async def _send_audio_content(self, audio_input: AudioDelta) -> None:
         """Internal: Send audio content to OpenAI for processing."""
-        # Audio is already base64 encoded in the event
-        await self._send_event({"type": "input_audio_buffer.append", "audio": audio_input.audio})
+        audio_bytes = audio_input.source.get("bytes")
+        if audio_bytes is None:
+            raise ValueError("audio source must contain bytes for OpenAI Realtime")
+        audio = base64.b64encode(audio_bytes).decode("utf-8")
+        await self._send_event({"type": "input_audio_buffer.append", "audio": audio})
 
-    async def _send_image_content(self, image_input: BidiImageInputEvent) -> None:
-        """Internal: Send image content to OpenAI for processing.
-
-        Sends the image as an ``input_image`` content block on a user message via
-        ``conversation.item.create``. Image data is encoded as a ``data:`` URL using
-        the event's MIME type and base64 payload, matching the format documented for
-        OpenAI's Realtime API image input on ``gpt-realtime`` models.
-        """
-        data_url = f"data:{image_input.mime_type};base64,{image_input.image}"
-        item_data = {
-            "type": "message",
-            "role": "user",
-            "content": [{"type": "input_image", "image_url": data_url}],
-        }
-        await self._send_event({"type": "conversation.item.create", "item": item_data})
-
-    async def _send_text_content(self, text: str) -> None:
-        """Internal: Send text content to OpenAI for processing."""
-        item_data = {"type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]}
-        await self._send_event({"type": "conversation.item.create", "item": item_data})
-        await self._send_event({"type": "response.create"})
-
-    async def _send_tool_result(self, tool_result: ToolResult) -> None:
+    async def _send_tool_result(self, tool_result: ToolResultBlock) -> None:
         """Internal: Send tool result back to OpenAI."""
-        tool_use_id = tool_result.get("toolUseId")
+        tool_use_id = tool_result.tool_use_id
 
         logger.debug("tool_use_id=<%s> | sending openai tool result", tool_use_id)
 
         # Validate content types and serialize, preserving structure
-        result_output = ""
-        if "content" in tool_result:
-            # First validate all content types are supported
-            for block in tool_result["content"]:
-                if "text" not in block and "json" not in block:
-                    # Unsupported content type - raise error
-                    raise ValueError(
-                        f"tool_use_id=<{tool_use_id}>, content_types=<{list(block.keys())}> | "
-                        f"Content type not supported by OpenAI Realtime API"
-                    )
+        for block in tool_result.content:
+            if "text" not in block and "json" not in block:
+                # Unsupported content type - raise error
+                raise ValueError(
+                    f"tool_use_id=<{tool_use_id}>, content_types=<{list(block.keys())}> | "
+                    f"Content type not supported by OpenAI Realtime API"
+                )
 
-            # Preserve structure by JSON-dumping the entire content array
-            result_output = json.dumps(tool_result["content"])
+        # Preserve structure by JSON-dumping the entire content array
+        result_output = json.dumps(tool_result.content)
 
         item_data = {"type": "function_call_output", "call_id": tool_use_id, "output": result_output}
         await self._send_event({"type": "conversation.item.create", "item": item_data})
-        await self._send_event({"type": "response.create"})
+        self._session_state.pending_tools.discard(tool_use_id)
+        await self._request_response()
+
+    async def _request_response(self) -> None:
+        """Coalesce continuation requests while a native response or tool group is active."""
+        state = self._session_state
+        state.response_pending = True
+        await self._flush_response_request(state)
+
+    async def _flush_response_request(self, state: _SessionState) -> None:
+        async with state.lock:
+            if not state.response_pending or state.response_requested or state.active_responses or state.pending_tools:
+                return
+            state.response_pending = False
+            state.response_requested = True
+            try:
+                await self._send_event({"type": "response.create"})
+            except BaseException:
+                state.response_requested = False
+                state.response_pending = True
+                raise
 
     async def stop(self) -> None:
         """Close session and cleanup resources."""

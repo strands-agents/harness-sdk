@@ -1,5 +1,5 @@
 ---
-title: Conciseness Evaluator
+title: Conciseness evaluator
 description: 'Catch verbose agent responses with ConcisenessEvaluator, which scores how efficiently a response communicates on a three-level scale.'
 tags: [conversation-management]
 sidebar:
@@ -10,14 +10,14 @@ sidebar:
 
 The `ConcisenessEvaluator` evaluates how concise an agent's response is. It assesses whether the response communicates information efficiently without unnecessary verbosity, using a three-level scoring rubric.
 
-## Key Features
+## Key features
 
 - **Trace-Level Evaluation**: Evaluates the most recent turn in the conversation
-- **Three-Level Scoring**: Simple scale — Not Concise, Partially Concise, Perfectly Concise
+- **Three-Level Scoring**: Simple scale of Not Concise, Partially Concise, Perfectly Concise
 - **Async Support**: Supports both synchronous and asynchronous evaluation
 - **Structured Reasoning**: Provides step-by-step reasoning for each evaluation
 
-## When to Use
+## When to use
 
 Use the `ConcisenessEvaluator` when you need to:
 
@@ -26,7 +26,7 @@ Use the `ConcisenessEvaluator` when you need to:
 - Detect padding or filler content in agent outputs
 - Compare verbosity across different agent configurations
 
-## Evaluation Level
+## Evaluation level
 
 This evaluator operates at the **TRACE_LEVEL**, evaluating the most recent turn in the conversation.
 
@@ -52,7 +52,7 @@ This evaluator operates at the **TRACE_LEVEL**, evaluating the most recent turn 
 - **Default**: `"v0"`
 - **Description**: Prompt template version.
 
-## Scoring System
+## Scoring system
 
 | Rating | Score | Description |
 |--------|-------|-------------|
@@ -62,7 +62,7 @@ This evaluator operates at the **TRACE_LEVEL**, evaluating the most recent turn 
 
 A response passes the evaluation if the score is >= 0.5.
 
-## Basic Usage
+## Basic usage
 
 :::caution[Required: Session ID Trace Attributes]
 When using `StrandsInMemorySessionMapper`, you **must** include session ID trace attributes in your agent configuration. This prevents spans from different test cases from being mixed together in the memory exporter.
@@ -102,7 +102,7 @@ async def main():
 asyncio.run(main())
 ```
 
-## Related Evaluators
+## Related evaluators
 
 - [**CoherenceEvaluator**](coherence_evaluator.md): Evaluates logical consistency
 - [**ResponseRelevanceEvaluator**](response_relevance_evaluator.md): Evaluates relevance to user questions

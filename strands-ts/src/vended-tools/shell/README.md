@@ -59,7 +59,9 @@ interface ShellOutput {
 
 ### Error Handling
 
-- **`ShellTimeoutError`**: thrown when a command exceeds its timeout
+- **`ShellTimeoutError`**: thrown when a command exceeds its timeout. The output captured before the kill is on
+  `error.partial` (`{ output, error, exit_code: 124 }`) and appended to the message as JSON, so the model still sees
+  it on the failed tool result
 - **`ShellExecutionError`**: thrown when the sandbox fails to execute the command
 
 Both extend the `Bash*` error types from [`../bash`](../bash/), so `catch` clauses written before the rename keep matching.
