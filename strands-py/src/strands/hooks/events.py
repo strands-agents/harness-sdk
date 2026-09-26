@@ -375,6 +375,8 @@ class AfterModelCallEvent(HookEvent):
             and dynamic configuration.
         stop_response: The model response data if invocation was successful, None if failed.
         exception: Exception if the model invocation failed, None if successful.
+        attempt_count: One-based count of model attempts in the current retry budget.
+            The first call is 1 and each retry increments the count.
         retry: Whether to retry the model invocation. Can be set by hook callbacks
             to trigger a retry. When True, the current response is discarded and the
             model is called again. Defaults to False.
@@ -396,9 +398,15 @@ class AfterModelCallEvent(HookEvent):
     stop_response: ModelStopResponse | None = None
     exception: Exception | None = None
     retry: bool = False
+    attempt_count: int = 1
+    _retry_attempts_reset: bool = field(default=False, init=False, repr=False, compare=False)
 
     def _can_write(self, name: str) -> bool:
         return name == "retry"
+
+    def _reset_retry_attempts(self) -> None:
+        """Mark the next model call as the first attempt in a new retry budget."""
+        object.__setattr__(self, "_retry_attempts_reset", True)
 
     @property
     def should_reverse_callbacks(self) -> bool:

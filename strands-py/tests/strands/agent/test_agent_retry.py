@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from strands import Agent, ModelRetryStrategy
+from strands import Agent, ConstantBackoff, ModelRetryStrategy
 from strands.event_loop.event_loop import INITIAL_DELAY, MAX_ATTEMPTS, MAX_DELAY
 from strands.hooks import AfterModelCallEvent
 from strands.types.exceptions import ModelThrottledException
@@ -186,3 +186,30 @@ async def test_agent_no_retry_when_retry_strategy_none(mock_sleep):
 
     # Should not have slept at all (no retries)
     assert len(mock_sleep.sleep_calls) == 0
+
+
+def test_agent_rejects_retry_strategy_shared_across_agents():
+    """Test that stateful retry strategies cannot be attached to two agents."""
+    strategy = ModelRetryStrategy()
+    Agent(retry_strategy=strategy)
+
+    with pytest.raises(ValueError, match="already attached to another agent"):
+        Agent(retry_strategy=strategy)
+
+
+@pytest.mark.asyncio
+async def test_agent_retries_with_custom_backoff(mock_sleep):
+    """Test that Agent uses a composed backoff strategy for retry delays."""
+    model = Mock()
+    model.stream.side_effect = [
+        ModelThrottledException("ThrottlingException"),
+        ModelThrottledException("ThrottlingException"),
+        MockedModelProvider([{"role": "assistant", "content": [{"text": "Success"}]}]).stream([]),
+    ]
+    strategy = ModelRetryStrategy(max_attempts=3, backoff=ConstantBackoff(delay=0.25))
+    agent = Agent(model=model, retry_strategy=strategy)
+
+    events = [event async for event in agent.stream_async("test prompt")]
+
+    assert events
+    assert mock_sleep.sleep_calls == [0.25, 0.25]

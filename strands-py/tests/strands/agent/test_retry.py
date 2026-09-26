@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from strands import ModelRetryStrategy
+from strands import BackoffContext, ModelRetryStrategy, RetryDecision
 from strands.hooks import AfterInvocationEvent, AfterModelCallEvent, HookRegistry
 from strands.types._events import EventLoopThrottleEvent
 from strands.types.exceptions import ModelThrottledException
@@ -100,10 +100,11 @@ async def test_model_retry_strategy_exponential_backoff(mock_sleep):
     mock_agent = Mock()
 
     # Simulate multiple retries
-    for _ in range(4):
+    for attempt_count in range(1, 5):
         event = AfterModelCallEvent(
             agent=mock_agent,
             exception=ModelThrottledException("Throttled"),
+            attempt_count=attempt_count,
         )
         await strategy._handle_after_model_call(event)
         assert event.retry is True
@@ -134,6 +135,7 @@ async def test_model_retry_strategy_no_retry_after_max_attempts(mock_sleep):
     event2 = AfterModelCallEvent(
         agent=mock_agent,
         exception=ModelThrottledException("Throttled"),
+        attempt_count=2,
     )
     await strategy._handle_after_model_call(event2)
     # Should NOT retry after reaching max_attempts
@@ -351,3 +353,83 @@ async def test_model_retry_strategy_subclass_overrides_is_retryable(mock_sleep, 
     await strategy._handle_after_model_call(event)
 
     assert event.retry is expect_retry
+
+
+@pytest.mark.asyncio
+async def test_model_retry_strategy_composes_custom_backoff_with_context(mock_sleep):
+    """Test custom backoff receives attempt, elapsed time, and prior delay."""
+
+    class RecordingBackoff:
+        def __init__(self):
+            self.contexts: list[BackoffContext] = []
+
+        def next_delay(self, context: BackoffContext) -> float:
+            self.contexts.append(context)
+            return 0.25
+
+    backoff = RecordingBackoff()
+    strategy = ModelRetryStrategy(max_attempts=3, backoff=backoff)
+    mock_agent = Mock()
+
+    for attempt_count in (1, 2):
+        event = AfterModelCallEvent(
+            agent=mock_agent,
+            exception=ModelThrottledException("Throttled"),
+            attempt_count=attempt_count,
+        )
+        await strategy._handle_after_model_call(event)
+
+    tru_contexts = backoff.contexts
+    assert [context.attempt for context in tru_contexts] == [1, 2]
+    assert [context.last_delay for context in tru_contexts] == [None, 0.25]
+    assert 0 <= tru_contexts[0].elapsed_time <= tru_contexts[1].elapsed_time
+    assert mock_sleep.sleep_calls == [0.25, 0.25]
+
+
+@pytest.mark.asyncio
+async def test_model_retry_strategy_subclass_overrides_retry_decision(mock_sleep):
+    """Test subclasses can own the full retry decision without replacing hook plumbing."""
+
+    class DecisionStrategy(ModelRetryStrategy):
+        def compute_retry_decision(self, event: AfterModelCallEvent) -> RetryDecision:
+            return RetryDecision(retry=True, delay=0.5)
+
+    event = AfterModelCallEvent(agent=Mock(), exception=ValueError("retry me"))
+    await DecisionStrategy(max_attempts=2)._handle_after_model_call(event)
+
+    assert event.retry is True
+    assert mock_sleep.sleep_calls == [0.5]
+
+
+@pytest.mark.parametrize("max_attempts", [0, -1, 1.5, True])
+def test_model_retry_strategy_rejects_invalid_max_attempts(max_attempts):
+    with pytest.raises(ValueError, match="max_attempts must be an integer >= 1"):
+        ModelRetryStrategy(max_attempts=max_attempts)
+
+
+@pytest.mark.asyncio
+async def test_model_retry_strategy_awaits_async_retry_decision(mock_sleep):
+    """Test subclasses can compute the full retry decision asynchronously."""
+
+    class AsyncDecisionStrategy(ModelRetryStrategy):
+        async def compute_retry_decision(self, event: AfterModelCallEvent) -> RetryDecision:
+            return RetryDecision(retry=True, delay=0.5)
+
+    event = AfterModelCallEvent(agent=Mock(), exception=ValueError("retry me"))
+    await AsyncDecisionStrategy(max_attempts=2)._handle_after_model_call(event)
+
+    assert event.retry is True
+    assert mock_sleep.sleep_calls == [0.5]
+
+
+@pytest.mark.parametrize(
+    "decision",
+    [
+        pytest.param(lambda: RetryDecision(retry=True), id="retry-without-delay"),
+        pytest.param(lambda: RetryDecision(retry=False, delay=1), id="no-retry-with-delay"),
+        pytest.param(lambda: RetryDecision(retry=True, delay=-1), id="negative-delay"),
+    ],
+)
+def test_retry_decision_rejects_invalid_shapes(decision):
+    with pytest.raises(ValueError):
+        decision()
