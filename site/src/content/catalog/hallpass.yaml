@@ -1,0 +1,9 @@
+name: hallpass
+description: Intervention that checks, before each tool call, whether the user may do that action in Jira, GitHub, Kubernetes, AWS and 17 more systems, asked live.
+integrationType: intervention
+languages:
+  python:
+    package: hallpass-client[strands]
+github: https://github.com/roee-hersh/hallpass
+docsUrl: https://github.com/roee-hersh/hallpass/blob/main/docs/guides/agent-tools.md
+addedDate: 2026-09-26
