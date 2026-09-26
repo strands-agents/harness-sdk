@@ -1,0 +1,8 @@
+name: Agent Guild
+description: Inspect public A2A and MCP endpoints before delegation with free live preflight checks and current paid-operation terms through native MCP tools.
+integrationType: tool
+languages:
+  python: {}
+github: https://github.com/AgentTanuki/agent-guild
+docsUrl: https://github.com/AgentTanuki/agent-guild/blob/bf19d667d3a2f0c3330795c397bda40302677326/docs/integrations/strands.md
+addedDate: 2026-09-08
