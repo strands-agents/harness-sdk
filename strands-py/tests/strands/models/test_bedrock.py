@@ -2387,6 +2387,25 @@ def test_format_request_message_content_normalizes_empty_tool_result_content(mod
     assert tool_result["content"] == [{"text": ""}], "Empty toolResult content should be normalized to [{'text': ''}]"
 
 
+@pytest.mark.parametrize("tool_input", [None, "", 0, False, [], "invalid", ["value"]])
+def test_format_request_message_content_normalizes_non_dict_tool_use_input(model, tool_input):
+    content = {
+        "toolUse": {
+            "toolUseId": "tool_001",
+            "name": "run_query",
+            "input": tool_input,
+        }
+    }
+
+    assert model._format_request_message_content(content) == {
+        "toolUse": {
+            "input": {},
+            "name": "run_query",
+            "toolUseId": "tool_001",
+        }
+    }
+
+
 def test_format_request_message_content_does_not_mutate_empty_tool_result(model, model_id):
     """Test that normalizing empty toolResult content does not mutate the original messages."""
     messages = [
