@@ -1120,9 +1120,10 @@ class BedrockModel(Model):
         # https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolUseBlock.html
         if "toolUse" in content:
             tool_use = content["toolUse"]
+            tool_input = tool_use.get("input")
             return {
                 "toolUse": {
-                    "input": tool_use["input"],
+                    "input": tool_input if isinstance(tool_input, dict) else {},
                     "name": tool_use["name"],
                     "toolUseId": tool_use["toolUseId"],
                 }
