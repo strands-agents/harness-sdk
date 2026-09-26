@@ -831,7 +831,7 @@ class Graph(MultiAgentBase):
         if self._interrupt_state.activated:
             nodes = [node for node in nodes if node.execution_status == Status.INTERRUPTED]
 
-        event_queue: asyncio.Queue[Any | None | Exception] = asyncio.Queue()
+        event_queue: asyncio.Queue[Any | None | BaseException] = asyncio.Queue()
 
         # Start all node streams as independent tasks
         tasks = [asyncio.create_task(self._stream_node_to_queue(node, event_queue, invocation_state)) for node in nodes]
@@ -851,7 +851,7 @@ class Graph(MultiAgentBase):
                     continue
 
                 # Check if it's an exception - fail fast
-                if isinstance(event, Exception):
+                if isinstance(event, BaseException):
                     # Cancel all other tasks immediately
                     for task in tasks:
                         if not task.done():
@@ -864,7 +864,7 @@ class Graph(MultiAgentBase):
             # Process any remaining events in the queue after all tasks complete
             while not event_queue.empty():
                 event = await event_queue.get()
-                if isinstance(event, Exception):
+                if isinstance(event, BaseException):
                     raise event
                 if event is not None:
                     yield event
@@ -883,7 +883,7 @@ class Graph(MultiAgentBase):
     async def _stream_node_to_queue(
         self,
         node: GraphNode,
-        event_queue: asyncio.Queue[Any | None | Exception],
+        event_queue: asyncio.Queue[Any | None | BaseException],
         invocation_state: dict[str, Any],
     ) -> None:
         """Stream events from a node to the shared queue with optional timeout."""
@@ -905,9 +905,12 @@ class Graph(MultiAgentBase):
                 # No timeout - stream normally
                 async for event in self._execute_node(node, invocation_state):
                     await event_queue.put(event)
-        except Exception as e:
+        except asyncio.CancelledError as error:
+            await event_queue.put(error)
+            raise
+        except Exception as error:
             # Send exception through queue for fail-fast behavior
-            await event_queue.put(e)
+            await event_queue.put(error)
         finally:
             await event_queue.put(None)
 

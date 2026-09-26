@@ -1671,6 +1671,66 @@ async def test_graph_streaming_with_failures(mock_strands_tracer, mock_use_span)
 
 
 @pytest.mark.asyncio
+async def test_graph_propagates_cancelled_error_from_child_stream(mock_strands_tracer, mock_use_span):
+    """A child stream cancellation must not be reported as successful graph completion (#4419)."""
+    cancelled_agent = create_mock_agent("cancelled_agent")
+
+    async def cancelled_stream(*args, **kwargs):
+        if False:
+            yield None
+        raise asyncio.CancelledError("child cancelled itself")
+
+    cancelled_agent.stream_async = Mock(side_effect=cancelled_stream)
+
+    builder = GraphBuilder()
+    builder.add_node(cancelled_agent, "cancelled")
+    builder.set_entry_point("cancelled")
+    graph = builder.build()
+
+    with pytest.raises(asyncio.CancelledError, match="child cancelled itself"):
+        await graph.invoke_async("Test child cancellation")
+
+
+@pytest.mark.asyncio
+async def test_graph_child_cancellation_cancels_parallel_sibling(mock_strands_tracer, mock_use_span):
+    """A child cancellation cancels other nodes in the same parallel batch (#4419)."""
+    cancelled_agent = create_mock_agent("cancelled_agent")
+    blocking_agent = create_mock_agent("blocking_agent")
+    sibling_started = asyncio.Event()
+    sibling_cancelled = asyncio.Event()
+
+    async def cancelled_stream(*args, **kwargs):
+        await sibling_started.wait()
+        if False:
+            yield None
+        raise asyncio.CancelledError("child cancelled itself")
+
+    async def blocking_stream(*args, **kwargs):
+        sibling_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            sibling_cancelled.set()
+        if False:
+            yield None
+
+    cancelled_agent.stream_async = Mock(side_effect=cancelled_stream)
+    blocking_agent.stream_async = Mock(side_effect=blocking_stream)
+
+    builder = GraphBuilder()
+    builder.add_node(cancelled_agent, "cancelled")
+    builder.add_node(blocking_agent, "blocking")
+    builder.set_entry_point("cancelled")
+    builder.set_entry_point("blocking")
+    graph = builder.build()
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(graph.invoke_async("Test parallel child cancellation"), timeout=1)
+
+    assert sibling_cancelled.is_set()
+
+
+@pytest.mark.asyncio
 async def test_graph_single_node_optimization(mock_strands_tracer, mock_use_span):
     """Test that single node execution uses direct path (optimization)."""
     agent = create_mock_agent("single_agent", "Single response")
