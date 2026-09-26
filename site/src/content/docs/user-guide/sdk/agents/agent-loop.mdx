@@ -382,7 +382,24 @@ Sometimes more than one request targets the same agent instance at once: a retri
   </Tab>
   <Tab label="TypeScript">
 
-  TypeScript rejects overlapping invocations: invoking an agent that is already running throws `ConcurrentInvocationError`. It does not offer a configurable concurrency mode or idempotency-token deduplication of retries; both are available only in the Python SDK.
+  To reject overlapping calls on shared conversation history, keep the default
+  `concurrentInvocationMode: 'singleThreaded'`. A second call receives
+  `ConcurrentInvocationError` while the agent is running.
+
+  To deduplicate an in-flight retry, pass the same `idempotencyToken` in the options
+  argument to `invoke()` or `stream()`. The retry waits for the original and receives
+  the same result or error without rerunning the agent. A deduplicated `stream()` emits
+  only the final `AgentResultEvent`, not the original's intermediate events.
+
+  If the primary stream is abandoned before producing a result, waiting retries receive
+  `IdempotencyAbortedError`. The token is forgotten when the invocation finishes, so it
+  can be reused later. A different token, or a call without a token, still receives
+  `ConcurrentInvocationError` while work is in flight.
+
+  To allow overlapping calls, construct the agent with
+  `concurrentInvocationMode: 'unsafeConcurrent'`. This mode ignores idempotency tokens
+  and does not protect shared agent state from interleaved mutation. Use it only with
+  your own synchronization; a separate agent per independent task is safer.
   </Tab>
 </Tabs>
 
