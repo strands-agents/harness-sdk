@@ -409,3 +409,30 @@ export type {
   IntervalTriggerOptions,
   ModelExtractorOptions,
 } from './memory/index.js'
+
+export { McpTaskCancelledError } from './mcp/client.js'
+export type { McpTaskRequestOptions } from './mcp/client.js'
+export type {
+  McpCallToolWithTaskResult,
+  McpCancelTaskResult,
+  McpCancelledTask,
+  McpCompletedTask,
+  McpCreateTaskResult,
+  McpDetailedTask,
+  McpDirectCallToolResult,
+  McpFailedTask,
+  McpGetTaskResult,
+  McpInputRequest,
+  McpInputRequests,
+  McpInputRequiredTask,
+  McpInputResponse,
+  McpInputResponses,
+  McpTask,
+  McpTaskError,
+  McpTaskResult,
+  McpTaskStatus,
+  McpTaskStatusNotification,
+  McpTaskStatusNotificationParams,
+  McpUpdateTaskResult,
+  McpWorkingTask,
+} from './mcp/task-types.js'
