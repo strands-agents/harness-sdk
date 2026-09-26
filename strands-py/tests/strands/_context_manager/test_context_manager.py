@@ -9,6 +9,7 @@ from strands._context_manager.strategies.offload import Offload
 from strands._context_manager.strategies.offload.truncate import EmergencyTruncateStrategy
 from strands.hooks import HookRegistry
 from strands.hooks.events import AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
+from strands.storage.in_memory_storage import InMemoryStorage
 from strands.types.content import ContentBlock, Message
 from strands.types.exceptions import ContextWindowOverflowException
 from strands.types.tools import ToolResult, ToolUse
@@ -482,3 +483,28 @@ class TestStashIsDurable:
     def test_false_before_init(self):
         context_manager = ContextManager()
         assert context_manager.stash_is_durable is False
+
+
+class TestStashRoot:
+    """Tests for resolving the stash root from the configured storage."""
+
+    @pytest.mark.asyncio
+    async def test_explicit_scoped_storage_is_exact_root(self, mock_agent):
+        mock_agent.session_id = "s1"
+        storage = InMemoryStorage()
+        context_manager = ContextManager(stash={"storage": storage.namespace("team")})
+        context_manager.init_agent(mock_agent)
+        await context_manager.stash.store("tool-1", 0, b"{}")
+
+        assert await storage.list("") == ["team/tool-1_0"]
+
+    @pytest.mark.asyncio
+    async def test_scoped_agent_storage_uses_per_agent_root(self, mock_agent):
+        mock_agent.session_id = "s1"
+        storage = InMemoryStorage()
+        mock_agent.storage = storage.namespace("tenant")
+        context_manager = ContextManager()
+        context_manager.init_agent(mock_agent)
+        await context_manager.stash.store("tool-1", 0, b"{}")
+
+        assert await storage.list("") == ["tenant/context/s1/scopes/agent/test-agent/tool-1_0"]

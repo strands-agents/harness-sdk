@@ -71,6 +71,11 @@ class ContextStrategy(Protocol):
 class StashConfig(TypedDict, total=False):
     """Configuration for the L1 stash.
 
+    By default each agent stashes under ``context/<session_id>/scopes/agent/<agent_id>/`` within
+    ``storage``. When ``storage`` is a view scoped with ``storage.namespace(...)``, the view is used
+    as the exact stash root, so agents given the same view share one stash. Deleting a session
+    leaves a shared stash in place.
+
     Attributes:
         storage: Storage backend. Defaults to InMemoryStorage when omitted.
         retrieval_tool: Whether to register the retrieve_context tool. Defaults to True.
