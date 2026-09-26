@@ -196,6 +196,72 @@ async def test_stream_preserves_choice_local_usage(sagemaker_client, model, mess
     assert metadata == {"inputTokens": 1, "outputTokens": 2, "totalTokens": 3}
 
 
+@pytest.mark.asyncio
+async def test_stream_usage_only_chunk_tolerates_undeclared_wire_field(sagemaker_client, model, messages, alist):
+    """A trailing usage chunk carrying completion_tokens_details still reports usage."""
+    usage = {
+        "prompt_tokens": 10,
+        "completion_tokens": 20,
+        "total_tokens": 30,
+        "completion_tokens_details": {"reasoning_tokens": 4},
+    }
+    events = [
+        {"choices": [{"delta": {"content": "answer"}, "finish_reason": None}]},
+        {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+        {"choices": [], "usage": usage},
+    ]
+    payload = "".join(f"data: {json.dumps(event)}\n\n" for event in events) + "data: [DONE]\n\n"
+    sagemaker_client.invoke_endpoint_with_response_stream.return_value = {"Body": _payload_parts(payload)}
+
+    response = await alist(model.stream(messages))
+
+    metadata = [event["metadata"]["usage"] for event in response if "metadata" in event]
+    assert metadata == [{"inputTokens": 10, "outputTokens": 20, "totalTokens": 30}]
+    assert response[-1] == {"messageStop": {"stopReason": "end_turn"}}
+
+
+@pytest.mark.asyncio
+async def test_stream_choice_local_usage_tolerates_undeclared_wire_field(sagemaker_client, model, messages, alist):
+    """Usage nested in a choice survives an undeclared field from the endpoint."""
+    usage = {
+        "prompt_tokens": 1,
+        "completion_tokens": 2,
+        "total_tokens": 3,
+        "completion_tokens_details": {"reasoning_tokens": 0},
+    }
+    event = {"choices": [{"delta": {}, "finish_reason": "stop", "usage": usage}]}
+    sagemaker_client.invoke_endpoint_with_response_stream.return_value = {"Body": _payload_parts(json.dumps(event))}
+
+    response = await alist(model.stream(messages))
+
+    metadata = next(item["metadata"]["usage"] for item in response if "metadata" in item)
+    assert metadata == {"inputTokens": 1, "outputTokens": 2, "totalTokens": 3}
+
+
+@pytest.mark.asyncio
+async def test_stream_non_streaming_usage_tolerates_undeclared_wire_field(sagemaker_client, model, messages, alist):
+    """The non-streaming branch reports usage that carries an undeclared field."""
+    model.payload_config["stream"] = False
+    body = unittest.mock.MagicMock()
+    body.read.return_value = json.dumps(
+        {
+            "choices": [{"message": {"content": "answer", "tool_calls": None}, "finish_reason": "stop"}],
+            "usage": {
+                "prompt_tokens": 7,
+                "completion_tokens": 8,
+                "total_tokens": 15,
+                "completion_tokens_details": {"reasoning_tokens": 2},
+            },
+        }
+    ).encode("utf-8")
+    sagemaker_client.invoke_endpoint.return_value = {"Body": body}
+
+    response = await alist(model.stream(messages))
+
+    metadata = next(item["metadata"]["usage"] for item in response if "metadata" in item)
+    assert metadata == {"inputTokens": 7, "outputTokens": 8, "totalTokens": 15}
+
+
 class TestSageMakerAIModel:
     """Test suite for SageMakerAIModel."""
 
@@ -745,6 +811,27 @@ class TestDataClasses:
         assert usage.completion_tokens == 30
         assert usage.prompt_tokens == 70
         assert usage.prompt_tokens_details == 5
+
+    def test_usage_metadata_from_usage_ignores_undeclared_fields(self):
+        """from_usage drops wire fields the dataclass does not declare."""
+        usage = UsageMetadata.from_usage(
+            {
+                "total_tokens": 100,
+                "completion_tokens": 30,
+                "prompt_tokens": 70,
+                "completion_tokens_details": {"reasoning_tokens": 12},
+            }
+        )
+
+        assert usage == UsageMetadata(total_tokens=100, completion_tokens=30, prompt_tokens=70)
+
+    def test_usage_metadata_from_usage_keeps_every_declared_field(self):
+        """from_usage forwards a usage object that carries only declared fields unchanged."""
+        usage = UsageMetadata.from_usage(
+            {"total_tokens": 100, "completion_tokens": 30, "prompt_tokens": 70, "prompt_tokens_details": 5}
+        )
+
+        assert usage == UsageMetadata(total_tokens=100, completion_tokens=30, prompt_tokens=70, prompt_tokens_details=5)
 
     def test_function_call(self):
         """Test FunctionCall dataclass."""
