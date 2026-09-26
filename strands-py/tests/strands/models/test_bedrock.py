@@ -2968,6 +2968,104 @@ def test_format_request_filters_video_content_blocks(model, model_id):
     assert "resolution" not in video_block
 
 
+def test_format_request_audio_bytes_only(model, model_id):
+    """Test that audio with only bytes source is properly formatted."""
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "audio": {
+                        "format": "mp3",
+                        "source": {"bytes": b"audio_data"},
+                    }
+                }
+            ],
+        }
+    ]
+
+    formatted_request = model.format_request(messages)
+    audio_source = formatted_request["messages"][0]["content"][0]["audio"]["source"]
+
+    assert audio_source == {"bytes": b"audio_data"}
+
+
+def test_format_request_audio_s3_location(model, model_id):
+    """Test that audio with s3Location is properly formatted."""
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "audio": {
+                        "format": "wav",
+                        "source": {
+                            "location": {"type": "s3", "uri": "s3://my-bucket/audio.wav"},
+                        },
+                    }
+                },
+            ],
+        }
+    ]
+
+    formatted_request = model.format_request(messages)
+    audio_source = formatted_request["messages"][0]["content"][0]["audio"]["source"]
+
+    assert audio_source == {"s3Location": {"uri": "s3://my-bucket/audio.wav"}}
+
+
+def test_format_request_filters_audio_content_blocks(model, model_id):
+    """Test that format_request filters extra fields from audio content blocks."""
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "audio": {
+                        "format": "flac",
+                        "source": {"bytes": b"audio_data"},
+                        "duration": 30,  # Extra field that should be filtered
+                        "sampleRate": 44100,  # Extra field that should be filtered
+                    }
+                },
+            ],
+        }
+    ]
+
+    formatted_request = model.format_request(messages)
+
+    audio_block = formatted_request["messages"][0]["content"][0]["audio"]
+    expected = {"format": "flac", "source": {"bytes": b"audio_data"}}
+    assert audio_block == expected
+    assert "duration" not in audio_block
+    assert "sampleRate" not in audio_block
+
+
+def test_format_request_mixed_text_and_audio(model, model_id):
+    """Test that messages with both text and audio content are properly formatted."""
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"text": "Please transcribe this audio:"},
+                {
+                    "audio": {
+                        "format": "mp3",
+                        "source": {"bytes": b"audio_data"},
+                    }
+                },
+            ],
+        }
+    ]
+
+    formatted_request = model.format_request(messages)
+    content = formatted_request["messages"][0]["content"]
+
+    assert len(content) == 2
+    assert content[0] == {"text": "Please transcribe this audio:"}
+    assert content[1] == {"audio": {"format": "mp3", "source": {"bytes": b"audio_data"}}}
+
+
 def test_format_request_filters_cache_point_content_blocks(model, model_id):
     """Test that format_request filters extra fields from cachePoint content blocks."""
     messages = [
