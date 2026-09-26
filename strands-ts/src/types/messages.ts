@@ -376,6 +376,11 @@ export interface ToolResultBlockData {
   content: ToolResultContentData[]
 
   /**
+   * Optional structured data returned by the tool (e.g. MCP `structuredContent`), any JSON value.
+   */
+  structuredContent?: JSONValue
+
+  /**
    * The original error object when status is 'error'.
    * Available for inspection by hooks, error handlers, and agent loop.
    * Tools must wrap non-Error thrown values into Error objects.
@@ -408,16 +413,30 @@ export class ToolResultBlock implements JSONSerializable<{ toolResult: ToolResul
   readonly content: ToolResultContent[]
 
   /**
+   * Optional structured data returned by the tool (e.g. MCP `structuredContent`), any JSON value.
+   */
+  readonly structuredContent?: JSONValue
+
+  /**
    * The original error object when status is 'error'.
    * Available for inspection by hooks, error handlers, and agent loop.
    * Tools must wrap non-Error thrown values into Error objects.
    */
   readonly error?: Error
 
-  constructor(data: { toolUseId: string; status: 'success' | 'error'; content: ToolResultContent[]; error?: Error }) {
+  constructor(data: {
+    toolUseId: string
+    status: 'success' | 'error'
+    content: ToolResultContent[]
+    structuredContent?: JSONValue
+    error?: Error
+  }) {
     this.toolUseId = data.toolUseId
     this.status = data.status
     this.content = data.content
+    if (data.structuredContent !== undefined) {
+      this.structuredContent = data.structuredContent
+    }
     if (data.error !== undefined) {
       this.error = data.error
     }
@@ -434,6 +453,7 @@ export class ToolResultBlock implements JSONSerializable<{ toolResult: ToolResul
         toolUseId: this.toolUseId,
         status: this.status,
         content: this.content.map((block) => block.toJSON() as ToolResultContentData),
+        ...(this.structuredContent !== undefined && { structuredContent: this.structuredContent }),
       },
     }
   }
@@ -450,6 +470,9 @@ export class ToolResultBlock implements JSONSerializable<{ toolResult: ToolResul
       toolUseId: data.toolResult.toolUseId,
       status: data.toolResult.status,
       content,
+      ...(data.toolResult.structuredContent !== undefined && {
+        structuredContent: data.toolResult.structuredContent,
+      }),
     })
   }
 }

@@ -485,6 +485,42 @@ describe('SlidingWindowConversationManager', () => {
       )
     })
 
+    it.each([
+      ['object', { temperature: 72 }],
+      ['zero', 0],
+      ['empty string', ''],
+      ['false', false],
+      ['null', null],
+    ])('preserves %s structuredContent on truncated tool results', (_label, structuredContent) => {
+      const manager = new SlidingWindowConversationManager({ shouldTruncateResults: true })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 'tool-1',
+              status: 'success',
+              content: [new TextBlock('x'.repeat(500))],
+              structuredContent,
+            }),
+          ],
+        }),
+      ]
+
+      const changed = (manager as any)._truncateToolResults(messages, 0)
+      expect(changed).toBe(true)
+
+      const expectedText = `${'x'.repeat(200)}\n<truncated chars="100"/>\n${'x'.repeat(200)}`
+      expect(messages[0]!.content[0]).toEqual(
+        new ToolResultBlock({
+          toolUseId: 'tool-1',
+          status: 'success',
+          content: [new TextBlock(expectedText)],
+          structuredContent,
+        })
+      )
+    })
+
     it('image placeholder reflects non-bytes source kinds honestly', () => {
       const manager = new SlidingWindowConversationManager({ shouldTruncateResults: true })
       const messages = [
