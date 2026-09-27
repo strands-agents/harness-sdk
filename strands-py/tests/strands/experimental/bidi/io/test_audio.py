@@ -12,13 +12,14 @@ import pytest
 import pytest_asyncio
 
 import strands.experimental.bidi.io as bidi_io
-from strands.experimental.bidi.io import AudioIO, AudioProcessorConfig
+from strands.experimental.bidi.io import AudioIO, AudioProcessorConfig, ConsoleIO
 from strands.experimental.bidi.models import AudioCapable
 from strands.experimental.bidi.types import (
     AudioDelta,
     BidiAudioDeltaEvent,
     BidiBargeInEvent,
     BidiResponseStopEvent,
+    BidiTranscriptStartEvent,
 )
 
 
@@ -195,8 +196,6 @@ async def test_audio_io_output_rejects_changed_format(audio_output, stream):
 
 @pytest.mark.asyncio
 async def test_audio_io_output_barge_in(audio_output):
-    transcript_output = unittest.mock.AsyncMock()
-    audio_output._transcript_output = transcript_output
     audio_event = BidiAudioDeltaEvent(
         audio=base64.b64encode(b"test-audio").decode("utf-8"),
         channels=2,
@@ -211,19 +210,29 @@ async def test_audio_io_output_barge_in(audio_output):
     tru_data, _ = audio_output._callback(None, frame_count=1)
     exp_data = b"\x00\x00\x00\x00"
     assert tru_data == exp_data
-    transcript_output.assert_any_await(barge_in_event)
 
 
 @pytest.mark.asyncio
-async def test_response_stop_is_forwarded_to_transcript_output(audio_output):
-    transcript_output = unittest.mock.AsyncMock()
-    audio_output._transcript_output = transcript_output
+async def test_response_stop_is_forwarded_to_console_output(audio_output):
     audio_output._buffer.put(b"\x01\x02\x03\x04")
     event = BidiResponseStopEvent(response_id="response-1")
 
-    await audio_output(event)
+    with unittest.mock.patch.object(audio_output, "_console_output", new_callable=unittest.mock.AsyncMock) as write:
+        await audio_output(event)
 
-    transcript_output.assert_awaited_once_with(event)
+    write.assert_awaited_once_with(event)
+
+
+@pytest.mark.asyncio
+async def test_output_forwards_events_to_shared_console():
+    console = unittest.mock.Mock(spec=ConsoleIO)
+    console.output.return_value = unittest.mock.AsyncMock()
+    output = AudioIO(console=console).output()
+    event = BidiTranscriptStartEvent("assistant", "speech")
+
+    await output(event)
+
+    console.output.return_value.assert_awaited_once_with(event)
 
 
 def test_audio_io_output_configs(pyaudio_module, py_audio, audio_output):

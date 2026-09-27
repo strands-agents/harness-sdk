@@ -1,6 +1,9 @@
 """Configuration types for bidirectional I/O."""
 
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
+
+if TYPE_CHECKING:
+    from .console import ConsoleIO
 
 
 class AudioProcessorConfig(TypedDict, total=False):
@@ -19,6 +22,7 @@ class AudioIOConfig(TypedDict, total=False):
     """Configure bidirectional audio input and output."""
 
     audio_processor: AudioProcessorConfig | bool | None
+    console: "ConsoleIO"
     input_buffer_size: int | None
     input_device_index: int | None
     input_frames_per_buffer: int
@@ -27,4 +31,13 @@ class AudioIOConfig(TypedDict, total=False):
     output_frames_per_buffer: int
 
 
-__all__ = ["AudioIOConfig", "AudioProcessorConfig"]
+class ConsoleIOConfig(TypedDict, total=False):
+    """Configure console input display and text, reasoning, and transcript output."""
+
+    placeholder: str
+    show_text: bool
+    show_reasoning: bool
+    show_transcript: bool
+
+
+__all__ = ["AudioIOConfig", "AudioProcessorConfig", "ConsoleIOConfig"]
