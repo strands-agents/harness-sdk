@@ -36,6 +36,7 @@ from ....hooks import (
 from ....hooks.registry import TEvent
 from ....interrupt import _InterruptState
 from ....sandbox import Sandbox
+from ....sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
 from ....storage import Storage
 from ....telemetry.metrics import EventLoopMetrics
 from ....tools._caller import _ToolCaller
@@ -157,6 +158,9 @@ class BidiAgent(LocalAgent):
         _, self._system_prompt_content = split_system_prompt(system_prompt)
         self.messages = messages if messages is not None else []
         self._storage: Storage | None = storage
+        self._sandbox: Sandbox = NotASandboxLocalEnvironment()
+        # Never set: bidirectional agents are stopped, not cancelled per invocation.
+        self._cancel_signal = threading.Event()
 
         # Agent identification
         self.agent_id = _identifier.validate(agent_id or _DEFAULT_AGENT_ID, _identifier.Identifier.AGENT)
@@ -279,8 +283,8 @@ class BidiAgent(LocalAgent):
 
     @property
     def sandbox(self) -> Sandbox:
-        """Raise because bidirectional agents do not support sandboxes yet."""
-        raise AttributeError("sandbox is not supported by bidirectional agents")
+        """Execution environment for tool code: the host, with no isolation."""
+        return self._sandbox
 
     @property
     def context_manager(self) -> "ContextManager | None":
@@ -299,8 +303,8 @@ class BidiAgent(LocalAgent):
 
     @property
     def cancel_signal(self) -> threading.Event:
-        """Raise because bidirectional agents use start/stop rather than per-invocation cancellation."""
-        raise AttributeError("cancel_signal is not supported by bidirectional agents")
+        """The cancellation signal; never set, because bidirectional agents are stopped rather than cancelled."""
+        return self._cancel_signal
 
     def add_hook(
         self,

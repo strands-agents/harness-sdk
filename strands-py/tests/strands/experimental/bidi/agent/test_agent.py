@@ -2,6 +2,7 @@
 
 import asyncio
 import sys
+import threading
 import unittest.mock
 from contextlib import nullcontext
 from uuid import uuid4
@@ -20,6 +21,7 @@ from strands.experimental.bidi.types import (
     BidiTranscriptDeltaEvent,
 )
 from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent, MessageAddedEvent, MessageUpdatedEvent
+from strands.sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
 from strands.types.content import SystemContentBlock, TextBlock
 from strands.types.media import AudioBlock, ImageBlock
 from tests.fixtures.mock_hook_provider import MockHookProvider
@@ -304,7 +306,33 @@ def test_bidi_agent_context_manager_is_none(mock_model):
     assert agent.context_manager is None
 
 
-@pytest.mark.parametrize("member", ["sandbox", "event_loop_metrics", "model_state", "cancel_signal"])
+def test_bidi_agent_sandbox_defaults_to_host_environment(mock_model):
+    agent = BidiAgent(model=mock_model)
+
+    assert isinstance(agent.sandbox, NotASandboxLocalEnvironment)
+    assert agent.sandbox is agent.sandbox
+
+
+def test_bidi_agent_cancel_signal_is_never_set(mock_model):
+    agent = BidiAgent(model=mock_model)
+
+    assert isinstance(agent.cancel_signal, threading.Event)
+    assert not agent.cancel_signal.is_set()
+    assert agent.cancel_signal is agent.cancel_signal
+
+
+def test_bidi_agent_tool_context_receives_cancel_signal(mock_model):
+    @tool(context=True)
+    def context_tool(tool_context: ToolContext[LocalAgent]) -> str:
+        assert tool_context.cancel_signal is agent.cancel_signal
+        return "ok"
+
+    agent = BidiAgent(model=mock_model, tools=[context_tool])
+
+    assert agent.tool.context_tool(record_direct_tool_call=False)["content"] == [{"text": "ok"}]
+
+
+@pytest.mark.parametrize("member", ["event_loop_metrics", "model_state"])
 def test_bidi_agent_unsupported_local_agent_members_raise(mock_model, member):
     """Unsupported members raise AttributeError so getattr/hasattr fallbacks keep working."""
     agent = BidiAgent(model=mock_model)

@@ -99,12 +99,18 @@ class LocalAgent(Protocol):
 
     @property
     def event_loop_metrics(self) -> EventLoopMetrics:
-        """Aggregated metrics for the agent's loop execution."""
+        """Aggregated metrics for the agent's loop execution.
+
+        Not provided by BidiAgent: access raises AttributeError, so ``hasattr`` reports False.
+        """
         ...
 
     @property
     def model_state(self) -> dict[str, Any]:
-        """Runtime state for the model provider."""
+        """Runtime state for the model provider.
+
+        Not provided by BidiAgent: access raises AttributeError, so ``hasattr`` reports False.
+        """
         ...
 
     @property
