@@ -5,6 +5,7 @@ This module defines the types used for an Agent.
 
 from __future__ import annotations
 
+import threading
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeAlias, TypeVar
 
@@ -14,10 +15,13 @@ from .content import ContentBlock, Messages, SystemContentBlock
 from .interrupt import InterruptResponseContent
 
 if TYPE_CHECKING:
+    from .._context_manager.context_manager import ContextManager
     from ..agent.state import AgentState
     from ..hooks.registry import BaseHookEvent, HookCallback, HookRegistry
     from ..models.model import Model
+    from ..sandbox import Sandbox
     from ..storage.storage import Storage
+    from ..telemetry.metrics import EventLoopMetrics
     from ..tools._caller import _ToolCaller
     from ..tools.registry import ToolRegistry
     from ._snapshot import Snapshot, SnapshotField, SnapshotPreset
@@ -81,6 +85,31 @@ class LocalAgent(Protocol):
     @property
     def storage(self) -> Storage | None:
         """Default storage backend for agent subsystems."""
+        ...
+
+    @property
+    def sandbox(self) -> Sandbox:
+        """Execution environment for running commands, code, and file operations."""
+        ...
+
+    @property
+    def context_manager(self) -> ContextManager | None:
+        """The ContextManager plugin, if one is registered on this agent."""
+        ...
+
+    @property
+    def event_loop_metrics(self) -> EventLoopMetrics:
+        """Aggregated metrics for the agent's loop execution."""
+        ...
+
+    @property
+    def model_state(self) -> dict[str, Any]:
+        """Runtime state for the model provider."""
+        ...
+
+    @property
+    def cancel_signal(self) -> threading.Event:
+        """The cancellation signal for the current invocation."""
         ...
 
     def add_hook(

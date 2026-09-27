@@ -16,6 +16,7 @@ Key capabilities:
 import asyncio
 import copy
 import logging
+import threading
 import uuid
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
@@ -34,7 +35,9 @@ from ....hooks import (
 )
 from ....hooks.registry import TEvent
 from ....interrupt import _InterruptState
+from ....sandbox import Sandbox
 from ....storage import Storage
+from ....telemetry.metrics import EventLoopMetrics
 from ....tools._caller import _ToolCaller
 from ....tools.executors import ConcurrentToolExecutor
 from ....tools.executors._executor import ToolExecutor
@@ -72,6 +75,7 @@ from ..types.media import AudioDelta
 from .loop import _AgentLoop
 
 if TYPE_CHECKING:
+    from ...._context_manager.context_manager import ContextManager
     from ....session.session_manager import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -272,6 +276,31 @@ class BidiAgent(LocalAgent):
     def storage(self) -> Storage | None:
         """Default storage backend for agent subsystems."""
         return self._storage
+
+    @property
+    def sandbox(self) -> Sandbox:
+        """Raise because bidirectional agents do not support sandboxes yet."""
+        raise AttributeError("sandbox is not supported by bidirectional agents")
+
+    @property
+    def context_manager(self) -> "ContextManager | None":
+        """The ContextManager plugin; always None because bidirectional agents do not support plugins."""
+        return None
+
+    @property
+    def event_loop_metrics(self) -> EventLoopMetrics:
+        """Raise because bidirectional agents do not collect event loop metrics yet."""
+        raise AttributeError("event_loop_metrics is not supported by bidirectional agents")
+
+    @property
+    def model_state(self) -> dict[str, Any]:
+        """Raise because bidirectional models do not keep provider state across invocations."""
+        raise AttributeError("model_state is not supported by bidirectional agents")
+
+    @property
+    def cancel_signal(self) -> threading.Event:
+        """Raise because bidirectional agents use start/stop rather than per-invocation cancellation."""
+        raise AttributeError("cancel_signal is not supported by bidirectional agents")
 
     def add_hook(
         self,

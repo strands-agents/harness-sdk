@@ -298,6 +298,23 @@ def test_bidi_agent_storage_returns_configured_value(mock_model):
     assert agent.storage is storage
 
 
+def test_bidi_agent_context_manager_is_none(mock_model):
+    agent = BidiAgent(model=mock_model)
+
+    assert agent.context_manager is None
+
+
+@pytest.mark.parametrize("member", ["sandbox", "event_loop_metrics", "model_state", "cancel_signal"])
+def test_bidi_agent_unsupported_local_agent_members_raise(mock_model, member):
+    """Unsupported members raise AttributeError so getattr/hasattr fallbacks keep working."""
+    agent = BidiAgent(model=mock_model)
+
+    with pytest.raises(AttributeError, match=f"{member} is not supported by bidirectional agents"):
+        getattr(agent, member)
+    assert not hasattr(agent, member)
+    assert getattr(agent, member, None) is None
+
+
 @pytest.mark.skipif(sys.version_info < (3, 12), reason="BedrockNovaSonicModel is only supported for Python 3.12+")
 @pytest.mark.parametrize("options", [{}, {"model": None}])
 def test_bidi_agent_init_with_default_model(options):
