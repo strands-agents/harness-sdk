@@ -417,17 +417,13 @@ class FunctionToolMetadata:
         if self._context_param and self._context_param in self.signature.parameters:
             if tool_context is None:
                 agent = invocation_state["agent"]
-                try:
-                    cancel_signal = getattr(agent, "cancel_signal", threading.Event())
-                except NotImplementedError:
-                    # A BidiAgent does not implement cancellation yet; an inert event keeps the field
-                    # non-optional for tool authors.
-                    cancel_signal = threading.Event()
                 tool_context = ToolContext(
                     tool_use=tool_use,
                     agent=agent,
                     invocation_state=invocation_state,
-                    cancel_signal=cancel_signal,
+                    # ``invocation_state["agent"]`` is untyped and may be a minimal stand-in; fall back
+                    # to an inert event so tool authors never have to guard the field.
+                    cancel_signal=getattr(agent, "cancel_signal", threading.Event()),
                 )
             validated_input[self._context_param] = tool_context
 

@@ -30,17 +30,6 @@ DELEGATION_DESCRIPTION_SUFFIX = (
 )
 
 
-def _parent_cancel_signal(invocation_state: dict[str, Any]) -> threading.Event | None:
-    """Return the invoking agent's cancel signal, or None when there is none to forward.
-
-    A BidiAgent does not implement cancellation yet and raises on access.
-    """
-    try:
-        return getattr(invocation_state.get("agent"), "cancel_signal", None)
-    except NotImplementedError:
-        return None
-
-
 class _AgentAsTool(AgentTool):
     """Adapter that exposes an Agent as a tool for use by other agents.
 
@@ -233,7 +222,9 @@ class _AgentAsTool(AgentTool):
             # context (background execution) carries the signal scoped to that call instead.
             tool_context = kwargs.get("_tool_context")
             cancel_signal = (
-                tool_context.cancel_signal if tool_context is not None else _parent_cancel_signal(invocation_state)
+                tool_context.cancel_signal
+                if tool_context is not None
+                else getattr(invocation_state.get("agent"), "cancel_signal", None)
             )
 
             result = None

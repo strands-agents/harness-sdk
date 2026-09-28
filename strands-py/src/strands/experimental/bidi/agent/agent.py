@@ -159,6 +159,8 @@ class BidiAgent(LocalAgent):
         self.messages = messages if messages is not None else []
         self._storage: Storage | None = storage
         self._sandbox: Sandbox = NotASandboxLocalEnvironment()
+        # Never set yet: bidirectional agents do not act on a cancellation signal.
+        self._cancel_signal = threading.Event()
 
         # Agent identification
         self.agent_id = _identifier.validate(agent_id or _DEFAULT_AGENT_ID, _identifier.Identifier.AGENT)
@@ -300,8 +302,8 @@ class BidiAgent(LocalAgent):
 
     @property
     def cancel_signal(self) -> threading.Event:
-        """Raise because bidirectional agents do not act on a cancellation signal yet."""
-        raise NotImplementedError("cancel_signal is not supported by bidirectional agents yet")
+        """The cancellation signal; never set yet, because bidirectional agents do not act on it."""
+        return self._cancel_signal
 
     def add_hook(
         self,
