@@ -206,6 +206,17 @@ export class MemoryManager implements Plugin {
   }
 
   /**
+   * Applies the owning agent's `traceAttributes` to memory spans. Called by `Agent` at
+   * construction, before {@link initAgent} hands the tracer to the extraction coordinator.
+   *
+   * @param traceAttributes - Custom attributes to include on all memory spans
+   * @internal
+   */
+  _setTraceAttributes(traceAttributes: Record<string, AttributeValue> | undefined): void {
+    this._tracer = new Tracer(traceAttributes)
+  }
+
+  /**
    * Initializes the plugin with the agent.
    *
    * Wires up two independent behaviors:
@@ -217,17 +228,6 @@ export class MemoryManager implements Plugin {
    *
    * @param agent - The agent this plugin is being attached to
    */
-  /**
-   * Applies the owning agent's `traceAttributes` to memory spans. Called by `Agent` at
-   * construction, before {@link initAgent} hands the tracer to the extraction coordinator.
-   *
-   * @param traceAttributes - Custom attributes to include on all memory spans
-   * @internal
-   */
-  _setTraceAttributes(traceAttributes: Record<string, AttributeValue> | undefined): void {
-    this._tracer = new Tracer(traceAttributes)
-  }
-
   async initAgent(agent: LocalAgent): Promise<void> {
     await this._initStores()
     this._initExtraction(agent)
