@@ -25,35 +25,6 @@ import {
 export type { FrogAnimationRun, FrogRenderOptions } from './frog-canvas.js'
 
 export const FROG_INTRO_DURATION_MS = 4_200
-export const SETUP_GUIDE_TRANSITION_DURATION_MS = 1_200
-
-export function setupGuideLayout(
-  width: number,
-  height: number,
-  showFrog = true
-): {
-  wide: boolean
-  frogWidth: number
-  frogHeight: number
-  bubbleWidth: number
-  tailWidth: number
-  contentWidth: number
-} {
-  const wide = width >= 68
-  const frogWidth = showFrog ? (wide ? 26 : Math.min(24, width)) : 0
-  const frogHeight = showFrog ? Math.min(wide ? 14 : 5, Math.max(4, height - 7)) : 0
-  const bubbleWidth = wide ? Math.max(24, Math.min(88, width - frogWidth - 4)) : Math.max(20, width)
-  const tailWidth = wide && showFrog ? 2 : 0
-  return {
-    wide,
-    frogWidth,
-    frogHeight,
-    bubbleWidth,
-    tailWidth,
-    contentWidth: wide ? frogWidth + bubbleWidth + tailWidth : bubbleWidth,
-  }
-}
-
 const GLYPHS = {
   A: [' █████╗ ', '██╔══██╗', '███████║', '██╔══██║', '██║  ██║', '╚═╝  ╚═╝'],
   D: ['██████╗ ', '██╔══██╗', '██║  ██║', '██║  ██║', '██████╔╝', '╚═════╝ '],
@@ -166,107 +137,6 @@ export function renderFrogStartupLockup(
   return canvas.rows(color).join('\n')
 }
 
-export function renderSetupGuideFrog(
-  width: number,
-  height: number,
-  progress: number,
-  elapsedMs: number,
-  color = false,
-  theme: FrogTheme = 'green',
-  options: FrogRenderOptions = {}
-): string {
-  const canvas = new Canvas(Math.max(1, width), Math.max(1, height), theme, false, elapsedMs, options)
-  const landing = { x: canvas.width / 2, y: canvas.height * 2 - 12 }
-  const scale = Math.min(1, Math.max(0.24, canvas.height / 13), Math.max(0.24, canvas.width / 24))
-  const value = clamp(progress)
-  let pose: FrogPose
-  let transform: FrogTransform
-  if (value < 0.78) {
-    const state = hopState({ x: landing.x, y: -8 }, landing, value / 0.78)
-    pose = state.pose
-    transform = { ...state.transform, scale }
-  } else {
-    pose = interpolatePose(FROG_POSES.squash, FROG_POSES.settled, smoothStep((value - 0.78) / 0.22))
-    transform = { ...landing, scale, rotation: -0.04 }
-    drawArrivalRipple(canvas, landing.x, landing.y + 3, (value - 0.78) / 0.22)
-  }
-  drawFrog(canvas, transform, pose, elapsedMs)
-  if (value >= 0.78) {
-    const eyeY = transform.y - 4.7
-    canvas.setPixel(transform.x - 2.3, eyeY, 'ink', 130)
-    canvas.setPixel(transform.x + 3, eyeY, 'ink', 130)
-  }
-  return canvas.rows(color).join('\n')
-}
-
-export function renderSetupGuideTransitionFrame(
-  width: number,
-  height: number,
-  progress: number,
-  elapsedMs: number,
-  landingX: number,
-  color = false,
-  theme: FrogTheme = 'green',
-  options: FrogRenderOptions = {},
-  landingY?: number
-): string {
-  const canvas = new Canvas(Math.max(1, width), Math.max(1, height), theme, false, elapsedMs, options)
-  const value = clamp(progress)
-  const layout = lockupLayout(canvas.width)
-  const landing = { x: landingX, y: landingY ?? canvas.height * 2 - 12 }
-
-  if (canvas.width < FROG_FULL_LOCKUP_MIN_WIDTH || canvas.height < 12) {
-    if (value < 0.16) {
-      drawCompactLockup(canvas)
-      return canvas.rows(color).join('\n')
-    }
-  } else {
-    const dissolve = smoothStep((value - 0.08) / 0.5)
-    for (const point of BRAND_WORD.points) {
-      const order = hash01(point.index * 83 + 17)
-      if (order > dissolve) {
-        canvas.set(layout.wordX + point.x, layout.wordY + point.y, point.character, wordColor(canvas, point), 68)
-      } else if (value < 0.72 && order > dissolve - 0.22) {
-        const drift = Math.max(0, dissolve - order)
-        canvas.set(
-          layout.wordX + point.x + drift * (8 + hash01(point.index * 29) * 10),
-          layout.wordY + point.y - drift * (3 + hash01(point.index * 41) * 5),
-          drift < 0.08 ? '▒' : '·',
-          wordColor(canvas, point),
-          42
-        )
-      }
-    }
-  }
-
-  const start = { x: layout.frogX, y: layout.frogY }
-  if (value < 0.14) {
-    drawFrog(
-      canvas,
-      { ...start, scale: 1 },
-      interpolatePose(FROG_POSES.settled, FROG_POSES.crouch, smoothStep(value / 0.14)),
-      elapsedMs
-    )
-  } else if (value < 0.88) {
-    const state = hopState(start, landing, (value - 0.14) / 0.74)
-    state.transform.scale = 1
-    drawFrog(canvas, state.transform, state.pose, elapsedMs)
-  } else {
-    const settle = smoothStep((value - 0.88) / 0.12)
-    drawArrivalRipple(canvas, landing.x, landing.y + 3, settle)
-    drawFrog(
-      canvas,
-      { ...landing, scale: 1, rotation: lerp(-0.06, -0.04, settle) },
-      interpolatePose(FROG_POSES.squash, FROG_POSES.settled, settle),
-      elapsedMs
-    )
-    const eyeY = landing.y - 4.7
-    canvas.setPixel(landing.x - 2.3, eyeY, 'ink', 130)
-    canvas.setPixel(landing.x + 3, eyeY, 'ink', 130)
-  }
-  return canvas.rows(color).join('\n')
-}
-
 export function renderFrogBrandEasterEggFrame(
   width: number,
   progress: number,
@@ -302,6 +172,21 @@ export function frogStartupHeight(width: number, availableHeight: number): numbe
     return wordOnlyHeight(width)
   }
   return width >= SMALL_BRAND_WORD.width && availableHeight >= 8 ? 2 : 1
+}
+
+/** The width the lockup artwork occupies at `height`, for centering it within `width`. */
+export function frogStartupWidth(width: number, height: number): number {
+  const canvasWidth = Math.max(1, width)
+  if (canvasWidth >= FROG_FULL_LOCKUP_MIN_WIDTH && height >= lockupLayout(canvasWidth).height) {
+    return FROG_FULL_LOCKUP_MIN_WIDTH
+  }
+  if (canvasWidth >= BRAND_WORD.width && height >= wordOnlyHeight(BRAND_WORD.width)) {
+    return BRAND_WORD.width
+  }
+  if (canvasWidth >= SMALL_BRAND_WORD.width && height >= 2) {
+    return SMALL_BRAND_WORD.width
+  }
+  return Math.min(canvasWidth, 'STRANDS'.length)
 }
 
 export function frogStartupHitbox(width: number, height = lockupLayout(width).height): FrogStartupHitbox {

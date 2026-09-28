@@ -1,7 +1,6 @@
 import {
   DEFAULT_HARNESS_AGENT_CONFIG,
   harnessAgentOptionsFromConfig,
-  supportsWebSearch,
   type HarnessAgentConfig,
 } from '@strands-agents/harness'
 import {
@@ -14,11 +13,17 @@ import {
 import { Message, TextBlock, tool, type Agent, type JSONSchema, type Tool } from '@strands-agents/sdk'
 
 import { validateNoConfigSecrets } from './project/configuration.js'
-import { EXA_WEB_SEARCH_WARNING, withoutProfileTool } from './builtin-tools.js'
-import { PROVIDER_IDS, CliConfigStore, normalizeToolName, type SetupConfiguration, type ProviderId } from './config.js'
+import { EXA_WEB_SEARCH_WARNING, builtinToolChoices, withBuiltinToolChoice } from './builtin-tools.js'
+import {
+  PROVIDER_IDS,
+  normalizeToolName,
+  type CliConfigStore,
+  type SetupConfiguration,
+  type ProviderId,
+} from './config.js'
 import { resolveModelTarget, validateModelSelection } from './model/selection.js'
 import { discoverProviderModels } from './provider/discovery.js'
-import type { ChatDiffPreview } from './chat/types.js'
+import type { ChatBuiltinToolsRuntime, ChatDiffPreview } from './chat/types.js'
 import { createDiffPreview } from './permissions/file-change-preview.js'
 import { SETTING_DEFINITIONS, VISUAL_SETTING_DEFINITIONS, parseSettings } from './settings.js'
 
@@ -41,18 +46,11 @@ const CONFIGURATION_SETTING_PROPERTIES: NonNullable<JSONSchema['properties']> = 
 export interface SetupChange {
   configuration?: SetupConfiguration
   agentProject?: string
-  newConversation?: boolean
   conversationId?: string
   onFailure?: (message: string) => Promise<void>
 }
 
 export type RequestSetup = (change?: SetupChange) => void
-
-export interface AgentSetupSelection {
-  model: string
-  effort: HarnessAgentConfig['effort']
-  configuration: SetupConfiguration
-}
 
 export function configurationFromStore(config: CliConfigStore): SetupConfiguration {
   const snapshot = config.snapshot()
@@ -67,11 +65,38 @@ export function configurationFromStore(config: CliConfigStore): SetupConfigurati
   }
 }
 
+/** Backs `/tools`: applying saves the selection and reloads the agent through setup. */
+export function createBuiltinToolsRuntime(
+  config: CliConfigStore,
+  profile: () => HarnessAgentConfig,
+  requestSetup: RequestSetup,
+  conversationId: string
+): ChatBuiltinToolsRuntime {
+  return {
+    choices: () =>
+      builtinToolChoices(profile()).map(({ id, description, active, thirdParty }) => ({
+        name: id,
+        description,
+        enabled: active,
+        thirdParty,
+      })),
+    apply(enabled): void {
+      let next = profile()
+      for (const choice of builtinToolChoices(next)) {
+        const selected = enabled.includes(choice.id)
+        if (selected !== choice.active) {
+          next = { ...next, builtinTools: withBuiltinToolChoice(next, choice, selected) }
+        }
+      }
+      requestSetup({ configuration: { ...configurationFromStore(config), profile: next }, conversationId })
+    },
+  }
+}
+
 interface ConfigurationToolOptions {
   config: CliConfigStore
   profile(): HarnessAgentConfig
   agent(): Agent | undefined
-  draft?: SetupConfiguration
   source?: string
 }
 
@@ -81,7 +106,7 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
   preview(): ChatDiffPreview
   takePending(): SetupChange | undefined
 } {
-  let draft: SetupConfiguration | undefined = options.draft
+  let draft: SetupConfiguration | undefined
   let pending: SetupChange | undefined
   let revision = 0
   const current = (): SetupConfiguration => {
@@ -98,17 +123,15 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
       'Credential-bearing values are shown as [redacted]; omit them from patches to preserve their existing values. ' +
       'Use environment placeholders such as ${env:API_KEY} for new credentials. ' +
       'models lists provider models. update stages a patch; arrays replace existing arrays and object fields merge one level. ' +
-      'apply requires the latest revision returned by inspect, update, or reset. ' +
-      (options.draft
-        ? 'reset starts a fresh setup draft from defaults, preserving detected providers. apply finishes setup and starts a new chat. '
-        : 'apply saves the draft and reloads the agent after this turn, keeping the conversation. ') +
+      'apply requires the latest revision returned by inspect or update. ' +
+      'apply saves the draft and reloads the agent after this turn, keeping the conversation. ' +
       'Use this for model, effort, prompt, tools, skills, plugins, memory, context management, appearance, and discovery settings. ' +
       'For a source-backed agent, inspect identifies its source; edit that code, then apply to reload it.',
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['inspect', 'models', 'update', 'apply', ...(options.draft ? ['reset'] : [])] },
-        revision: { type: 'integer', description: 'For apply: the revision returned by inspect, update, or reset.' },
+        action: { type: 'string', enum: ['inspect', 'models', 'update', 'apply'] },
+        revision: { type: 'integer', description: 'For apply: the revision returned by inspect or update.' },
         provider: { type: 'string', enum: [...PROVIDER_IDS] },
         query: { type: 'string', description: 'Optional model-name filter for models.' },
         profile: {
@@ -177,30 +200,6 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
             tools: DEFAULT_HARNESS_AGENT_CONFIG.builtinTools,
             plugins: DEFAULT_HARNESS_AGENT_CONFIG.builtinPlugins,
           },
-          ...(options.draft ? { mode: 'setup draft; the assistant model is separate from this target model' } : {}),
-        })
-      }
-      if (request.action === 'reset' && options.draft) {
-        const setupDraft = options.draft
-        const nextDraft: SetupConfiguration = {
-          ...configurationFromStore(CliConfigStore.memory()),
-          providers: setupDraft.providers,
-          providerEnvironment: setupDraft.providerEnvironment,
-          settings: current().settings ?? options.config.snapshot().settings,
-        }
-        if (!supportsWebSearch(nextDraft.profile.model)) {
-          nextDraft.profile = {
-            ...nextDraft.profile,
-            builtinTools: withoutProfileTool(nextDraft.profile.builtinTools, 'web_search'),
-          }
-        }
-        draft = nextDraft
-        revision++
-        pending = undefined
-        return JSON.stringify({
-          status: 'fresh setup draft; saved configuration is unchanged',
-          revision,
-          profile: nextDraft.profile,
         })
       }
       if (request.action === 'update') {
@@ -309,7 +308,6 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
             throw new Error('The configuration changed during validation. Inspect the latest draft and apply it again.')
           }
           pending = {
-            ...(options.draft ? { newConversation: true } : {}),
             configuration: {
               ...configuration,
               providers: [...new Set([provider, ...configuration.providers])],
@@ -331,11 +329,7 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
           )
           await agent.sessionManager?.saveSnapshot({ target: agent, isLatest: true })
         }
-        return (
-          (options.draft
-            ? 'Configuration validated. Your custom agent will launch in a fresh chat after this turn.'
-            : 'Configuration validated. It will be applied after this turn, preserving the conversation.') + exaNotice
-        )
+        return 'Configuration validated. It will be applied after this turn, preserving the conversation.' + exaNotice
       }
       throw new Error('Unknown strands_config action.')
     },

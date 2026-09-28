@@ -209,7 +209,7 @@ It's also available on GitHub via [strands-agents/tools](https://github.com/stra
 Build real-time voice and audio conversations with persistent streaming connections. Unlike traditional request-response patterns, bidirectional streaming maintains long-running conversations where users can interrupt, provide continuous input, and receive real-time audio responses. Get started with your first BidiAgent by following the [Quickstart](https://strandsagents.com/docs/user-guide/concepts/bidirectional-streaming/quickstart/) guide. 
 
 **Supported Model Providers:**
-- Amazon Bedrock Nova Sonic (v1, v2)
+- Amazon Bedrock Nova Sonic
 - Google Gemini Live
 - OpenAI Realtime API
 
@@ -239,7 +239,7 @@ from strands_tools import calculator, stop
 
 async def main():
     # Create bidirectional agent with Nova Sonic v2
-    model = BedrockNovaSonicModel()
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
     agent = BidiAgent(model=model, tools=[calculator, stop])
 
     # Setup audio I/O (local audio requires the bidi-pyaudio extra)
@@ -269,11 +269,12 @@ from strands.experimental.bidi.models import BedrockNovaSonicModel
 
 # Configure audio streams and Nova Sonic session parameters.
 model = BedrockNovaSonicModel(
+    model_id="amazon.nova-2-sonic-v1:0",
     audio={
-        "input_rate": 16000,
-        "output_rate": 16000,
-        "voice": "matthew",
+        "input": {"sample_rate": 16000},
+        "output": {"sample_rate": 16000},
     },
+    voice="matthew",
     params={
         "turnDetectionConfiguration": {
             "endpointingSensitivity": "MEDIUM"

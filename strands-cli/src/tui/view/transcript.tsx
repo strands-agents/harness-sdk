@@ -256,7 +256,7 @@ function NoticeView({ notice }: { notice: ChatNotice }): ReactElement {
           ? theme.accent
           : 'green'
   return (
-    <Box paddingLeft={2}>
+    <Box paddingLeft={1}>
       <Text>
         <Text color={color}>{marker}</Text> {notice.text}
         {notice.taskId ? <Text dimColor> - {notice.taskId}</Text> : null}

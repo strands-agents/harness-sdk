@@ -399,7 +399,13 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
           continue
         }
 
-        usage.totalTokens = usage.inputTokens + usage.outputTokens
+        // Anthropic's input_tokens excludes tokens read from or written to the cache, so the
+        // billed total is the sum of all four counters.
+        usage.totalTokens =
+          usage.inputTokens +
+          usage.outputTokens +
+          (usage.cacheReadInputTokens ?? 0) +
+          (usage.cacheWriteInputTokens ?? 0)
         yield {
           type: 'modelMetadataEvent',
           usage,

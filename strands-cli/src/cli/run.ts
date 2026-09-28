@@ -8,7 +8,6 @@ import { initLogging } from '../logging.js'
 import { runPlainChat, runTurn } from '../console.js'
 import { importAgentProject } from '../tui/project/import.js'
 import { rethrowWithProviderHint } from '../tui/provider/packages.js'
-import { withSession } from '../tui/session/options.js'
 import { buildTelemetryPing, sendTelemetryPing, telemetryEnabled } from '../tui/telemetry.js'
 import { errorMessage } from '../tui/terminal/sanitize.js'
 import { confirmWorkspaceMcp, resolveMcpConfig } from '../tui/workspace/trust.js'
@@ -27,6 +26,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       return
     }
     throw err
+  }
+
+  if (args.update) {
+    const { updateCli } = await import('./update.js')
+    process.exitCode = await updateCli()
+    return
   }
 
   const stdinIsTty = stdin.isTTY === true
@@ -197,15 +202,11 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
     const initialWorkspace = process.cwd()
     let pinged = false
     process.exitCode = await runInkChat(
-      async (signal, requestSetup, conversation, launch) => {
+      async (signal, requestSetup, conversation, launch, confirmMcp) => {
         signal.throwIfAborted()
-        if (launch?.assistant) {
-          const { createSetupAssistant } = await import('../tui/agent-setup.js')
-          return createSetupAssistant(launch.assistant, config, requestSetup, initialWorkspace)
-        }
         const initialMcp = await resolveMcpConfig(args.mcpConfig, {
           cwd: initialWorkspace,
-          confirm: confirmWorkspaceMcp,
+          confirm: confirmMcp,
           discovery: config.snapshot().settings.mcpDiscovery,
         })
         signal.throwIfAborted()
@@ -236,7 +237,6 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
                 ),
               }
             : await invocationAgentForRun(launch?.agentProject ? { ...args, agent: launch.agentProject } : args, config)
-        if (launch?.newConversation) invocation.options = withSession(invocation.options, { id: undefined })
         signal.throwIfAborted()
         const chat = await createInteractiveChat({
           agentOptions: invocation.options,

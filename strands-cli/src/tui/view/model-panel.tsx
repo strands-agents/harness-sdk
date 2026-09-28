@@ -31,7 +31,6 @@ export function ModelPicker({
   onPanelElement,
   onRowElement,
   onFilterElement,
-  onPinElement,
   onSearchElement,
   onSliderElement,
   onControlElement,
@@ -49,7 +48,6 @@ export function ModelPicker({
   pressedControl?: string
   hoveredControl?: string
   onFilterElement?: (id: string, element: DOMElement | null) => void
-  onPinElement?: (index: number, element: DOMElement | null) => void
   onSearchElement?: (element: DOMElement | null) => void
   onSliderElement?: (element: DOMElement | null) => void
   onControlElement?: (key: string, element: DOMElement | null) => void
@@ -89,7 +87,6 @@ export function ModelPicker({
       {...(pressedRow !== undefined ? { pressed: pressedRow } : {})}
       {...(hoveredRow !== undefined ? { hovered: hoveredRow } : {})}
       {...(onRowElement ? { onRowElement } : {})}
-      {...(onPinElement ? { onPinElement } : {})}
     />
   )
   return (
@@ -343,15 +340,13 @@ function ModelRows({
   focused,
   emptyMessage,
   onRowElement,
-  onPinElement,
 }: Pick<PanelRowsProps, 'panel' | 'rows' | 'selected' | 'start' | 'onRowElement'> & {
   pressed?: number
   hovered?: number
   focused: boolean
   emptyMessage: string
-  onPinElement?: (index: number, element: DOMElement | null) => void
 }): ReactElement {
-  const { accent, hover, selection } = useTheme()
+  const { hover, selection } = useTheme()
   return (
     <Box flexGrow={1} flexDirection="column" overflow="hidden">
       {rows.length === 0 ? (
@@ -361,32 +356,17 @@ function ModelRows({
           const index = start + visibleIndex
           const active = index === selected
           const pressedRow = index === pressed
-          const showPin = row.value && (row.pinned || index === hovered || pressedRow || (focused && active))
           return (
             <Box
               key={`${panel.id}-model-${index}`}
               ref={(element) => onRowElement?.(index, element)}
               width="100%"
               paddingX={1}
-              justifyContent="space-between"
               backgroundColor={index === hovered || pressedRow || (focused && active) ? selection : undefined}
             >
               <Text wrap="truncate-end" {...(pressedRow && row.value ? { color: hover } : {})} bold={focused && active}>
                 {row.label}
               </Text>
-              <Box flexShrink={0}>
-                {showPin ? (
-                  <Box ref={(element) => onPinElement?.(index, element)}>
-                    <Text
-                      {...(pressedRow ? { color: hover } : row.pinned ? { color: accent } : {})}
-                      dimColor={!row.pinned && !pressedRow}
-                    >
-                      {' '}
-                      {row.pinned ? '★' : '☆'}
-                    </Text>
-                  </Box>
-                ) : null}
-              </Box>
             </Box>
           )
         })

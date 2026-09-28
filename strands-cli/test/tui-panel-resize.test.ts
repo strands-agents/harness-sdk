@@ -206,7 +206,7 @@ describe('mounted panel resizing', () => {
   it('blocks covered metadata while retaining visible metadata and footer actions', async () => {
     const { controller } = createController()
     const view = await mount(controller)
-    await view.resize(40, 16)
+    await view.resize(40, 14)
     await vi.waitFor(() => view.fits())
     const modelTarget = view.point('model-00')
     controller.openContextPanel()

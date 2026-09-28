@@ -31,7 +31,7 @@ async def test_cancel_with_bedrock():
     model by cancelling before the model call starts.
     """
 
-    agent = Agent(model=BedrockModel(model_id="anthropic.claude-3-haiku-20240307-v1:0"))
+    agent = Agent(model=BedrockModel(model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0"))
 
     # Cancel deterministically before the model call
     async def cancel_before_model(event: BeforeModelCallEvent):
@@ -56,7 +56,7 @@ async def test_cancel_during_streaming_bedrock():
     streaming API with a real Bedrock model.
     """
 
-    agent = Agent(model=BedrockModel(model_id="anthropic.claude-3-haiku-20240307-v1:0"))
+    agent = Agent(model=BedrockModel(model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0"))
 
     events = []
     async for event in agent.stream_async(
@@ -111,7 +111,7 @@ async def test_cancel_with_tools_bedrock():
         return a * b
 
     agent = Agent(
-        model=BedrockModel(model_id="anthropic.claude-3-haiku-20240307-v1:0"),
+        model=BedrockModel(model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0"),
         tools=[slow_calculation, another_calculation],
     )
 
@@ -137,7 +137,7 @@ async def test_cancel_from_thread_bedrock():
     is executing.
     """
 
-    agent = Agent(model=BedrockModel(model_id="anthropic.claude-3-haiku-20240307-v1:0"))
+    agent = Agent(model=BedrockModel(model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0"))
 
     # Cancel deterministically from a different thread before the model call
     def cancel_before_model(event: BeforeModelCallEvent):
@@ -163,7 +163,7 @@ async def test_cancel_with_external_signal_bedrock():
     the invocation and aborts the in-flight Bedrock response.
     """
 
-    agent = Agent(model=BedrockModel(model_id="anthropic.claude-3-haiku-20240307-v1:0"))
+    agent = Agent(model=BedrockModel(model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0"))
     cancel_signal = threading.Event()
 
     events = []

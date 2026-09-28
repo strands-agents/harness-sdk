@@ -1,9 +1,7 @@
-import { createElement } from 'react'
-import { renderToString } from 'ink'
 import { describe, expect, it } from 'vitest'
 
 import { sanitizeTerminalText } from '../src/tui/terminal/sanitize.js'
-import { DnaVortexIntro } from '../src/tui/view/intro.js'
+import { hasRoomForFrogIntro } from '../src/tui/view/intro.js'
 import {
   renderFrogSpiralFrame,
   renderFrogBrandEasterEggFrame,
@@ -49,15 +47,11 @@ describe('Strands intro', () => {
     expect(renderFrogBrandEasterEggFrame(width, 1, 3_200)).toBe(startup)
   })
 
-  it('shows a subtle skip hint', () => {
-    const output = renderToString(createElement(DnaVortexIntro, { onComplete: () => {} }), { columns: 80 })
-    const rows = output.split('\n')
-    const hint = '[ space to skip ]'
-    const hintRow = rows.findIndex((row) => row.includes(hint))
-    const hintColumn = rows[hintRow]!.indexOf(hint)
-
-    expect(hintRow).toBe(rows.length - 1)
-    expect(Math.abs(hintColumn + hint.length / 2 - 40)).toBeLessThanOrEqual(1)
+  it('only runs when the full frog lockup fits', () => {
+    expect(hasRoomForFrogIntro(92, 40)).toBe(false)
+    expect(hasRoomForFrogIntro(93, 31)).toBe(false)
+    expect(hasRoomForFrogIntro(93, 32)).toBe(true)
+    expect(hasRoomForFrogIntro(120, 40)).toBe(true)
   })
 
   it('writes STRANDS with the spiral before the frog enters', () => {

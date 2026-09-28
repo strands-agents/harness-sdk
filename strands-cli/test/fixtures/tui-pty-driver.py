@@ -24,8 +24,10 @@ def main() -> int:
     shell_mode = os.environ.get("STRANDS_CLI_TEST_SHELL_MODE")
     frog_mode = os.environ.get("STRANDS_CLI_TEST_FROG_MODE") == "true"
     skip_intro = os.environ.get("STRANDS_CLI_TEST_SKIP_INTRO") == "true"
+    intro = os.environ.get("STRANDS_CLI_TEST_INTRO") == "true"
     master, slave = pty.openpty()
-    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
+    rows = 40 if skip_intro else 20 if intro else 30
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, 100, 0, 0))
     initial_terminal = termios.tcgetattr(slave)
     process = subprocess.Popen(
         command,
@@ -89,8 +91,6 @@ def main() -> int:
         if skip_intro:
             wait_for_raw_mode()
             os.write(master, b" ")
-        elif os.environ.get("STRANDS_CLI_TEST_INTRO") == "true":
-            wait_for([b"[ space to skip ]"], styled=False)
         wait_for([ready_marker, CHAT_READY])
         wait_for_raw_mode()
         if frog_mode:

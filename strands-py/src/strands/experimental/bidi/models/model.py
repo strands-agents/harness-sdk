@@ -20,8 +20,8 @@ from typing import Any, NoReturn, Protocol, cast, runtime_checkable
 
 from ....models.model import Model
 from ....types.content import Messages
-from ....types.tools import ToolResultBlock, ToolSpec
-from ..types.content import BidiContentBlock, BidiContentDelta
+from ....types.tools import ToolSpec
+from ..types.content import BidiContentDelta, BidiMessage
 from ..types.events import BidiOutputEvent
 from .configs import AudioConfig, ConnectionConfig
 
@@ -122,9 +122,9 @@ class BidiModel(Model, abc.ABC):
     def receive(self) -> AsyncIterable[BidiOutputEvent]:
         """Receive streaming events from the model.
 
-        Continuously yields events from the model as they arrive over the connection.
-        Events are normalized to a provider-agnostic format for uniform processing.
-        This method should be called in a loop or async task to process model responses.
+        Each transcript has start and stop events, with zero or more deltas between
+        them, sharing a content_id unique within the connection. Transcript streams
+        may interleave, and user transcripts may arrive outside response boundaries.
 
         The stream continues until the connection is closed or an error occurs.
 
@@ -136,30 +136,33 @@ class BidiModel(Model, abc.ABC):
 
     @abc.abstractmethod
     # pragma: no cover
-    async def send(
-        self,
-        content: BidiContentBlock | BidiContentDelta | ToolResultBlock,
-    ) -> None:
-        """Send content to the model over the active connection.
-
-        Transmits user input or tool results to the model during an active streaming
-        session. Supports multiple content types including text, audio, images, and
-        tool execution results. Can be called multiple times during a conversation.
+    async def send(self, content: BidiMessage | BidiContentDelta) -> None:
+        """Send a complete message or an individual delta over the active connection.
 
         Args:
-            content: A TextBlock, AudioDelta, ImageBlock, or ToolResultBlock.
+            content: A message of text and image blocks, a message of tool results,
+                or a streaming audio delta. Complete messages preserve block order
+                and request a response after delivery, subject to provider turn and
+                tool scheduling. A message may require several provider events.
+
+        Raises:
+            ValueError: If the content is unsupported by the provider.
 
         Example:
             ```
-            from strands.experimental.bidi.types import AudioDelta
+            from strands.experimental.bidi.types import AudioDelta, BidiMessage
             from strands.types.content import TextBlock
             from strands.types.media import ImageBlock
             from strands.types.tools import ToolResultBlock
 
-            await model.send(TextBlock("Hello"))
+            await model.send(BidiMessage(content=[
+                ImageBlock(format="jpeg", source={"bytes": image_bytes}),
+                TextBlock("What is in this image?"),
+            ]))
             await model.send(AudioDelta(format="pcm", source={"bytes": audio_bytes}))
-            await model.send(ImageBlock(format="jpeg", source={"bytes": image_bytes}))
-            await model.send(ToolResultBlock(tool_use_id="call-1", status="success", content=[{"text": "Done"}]))
+            await model.send(BidiMessage(content=[
+                ToolResultBlock(tool_use_id="call-1", status="success", content=[{"text": "Done"}]),
+            ]))
             ```
         """
         pass

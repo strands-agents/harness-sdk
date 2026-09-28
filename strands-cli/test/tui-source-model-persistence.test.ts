@@ -51,7 +51,7 @@ async function open(
       backgroundTasks: false,
       ...overrides,
     },
-    config: CliConfigStore.memory({}, {}, { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false }),
+    config: CliConfigStore.memory({}, { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false }),
     cwd: root,
     sessionCatalogPath: join(root, 'catalog.json'),
     persistModelChanges: false,

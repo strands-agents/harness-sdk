@@ -38,9 +38,8 @@ function backend(): ChatBackend {
 }
 
 describe('runInkChat', () => {
-  it('retains chat on reload or failed setup and starts fresh after Q&A', async () => {
+  it('retains chat on reload or failed setup', async () => {
     const config = CliConfigStore.memory(
-      {},
       {},
       { toolOutput: 'full', animations: false, showReasoning: false, frogTheme: 'merlin' },
       { onboardingVersion: 0, profile: { name: 'Original' } }
@@ -140,18 +139,6 @@ describe('runInkChat', () => {
       current.dismissPanel()
       await current.submit('Continue.')
       expect(current.getSnapshot().completedTurns).toHaveLength(2)
-      const beforeFreshChat = current
-      source.mockImplementationOnce(async () => {
-        current = new ChatController(backend())
-        return current
-      })
-      root.props.onSetupComplete(0, true, { newConversation: true })
-      await vi.waitFor(() => {
-        expect(root.props.controller).toBeDefined()
-        expect(root.props.controller).not.toBe(beforeFreshChat)
-      })
-      expect(source.mock.calls.at(-1)?.[2]).toBeUndefined()
-      expect(current.getSnapshot().completedTurns).toEqual([])
     } finally {
       finish()
       await running
@@ -335,6 +322,31 @@ describe('runInkChat', () => {
       await vi.waitFor(() => expect(writes.join('')).toContain('Message Test'))
       input.push('draft')
       await vi.waitFor(() => expect(writes.join('')).toContain('draft'))
+      writes.length = 0
+      input.push('\n')
+      await instance!.waitUntilRenderFlush()
+      const multilineDraft = sanitizeTerminalText(
+        renderToString(
+          createElement(ChatView, {
+            snapshot: controller.getSnapshot(),
+            input: 'draft\n',
+            cursor: 6,
+            terminalWidth: output.columns,
+            terminalHeight: output.rows,
+            synchronousTranscriptLayout: true,
+          }),
+          { columns: output.columns }
+        )
+      ).trimEnd()
+      await vi.waitFor(() => {
+        const frame = writes.filter((write) => write.includes('draft')).at(-1) ?? ''
+        expect(sanitizeTerminalText(frame).trimEnd()).toBe(multilineDraft)
+      })
+      writes.length = 0
+      input.push('\u007f')
+      await vi.waitFor(() => {
+        expect(writes.some((write) => sanitizeTerminalText(write).includes('draft'))).toBe(true)
+      })
       for (const [columns, rows] of [
         [90, 50],
         [60, 25],
@@ -503,7 +515,7 @@ describe('runInkChat', () => {
     const runTask = runInkChat(source, {
       alternateScreen: false,
       setup: true,
-      config: CliConfigStore.memory({}, {}, {}, { onboardingVersion: 0 }),
+      config: CliConfigStore.memory({}, {}, { onboardingVersion: 0 }),
       renderApp: ((element: unknown) => {
         renderedRoot = element
         return instance

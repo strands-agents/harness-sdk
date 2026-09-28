@@ -26,6 +26,7 @@
     "test:browser:install": "npm run test:browser:install -w strands-ts",
     "test:package": "npm run test:package -w strands-ts",
     "lint": "npm run lint -w strands-ts",
+    "lint:py": "sh .husky/lint-python.sh",
     "format": "npm run format -w strands-ts",
     "format:check": "npm run format:check -w strands-ts",
     "type-check": "npm run type-check -w strands-ts",

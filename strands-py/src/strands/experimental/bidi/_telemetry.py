@@ -100,7 +100,6 @@ def start_response_span(tracer: Tracer, response_id: str, parent_span: Span | No
 def end_response_span(
     tracer: Tracer,
     span: Span,
-    stop_reason: str | None = None,
     time_to_first_audio_ms: int | None = None,
     error: Exception | None = None,
 ) -> None:
@@ -109,15 +108,11 @@ def end_response_span(
     Args:
         tracer: Tracer instance.
         span: The response span to end.
-        stop_reason: Why the response ended (complete, interrupted, tool_use, error).
         time_to_first_audio_ms: Milliseconds from response start to the first audio chunk, if any
             audio was emitted for this response.
         error: Exception if the response ended with an error.
     """
     attributes: dict[str, AttributeValue] = {}
-
-    if stop_reason:
-        attributes["gen_ai.response.finish_reason"] = stop_reason
 
     if time_to_first_audio_ms is not None:
         attributes["gen_ai.server.time_to_first_audio"] = time_to_first_audio_ms
@@ -195,12 +190,12 @@ def end_connection_span(tracer: Tracer, span: Span, error: Exception | None = No
     tracer._end_span(span, error=error)
 
 
-def add_interruption_event(span: Span, reason: str) -> None:
-    """Record an interruption as a span event on the session span.
+def add_barge_in_event(span: Span, reason: str) -> None:
+    """Record a barge-in as a span event on the session span.
 
     Args:
         span: The session span to add the event to.
-        reason: Reason for the interruption.
+        reason: Reason for the barge-in.
     """
     if span and span.is_recording():
-        span.add_event("bidi_interruption", attributes={"interruption.reason": reason})
+        span.add_event("bidi_barge_in", attributes={"barge_in.reason": reason})

@@ -15,6 +15,7 @@ import asyncio
 import base64
 import concurrent.futures
 import json
+from dataclasses import asdict
 from unittest.mock import ANY, AsyncMock, Mock, patch
 
 import pytest
@@ -29,20 +30,23 @@ from strands.experimental.bidi.models import (
     ConnectionTimeoutError,
 )
 from strands.experimental.bidi.models.bedrock import (
-    NOVA_SONIC_V1_MODEL_ID,
-    NOVA_SONIC_V2_MODEL_ID,
     _BedrockAWSCRTHTTPClient,
     _BedrockAWSCRTHTTPResponse,
     _ResponseState,
+    _Transcript,
 )
 from strands.experimental.bidi.types import (
     AudioDelta,
-    BidiAudioStreamEvent,
-    BidiInterruptionEvent,
-    BidiResponseCompleteEvent,
+    BidiAudioDeltaEvent,
+    BidiAudioStartEvent,
+    BidiAudioStopEvent,
+    BidiBargeInEvent,
+    BidiMessage,
     BidiResponseStartEvent,
-    BidiTranscriptCompleteEvent,
-    BidiTranscriptStreamEvent,
+    BidiResponseStopEvent,
+    BidiTranscriptDeltaEvent,
+    BidiTranscriptStartEvent,
+    BidiTranscriptStopEvent,
     BidiUsageEvent,
 )
 from strands.types.content import TextBlock
@@ -54,7 +58,7 @@ from strands.types.tools import ToolResultBlock
 @pytest.fixture
 def model_id():
     """Nova Sonic model identifier."""
-    return "amazon.nova-sonic-v1:0"
+    return "amazon.nova-2-sonic-v1:0"
 
 
 @pytest.fixture
@@ -107,20 +111,44 @@ async def test_model_initialization(model_id, boto_session):
 
 
 def test_get_config_returns_reference(boto_session):
-    model = BedrockNovaSonicModel(boto_session=boto_session)
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0", boto_session=boto_session)
 
     config = model.get_config()
     exp_config = {
-        "model_id": NOVA_SONIC_V2_MODEL_ID,
+        "model_id": "amazon.nova-2-sonic-v1:0",
         "params": {},
         "connection": {"restart_after_s": 420},
     }
     assert config == exp_config
 
-    config["model_id"] = NOVA_SONIC_V1_MODEL_ID
-    exp_config["model_id"] = NOVA_SONIC_V1_MODEL_ID
+    config["model_id"] = "updated-model"
+    exp_config["model_id"] = "updated-model"
     assert model.get_config() == exp_config
     assert model.get_config() is config
+
+    model.update_config()
+    assert model.get_config() == exp_config
+    assert model.get_config() is config
+
+
+@pytest.mark.parametrize("model_config", [{}, {"model_id": None}, {"model_id": ""}, {"model_id": 123}])
+def test__init__rejects_invalid_model_id(boto_session, model_config):
+    with pytest.raises(ValueError, match="model_id"):
+        BedrockNovaSonicModel(boto_session=boto_session, **model_config)
+
+
+@pytest.mark.parametrize("invalid_model_id", [None, "", 123])
+def test_update_config_rejects_invalid_model_id(boto_session, invalid_model_id):
+    model = BedrockNovaSonicModel(model_id="test-model", boto_session=boto_session)
+    config = model.get_config()
+    exp_config = dict(config)
+
+    with pytest.raises(ValueError, match="model_id must be a non-empty string"):
+        model.update_config(model_id=invalid_model_id, params={"temperature": 0.7}, connection={})
+
+    tru_config = model.get_config()
+    assert tru_config == exp_config
+    assert tru_config is config
 
 
 @pytest.mark.parametrize(
@@ -131,7 +159,7 @@ def test_get_config_returns_reference(boto_session):
     ],
 )
 def test_update_config_warns_invalid_keys(boto_session, model_config, invalid_key):
-    model = BedrockNovaSonicModel(boto_session=boto_session)
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0", boto_session=boto_session)
 
     with pytest.warns(UserWarning, match=invalid_key):
         model.update_config(**model_config)
@@ -139,13 +167,13 @@ def test_update_config_warns_invalid_keys(boto_session, model_config, invalid_ke
 
 @pytest.mark.parametrize("connection", [{"restart_after_s": 30}, {"auto_reconnect": False}, {}])
 def test_update_config_replaces_connection(boto_session, connection):
-    model = BedrockNovaSonicModel(boto_session=boto_session)
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0", boto_session=boto_session)
 
     model.update_config(connection=connection)
 
     tru_config = model.get_config()
     exp_config = {
-        "model_id": NOVA_SONIC_V2_MODEL_ID,
+        "model_id": "amazon.nova-2-sonic-v1:0",
         "params": {},
         "connection": connection,
     }
@@ -160,14 +188,14 @@ async def test_restart_uses_updated_config(nova_model, mock_client, mock_stream)
     await nova_model.start()
 
     updated_params = {"inferenceConfiguration": {"temperature": 0.8}}
-    nova_model.update_config(model_id=NOVA_SONIC_V2_MODEL_ID, params=updated_params)
+    nova_model.update_config(model_id="updated-model", params=updated_params)
     invoke.assert_called_once()
 
     await nova_model.restart()
 
     assert invoke.call_count == 2
     restarted_request = invoke.call_args.args[0]
-    assert restarted_request.model_id == NOVA_SONIC_V2_MODEL_ID
+    assert restarted_request.model_id == "updated-model"
 
     events = [json.loads(call.args[0].value.bytes_)["event"] for call in mock_stream.input_stream.send.call_args_list]
     session_configs = [event["sessionStart"] for event in events if "sessionStart" in event]
@@ -392,7 +420,7 @@ async def test_crt_response_reports_cancelled_read_failure():
     ],
 )
 def test_get_audio_config(boto_session, audio, input_rate, output_rate):
-    model = BedrockNovaSonicModel(boto_session=boto_session, audio=audio)
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0", boto_session=boto_session, audio=audio)
 
     tru_config = model.get_audio_config()
     exp_config = {
@@ -406,13 +434,15 @@ def test_get_audio_config(boto_session, audio, input_rate, output_rate):
 @pytest.mark.parametrize("direction", ["input", "output"])
 def test__init__requires_audio_sample_rate(boto_session, direction):
     with pytest.raises(KeyError, match="sample_rate"):
-        BedrockNovaSonicModel(boto_session=boto_session, audio={direction: {}})
+        BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0", boto_session=boto_session, audio={direction: {}})
 
 
 @pytest.mark.parametrize("direction", ["input", "output"])
 def test__init__rejects_unsupported_audio_sample_rate(boto_session, direction):
     with pytest.raises(ValueError, match="Unsupported sample rate"):
-        BedrockNovaSonicModel(boto_session=boto_session, audio={direction: {"sample_rate": 48000}})
+        BedrockNovaSonicModel(
+            model_id="amazon.nova-2-sonic-v1:0", boto_session=boto_session, audio={direction: {"sample_rate": 48000}}
+        )
 
 
 @pytest.mark.parametrize(
@@ -425,7 +455,7 @@ def test__init__rejects_unsupported_audio_sample_rate(boto_session, direction):
 )
 def test__init__warns_on_unknown_audio_keys(boto_session, audio, invalid_key):
     with pytest.warns(UserWarning, match=invalid_key):
-        model = BedrockNovaSonicModel(boto_session=boto_session, audio=audio)
+        model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0", boto_session=boto_session, audio=audio)
 
     tru_config = model.get_audio_config()
     exp_config = {
@@ -444,7 +474,7 @@ def test__init__warns_on_unknown_audio_keys(boto_session, audio, invalid_key):
 )
 def test__get_prompt_start_event_audio_output_config(boto_session, options, rate, voice):
     """Prompt start uses the resolved audio output configuration."""
-    model = BedrockNovaSonicModel(boto_session=boto_session, **options)
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0", boto_session=boto_session, **options)
 
     prompt_start = json.loads(model._get_prompt_start_event([]))["event"]["promptStart"]
     tru_config = prompt_start["audioOutputConfiguration"]
@@ -507,59 +537,294 @@ async def test_stop_is_idempotent(nova_model, mock_stream):
     assert mock_stream.close.call_count == 1
 
 
-@pytest.mark.asyncio
-async def test_content_end_end_turn_emits_response_complete(nova_model):
-    """A per-turn boundary (contentEnd END_TURN) emits a response-complete event."""
-    nova_model._current_completion_id = "c1"
+@pytest.mark.parametrize("user_transcript", [False, True])
+def test_response_boundaries_across_content_blocks(nova_model, user_transcript):
+    """User transcription and assistant output share one response boundary."""
     response_state = _ResponseState()
-
-    # Intermediate blocks are not a turn boundary.
-    assert (
-        nova_model._convert_nova_event(
-            {"contentEnd": {"type": "TEXT", "stopReason": "PARTIAL_TURN"}},
-            response_state,
-        )
-        == []
-    )
-
-    # The audio boundary is not the response lifecycle boundary; Nova sends a later
-    # FINAL transcript block for the same turn.
-    assert (
-        nova_model._convert_nova_event(
-            {"contentEnd": {"type": "AUDIO", "stopReason": "END_TURN"}},
-            response_state,
-        )
-        == []
-    )
-
-    response_state.generation_stage = "FINAL"
-    end = nova_model._convert_nova_event(
+    user_events = [
+        {"contentStart": {"role": "USER", "type": "TEXT", "contentId": "user"}},
+        {"textOutput": {"role": "USER", "contentId": "user", "content": "Hi."}},
+        {"contentEnd": {"type": "TEXT", "contentId": "user", "stopReason": "PARTIAL_TURN"}},
+    ]
+    native_events = [
+        *(user_events if user_transcript else []),
         {
-            "contentEnd": {
-                "contentId": "assistant-final",
+            "contentStart": {
+                "role": "ASSISTANT",
                 "type": "TEXT",
-                "stopReason": "END_TURN",
+                "contentId": "speculative",
+                "additionalModelFields": '{"generationStage":"SPECULATIVE"}',
             }
         },
-        response_state,
-    )[0]
-    assert isinstance(end, BidiResponseCompleteEvent)
-    assert end.stop_reason == "complete"
+        {"textOutput": {"role": "ASSISTANT", "contentId": "speculative", "content": "Hello."}},
+        {"contentEnd": {"type": "TEXT", "contentId": "speculative", "stopReason": "PARTIAL_TURN"}},
+        {"contentStart": {"role": "ASSISTANT", "type": "AUDIO", "contentId": "audio"}},
+        {"audioOutput": {"contentId": "audio", "content": "YQ=="}},
+        {"audioOutput": {"contentId": "audio", "content": "Yg=="}},
+        {"contentEnd": {"type": "AUDIO", "contentId": "audio", "stopReason": "END_TURN"}},
+        {
+            "contentStart": {
+                "role": "ASSISTANT",
+                "type": "TEXT",
+                "contentId": "final",
+                "additionalModelFields": '{"generationStage":"FINAL"}',
+            }
+        },
+        {"textOutput": {"role": "ASSISTANT", "contentId": "final", "content": "Different final text."}},
+        {"contentEnd": {"type": "TEXT", "contentId": "final", "stopReason": "END_TURN"}},
+    ]
+    response_ids = []
+    for _ in range(2):
+        tru_events = []
+        for native_event in native_events:
+            events = nova_model._convert_nova_event(native_event, response_state)
+            if native_event.get("contentEnd", {}).get("contentId") == "audio":
+                assert events == [
+                    BidiAudioStopEvent(),
+                    BidiTranscriptStopEvent("Hello.", "assistant", "speculative"),
+                    BidiResponseStopEvent(tru_events[0].response_id),
+                ]
+            tru_events.extend(events)
+        response_id = tru_events[0].response_id
+        response_ids.append(response_id)
+        exp_events = [
+            BidiResponseStartEvent(response_id),
+            *(
+                [
+                    BidiTranscriptStartEvent("user", "user"),
+                    BidiTranscriptDeltaEvent("Hi.", "user", "user"),
+                    BidiTranscriptStopEvent("Hi.", "user", "user"),
+                ]
+                if user_transcript
+                else []
+            ),
+            BidiTranscriptStartEvent("assistant", content_id="speculative"),
+            BidiTranscriptDeltaEvent("Hello.", "assistant", content_id="speculative"),
+            BidiAudioStartEvent(),
+            BidiAudioDeltaEvent("YQ==", format="pcm", sample_rate=16000, channels=1),
+            BidiAudioDeltaEvent("Yg==", format="pcm", sample_rate=16000, channels=1),
+            BidiAudioStopEvent(),
+            BidiTranscriptStopEvent("Hello.", "assistant", content_id="speculative"),
+            BidiResponseStopEvent(response_id),
+        ]
+        assert tru_events == exp_events
+    assert response_ids[0] != response_ids[1]
 
-    # A barge-in ends the turn regardless of block/stage.
-    interrupted = nova_model._convert_nova_event(
-        {"contentEnd": {"type": "AUDIO", "stopReason": "INTERRUPTED"}},
-        response_state,
-    )[0]
-    assert isinstance(interrupted, BidiResponseCompleteEvent)
-    assert interrupted.stop_reason == "interrupted"
+
+def test_accumulates_speculative_assistant_transcript_blocks(nova_model):
+    response_state = _ResponseState(response_id="r1", transcript=_Transcript("t1", "assistant"))
+    tru_events = []
+    for content_id, text, stop_reason in [
+        ("first", "Dragons appear in myths worldwide.", "PARTIAL_TURN"),
+        ("second", "Would you like to hear more?", "END_TURN"),
+    ]:
+        native_events = [
+            {
+                "contentStart": {
+                    "role": "ASSISTANT",
+                    "type": "TEXT",
+                    "additionalModelFields": '{"generationStage":"SPECULATIVE"}',
+                    "contentId": content_id,
+                }
+            },
+            {"textOutput": {"role": "ASSISTANT", "contentId": content_id, "content": text}},
+            {"contentEnd": {"type": "TEXT", "contentId": content_id, "stopReason": "PARTIAL_TURN"}},
+            {"contentStart": {"role": "ASSISTANT", "type": "AUDIO", "contentId": f"{content_id}-audio"}},
+            {"audioOutput": {"contentId": f"{content_id}-audio", "content": "YQ=="}},
+            {"contentEnd": {"type": "AUDIO", "contentId": f"{content_id}-audio", "stopReason": stop_reason}},
+        ]
+        tru_events.extend(
+            event
+            for native_event in native_events
+            for event in nova_model._convert_nova_event(native_event, response_state)
+        )
+    exp_events = [
+        BidiTranscriptDeltaEvent("Dragons appear in myths worldwide.", "assistant", "t1"),
+        BidiAudioStartEvent(),
+        BidiAudioDeltaEvent("YQ==", format="pcm", sample_rate=16000, channels=1),
+        BidiTranscriptDeltaEvent(" Would you like to hear more?", "assistant", "t1"),
+        BidiAudioDeltaEvent("YQ==", format="pcm", sample_rate=16000, channels=1),
+        BidiAudioStopEvent(),
+        BidiTranscriptStopEvent("Dragons appear in myths worldwide. Would you like to hear more?", "assistant", "t1"),
+        BidiResponseStopEvent("r1"),
+    ]
+    assert tru_events == exp_events
+    assert response_state == _ResponseState()
 
 
-def test_accumulates_final_assistant_transcript_blocks(nova_model):
+@pytest.mark.parametrize("role", ["user", "assistant"])
+def test_barge_in_closes_response_before_next_turn(nova_model, role):
+    state = _ResponseState(
+        response_id="r1", generation_stage="FINAL", transcript=_Transcript("t1", role, "Partial answer.")
+    )
+
+    tru_events = nova_model._convert_nova_event({"contentEnd": {"type": "TEXT", "stopReason": "INTERRUPTED"}}, state)
+    exp_events = [
+        BidiBargeInEvent("user_speech"),
+        BidiTranscriptStopEvent("Partial answer.", role, "t1"),
+        BidiResponseStopEvent("r1"),
+    ]
+    assert tru_events == exp_events
+    assert state == _ResponseState()
+
+    tru_events = nova_model._convert_nova_event(
+        {
+            "contentStart": {
+                "role": "ASSISTANT",
+                "type": "TEXT",
+                "contentId": "next-speculative",
+                "additionalModelFields": '{"generationStage":"SPECULATIVE"}',
+            }
+        },
+        state,
+    )
+    exp_events = [
+        BidiResponseStartEvent(state.response_id),
+        BidiTranscriptStartEvent("assistant", "next-speculative"),
+    ]
+    assert tru_events == exp_events
+    assert state.response_id != "r1"
+
+
+@pytest.mark.parametrize(
+    "final_fragments",
+    [[], ["Spoken answer."], ["Spoken answer.", "More words."]],
+    ids=["no-final-text", "one-final-chunk", "multiple-final-chunks"],
+)
+def test_response_after_barge_in_finishes_before_next_user_transcript(nova_model, final_fragments):
+    response_state = _ResponseState(response_id="r1", transcript=_Transcript("t1", "assistant", "Planned answer."))
+    native_events = []
+    if final_fragments:
+        native_events.extend(
+            [
+                {"contentStart": {"role": "ASSISTANT", "type": "AUDIO"}},
+                {"contentEnd": {"type": "AUDIO", "stopReason": "PARTIAL_TURN"}},
+            ]
+        )
+    native_events.extend(
+        [
+            {
+                "contentStart": {
+                    "role": "ASSISTANT",
+                    "type": "TEXT",
+                    "contentId": "control",
+                    "additionalModelFields": '{"generationStage":"FINAL"}',
+                }
+            },
+            {"textOutput": {"role": "ASSISTANT", "contentId": "control", "content": '{ "interrupted" : true }'}},
+            {"contentEnd": {"type": "TEXT", "contentId": "control", "stopReason": "INTERRUPTED"}},
+        ]
+    )
+    if final_fragments:
+        native_events.append(
+            {
+                "contentStart": {
+                    "role": "ASSISTANT",
+                    "type": "TEXT",
+                    "contentId": "final",
+                    "additionalModelFields": '{"generationStage":"FINAL"}',
+                }
+            }
+        )
+        native_events.extend(
+            {"textOutput": {"role": "ASSISTANT", "contentId": "final", "content": text}} for text in final_fragments
+        )
+        native_events.append({"contentEnd": {"type": "TEXT", "contentId": "final", "stopReason": "PARTIAL_TURN"}})
+    native_events.extend(
+        [
+            {
+                "contentStart": {
+                    "role": "USER",
+                    "type": "TEXT",
+                    "contentId": "user",
+                    "additionalModelFields": '{"generationStage":"FINAL"}',
+                }
+            },
+            {"textOutput": {"role": "USER", "contentId": "user", "content": "Next question."}},
+            {"contentEnd": {"type": "TEXT", "contentId": "user", "stopReason": "PARTIAL_TURN"}},
+            {"contentStart": {"role": "ASSISTANT", "type": "AUDIO", "contentId": "next-audio"}},
+        ]
+    )
+    tru_events = []
+    for native_event in native_events:
+        events = nova_model._convert_nova_event(native_event, response_state)
+        tru_events.extend(events)
+        if native_event.get("textOutput", {}).get("contentId") == "control":
+            assert events == []
+            assert response_state.generation_stage == "FINAL"
+        elif native_event.get("contentEnd", {}).get("contentId") == "control":
+            assert events == [
+                BidiBargeInEvent("user_speech"),
+                *([BidiAudioStopEvent()] if final_fragments else []),
+                BidiTranscriptStopEvent("Planned answer.", "assistant", content_id="t1"),
+                BidiResponseStopEvent("r1"),
+            ]
+        elif native_event.get("textOutput", {}).get("contentId") == "final":
+            assert events == []
+        elif native_event.get("contentEnd", {}).get("contentId") == "final":
+            assert events == []
+    exp_events = [
+        *([BidiAudioStartEvent()] if final_fragments else []),
+        BidiBargeInEvent("user_speech"),
+        *([BidiAudioStopEvent()] if final_fragments else []),
+        BidiTranscriptStopEvent("Planned answer.", "assistant", content_id="t1"),
+        BidiResponseStopEvent("r1"),
+        BidiResponseStartEvent(response_state.response_id),
+        BidiTranscriptStartEvent("user", content_id="user"),
+        BidiTranscriptDeltaEvent("Next question.", "user", content_id="user"),
+        BidiTranscriptStopEvent("Next question.", "user", content_id="user"),
+        BidiAudioStartEvent(),
+    ]
+    assert tru_events == exp_events
+    assert response_state.response_id != "r1"
+
+
+def test_barge_in_after_response_stop_only_stops_playback(nova_model):
     response_state = _ResponseState()
+    tru_events = nova_model._convert_nova_event(
+        {"contentEnd": {"type": "TEXT", "stopReason": "INTERRUPTED"}}, response_state
+    )
+    exp_events = [BidiBargeInEvent("user_speech")]
+    assert tru_events == exp_events
+    assert response_state == _ResponseState()
 
-    def start_final_text(content_id: str) -> None:
-        nova_model._convert_nova_event(
+
+def test_user_content_without_transcript_text_completes(nova_model):
+    state = _ResponseState()
+    native_events = [
+        {"contentStart": {"role": "USER", "type": "TEXT", "contentId": "user"}},
+        {"contentEnd": {"type": "TEXT", "contentId": "user", "stopReason": "PARTIAL_TURN"}},
+        {
+            "contentStart": {
+                "role": "ASSISTANT",
+                "type": "TEXT",
+                "contentId": "assistant",
+                "additionalModelFields": '{"generationStage":"SPECULATIVE"}',
+            }
+        },
+    ]
+    tru_events = [
+        event for native_event in native_events for event in nova_model._convert_nova_event(native_event, state)
+    ]
+    exp_events = [
+        BidiResponseStartEvent(state.response_id),
+        BidiTranscriptStartEvent("user", content_id="user"),
+        BidiTranscriptStopEvent("", "user", content_id="user"),
+        BidiTranscriptStartEvent("assistant", content_id="assistant"),
+    ]
+    assert tru_events == exp_events
+
+
+@pytest.mark.parametrize("role", [None, "user", "assistant"])
+def test_final_assistant_blocks_do_not_change_pending_transcript(nova_model, role):
+    response_state = _ResponseState(
+        transcript=_Transcript("pending", role, "Pending text.") if role else None,
+        response_id="r1" if role else None,
+    )
+    exp_state = asdict(response_state)
+    tru_events = []
+    for content_id, stop_reason in [("early-final", "END_TURN"), ("late-final", "PARTIAL_TURN")]:
+        native_events = [
             {
                 "contentStart": {
                     "role": "ASSISTANT",
@@ -568,136 +833,23 @@ def test_accumulates_final_assistant_transcript_blocks(nova_model):
                     "contentId": content_id,
                 }
             },
-            response_state,
+            {"textOutput": {"role": "ASSISTANT", "contentId": content_id, "content": "Ignored final text."}},
+            {"contentEnd": {"type": "TEXT", "contentId": content_id, "stopReason": stop_reason}},
+        ]
+        tru_events.extend(
+            event
+            for native_event in native_events
+            for event in nova_model._convert_nova_event(native_event, response_state)
         )
-
-    nova_model._convert_nova_event(
-        {"contentStart": {"role": "ASSISTANT", "type": "AUDIO", "contentId": "assistant-audio"}},
-        response_state,
-    )
-    nova_model._convert_nova_event(
-        {"contentEnd": {"contentId": "assistant-audio", "type": "AUDIO", "stopReason": "END_TURN"}},
-        response_state,
-    )
-
-    start_final_text("assistant-final-1")
-    first = nova_model._convert_nova_event(
-        {
-            "textOutput": {
-                "content": "Dragons appear in myths worldwide.",
-                "role": "ASSISTANT",
-                "contentId": "assistant-final-1",
-            }
-        },
-        response_state,
-    )
-    assert first == []
-
-    nova_model._convert_nova_event(
-        {
-            "contentEnd": {
-                "contentId": "assistant-final-1",
-                "type": "TEXT",
-                "stopReason": "PARTIAL_TURN",
-            }
-        },
-        response_state,
-    )
-    assert response_state.transcript == "Dragons appear in myths worldwide."
-
-    start_final_text("assistant-final-2")
-    second = nova_model._convert_nova_event(
-        {
-            "textOutput": {
-                "content": " Would you like to hear more?",
-                "role": "ASSISTANT",
-                "contentId": "assistant-final-2",
-            }
-        },
-        response_state,
-    )
-    assert second == []
-
-    completed = nova_model._convert_nova_event(
-        {
-            "contentEnd": {
-                "contentId": "assistant-final-2",
-                "type": "TEXT",
-                "stopReason": "END_TURN",
-            }
-        },
-        response_state,
-    )
-    assert isinstance(completed, list)
-    assert completed[0] == BidiTranscriptCompleteEvent(
-        "Dragons appear in myths worldwide. Would you like to hear more?", "assistant"
-    )
-    assert isinstance(completed[1], BidiResponseCompleteEvent)
-    assert completed[1].stop_reason == "complete"
-
-    assert response_state.transcript == ""
+    assert tru_events == []
+    assert asdict(response_state) == exp_state
 
 
-def test_streams_speculative_text_and_completes_with_final_transcript(nova_model):
-    response_state = _ResponseState()
-
-    def start_text(generation_stage: str) -> None:
-        nova_model._convert_nova_event(
-            {
-                "contentStart": {
-                    "role": "ASSISTANT",
-                    "type": "TEXT",
-                    "additionalModelFields": json.dumps({"generationStage": generation_stage}),
-                    "contentId": f"assistant-{generation_stage.lower()}",
-                }
-            },
-            response_state,
-        )
-
-    start_text("SPECULATIVE")
-    preview = nova_model._convert_nova_event(
-        {
-            "textOutput": {
-                "content": "A garden began to grow.",
-                "role": "ASSISTANT",
-                "contentId": "assistant-speculative",
-            }
-        },
-        response_state,
-    )[0]
-    assert isinstance(preview, BidiTranscriptStreamEvent)
-
-    start_text("FINAL")
-    final = nova_model._convert_nova_event(
-        {
-            "textOutput": {
-                "content": "A garden began to grow.",
-                "role": "ASSISTANT",
-                "contentId": "assistant-final",
-            }
-        },
-        response_state,
-    )
-    assert final == []
-    completed = nova_model._convert_nova_event(
-        {
-            "contentEnd": {
-                "contentId": "assistant-final",
-                "type": "TEXT",
-                "stopReason": "END_TURN",
-            }
-        },
-        response_state,
-    )
-    assert isinstance(completed, list)
-    assert completed[0] == BidiTranscriptCompleteEvent("A garden began to grow.", "assistant")
-
-
-def test_completes_accumulated_user_transcript_when_response_starts(nova_model):
+def test_completes_accumulated_user_transcript_before_assistant_audio(nova_model):
     response_state = _ResponseState()
 
     def start_user_text(content_id: str) -> None:
-        nova_model._convert_nova_event(
+        events = nova_model._convert_nova_event(
             {
                 "contentStart": {
                     "role": "USER",
@@ -707,6 +859,14 @@ def test_completes_accumulated_user_transcript_when_response_starts(nova_model):
                 }
             },
             response_state,
+        )
+        assert events == (
+            [
+                BidiResponseStartEvent(response_state.response_id),
+                BidiTranscriptStartEvent("user", content_id=content_id),
+            ]
+            if content_id == "user-content-1"
+            else []
         )
 
     start_user_text("user-content-1")
@@ -730,10 +890,10 @@ def test_completes_accumulated_user_transcript_when_response_starts(nova_model):
         response_state,
     )[0]
 
-    assert isinstance(second, BidiTranscriptStreamEvent)
+    assert isinstance(second, BidiTranscriptDeltaEvent)
     assert second.delta == " second"
 
-    nova_model._convert_nova_event(
+    completed = nova_model._convert_nova_event(
         {
             "contentEnd": {
                 "contentId": "user-content-2",
@@ -743,6 +903,7 @@ def test_completes_accumulated_user_transcript_when_response_starts(nova_model):
         },
         response_state,
     )
+    assert completed == []
 
     response_start = {
         "contentStart": {
@@ -751,14 +912,17 @@ def test_completes_accumulated_user_transcript_when_response_starts(nova_model):
             "contentId": "assistant-audio",
         }
     }
-    completed = nova_model._convert_nova_event(
-        response_start,
-        response_state,
+    completed.extend(
+        nova_model._convert_nova_event(
+            response_start,
+            response_state,
+        )
     )
 
-    assert isinstance(completed, list)
-    assert completed[0] == BidiTranscriptCompleteEvent("Let me think for a second", "user")
-    assert isinstance(completed[1], BidiResponseStartEvent)
+    assert completed == [
+        BidiTranscriptStopEvent("Let me think for a second", "user", content_id="user-content-1"),
+        BidiAudioStartEvent(),
+    ]
 
 
 @pytest.mark.asyncio
@@ -972,17 +1136,69 @@ async def test_connection_with_message_history(nova_model, mock_client, mock_str
 
 
 @pytest.mark.asyncio
+async def test_send_message_creates_one_text_input(nova_model, mock_stream):
+    await nova_model.start()
+    mock_stream.input_stream.send.reset_mock()
+    try:
+        await nova_model.send(BidiMessage(content=[TextBlock("First"), TextBlock("Second")]))
+
+        tru_events = [json.loads(call.args[0].value.bytes_) for call in mock_stream.input_stream.send.await_args_list]
+        content_name = tru_events[0]["event"]["contentStart"]["contentName"]
+        exp_events = [
+            {
+                "event": {
+                    "contentStart": {
+                        "promptName": nova_model._connection_id,
+                        "contentName": content_name,
+                        "type": "TEXT",
+                        "role": "USER",
+                        "interactive": True,
+                        "textInputConfiguration": {"mediaType": "text/plain"},
+                    }
+                }
+            },
+            {
+                "event": {
+                    "textInput": {
+                        "promptName": nova_model._connection_id,
+                        "contentName": content_name,
+                        "content": "First\nSecond",
+                    }
+                }
+            },
+            {"event": {"contentEnd": {"promptName": nova_model._connection_id, "contentName": content_name}}},
+        ]
+        assert tru_events == exp_events
+    finally:
+        await nova_model.stop()
+
+
+@pytest.mark.asyncio
+async def test_send_message_rejects_images_before_sending(nova_model, mock_stream):
+    await nova_model.start()
+    mock_stream.input_stream.send.reset_mock()
+    try:
+        with pytest.raises(ValueError, match="content not supported"):
+            await nova_model.send(
+                BidiMessage(content=[TextBlock("Hello"), ImageBlock(format="jpeg", source={"bytes": b"image"})])
+            )
+        mock_stream.input_stream.send.assert_not_awaited()
+    finally:
+        await nova_model.stop()
+
+
+@pytest.mark.asyncio
 async def test_send_all_content_types(nova_model, mock_stream):
     """Test sending all content types through unified send() method."""
     await nova_model.start()
 
     # Test text content
-    await nova_model.send(TextBlock("Hello, Nova!"))
+    assert await nova_model.send(BidiMessage(content=[TextBlock("Hello, Nova!")])) is None
     # Should send contentStart, textInput, and contentEnd
     assert mock_stream.input_stream.send.call_count >= 3
 
     # Test audio content
-    await nova_model.send(AudioDelta(format="pcm", source={"bytes": b"audio data"}))
+    assert await nova_model.send(AudioDelta(format="pcm", source={"bytes": b"audio data"})) is None
     # Should start audio connection and send audio
     assert nova_model._audio_content_name
     assert mock_stream.input_stream.send.called
@@ -991,7 +1207,7 @@ async def test_send_all_content_types(nova_model, mock_stream):
     tool_result_single = ToolResultBlock(
         tool_use_id="tool-123", status="success", content=[{"text": "Weather is sunny"}]
     )
-    await nova_model.send(tool_result_single)
+    await nova_model.send(BidiMessage(content=[tool_result_single]))
     # Should send contentStart, toolResult, and contentEnd
     assert mock_stream.input_stream.send.called
 
@@ -999,7 +1215,7 @@ async def test_send_all_content_types(nova_model, mock_stream):
     tool_result_multi = ToolResultBlock(
         tool_use_id="tool-456", status="success", content=[{"text": "Part 1"}, {"json": {"data": "value"}}]
     )
-    await nova_model.send(tool_result_multi)
+    await nova_model.send(BidiMessage(content=[tool_result_multi]))
     assert mock_stream.input_stream.send.called
 
     await nova_model.stop()
@@ -1013,7 +1229,7 @@ async def test_send_edge_cases(nova_model):
     await nova_model.start()
 
     with pytest.raises(ValueError, match=r"content not supported"):
-        await nova_model.send(ImageBlock(format="jpeg", source={"bytes": b"image data"}))
+        await nova_model.send(BidiMessage(content=[ImageBlock(format="jpeg", source={"bytes": b"image data"})]))
 
     await nova_model.stop()
 
@@ -1026,32 +1242,23 @@ async def test_event_conversion(nova_model):
     """Test conversion of all Nova Sonic event types to standard format."""
     response_state = _ResponseState()
 
-    # Test audio output (now returns BidiAudioStreamEvent)
+    # Audio chunks become deltas.
     audio_bytes = b"test audio data"
     audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
     nova_event = {"audioOutput": {"content": audio_base64}}
-    result = nova_model._convert_nova_event(
-        nova_event,
-        response_state,
-    )[0]
-    assert isinstance(result, BidiAudioStreamEvent)
-    assert result.get("type") == "bidi_audio_stream"
-    # Audio is kept as base64 string
-    assert result.get("audio") == audio_base64
-    assert result.get("format") == "pcm"
-    assert result.get("sample_rate") == 16000
+    tru_events = nova_model._convert_nova_event(nova_event, response_state)
+    exp_events = [
+        BidiAudioDeltaEvent(audio_base64, format="pcm", sample_rate=16000, channels=1),
+    ]
+    assert tru_events == exp_events
 
-    # Test text output (now returns BidiTranscriptStreamEvent)
+    # Text chunks become deltas for the transcript opened by contentStart.
     nova_event = {"textOutput": {"content": "Hello, world!", "role": "ASSISTANT"}}
-    result = nova_model._convert_nova_event(
-        nova_event,
-        response_state,
-    )[0]
-    assert isinstance(result, BidiTranscriptStreamEvent)
-    assert result.get("type") == "bidi_transcript_stream"
-    assert result.get("delta") == "Hello, world!"
-    assert result.get("role") == "assistant"
-    assert result.delta == "Hello, world!"
+    tru_events = nova_model._convert_nova_event(nova_event, _ResponseState(transcript=_Transcript("t1", "assistant")))
+    exp_events = [
+        BidiTranscriptDeltaEvent("Hello, world!", "assistant", content_id="t1"),
+    ]
+    assert tru_events == exp_events
 
     # Test tool use (now returns ToolUseStreamEvent from core strands)
     tool_input = {"location": "Seattle"}
@@ -1068,16 +1275,6 @@ async def test_event_conversion(nova_model):
     assert tool_use["name"] == "get_weather"
     assert tool_use["input"] == json.dumps(tool_input)
     assert result["current_tool_use"]["input"] == tool_input
-
-    # Test interruption (now returns BidiInterruptionEvent)
-    nova_event = {"stopReason": "INTERRUPTED"}
-    result = nova_model._convert_nova_event(
-        nova_event,
-        response_state,
-    )[0]
-    assert isinstance(result, BidiInterruptionEvent)
-    assert result.get("type") == "bidi_interruption"
-    assert result.get("reason") == "user_speech"
 
     # Test usage metrics (now returns BidiUsageEvent)
     nova_event = {
@@ -1104,7 +1301,7 @@ async def test_event_conversion(nova_model):
         "contentStart": {
             "role": "ASSISTANT",
             "type": "TEXT",
-            "additionalModelFields": '{"generationStage":"FINAL"}',
+            "additionalModelFields": '{"generationStage":"SPECULATIVE"}',
             "contentId": "content-123",
         }
     }
@@ -1114,23 +1311,23 @@ async def test_event_conversion(nova_model):
     )[0]
     assert isinstance(result, BidiResponseStartEvent)
     assert result.get("type") == "bidi_response_start"
-    assert response_state.generation_stage == "FINAL"
+    assert response_state.generation_stage == "SPECULATIVE"
 
     # Test AUDIO type contentStart (no additionalModelFields)
     nova_event = {"contentStart": {"role": "ASSISTANT", "type": "AUDIO", "contentId": "content-456"}}
     result = nova_model._convert_nova_event(
         nova_event,
         response_state,
-    )[0]
-    assert isinstance(result, BidiResponseStartEvent)
+    )
+    assert result == [BidiAudioStartEvent()]
 
     # Test TOOL type contentStart
     nova_event = {"contentStart": {"role": "TOOL", "type": "TOOL", "contentId": "content-789"}}
     result = nova_model._convert_nova_event(
         nova_event,
         response_state,
-    )[0]
-    assert isinstance(result, BidiResponseStartEvent)
+    )
+    assert result == []
 
 
 # Audio Streaming Tests
@@ -1291,43 +1488,17 @@ async def test_message_history_empty_and_edge_cases(nova_model):
     ],
 )
 def test__convert_nova_event_audio_format(boto_session, audio, rate):
-    model = BedrockNovaSonicModel(boto_session=boto_session, audio=audio)
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0", boto_session=boto_session, audio=audio)
     audio_base64 = base64.b64encode(b"audio data").decode()
 
     tru_events = model._convert_nova_event({"audioOutput": {"content": audio_base64}}, _ResponseState())
-    exp_events = [BidiAudioStreamEvent(audio=audio_base64, format="pcm", sample_rate=rate, channels=1)]
+    exp_events = [
+        BidiAudioDeltaEvent(audio=audio_base64, format="pcm", sample_rate=rate, channels=1),
+    ]
     assert tru_events == exp_events
 
 
 # Nova Sonic v2 Support Tests
-
-
-def test_nova_sonic_model_constants():
-    """Test that Nova Sonic model ID constants are correctly defined."""
-    assert NOVA_SONIC_V1_MODEL_ID == "amazon.nova-sonic-v1:0"
-    assert NOVA_SONIC_V2_MODEL_ID == "amazon.nova-2-sonic-v1:0"
-
-
-@pytest.mark.asyncio
-async def test_nova_sonic_v1_instantiation(boto_session, mock_client):
-    """Test direct instantiation with Nova Sonic v1 model ID."""
-    _ = mock_client  # Ensure mock is active
-
-    # Test default creation
-    model = BedrockNovaSonicModel(model_id=NOVA_SONIC_V1_MODEL_ID, boto_session=boto_session)
-    assert model.model_id == NOVA_SONIC_V1_MODEL_ID
-    assert model.region == "us-east-1"
-
-    # Test with custom config
-    model_custom = BedrockNovaSonicModel(
-        model_id=NOVA_SONIC_V1_MODEL_ID,
-        boto_session=boto_session,
-        audio={"output": {"sample_rate": 24000}},
-        voice="joanna",
-    )
-
-    assert model_custom.model_id == NOVA_SONIC_V1_MODEL_ID
-    assert model_custom.get_audio_config()["output"]["sample_rate"] == 24000
 
 
 @pytest.mark.asyncio
@@ -1336,20 +1507,20 @@ async def test_nova_sonic_v2_instantiation(boto_session, mock_client):
     _ = mock_client  # Ensure mock is active
 
     # Test default creation
-    model = BedrockNovaSonicModel(model_id=NOVA_SONIC_V2_MODEL_ID, boto_session=boto_session)
-    assert model.model_id == NOVA_SONIC_V2_MODEL_ID
+    model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0", boto_session=boto_session)
+    assert model.model_id == "amazon.nova-2-sonic-v1:0"
     assert model.region == "us-east-1"
 
     # Test with custom config
     model_custom = BedrockNovaSonicModel(
-        model_id=NOVA_SONIC_V2_MODEL_ID,
+        model_id="amazon.nova-2-sonic-v1:0",
         boto_session=boto_session,
         audio={"input": {"sample_rate": 24000}},
         voice="ruth",
         params={"inferenceConfiguration": {"temperature": 0.8}},
     )
 
-    assert model_custom.model_id == NOVA_SONIC_V2_MODEL_ID
+    assert model_custom.model_id == "amazon.nova-2-sonic-v1:0"
     assert model_custom.get_audio_config()["input"]["sample_rate"] == 24000
     assert (
         json.loads(model_custom._get_connection_start_event())["event"]["sessionStart"]["inferenceConfiguration"][
@@ -1359,48 +1530,11 @@ async def test_nova_sonic_v2_instantiation(boto_session, mock_client):
     )
 
 
-@pytest.mark.asyncio
-async def test_nova_sonic_v1_v2_compatibility(boto_session, mock_client):
-    """Test that v1 and v2 models have the same config structure and behavior."""
-    _ = mock_client  # Ensure mock is active
+@pytest.mark.parametrize("model_id", ["amazon.nova-2-sonic-v1:0", "custom-model"])
+def test__init__uses_explicit_model_id(boto_session, model_id):
+    model = BedrockNovaSonicModel(model_id=model_id, boto_session=boto_session)
 
-    # Create both models with same config
-    model_v1 = BedrockNovaSonicModel(
-        model_id=NOVA_SONIC_V1_MODEL_ID,
-        boto_session=boto_session,
-        voice="matthew",
-    )
-    model_v2 = BedrockNovaSonicModel(
-        model_id=NOVA_SONIC_V2_MODEL_ID,
-        boto_session=boto_session,
-        voice="matthew",
-    )
-
-    assert model_v1.get_audio_config() == model_v2.get_audio_config()
-    assert model_v1.region == model_v2.region
-
-    # Only model_id should differ
-    assert model_v1.model_id != model_v2.model_id
-    assert model_v1.model_id == NOVA_SONIC_V1_MODEL_ID
-    assert model_v2.model_id == NOVA_SONIC_V2_MODEL_ID
-
-
-@pytest.mark.asyncio
-async def test_backward_compatibility(boto_session, mock_client):
-    """Test that existing code continues to work (backward compatibility)."""
-    _ = mock_client  # Ensure mock is active
-
-    # Test that default behavior now uses v2 (updated default)
-    model_default = BedrockNovaSonicModel(boto_session=boto_session)
-    assert model_default.model_id == NOVA_SONIC_V2_MODEL_ID
-
-    # Test that existing explicit v1 usage still works
-    model_explicit_v1 = BedrockNovaSonicModel(model_id=NOVA_SONIC_V1_MODEL_ID, boto_session=boto_session)
-    assert model_explicit_v1.model_id == NOVA_SONIC_V1_MODEL_ID
-
-    # Test that explicit v2 usage works
-    model_explicit_v2 = BedrockNovaSonicModel(model_id=NOVA_SONIC_V2_MODEL_ID, boto_session=boto_session)
-    assert model_explicit_v2.model_id == NOVA_SONIC_V2_MODEL_ID
+    assert model.model_id == model_id
 
 
 def test_params_passed_to_session_start(boto_session):
@@ -1410,7 +1544,7 @@ def test_params_passed_to_session_start(boto_session):
         "turnDetectionConfiguration": {"endpointingSensitivity": "MEDIUM"},
     }
     model = BedrockNovaSonicModel(
-        model_id=NOVA_SONIC_V1_MODEL_ID,
+        model_id="amazon.nova-2-sonic-v1:0",
         params=params,
         boto_session=boto_session,
     )
@@ -1423,6 +1557,7 @@ def test_params_passed_to_session_start(boto_session):
 @pytest.mark.parametrize("params", [{"inferenceConfiguration": {"topP": 0.9}}, {}, None])
 def test_update_config_replaces_params(boto_session, params):
     model = BedrockNovaSonicModel(
+        model_id="amazon.nova-2-sonic-v1:0",
         boto_session=boto_session,
         params={"inferenceConfiguration": {"temperature": 0.8}},
     )
@@ -1474,7 +1609,7 @@ async def test_receive_ends_when_stream_closed(nova_model, mock_stream, alist):
     mock_output.receive = AsyncMock(return_value=None)
     mock_stream.await_output.return_value = (None, mock_output)
 
-    nova_model.update_config(model_id=NOVA_SONIC_V2_MODEL_ID)
+    nova_model.update_config(model_id="updated-model")
     await nova_model.start()
 
     # Bounded so a regression (busy-loop) fails fast instead of hanging the suite.
@@ -1482,7 +1617,7 @@ async def test_receive_ends_when_stream_closed(nova_model, mock_stream, alist):
 
     # Only the initial connection-start event precedes the end-of-stream.
     assert [type(event).__name__ for event in events] == ["BidiConnectionStartEvent"]
-    assert events[0].model == NOVA_SONIC_V2_MODEL_ID
+    assert events[0].model == "updated-model"
     await nova_model.stop()
 
 
@@ -1515,7 +1650,7 @@ async def test_tool_result_single_content_unwrapped(nova_model, mock_stream):
 
     tool_result = ToolResultBlock(tool_use_id="tool-123", status="success", content=[{"text": "Single result"}])
 
-    await nova_model.send(tool_result)
+    await nova_model.send(BidiMessage(content=[tool_result]))
 
     # Verify events were sent
     assert mock_stream.input_stream.send.called
@@ -1548,7 +1683,7 @@ async def test_tool_result_multiple_content_as_array(nova_model, mock_stream):
         tool_use_id="tool-456", status="success", content=[{"text": "Part 1"}, {"json": {"data": "value"}}]
     )
 
-    await nova_model.send(tool_result)
+    await nova_model.send(BidiMessage(content=[tool_result]))
 
     # Verify events were sent
     assert mock_stream.input_stream.send.called
@@ -1583,7 +1718,7 @@ async def test_tool_result_empty_content(nova_model, mock_stream):
 
     tool_result = ToolResultBlock(tool_use_id="tool-789", status="success", content=[])
 
-    await nova_model.send(tool_result)
+    await nova_model.send(BidiMessage(content=[tool_result]))
 
     # Verify events were sent
     assert mock_stream.input_stream.send.called
@@ -1620,7 +1755,7 @@ async def test_tool_result_unsupported_content_type(nova_model):
     )
 
     with pytest.raises(ValueError, match=r"Content type not supported by Nova Sonic"):
-        await nova_model.send(tool_result_image)
+        await nova_model.send(BidiMessage(content=[tool_result_image]))
 
     # Test with document content (unsupported)
     tool_result_doc = ToolResultBlock(
@@ -1630,7 +1765,7 @@ async def test_tool_result_unsupported_content_type(nova_model):
     )
 
     with pytest.raises(ValueError, match=r"Content type not supported by Nova Sonic"):
-        await nova_model.send(tool_result_doc)
+        await nova_model.send(BidiMessage(content=[tool_result_doc]))
 
     # Test with mixed content (one unsupported)
     tool_result_mixed = ToolResultBlock(
@@ -1640,6 +1775,155 @@ async def test_tool_result_unsupported_content_type(nova_model):
     )
 
     with pytest.raises(ValueError, match=r"Content type not supported by Nova Sonic"):
-        await nova_model.send(tool_result_mixed)
+        await nova_model.send(BidiMessage(content=[tool_result_mixed]))
 
     await nova_model.stop()
+
+
+@pytest.mark.parametrize("assistant_transcript", [False, True])
+@pytest.mark.parametrize("tool_count", [1, 3])
+def test_tool_calls_keep_response_open_until_audio_ends(nova_model, assistant_transcript, tool_count):
+    from strands.types._events import ToolUseStreamEvent
+
+    state = _ResponseState()
+    tool_events = []
+    for index in range(tool_count):
+        tool_events.extend(
+            [
+                {"contentStart": {"role": "TOOL", "type": "TOOL", "contentId": f"tool-{index}"}},
+                {"toolUse": {"toolUseId": f"call-{index}", "toolName": "time_tool", "content": "{}"}},
+                {"contentEnd": {"type": "TOOL", "contentId": f"tool-{index}", "stopReason": "TOOL_USE"}},
+            ]
+        )
+    assistant_events = [
+        {
+            "contentStart": {
+                "role": "ASSISTANT",
+                "type": "TEXT",
+                "contentId": "assistant",
+                "additionalModelFields": '{"generationStage":"SPECULATIVE"}',
+            }
+        },
+        {"textOutput": {"role": "ASSISTANT", "contentId": "assistant", "content": "Let me check."}},
+        {"contentEnd": {"type": "TEXT", "contentId": "assistant", "stopReason": "PARTIAL_TURN"}},
+    ]
+    native_events = [
+        {
+            "contentStart": {
+                "role": "USER",
+                "type": "TEXT",
+                "contentId": "user",
+                "additionalModelFields": '{"generationStage":"FINAL"}',
+            }
+        },
+        {"textOutput": {"role": "USER", "contentId": "user", "content": "What time is it?"}},
+        {"contentEnd": {"type": "TEXT", "contentId": "user", "stopReason": "PARTIAL_TURN"}},
+        *(assistant_events if assistant_transcript else []),
+        *tool_events,
+        {
+            "contentStart": {
+                "role": "ASSISTANT",
+                "type": "TEXT",
+                "contentId": "answer",
+                "additionalModelFields": '{"generationStage":"SPECULATIVE"}',
+            }
+        },
+        {"textOutput": {"role": "ASSISTANT", "contentId": "answer", "content": "It is noon."}},
+        {"contentEnd": {"type": "TEXT", "contentId": "answer", "stopReason": "PARTIAL_TURN"}},
+        {"contentStart": {"role": "ASSISTANT", "type": "AUDIO", "contentId": "audio"}},
+        {"audioOutput": {"contentId": "audio", "content": "YQ=="}},
+        {"contentEnd": {"type": "AUDIO", "contentId": "audio", "stopReason": "END_TURN"}},
+    ]
+    tru_events = [event for native in native_events for event in nova_model._convert_nova_event(native, state)]
+    response_id = tru_events[0].response_id
+    content_id = "assistant" if assistant_transcript else "answer"
+    exp_events = [
+        BidiResponseStartEvent(response_id),
+        BidiTranscriptStartEvent("user", content_id="user"),
+        BidiTranscriptDeltaEvent("What time is it?", "user", content_id="user"),
+        BidiTranscriptStopEvent("What time is it?", "user", content_id="user"),
+        *(
+            [
+                BidiTranscriptStartEvent("assistant", "assistant"),
+                BidiTranscriptDeltaEvent("Let me check.", "assistant", "assistant"),
+            ]
+            if assistant_transcript
+            else []
+        ),
+        *[
+            ToolUseStreamEvent(
+                delta={"toolUse": {"toolUseId": f"call-{index}", "name": "time_tool", "input": "{}"}},
+                current_tool_use={"toolUseId": f"call-{index}", "name": "time_tool", "input": {}},
+            )
+            for index in range(tool_count)
+        ],
+        *([] if assistant_transcript else [BidiTranscriptStartEvent("assistant", content_id)]),
+        BidiTranscriptDeltaEvent(" It is noon." if assistant_transcript else "It is noon.", "assistant", content_id),
+        BidiAudioStartEvent(),
+        BidiAudioDeltaEvent("YQ==", format="pcm", sample_rate=16000, channels=1),
+        BidiAudioStopEvent(),
+        BidiTranscriptStopEvent(
+            "Let me check. It is noon." if assistant_transcript else "It is noon.", "assistant", content_id
+        ),
+        BidiResponseStopEvent(response_id),
+    ]
+    assert tru_events == exp_events
+    assert state == _ResponseState()
+
+
+@pytest.mark.parametrize("assistant_transcript", [False, True])
+@pytest.mark.parametrize("partial_audio", [False, True])
+def test_user_transcript_closes_response_after_tool_use(nova_model, assistant_transcript, partial_audio):
+    state = _ResponseState(
+        response_id="previous",
+        transcript=_Transcript("assistant", "assistant", "Let me check.") if assistant_transcript else None,
+    )
+    native_events = [
+        {"contentEnd": {"type": "TOOL", "contentId": "tool", "stopReason": "TOOL_USE"}},
+    ]
+    if partial_audio:
+        native_events.extend(
+            [
+                {"contentStart": {"role": "ASSISTANT", "type": "AUDIO", "contentId": "audio"}},
+                {"audioOutput": {"contentId": "audio", "content": "YQ=="}},
+                {"contentEnd": {"type": "AUDIO", "contentId": "audio", "stopReason": "PARTIAL_TURN"}},
+            ]
+        )
+    tru_events = [event for native in native_events for event in nova_model._convert_nova_event(native, state)]
+    for content_id, text in [("user-1", "Next"), ("user-2", "question.")]:
+        native_events = [
+            {
+                "contentStart": {
+                    "role": "USER",
+                    "type": "TEXT",
+                    "contentId": content_id,
+                    "additionalModelFields": '{"generationStage":"FINAL"}',
+                }
+            },
+            {"textOutput": {"role": "USER", "contentId": content_id, "content": text}},
+            {"contentEnd": {"type": "TEXT", "contentId": content_id, "stopReason": "PARTIAL_TURN"}},
+        ]
+        tru_events.extend(event for native in native_events for event in nova_model._convert_nova_event(native, state))
+
+    exp_events = [
+        *(
+            [
+                BidiAudioStartEvent(),
+                BidiAudioDeltaEvent("YQ==", format="pcm", sample_rate=16000, channels=1),
+                BidiAudioStopEvent(),
+            ]
+            if partial_audio
+            else []
+        ),
+        *([BidiTranscriptStopEvent("Let me check.", "assistant", "assistant")] if assistant_transcript else []),
+        BidiResponseStopEvent("previous"),
+        BidiResponseStartEvent(state.response_id),
+        BidiTranscriptStartEvent("user", "user-1"),
+        BidiTranscriptDeltaEvent("Next", "user", "user-1"),
+        BidiTranscriptDeltaEvent(" question.", "user", "user-1"),
+    ]
+    assert tru_events == exp_events
+    assert state == _ResponseState(
+        response_id=state.response_id, transcript=_Transcript("user-1", "user", "Next question.")
+    )
+    assert state.response_id != "previous"

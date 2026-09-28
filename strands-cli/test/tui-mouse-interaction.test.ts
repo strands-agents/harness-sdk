@@ -132,21 +132,15 @@ describe('TUI mouse input', () => {
     expect(rendered).toContain('\u001b[?1003h')
     const row = findText(frame(), 'Model 01')
 
-    rendered = ''
-    input.write(mouseInputSequence(35, row.column, row.row, 'M'))
-    await vi.waitFor(() => expect(sanitizeTerminalText(rendered)).toMatch(/Model 01[^\n]*☆/))
-    rendered = ''
-    input.write(mouseInputSequence(35, 0, 0, 'M'))
-    await vi.waitFor(() => {
-      expect(sanitizeTerminalText(rendered)).toContain('Model 01')
-      expect(sanitizeTerminalText(rendered)).not.toMatch(/Model 01[^\n]*☆/)
-    })
     input.write(mouseInputSequence(35, row.column, row.row, 'M'))
     await instance.waitUntilRenderFlush()
     input.write('\r')
     await vi.waitFor(() => expect(target.switchModel).toHaveBeenCalledWith('model-00'))
+    await vi.waitFor(() => expect(controller.getSnapshot().panel).toBeUndefined())
     vi.mocked(target.switchModel).mockClear()
 
+    await controller.submit('/model')
+    await instance.waitUntilRenderFlush()
     input.write(mouseInputSequence(0, row.column, row.row, 'M'))
     input.write(mouseInputSequence(3, row.column, row.row, 'm'))
     await vi.waitFor(() => expect(target.switchModel).toHaveBeenCalledWith('model-01'))
@@ -247,6 +241,93 @@ describe('TUI mouse input', () => {
       id: panelId,
       slider: { options: expect.arrayContaining([expect.objectContaining({ id: 'max', active: true })]) },
     })
+  })
+
+  it('closes the /effort panel on Enter without switching models', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(80, 20)
+    const target = backend()
+    target.info = () => ({ model: 'model-00', effort: 'Medium' })
+    target.listModels = () => [
+      { id: 'model-01', name: 'Model 01', description: '' },
+      { id: 'model-00', name: 'Model 00', description: '', active: true },
+    ]
+    target.listEfforts = () => [
+      { id: 'low', label: 'Low' },
+      { id: 'medium', label: 'Medium', active: true },
+      { id: 'high', label: 'High' },
+    ]
+    target.setEffort = vi.fn(async (effort) => effort)
+    target.switchModel = vi.fn()
+    const controller = new ChatController(target, {
+      runtime: { version: '1.2.3', model: 'model-00', cwd: '/work' },
+    })
+    const instance = render(createElement(ChatApp, { controller }), {
+      stdin: input,
+      stdout: output,
+      stderr: ttyOutput(80, 20),
+      exitOnCtrlC: false,
+      patchConsole: false,
+      interactive: true,
+    })
+    instances.push(instance)
+    await controller.submit('/effort')
+    await instance.waitUntilRenderFlush()
+
+    input.write('\u001b[C')
+    await vi.waitFor(() => expect(target.setEffort).toHaveBeenLastCalledWith('high'))
+    input.write('\r')
+
+    await vi.waitFor(() => expect(controller.getSnapshot().panel).toBeUndefined())
+    expect(target.switchModel).not.toHaveBeenCalled()
+  })
+
+  it('moves from the chosen model to its effort, then closes /model on Enter', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(80, 30)
+    const frame = captureFrame(output)
+    const target = backend()
+    target.info = () => ({ model: 'model-00', effort: 'Medium' })
+    target.listModels = () => [
+      { id: 'model-00', name: 'Model 00', description: '', active: true },
+      { id: 'model-01', name: 'Model 01', description: '' },
+    ]
+    target.listEfforts = () => [
+      { id: 'low', label: 'Low' },
+      { id: 'medium', label: 'Medium', active: true },
+      { id: 'high', label: 'High' },
+    ]
+    target.modelChangeMode = () => 'live'
+    target.switchModel = vi.fn()
+    target.setEffort = vi.fn(async (effort) => effort)
+    const controller = new ChatController(target, {
+      runtime: { version: '1.2.3', model: 'model-00', cwd: '/work' },
+    })
+    const instance = render(createElement(ChatApp, { controller }), {
+      stdin: input,
+      stdout: output,
+      stderr: ttyOutput(80, 30),
+      exitOnCtrlC: false,
+      patchConsole: false,
+      interactive: true,
+    })
+    instances.push(instance)
+    await controller.submit('/model')
+    await instance.waitUntilRenderFlush()
+
+    input.write('\u001b[B')
+    await instance.waitUntilRenderFlush()
+    input.write('\r')
+    await vi.waitFor(() => expect(target.switchModel).toHaveBeenCalledWith('model-01'))
+    await instance.waitUntilRenderFlush()
+    expect(controller.getSnapshot().panel?.kind).toBe('models')
+
+    input.write('\u001b[C')
+    await vi.waitFor(() => expect(target.setEffort).toHaveBeenLastCalledWith('high'))
+    input.write('\r')
+    await vi.waitFor(() => expect(controller.getSnapshot().panel).toBeUndefined())
+    expect(target.switchModel).toHaveBeenCalledOnce()
+    await vi.waitFor(() => expect(frame().join('\n')).not.toContain('Models'))
   })
 
   it.each([80, 60])('clicks live theme settings and opens the custom editor at %i columns', async (width) => {

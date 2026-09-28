@@ -241,7 +241,8 @@ export function metadataPlacements(snapshot: ChatSnapshot, terminalWidth: number
     },
     {
       target: 'context' as const,
-      value: `${contextLabel}${formatContext(snapshot.context, contextBarWidth)}`,
+      // Without a known context window there's nothing to measure against, so the meter is hidden.
+      value: snapshot.context.contextWindow ? `${contextLabel}${formatContext(snapshot.context, contextBarWidth)}` : '',
       truncate: truncateEnd,
       alignment: 'flex-end' as const,
     },

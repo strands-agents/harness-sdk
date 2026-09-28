@@ -6,6 +6,7 @@ import {
   FROG_BRAND_EASTER_EGG_DURATION_MS,
   frogStartupHeight,
   frogStartupHitbox,
+  frogStartupWidth,
   renderFrogBrandEasterEggFrame,
   renderFrogStartupLockup,
 } from './frog-intro-renderer.js'
@@ -38,7 +39,9 @@ export function StartupView({
     ...(theme === 'custom' ? { frogColor: palette.frog } : {}),
     ...(customBase ? { customBase } : {}),
   }
-  const lockupWidth = Math.max(1, terminalWidth - 2)
+  const maxWidth = Math.max(1, terminalWidth - 2)
+  // Sized to the artwork so the column centers it.
+  const lockupWidth = frogStartupWidth(maxWidth, frogStartupHeight(maxWidth, availableHeight))
   const lockupHeight = frogStartupHeight(lockupWidth, availableHeight)
   const frogHitbox = frogStartupHitbox(lockupWidth, lockupHeight)
   const brandElapsedMs = frogBrandElapsedMs ?? FROG_BRAND_EASTER_EGG_DURATION_MS

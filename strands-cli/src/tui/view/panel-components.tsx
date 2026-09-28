@@ -62,15 +62,27 @@ export function PanelOverlay({
   height,
   children,
   onElement,
+  bottomOffset,
 }: {
   width: number
   height?: number
   children: ReactNode
   onElement?: (element: DOMElement | null) => void
+  /** Docks the panel at the bottom left, this many rows above the screen's bottom edge. */
+  bottomOffset?: number
 }): ReactElement {
   const theme = useTheme()
+  const docked = bottomOffset !== undefined
   return (
-    <Box position="absolute" width="100%" height="100%" alignItems="center" justifyContent="center" padding={1}>
+    <Box
+      position="absolute"
+      width="100%"
+      height="100%"
+      alignItems={docked ? 'flex-end' : 'center'}
+      justifyContent={docked ? 'flex-start' : 'center'}
+      padding={1}
+      {...(docked ? { paddingBottom: bottomOffset } : {})}
+    >
       <Box
         ref={onElement}
         width={width}

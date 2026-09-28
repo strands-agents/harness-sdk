@@ -35,7 +35,6 @@ describe('CliConfigStore', () => {
       providers: { enabled: ['bedrock'] },
       profile: DEFAULT_HARNESS_AGENT_CONFIG,
       permissions: { mode: 'default', allow: [] },
-      models: { pinned: [] },
       settings: {
         transcriptSpacing: 'comfortable',
         animations: true,
@@ -92,28 +91,15 @@ describe('CliConfigStore', () => {
     )
   })
 
-  it('persists pinned models while preserving unrelated model settings', async () => {
+  it('loads and preserves a models section it no longer reads', async () => {
     const path = join(await temporaryDirectory(), 'config.json')
-    await writeFile(
-      path,
-      JSON.stringify({
-        theme: 'custom',
-        models: { pinned: ['bedrock/model-b'], futureSetting: true },
-      })
-    )
+    const models = { pinned: ['bedrock/model-b', ' not trimmed '], futureSetting: true }
+    await writeFile(path, JSON.stringify({ models }))
     const config = await CliConfigStore.load(path)
 
-    await config.setModelPinned('bedrock/model-a', true)
-    await config.setModelPinned('bedrock/model-b', false)
+    await config.setSettings({ animations: false })
 
-    expect(config.snapshot().models).toEqual({ pinned: ['bedrock/model-a'] })
-    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({
-      theme: 'custom',
-      models: {
-        pinned: ['bedrock/model-a'],
-        futureSetting: true,
-      },
-    })
+    expect(JSON.parse(await readFile(path, 'utf8'))).toMatchObject({ models, settings: { animations: false } })
   })
 
   it('persists presentation settings while preserving unrelated settings', async () => {
@@ -358,7 +344,7 @@ describe('CliConfigStore', () => {
       ['OLLAMA_HOST=http://local:11434', 'LITELLM_BASE_URL=http://local:4000'].join('\n')
     )
     vi.stubEnv('GEMINI_API_KEY', 'process-key')
-    const config = CliConfigStore.memory({}, {}, {}, { providerEnvironment: { LITELLM_MODEL: 'stored-model' } })
+    const config = CliConfigStore.memory({}, {}, { providerEnvironment: { LITELLM_MODEL: 'stored-model' } })
     config.useEnvironmentFiles([join(directory, '.env'), join(directory, '.env.local')])
 
     expect(config.providerEnvironment()).toMatchObject({

@@ -196,6 +196,7 @@ sidebar:
       - label: Reference
         items:
           - docs/user-guide/harness/reference/configuration
+          - docs/user-guide/harness/versioning
 
   - label: Harness SDK
     items:
@@ -412,7 +413,7 @@ sidebar:
               - docs/user-guide/sdk/bidirectional-streaming/models/openai
               - docs/user-guide/sdk/bidirectional-streaming/io
               - docs/user-guide/sdk/bidirectional-streaming/events
-              - docs/user-guide/sdk/bidirectional-streaming/interruption
+              - docs/user-guide/sdk/bidirectional-streaming/barge-in
               - docs/user-guide/sdk/bidirectional-streaming/hooks
               - docs/user-guide/sdk/bidirectional-streaming/session-management
               - docs/user-guide/sdk/bidirectional-streaming/observability

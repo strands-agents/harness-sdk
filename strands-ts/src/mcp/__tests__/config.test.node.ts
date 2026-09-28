@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest'
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
+import { StreamableHTTPClientTransport, SSEClientTransport, Client } from '@modelcontextprotocol/client'
 import { McpClient } from '../client.js'
 import { mcpServerLoader } from '../config.js'
 
@@ -18,20 +16,15 @@ vi.mock('node:path', () => ({
   join: (...segments: string[]) => segments.join('/'),
 }))
 
-vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
+vi.mock('@modelcontextprotocol/client/stdio', () => ({
   StdioClientTransport: vi.fn(function () {}),
   getDefaultEnvironment: vi.fn(() => ({ PATH: '/usr/bin', HOME: '/home/user' })),
 }))
 
-vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
+vi.mock('@modelcontextprotocol/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@modelcontextprotocol/client')>()),
   StreamableHTTPClientTransport: vi.fn(function () {}),
-}))
-
-vi.mock('@modelcontextprotocol/sdk/client/sse.js', () => ({
   SSEClientTransport: vi.fn(function () {}),
-}))
-
-vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
   Client: vi.fn(function (this: Record<string, unknown>) {
     this.connect = vi.fn()
     this.close = vi.fn()
@@ -42,7 +35,6 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
     this.getServerCapabilities = vi.fn()
     this.getServerVersion = vi.fn()
     this.getInstructions = vi.fn()
-    this.experimental = { tasks: { callToolStream: vi.fn() } }
   }),
 }))
 

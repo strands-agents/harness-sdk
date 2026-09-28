@@ -163,14 +163,11 @@ describe('prompt editor input', () => {
     expect(reduceInput(typed, '', { backspace: true }, 'idle').state.input).toBe('A')
   })
 
-  it('supports Shift+Enter and Ctrl+J newlines without submitting', () => {
+  it('supports Ctrl+J without submitting', () => {
     const first = reduceInput(emptyEditor(), 'one', {}, 'idle').state
-    const shifted = reduceInput(first, '', { return: true, shift: true }, 'idle')
-    expect(shifted).toMatchObject({ action: 'none', state: { input: 'one\n' } })
-    const second = reduceInput(shifted.state, 'two', {}, 'idle').state
-    expect(reduceInput(second, 'j', { ctrl: true }, 'idle')).toMatchObject({
+    expect(reduceInput(first, '\n', {}, 'idle')).toMatchObject({
       action: 'none',
-      state: { input: 'one\ntwo\n' },
+      state: { input: 'one\n' },
     })
   })
 

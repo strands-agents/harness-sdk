@@ -17,10 +17,10 @@ import {
   makePanel,
   modelRows,
   sessionRows,
-  setupQuestionRows,
   skillRows,
   skillDetailRows,
   permissionSettingsRows,
+  builtinToolRows,
   mcpRows,
   mcpOptions,
   BACKGROUND_TASK_WAIT_TOGGLE,
@@ -53,7 +53,6 @@ import {
   readyBackgroundGeneration,
 } from './controller-helpers.js'
 import { TurnProjector, projectMessages } from './projector.js'
-import type { SetupQuestionBroker, SetupQuestionRequest } from '../setup/questions.js'
 import {
   type ChatBackend,
   type ChatContextUsage,
@@ -111,14 +110,13 @@ export class ChatController implements ChatControllerApi {
   private readonly _mcp: LoadedMcp | undefined
   private _settings: ChatSettings
   private readonly _streamPresentation: StreamPresentationOptions | undefined
-  private readonly _pinnedModels: Set<string>
-  private readonly _setModelPinned: ((modelId: string, pinned: boolean) => Promise<void>) | undefined
   private readonly _setSettings: ((settings: Partial<ChatSettings>) => Promise<void>) | undefined
-  private readonly _requestSetup: (() => void) | undefined
+  private readonly _requestSetup: ChatControllerOptions['requestSetup']
+  private readonly _builtinTools: ChatControllerOptions['builtinTools']
+  private _builtinToolSelection = new Set<string>()
   private readonly _exportAgentProject: ChatControllerOptions['exportAgentProject']
   private readonly _project: ChatControllerOptions['project']
   private readonly _copyText: (text: string) => Promise<boolean>
-  private readonly _setupQuestions: SetupQuestionBroker | undefined
   private _exportedPath: string | undefined
 
   private readonly _backend: ChatBackend
@@ -129,7 +127,6 @@ export class ChatController implements ChatControllerApi {
   private _pendingSubmissionRun: Promise<void> | undefined
   private _stopWatchingTasks: (() => void) | undefined
   private _stopWatchingPermissions: (() => void) | undefined
-  private _stopWatchingSetupQuestions: (() => void) | undefined
   private _stopWatchingTaskActivity: (() => void) | undefined
   private readonly _usageSubscriptions = new Set<() => void>()
   private _usageGeneration = 0
@@ -148,7 +145,6 @@ export class ChatController implements ChatControllerApi {
   private _deferredModelNoticeId: string | undefined
   private _resourceChanging = false
   private _composerStatus: string | undefined
-  private _setupGuideAnswer: string | undefined
   private _closed = false
   private _exitCode: number | undefined
   private _hardExitCode: number | undefined
@@ -170,14 +166,12 @@ export class ChatController implements ChatControllerApi {
     this._mcp = options.mcp
     this._settings = globalThis.structuredClone({ ...DEFAULT_CHAT_SETTINGS, ...options.settings })
     this._streamPresentation = options.streamPresentation
-    this._pinnedModels = new Set(options.pinnedModels ?? [])
-    this._setModelPinned = options.setModelPinned
     this._setSettings = options.setSettings
     this._requestSetup = options.requestSetup
+    this._builtinTools = options.builtinTools
     this._exportAgentProject = options.exportAgentProject
     this._project = options.project
     this._copyText = options.copyText ?? copyTerminalText
-    this._setupQuestions = options.setupQuestions
     const info = backend.info?.()
     this._runtime = {
       agent: backend.name,
@@ -217,13 +211,6 @@ export class ChatController implements ChatControllerApi {
         this._openPermissionPanel(request)
       } else {
         this._closePermissionPanel()
-      }
-    })
-    this._stopWatchingSetupQuestions = this._setupQuestions?.subscribe((request) => {
-      if (request) {
-        this._openSetupQuestion(request)
-      } else {
-        this._closeSetupQuestion()
       }
     })
   }
@@ -293,13 +280,13 @@ export class ChatController implements ChatControllerApi {
       : undefined
   }
 
-  async start(firstRequest?: string, options?: { hidePrompt?: boolean }): Promise<void> {
+  async start(firstRequest?: string): Promise<void> {
     if (firstRequest) {
       const prompt = firstRequest.trim()
       if (prompt.startsWith('!')) {
         await this._executeSubmission(prompt)
       } else {
-        await this._runPrompt(prompt, options?.hidePrompt ? '' : prompt)
+        await this._runPrompt(prompt)
       }
     }
   }
@@ -311,9 +298,6 @@ export class ChatController implements ChatControllerApi {
     }
     if (EXIT_WORDS.has(prompt.toLowerCase())) {
       this.close()
-      return undefined
-    }
-    if (this._panel?.kind === 'question' && this._respondSetupQuestionText(prompt)) {
       return undefined
     }
     if (/^\/help(?:\s|$)/iu.test(prompt) && !this._resourceChanging && this._panel?.kind !== 'permission') {
@@ -482,16 +466,13 @@ export class ChatController implements ChatControllerApi {
     return this._runStream(prompt, this._backend.streamShell(command))
   }
 
-  private async _runPrompt(prompt: string, displayPrompt = prompt): Promise<ChatTurn | undefined> {
+  private async _runPrompt(prompt: string): Promise<ChatTurn | undefined> {
     if (this._closed || this._activeProjector || this._drainingProjector || this._resourceChanging) {
       return undefined
     }
-    if (this._setupQuestions && displayPrompt) {
-      this._setupGuideAnswer = displayPrompt
-    }
     this._panel = undefined
     this._panelStack.length = 0
-    return this._runStream(displayPrompt, this._backend.stream(prompt))
+    return this._runStream(prompt, this._backend.stream(prompt))
   }
 
   private async _runPeerMessage(message: PeerMessage): Promise<ChatTurn | undefined> {
@@ -704,8 +685,6 @@ export class ChatController implements ChatControllerApi {
     this._stopWatchingTasks = undefined
     this._stopWatchingPermissions?.()
     this._stopWatchingPermissions = undefined
-    this._stopWatchingSetupQuestions?.()
-    this._stopWatchingSetupQuestions = undefined
     this._stopTaskActivity()
     this._listeners.clear()
     await Promise.allSettled([Promise.resolve().then(() => this._backend.dispose?.()), this._mcp?.dispose()])
@@ -785,13 +764,11 @@ export class ChatController implements ChatControllerApi {
   }
 
   dismissPanel(): boolean {
-    if (
-      !this._panel ||
-      this._resourceChanging ||
-      this._panel.kind === 'permission' ||
-      this._panel.kind === 'question'
-    ) {
+    if (!this._panel || this._resourceChanging || this._panel.kind === 'permission') {
       return false
+    }
+    if (this._panel.kind === 'tools' && !this._applyBuiltinTools()) {
+      return true
     }
     this._stopTaskActivity()
     this._panel = this._panelStack.pop()
@@ -816,18 +793,22 @@ export class ChatController implements ChatControllerApi {
         }
         return true
       }
+      case 'effort':
       case 'models':
         return row.value.startsWith('effort:')
           ? this._selectEffort(row.value.slice('effort:'.length))
           : this._selectModel(row.value)
       case 'skills':
-        return this._openSkillDetail(row.value)
+        await this.submit(`$${row.value}`)
+        return true
       case 'tasks':
         return row.value === BACKGROUND_TASK_WAIT_TOGGLE
           ? this._toggleBackgroundTaskWaitMode()
           : this._openTaskDetail(row.value)
       case 'permissions':
         return this._updatePermissions(row.value)
+      case 'tools':
+        return this._toggleBuiltinTool(row.value)
       case 'settings':
         return row.value.startsWith('settings:')
           ? this._openSettingsCategory(row.value)
@@ -843,8 +824,6 @@ export class ChatController implements ChatControllerApi {
             : false
       case 'permission':
         return this._respondPermission(row.value)
-      case 'question':
-        return this._respondSetupQuestion(row.value)
       default:
         return false
     }
@@ -852,49 +831,6 @@ export class ChatController implements ChatControllerApi {
 
   openContextPanel(): void {
     this._openPanel('context', 'Context usage', [])
-  }
-
-  async toggleModelPin(modelId: string): Promise<boolean> {
-    const normalized = sanitizeTerminalText(modelId).trim()
-    if (!normalized) {
-      return false
-    }
-    const pinned = !this._pinnedModels.has(normalized)
-    try {
-      await this._setModelPinned?.(normalized, pinned)
-      if (pinned) {
-        this._pinnedModels.add(normalized)
-      } else {
-        this._pinnedModels.delete(normalized)
-      }
-      if (this._panel?.kind === 'models') {
-        const rows = this._panel.rows
-          .map<ChatPanelRow>((row) => {
-            if (row.value !== normalized) {
-              return row
-            }
-            const { pinned: _pinned, ...rest } = row
-            return pinned ? { ...rest, pinned: true } : rest
-          })
-          .sort((left, right) => {
-            const leftCurrent = left.badge?.text === 'current'
-            const rightCurrent = right.badge?.text === 'current'
-            if (leftCurrent !== rightCurrent) {
-              return leftCurrent ? -1 : 1
-            }
-            if (Boolean(left.pinned) !== Boolean(right.pinned)) {
-              return left.pinned ? -1 : 1
-            }
-            return left.label.localeCompare(right.label) || left.description.localeCompare(right.description)
-          })
-        this._panel = { ...this._panel, rows: sanitizeRows(rows) }
-        this._emit()
-      }
-      return true
-    } catch (error) {
-      this._openError('model pin failed', normalized, errorMessage(error))
-      return false
-    }
   }
 
   sessionTarget(reference: string): Promise<SessionTarget | undefined> {
@@ -992,8 +928,6 @@ export class ChatController implements ChatControllerApi {
       ...(this._panel ? { panel: clonePanel(this._panel) } : {}),
       runtime: cloneRuntime(this._runtime),
       settings: globalThis.structuredClone(this._settings),
-      ...(this._setupQuestions ? { setupGuide: true } : {}),
-      ...(this._setupGuideAnswer ? { setupGuideAnswer: this._setupGuideAnswer } : {}),
       ...(this._exitCode !== undefined ? { exitCode: this._exitCode } : {}),
     }
   }
@@ -1018,6 +952,7 @@ export class ChatController implements ChatControllerApi {
             skills: this._skills !== undefined,
             mcp: this._mcp !== undefined,
             setup: this._requestSetup !== undefined,
+            tools: this._builtinTools !== undefined,
             export: this._exportAgentProject !== undefined,
           }),
           {
@@ -1047,7 +982,11 @@ export class ChatController implements ChatControllerApi {
         await (argument ? this._selectModel(argument) : this.openModelPanel())
         break
       case 'effort':
-        await (argument ? this._selectEffort(argument.toLowerCase()) : this.openModelPanel({ focusEffort: true }))
+        if (argument) {
+          await this._selectEffort(argument.toLowerCase())
+        } else {
+          this._openEffortPanel()
+        }
         break
       case 'sessions':
         await (argument ? this._handleSessionsCommand(argument) : this._openSessionsPanel())
@@ -1067,6 +1006,9 @@ export class ChatController implements ChatControllerApi {
       case 'setup':
         this._requestSetup?.()
         break
+      case 'tools':
+        this._openBuiltinToolsPanel()
+        break
       case 'export':
         await this._handleExportCommand(parseCommandInvocation(prompt)?.argument ?? '')
         break
@@ -1081,6 +1023,51 @@ export class ChatController implements ChatControllerApi {
         break
       }
     }
+  }
+
+  private _openBuiltinToolsPanel(): void {
+    if (!this._builtinTools) {
+      this._openError(
+        'tools unavailable',
+        '/tools',
+        this._project
+          ? `This agent is defined in ${this._project.entrypoint}. Edit its tools there.`
+          : 'Tool selection is not available in this session.'
+      )
+      return
+    }
+    const choices = this._builtinTools.choices()
+    this._builtinToolSelection = new Set(choices.filter((choice) => choice.enabled).map((choice) => choice.name))
+    this._openPanel('tools', 'tools', builtinToolRows(choices, this._builtinToolSelection))
+  }
+
+  private _toggleBuiltinTool(value: string): boolean {
+    if (this._panel?.kind !== 'tools' || !this._builtinTools || !value.startsWith('tools:toggle:')) {
+      return false
+    }
+    const name = decodeURIComponent(value.slice('tools:toggle:'.length))
+    if (!this._builtinToolSelection.delete(name)) {
+      this._builtinToolSelection.add(name)
+    }
+    // Keeping the panel id keeps the cursor on the toggled row.
+    const rows = builtinToolRows(this._builtinTools.choices(), this._builtinToolSelection)
+    this._panel = makePanel(this._panel.id, 'tools', 'tools', rows, {})
+    this._emit()
+    return true
+  }
+
+  /** Closing `/tools` applies its selection; returns false when the change is blocked. */
+  private _applyBuiltinTools(): boolean {
+    const choices = this._builtinTools?.choices() ?? []
+    if (choices.every((choice) => choice.enabled === this._builtinToolSelection.has(choice.name))) {
+      return true
+    }
+    if (this.busy || this._hasUnresolvedBackgroundTasks()) {
+      this._openError('tools not changed', '/tools', 'Finish or cancel running work, then change tools again.')
+      return false
+    }
+    this._builtinTools?.apply([...this._builtinToolSelection])
+    return true
   }
 
   private _openTasksPanel(): void {
@@ -1127,7 +1114,19 @@ export class ChatController implements ChatControllerApi {
     }
   }
 
-  async openModelPanel({ focusEffort = false } = {}): Promise<void> {
+  private _openEffortPanel(): void {
+    const slider = effortSlider(this._backend.listEfforts?.() ?? [])
+    if (!slider || slider.disabled) {
+      this._openError('effort unavailable', this._runtime.model, 'This model does not support reasoning effort.')
+      return
+    }
+    this._openPanel('effort', 'effort', [], {
+      slider: { ...slider, focused: true },
+      body: `${modelDisplayName(this._runtime.model)}\n${this._runtime.model}`,
+    })
+  }
+
+  async openModelPanel(): Promise<void> {
     if (!this._backend.listModels) {
       this._openError('models unavailable', this._runtime.model, 'This backend does not expose model selection.')
       return
@@ -1140,20 +1139,15 @@ export class ChatController implements ChatControllerApi {
       }
       const efforts = this._backend.listEfforts?.() ?? []
       const slider = effortSlider(efforts)
-      this._openPanel(
-        'models',
-        `models (${models.length})`,
-        modelRows(models, this._pinnedModels, this._runtime.model),
-        {
-          searchable: true,
-          filters: modelFilters(
-            models.map((model) => model.catalog).filter((catalog): catalog is string => !!catalog),
-            this._backend.protocol
-          ),
-          ...(slider ? { slider: { ...slider, ...(focusEffort && !slider.disabled ? { focused: true } : {}) } } : {}),
-          body: `${modelDisplayName(this._runtime.model)}\n${this._runtime.model}`,
-        }
-      )
+      this._openPanel('models', `models (${models.length})`, modelRows(models, this._runtime.model), {
+        searchable: true,
+        filters: modelFilters(
+          models.map((model) => model.catalog).filter((catalog): catalog is string => !!catalog),
+          this._backend.protocol
+        ),
+        ...(slider ? { slider } : {}),
+        body: `${modelDisplayName(this._runtime.model)}\n${this._runtime.model}`,
+      })
     } catch (error) {
       if (this._panel?.id === loading.id) {
         this._openError('model discovery failed', this._runtime.model, errorMessage(error))
@@ -1221,7 +1215,7 @@ export class ChatController implements ChatControllerApi {
       const selected = await this._backend.setEffort(effort)
       this._context = {}
       this._refreshRuntime()
-      if (this._panel?.kind === 'models' && this._panel.slider) {
+      if ((this._panel?.kind === 'models' || this._panel?.kind === 'effort') && this._panel.slider) {
         this._panel = {
           ...this._panel,
           slider: {
@@ -1413,8 +1407,12 @@ export class ChatController implements ChatControllerApi {
     this._panelStack.length = 0
     this._emit()
     try {
-      if (await this._backend.compact()) {
-        this._context = {}
+      const context = await this._backend.compact()
+      if (context) {
+        this._context = { ...context }
+        this._addNotice('success', 'Compacted older conversation context into a summary')
+      } else {
+        this._addNotice('delivered', 'Nothing to compact yet')
       }
     } catch (error) {
       this._openError('compaction failed', 'compact', errorMessage(error))
@@ -1470,7 +1468,7 @@ export class ChatController implements ChatControllerApi {
     }
   }
 
-  private _openSkillDetail(name: string): boolean {
+  openSkillDetail(name: string): boolean {
     const skill = this._skillDetails.get(name)
     if (!skill) {
       return false
@@ -1524,7 +1522,7 @@ export class ChatController implements ChatControllerApi {
     )
   }
 
-  private _openPermissionsPanel(): void {
+  private _openPermissionsPanel(refresh = false): void {
     const status = this._backend.permissionStatus?.()
     if (
       !status ||
@@ -1539,11 +1537,21 @@ export class ChatController implements ChatControllerApi {
       )
       return
     }
-    this._openPanel('permissions', 'permissions', permissionSettingsRows(status, this._runtime.tools), {
+    const options: ChatPanelOptions = {
       ...(status.mode === 'bypassPermissions'
         ? { body: 'WARNING: Permission checks are bypassed. Configured interventions and sandboxing still apply.' }
         : {}),
-    })
+    }
+    if (refresh && this._panel?.kind === 'permissions') {
+      const currentId = this._panel.id
+      this._panel = {
+        ...this._makePanel('permissions', 'permissions', permissionSettingsRows(status, this._runtime.tools), options),
+        id: currentId,
+      }
+      this._emit()
+      return
+    }
+    this._openPanel('permissions', 'permissions', permissionSettingsRows(status, this._runtime.tools), options)
   }
 
   private async _updatePermissions(value: string): Promise<boolean> {
@@ -1570,7 +1578,7 @@ export class ChatController implements ChatControllerApi {
       } else {
         await this._backend.allowPermission(toolName)
       }
-      this._openPermissionsPanel()
+      this._openPermissionsPanel(true)
       return true
     } catch (error) {
       this._openError('permission update failed', toolName, errorMessage(error))
@@ -1589,7 +1597,7 @@ export class ChatController implements ChatControllerApi {
     }
     try {
       await this._backend.setPermissionMode(mode)
-      this._openPermissionsPanel()
+      this._openPermissionsPanel(true)
       return true
     } catch (error) {
       this._openError('permission update failed', mode, errorMessage(error))
@@ -1798,53 +1806,11 @@ export class ChatController implements ChatControllerApi {
     return true
   }
 
-  private _respondSetupQuestion(value: string): boolean {
-    const [prefix, encodedRequestId, encodedChoiceId] = value.split(':')
-    if (prefix !== 'question' || !encodedRequestId || !encodedChoiceId) {
-      return false
-    }
-    const previousAnswer = this._setupGuideAnswer
-    this._setupGuideAnswer = this._panel?.rows.find((row) => row.value === value)?.label
-    const responded =
-      this._setupQuestions?.respond(decodeURIComponent(encodedRequestId), decodeURIComponent(encodedChoiceId)) ?? false
-    if (!responded) {
-      this._setupGuideAnswer = previousAnswer
-    }
-    return responded
-  }
-
-  private _respondSetupQuestionText(answer: string): boolean {
-    const value = this._panel?.rows.find((row) => row.value?.startsWith('question:'))?.value
-    const [, encodedRequestId] = value?.split(':') ?? []
-    if (!encodedRequestId) {
-      return false
-    }
-    const previousAnswer = this._setupGuideAnswer
-    const normalizedAnswer = sanitizeTerminalText(answer).trim()
-    this._setupGuideAnswer = normalizedAnswer
-    try {
-      const responded =
-        this._setupQuestions?.respondText(decodeURIComponent(encodedRequestId), normalizedAnswer) ?? false
-      if (!responded) {
-        this._setupGuideAnswer = previousAnswer
-      }
-      return responded
-    } catch (error) {
-      this._setupGuideAnswer = previousAnswer
-      throw error
-    }
-  }
-
   private _openPermissionPanel(request: ChatPermissionRequest): void {
     this._pushPanel('permission', `Allow ${request.toolName}?`, permissionRequestRows(request), {
       body: formatPermissionPanelBody(request),
       ...(request.diff ? { diff: request.diff } : {}),
     })
-  }
-
-  private _openSetupQuestion(request: SetupQuestionRequest): void {
-    this._setupGuideAnswer = undefined
-    this._pushPanel('question', 'Dr. Harness', setupQuestionRows(request), { body: request.question })
   }
 
   private _refreshRuntime(model?: string): void {
@@ -1872,14 +1838,6 @@ export class ChatController implements ChatControllerApi {
 
   private _closePermissionPanel(): void {
     if (this._panel?.kind !== 'permission') {
-      return
-    }
-    this._panel = this._panelStack.pop()
-    this._emit()
-  }
-
-  private _closeSetupQuestion(): void {
-    if (this._panel?.kind !== 'question') {
       return
     }
     this._panel = this._panelStack.pop()

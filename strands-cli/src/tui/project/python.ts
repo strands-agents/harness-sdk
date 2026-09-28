@@ -9,7 +9,14 @@ import { Message, type MessageData, type JSONValue, type ContentBlockData } from
 import type { HarnessAgentConfig } from '@strands-agents/harness'
 import { isAuthorized } from '@cedar-policy/cedar-wasm/nodejs'
 
-import type { ChatBackend, ChatConversation, ChatEvent, ChatRunResult, ChatPermissionMode } from '../chat/types.js'
+import type {
+  ChatBackend,
+  ChatContextUsage,
+  ChatConversation,
+  ChatEvent,
+  ChatRunResult,
+  ChatPermissionMode,
+} from '../chat/types.js'
 import type { SetupChange } from '../agent-configuration.js'
 import type { ImportedAgentProject } from './import.js'
 import { prepareArchiveDependencies } from './archive.js'
@@ -310,9 +317,9 @@ export class PythonBackend implements ChatBackend {
     await this._request({ type: 'reset', clear: true, sessionId: randomUUID() })
   }
 
-  async compact(): Promise<boolean> {
+  async compact(): Promise<ChatContextUsage | undefined> {
     const result = await this._request({ type: 'compact' })
-    return result.stopReason === 'compacted'
+    return result.stopReason === 'compacted' ? { ...result.context } : undefined
   }
 
   async activateSkill(name: string): Promise<SkillInfo | undefined> {

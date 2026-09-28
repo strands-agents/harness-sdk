@@ -37,6 +37,12 @@ SNAPSHOT_PRESETS: dict[str, tuple[SnapshotField, ...]] = {
     "session": ("messages", "state", "conversation_manager_state", "interrupt_state", "model_state"),
 }
 
+BIDI_SNAPSHOT_FIELDS: tuple[SnapshotField, ...] = ("messages", "state", "system_prompt")
+
+BIDI_SNAPSHOT_PRESETS: dict[str, tuple[SnapshotField, ...]] = {
+    "session": ("messages", "state"),
+}
+
 
 @dataclass
 class Snapshot:

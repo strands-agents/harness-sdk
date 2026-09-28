@@ -96,7 +96,7 @@ from ..types.content import (
     _ensure_tracking_id,
     split_system_prompt,
 )
-from ..types.exceptions import ConcurrencyException, ContextWindowOverflowException
+from ..types.exceptions import ConcurrencyException, ContextWindowOverflowException, SnapshotException
 from ..types.tools import AgentTool
 from ..types.traces import AttributeValue
 from . import _continuation
@@ -2019,12 +2019,14 @@ class Agent(AgentBase, LocalAgent):
             snapshot: The snapshot to restore from.
 
         Raises:
-            SnapshotException: If snapshot.schema_version is not "1.0".
+            SnapshotException: If snapshot.schema_version is not "1.0" or snapshot.scope is not "agent".
             RuntimeError: If background tasks are still tracked.
         """
         if self._background_tasks is not None:
             self._background_tasks.assert_can_load_snapshot()
         snapshot.validate()
+        if snapshot.scope != "agent":
+            raise SnapshotException(f"Expected snapshot scope 'agent', got {snapshot.scope!r}")
 
         data = snapshot.data
 

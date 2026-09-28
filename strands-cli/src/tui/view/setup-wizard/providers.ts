@@ -12,6 +12,7 @@ import { DEFAULT_HARNESS_AGENT_CONFIG, supportsWebSearch, type HarnessAgentConfi
 import type { AwsConfigurationDiscovery, LiteLlmDiscovery, OllamaDiscovery } from '../../provider/discovery.js'
 import { webSearchFallback, withoutProfileTool } from '../../builtin-tools.js'
 import { missingProviderPackage } from '../../provider/packages.js'
+import { effortForModel, profileEffort } from '../../model/selection.js'
 import type { SelectOption, SetupDraft } from './types.js'
 
 const COMMON_AWS_REGIONS = [
@@ -86,13 +87,14 @@ export function quickstartDraft(provider: ProviderId, environment: DetectedProvi
     profile: compatibleProfile({
       ...DEFAULT_HARNESS_AGENT_CONFIG,
       model: PROVIDERS[provider].model(environment),
+      builtinTools: withoutProfileTool(DEFAULT_HARNESS_AGENT_CONFIG.builtinTools, 'web_search'),
       caching: !localProvider,
       effort: localProvider ? 'off' : DEFAULT_HARNESS_AGENT_CONFIG.effort,
     }),
     permissionMode: 'default',
     allowedTools: [],
     customPermissions: false,
-    settings: { mcpDiscovery: false, skillDiscovery: false, agentMessaging: true },
+    settings: { mcpDiscovery: true, skillDiscovery: true, agentMessaging: true },
   }
 }
 
@@ -103,9 +105,16 @@ export function exaWebSearchActive(profile: HarnessAgentConfig): boolean {
 
 /** Without native search, `web_search` is only kept as the explicit Exa opt-in; the plain default would refuse to start. */
 export function compatibleProfile(profile: HarnessAgentConfig): HarnessAgentConfig {
+  const effort = compatibleEffort(profile)
+  const withEffort = effort === profile.effort ? profile : { ...profile, effort }
   return providerSupportsWebSearch(profile.model) || webSearchFallback(profile.builtinTools) === 'exa'
-    ? profile
-    : { ...profile, builtinTools: withoutProfileTool(profile.builtinTools, 'web_search') }
+    ? withEffort
+    : { ...withEffort, builtinTools: withoutProfileTool(profile.builtinTools, 'web_search') }
+}
+
+/** An effort level the model doesn't support falls back to `auto`, matching what the Reasoning row shows. */
+function compatibleEffort({ model, effort }: HarnessAgentConfig): HarnessAgentConfig['effort'] {
+  return effort === 'auto' || effort === 'off' ? effort : profileEffort(effortForModel(model, effort))
 }
 
 export function providerFromModel(model: string): ProviderId | undefined {
