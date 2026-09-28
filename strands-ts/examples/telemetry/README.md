@@ -22,24 +22,25 @@ via Docker Compose.
 
 ## Quick Start
 
-1. Start Jaeger and the OTel Collector:
+1. From the repository root, start Jaeger and the OTel Collector:
 
 ```bash
-docker compose up -d
+docker compose -f strands-ts/examples/telemetry/docker-compose.yml up -d
 ```
 
-(Or `finch compose up -d` if using Finch.)
+(Or `finch compose -f strands-ts/examples/telemetry/docker-compose.yml up -d` if using Finch.)
 
-2. Install dependencies:
+2. Install dependencies and build the SDK:
 
 ```bash
-npm install
+pnpm install --frozen-lockfile
+npm run build
 ```
 
 3. Run the example:
 
 ```bash
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 npm start
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 npm --prefix strands-ts/examples/telemetry start
 ```
 
 4. Open the Jaeger UI at [http://localhost:16686](http://localhost:16686).
@@ -51,5 +52,5 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 npm start
 5. Tear down when done:
 
 ```bash
-docker compose down
+docker compose -f strands-ts/examples/telemetry/docker-compose.yml down
 ```

@@ -178,7 +178,7 @@ describe('build-release-file', () => {
           labels: [],
           merge_commit_sha: 'cfc8825aaaa',
           user: 'dependabot[bot]',
-          files: ['package-lock.json'],
+          files: ['pnpm-lock.yaml'],
         })),
       deriveEntries: bodyDerive,
       readExisting: async () => null,

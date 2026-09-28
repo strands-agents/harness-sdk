@@ -45,7 +45,8 @@ expect_branch() {
 
 # --- Structural: must force the full suite ---
 expect_branch structural "root package.json" "package.json"
-expect_branch structural "root lockfile" "package-lock.json"
+expect_branch structural "root lockfile" "pnpm-lock.yaml"
+expect_branch structural "workspace config" "pnpm-workspace.yaml"
 expect_branch structural "strands-ts package.json" "strands-ts/package.json"
 expect_branch structural "top-level tsconfig" "strands-ts/tsconfig.json"
 expect_branch structural "nested src tsconfig" "strands-ts/src/tsconfig.json"

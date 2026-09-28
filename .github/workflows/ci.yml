@@ -41,7 +41,8 @@ jobs:
             typescript:
               - 'strands-ts/**/!(*.md)'
               - 'package.json'
-              - 'package-lock.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
               - '.github/workflows/typescript-*'
               - '.github/workflows/ci.yml'
             docs:

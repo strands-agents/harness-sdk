@@ -4,17 +4,14 @@
   "main": "dist/setup-tracer.js",
   "type": "module",
   "scripts": {
-    "prepare": "npm ci --prefix ../../..",
-    "clean": "rm -rf dist node_modules package-lock.json",
+    "clean": "rm -rf dist",
     "build": "tsc",
     "start": "tsc && node dist/setup-tracer.js",
     "start:custom-provider": "tsc && node dist/custom-provider.js"
   },
-  "workspaces": [
-    "../../"
-  ],
   "dependencies": {
-    "@strands-agents/sdk": "*"
+    "@strands-agents/sdk": "workspace:*",
+    "zod": "^4.1.12"
   },
   "devDependencies": {
     "@opentelemetry/api": "^1.9.0",

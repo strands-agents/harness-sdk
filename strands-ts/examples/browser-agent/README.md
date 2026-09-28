@@ -7,11 +7,12 @@ A browser-based AI agent that can modify DOM elements through natural language c
 ## Quick Start
 
 ```bash
-# Install dependencies
-npm install
+# From the repository root, install dependencies and build the SDK
+pnpm install --frozen-lockfile
+npm run build
 
 # Start dev server
-npm run dev
+npm --prefix strands-ts/examples/browser-agent run dev
 ```
 
 Open the URL (usually `http://localhost:5173`), configure your API credentials in settings, and start chatting.

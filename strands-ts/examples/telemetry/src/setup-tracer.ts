@@ -24,7 +24,7 @@ import { z } from 'zod'
 // 1. Set up telemetry ONCE at application start.
 //    setupTracer() creates a NodeTracerProvider with sensible defaults and
 //    registers it globally. All agents will automatically pick it up.
-const provider = setupTracer({
+setupTracer({
   exporters: {
     // Send spans to an OTLP-compatible backend (Jaeger, Grafana, etc.)
     // Uses OTEL_EXPORTER_OTLP_ENDPOINT env var for the endpoint.
@@ -33,13 +33,6 @@ const provider = setupTracer({
     console: true,
   },
 })
-
-// You can inspect the resource attributes that will be attached to all spans.
-console.log('=== Resource Attributes ===\n')
-for (const [key, value] of Object.entries(provider.resource.attributes)) {
-  console.log(`  ${key}: ${value}`)
-}
-console.log('')
 
 // 2. Define tools as usual
 const getWeather = tool({

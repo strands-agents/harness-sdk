@@ -13,13 +13,15 @@ const LANGUAGE_DIRS: Record<string, string> = {
   'strands-ts': 'typescript',
 }
 
-// The repo-root npm lockfile resolves the strands-ts workspace (root
-// package.json `workspaces`), so a bump there can change what npm consumers
-// install and can never reach the PyPI distribution. A Map keyed by filename,
-// so a GitHub-controlled path cannot reach Object.prototype. Lockfiles only:
+// The repo-root lockfiles resolve the strands-ts workspace, so a bump
+// there can change what npm consumers install but not the PyPI distribution.
+// Key by filename so a GitHub-controlled path cannot reach Object.prototype. Lockfiles only:
 // the sibling manifests (package.json, pyproject.toml) also carry repo-wide
 // tooling, which belongs to neither SDK.
-const ROOT_LOCKFILES = new Map([['package-lock.json', 'typescript']])
+const ROOT_LOCKFILES = new Map([
+  ['package-lock.json', 'typescript'],
+  ['pnpm-lock.yaml', 'typescript'],
+])
 
 // Top-level dirs holding docs/blog/website content rather than SDK code.
 // `site/` is the monorepo home for all docs+blog+website; `docs/` is the

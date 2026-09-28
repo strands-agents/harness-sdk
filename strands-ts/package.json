@@ -194,8 +194,8 @@
     "prepack": "npm run build",
     "check": "npm run lint && npm run format && npm run type-check && npm run check:browser-bundle && npm run test:coverage && npm run test:package",
     "check:browser-bundle": "esbuild src/index.ts --bundle --platform=browser --format=esm --packages=external --outfile=/dev/null",
-    "clean": "rm -rf node_modules dist",
-    "lock:refresh": "rm -rf node_modules && npm install --ignore-scripts --os=linux --os=darwin --os=win32 --cpu=x64 --cpu=arm64 --cpu=wasm32",
+    "clean": "rm -rf dist",
+    "lock:refresh": "pnpm install --lockfile-only",
     "test": "vitest run --project unit-node",
     "test:watch": "vitest --project unit-node",
     "test:coverage": "vitest run --coverage --project unit-node",
@@ -261,6 +261,7 @@
     "@vitest/browser": "^4.1.10",
     "@vitest/browser-playwright": "^4.1.10",
     "@vitest/coverage-v8": "^4.1.10",
+    "esbuild": "^0.28.1",
     "eslint": "^10.6.0",
     "eslint-plugin-tsdoc": "^0.5.0",
     "express": "^5.2.1",
@@ -269,6 +270,7 @@
     "tsx": "^4.22.5",
     "turndown": "^7.2.4",
     "typescript": "^6.0.3",
+    "vite": "^8.0.16",
     "vitest": "^4.1.10"
   },
   "engines": {

@@ -1,0 +1,18 @@
+packages:
+  - strands-ts
+  - strands-ts/examples/*
+  - test-infra
+
+allowBuilds:
+  '@google/genai': true
+  '@parcel/watcher': true
+  better-sqlite3: true
+  esbuild: true
+  node-llama-cpp: true
+  protobufjs: true
+  tree-sitter-go: true
+  tree-sitter-javascript: true
+  tree-sitter-python: true
+  tree-sitter-rust: true
+  tree-sitter-typescript: true
+  unrs-resolver: true

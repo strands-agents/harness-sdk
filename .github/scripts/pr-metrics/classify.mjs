@@ -45,6 +45,7 @@ const TEST_PATTERNS = [
 /** Machine-generated files. A lockfile bump is not review effort. */
 const GENERATED_PATTERNS = [
   /(^|\/)package-lock\.json$/,
+  /(^|\/)pnpm-lock\.yaml$/,
   /(^|\/)uv\.lock$/,
   /\.lock$/,
   /\.snap$/,

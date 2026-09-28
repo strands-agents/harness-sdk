@@ -82,7 +82,8 @@ fi
 # risk a narrowed (or empty) selective run.
 STRUCTURAL_PATTERNS=(
   '^package\.json$'                            # root dependency manifest
-  '^package-lock\.json$'                       # root lockfile
+  '^pnpm-lock\.yaml$'                         # root lockfile
+  '^pnpm-workspace\.yaml$'                    # workspace membership and build policy
   '^strands-ts/package\.json$'                 # workspace manifest
   '^strands-ts/(.*/)?tsconfig.*\.json$'        # any tsconfig (src/ + test/integ/ define the $/sdk alias)
   '^strands-ts/vitest\.config\.ts$'            # vitest config (projects, aliases)

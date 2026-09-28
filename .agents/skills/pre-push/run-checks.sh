@@ -133,7 +133,7 @@ matches_python() {
 matches_typescript() {
   case "$1" in
     strands-ts/*) return 0 ;;
-    package.json|package-lock.json) return 0 ;;
+    package.json|pnpm-lock.yaml|pnpm-workspace.yaml) return 0 ;;
     .github/workflows/typescript-*|.github/workflows/ci.yml) return 0 ;;
   esac
   return 1
@@ -252,6 +252,11 @@ have_npm() {
   echo "  'npm' not found" >&2
   return 1
 }
+have_pnpm() {
+  command -v pnpm >/dev/null 2>&1 && return 0
+  echo "  'pnpm' not found" >&2
+  return 1
+}
 
 # Fixers are scoped to the files your change touches, so they never reformat
 # unrelated files into your commit. The project's own commands (hatch fmt,
@@ -313,10 +318,11 @@ check_python() {
 # --- TypeScript: mirrors typescript-pr-and-push.yml fan-out -----------------
 # Scoped to changed strands-ts/ files via prettier/eslint directly. eslint only
 # lints src + test/integ (per package.json), so scope the autofix to those.
-# npm install (lockfile sync) is inherently whole-repo but only writes the
+# pnpm install (lockfile sync) is inherently whole-repo but only writes the
 # lockfile, which is itself part of a dependency change — so it doesn't pollute.
 fix_typescript() {
   have_npm || return 0
+  have_pnpm || return 0
   ( cd strands-ts || exit 1
     if [[ -z "$(changed_z '.')" ]]; then
       echo; echo "  fix: no changed strands-ts/ files to format"
@@ -332,19 +338,20 @@ fix_typescript() {
     fi
   )
   # lockfile sync only matters when package.json / lockfile changed.
-  if [[ -n "$(changed_z 'package.json' 'package-lock.json')" ]]; then
-    fix_step "lockfile sync (npm install)" npm install
+  if [[ -n "$(changed_z 'package.json' 'strands-ts/package.json' 'pnpm-lock.yaml' 'pnpm-workspace.yaml')" ]]; then
+    fix_step "lockfile sync (pnpm install)" pnpm install
   fi
 }
 # CI runs (across jobs): build, lint, format:check, type-check,
 # check:browser-bundle, test:all:coverage, test:package, npm-pack smoke test,
-# and npm audit --audit-level=high. Locally we run the deterministic subset;
+# and pnpm audit --audit-level=high. Locally we run the deterministic subset;
 # --heavy adds browser tests + test:package. The npm-pack smoke test stays in CI.
-# CI dropped its package-lock drift check in #2841 (to unblock Dependabot/audit
+# CI dropped its lockfile drift check in #2841 (to unblock Dependabot/audit
 # fixes), so we no longer check drift either — the fixer above still runs
-# `npm install` to keep the lockfile synced when a dependency change touched it.
+# `pnpm install` to keep the lockfile synced when a dependency change touched it.
 check_typescript() {
   have_npm || return 1
+  have_pnpm || return 1
   local ok=1
   # build first: workspace type resolution + integ type-check need dist/.
   run_step "build (npm run build)"            npm run build           || ok=0
@@ -352,7 +359,7 @@ check_typescript() {
   run_step "format check (npm run format:check)" npm run format:check || ok=0
   run_step "type-check (npm run type-check)"  npm run type-check      || ok=0
   run_step "browser bundle (npm run check:browser-bundle)" npm run check:browser-bundle || ok=0
-  run_step "npm audit (--audit-level=high)"   npm audit --audit-level=high || ok=0
+  run_step "pnpm audit (--audit-level=high)"   pnpm audit --audit-level=high || ok=0
 
   if [[ ${RUN_HEAVY} -eq 1 ]]; then
     run_step "browser install (npm run test:browser:install)" npm run test:browser:install || ok=0
@@ -384,7 +391,9 @@ fix_docs() {
 check_docs() {
   have_npm || return 1
   local ok=1
+  run_step "build SDK for docs (npm run build)" npm run build || return 1
   ( cd site || exit 1
+    run_step "re-link SDK types (npm install --install-links)" npm install --no-save --install-links --ignore-scripts ../strands-ts || exit 1
     run_step "build (npm run cms:build)"          npm run cms:build         || exit 1
     run_step "typecheck (npm run typecheck)"      npm run typecheck         || exit 1
     run_step "snippet typecheck (npm run typecheck:snippets)" npm run typecheck:snippets || exit 1

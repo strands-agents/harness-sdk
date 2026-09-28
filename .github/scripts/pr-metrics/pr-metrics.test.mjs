@@ -26,7 +26,7 @@ test('classify separates tests from source', () => {
   assert.equal(classify('strands-ts/src/mcp/client.test.ts'), FileKind.TEST)
   assert.equal(classify('strands-py/src/strands/conftest.py'), FileKind.TEST)
   assert.equal(classify('site/src/content/docs/index.mdx'), FileKind.DOCS)
-  assert.equal(classify('package-lock.json'), FileKind.GENERATED)
+  assert.equal(classify('pnpm-lock.yaml'), FileKind.GENERATED)
   assert.equal(classify('strands-py/uv.lock'), FileKind.GENERATED)
 })
 
@@ -34,7 +34,8 @@ test('size counts source and docs but not tests or lockfiles', () => {
   assert.equal(countsTowardSize('strands-ts/src/agent/agent.ts'), true)
   assert.equal(countsTowardSize('site/src/content/docs/index.mdx'), true)
   assert.equal(countsTowardSize('strands-py/tests/test_agent.py'), false)
-  assert.equal(countsTowardSize('package-lock.json'), false)
+  assert.equal(countsTowardSize('site/package-lock.json'), false)
+  assert.equal(countsTowardSize('pnpm-lock.yaml'), false)
 })
 
 test('only SDK source is analyzed for complexity', () => {
@@ -222,7 +223,7 @@ test('size excludes test churn from the bucket', () => {
     files: [
       { path: 'strands-py/src/strands/agent.py', additions: 10, deletions: 5 },
       { path: 'strands-py/tests/test_agent.py', additions: 800, deletions: 100 },
-      { path: 'package-lock.json', additions: 5000, deletions: 4000 },
+      { path: 'site/package-lock.json', additions: 5000, deletions: 4000 },
     ],
     functions: [],
   })
