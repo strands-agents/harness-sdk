@@ -452,13 +452,13 @@ export class PythonBackend implements ChatBackend {
     if (authorization.type === 'failure') throw new Error('Cedar permission evaluation failed.')
     if (authorization.response.decision === 'allow') return true
     const path = message.input.path
+    const oldStr = message.input.old_str
+    const newStr = message.input.new_str
     const after =
       message.name === 'write'
         ? message.input.content
-        : message.name === 'edit' &&
-            typeof message.input.old_str === 'string' &&
-            typeof message.input.new_str === 'string'
-          ? message.before?.replace(message.input.old_str, message.input.new_str)
+        : message.name === 'edit' && typeof oldStr === 'string' && typeof newStr === 'string'
+          ? message.before?.replace(oldStr, () => newStr)
           : undefined
     const diff =
       typeof path === 'string' && typeof after === 'string' && message.before !== undefined
