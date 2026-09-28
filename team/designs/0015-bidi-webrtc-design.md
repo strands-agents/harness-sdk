@@ -359,7 +359,7 @@ await agent.run(inputs=[ivs_io.input()], outputs=[ivs_io.output()])
 from strands.experimental.bidi.models import OpenAIRealtimeModel
 
 # Same IVS IO works with any model — transport is decoupled from inference
-agent = BidiAgent(model=OpenAIRealtimeModel(), tools=[...])
+agent = BidiAgent(model=OpenAIRealtimeModel(transcription_model_id="gpt-transcribe"), tools=[...])
 await agent.run(inputs=[ivs_io.input()], outputs=[ivs_io.output()])
 ```
 

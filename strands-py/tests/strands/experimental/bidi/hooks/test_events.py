@@ -10,7 +10,7 @@ from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.hooks import (
     BidiAgentStopEvent,
     BidiBargeInEvent,
-    BidiResponseCompleteEvent,
+    BidiResponseStopEvent,
 )
 from strands.experimental.bidi.models import BidiModel
 from strands.hooks import AgentInitializedEvent, MessageAddedEvent
@@ -57,8 +57,8 @@ def agent_stop_event(agent):
 
 
 @pytest.fixture
-def response_complete_event(agent):
-    return BidiResponseCompleteEvent(agent=agent, response_id="response-1", stop_reason="complete")
+def response_stop_event(agent):
+    return BidiResponseStopEvent(agent=agent, response_id="response-1")
 
 
 @pytest.fixture
@@ -66,10 +66,10 @@ def barge_in_event(agent):
     return BidiBargeInEvent(agent=agent, reason="user_speech")
 
 
-def test_event_should_reverse_callbacks(agent_stop_event, response_complete_event, barge_in_event):
+def test_event_should_reverse_callbacks(agent_stop_event, response_stop_event, barge_in_event):
     """Verify which events use reverse callback ordering."""
     assert agent_stop_event.should_reverse_callbacks is True
-    assert response_complete_event.should_reverse_callbacks is False
+    assert response_stop_event.should_reverse_callbacks is False
     assert barge_in_event.should_reverse_callbacks is False
 
 
@@ -81,7 +81,7 @@ def test_barge_in_event_fields(agent):
     assert tru_event == exp_event
 
 
-@pytest.mark.parametrize("name", ["agent", "response_id", "stop_reason"])
-def test_response_complete_event_cannot_write_properties(response_complete_event, name):
+@pytest.mark.parametrize("name", ["agent", "response_id"])
+def test_response_stop_event_cannot_write_properties(response_stop_event, name):
     with pytest.raises(AttributeError, match=f"Property {name} is not writable"):
-        setattr(response_complete_event, name, None)
+        setattr(response_stop_event, name, None)

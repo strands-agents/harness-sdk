@@ -87,13 +87,14 @@ export function quickstartDraft(provider: ProviderId, environment: DetectedProvi
     profile: compatibleProfile({
       ...DEFAULT_HARNESS_AGENT_CONFIG,
       model: PROVIDERS[provider].model(environment),
+      builtinTools: withoutProfileTool(DEFAULT_HARNESS_AGENT_CONFIG.builtinTools, 'web_search'),
       caching: !localProvider,
       effort: localProvider ? 'off' : DEFAULT_HARNESS_AGENT_CONFIG.effort,
     }),
     permissionMode: 'default',
     allowedTools: [],
     customPermissions: false,
-    settings: { mcpDiscovery: false, skillDiscovery: false, agentMessaging: true },
+    settings: { mcpDiscovery: true, skillDiscovery: true, agentMessaging: true },
   }
 }
 

@@ -9,7 +9,6 @@ import type { StreamPresentationOptions } from '../stream-presentation.js'
 import type { VoiceSessionSnapshot } from '../voice/session.js'
 import type { ImportedAgentProject } from '../project/import.js'
 import type { ChatSettings, SettingsCategory } from '../settings.js'
-import type { SetupQuestionBroker } from '../setup/questions.js'
 
 export {
   DEFAULT_CHAT_SETTINGS,
@@ -272,7 +271,8 @@ export interface ChatBackend {
   removeAllowedPermission?(toolName: string): Promise<void>
   backgroundTasksWaitForCompletion?(): boolean | undefined
   setBackgroundTasksWaitForCompletion?(waitForCompletion: boolean): Promise<void>
-  compact?(): Promise<boolean>
+  /** Summarizes older conversation context and returns the new context usage, or undefined when nothing changed. */
+  compact?(): Promise<ChatContextUsage | undefined>
   clear?(): Promise<void>
   hasReadyBackgroundResults?(): boolean
   streamBackgroundResults?(): AsyncGenerator<ChatEvent, ChatRunResult, undefined>
@@ -384,14 +384,15 @@ export interface ChatPanel {
     | 'skills'
     | 'mcp'
     | 'agents'
+    | 'rename'
     | 'permissions'
+    | 'tools'
     | 'settings'
     | 'voice'
     | 'export'
     | 'help'
     | 'detail'
     | 'permission'
-    | 'question'
     | 'error'
   title: string
   rows: readonly ChatPanelRow[]
@@ -458,10 +459,22 @@ export interface ChatSnapshot {
   panel?: ChatPanel
   runtime: ChatRuntimeInfo
   settings: ChatSettings
-  setupGuide?: boolean
-  setupGuideAnswer?: string
   voice?: VoiceSessionSnapshot
   exitCode?: number
+}
+
+export interface ChatBuiltinToolChoice {
+  name: string
+  description: string
+  enabled: boolean
+  /** Enabling it sends data to a third-party service. */
+  thirdParty?: boolean
+}
+
+export interface ChatBuiltinToolsRuntime {
+  choices(): readonly ChatBuiltinToolChoice[]
+  /** Saves the selection and reloads the agent, keeping the conversation. */
+  apply(enabled: readonly string[]): void
 }
 
 export interface ChatControllerOptions {
@@ -478,9 +491,9 @@ export interface ChatControllerOptions {
   initialTurns?: readonly ChatTurn[]
   setSettings?: (settings: Partial<ChatSettings>) => Promise<void>
   requestSetup?: () => void
+  builtinTools?: ChatBuiltinToolsRuntime
   exportAgentProject?: (language: 'typescript' | 'python', destination?: string) => Promise<string | undefined>
   peerEndpointId?: string
-  setupQuestions?: SetupQuestionBroker
 }
 
 export interface ChatControllerApi {
@@ -494,7 +507,7 @@ export interface ChatControllerApi {
   showError?(title: string, message: string): void
   toggleVoiceMute?(): boolean
   actionableCommandToken(input: string): string | undefined
-  start(firstRequest?: string, options?: { hidePrompt?: boolean }): Promise<void>
+  start(firstRequest?: string): Promise<void>
   submit(input: string): Promise<ChatTurn | undefined>
   enqueuePeerMessage?(message: PeerMessage): boolean
   steer(input: string): Promise<ChatTurn | undefined>
@@ -506,6 +519,7 @@ export interface ChatControllerApi {
   dispose(): Promise<void>
   dismissPanel(): boolean
   activatePanelRow(row: ChatPanelRow): Promise<boolean>
+  openSkillDetail(name: string): boolean
   openModelPanel(): Promise<void>
   openContextPanel(): void
 }

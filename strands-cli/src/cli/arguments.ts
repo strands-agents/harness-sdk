@@ -5,6 +5,7 @@ import { EFFORT_LEVELS, normalizeHarnessAgentConfig } from '@strands-agents/harn
 import { readCliVersion } from '../tui/package-version.js'
 
 export interface ParsedArgs {
+  update: boolean
   request: string | undefined
   oneShot: boolean
   acpServer: boolean
@@ -34,6 +35,10 @@ export type CliRunMode = 'acp' | 'ink' | 'plain' | 'print'
 const DIRECT_CONFIG_FLAGS = ['name', 'description', 'effort', 'instructions', 'interventions'] as const
 
 export function parseArgs(argv: string[]): ParsedArgs {
+  if (argv[0] === 'update') {
+    return parseUpdateArgs(argv.slice(1))
+  }
+
   const collect = (value: string, previous: string[]): string[] => [...previous, value]
   const program = new Command()
   program
@@ -68,6 +73,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     .option('--mcp-config <path>', 'additional MCP configuration file (repeatable)', collect, [])
     .allowExcessArguments(false)
     .exitOverride()
+    .addHelpText('after', '\nCommands:\n  update                    update the globally installed CLI\n')
 
   program.parse(argv, { from: 'user' })
   const opts = program.opts()
@@ -75,6 +81,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     program.error('error: pass the initial request either positionally or with --prompt, not both.')
   }
   return {
+    update: false,
     request: opts.prompt ?? program.args[0],
     oneShot: Boolean(opts.print),
     acpServer: Boolean(opts.acpServer),
@@ -97,6 +104,42 @@ export function parseArgs(argv: string[]): ParsedArgs {
     memory: opts.memory,
     interventions: opts.interventions,
     mcpConfig: opts.mcpConfig,
+  }
+}
+
+function parseUpdateArgs(argv: string[]): ParsedArgs {
+  const program = new Command()
+  program
+    .name('strands update')
+    .description('Update the globally installed Strands CLI.')
+    .allowExcessArguments(false)
+    .exitOverride()
+    .parse(argv, { from: 'user' })
+
+  return {
+    update: true,
+    request: undefined,
+    oneShot: false,
+    acpServer: false,
+    setup: false,
+    agent: undefined,
+    configSet: [],
+    envFiles: [],
+    name: undefined,
+    description: undefined,
+    model: undefined,
+    effort: undefined,
+    instructions: undefined,
+    builtinTools: undefined,
+    builtinPlugins: undefined,
+    caching: undefined,
+    contextManager: undefined,
+    session: undefined,
+    sessionId: undefined,
+    skills: undefined,
+    memory: undefined,
+    interventions: undefined,
+    mcpConfig: [],
   }
 }
 

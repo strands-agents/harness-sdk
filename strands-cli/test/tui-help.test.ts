@@ -187,7 +187,7 @@ describe('help', () => {
   })
 
   it('uses reported capabilities for ACP connections', async () => {
-    const compact = vi.fn(async () => true)
+    const compact = vi.fn(async () => ({}))
     const controller = new ChatController(backend({ protocol: 'acp', compact }))
     await controller.submit('/help')
     expect(row(controller, '/compact').value).toBe('help:command:compact')

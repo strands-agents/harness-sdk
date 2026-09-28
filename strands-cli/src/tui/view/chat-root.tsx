@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import { useInput } from 'ink'
 import { Text, ThemeProvider } from './theme.js'
 
@@ -6,16 +6,18 @@ import { ChatApp } from './app.js'
 import type { ChatControllerApi } from '../chat/controller.js'
 import { DEFAULT_CHAT_SETTINGS } from '../chat/types.js'
 import type { CliConfigStore } from '../config.js'
-import type { AgentSetupSelection, RequestSetup, SetupChange } from '../agent-configuration.js'
+import type { RequestSetup, SetupChange } from '../agent-configuration.js'
 import { DnaVortexIntro } from './intro.js'
+import { McpTrustPrompt, type McpTrustRequest } from './mcp-trust-prompt.js'
 import { SetupWizard } from './setup-wizard/index.js'
 
-export interface ChatLaunch extends SetupChange {
-  assistant?: AgentSetupSelection
-}
+const LOADING_DOT_FRAMES = ['.  ', '.. ', '...'] as const
+
+export type ChatLaunch = SetupChange
 
 export interface SetupBridge {
   request: RequestSetup
+  confirmMcp(workspace: string, paths: readonly string[]): Promise<boolean>
 }
 
 interface ChatRootProps {
@@ -26,6 +28,22 @@ interface ChatRootProps {
   setupBridge: SetupBridge
   onSetupComplete(exitCode: 0 | 130, changed: boolean, launch?: ChatLaunch): void
   onIntroComplete(exitCode: 0 | 130): void
+}
+
+function StartingHarness({ animate }: { animate: boolean }): ReactElement {
+  const [frame, setFrame] = useState(0)
+  useEffect(() => {
+    if (!animate) {
+      return
+    }
+    const timer = setInterval(() => setFrame((current) => current + 1), 350)
+    return (): void => clearInterval(timer)
+  }, [animate])
+  return (
+    <Text dimColor>
+      Starting Strands harness{animate ? LOADING_DOT_FRAMES[frame % LOADING_DOT_FRAMES.length] : '...'}
+    </Text>
+  )
 }
 
 export function ChatRoot({
@@ -40,9 +58,23 @@ export function ChatRoot({
   const [phase, setPhase] = useState<'setup' | 'intro' | 'chat' | 'cancelled'>(
     intro ? 'intro' : setup ? 'setup' : 'chat'
   )
-  const [awaitingAssistant, setAwaitingAssistant] = useState(false)
-  const assistantController = useRef<ChatControllerApi | undefined>(undefined)
-  const assistantControllerGap = useRef(false)
+  const [trustRequest, setTrustRequest] = useState<McpTrustRequest>()
+  useEffect(() => {
+    setupBridge.confirmMcp = (workspace, paths): Promise<boolean> =>
+      new Promise((resolve) => {
+        setTrustRequest({
+          workspace,
+          paths,
+          resolve: (trusted): void => {
+            setTrustRequest(undefined)
+            resolve(trusted)
+          },
+        })
+      })
+    return (): void => {
+      setupBridge.confirmMcp = async (): Promise<boolean> => false
+    }
+  }, [setupBridge])
   useEffect(() => {
     setupBridge.request = (change): void => {
       if (config) {
@@ -58,28 +90,8 @@ export function ChatRoot({
       setupBridge.request = (): void => {}
     }
   }, [config, onSetupComplete, setupBridge])
-  useEffect(() => {
-    if (!awaitingAssistant) {
-      return
-    }
-    if (!controller) {
-      assistantControllerGap.current = true
-      return
-    }
-    if (assistantControllerGap.current || controller !== assistantController.current) {
-      setAwaitingAssistant(false)
-      setPhase('chat')
-    }
-  }, [awaitingAssistant, controller])
   function finishSetup(exitCode: 0 | 130, changed: boolean, launch?: ChatLaunch): void {
-    const launchingAssistant = exitCode === 0 && launch?.assistant !== undefined
-    if (launchingAssistant) {
-      assistantController.current = controller
-      assistantControllerGap.current = controller === undefined
-      setAwaitingAssistant(true)
-    } else {
-      setPhase(exitCode === 130 && !controller ? 'cancelled' : 'chat')
-    }
+    setPhase(exitCode === 130 && !controller ? 'cancelled' : 'chat')
     onSetupComplete(exitCode, changed, launch)
   }
   const finishIntro = useCallback(
@@ -113,7 +125,6 @@ export function ChatRoot({
         deferred
         onComplete={(change) => finishSetup(0, true, change)}
         onCancel={(exitCode) => finishSetup(exitCode, false)}
-        onAgentSetup={(assistant) => finishSetup(0, true, { assistant })}
       />
     )
   }
@@ -134,5 +145,19 @@ export function ChatRoot({
   if (phase === 'cancelled') {
     return null
   }
-  return controller ? <ChatApp controller={controller} /> : <Text dimColor>Starting Strands harness...</Text>
+  const settings = config?.snapshot().settings ?? DEFAULT_CHAT_SETTINGS
+  if (trustRequest) {
+    return (
+      <ThemeProvider settings={settings}>
+        <McpTrustPrompt request={trustRequest} />
+      </ThemeProvider>
+    )
+  }
+  return controller ? (
+    <ChatApp controller={controller} />
+  ) : (
+    <ThemeProvider settings={settings}>
+      <StartingHarness animate={settings.animations} />
+    </ThemeProvider>
+  )
 }

@@ -7,6 +7,7 @@ from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.hooks import BidiAgentStopEvent
 from strands.hooks import AgentInitializedEvent, HookProvider
 
+from .context import BidirectionalTestContext
 from .hook_utils import HookEventCollector
 
 
@@ -38,17 +39,14 @@ class TestBidiAgentHooksLifecycle:
         assert event_types.index("initialized") < event_types.index("agent_stop")
         assert len(collector.get_events_by_type("agent_stop")) == 1
 
-    async def test_message_added_hook_on_text_input(self):
-        """Verify sending text emits MessageAddedEvent."""
+    async def test_message_added_hook_on_text_input(self, audio_generator):
+        """Verify sending a text block publishes it through MessageAddedEvent."""
         collector = HookEventCollector()
         agent = BidiAgent(hooks=[collector])
 
-        await agent.start()
-
-        # Send text message
-        await agent.send("Hello, agent!")
-
-        await agent.stop()
+        async with BidirectionalTestContext(agent, audio_generator) as context:
+            await context.send("Hello, agent!")
+            await context.wait_for_response(timeout=30)
 
         # Should have emitted message_added event
         message_events = collector.get_events_by_type("message_added")
@@ -104,15 +102,15 @@ class TestBidiAgentHooksEventData:
             assert hasattr(event, "agent")
             assert event.agent == agent
 
-    async def test_message_added_event_contains_message(self):
+    async def test_message_added_event_contains_message(self, audio_generator):
         """Verify MessageAddedEvent contains the actual message."""
         collector = HookEventCollector()
         agent = BidiAgent(hooks=[collector])
 
-        await agent.start()
         test_text = "Test message content"
-        await agent.send(test_text)
-        await agent.stop()
+        async with BidirectionalTestContext(agent, audio_generator) as context:
+            await context.send(test_text)
+            await context.wait_for_response(timeout=30)
 
         # Find message_added events
         message_events = collector.get_events_by_type("message_added")

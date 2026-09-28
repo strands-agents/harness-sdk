@@ -6,7 +6,7 @@ import type { Message, Agent, Tool } from '@strands-agents/sdk'
 import { ContextInjector } from '@strands-agents/sdk/vended-plugins'
 import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
 
-import { createConfigurationTool, type RequestSetup } from './agent-configuration.js'
+import { createBuiltinToolsRuntime, createConfigurationTool, type RequestSetup } from './agent-configuration.js'
 import { CONFIGURATION_INSTRUCTIONS } from './configuration-instructions.js'
 import { exportAgentProject, exportSourceProject } from './project/export.js'
 import type { ImportedAgentProject } from './project/import.js'
@@ -22,7 +22,7 @@ import {
 } from './chat/controller.js'
 import { isUnresolvedBackgroundTask } from './chat/controller-helpers.js'
 import { ConversationManager } from './session/conversations.js'
-import { CliConfigStore, type SetupConfiguration } from './config.js'
+import { CliConfigStore } from './config.js'
 import { loadMcp, type LoadMcpOptions } from './mcp.js'
 import { memoryDirectory } from './memory-options.js'
 import { AgentMessaging, peerMessagePrompt } from './messaging.js'
@@ -49,7 +49,6 @@ import { errorMessage } from './terminal/sanitize.js'
 import { PythonVoiceSession } from './voice/session.js'
 import { inspectWorkspaceMcp, isWorkspaceMcpTrusted } from './workspace/trust.js'
 import { WorkspaceSandbox } from './workspace/sandbox.js'
-import type { SetupQuestionBroker } from './setup/questions.js'
 
 interface CreateInteractiveChatOptions {
   agentOptions?: HarnessAgentOptions
@@ -65,8 +64,6 @@ interface CreateInteractiveChatOptions {
   config?: CliConfigStore
   sessionCatalogPath?: string
   requestSetup?: RequestSetup
-  configuration?: { config: CliConfigStore; draft: SetupConfiguration }
-  setupQuestions?: SetupQuestionBroker
   conversation?: ChatConversation
 }
 
@@ -202,7 +199,6 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
       return
     }
     disposed = true
-    options.setupQuestions?.dispose()
     // Extraction runs in the background on a turn interval; flush every live agent at teardown so a
     // session that ends between intervals still persists its recent turns.
     await Promise.allSettled([...agents].map((agent) => agent.memoryManager?.flush()))
@@ -275,7 +271,6 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
       config,
       cwd: workspace,
       configurationPreview: (): ChatDiffPreview | undefined => configuration?.preview(),
-      ...(options.setupQuestions ? { trustedTools: ['setup_question', 'strands_config'] } : {}),
     })
     const liveSteering: LiveSteering = new LiveSteering((candidate) => {
       return backgroundInbox.observeAgent((prompt): boolean => liveSteering.enqueue(candidate, prompt))
@@ -298,10 +293,9 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
     let agent: Agent | undefined
     const configuration = options.requestSetup
       ? createConfigurationTool({
-          config: options.configuration?.config ?? config,
+          config,
           profile: (): HarnessAgentConfig => exportProfile,
           agent: (): Agent | undefined => agent,
-          ...(options.configuration ? { draft: options.configuration.draft } : {}),
           ...(options.project ? { source: options.project.entrypoint } : {}),
         })
       : undefined
@@ -441,14 +435,23 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
                 destination
               )
             : exportAgentProject(
-                options.configuration ? configuration!.profile() : exportProfile,
+                exportProfile,
                 language,
                 profileSkillPaths,
                 configSnapshot.profileBaseDir ?? initialWorkspace,
                 destination
               ),
         ...(options.requestSetup ? { requestSetup: options.requestSetup } : {}),
-        ...(options.setupQuestions ? { setupQuestions: options.setupQuestions } : {}),
+        ...(options.requestSetup && !options.project
+          ? {
+              builtinTools: createBuiltinToolsRuntime(
+                config,
+                (): HarnessAgentConfig => exportProfile,
+                options.requestSetup,
+                peerEndpointId
+              ),
+            }
+          : {}),
         peerEndpointId,
       })
       if (configuration) {

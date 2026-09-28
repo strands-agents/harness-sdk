@@ -15,6 +15,7 @@ from strands.experimental.bidi.hooks import BidiAgentStopEvent
 from strands.experimental.bidi.models import BidiModel
 from strands.hooks import AfterInvocationEvent
 from strands.interrupt import _InterruptState
+from strands.session.file_session_manager import FileSessionManager
 from strands.session.repository_session_manager import RepositorySessionManager
 from strands.types.content import ContentBlock
 from strands.types.exceptions import SessionException
@@ -1369,3 +1370,36 @@ def test_fix_broken_tool_use_keeps_paired_tool_result_after_a_text_turn(session_
     fixed_messages = session_manager._fix_broken_tool_use(messages)
 
     assert fixed_messages == expected
+
+
+def test_prune_held_records_drops_removed_messages(session_manager):
+    agent = Agent(agent_id="a", session_manager=session_manager)
+    m1 = {"role": "user", "content": [{"text": "one"}]}
+    m2 = {"role": "assistant", "content": [{"text": "two"}]}
+    session_manager.append_message(m1, agent)
+    session_manager.append_message(m2, agent)
+
+    # Drop m1 → pruned from held records
+    agent.messages = [m2]
+    session_manager._prune_held_records(agent)
+    assert len(session_manager._held_records["a"]) == 1
+
+
+def test_restore_after_redacting_alias_records_returns_redacted_conversation(tmp_path):
+    """A fresh restore over the same storage must see both copies redacted (the cross-process scenario)."""
+    sm = FileSessionManager(session_id="s", storage_dir=str(tmp_path))
+    agent = Agent(agent_id="a", conversation_manager=NullConversationManager(), session_manager=sm)
+    msg = {"role": "user", "content": [{"text": "secret"}]}
+    sm.append_message(msg, agent)  # record 0
+    sm.append_message(msg, agent)  # record 1 — same object
+
+    msg["content"] = [{"text": "[redacted]"}]
+    sm.redact_latest_message(msg, agent)
+
+    # Simulate a new process: fresh manager and agent over the same storage directory.
+    sm2 = FileSessionManager(session_id="s", storage_dir=str(tmp_path))
+    restored = Agent(agent_id="a", conversation_manager=NullConversationManager(), session_manager=sm2)
+
+    assert len(restored.messages) == 2
+    assert restored.messages[0]["content"] == [{"text": "[redacted]"}]
+    assert restored.messages[1]["content"] == [{"text": "[redacted]"}]

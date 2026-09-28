@@ -24,9 +24,9 @@ flowchart LR
     B --> C[BidiBargeInEvent]
     C --> D[Clear Audio Buffer]
     C --> E[Stop Response]
-    E --> F[BidiResponseCompleteEvent]
+    E --> F[BidiResponseStopEvent]
     B --> G[Transcribe Speech]
-    G --> H[BidiTranscriptStreamEvent]
+    G --> H[BidiTranscriptDeltaEvent]
     F --> I[Ready for New Input]
     H --> I
 ```
@@ -70,10 +70,7 @@ For custom behavior, process barge-in events manually:
 import asyncio
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import BedrockNovaSonicModel
-from strands.experimental.bidi.types import (
-    BidiBargeInEvent,
-    BidiResponseCompleteEvent
-)
+from strands.experimental.bidi.types import BidiBargeInEvent
 
 model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 agent = BidiAgent(model=model)
@@ -89,11 +86,6 @@ async def main():
             # - Update UI to show barge-in
             # - Log analytics
             # - Clear custom buffers
-            
-        elif isinstance(event, BidiResponseCompleteEvent):
-            if event.stop_reason == "barge_in":
-                print("Response stopped due to barge-in")
-            break
     
     await agent.stop()
 
@@ -106,9 +98,6 @@ asyncio.run(main())
 
 **BidiBargeInEvent** - Emitted when barge-in detected:
 - `reason`: `"user_speech"` (most common) or `"error"`
-
-**BidiResponseCompleteEvent** - Includes barge-in status:
-- `stop_reason`: `"complete"`, `"barge_in"`, `"error"`, or `"tool_use"`
 
 ## Barge-in Hooks
 
@@ -151,6 +140,7 @@ from strands.experimental.bidi.models import OpenAIRealtimeModel
 # Check VAD configuration (OpenAI)
 model = OpenAIRealtimeModel(
     model_id="gpt-realtime-2.1",
+    transcription_model_id="gpt-transcribe",
     params={
         "audio": {
             "input": {
@@ -193,6 +183,7 @@ from strands.experimental.bidi.models import OpenAIRealtimeModel
 # Increase VAD threshold (OpenAI)
 model = OpenAIRealtimeModel(
     model_id="gpt-realtime-2.1",
+    transcription_model_id="gpt-transcribe",
     params={
         "audio": {
             "input": {
