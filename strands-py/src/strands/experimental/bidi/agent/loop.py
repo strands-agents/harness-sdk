@@ -189,6 +189,7 @@ class _AgentLoop:
         self._model_task = self._task_pool.create(self._run_model(self._generation))
 
         self._invocation_state = invocation_state if invocation_state is not None else {}
+        # Retained for compatibility with shared tools that expect request_state.
         self._invocation_state.setdefault("request_state", {})
         self._send_gate.set()
         self._started = True
