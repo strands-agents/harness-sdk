@@ -673,24 +673,6 @@ class Agent(AgentBase, LocalAgent):
         return self._context_manager
 
     @property
-    def model_state(self) -> dict[str, Any]:
-        """Runtime state for the model provider.
-
-        Used by stateful models to persist provider-specific data (e.g., response IDs for
-        server-side conversation chaining) across invocations.
-        """
-        return self._model_state
-
-    @property
-    def event_loop_metrics(self) -> EventLoopMetrics:
-        """Aggregated metrics for the agent's loop execution."""
-        return self._event_loop_metrics
-
-    @event_loop_metrics.setter
-    def event_loop_metrics(self, value: EventLoopMetrics) -> None:
-        self._event_loop_metrics = value
-
-    @property
     def session_id(self) -> str:
         """Identifier for the current conversation session.
 

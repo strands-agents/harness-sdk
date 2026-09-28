@@ -110,12 +110,10 @@ def local_agent_services(agent: Agent, bidi_agent: BidiAgent, local_agent: Local
         assert_type(shared.sandbox, Sandbox)
         assert_type(shared.context_manager, ContextManager | None)
         assert_type(shared.event_loop_metrics, EventLoopMetrics)
-        assert_type(shared.model_state, dict[str, Any])
         assert_type(shared.cancel_signal, threading.Event)
+    local_agent.event_loop_metrics = agent.event_loop_metrics
     local_agent.sandbox = agent.sandbox  # type: ignore[misc]
     local_agent.context_manager = None  # type: ignore[misc]
-    local_agent.event_loop_metrics = agent.event_loop_metrics  # type: ignore[misc]
-    local_agent.model_state = {}  # type: ignore[misc]
     local_agent.cancel_signal = threading.Event()  # type: ignore[misc]
 
 

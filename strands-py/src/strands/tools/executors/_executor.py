@@ -6,6 +6,7 @@ thread pools, etc.).
 
 import abc
 import logging
+import threading
 import time
 from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass, field
@@ -206,7 +207,9 @@ class ToolExecutor(abc.ABC):
             }
         )
 
-        cancel_signal = agent.cancel_signal
+        # A BidiAgent does not implement cancellation yet; an inert event keeps the middleware and
+        # tool contracts non-optional.
+        cancel_signal = cast("Agent", agent).cancel_signal if ToolExecutor._is_agent(agent) else threading.Event()
         background_tasks: _BackgroundTasks | None = getattr(agent, "_background_tasks", None)
 
         # Retry loop for tool execution - hooks can set after_event.retry = True to retry

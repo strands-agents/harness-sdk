@@ -60,17 +60,6 @@ def test_agent_model_state(mock_model):
     assert second_call_kwargs.get("model_state") is agent._model_state
 
 
-def test_agent_model_state_property(mock_model):
-    """The public property exposes the same dict the model writes to."""
-    agent = Agent(model=mock_model, callback_handler=None)
-    assert agent.model_state == {}
-
-    agent("Turn 1")
-
-    assert agent.model_state is agent._model_state
-    assert agent.model_state.get("response_id") == "resp_abc123"
-
-
 def test_agent_model_state_raises_with_conversation_manager():
     """Passing a conversation_manager with a stateful model raises ValueError."""
     model = unittest.mock.MagicMock()

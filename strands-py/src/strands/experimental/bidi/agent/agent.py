@@ -38,7 +38,6 @@ from ....interrupt import _InterruptState
 from ....sandbox import Sandbox
 from ....sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
 from ....storage import Storage
-from ....telemetry.metrics import EventLoopMetrics
 from ....tools._caller import _ToolCaller
 from ....tools.executors import ConcurrentToolExecutor
 from ....tools.executors._executor import ToolExecutor
@@ -78,6 +77,7 @@ from .loop import _AgentLoop
 if TYPE_CHECKING:
     from ...._context_manager.context_manager import ContextManager
     from ....session.session_manager import SessionManager
+    from ....telemetry.metrics import EventLoopMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -159,8 +159,6 @@ class BidiAgent(LocalAgent):
         self.messages = messages if messages is not None else []
         self._storage: Storage | None = storage
         self._sandbox: Sandbox = NotASandboxLocalEnvironment()
-        # Never set: bidirectional agents are stopped, not cancelled per invocation.
-        self._cancel_signal = threading.Event()
 
         # Agent identification
         self.agent_id = _identifier.validate(agent_id or _DEFAULT_AGENT_ID, _identifier.Identifier.AGENT)
@@ -292,19 +290,18 @@ class BidiAgent(LocalAgent):
         return None
 
     @property
-    def event_loop_metrics(self) -> EventLoopMetrics:
+    def event_loop_metrics(self) -> "EventLoopMetrics":
         """Raise because bidirectional agents do not collect event loop metrics yet."""
-        raise AttributeError("event_loop_metrics is not supported by bidirectional agents")
+        raise NotImplementedError("event_loop_metrics is not supported by bidirectional agents yet")
 
-    @property
-    def model_state(self) -> dict[str, Any]:
-        """Raise because bidirectional models do not keep provider state across invocations."""
-        raise AttributeError("model_state is not supported by bidirectional agents")
+    @event_loop_metrics.setter
+    def event_loop_metrics(self, value: "EventLoopMetrics") -> None:
+        raise NotImplementedError("event_loop_metrics is not supported by bidirectional agents yet")
 
     @property
     def cancel_signal(self) -> threading.Event:
-        """The cancellation signal; never set, because bidirectional agents are stopped rather than cancelled."""
-        return self._cancel_signal
+        """Raise because bidirectional agents do not act on a cancellation signal yet."""
+        raise NotImplementedError("cancel_signal is not supported by bidirectional agents yet")
 
     def add_hook(
         self,

@@ -47,6 +47,7 @@ class LocalAgent(Protocol):
         model: Model used by the agent.
         system_prompt: String representation of the agent's system prompt.
         tool_registry: Registry containing tools available to the agent.
+        event_loop_metrics: Aggregated metrics for the agent's loop execution.
     """
 
     _is_strands_local_agent: ClassVar[Literal[True]]
@@ -61,6 +62,7 @@ class LocalAgent(Protocol):
     model: Model
     system_prompt: str | None
     tool_registry: ToolRegistry
+    event_loop_metrics: EventLoopMetrics
 
     @property
     def tool(self) -> _ToolCaller:
@@ -95,22 +97,6 @@ class LocalAgent(Protocol):
     @property
     def context_manager(self) -> ContextManager | None:
         """The ContextManager plugin, if one is registered on this agent."""
-        ...
-
-    @property
-    def event_loop_metrics(self) -> EventLoopMetrics:
-        """Aggregated metrics for the agent's loop execution.
-
-        Not provided by BidiAgent: access raises AttributeError, so ``hasattr`` reports False.
-        """
-        ...
-
-    @property
-    def model_state(self) -> dict[str, Any]:
-        """Runtime state for the model provider.
-
-        Not provided by BidiAgent: access raises AttributeError, so ``hasattr`` reports False.
-        """
         ...
 
     @property

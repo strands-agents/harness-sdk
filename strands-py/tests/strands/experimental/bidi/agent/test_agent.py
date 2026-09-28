@@ -313,18 +313,11 @@ def test_bidi_agent_sandbox_defaults_to_host_environment(mock_model):
     assert agent.sandbox is agent.sandbox
 
 
-def test_bidi_agent_cancel_signal_is_never_set(mock_model):
-    agent = BidiAgent(model=mock_model)
-
-    assert isinstance(agent.cancel_signal, threading.Event)
-    assert not agent.cancel_signal.is_set()
-    assert agent.cancel_signal is agent.cancel_signal
-
-
-def test_bidi_agent_tool_context_receives_cancel_signal(mock_model):
+def test_bidi_agent_tool_context_gets_inert_cancel_signal(mock_model):
     @tool(context=True)
     def context_tool(tool_context: ToolContext[LocalAgent]) -> str:
-        assert tool_context.cancel_signal is agent.cancel_signal
+        assert isinstance(tool_context.cancel_signal, threading.Event)
+        assert not tool_context.cancel_signal.is_set()
         return "ok"
 
     agent = BidiAgent(model=mock_model, tools=[context_tool])
@@ -332,15 +325,19 @@ def test_bidi_agent_tool_context_receives_cancel_signal(mock_model):
     assert agent.tool.context_tool(record_direct_tool_call=False)["content"] == [{"text": "ok"}]
 
 
-@pytest.mark.parametrize("member", ["event_loop_metrics", "model_state"])
+@pytest.mark.parametrize("member", ["event_loop_metrics", "cancel_signal"])
 def test_bidi_agent_unsupported_local_agent_members_raise(mock_model, member):
-    """Unsupported members raise AttributeError so getattr/hasattr fallbacks keep working."""
     agent = BidiAgent(model=mock_model)
 
-    with pytest.raises(AttributeError, match=f"{member} is not supported by bidirectional agents"):
+    with pytest.raises(NotImplementedError, match=f"{member} is not supported by bidirectional agents yet"):
         getattr(agent, member)
-    assert not hasattr(agent, member)
-    assert getattr(agent, member, None) is None
+
+
+def test_bidi_agent_event_loop_metrics_setter_raises(mock_model):
+    agent = BidiAgent(model=mock_model)
+
+    with pytest.raises(NotImplementedError, match="event_loop_metrics is not supported by bidirectional agents yet"):
+        agent.event_loop_metrics = unittest.mock.Mock()
 
 
 @pytest.mark.skipif(sys.version_info < (3, 12), reason="BedrockNovaSonicModel is only supported for Python 3.12+")
