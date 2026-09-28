@@ -1190,6 +1190,25 @@ describe('Tracer', () => {
   })
 
   describe('memory spans', () => {
+    it('includes constructor-level trace attributes on every memory span', () => {
+      const tracer = new Tracer({ 'session.id': 'sess-1' })
+
+      tracer.startMemorySearchSpan({ query: 'q', storeNames: ['personal'] })
+      tracer.startMemoryAddSpan({ content: 'c', storeNames: ['personal'] })
+      tracer.startMemoryInjectSpan()
+      tracer.startMemoryExtractSpan({ storeName: 'personal', messageCount: 1 })
+
+      expect(mockStartSpan.mock.calls.map(([name]) => name)).toEqual([
+        'memory.search',
+        'memory.add',
+        'memory.inject',
+        'memory.extract',
+      ])
+      for (const [, options] of mockStartSpan.mock.calls) {
+        expect((options as { attributes: Record<string, unknown> }).attributes['session.id']).toBe('sess-1')
+      }
+    })
+
     it('startMemorySearchSpan sets attributes and records the query as an event', () => {
       const tracer = new Tracer()
 
