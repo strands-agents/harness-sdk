@@ -319,6 +319,7 @@ class MCPClient(ToolProvider):
         progress_callback: ProgressFnT | None = None,
         tasks_config: TasksConfig | None = None,
         on_tools_changed: ToolsChanged | None = None,
+        meta: dict[str, Any] | None = None,
     ) -> None:
         """Initialize a new MCP Server connection.
 
@@ -349,6 +350,10 @@ class MCPClient(ToolProvider):
             progress_callback: Optional callback to receive progress notifications during tool execution.
                 Called with `(progress, total, message)` as the server reports progress. The `total`
                 and `message` parameters may be `None` if the server does not provide them.
+            meta: Optional request metadata (the MCP spec's `_meta` field) sent with every tool
+                call made through this client, including model-driven calls dispatched via
+                `MCPAgentTool`. Trace context is merged on top. A per-call `meta` argument to
+                `call_tool`/`call_tool_async`/`submit_tool_sync` takes precedence.
             tasks_config: Configuration for MCP task-augmented execution for long-running tools.
                 Experimental and subject to change as MCP Tasks evolve. On MCP 2.x, this enables
                 finalized SEP-2663 Tasks support. On MCP 1.x, it enables the legacy task
@@ -380,6 +385,7 @@ class MCPClient(ToolProvider):
         self._connection_failed = False
         self._elicitation_callback = elicitation_callback
         self._progress_callback = progress_callback
+        self._meta = meta
         self._on_tools_changed = on_tools_changed
         self._tools_refresh_in_progress = False
         self._tools_refresh_pending = False
@@ -934,6 +940,10 @@ class MCPClient(ToolProvider):
         """
         use_task = self._should_use_task(name)
         effective_callback = progress_callback if progress_callback is not None else self._progress_callback
+
+        # Fall back to the client-level meta so model-driven calls (which have no
+        # per-call meta) inherit it; an explicit per-call meta takes precedence.
+        meta = meta if meta is not None else self._meta
 
         # Inject once, before branching, so both the task-augmented and direct
         # call paths below carry the same enriched meta. This is safe on the
