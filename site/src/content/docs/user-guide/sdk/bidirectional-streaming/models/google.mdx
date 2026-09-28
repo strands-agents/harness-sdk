@@ -45,7 +45,7 @@ import asyncio
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.io import AudioIO
 from strands.experimental.bidi.models import GoogleGeminiLiveModel
-from strands.experimental.tools import stop
+from strands.experimental.bidi.vended_tools import stop_conversation
 from strands.vended_tools import notebook
 
 
@@ -55,8 +55,7 @@ async def main() -> None:
         voice="Kore",
         client_args={"api_key": "<GOOGLE_API_KEY>"},
     )
-    # stop tool allows user to verbally stop agent execution.
-    agent = BidiAgent(model=model, tools=[notebook, stop])
+    agent = BidiAgent(model=model, tools=[notebook, stop_conversation])
 
     audio_io = AudioIO()
     await agent.run(inputs=[audio_io.input()], outputs=[audio_io.output()])

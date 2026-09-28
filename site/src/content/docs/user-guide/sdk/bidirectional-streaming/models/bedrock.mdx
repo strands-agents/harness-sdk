@@ -49,7 +49,7 @@ import asyncio
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.io import AudioIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
-from strands.experimental.tools import stop
+from strands.experimental.bidi.vended_tools import stop_conversation
 from strands.vended_tools import notebook
 
 
@@ -59,7 +59,7 @@ async def main() -> None:
         region="us-east-1",
         voice="tiffany",
     )
-    agent = BidiAgent(model=model, tools=[notebook, stop])
+    agent = BidiAgent(model=model, tools=[notebook, stop_conversation])
     audio_io = AudioIO()
     await agent.run(inputs=[audio_io.input()], outputs=[audio_io.output()])
 

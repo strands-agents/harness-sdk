@@ -87,12 +87,11 @@ Pass your I/O streams to the agent's `run()` method to connect them to the agent
 import asyncio
 
 from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.tools import stop
+from strands.experimental.bidi.vended_tools import stop_conversation
 
 
 async def main():
-    # stop tool allows user to verbally stop agent execution.
-    agent = BidiAgent(tools=[stop])
+    agent = BidiAgent(tools=[stop_conversation])
     await agent.run(inputs=[MyInputStream()], outputs=[MyOutputStream()])
 
 
@@ -123,12 +122,11 @@ import asyncio
 
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.io import AudioIO
-from strands.experimental.tools import stop
+from strands.experimental.bidi.vended_tools import stop_conversation
 
 
 async def main():
-    # stop tool allows user to verbally stop agent execution.
-    agent = BidiAgent(tools=[stop])
+    agent = BidiAgent(tools=[stop_conversation])
     audio_io = AudioIO(input_device_index=1)
 
     await agent.run(
@@ -225,12 +223,11 @@ import asyncio
 
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.io import ConsoleIO
-from strands.experimental.tools import stop
+from strands.experimental.bidi.vended_tools import stop_conversation
 
 
 async def main():
-    # stop tool allows user to verbally stop agent execution.
-    agent = BidiAgent(tools=[stop])
+    agent = BidiAgent(tools=[stop_conversation])
     text_io = ConsoleIO(input_prompt="> You: ")
 
     await agent.run(

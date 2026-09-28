@@ -1,7 +1,7 @@
 """Experimental bidirectional streaming APIs."""
 
-from . import agent, hooks, io, models, tools, types
+from . import agent, hooks, io, models, types, vended_tools
 from .agent import BidiAgent as BidiAgent
 
 # Compatibility for AgentCore's root import; remove after AgentCore imports from bidi.agent.
-__all__ = ["agent", "hooks", "io", "models", "tools", "types"]
+__all__ = ["agent", "hooks", "io", "models", "types", "vended_tools"]

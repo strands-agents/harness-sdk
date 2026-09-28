@@ -406,22 +406,21 @@ See [Controlling Conversation Lifecycle](#controlling-conversation-lifecycle) fo
 
 ## Graceful Shutdown
 
-Use the SDK's experimental `stop` tool to allow users to end conversations
-naturally. It sets `request_state["stop_event_loop"]`, which the agent loop checks
-to trigger a graceful shutdown:
+To let users end a conversation by saying "stop conversation", add the
+`stop_conversation` tool:
 
 ```python
 import asyncio
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.io import AudioIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
-from strands.experimental.tools import stop
+from strands.experimental.bidi.vended_tools import stop_conversation
 
 model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 agent = BidiAgent(
     model=model,
-    tools=[stop],
-    system_prompt="You are a helpful assistant. When the user says 'stop conversation', use the stop tool."
+    tools=[stop_conversation],
+    system_prompt="You are a helpful assistant.",
 )
 
 audio_io = AudioIO()
@@ -431,24 +430,10 @@ async def main():
         inputs=[audio_io.input()],
         outputs=[audio_io.output()]
     )
-    # Conversation ends when user says "stop conversation"
+    # run() returns after the agent calls stop_conversation.
 
 asyncio.run(main())
 ```
-
-You can also create custom stop tools using the `request_state["stop_event_loop"]` flag:
-
-```python
-from strands import tool
-
-@tool
-def end_session(request_state: dict) -> str:
-    request_state["stop_event_loop"] = True
-    return "Goodbye!"
-```
-
-The agent will gracefully close the connection when any tool sets `request_state["stop_event_loop"] = True`.
-
 
 ## Debug Logs
 

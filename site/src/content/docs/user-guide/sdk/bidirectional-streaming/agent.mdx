@@ -177,9 +177,8 @@ Each tool use stays adjacent to its result even when conversation continues or t
 
 Tool-result messages identify their purpose in `metadata["custom"]["bidi"]`: `kind` is `tool_dispatch` or `tool_result`, and `tool_use_id` links to the original request.
 
-The agent loop checks for `request_state["stop_event_loop"]` to trigger graceful
-shutdown instead of sending tool results back to the model. Any tool can set this
-flag to stop the conversation. The SDK's experimental `stop` tool uses this mechanism.
+When the agent calls `stop_conversation`, the agent loop records the tool result
+and emits a connection stop event without sending the result back to the model.
 
 ### Connection Lifecycle
 

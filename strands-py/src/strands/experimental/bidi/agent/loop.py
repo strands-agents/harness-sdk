@@ -6,7 +6,6 @@ The agent loop handles the events received from the model and executes tools whe
 import asyncio
 import logging
 import time
-import warnings
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -45,6 +44,7 @@ from ..types.events import (
     BidiTranscriptStopEvent,
     BidiUsageEvent,
 )
+from ..vended_tools import stop_conversation
 from ._reconnect_timer import _ReconnectTimer, resolve_deadline_s
 
 if TYPE_CHECKING:
@@ -189,6 +189,7 @@ class _AgentLoop:
         self._model_task = self._task_pool.create(self._run_model(self._generation))
 
         self._invocation_state = invocation_state if invocation_state is not None else {}
+        self._invocation_state.setdefault("request_state", {})
         self._send_gate.set()
         self._started = True
 
@@ -745,11 +746,6 @@ class _AgentLoop:
 
         tool_results: list[ToolResult] = []
 
-        # Ensure request_state exists for tools like strands_tools.stop
-        invocation_state = self._invocation_state
-        if "request_state" not in invocation_state:
-            invocation_state["request_state"] = {}
-
         tool_call_span = self._tracer.start_tool_call_span(tool_use, parent_span=self._session_span)
         tool_result: ToolResult | None = None
         tool_error: Exception | None = None
@@ -759,7 +755,7 @@ class _AgentLoop:
                 self._agent,
                 tool_use,
                 tool_results,
-                invocation_state,
+                self._invocation_state,
                 structured_output_context=None,
             )
 
@@ -771,7 +767,6 @@ class _AgentLoop:
 
                 await self._event_queue.put(tool_event)
 
-            # Normal flow for all tools (including stop_conversation)
             tool_result_event = cast(ToolResultEvent, tool_event)
             tool_result = tool_result_event.tool_result
 
@@ -790,22 +785,8 @@ class _AgentLoop:
 
             await self._event_queue.put(ToolResultMessageEvent(tool_result_message))
 
-            # Check for stop_event_loop flag (set by strands_tools.stop, stop_conversation, or any custom tool)
-            request_state = invocation_state.get("request_state", {})
-            should_stop = request_state.get("stop_event_loop", False)
-
-            # Backward compatibility: also check for stop_conversation by name (deprecated)
-            if not should_stop and tool_use["name"] == "stop_conversation":
-                warnings.warn(
-                    "Stopping the event loop by tool name 'stop_conversation' is deprecated. "
-                    "Use request_state['stop_event_loop'] = True instead.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-                should_stop = True
-
-            if should_stop:
-                logger.info("stop_event_loop=<True> | stopping conversation")
+            if tool_use["name"] == stop_conversation.tool_name:
+                logger.info("tool_name=<%s> | stopping conversation", tool_use["name"])
                 connection_id = getattr(self._agent.model, "_connection_id", "unknown")
                 await self._event_queue.put(BidiConnectionStopEvent(connection_id=connection_id, reason="user_request"))
                 return  # Skip sending result to model
