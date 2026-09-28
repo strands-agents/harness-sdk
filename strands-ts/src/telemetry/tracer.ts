@@ -668,7 +668,11 @@ export class Tracer {
       attributes['memory.store.count'] = options.storeNames.length
       if (options.maxSearchResults !== undefined) attributes['memory.max_search_results'] = options.maxSearchResults
 
-      const span = this._startSpan({ name: 'memory.search', attributes, spanKind: SpanKind.INTERNAL })
+      const span = this._startSpan({
+        name: 'memory.search',
+        attributes: { ...attributes, ...this._traceAttributes },
+        spanKind: SpanKind.INTERNAL,
+      })
       this._addEvent(span, 'memory.query', { content: options.query }, this._spanAttributesOnly)
       return span
     } catch (error) {
@@ -734,7 +738,7 @@ export class Tracer {
 
       const span = this._startSpan({
         name: 'memory.add',
-        attributes,
+        attributes: { ...attributes, ...this._traceAttributes },
         spanKind: SpanKind.INTERNAL,
         ...(options.forceRoot && { forceRoot: true }),
       })
@@ -774,7 +778,11 @@ export class Tracer {
       const attributes = this._getCommonAttributes('memory.inject')
       if (options.maxEntries !== undefined) attributes['memory.max_entries'] = options.maxEntries
 
-      return this._startSpan({ name: 'memory.inject', attributes, spanKind: SpanKind.INTERNAL })
+      return this._startSpan({
+        name: 'memory.inject',
+        attributes: { ...attributes, ...this._traceAttributes },
+        spanKind: SpanKind.INTERNAL,
+      })
     } catch (error) {
       logger.warn(`error=<${error}> | failed to start memory inject span`)
       return null
@@ -835,7 +843,7 @@ export class Tracer {
 
       return this._startSpan({
         name: 'memory.extract',
-        attributes,
+        attributes: { ...attributes, ...this._traceAttributes },
         spanKind: SpanKind.INTERNAL,
         forceRoot: true,
         ...(links && { links }),
