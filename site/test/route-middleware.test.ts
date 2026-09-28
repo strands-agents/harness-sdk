@@ -4,9 +4,11 @@ import {
   findCurrentNavSection,
   filterSidebarByBasePath,
   applyCollapse,
+  onRequest,
 } from '../src/route-middleware'
 import { type NavLink } from '../src/config/navbar'
 import { loadSidebarFromConfig, type StarlightSidebarItem } from '../src/sidebar'
+import { buildCourseSidebar, getPrevNextLinks, type DocInfo } from '../src/dynamic-sidebar'
 
 // Sidebar entry types matching Starlight's runtime structure
 type SidebarLink = { type: 'link'; label: string; href: string; isCurrent: boolean }
@@ -22,10 +24,6 @@ const testNavLinks: NavLink[] = [
   { label: 'Contribute', href: 'https://github.com/example', external: true },
 ]
 
-/**
- * Convert build-time sidebar config to runtime format.
- * Starlight transforms { slug: "examples" } to { type: "link", href: "/examples/", ... }
- */
 function convertToRuntimeFormat(items: StarlightSidebarItem[]): SidebarEntry[] {
   return items.map((item) => {
     if ('slug' in item) {
@@ -130,18 +128,10 @@ describe('Sidebar filtering with live navigation.yml data', () => {
     console.log(`\nLoaded ${runtimeSidebar.length} top-level sidebar items`)
   })
 
-  it('should filter sidebar to only Examples items for /examples/ basePath', () => {
+  it('has no doc-sidebar section for examples (standalone /examples/ catalog)', () => {
+    // Examples is a standalone /examples/ catalog page, not a filtered doc sidebar.
     const result = filterSidebarByBasePath(runtimeSidebar as any, '/docs/examples/')
-
-    const allLinks = getAllLinks(result)
-    console.log(`\nExamples section has ${allLinks.length} links:`)
-    allLinks.slice(0, 5).forEach((link) => console.log(`  - ${link.href}`))
-    if (allLinks.length > 5) console.log(`  ... and ${allLinks.length - 5} more`)
-
-    expect(allLinks.length).toBeGreaterThan(0)
-    allLinks.forEach((link) => {
-      expect(link.href).toMatch(/^\/docs\/examples\//)
-    })
+    expect(getAllLinks(result)).toHaveLength(0)
   })
 
   it('should filter sidebar to only User Guide items for /user-guide/ basePath', () => {
@@ -156,31 +146,13 @@ describe('Sidebar filtering with live navigation.yml data', () => {
     })
   })
 
-  it('should filter sidebar to only Integrations items for /integrations/ basePath', () => {
+  it('has no doc-sidebar section for integrations (dynamic catalog sidebar)', () => {
+    // Integrations pages build their rail from the catalog collection
+    // (src/util/integrations-sidebar.ts), not from navigation.yml.
     const result = filterSidebarByBasePath(runtimeSidebar as any, '/docs/integrations/')
-
-    const allLinks = getAllLinks(result)
-    console.log(`\nIntegrations section has ${allLinks.length} links`)
-
-    expect(allLinks.length).toBeGreaterThan(0)
-    allLinks.forEach((link) => {
-      expect(link.href).toMatch(/^\/docs\/integrations\//)
-    })
+    expect(getAllLinks(result)).toHaveLength(0)
   })
 
-  it('should not include User Guide or Integrations items when filtering for Examples', () => {
-    const result = filterSidebarByBasePath(runtimeSidebar as any, '/docs/examples/')
-
-    const allLinks = getAllLinks(result)
-    const nonExamplesLinks = allLinks.filter((link) => !link.href.startsWith('/docs/examples/'))
-
-    if (nonExamplesLinks.length > 0) {
-      console.log('\nUnexpected non-examples links found:')
-      nonExamplesLinks.forEach((link) => console.log(`  - ${link.href}`))
-    }
-
-    expect(nonExamplesLinks).toEqual([])
-  })
 })
 
 describe('Integration: Full filtering flow', () => {
@@ -189,46 +161,10 @@ describe('Integration: Full filtering flow', () => {
   const buildTimeSidebar = loadSidebarFromConfig(configPath, docsDir)
   const runtimeSidebar = convertToRuntimeFormat(buildTimeSidebar)
 
-  it('should correctly filter sidebar for /examples/ page', () => {
-    const currentPath = '/docs/examples/'
-    const currentNav = findCurrentNavSection(currentPath, testNavLinks)
-
-    expect(currentNav).toBeDefined()
-    expect(currentNav?.label).toBe('Examples')
-    expect(currentNav?.basePath).toBe('/docs/examples/')
-
-    const basePath = currentNav?.basePath || currentNav?.href || ''
-    const filtered = filterSidebarByBasePath(runtimeSidebar as any, basePath)
-    const result = applyCollapse(filtered)
-
-    const allLinks = getAllLinks(result)
-    console.log(`\n/docs/examples/ page should show ${allLinks.length} sidebar links`)
-
-    expect(allLinks.length).toBeGreaterThan(0)
-    allLinks.forEach((link) => {
-      expect(link.href.startsWith('/docs/examples/')).toBe(true)
-    })
-  })
-
-  it('should correctly filter sidebar for nested /examples/python/weather_forecaster/ page', () => {
-    const currentPath = '/docs/examples/python/weather_forecaster/'
-    const currentNav = findCurrentNavSection(currentPath, testNavLinks)
-
-    expect(currentNav).toBeDefined()
-    expect(currentNav?.label).toBe('Examples')
-
-    const basePath = currentNav?.basePath || currentNav?.href || ''
-    const filtered = filterSidebarByBasePath(runtimeSidebar as any, basePath)
-    const result = applyCollapse(filtered)
-
-    const allLinks = getAllLinks(result)
-    expect(allLinks.length).toBeGreaterThan(0)
-    allLinks.forEach((link) => {
-      expect(link.href.startsWith('/docs/examples/')).toBe(true)
-    })
-  })
-
-  it('should correctly filter sidebar for integrations docs pages', () => {
+  it('resolves integrations docs pages to the Integrations nav section with an empty yml sidebar', () => {
+    // The Integrations section owns /docs/integrations/, but its rail is built
+    // dynamically from the catalog (see buildIntegrationsSidebar), so the
+    // navigation.yml-derived sidebar is expected to contribute nothing here.
     const currentPath = '/docs/integrations/get-featured/'
     const currentNav = findCurrentNavSection(currentPath, testNavLinks)
 
@@ -239,11 +175,35 @@ describe('Integration: Full filtering flow', () => {
     const filtered = filterSidebarByBasePath(runtimeSidebar as any, basePath)
     const result = applyCollapse(filtered)
 
-    const allLinks = getAllLinks(result)
-    expect(allLinks.length).toBeGreaterThan(0)
-    allLinks.forEach((link) => {
-      expect(link.href.startsWith('/docs/integrations/')).toBe(true)
-    })
+    expect(getAllLinks(result)).toHaveLength(0)
+  })
+
+  it('lesson pagination prev is the previous lesson, not the All-courses back-link', () => {
+    // Mirrors the middleware's lesson branch: sidebar from buildCourseSidebar,
+    // pagination from the lesson group's entries only.
+    const lessonIds = [
+      'docs/learning/how-agents-really-work',
+      'docs/learning/switching-model-providers',
+      'docs/learning/give-your-agent-tools-using-mcp',
+    ]
+    const lessonDocs: DocInfo[] = [
+      { id: 'docs/learning/how-agents-really-work', title: 'Lesson 1: How Agents Really Work' },
+      { id: 'docs/learning/switching-model-providers', title: 'Lesson 2: Switching Model Providers' },
+      { id: 'docs/learning/give-your-agent-tools-using-mcp', title: 'Lesson 3: Give Your Agent Tools Using MCP' },
+    ]
+    const currentSlug = 'docs/learning/switching-model-providers'
+    const course = { title: 'Agent Fundamentals with Strands', lessonIds }
+    const courseSidebar = buildCourseSidebar(lessonDocs, currentSlug, course)
+
+    expect(courseSidebar[0]?.type).toBe('group')
+
+    const lessonGroup = courseSidebar.find((entry) => entry.type === 'group')
+    const lessonsOnly = lessonGroup?.type === 'group' ? lessonGroup.entries : []
+    const { prev, next } = getPrevNextLinks(lessonsOnly)
+
+    expect(prev?.label).toBe('Lesson 1: How Agents Really Work')
+    expect(prev?.label).not.toBe('← Course start')
+    expect(next?.label).toBe('Lesson 3: Give Your Agent Tools Using MCP')
   })
 })
 
@@ -273,8 +233,7 @@ describe('applyCollapse', () => {
   })
 
   it('should collapse nested groups by default when no explicit value', () => {
-    // Note: in production Starlight pre-normalizes all unset collapsed to false,
-    // so this path (no collapsed property) is only exercised outside Starlight.
+    // Starlight pre-normalizes unset collapsed to false; this path (missing property) only runs outside Starlight.
     const nested = { type: 'group' as const, label: 'Nested', entries: [] }
     const input = [{ type: 'group' as const, label: 'Top', entries: [nested] }]
 
@@ -286,10 +245,7 @@ describe('applyCollapse', () => {
   })
 
   it('should collapse nested groups when Starlight has normalized collapsed to false', () => {
-    // Starlight normalizes unset collapsed to false before the middleware runs,
-    // making collapsed: false indistinguishable from "not set". Depth-based
-    // default still applies — only explicit collapsed: true in navigation.yml
-    // can override it.
+    // Starlight normalizes unset collapsed to false; depth-based default still applies.
     const nested: SidebarGroup = { type: 'group', label: 'Nested', collapsed: false, entries: [] }
     const input: SidebarEntry[] = [{ type: 'group', label: 'Top', collapsed: false, entries: [nested] }]
 
@@ -417,5 +373,37 @@ describe('filterSidebarByBasePath with base path in URLs', () => {
     expect(result.length).toBe(2)
     expect((result[0] as SidebarLink).href).toBe('/docs/examples/')
     expect((result[1] as SidebarLink).href).toBe('/docs/examples/python/')
+  })
+})
+
+describe('onRequest integration: lesson pagination via real collection', () => {
+  it('lesson1 has no prev — back-link must not appear as prev', async () => {
+    // Guards lessonsOnly: back-link is the entry preceding lesson1 in the full sidebar;
+    // passing the full sidebar to getPrevNextLinks would make it lesson1's prev.
+    const currentSlug = 'docs/learning/how-agents-really-work'
+
+    const starlightRoute: Record<string, unknown> = {
+      id: currentSlug,
+      sidebar: [],
+      hasSidebar: true,
+      pagination: { prev: undefined, next: undefined },
+    }
+
+    const context = {
+      locals: { starlightRoute },
+      url: new URL(`https://example.com/${currentSlug}/`),
+    }
+
+    const noopNext = async (): Promise<void> => {}
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await onRequest(context as any, noopNext)
+
+    const sidebar = starlightRoute.sidebar as SidebarEntry[]
+    expect(sidebar[0]?.type).toBe('group')
+
+    const pagination = starlightRoute.pagination as { prev?: SidebarLink; next?: SidebarLink }
+    expect(pagination.prev).toBeUndefined()
+    expect(pagination.next?.label).toBe('Lesson 2: Switching Model Providers')
   })
 })

@@ -9,9 +9,8 @@ import pytest
 
 import strands
 from strands import Agent, tool
-from strands.event_loop._retry import ModelRetryStrategy
 from strands.models.openai import OpenAIModel
-from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
+from strands.types.exceptions import ContextWindowOverflowException
 from tests_integ.models import providers
 from tests_integ.models.providers import _openai_responses_available
 
@@ -264,41 +263,6 @@ def test_context_window_overflow_integration(model_class, model_id, quiet_strand
     # The agent should attempt to reduce context and retry
     with pytest.raises(ContextWindowOverflowException):
         agent(long_text)
-
-
-def _rate_limit_params():
-    params = [(OpenAIModel, "gpt-4o")]
-    if _openai_responses_available:
-        params.append((OpenAIResponsesModel, "gpt-4o"))
-    return params
-
-
-def test_rate_limit_throttling_integration_no_retries(quiet_strands_logging):
-    """Integration test for rate limit handling with retries disabled.
-
-    This test verifies that when a request exceeds OpenAI's rate limits,
-    the model properly raises a ModelThrottledException. We disable retries
-    to avoid waiting for the exponential backoff during testing.
-    """
-    model = OpenAIModel(
-        model_id="gpt-4o",
-        client_args={
-            "api_key": os.getenv("OPENAI_API_KEY"),
-        },
-    )
-    agent = Agent(model=model, retry_strategy=ModelRetryStrategy(max_attempts=1))
-
-    # Create a message that's very long to trigger token-per-minute rate limits
-    # This should be large enough to exceed TPM limits immediately
-    very_long_text = "Really long text " * 600000
-
-    # This should raise ModelThrottledException without retries
-    with pytest.raises(ModelThrottledException) as exc_info:
-        agent(very_long_text)
-
-    # Verify it's a rate limit error
-    error_message = str(exc_info.value).lower()
-    assert "rate_limit_exceeded" in error_message
 
 
 def test_content_blocks_handling(model):

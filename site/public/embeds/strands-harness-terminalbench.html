@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Strands harness — Terminal Bench 2.1, Claude Fable 5</title>
+<style>
+  :root {
+    --strands: #00FF77;
+    --ink:     #f2f2f2;
+    --muted:   #8a8f98;
+    --faint:   #5c616b;
+    --rule:    #33373f;
+    --card:    #0a0b0d;
+    --mono: "SF Mono", "JetBrains Mono", "Roboto Mono", "Space Mono", ui-monospace, Menlo, Consolas, monospace;
+    --claudecode: #c8794f;
+    --opencode:   #d69a78;
+    --ohmypi:     #6fae8f;
+    --deepseek:   #8f7ae0;
+  }
+  * { box-sizing: border-box; }
+  html, body { overflow: hidden; }
+  body {
+    margin: 0;
+    padding: 4px;
+    background: #000;
+    color: var(--ink);
+    font-family: var(--mono);
+    letter-spacing: 0.02em;
+    -webkit-font-smoothing: antialiased;
+  }
+  .card {
+    max-width: 1080px;
+    margin: 0 auto;
+    background: var(--card);
+    border: 1px solid var(--rule);
+    border-radius: 14px;
+    padding: 24px 28px 22px;
+  }
+  h1 { font-size: 25px; font-weight: 700; margin: 0 0 10px; line-height: 1.25; }
+  .subtitle { color: var(--muted); font-size: 15px; margin: 0 0 30px; }
+
+  .col-heads, .row {
+    display: grid;
+    grid-template-columns: 118px 1fr 80px;
+    gap: 18px;
+    align-items: center;
+  }
+  .col-heads {
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    color: var(--faint);
+    margin-bottom: 14px;
+  }
+  .col-heads .l { text-align: right; }
+  .col-heads .score-head { padding-left: 16px; }
+  .col-heads .r { text-align: right; white-space: nowrap; }
+
+  .row { margin-bottom: 16px; }
+  .cost {
+    text-align: right;
+    font-size: 20px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .bar-track { position: relative; height: 52px; }
+  .bar {
+    height: 100%;
+    border-radius: 5px;
+    display: flex;
+    align-items: center;
+    padding-left: 16px;
+    border: 1.5px solid var(--c);
+    background:
+      repeating-linear-gradient(45deg,
+        color-mix(in srgb, var(--c) 20%, transparent) 0 1.5px,
+        transparent 1.5px 6px),
+      color-mix(in srgb, var(--c) 14%, transparent);
+  }
+  .bar .name { font-size: 16px; font-weight: 600; color: var(--ink); }
+  .score {
+    font-size: 20px;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+
+  .row.hero .cost { color: var(--ink); font-weight: 700; }
+  .row.hero .bar .name { font-weight: 700; }
+  .row.hero .score { font-weight: 700; }
+
+  /* Mobile: tighten columns/type so the title doesn't wrap into a wall and the
+     cost/accuracy columns still leave room for the bars. */
+  @media (max-width: 520px) {
+    .card { padding: 18px 16px 16px; }
+    h1 { font-size: 18px; }
+    .subtitle { font-size: 12px; margin-bottom: 20px; }
+    .col-heads, .row { grid-template-columns: 74px 1fr 46px; gap: 10px; }
+    .col-heads { font-size: 10px; }
+    .cost, .score { font-size: 15px; }
+    .bar .name { font-size: 12px; }
+    .bar-track { height: 42px; }
+    .bar { padding-left: 12px; }
+    .row { margin-bottom: 12px; }
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Strands harness: frontier accuracy on Terminal Bench 2.1 at lower cost</h1>
+    <p class="subtitle">All harnesses running Claude Fable 5 &middot; 89 trials each</p>
+
+    <div class="col-heads">
+      <div class="l">COST</div>
+      <div></div>
+      <div class="r">ACCURACY</div>
+    </div>
+
+    <div id="rows"></div>
+  </div>
+
+<script>
+const DATA = [
+  { name: "Deepseek Harness Fable 5", cost: 40.30,  score: 59.55, tokens: 21444783, color: "var(--deepseek)"   },
+  { name: "Strands harness Fable 5",  cost: 56.29,  score: 69.66, tokens: 28734117, color: "var(--strands)", hero: true },
+  { name: "OpenCode Fable 5",         cost: 73.42,  score: 66.29, tokens: 37114373, color: "var(--opencode)"   },
+  { name: "Oh-my-pi Fable 5",         cost: 86.83,  score: 69.66, tokens: 45062996, color: "var(--ohmypi)"     },
+  { name: "Claude Code Fable 5",      cost: 248.05, score: 61.80, tokens: 54993386, color: "var(--claudecode)" },
+];
+const AXIS_MAX = 72;
+const M = n => (n / 1e6).toFixed(1) + "M";
+let html = "";
+DATA.forEach(d => {
+  const w = (d.score / AXIS_MAX) * 100;
+  html += `
+  <div class="row${d.hero ? " hero" : ""}">
+    <div class="cost">$${d.cost.toFixed(2)}</div>
+    <div class="bar-track">
+      <div class="bar" style="--c:${d.color}; width:${w}%;">
+        <span class="name">${d.name}</span>
+      </div>
+    </div>
+    <div class="score">${d.score.toFixed(1)}</div>
+  </div>`;
+});
+document.getElementById("rows").innerHTML = html;
+</script>
+<script>
+  // Same-origin embed: size our own iframe to the content height so nothing is
+  // clipped on mobile (where the title wraps to several lines) and there is no gap.
+  (function () {
+    var card = document.querySelector(".card");
+    function fit() {
+      if (!window.frameElement || !card) return;
+      // Measure the card itself (not documentElement.scrollHeight, which is clamped
+      // to the iframe's own height and would ratchet the frame ever taller).
+      window.frameElement.style.height = Math.ceil(card.getBoundingClientRect().bottom) + 4 + "px";
+      window.frameElement.style.aspectRatio = "auto";
+    }
+    window.addEventListener("load", fit);
+    if (window.ResizeObserver) new ResizeObserver(fit).observe(card);
+    else window.addEventListener("resize", fit);
+  })();
+</script>
+</body>
+</html>

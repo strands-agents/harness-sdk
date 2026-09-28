@@ -9,7 +9,7 @@ import type {
 } from '../types/agent.js'
 import type { Message, SystemPrompt, ToolResultBlock } from '../types/messages.js'
 import type { ToolSpec, ToolChoice } from '../tools/types.js'
-import type { StreamAggregatedResult } from '../models/model.js'
+import type { Model, StreamAggregatedResult } from '../models/model.js'
 import type { ToolUseData } from '../hooks/events.js'
 import type { Tool } from '../tools/tool.js'
 import type { InterruptParams } from '../types/interrupt.js'
@@ -69,11 +69,14 @@ export function createStage<TContext, TResult, TEvent>(name: string): Middleware
 /**
  * Context passed to model-stage middleware.
  * All inputs to the model call are explicit — middleware can inspect and transform
- * any of them by passing a modified context to next().
+ * any of them by passing a modified context to next(). Collection fields are
+ * defensive copies; invocationState and model are shared references.
  */
 export interface InvokeModelContext {
   /** The agent instance (escape hatch for advanced use cases). */
   readonly agent: LocalAgent
+  /** The model this call invokes. Initialized from agent.model and replaceable per call. */
+  readonly model: Model
   /** The messages to send to the model. */
   readonly messages: readonly Message[]
   /** System prompt to guide the model's behavior. */

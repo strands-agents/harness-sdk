@@ -11,7 +11,7 @@ from strands.agent.state import AgentState
 from strands.hooks import AfterMultiAgentInvocationEvent, AfterNodeCallEvent, BeforeNodeCallEvent
 from strands.hooks.registry import HookRegistry
 from strands.interrupt import Interrupt, _InterruptState
-from strands.multiagent.base import Status
+from strands.multiagent.base import NodeResult, Status
 from strands.multiagent.swarm import SharedContext, Swarm, SwarmNode, SwarmResult, SwarmState, _InflightTurn
 from strands.session.file_session_manager import FileSessionManager
 from strands.session.session_manager import SessionManager
@@ -450,6 +450,77 @@ def test_swarm_metrics_handling():
 
     result = no_metrics_swarm("Test no metrics")
     assert result.status == Status.COMPLETED
+
+
+def test_accumulate_metrics_sums_cache_token_counters():
+    """Cache token counters are summed across nodes, not dropped (#797).
+
+    Each node's usage is a disjoint Bedrock-style payload where
+    totalTokens = inputTokens + outputTokens + cacheReadInputTokens + cacheWriteInputTokens,
+    so the aggregated totals must reconcile once the cache counters are accumulated too.
+    """
+    swarm = Swarm(nodes=[create_mock_agent("agent1"), create_mock_agent("agent2")])
+    result_text = AgentResult(
+        message={"role": "assistant", "content": [{"text": "ok"}]}, stop_reason="end_turn", state={}, metrics={}
+    )
+    node_results = [
+        NodeResult(
+            result=result_text,
+            accumulated_usage={
+                "inputTokens": 10,
+                "outputTokens": 20,
+                "totalTokens": 38,
+                "cacheReadInputTokens": 5,
+                "cacheWriteInputTokens": 3,
+            },
+        ),
+        NodeResult(
+            result=result_text,
+            accumulated_usage={
+                "inputTokens": 15,
+                "outputTokens": 25,
+                "totalTokens": 51,
+                "cacheReadInputTokens": 7,
+                "cacheWriteInputTokens": 4,
+            },
+        ),
+    ]
+
+    for node_result in node_results:
+        swarm._accumulate_metrics(node_result)
+
+    tru_usage = swarm.state.accumulated_usage
+    exp_usage = {
+        "inputTokens": 25,
+        "outputTokens": 45,
+        "totalTokens": 89,
+        "cacheReadInputTokens": 12,
+        "cacheWriteInputTokens": 7,
+    }
+    assert tru_usage == exp_usage
+    assert (
+        tru_usage["inputTokens"]
+        + tru_usage["outputTokens"]
+        + tru_usage["cacheReadInputTokens"]
+        + tru_usage["cacheWriteInputTokens"]
+        == tru_usage["totalTokens"]
+    )
+
+
+def test_accumulate_metrics_without_cache_counters_omits_them():
+    """Nodes without cache counters must not materialize cache keys as 0 (#797)."""
+    swarm = Swarm(nodes=[create_mock_agent("agent1"), create_mock_agent("agent2")])
+    result_text = AgentResult(
+        message={"role": "assistant", "content": [{"text": "ok"}]}, stop_reason="end_turn", state={}, metrics={}
+    )
+
+    swarm._accumulate_metrics(
+        NodeResult(result=result_text, accumulated_usage={"inputTokens": 10, "outputTokens": 20, "totalTokens": 30})
+    )
+
+    tru_usage = swarm.state.accumulated_usage
+    exp_usage = {"inputTokens": 10, "outputTokens": 20, "totalTokens": 30}
+    assert tru_usage == exp_usage
 
 
 def test_swarm_auto_completion_without_handoff():

@@ -1,0 +1,237 @@
+---
+// Examples catalog: the strands-agents/samples manifest rendered on a
+// StarlightPage (real docs chrome) with a custom card grid.
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro'
+import { GITHUB_ICON } from '../components/catalog/icons'
+import fallbackManifest from '../data/samples.json'
+import '../styles/catalog.css'
+
+// Dynamic pull: fetch the manifest from the samples repo branch at build time
+// (the real integration reads it straight from GitHub). Falls back to the
+// vendored copy when the build has no network, so it never hard-fails.
+const RAW_MANIFEST_URL =
+  'https://raw.githubusercontent.com/tmoreton/samples/add-samples-manifest/samples.json'
+
+let manifest: typeof fallbackManifest = fallbackManifest
+try {
+  const res = await fetch(RAW_MANIFEST_URL)
+  if (res.ok) manifest = await res.json()
+} catch {
+  // keep the vendored fallback
+}
+
+type Sample = {
+  id: string
+  language: string
+  category: string
+  categoryLabel: string
+  title: string
+  description: string
+  tags: string[]
+  url: string
+  notebook?: string
+}
+
+const samples = manifest.samples as Sample[]
+const categories = manifest.categories as { language: string; id: string; label: string }[]
+
+const sectionsFor = (lang: string) =>
+  categories
+    .filter((c) => c.language === lang)
+    .map((c) => ({
+      ...c,
+      items: samples.filter((s) => s.language === lang && s.category === c.id),
+    }))
+    .filter((s) => s.items.length > 0)
+
+const languages = [
+  { id: 'python', label: 'Python', sections: sectionsFor('python') },
+  { id: 'typescript', label: 'TypeScript', sections: sectionsFor('typescript') },
+].filter((l) => l.sections.length > 0)
+
+// Real Starlight sidebar config: one group per language, each category linking
+// to its section anchor on this page.
+const sidebar = languages.map((l) => ({
+  label: l.label,
+  items: l.sections.map((s) => ({ label: s.label, link: `/examples/#${l.id}-${s.id}` })),
+}))
+
+const title = 'Examples'
+const description = `${samples.length} runnable Strands Agents samples, pulled from the samples repo.`
+---
+
+<StarlightPage frontmatter={{ title, description, pagefind: false }} sidebar={sidebar}>
+  <div class="samples-page">
+    <p class="samples__lede">
+      Runnable, end-to-end examples to learn from and adapt. Pick one below, open it
+      on <a href="https://github.com/strands-agents/samples" target="_blank" rel="noopener">GitHub</a>,
+      and run it. Each is self-contained.
+    </p>
+
+    {languages.map((lang) =>
+      lang.sections.map((section) => (
+        <section class="samples__group" id={`${lang.id}-${section.id}`}>
+          <h2 class="samples__group-title">
+            {section.label}
+            <span class="samples__group-lang">{lang.label}</span>
+          </h2>
+          {/* Tiles reuse the integrations catalog card (cat-*) markup + CSS so
+              the two catalogs are visually identical. */}
+          <div class="cat-grid">
+            {section.items.map((s) => (
+              <article class="cat-card">
+                <div class="cat-card-header">
+                  <span class="cat-tile" aria-hidden="true">
+                    <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+                      <path
+                        fill="currentColor"
+                        d="M3 3h18a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm3.4 5L5 9.4 7.6 12 5 14.6 6.4 16l4-4-4-4zM13 14h5v2h-5z"
+                      />
+                    </svg>
+                  </span>
+                  <div class="cat-card-head">
+                    <a class="cat-card-title" href={s.url} target="_blank" rel="noopener" title={s.title}>
+                      {s.title}
+                      <span class="cat-external" aria-hidden="true">↗</span>
+                    </a>
+                  </div>
+                </div>
+                {s.notebook && (
+                  <div class="cat-card-flags">
+                    <span class="cat-flag cat-flag--new">Notebook</span>
+                  </div>
+                )}
+                <p class="cat-card-desc">{s.description}</p>
+                <div class="cat-card-foot">
+                  <span class="cat-facts">
+                    <span class="cat-type">{section.label}</span>
+                    <span class="cat-langs">{lang.label}</span>
+                  </span>
+                  <span class="cat-links">
+                    <a
+                      class="cat-link"
+                      href={s.url}
+                      target="_blank"
+                      rel="noopener"
+                      aria-label={`${s.title} on GitHub (opens in a new tab)`}
+                      title="GitHub"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
+                        {GITHUB_ICON.map((d) => (
+                          <path fill="currentColor" d={d} />
+                        ))}
+                      </svg>
+                    </a>
+                  </span>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )),
+    )}
+  </div>
+</StarlightPage>
+
+<style is:global>
+  /* Anchored sections clear the fixed header when jumped to from the sidebar. */
+  .samples-page .samples__group {
+    scroll-margin-top: calc(var(--sl-nav-height, 84px) + 1rem);
+  }
+
+  /* Show only the language matching the header toggle (via <html data-lang-pref>,
+     set by Sidebar.astro). Default (attr unset) = TypeScript. Filters both the
+     content sections and their sidebar group. */
+  html:not([data-lang-pref='python']) .samples-page section[id^='python-'],
+  html:not([data-lang-pref='python']) .sidebar-content li:has(.section-group a[href*='/examples/#python-']) {
+    display: none;
+  }
+
+  html[data-lang-pref='python'] .samples-page section[id^='typescript-'],
+  html[data-lang-pref='python'] .sidebar-content li:has(.section-group a[href*='/examples/#typescript-']) {
+    display: none;
+  }
+</style>
+
+<style>
+  .samples__lede {
+    margin: 0 0 2.5rem;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 18px;
+    line-height: 1.4;
+    color: var(--sl-color-white);
+  }
+
+  .samples__lede a {
+    color: var(--sl-color-text-accent, var(--accent-green));
+  }
+
+  .samples__group {
+    margin-bottom: 3rem;
+  }
+
+  .samples__group-title {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin: 0 0 20px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 700;
+    font-size: 22px;
+    letter-spacing: 1px;
+    color: var(--sl-color-white);
+  }
+
+  .samples__group-lang {
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--sl-color-text-accent, var(--accent-green));
+  }
+</style>
+
+<script>
+  // Scroll-synced sidebar highlight: Starlight marks the sidebar link current
+  // by URL, which can't track in-page anchors, so mirror the section in view
+  // onto the real sidebar link's aria-current (which drives the active pill).
+  const links = new Map<string, HTMLAnchorElement>()
+  document.querySelectorAll<HTMLAnchorElement>('a[href*="/examples/#"]').forEach((a) => {
+    const hash = a.getAttribute('href')?.split('#')[1]
+    if (hash) links.set(hash, a)
+  })
+  if (links.size > 0) {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue
+          const link = links.get(entry.target.id)
+          if (!link) continue
+          links.forEach((l) => l.removeAttribute('aria-current'))
+          link.setAttribute('aria-current', 'page')
+        }
+      },
+      { rootMargin: '-20% 0px -70% 0px' },
+    )
+    document.querySelectorAll('.samples__group').forEach((g) => observer.observe(g))
+  }
+
+  // Sidebar search live-filters the sample cards by text; a section hides when
+  // all its cards are filtered out.
+  const search = document.querySelector<HTMLInputElement>('[data-sidebar-search]')
+  if (search) {
+    const groups = Array.from(document.querySelectorAll<HTMLElement>('.samples__group'))
+    const cards = Array.from(document.querySelectorAll<HTMLElement>('.cat-card')).map((el) => ({
+      el,
+      text: (el.textContent || '').toLowerCase(),
+    }))
+    search.addEventListener('input', () => {
+      const q = search.value.trim().toLowerCase()
+      for (const { el, text } of cards) el.hidden = q !== '' && !text.includes(q)
+      for (const g of groups) {
+        const anyVisible = g.querySelectorAll<HTMLElement>('.cat-card:not([hidden])').length > 0
+        g.hidden = !anyVisible
+      }
+    })
+  }
+</script>

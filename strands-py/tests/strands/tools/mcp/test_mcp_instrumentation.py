@@ -1,6 +1,4 @@
 import threading
-import time
-from importlib.metadata import PackageNotFoundError
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -8,7 +6,6 @@ from mcp.shared.message import SessionMessage
 from mcp.types import JSONRPCMessage, JSONRPCRequest
 from opentelemetry import context, propagate
 
-import strands.tools.mcp.mcp_instrumentation as mcp_instrumentation_module
 from strands.tools.mcp.mcp_client import MCPClient
 from strands.tools.mcp.mcp_instrumentation import (
     ItemWithContext,
@@ -29,35 +26,6 @@ def reset_mcp_instrumentation():
     yield
     # Reset after test too
     mcp_inst._instrumentation_applied = False
-
-
-class TestIsMcpV1:
-    @pytest.mark.parametrize(
-        ("installed_version", "expected"),
-        [
-            ("1.23.0", True),
-            ("1.30.0", True),
-            ("2.0.0", False),
-            ("2.0.0b1", False),
-        ],
-    )
-    def test_version_detection(self, installed_version, expected):
-        """Test that the major version of the installed mcp package is detected correctly."""
-        with patch("strands.tools.mcp.mcp_instrumentation._package_version", return_value=installed_version):
-            assert mcp_instrumentation_module._is_mcp_v1() is expected
-
-    def test_unparseable_version_skips(self):
-        """Test that an unparseable version reports non-1.x so no patches are applied."""
-        with patch("strands.tools.mcp.mcp_instrumentation._package_version", return_value="unknown"):
-            assert mcp_instrumentation_module._is_mcp_v1() is False
-
-    def test_missing_package_skips(self):
-        """Test that a missing mcp distribution reports non-1.x so no patches are applied."""
-        with patch(
-            "strands.tools.mcp.mcp_instrumentation._package_version",
-            side_effect=PackageNotFoundError("mcp"),
-        ):
-            assert mcp_instrumentation_module._is_mcp_v1() is False
 
 
 class TestInjectTraceContext:
@@ -450,8 +418,11 @@ class TestMCPInstrumentation:
             assert mock_register.call_count == first_call_count
 
     def test_mcp_instrumentation_registers_server_side_hooks(self):
-        """Test that mcp_instrumentation registers the transport and session wrappers."""
-        with patch("strands.tools.mcp.mcp_instrumentation.register_post_import_hook") as mock_register:
+        """Test that mcp_instrumentation registers the transport and session wrappers on the 1.x line."""
+        with (
+            patch("strands.tools.mcp.mcp_instrumentation.MCP_V2", False),
+            patch("strands.tools.mcp.mcp_instrumentation.register_post_import_hook") as mock_register,
+        ):
             mcp_instrumentation()
 
             # Verify register_post_import_hook was called for transport and session wrappers
@@ -465,7 +436,7 @@ class TestMCPInstrumentation:
     def test_mcp_instrumentation_skips_patches_on_mcp_v2(self):
         """Test that the server-side patches are not applied when mcp 2.x is installed."""
         with (
-            patch("strands.tools.mcp.mcp_instrumentation._is_mcp_v1", return_value=False),
+            patch("strands.tools.mcp.mcp_instrumentation.MCP_V2", True),
             patch("strands.tools.mcp.mcp_instrumentation.register_post_import_hook") as mock_register,
         ):
             mcp_instrumentation()
@@ -475,17 +446,11 @@ class TestMCPInstrumentation:
     def test_mcp_instrumentation_applies_once_under_concurrency(self):
         """Test that concurrent callers cannot apply the patches more than once.
 
-        Guards https://github.com/strands-agents/harness-sdk/pull/3611#discussion_r3706469411: the
-        version probe does GIL-releasing I/O, so an unlocked check-and-set let concurrent MCPClient
-        construction stack duplicate wrappers.
+        Guards https://github.com/strands-agents/harness-sdk/pull/3611#discussion_r3706469411: an
+        unlocked check-and-set let concurrent MCPClient construction stack duplicate wrappers.
         """
-
-        def slow_is_mcp_v1():
-            time.sleep(0.01)
-            return True
-
         with (
-            patch("strands.tools.mcp.mcp_instrumentation._is_mcp_v1", side_effect=slow_is_mcp_v1),
+            patch("strands.tools.mcp.mcp_instrumentation.MCP_V2", False),
             patch("strands.tools.mcp.mcp_instrumentation.register_post_import_hook") as mock_register,
         ):
             threads = [threading.Thread(target=mcp_instrumentation) for _ in range(8)]
@@ -499,7 +464,7 @@ class TestMCPInstrumentation:
 
     def test_mcp_instrumentation_skip_is_sticky(self):
         """Test that a skipped application still marks instrumentation as applied."""
-        with patch("strands.tools.mcp.mcp_instrumentation._is_mcp_v1", return_value=False):
+        with patch("strands.tools.mcp.mcp_instrumentation.MCP_V2", True):
             mcp_instrumentation()
 
         with patch("strands.tools.mcp.mcp_instrumentation.register_post_import_hook") as mock_register:

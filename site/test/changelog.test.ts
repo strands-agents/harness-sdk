@@ -43,7 +43,7 @@ describe('changelogEntrySchema', () => {
 describe('changelogFrontmatterSchema', () => {
   it('coerces a string date to a Date', () => {
     const fm = changelogFrontmatterSchema.parse({
-      sdk: 'harness',
+      sdk: 'sdk',
       language: 'python',
       version: '1.42.0',
       tag: 'python/v1.42.0',
@@ -71,7 +71,7 @@ describe('changelogFrontmatterSchema', () => {
   it('rejects a harness release with no language', () => {
     expect(() =>
       changelogFrontmatterSchema.parse({
-        sdk: 'harness',
+        sdk: 'sdk',
         version: '1.0.0',
         tag: 'v1.0.0',
         date: '2026-01-01',

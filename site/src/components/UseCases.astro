@@ -1,0 +1,879 @@
+---
+import boxIcon from '../assets/use-cases/box.svg?raw';
+import robotIcon from '../assets/use-cases/robot.svg?raw';
+import chatIcon from '../assets/use-cases/chat.svg?raw';
+import hammerIcon from '../assets/use-cases/hammer.svg?raw';
+import arrow from '../assets/banner/arrow.svg?raw';
+import LanguageToggle from './LanguageToggle.astro';
+
+// Token helpers keep the per-use-case code arrays readable. `kw` = keyword,
+// `str` = string literal; bare strings render in the default foreground.
+const kw = (text: string) => ({ text, color: 'var(--code-keyword)' })
+const str = (text: string) => ({ text, color: 'var(--code-string)' })
+const t = (text: string) => ({ text })
+
+const useCases = [
+  {
+    id: 'automate',
+    icon: boxIcon,
+    title: 'Automate workflows',
+    description:
+      'Classify, score, and route. One agent, one job. Replace brittle scripts with tools that adapt when your process changes.',
+    active: true,
+    filename: { ts: 'lead_router.ts', py: 'lead_router.py' },
+    ts: [
+      { line: 1, tokens: [kw('import'), t(' { createHarness } '), kw('from'), t(' '), str("'@strands-agents/harness'")] },
+      { line: 2, tokens: [kw('import'), t(' { tool } '), kw('from'), t(' '), str("'@strands-agents/sdk'")] },
+      { line: 3, tokens: [kw('import'), t(' z '), kw('from'), t(' '), str("'zod'")] },
+      { line: 4, tokens: [t('')] },
+      { line: 5, tokens: [kw('const'), t(' classifyLead = tool({')] },
+      { line: 6, tokens: [t('  name: '), str("'classify_lead'"), t(',')] },
+      { line: 7, tokens: [t('  description: '), str("'Score and classify a lead.'"), t(',')] },
+      { line: 8, tokens: [t('  inputSchema: z.object({')] },
+      { line: 9, tokens: [t('    email: z.string(),')] },
+      { line: 10, tokens: [t('    company: z.string(),')] },
+      { line: 11, tokens: [t('  }),')] },
+      { line: 12, tokens: [t('  callback: ({ email, company }) => {')] },
+      { line: 13, tokens: [t('    '), kw('const'), t(' data = crm.lookup(company)')] },
+      { line: 14, tokens: [t('    '), kw('return'), t(' {')] },
+      { line: 15, tokens: [t('      leadId: crm.createLead(email, company),')] },
+      { line: 16, tokens: [t('      score: computeIcpScore(data),')] },
+      { line: 17, tokens: [t('      segment: data.industry,')] },
+      { line: 18, tokens: [t('    }')] },
+      { line: 19, tokens: [t('  },')] },
+      { line: 20, tokens: [t('})')] },
+      { line: 21, tokens: [t('')] },
+      { line: 22, tokens: [kw('const'), t(' routeToRep = tool({')] },
+      { line: 23, tokens: [t('  name: '), str("'route_to_rep'"), t(',')] },
+      { line: 24, tokens: [t('  description: '), str("'Assign a lead to a rep.'"), t(',')] },
+      { line: 25, tokens: [t('  inputSchema: z.object({')] },
+      { line: 26, tokens: [t('    leadId: z.string(),')] },
+      { line: 27, tokens: [t('    region: z.string(),')] },
+      { line: 28, tokens: [t('  }),')] },
+      { line: 29, tokens: [t('  callback: ({ leadId, region }) => {')] },
+      { line: 30, tokens: [t('    '), kw('const'), t(' rep = crm.getRepForRegion(region)')] },
+      { line: 31, tokens: [t('    crm.assign(leadId, rep)')] },
+      { line: 32, tokens: [t('    '), kw('return'), t(' `Assigned to ${rep}`')] },
+      { line: 33, tokens: [t('  },')] },
+      { line: 34, tokens: [t('})')] },
+      { line: 35, tokens: [t('')] },
+      { line: 36, tokens: [kw('const'), t(' agent = '), kw('await'), t(' createHarness({')] },
+      { line: 37, tokens: [t('  tools: [classifyLead, routeToRep],')] },
+      { line: 38, tokens: [t('})')] },
+      { line: 39, tokens: [t('')] },
+      { line: 40, tokens: [kw('await'), t(' agent.invoke(')] },
+      { line: 41, tokens: [t('  '), str("'New lead: jane@acme.com, Acme Corp, US-West'")] },
+      { line: 42, tokens: [t(')')] },
+    ],
+    py: [
+      { line: 1, tokens: [kw('from'), t(' strands '), kw('import'), t(' tool')] },
+      { line: 2, tokens: [kw('from'), t(' strands_harness '), kw('import'), t(' create_harness')] },
+      { line: 3, tokens: [t('')] },
+      { line: 4, tokens: [kw('@tool')] },
+      { line: 5, tokens: [kw('def'), t(' classify_lead(email: str, company: str) -> dict:')] },
+      { line: 6, tokens: [t('    '), str('"""Score and classify a lead."""')] },
+      { line: 7, tokens: [t('    data = crm.lookup(company)')] },
+      { line: 8, tokens: [t('    '), kw('return'), t(' {')] },
+      { line: 9, tokens: [t('        '), str('"lead_id"'), t(': crm.create_lead(email, company),')] },
+      { line: 10, tokens: [t('        '), str('"score"'), t(': compute_icp_score(data),')] },
+      { line: 11, tokens: [t('        '), str('"segment"'), t(': data['), str('"industry"'), t('],')] },
+      { line: 12, tokens: [t('    }')] },
+      { line: 13, tokens: [t('')] },
+      { line: 14, tokens: [kw('@tool')] },
+      { line: 15, tokens: [kw('def'), t(' route_to_rep(lead_id: str, region: str) -> str:')] },
+      { line: 16, tokens: [t('    '), str('"""Assign a lead to a rep."""')] },
+      { line: 17, tokens: [t('    rep = crm.get_rep_for_region(region)')] },
+      { line: 18, tokens: [t('    crm.assign(lead_id, rep)')] },
+      { line: 19, tokens: [t('    '), kw('return'), t(' f'), str('"Assigned to {rep}"')] },
+      { line: 20, tokens: [t('')] },
+      { line: 21, tokens: [t('agent = create_harness(tools=[classify_lead, route_to_rep])')] },
+      { line: 22, tokens: [t('agent('), str('"New lead: jane@acme.com, Acme Corp, US-West"'), t(')')] },
+    ],
+  },
+  {
+    id: 'assistants',
+    icon: chatIcon,
+    title: 'Build AI Assistants',
+    description:
+      'Build assistants that reason over your own data by giving an agent retrieval tools. Strands harness manages context across turns, keeping the conversation within the model’s window.',
+    active: false,
+    filename: { ts: 'support.ts', py: 'support.py' },
+    ts: [
+      { line: 1, tokens: [kw('import'), t(' { createHarness } '), kw('from'), t(' '), str("'@strands-agents/harness'")] },
+      { line: 2, tokens: [kw('import'), t(' { tool } '), kw('from'), t(' '), str("'@strands-agents/sdk'")] },
+      { line: 3, tokens: [kw('import'), t(' z '), kw('from'), t(' '), str("'zod'")] },
+      { line: 4, tokens: [t('')] },
+      { line: 5, tokens: [kw('const'), t(' issueRefund = tool({')] },
+      { line: 6, tokens: [t('  name: '), str("'issue_refund'"), t(',')] },
+      { line: 7, tokens: [t('  description: '), str("'Process a customer refund.'"), t(',')] },
+      { line: 8, tokens: [t('  inputSchema: z.object({ orderId: z.string(), amount: z.number() }),')] },
+      { line: 9, tokens: [t('  callback: ({ orderId, amount }) => payments.refund(orderId, amount),')] },
+      { line: 10, tokens: [t('})')] },
+      { line: 11, tokens: [t('')] },
+      { line: 12, tokens: [kw('const'), t(' agent = '), kw('await'), t(' createHarness({')] },
+      { line: 13, tokens: [t('  instructions: '), str("'Support assistant. Use the KB. Refunds require approval.'"), t(',')] },
+      { line: 14, tokens: [t('  tools: [issueRefund],')] },
+      { line: 15, tokens: [t('  mcpServers: { kb: { command: '), str("'uvx'"), t(', args: ['), str("'kb-server'"), t('] } },')] },
+      { line: 16, tokens: [t('  interventions: '), str("'Ask before issuing any refund.'"), t(',')] },
+      { line: 17, tokens: [t('})')] },
+      { line: 18, tokens: [t('')] },
+      { line: 19, tokens: [kw('await'), t(' agent.invoke('), str("'Order A1234 wants a $40 refund. Policy, and can you process it?'"), t(')')] },
+    ],
+    py: [
+      { line: 1, tokens: [kw('from'), t(' strands '), kw('import'), t(' tool')] },
+      { line: 2, tokens: [kw('from'), t(' strands_harness '), kw('import'), t(' create_harness')] },
+      { line: 3, tokens: [t('')] },
+      { line: 4, tokens: [kw('@tool')] },
+      { line: 5, tokens: [kw('def'), t(' issue_refund(order_id: str, amount: float) -> str:')] },
+      { line: 6, tokens: [t('    '), str('"""Process a customer refund."""')] },
+      { line: 7, tokens: [t('    '), kw('return'), t(' payments.refund(order_id, amount)')] },
+      { line: 8, tokens: [t('')] },
+      { line: 9, tokens: [t('agent = create_harness(')] },
+      { line: 10, tokens: [t('    instructions='), str('"Support assistant. Use the KB. Refunds require approval."'), t(',')] },
+      { line: 11, tokens: [t('    tools=[issue_refund],')] },
+      { line: 12, tokens: [t('    mcp_servers={'), str('"kb"'), t(': {'), str('"command"'), t(': '), str('"uvx"'), t(', '), str('"args"'), t(': ['), str('"kb-server"'), t(']}},')] },
+      { line: 13, tokens: [t('    interventions='), str('"Ask before issuing any refund."'), t(',')] },
+      { line: 14, tokens: [t(')')] },
+      { line: 15, tokens: [t('agent('), str('"Order A1234 wants a $40 refund. Policy, and can you process it?"'), t(')')] },
+    ],
+  },
+  {
+    id: 'research',
+    icon: hammerIcon,
+    title: 'Build research agents',
+    description:
+      'Build agents that work autonomously through multi-step tasks, calling tools to gather and synthesize information. The agent loops on its own — you describe the goal, not the steps.',
+    active: false,
+    filename: { ts: 'research_agent.ts', py: 'research_agent.py' },
+    ts: [
+      { line: 1, tokens: [kw('import'), t(' { createHarness } '), kw('from'), t(' '), str("'@strands-agents/harness'")] },
+      { line: 2, tokens: [t('')] },
+      { line: 3, tokens: [t('// Web fetch and search are built in, on by default.')] },
+      { line: 4, tokens: [kw('const'), t(' agent = '), kw('await'), t(' createHarness({')] },
+      { line: 5, tokens: [t('  instructions: '), str("'Research the goal, fetch sources, cite them.'"), t(',')] },
+      { line: 6, tokens: [t('})')] },
+      { line: 7, tokens: [t('')] },
+      { line: 8, tokens: [kw('await'), t(' agent.invoke(')] },
+      { line: 9, tokens: [t('  '), str("'Summarize recent advances in solid-state batteries from https://en.wikipedia.org/wiki/Solid-state_battery'")] },
+      { line: 10, tokens: [t(')')] },
+    ],
+    py: [
+      { line: 1, tokens: [kw('from'), t(' strands_harness '), kw('import'), t(' create_harness')] },
+      { line: 2, tokens: [t('')] },
+      { line: 3, tokens: [t('# Web fetch and search are built in, on by default.')] },
+      { line: 4, tokens: [t('agent = create_harness(instructions='), str('"Research the goal, fetch sources, cite them."'), t(')')] },
+      { line: 5, tokens: [t('agent(')] },
+      { line: 6, tokens: [t('    '), str('"Summarize recent advances in solid-state batteries from https://en.wikipedia.org/wiki/Solid-state_battery"')] },
+      { line: 7, tokens: [t(')')] },
+    ],
+  },
+  {
+    id: 'robots',
+    icon: robotIcon,
+    title: 'Control robots',
+    description:
+      'Drive arms, humanoids, quadrupeds, and drones with natural language. One Robot() call gives an agent a MuJoCo simulation or a real robot — same code, sim or hardware.',
+    active: false,
+    filename: { ts: 'robot_agent.py', py: 'robot_agent.py' },
+    ts: [
+      { line: 1, tokens: [str('# strands-robots is Python-first — toggle to Python for the sample.')] },
+      { line: 2, tokens: [t('')] },
+      { line: 3, tokens: [kw('from'), t(' strands_harness '), kw('import'), t(' create_harness')] },
+      { line: 4, tokens: [kw('from'), t(' strands_robots '), kw('import'), t(' Robot')] },
+      { line: 5, tokens: [t('')] },
+      { line: 6, tokens: [t('robot = Robot('), str('"so100"'), t(')')] },
+      { line: 7, tokens: [t('create_harness(tools=[robot])('), str('"pick up the red cube"'), t(')')] },
+    ],
+    py: [
+      { line: 1, tokens: [kw('from'), t(' strands_harness '), kw('import'), t(' create_harness')] },
+      { line: 2, tokens: [kw('from'), t(' strands_robots '), kw('import'), t(' Robot')] },
+      { line: 3, tokens: [t('')] },
+      { line: 4, tokens: [str('# MuJoCo sim by default — no GPU, no hardware.')] },
+      { line: 5, tokens: [str('# Pass mode="real" to drive a physical robot with the same code.')] },
+      { line: 6, tokens: [t('robot = Robot('), str('"so100"'), t(')')] },
+      { line: 7, tokens: [t('')] },
+      { line: 8, tokens: [t('agent = create_harness(tools=[robot])')] },
+      { line: 9, tokens: [t('agent('), str('"pick up the red cube"'), t(')')] },
+      { line: 10, tokens: [t('')] },
+      { line: 11, tokens: [str('# Every robot is a Zenoh peer — coordinate a fleet:')] },
+      { line: 12, tokens: [t('robot.mesh.tell(robot.mesh.peers['), str('0'), t(']['), str('"peer_id"'), t('],')] },
+      { line: 13, tokens: [t('                '), str('"hold the tray steady"'), t(')')] },
+    ],
+  },
+];
+
+---
+
+<section class="use-cases" aria-label="Use cases">
+  <div class="use-cases__inner">
+    <header class="use-cases__headline">
+      <p class="use-cases__eyebrow">Use Cases</p>
+      <h2 class="use-cases__title">Built for the agent you need</h2>
+      <p class="use-cases__lede">
+        Automate multi-step processes, ship assistants that reason over your own
+        data, run research agents that work autonomously, or control robots in
+        the physical world.
+      </p>
+      <a
+        href="https://github.com/strands-agents/samples"
+        class="use-cases__cta"
+        target="_blank"
+        rel="noopener"
+      >
+        strands-agents/samples
+        <span class="use-cases__cta-arrow" set:html={arrow} />
+      </a>
+    </header>
+
+    <div class="use-cases__body">
+      <ul class="use-cases__list" role="list">
+        {useCases.map((uc) => (
+          <li
+            class:list={['use-cases__item', uc.active && 'is-active']}
+            data-use-case={uc.id}
+          >
+            {/* The whole item is a button so clicking anywhere selects the
+                use case and swaps the terminal to its code sample. */}
+            <button
+              type="button"
+              class="use-cases__item-btn"
+              aria-pressed={uc.active ? 'true' : 'false'}
+              data-use-case-btn={uc.id}
+            >
+              <span class="use-cases__item-icon" set:html={uc.icon} />
+              <span class="use-cases__item-text">
+                <span class="use-cases__item-title">{uc.title}</span>
+                <span class="use-cases__item-desc">{uc.description}</span>
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+
+      <!-- On mobile the terminal sits below all three use-case items (see the
+           `order` in the mobile media query). On desktop it's the right-hand
+           column, unaffected by `order`. -->
+      <div
+        class="terminal"
+        data-filenames={JSON.stringify(
+          Object.fromEntries(useCases.map((uc) => [uc.id, uc.filename]))
+        )}
+      >
+        <header class="terminal__header">
+          <div class="terminal__dots" aria-hidden="true">
+            <span class="terminal__dot terminal__dot--red"></span>
+            <span class="terminal__dot terminal__dot--yellow"></span>
+            <span class="terminal__dot terminal__dot--green"></span>
+          </div>
+          <p class="terminal__filename" data-filename>{useCases[0].filename.ts}</p>
+          <button type="button" class="terminal__copy" aria-label="Copy code">
+            <svg
+              class="terminal__copy-icon terminal__copy-icon--copy"
+              viewBox="0 0 16 19"
+              fill="none"
+              aria-hidden="true"
+            >
+              <rect
+                x="4.5"
+                y="0.5"
+                width="11"
+                height="14"
+                rx="1.5"
+                stroke="currentColor"
+              />
+              <rect
+                x="0.5"
+                y="4.5"
+                width="11"
+                height="14"
+                rx="1.5"
+                fill="var(--strands-charcoal-2)"
+                stroke="currentColor"
+              />
+            </svg>
+            <svg
+              class="terminal__copy-icon terminal__copy-icon--check"
+              viewBox="0 0 16 16"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path
+                d="M13.5 4.5L6.5 11.5L3 8"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <span class="terminal__copy-label">copy</span>
+          </button>
+        </header>
+
+        {/* One TS + one Python panel per use case. Only the active use case's
+            panel for the current language is visible; the rest are `hidden`.
+            The item buttons + language toggle swap visibility via data attrs. */}
+        {useCases.map((uc) => (
+          <Fragment>
+            <pre
+              class="terminal__code terminal__code--ts"
+              data-lang-code="typescript"
+              data-use-case-code={uc.id}
+              hidden={!uc.active}
+              tabindex="0"
+              role="region"
+              aria-label={`${uc.title} — TypeScript code example`}
+            ><code>{uc.ts.map((row) => (
+              <div class="terminal__row">
+                <span class="terminal__lineno">{row.line}</span>
+                <span class="terminal__line">{row.tokens.map((tok) => (
+                  tok.color ? <span style={`color: ${tok.color};`}>{tok.text}</span> : <span>{tok.text}</span>
+                ))}</span>
+              </div>
+            ))}</code></pre>
+            <pre
+              class="terminal__code terminal__code--py"
+              data-lang-code="python"
+              data-use-case-code={uc.id}
+              hidden
+              tabindex="0"
+              role="region"
+              aria-label={`${uc.title} — Python code example`}
+            ><code>{uc.py.map((row) => (
+              <div class="terminal__row">
+                <span class="terminal__lineno">{row.line}</span>
+                <span class="terminal__line">{row.tokens.map((tok) => (
+                  tok.color ? <span style={`color: ${tok.color};`}>{tok.text}</span> : <span>{tok.text}</span>
+                ))}</span>
+              </div>
+            ))}</code></pre>
+          </Fragment>
+        ))}
+
+        <div class="terminal__toggle">
+          <LanguageToggle />
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .use-cases {
+    background: var(--bg);
+    color: var(--fg);
+    padding: 40px 55px 58px;
+  }
+
+  .use-cases__inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 68px;
+    max-width: 1332px;
+    margin: 0 auto;
+    padding: 32px 0;
+  }
+
+  .use-cases__headline {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 23px;
+    max-width: 813px;
+    text-align: center;
+  }
+
+  .use-cases__eyebrow {
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 500;
+    font-size: 32px;
+    letter-spacing: 3.2px;
+    line-height: 1.2;
+    color: var(--eyebrow);
+  }
+
+  .use-cases__title {
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 600;
+    font-size: 40px;
+    letter-spacing: 4px;
+    line-height: 1.2;
+    color: var(--fg);
+  }
+
+  .use-cases__lede {
+    margin: 0;
+    max-width: 779px;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 20px;
+    letter-spacing: 2px;
+    line-height: 1.4;
+  }
+
+  .use-cases__cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 11px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 500;
+    font-size: 20px;
+    line-height: 1.12;
+    /* --accent-green is #02a435 in light mode (3.29:1 on white — fails AA
+       for this 20px normal-weight link). Use a theme-aware CTA color:
+       darker brand green on light, bright brand green on dark. */
+    color: var(--cta-green);
+    text-decoration: none;
+  }
+
+  .use-cases__cta:hover {
+    opacity: 0.8;
+  }
+
+  .use-cases__cta-arrow {
+    display: inline-flex;
+    width: 12.75px;
+    height: 11.05px;
+  }
+
+  .use-cases__cta-arrow :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  .use-cases__body {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 66px;
+    width: 100%;
+    padding: 0 30px;
+  }
+
+  .use-cases__list {
+    display: flex;
+    flex-direction: column;
+    gap: 23px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    width: 548px;
+  }
+
+  .use-cases__item {
+    padding-left: 32px;
+    /* Inactive items are muted. --strands-grey-600 (#999696) is only 2.93:1
+       on the light-mode white surface (fails 3:1 for this 32px title); use a
+       theme-aware muted grey that clears it. */
+    color: var(--use-case-muted, var(--strands-grey-600));
+  }
+
+  .use-cases__item.is-active {
+    border-left: 3px solid var(--accent-green);
+    padding-left: 29px;
+    color: var(--fg);
+  }
+
+  /* Full-width button; reset native button styling so it lays out as plain content. */
+  .use-cases__item-btn {
+    display: flex;
+    align-items: flex-start;
+    gap: 0;
+    width: 100%;
+    padding: 0;
+    background: none;
+    border: none;
+    text-align: left;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .use-cases__item-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 60px;
+    height: 42px;
+    flex: none;
+    color: currentColor;
+  }
+
+  .use-cases__item.is-active .use-cases__item-icon {
+    color: var(--accent-green);
+  }
+
+  .use-cases__item-icon :global(svg) {
+    width: 30px;
+    height: 28px;
+  }
+
+  .use-cases__item-text {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .use-cases__item-title {
+    display: block;
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 32px;
+    line-height: 1.2;
+    color: inherit;
+  }
+
+  .use-cases__item.is-active .use-cases__item-title {
+    color: var(--accent-green);
+  }
+
+  .use-cases__item-desc {
+    /* Description shows only for the selected use case (matches the design:
+       inactive items are title-only). It swaps in as you select an item. */
+    display: none;
+    margin: 0;
+    width: 377px;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 14px;
+    letter-spacing: 1.4px;
+    line-height: 1.4;
+    color: var(--fg);
+  }
+
+  .use-cases__item.is-active .use-cases__item-desc {
+    display: block;
+  }
+
+  .terminal {
+    position: relative;
+    width: 660px;
+    height: 496px;
+    background: var(--terminal-bg);
+    border: 1px solid var(--strands-grey-600);
+    border-radius: 16px;
+    overflow: hidden;
+  }
+
+  .terminal__header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    height: 54px;
+    padding: 0 20px;
+    background: var(--terminal-header-bg);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .terminal__dots {
+    display: flex;
+    gap: 6px;
+    flex: none;
+  }
+
+  .terminal__dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+  }
+
+  .terminal__dot--red {
+    background: var(--strands-red);
+  }
+
+  .terminal__dot--yellow {
+    background: var(--strands-yellow);
+  }
+
+  .terminal__dot--green {
+    background: var(--strands-green);
+  }
+
+  .terminal__filename {
+    flex: 1;
+    margin: 0 0 0 12px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 300;
+    font-size: 20px;
+    line-height: 1.3;
+    color: var(--terminal-fg);
+  }
+
+  .terminal__copy {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 300;
+    font-size: 20px;
+    line-height: 1.3;
+    color: var(--terminal-fg);
+    cursor: pointer;
+  }
+
+  .terminal__copy:hover {
+    opacity: 0.8;
+  }
+
+  .terminal__copy-icon {
+    width: 16px;
+    height: 19px;
+    color: var(--terminal-fg);
+  }
+
+  /* Swap the copy icon for a check on success, and turn the button green. */
+  .terminal__copy-icon--check {
+    display: none;
+    height: 16px;
+  }
+
+  .terminal__copy.is-copied {
+    color: var(--strands-green);
+  }
+
+  .terminal__copy.is-copied .terminal__copy-icon--copy {
+    display: none;
+  }
+
+  .terminal__copy.is-copied .terminal__copy-icon--check {
+    display: inline-block;
+  }
+
+  .terminal__code {
+    margin: 0;
+    padding: 20px;
+    height: 419px;
+    overflow: auto;
+    /* Keep scrollability but hide the scrollbar chrome (it looked like a stray
+       UI element inside the code card). */
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--terminal-fg);
+    background: transparent;
+  }
+
+  .terminal__code::-webkit-scrollbar {
+    display: none;
+  }
+
+  .terminal__row {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    min-height: 22px;
+  }
+
+  .terminal__lineno {
+    display: inline-block;
+    width: 24px;
+    text-align: right;
+    /* --strands-grey-600 is only 2.67:1 on the light terminal bg (#f4f4f4).
+       Theme-aware grey clears AA on both terminal surfaces. */
+    color: var(--terminal-lineno, var(--strands-grey-600));
+    user-select: none;
+    flex: none;
+  }
+
+  .terminal__line {
+    white-space: pre;
+  }
+
+  /* Positioned wrapper for the shared <LanguageToggle/>, centered at the
+     bottom of the terminal. The control's own styling lives in
+     LanguageToggle.astro. */
+  .terminal__toggle {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+  }
+
+  /* ---------- Mobile (< 768px) ---------- */
+  @media (max-width: 767px) {
+    .use-cases {
+      padding: 40px 19px;
+    }
+
+    .use-cases__inner {
+      gap: 40px;
+      padding: 0;
+    }
+
+    .use-cases__eyebrow {
+      font-size: 20px;
+      letter-spacing: 2px;
+    }
+
+    .use-cases__title {
+      font-size: 26px;
+      letter-spacing: 2.6px;
+    }
+
+    .use-cases__lede {
+      font-size: 16px;
+      letter-spacing: 1.6px;
+    }
+
+    /* On mobile, .use-cases__body is a vertical flex column and .use-cases__list
+       is flattened with `display: contents` so its <li>s become direct children
+       of .use-cases__body. The three use-case items keep their natural order at
+       the top; the terminal is pushed below all of them via a high `order`. */
+    .use-cases__body {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 24px;
+      padding: 0;
+    }
+
+    .use-cases__list {
+      display: contents;
+    }
+
+    .use-cases__item {
+      padding-left: 0;
+    }
+
+    .use-cases__item.is-active {
+      padding-left: 0;
+      border-left: 2px solid var(--strands-green);
+    }
+
+    .use-cases__item-icon {
+      width: 55.64px;
+      height: 35px;
+    }
+
+    .use-cases__item-icon :global(svg) {
+      width: 26px;
+      height: 26px;
+    }
+
+    .use-cases__item-title {
+      font-size: 20px;
+      letter-spacing: normal;
+    }
+
+    .use-cases__item-desc {
+      width: 100%;
+      font-size: 12px;
+      letter-spacing: 1.2px;
+    }
+
+    .terminal {
+      /* Pushed below all three use-case items on mobile. */
+      order: 99;
+      width: 100%;
+      height: 572px;
+    }
+
+    .terminal__filename,
+    .terminal__copy {
+      font-size: 14px;
+    }
+
+    .terminal__header {
+      height: 42px;
+      padding: 0 12px;
+      gap: 8px;
+    }
+
+    .terminal__code {
+      padding: 12px;
+      font-size: 12px;
+      height: calc(100% - 42px - 72px);
+      padding-bottom: 60px;
+    }
+
+    .terminal__lineno {
+      width: 18px;
+    }
+  }
+</style>
+
+<script>
+  import { attachCopyButton } from '../util/clipboard'
+  import { LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE_LABEL } from '../util/language-preference'
+
+  // The Use Cases section tracks two independent bits of state: which use case
+  // is selected (via the item buttons) and which language is shown (via the
+  // toggle, synced site-wide). Both drive which single code panel is visible.
+  const section = document.querySelector<HTMLElement>('.use-cases');
+
+  if (section) {
+    const terminal = section.querySelector<HTMLElement>('.terminal');
+    const filenameEl = terminal?.querySelector<HTMLElement>('[data-filename]');
+    const filenames: Record<string, { ts: string; py: string }> = JSON.parse(
+      terminal?.dataset.filenames || '{}'
+    );
+
+    const firstItem = section.querySelector<HTMLElement>('.use-cases__item.is-active');
+    let currentCase = firstItem?.dataset.useCase || Object.keys(filenames)[0] || '';
+    let currentLang: 'TypeScript' | 'Python' =
+      localStorage.getItem(LANGUAGE_STORAGE_KEY) === 'Python' ? 'Python' : DEFAULT_LANGUAGE_LABEL;
+
+    function render() {
+      const langCode = currentLang === 'Python' ? 'python' : 'typescript';
+
+      // Show only the panel matching the current use case AND language.
+      section!.querySelectorAll<HTMLElement>('.terminal__code').forEach((pre) => {
+        const match =
+          pre.dataset.useCaseCode === currentCase &&
+          pre.dataset.langCode === langCode;
+        pre.hidden = !match;
+      });
+
+      // Filename follows the use case + language.
+      if (filenameEl && filenames[currentCase]) {
+        filenameEl.textContent =
+          currentLang === 'Python' ? filenames[currentCase].py : filenames[currentCase].ts;
+      }
+
+      // Active use-case item styling + a11y state.
+      section!.querySelectorAll<HTMLElement>('.use-cases__item').forEach((item) => {
+        const active = item.dataset.useCase === currentCase;
+        item.classList.toggle('is-active', active);
+        item
+          .querySelector<HTMLButtonElement>('[data-use-case-btn]')
+          ?.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+    }
+
+    // Use-case selection.
+    section.querySelectorAll<HTMLButtonElement>('[data-use-case-btn]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.useCaseBtn;
+        if (!id || id === currentCase) return;
+        currentCase = id;
+        render();
+      });
+    });
+
+    // Language is driven by the shared <LanguageToggle/>, which broadcasts
+    // lang-change site-wide; the terminal just re-renders to match.
+    window.addEventListener('lang-change', (e: Event) => {
+      const lang = (e as CustomEvent).detail;
+      currentLang = lang === 'Python' ? 'Python' : 'TypeScript';
+      render();
+    });
+
+    // Copy the visible panel, with clear "Copied" feedback on success.
+    section.querySelectorAll<HTMLButtonElement>('.terminal__copy').forEach((btn) => {
+      attachCopyButton(btn, {
+        label: btn.querySelector<HTMLElement>('.terminal__copy-label'),
+        getText: () =>
+          section!.querySelector<HTMLElement>('.terminal__code:not([hidden]) code')?.innerText ?? '',
+        track: { surface: 'code:use-cases', detail: () => currentLang },
+      });
+    });
+
+    render();
+  }
+</script>

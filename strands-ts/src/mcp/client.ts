@@ -1,30 +1,29 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { ClientCredentialsProvider } from '@modelcontextprotocol/sdk/client/auth-extensions.js'
-import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js'
-import { takeResult } from '@modelcontextprotocol/sdk/shared/responseMessage.js'
 import {
-  ElicitRequestSchema,
-  LoggingMessageNotificationSchema,
+  Client,
+  ClientCredentialsProvider,
+  StreamableHTTPClientTransport,
+  type Transport,
+  type OAuthClientProvider,
   type ServerCapabilities,
   type Implementation,
   type LoggingMessageNotificationParams,
-} from '@modelcontextprotocol/sdk/types.js'
+} from '@modelcontextprotocol/client'
 import { context, propagation, trace } from '@opentelemetry/api'
 import type { JSONSchema, JSONValue } from '../types/json.js'
 import type { ElicitationCallback } from '../types/elicitation.js'
 import { McpTool } from '../tools/mcp-tool.js'
 import { logger } from '../logging/index.js'
-import { type McpServerConfig, mcpServerLoader } from './config.js'
+import { type McpLoadServersOptions, type McpServerConfig, mcpServerLoader } from './config.js'
 
 /**
  * Widened transport type that accepts MCP transport implementations without requiring explicit casts.
  *
- * Under `exactOptionalPropertyTypes`, `StreamableHTTPClientTransport` is not directly assignable
- * to `Transport` because its `sessionId` getter returns `string | undefined`, while `Transport`
- * declares `sessionId?: string` (absent or string, but not explicitly undefined).
- * This type relaxes that constraint so users can pass any MCP transport without `as Transport`.
+ * The `sessionId` member is widened to `string | undefined` so that, under
+ * `exactOptionalPropertyTypes`, transport instances whose `sessionId` getter returns
+ * `string | undefined` — including transports constructed from the legacy
+ * `@modelcontextprotocol/sdk` package — are assignable without `as Transport`. The MCP `Transport`
+ * contract's required members (`start`, `send`, `close`) are unchanged between the legacy package
+ * and `@modelcontextprotocol/client`, so legacy instances keep working.
  */
 export type McpTransport = Omit<Transport, 'sessionId'> & { sessionId?: string | undefined }
 
@@ -40,21 +39,15 @@ export interface RuntimeConfig {
  * WARNING: MCP Tasks is an experimental feature in both the MCP specification and this SDK.
  * The API may change without notice in future versions.
  *
- * When provided to McpClient, enables task-based tool invocation which supports
- * long-running tools with progress tracking. Without this config, tools are
- * called directly without task management.
+ * Task-augmented execution is temporarily unavailable while task support is rebuilt on the
+ * MCP tasks extension (https://github.com/strands-agents/harness-sdk/issues/1659). A client
+ * constructed with `tasksConfig` throws from {@link McpClient.callTool}.
  */
 export interface TasksConfig {
-  /**
-   * Time-to-live in milliseconds for task polling.
-   * Defaults to 60000 (60 seconds).
-   */
+  /** Time-to-live in milliseconds for task polling. */
   ttl?: number
 
-  /**
-   * Maximum time in milliseconds to wait for task completion during polling.
-   * Defaults to 300000 (5 minutes).
-   */
+  /** Maximum time in milliseconds to wait for task completion during polling. */
   pollTimeout?: number
 }
 
@@ -113,8 +106,9 @@ export interface McpClientOptions extends RuntimeConfig {
 
   /**
    * Configuration for task-augmented tool execution (experimental).
-   * When provided (even as empty object), enables MCP task-based tool invocation.
-   * When undefined, tools are called directly without task management.
+   *
+   * Temporarily unavailable while task support is rebuilt on the MCP tasks extension
+   * (https://github.com/strands-agents/harness-sdk/issues/1659). When set, `callTool` throws.
    */
   tasksConfig?: TasksConfig
 
@@ -152,10 +146,18 @@ export type McpClientConfig = McpClientOptions & {
 
 /** MCP Client for interacting with Model Context Protocol servers. */
 export class McpClient {
-  /** Default TTL for task polling in milliseconds (60 seconds). */
+  /**
+   * Default TTL for task polling in milliseconds (60 seconds).
+   *
+   * Unused while task support is rebuilt on the MCP tasks extension (#1659).
+   */
   public static readonly DEFAULT_TTL = 60000
 
-  /** Default poll timeout for task completion in milliseconds (5 minutes). */
+  /**
+   * Default poll timeout for task completion in milliseconds (5 minutes).
+   *
+   * Unused while task support is rebuilt on the MCP tasks extension (#1659).
+   */
   public static readonly DEFAULT_POLL_TIMEOUT = 300000
 
   /**
@@ -163,13 +165,15 @@ export class McpClient {
    *
    * @param config - A file path to a JSON config, or a flat server map object.
    * @param defaults - Options applied to all clients unless overridden per-server.
+   * @param options - Loader behavior, such as prefixing tools with the server name.
    * @returns An array of McpClient instances ready to be passed to an Agent.
    */
   public static async loadServers(
     config: string | Record<string, McpServerConfig>,
-    defaults?: McpClientOptions
+    defaults?: McpClientOptions,
+    options?: McpLoadServersOptions
   ): Promise<McpClient[]> {
-    return (await mcpServerLoader.get()(config, defaults)).map((c) => new McpClient(c))
+    return (await mcpServerLoader.get()(config, defaults, options)).map((c) => new McpClient(c))
   }
 
   private _clientName: string
@@ -209,6 +213,9 @@ export class McpClient {
       },
       {
         ...(this._elicitationCallback ? { capabilities: { elicitation: { form: {}, url: {} } } } : undefined),
+        // Probe for protocol revision 2026-07-28 and fall back to the legacy initialize
+        // handshake, mirroring the Python SDK's negotiate_auto posture.
+        versionNegotiation: { mode: 'auto' },
         listChanged: {
           tools: {
             autoRefresh: false,
@@ -221,11 +228,17 @@ export class McpClient {
       }
     )
 
-    this._client.setNotificationHandler(LoggingMessageNotificationSchema, (notification) => {
+    this._client.setNotificationHandler('notifications/message', (notification) => {
       this._logHandler(notification.params)
     })
 
     this._disableMcpInstrumentation = args.disableMcpInstrumentation ?? false
+
+    if (this._tasksConfig !== undefined) {
+      logger.warn(
+        `client=<${this._clientName}> | tasksConfig is set but task-augmented execution is temporarily unavailable (#1659), callTool will throw`
+      )
+    }
   }
 
   private static _resolveTransport(args: McpClientConfig): Transport {
@@ -310,8 +323,10 @@ export class McpClient {
 
     if (this._elicitationCallback) {
       const callback = this._elicitationCallback
-      this._client.setRequestHandler(ElicitRequestSchema, async (request, extra) => {
-        return await callback(extra, request.params)
+      this._client.setRequestHandler('elicitation/create', async (request, requestContext) => {
+        // The top-level `signal` mirrors `mcpReq.signal` for callbacks written against the
+        // deprecated ElicitationContext.signal field.
+        return await callback({ ...requestContext, signal: requestContext.mcpReq.signal }, request.params)
       })
     }
 
@@ -443,16 +458,23 @@ export class McpClient {
   /**
    * Invoke a tool on the connected MCP server using an McpTool instance.
    *
-   * When `tasksConfig` was provided to the client constructor, uses experimental
-   * task-based invocation which supports long-running tools with progress tracking.
-   * Otherwise, calls tools directly without task management.
-   *
    * @param tool - The McpTool instance to invoke.
    * @param args - The arguments to pass to the tool.
    * @param options - Optional settings for the request.
    * @returns A promise that resolves with the result of the tool invocation.
+   * @throws Error when the client was constructed with `tasksConfig`: task-augmented execution
+   *         is temporarily unavailable while task support is rebuilt on the MCP tasks extension
+   *         (https://github.com/strands-agents/harness-sdk/issues/1659).
    */
   public async callTool(tool: McpTool, args: JSONValue, options?: McpCallToolOptions): Promise<JSONValue> {
+    if (this._tasksConfig !== undefined) {
+      throw new Error(
+        'MCP task-augmented execution is temporarily unavailable while task support is rebuilt ' +
+          'on the MCP tasks extension (https://github.com/strands-agents/harness-sdk/issues/1659). ' +
+          'Unset tasksConfig to call tools now.'
+      )
+    }
+
     await this.connect()
     if (this._state === 'failed') throw new Error('MCP server failed to connect. Call connect(true) to retry.')
 
@@ -474,21 +496,7 @@ export class McpClient {
     // Use the server-side name for server communication; tool.name may carry a prefix.
     const toolName = this._serverToolNames.get(tool) ?? tool.name
 
-    if (this._tasksConfig === undefined) {
-      return (await this._client.callTool({ name: toolName, arguments: toolArgs }, undefined, options)) as JSONValue
-    }
-
-    // When tasksConfig is defined (even as empty object), use task-based invocation
-    // which supports long-running tools with progress tracking
-    const stream = this._client.experimental.tasks.callToolStream({ name: toolName, arguments: toolArgs }, undefined, {
-      timeout: this._tasksConfig.ttl ?? McpClient.DEFAULT_TTL,
-      maxTotalTimeout: this._tasksConfig.pollTimeout ?? McpClient.DEFAULT_POLL_TIMEOUT,
-      resetTimeoutOnProgress: true,
-      ...options,
-    })
-
-    const result = await takeResult(stream)
-    return result as JSONValue
+    return (await this._client.callTool({ name: toolName, arguments: toolArgs }, options)) as JSONValue
   }
 }
 

@@ -1,0 +1,24 @@
+---
+import Navigation from './Navigation.astro'
+import Search from '@astrojs/starlight/components/Search.astro'
+---
+
+<Navigation />
+
+{/* Starlight's site-wide search (Pagefind). Our nav replaces Starlight's
+    default header, which normally renders this — so include it here (button
+    hidden) purely to provide the search dialog the sidebar search box opens. */}
+<div class="site-search-host">
+  <Search />
+</div>
+
+<style>
+  /* Keep the search dialog mounted, but hide its trigger button — the sidebar
+     search input is the visible entry point (see overrides/Sidebar.astro). */
+  .site-search-host {
+    display: contents;
+  }
+  .site-search-host :global(button[data-open-modal]) {
+    display: none;
+  }
+</style>

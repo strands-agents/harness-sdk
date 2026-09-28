@@ -13,7 +13,7 @@ The documentation site is built with [Astro](https://astro.build/) and the [Star
 ### Prerequisites
 
 - Python 3.10+
-- Node.js 20+, npm
+- Node.js 22+, npm
 
 ### Install and Run
 

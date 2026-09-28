@@ -11,6 +11,7 @@ from typing import Any
 
 from ..event_loop._retry import ModelRetryStrategy
 from .agent import Agent
+from .agent_metadata import AgentMetadata
 from .agent_result import AgentResult
 from .base import AgentBase
 from .conversation_manager import (
@@ -23,6 +24,7 @@ from .conversation_manager import (
 __all__ = [
     "Agent",
     "AgentBase",
+    "AgentMetadata",
     "AgentResult",
     "ConversationManager",
     "NullConversationManager",

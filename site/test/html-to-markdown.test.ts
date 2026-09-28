@@ -121,7 +121,6 @@ describe('HTML to Markdown Conversion', () => {
       expect(markdown).toContain('```python')
       expect(markdown).toContain('from strands import Agent')
       expect(markdown).toContain('agent = Agent()')
-      // Should have proper newlines between lines
       expect(markdown).toMatch(/from strands import Agent\nagent = Agent\(\)/)
     })
 
@@ -183,6 +182,33 @@ describe('HTML to Markdown Conversion', () => {
       expect(markdown).toContain('Content')
       expect(markdown).not.toContain('alert')
       expect(markdown).not.toContain('script')
+    })
+
+    it('should remove lite-youtube elements so no bare [Play] link appears', () => {
+      const html = `
+        <p>*<a href="https://www.youtube.com/watch?v=abc123">Watch on YouTube</a>*</p>
+        <lite-youtube videoid="abc123" title="Lesson 1">
+          <a class="lty-playbtn" href="https://www.youtube.com/watch?v=abc123">Play</a>
+        </lite-youtube>
+      `
+      const markdown = htmlToMarkdown(html)
+
+      expect(markdown).toContain('[Watch on YouTube](https://www.youtube.com/watch?v=abc123)')
+      expect(markdown).not.toContain('[Play]')
+    })
+
+    it('should strip a bare Play anchor pointing at a YouTube host', () => {
+      const html = '<p><a href="https://www.youtube.com/watch?v=abc123">Play</a></p>'
+      const markdown = htmlToMarkdown(html)
+
+      expect(markdown).not.toContain('[Play]')
+    })
+
+    it('should keep a Play anchor pointing at a look-alike host', () => {
+      const html = '<p><a href="https://youtube.com.evil.com/watch?v=abc123">Play</a></p>'
+      const markdown = htmlToMarkdown(html)
+
+      expect(markdown).toContain('[Play](https://youtube.com.evil.com/watch?v=abc123)')
     })
   })
 

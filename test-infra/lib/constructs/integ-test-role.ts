@@ -115,6 +115,7 @@ export class IntegTestRole extends Construct {
           'arn:aws:bedrock:*:*:inference-profile/global.anthropic.claude-sonnet-4-5-20250929-v1:0',
           'arn:aws:bedrock:*:*:foundation-model/meta.llama3-2-90b-instruct-v1:0',
           'arn:aws:bedrock:*:*:inference-profile/us.meta.llama3-2-90b-instruct-v1:0',
+          'arn:aws:bedrock:*:*:foundation-model/mistral.voxtral-small-24b-2507',
           'arn:aws:bedrock:*:*:foundation-model/amazon.nova-reel-v1:1',
           'arn:aws:bedrock:*:*:foundation-model/amazon.nova-pro-v1:0',
           'arn:aws:bedrock:*:*:inference-profile/us.amazon.nova-pro-v1:0',
@@ -128,7 +129,16 @@ export class IntegTestRole extends Construct {
           'arn:aws:bedrock:*:*:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0',
           'arn:aws:bedrock:*:*:inference-profile/global.anthropic.claude-sonnet-4-6',
           'arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6',
+          'arn:aws:bedrock:*::foundation-model/amazon.nova-2-sonic-v1:0',
         ],
+      }),
+    );
+
+    // Bidi integration tests use Polly to generate PCM audio input from test prompts.
+    this.role.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['polly:SynthesizeSpeech'],
+        resources: ['*'],
       }),
     );
 

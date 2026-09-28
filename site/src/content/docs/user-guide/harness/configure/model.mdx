@@ -1,0 +1,169 @@
+---
+title: Choose a model and reasoning
+description: "Point Strands harness at any model by provider name, a bare Bedrock id, or a Model instance, and set reasoning effort with a single thinking level."
+sourceLinks:
+  - path: harness-py/src/strands_harness/models.py
+  - path: harness-ts/src/models.ts
+  - path: harness-py/src/strands_harness/defaults.py
+sidebar:
+  label: "Choose a model and reasoning"
+---
+
+Strands harness runs on the latest models across Amazon Bedrock, Anthropic, OpenAI,
+and Google, and uses Amazon Bedrock by default. Pass `model` to pick another; pass
+`effort` to change how hard the agent reasons. Both are single arguments that work the
+same across every provider.
+
+## Point Strands harness at a model
+
+You pick a model by passing `model`, which accepts three forms: a `provider/name`
+string, a bare Bedrock model id, or a ready-made Strands `Model` instance. The
+`provider/` prefix has aliases for `bedrock`, `bedrock-mantle`, `anthropic`, `openai`,
+`google`, `ollama`, and `litellm`. A string with no provider prefix is treated as a bare
+Amazon Bedrock id.
+
+<Tabs>
+  <Tab label="Strands harness">
+    <Tabs>
+      <Tab label="Python">
+        ```python
+        from strands_harness import create_harness
+
+        agent = create_harness(model="openai/gpt-5.6-sol")
+        ```
+      </Tab>
+      <Tab label="TypeScript">
+        ```typescript
+        import { createHarness } from '@strands-agents/harness'
+
+        const agent = await createHarness({ model: 'openai/gpt-5.6-sol' })
+        ```
+      </Tab>
+    </Tabs>
+  </Tab>
+  <Tab label="SDK">
+    <Tabs>
+      <Tab label="Python">
+        ```python
+        from strands import Agent
+
+        agent = Agent(model="global.anthropic.claude-sonnet-5")
+        ```
+      </Tab>
+      <Tab label="TypeScript">
+        ```typescript
+        import { Agent } from '@strands-agents/sdk'
+
+        const agent = new Agent({ model: 'global.anthropic.claude-sonnet-5' })
+        ```
+      </Tab>
+    </Tabs>
+  </Tab>
+</Tabs>
+
+For a provider Strands harness does not have an alias for, or for a model you have already
+configured (custom endpoint, credentials, request fields), build the `Model` instance
+yourself and pass it. Strands harness uses it as-is:
+
+<Tabs>
+  <Tab label="Python">
+    ```python
+    from strands.models import BedrockModel
+    from strands_harness import create_harness
+
+    model = BedrockModel(model_id="global.anthropic.claude-opus-4-8", region_name="us-west-2")
+    agent = create_harness(model=model)
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    import { BedrockModel } from '@strands-agents/sdk'
+    import { createHarness } from '@strands-agents/harness'
+
+    const model = new BedrockModel({ modelId: 'global.anthropic.claude-opus-4-8' })
+    const agent = await createHarness({ model })
+    ```
+  </Tab>
+</Tabs>
+
+An unknown provider prefix fails at construction with the list of supported providers, so
+a typo surfaces immediately rather than as a request error later.
+
+## Set reasoning effort
+
+`effort` maps one reasoning level onto whatever each provider's API expects, so you set
+it once regardless of provider:
+
+- `"auto"` (the default) uses each provider's recommended level.
+- `"low"`, `"medium"`, and `"high"` set it explicitly.
+- `"off"` (or `off` on the CLI) turns reasoning off.
+
+<Tabs>
+  <Tab label="Strands harness">
+    <Tabs>
+      <Tab label="Python">
+        ```python
+        from strands_harness import create_harness
+
+        agent = create_harness(model="anthropic/claude-opus-4-8", effort="high")
+        ```
+      </Tab>
+      <Tab label="TypeScript">
+        ```typescript
+        import { createHarness } from '@strands-agents/harness'
+
+        const agent = await createHarness({ model: 'anthropic/claude-opus-4-8', effort: 'high' })
+        ```
+      </Tab>
+    </Tabs>
+  </Tab>
+  <Tab label="SDK">
+    <Tabs>
+      <Tab label="Python">
+        ```python
+        from strands import Agent
+        from strands.models import BedrockModel
+
+        bedrock_model = BedrockModel(
+            model_id="global.anthropic.claude-sonnet-5",
+            additional_request_fields={
+                "thinking": {"type": "enabled", "budget_tokens": 4096}
+            },
+        )
+        agent = Agent(model=bedrock_model)
+        ```
+      </Tab>
+      <Tab label="TypeScript">
+        ```typescript
+        import { Agent, BedrockModel } from '@strands-agents/sdk'
+
+        const bedrockModel = new BedrockModel({
+          modelId: 'global.anthropic.claude-sonnet-5',
+          additionalRequestFields: {
+            thinking: { type: 'enabled', budget_tokens: 4096 },
+          },
+        })
+        const agent = new Agent({ model: bedrockModel })
+        ```
+      </Tab>
+    </Tabs>
+  </Tab>
+</Tabs>
+
+A level a provider does not accept fails at construction rather than mid-request. Some
+providers accept finer levels (for example `minimal` or `xhigh`); Strands harness validates against
+the resolved provider's own set, so use the levels that provider documents.
+
+Reasoning does not apply to a pre-built `Model` instance: configure reasoning on the
+instance itself when you pass one.
+
+## Note on web search and caching
+
+Two model-level features follow from the provider you pick. Native `web_search` works on
+OpenAI, Anthropic, Google, and GPT-5/GPT-6 models on bedrock-mantle; prompt caching is
+configured by Strands harness on Amazon Bedrock and Anthropic direct and is automatic elsewhere. Both are covered where you enable them:
+[web access](../../tools/web-access/) and
+[manage context and caching](../context-and-caching/).
+
+For the full option list, see the
+[configuration reference](../../reference/configuration/).

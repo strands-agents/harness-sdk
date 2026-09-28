@@ -14,7 +14,7 @@ A cross-platform HTTP request tool for making HTTP requests to external APIs fro
 ## Features
 
 - **All HTTP Methods**: Supports GET, POST, PUT, DELETE, PATCH, HEAD, and OPTIONS
-- **Cross-Platform**: Uses native `fetch` API - works in Node.js 20+ and all modern browsers
+- **Cross-Platform**: Uses native `fetch` API - works in Node.js 22+ and all modern browsers
 - **Timeout Support**: Configurable request timeout with default of 30 seconds
 - **Type-Safe**: Full TypeScript support with Zod schema validation
 - **Comprehensive Error Handling**: Network errors, timeouts, and HTTP errors are properly handled

@@ -5,6 +5,7 @@ Each call runs in a fresh shell; state does not persist across calls. These
 spawn ``sh`` and require POSIX, so they are skipped on Windows.
 """
 
+import json
 import sys
 from types import SimpleNamespace
 
@@ -37,11 +38,18 @@ class TestMakeShell:
         result = await sandbox_shell(command='echo "hello sandbox"', tool_context=_tool_context())
         assert "hello sandbox" in result["output"]
         assert result["error"] == ""
+        assert result["exit_code"] == 0
 
     @pytest.mark.asyncio
     async def test_captures_stderr_via_sandbox(self, sandbox_shell):
         result = await sandbox_shell(command='echo "oops" >&2', tool_context=_tool_context())
         assert "oops" in result["error"]
+        assert result["exit_code"] == 0
+
+    @pytest.mark.asyncio
+    async def test_reports_nonzero_exit_code(self, sandbox_shell):
+        result = await sandbox_shell(command="exit 42", tool_context=_tool_context())
+        assert result["exit_code"] == 42
 
     @pytest.mark.asyncio
     async def test_does_not_persist_state_between_calls(self, sandbox_shell):
@@ -53,6 +61,15 @@ class TestMakeShell:
     async def test_respects_timeout(self, sandbox_shell):
         with pytest.raises(SandboxTimeoutError):
             await sandbox_shell(command="sleep 10", tool_context=_tool_context(), timeout=0.1)
+
+    @pytest.mark.asyncio
+    async def test_timeout_error_carries_partial_output_with_success_field_names(self, sandbox_shell):
+        with pytest.raises(SandboxTimeoutError) as exc_info:
+            await sandbox_shell(
+                command="echo partial; echo warn >&2; sleep 5", tool_context=_tool_context(), timeout=0.3
+            )
+        partial = {"output": "partial\n", "error": "warn\n", "exit_code": 124}
+        assert str(exc_info.value) == f"Execution timed out after 0.3 seconds\n{json.dumps(partial)}"
 
     @pytest.mark.asyncio
     async def test_wraps_sandbox_error_as_shell_execution_error(self):
@@ -111,8 +128,7 @@ class TestDeprecatedBashAliases:
 
     Keeping ``tool_name == "bash"`` is what makes the alias backwards compatible:
     consumers key registries, hooks, and defaults lists on the runtime name, so an
-    alias that returned a tool named ``shell`` would still break them (see
-    awsarron/stan#6).
+    alias that returned a tool named ``shell`` would still break them.
     """
 
     def test_bash_alias_warns_and_keeps_its_name(self):

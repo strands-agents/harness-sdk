@@ -23,6 +23,16 @@ export interface HtmlToMarkdownOptions {
   linkReferenceStyle?: 'full' | 'collapsed' | 'shortcut'
 }
 
+const YOUTUBE_HOSTS = new Set(['youtube.com', 'www.youtube.com', 'youtube-nocookie.com', 'www.youtube-nocookie.com'])
+
+function isYouTubeHost(href: string): boolean {
+  try {
+    return YOUTUBE_HOSTS.has(new URL(href).hostname)
+  } catch {
+    return false
+  }
+}
+
 /**
  * Creates a configured TurndownService instance for HTML to Markdown conversion.
  * Returns the service so you can add custom rules before converting.
@@ -40,10 +50,8 @@ export function createTurndownService(options: HtmlToMarkdownOptions = {}): Turn
     linkReferenceStyle: options.linkReferenceStyle ?? 'full',
   })
 
-  // Add GFM plugin for tables, strikethrough, and task lists
   service.use(gfm)
 
-  // Remove screen-reader-only elements (e.g., "Section titled X" links)
   service.addRule('removeSrOnly', {
     filter: (node) => {
       if (node.nodeType !== 1) return false
@@ -54,25 +62,37 @@ export function createTurndownService(options: HtmlToMarkdownOptions = {}): Turn
     replacement: () => '',
   })
 
-  // Remove script tags (JavaScript code shouldn't appear in markdown)
   service.addRule('removeScripts', {
     filter: 'script',
     replacement: () => '',
   })
 
-  // Remove empty anchor links (e.g., <a href="#section"><svg>...</svg></a> anchor icons)
-  // These are typically section anchor links with only icons, no text
+  // Removes lite-youtube and its Play anchor so .md/llms-full.txt don't emit bare '[Play](url)' lines.
+  service.addRule('removeLiteYouTube', {
+    filter: (node) => {
+      if (node.nodeName === 'LITE-YOUTUBE') return true
+      if (node.nodeName === 'A') {
+        const el = node as Element
+        const className = el.getAttribute?.('class') || ''
+        if (className.includes('lty-playbtn')) return true
+        // hostname parsed, not substring-matched, so lookalike hosts don't count
+        const href = el.getAttribute?.('href') || ''
+        const text = el.textContent?.trim() || ''
+        if (text.toLowerCase() === 'play' && isYouTubeHost(href)) return true
+      }
+      return false
+    },
+    replacement: () => '',
+  })
+
   service.addRule('removeAnchorLinks', {
     filter: (node) => {
       if (node.nodeName !== 'A') return false
       const el = node as Element
       const className = el.getAttribute?.('class') || ''
-      // Remove Starlight anchor links (icon-only links next to headings)
       if (className.includes('sl-anchor-link')) return true
-      // Also remove any anchor link that only contains whitespace/icons
       const href = el.getAttribute?.('href') || ''
       if (href.startsWith('#')) {
-        // Check if there's any actual text (not just whitespace)
         const text = el.textContent?.replace(/\s/g, '') || ''
         return text === ''
       }
@@ -81,8 +101,6 @@ export function createTurndownService(options: HtmlToMarkdownOptions = {}): Turn
     replacement: () => '',
   })
 
-  // Remove tab navigation lists (the Python/TypeScript tab buttons)
-  // These render as "- [Python](#tab-panel-xxx)" lists which aren't useful in markdown
   service.addRule('removeTabList', {
     filter: (node) => {
       if (node.nodeName !== 'UL') return false
@@ -92,9 +110,6 @@ export function createTurndownService(options: HtmlToMarkdownOptions = {}): Turn
     replacement: () => '',
   })
 
-  // Wrap tab panels with markers so readers know which language section they're in
-  // Input: <div id="tab-panel-xxx" role="tabpanel" aria-labelledby="tab-xxx">...</div>
-  // The tab label is found in the corresponding <a id="tab-xxx">Label</a>
   service.addRule('tabPanel', {
     filter: (node) => {
       if (node.nodeName !== 'DIV') return false
@@ -105,11 +120,8 @@ export function createTurndownService(options: HtmlToMarkdownOptions = {}): Turn
       const el = node as Element
       const labelledBy = el.getAttribute?.('aria-labelledby') || ''
 
-      // Find the tab label by looking for the corresponding tab link
-      // The tab link has id matching aria-labelledby and contains the label text
       let tabLabel = ''
       if (labelledBy) {
-        // Look for the tab element in the parent starlight-tabs
         const parent = el.parentElement
         if (parent) {
           const tabLink = parent.querySelector?.(`#${labelledBy}`)
@@ -126,9 +138,7 @@ export function createTurndownService(options: HtmlToMarkdownOptions = {}): Turn
     },
   })
 
-  // Standard fenced code block rule (for non-expressive-code blocks)
-  // This must be added BEFORE expressiveCodeBlock so that expressiveCodeBlock takes precedence
-  // (Turndown checks rules in reverse order of addition - last added = first checked)
+  // Added before expressiveCodeBlock; Turndown checks last-added first, so expressiveCodeBlock wins.
   service.addRule('fencedCodeBlock', {
     filter: (node, options) => {
       return (
@@ -151,9 +161,6 @@ export function createTurndownService(options: HtmlToMarkdownOptions = {}): Turn
     },
   })
 
-  // Custom rule for syntax-highlighted code blocks (expressive-code format)
-  // These have: <pre data-language="python"><code><div class="ec-line">...</div></code></pre>
-  // This rule is added AFTER fencedCodeBlock so it takes precedence (Turndown checks last-added first)
   service.addRule('expressiveCodeBlock', {
     filter: (node) => {
       if (node.nodeName !== 'PRE') return false
@@ -164,7 +171,6 @@ export function createTurndownService(options: HtmlToMarkdownOptions = {}): Turn
       const language = node.getAttribute?.('data-language') || ''
       const fence = options.fence || '```'
 
-      // Extract lines from ec-line divs
       const lines: string[] = []
       function walk(el: Element | ChildNode) {
         if (el.nodeType === 1) {
@@ -187,8 +193,6 @@ export function createTurndownService(options: HtmlToMarkdownOptions = {}): Turn
     },
   })
 
-  // Rewrite local links to point to raw.md endpoints
-  // Transforms: <a href="/user-guide/foo/"> -> [text](/user-guide/foo/raw.md)
   service.addRule('rewriteLocalLinks', {
     filter: (node) => {
       if (node.nodeName !== 'A') return false
@@ -217,20 +221,7 @@ export function htmlToMarkdown(html: string, options: HtmlToMarkdownOptions = {}
   return service.turndown(html)
 }
 
-/**
- * Converts HTML to Markdown with custom rules.
- * Use this when you need to add custom transformation rules.
- *
- * @example
- * ```ts
- * const markdown = htmlToMarkdownWithRules(html, (service) => {
- *   service.addRule('customDiv', {
- *     filter: (node) => node.nodeName === 'DIV' && node.classList.contains('note'),
- *     replacement: (content) => `:::note\n${content}\n:::\n`
- *   })
- * })
- * ```
- */
+/** Convert HTML to Markdown with additional Turndown rules configured via a callback. */
 export function htmlToMarkdownWithRules(
   html: string,
   configureService: (service: TurndownService) => void,

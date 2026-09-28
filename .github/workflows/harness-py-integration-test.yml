@@ -1,0 +1,127 @@
+name: "Harness Python: Integration Test"
+
+# Live-model integration tests for harness-py (`strands-harness`), against
+# Bedrock via OIDC. Mirrors the SDK's python-integration-test.yml security
+# model: pull_request_target runs in the base-repo context, so an
+# authorization-check routes untrusted PRs to a manual-approval environment
+# before any credentialed job runs, and the test job checks out the PR head.
+#
+# Reusable too: release-harness-py.yml calls it with an explicit `ref`; the
+# authorization-check is skipped on that path because the caller is
+# workflow_dispatch-gated (repo write access). See the SDK workflow for the full
+# trust-invariant reasoning this follows.
+
+on:
+  pull_request_target:
+    branches: [main]
+    paths:
+      - 'harness-py/**'
+      - '.github/workflows/harness-py-*'
+  merge_group:
+    types: [checks_requested]
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+
+concurrency:
+  group: harness-py-integration-test-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ inputs.ref == '' && github.event_name == 'pull_request_target' }}
+
+jobs:
+  validate-call-ref:
+    name: Validate workflow_call ref
+    if: inputs.ref != ''
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions:
+      contents: read
+    steps:
+      - name: Reject untrusted-shaped refs
+        # Reject ref shapes that could check out untrusted code: `refs/pull/*`
+        # (fork-PR merge refs) and `owner:branch` (cross-repo refs); plain
+        # branches and SHAs pass.
+        env:
+          REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          case "$REF" in
+            refs/pull/*|*:*)
+              echo "::error::workflow_call ref '$REF' looks like a fork PR or cross-repo ref."
+              exit 1
+              ;;
+          esac
+          echo "ref '$REF' passed shape check."
+
+  authorization-check:
+    name: Check access
+    needs: [validate-call-ref]
+    if: |
+      always() &&
+      (needs.validate-call-ref.result == 'success' || needs.validate-call-ref.result == 'skipped')
+    permissions:
+      contents: read
+    runs-on: strands-agents_ubuntu-latest_4-core
+    outputs:
+      approval-env: ${{ steps.auth.outputs.approval-env }}
+    steps:
+      - name: Check Authorization
+        id: auth
+        uses: strands-agents/devtools/authorization-check@main
+        with:
+          # Skip on merge_group (gated by branch protection) and on workflow_call
+          # (the caller is workflow_dispatch-gated). Inside a reusable workflow
+          # github.event_name reports the caller's event, so key off inputs.ref,
+          # which only a workflow_call caller supplies.
+          skip-check: ${{ github.event_name == 'merge_group' || inputs.ref != '' }}
+          username: ${{ github.event.pull_request.user.login || 'invalid' }}
+          allowed-roles: 'maintain,triage,write,admin'
+
+  integration-test:
+    name: Run integration tests - Python ${{ matrix.python-version }}
+    runs-on: strands-agents_ubuntu-latest_4-core
+    needs: authorization-check
+    if: always() && needs.authorization-check.result == 'success'
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.12']
+    environment:
+      name: ${{ needs.authorization-check.outputs.approval-env }}
+      deployment: false
+    permissions:
+      id-token: write
+      pull-requests: read
+      contents: read
+    defaults:
+      run:
+        working-directory: harness-py
+    steps:
+      - name: Configure Credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.STRANDS_INTEG_TEST_ROLE }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+
+      - name: Checkout head commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.event.pull_request.head.sha }}
+          persist-credentials: false
+          allow-unsafe-pr-checkout: true  # opt back into fork-PR checkout, blocked by default in checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package + integ deps
+        run: pip install --no-cache-dir -e '.[dev,integ]'
+
+      - name: Run integration tests
+        env:
+          AWS_REGION: us-east-1
+        # --reruns retries the occasional non-deterministic LLM miss; a genuinely
+        # broken test still fails after the reruns.
+        run: pytest tests_integ --reruns 2 --reruns-delay 3

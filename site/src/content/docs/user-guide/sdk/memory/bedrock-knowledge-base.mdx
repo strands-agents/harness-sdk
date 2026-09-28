@@ -1,0 +1,354 @@
+---
+title: Bedrock Knowledge Base Store
+description: "Back agent memory with Amazon Bedrock Knowledge Bases: semantic search over a managed vector store and document ingestion for CUSTOM and S3 data sources."
+tags: [memory, bedrock, aws]
+sourceLinks:
+  - path: strands-py/src/strands/vended_memory_stores/bedrock_knowledge_base/store.py
+  - path: strands-ts/src/vended-memory-stores/bedrock-knowledge-base/store.ts
+addedDate: 2026-06-17
+sidebar:
+  label: "Bedrock Knowledge Base"
+---
+
+`BedrockKnowledgeBaseStore` is a [`MemoryStore`](./managing-memory#stores) backed by [Amazon Bedrock Knowledge Bases](https://docs.aws.amazon.com/bedrock/latest/userguide/knowledge-base.html).
+
+Connect the store to a knowledge base you have already set up. Configure your store with its knowledge base ID and data source (see [Data Source Types and Writability](#data-source-types-and-writability)). A store with only a knowledge base ID is read-only. The store reaches Bedrock with the standard AWS credential chain, the same as the [Amazon Bedrock model provider](../model-providers/amazon-bedrock).
+
+Both managed and vector knowledge bases are supported. The store detects which type it is connected to and shapes its Retrieve request to match, so the same configuration works for either (see [Required IAM Permissions](#required-iam-permissions) for the permission this detection needs). Managed knowledge bases can have ACL-aware data sources; see [Access control lists](#access-control-lists) to configure per-document access.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.memory import MemoryManager
+from strands.vended_memory_stores import BedrockKnowledgeBaseStore
+
+store = BedrockKnowledgeBaseStore(
+    name="docs",
+    description="Company documentation and policies.",
+    config={"knowledge_base_id": "KB123"},
+)
+
+agent = Agent(memory_manager=MemoryManager(stores=[store]))
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/memory/bedrock-knowledge-base_imports.ts:read_only_imports"
+
+--8<-- "user-guide/sdk/memory/bedrock-knowledge-base.ts:read_only"
+```
+</Tab>
+</Tabs>
+
+To enable writing memories through the [`add_memory` tool](./managing-memory#memory-tools) or [automatic extraction](./managing-memory#automatic-extraction), mark the store writable and point it at a data source that accepts ingestion:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands.vended_memory_stores import BedrockKnowledgeBaseStore
+
+store = BedrockKnowledgeBaseStore(
+    name="preferences",
+    description="User preferences and stable facts.",
+    writable=True,
+    config={
+        "knowledge_base_id": "KB123",
+        "data_source_type": "CUSTOM",
+        "data_source_id": "DS456",
+    },
+)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/memory/bedrock-knowledge-base_imports.ts:writable_custom_imports"
+
+--8<-- "user-guide/sdk/memory/bedrock-knowledge-base.ts:writable_custom"
+```
+</Tab>
+</Tabs>
+
+## Configuration
+
+### Scope and namespaces
+
+`scope` isolates documents within a single knowledge base. It is stamped on every write (under <Syntax py="scope_metadata_key" ts="scopeMetadataKey" />, default `'namespace'`) and applied as a metadata filter on search. Unlike `name`, scope is not a routing identity, so it never affects which store the `MemoryManager` targets. For per-tenant isolation, construct one store per scope; since they share a connection, this is cheap.
+
+### Store config
+
+The outer `BedrockKnowledgeBaseStoreConfig` carries the per-store identity and behavior, plus the [shared `MemoryStore` fields](./managing-memory#stores) (`name`, `description`, <Syntax py="max_search_results" ts="maxSearchResults" />, `writable`, `extraction`):
+
+| Field | Purpose |
+|-------|---------|
+| `config` | The knowledge base connection (see below). Reuse one across stores that differ only by `scope`. |
+| `scope` | Logical namespace isolating documents. Applied as a metadata filter on search and stamped on writes. |
+| `filter` | Explicit retrieval filter; overrides the auto-generated scope filter on search. |
+| <Syntax py="access_control_list" ts="accessControlList" /> | Document-level ACL entries stamped on every write. Required when the data source has ACL awareness enabled. See [Access control lists](#access-control-lists). |
+| <Syntax py="min_score" ts="minScore" /> | Score floor a result must meet. Use for similarity-scored knowledge bases, where a higher score is a better match. See [Filtering by score](#filtering-by-score). |
+| <Syntax py="max_score" ts="maxScore" /> | Score ceiling a result must not exceed. Use for distance-scored knowledge bases, where a lower score is a better match. See [Filtering by score](#filtering-by-score). |
+
+### Connection config
+
+The inner `BedrockKnowledgeBaseConfig` is the reusable connection: which knowledge base, which data source, and the clients used to reach them:
+
+| Field | Purpose |
+|-------|---------|
+| <Syntax py="knowledge_base_id" ts="knowledgeBaseId" /> | The Bedrock Knowledge Base to query and ingest into. Required. |
+| <Syntax py="knowledge_base_type" ts="knowledgeBaseType" /> | The knowledge base type (`'MANAGED'`, `'VECTOR'`, `'KENDRA'`, or `'SQL'`). When provided, skips the `GetKnowledgeBase` call during initialization. When omitted, detected automatically. |
+| <Syntax py="data_source_type" ts="dataSourceType" /> | `'CUSTOM'`, `'S3'`, or `'OTHER'`. Governs whether and how the store can be written to. |
+| <Syntax py="data_source_id" ts="dataSourceId" /> | The data source to ingest into. Required for writes. |
+| `s3` | S3 ingestion settings (`bucket`, `prefix`). Required when the data source type is `'S3'`. |
+| <Syntax py="scope_metadata_key" ts="scopeMetadataKey" /> | Metadata attribute key used for scope filtering. Defaults to `'namespace'`. |
+| <Syntax py="runtime_client / agent_client" ts="runtimeClient / agentClient" /> | Pre-constructed AWS clients. When omitted, default clients are constructed using the standard credential chain (the agent client lazily, on first write). |
+| <Syntax py="region_name" ts="regionName" /> | AWS region hint for the default clients the store constructs. When omitted, boto3 resolves the region itself. Ignored for any client you inject explicitly (`runtime_client` / `agent_client` / `s3.client`). |
+
+Because the connection is a separate object, you build it once and vary only `name` and `scope` per store. This is the cheap way to give each tenant an isolated namespace over a single knowledge base:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands.vended_memory_stores import BedrockKnowledgeBaseStore
+
+# Build the connection once, vary only name and scope per store.
+connection = {
+    "knowledge_base_id": "KB123",
+    "data_source_type": "CUSTOM",
+    "data_source_id": "DS456",
+}
+
+alice = BedrockKnowledgeBaseStore(name="alice", writable=True, scope="user-alice", config=connection)
+bob = BedrockKnowledgeBaseStore(name="bob", writable=True, scope="user-bob", config=connection)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/memory/bedrock-knowledge-base_imports.ts:scoped_stores_imports"
+
+--8<-- "user-guide/sdk/memory/bedrock-knowledge-base.ts:scoped_stores"
+```
+</Tab>
+</Tabs>
+
+## Data Source Types and Writability
+
+Only data sources that accept direct ingestion can be written to. A store is writable only when you opt in *and* the backend supports ingestion: that is, the store is marked writable and the data source type is `'CUSTOM'` or `'S3'`.
+
+| Data source type | Writable | How writes work |
+|------------------|----------|-----------------|
+| `CUSTOM` | Yes | Ingests the content as inline text, with scope and metadata attached as inline attributes. |
+| `S3` | Yes | Uploads the content to the configured `s3` bucket and ingests that object. Requires an `s3` config. |
+| `OTHER` | No | External backends such as Confluence, SharePoint, Salesforce, Web, or SQL/Redshift that sync from their own source or are query-only. Read-only. |
+| omitted | No | Read-only. |
+
+A writable `CUSTOM` store needs a data source ID. A writable `S3` store needs a data source ID and an `s3` config:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands.vended_memory_stores import BedrockKnowledgeBaseStore
+
+store = BedrockKnowledgeBaseStore(
+    name="preferences",
+    writable=True,
+    config={
+        "knowledge_base_id": "KB123",
+        "data_source_type": "S3",
+        "data_source_id": "DS789",
+        "s3": {"bucket": "my-agent-memories", "prefix": "memories/"},
+    },
+)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/memory/bedrock-knowledge-base_imports.ts:s3_store_imports"
+
+--8<-- "user-guide/sdk/memory/bedrock-knowledge-base.ts:s3_store"
+```
+</Tab>
+</Tabs>
+
+### How S3 writes work
+
+An S3 document can't carry metadata inline, so when a scope or metadata are present a single write produces two objects: the content as a `.txt` object, and a `<object-key>.metadata.json` sidecar beside it (Bedrock's convention for attaching attributes to an S3 object). The uploads are not transactional, so if a later step fails, any already-uploaded objects remain in the bucket un-ingested, where a future sync may pick them up or you can clean them up out of band.
+
+A write ingests its object directly, regardless of where the data source is configured to scan. A later data-source sync reconciles the index to the scanned location, so a memory written outside that location is treated as deleted and removed. If you run periodic syncs against this data source, upload to the bucket and prefix it scans (the `s3` config) so directly-ingested memories survive them.
+
+## Search and Ingestion
+
+`search` runs the Bedrock Retrieve API and returns entries ordered by relevance, while `add` ingests new content and returns its document id:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands.memory.types import SearchOptions
+from strands.vended_memory_stores import BedrockKnowledgeBaseStore
+
+store = BedrockKnowledgeBaseStore(
+    name="preferences",
+    writable=True,
+    config={
+        "knowledge_base_id": "KB123",
+        "data_source_type": "CUSTOM",
+        "data_source_id": "DS456",
+    },
+)
+
+results = await store.search("what are my preferences?", SearchOptions(max_search_results=5))
+for entry in results:
+    print(entry.content, entry.metadata.get("_relevance_score"))
+
+# add returns the new document's id (a UUID for CUSTOM, an s3:// URI for S3)
+result = await store.add("User prefers aisle seats", {"category": "travel"})
+print(result.document_id)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/memory/bedrock-knowledge-base_imports.ts:search_imports"
+
+--8<-- "user-guide/sdk/memory/bedrock-knowledge-base.ts:search"
+```
+</Tab>
+</Tabs>
+
+The search result cap defaults to `10` when neither the call nor the store sets one. This `10` default applies only to direct calls on the store. Reached through a `MemoryManager` tool or its search method, the manager supplies its own per-call cap instead; set <Syntax py="max_search_results" ts="maxSearchResults" /> on the store to pin a value across both paths.
+
+Each entry's `metadata` carries the document's own attributes plus two reserved synthetic keys: <Syntax py="_relevance_score" ts="_relevanceScore" /> (the Bedrock relevance score) and <Syntax py="_source_location" ts="_sourceLocation" /> (the retrieval location). When `scope` is set, search filters to that namespace automatically; an explicit `filter` overrides the scope-derived one. The asymmetry is deliberate: an explicit `filter` affects search only, while writes always scope by `scope`.
+
+The document id from `add` is the generated UUID for a `CUSTOM` document, or the `s3://` URI of the uploaded object for `S3`. Writes require a data source ID (and an `s3` config for S3 data sources); a write against a missing or read-only configuration raises.
+
+Ingestion is eventually consistent: a successful write does not mean the content is immediately searchable.
+
+### Filtering by score
+
+Set <Syntax py="min_score" ts="minScore" /> or <Syntax py="max_score" ts="maxScore" /> on the store to enforce score limits on returned results. For similarity-scored knowledge bases use <Syntax py="min_score" ts="minScore" /> to keep results at or above the floor. For distance-scored knowledge bases use <Syntax py="max_score" ts="maxScore" /> to keep results at or below the ceiling.
+
+The score metric is a property of the vector store behind the knowledge base. Filtering is applied after retrieval, so a search may therefore return fewer entries than <Syntax py="max_search_results" ts="maxSearchResults" />, or none at all when nothing clears the bound. A result without a score is retained.
+
+## Extraction
+
+Enable [automatic extraction](./managing-memory#automatic-extraction) on a writable store to capture memories from the conversation. By default it runs every 5 turns, distilling facts client-side with a `ModelExtractor` that uses the agent's own model:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands.vended_memory_stores import BedrockKnowledgeBaseStore
+
+store = BedrockKnowledgeBaseStore(
+    name="preferences",
+    writable=True,
+    extraction=True,
+    config={
+        "knowledge_base_id": "KB123",
+        "data_source_type": "CUSTOM",
+        "data_source_id": "DS456",
+    },
+)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/memory/bedrock-knowledge-base_imports.ts:extraction_imports"
+
+--8<-- "user-guide/sdk/memory/bedrock-knowledge-base.ts:extraction"
+```
+</Tab>
+</Tabs>
+
+To change the cadence, swap the extractor, or extract server-side, see [Automatic Extraction](./managing-memory#automatic-extraction) on the Memory page.
+
+## Required IAM Permissions
+
+The credentials the store uses must allow the Bedrock operations it calls, plus S3 writes when using an S3 data source:
+
+- `bedrock:Retrieve` - for search.
+- `bedrock:GetKnowledgeBase` - called once at initialization to detect the knowledge base type, then memoized. Not required if you provide <Syntax py="knowledge_base_type" ts="knowledgeBaseType" /> in the config.
+- `bedrock:IngestKnowledgeBaseDocuments` - for writes (`CUSTOM` and `S3`).
+- `s3:PutObject` - for writes to an `S3` data source, on the configured bucket and prefix.
+
+Here is a sample IAM policy for a writable store backed by a `CUSTOM` data source:
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "bedrock:Retrieve",
+                "bedrock:GetKnowledgeBase",
+                "bedrock:IngestKnowledgeBaseDocuments"
+            ],
+            "Resource": "arn:aws:bedrock:*:*:knowledge-base/KB123"
+        }
+    ]
+}
+```
+
+For an `S3` data source, add `s3:PutObject` on the bucket and prefix the store uploads to:
+
+```json
+{
+    "Effect": "Allow",
+    "Action": "s3:PutObject",
+    "Resource": "arn:aws:s3:::my-agent-memories/memories/*"
+}
+```
+
+## Access Control Lists
+
+Managed knowledge base data sources can have [ACL awareness](https://docs.aws.amazon.com/bedrock/latest/userguide/kb-managed-acl.html) enabled, which requires every ingested document to carry an access control list specifying who can retrieve it. Set <Syntax py="access_control_list" ts="accessControlList" /> on the store to supply entries for every write:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands.vended_memory_stores import BedrockKnowledgeBaseStore
+
+store = BedrockKnowledgeBaseStore(
+    name="policies",
+    writable=True,
+    scope="hr",
+    access_control_list=[
+        {"access": "ALLOW", "name": "alice@example.com", "type": "USER"},
+    ],
+    config={
+        "knowledge_base_id": "KB123",
+        "data_source_type": "CUSTOM",
+        "data_source_id": "DS456",
+    },
+)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/memory/bedrock-knowledge-base_imports.ts:acl_store_imports"
+
+--8<-- "user-guide/sdk/memory/bedrock-knowledge-base.ts:acl_store"
+```
+</Tab>
+</Tabs>
+
+Each entry specifies `access` (`'ALLOW'` or `'DENY'`), `name` (the user's email), and `type` (`'USER'`). Deny overrides allow. The entries apply to both `CUSTOM` and `S3` writes. For the `CUSTOM` path, an inline ACL requires at least one metadata attribute (a `scope` satisfies this); if none is present the store raises with guidance.
+
+If the data source has ACL awareness enabled and no <Syntax py="access_control_list" ts="accessControlList" /> is set, the store surfaces a clear error pointing at the field.
+
+## Related
+
+- [Memory](./overview) - the `MemoryManager` concept this store plugs into, including the tools, extraction, and injection it enables.
+- [Amazon Bedrock](../model-providers/amazon-bedrock) - credential and region setup shared with the Bedrock model provider.

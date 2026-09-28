@@ -1,7 +1,9 @@
-import type { Storage } from './storage.js'
+import type { SearchStrategy } from './search/types.js'
+import type { Storage, StorageSearchResult } from './storage.js'
 
 import { StorageError } from '../errors.js'
 import { namespace, normalizeKey, normalizePrefix } from './storage.js'
+import { KeywordSearchStrategy } from './search/keyword.js'
 
 /** Configuration for {@link S3Storage}. */
 export interface S3StorageConfig {
@@ -11,6 +13,8 @@ export interface S3StorageConfig {
   region?: string
   /** Pre-configured S3 client. Cannot be combined with `region`. */
   s3Client?: import('@aws-sdk/client-s3').S3Client
+  /** Optional search strategy. When set, `write()` indexes entries and `search()` delegates to the strategy. */
+  searchStrategy?: SearchStrategy<S3Storage>
 }
 
 const S3_PAGE_SIZE = 1000
@@ -34,6 +38,7 @@ export class S3Storage implements Storage {
   private readonly _bucket: string
   private readonly _prefix: string
   private readonly _region: string | undefined
+  private readonly _searchStrategy: SearchStrategy<S3Storage> | undefined
   private _client: import('@aws-sdk/client-s3').S3Client | undefined
 
   /**
@@ -48,6 +53,7 @@ export class S3Storage implements Storage {
     this._bucket = bucket
     this._prefix = config?.prefix ? config.prefix.split('/').filter(Boolean).join('/') + '/' : ''
     this._region = config?.region
+    this._searchStrategy = config?.searchStrategy
     this._client = config?.s3Client
   }
 
@@ -66,6 +72,9 @@ export class S3Storage implements Storage {
       await client.send(new PutObjectCommand({ Bucket: this._bucket, Key: this._objectKey(normalized), Body: data }))
     } catch (error: unknown) {
       throw new StorageError(`Failed to write '${normalized}' to S3 bucket '${this._bucket}'`, { cause: error })
+    }
+    if (this._searchStrategy) {
+      await this._searchStrategy.index?.(this, normalized, data)
     }
   }
 
@@ -145,6 +154,19 @@ export class S3Storage implements Storage {
       throw new StorageError(`Failed to list S3 bucket '${this._bucket}' under '${normalized}'`, { cause: error })
     }
     return keys.sort()
+  }
+
+  /**
+   * Searches stored content by keyword token-overlap scoring.
+   *
+   * @param query - Natural-language search query
+   * @returns All matches with relevance scores, ranked best-first
+   */
+  async search(query: string): Promise<StorageSearchResult[]> {
+    if (this._searchStrategy) {
+      return this._searchStrategy.search(this, query)
+    }
+    return KeywordSearchStrategy.search(this, query)
   }
 
   private async _getClient(): Promise<import('@aws-sdk/client-s3').S3Client> {

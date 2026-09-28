@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isModelStreamEvent } from '../streaming.js'
+import { totalPromptTokens, isModelStreamEvent } from '../streaming.js'
 import type { ModelStreamEvent } from '../streaming.js'
 
 describe('isModelStreamEvent', () => {
@@ -55,5 +55,42 @@ describe('isModelStreamEvent', () => {
   it('returns false for content block types', () => {
     const event = { type: 'textBlock', text: 'hello' }
     expect(isModelStreamEvent(event)).toBe(false)
+  })
+})
+
+// Regression for #3546: cache tokens must count toward the total prompt under both provider conventions.
+describe('totalPromptTokens', () => {
+  it('counts cache tokens on disjoint providers where they add to inputTokens', () => {
+    expect(totalPromptTokens({ inputTokens: 10, outputTokens: 4, totalTokens: 5862, cacheReadInputTokens: 5848 })).toBe(
+      5858
+    )
+  })
+
+  it('does not double-count cache tokens on subset providers where they sit inside inputTokens', () => {
+    expect(
+      totalPromptTokens({ inputTokens: 12936, outputTokens: 10, totalTokens: 12946, cacheReadInputTokens: 6457 })
+    ).toBe(12936)
+  })
+
+  it('counts the cache read from an Anthropic-direct payload, whose totalTokens includes the cache', () => {
+    expect(totalPromptTokens({ inputTokens: 10, outputTokens: 4, totalTokens: 5862, cacheReadInputTokens: 5848 })).toBe(
+      5858
+    )
+  })
+
+  it('adds cache reads and writes on disjoint providers', () => {
+    expect(
+      totalPromptTokens({
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 100,
+        cacheReadInputTokens: 60,
+        cacheWriteInputTokens: 25,
+      })
+    ).toBe(95)
+  })
+
+  it('collapses to inputTokens when there are no cache tokens', () => {
+    expect(totalPromptTokens({ inputTokens: 100, outputTokens: 50, totalTokens: 150 })).toBe(100)
   })
 })

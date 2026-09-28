@@ -3,11 +3,13 @@ import OpenAI from 'openai'
 import { isNode } from '../../../__fixtures__/environment.js'
 import { OpenAIModel } from '../index.js'
 
-vi.mock('openai', () => {
+vi.mock('openai', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('openai')>()
   const mockConstructor = vi.fn(function (this: unknown) {
     return {}
   })
   return {
+    ...actual,
     default: mockConstructor,
   }
 })
@@ -196,6 +198,7 @@ describe('OpenAIModel bedrockMantleConfig', () => {
       ['google.gemma-4-26b-a4b', '/openai/v1'],
       ['google.gemma-4-e2b', '/openai/v1'],
       ['openai.gpt-5.6-terra', '/openai/v1'],
+      ['openai.gpt-6-astra', '/openai/v1'],
       // Gemma 3 is served from /v1 while Gemma 4 is not, so `google.` cannot be a prefix.
       ['google.gemma-3-27b-it', '/v1'],
       ['google.gemma-3-4b-it', '/v1'],
@@ -220,6 +223,7 @@ describe('OpenAIModel bedrockMantleConfig', () => {
       // Point releases within a verified line, beyond the verified catalog.
       ['xai.grok-4.9', '/openai/v1'],
       ['openai.gpt-5.9-unreleased', '/openai/v1'],
+      ['openai.gpt-6-nova', '/openai/v1'],
       // New lines the prefixes deliberately do not cover.
       ['xai.grok-5', '/v1'],
       ['xai.grok-5-preview', '/v1'],

@@ -4,11 +4,6 @@
  * Implements {@link ModelRetryStrategy.computeRetryDecision} to retry failed model
  * calls classified by {@link isRetryable}, bounded by `maxAttempts`, with
  * delays computed by the configured {@link BackoffStrategy}.
- *
- * The attempt counter lives on {@link AfterModelCallEvent.attemptCount},
- * maintained by the agent loop. This strategy only keeps per-turn backoff
- * state (first-failure timestamp, last delay), which is cleared in
- * {@link onFirstModelAttempt}.
  */
 
 import type { AfterModelCallEvent } from '../hooks/events.js'
@@ -46,9 +41,9 @@ export interface DefaultModelRetryStrategyOptions {
  * and override {@link isRetryable} to expand or narrow that set without
  * reimplementing the rest of the retry policy.
  *
- * State is per-turn: backoff timing state resets in {@link onFirstModelAttempt},
- * which the base class calls when `event.attemptCount === 1`. The attempt
- * counter itself is owned by the agent loop and read off
+ * State is per retry budget: timing state resets in {@link onFirstModelAttempt}, which the base class
+ * calls when `event.attemptCount === 1`. A new turn and a router candidate switch each start a fresh
+ * budget. The attempt counter itself is owned by the agent loop and read from
  * {@link AfterModelCallEvent.attemptCount}.
  *
  * Hook precedence: {@link AfterModelCallEvent} fires hooks in reverse registration

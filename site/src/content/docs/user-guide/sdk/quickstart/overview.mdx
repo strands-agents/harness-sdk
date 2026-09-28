@@ -1,0 +1,222 @@
+---
+title: Get started
+description: "Documentation for the Strands Agents SDK. Learn to build, deploy, and scale AI agents with tools, multi-agent patterns, and any model provider."
+sidebar:
+  label: "Getting Started"
+redirectFrom:
+  - docs
+  - docs/user-guide/quickstart
+tags: [quickstart]
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+The Strands Agents SDK empowers developers to quickly build, manage, evaluate and deploy AI-powered agents. These quick start guides get you set up and running a simple agent in less than 20 minutes.
+
+<CardGrid>
+<LinkCard
+  title="Python Quickstart"
+  description="Create your first Python Strands agent with full feature access!"
+  href="../python/"
+/>
+<LinkCard
+  title="TypeScript Quickstart"
+  description="Create your first TypeScript Strands agent!"
+  href="../typescript/"
+/>
+</CardGrid>
+---
+
+## A library, not a platform
+
+Strands runs inside your own process. Creating an agent is constructing an object
+in Python or Node.js: there is no hosted control plane, scheduler, or database to
+stand up first. Any [model provider](../model-providers/) works. Amazon
+Bedrock is the default, and swapping in Anthropic, OpenAI, Gemini, or Ollama is a
+one-line change, so an AWS account is only required if you keep the default.
+Adding an agent to an existing FastAPI, Express, or Next.js app is a dependency
+and a few lines of code, not new infrastructure.
+
+Here is the whole of it: one file that answers HTTP requests with a Strands
+agent. The route handler constructs an agent and calls it. The only service it
+reaches is the model provider.
+
+<Tabs>
+<Tab label="Python">
+```python
+from fastapi import FastAPI
+from pydantic import BaseModel
+from strands import Agent
+
+app = FastAPI()
+
+
+class ChatRequest(BaseModel):
+    prompt: str
+
+
+@app.post("/chat")
+def chat(request: ChatRequest) -> dict[str, str]:
+    # The agent lives in this process: no scheduler or database to reach.
+    agent = Agent()
+    result = agent(request.prompt)
+    return {"reply": str(result)}
+```
+
+Run it with `uvicorn main:app`.
+</Tab>
+<Tab label="TypeScript">
+```typescript
+--8<-- "user-guide/sdk/quickstart/overview_imports.ts:chat_server_imports"
+
+--8<-- "user-guide/sdk/quickstart/overview.ts:chat_server"
+```
+
+Run it with `tsx server.ts`.
+</Tab>
+</Tabs>
+
+## Use any model provider
+
+The model is one object you hand to the agent. Amazon Bedrock is the default, and
+every other provider is a one-line swap; the rest of your agent code does not change.
+
+<Tabs>
+<Tab label="Python">
+<Tabs>
+<Tab label="Amazon Bedrock">
+```python
+from strands import Agent
+
+# Amazon Bedrock is the default, so no model object is required.
+agent = Agent()
+print(agent("What can you help me build?"))
+```
+</Tab>
+<Tab label="Anthropic">
+```python
+from strands import Agent
+from strands.models.anthropic import AnthropicModel
+
+agent = Agent(model=AnthropicModel(client_args={"api_key": "<KEY>"}, model_id="claude-sonnet-5"))
+print(agent("What can you help me build?"))
+```
+</Tab>
+<Tab label="OpenAI">
+```python
+from strands import Agent
+from strands.models.openai import OpenAIModel
+
+agent = Agent(model=OpenAIModel(client_args={"api_key": "<KEY>"}, model_id="gpt-5.4"))
+print(agent("What can you help me build?"))
+```
+</Tab>
+<Tab label="Google">
+```python
+from strands import Agent
+from strands.models.gemini import GeminiModel
+
+agent = Agent(model=GeminiModel(client_args={"api_key": "<KEY>"}, model_id="gemini-2.5-flash"))
+print(agent("What can you help me build?"))
+```
+</Tab>
+<Tab label="Ollama">
+```python
+from strands import Agent
+from strands.models.ollama import OllamaModel
+
+agent = Agent(model=OllamaModel(host="http://localhost:11434", model_id="llama3.1"))
+print(agent("What can you help me build?"))
+```
+</Tab>
+</Tabs>
+</Tab>
+<Tab label="TypeScript">
+<Tabs>
+<Tab label="Amazon Bedrock">
+```typescript
+--8<-- "user-guide/sdk/quickstart/overview_imports.ts:provider_bedrock_imports"
+
+--8<-- "user-guide/sdk/quickstart/overview.ts:provider_bedrock"
+```
+</Tab>
+<Tab label="Anthropic">
+```typescript
+--8<-- "user-guide/sdk/quickstart/overview_imports.ts:provider_anthropic_imports"
+
+--8<-- "user-guide/sdk/quickstart/overview.ts:provider_anthropic"
+```
+</Tab>
+<Tab label="OpenAI">
+```typescript
+--8<-- "user-guide/sdk/quickstart/overview_imports.ts:provider_openai_imports"
+
+--8<-- "user-guide/sdk/quickstart/overview.ts:provider_openai"
+```
+</Tab>
+<Tab label="Google">
+```typescript
+--8<-- "user-guide/sdk/quickstart/overview_imports.ts:provider_google_imports"
+
+--8<-- "user-guide/sdk/quickstart/overview.ts:provider_google"
+```
+</Tab>
+</Tabs>
+
+Ollama runs in the Python SDK only.
+</Tab>
+</Tabs>
+
+See [model providers](../model-providers/) for the full list and per-provider configuration.
+
+## Strands harness or the Strands Harness SDK?
+
+Strands gives you two starting points, and you can move between them without a rewrite.
+
+| If you want to... | Start with | Why |
+|---|---|---|
+| Get a complete agent harness with tested defaults, in one import | [Strands harness](../../harness/) | Model, tools, memory, context management, and a production loop are already wired together. |
+| Build the agent yourself and customize every part of the loop | [SDK](../) | You define the tools, model, memory, and control flow, and the Strands Harness SDK runs the loop. |
+| Start on Strands harness and drop down for more control later | [Compose with the Strands Harness SDK](../../harness/composing-with-sdk/) | Strands harness is built on the Strands Harness SDK, so you can change any piece of it without a rewrite. |
+
+Weighing Strands against other frameworks or a hand-written loop instead? See [choosing an agent foundation](../../migrate/choosing-an-agent-foundation/).
+
+## Language support
+
+Strands Agents SDK is available in both Python and TypeScript.
+
+### Feature availability
+
+The table below compares feature availability between the Python and TypeScript SDKs.
+
+| Category | Feature | Python | TypeScript |
+|----------|---------|:------:|:----------:|
+| **Core** | [Agent creation and invocation](../agents/agent-loop/) | ✅ | ✅ |
+| | [Streaming responses](../streaming/) | ✅ | ✅ |
+| | [Structured output](../agents/structured-output/) | ✅ | ✅ |
+| **Model providers** | [Amazon Bedrock](../model-providers/amazon-bedrock/) | ✅ | ✅ |
+| | [OpenAI](../model-providers/openai/) | ✅ | ✅ |
+| | [OpenAI Responses API](../model-providers/openai-responses/) | ✅ | ✅ |
+| | [Anthropic](../model-providers/anthropic/) | ✅ | ✅ |
+| | [Google](../model-providers/google/) | ✅ | ✅ |
+| | [Ollama](../model-providers/ollama/) | ✅ | ❌ |
+| | [LiteLLM](../model-providers/litellm/) | ✅ | ❌ |
+| | [Custom providers](../model-providers/custom_model_provider/) | ✅ | ✅ |
+| | [Additional providers](../model-providers/) | 5+ | 1+ |
+| **Tools** | [Custom function tools](../tools/custom-tools/) | ✅ | ✅ |
+| | [MCP (Model Context Protocol)](../tools/mcp-tools/) | ✅ | ✅ |
+| | [Built-in tools](../tools/community-tools-package/) | 30+ via community package | 4 built-in |
+| **Conversation** | [Null manager](../agents/conversation-management/) | ✅ | ✅ |
+| | [Sliding window manager](../agents/conversation-management/) | ✅ | ✅ |
+| | [Summarizing manager](../agents/conversation-management/) | ✅ | ✅ |
+| **Hooks** | [Lifecycle hooks](../agents/hooks/) | ✅ | ✅ |
+| | [Custom hook providers](../agents/hooks/) | ✅ | ✅ |
+| **Multi-agent** | [Swarms](../multi-agent/swarm/) | ✅ | ✅ |
+| | [Graphs](../multi-agent/graph/) | ✅ | ✅ |
+| | [Workflows](../multi-agent/workflow/) | ✅ | ✅ |
+| | [Agents as tools](../multi-agent/agents-as-tools/) | ✅ | ✅ |
+| | [Agent-to-Agent (A2A)](../multi-agent/agent-to-agent/) | ✅ | ✅ |
+| **Session management** | [File, S3, repository managers](../agents/session-management/) | ✅ | ✅ |
+| **Observability** | [OpenTelemetry integration](../observability-evaluation/observability/) | ✅ | ✅ |
+| **Steering** | [Agent steering](../agents/interventions/steering/) | ✅ | ✅ |
+| **Experimental** | [Bidirectional streaming](../bidirectional-streaming/quickstart/) | ✅ | ❌ |

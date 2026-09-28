@@ -69,28 +69,31 @@ describe('Sidebar Generation from navigation.yml', () => {
       .filter((item): item is StarlightSidebarItem & { label: string } => 'label' in item)
       .map((item) => item.label)
 
-    expect(topLevelLabels).toContain('Docs')
-    expect(topLevelLabels).toContain('Examples')
+    // Examples is a standalone navbar entry (/examples/), not a docs sidebar section.
+    expect(topLevelLabels).toContain('Harness')
+    expect(topLevelLabels).toContain('Harness SDK')
+    expect(topLevelLabels).toContain('Shell')
+    expect(topLevelLabels).toContain('Evals SDK')
     expect(topLevelLabels).toContain('Community')
   })
 
   it('should not set collapsed on groups unless explicitly specified in YAML', () => {
     const sidebar = loadSidebarFromConfig(pathToNavigationYml)
 
-    // Find the Docs section
-    const docs = sidebar.find(
+    // Find the SDK product section
+    const harness = sidebar.find(
       (item): item is StarlightSidebarItem & { label: string; items: StarlightSidebarItem[] } =>
-        'label' in item && item.label === 'Docs'
+        'label' in item && item.label === 'Harness SDK'
     )
 
-    expect(docs).toBeDefined()
-    if (docs) {
+    expect(harness).toBeDefined()
+    if (harness) {
       // Top level should not have collapsed set (middleware handles depth-based defaults)
-      expect(docs).not.toHaveProperty('collapsed')
+      expect(harness).not.toHaveProperty('collapsed')
 
-      // Find a nested group (like "Get Started") — no explicit collapsed in YAML
-      const getStarted = docs.items.find(
-        (item): item is StarlightSidebarItem & { label: string } => 'label' in item && item.label === 'Get Started'
+      // A nested group without an explicit collapsed flag in YAML — "Get started"
+      const getStarted = harness.items.find(
+        (item): item is StarlightSidebarItem & { label: string } => 'label' in item && item.label === 'Get started'
       )
 
       // Nested groups without explicit YAML collapsed flag should also lack the property
@@ -127,7 +130,7 @@ describe('Sidebar Generation from navigation.yml', () => {
     expect(unlabeled.length).toBeGreaterThan(0)
   })
 
-  it('should include Labs and Contribute under Community', () => {
+  it('should include Labs and Learning under Community', () => {
     const sidebar = loadSidebarFromConfig(pathToNavigationYml)
 
     // Find the Community section
@@ -143,7 +146,70 @@ describe('Sidebar Generation from navigation.yml', () => {
         .map((item) => item.label)
 
       expect(subLabels).toContain('Labs')
-      expect(subLabels).toContain('Contribute')
+      expect(subLabels).toContain('Learning')
     }
+  })
+
+  it('should have Contribute as its own top-level section', () => {
+    const sidebar = loadSidebarFromConfig(pathToNavigationYml)
+    const labels = sidebar
+      .filter((item): item is StarlightSidebarItem & { label: string } => 'label' in item)
+      .map((item) => item.label)
+    expect(labels).toContain('Contribute')
+  })
+
+  it('should group SDK build guides by task', () => {
+    const sidebar = loadSidebarFromConfig(pathToNavigationYml)
+    const harness = sidebar.find(
+      (item): item is StarlightSidebarItem & { label: string; items: StarlightSidebarItem[] } =>
+        'label' in item && item.label === 'Harness SDK'
+    )
+
+    expect(harness).toBeDefined()
+    if (!harness) return
+
+    const buildGuides = harness.items.find(
+      (item): item is StarlightSidebarItem & { label: string; items: StarlightSidebarItem[] } =>
+        'label' in item && item.label === 'Build guides' && 'items' in item
+    )
+
+    expect(buildGuides).toBeDefined()
+    if (!buildGuides) return
+
+    const groups = buildGuides.items.filter(
+      (item): item is StarlightSidebarItem & { label: string; items: StarlightSidebarItem[] } =>
+        'label' in item && 'items' in item
+    )
+    const labels = groups.map((group) => group.label)
+
+    expect(labels).toEqual(['Tools', 'Sessions', 'Memory', 'Responses'])
+    expect(groups[0]?.items).toEqual([
+      { label: 'Overview', slug: 'docs/user-guide/sdk/tools' },
+      { label: 'Attach and invoke tools', slug: 'docs/user-guide/sdk/tools/using-tools' },
+      { label: 'Use MCP tools', slug: 'docs/user-guide/sdk/tools/mcp-tools' },
+      { label: 'Create custom tools', slug: 'docs/user-guide/sdk/tools/custom-tools' },
+    ])
+    expect(groups[1]?.items).toEqual([
+      { label: 'Persist state across sessions', slug: 'docs/user-guide/sdk/agents/session-management' },
+    ])
+    expect(groups[2]?.items).toEqual([
+      { label: 'Overview', slug: 'docs/user-guide/sdk/memory/overview' },
+      { label: 'Control what the agent remembers', slug: 'docs/user-guide/sdk/memory/managing-memory' },
+    ])
+    expect(groups[3]?.items).toEqual([
+      { label: 'Return structured output', slug: 'docs/user-guide/sdk/agents/structured-output' },
+      { label: 'Stream responses', slug: 'docs/user-guide/sdk/streaming' },
+    ])
+
+    // Single-page guides sit alongside the groups as flat links.
+    const flat = buildGuides.items
+      .filter((item): item is StarlightSidebarItem & { label: string; slug: string } => 'slug' in item)
+      .map((item) => ({ label: item.label, slug: item.slug }))
+    expect(flat).toEqual([
+      { label: 'Manage the context window', slug: 'docs/user-guide/sdk/context-management' },
+      { label: 'Pause for input and control', slug: 'docs/user-guide/sdk/agents/interventions/human-in-the-loop' },
+      { label: 'Coordinate multiple agents', slug: 'docs/user-guide/sdk/multi-agent/multi-agent-patterns' },
+      { label: 'Build a voice agent', slug: 'docs/user-guide/sdk/bidirectional-streaming/quickstart' },
+    ])
   })
 })

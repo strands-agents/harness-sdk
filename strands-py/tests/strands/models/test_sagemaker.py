@@ -1,6 +1,7 @@
 """Tests for the Amazon SageMaker model provider."""
 
 import json
+import logging
 import unittest.mock
 from typing import Any
 
@@ -8,11 +9,13 @@ import boto3
 import pytest
 from botocore.config import Config as BotocoreConfig
 
+from strands.models.model import CacheConfig
 from strands.models.sagemaker import (
     FunctionCall,
     SageMakerAIModel,
     ToolCall,
     UsageMetadata,
+    _parse_event_stream,
 )
 from strands.types.content import Messages
 from strands.types.tools import ToolSpec
@@ -102,6 +105,95 @@ def test_format_request_tool_message_preserves_non_ascii():
         "content": '{"city": "東京"}',
     }
     assert tru_result == exp_result
+
+
+def _payload_parts(*chunks: str) -> list[dict[str, dict[str, bytes]]]:
+    """Build the PayloadPart shape returned by SageMaker streaming responses."""
+    return [{"PayloadPart": {"Bytes": chunk.encode("utf-8")}} for chunk in chunks]
+
+
+class TestSageMakerEventStreamParser:
+    """Tests for SageMaker PayloadPart and SSE framing edge cases."""
+
+    def test_skips_malformed_sse_event_and_continues(self, caplog):
+        """A malformed data field is warned about without dropping later events."""
+        caplog.set_level(logging.WARNING, logger="strands.models.sagemaker")
+        body = _payload_parts('data: {malformed\ndata: {"value": "valid"}\n')
+
+        assert list(_parse_event_stream(body)) == [{"value": "valid"}]
+        assert [record.message for record in caplog.records] == ["line=<data: {malformed> | skipping malformed event"]
+
+    def test_buffers_multiline_bare_json_until_it_parses(self, caplog):
+        """A bare JSON document containing newlines is decoded as a whole."""
+        caplog.set_level(logging.WARNING, logger="strands.models.sagemaker")
+        event = {"value": "pretty"}
+        payload = json.dumps(event, indent=2)
+        split = len(payload) // 2
+        body = _payload_parts(payload[:split], payload[split:])
+
+        assert list(_parse_event_stream(body)) == [event]
+        assert not caplog.records
+
+    def test_skips_sse_control_fields_and_done(self, caplog):
+        """SSE control fields, comments, blank lines, and DONE carry no JSON event."""
+        caplog.set_level(logging.WARNING, logger="strands.models.sagemaker")
+        body = _payload_parts(
+            'event: message\nid: 42\nretry: 1000\n: keep-alive\n\ndata: {"value": "valid"}\n\ndata: [DONE]\n\n'
+        )
+
+        assert list(_parse_event_stream(body)) == [{"value": "valid"}]
+        assert not caplog.records
+
+    def test_warns_when_stream_ends_with_partial_event(self, caplog):
+        """An undecoded residual is reported rather than silently discarded."""
+        caplog.set_level(logging.WARNING, logger="strands.models.sagemaker")
+        body = _payload_parts('data: {"value":')
+
+        assert list(_parse_event_stream(body)) == []
+        assert [record.message for record in caplog.records] == [
+            'buffer=<data: {"value":> | stream ended with an undecoded partial event'
+        ]
+
+
+@pytest.mark.asyncio
+async def test_stream_emits_usage_only_chunk_after_finish(sagemaker_client, model, messages, alist):
+    """A trailing OpenAI-compatible usage chunk is emitted despite its empty choices list."""
+    usage = {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}
+    events = [
+        {"choices": [{"delta": {"content": "answer"}, "finish_reason": None}]},
+        {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+        # Choice events after the finish reason remain ignored while the usage tail is consumed.
+        {"choices": [{"delta": {"content": "ignored"}, "finish_reason": None}]},
+        {"choices": []},
+        {"choices": [], "usage": usage},
+    ]
+    payload = "".join(f"data: {json.dumps(event)}\n\n" for event in events) + "data: [DONE]\n\n"
+    sagemaker_client.invoke_endpoint_with_response_stream.return_value = {"Body": _payload_parts(payload)}
+
+    response = await alist(model.stream(messages))
+
+    tru_text = "".join(
+        event["contentBlockDelta"]["delta"]["text"]
+        for event in response
+        if "contentBlockDelta" in event and "text" in event["contentBlockDelta"]["delta"]
+    )
+    metadata = [event["metadata"]["usage"] for event in response if "metadata" in event]
+    assert tru_text == "answer"
+    assert metadata == [{"inputTokens": 10, "outputTokens": 20, "totalTokens": 30}]
+    assert response[-1] == {"messageStop": {"stopReason": "end_turn"}}
+
+
+@pytest.mark.asyncio
+async def test_stream_preserves_choice_local_usage(sagemaker_client, model, messages, alist):
+    """Usage nested in a choice remains supported for custom SageMaker containers."""
+    usage = {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}
+    event = {"choices": [{"delta": {}, "finish_reason": "stop", "usage": usage}]}
+    sagemaker_client.invoke_endpoint_with_response_stream.return_value = {"Body": _payload_parts(json.dumps(event))}
+
+    response = await alist(model.stream(messages))
+
+    metadata = next(item["metadata"]["usage"] for item in response if "metadata" in item)
+    assert metadata == {"inputTokens": 1, "outputTokens": 2, "totalTokens": 3}
 
 
 class TestSageMakerAIModel:
@@ -339,6 +431,15 @@ class TestSageMakerAIModel:
         assert message_stop is not None
         assert message_stop["messageStop"]["stopReason"] == "end_turn"
 
+        # Every part must contribute to the reassembled text, not just the first one.
+        tru_text = "".join(
+            e["contentBlockDelta"]["delta"]["text"]
+            for e in response
+            if "contentBlockDelta" in e and "text" in e["contentBlockDelta"]["delta"]
+        )
+        exp_text = "Paris is the capital of France. It is known for the Eiffel Tower."
+        assert tru_text == exp_text
+
         sagemaker_client.invoke_endpoint_with_response_stream.assert_called_once()
 
     @pytest.mark.asyncio
@@ -355,17 +456,15 @@ class TestSageMakerAIModel:
                                     {
                                         "delta": {
                                             "content": None,
-                                            "tool_calls": [
-                                                {
-                                                    "index": 0,
-                                                    "id": "tool123",
-                                                    "type": "function",
-                                                    "function": {
-                                                        "name": "get_weather",
-                                                        "arguments": '{"location": "Paris"}',
-                                                    },
-                                                }
-                                            ],
+                                            "tool_calls": {
+                                                "index": 0,
+                                                "id": "tool123",
+                                                "type": "function",
+                                                "function": {
+                                                    "name": "get_weather",
+                                                    "arguments": '{"location": "Paris"}',
+                                                },
+                                            },
                                         },
                                         "finish_reason": "tool_calls",
                                     }
@@ -451,6 +550,50 @@ class TestSageMakerAIModel:
 
         # Ensure no warnings emitted
         assert len(captured_warnings) == 0
+
+    @pytest.mark.asyncio
+    async def test_stream_multiple_events_per_payload_part(self, sagemaker_client, model, messages, alist, caplog):
+        """Every SSE event is surfaced when a PayloadPart carries more than one event or splits one.
+
+        SageMaker does not align PayloadParts to SSE event boundaries: a container such as vLLM or
+        TGI may flush several ``data:`` events into one part or split a single event mid-JSON across
+        parts. All content up to and including the terminating event must be yielded in order.
+
+        Regression test for #4035.
+        """
+        caplog.set_level(logging.WARNING, logger="strands.models.sagemaker")
+
+        def sse(content: str, finish_reason: str | None = None) -> str:
+            event = {"choices": [{"delta": {"content": content}, "finish_reason": finish_reason}]}
+            return f"data: {json.dumps(event)}\n\n"
+
+        final_event = sse("!", finish_reason="stop")
+        split = len(final_event) // 2
+        mock_response = {
+            "Body": [
+                # Three complete SSE events packed into a single PayloadPart.
+                {"PayloadPart": {"Bytes": (sse("Paris ") + sse("is the ") + sse("capital of France")).encode("utf-8")}},
+                # A fourth event split mid-JSON across two parts.
+                {"PayloadPart": {"Bytes": final_event[:split].encode("utf-8")}},
+                {"PayloadPart": {"Bytes": final_event[split:].encode("utf-8")}},
+            ]
+        }
+        sagemaker_client.invoke_endpoint_with_response_stream.return_value = mock_response
+
+        response = await alist(model.stream(messages))
+
+        tru_text = "".join(
+            event["contentBlockDelta"]["delta"]["text"]
+            for event in response
+            if "contentBlockDelta" in event and "text" in event["contentBlockDelta"]["delta"]
+        )
+        exp_text = "Paris is the capital of France!"
+        message_stop = next((event for event in response if "messageStop" in event), None)
+
+        assert tru_text == exp_text
+        assert message_stop is not None
+        assert message_stop["messageStop"]["stopReason"] == "end_turn"
+        assert not caplog.records
 
     @pytest.mark.asyncio
     async def test_tool_choice_not_supported_warns(self, sagemaker_client, model, messages, captured_warnings, alist):
@@ -702,6 +845,13 @@ class TestSageMakerReasoningContent:
                 {
                     "PayloadPart": {
                         "Bytes": json.dumps(
+                            {"choices": [{"delta": {"reasoning": " still thinking."}, "finish_reason": None}]}
+                        ).encode("utf-8")
+                    }
+                },
+                {
+                    "PayloadPart": {
+                        "Bytes": json.dumps(
                             {"choices": [{"delta": {"content": "Paris."}, "finish_reason": "stop"}]}
                         ).encode("utf-8")
                     }
@@ -715,8 +865,10 @@ class TestSageMakerReasoningContent:
         reasoning_deltas = [
             e for e in response if "contentBlockDelta" in e and "reasoningContent" in e["contentBlockDelta"]["delta"]
         ]
-        assert len(reasoning_deltas) == 1
-        assert reasoning_deltas[0]["contentBlockDelta"]["delta"]["reasoningContent"]["text"] == "Let me think..."
+        assert [event["contentBlockDelta"]["delta"]["reasoningContent"]["text"] for event in reasoning_deltas] == [
+            "Let me think...",
+            " still thinking.",
+        ]
 
     @pytest.mark.asyncio
     async def test_stream_reasoning_with_reasoning_content_field(self, sagemaker_client, model, messages):
@@ -865,3 +1017,65 @@ class TestSageMakerReasoningContent:
         ]
         assert len(reasoning_deltas) == 1
         assert reasoning_deltas[0]["contentBlockDelta"]["delta"]["reasoningContent"]["text"] == "Thinking..."
+
+
+def test_cache_config_round_trips(boto_session, endpoint_config, payload_config, captured_warnings):
+    """cache_config is a valid endpoint_config field and survives get_config/update_config unchanged."""
+    cache_config = CacheConfig()
+    model = SageMakerAIModel(
+        boto_session=boto_session,
+        endpoint_config={**endpoint_config, "cache_config": cache_config},
+        payload_config=payload_config,
+    )
+
+    assert model.get_config()["cache_config"] is cache_config
+
+    updated = CacheConfig()
+    model.update_config(cache_config=updated)
+    assert model.get_config()["cache_config"] is updated
+
+    assert not any("Invalid configuration parameters" in str(warning.message) for warning in captured_warnings)
+
+
+def test_cache_config_default_is_silent_and_not_routed(
+    boto_session, endpoint_config, payload_config, messages, captured_warnings
+):
+    """A CacheConfig whose fields are all default warns about nothing and never reaches the request."""
+    model = SageMakerAIModel(
+        boto_session=boto_session,
+        endpoint_config={**endpoint_config, "cache_config": CacheConfig(strategy="auto")},
+        payload_config=payload_config,
+    )
+
+    request = model.format_request(messages)
+
+    assert "cache_config" not in request
+    assert "cache_config" not in json.loads(request["Body"])
+    assert not any("have no effect" in str(warning.message) for warning in captured_warnings)
+
+
+@pytest.mark.parametrize(
+    ("cache_config", "field"),
+    [
+        (CacheConfig(strategy="anthropic"), "strategy"),
+        (CacheConfig(ttl="1h"), "ttl"),
+        (CacheConfig(system_prompt_ttl="1h"), "system_prompt_ttl"),
+        (CacheConfig(cache_key="tenant-42"), "cache_key"),
+        (CacheConfig(tools_ttl=True), "tools_ttl"),
+    ],
+)
+def test_cache_config_unsupported_field_warns_and_is_not_routed(
+    boto_session, endpoint_config, payload_config, messages, cache_config, field
+):
+    """SageMaker honors no cache field: a non-default field warns (naming the provider) and never reaches request."""
+    model = SageMakerAIModel(
+        boto_session=boto_session,
+        endpoint_config={**endpoint_config, "cache_config": cache_config},
+        payload_config=payload_config,
+    )
+
+    with pytest.warns(UserWarning, match=rf"fields \['{field}'\] have no effect on SageMaker"):
+        request = model.format_request(messages)
+
+    assert "cache_config" not in request
+    assert "cache_config" not in json.loads(request["Body"])

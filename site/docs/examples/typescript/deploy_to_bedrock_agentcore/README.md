@@ -17,7 +17,7 @@ This example includes a complete, ready-to-deploy agent service with:
 
 Before you begin, ensure you have:
 
-- Node.js 20+
+- Node.js 22+
 - Docker installed and running
 - AWS CLI configured with valid credentials
 - AWS account with [appropriate permissions](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-permissions.html)

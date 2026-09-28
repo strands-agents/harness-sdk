@@ -1,0 +1,49 @@
+name: "Harness CLI: Test and Lint"
+
+# Build + lint + unit tests for the Strands CLI (`@strands-agents/cli`). Reusable:
+# called by ci.yml on PRs that touch strands-cli, and by release-harness-cli.yml
+# at release time. Mirrors harness-ts-test-lint.yml.
+#
+# The CLI installs standalone (its own package-lock.json) against the published
+# @strands-agents/harness (< 2.0.0) and @strands-agents/sdk, not the repo-root
+# workspace. `npm run build` also bundles the sibling harness-py source
+# (scripts/bundle-python.js reads ../harness-py), so this needs a full checkout.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+
+jobs:
+  test-lint:
+    name: Test and Lint
+    runs-on: strands-agents_ubuntu-latest_4-core
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: strands-cli
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Lint, format, type-check, and test
+        run: npm run check

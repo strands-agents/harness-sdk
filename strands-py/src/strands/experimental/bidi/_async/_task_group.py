@@ -6,7 +6,8 @@ This is intended to mimic the behaviors of asyncio.TaskGroup released in Python 
 """
 
 import asyncio
-from typing import Any, Coroutine, cast
+from collections.abc import Coroutine
+from typing import Any, cast
 
 
 class _TaskGroup:

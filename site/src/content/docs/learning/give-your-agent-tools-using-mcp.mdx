@@ -1,0 +1,155 @@
+---
+title: "Lesson 3: Give Your Agent Tools Using MCP"
+description: "This chapter covers MCP and how it changes the way you think about equipping your agent with capabilities."
+redirectFrom:
+  - docs/community/learning/lesson3-give-your-agent-tools-using-mcp
+---
+
+<YouTube id="Pucmy0GZkeI" title="Lesson 3: Give Your Agent Tools Using MCP" />
+*[Watch on YouTube](https://www.youtube.com/watch?v=Pucmy0GZkeI&list=PLDzwjhH-4yhU&index=3)*
+
+:::note[About this lesson]
+The videos in this course are a snapshot in time. Strands is under active development, so the code featured on this page reflects the most up-to-date patterns, but the concepts covered in the video still apply. When in doubt, trust the code.
+:::
+
+*Code for this lesson: [`samples/03-mcp-tools`](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/03-mcp-tools)*
+
+## Where Tools Come From
+
+Tools give agents the ability to take actions and access information beyond what's in the model's training data. There isn't one way to define a tool. Tools can come from different places, and they all sit side by side in the same agent's `tools` list:
+
+- **Custom tools** you write yourself with the `@tool` decorator (you saw this in lesson 1)
+- **Vended tools** that ship with the SDK in `strands.vended_tools`: file editing, shell, web fetch
+- **MCP servers** that expose tools over a standard protocol, whether you run them or someone else does
+- **Other agents**, which you'll see in lesson 10 when we cover agents as tools
+
+MCP is particularly powerful because it lets you connect agents to externally managed tool servers. The agent discovers available tools dynamically at runtime rather than having them hardcoded.
+
+## MCP (Model Context Protocol)
+
+MCP is an open standard that gives agents a consistent way to discover and interact with external capabilities (GitHub, AWS, databases, browser tools) through a standard protocol. Servers can run locally as a subprocess (stdio) or remotely over HTTP.
+
+```python
+from mcp import stdio_client, StdioServerParameters
+from strands import Agent
+from strands.tools.mcp import MCPClient
+
+# Remote MCP server (Streamable HTTP): pass the URL and Strands builds the transport
+aws_knowledge = MCPClient(
+    url="https://knowledge-mcp.global.api.aws",
+    prefix="knowledge",
+)
+
+# Local MCP server (stdio)
+aws_pricing = MCPClient(
+    lambda: stdio_client(StdioServerParameters(
+        command="uvx",
+        args=["awslabs.aws-pricing-mcp-server@latest"],
+        env={"AWS_REGION": "us-east-1"}
+    )),
+    prefix="pricing"
+)
+
+agent = Agent(tools=[aws_knowledge, aws_pricing], system_prompt="You are an AWS architect.")
+agent("What AWS services should I use for a serverless FastAPI backend?")
+```
+
+📂 [mcp_http.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/03-mcp-tools/mcp_http.py)
+
+The `prefix` argument namespaces tool names from each server so two servers exposing a tool with the same name don't collide.
+
+## Mixing MCP Tools with Vended Tools
+
+An MCP client sits in the `tools` list alongside any other tool. Here a coding assistant gets AWS documentation through MCP plus local file and shell access through vended tools:
+
+```python
+from strands import Agent
+from strands.tools.mcp import MCPClient
+from strands.vended_tools import file_editor, shell
+
+# Connect to the AWS MCP server (streamable HTTP)
+aws_mcp = MCPClient(url="https://aws-mcp.us-east-1.api.aws/mcp")
+
+SYSTEM_PROMPT = """You are a coding assistant with AWS expertise.
+Use the AWS MCP tools to look up documentation, architecture patterns,
+and service details when answering questions about building on AWS.
+Be concise and actionable in your recommendations."""
+
+agent = Agent(
+    tools=[aws_mcp, file_editor, shell],
+    system_prompt=SYSTEM_PROMPT,
+)
+
+agent("I need to build a serverless FastAPI backend with authentication "
+      "and file uploads. What AWS services should I use and how should "
+      "I architect this?")
+```
+
+📂 [mcp_coding_agent.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/03-mcp-tools/mcp_coding_agent.py)
+
+## Tool Filtering
+
+Too many tools leads to worse tool selection, hallucinated tool names, and wasted context. In production, restrict which tools an agent can access using `tool_filters` and only expose what the agent actually needs:
+
+```python
+from strands import Agent
+from strands.tools.mcp import MCPClient
+
+# Filter to only documentation tools
+filtered_mcp = MCPClient(
+    url="https://aws-mcp.us-east-1.api.aws/mcp",
+    tool_filters={
+        "allowed": ["aws___search_documentation", "aws___read_documentation"]
+    },
+)
+
+agent = Agent(
+    tools=[filtered_mcp],
+    system_prompt="You are an AWS documentation assistant.",
+)
+```
+
+📂 [tool_filtering.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/03-mcp-tools/tool_filtering.py)
+
+## Controlling Tool Execution
+
+By default Strands runs multiple tool calls from a single model turn concurrently. When tools have side effects that depend on each other, switch to a sequential executor:
+
+```python
+from strands import Agent, tool
+from strands.tools.executors import SequentialToolExecutor
+
+
+@tool
+def step_one() -> str:
+    """Perform the first step of the workflow."""
+    return "Step one complete - file created."
+
+
+@tool
+def step_two() -> str:
+    """Perform the second step that depends on step one."""
+    return "Step two complete - file processed."
+
+
+agent = Agent(
+    tools=[step_one, step_two],
+    tool_executor=SequentialToolExecutor(),
+)
+agent("Run step one and then step two.")
+```
+
+📂 [tool_executor.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/03-mcp-tools/tool_executor.py)
+
+## The Security Boundary
+
+Tools execute with the permissions of the host process. If you give an agent the `shell` tool, you've given it access to your machine. With MCP, you're handing your agent tools that someone else controls. Be thoughtful about what you connect.
+
+For sandboxed execution, look at [Strands Shell](https://github.com/strands-agents/shell), which gives agents isolated filesystem and network access.
+
+## Resources
+
+- 📖 [Tools Overview](/docs/user-guide/sdk/tools/)
+- 📖 [MCP Tools](/docs/user-guide/sdk/tools/mcp-tools/)
+- 📖 [Custom Tools](/docs/user-guide/sdk/tools/custom-tools/)
+- 🛠️ [Strands Shell](https://github.com/strands-agents/shell)

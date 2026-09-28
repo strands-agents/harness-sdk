@@ -1,6 +1,7 @@
 """Tests for LocalFileStorage."""
 
 import os
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -95,6 +96,29 @@ class TestLocalFileStorage:
         await ns.write("key", b"value")
         assert await ns.read("key") == b"value"
         assert await storage.read("scope/key") == b"value"
+
+    def test_namespace_returns_local_file_storage(self, storage, tmp_path):
+        from strands.storage.storage import _NAMESPACED
+
+        ns = storage.namespace("scope")
+        assert isinstance(ns, LocalFileStorage)
+        assert ns.base_dir == os.path.join(str(tmp_path), "scope")
+        assert ns._namespaced is _NAMESPACED
+
+    def test_normpath_prevents_trailing_slash_in_namespace(self, tmp_path):
+        storage = LocalFileStorage(str(tmp_path) + "/")
+        ns = storage.namespace("scope")
+        assert not ns.base_dir.endswith("/")
+        assert os.sep + "scope" in ns.base_dir
+
+    @pytest.mark.asyncio
+    async def test_search_returns_matching_results(self, storage):
+        await storage.write("notes/dark-mode.md", b"enable dark mode in settings")
+        await storage.write("notes/deploy.md", b"deploy to production")
+        results = await storage.search("dark mode")
+        assert len(results) == 1
+        assert results[0].key == "notes/dark-mode.md"
+        assert results[0].score > 0
 
     @pytest.mark.asyncio
     async def test_key_normalization(self, storage):
@@ -210,12 +234,15 @@ class TestLocalFileStorage:
     def test_namespace_preserves_for_sandbox(self, tmp_path):
         from unittest.mock import MagicMock
 
+        from strands.storage.storage import _NAMESPACED
+
         sandbox = MagicMock()
         storage = LocalFileStorage(str(tmp_path))
         ns = storage.namespace("scope")
         assert hasattr(ns, "for_sandbox")
         bound = ns.for_sandbox(sandbox)
         assert bound is not ns
+        assert bound._namespaced is _NAMESPACED
 
     @pytest.mark.asyncio
     async def test_list_prefix_narrows_directory(self, storage, tmp_path):
@@ -273,3 +300,63 @@ class TestLocalFileStorage:
         # Temp file should be cleaned up
         all_files = list(tmp_path.rglob("*"))
         assert not any("__strands_tmp" in str(f) for f in all_files)
+
+    @pytest.mark.asyncio
+    async def test_write_indexes_with_search_strategy(self, tmp_path):
+        strategy = AsyncMock()
+        storage = LocalFileStorage(str(tmp_path), search_strategy=strategy)
+        await storage.write("key.txt", b"data")
+        strategy.index.assert_awaited_once_with(storage, "key.txt", b"data")
+
+    @pytest.mark.asyncio
+    async def test_search_delegates_to_strategy(self, tmp_path):
+        strategy = AsyncMock()
+        strategy.search.return_value = []
+        storage = LocalFileStorage(str(tmp_path), search_strategy=strategy)
+        await storage.search("query")
+        strategy.search.assert_awaited_once_with(storage, "query")
+
+    @pytest.mark.asyncio
+    async def test_sandbox_write_skips_indexing(self, tmp_path):
+        strategy = AsyncMock()
+        strategy.requires_host_fs = False
+        sandbox = MagicMock()
+        sandbox.write_file = AsyncMock()
+        storage = LocalFileStorage(str(tmp_path), sandbox=sandbox, search_strategy=strategy)
+        await storage.write("key.txt", b"data")
+        strategy.index.assert_not_awaited()
+
+    def test_for_sandbox_preserves_search_strategy(self, tmp_path):
+        strategy = AsyncMock()
+        strategy.requires_host_fs = False
+        storage = LocalFileStorage(str(tmp_path), search_strategy=strategy)
+        sandbox = MagicMock()
+        bound = storage.for_sandbox(sandbox)
+        assert bound._search_strategy is strategy
+
+    def test_namespace_preserves_search_strategy(self, tmp_path):
+        strategy = AsyncMock()
+        storage = LocalFileStorage(str(tmp_path), search_strategy=strategy)
+        ns = storage.namespace("scope")
+        assert ns._search_strategy is strategy
+
+    def test_rejects_host_fs_strategy_with_sandbox(self, tmp_path):
+        strategy = MagicMock()
+        strategy.requires_host_fs = True
+        sandbox = MagicMock()
+        with pytest.raises(ValueError, match="requires host filesystem access"):
+            LocalFileStorage(str(tmp_path), sandbox=sandbox, search_strategy=strategy)
+
+    def test_for_sandbox_drops_host_fs_strategy_with_warning(self, tmp_path):
+        import warnings
+
+        strategy = MagicMock()
+        strategy.requires_host_fs = True
+        storage = LocalFileStorage(str(tmp_path), search_strategy=strategy)
+        sandbox = MagicMock()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            bound = storage.for_sandbox(sandbox)
+        assert bound._search_strategy is None
+        assert len(caught) == 1
+        assert "requires host filesystem access" in str(caught[0].message)

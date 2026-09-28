@@ -2,6 +2,7 @@ import asyncio
 import base64
 import threading
 import time
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,20 +13,27 @@ from mcp.types import (
     ListPromptsResult,
     ListResourcesResult,
     ListResourceTemplatesResult,
+    PaginatedRequestParams,
     Prompt,
     PromptMessage,
     ReadResourceResult,
     Resource,
     ResourceTemplate,
     TextResourceContents,
+    ToolListChangedNotification,
 )
+from mcp.types import ImageContent as MCPImageContent
 from mcp.types import TextContent as MCPTextContent
 from mcp.types import Tool as MCPTool
 from pydantic import AnyUrl
 
+import strands.tools.mcp.mcp_client as mcp_client_module
 from strands.tools.mcp import MCPClient
+from strands.tools.mcp._compat import MCP_V2, next_cursor, resource_templates
 from strands.tools.mcp.mcp_types import MCPToolResult
 from strands.types.exceptions import MCPClientInitializationError
+
+from .conftest import assert_session_call_tool_once_with, make_mcp_error
 
 # Fixtures mock_transport and mock_session are imported from conftest.py
 
@@ -55,13 +63,15 @@ def test_mcp_client_context_manager(mock_transport, mock_session):
 def test_server_instructions_default(mock_transport, mock_session):
     """Test that server_instructions defaults to None when server returns None."""
     mock_session.initialize.return_value.instructions = None
+    mock_session.instructions = None
     with MCPClient(mock_transport["transport_callable"]) as client:
         assert client.server_instructions is None
 
 
 def test_server_instructions_from_server(mock_transport, mock_session):
-    """Test that server_instructions is populated from InitializeResult."""
+    """Test that server_instructions is populated from the negotiated session."""
     mock_session.initialize.return_value.instructions = "Use tool A before tool B."
+    mock_session.instructions = "Use tool A before tool B."
     with MCPClient(mock_transport["transport_callable"]) as client:
         assert client.server_instructions == "Use tool A before tool B."
 
@@ -74,7 +84,7 @@ def test_list_tools_sync(mock_transport, mock_session):
     with MCPClient(mock_transport["transport_callable"]) as client:
         tools = client.list_tools_sync()
 
-        mock_session.list_tools.assert_called_once_with(cursor=None)
+        mock_session.list_tools.assert_called_once_with(params=None)
 
         assert len(tools) == 1
         assert tools[0].tool_name == "test_tool"
@@ -97,7 +107,7 @@ def test_list_tools_sync_with_pagination_token(mock_transport, mock_session):
     with MCPClient(mock_transport["transport_callable"]) as client:
         tools = client.list_tools_sync(pagination_token="current_page_token")
 
-        mock_session.list_tools.assert_called_once_with(cursor="current_page_token")
+        mock_session.list_tools.assert_called_once_with(params=PaginatedRequestParams(cursor="current_page_token"))
         assert len(tools) == 1
         assert tools[0].tool_name == "test_tool"
         assert tools.pagination_token == "next_page_token"
@@ -111,7 +121,7 @@ def test_list_tools_sync_without_pagination_token(mock_transport, mock_session):
     with MCPClient(mock_transport["transport_callable"]) as client:
         tools = client.list_tools_sync()
 
-        mock_session.list_tools.assert_called_once_with(cursor=None)
+        mock_session.list_tools.assert_called_once_with(params=None)
         assert len(tools) == 1
         assert tools[0].tool_name == "test_tool"
         assert tools.pagination_token is None
@@ -126,9 +136,7 @@ def test_call_tool_sync_status(mock_transport, mock_session, is_error, expected_
     with MCPClient(mock_transport["transport_callable"]) as client:
         result = client.call_tool_sync(tool_use_id="test-123", name="test_tool", arguments={"param": "value"})
 
-        mock_session.call_tool.assert_called_once_with(
-            "test_tool", {"param": "value"}, None, progress_callback=None, meta=None
-        )
+        assert_session_call_tool_once_with(mock_session, "test_tool", {"param": "value"})
 
         assert result["status"] == expected_status
         assert result["toolUseId"] == "test-123"
@@ -138,6 +146,58 @@ def test_call_tool_sync_status(mock_transport, mock_session, is_error, expected_
         assert result.get("structuredContent") is None
         # isError mirrors the MCP server's explicit value; absent only for protocol/client exceptions
         assert result.get("isError") is is_error
+
+
+def test_call_tool_sync_without_error_flag(mock_transport, mock_session):
+    """A result whose error flag is unset maps to success without an isError key.
+
+    mcp 2.x models the flag as `bool | None` defaulting to None; the 1.x model
+    validates it to a bool, so the unset shape is built with `model_construct`.
+    """
+    mock_content = MCPTextContent(type="text", text="Test message")
+    mock_session.call_tool.return_value = MCPCallToolResult.model_construct(isError=None, content=[mock_content])
+
+    with MCPClient(mock_transport["transport_callable"]) as client:
+        result = client.call_tool_sync(tool_use_id="test-123", name="test_tool", arguments={"param": "value"})
+
+        assert result == {
+            "status": "success",
+            "toolUseId": "test-123",
+            "content": [{"text": "Test message"}],
+        }
+
+
+def test_call_tool_sync_with_falsy_structured_content(mock_transport, mock_session):
+    """Test that an empty structured payload is forwarded, not dropped as falsy.
+
+    The 2026-07-28 spec allows any JSON value in `structuredContent`, so `0`,
+    `False`, `""`, `[]`, and `{}` are all valid payloads.
+    """
+    mock_content = MCPTextContent(type="text", text="Test message")
+    mock_session.call_tool.return_value = MCPCallToolResult(isError=False, content=[mock_content], structuredContent={})
+
+    with MCPClient(mock_transport["transport_callable"]) as client:
+        result = client.call_tool_sync(tool_use_id="test-123", name="test_tool", arguments={"param": "value"})
+
+        assert result == {
+            "status": "success",
+            "toolUseId": "test-123",
+            "content": [{"text": "Test message"}],
+            "structuredContent": {},
+            "isError": False,
+        }
+
+
+def test_call_tool_sync_calls_the_tool_through_the_compat_shim(mock_transport, mock_session):
+    """Test that the direct tool-call path calls the tool through the version shim."""
+    mock_content = MCPTextContent(type="text", text="Test message")
+    shim = AsyncMock(return_value=MCPCallToolResult(isError=False, content=[mock_content]))
+
+    with patch("strands.tools.mcp.mcp_client.compat_call_tool", shim):
+        with MCPClient(mock_transport["transport_callable"]) as client:
+            client.call_tool_sync(tool_use_id="test-123", name="test_tool", arguments={"param": "value"})
+
+    shim.assert_awaited_once_with(mock_session, "test_tool", {"param": "value"}, None, None, None)
 
 
 def test_call_tool_sync_session_not_active():
@@ -159,9 +219,7 @@ def test_call_tool_sync_with_structured_content(mock_transport, mock_session):
     with MCPClient(mock_transport["transport_callable"]) as client:
         result = client.call_tool_sync(tool_use_id="test-123", name="test_tool", arguments={"param": "value"})
 
-        mock_session.call_tool.assert_called_once_with(
-            "test_tool", {"param": "value"}, None, progress_callback=None, meta=None
-        )
+        assert_session_call_tool_once_with(mock_session, "test_tool", {"param": "value"})
 
         assert result["status"] == "success"
         assert result["toolUseId"] == "test-123"
@@ -199,9 +257,7 @@ def test_call_tool_sync_forwards_meta(mock_transport, mock_session):
             tool_use_id="test-123", name="test_tool", arguments={"param": "value"}, meta=meta
         )
 
-        mock_session.call_tool.assert_called_once_with(
-            "test_tool", {"param": "value"}, None, progress_callback=None, meta=meta
-        )
+        assert_session_call_tool_once_with(mock_session, "test_tool", {"param": "value"}, meta=meta)
         assert result["status"] == "success"
 
 
@@ -214,7 +270,7 @@ def test_call_tool_sync_forwards_instance_progress_callback(mock_transport, mock
     with MCPClient(mock_transport["transport_callable"], progress_callback=cb) as client:
         result = client.call_tool_sync(tool_use_id="test-123", name="test_tool", arguments={})
 
-        mock_session.call_tool.assert_called_once_with("test_tool", {}, None, progress_callback=cb, meta=None)
+        assert_session_call_tool_once_with(mock_session, "test_tool", {}, progress_callback=cb)
         assert result["status"] == "success"
 
 
@@ -230,7 +286,7 @@ def test_call_tool_sync_per_call_progress_callback_overrides_instance(mock_trans
             tool_use_id="test-123", name="test_tool", arguments={}, progress_callback=per_call_cb
         )
 
-        mock_session.call_tool.assert_called_once_with("test_tool", {}, None, progress_callback=per_call_cb, meta=None)
+        assert_session_call_tool_once_with(mock_session, "test_tool", {}, progress_callback=per_call_cb)
         assert result["status"] == "success"
 
 
@@ -242,7 +298,7 @@ def test_call_tool_sync_no_progress_callback_by_default(mock_transport, mock_ses
     with MCPClient(mock_transport["transport_callable"]) as client:
         client.call_tool_sync(tool_use_id="test-123", name="test_tool", arguments={})
 
-        mock_session.call_tool.assert_called_once_with("test_tool", {}, None, progress_callback=None, meta=None)
+        assert_session_call_tool_once_with(mock_session, "test_tool", {})
 
 
 def test_call_tool_sync_pre_set_cancel_signal_skips_request(mock_transport, mock_session):
@@ -272,7 +328,7 @@ def test_call_tool_sync_cancel_signal_cancels_only_in_flight_call(mock_transport
     cancel_signal = threading.Event()
     mock_content = MCPTextContent(type="text", text="done")
 
-    async def call_tool(name, arguments, read_timeout_seconds, progress_callback=None, meta=None):
+    async def call_tool(name, arguments, read_timeout_seconds, progress_callback=None, meta=None, **kwargs):
         if name == "slow_tool":
             first_call_started.set()
             try:
@@ -302,12 +358,50 @@ def test_call_tool_sync_cancel_signal_cancels_only_in_flight_call(mock_transport
         "cancelled": True,
     }
     assert first_call_cancelled.wait(timeout=1)
-    mock_session.send_notification.assert_awaited_once()
-    notification = mock_session.send_notification.await_args.args[0].root
-    assert notification.method == "notifications/cancelled"
-    assert notification.params.requestId == 0
+    if MCP_V2:
+        # The 2.x dispatcher sends the cancel itself when the awaiting task is
+        # cancelled; the client hand-sends nothing.
+        mock_session.send_notification.assert_not_awaited()
+    else:
+        mock_session.send_notification.assert_awaited_once()
+        notification = mock_session.send_notification.await_args.args[0].root
+        assert notification.method == "notifications/cancelled"
+        assert notification.params.requestId == 0
     assert second_result["status"] == "success"
     assert mock_session.call_tool.call_count == 2
+
+
+def test_call_tool_sync_cancel_on_v2_sends_no_hand_built_notification(mock_transport, mock_session):
+    """Test that cancelling on the 2.x path hand-sends nothing: cancelling the awaiting task is the mechanism."""
+    call_started = threading.Event()
+    call_cancelled = threading.Event()
+    cancel_signal = threading.Event()
+
+    async def call_tool(name, arguments, read_timeout_seconds, progress_callback=None, meta=None, **kwargs):
+        call_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            call_cancelled.set()
+            raise
+
+    mock_session.call_tool.side_effect = call_tool
+    mock_session._request_id = 0
+
+    with (
+        patch("strands.tools.mcp.mcp_client.MCP_V2", True),
+        MCPClient(mock_transport["transport_callable"]) as client,
+    ):
+        cancellation_thread = threading.Thread(target=lambda: (call_started.wait(timeout=1), cancel_signal.set()))
+        cancellation_thread.start()
+        cancelled_result = client.call_tool_sync(
+            tool_use_id="cancelled", name="slow_tool", arguments={}, cancel_signal=cancel_signal
+        )
+        cancellation_thread.join(timeout=1)
+
+    assert cancelled_result["cancelled"] is True
+    assert call_cancelled.wait(timeout=1)
+    mock_session.send_notification.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -322,7 +416,7 @@ async def test_call_tool_async_cancel_signal_cancels_only_matching_call(mock_tra
 
     assigned_request_ids = {}
 
-    async def call_tool(name, arguments, read_timeout_seconds, progress_callback=None, meta=None):
+    async def call_tool(name, arguments, read_timeout_seconds, progress_callback=None, meta=None, **kwargs):
         request_id = mock_session._request_id
         mock_session._request_id += 1
         assigned_request_ids[name] = request_id
@@ -368,10 +462,15 @@ async def test_call_tool_async_cancel_signal_cancels_only_matching_call(mock_tra
     ]
     assert cancelled_result["cancelled"] is True
     assert slow_call_cancelled.is_set()
-    notifications = [call.args[0].root for call in mock_session.send_notification.await_args_list]
-    assert all(notification.method == "notifications/cancelled" for notification in notifications)
-    cancelled_request_ids = {notification.params.requestId for notification in notifications}
-    assert assigned_request_ids["slow_tool"] in cancelled_request_ids
+    if MCP_V2:
+        # The 2.x dispatcher sends the cancel itself when the awaiting task is
+        # cancelled; the client hand-sends nothing.
+        mock_session.send_notification.assert_not_awaited()
+    else:
+        notifications = [call.args[0].root for call in mock_session.send_notification.await_args_list]
+        assert all(notification.method == "notifications/cancelled" for notification in notifications)
+        cancelled_request_ids = {notification.params.requestId for notification in notifications}
+        assert assigned_request_ids["slow_tool"] in cancelled_request_ids
     assert assigned_request_ids["slow_tool"] > assigned_request_ids["first_tool"]
     assert assigned_request_ids["slow_tool"] != assigned_request_ids["fast_tool"]
     assert completed_result["status"] == "success"
@@ -385,7 +484,7 @@ async def test_call_tool_async_cancel_without_sdk_request_id_still_cancels_local
     cancel_signal = threading.Event()
     del mock_session._request_id
 
-    async def call_tool(name, arguments, read_timeout_seconds, progress_callback=None, meta=None):
+    async def call_tool(name, arguments, read_timeout_seconds, progress_callback=None, meta=None, **kwargs):
         call_started.set()
         await asyncio.Event().wait()
 
@@ -403,6 +502,7 @@ async def test_call_tool_async_cancel_without_sdk_request_id_still_cancels_local
     mock_session.send_notification.assert_not_awaited()
 
 
+@pytest.mark.skipif(MCP_V2, reason="hand-sent cancellation is 1.x-only; the 2.x dispatcher sends the cancel itself")
 @pytest.mark.asyncio
 async def test_call_tool_async_logs_remote_cancellation_failure(mock_transport, mock_session, caplog):
     """Test an immediate remote notification failure is observed and logged."""
@@ -411,7 +511,7 @@ async def test_call_tool_async_logs_remote_cancellation_failure(mock_transport, 
     mock_session._request_id = 7
     mock_session.send_notification.side_effect = RuntimeError("notification failed")
 
-    async def call_tool(name, arguments, read_timeout_seconds, progress_callback=None, meta=None):
+    async def call_tool(name, arguments, read_timeout_seconds, progress_callback=None, meta=None, **kwargs):
         call_started.set()
         await asyncio.Event().wait()
 
@@ -436,7 +536,7 @@ async def test_call_tool_async_cancel_wins_when_result_and_signal_are_ready(mock
     cancel_signal = threading.Event()
     mock_content = MCPTextContent(type="text", text="late result")
 
-    async def call_tool(name, arguments, read_timeout_seconds, progress_callback=None, meta=None):
+    async def call_tool(name, arguments, read_timeout_seconds, progress_callback=None, meta=None, **kwargs):
         cancel_signal.set()
         return MCPCallToolResult(isError=False, content=[mock_content])
 
@@ -460,7 +560,7 @@ async def test_call_tool_async_tracks_cancellation_resistant_invocation(mock_tra
     cancel_signal = threading.Event()
     mock_session._request_id = 0
 
-    async def call_tool(name, arguments, read_timeout_seconds, progress_callback=None, meta=None):
+    async def call_tool(name, arguments, read_timeout_seconds, progress_callback=None, meta=None, **kwargs):
         call_started.set()
         try:
             await asyncio.Event().wait()
@@ -494,7 +594,7 @@ async def test_call_tool_async_caller_cancellation_cleans_up_background_call(moc
     call_cancelled = asyncio.Event()
     mock_session._request_id = 0
 
-    async def call_tool(name, arguments, read_timeout_seconds, progress_callback=None, meta=None):
+    async def call_tool(name, arguments, read_timeout_seconds, progress_callback=None, meta=None, **kwargs):
         call_started.set()
         try:
             await asyncio.Event().wait()
@@ -518,7 +618,12 @@ async def test_call_tool_async_caller_cancellation_cleans_up_background_call(moc
         second_result = await client.call_tool_async(tool_use_id="completed", name="fast_tool", arguments={})
 
     assert call_cancelled.is_set()
-    mock_session.send_notification.assert_awaited_once()
+    if MCP_V2:
+        # The 2.x dispatcher sends the cancel itself when the awaiting task is
+        # cancelled; the client hand-sends nothing.
+        mock_session.send_notification.assert_not_awaited()
+    else:
+        mock_session.send_notification.assert_awaited_once()
     assert second_result["status"] == "success"
 
 
@@ -532,7 +637,7 @@ async def test_call_tool_async_caller_cancellation_timeout_preserves_cancelled_e
     release_call = threading.Event()
     mock_session._request_id = 0
 
-    async def resistant_call(name, arguments, read_timeout_seconds, progress_callback=None, meta=None):
+    async def resistant_call(name, arguments, read_timeout_seconds, progress_callback=None, meta=None, **kwargs):
         call_started.set()
         try:
             await asyncio.Event().wait()
@@ -866,10 +971,10 @@ def test_list_prompts_sync(mock_transport, mock_session):
     with MCPClient(mock_transport["transport_callable"]) as client:
         result = client.list_prompts_sync()
 
-        mock_session.list_prompts.assert_called_once_with(cursor=None)
+        mock_session.list_prompts.assert_called_once_with(params=None)
         assert len(result.prompts) == 1
         assert result.prompts[0].name == "test_prompt"
-        assert result.nextCursor is None
+        assert next_cursor(result) is None
 
 
 def test_list_prompts_sync_with_pagination_token(mock_transport, mock_session):
@@ -880,10 +985,10 @@ def test_list_prompts_sync_with_pagination_token(mock_transport, mock_session):
     with MCPClient(mock_transport["transport_callable"]) as client:
         result = client.list_prompts_sync(pagination_token="current_page_token")
 
-        mock_session.list_prompts.assert_called_once_with(cursor="current_page_token")
+        mock_session.list_prompts.assert_called_once_with(params=PaginatedRequestParams(cursor="current_page_token"))
         assert len(result.prompts) == 1
         assert result.prompts[0].name == "test_prompt"
-        assert result.nextCursor == "next_page_token"
+        assert next_cursor(result) == "next_page_token"
 
 
 def test_list_prompts_sync_session_not_active():
@@ -902,7 +1007,16 @@ def test_get_prompt_sync(mock_transport, mock_session):
     with MCPClient(mock_transport["transport_callable"]) as client:
         result = client.get_prompt_sync("test_prompt_id", {"key": "value"})
 
-        mock_session.get_prompt.assert_called_once_with("test_prompt_id", arguments={"key": "value"})
+        if MCP_V2:
+            mock_session.get_prompt.assert_called_once_with(
+                "test_prompt_id",
+                arguments={"key": "value"},
+                input_responses=None,
+                request_state=None,
+                allow_input_required=True,
+            )
+        else:
+            mock_session.get_prompt.assert_called_once_with("test_prompt_id", arguments={"key": "value"})
         assert len(result.messages) == 1
         assert result.messages[0].role == "user"
         assert result.messages[0].content.text == "This is a test prompt"
@@ -1041,6 +1155,25 @@ def test_mcp_client_state_reset_after_timeout():
     assert not client._init_future.done()  # New future created
 
 
+def test_call_tool_sync_image_content(mock_transport, mock_session):
+    """A top-level ImageContent block should map to image content with decoded bytes."""
+    with open("tests_integ/resources/yellow.png", "rb") as image_file:
+        png_data = image_file.read()
+
+    image_content = MCPImageContent(type="image", data=base64.b64encode(png_data).decode(), mimeType="image/png")
+    mock_session.call_tool.return_value = MCPCallToolResult(isError=False, content=[image_content])
+
+    with MCPClient(mock_transport["transport_callable"]) as client:
+        result = client.call_tool_sync(tool_use_id="img-1", name="get_image", arguments={})
+
+        assert result == {
+            "status": "success",
+            "toolUseId": "img-1",
+            "content": [{"image": {"format": "png", "source": {"bytes": png_data}}}],
+            "isError": False,
+        }
+
+
 def test_call_tool_sync_embedded_nested_text(mock_transport, mock_session):
     """EmbeddedResource.resource (uri + text) should map to plain text content."""
     embedded_resource = {
@@ -1056,7 +1189,7 @@ def test_call_tool_sync_embedded_nested_text(mock_transport, mock_session):
     with MCPClient(mock_transport["transport_callable"]) as client:
         result = client.call_tool_sync(tool_use_id="er-text", name="get_file_contents", arguments={})
 
-        mock_session.call_tool.assert_called_once_with("get_file_contents", {}, None, progress_callback=None, meta=None)
+        assert_session_call_tool_once_with(mock_session, "get_file_contents", {})
         assert result["status"] == "success"
         assert len(result["content"]) == 1
         assert result["content"][0]["text"] == "inner text"
@@ -1081,7 +1214,7 @@ def test_call_tool_sync_embedded_nested_base64_textual_mime(mock_transport, mock
     with MCPClient(mock_transport["transport_callable"]) as client:
         result = client.call_tool_sync(tool_use_id="er-blob", name="get_file_contents", arguments={})
 
-        mock_session.call_tool.assert_called_once_with("get_file_contents", {}, None, progress_callback=None, meta=None)
+        assert_session_call_tool_once_with(mock_session, "get_file_contents", {})
         assert result["status"] == "success"
         assert len(result["content"]) == 1
         assert result["content"][0]["text"] == '{"k":"v"}'
@@ -1107,7 +1240,7 @@ def test_call_tool_sync_embedded_image_blob(mock_transport, mock_session):
     with MCPClient(mock_transport["transport_callable"]) as client:
         result = client.call_tool_sync(tool_use_id="er-image", name="get_file_contents", arguments={})
 
-        mock_session.call_tool.assert_called_once_with("get_file_contents", {}, None, progress_callback=None, meta=None)
+        assert_session_call_tool_once_with(mock_session, "get_file_contents", {})
         assert result["status"] == "success"
         assert len(result["content"]) == 1
         assert "image" in result["content"][0]
@@ -1132,7 +1265,7 @@ def test_call_tool_sync_embedded_non_textual_blob_dropped(mock_transport, mock_s
     with MCPClient(mock_transport["transport_callable"]) as client:
         result = client.call_tool_sync(tool_use_id="er-binary", name="get_file_contents", arguments={})
 
-        mock_session.call_tool.assert_called_once_with("get_file_contents", {}, None, progress_callback=None, meta=None)
+        assert_session_call_tool_once_with(mock_session, "get_file_contents", {})
         assert result["status"] == "success"
         assert len(result["content"]) == 0  # Content should be dropped
 
@@ -1155,7 +1288,7 @@ def test_call_tool_sync_embedded_multiple_textual_mimes(mock_transport, mock_ses
     with MCPClient(mock_transport["transport_callable"]) as client:
         result = client.call_tool_sync(tool_use_id="er-yaml", name="get_file_contents", arguments={})
 
-        mock_session.call_tool.assert_called_once_with("get_file_contents", {}, None, progress_callback=None, meta=None)
+        assert_session_call_tool_once_with(mock_session, "get_file_contents", {})
         assert result["status"] == "success"
         assert len(result["content"]) == 1
         assert "key: value" in result["content"][0]["text"]
@@ -1175,27 +1308,34 @@ def test_call_tool_sync_embedded_unknown_resource_type_dropped(mock_transport, m
     mock_embedded_resource = MagicMock()
     mock_embedded_resource.resource = UnknownResourceContents()
 
+    # A loose mock stands in for the result model, so both lines' attribute
+    # spellings need explicit values.
     mock_session.call_tool.return_value = MagicMock(
-        isError=False, content=[mock_embedded_resource], structuredContent=None
+        isError=False,
+        is_error=False,
+        content=[mock_embedded_resource],
+        structuredContent=None,
+        structured_content=None,
+        meta=None,
     )
 
     with MCPClient(mock_transport["transport_callable"]) as client:
         result = client.call_tool_sync(tool_use_id="er-unknown", name="get_file_contents", arguments={})
 
-        mock_session.call_tool.assert_called_once_with("get_file_contents", {}, None, progress_callback=None, meta=None)
+        assert_session_call_tool_once_with(mock_session, "get_file_contents", {})
         assert result["status"] == "success"
         assert len(result["content"]) == 0  # Unknown resource type should be dropped
 
 
 @pytest.mark.asyncio
-async def test_handle_error_message_non_fatal_error():
-    """Test that _handle_error_message ignores non-fatal errors and logs them."""
+async def test_handle_session_message_non_fatal_error():
+    """Test that _handle_session_message ignores non-fatal errors and logs them."""
     client = MCPClient(MagicMock())
 
     # Test the message handler directly with a non-fatal error
     with patch.object(client, "_log_debug_with_thread") as mock_log:
         # This should not raise an exception
-        await client._handle_error_message(Exception("unknown request id: abc123"))
+        await client._handle_session_message(Exception("unknown request id: abc123"))
 
         # Verify the non-fatal error was logged as ignored
         assert mock_log.called
@@ -1204,22 +1344,294 @@ async def test_handle_error_message_non_fatal_error():
 
 
 @pytest.mark.asyncio
-async def test_handle_error_message_fatal_error():
-    """Test that _handle_error_message raises fatal errors."""
+async def test_handle_session_message_fatal_error():
+    """Test that _handle_session_message raises fatal errors."""
     client = MCPClient(MagicMock())
 
     # This should raise the exception
     with pytest.raises(Exception, match="connection timeout"):
-        await client._handle_error_message(Exception("connection timeout"))
+        await client._handle_session_message(Exception("connection timeout"))
 
 
 @pytest.mark.asyncio
-async def test_handle_error_message_non_exception():
-    """Test that _handle_error_message handles non-exception messages."""
+async def test_handle_session_message_non_exception():
+    """Test that _handle_session_message handles non-exception messages."""
     client = MCPClient(MagicMock())
 
     # This should not raise an exception
-    await client._handle_error_message("normal message")
+    await client._handle_session_message("normal message")
+
+
+@pytest.mark.asyncio
+async def test_handle_session_message_tools_changed_schedules_a_refresh():
+    """Test that a tools list-changed notification schedules a refresh when the callback is set."""
+    client = MCPClient(MagicMock(), on_tools_changed=MagicMock())
+    notification = ToolListChangedNotification(method="notifications/tools/list_changed")
+
+    with patch.object(client, "_handle_tools_changed", new=AsyncMock()) as mock_refresh:
+        await client._handle_session_message(notification)
+        assert client._tools_refresh_tasks
+        await asyncio.gather(*client._tools_refresh_tasks)
+        # One more loop tick so the done-callback that discards the task runs.
+        await asyncio.sleep(0)
+
+    mock_refresh.assert_awaited_once()
+    assert not client._tools_refresh_tasks
+
+
+@pytest.mark.asyncio
+async def test_handle_session_message_tools_changed_ignored_without_callback():
+    """Test that a tools list-changed notification is a no-op when no callback is registered."""
+    client = MCPClient(MagicMock())
+    notification = ToolListChangedNotification(method="notifications/tools/list_changed")
+
+    await client._handle_session_message(notification)
+
+    assert not client._tools_refresh_tasks
+
+
+@pytest.mark.asyncio
+async def test_handle_tools_changed_coalesces_overlapping_notifications(monkeypatch):
+    """Test that a notification arriving mid-refresh folds into one trailing rerun."""
+    monkeypatch.setattr(mcp_client_module, "_TOOLS_CHANGED_DEBOUNCE_SECONDS", 0)
+    client = MCPClient(MagicMock(), on_tools_changed=MagicMock())
+    refresh_calls = []
+    first_refresh_started = threading.Event()
+    release_first_refresh = threading.Event()
+
+    def blocking_refresh():
+        refresh_calls.append(len(refresh_calls))
+        if len(refresh_calls) == 1:
+            first_refresh_started.set()
+            release_first_refresh.wait(timeout=5)
+
+    monkeypatch.setattr(client, "_refresh_loaded_tools", blocking_refresh)
+
+    first_notification = asyncio.create_task(client._handle_tools_changed())
+    deadline = time.time() + 5
+    while not first_refresh_started.is_set():
+        assert time.time() < deadline, "first refresh never started"
+        await asyncio.sleep(0.01)
+
+    await client._handle_tools_changed()
+    assert client._tools_refresh_pending
+
+    release_first_refresh.set()
+    await first_notification
+
+    assert refresh_calls == [0, 1]
+    assert not client._tools_refresh_in_progress
+
+
+@pytest.mark.asyncio
+async def test_handle_tools_changed_logs_and_recovers_when_the_refresh_raises(monkeypatch, caplog):
+    """Test that a failing refresh is logged as a warning and leaves the client ready for the next one."""
+    monkeypatch.setattr(mcp_client_module, "_TOOLS_CHANGED_DEBOUNCE_SECONDS", 0)
+    client = MCPClient(MagicMock(), on_tools_changed=MagicMock())
+    monkeypatch.setattr(client, "_refresh_loaded_tools", MagicMock(side_effect=RuntimeError("listing failed")))
+
+    await client._handle_tools_changed()
+
+    assert "failed to refresh tools after list-changed notification" in caplog.text
+    assert not client._tools_refresh_in_progress
+
+
+@pytest.mark.asyncio
+async def test_handle_tools_changed_failed_round_keeps_the_queued_rerun(monkeypatch, caplog):
+    """Test that a round that raises does not discard a rerun queued by a mid-refresh notification."""
+    monkeypatch.setattr(mcp_client_module, "_TOOLS_CHANGED_DEBOUNCE_SECONDS", 0)
+    client = MCPClient(MagicMock(), on_tools_changed=MagicMock())
+    refresh_calls = []
+
+    def failing_first_refresh():
+        refresh_calls.append(len(refresh_calls))
+        if len(refresh_calls) == 1:
+            # A notification landing mid-refresh queues the trailing rerun.
+            client._tools_refresh_pending = True
+            raise RuntimeError("listing failed")
+
+    monkeypatch.setattr(client, "_refresh_loaded_tools", failing_first_refresh)
+
+    await client._handle_tools_changed()
+
+    assert refresh_calls == [0, 1]
+    assert "failed to refresh tools after list-changed notification" in caplog.text
+    assert not client._tools_refresh_in_progress
+    assert not client._tools_refresh_pending
+
+
+def test_refresh_loaded_tools_updates_the_cache_and_invokes_the_callback():
+    """Test that a refresh replaces the cached tools and reports the change to the callback."""
+    on_tools_changed = MagicMock()
+    client = MCPClient(MagicMock(), on_tools_changed=on_tools_changed)
+    previous_tool = MagicMock()
+    previous_tool.tool_name = "previous_tool"
+    client._loaded_tools = [previous_tool]
+    refreshed_tools = [MagicMock()]
+
+    with patch.object(client, "_list_all_tools_sync", return_value=refreshed_tools):
+        client._refresh_loaded_tools()
+
+    assert client._loaded_tools is refreshed_tools
+    on_tools_changed.assert_called_once_with(["previous_tool"], refreshed_tools)
+
+
+def test_refresh_loaded_tools_raising_callback_keeps_the_refreshed_cache(caplog):
+    """Test that a raising callback is logged with its own message and the cache stays refreshed."""
+    on_tools_changed = MagicMock(side_effect=RuntimeError("consumer broke"))
+    client = MCPClient(MagicMock(), on_tools_changed=on_tools_changed)
+    refreshed_tools = [MagicMock()]
+
+    with patch.object(client, "_list_all_tools_sync", return_value=refreshed_tools):
+        client._refresh_loaded_tools()
+
+    assert client._loaded_tools is refreshed_tools
+    assert "on_tools_changed callback raised" in caplog.text
+    assert "failed to refresh tools" not in caplog.text
+
+
+def test_on_tools_changed_is_settable_after_construction():
+    """Test that the callback can be registered and removed through the property."""
+    client = MCPClient(MagicMock())
+    assert client.on_tools_changed is None
+
+    callback = MagicMock()
+    client.on_tools_changed = callback
+
+    assert client.on_tools_changed is callback
+
+
+def test_subscription_entered_before_ready_and_exited_on_stop(mock_transport, mock_session):
+    """Test that the tools list-changed subscription wraps the session lifetime when a callback is set."""
+    lifecycle_events = []
+
+    @asynccontextmanager
+    async def recording_subscription(session):
+        lifecycle_events.append("enter")
+        try:
+            yield None
+        finally:
+            lifecycle_events.append("exit")
+
+    with patch("strands.tools.mcp.mcp_client.tools_changed_subscription", new=recording_subscription):
+        client = MCPClient(mock_transport["transport_callable"], on_tools_changed=MagicMock())
+        with client:
+            assert lifecycle_events == ["enter"]
+        assert lifecycle_events == ["enter", "exit"]
+
+
+def test_subscription_not_entered_without_callback(mock_transport, mock_session):
+    """Test that no subscription is held when no callback is registered."""
+    lifecycle_events = []
+
+    @asynccontextmanager
+    async def recording_subscription(session):
+        lifecycle_events.append("enter")
+        yield None
+
+    with patch("strands.tools.mcp.mcp_client.tools_changed_subscription", new=recording_subscription):
+        with MCPClient(mock_transport["transport_callable"]):
+            pass
+
+    assert lifecycle_events == []
+
+
+def test_start_raises_when_the_subscription_never_acknowledges(mock_transport, mock_session):
+    """Test that a subscription the server never acknowledges bounds start() instead of hanging it."""
+
+    @asynccontextmanager
+    async def never_acknowledging_subscription(session):
+        await asyncio.Event().wait()
+        yield None
+
+    with patch("strands.tools.mcp.mcp_client.tools_changed_subscription", new=never_acknowledging_subscription):
+        client = MCPClient(mock_transport["transport_callable"], on_tools_changed=MagicMock(), startup_timeout=1)
+        started = time.time()
+        with pytest.raises(MCPClientInitializationError):
+            client.start()
+
+    assert time.time() - started < 10
+
+
+def test_stop_resets_tools_refresh_state_for_restart(mock_transport, mock_session):
+    """Test that a restarted client refreshes again after a stop that interrupted a refresh.
+
+    A refresh task destroyed with its event loop never runs the finally block
+    that clears the in-progress flag, so stop() must reset the refresh state
+    itself for the next start() to work.
+    """
+    client = MCPClient(mock_transport["transport_callable"], on_tools_changed=MagicMock())
+    with client:
+        client._tools_refresh_in_progress = True
+        client._tools_refresh_pending = True
+
+        # The stale entry must be a real future: stop() drains this set with
+        # asyncio.wait, which on Python 3.10 rejects a non-awaitable stand-in.
+        async def _seed_stale_refresh_task() -> None:
+            stale_refresh_task: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+            stale_refresh_task.set_result(None)
+            client._tools_refresh_tasks.add(stale_refresh_task)
+
+        asyncio.run_coroutine_threadsafe(_seed_stale_refresh_task(), client._background_thread_event_loop).result(
+            timeout=5
+        )
+
+    with client:
+        assert not client._tools_refresh_in_progress
+        assert not client._tools_refresh_pending
+        assert not client._tools_refresh_tasks
+
+
+def test_tools_changed_notification_end_to_end_refreshes_and_notifies(mock_transport, mock_session, monkeypatch):
+    """Test the composed chain: notification, refresh off the loop thread, callback with real tools."""
+    monkeypatch.setattr(mcp_client_module, "_TOOLS_CHANGED_DEBOUNCE_SECONDS", 0)
+    callback_called = threading.Event()
+    callback_args = {}
+
+    def on_tools_changed(previous_names, refreshed_tools):
+        callback_args["previous_names"] = previous_names
+        callback_args["refreshed_tools"] = refreshed_tools
+        callback_called.set()
+
+    refreshed_tool = MCPTool(name="echo", description="test tool", inputSchema={"type": "object", "properties": {}})
+    mock_session.list_tools.return_value = ListToolsResult(tools=[refreshed_tool])
+    notification = ToolListChangedNotification(method="notifications/tools/list_changed")
+
+    client = MCPClient(mock_transport["transport_callable"], on_tools_changed=on_tools_changed)
+    with client:
+        asyncio.run_coroutine_threadsafe(
+            client._handle_session_message(notification), client._background_thread_event_loop
+        ).result(timeout=5)
+        assert callback_called.wait(timeout=5)
+
+        assert callback_args["previous_names"] == []
+        assert [tool.tool_name for tool in callback_args["refreshed_tools"]] == ["echo"]
+        assert client._loaded_tools == callback_args["refreshed_tools"]
+
+
+def test_stop_with_refresh_in_flight_unwinds_the_worker(mock_transport, mock_session, monkeypatch):
+    """Test that stop() lets an in-flight refresh unwind instead of stranding its worker thread."""
+    monkeypatch.setattr(mcp_client_module, "_TOOLS_CHANGED_DEBOUNCE_SECONDS", 0)
+    refresh_started = threading.Event()
+
+    async def hanging_list_tools(*args, **kwargs):
+        refresh_started.set()
+        await asyncio.Event().wait()
+
+    mock_session.list_tools.side_effect = hanging_list_tools
+    notification = ToolListChangedNotification(method="notifications/tools/list_changed")
+
+    client = MCPClient(mock_transport["transport_callable"], on_tools_changed=MagicMock())
+    with client:
+        asyncio.run_coroutine_threadsafe(
+            client._handle_session_message(notification), client._background_thread_event_loop
+        ).result(timeout=5)
+        assert refresh_started.wait(timeout=5)
+
+    # Exiting the block proves stop() drained the refresh; a restart proves nothing leaked.
+    mock_session.list_tools.side_effect = None
+    with client:
+        assert not client._tools_refresh_tasks
 
 
 def test_call_tool_sync_with_meta_and_structured_content(mock_transport, mock_session):
@@ -1234,9 +1646,7 @@ def test_call_tool_sync_with_meta_and_structured_content(mock_transport, mock_se
     with MCPClient(mock_transport["transport_callable"]) as client:
         result = client.call_tool_sync(tool_use_id="test-123", name="test_tool", arguments={"param": "value"})
 
-        mock_session.call_tool.assert_called_once_with(
-            "test_tool", {"param": "value"}, None, progress_callback=None, meta=None
-        )
+        assert_session_call_tool_once_with(mock_session, "test_tool", {"param": "value"})
 
         assert result["status"] == "success"
         assert result["toolUseId"] == "test-123"
@@ -1252,34 +1662,34 @@ def test_call_tool_sync_with_meta_and_structured_content(mock_transport, mock_se
 def test_list_resources_sync(mock_transport, mock_session):
     """Test that list_resources_sync correctly retrieves resources."""
     mock_resource = Resource(
-        uri=AnyUrl("file://documents/test.txt"), name="test.txt", description="A test document", mimeType="text/plain"
+        uri="file://documents/test.txt", name="test.txt", description="A test document", mimeType="text/plain"
     )
     mock_session.list_resources.return_value = ListResourcesResult(resources=[mock_resource])
 
     with MCPClient(mock_transport["transport_callable"]) as client:
         result = client.list_resources_sync()
 
-        mock_session.list_resources.assert_called_once_with(cursor=None)
+        mock_session.list_resources.assert_called_once_with(params=None)
         assert len(result.resources) == 1
         assert result.resources[0].name == "test.txt"
         assert str(result.resources[0].uri) == "file://documents/test.txt"
-        assert result.nextCursor is None
+        assert next_cursor(result) is None
 
 
 def test_list_resources_sync_with_pagination_token(mock_transport, mock_session):
     """Test that list_resources_sync correctly passes pagination token and returns next cursor."""
     mock_resource = Resource(
-        uri=AnyUrl("file://documents/test.txt"), name="test.txt", description="A test document", mimeType="text/plain"
+        uri="file://documents/test.txt", name="test.txt", description="A test document", mimeType="text/plain"
     )
     mock_session.list_resources.return_value = ListResourcesResult(resources=[mock_resource], nextCursor="next_page")
 
     with MCPClient(mock_transport["transport_callable"]) as client:
         result = client.list_resources_sync(pagination_token="current_page")
 
-        mock_session.list_resources.assert_called_once_with(cursor="current_page")
+        mock_session.list_resources.assert_called_once_with(params=PaginatedRequestParams(cursor="current_page"))
         assert len(result.resources) == 1
         assert result.resources[0].name == "test.txt"
-        assert result.nextCursor == "next_page"
+        assert next_cursor(result) == "next_page"
 
 
 def test_list_resources_sync_session_not_active():
@@ -1292,9 +1702,7 @@ def test_list_resources_sync_session_not_active():
 
 def test_read_resource_sync(mock_transport, mock_session):
     """Test that read_resource_sync correctly reads a resource."""
-    mock_content = TextResourceContents(
-        uri=AnyUrl("file://documents/test.txt"), text="Resource content", mimeType="text/plain"
-    )
+    mock_content = TextResourceContents(uri="file://documents/test.txt", text="Resource content", mimeType="text/plain")
     mock_session.read_resource.return_value = ReadResourceResult(contents=[mock_content])
 
     with MCPClient(mock_transport["transport_callable"]) as client:
@@ -1312,9 +1720,7 @@ def test_read_resource_sync(mock_transport, mock_session):
 
 def test_read_resource_sync_with_anyurl(mock_transport, mock_session):
     """Test that read_resource_sync correctly handles AnyUrl input."""
-    mock_content = TextResourceContents(
-        uri=AnyUrl("file://documents/test.txt"), text="Resource content", mimeType="text/plain"
-    )
+    mock_content = TextResourceContents(uri="file://documents/test.txt", text="Resource content", mimeType="text/plain")
     mock_session.read_resource.return_value = ReadResourceResult(contents=[mock_content])
 
     with MCPClient(mock_transport["transport_callable"]) as client:
@@ -1350,11 +1756,12 @@ def test_list_resource_templates_sync(mock_transport, mock_session):
     with MCPClient(mock_transport["transport_callable"]) as client:
         result = client.list_resource_templates_sync()
 
-        mock_session.list_resource_templates.assert_called_once_with(cursor=None)
-        assert len(result.resourceTemplates) == 1
-        assert result.resourceTemplates[0].name == "document_template"
-        assert result.resourceTemplates[0].uriTemplate == "file://documents/{name}"
-        assert result.nextCursor is None
+        mock_session.list_resource_templates.assert_called_once_with(params=None)
+        templates = resource_templates(result)
+        assert len(templates) == 1
+        assert templates[0].name == "document_template"
+        assert (templates[0].uri_template if MCP_V2 else templates[0].uriTemplate) == "file://documents/{name}"
+        assert next_cursor(result) is None
 
 
 def test_list_resource_templates_sync_with_pagination_token(mock_transport, mock_session):
@@ -1372,10 +1779,13 @@ def test_list_resource_templates_sync_with_pagination_token(mock_transport, mock
     with MCPClient(mock_transport["transport_callable"]) as client:
         result = client.list_resource_templates_sync(pagination_token="current_page")
 
-        mock_session.list_resource_templates.assert_called_once_with(cursor="current_page")
-        assert len(result.resourceTemplates) == 1
-        assert result.resourceTemplates[0].name == "document_template"
-        assert result.nextCursor == "next_page"
+        mock_session.list_resource_templates.assert_called_once_with(
+            params=PaginatedRequestParams(cursor="current_page")
+        )
+        templates = resource_templates(result)
+        assert len(templates) == 1
+        assert templates[0].name == "document_template"
+        assert next_cursor(result) == "next_page"
 
 
 def test_list_resource_templates_sync_session_not_active():
@@ -1387,8 +1797,8 @@ def test_list_resource_templates_sync_session_not_active():
 
 
 @pytest.mark.asyncio
-async def test_handle_error_message_with_percent_in_message():
-    """Test that _handle_error_message handles messages containing % characters without string formatting errors.
+async def test_handle_session_message_with_percent_in_message():
+    """Test that _handle_session_message handles messages containing % characters without string formatting errors.
 
     This is a regression test for issue #1244 where MCP error messages containing '%' characters
     (e.g., from URLs like "https://example.com/path?param=value%20encoded") would cause a
@@ -1401,12 +1811,11 @@ async def test_handle_error_message_with_percent_in_message():
     error_with_percent = Exception("unknown request id: abc%20123%30def")
 
     # This should not raise TypeError and should not raise the exception (since it's non-fatal)
-    await client._handle_error_message(error_with_percent)
+    await client._handle_session_message(error_with_percent)
 
 
 def test_call_tool_sync_elicitation_error(mock_transport, mock_session):
     """Test that call_tool_sync correctly handles elicitation required errors."""
-    from mcp.shared.exceptions import McpError
     from mcp.types import ElicitationRequiredErrorData, ElicitRequestURLParams
 
     elicitation_data = ElicitationRequiredErrorData(
@@ -1417,7 +1826,7 @@ def test_call_tool_sync_elicitation_error(mock_transport, mock_session):
         ]
     )
 
-    error = McpError(error=MagicMock(code=-32042, data=elicitation_data.model_dump()))
+    error = make_mcp_error(code=-32042, data=elicitation_data.model_dump())
     mock_session.call_tool.side_effect = error
 
     with MCPClient(mock_transport["transport_callable"]) as client:
@@ -1434,7 +1843,6 @@ def test_call_tool_sync_elicitation_error(mock_transport, mock_session):
 
 def test_call_tool_sync_elicitation_error_multiple_urls(mock_transport, mock_session):
     """Test that call_tool_sync correctly handles elicitation errors with multiple elicitations."""
-    from mcp.shared.exceptions import McpError
     from mcp.types import ElicitationRequiredErrorData, ElicitRequestURLParams
 
     elicitation_data = ElicitationRequiredErrorData(
@@ -1448,7 +1856,7 @@ def test_call_tool_sync_elicitation_error_multiple_urls(mock_transport, mock_ses
         ]
     )
 
-    error = McpError(error=MagicMock(code=-32042, data=elicitation_data.model_dump()))
+    error = make_mcp_error(code=-32042, data=elicitation_data.model_dump())
     mock_session.call_tool.side_effect = error
 
     with MCPClient(mock_transport["transport_callable"]) as client:
@@ -1468,13 +1876,12 @@ def test_call_tool_sync_elicitation_error_multiple_urls(mock_transport, mock_ses
 
 def test_call_tool_sync_elicitation_error_no_urls(mock_transport, mock_session):
     """Test that -32042 error with empty URL still returns generic elicitation result."""
-    from mcp.shared.exceptions import McpError
     from mcp.types import ElicitationRequiredErrorData, ElicitRequestURLParams
 
     elicitation_data = ElicitationRequiredErrorData(
         elicitations=[ElicitRequestURLParams(url="", message="No URL provided", elicitationId="elicit-1")]
     )
-    error = McpError(error=MagicMock(code=-32042, data=elicitation_data.model_dump()))
+    error = make_mcp_error(code=-32042, data=elicitation_data.model_dump())
     mock_session.call_tool.side_effect = error
 
     with MCPClient(mock_transport["transport_callable"]) as client:
@@ -1486,10 +1893,8 @@ def test_call_tool_sync_elicitation_error_no_urls(mock_transport, mock_session):
 
 
 def test_call_tool_sync_other_mcp_error_code(mock_transport, mock_session):
-    """Test that non-32042 McpError falls through to generic error."""
-    from mcp.shared.exceptions import McpError
-
-    error = McpError(error=MagicMock(code=-32600, message="Invalid request"))
+    """Test that non-32042 MCPError falls through to generic error."""
+    error = make_mcp_error(code=-32600, message="Invalid request")
     mock_session.call_tool.side_effect = error
 
     with MCPClient(mock_transport["transport_callable"]) as client:
@@ -1500,9 +1905,7 @@ def test_call_tool_sync_other_mcp_error_code(mock_transport, mock_session):
 
 def test_call_tool_sync_elicitation_error_malformed_data(mock_transport, mock_session):
     """Test that -32042 with unparseable data falls through to generic error."""
-    from mcp.shared.exceptions import McpError
-
-    error = McpError(error=MagicMock(code=-32042, data={"garbage": True}))
+    error = make_mcp_error(code=-32042, data={"garbage": True})
     mock_session.call_tool.side_effect = error
 
     with MCPClient(mock_transport["transport_callable"]) as client:
@@ -1514,7 +1917,6 @@ def test_call_tool_sync_elicitation_error_malformed_data(mock_transport, mock_se
 @pytest.mark.asyncio
 async def test_call_tool_async_elicitation_error(mock_transport, mock_session):
     """Test that call_tool_async correctly handles elicitation required errors."""
-    from mcp.shared.exceptions import McpError
     from mcp.types import ElicitationRequiredErrorData, ElicitRequestURLParams
 
     elicitation_data = ElicitationRequiredErrorData(
@@ -1525,7 +1927,7 @@ async def test_call_tool_async_elicitation_error(mock_transport, mock_session):
         ]
     )
 
-    error = McpError(error=MagicMock(code=-32042, data=elicitation_data.model_dump()))
+    error = make_mcp_error(code=-32042, data=elicitation_data.model_dump())
 
     with MCPClient(mock_transport["transport_callable"]) as client:
         with (
@@ -1608,6 +2010,12 @@ def test_mcp_client_client_info_passed(
             call_kwargs = mock_client_session.call_args[1]
             assert call_kwargs["client_info"].name == expected_name
             assert expected_version_check(call_kwargs["client_info"].version)
+
+
+def test_mcp_client_client_name_property(mock_transport):
+    """Test that client_name exposes the configured application_name."""
+    assert MCPClient(mock_transport["transport_callable"]).client_name is None
+    assert MCPClient(mock_transport["transport_callable"], application_name="my-agent").client_name == "my-agent"
 
 
 @pytest.mark.parametrize(

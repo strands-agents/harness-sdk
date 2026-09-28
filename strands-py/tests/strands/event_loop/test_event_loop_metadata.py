@@ -56,6 +56,7 @@ def agent(model, messages, tool_registry, hook_registry):
     mock.tool_executor = SequentialToolExecutor()
     mock._interrupt_state = _InterruptState()
     mock._cancel_signal = threading.Event()
+    mock._observe_cancellation = mock._cancel_signal.is_set
     mock._model_state = {}
     mock._system_prompt_content = None
     mock._middleware_registry = strands._middleware.MiddlewareRegistry()

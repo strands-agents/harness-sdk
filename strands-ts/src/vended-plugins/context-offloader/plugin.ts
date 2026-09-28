@@ -12,7 +12,7 @@ import { z } from 'zod'
 import { logger } from '../../logging/logger.js'
 import type { JSONValue } from '../../types/json.js'
 import { FileStorage, InMemoryStorage as LegacyInMemoryStorage, type Storage as OffloaderStorage } from './storage.js'
-import { NAMESPACED, namespace, type Storage } from '../../storage/storage.js'
+import { resolveNamespace, type Storage } from '../../storage/storage.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 import { isSearchableContent, searchContent } from './search.js'
 import { AgentAsTool } from '../../agent/agent-as-tool.js'
@@ -249,12 +249,8 @@ export class ContextOffloader implements Plugin {
   private _resolveAndSetStorage(storage: Storage | OffloaderStorage): void {
     if (isOffloaderStorage(storage)) {
       this._storage = storage
-    } else if (NAMESPACED in storage) {
-      this._storage = storage
-    } else if (storage.namespace) {
-      this._storage = storage.namespace('offloader')
     } else {
-      this._storage = namespace(storage, 'offloader')
+      this._storage = resolveNamespace(storage, 'offloader')
     }
     this._sandboxableStorage =
       !isOffloaderStorage(this._storage) && 'forSandbox' in this._storage

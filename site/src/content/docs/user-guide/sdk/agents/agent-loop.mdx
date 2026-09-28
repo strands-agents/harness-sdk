@@ -1,0 +1,427 @@
+---
+title: Agent Loop
+tags: [event-loop, tool-execution, hooks]
+description: "How Strands agents reason, plan, and act. Understand the model-driven loop that orchestrates tool use, reflection, and goal completion."
+sourceLinks:
+  - path: strands-py/src/strands/agent/agent.py
+  - path: strands-py/src/strands/event_loop/event_loop.py
+  - path: strands-ts/src/agent/agent.ts
+---
+
+A language model can answer questions. An agent can *do things*. The agent loop is what makes that difference possible.
+
+When a model receives a request it cannot fully address with its training alone, it needs to reach out into the world: read files, query databases, call APIs, execute code. The agent loop is the orchestration layer that enables this. It manages the cycle of reasoning and action that allows a model to tackle problems requiring multiple steps, external information, or real-world side effects.
+
+This is the foundational concept in the Strands Agents SDK, installed as
+`strands-agents` on PyPI and `@strands-agents/sdk` on npm. Everything else builds
+on top of it. The loop ships with the controls a production agent needs:
+
+- [Invocation limits](#invocation-limits) cap the turns and tokens one call may use
+- [Cancellation](#cancellation) stops a running agent mid-loop
+- [Stop reasons](#stop-reasons) report why the loop ended
+- [Concurrent invocations](#concurrent-invocations) run one agent across many
+  conversations at once
+- [Hooks](./hooks.mdx) intercept any step, and
+  [retry strategies](./retry-strategies.mdx) recover from model and tool errors
+
+## How the Loop Works
+
+The agent loop operates on a simple principle: invoke the model, check if it wants to use a tool, execute the tool if so, then invoke the model again with the result. Repeat until the model produces a final response.
+
+```mermaid
+flowchart LR
+    A[Input & Context] --> Loop
+
+    subgraph Loop[" "]
+        direction TB
+        B["Reasoning (LLM)"] --> C["Tool Selection"]
+        C --> D["Tool Execution"]
+        D --> B
+    end
+
+    Loop --> E[Response]
+```
+
+The diagram shows the recursive structure at the heart of the loop. The model reasons, selects a tool, the tool executes, and the result feeds back into the model for another round of reasoning. This cycle continues until the model decides it has enough information to respond.
+
+Context accumulates as the loop runs. Each iteration adds to the conversation history, so the model sees not just the original request but every tool it has called and every result it has received. That growing context is what lets the model reason across many steps.
+
+## A Concrete Example
+
+Consider a request to analyze a codebase for security vulnerabilities. This is not something a model can do from memory. It requires an agent that can read files, search code, and synthesize findings. The agent loop handles this through successive iterations:
+
+1. The model receives the request to analyze a codebase. It first needs to understand the structure. It requests a file listing tool with the repository root as input.
+
+2. The model now sees the directory structure in its context. It identifies the main application entry point and requests the file reader tool to examine it.
+
+3. The model sees the application code. It notices database queries and decides to examine the database module for potential SQL injection. It requests the file reader again.
+
+4. The model sees the database module and identifies a vulnerability: user input concatenated directly into SQL queries. To assess the scope, it requests a code search tool to find all call sites of the vulnerable function.
+
+5. The model sees 12 call sites in the search results. It now has everything it needs. Rather than requesting another tool, it produces a terminal response: a report detailing the vulnerability, affected locations, and remediation steps.
+
+Each iteration followed the same pattern. The model received context, decided whether to act or respond, and either continued the loop or exited it. The key insight is that the model made these decisions autonomously based on its evolving understanding of the task.
+
+## Messages and Conversation History
+
+Messages flow through the agent loop with two roles: user and assistant. Each message contains content that can take different forms.
+
+**User messages** contain the initial request and any follow-up instructions. User message content can include:
+
+- Text input from the user
+- Tool results from previous tool executions
+- Media such as files, images, audio, or video
+
+**Assistant messages** are the model's outputs. Assistant message content can include:
+
+- Text responses for the user
+- Tool use requests for the execution system
+- Reasoning traces (when supported by the model)
+
+The conversation history accumulates all three message types across loop iterations. This history is the model's working memory for the task. The conversation manager applies strategies to keep this history within the model's context window while preserving the most relevant information. See [Conversation Management](conversation-management.md) for details on available strategies.
+
+## Tool Execution
+
+When the model requests a tool, the execution system validates the request against the tool's schema, locates the tool in the registry, executes it with error handling, and formats the result as a tool result message.
+
+The execution system captures both successful results and failures. When a tool fails, the error information goes back to the model as an error result rather than throwing an exception that terminates the loop. This gives the model an opportunity to recover or try alternatives.
+
+## Loop Lifecycle
+
+The agent loop has well-defined entry and exit points. Understanding these helps predict agent behavior and handle edge cases.
+
+See [Production lifecycle controls](./lifecycle-controls.md) for the stop reasons, invocation limits, and cancellation below collected in one place, with a worked example.
+
+### Starting the Loop
+
+When an agent receives a request, it initializes by registering tools, setting up the conversation manager, and preparing metrics collection. The user's input becomes the first message in the conversation history, and the loop begins its first iteration.
+
+### Stop Reasons
+
+Each model invocation ends with a stop reason that determines what happens next:
+
+- **End turn** (<Syntax py="end_turn" ts="endTurn" />): The model has finished its
+  response and has no further actions to take. This is the normal successful termination.
+  The loop exits and returns the model's final message.
+- **Tool use** (<Syntax py="tool_use" ts="toolUse" />): The model wants to execute one or
+  more tools before continuing. The loop executes the requested tools, appends the results
+  to the conversation history, and invokes the model again.
+- **Cancelled** (`cancelled`): The agent was stopped externally via `agent.cancel()`. See
+  [Cancellation](#cancellation) below.
+- **Limit turns** (<Syntax py="limit_turns" ts="limitTurns" />): The per-invocation turn
+  budget was exhausted. See [Invocation Limits](#invocation-limits).
+- **Limit total tokens** (<Syntax py="limit_total_tokens" ts="limitTotalTokens" />): The
+  cumulative token budget was exhausted. See [Invocation Limits](#invocation-limits).
+- **Limit output tokens** (<Syntax py="limit_output_tokens" ts="limitOutputTokens" />):
+  The output token budget was exhausted. See [Invocation Limits](#invocation-limits).
+- **Max tokens** (<Syntax py="max_tokens" ts="maxTokens" />): The model's response was
+  truncated because it hit the token limit. This is unrecoverable within the current loop.
+  The model cannot continue from a partial response, and the loop terminates with an
+  error.
+- **Stop sequence** (<Syntax py="stop_sequence" ts="stopSequence" />): The model
+  encountered a configured stop sequence. Like end turn, this terminates the loop
+  normally.
+- **Content filtered** (<Syntax py="content_filtered" ts="contentFiltered" />): The
+  response was blocked by safety mechanisms.
+- **Guardrail intervention**
+  (<Syntax py="guardrail_intervened" ts="guardrailIntervened" />): A guardrail policy
+  stopped generation.
+
+The limit stop reasons indicate graceful budget exhaustion. The agent's message history remains in a valid state, and you can reinvoke with a higher budget or different prompt.
+
+Both content filtered and guardrail intervention terminate the loop and should be handled according to application requirements.
+
+### Extending the Loop
+
+The agent emits lifecycle events at key points: before and after each invocation, before and after each model call, and before and after each tool execution. These events enable observation, metrics collection, and behavior modification without changing the core loop logic. See [Hooks](hooks.md) for details on subscribing to these events.
+
+### Cancellation
+
+The `agent.cancel()` method provides a way to stop the loop from outside, such as on a client disconnect, a timeout, or a UI "Stop" button. Calling `cancel()` sets an internal signal that the agent checks at key checkpoints. The cancel signal clears automatically when the invocation completes, so the agent is immediately reusable.
+
+<Tabs>
+  <Tab label="Python">
+
+  The agent checks for cancellation at four checkpoints:
+
+  | Checkpoint | Behavior | Note |
+  |---|---|---|
+  | Model response streaming | Partial output is discarded | Usage metrics may be inaccurate since the stream is closed before the model sends its final metadata event |
+  | Before tool execution | Tool calls are skipped with error results added to maintain valid conversation state | |
+  | During MCP tool execution | The in-flight MCP request is cancelled without closing the shared MCP session | Remote cancellation is best-effort; the agent stops locally even if the server does not acknowledge cancellation |
+  | After tool execution | The agent stops before the next model call | Non-MCP tools finish before cancellation is observed |
+
+  The agent returns a result with `stop_reason="cancelled"`. `cancel()` is thread-safe and idempotent. Calling it multiple times or from different threads is safe.
+
+  ```python
+  import threading
+  import time
+
+  from strands import Agent
+
+
+  def timeout_watchdog(agent: Agent, timeout: float) -> None:
+      """Cancel the agent after a timeout period."""
+      time.sleep(timeout)
+      agent.cancel()
+
+
+  agent = Agent()
+
+  # Cancel from a background thread after 30 seconds
+  watchdog = threading.Thread(target=timeout_watchdog, args=(agent, 30.0))
+  watchdog.start()
+
+  result = agent("Analyze this large dataset")
+  watchdog.join()
+
+  if result.stop_reason == "cancelled":
+      print("Agent was cancelled due to timeout")
+  ```
+
+  #### External cancellation signals
+
+  You can also pass your own `threading.Event` into `__call__()`, `invoke_async()`, or `stream_async()` via the `cancel_signal` parameter. The agent observes both its internal signal and the external event, so `agent.cancel()` and the external signal can each trigger cancellation independently. The agent never sets or clears the caller's event, and an event that is already set cancels the invocation at its first checkpoint. This is useful for declarative timeouts, sharing one signal across agents, or framework-driven cancellation on client disconnect. Two costs to know about: the first checkpoint sits inside model streaming, so an event set before the call still records the user turn and may issue (then abort) one model request; and the agent observes the event by polling (up to ~50 ms latency, compounding per `as_tool()` nesting level), so a set-then-cleared event inside one poll window is missed. Clear the event only between invocations.
+
+  ```python
+  import threading
+
+  from strands import Agent
+
+  agent = Agent()
+
+  cancel_signal = threading.Event()
+  threading.Timer(30.0, cancel_signal.set).start()  # declarative timeout
+
+  result = agent("Analyze this large dataset", cancel_signal=cancel_signal)
+
+  if result.stop_reason == "cancelled":
+      print("Agent was cancelled due to timeout")
+  ```
+
+  The signal is also forwarded to the model provider so it can abort the in-flight request instead of letting the response run on. Support is provider-dependent: Bedrock closes the streaming response at the next chunk boundary, but cannot abort a request that has not returned headers yet or a non-streaming (`streaming=False`) call. Providers that ignore the signal still cancel at the SDK's between-chunk checkpoint.
+
+  #### Cancellation within tool execution
+
+  The SDK automatically checks for cancellation before and between tool calls (see checkpoints above). Once a tool is running, cancellation is **cooperative**: only the tool itself can respond mid-execution. Tools can participate by polling `tool_context.cancel_signal.is_set()` between steps, or by forwarding `tool_context.cancel_signal` to APIs that accept one (e.g. `MCPClient.call_tool_async`). If a tool does neither, it runs to completion, and the agent resumes cancellation handling after the tool returns. An agent used as a tool via `as_tool()` receives the parent's signal automatically, so cancelling the parent also cancels the delegated agent.
+
+  ```python
+  from strands import tool
+  from strands.types.tools import ToolContext
+
+
+  @tool(context=True)
+  def long_job(tool_context: ToolContext) -> str:
+      """Do chunked work."""
+      for chunk in chunks:
+          if tool_context.cancel_signal.is_set():
+              return "cancelled"
+          process(chunk)
+      return "done"
+  ```
+
+  Cancellation differs from [interrupts](../interrupts.mdx) in that it stops the agent entirely rather than pausing for human input. Interrupts allow the agent to resume from where it left off; cancellation does not.
+  </Tab>
+  <Tab label="TypeScript">
+
+  The agent checks for cancellation at four checkpoints:
+
+  | Checkpoint | Behavior | Note |
+  |---|---|---|
+  | Top of each loop cycle | Agent stops before the next model invocation | |
+  | During model response streaming | Partial output is discarded | Usage metrics may be inaccurate since the stream is closed before the model sends its final metadata event |
+  | Before tool execution | All pending tool calls are skipped with error results | |
+  | Between sequential tool executions | Remaining tool calls are skipped with error results | |
+
+  The agent returns a result with `stopReason: 'cancelled'`. `cancel()` is idempotent: calling it multiple times is safe.
+
+  ```typescript
+  --8<-- "user-guide/sdk/agents/agent-loop.ts:cancel_timeout"
+  ```
+
+  #### External cancellation signals
+
+  You can also pass your own `AbortSignal` into `invoke()` or `stream()` via the `cancelSignal` option. The agent composes it with its internal controller using `AbortSignal.any()`, so both `agent.cancel()` and the external signal can trigger cancellation independently. This is useful for declarative timeouts, custom `AbortController` workflows, or framework-driven cancellation on client disconnect.
+
+  ```typescript
+  --8<-- "user-guide/sdk/agents/agent-loop.ts:cancel_external_signal"
+  ```
+
+  #### Cancellation within tool execution
+
+  The SDK automatically checks for cancellation before and between tool calls (see checkpoints above). Once a tool callback is running, cancellation is **cooperative**: only the tool itself can respond mid-execution. Tools can participate by forwarding `context.cancelSignal` to APIs that accept `AbortSignal`, or by polling `context.cancelSignal.aborted` between steps. If a tool does neither, it runs to completion, and the agent resumes cancellation handling after the tool returns.
+
+  ```typescript
+  --8<-- "user-guide/sdk/agents/agent-loop.ts:cancel_signal"
+  ```
+  </Tab>
+</Tabs>
+
+### Invocation Limits
+
+To cap how much work an agent does in a single invocation, pass
+a `limits` object. You can bound turns (loop iterations), output
+tokens, or total tokens. All three are optional.
+
+<Tabs>
+  <Tab label="Python">
+
+  ```python
+  from strands import Agent
+
+  agent = Agent()
+
+  result = agent(
+      "Summarize this document",
+      limits={
+          "turns": 5,
+          "output_tokens": 2000,
+          "total_tokens": 10000,
+      },
+  )
+
+  if result.stop_reason == "limit_turns":
+      print("Hit turn budget")
+  elif result.stop_reason == "limit_total_tokens":
+      print("Hit token budget")
+  ```
+
+  The same parameter works with `invoke_async` and
+  `stream_async`. Each cap must be a positive `int`.
+
+  </Tab>
+  <Tab label="TypeScript">
+
+  ```typescript
+  --8<-- "user-guide/sdk/agents/agent-loop.ts:limits_basic"
+  ```
+
+  The same option works with `stream`. Each cap must be a
+  positive finite number.
+
+  </Tab>
+</Tabs>
+
+Limits are checked at the top of each loop iteration, not
+mid-call. A single turn can overshoot the token budget, but the
+check fires before the next turn starts. Tools requested by the
+previous turn always run to completion before the limit check
+fires. The agent's message history stays in a valid,
+reinvokable state.
+
+Limits apply to the current invocation only. A reused agent
+starts each call with fresh counters.
+
+When multiple caps trip simultaneously, the reported stop reason
+follows priority order: turns, then total tokens, then output
+tokens.
+
+## Concurrent Invocations
+
+Sometimes more than one request targets the same agent instance at once: a retried API call, a double-submitted form, two web requests that happen to share an agent.
+
+<Tabs>
+  <Tab label="Python">
+
+  An agent mutates its conversation history as each invocation runs, so by default it processes one invocation at a time and rejects overlap. The <Syntax py="concurrent_invocation_mode" /> constructor parameter controls this behavior. It accepts a `ConcurrentInvocationMode` enum: either `THROW` (the default) or `UNSAFE_REENTRANT`.
+
+  In the default `THROW` mode, invoking an agent that is already running raises `ConcurrencyException`:
+
+  ```python
+  from strands import Agent
+  from strands.types.exceptions import ConcurrencyException
+
+  agent = Agent()
+
+  try:
+      result = agent("Summarize this report")
+  except ConcurrencyException:
+      # Another invocation is already running on this agent instance
+      ...
+  ```
+
+  For most applications this is the behavior you want. One agent instance maps to one conversation, and letting invocations overlap would interleave their messages and corrupt the history.
+
+  #### Deduplicating retried requests
+
+  When a retry arrives for a request that is still running, returning the original's result beats both erroring and starting the work twice. Pass <Syntax py="idempotency_token" /> to any invocation method (`__call__`, `invoke_async`, `stream_async`) to identify the logical request, for example `agent("Process order 1234", idempotency_token="order-1234")`.
+
+  If a call with the same token is already in flight, the new call waits for the original and returns the same `AgentResult`. Tokens are compared by equality, so any stable identifier works: an order ID, a request UUID, or the prompt string itself.
+
+  If the tokens differ while an invocation is in flight, the new call raises `ConcurrencyException`; deduplication only applies to matching tokens.
+
+  A deduplicated call gets the final result only, not the original's streamed events. Its `callback_handler` still fires once with that result, so output consumers are not left empty-handed.
+
+  If the original ends without producing a result, for instance when it is cancelled mid-flight, the waiting calls raise `IdempotencyAbortedError` so they can decide whether to retry:
+
+  ```python
+  from strands import Agent
+  from strands.types.exceptions import IdempotencyAbortedError
+
+  agent = Agent()
+
+  try:
+      result = agent("Process order 1234", idempotency_token="order-1234")
+  except IdempotencyAbortedError:
+      # The original was aborted before producing a result
+      ...
+  ```
+
+  #### Allowing concurrent invocations
+
+  To run multiple invocations on one agent at the same time, set the concurrency mode when you construct it:
+
+  ```python
+  from strands import Agent
+  from strands.types.agent import ConcurrentInvocationMode
+
+  agent = Agent(concurrent_invocation_mode=ConcurrentInvocationMode.UNSAFE_REENTRANT)
+  ```
+
+  This removes the single-invocation guard entirely: overlapping calls neither raise nor deduplicate, and an idempotency token is ignored. Nothing protects the conversation history from concurrent mutation, so interleaved invocations can corrupt it. Reach for this only when each invocation works on isolated state, or when you handle synchronization yourself. To run independent work in parallel, a separate agent per task is safer than sharing one.
+  </Tab>
+  <Tab label="TypeScript">
+
+  TypeScript rejects overlapping invocations: invoking an agent that is already running throws `ConcurrentInvocationError`. It does not offer a configurable concurrency mode or idempotency-token deduplication of retries; both are available only in the Python SDK.
+  </Tab>
+</Tabs>
+
+## Common Problems
+
+### Context Window Exhaustion
+
+Each loop iteration adds messages to the conversation history. For complex tasks requiring many tool calls, this history can exceed the model's context window. When this happens, the agent cannot continue.
+
+Symptoms include errors from the model provider about input length, or degraded model performance as the context fills with less relevant earlier messages.
+
+Solutions:
+
+- Reduce tool output verbosity. Return summaries or relevant excerpts rather than complete data.
+- Simplify tool schemas. Deeply nested schemas consume tokens in both the tool configuration and the model's reasoning.
+- Configure a conversation manager with appropriate strategies. The default sliding window strategy works for many applications, but summarization or custom approaches may be needed for long-running tasks. See [Conversation Management](conversation-management.md) for available options.
+- Decompose large tasks into subtasks, each handled with a fresh context.
+
+### Inappropriate Tool Selection
+
+When the model consistently picks the wrong tool, the problem is usually ambiguous tool descriptions. Review the descriptions from the model's perspective. If two tools have overlapping descriptions, the model has no basis for choosing between them. See [Create custom tools](../tools/custom-tools.md#write-effective-tool-descriptions) for guidance on writing effective descriptions.
+
+### MaxTokensReachedException
+
+When the model's response exceeds the configured token limit, the loop raises a `MaxTokensReachedException`. This typically occurs when:
+
+- The model attempts to generate an unusually long response
+- The context window is nearly full, leaving insufficient space for the response
+- Tool results push the conversation close to the token limit
+
+Handle this exception by reducing context size, increasing the token limit, or breaking the task into smaller steps.
+
+## What Comes Next
+
+The agent loop is the execution primitive. Higher-level patterns build on top of it:
+
+- [Conversation Management](conversation-management.md) strategies that maintain coherent long-running interactions
+- [Hooks](hooks.md) for observing, modifying, and extending agent behavior
+- Multi-agent architectures where agents coordinate through shared tools or message passing
+- Evaluation frameworks that assess agent performance on complex tasks
+
+Understanding the loop deeply makes these advanced patterns more approachable. The same principles apply at every level: clear tool contracts, accumulated context, and autonomous decision-making within defined boundaries.

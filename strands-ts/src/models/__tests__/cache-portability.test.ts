@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
+import type { LanguageModelV3, LanguageModelV3CallOptions, LanguageModelV3StreamResult } from '@ai-sdk/provider'
 import { BedrockModel } from '../bedrock.js'
 import { AnthropicModel } from '../anthropic.js'
+import { VercelModel } from '../vercel.js'
 import { Message, TextBlock } from '../../types/messages.js'
 import type { StreamOptions } from '../model.js'
 import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
@@ -89,6 +91,36 @@ describe('cacheConfig portability across providers', () => {
     }
   }
 
+  const vercelAnthropicSections = async (cacheConfig: object): Promise<Record<string, (string | null)[]>> => {
+    const captured: { callOptions: LanguageModelV3CallOptions | null } = { callOptions: null }
+    const provider = {
+      specificationVersion: 'v3',
+      provider: 'anthropic.messages',
+      modelId: 'claude-sonnet-4-6',
+      supportedUrls: {},
+      doGenerate: vi.fn(),
+      doStream: vi.fn(async (callOptions: LanguageModelV3CallOptions): Promise<LanguageModelV3StreamResult> => {
+        captured.callOptions = callOptions
+        return { stream: new ReadableStream({ start: (controller) => controller.close() }) }
+      }),
+    } as unknown as LanguageModelV3
+    const model = new VercelModel({ provider, cacheConfig })
+    await collectIterator(model.stream(messages, { toolSpecs } as StreamOptions))
+
+    const cacheControl = (options: any): any => options?.anthropic?.cacheControl
+    const tools = (captured.callOptions?.tools ?? [])
+      .filter((tool) => tool.type === 'function')
+      .filter((tool) => cacheControl(tool.providerOptions))
+    // The breakpoint lands on a content part, not the message, so it can sit ahead of per-call blocks.
+    const messageParts = (captured.callOptions?.prompt ?? [])
+      .flatMap((message) => (message.role === 'user' ? message.content : []))
+      .filter((part) => cacheControl(part.providerOptions))
+    return {
+      tools: tools.map((tool) => cacheControl((tool as { providerOptions?: unknown }).providerOptions).ttl ?? null),
+      messages: messageParts.map((part) => cacheControl(part.providerOptions).ttl ?? null),
+    }
+  }
+
   it.each([
     ['both sections by default', {}, { tools: [null], messages: [null] }],
     ['a shared ttl on both sections', { ttl: '1h' }, { tools: ['1h'], messages: ['1h'] }],
@@ -98,11 +130,13 @@ describe('cacheConfig portability across providers', () => {
     ['an empty ttl treated as unset', { ttl: '' }, { tools: [null], messages: [null] }],
     ['every section disabled', { toolsTTL: false, messagesTTL: false }, { tools: [], messages: [] }],
   ])('agrees on %s', async (_label, cacheConfig, expected) => {
-    // The same object reaches both providers, as it would when switching provider.
+    // The same object reaches every provider, as it would when switching provider.
     const bedrock = await bedrockSections(cacheConfig)
     const anthropic = await anthropicSections(cacheConfig)
+    const vercelAnthropic = await vercelAnthropicSections(cacheConfig)
 
     expect(bedrock).toStrictEqual(expected)
     expect(anthropic).toStrictEqual(expected)
+    expect(vercelAnthropic).toStrictEqual(expected)
   })
 })

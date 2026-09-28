@@ -3,6 +3,7 @@ from typing import Union
 
 import pytest
 
+from strands import LocalAgent
 from strands.hooks import (
     AfterModelCallEvent,
     AgentInitializedEvent,
@@ -115,6 +116,15 @@ def test_hook_registry_add_callback_infers_event_type(registry):
     # Verify callback was registered
     assert BeforeInvocationEvent in registry._registered_callbacks
     assert _has_callback(registry, BeforeInvocationEvent, typed_callback)
+
+
+def test_hook_registry_add_callback_infers_parameterized_event_type(registry):
+    def typed_callback(event: BeforeToolCallEvent[LocalAgent]) -> None:
+        pass
+
+    registry.add_callback(None, typed_callback)
+
+    assert _has_callback(registry, BeforeToolCallEvent, typed_callback)
 
 
 def test_hook_registry_add_callback_raises_error_no_type_hint(registry):

@@ -1,0 +1,86 @@
+---
+title: Context Estimation
+description: "How the SDK estimates token counts, context window utilization, and context window limits."
+experimental: true
+tags: [conversation-management, token-management]
+sourceLinks:
+  - path: strands-py/src/strands/models/model.py
+  - path: strands-ts/src/models/model.ts
+addedDate: 2026-09-14
+---
+
+:::caution[Experimental]
+The Context Manager strategy API is experimental and may change in future versions.
+:::
+
+The SDK estimates how much of the model's context window is in use so it can trigger compression before overflow. Three pieces work together: the context window limit, token counting, and utilization estimation.
+
+## Context window limit
+
+The threshold check requires the model's context window size. The SDK auto-populates <Syntax py="context_window_limit" ts="contextWindowLimit" /> from built-in lookup tables for known models.
+
+<Tabs>
+<Tab label="Python">
+
+Override it manually for models not in the [lookup table](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/_defaults.py):
+
+```python
+model = BedrockModel(
+    model_id="my-custom-model",
+    context_window_limit=128_000,
+)
+```
+</Tab>
+<Tab label="TypeScript">
+
+Override it manually for models not in the [lookup table](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/defaults.ts):
+
+```typescript
+--8<-- "user-guide/sdk/context-management/context-estimation_imports.ts:context_window_limit_imports"
+
+--8<-- "user-guide/sdk/context-management/context-estimation.ts:context_window_limit"
+```
+</Tab>
+</Tabs>
+
+:::caution[Inaccurate compression with default fallback]
+If <Syntax py="context_window_limit" ts="contextWindowLimit" /> is not set and the model ID is not in the built-in lookup table, the SDK falls back to a default of 200,000 tokens. When the actual context window is significantly different, compression thresholds will not behave correctly.
+:::
+
+## Token estimation
+
+The agent estimates input tokens using the following strategy:
+
+1. **Known baseline**: reads <Syntax py="input_tokens + output_tokens" ts="inputTokens + outputTokens" /> from the last assistant message's usage metadata
+2. **Delta estimation**: estimates tokens for new messages added since that baseline using the model's <Syntax py="count_tokens()" ts="countTokens()" /> method
+3. **Cold start fallback**: when no prior usage metadata exists (first call or after session restore), estimates all messages via <Syntax py="count_tokens()" ts="countTokens()" />
+
+The <Syntax py="count_tokens()" ts="countTokens()" /> method uses a character-based heuristic by default (characters / 4 for text, characters / 2 for JSON). Some model providers support native token counting APIs for exact counts. For an example in both SDKs, see [Amazon Bedrock token counting](../model-providers/amazon-bedrock/#token-counting).
+
+## Utilization estimation
+
+The Model base class provides an <Syntax py="estimate_utilization(input_tokens)" ts="estimateUtilization(inputTokens)" /> method that computes the fraction of the context window consumed by a given input token count:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+ratio = model.estimate_utilization(
+    input_tokens=projected_tokens,
+)
+# ratio is 0-1+ (above 1.0 means overflow)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/context-management/context-estimation_imports.ts:utilization_imports"
+
+--8<-- "user-guide/sdk/context-management/context-estimation.ts:utilization"
+```
+</Tab>
+</Tabs>
+
+The method divides <Syntax py="input_tokens" ts="inputTokens" /> by the model's <Syntax py="context_window_limit" ts="contextWindowLimit" />, falling back to the 200,000 default with a warning when not configured. A return value above 1.0 means overflow.
+
+Both the built-in [context management modes](./built-in-modes) and the [conversation managers](../agents/conversation-management) use this internally for compression decisions. You can also call it directly when building custom logic.

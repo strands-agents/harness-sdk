@@ -93,14 +93,21 @@ class _ToolCaller:
 
             from ..agent import Agent  # Locally imported to avoid circular reference
 
-            acquired_lock = (
-                should_lock and isinstance(self._agent, Agent) and self._agent._concurrency.try_acquire_lock()
-            )
-            if should_lock and not acquired_lock:
-                raise ConcurrencyException(
-                    "Direct tool call cannot be made while the agent is in the middle of an invocation. "
-                    "Set record_direct_tool_call=False to allow direct tool calls during agent invocation."
-                )
+            agent = self._agent
+            acquired_lock = False
+            if should_lock:
+                if isinstance(agent, Agent):
+                    acquired_lock = agent._concurrency.try_acquire_lock()
+                    if not acquired_lock:
+                        raise ConcurrencyException(
+                            "Direct tool call cannot be made while the agent is in the middle of an invocation. "
+                            "Set record_direct_tool_call=False to allow direct tool calls during agent invocation."
+                        )
+                elif agent._started:
+                    raise ConcurrencyException(
+                        "Direct tool call cannot be recorded while the bidirectional agent is running. "
+                        "Set record_direct_tool_call=False to allow direct tool calls during an active session."
+                    )
 
             try:
                 normalized_name = self._find_normalized_tool_name(name)
@@ -116,9 +123,9 @@ class _ToolCaller:
                 invocation_state = kwargs
 
                 async def acall() -> ToolResult:
-                    async for event in ToolExecutor._stream(self._agent, tool_use, tool_results, invocation_state):
+                    async for event in ToolExecutor._stream(agent, tool_use, tool_results, invocation_state):
                         if isinstance(event, ToolInterruptEvent):
-                            self._agent._interrupt_state.deactivate()
+                            agent._interrupt_state.deactivate()
                             raise RuntimeError("cannot raise interrupt in direct tool call")
 
                     tool_result = tool_results[0]
@@ -132,14 +139,14 @@ class _ToolCaller:
                 tool_result = run_async(acall)
 
                 # TODO: https://github.com/strands-agents/harness-sdk/issues/1311
-                if isinstance(self._agent, Agent):
-                    self._agent.conversation_manager.apply_management(self._agent)
+                if isinstance(agent, Agent):
+                    agent.conversation_manager.apply_management(agent)
 
                 return tool_result
 
             finally:
-                if acquired_lock and isinstance(self._agent, Agent):
-                    self._agent._concurrency.release_lock()
+                if acquired_lock and isinstance(agent, Agent):
+                    agent._concurrency.release_lock()
 
         return caller
 

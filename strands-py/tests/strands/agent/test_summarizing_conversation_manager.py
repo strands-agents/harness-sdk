@@ -328,6 +328,33 @@ def test_apply_management_no_op(summarizing_manager, mock_agent):
     assert mock_agent.messages == original_messages
 
 
+def test_summarization_agent_reasoning_blocks_are_dropped_from_summary():
+    """A reasoning summarizer's reply is re-roled as user with only its text kept."""
+
+    class ReasoningMockAgent(MockAgent):
+        def __call__(self, prompt):
+            result = Mock()
+            result.message = {
+                "role": "assistant",
+                "content": [
+                    {"reasoningContent": {"reasoningText": {"text": "thinking", "signature": "sig"}}},
+                    {"text": "Summary"},
+                ],
+            }
+            return result
+
+    manager = SummarizingConversationManager(summarization_agent=cast("Agent", ReasoningMockAgent()))
+    messages: Messages = [
+        {"role": "user", "content": [{"text": "Hello"}]},
+        {"role": "assistant", "content": [{"text": "Hi there"}]},
+    ]
+
+    tru_summary = manager._generate_summary(messages, create_mock_agent())
+
+    exp_summary = {"role": "user", "content": [{"text": "Summary"}]}
+    assert tru_summary == exp_summary
+
+
 def test_init_with_custom_parameters():
     """Test initialization with custom parameters."""
     mock_agent = create_mock_agent()

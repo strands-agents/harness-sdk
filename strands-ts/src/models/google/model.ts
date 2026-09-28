@@ -16,7 +16,7 @@ import {
 import { Model, resolveConfigMetadata } from '../model.js'
 import type { CountTokensOptions, StreamOptions } from '../model.js'
 import type { Message } from '../../types/messages.js'
-import type { ModelStreamEvent } from '../streaming.js'
+import type { ModelStreamEvent, Usage } from '../streaming.js'
 import { ContextWindowOverflowError, ModelThrottledError, ProviderTokenCountError } from '../../errors.js'
 import type { GoogleModelConfig, GoogleModelOptions, GoogleStreamState } from './types.js'
 export type { GoogleModelConfig, GoogleModelOptions }
@@ -236,6 +236,7 @@ export class GoogleModel extends Model<GoogleModelConfig> {
         hasToolCalls: false,
         inputTokens: 0,
         outputTokens: 0,
+        totalTokens: 0,
       }
 
       for await (const chunk of stream) {
@@ -243,14 +244,15 @@ export class GoogleModel extends Model<GoogleModelConfig> {
       }
 
       if (streamState.inputTokens > 0 || streamState.outputTokens > 0) {
-        yield {
-          type: 'modelMetadataEvent',
-          usage: {
-            inputTokens: streamState.inputTokens,
-            outputTokens: streamState.outputTokens,
-            totalTokens: streamState.inputTokens + streamState.outputTokens,
-          },
+        const usage: Usage = {
+          inputTokens: streamState.inputTokens,
+          outputTokens: streamState.outputTokens,
+          totalTokens: streamState.totalTokens,
         }
+        if (streamState.cacheReadInputTokens !== undefined) {
+          usage.cacheReadInputTokens = streamState.cacheReadInputTokens
+        }
+        yield { type: 'modelMetadataEvent', usage }
       }
     } catch (error) {
       if (!(error instanceof Error)) {

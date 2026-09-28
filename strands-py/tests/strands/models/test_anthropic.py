@@ -2,6 +2,7 @@ import copy
 import logging
 import mimetypes
 import re
+import types
 import unittest.mock
 import warnings
 
@@ -13,6 +14,8 @@ import strands
 from strands.models.anthropic import AnthropicModel
 from strands.models.model import CacheConfig, CacheToolsConfig
 from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
+
+WEB_SEARCH_TOOL = {"type": "web_search_20260318", "name": "web_search", "max_uses": 3}
 
 
 @pytest.fixture
@@ -117,6 +120,22 @@ def test_update_config(model, model_id):
     exp_model_id = model_id
 
     assert tru_model_id == exp_model_id
+
+
+def test_cache_key_round_trips_through_config(model):
+    """Anthropic accepts and preserves cache_config.cache_key through update_config/get_config."""
+    model.update_config(cache_config=CacheConfig(cache_key="tenant-42"))
+
+    assert model.get_config()["cache_config"].cache_key == "tenant-42"
+
+
+def test_cache_key_does_not_change_request_shape(anthropic_client, messages, model_id, max_tokens):
+    """Anthropic ignores cache_key: two configs differing only in cache_key format identically."""
+    _ = anthropic_client
+    without_key = AnthropicModel(model_id=model_id, max_tokens=max_tokens, cache_config=CacheConfig())
+    with_key = AnthropicModel(model_id=model_id, max_tokens=max_tokens, cache_config=CacheConfig(cache_key="tenant-42"))
+
+    assert with_key.format_request(messages) == without_key.format_request(messages)
 
 
 def test_format_request_default(model, messages, model_id, max_tokens):
@@ -849,9 +868,8 @@ def test_format_chunk_metadata(model):
 
 
 def test_format_chunk_metadata_with_cache_tokens(model):
-    """When prompt caching is active, Anthropic returns cache_read_input_tokens
-    and cache_creation_input_tokens alongside input_tokens; surface them so
-    downstream cost accounting reflects what the user is billed for."""
+    """Anthropic reports input_tokens net of the cache, so the cache counters are surfaced and the
+    total is the sum of all four counters (#3546)."""
     event = {
         "type": "metadata",
         "usage": {
@@ -868,7 +886,7 @@ def test_format_chunk_metadata_with_cache_tokens(model):
             "usage": {
                 "inputTokens": 5,
                 "outputTokens": 7,
-                "totalTokens": 12,
+                "totalTokens": 162,
                 "cacheReadInputTokens": 100,
                 "cacheWriteInputTokens": 50,
             },
@@ -1045,6 +1063,7 @@ async def test_structured_output(anthropic_client, model, test_output_model_cls,
         unittest.mock.Mock(type="message_start", model_dump=unittest.mock.Mock(return_value={"type": "message_start"})),
         unittest.mock.Mock(
             type="content_block_start",
+            index=0,
             model_dump=unittest.mock.Mock(
                 return_value={
                     "type": "content_block_start",
@@ -1055,6 +1074,7 @@ async def test_structured_output(anthropic_client, model, test_output_model_cls,
         ),
         unittest.mock.Mock(
             type="content_block_delta",
+            index=0,
             model_dump=unittest.mock.Mock(
                 return_value={
                     "type": "content_block_delta",
@@ -1065,6 +1085,7 @@ async def test_structured_output(anthropic_client, model, test_output_model_cls,
         ),
         unittest.mock.Mock(
             type="content_block_stop",
+            index=0,
             model_dump=unittest.mock.Mock(return_value={"type": "content_block_stop", "index": 0}),
         ),
         unittest.mock.Mock(
@@ -1319,6 +1340,28 @@ class TestCountTokens:
         assert call_kwargs["system"] == "Be helpful."
 
     @pytest.mark.asyncio
+    async def test_native_count_tokens_renders_system_prompt_content(
+        self, model_with_client, anthropic_client, messages
+    ):
+        """The count matches what stream() sends: system_prompt_content is rendered, not the plain string."""
+        model_with_client.update_config(cache_config=CacheConfig(strategy="auto"))
+        mock_response = unittest.mock.MagicMock()
+        mock_response.input_tokens = 42
+        anthropic_client.messages.count_tokens = unittest.mock.AsyncMock(return_value=mock_response)
+
+        result = await model_with_client.count_tokens(
+            messages=messages,
+            system_prompt="Be helpful.",
+            system_prompt_content=[{"text": "Be helpful."}],
+        )
+
+        assert result == 42
+        call_kwargs = anthropic_client.messages.count_tokens.call_args[1]
+        assert call_kwargs["system"] == [
+            {"type": "text", "text": "Be helpful.", "cache_control": {"type": "ephemeral"}}
+        ]
+
+    @pytest.mark.asyncio
     async def test_native_count_tokens_with_tool_specs(self, model_with_client, anthropic_client, messages, tool_specs):
         mock_response = unittest.mock.MagicMock()
         mock_response.input_tokens = 100
@@ -1395,6 +1438,7 @@ class TestCountTokens:
         assert result >= 0
 
 
+@pytest.mark.filterwarnings("ignore:cache_tools is deprecated:DeprecationWarning")
 class TestPromptCaching:
     """Prompt caching via ``cache_config`` / ``cache_tools``.
 
@@ -1502,6 +1546,87 @@ class TestPromptCaching:
         model.update_config(cache_tools="default")
 
         assert self._breakpoints(model.format_request(messages, tool_specs)) == [("tools", "t2", {"type": "ephemeral"})]
+
+    def test_cache_tools_emits_deprecation_warning(self, model, messages, tool_specs):
+        """cache_tools is deprecated in favor of CacheConfig(tools_ttl=...); setting it warns."""
+        with pytest.warns(DeprecationWarning, match="cache_tools is deprecated. Use CacheConfig"):
+            model.update_config(cache_tools="default")
+
+    def test_tools_ttl_true_derives_from_shared_ttl(self, model, messages, tool_specs):
+        """tools_ttl=True mirrors system_prompt_ttl: it derives the tools section duration from cache_config.ttl."""
+        model.update_config(cache_config=CacheConfig(strategy="auto", ttl="1h", tools_ttl=True))
+
+        breakpoints = self._breakpoints(model.format_request(messages, tool_specs))
+
+        assert breakpoints == [
+            ("tools", "t2", {"type": "ephemeral", "ttl": "1h"}),
+            ("messages", 0, {"type": "ephemeral", "ttl": "1h"}),
+        ]
+
+    def test_tools_ttl_string_sets_the_section_duration(self, model, messages, tool_specs):
+        """A tools_ttl string sets the tools section's own duration rather than deriving from the shared ttl."""
+        model.update_config(cache_config=CacheConfig(strategy="auto", ttl="1h", tools_ttl="5m"))
+
+        breakpoints = self._breakpoints(model.format_request(messages, tool_specs))
+
+        assert breakpoints == [
+            ("tools", "t2", {"type": "ephemeral", "ttl": "5m"}),
+            ("messages", 0, {"type": "ephemeral", "ttl": "1h"}),
+        ]
+
+    def test_tools_ttl_true_without_shared_ttl_stays_untimed(self, model, messages, tool_specs):
+        """With nothing to derive from, tools_ttl=True still caches the tools but at the API default."""
+        model.update_config(cache_config=CacheConfig(strategy="auto", tools_ttl=True))
+
+        breakpoints = self._breakpoints(model.format_request(messages, tool_specs))
+
+        assert breakpoints == [
+            ("tools", "t2", {"type": "ephemeral"}),
+            ("messages", 0, {"type": "ephemeral"}),
+        ]
+
+    def test_tools_ttl_false_disables_the_tools_cache_point(self, model, messages, tool_specs):
+        """tools_ttl=False disables tool caching even when the shared ttl is set."""
+        model.update_config(cache_config=CacheConfig(strategy="auto", ttl="1h", tools_ttl=False))
+
+        breakpoints = self._breakpoints(model.format_request(messages, tool_specs))
+
+        assert not any(bp[0] == "tools" for bp in breakpoints)
+
+    def test_tools_ttl_defaults_to_off(self, model, messages, tool_specs):
+        """tools_ttl defaults to None (unset), so cache_config alone does not cache the tools yet."""
+        model.update_config(cache_config=CacheConfig(strategy="auto", ttl="1h"))
+
+        breakpoints = self._breakpoints(model.format_request(messages, tool_specs))
+
+        assert not any(bp[0] == "tools" for bp in breakpoints)
+
+    def test_tools_ttl_takes_precedence_over_deprecated_cache_tools(self, model, messages, tool_specs):
+        """An explicitly set tools_ttl wins over the deprecated cache_tools when both are set."""
+        with pytest.warns(DeprecationWarning, match="cache_tools is deprecated"):
+            model.update_config(
+                cache_config=CacheConfig(strategy="auto", ttl="1h", tools_ttl="5m"),
+                cache_tools=CacheToolsConfig(ttl="1h"),
+            )
+
+        breakpoints = self._breakpoints(model.format_request(messages, tool_specs))
+
+        assert breakpoints == [
+            ("tools", "t2", {"type": "ephemeral", "ttl": "5m"}),
+            ("messages", 0, {"type": "ephemeral", "ttl": "1h"}),
+        ]
+
+    def test_tools_ttl_false_overrides_deprecated_cache_tools(self, model, messages, tool_specs):
+        """tools_ttl=False disables tool caching even when the deprecated cache_tools is set."""
+        with pytest.warns(DeprecationWarning, match="cache_tools is deprecated"):
+            model.update_config(
+                cache_config=CacheConfig(strategy="auto", ttl="1h", tools_ttl=False),
+                cache_tools=CacheToolsConfig(ttl="1h"),
+            )
+
+        breakpoints = self._breakpoints(model.format_request(messages, tool_specs))
+
+        assert not any(bp[0] == "tools" for bp in breakpoints)
 
     def test_both_options_produce_two_breakpoints(self, model, messages, tool_specs):
         model.update_config(cache_config=CacheConfig(strategy="auto"), cache_tools="default")
@@ -2134,3 +2259,577 @@ class TestPromptCaching:
         request = model.format_request(messages, dynamic_trailing_blocks=1)
 
         assert self._breakpoints(request) == []
+
+    def test_string_system_prompt_is_promoted_to_a_cached_block(self, model, messages):
+        """A plain string carries no cache_control, so it is rendered to a block that can."""
+        model.update_config(cache_config=CacheConfig(strategy="auto"))
+
+        request = model.format_request(messages, system_prompt="static prompt")
+
+        assert request["system"] == [{"type": "text", "text": "static prompt", "cache_control": {"type": "ephemeral"}}]
+
+    def test_auto_injects_a_system_cache_point_on_the_last_block(self, model, messages):
+        model.update_config(cache_config=CacheConfig(strategy="auto"))
+        system_prompt_content = [{"text": "Heavy context"}, {"text": "More context"}]
+
+        request = model.format_request(messages, system_prompt_content=system_prompt_content)
+
+        # The default messages section also caches the last user message, so both points are present.
+        assert self._breakpoints(request) == [
+            ("system", "text", {"type": "ephemeral"}),
+            ("messages", 0, {"type": "ephemeral"}),
+        ]
+        assert "cache_control" not in request["system"][0]
+        assert request["system"][1]["cache_control"] == {"type": "ephemeral"}
+
+    def test_auto_injected_system_cache_point_inherits_cache_config_ttl(self, model, messages):
+        model.update_config(cache_config=CacheConfig(strategy="auto", ttl="1h"))
+
+        request = model.format_request(messages, system_prompt="static prompt")
+
+        assert request["system"][0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+
+    def test_system_prompt_ttl_false_leaves_the_system_prompt_uncached(self, model, messages):
+        model.update_config(cache_config=CacheConfig(strategy="auto", system_prompt_ttl=False))
+
+        request = model.format_request(messages, system_prompt="static prompt")
+
+        assert request["system"] == "static prompt"
+
+    def test_system_prompt_ttl_string_sets_the_section_duration(self, model, messages):
+        """A system_prompt_ttl string sets the system section's own duration rather than deriving from shared ttl."""
+        model.update_config(cache_config=CacheConfig(strategy="auto", ttl="5m", system_prompt_ttl="1h"))
+
+        request = model.format_request(messages, system_prompt="static prompt")
+
+        assert request["system"][0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+
+    def test_hand_placed_system_cache_point_is_not_doubled(self, model, messages):
+        model.update_config(cache_config=CacheConfig(strategy="auto"))
+        system_prompt_content = [
+            {"text": "Heavy context"},
+            {"cachePoint": {"type": "default"}},
+            {"text": "Light context"},
+        ]
+
+        request = model.format_request(messages, system_prompt_content=system_prompt_content)
+
+        # The placed point on the first block is honored; the last block is not also cached.
+        assert self._breakpoints(request) == [
+            ("system", "text", {"type": "ephemeral"}),
+            ("messages", 0, {"type": "ephemeral"}),
+        ]
+        assert request["system"][0]["cache_control"] == {"type": "ephemeral"}
+        assert "cache_control" not in request["system"][1]
+
+    def test_hand_placed_system_cache_point_inherits_cache_config_ttl(self, model, messages):
+        """Parity with the messages path: a placed point with no TTL fills in ``cache_config.ttl``."""
+        model.update_config(cache_config=CacheConfig(strategy="auto", ttl="1h"))
+        system_prompt_content = [{"text": "Heavy context"}, {"cachePoint": {"type": "default"}}]
+
+        request = model.format_request(messages, system_prompt_content=system_prompt_content)
+
+        assert request["system"][0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+
+    def test_hand_placed_system_cache_point_keeps_its_own_ttl(self, model, messages):
+        """A TTL the caller wrote is more specific than the configured one."""
+        model.update_config(cache_config=CacheConfig(strategy="auto", ttl="1h"))
+        system_prompt_content = [{"text": "Heavy context"}, {"cachePoint": {"type": "default", "ttl": "5m"}}]
+
+        request = model.format_request(messages, system_prompt_content=system_prompt_content)
+
+        assert request["system"][0]["cache_control"] == {"type": "ephemeral", "ttl": "5m"}
+
+    def test_hand_placed_system_cache_point_is_honored_without_cache_config(self, model, messages):
+        """Mirrors the messages path: a placed point is honored even with caching unconfigured."""
+        system_prompt_content = [{"text": "Heavy context"}, {"cachePoint": {"type": "default"}}]
+
+        request = model.format_request(messages, system_prompt_content=system_prompt_content)
+
+        assert self._breakpoints(request) == [("system", "text", {"type": "ephemeral"})]
+
+    def test_system_prompt_content_without_a_placed_point_is_uncached_without_cache_config(self, model, messages):
+        system_prompt_content = [{"text": "Heavy context"}]
+
+        request = model.format_request(messages, system_prompt_content=system_prompt_content)
+
+        assert request["system"] == [{"type": "text", "text": "Heavy context"}]
+        assert self._breakpoints(request) == []
+
+    def test_adjacent_system_cache_points_keep_the_first_and_warn(self, model, messages, caplog):
+        """First-wins parity with the messages path: a second point on a block already carrying one is
+        dropped, not applied over the first. Swapping the two TTLs swaps which value survives."""
+        caplog.set_level(logging.WARNING, logger="strands.models.anthropic")
+
+        def system_points(system_prompt_content):
+            request = model.format_request(messages, system_prompt_content=system_prompt_content)
+            return [point for point in self._breakpoints(request) if point[0] == "system"]
+
+        first_wins = system_points(
+            [{"text": "ctx"}, {"cachePoint": {"type": "default", "ttl": "1h"}}, {"cachePoint": {"type": "default"}}]
+        )
+        swapped = system_points(
+            [{"text": "ctx"}, {"cachePoint": {"type": "default"}}, {"cachePoint": {"type": "default", "ttl": "1h"}}]
+        )
+
+        assert first_wins == [("system", "text", {"type": "ephemeral", "ttl": "1h"})]
+        assert swapped == [("system", "text", {"type": "ephemeral"})]
+        assert "stripped an extra system cache point" in caplog.text
+
+    def test_tool_choice_and_dynamic_trailing_blocks_stay_positional(self, model, messages, tool_specs):
+        """tool_choice and dynamic_trailing_blocks keep their released positional slots so an existing
+        positional call still routes them; only system_prompt_content is keyword-only."""
+        request = model.format_request(messages, tool_specs, "SYSTEM", {"any": {}}, 1)
+
+        assert request["tool_choice"] == {"type": "any"}
+
+    def test_system_prompt_content_is_keyword_only(self, model, messages, tool_specs):
+        """system_prompt_content is keyword-only so a sixth positional argument fails loudly rather than
+        landing silently in it."""
+        with pytest.raises(TypeError):
+            model.format_request(messages, tool_specs, "SYSTEM", {"any": {}}, 1, [{"text": "ctx"}])
+
+    def test_untimed_cache_tools_inherits_cache_config_ttl(self, model, messages, tool_specs):
+        """Mirrors the Bedrock tools point: an untimed cache_tools inherits cache_config.ttl so it is not
+        the lone 5m point ahead of the 1h system/messages points, which the API rejects."""
+        model.update_config(cache_config=CacheConfig(strategy="anthropic", ttl="1h"), cache_tools="default")
+
+        breakpoints = self._breakpoints(model.format_request(messages, tool_specs))
+
+        assert breakpoints == [
+            ("tools", "t2", {"type": "ephemeral", "ttl": "1h"}),
+            ("messages", 0, {"type": "ephemeral", "ttl": "1h"}),
+        ]
+
+    def test_leading_system_cache_point_falls_through_to_automatic_placement(self, model, messages):
+        """A point ahead of every text block cannot attach; auto-injection still caches the last block."""
+        model.update_config(cache_config=CacheConfig(strategy="auto"))
+        system_prompt_content = [{"cachePoint": {"type": "default"}}, {"text": "ctx"}]
+
+        request = model.format_request(messages, system_prompt_content=system_prompt_content)
+
+        assert request["system"] == [{"type": "text", "text": "ctx", "cache_control": {"type": "ephemeral"}}]
+
+    def test_system_prompt_content_with_no_renderable_blocks_omits_the_system_field(self, model, messages):
+        """Blocks carrying neither text nor a cache point render nothing, so no system field is sent."""
+        request = model.format_request(messages, system_prompt_content=[{}])
+
+        assert "system" not in request
+
+
+@pytest.fixture
+def tool_spec():
+    return {"description": "description", "name": "name", "inputSchema": {"json": {"key": "val"}}}
+
+
+def web_search_stream_events():
+    def event(payload, **attrs):
+        return unittest.mock.Mock(model_dump=lambda: payload, **attrs)
+
+    server_tool_use = types.SimpleNamespace(type="server_tool_use", id="srvtoolu_1", name="web_search", input={})
+    search_result = types.SimpleNamespace(type="web_search_tool_result", tool_use_id="srvtoolu_1", content=[])
+    citation = {
+        "type": "web_search_result_location",
+        "url": "https://docs.example.com/agents",
+        "title": "Agents guide",
+        "cited_text": "Agents are autonomous programs.",
+    }
+    return [
+        event({"type": "message_start"}, type="message_start"),
+        event(
+            {"type": "content_block_start", "index": 0},
+            type="content_block_start",
+            index=0,
+            content_block=server_tool_use,
+        ),
+        event(
+            {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "{"}},
+            type="content_block_delta",
+            index=0,
+        ),
+        event({"type": "content_block_stop", "index": 0}, type="content_block_stop", index=0),
+        event(
+            {"type": "content_block_start", "index": 1},
+            type="content_block_start",
+            index=1,
+            content_block=search_result,
+        ),
+        event({"type": "content_block_stop", "index": 1}, type="content_block_stop", index=1),
+        event(
+            {"type": "content_block_start", "index": 2, "content_block": {"type": "text", "text": ""}},
+            type="content_block_start",
+            index=2,
+            content_block=types.SimpleNamespace(type="text", text=""),
+        ),
+        event(
+            {
+                "type": "content_block_delta",
+                "index": 2,
+                "delta": {"type": "text_delta", "text": "Agents are autonomous."},
+            },
+            type="content_block_delta",
+            index=2,
+        ),
+        event(
+            {"type": "content_block_delta", "index": 2, "delta": {"type": "citations_delta", "citation": citation}},
+            type="content_block_delta",
+            index=2,
+        ),
+        event({"type": "content_block_stop", "index": 2}, type="content_block_stop", index=2),
+        event({"type": "message_stop"}, type="message_stop", message=unittest.mock.Mock(stop_reason="end_turn")),
+    ]
+
+
+def test_format_request_with_anthropic_tools(anthropic_client, model_id, max_tokens, messages, tool_spec):
+    _ = anthropic_client
+    model = AnthropicModel(model_id=model_id, max_tokens=max_tokens, anthropic_tools=[WEB_SEARCH_TOOL])
+
+    request = model.format_request(messages, [tool_spec])
+
+    assert request["tools"] == [
+        {"name": "name", "description": "description", "input_schema": {"key": "val"}},
+        WEB_SEARCH_TOOL,
+    ]
+
+
+def test_format_request_with_params_tools(anthropic_client, model_id, max_tokens, messages, tool_spec):
+    _ = anthropic_client
+    model = AnthropicModel(model_id=model_id, max_tokens=max_tokens, params={"tools": [WEB_SEARCH_TOOL]})
+
+    request = model.format_request(messages, [tool_spec])
+
+    assert request["tools"] == [
+        {"name": "name", "description": "description", "input_schema": {"key": "val"}},
+        WEB_SEARCH_TOOL,
+    ]
+
+
+@pytest.mark.parametrize("tool_choice", [{"any": {}}, {"tool": {"name": "test_tool"}}])
+def test_format_request_forced_tool_choice_omits_server_tools(
+    anthropic_client, model_id, max_tokens, messages, tool_choice, caplog
+):
+    caplog.set_level(logging.WARNING, logger="strands.models.anthropic")
+    tool_spec = {"description": "d", "name": "test_tool", "inputSchema": {"json": {}}}
+    model = AnthropicModel(
+        model_id=model_id, max_tokens=max_tokens, anthropic_tools=[WEB_SEARCH_TOOL], params={"tools": [WEB_SEARCH_TOOL]}
+    )
+
+    request = model.format_request(messages, [tool_spec], tool_choice=tool_choice)
+
+    assert request["tools"] == [{"name": "test_tool", "description": "d", "input_schema": {}}]
+    assert request["tool_choice"]["type"] == next(iter(tool_choice))
+    assert "server_tools=<['web_search', 'web_search']> | forced tool call, omitting server tools" in caplog.text
+
+
+def test_format_request_empty_tool_choice_omits_server_tools(anthropic_client, model_id, max_tokens, messages):
+    tool_spec = {"description": "d", "name": "test_tool", "inputSchema": {"json": {}}}
+    model = AnthropicModel(model_id=model_id, max_tokens=max_tokens, anthropic_tools=[WEB_SEARCH_TOOL])
+
+    request = model.format_request(messages, [tool_spec], tool_choice={})
+
+    assert request["tools"] == [{"name": "test_tool", "description": "d", "input_schema": {}}]
+    assert "tool_choice" not in request
+
+
+def test_format_request_auto_tool_choice_keeps_server_tools(
+    anthropic_client, model_id, max_tokens, messages, tool_spec
+):
+    model = AnthropicModel(model_id=model_id, max_tokens=max_tokens, anthropic_tools=[WEB_SEARCH_TOOL])
+
+    request = model.format_request(messages, [tool_spec], tool_choice={"auto": {}})
+
+    assert request["tools"][-1] == WEB_SEARCH_TOOL
+    assert request["tool_choice"] == {"type": "auto"}
+
+
+def test_format_request_tools_cache_lands_on_server_tool_without_mutating_config(
+    anthropic_client, model_id, max_tokens, messages, tool_spec
+):
+    _ = anthropic_client
+    anthropic_tools = [dict(WEB_SEARCH_TOOL)]
+    model = AnthropicModel(
+        model_id=model_id,
+        max_tokens=max_tokens,
+        anthropic_tools=anthropic_tools,
+        cache_config=CacheConfig(tools_ttl=True),
+    )
+
+    request = model.format_request(messages, [tool_spec])
+
+    assert request["tools"] == [
+        {"name": "name", "description": "description", "input_schema": {"key": "val"}},
+        {**WEB_SEARCH_TOOL, "cache_control": {"type": "ephemeral"}},
+    ]
+    assert anthropic_tools == [WEB_SEARCH_TOOL]
+
+    model.update_config(cache_config=CacheConfig(tools_ttl=False))
+    request = model.format_request(messages, [tool_spec])
+
+    assert request["tools"][-1] == WEB_SEARCH_TOOL
+
+
+def test__init__rejects_function_tools_in_anthropic_tools(anthropic_client, model_id, max_tokens):
+    _ = anthropic_client
+    with pytest.raises(ValueError, match="anthropic_tools should not contain function tool definitions"):
+        AnthropicModel(model_id=model_id, max_tokens=max_tokens, anthropic_tools=[{"name": "f", "input_schema": {}}])
+
+
+def test_update_config_rejects_function_tools_in_anthropic_tools(model):
+    with pytest.raises(ValueError, match="anthropic_tools should not contain function tool definitions"):
+        model.update_config(anthropic_tools=[{"name": "f", "input_schema": {}}])
+
+
+@pytest.mark.parametrize(
+    ("citation", "exp_citation"),
+    [
+        (
+            {
+                "type": "web_search_result_location",
+                "url": "https://docs.example.com/agents",
+                "title": "Agents guide",
+                "cited_text": "Agents are autonomous programs.",
+            },
+            {
+                "title": "Agents guide",
+                "sourceContent": [{"text": "Agents are autonomous programs."}],
+                "location": {"web": {"url": "https://docs.example.com/agents", "domain": "docs.example.com"}},
+            },
+        ),
+        (
+            {"type": "search_result_location", "search_result_index": 1, "start_block_index": 2, "end_block_index": 3},
+            {"location": {"searchResultLocation": {"searchResultIndex": 1, "start": 2, "end": 3}}},
+        ),
+        (
+            {
+                "type": "char_location",
+                "document_index": 0,
+                "document_title": "D",
+                "start_char_index": 1,
+                "end_char_index": 2,
+            },
+            {"title": "D", "location": {"documentChar": {"documentIndex": 0, "start": 1, "end": 2}}},
+        ),
+        (
+            {"type": "page_location", "document_index": 0, "start_page_number": 1, "end_page_number": 2},
+            {"location": {"documentPage": {"documentIndex": 0, "start": 1, "end": 2}}},
+        ),
+        (
+            {"type": "content_block_location", "document_index": 0, "start_block_index": 1, "end_block_index": 2},
+            {"location": {"documentChunk": {"documentIndex": 0, "start": 1, "end": 2}}},
+        ),
+        ({"type": "unknown_location", "title": "T"}, {"title": "T"}),
+    ],
+)
+def test_format_chunk_citations_delta(model, citation, exp_citation):
+    event = {"type": "content_block_delta", "index": 0, "delta": {"type": "citations_delta", "citation": citation}}
+
+    chunk = model.format_chunk(event)
+
+    assert chunk == {"contentBlockDelta": {"contentBlockIndex": 0, "delta": {"citation": exp_citation}}}
+
+
+def paused_stream_events(text_index=1):
+    def event(payload, **attrs):
+        return unittest.mock.Mock(model_dump=lambda: payload, **attrs)
+
+    server_tool_use = types.SimpleNamespace(type="server_tool_use", id="srvtoolu_1", name="web_search", input={})
+    return [
+        event({"type": "message_start"}, type="message_start"),
+        event(
+            {"type": "content_block_start", "index": text_index - 1},
+            type="content_block_start",
+            index=text_index - 1,
+            content_block=server_tool_use,
+        ),
+        event({"type": "content_block_stop", "index": text_index - 1}, type="content_block_stop", index=text_index - 1),
+        event(
+            {"type": "content_block_start", "index": text_index, "content_block": {"type": "text", "text": ""}},
+            type="content_block_start",
+            index=text_index,
+            content_block=types.SimpleNamespace(type="text", text=""),
+        ),
+        event(
+            {
+                "type": "content_block_delta",
+                "index": text_index,
+                "delta": {"type": "text_delta", "text": "Searching. "},
+            },
+            type="content_block_delta",
+            index=text_index,
+        ),
+        event({"type": "content_block_stop", "index": text_index}, type="content_block_stop", index=text_index),
+        event({"type": "message_stop"}, type="message_stop", message=unittest.mock.Mock(stop_reason="pause_turn")),
+    ]
+
+
+def paused_final_message(content):
+    return unittest.mock.Mock(
+        content=content,
+        usage=unittest.mock.Mock(
+            model_dump=lambda: {"input_tokens": 10, "output_tokens": 5, "service_tier": "standard"}
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_stream_continues_paused_server_tool_turn(anthropic_client, model, agenerator, alist):
+    paused_content = [{"type": "server_tool_use", "id": "srvtoolu_1", "name": "web_search", "input": {}}]
+    anthropic_client.messages.stream.side_effect = [
+        generate_mock_stream_context(paused_stream_events(), final_message=paused_final_message(paused_content)),
+        generate_mock_stream_context(web_search_stream_events(), final_message=mock_final_message()),
+    ]
+    tool_spec = {"description": "d", "name": "calculator", "inputSchema": {"json": {}}}
+
+    chunks = await alist(model.stream([{"role": "user", "content": [{"text": "hi"}]}], [tool_spec]))
+    events = await alist(strands.event_loop.streaming.process_stream(agenerator(chunks)))
+    stop_reason, message, usage, _ = events[-1]["stop"]
+
+    assert [next(iter(chunk)) for chunk in chunks] == [
+        "messageStart",
+        "contentBlockStart",
+        "contentBlockDelta",
+        "contentBlockStop",
+        "contentBlockStart",
+        "contentBlockDelta",
+        "contentBlockDelta",
+        "contentBlockStop",
+        "messageStop",
+        "metadata",
+    ]
+    assert [chunk["contentBlockStart"]["contentBlockIndex"] for chunk in chunks if "contentBlockStart" in chunk] == [
+        1,
+        4,
+    ]
+    assert stop_reason == "end_turn"
+    assert message["content"][0] == {"text": "Searching. "}
+    assert message["content"][1]["citationsContent"]["content"] == [{"text": "Agents are autonomous."}]
+    assert usage == {"inputTokens": 11, "outputTokens": 7, "totalTokens": 18}
+
+    first_request = anthropic_client.messages.stream.call_args_list[0].kwargs
+    second_request = anthropic_client.messages.stream.call_args_list[1].kwargs
+    assert second_request["messages"] == [*first_request["messages"], {"role": "assistant", "content": paused_content}]
+    assert second_request["tools"] == first_request["tools"]
+    assert len(first_request["tools"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_pause_turn_continuation_limit(anthropic_client, model, alist):
+    anthropic_client.messages.stream.side_effect = [
+        generate_mock_stream_context(paused_stream_events(), final_message=paused_final_message([])) for _ in range(11)
+    ]
+
+    with pytest.raises(RuntimeError, match="did not complete after 10 continuations"):
+        await alist(model.stream([{"role": "user", "content": [{"text": "hi"}]}]))
+
+    assert anthropic_client.messages.stream.call_count == 11
+
+
+@pytest.mark.asyncio
+async def test_stream_pause_turn_without_snapshot_ends_turn(anthropic_client, model, alist, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.anthropic")
+    anthropic_client.messages.stream.return_value = generate_mock_stream_context(
+        paused_stream_events(), final_message=AssertionError("message snapshot is not available")
+    )
+
+    chunks = await alist(model.stream([{"role": "user", "content": [{"text": "hi"}]}]))
+
+    assert anthropic_client.messages.stream.call_count == 1
+    assert chunks[-1] == {"messageStop": {"stopReason": "end_turn"}}
+    assert "paused server-side tool turn not resumed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_stream_pause_turn_keeps_usage_when_last_snapshot_unavailable(anthropic_client, model, alist):
+    anthropic_client.messages.stream.side_effect = [
+        generate_mock_stream_context(paused_stream_events(), final_message=paused_final_message([])),
+        generate_mock_stream_context(
+            web_search_stream_events(), final_message=AssertionError("message snapshot is not available")
+        ),
+    ]
+
+    chunks = await alist(model.stream([{"role": "user", "content": [{"text": "hi"}]}]))
+
+    assert anthropic_client.messages.stream.call_count == 2
+    assert chunks[-2] == {"messageStop": {"stopReason": "end_turn"}}
+    assert chunks[-1]["metadata"]["usage"] == {"inputTokens": 10, "outputTokens": 5, "totalTokens": 15}
+
+
+def test_format_request_with_citations_content(model, model_id, max_tokens):
+    messages = [
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "citationsContent": {
+                        "citations": [{"title": "Agents guide"}],
+                        "content": [{"text": "Agents are "}, {"text": "autonomous."}],
+                    }
+                }
+            ],
+        }
+    ]
+
+    request = model.format_request(messages)
+
+    assert request["messages"] == [
+        {"role": "assistant", "content": [{"text": "Agents are autonomous.", "type": "text"}]}
+    ]
+
+
+def mock_final_message():
+    return unittest.mock.Mock(usage=unittest.mock.Mock(model_dump=lambda: {"input_tokens": 1, "output_tokens": 2}))
+
+
+@pytest.mark.asyncio
+async def test_stream_skips_server_tool_blocks(anthropic_client, model, agenerator, alist, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.event_loop.streaming")
+    anthropic_client.messages.stream.return_value = generate_mock_stream_context(
+        web_search_stream_events(), final_message=mock_final_message()
+    )
+
+    chunks = await alist(model.stream([{"role": "user", "content": [{"text": "hi"}]}]))
+    events = await alist(strands.event_loop.streaming.process_stream(agenerator(chunks)))
+    stop_reason, message, _, _ = events[-1]["stop"]
+
+    assert [next(iter(chunk)) for chunk in chunks] == [
+        "messageStart",
+        "contentBlockStart",
+        "contentBlockDelta",
+        "contentBlockDelta",
+        "contentBlockStop",
+        "messageStop",
+        "metadata",
+    ]
+    assert stop_reason == "end_turn"
+    assert message["content"] == [
+        {
+            "citationsContent": {
+                "citations": [
+                    {
+                        "title": "Agents guide",
+                        "sourceContent": [{"text": "Agents are autonomous programs."}],
+                        "location": {"web": {"url": "https://docs.example.com/agents", "domain": "docs.example.com"}},
+                    }
+                ],
+                "content": [{"text": "Agents are autonomous."}],
+            }
+        }
+    ]
+    assert "incomplete tool use block" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_stream_logs_server_tool_error(anthropic_client, model, alist, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.anthropic")
+    error_block = types.SimpleNamespace(
+        type="web_search_tool_result",
+        content=types.SimpleNamespace(type="web_search_tool_result_error", error_code="max_uses_exceeded"),
+    )
+    event = unittest.mock.Mock(type="content_block_start", index=0, content_block=error_block)
+    anthropic_client.messages.stream.return_value = generate_mock_stream_context(
+        [event], final_message=mock_final_message()
+    )
+
+    await alist(model.stream([{"role": "user", "content": [{"text": "hi"}]}]))
+
+    assert "error_code=<max_uses_exceeded>" in caplog.text

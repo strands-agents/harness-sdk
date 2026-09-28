@@ -86,4 +86,6 @@ export interface GoogleStreamState {
   hasToolCalls: boolean
   inputTokens: number
   outputTokens: number
+  totalTokens: number
+  cacheReadInputTokens?: number
 }

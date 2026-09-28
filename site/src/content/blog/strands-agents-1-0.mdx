@@ -24,11 +24,11 @@ Multi-agent patterns enable specialized AI agents to work together—delegating 
 
 ### Agents-as-Tools: Hierarchical Delegation Made Simple
 
-The [agents-as-tools](/docs/user-guide/concepts/multi-agent/agents-as-tools/) pattern transforms specialized agents into intelligent tools that other agents can call, enabling hierarchical delegation where agents acting as the orchestrator dynamically consult domain experts without giving up control of the request. This mirrors how human teams work—a project manager doesn't need to know everything, they just need to know which specialist to consult for each task.
+The [agents-as-tools](/docs/user-guide/sdk/multi-agent/agents-as-tools/) pattern transforms specialized agents into intelligent tools that other agents can call, enabling hierarchical delegation where agents acting as the orchestrator dynamically consult domain experts without giving up control of the request. This mirrors how human teams work—a project manager doesn't need to know everything, they just need to know which specialist to consult for each task.
 
 ```python
 from strands import Agent, tool
-from strands_tools import calculator, file_write, python_repl, journal
+from strands.vended_tools import file_editor, notebook, shell
 
 @tool
 def web_search(query: str) -> str:
@@ -37,12 +37,12 @@ def web_search(query: str) -> str:
 # Create specialized agents
 research_analyst_agent = Agent(
     system_prompt="You are a research specialist who gathers and analyzes information about local startup markets",
-    tools=[web_search, calculator, file_write, python_repl]
+    tools=[web_search, notebook, file_editor, shell]
 )
 
 travel_advisor_agent = Agent(
     system_prompt="You are a travel expert who helps with trip planning and destination advice",
-    tools=[web_search, journal]
+    tools=[web_search, notebook]
 )
 
 # Convert the agents into tools
@@ -68,28 +68,26 @@ result = executive_assistant(
 )
 ```
 
-In this abridged example, we define travel and research agents who have specialized prompts and tools for their areas of focus, which the executive assistant agent can call upon for input on the user's request. The executive assistant agent is responsible for synthesizing input from other agents into the response back to the user. Learn more about [Agents-as-Tools](/docs/user-guide/concepts/multi-agent/agents-as-tools/) in the Strands documentation.
+In this abridged example, we define travel and research agents who have specialized prompts and tools for their areas of focus, which the executive assistant agent can call upon for input on the user's request. The executive assistant agent is responsible for synthesizing input from other agents into the response back to the user. Learn more about [Agents-as-Tools](/docs/user-guide/sdk/multi-agent/agents-as-tools/) in the Strands documentation.
 
-### Handoffs: Explicit transfer of control
+### Graceful completion
 
-Handoffs enable agents to explicitly pass responsibility to humans when they encounter tasks outside their expertise, preserving full conversation context during the transfer. Strands provides a built-in `handoff_to_user` tool that agents can use to seamlessly transfer control while maintaining conversation history and context—like a customer service representative asking the customer for more information about their case.
+Agents can use the SDK's experimental stop tool to end their event loop when the
+task is complete.
 
 ```python
 from strands import Agent
-from strands_tools import handoff_to_user
+from strands.experimental.tools import stop
 
 SYSTEM_PROMPT = """
-Answer the user's support query. Ask them questions with the handoff_to_user
-tool when you need more information
+Answer the user's support query. Use the stop tool after providing the final answer.
 """
 
-# Include the handoff_to_user tool in our agent's tool list
 agent = Agent(
     system_prompt=SYSTEM_PROMPT,
-    tools=[handoff_to_user]
+    tools=[stop]
 )
 
-# The agent calls the handoff_to_user tool which includes the question for the customer
 agent("I have a question about my order.")
 ```
 
@@ -112,13 +110,13 @@ agent("I have a question about my order.")
 
 ### Swarms: Self-Organizing Collaborative Teams
 
-A [Swarm](/docs/user-guide/concepts/multi-agent/swarm/) creates autonomous agent teams that dynamically coordinate through shared memory, allowing multiple specialists to collaborate on complex tasks. Think of it as a brainstorming session where experts build on each other's ideas, with the team self-organizing to deliver the best collective result.
+A [Swarm](/docs/user-guide/sdk/multi-agent/swarm/) creates autonomous agent teams that dynamically coordinate through shared memory, allowing multiple specialists to collaborate on complex tasks. Think of it as a brainstorming session where experts build on each other's ideas, with the team self-organizing to deliver the best collective result.
 
 ```python
 import logging
 from strands import Agent
 from strands.multiagent import Swarm
-from strands_tools import memory, calculator, file_write
+from strands.vended_tools import file_editor, notebook
 
 # Enables Strands debug logs level, and prints to stderr
 logging.getLogger("strands.multiagent").setLevel(logging.DEBUG)
@@ -130,19 +128,19 @@ logging.basicConfig(
 researcher = Agent(
     name="researcher",
     system_prompt="You research topics thoroughly using your memory and built-in knowledge",
-    tools=[memory]
+    tools=[notebook]
 )
 
 analyst = Agent(
     name="analyst",
     system_prompt="You analyze data and create insights",
-    tools=[calculator, memory]
+    tools=[notebook]
 )
 
 writer = Agent(
     name="writer",
     system_prompt="You write comprehensive reports based on research and analysis",
-    tools=[file_write, memory]
+    tools=[file_editor, notebook]
 )
 
 # Swarm automatically coordinates agents
@@ -153,11 +151,11 @@ result = market_research_team(
 )
 ```
 
-Learn more about [Swarms](/docs/user-guide/concepts/multi-agent/swarm/) in the Strands documentation.
+Learn more about [Swarms](/docs/user-guide/sdk/multi-agent/swarm/) in the Strands documentation.
 
 ### Graphs: Deterministic Workflow Control
 
-[Graphs](/docs/user-guide/concepts/multi-agent/graph/) let you define explicit agent workflows with conditional routing and decision points, helpful for processes that require specific steps, approvals, or quality gates. Like a well-designed assembly line or approval chain, graphs ensure agents work through predefined business rules in the correct order every time.
+[Graphs](/docs/user-guide/sdk/multi-agent/graph/) let you define explicit agent workflows with conditional routing and decision points, helpful for processes that require specific steps, approvals, or quality gates. Like a well-designed assembly line or approval chain, graphs ensure agents work through predefined business rules in the correct order every time.
 
 ```python
 from strands import Agent
@@ -203,30 +201,30 @@ customer_support_graph = builder.build()
 results = customer_support_graph("I need help with my order!")
 ```
 
-Learn more about [Graphs](/docs/user-guide/concepts/multi-agent/graph/) in the Strands documentation.
+Learn more about [Graphs](/docs/user-guide/sdk/multi-agent/graph/) in the Strands documentation.
 
 These multi-agent patterns are designed to be gradually adopted and freely combined—start with single agents, add specialists as tools, evolve to swarms, and orchestrate with graphs as your needs grow. Mix and match patterns to create sophisticated systems: swarms can contain graphs, graphs can orchestrate swarms, and any pattern can use agents equipped with other agents as tools.
 
 ```python
 from strands import Agent, tool
 from strands.multiagent import GraphBuilder, Swarm
-from strands_tools import memory, calculator, python_repl, file_write
+from strands.vended_tools import file_editor, notebook, shell
 
 # Start simple with a single agent
-agent = Agent(tools=[memory])
+agent = Agent(tools=[notebook])
 
 # Create specialist agents that a lead orchestrator agent can consult
-data_analyst = Agent(name="analyst", tools=[calculator, python_repl])
+data_analyst = Agent(name="analyst", tools=[notebook, shell])
 
 @tool
 def data_analyst_tool(query: str) -> str:
     return str(data_analyst(query))
 
-analyst_orchestrator = Agent(tools=[memory, data_analyst_tool]) # Agents-as-tools
+analyst_orchestrator = Agent(tools=[notebook, data_analyst_tool]) # Agents-as-tools
 
 # Compose patterns together - a graph that uses a swarm
-researcher = Agent(name="researcher", tools=[memory])
-writer = Agent(name="writer", tools=[file_write])
+researcher = Agent(name="researcher", tools=[notebook])
+writer = Agent(name="writer", tools=[file_editor])
 research_swarm = Swarm([researcher, analyst_orchestrator, writer])
 review_agent = Agent(system_prompt="Review the research quality and suggest improvements")
 builder = GraphBuilder()
@@ -245,28 +243,19 @@ Strands 1.0 includes support for the [Agent-to-Agent (A2A) protocol](https://a2a
 
 ```python
 from strands import Agent
-from strands.multiagent.a2a import A2AServer
-from strands_tools.a2a_client import A2AClientToolProvider
+from strands.multiagent.a2a import A2AAgent, A2AServer
 
 # Serve your agent via A2A protocol
 local_agent = Agent(name="analyzer", tools=[web_search, data_analysis])
 a2a_agent = A2AServer(agent=local_agent, port=9000)
 a2a_agent.serve()  # AgentCard available at http://localhost:9000/.well-known/agent.json
 
-# Use remote A2A agents
-partner_agent_url = "https://partner.com"
-cloud_agent_url = "https://cloud.ai"
-
-# Connect to remote A2A enabled agents
-a2a_tool_provider = A2AClientToolProvider(
-    known_agent_urls=[partner_agent_url, cloud_agent_url]
-)
-
-# Orchestrate remote agents
-orchestrator = Agent(tools=a2a_tool_provider.tools)
+# Connect to a remote A2A-enabled agent
+partner_agent = A2AAgent(endpoint="https://partner.com", name="partner")
+response = partner_agent("Analyze this request.")
 ```
 
-Because A2A provides features like the agent card, a standardized description of agent capabilities, A2A-enabled multi-agent systems can easily discover and connect to agents created by other teams or other organizations. Strands auto-generates the agent card based on the tools you've given the agent. To see complete working examples and get started with the A2A integration, check out our [samples repository](https://github.com/strands-agents/samples/tree/main/python/03-integrate/protocols/a2a-native) and the [Strands A2A documentation](/docs/user-guide/concepts/multi-agent/agent-to-agent/).
+Because A2A provides features like the agent card, a standardized description of agent capabilities, A2A-enabled multi-agent systems can easily discover and connect to agents created by other teams or other organizations. Strands auto-generates the agent card based on the tools you've given the agent. To see complete working examples and get started with the A2A integration, check out our [samples repository](https://github.com/strands-agents/samples/tree/main/python/03-integrate/protocols/a2a-native) and the [Strands A2A documentation](/docs/user-guide/sdk/multi-agent/agent-to-agent/).
 
 ## Production-Ready
 
@@ -310,7 +299,7 @@ restored_agent = Agent(
 # Agent remembers entire conversation history and can continue seamlessly
 ```
 
-You can extend this abstraction with your own storage backend implementation through a Data Access Object (DAO) pattern, and Strands includes local filesystem and Amazon S3 backends by default. Each agent gets a unique ID for tracking, and the system handles concurrent agents within the same session for multi-agent scenarios, ensuring your agents maintain context across deployments, scaling events, and system restarts. Learn more about [Session Management](/docs/user-guide/concepts/agents/session-management/) in the documentation.
+You can extend this abstraction with your own storage backend implementation through a Data Access Object (DAO) pattern, and Strands includes local filesystem and Amazon S3 backends by default. Each agent gets a unique ID for tracking, and the system handles concurrent agents within the same session for multi-agent scenarios, ensuring your agents maintain context across deployments, scaling events, and system restarts. Learn more about [Session Management](/docs/user-guide/sdk/agents/session-management/) in the documentation.
 
 **Native Async Support and Improved Performance**: Production workloads demand reliability and responsive performance. For 1.0, we've improved the Strands event loop architecture to support async operations throughout the entire stack. Tools and model providers can now run asynchronously without blocking, enabling true concurrent execution. The new `stream_async` method streams all agent events—text, tool usage, reasoning steps—in real-time, with built-in cancellation support for when users navigate away.
 
@@ -319,14 +308,14 @@ import asyncio
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from strands import Agent
-from strands_tools import calculator
+from strands.vended_tools import notebook
 
 app = FastAPI()
 
 @app.post("/chat")
 async def chat_endpoint(message: str):
     async def stream_response():
-        agent = Agent(tools=[web_search, calculator])
+        agent = Agent(tools=[web_search, notebook])
         # Stream agent responses in real-time
         async for event in agent.stream_async(message):
             if "data" in event:
@@ -357,7 +346,7 @@ async def evaluate_models_concurrently(prompt: str):
     return responses
 ```
 
-Learn more about [Native Async Support](/docs/user-guide/concepts/streaming/async-iterators/) in the documentation.
+Learn more about [Native Async Support](/docs/user-guide/sdk/streaming/async-iterators/) in the documentation.
 
 **Expanded Model Provider Support**: Customers told us they needed flexibility to use different models for different tasks. To deliver this, Strands Agents has received strong support from the model provider community. Model providers like [Anthropic](https://www.anthropic.com/), [Meta](https://www.llama.com/), [OpenAI](https://openai.com/), [Cohere](https://cohere.com/), [Mistral](https://mistral.ai/), [Stability](https://stability.ai/), and [Writer](https://writer.com/) have made contributions which enable their own model API to be used by a Strands Agent with code. Accessing Strands Agents through a provider's API infrastructure allows developers to focus on building AI-powered solutions, without managing infrastructure. These additions complement preview launch support for any model on Amazon Bedrock, OpenAI, and any OpenAI-compatible endpoint through LiteLLM. Strands lets you use different models for each agent, or switch models and model providers without modifying your tools or logic.
 

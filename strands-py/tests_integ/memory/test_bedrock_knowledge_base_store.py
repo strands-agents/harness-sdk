@@ -22,11 +22,14 @@ from ._bedrock_kb_test_helpers import (
     cleanup_custom_document,
     cleanup_s3_document,
     key_from_uri,
+    search_until,
     unique_marker,
     wait_for_indexed,
 )
 
-pytestmark = pytest.mark.asyncio
+# Bedrock KB ingestion is eventually consistent and routinely exceeds the global 90s per-test cap
+# once indexing (up to 120s) and the follow-on search poll are serialized; raise it for this suite.
+pytestmark = [pytest.mark.asyncio, pytest.mark.timeout(300)]
 
 
 @pytest.fixture(scope="session")
@@ -86,8 +89,7 @@ class TestCustomDataSource:
             kb_clients["agent"], kb_id, ds_id, {"dataSourceType": "CUSTOM", "custom": {"id": result.document_id}}
         )
 
-        entries = await store.search(marker, SearchOptions(max_search_results=10))
-        match = next((entry for entry in entries if marker in entry.content), None)
+        match = await search_until(store, marker, lambda entry: marker in entry.content)
         assert match is not None
         assert "launched in 2025" in match.content
 
@@ -120,8 +122,7 @@ class TestCustomDataSource:
             kb_clients["agent"], kb_id, ds_id, {"dataSourceType": "CUSTOM", "custom": {"id": result.document_id}}
         )
 
-        entries = await store.search(marker, SearchOptions(max_search_results=10))
-        assert any(marker in entry.content for entry in entries)
+        assert await search_until(store, marker, lambda entry: marker in entry.content) is not None
 
     async def test_scope_isolates_documents_from_other_scopes(
         self, skip_if_no_kb, bedrock_kb_context, kb_clients, cleanup_registrar
@@ -166,9 +167,9 @@ class TestCustomDataSource:
             kb_clients["agent"], kb_id, ds_id, {"dataSourceType": "CUSTOM", "custom": {"id": result.document_id}}
         )
 
-        entries_a = await store_a.search(marker, SearchOptions(max_search_results=10))
-        assert any(marker in entry.content for entry in entries_a)
+        assert await search_until(store_a, marker, lambda entry: marker in entry.content) is not None
 
+        # Absence is only meaningful once the doc is confirmed retrievable in scope A above.
         entries_b = await store_b.search(marker, SearchOptions(max_search_results=10))
         assert not any(marker in entry.content for entry in entries_b)
 
@@ -199,8 +200,7 @@ class TestCustomDataSource:
             kb_clients["agent"], kb_id, ds_id, {"dataSourceType": "CUSTOM", "custom": {"id": result.document_id}}
         )
 
-        entries = await store.search(marker, SearchOptions(max_search_results=10))
-        match = next((entry for entry in entries if marker in entry.content), None)
+        match = await search_until(store, marker, lambda entry: marker in entry.content)
         assert match is not None
         assert match.metadata is not None
         assert match.metadata.get("priority") == "high"
@@ -252,8 +252,7 @@ class TestS3DataSource:
 
         wait_for_indexed(kb_clients["agent"], kb_id, ds_id, {"dataSourceType": "S3", "s3": {"uri": result.document_id}})
 
-        entries = await store.search(marker, SearchOptions(max_search_results=10))
-        match = next((entry for entry in entries if marker in entry.content), None)
+        match = await search_until(store, marker, lambda entry: marker in entry.content)
         assert match is not None
         assert "answer is 42" in match.content
 
@@ -289,8 +288,7 @@ class TestS3DataSource:
 
         wait_for_indexed(kb_clients["agent"], kb_id, ds_id, {"dataSourceType": "S3", "s3": {"uri": result.document_id}})
 
-        entries = await store.search(marker, SearchOptions(max_search_results=10))
-        match = next((entry for entry in entries if marker in entry.content), None)
+        match = await search_until(store, marker, lambda entry: marker in entry.content)
         assert match is not None
         assert match.metadata is not None
         assert match.metadata.get("namespace") == scope
@@ -344,9 +342,9 @@ class TestS3DataSource:
 
         wait_for_indexed(kb_clients["agent"], kb_id, ds_id, {"dataSourceType": "S3", "s3": {"uri": result.document_id}})
 
-        entries_a = await store_a.search(marker, SearchOptions(max_search_results=10))
-        assert any(marker in entry.content for entry in entries_a)
+        assert await search_until(store_a, marker, lambda entry: marker in entry.content) is not None
 
+        # Absence is only meaningful once the doc is confirmed retrievable in scope A above.
         entries_b = await store_b.search(marker, SearchOptions(max_search_results=10))
         assert not any(marker in entry.content for entry in entries_b)
 
@@ -380,8 +378,7 @@ class TestS3DataSource:
 
         wait_for_indexed(kb_clients["agent"], kb_id, ds_id, {"dataSourceType": "S3", "s3": {"uri": result.document_id}})
 
-        entries = await store.search(marker, SearchOptions(max_search_results=10))
-        match = next((entry for entry in entries if marker in entry.content), None)
+        match = await search_until(store, marker, lambda entry: marker in entry.content)
         assert match is not None
         assert match.metadata is not None
         assert match.metadata.get("category") == "testing"

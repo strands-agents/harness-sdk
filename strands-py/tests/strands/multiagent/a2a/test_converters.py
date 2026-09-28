@@ -336,6 +336,22 @@ def test_task_without_status_does_not_reset_observed_state():
     assert result.state.get("a2a_task_state") == "completed"
 
 
+def test_task_status_message_non_text_parts_are_skipped():
+    """A Task whose status.message holds only non-text parts yields empty content (no artifacts)."""
+    task = Task(
+        id="t1",
+        context_id="c1",
+        status=TaskStatus(
+            state=TaskState.TASK_STATE_COMPLETED,
+            message=A2AMessage(message_id=uuid4().hex, role=Role.ROLE_AGENT, parts=[Part(data={"a": 1})]),
+        ),
+    )
+
+    result = convert_responses_to_agent_result([StreamResponse(task=task)])
+
+    assert result.message["content"] == []
+
+
 # =========================================================================
 # Lifecycle state mapping
 # =========================================================================

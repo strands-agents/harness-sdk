@@ -80,11 +80,10 @@ def make_store(store_path: str):
 
 
 class TestPackageExport:
-    def test_lazy_export_from_parent_package(self):
-        # The store is documented as importable from the parent package via its lazy __getattr__.
-        from strands.vended_memory_stores import __getattr__
+    def test_export_from_parent_package(self):
+        from strands.vended_memory_stores import TestMemoryStore as Imported
 
-        assert __getattr__("TestMemoryStore") is TestMemoryStore
+        assert Imported is TestMemoryStore
 
     def test_unknown_attribute_raises(self):
         from strands.vended_memory_stores import __getattr__

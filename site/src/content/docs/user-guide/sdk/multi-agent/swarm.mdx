@@ -1,0 +1,398 @@
+---
+title: Swarm Multi-Agent Pattern
+description: 'Build self-organizing agent teams with the Strands Swarm pattern. Agents collaborate through autonomous handoffs, shared context, and working memory.'
+sidebar:
+  label: "Swarm"
+tags: [multi-agent]
+sourceLinks:
+  - path: strands-py/src/strands/multiagent/base.py
+  - path: strands-py/src/strands/multiagent/swarm.py
+  - path: strands-ts/src/multiagent/swarm.ts
+---
+
+A Swarm hands a pool of specialized agents to a single orchestrator and lets them hand off work to one another autonomously, with no fixed path between them. Reach for it when a task benefits from several perspectives and you want the agents, rather than a developer-defined graph, to decide who works next.
+
+Unlike a sequential or hierarchical arrangement, a Swarm coordinates agents through shared context and working memory:
+
+- Agents hand off to one another autonomously, without central control.
+- Every agent reads the full task context and the knowledge earlier agents contributed.
+- Tasks distribute dynamically based on each agent's expertise.
+- Text, images, and other content types are all supported as input.
+
+## How Swarms Work
+
+A group of specialized agents handing work between themselves can cover a problem more thoroughly than one agent alone. Each agent in a Swarm:
+
+1. Has access to the full task context
+2. Can see the history of which agents have worked on the task
+3. Can access shared knowledge contributed by other agents
+4. Can decide when to hand off to another agent with different expertise
+
+```mermaid
+graph TD
+    Researcher <--> Reviewer
+    Researcher <--> Architect
+    Reviewer <--> Architect
+    Coder <--> Researcher
+    Coder <--> Reviewer
+    Coder <--> Architect
+```
+
+## Creating a Swarm
+
+<Tabs>
+<Tab label="Python">
+
+To create a Swarm, you need to define a collection of agents with different specializations. By default, the first agent in the list will receive the initial user request, but you can specify any agent as the entry point using the `entry_point` parameter:
+
+```python
+import logging
+from strands import Agent
+from strands.multiagent import Swarm
+
+# Enable debug logs and print them to stderr
+logging.getLogger("strands.multiagent").setLevel(logging.DEBUG)
+logging.basicConfig(
+    format="%(levelname)s | %(name)s | %(message)s",
+    handlers=[logging.StreamHandler()]
+)
+
+# Create specialized agents
+researcher = Agent(name="researcher", system_prompt="You are a research specialist...")
+coder = Agent(name="coder", system_prompt="You are a coding specialist...")
+reviewer = Agent(name="reviewer", system_prompt="You are a code review specialist...")
+architect = Agent(name="architect", system_prompt="You are a system architecture specialist...")
+
+# Create a swarm with these agents, starting with the researcher
+swarm = Swarm(
+    [coder, researcher, reviewer, architect],
+    entry_point=researcher,  # Start with the researcher
+    max_handoffs=20,
+    max_iterations=20,
+    execution_timeout=900.0,  # 15 minutes
+    node_timeout=300.0,       # 5 minutes per agent
+    repetitive_handoff_detection_window=8,  # There must be >= 3 unique agents in the last 8 handoffs
+    repetitive_handoff_min_unique_agents=3
+)
+
+# Execute the swarm on a task
+result = swarm("Design and implement a simple REST API for a todo app")
+# Or use invoke_async for async execution: result = await swarm.invoke_async(...)
+
+# Access the final result
+print(f"Status: {result.status}")
+print(f"Node history: {[node.node_id for node in result.node_history]}")
+```
+</Tab>
+<Tab label="TypeScript">
+
+To create a Swarm, define a collection of agents with different specializations. By default, the first agent in `nodes` receives the initial input. Use `start` to override this. Agent `description` fields help the swarm make informed routing decisions:
+
+```typescript
+--8<-- "user-guide/sdk/multi-agent/swarm.ts:swarm_team"
+```
+</Tab>
+</Tabs>
+
+In this example:
+
+1. The `researcher` receives the initial request and might start by handing off to the `architect`
+2. The `architect` designs an API and system architecture
+3. Handoff to the `coder` to implement the API and architecture
+4. The `coder` writes the code
+5. Handoff to the `reviewer` for code review
+6. Finally, the `reviewer` provides the final result
+
+## Swarm Configuration
+
+The following initialization parameters control swarm behavior and safety limits:
+
+<Tabs>
+<Tab label="Python">
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `entry_point` | The agent instance to start with | None (uses first agent) |
+| `max_handoffs` | Maximum number of agent handoffs allowed | 20 |
+| `max_iterations` | Maximum total iterations across all agents | 20 |
+| `execution_timeout` | Total execution timeout in seconds | 900.0 (15 min) |
+| `node_timeout` | Individual agent timeout in seconds | 300.0 (5 min) |
+| `repetitive_handoff_detection_window` | Number of recent nodes to check for ping-pong behavior | 0 (disabled) |
+| `repetitive_handoff_min_unique_agents` | Minimum unique nodes required in recent sequence | 0 (disabled) |
+
+</Tab>
+<Tab label="TypeScript">
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `start` | Agent ID that receives the initial input | First agent in `nodes` |
+| `nodes` | Array of agents (or `AgentNodeOptions`) | (required) |
+| `maxSteps` | Maximum total agent executions (including start) | Infinity |
+| `repetitiveHandoffDetectionWindow` | Number of recent completed nodes to check for ping-pong behavior | 0 (disabled) |
+| `repetitiveHandoffMinUniqueAgents` | Minimum unique nodes required in that window | 0 (disabled) |
+| `timeout` | Wall-clock ceiling for the entire swarm invocation, in milliseconds | Infinity |
+| `nodeTimeout` | Fallback per-node wall-clock ceiling in milliseconds. Applied to any node without its own `timeout` | Infinity |
+| `plugins` | Plugins for event-driven extensibility | None |
+
+To bound an individual node, pass `timeout` on its `AgentNodeOptions` entry. Per-node `timeout` overrides the orchestrator's `nodeTimeout` and must be at least 1 ms.
+
+Set both repetitive-handoff options to positive integers to enable detection. Leave both
+at `0` to disable it. The minimum cannot exceed the window or the number of nodes in
+the swarm.
+
+The window contains completed nodes from the current invocation. Restored results from
+an earlier invocation are not counted. When the trailing window contains fewer unique
+nodes than the configured minimum, the swarm stops before executing another node. It
+returns a `FAILED` result whose `error` describes the repetitive handoff.
+
+Detection only runs once the window is full, so `maxSteps` must be greater than
+`repetitiveHandoffDetectionWindow` for it to fire. When `maxSteps` is less than or equal
+to the window, the `maxSteps` limit is reached first and takes precedence.
+
+If neither `maxSteps` nor `timeout` is set, the SDK emits a one-time warning at construction since a swarm with no bound can run indefinitely.
+
+Timeouts are enforced via `AbortSignal` and are cooperative. A tool that neither polls its cancel signal nor forwards it to a cancellable API can run past the deadline.
+
+</Tab>
+</Tabs>
+
+## Multi-Modal Input Support
+
+Swarms support multi-modal inputs like text and images using content blocks:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.multiagent import Swarm
+from strands.types.content import ContentBlock
+
+# Create agents for image processing workflow
+image_analyzer = Agent(name="image_analyzer", system_prompt="You are an image analysis expert...")
+report_writer = Agent(name="report_writer", system_prompt="You are a report writing expert...")
+
+# Create the swarm
+swarm = Swarm([image_analyzer, report_writer])
+
+# Create content blocks with text and image
+content_blocks = [
+    ContentBlock(text="Analyze this image and create a report about what you see:"),
+    ContentBlock(image={"format": "png", "source": {"bytes": image_bytes}}),
+]
+
+# Execute the swarm with multi-modal input
+result = swarm(content_blocks)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/multi-agent/swarm.ts:multimodal"
+```
+</Tab>
+</Tabs>
+
+## Swarm Coordination
+
+<Tabs>
+<Tab label="Python">
+
+**Handoff Tool**
+
+When you create a Swarm in Python, each agent is automatically equipped with special tools for coordination. Agents can transfer control to another agent when they need specialized help:
+
+```python
+# Handoff Tool Description: Transfer control to another agent in the swarm for specialized help.
+handoff_to_agent(
+    agent_name="coder",
+    message="I need help implementing this algorithm in Python",
+    context={"algorithm_details": "..."}
+)
+```
+
+**Shared Context**
+
+The Swarm maintains a shared context that all agents can access. This includes:
+
+- The original task description
+- History of which agents have worked on the task
+- Knowledge contributed by previous agents
+- List of available agents for collaboration
+
+The formatted context for each agent looks like:
+
+```
+Handoff Message: The user needs help with Python debugging - I've identified the issue but need someone with more expertise to fix it.
+
+User Request: My Python script is throwing a KeyError when processing JSON data from an API
+
+Previous agents who worked on this: data_analyst → code_reviewer
+
+Shared knowledge from previous agents:
+• data_analyst: {"issue_location": "line 42", "error_type": "missing key validation", "suggested_fix": "add key existence check"}
+• code_reviewer: {"code_quality": "good overall structure", "security_notes": "API key should be in environment variable"}
+
+Other agents available for collaboration:
+Agent name: data_analyst. Agent description: Analyzes data and provides deeper insights
+Agent name: code_reviewer.
+Agent name: security_specialist. Agent description: Focuses on secure coding practices and vulnerability assessment
+
+You have access to swarm coordination tools if you need help from other agents.
+```
+</Tab>
+<Tab label="TypeScript">
+
+**Structured Output Routing**
+
+Agents use structured output to decide the next step. Each agent's response includes:
+
+- `agentId`: the agent to hand off to (omit to end the swarm and return a final response)
+- `message`: instructions for the next agent, or the final response if no handoff
+- `context`: optional structured data to pass along with the handoff
+
+Agent descriptions are used to help agents make informed routing decisions.
+</Tab>
+</Tabs>
+
+## Shared State
+
+Swarms support passing shared state to all agents. This enables sharing context and configuration across agents without exposing it to the LLM, keeping it separate from the shared context used for collaboration.
+
+For detailed information about shared state, including examples and best practices, see [Shared State Across Multi-Agent Patterns](./multi-agent-patterns.md#shared-state-across-multi-agent-patterns).
+
+## Streaming Events
+
+Swarms support real-time streaming of events during execution. This provides visibility into agent collaboration, handoffs, and autonomous coordination.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.multiagent import Swarm
+
+# Create specialized agents
+coordinator = Agent(name="coordinator", system_prompt="You coordinate tasks...")
+specialist = Agent(name="specialist", system_prompt="You handle specialized work...")
+
+# Create swarm
+swarm = Swarm([coordinator, specialist])
+
+# Stream events during execution
+async for event in swarm.stream_async("Design and implement a REST API"):
+    # Track node execution
+    if event.get("type") == "multiagent_node_start":
+        print(f"Agent {event['node_id']} taking control")
+
+    # Monitor agent events
+    elif event.get("type") == "multiagent_node_stream":
+        inner_event = event["event"]
+        if "data" in inner_event:
+            print(inner_event["data"], end="")
+
+    # Track handoffs
+    elif event.get("type") == "multiagent_handoff":
+        from_nodes = ", ".join(event['from_node_ids'])
+        to_nodes = ", ".join(event['to_node_ids'])
+        print(f"\nHandoff: {from_nodes} -> {to_nodes}")
+
+    # Get final result
+    elif event.get("type") == "multiagent_result":
+        result = event["result"]
+        print(f"\nSwarm completed: {result.status}")
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/multi-agent/swarm.ts:streaming"
+```
+</Tab>
+</Tabs>
+
+See the [stream event types](../streaming/events.md#multi-agent-events) reference for details on all multi-agent event types.
+
+## Swarm Results
+
+When a Swarm completes execution, it returns a result object with detailed information:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+result = swarm("Design a system architecture for...")
+
+# Check execution status
+print(f"Status: {result.status}")  # COMPLETED, FAILED, etc.
+
+# See which agents were involved
+for node in result.node_history:
+    print(f"Agent: {node.node_id}")
+
+# Get results from specific nodes
+analyst_result = result.results["analyst"].result
+print(f"Analysis: {analyst_result}")
+
+# Get performance metrics
+print(f"Total iterations: {result.execution_count}")
+print(f"Execution time: {result.execution_time}ms")
+print(f"Token usage: {result.accumulated_usage}")
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/multi-agent/swarm.ts:results"
+```
+</Tab>
+</Tabs>
+
+
+## Safety Mechanisms
+
+Swarms include several safety mechanisms to prevent infinite loops and ensure reliable execution:
+
+1. **Step limits**: Caps the total number of agent executions to prevent runaway loops
+2. **Execution timeout**: Sets a maximum total runtime for the Swarm
+3. **Node timeout**: Limits how long any single agent can run
+4. **Repetitive handoff detection**: Prevents agents from endlessly passing control back and forth
+
+The specific parameters and their defaults vary by SDK. See the [Swarm Configuration](#swarm-configuration) table for details.
+
+## Best Practices
+
+1. **Create specialized agents**: Define clear roles for each agent in your Swarm
+2. **Use descriptive agent names**: Names should reflect the agent's specialty
+3. **Set appropriate timeouts**: Adjust based on task complexity and expected runtime
+4. **Enable repetitive handoff detection**: Configure detection parameters to prevent ping-pong behavior between agents
+5. **Include diverse expertise**: Ensure your Swarm has agents with complementary skills
+6. **Provide agent descriptions**: Add descriptions to your agents to help other agents understand their capabilities
+7. **Use multi-modal inputs**: Pass ContentBlocks for rich inputs including images
+
+## SDK Differences
+
+The Swarm pattern is available in multiple SDKs. While the core concept is the same, there are behavioral differences.
+
+**Handoff mechanism**: Python injects a `handoff_to_agent` tool that agents call to trigger handoffs. TypeScript uses a structured output schema (`{ agentId, message, context }`), meaning every agent's response is shaped by this schema. When `agentId` is present, the orchestrator hands off to that agent with `message` as input. When omitted, `message` becomes the final swarm response. The final agent's output is always shaped by the schema, though agents can still produce side effects (tool calls, API calls) during their turn.
+
+**Shared context**: Python maintains a mutable `SharedContext` that accumulates key-value pairs across agents, where each agent can read and write to it. TypeScript passes context as a serialized JSON text block in the handoff input to the next agent, avoiding cross-agent mutable state.
+
+**Step limits**: Python uses separate `max_handoffs` and `max_iterations` limits. TypeScript uses a single `maxSteps` that counts total agent executions including the start agent.
+
+**Node input**: Python builds a rich context string for each receiving agent that includes the original task, full node history chain, accumulated shared context, and available agent descriptions. TypeScript passes only the handoff message and serialized context from the handing-off agent. Agent descriptions are already embedded in the structured output schema for routing decisions.
+
+**Error handling**: In both SDKs, node failures produce a FAILED result. Exceeding
+`maxSteps` throws an exception in TypeScript to promote fail-fast behavior for that
+global limit, while Python returns a FAILED result. Repetitive handoff detection is a
+soft limit in both SDKs. TypeScript returns a FAILED result with the detection reason
+in `error`.
+
+**Repetitive handoff scope**: Python's detection window is restored across an
+interrupt-and-resume of the same task, so a ping-pong that spans a resume is still
+caught. TypeScript's window is scoped to the current invocation and resets on every
+resume, so a ping-pong that alternates with interrupts across several resumes is not
+detected. Set `maxSteps` if your swarm can interrupt mid-task. This is the opposite of
+`maxSteps` itself, whose step count TypeScript does carry forward across resumes.
+
+**Node cancellation**: Both SDKs support cancelling a node before execution via hook callbacks. In TypeScript, a cancelled node produces a CANCELLED result status, allowing the orchestrator to distinguish cancellation from failure. In Python, a cancelled node results in a FAILED status.

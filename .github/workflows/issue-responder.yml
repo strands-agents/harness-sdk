@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   respond-to-issue:
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     # Only run for repository-affiliated authors. This is intentional: the job
     # assumes an AWS role via OIDC and forwards issue text to a Bedrock AgentCore
     # runtime, so an arbitrary account opening an issue must not be able to drive

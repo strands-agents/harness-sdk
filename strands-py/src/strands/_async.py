@@ -8,6 +8,13 @@ from typing import TypeVar
 
 T = TypeVar("T")
 
+_RUN_ASYNC_BRIDGE = contextvars.ContextVar("strands_run_async_bridge", default=False)
+
+
+def is_run_async_bridge() -> bool:
+    """Return whether execution is inside the temporary sync bridge loop."""
+    return _RUN_ASYNC_BRIDGE.get()
+
 
 def run_async(async_func: Callable[[], Awaitable[T]]) -> T:
     """Run an async function in a separate thread to avoid event loop conflicts.
@@ -26,7 +33,11 @@ def run_async(async_func: Callable[[], Awaitable[T]]) -> T:
         return await async_func()
 
     def execute() -> T:
-        return asyncio.run(execute_async())
+        token = _RUN_ASYNC_BRIDGE.set(True)
+        try:
+            return asyncio.run(execute_async())
+        finally:
+            _RUN_ASYNC_BRIDGE.reset(token)
 
     with ThreadPoolExecutor() as executor:
         context = contextvars.copy_context()

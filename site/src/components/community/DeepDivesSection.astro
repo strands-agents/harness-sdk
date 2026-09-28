@@ -1,0 +1,164 @@
+---
+import type { DeepDive } from '../../config/learn'
+import { pathWithBase } from '../../util/links'
+
+interface Props {
+  dives: DeepDive[]
+  suggestTopicHref: string
+}
+
+const { dives, suggestTopicHref } = Astro.props
+---
+
+<div class="deep-dives">
+  <h2>Deep dives</h2>
+  <p class="sec-dek">Long-form explorations beyond the courses.</p>
+
+  {
+    dives.map((dive) => (
+      <a class="dive" href={pathWithBase(dive.href)}>
+        <div class="thumb" aria-hidden="true">
+          {dive.thumbnail === 'target' && (
+            <svg viewBox="0 0 150 112">
+              <path d="M15 90 C50 85, 60 40, 95 35" fill="none" stroke="#5a5a3a" stroke-width="1.5" stroke-dasharray="4 5" />
+              <path d="M15 90 C55 80, 80 60, 118 30" fill="none" stroke="#00cc5f" stroke-width="2" />
+              <circle cx="118" cy="30" r="9" fill="none" stroke="#00ff77" stroke-width="1.5" />
+              <circle cx="118" cy="30" r="3.5" fill="#00ff77" />
+            </svg>
+          )}
+          {dive.thumbnail === 'question' && (
+            <svg viewBox="0 0 150 112">
+              <text x="75" y="72" text-anchor="middle" font-family="Space Grotesk" font-style="italic" font-size="52" fill="none" stroke="#2f6b48" stroke-width="1.2">
+                ?
+              </text>
+            </svg>
+          )}
+        </div>
+        <div>
+          <span class="tag">{dive.tag}</span>
+          <h3>{dive.title}</h3>
+          <p>{dive.description}</p>
+        </div>
+      </a>
+    ))
+  }
+
+  <a class="dive suggest" href={suggestTopicHref}>
+    <div class="thumb" aria-hidden="true">
+      <svg viewBox="0 0 150 112">
+        <text x="75" y="72" text-anchor="middle" font-family="Space Grotesk" font-style="italic" font-size="52" fill="none" stroke="#2f6b48" stroke-width="1.2">
+          ?
+        </text>
+      </svg>
+    </div>
+    <div>
+      <span class="tag">Suggest the next one</span>
+      <h3>What should we cover next?</h3>
+      <p>Tell us on Discord or open a discussion on GitHub.</p>
+    </div>
+  </a>
+</div>
+
+<style>
+  h2 {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 2.625rem;
+    letter-spacing: -0.02em;
+    font-weight: 600;
+    color: var(--sl-color-white);
+    margin: 0;
+  }
+
+  .sec-dek {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    color: var(--sl-color-gray-3);
+    font-size: 0.9375rem;
+    margin: 0.375rem 0 0;
+  }
+
+  .dive {
+    display: grid;
+    grid-template-columns: 150px 1fr;
+    gap: 1.625rem;
+    align-items: center;
+    padding: 1.5rem 0;
+    border-bottom: 1px solid #262626;
+    text-decoration: none;
+  }
+
+  :global([data-theme='light']) .dive {
+    border-bottom-color: rgba(0, 0, 0, 0.1);
+  }
+
+  .dive:last-child {
+    border-bottom: none;
+  }
+
+  .thumb {
+    aspect-ratio: 4 / 3;
+    border-radius: 12px;
+    position: relative;
+    overflow: hidden;
+    border: 1px solid #223328;
+    background: linear-gradient(145deg, #0f2b1c, #0b1210);
+  }
+
+  :global([data-theme='light']) .thumb {
+    border-color: rgba(0, 0, 0, 0.1);
+  }
+
+  .thumb svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  .tag {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 0.6875rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: #6a6a6a;
+  }
+
+  h3 {
+    /* JetBrains Mono to match the /blog post titles and the site-wide heading
+       convention; the rest of this card stays Space Grotesk. */
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 1.5rem;
+    letter-spacing: -0.01em;
+    font-weight: 600;
+    color: var(--sl-color-white);
+    margin: 0.3125rem 0;
+  }
+
+  .dive:hover h3 {
+    color: #00ff77;
+  }
+
+  :global([data-theme='light']) .dive:hover h3 {
+    color: #008542;
+  }
+
+  .suggest h3 {
+    color: var(--sl-color-gray-4);
+  }
+
+  .dive p {
+    color: var(--sl-color-gray-3);
+    font-size: 0.90625rem;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    margin: 0;
+  }
+
+  @media (max-width: 900px) {
+    .dive {
+      grid-template-columns: 110px 1fr;
+    }
+
+    h2 {
+      font-size: 2rem;
+    }
+  }
+</style>

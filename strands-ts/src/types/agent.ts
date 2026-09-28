@@ -1,5 +1,6 @@
 import type { Sandbox } from '../sandbox/base.js'
 import type { Storage } from '../storage/storage.js'
+import type { ContextManager } from '../context-manager/context-manager.js'
 import type { StateStore } from '../state-store.js'
 import type { ContentBlock, ContentBlockData, Message, MessageData, StopReason, SystemPrompt } from './messages.js'
 import type { Interrupt } from '../interrupt.js'
@@ -191,6 +192,13 @@ export interface InvokeOptions {
 }
 
 /**
+ * The cap names recognized by {@link InvokeOptions.limits}.
+ *
+ * @internal
+ */
+export const LIMITS_KEYS = ['turns', 'outputTokens', 'totalTokens'] as const
+
+/**
  * Interface for agents that support request-response invocation.
  *
  * Both `Agent` (full orchestration agent) and `A2AAgent` (remote agent proxy)
@@ -257,6 +265,16 @@ export interface LocalAgent {
   readonly id: string
 
   /**
+   * A stable, unique identifier for the current conversation session.
+   *
+   * Resolution order:
+   * 1. If a SessionManager is attached, returns its session ID.
+   * 2. Otherwise, returns a lazily-generated random 8-character hex string
+   *    cached for the lifetime of the agent instance.
+   */
+  readonly sessionId: string
+
+  /**
    * App state storage accessible to tools and application logic.
    */
   appState: StateStore
@@ -294,6 +312,13 @@ export interface LocalAgent {
    * auto-namespaces under its own prefix to avoid key collisions.
    */
   readonly storage?: Storage | undefined
+
+  /**
+   * The resolved context manager instance. Present when a preset, config, or instance was provided.
+   *
+   * @internal
+   */
+  readonly contextManager?: ContextManager | undefined
 
   /**
    * Aggregated metrics for the agent's loop execution.
@@ -495,7 +520,7 @@ export class AgentResult {
   }
 
   /**
-   * The most recent input token count from the last model invocation.
+   * The total prompt the model processed on the last invocation, including cached tokens.
    * Convenience accessor that delegates to `metrics.latestContextSize`.
    * Returns `undefined` when no metrics or invocations are available.
    */
@@ -504,7 +529,8 @@ export class AgentResult {
   }
 
   /**
-   * Projected context size for the next model call (inputTokens + outputTokens from the last call).
+   * Projected context size for the next model call (total prompt including cached tokens plus the
+   * generated output from the last call).
    * Convenience accessor that delegates to `metrics.projectedContextSize`.
    * Returns `undefined` when no metrics or invocations are available.
    */

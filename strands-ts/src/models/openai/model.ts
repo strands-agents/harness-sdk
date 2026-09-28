@@ -8,12 +8,12 @@
  * @see https://platform.openai.com/docs/api-reference/chat
  */
 
-import OpenAI from 'openai'
+import OpenAI, { APIUserAbortError } from 'openai'
 import type { ResponseStreamEvent } from 'openai/resources/responses/responses'
 import { Model, resolveConfigMetadata } from '../model.js'
 import type { StreamOptions } from '../model.js'
 import type { Message } from '../../types/messages.js'
-import type { ModelStreamEvent } from '../streaming.js'
+import type { ModelStreamEvent, Usage } from '../streaming.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
 import { logger } from '../../logging/logger.js'
 import { warnOnce } from '../../logging/warn-once.js'
@@ -182,7 +182,7 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
   private async *_streamChat(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
     try {
       const request = formatChatRequest(this._config as OpenAIChatConfig, messages, options)
-      const stream = await this._client.chat.completions.create(request)
+      const stream = await this._client.chat.completions.create(request, { signal: options?.cancelSignal })
 
       const streamState: ChatStreamState = {
         messageStarted: false,
@@ -192,7 +192,7 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
 
       let bufferedUsage: {
         type: 'modelMetadataEvent'
-        usage: { inputTokens: number; outputTokens: number; totalTokens: number }
+        usage: Usage
       } | null = null
 
       for await (const chunk of stream) {
@@ -205,6 +205,18 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
                 outputTokens: chunk.usage.completion_tokens ?? 0,
                 totalTokens: chunk.usage.total_tokens ?? 0,
               },
+            }
+            // Match the Responses path's present-and-positive guard so the two OpenAI paths agree.
+            const cached = chunk.usage.prompt_tokens_details?.cached_tokens
+            if (typeof cached === 'number' && cached > 0) {
+              bufferedUsage.usage.cacheReadInputTokens = cached
+            }
+            // GPT-5.6 reports cache writes here; the openai package's PromptTokensDetails
+            // does not type the field yet, so read it through a narrow cast.
+            const cacheWrite = (chunk.usage.prompt_tokens_details as { cache_write_tokens?: number } | undefined)
+              ?.cache_write_tokens
+            if (typeof cacheWrite === 'number' && cacheWrite > 0) {
+              bufferedUsage.usage.cacheWriteInputTokens = cacheWrite
             }
           }
           continue
@@ -220,6 +232,10 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
         }
       }
 
+      if (options?.cancelSignal?.aborted) {
+        throw new APIUserAbortError()
+      }
+
       if (bufferedUsage) {
         yield bufferedUsage
       }
@@ -231,7 +247,7 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
   private async *_streamResponses(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
     try {
       const request = formatResponsesRequest(this._config as OpenAIResponsesConfig, messages, options, this.stateful)
-      const stream = await this._client.responses.create(request)
+      const stream = await this._client.responses.create(request, { signal: options?.cancelSignal })
 
       const state = createResponsesStreamState()
 
@@ -239,6 +255,10 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
         for (const sdkEvent of mapResponsesEventToSDK(event, state, this.stateful, options?.modelState)) {
           yield sdkEvent
         }
+      }
+
+      if (options?.cancelSignal?.aborted) {
+        throw new APIUserAbortError()
       }
 
       for (const sdkEvent of finalizeResponsesStream(state)) {

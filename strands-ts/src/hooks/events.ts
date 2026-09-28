@@ -788,13 +788,14 @@ export class AfterToolsEvent extends HookableEvent {
    * (`"Turn ended early by hook after tool execution"`) is appended as the
    * final assistant message. When set to a string, that string is used instead
    * of the default — the string becomes literal assistant content (a
-   * `TextBlock`), not a reason or label. Contrast with
-   * {@link BeforeToolCallEvent.cancel | cancel} fields on other events, where
-   * the string is a cancellation reason.
+   * `TextBlock`), not a reason or label. When set to a `ContentBlock[]`, those
+   * blocks become the final assistant message content directly (shallow-copied).
+   * Contrast with {@link BeforeToolCallEvent.cancel | cancel} fields on other events,
+   * where the string is a cancellation reason.
    *
-   * In both cases `stopReason` on the returned `AgentResult` is `'endTurn'`.
+   * In all cases `stopReason` on the returned `AgentResult` is `'endTurn'`.
    */
-  endTurn: boolean | string = false
+  endTurn: boolean | string | ContentBlock[] = false
 
   constructor(data: { agent: LocalAgent; message: Message; invocationState: InvocationState }) {
     super()

@@ -1,0 +1,75 @@
+name: "Harness Python: Test and Lint"
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+
+jobs:
+  unit-test:
+    name: Unit Tests - Python ${{ matrix.python-version }}
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        # harness-py requires-python is >=3.10; cover each supported minor on Linux.
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+      fail-fast: false
+    runs-on: strands-agents_ubuntu-latest_4-core
+    # Suite runs in ~3 min; 25 min caps a hung step instead of the 6-hour default.
+    timeout-minutes: 25
+    env:
+      LOG_LEVEL: DEBUG
+    defaults:
+      run:
+        working-directory: harness-py
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package with dev extras
+        run: pip install --no-cache-dir -e '.[dev]'
+
+      - name: Run unit tests
+        run: pytest
+
+  lint:
+    name: Lint
+    runs-on: strands-agents_ubuntu-latest_4-core
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: harness-py
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install package with dev extras
+        run: pip install --no-cache-dir -e '.[dev]'
+
+      - name: Check formatting
+        run: ruff format --check .
+
+      - name: Run lint
+        run: ruff check .

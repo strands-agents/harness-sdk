@@ -359,6 +359,152 @@ describe('fileEditor tool', () => {
           fileEditor.invoke({ command: 'str_replace', path: dirPath, old_str: 'OLD', new_str: 'NEW' }, context)
         ).rejects.toThrow('directory')
       })
+
+      it('rejects empty old_str', async () => {
+        const filePath = await createTestFile('test.txt', 'some content')
+        await expect(
+          fileEditor.invoke({ command: 'str_replace', path: filePath, old_str: '', new_str: 'x' }, context)
+        ).rejects.toThrow('must not be empty')
+      })
+
+      it('preserves tabs and CRLF outside the edited region', async () => {
+        const content = 'func a() {\n\treturn 1\n}\r\n\r\nfunc b() {\n\treturn 2\n}\n'
+        const filePath = await createTestFile('preserve.go', content)
+        await fileEditor.invoke(
+          { command: 'str_replace', path: filePath, old_str: '\treturn 1', new_str: '\treturn 10' },
+          context
+        )
+        const updated = await fs.readFile(filePath, 'utf-8')
+        expect(updated).toBe('func a() {\n\treturn 10\n}\r\n\r\nfunc b() {\n\treturn 2\n}\n')
+      })
+
+      it('reports correct line numbers for repeated multi-line old_str', async () => {
+        const content = 'if (x) {\n  do()\n}\nspacer\nif (x) {\n  do()\n}\n'
+        const filePath = await createTestFile('multi.txt', content)
+        await expect(
+          fileEditor.invoke(
+            { command: 'str_replace', path: filePath, old_str: 'if (x) {\n  do()\n}', new_str: 'z' },
+            context
+          )
+        ).rejects.toThrow(/lines \[1,5\]/)
+      })
+
+      it('preserves a file that is entirely tabs', async () => {
+        const content = '\t\t\tfirst\n\t\t\tsecond\n\t\t\tthird\n'
+        const filePath = await createTestFile('tabs.txt', content)
+        await fileEditor.invoke(
+          { command: 'str_replace', path: filePath, old_str: '\t\t\tsecond', new_str: '\t\t\treplaced' },
+          context
+        )
+        const updated = await fs.readFile(filePath, 'utf-8')
+        expect(updated).toBe('\t\t\tfirst\n\t\t\treplaced\n\t\t\tthird\n')
+      })
+
+      it('preserves an all-CRLF file when editing one line', async () => {
+        const content = 'line1\r\nline2\r\nline3\r\n'
+        const filePath = await createTestFile('crlf.txt', content)
+        await fileEditor.invoke(
+          { command: 'str_replace', path: filePath, old_str: 'line2', new_str: 'changed' },
+          context
+        )
+        const updated = await fs.readFile(filePath, 'utf-8')
+        expect(updated).toBe('line1\r\nchanged\r\nline3\r\n')
+      })
+
+      it('handles old_str that spans multiple lines', async () => {
+        const content = 'function hello() {\n  console.log("hi")\n  return true\n}\n'
+        const filePath = await createTestFile('span.ts', content)
+        await fileEditor.invoke(
+          {
+            command: 'str_replace',
+            path: filePath,
+            old_str: '  console.log("hi")\n  return true',
+            new_str: '  return false',
+          },
+          context
+        )
+        const updated = await fs.readFile(filePath, 'utf-8')
+        expect(updated).toBe('function hello() {\n  return false\n}\n')
+      })
+
+      it('handles replacing with empty string (deletion)', async () => {
+        const content = 'keep\ndelete me\nkeep too\n'
+        const filePath = await createTestFile('delete.txt', content)
+        await fileEditor.invoke({ command: 'str_replace', path: filePath, old_str: 'delete me\n' }, context)
+        const updated = await fs.readFile(filePath, 'utf-8')
+        expect(updated).toBe('keep\nkeep too\n')
+      })
+
+      it('handles special regex characters in old_str', async () => {
+        const content = 'price is $100.00 (USD)\nother line\n'
+        const filePath = await createTestFile('regex.txt', content)
+        await fileEditor.invoke(
+          { command: 'str_replace', path: filePath, old_str: '$100.00 (USD)', new_str: '$200.00 (EUR)' },
+          context
+        )
+        const updated = await fs.readFile(filePath, 'utf-8')
+        expect(updated).toBe('price is $200.00 (EUR)\nother line\n')
+      })
+
+      it('preserves binary-like content outside the edit', async () => {
+        const content = 'normal\n\x00\x01\x02\n\ttabbed\nnormal again\n'
+        const filePath = await createTestFile('binary.txt', content)
+        await fileEditor.invoke(
+          { command: 'str_replace', path: filePath, old_str: 'normal again', new_str: 'done' },
+          context
+        )
+        const updated = await fs.readFile(filePath, 'utf-8')
+        expect(updated).toBe('normal\n\x00\x01\x02\n\ttabbed\ndone\n')
+      })
+
+      it('handles replacement at the very start of file', async () => {
+        const content = 'first line\nsecond\n'
+        const filePath = await createTestFile('start.txt', content)
+        await fileEditor.invoke(
+          { command: 'str_replace', path: filePath, old_str: 'first line', new_str: 'new first' },
+          context
+        )
+        const updated = await fs.readFile(filePath, 'utf-8')
+        expect(updated).toBe('new first\nsecond\n')
+      })
+
+      it('handles replacement at the very end of file', async () => {
+        const content = 'first\nlast line'
+        const filePath = await createTestFile('end.txt', content)
+        await fileEditor.invoke(
+          { command: 'str_replace', path: filePath, old_str: 'last line', new_str: 'new last' },
+          context
+        )
+        const updated = await fs.readFile(filePath, 'utf-8')
+        expect(updated).toBe('first\nnew last')
+      })
+
+      it('handles replacement that makes file larger', async () => {
+        const content = 'x\n'
+        const filePath = await createTestFile('grow.txt', content)
+        await fileEditor.invoke(
+          {
+            command: 'str_replace',
+            path: filePath,
+            old_str: 'x',
+            new_str: 'a very long replacement string that is much bigger',
+          },
+          context
+        )
+        const updated = await fs.readFile(filePath, 'utf-8')
+        expect(updated).toBe('a very long replacement string that is much bigger\n')
+      })
+
+      it('handles mixed tabs and spaces without corrupting either', async () => {
+        const content = '\tindented with tab\n    indented with spaces\n  \tmixed\n'
+        const filePath = await createTestFile('mixed.txt', content)
+        await fileEditor.invoke(
+          { command: 'str_replace', path: filePath, old_str: '    indented with spaces', new_str: '    changed' },
+          context
+        )
+        const updated = await fs.readFile(filePath, 'utf-8')
+        expect(updated).toBe('\tindented with tab\n    changed\n  \tmixed\n')
+      })
     })
   })
 

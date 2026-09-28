@@ -319,6 +319,151 @@ describe('GoogleModel', () => {
       })
     })
 
+    // Regression for the token miscount catalogued in #3546: totalTokenCount sums four disjoint buckets
+    // (prompt + candidates + toolUsePrompt + thoughts), so subtracting only prompt miscounts the
+    // input-side toolUsePrompt tokens as output.
+    it('counts tool-use tokens as input and thinking tokens as output', async () => {
+      const { provider, messages } = setupStreamTest(async function* () {
+        yield {
+          candidates: [{ content: { parts: [{ text: 'Hi' }] } }],
+          usageMetadata: {
+            promptTokenCount: 100,
+            candidatesTokenCount: 20,
+            toolUsePromptTokenCount: 5,
+            thoughtsTokenCount: 30,
+            totalTokenCount: 155,
+          },
+        }
+        yield { candidates: [{ finishReason: 'STOP' }] }
+      })
+
+      const events = await collectIterator(provider.stream(messages))
+
+      const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
+      expect(metadataEvent).toEqual({
+        type: 'modelMetadataEvent',
+        usage: {
+          inputTokens: 105,
+          outputTokens: 50,
+          totalTokens: 155,
+        },
+      })
+    })
+
+    it('surfaces cache-read tokens when present', async () => {
+      const { provider, messages } = setupStreamTest(async function* () {
+        yield {
+          candidates: [{ content: { parts: [{ text: 'Hi' }] } }],
+          usageMetadata: {
+            promptTokenCount: 100,
+            candidatesTokenCount: 20,
+            cachedContentTokenCount: 25,
+            totalTokenCount: 120,
+          },
+        }
+        yield { candidates: [{ finishReason: 'STOP' }] }
+      })
+
+      const events = await collectIterator(provider.stream(messages))
+
+      const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
+      expect(metadataEvent).toEqual({
+        type: 'modelMetadataEvent',
+        usage: {
+          inputTokens: 100,
+          outputTokens: 20,
+          totalTokens: 120,
+          cacheReadInputTokens: 25,
+        },
+      })
+    })
+
+    it('omits cache-read tokens when cachedContentTokenCount is 0', async () => {
+      const { provider, messages } = setupStreamTest(async function* () {
+        yield {
+          candidates: [{ content: { parts: [{ text: 'Hi' }] } }],
+          usageMetadata: {
+            promptTokenCount: 100,
+            candidatesTokenCount: 20,
+            cachedContentTokenCount: 0,
+            totalTokenCount: 120,
+          },
+        }
+        yield { candidates: [{ finishReason: 'STOP' }] }
+      })
+
+      const events = await collectIterator(provider.stream(messages))
+
+      const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
+      expect(metadataEvent).toEqual({
+        type: 'modelMetadataEvent',
+        usage: {
+          inputTokens: 100,
+          outputTokens: 20,
+          totalTokens: 120,
+        },
+      })
+    })
+
+    it('clears cache-read tokens when a later usage chunk reports none', async () => {
+      const { provider, messages } = setupStreamTest(async function* () {
+        yield {
+          candidates: [{ content: { parts: [{ text: 'Hi' }] } }],
+          usageMetadata: {
+            promptTokenCount: 100,
+            candidatesTokenCount: 20,
+            cachedContentTokenCount: 25,
+            totalTokenCount: 120,
+          },
+        }
+        yield {
+          candidates: [{ finishReason: 'STOP' }],
+          usageMetadata: {
+            promptTokenCount: 100,
+            candidatesTokenCount: 20,
+            totalTokenCount: 120,
+          },
+        }
+      })
+
+      const events = await collectIterator(provider.stream(messages))
+
+      const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
+      expect(metadataEvent).toEqual({
+        type: 'modelMetadataEvent',
+        usage: {
+          inputTokens: 100,
+          outputTokens: 20,
+          totalTokens: 120,
+        },
+      })
+    })
+
+    it('clamps output to zero when totalTokenCount is below promptTokenCount', async () => {
+      const { provider, messages } = setupStreamTest(async function* () {
+        yield {
+          candidates: [{ content: { parts: [{ text: 'Hi' }] } }],
+          usageMetadata: {
+            promptTokenCount: 10,
+            totalTokenCount: 5,
+          },
+        }
+        yield { candidates: [{ finishReason: 'STOP' }] }
+      })
+
+      const events = await collectIterator(provider.stream(messages))
+
+      const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
+      expect(metadataEvent).toEqual({
+        type: 'modelMetadataEvent',
+        usage: {
+          inputTokens: 10,
+          outputTokens: 0,
+          totalTokens: 5,
+        },
+      })
+    })
+
     it('handles MAX_TOKENS finish reason', async () => {
       const { provider, messages } = setupStreamTest(async function* () {
         yield {
@@ -1118,6 +1263,7 @@ describe('GoogleModel', () => {
         hasToolCalls: false,
         inputTokens: 0,
         outputTokens: 0,
+        totalTokens: 0,
       }
     }
 

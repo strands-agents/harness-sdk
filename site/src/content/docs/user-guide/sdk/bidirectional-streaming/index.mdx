@@ -1,0 +1,115 @@
+---
+title: Build a realtime voice agent
+description: "Build a realtime agent that streams audio in and out: a persistent BidiAgent connection, a realtime model provider, and the events, I/O, and barge-ins a live conversation needs."
+experimental: true
+tags: [bidi-streaming]
+sidebar:
+  label: Overview
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components'
+
+A voice agent listens and talks at the same time: audio streams in while the
+model streams a reply out, the user can cut in mid-sentence, and tools run
+without pausing the conversation. Bidirectional streaming is the piece that makes
+this work. Instead of the request-then-response cycle of a standard agent, a
+`BidiAgent` holds a persistent connection to a realtime model and moves audio,
+text, and events across it continuously. This section covers building that agent,
+choosing a model provider that supports it, and handling the live stream.
+
+## Get started
+
+<CardGrid>
+  <LinkCard
+    title="Build a voice agent"
+    href="quickstart/"
+    description="Stand up a listening, talking agent end to end, from install to first conversation."
+  />
+  <LinkCard
+    title="BidiAgent"
+    href="agent/"
+    description="Configure the persistent-connection agent: model, tools, system prompt, and lifecycle."
+  />
+</CardGrid>
+
+## Model providers
+
+<CardGrid>
+  <LinkCard
+    title="Nova Sonic"
+    href="models/bedrock/"
+    description="Amazon's bidirectional streaming model, served through Amazon Bedrock."
+  />
+  <LinkCard
+    title="OpenAI Realtime"
+    href="models/openai/"
+    description="OpenAI's Realtime API, with a longer connection timeout for extended sessions."
+  />
+  <LinkCard
+    title="Gemini Live"
+    href="models/google/"
+    description="Google's multimodal Live API for streaming voice and video."
+  />
+</CardGrid>
+
+## Handle the live stream
+
+<CardGrid>
+  <LinkCard
+    title="I/O channels"
+    href="io/"
+    description="Wire local audio and text I/O, or implement custom channels for a web server."
+  />
+  <LinkCard
+    title="Streaming events"
+    href="events/"
+    description="Handle the events the agent emits as audio, transcripts, and tool calls arrive."
+  />
+  <LinkCard
+    title="Barge-in"
+    href="barge-in/"
+    description="Let a user cut in mid-response and have the agent stop and listen."
+  />
+</CardGrid>
+
+## A streaming voice agent
+
+The smallest real thing this section builds: a `BidiAgent` on a realtime model,
+reading from the microphone and playing back through the speakers. The `run()`
+loop streams audio both ways until you interrupt it.
+
+```python
+import asyncio
+
+from strands.experimental.bidi import BidiAgent
+from strands.experimental.bidi.io import AudioIO
+from strands.experimental.bidi.models import BedrockNovaSonicModel
+
+model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
+agent = BidiAgent(
+    model=model,
+    system_prompt="You are a helpful voice assistant. Keep replies short and natural.",
+)
+audio_io = AudioIO()
+
+
+async def main():
+    # Stream microphone audio in and speaker audio out until interrupted
+    await agent.run(inputs=[audio_io.input()], outputs=[audio_io.output()])
+
+
+asyncio.run(main())
+```
+
+Bidirectional streaming is a Python-only experimental feature; install it with
+`pip install "strands-agents[bidi-all]"`. The [quickstart](quickstart/) covers
+per-provider installs and credentials.
+
+## Where to go next
+
+New here? Start with the [quickstart](quickstart/) to get a voice conversation
+running, then read [BidiAgent](agent/) to configure tools, prompts, and the
+connection lifecycle. Pick a [model provider](models/bedrock/) based on the
+provider you use and the session length you need.
+
+Building for a server rather than a local machine? Read [I/O channels](io/) to replace microphone-and-speaker I/O with your own transport, then [streaming events](events/) and [barge-ins](barge-in/) to drive the conversation from your own event loop.

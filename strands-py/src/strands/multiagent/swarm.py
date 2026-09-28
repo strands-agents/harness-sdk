@@ -56,7 +56,15 @@ from ..types.event_loop import Metrics, Usage
 from ..types.multiagent import MultiAgentInput
 from ..types.session import decode_bytes_values, encode_bytes_values
 from ..types.traces import AttributeValue
-from .base import MultiAgentBase, MultiAgentResult, NodeResult, Status, _parse_metrics, _parse_usage
+from .base import (
+    MultiAgentBase,
+    MultiAgentResult,
+    NodeResult,
+    Status,
+    _accumulate_cache_usage,
+    _parse_metrics,
+    _parse_usage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -410,12 +418,11 @@ class Swarm(MultiAgentBase):
             - multi_agent_node_stop: When a node stops execution
             - result: Final swarm result
         """
-        self._interrupt_state.resume(task)
-
         if invocation_state is None:
             invocation_state = {}
 
         await self.hooks.invoke_callbacks_async(BeforeMultiAgentInvocationEvent(self, invocation_state))
+        self._interrupt_state.resume(task)
 
         logger.debug("starting swarm execution")
 
@@ -1025,6 +1032,7 @@ class Swarm(MultiAgentBase):
         self.state.accumulated_usage["inputTokens"] += node_result.accumulated_usage.get("inputTokens", 0)
         self.state.accumulated_usage["outputTokens"] += node_result.accumulated_usage.get("outputTokens", 0)
         self.state.accumulated_usage["totalTokens"] += node_result.accumulated_usage.get("totalTokens", 0)
+        _accumulate_cache_usage(self.state.accumulated_usage, node_result.accumulated_usage)
         self.state.accumulated_metrics["latencyMs"] += node_result.accumulated_metrics.get("latencyMs", 0)
 
     def _build_result(self, interrupts: list[Interrupt]) -> SwarmResult:

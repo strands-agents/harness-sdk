@@ -1,0 +1,10 @@
+name: mem0-strands
+description: 'Persistent long-term memory for Strands agents, enabled by Mem0: a native MemoryStore with automatic recall and server-side extraction.'
+integrationType: memory-store
+languages:
+  python:
+    package: mem0-strands
+github: https://github.com/mem0ai/mem0/tree/main/integrations/mem0-strands
+docsUrl: https://docs.mem0.ai/integrations/strands
+maintainedBy: partner
+addedDate: 2026-08-27

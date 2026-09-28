@@ -5,38 +5,60 @@ sidebar:
   label: "Overview"
 ---
 
-[Strands Labs](https://github.com/strands-labs) is the experimental arm of Strands Agents - a space for projects that push the boundaries of what AI agents can do. Labs projects explore new domains, validate novel approaches, and move fast. All projects are open source.
+import { CardGrid, LinkCard } from '@astrojs/starlight/components'
 
-While the core Strands Agents SDK provides the foundation for building agents - the agent loop, tool use, model providers, and multi-agent patterns - Labs is where that foundation gets applied to new problem spaces. These are projects that extend agents into areas like physical robotics, world models, agentic benchmarking, harness optimization, and real-time audio. Some Labs projects may eventually graduate into the core SDK or become standalone products; others may remain experimental. The common thread is that they all build on agentic AI in open source and are designed to be used alongside it.
+[Strands Labs](https://github.com/strands-labs) is the experimental arm of
+Strands Agents: open source projects that take the core SDK into new problem
+spaces. Where the SDK gives you the agent loop, tool use, model providers, and
+multi-agent patterns, Labs applies that foundation to areas like physical
+robotics, world models, agentic benchmarking, harness optimization, and
+real-time audio.
 
-Labs projects are fully functional and published to package repositories, but they move faster and have a wider surface area than the core SDK. Expect more frequent changes, newer integrations, and a focus on enabling research and prototyping alongside production use.
+Labs projects are published to package repositories and work alongside the SDK
+today. They move faster and cover more surface area than the core SDK, so expect
+more frequent changes and newer integrations. Some projects graduate into the
+core SDK or become standalone products; others stay experimental. Each project
+lives in its own repository under the
+[strands-labs](https://github.com/strands-labs) organization.
 
 ## Projects
 
-### [Robots](robots.md)
-
-Control, simulate, and train physical robots with natural language through Strands Agents. One `Robot()` call returns a MuJoCo simulation or real hardware - same code, same natural-language control - with pluggable vision-language-action policies, a hardware abstraction layer, and a peer-to-peer mesh.
-
-### [Strands for Cosmos](strands-for-cosmos.md)
-
-Bring NVIDIA Cosmos to Strands Agents: give your agent eyes that understand physics and hands that generate video, audio, and robot actions on local compute. Ships four model providers (Cosmos 3 Reasoner and Generator, plus the Cosmos-Reason2 edge VLM) and 45 tools spanning reasoning, generation, curation, post-training, and evaluation.
-
-### [Benchmark Harnesses](benchmark-harnesses.md)
-
-Strands-based agents and harnesses for agentic benchmarks. Includes Simple Strands Agent (SSA), a lean, hackable autonomous-coding harness that pairs frontier LLMs with shell and file-editing tools in isolated Docker environments, delivering state-of-the-art results on SWE-Bench Verified, SWE-Bench Pro, and Terminal Bench 2.
-
-### [Harness Optimizer](harness-optimizer.md)
-
-Optimize an LLM agent's harness through tunable Formulas that dynamically enhance the agent, then improve those Formulas with optimizers based on collected agent rollout trajectories. A PyTorch-style training loop (DataLoader, rollout engine, reward function, optimizer) for evolving agent context.
-
-### [AI Functions](ai-functions.md)
-
-Python functions that behave like standard functions but are evaluated by AI agents. AI Functions enforce correctness through runtime post-conditions rather than prompt engineering alone, enabling developers to build reliable agentic workflows using familiar programming patterns. Supports async execution, parallel workflows, and composing functions into multi-agent systems.
-
-### [PyWebRTC Audio](pywebrtc-audio.md)
-
-Python bindings for WebRTC's audio processing pipeline - echo cancellation, noise suppression, automatic gain control, and voice activity detection - the same algorithms that run in Chrome. Removes an agent's own speaker output from its mic capture so a voice agent only hears the user, with a working Strands BidiAgent integration.
+<CardGrid>
+  <LinkCard
+    title="Robots"
+    href="https://github.com/strands-labs/robots"
+    description="Control, simulate, and train physical robots with natural language. One Robot() call returns a MuJoCo simulation or real hardware, with pluggable vision-language-action policies and a peer-to-peer mesh."
+  />
+  <LinkCard
+    title="Strands for Cosmos"
+    href="https://github.com/strands-labs/strands-for-cosmos"
+    description="Bring NVIDIA Cosmos to Strands Agents: physics-aware reasoning over video, plus generation of video, audio, and robot actions on local compute."
+  />
+  <LinkCard
+    title="Benchmark Harnesses"
+    href="https://github.com/strands-labs/benchmark-harnesses"
+    description="Strands-based agents and harnesses for agentic benchmarks, including Simple Strands Agent, a lean autonomous-coding harness with strong results on SWE-Bench and Terminal Bench 2."
+  />
+  <LinkCard
+    title="Harness Optimizer"
+    href="https://github.com/strands-labs/harness-optimizer"
+    description="Optimize an agent's harness through tunable Formulas, then improve those Formulas from collected rollout trajectories with a PyTorch-style training loop."
+  />
+  <LinkCard
+    title="AI Functions"
+    href="https://github.com/strands-labs/ai-functions"
+    description="Python functions evaluated by AI agents. Enforce correctness with runtime post-conditions instead of prompt engineering alone, and compose functions into multi-agent workflows."
+  />
+  <LinkCard
+    title="PyWebRTC Audio"
+    href="https://github.com/strands-labs/pywebrtc-audio"
+    description="Python bindings for WebRTC audio processing: echo cancellation, noise suppression, gain control, and voice activity detection, with a working Strands BidiAgent integration."
+  />
+</CardGrid>
 
 ## Contributing
 
-Have an experimental idea that pushes AI agents forward? Labs is designed for innovation from across the community. Check the [contributing guide](https://github.com/strands-agents/harness-sdk/blob/main/CONTRIBUTING.md) to get started.
+Have an experimental idea for AI agents? Labs takes contributions from across the
+community. See the
+[contributing guide](https://github.com/strands-agents/harness-sdk/blob/main/CONTRIBUTING.md)
+to get started.

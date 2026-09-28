@@ -1,0 +1,23 @@
+title: Agent Fundamentals with Strands
+number: 1
+status: available
+description: >-
+  Fourteen lessons, one production agent. Build up from the agent loop through
+  tools, hooks, steering, memory, and multi-agent patterns — then deploy and
+  evaluate it.
+href: /docs/learning/how-agents-really-work/
+lessons:
+  - href: /docs/learning/how-agents-really-work/
+  - href: /docs/learning/switching-model-providers/
+  - href: /docs/learning/give-your-agent-tools-using-mcp/
+  - href: /docs/learning/adding-callbacks-and-response-streaming/
+  - href: /docs/learning/control-your-agent-with-hooks/
+  - href: /docs/learning/agent-plugins-and-skills/
+  - href: /docs/learning/improve-agent-reliability-with-strands-steering/
+  - href: /docs/learning/context-engineering-and-conversation-management/
+  - href: /docs/learning/persistent-memory-with-session-managers/
+  - href: /docs/learning/multi-agent-patterns-agents-as-tools/
+  - href: /docs/learning/multi-agent-patterns-graph-workflows/
+  - href: /docs/learning/multi-agent-patterns-agent-swarms/
+  - href: /docs/learning/evaluating-agents/
+  - href: /docs/learning/deploying-agents-to-the-cloud/

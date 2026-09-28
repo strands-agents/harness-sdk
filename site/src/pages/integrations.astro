@@ -1,17 +1,15 @@
 ---
 /**
- * Integration catalog: searchable, filterable grid of SDK built-ins and
- * community packages. Entries come from the `catalog` content collection;
- * popularity stats from the bot-maintained src/data/catalog-stats.json.
- * Everything is rendered statically; the inline script only toggles card
- * visibility.
+ * Community integration catalog: searchable, filterable grid of community
+ * packages. Entries come from the `catalog` content collection; popularity
+ * stats from the bot-maintained src/data/catalog-stats.json. Everything is
+ * rendered statically; the inline script only toggles card visibility.
  */
 import { getCollection } from 'astro:content'
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro'
 import CatalogCard from '../components/catalog/CatalogCard.astro'
-import CatalogFilterBar from '../components/catalog/CatalogFilterBar.astro'
 import CatalogFacets from '../components/catalog/CatalogFacets.astro'
-import { CATALOG_TYPES, AWS_MARK_VIEWBOX, MAINTAINED_BY_ICONS, MAINTAINED_BY_TIERS, TYPE_ICONS } from '../components/catalog/types'
+import { CATALOG_TYPES, MAINTAINED_BY_TIERS } from '../components/catalog/types'
 import { toCardModel, sortEntries, type CatalogStatsFile } from '../util/catalog'
 import { pathWithBase } from '../util/links'
 import statsFile from '../data/catalog-stats.json'
@@ -29,8 +27,8 @@ const hasVerified = cards.some((c) => c.badges.includes('verified'))
 const hasFeatured = cards.some((c) => c.featured)
 const hasNew = cards.some((c) => c.badges.includes('new'))
 
-// Build-time counts are the initial paint only; apply() recomputes every
-// chip count client-side against the active filters.
+// Counts span both SDKs while filtering is per-SDK; with no evals entries the
+// two coincide, so if/when evals entries land these need client-side recompute.
 const typeFacets = CATALOG_TYPES.map(({ value, labelPlural }) => ({
   value,
   label: labelPlural,
@@ -44,164 +42,53 @@ const maintainedByFacets = MAINTAINED_BY_TIERS.map(({ value, label }) => ({
 })).filter((t) => t.count > 0)
 
 const title = 'Integrations'
-const description = 'Built-in and community tools, model providers, plugins, and integrations for Strands Agents.'
+const description = 'Community-built tools, model providers, plugins, and integrations for Strands Agents.'
+
+// Left sidebar (real Starlight sidebar): browse by type. Each link filters the
+// catalog via ?type=; "All integrations" clears it.
+const sidebar = [
+  {
+    label: 'Integrations',
+    items: [
+      { label: 'All integrations', link: '/integrations/' },
+      ...typeFacets.map((t) => ({ label: t.label, link: `/integrations/?type=${t.value}` })),
+    ],
+  },
+  { label: 'Add your integration', link: '/docs/integrations/get-featured/' },
+]
 ---
 
-<StarlightPage frontmatter={{ title, description, template: 'splash', pagefind: false, hero: { actions: [] } }} hasSidebar={false}>
+<StarlightPage frontmatter={{ title, description, pagefind: false, tableOfContents: false }} sidebar={sidebar}>
   <div class="cat-page">
     <div class="cat-head">
-      <div>
-        <h1 class="cat-title">Integrations</h1>
-        <p class="cat-subtitle">Tools, model providers, and integrations, built into the SDK and by the Strands community</p>
-      </div>
+      <p class="cat-subtitle">Tools, model providers, and integrations built by the Strands team and community.</p>
       <div class="cat-head-actions">
         <a class="cat-cta-btn" href={pathWithBase('/docs/integrations/get-featured/')}>Add your integration</a>
         <p class="cat-note"><span data-cat-count>{cards.length}</span> integrations</p>
       </div>
     </div>
 
-    <CatalogFilterBar showSdkFacet={showSdkFacet} />
-    <div class="cat-body">
-      <nav class="cat-rail" aria-label="Filter catalog">
-        {
-          (hasFeatured || hasNew || hasVerified) && (
-            <>
-              <p class="cat-rail-label" id="cat-highlight-label">Highlights</p>
-              <ul class="cat-rail-list" aria-labelledby="cat-highlight-label">
-                {hasFeatured && (
-                  <li class="cat-rail-item">
-                    <button class="cat-chip" type="button" data-cat-badge="featured" aria-pressed="false">
-                      Featured
-                      <span class="cat-count">{cards.filter((c) => c.featured).length}</span>
-                    </button>
-                  </li>
-                )}
-                {hasNew && (
-                  <li class="cat-rail-item">
-                    <button class="cat-chip" type="button" data-cat-badge="new" aria-pressed="false">
-                      New
-                      <span class="cat-count">{cards.filter((c) => c.badges.includes('new')).length}</span>
-                    </button>
-                  </li>
-                )}
-                {hasVerified && (
-                  <li class="cat-rail-item">
-                    <button class="cat-chip" type="button" data-cat-badge="verified" aria-pressed="false">
-                      Verified
-                      <span class="cat-count">{cards.filter((c) => c.badges.includes('verified')).length}</span>
-                    </button>
-                  </li>
-                )}
-              </ul>
-            </>
-          )
-        }
-        <p class="cat-rail-label" id="cat-type-label">Type</p>
-        <ul class="cat-rail-list" aria-labelledby="cat-type-label">
-          {
-            typeFacets.map((t) => (
-              <li class="cat-rail-item">
-                <button class="cat-chip" type="button" data-cat-type={t.value} aria-pressed="false">
-                  <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true">
-                    <path fill="currentColor" d={TYPE_ICONS[t.value]} />
-                  </svg>
-                  {t.label}
-                  <span class="cat-count">{t.count}</span>
-                </button>
-              </li>
-            ))
-          }
-        </ul>
-        <p class="cat-rail-label" id="cat-maintained-label">Maintained by</p>
-        <ul class="cat-rail-list" aria-labelledby="cat-maintained-label">
-          {
-            maintainedByFacets.map((t) => (
-              <li class="cat-rail-item">
-                <button class="cat-chip" type="button" data-cat-maintained={t.value} aria-label={t.label} aria-pressed="false">
-                  {MAINTAINED_BY_ICONS[t.value] ? (
-                    <svg width="29" height="18" viewBox={AWS_MARK_VIEWBOX} aria-hidden="true">
-                      <path fill="currentColor" d={MAINTAINED_BY_ICONS[t.value]} />
-                    </svg>
-                  ) : (
-                    t.label
-                  )}
-                  <span class="cat-count">{t.count}</span>
-                </button>
-              </li>
-            ))
-          }
-        </ul>
-      </nav>
-      <div class="cat-grid" data-cat-grid>
-        {cards.map((card) => <CatalogCard card={card} />)}
-        <div class="cat-empty" data-cat-empty hidden>
-          <p class="cat-empty-title">No integrations match</p>
-          <p class="cat-empty-body">Try different filters, or build the missing piece and list it here.</p>
-          <div class="cat-empty-actions">
-            <button class="cat-btn-ghost" type="button" data-cat-clear>Clear filters</button>
-            <a class="cat-cta-btn" href={pathWithBase('/docs/integrations/get-featured/')}>Add your integration</a>
-          </div>
-        </div>
-        {/* Not a .cat-card: hidden only when the empty panel takes over. */}
-        <div class="cat-cta" data-cat-cta>
-          <h2 class="cat-cta-title">Add your integration</h2>
-          <p class="cat-cta-body">Built a tool, model provider, or plugin for Strands? List it here.</p>
-          <a class="cat-cta-btn" href={pathWithBase('/docs/integrations/get-featured/')}>Add your integration</a>
-        </div>
+    {/* Facets inline (no modal): the search input lives in the left sidebar
+        and drives the same filter state document-wide. */}
+    <div class="cat-facets">
+      <CatalogFacets
+        maintainedBy={maintainedByFacets}
+        showSdkFacet={showSdkFacet}
+        hasVerified={hasVerified}
+        hasFeatured={hasFeatured}
+        hasNew={hasNew}
+      />
+    </div>
+    <div class="cat-grid" data-cat-grid>
+      {cards.map((card) => <CatalogCard card={card} />)}
+      {/* Not a .cat-card: the filter script must never hide this tile. */}
+      <div class="cat-cta">
+        <h2 class="cat-cta-title">Add your integration</h2>
+        <p class="cat-cta-body">Built a tool, model provider, or plugin for Strands? List it here.</p>
+        <a class="cat-cta-btn" href={pathWithBase('/docs/integrations/get-featured/')}>Add your integration</a>
       </div>
     </div>
 
-    <dialog class="cat-dialog" data-cat-dialog aria-label="Search integrations">
-      <div class="cat-dialog-bar">
-        <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
-          <path
-            fill="currentColor"
-            d="M15.5 14h-.8l-.3-.3a6.5 6.5 0 1 0-.7.7l.3.3v.8l5 5 1.5-1.5-5-5zm-6 0a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9z"
-          />
-        </svg>
-        <input
-          class="cat-dialog-input"
-          type="search"
-          placeholder="Search integrations…"
-          aria-label="Search integrations"
-          data-cat-search
-        />
-        <button class="cat-dialog-close" type="button" data-cat-dialog-close aria-label="Close search">Esc</button>
-      </div>
-      <div class="cat-dialog-facets">
-        <CatalogFacets
-          types={typeFacets}
-          maintainedBy={maintainedByFacets}
-          showSdkFacet={showSdkFacet}
-          hasVerified={hasVerified}
-          hasFeatured={hasFeatured}
-          hasNew={hasNew}
-        />
-      </div>
-      <ul class="cat-dialog-list" data-cat-dialog-list>
-        {cards.map((card) => (
-          <li
-            class="cat-dialog-item"
-            data-type={card.integrationType}
-            data-langs={card.languages.join(' ')}
-            data-badges={[...card.badges, ...(card.featured ? ['featured'] : [])].join(' ')}
-            data-maintained={card.maintainedBy}
-            data-sdk={card.sdk}
-            data-search={`${card.name} ${card.description} by ${card.maintainer}`.toLowerCase()}
-          >
-            <a
-              href={card.external ? card.href : pathWithBase(card.href)}
-              target={card.external ? '_blank' : undefined}
-              rel={card.external ? 'noopener' : undefined}
-            >
-              <span class="cat-dialog-name">{card.name}</span>
-              <span class="cat-dialog-desc">{card.description}</span>
-            </a>
-          </li>
-        ))}
-      </ul>
-      <p class="cat-dialog-empty" data-cat-dialog-empty hidden>No integrations found.</p>
-    </dialog>
     {/* Docs drawer: clicking a card whose docs live on this site opens the
         page in a slide-over iframe (the doc loads with ?embed so it renders
         chromeless — see overrides/Head.astro). The grid, filters, and scroll
@@ -209,12 +96,13 @@ const description = 'Built-in and community tools, model providers, plugins, and
     <dialog class="cat-drawer" data-cat-drawer aria-label="Integration documentation">
       <div class="cat-drawer-bar">
         <span class="cat-drawer-name" data-cat-drawer-name></span>
-        <a class="cat-drawer-full" data-cat-drawer-full href="/">Open full page ↗</a>
+        <a class="cat-drawer-full" data-cat-drawer-full href={pathWithBase('/')}>Open full page ↗</a>
         <button class="cat-dialog-close" type="button" data-cat-drawer-close aria-label="Close documentation">Esc</button>
       </div>
       <iframe class="cat-drawer-frame" data-cat-drawer-frame title="Integration documentation" src="about:blank"
       ></iframe>
     </dialog>
+    <p class="cat-empty" data-cat-empty hidden>No integrations match the current filters.</p>
 
     <p class="cat-disclaimer">Community packages are maintained by their authors — review before production use.</p>
   </div>
@@ -224,30 +112,19 @@ const description = 'Built-in and community tools, model providers, plugins, and
   // Client-side faceted filtering over the statically-rendered cards. The
   // matching + URL-state logic lives in util/catalog-filter (unit-tested);
   // this script only reads the DOM and toggles [hidden].
-  import {
-    countIfSelected,
-    matchesFilters,
-    selectOnly,
-    stateToQuery,
-    queryToState,
-    type CardFilterData,
-  } from '../util/catalog-filter'
+  import { matchesFilters, stateToQuery, queryToState, type CardFilterData } from '../util/catalog-filter'
+  import { CATALOG_TYPES } from '../components/catalog/types'
 
   const cards = Array.from(document.querySelectorAll<HTMLElement>('[data-cat-grid] .cat-card'))
-  const searchInput = document.querySelector<HTMLInputElement>('[data-cat-search]')
+  // The search input lives in the left sidebar (shared across pages).
+  const searchInput = document.querySelector<HTMLInputElement>('[data-sidebar-search]')
   const typeBtns = Array.from(document.querySelectorAll<HTMLElement>('[data-cat-type]'))
-  const langBtns = Array.from(document.querySelectorAll<HTMLElement>('[data-cat-lang]'))
   const badgeBtns = Array.from(document.querySelectorAll<HTMLElement>('[data-cat-badge]'))
   const maintainedBtns = Array.from(document.querySelectorAll<HTMLElement>('[data-cat-maintained]'))
   const sdkBtns = Array.from(document.querySelectorAll<HTMLElement>('[data-cat-sdk]'))
+  const langBtns = Array.from(document.querySelectorAll<HTMLElement>('[data-cat-lang]'))
   const emptyEl = document.querySelector<HTMLElement>('[data-cat-empty]')
-  const ctaEl = document.querySelector<HTMLElement>('[data-cat-cta]')
   const countEl = document.querySelector<HTMLElement>('[data-cat-count]')
-  const dialog = document.querySelector<HTMLDialogElement>('[data-cat-dialog]')
-  const dialogItems = Array.from(document.querySelectorAll<HTMLElement>('[data-cat-dialog-list] .cat-dialog-item'))
-  const dialogEmpty = document.querySelector<HTMLElement>('[data-cat-dialog-empty]')
-  const searchOpenBtn = document.querySelector<HTMLElement>('[data-cat-search-open]')
-  const searchLabel = document.querySelector<HTMLElement>('[data-cat-search-label]')
 
   const state = queryToState(location.search)
   // A URL facet with no rendered control would show an empty grid with no
@@ -256,10 +133,19 @@ const description = 'Built-in and community tools, model providers, plugins, and
   if (sdkBtns.length === 0) state.sdk = 'agents'
   const renderedBadges = new Set(badgeBtns.map((btn) => btn.dataset.catBadge))
   for (const badge of state.badges) if (!renderedBadges.has(badge)) state.badges.delete(badge)
-  const renderedTypes = new Set(typeBtns.map((btn) => btn.dataset.catType))
-  for (const t of state.types) if (!renderedTypes.has(t)) state.types.delete(t)
   const renderedMaintained = new Set(maintainedBtns.map((btn) => btn.dataset.catMaintained))
-  for (const t of state.maintainedBy) if (!renderedMaintained.has(t)) state.maintainedBy.delete(t)
+  for (const by of state.maintainedBy) if (!renderedMaintained.has(by)) state.maintainedBy.delete(by)
+  // Type filtering is driven by the left sidebar (?type=), not on-page chips,
+  // so validate against the known catalog types rather than rendered buttons.
+  const validTypes = new Set(CATALOG_TYPES.map((t) => t.value))
+  for (const t of state.types) if (!validTypes.has(t)) state.types.delete(t)
+
+  // Language is a catalog control (the All / Python / TypeScript segment), no
+  // longer tied to the header's site-wide language toggle. Drop any ?lang value
+  // without a rendered button so the URL can't select an option the user can't
+  // clear.
+  const renderedLangs = new Set(langBtns.map((btn) => btn.dataset.catLang).filter(Boolean))
+  for (const l of state.languages) if (!renderedLangs.has(l)) state.languages.delete(l)
 
   function cardData(el: HTMLElement): CardFilterData {
     return {
@@ -267,55 +153,45 @@ const description = 'Built-in and community tools, model providers, plugins, and
       type: el.dataset.type || '',
       languages: (el.dataset.langs || '').split(' ').filter(Boolean),
       badges: (el.dataset.badges || '').split(' ').filter(Boolean),
-      maintainedBy: el.dataset.maintained || 'community',
+      maintainedBy: el.dataset.maintained || '',
       sdk: el.dataset.sdk || 'agents',
     }
-  }
-
-  // Facet data never changes after render; cache it for the count updates.
-  const facetData = cards.map(cardData)
-
-  function updateChipCount(btn: HTMLElement, facet: 'types' | 'badges' | 'maintainedBy', value: string) {
-    const el = btn.querySelector('.cat-count')
-    if (!el) return
-    const count = countIfSelected(facetData, state, facet, value)
-    el.textContent = String(count)
-    btn.classList.toggle('cat-chip--zero', count === 0)
   }
 
   function apply() {
     let visible = 0
     for (const el of cards) {
-      const show = matchesFilters(cardData(el), state)
+      const data = cardData(el)
+      const show = matchesFilters(data, state)
       el.hidden = !show
       if (show) visible++
     }
     if (emptyEl) emptyEl.hidden = visible > 0
-    if (ctaEl) ctaEl.hidden = visible === 0
     if (countEl) countEl.textContent = String(visible)
-    if (searchLabel) searchLabel.textContent = state.search.trim() || 'Search integrations…'
-    if (searchOpenBtn) searchOpenBtn.classList.toggle('cat-search-trigger--active', Boolean(state.search.trim()))
 
-    // The dialog's result list applies the same full facet state as the grid;
-    // its facet controls are bound document-wide alongside the filter bar's.
-    let dialogVisible = 0
-    for (const item of dialogItems) {
-      const show = matchesFilters(cardData(item), state)
-      item.hidden = !show
-      if (show) dialogVisible++
-    }
-    if (dialogEmpty) dialogEmpty.hidden = dialogVisible > 0
+    // Reflect the active type onto the left sidebar (single-select browse).
+    // Starlight marks every /integrations link current by pathname, so clear
+    // and set aria-current here to match the ?type in effect ("" = All).
+    const activeType = state.types.size === 1 ? [...state.types][0] : ''
+    // Scope to the catalog browse links (/integrations[?type=]); the "Add your
+    // integration" link points at /docs/… and must never take the active state.
+    document.querySelectorAll<HTMLAnchorElement>('.sidebar-content a[href*="/integrations"]:not([href*="/docs/"])').forEach((a) => {
+      const linkType = new URL(a.href, location.origin).searchParams.get('type') || ''
+      if (linkType === activeType) a.setAttribute('aria-current', 'page')
+      else a.removeAttribute('aria-current')
+    })
 
     for (const btn of typeBtns) btn.setAttribute('aria-pressed', String(state.types.has(btn.dataset.catType || '')))
-    for (const btn of langBtns) btn.setAttribute('aria-pressed', String(state.languages.has(btn.dataset.catLang || '')))
     for (const btn of badgeBtns) btn.setAttribute('aria-pressed', String(state.badges.has(btn.dataset.catBadge || '')))
     for (const btn of maintainedBtns)
       btn.setAttribute('aria-pressed', String(state.maintainedBy.has(btn.dataset.catMaintained || '')))
-
-    for (const btn of typeBtns) updateChipCount(btn, 'types', btn.dataset.catType || '')
-    for (const btn of badgeBtns) updateChipCount(btn, 'badges', btn.dataset.catBadge || '')
-    for (const btn of maintainedBtns) updateChipCount(btn, 'maintainedBy', btn.dataset.catMaintained || '')
     for (const btn of sdkBtns) btn.setAttribute('aria-checked', String(state.sdk === btn.dataset.catSdk))
+    // The "All" button (empty value) is checked when no language is selected.
+    for (const btn of langBtns) {
+      const lang = btn.dataset.catLang || ''
+      const checked = lang ? state.languages.has(lang) : state.languages.size === 0
+      btn.setAttribute('aria-checked', String(checked))
+    }
 
     // `entry` (the open docs drawer) is not filter state; carry the current
     // value through so re-serializing the filters doesn't close the deep link.
@@ -339,45 +215,11 @@ const description = 'Built-in and community tools, model providers, plugins, and
     })
   }
 
-  // Search palette: the filter-bar trigger opens a modal dialog (mirroring the
-  // global site search UX); typing filters both the dialog list and the grid.
-  function openSearch() {
-    if (!dialog) return
-    dialog.showModal()
-    searchInput?.focus()
-    searchInput?.select()
-  }
-  function closeSearch() {
-    dialog?.close()
-  }
-  searchOpenBtn?.addEventListener('click', openSearch)
-  document.querySelector('[data-cat-dialog-close]')?.addEventListener('click', closeSearch)
-  dialog?.addEventListener('click', (e) => {
-    // Clicks on the backdrop land on the dialog element itself.
-    if (e.target === dialog) closeSearch()
-  })
-  dialog?.addEventListener('close', () => apply())
-  document.addEventListener('keydown', (e) => {
-    const target = e.target as HTMLElement
-    const typing = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target.isContentEditable
-    if (e.key === '/' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && dialog && !dialog.open) {
-      e.preventDefault()
-      openSearch()
-    }
-  })
   for (const btn of typeBtns)
     btn.addEventListener('click', () => {
-      selectOnly(state.types, btn.dataset.catType || '')
+      toggle(state.types, btn.dataset.catType || '')
       apply()
     })
-  for (const btn of langBtns)
-    btn.addEventListener('click', () => {
-      toggle(state.languages, btn.dataset.catLang || '')
-      apply()
-    })
-  // Highlights are cross-cutting flags (an entry can be Featured and New), so
-  // they multi-select; Type and Maintained-by hold one value per entry, so
-  // selecting within them replaces the previous choice.
   for (const btn of badgeBtns)
     btn.addEventListener('click', () => {
       toggle(state.badges, btn.dataset.catBadge || '')
@@ -385,22 +227,21 @@ const description = 'Built-in and community tools, model providers, plugins, and
     })
   for (const btn of maintainedBtns)
     btn.addEventListener('click', () => {
-      selectOnly(state.maintainedBy, btn.dataset.catMaintained || '')
+      toggle(state.maintainedBy, btn.dataset.catMaintained || '')
       apply()
     })
-  document.querySelector('[data-cat-clear]')?.addEventListener('click', () => {
-    state.search = ''
-    if (searchInput) searchInput.value = ''
-    state.types.clear()
-    state.languages.clear()
-    state.badges.clear()
-    state.maintainedBy.clear()
-    state.sdk = 'agents'
-    apply()
-  })
   for (const btn of sdkBtns)
     btn.addEventListener('click', () => {
       state.sdk = btn.dataset.catSdk || 'agents'
+      apply()
+    })
+  // Single-select, radio semantics: picking a language replaces the set; "All"
+  // (empty value) clears it. Re-picking the active one keeps it selected.
+  for (const btn of langBtns)
+    btn.addEventListener('click', () => {
+      const lang = btn.dataset.catLang || ''
+      state.languages.clear()
+      if (lang) state.languages.add(lang)
       apply()
     })
 

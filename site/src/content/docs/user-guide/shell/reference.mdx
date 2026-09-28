@@ -1,0 +1,138 @@
+---
+title: Reference
+description: The one place to look up Strands Shell's surface, the command-line interface, the Python and Node.js API, the command inventory, the configuration and TOML schema, and the MCP server tools.
+sidebar:
+  label: "Reference"
+---
+
+This page is the single index to everything you can look up about Strands Shell:
+the command-line interface, the Python and Node.js API, the command inventory, the
+configuration and TOML schema, and the MCP server tools. Each section summarizes a
+surface and links to its detailed home. For how the sandbox holds up and where it
+stops, see the [security model](security.md).
+
+## Command-line interface
+
+The `strands-shell` executable ships the shell as a command-line tool. Install it
+with `pip install strands-shell`, or run it without installing via
+`uvx strands-shell`; the Node.js package is `@strands-agents/shell`.
+
+### Options and subcommands
+
+The binary accepts these top-level options:
+
+| Option | Description |
+|---|---|
+| `--config <path>` | Load a [TOML config file](configuration.md#toml-configuration) for binds, credentials, the network allowlist, and limits. Applies to the `--mcp`, `-c`, and interactive paths. |
+| `-c <command>` | Run a single command string, then exit. Stdin is not connected to commands under `-c`; use an in-shell pipe instead. |
+| `--mcp` | Run as an [MCP server](mcp-server.md) over stdio. |
+| `-V`, `--version` | Print the version and exit. |
+| `-h`, `--help` | Print usage and exit. |
+
+One subcommand is available:
+
+| Subcommand | Description |
+|---|---|
+| `strands-shell list-commands` | Print the available commands, one per line, sorted alphabetically. |
+
+The invocation modes are mutually exclusive. When more than one is present they
+resolve in this order: the subcommand runs first, then `--mcp`, then `-c`. With none
+of them, `strands-shell` starts an interactive read-eval-print loop.
+
+| Invocation | What it does |
+|---|---|
+| `strands-shell --mcp` | Start the MCP server over stdio with a bare in-memory sandbox and the [default network policy](configuration.md#network-access). |
+| `strands-shell --config sandbox.toml --mcp` | Start the MCP server with the policy from a TOML config file. |
+| `strands-shell -c 'grep -rn TODO /workspace'` | Run one command string against the configured sandbox, then exit. |
+| `strands-shell` | Start an interactive prompt. |
+
+Per-command flags follow the standard POSIX and coreutils tools the shell
+reimplements; the [command inventory](commands.md) lists which flags each command
+supports and where behavior diverges.
+
+### Exit status
+
+A command's exit status surfaces three ways: the `status` field of the `Output`
+returned by the programmatic API, the `metadata.exit_code` of the MCP `shell` tool
+response, and the process exit code under `strands-shell -c`. The shell follows
+POSIX conventions:
+
+| Status | Meaning |
+|---|---|
+| `0` | The command succeeded. |
+| `1` | General failure: a command returned an error, a parse error, input larger than `max_input`, or an execution limit reached (the per-command timeout or the maximum recursion depth). |
+| `126` | A script invoked as a program could not be opened or read. |
+| `127` | Command not found. |
+| _n_ | The status a script sets explicitly with `exit n` or `return n`. |
+
+The `strands-shell` process itself exits `1` when `--config` fails to load or the
+shell fails to build.
+
+## Programmatic API
+
+Embed the shell directly in Python or Node.js. Both surfaces take the same options;
+Python uses `snake_case` and Node.js uses `camelCase` (`allowed_urls` becomes
+`allowedUrls`, `config_file` becomes `configFile`).
+
+| Construct | Purpose |
+|---|---|
+| <Syntax py="Shell(...)" ts="Shell.create({ ... })" /> | Create a shell from `binds`, `credentials`, `allowed_urls`, `env`, `timeout`, `umask`, `limits`, and `config_file`. |
+| `Bind(source, destination, mode, readonly)` | Map a host directory into the VFS in `copy` or `direct` mode. |
+| `Cred(url, ...)` | Attach a secret to a URL prefix via an inline `token` or an `env_var`. |
+| `Limits(...)` | Cap `max_output`, `max_file_size`, `max_fds`, `max_bg_jobs`, `max_pipeline`, `max_input`, `max_inodes`, and `max_depth`. |
+| `Output` | The result of `run`: `stdout`, `stderr`, and `status` (the exit code). |
+
+A constructed shell exposes these methods:
+
+| Method | Purpose |
+|---|---|
+| <Syntax py="run(command)" ts="run(command)" /> | Run a command; returns an `Output`. |
+| <Syntax py="set_env(key, value)" ts="setEnv(key, value)" /> | Set an environment variable in the shell's persistent state. |
+| <Syntax py="get_env(key)" ts="getEnv(key)" /> | Read an environment variable; returns the value or `None`/`null`. |
+| <Syntax py="read_file(path)" ts="readFile(path)" /> | Read a file from the VFS as bytes. |
+| <Syntax py="write_file(path, content)" ts="writeFile(path, content)" /> | Create or overwrite a file in the VFS. |
+| <Syntax py="remove_file(path)" ts="removeFile(path)" /> | Remove a file from the VFS. |
+| <Syntax py="list_files(path)" ts="listFiles(path)" /> | List directory entries as `FileInfo`. |
+| <Syntax py="config" ts="config()" /> | A read-only [configuration snapshot](inspecting-configuration.md); credential secrets are never included. |
+
+The [configuration](configuration.md) guide documents every constructor option and its
+default; the [quickstart](quickstart.md) shows each surface end to end.
+
+## Commands
+
+The [command inventory](commands.md) is the reference for the external commands the
+shell reimplements and where they diverge from GNU or BSD behavior. It groups them into
+text processing, file contents, file management, path and system utilities, networking,
+JSON, and search. Commands reimplement a curated subset of POSIX and coreutils in Rust;
+unsupported flags are rejected rather than ignored, and each divergence is listed per
+command. The shell language and builtins are documented in
+[Shell language and builtins](shell-language.md), and `lua` scripting in
+[Lua scripting](lua-scripting.md).
+
+## Configuration and TOML schema
+
+[Configuration](configuration.md) documents the full policy surface: [binds](configuration.md#binds),
+[credential injection](configuration.md#credentials), the
+[network allowlist](configuration.md#network-access), the behavioral settings
+(`env`, `timeout`, `umask`), and the [resource limits](configuration.md#resource-limits).
+Every option is available both as a constructor argument and as a
+[TOML key](configuration.md#toml-configuration). The TOML schema uses `[[bind]]`,
+`[[cred]]`, `[env]`, `[limits]`, and `[[mcp]]` tables alongside top-level
+`allowed_urls` and `umask` keys, with `timeout` and the resource caps under
+`[limits]`. The same file is read by the constructors and the MCP server's
+`--config` flag.
+
+## MCP server tools
+
+The [MCP server](mcp-server.md) exposes four sandboxed tools over stdio and can
+surface nested MCP servers declared under `[[mcp]]` as Lua modules.
+
+| Tool | Purpose |
+|---|---|
+| `shell` | Run a command in the virtual shell. State persists across calls on the same connection. |
+| `read_file` | Read a file from the VFS, honoring `offset` and `limit`. |
+| `write_file` | Create or overwrite a file in the VFS. |
+| `list_dir` | List the entries in a directory in the VFS. |
+
+That page documents each tool's parameters and how to register the server with an
+MCP client.

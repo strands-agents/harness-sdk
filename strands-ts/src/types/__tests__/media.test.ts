@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import {
   S3Location,
+  AudioBlock,
   ImageBlock,
   VideoBlock,
   DocumentBlock,
   encodeBase64,
   decodeBase64,
+  type AudioBlockData,
   type ImageBlockData,
   type VideoBlockData,
   type DocumentBlockData,
@@ -33,6 +35,54 @@ describe('S3Location', () => {
       uri: 's3://my-bucket/image.jpg',
       bucketOwner: '123456789012',
     })
+  })
+})
+
+describe('AudioBlock', () => {
+  it('creates instance with bytes source', () => {
+    const bytes = new Uint8Array([1, 2, 3])
+    const block = new AudioBlock({
+      format: 'mp3',
+      source: { bytes },
+    })
+    expect(block).toEqual({
+      type: 'audioBlock',
+      format: 'mp3',
+      source: { type: 'audioSourceBytes', bytes },
+    })
+  })
+
+  it('creates instance with S3 location source', () => {
+    const block = new AudioBlock({
+      format: 'wav',
+      source: {
+        location: {
+          type: 's3',
+          uri: 's3://my-bucket/audio.wav',
+          bucketOwner: '123456789012',
+        },
+      },
+    })
+    expect(block).toEqual({
+      type: 'audioBlock',
+      format: 'wav',
+      source: {
+        type: 'audioSourceS3Location',
+        location: {
+          type: 's3',
+          uri: 's3://my-bucket/audio.wav',
+          bucketOwner: '123456789012',
+        },
+      },
+    })
+  })
+
+  it('throws error for invalid source', () => {
+    const data = {
+      format: 'mp3',
+      source: {},
+    } as AudioBlockData
+    expect(() => new AudioBlock(data)).toThrow('Invalid audio source')
   })
 })
 
@@ -322,6 +372,23 @@ describe('encodeBase64 and decodeBase64', () => {
 })
 
 describe('fromJSON with serialized (base64 string) input', () => {
+  it('AudioBlock.fromJSON accepts base64 string for bytes', () => {
+    const originalBytes = new Uint8Array([1, 2, 3, 4, 5])
+    const base64String = encodeBase64(originalBytes)
+    const block = AudioBlock.fromJSON({
+      audio: { format: 'mp3', source: { bytes: base64String } },
+    })
+    expect((block.source as { type: 'audioSourceBytes'; bytes: Uint8Array }).bytes).toEqual(originalBytes)
+  })
+
+  it('AudioBlock.fromJSON accepts Uint8Array for bytes', () => {
+    const originalBytes = new Uint8Array([1, 2, 3, 4, 5])
+    const block = AudioBlock.fromJSON({
+      audio: { format: 'mp3', source: { bytes: originalBytes } },
+    })
+    expect((block.source as { type: 'audioSourceBytes'; bytes: Uint8Array }).bytes).toEqual(originalBytes)
+  })
+
   it('ImageBlock.fromJSON accepts base64 string for bytes', () => {
     const originalBytes = new Uint8Array([1, 2, 3, 4, 5])
     const base64String = encodeBase64(originalBytes)
@@ -394,6 +461,35 @@ describe('S3Location toJSON/fromJSON', () => {
     const json = location.toJSON()
     expect(json).toStrictEqual({ type: 's3', uri: 's3://bucket/key.jpg' })
     expect('bucketOwner' in json).toBe(false)
+  })
+})
+
+describe('AudioBlock toJSON/fromJSON', () => {
+  it('round-trips with bytes source', () => {
+    const original = new AudioBlock({
+      format: 'mp3',
+      source: { bytes: new Uint8Array([1, 2, 3]) },
+    })
+    const restored = AudioBlock.fromJSON(original.toJSON())
+    expect(restored).toEqual(original)
+  })
+
+  it('round-trips with s3Location source', () => {
+    const original = new AudioBlock({
+      format: 'wav',
+      source: { location: { type: 's3', uri: 's3://bucket/audio.wav', bucketOwner: '123456789012' } },
+    })
+    const restored = AudioBlock.fromJSON(original.toJSON())
+    expect(restored).toEqual(original)
+  })
+
+  it('encodes bytes as base64 in JSON output', () => {
+    const block = new AudioBlock({
+      format: 'mp3',
+      source: { bytes: new Uint8Array([1, 2, 3]) },
+    })
+    const json = block.toJSON()
+    expect(typeof (json.audio.source as { bytes: unknown }).bytes).toBe('string')
   })
 })
 

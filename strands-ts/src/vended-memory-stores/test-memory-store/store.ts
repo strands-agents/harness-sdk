@@ -6,12 +6,12 @@ import type { MemoryEntry, MemoryStore, MemoryStoreConfig, SearchOptions } from 
 import type { ExtractionConfig } from '../../memory/extraction/types.js'
 import type { JSONValue } from '../../types/json.js'
 import type { Storage } from '../../storage/storage.js'
-
-const DEFAULT_MAX_SEARCH_RESULTS = 10
+import { tokenize, tokenOverlapScore } from '../../storage/search/keyword.js'
 
 /**
  * Metadata key holding the token-overlap relevance score on a search result.
  */
+const DEFAULT_MAX_SEARCH_RESULTS = 10
 const RELEVANCE_SCORE_KEY = '_relevanceScore'
 
 /**
@@ -62,33 +62,6 @@ function sanitizeName(name: string): string {
     .replace(/\.\./g, '_')
     .replace(/[/\\]/g, '_')
     .replace(/[^\w\-.]/g, '_')
-}
-
-/**
- * Lowercases and splits text into a set of word tokens, dropping empties. Splits on any run of
- * characters that are not Unicode letters, numbers, or underscore. Ensures cross-SDK consistent
- * tokenization.
- */
-function tokenize(text: string): Set<string> {
-  return new Set(
-    text
-      .toLowerCase()
-      .split(/[^\p{L}\p{N}_]+/u)
-      .filter(Boolean)
-  )
-}
-
-/**
- * Lexical relevance score for one record: the number of distinct query tokens that appear in the
- * record's content. A higher count means more of the query's words are present. Returns 0 when there
- * is no overlap.
- */
-function tokenOverlapScore(queryTokens: Set<string>, content: string): number {
-  let score = 0
-  for (const token of tokenize(content)) {
-    if (queryTokens.has(token)) score++
-  }
-  return score
 }
 
 /**

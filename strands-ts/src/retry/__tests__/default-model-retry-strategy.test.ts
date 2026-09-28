@@ -62,6 +62,23 @@ describe('DefaultModelRetryStrategy', () => {
     expect(event.retry).toBe(true)
   })
 
+  it('does not schedule a backoff timer when cancellation was already requested', async () => {
+    const strategy = new DefaultModelRetryStrategy({
+      maxAttempts: 3,
+      backoff: new ConstantBackoff({ delayMs: 500 }),
+    })
+    const controller = new AbortController()
+    controller.abort()
+    const agent = createMockAgent({ extra: { cancelSignal: controller.signal } })
+    strategy.initAgent(agent)
+
+    const event = makeErrorEvent(agent, new ModelThrottledError('rate limited'), 1)
+    await invokeTrackedHook(agent, event)
+
+    expect(event.retry).toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('does not retry non-retryable errors', async () => {
     const strategy = new DefaultModelRetryStrategy({
       backoff: new ConstantBackoff({ delayMs: 10 }),

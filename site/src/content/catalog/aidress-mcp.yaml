@@ -1,0 +1,8 @@
+name: aidress-mcp
+description: MCP server for the Aidress agent trust registry — check an unfamiliar agent's trust score, capabilities, and transaction history before delegating work to it.
+integrationType: tool
+languages:
+  python: {}
+github: https://github.com/Aidress-ai/Aidress
+docsUrl: https://aidress.ai/docs/strands
+addedDate: 2026-08-12

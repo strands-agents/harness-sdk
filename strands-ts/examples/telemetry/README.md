@@ -17,7 +17,7 @@ via Docker Compose.
 ## Prerequisites
 
 - Docker (or [Finch](https://github.com/runfinch/finch))
-- Node.js 18+
+- Node.js 22+
 - AWS credentials configured (for Bedrock model access)
 
 ## Quick Start

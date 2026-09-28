@@ -213,6 +213,10 @@ class InterventionRegistry:
                 result = method_fn(event)
                 # Overrides may be sync or async, so branch on the returned value.
                 action = await result if inspect.isawaitable(result) else result
+            except InterruptException:
+                # Intentional control flow (pauses the agent), not a handler failure.
+                # Always propagate regardless of on_error.
+                raise
             except Exception as error:
                 action = self._handle_error(handler, method, error)
                 if action is None:

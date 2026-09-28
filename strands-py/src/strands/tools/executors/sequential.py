@@ -48,7 +48,7 @@ class SequentialToolExecutor(ToolExecutor):
         interrupted = False
 
         for tool_use in tool_uses:
-            if agent._cancel_signal.is_set():
+            if agent._observe_cancellation():
                 cancel_result: ToolResult = {
                     "toolUseId": str(tool_use.get("toolUseId")),
                     "status": "error",

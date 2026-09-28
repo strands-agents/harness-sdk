@@ -10,6 +10,7 @@ import pytest
 from pydantic import BaseModel
 
 from strands.models.llamacpp import LlamaCppModel
+from strands.models.model import CacheConfig
 from strands.types.exceptions import (
     ContextWindowOverflowException,
     ModelThrottledException,
@@ -287,6 +288,111 @@ def test_get_config() -> None:
     assert retrieved_config["params"]["temperature"] == 0.9
 
 
+def test_cache_config_enables_cache_prompt_when_params_absent(captured_warnings) -> None:
+    """A CacheConfig turns on server-side prompt caching even when no params are configured."""
+    model = LlamaCppModel(cache_config=CacheConfig())
+
+    request = model._format_request([{"role": "user", "content": [{"text": "Test"}]}])
+
+    assert request["cache_prompt"] is True
+    assert not any("have no effect" in str(warning.message) for warning in captured_warnings)
+
+
+def test_cache_config_enables_cache_prompt_alongside_other_params(captured_warnings) -> None:
+    """Enabling caching does not clobber other configured params."""
+    model = LlamaCppModel(params={"temperature": 0.7}, cache_config=CacheConfig())
+
+    request = model._format_request([{"role": "user", "content": [{"text": "Test"}]}])
+
+    assert request["cache_prompt"] is True
+    assert request["temperature"] == 0.7
+    assert not any("have no effect" in str(warning.message) for warning in captured_warnings)
+
+
+def test_cache_config_default_enables_without_warning(captured_warnings) -> None:
+    """A CacheConfig whose fields are all default (strategy="auto" is the default) warns about nothing."""
+    model = LlamaCppModel(cache_config=CacheConfig(strategy="auto"))
+
+    request = model._format_request([{"role": "user", "content": [{"text": "Test"}]}])
+
+    assert request["cache_prompt"] is True
+    assert not any("have no effect" in str(warning.message) for warning in captured_warnings)
+
+
+@pytest.mark.parametrize(
+    ("cache_config", "field"),
+    [
+        (CacheConfig(strategy="anthropic"), "strategy"),
+        (CacheConfig(system_prompt_ttl="1h"), "system_prompt_ttl"),
+        (CacheConfig(tools_ttl=True), "tools_ttl"),
+    ],
+)
+def test_cache_config_unsupported_field_warns_and_still_enables(cache_config, field) -> None:
+    """A non-default field llama.cpp cannot honor warns (naming the provider) and still enables caching."""
+    model = LlamaCppModel(cache_config=cache_config)
+
+    with pytest.warns(UserWarning, match=rf"fields \['{field}'\] have no effect on llama\.cpp"):
+        request = model._format_request([{"role": "user", "content": [{"text": "Test"}]}])
+
+    assert request["cache_prompt"] is True
+
+
+def test_explicit_cache_prompt_false_preserved() -> None:
+    """An explicit params["cache_prompt"] wins over the CacheConfig enable signal."""
+    model = LlamaCppModel(params={"cache_prompt": False}, cache_config=CacheConfig())
+
+    request = model._format_request([{"role": "user", "content": [{"text": "Test"}]}])
+
+    assert request["cache_prompt"] is False
+
+
+def test_cache_prompt_absent_without_cache_config() -> None:
+    """Without a CacheConfig, cache_prompt is left unset so the server default applies."""
+    model = LlamaCppModel()
+
+    request = model._format_request([{"role": "user", "content": [{"text": "Test"}]}])
+
+    assert "cache_prompt" not in request
+
+
+def test_cache_config_round_trips(captured_warnings) -> None:
+    """cache_config is a valid config field and survives get_config/update_config unchanged."""
+    cache_config = CacheConfig()
+    model = LlamaCppModel(cache_config=cache_config)
+
+    assert model.get_config()["cache_config"] is cache_config
+
+    updated = CacheConfig()
+    model.update_config(cache_config=updated)
+    assert model.get_config()["cache_config"] is updated
+
+    assert not any("Invalid configuration parameters" in str(warning.message) for warning in captured_warnings)
+
+
+def test_cache_config_unsupported_ttl_warns_and_still_enables() -> None:
+    """llama.cpp has no retention control: ttl is a no-op that warns, and caching is still enabled."""
+    model = LlamaCppModel(cache_config=CacheConfig(ttl="1h"))
+
+    with pytest.warns(UserWarning, match=r"fields \['ttl'\] have no effect on llama\.cpp"):
+        request = model._format_request([{"role": "user", "content": [{"text": "Test"}]}])
+
+    assert request["cache_prompt"] is True
+
+
+def test_cache_config_cache_key_warns_and_is_not_routed() -> None:
+    """llama.cpp has no key-based cache routing: cache_key warns and is never placed on the request."""
+    model = LlamaCppModel(cache_config=CacheConfig(cache_key="tenant-42"))
+
+    with pytest.warns(UserWarning, match=r"fields \['cache_key'\] have no effect on llama\.cpp"):
+        request = model._format_request([{"role": "user", "content": [{"text": "Test"}]}])
+
+    assert request["cache_prompt"] is True
+    assert "prompt_cache_key" not in request
+    assert "cache_key" not in request
+    assert "slot_id" not in request
+    assert "id_slot" not in request
+
+
 @pytest.mark.asyncio
 async def test_stream_basic() -> None:
     """Test basic streaming functionality."""
@@ -324,6 +430,87 @@ async def test_stream_basic() -> None:
             "contentBlockDelta" in chunk and chunk["contentBlockDelta"]["delta"]["text"] == " world" for chunk in chunks
         )
         assert any("messageStop" in chunk for chunk in chunks)
+        # Verify usage metadata is yielded after the trailing usage SSE line
+        # (regression: previously the loop broke on finish_reason and dropped this)
+        metadata_chunks = [c for c in chunks if "metadata" in c]
+        assert len(metadata_chunks) == 1, f"Expected exactly one metadata chunk, got {len(metadata_chunks)}"
+        assert "usage" in metadata_chunks[0]["metadata"]
+
+
+@pytest.mark.asyncio
+async def test_stream_surfaces_cache_read_tokens() -> None:
+    """A reused KV prefix is surfaced as cacheReadInputTokens, like the other cache-aware providers.
+
+    llama.cpp reports the reused prefix length in usage.prompt_tokens_details.cached_tokens.
+    """
+    model = LlamaCppModel()
+
+    mock_response_lines = [
+        'data: {"choices": [{"delta": {"content": "Hi"}, "finish_reason": "stop"}]}',
+        'data: {"usage": {"prompt_tokens": 100, "completion_tokens": 5, "total_tokens": 105, '
+        '"prompt_tokens_details": {"cached_tokens": 91}}}',
+        "data: [DONE]",
+    ]
+
+    async def mock_aiter_lines():
+        for line in mock_response_lines:
+            yield line
+
+    mock_response = AsyncMock()
+    mock_response.aiter_lines = mock_aiter_lines
+    mock_response.raise_for_status = MagicMock()
+
+    with patch.object(model.client, "post", return_value=mock_response):
+        chunks = []
+        async for chunk in model.stream([{"role": "user", "content": [{"text": "Hi"}]}]):
+            chunks.append(chunk)
+
+    usage = next(chunk["metadata"]["usage"] for chunk in chunks if "metadata" in chunk)
+    assert usage == {"inputTokens": 100, "outputTokens": 5, "totalTokens": 105, "cacheReadInputTokens": 91}
+
+
+_NO_REUSE_TOKENS = {"prompt_tokens": 100, "completion_tokens": 5, "total_tokens": 105}
+
+
+@pytest.mark.parametrize(
+    "usage_payload",
+    [
+        {**_NO_REUSE_TOKENS, "prompt_tokens_details": {"cached_tokens": 0}},
+        {**_NO_REUSE_TOKENS, "prompt_tokens_details": None},
+        _NO_REUSE_TOKENS,
+    ],
+    ids=["cached_zero", "details_null", "details_absent"],
+)
+@pytest.mark.asyncio
+async def test_stream_omits_cache_read_tokens_when_prefix_not_reused(usage_payload) -> None:
+    """No reuse — cached zero, a null details object, or the field absent — yields usage with no cache-read key.
+
+    The whole-dict assertion pins the ``or {}`` guard in stream() and the ``getattr(..., 0)`` default in
+    _format_usage: a fabricated non-zero default would add a phantom cacheReadInputTokens and fail here.
+    """
+    model = LlamaCppModel()
+
+    mock_response_lines = [
+        'data: {"choices": [{"delta": {"content": "Hi"}, "finish_reason": "stop"}]}',
+        "data: " + json.dumps({"usage": usage_payload}),
+        "data: [DONE]",
+    ]
+
+    async def mock_aiter_lines():
+        for line in mock_response_lines:
+            yield line
+
+    mock_response = AsyncMock()
+    mock_response.aiter_lines = mock_aiter_lines
+    mock_response.raise_for_status = MagicMock()
+
+    with patch.object(model.client, "post", return_value=mock_response):
+        chunks = []
+        async for chunk in model.stream([{"role": "user", "content": [{"text": "Hi"}]}]):
+            chunks.append(chunk)
+
+    usage = next(chunk["metadata"]["usage"] for chunk in chunks if "metadata" in chunk)
+    assert usage == {"inputTokens": 100, "outputTokens": 5, "totalTokens": 105}
 
 
 @pytest.mark.asyncio
@@ -562,17 +749,13 @@ def test_format_audio_content() -> None:
 
 
 def test_format_audio_content_default_format() -> None:
-    """Test audio content formatting uses wav as default format."""
+    """Test backward-compatible WAV default for untyped audio content."""
     model = LlamaCppModel()
 
-    audio_content = {
-        "audio": {"source": {"bytes": b"test audio"}}
-        # No format specified
-    }
+    audio_content = {"audio": {"source": {"bytes": b"test audio"}}}
 
     result = model._format_message_content(audio_content)
 
-    # Should default to wav
     assert result["input_audio"]["format"] == "wav"
 
 

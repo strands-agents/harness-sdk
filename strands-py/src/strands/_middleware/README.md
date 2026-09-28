@@ -157,6 +157,10 @@ carries — `cancel_signal`, structured-output config, `limits` — from the age
 those remain reachable on `agent` but are not surfaced as first-class context fields here. Since
 the stage is internal, that surface is not yet finalized.
 
+`ExecuteToolContext.cancel_signal` is executor-owned: middleware can observe it, but replacing it
+via `dataclasses.replace()` does not change the signal the tool receives — the executor hands the
+tool the agent's own signal, not the context's copy (matching TS, where the field is `readonly`).
+
 ### Transforming `messages` vs `invocation_state`
 
 The two agent-stream context fields have **different** transform semantics, and only one is fully
@@ -193,30 +197,28 @@ short-circuit), at the cost of `replace(messages=...)` not being honored. Both S
 ## AgentStreamStage interrupt resume
 
 Python interrupts were tool-only: the event loop keyed resume behavior on interrupt state being
-`activated` alone — priming a resume by replaying the stored `tool_use_message`, and merging the
-stored `tool_results`. An `AgentStreamStage` interrupt activates interrupt state **without** a
-pending tool execution (empty context), so both reads are gated on the presence of their tool
-context key (`"tool_use_message" in context` / `"tool_results" in context`). An agent-stream
-resume therefore falls through to a normal model call — and if that call then invokes a tool, the
-tool path no longer trips over the empty context — while the middleware resolves its own interrupt
-(returning the response) before calling `next()`.
+`activated` alone. Tool replay state now lives in the typed `PendingToolExecution` field. An
+`AgentStreamStage` interrupt activates interrupt state **without** a pending tool execution, so an
+agent-stream resume falls through to a normal model call while the middleware resolves its own
+interrupt (returning the response) before calling `next()`.
 
 Because an agent-stream interrupt has no tool cycle to deactivate the state afterward, the run
 loop deactivates interrupt state when the pass completes without one. The guard is narrow — it
 fires only when the state is activated, the pass did not stop on an interrupt, **and** no tool
-context is present (`"tool_use_message" not in context`). That last condition is essential: a
+execution is pending (`pending_tool_execution is None`). That last condition is essential: a
 pending *tool* interrupt also leaves the state activated, and some non-interrupt endings keep it
 that way on purpose — e.g. cancelling a resumed tool interrupt ends the pass `"cancelled"` while
-the interrupt is still owed a resume. Without the tool-context check the run loop would wipe that
+the interrupt is still owed a resume. Without the pending-execution check the run loop would wipe that
 pending tool interrupt. Scoped this way, the run-loop deactivation only ever clears agent-stream
-interrupts (which never store tool context); the event loop remains the sole owner of
+interrupts (which never store pending tool execution); the event loop remains the sole owner of
 tool-interrupt state.
 
 A cancelled pass keeps that tool interrupt because the event loop only completes the tool resume
 when the tools actually ran: cancellation (`agent.cancel()` or a `BeforeToolsEvent` cancel) produces
-cancel tool results without executing anything, so the stored `tool_use_message` and the human's
-answer are left in place for a later resume. Clearing them would strand the caller holding
-interrupt responses for state that no longer exists.
+cancel tool results without executing anything, so the stored tool-use message and the human's
+answer are left in place for a later resume (a cancel mid-execution refreshes the stored results so
+completed tools aren't re-run). Clearing them would strand the caller holding interrupt responses
+for state that no longer exists.
 
 (TypeScript mirrors this: its AgentStreamStage wrapper deactivates on a non-interrupt completion
 when no pending tool execution is stored, so an agent-stream interrupt that resumes to a plain
@@ -265,7 +267,7 @@ run loop refuses the part of this it can detect precisely — an interrupt raise
 produced its EventLoopStopEvent — by clearing interrupt state and raising RuntimeError naming the
 interrupt. Interrupts in the window between the model turn and the stop event are not caught.
 
-A *tool* interrupt is exempt: its stored `tool_use_message` is replayed on resume, so no second
+A *tool* interrupt is exempt: its pending tool execution is replayed on resume, so no second
 model call happens, and gating on top of a tool interrupt keeps working.
 
 This makes the Output phase unsuitable for gating. The Output adapter drains the whole inner chain

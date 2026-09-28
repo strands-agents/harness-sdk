@@ -1,0 +1,96 @@
+---
+title: "Lesson 2: Switching Model Providers"
+description: "This covers model providers: how Strands abstracts the underlying LLM so your agent logic stays the same regardless of which model you're calling."
+redirectFrom:
+  - docs/community/learning/lesson2-switching-model-providers
+---
+
+<YouTube id="NAEX4ORLkbQ" title="Lesson 2: Switching Model Providers" />
+*[Watch on YouTube](https://www.youtube.com/watch?v=NAEX4ORLkbQ&list=PLDzwjhH-4yhU&index=2)*
+
+:::note[About this lesson]
+The videos in this course are a snapshot in time. Strands is under active development, so the code featured on this page reflects the most up-to-date patterns, but the concepts covered in the video still apply. When in doubt, trust the code.
+:::
+
+*Code for this lesson: [`samples/02-model-providers`](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/02-model-providers)*
+
+## Model Choice Is an Architecture Decision
+
+Different models have different strengths, costs, latency characteristics, and tool-use behavior. Strands abstracts providers behind a common interface so your agent code stays the same regardless of the underlying model. Your tools, system prompt, and orchestration logic don't change when you swap the model.
+
+## Configuring Providers
+
+All providers follow the same pattern: instantiate a model class, pass it to the agent.
+
+```python
+from strands import Agent
+from strands.models import BedrockModel
+from strands.models.anthropic import AnthropicModel
+from strands.models.ollama import OllamaModel
+from strands.models.openai import OpenAIModel
+import os
+
+# Amazon Bedrock (default if no model specified)
+bedrock_model = BedrockModel(
+    model_id="us.anthropic.claude-opus-5"
+)
+
+# Anthropic direct API
+anthropic_model = AnthropicModel(
+    client_args={"api_key": os.environ["ANTHROPIC_API_KEY"]},
+    model_id="claude-sonnet-5",
+    max_tokens=1024,
+    params={"temperature": 0.7},
+)
+
+# OpenAI
+openai_model = OpenAIModel(
+    client_args={"api_key": os.environ["OPENAI_API_KEY"]},
+    model_id="gpt-4o",
+    params={"max_tokens": 1000, "temperature": 0.7},
+)
+
+# Local with Ollama (no cloud APIs needed)
+ollama_model = OllamaModel(
+    host="http://localhost:11434",
+    model_id="gemma4:latest",
+)
+
+# Use any provider. Agent code stays identical.
+agent = Agent(model=ollama_model)
+agent("Explain the agent loop in one paragraph.")
+```
+
+📂 [model_providers.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/02-model-providers/model_providers.py)
+
+| Provider | Install | Auth |
+|----------|---------|------|
+| Bedrock (default) | `pip install strands-agents` | AWS credentials configured |
+| Anthropic | `pip install "strands-agents[anthropic]"` | `ANTHROPIC_API_KEY` |
+| OpenAI | `pip install "strands-agents[openai]"` | `OPENAI_API_KEY` |
+| Ollama (local) | `pip install "strands-agents[ollama]"` | None, runs on your machine |
+
+## Multi-Model Architectures
+
+In sophisticated systems, different agents use different models:
+
+- Fast/cheap model for lightweight classification
+- Strong reasoning model for orchestration
+- Specialized model for code generation
+- A different provider entirely for evaluation/verification (avoids same-model bias)
+
+## Ollama Setup
+
+Ollama lets you run models entirely on your machine. Useful for development, offline use, or avoiding API costs.
+
+```bash
+brew install ollama
+ollama serve
+ollama pull gemma4:latest
+```
+
+## Resources
+
+- 📖 [Model Providers](/docs/user-guide/sdk/model-providers/)
+- 📖 [Getting Started](/docs/user-guide/sdk/quickstart/python/)
+- 📂 [Course Code Repository](https://github.com/aws-samples/sample-building-with-strands-course)

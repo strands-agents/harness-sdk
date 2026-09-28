@@ -56,7 +56,15 @@ from ..types.event_loop import Metrics, Usage
 from ..types.multiagent import MultiAgentInput
 from ..types.session import decode_bytes_values, encode_bytes_values
 from ..types.traces import AttributeValue
-from .base import MultiAgentBase, MultiAgentResult, NodeResult, Status, _parse_metrics, _parse_usage
+from .base import (
+    MultiAgentBase,
+    MultiAgentResult,
+    NodeResult,
+    Status,
+    _accumulate_cache_usage,
+    _parse_metrics,
+    _parse_usage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -633,14 +641,13 @@ class Graph(MultiAgentBase):
             - multi_agent_node_stop: When a node stops execution
             - result: Final graph result
         """
-        self._interrupt_state.resume(task)
-
         if invocation_state is None:
             invocation_state = {}
 
         self._current_invocation_state = invocation_state
 
         await self.hooks.invoke_callbacks_async(BeforeMultiAgentInvocationEvent(self, invocation_state))
+        self._interrupt_state.resume(task)
 
         logger.debug("task=<%s> | starting graph execution", task)
 
@@ -688,21 +695,18 @@ class Graph(MultiAgentBase):
 
                 logger.debug("status=<%s> | graph execution completed", self.state.status)
 
-                # Yield final result (consistent with Agent's AgentResultEvent format)
-                result = self._build_result(interrupts)
-
-                # Use the same event format as Agent for consistency
-                yield MultiAgentResultEvent(result=result).as_dict()
-
             except Exception:
                 logger.exception("graph execution failed")
                 self.state.status = Status.FAILED
                 raise
             finally:
                 self.state.execution_time = self._commit_active_interval(self.state.execution_time)
-                await self.hooks.invoke_callbacks_async(AfterMultiAgentInvocationEvent(self))
+                await self.hooks.invoke_callbacks_async(AfterMultiAgentInvocationEvent(self, invocation_state))
                 self._resume_from_session = False
                 self._resume_next_nodes.clear()
+
+            result = self._build_result(interrupts)
+            yield MultiAgentResultEvent(result=result).as_dict()
 
     def _validate_graph(self, nodes: dict[str, GraphNode]) -> None:
         """Validate graph nodes for duplicate instances."""
@@ -1147,6 +1151,7 @@ class Graph(MultiAgentBase):
         self.state.accumulated_usage["inputTokens"] += node_result.accumulated_usage.get("inputTokens", 0)
         self.state.accumulated_usage["outputTokens"] += node_result.accumulated_usage.get("outputTokens", 0)
         self.state.accumulated_usage["totalTokens"] += node_result.accumulated_usage.get("totalTokens", 0)
+        _accumulate_cache_usage(self.state.accumulated_usage, node_result.accumulated_usage)
         self.state.accumulated_metrics["latencyMs"] += node_result.accumulated_metrics.get("latencyMs", 0)
         self.state.execution_count += node_result.execution_count
 

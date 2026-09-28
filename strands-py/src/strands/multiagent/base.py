@@ -385,3 +385,11 @@ def _parse_usage(usage_data: dict[str, Any]) -> Usage:
 def _parse_metrics(metrics_data: dict[str, Any]) -> Metrics:
     """Parse Metrics from dict data."""
     return Metrics(latencyMs=metrics_data.get("latencyMs", 0))
+
+
+def _accumulate_cache_usage(target: Usage, source: Usage) -> None:
+    """Add source's optional cache token counters into target."""
+    if "cacheReadInputTokens" in source:
+        target["cacheReadInputTokens"] = target.get("cacheReadInputTokens", 0) + source["cacheReadInputTokens"]
+    if "cacheWriteInputTokens" in source:
+        target["cacheWriteInputTokens"] = target.get("cacheWriteInputTokens", 0) + source["cacheWriteInputTokens"]

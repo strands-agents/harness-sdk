@@ -164,6 +164,13 @@ def blue_video(pytestconfig):
         return fp.read()
 
 
+@pytest.fixture
+def pineapple_audio(pytestconfig):
+    path = pytestconfig.rootdir / "tests_integ/resources/pineapple.mp3"
+    with open(path, "rb") as fp:
+        return fp.read()
+
+
 ## Async
 
 

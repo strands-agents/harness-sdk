@@ -1,5 +1,6 @@
 """Integration tests for ExecuteToolStage middleware with Agent."""
 
+import threading
 from dataclasses import replace
 
 import pytest
@@ -10,6 +11,7 @@ from strands._middleware.stages import ExecuteToolContext, ExecuteToolStage
 from strands._middleware.types import MiddlewareResult
 from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent
 from strands.types._events import ToolInterruptEvent, ToolResultEvent, ToolStreamEvent
+from strands.types.tools import ToolContext
 from tests.fixtures.mock_hook_provider import MockHookProvider
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
@@ -906,3 +908,35 @@ def test_wrap_yielding_no_result_surfaces_actionable_error(calculator_tool):
     result = tool_result_messages[0]["content"][0]["toolResult"]
     assert result["status"] == "error"
     assert "did not yield a ToolResultEvent" in result["content"][0]["text"]
+
+
+def test_middleware_observes_but_cannot_replace_cancel_signal():
+    """ExecuteToolContext.cancel_signal is executor-owned: middleware replacement never reaches the tool."""
+    observed_signals: list[threading.Event] = []
+    tool_signals: list[threading.Event] = []
+    replacement = threading.Event()
+
+    @strands.tool(name="probe", context=True)
+    def probe(tool_context: ToolContext) -> str:
+        """Record the cancellation signal handed to the tool."""
+        tool_signals.append(tool_context.cancel_signal)
+        return "ok"
+
+    tool_use_msg = {
+        "role": "assistant",
+        "content": [{"toolUse": {"toolUseId": "t1", "name": "probe", "input": {}}}],
+    }
+    final_msg = {"role": "assistant", "content": [{"text": "done"}]}
+    agent = Agent(model=MockedModelProvider([tool_use_msg, final_msg]), tools=[probe], callback_handler=None)
+
+    async def replace_signal(context, next_fn):
+        observed_signals.append(context.cancel_signal)
+        async for event in next_fn(replace(context, cancel_signal=replacement)):
+            yield event
+
+    agent._middleware_registry.add_middleware(ExecuteToolStage, replace_signal)
+    agent("use the probe tool")
+
+    assert observed_signals == [agent.cancel_signal]
+    assert tool_signals == [agent.cancel_signal]
+    assert tool_signals[0] is not replacement

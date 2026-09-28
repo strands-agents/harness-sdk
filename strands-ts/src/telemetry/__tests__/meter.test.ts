@@ -345,6 +345,28 @@ describe('Meter', () => {
 
       expect(meter.metrics.latestContextSize).toBeUndefined()
     })
+
+    // Regression for #3546: a large cache read on a disjoint provider (Bedrock/Anthropic) must be
+    // counted, or context utilization reads as tiny and proactive compaction never fires.
+    it('counts cache reads on disjoint providers where they add to inputTokens', () => {
+      meter.updateCycle({
+        type: 'modelMetadataEvent',
+        usage: { inputTokens: 10, outputTokens: 4, totalTokens: 5862, cacheReadInputTokens: 5848 },
+      })
+
+      expect(meter.metrics.latestContextSize).toBe(5858)
+    })
+
+    // Regression for #3546: on subset providers (OpenAI/Gemini) the cache read already sits inside
+    // inputTokens, so it must not be added again.
+    it('does not double-count cache reads on subset providers', () => {
+      meter.updateCycle({
+        type: 'modelMetadataEvent',
+        usage: { inputTokens: 12936, outputTokens: 10, totalTokens: 12946, cacheReadInputTokens: 6457 },
+      })
+
+      expect(meter.metrics.latestContextSize).toBe(12936)
+    })
   })
 
   describe('projectedContextSize', () => {
@@ -372,6 +394,26 @@ describe('Meter', () => {
       })
 
       expect(meter.metrics.projectedContextSize).toBe(280)
+    })
+
+    // Regression for #3546: projects total prompt + output on a disjoint provider.
+    it('counts cache reads on disjoint providers where they add to inputTokens', () => {
+      meter.updateCycle({
+        type: 'modelMetadataEvent',
+        usage: { inputTokens: 10, outputTokens: 4, totalTokens: 5862, cacheReadInputTokens: 5848 },
+      })
+
+      expect(meter.metrics.projectedContextSize).toBe(5862)
+    })
+
+    // Regression for #3546: projects total prompt + output on a subset provider without double-counting.
+    it('does not double-count cache reads on subset providers', () => {
+      meter.updateCycle({
+        type: 'modelMetadataEvent',
+        usage: { inputTokens: 12936, outputTokens: 10, totalTokens: 12946, cacheReadInputTokens: 6457 },
+      })
+
+      expect(meter.metrics.projectedContextSize).toBe(12946)
     })
   })
 

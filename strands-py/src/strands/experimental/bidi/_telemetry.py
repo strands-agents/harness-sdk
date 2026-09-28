@@ -69,8 +69,11 @@ def end_session_span(
         "gen_ai.usage.input_tokens": input_tokens,
         "gen_ai.usage.output_tokens": output_tokens,
         "gen_ai.usage.total_tokens": total_tokens,
-        "gen_ai.usage.cache_read_input_tokens": cache_read_input_tokens,
+        "gen_ai.usage.cache_read.input_tokens": cache_read_input_tokens,
     }
+    if not tracer.use_latest_genai_conventions:
+        # Deprecated pre-semconv name, dual-emitted unless opted into the latest conventions
+        token_attributes["gen_ai.usage.cache_read_input_tokens"] = cache_read_input_tokens
     attributes: dict[str, AttributeValue] = {name: value for name, value in token_attributes.items() if value > 0}
 
     tracer._end_span(span, attributes=attributes, error=error)
@@ -97,7 +100,6 @@ def start_response_span(tracer: Tracer, response_id: str, parent_span: Span | No
 def end_response_span(
     tracer: Tracer,
     span: Span,
-    stop_reason: str | None = None,
     time_to_first_audio_ms: int | None = None,
     error: Exception | None = None,
 ) -> None:
@@ -106,15 +108,11 @@ def end_response_span(
     Args:
         tracer: Tracer instance.
         span: The response span to end.
-        stop_reason: Why the response ended (complete, interrupted, tool_use, error).
         time_to_first_audio_ms: Milliseconds from response start to the first audio chunk, if any
             audio was emitted for this response.
         error: Exception if the response ended with an error.
     """
     attributes: dict[str, AttributeValue] = {}
-
-    if stop_reason:
-        attributes["gen_ai.response.finish_reason"] = stop_reason
 
     if time_to_first_audio_ms is not None:
         attributes["gen_ai.server.time_to_first_audio"] = time_to_first_audio_ms
@@ -122,21 +120,31 @@ def end_response_span(
     tracer._end_span(span, attributes=attributes, error=error)
 
 
-def start_restart_span(tracer: Tracer, parent_span: Span | None = None, error_message: str | None = None) -> Span:
+def start_restart_span(
+    tracer: Tracer,
+    parent_span: Span | None = None,
+    reason: str = "timeout",
+    error_message: str | None = None,
+) -> Span:
     """Start a span for a connection restart.
 
     Args:
         tracer: Tracer instance.
         parent_span: Parent session span.
-        error_message: The timeout error message that triggered the restart.
+        reason: What triggered the restart ("timeout" reactively, "scheduled" proactively).
+        error_message: The timeout error message that triggered a reactive restart, if any.
 
     Returns:
         The restart span.
     """
     attributes: dict[str, AttributeValue] = tracer._get_common_attributes(operation_name="bidi_connection_restart")
+    attributes["gen_ai.bidi.restart_reason"] = reason
 
+    # The message of the timeout that triggered a reactive restart. Namespaced under
+    # gen_ai.bidi.* (not gen_ai.error.*) so it does not read as a failure of this span,
+    # which may end successfully; a failed restart is recorded via end_restart_span.
     if error_message:
-        attributes["gen_ai.error.message"] = error_message
+        attributes["gen_ai.bidi.restart_error_message"] = error_message
 
     return tracer._start_span("bidi_connection_restart", parent_span, attributes=attributes)
 
@@ -182,12 +190,12 @@ def end_connection_span(tracer: Tracer, span: Span, error: Exception | None = No
     tracer._end_span(span, error=error)
 
 
-def add_interruption_event(span: Span, reason: str) -> None:
-    """Record an interruption as a span event on the session span.
+def add_barge_in_event(span: Span, reason: str) -> None:
+    """Record a barge-in as a span event on the session span.
 
     Args:
         span: The session span to add the event to.
-        reason: Reason for the interruption.
+        reason: Reason for the barge-in.
     """
     if span and span.is_recording():
-        span.add_event("bidi_interruption", attributes={"interruption.reason": reason})
+        span.add_event("bidi_barge_in", attributes={"barge_in.reason": reason})

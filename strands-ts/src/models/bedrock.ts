@@ -30,11 +30,14 @@ import {
   type ReasoningContentBlockDelta,
   type Tool,
   type ToolConfiguration,
+  type TokenUsage as BedrockTokenUsage,
   type ToolUseBlockDelta,
+  type AudioSource as BedrockAudioSource,
   type ImageSource as BedrockImageSource,
   type VideoSource as BedrockVideoSource,
   type DocumentSource as BedrockDocumentSource,
   type SystemContentBlock,
+  AudioFormat,
   DocumentFormat,
   ImageFormat,
   VideoFormat,
@@ -57,7 +60,7 @@ import {
   resolveConfigMetadata,
 } from '../models/model.js'
 import type { ContentBlock, Message, StopReason, ToolUseBlock } from '../types/messages.js'
-import type { ImageSource, VideoSource, DocumentSource } from '../types/media.js'
+import type { AudioSource, ImageSource, VideoSource, DocumentSource } from '../types/media.js'
 import type { CitationsDelta, ModelStreamEvent, ReasoningContentDelta, Usage } from '../models/streaming.js'
 import type { Citation, CitationLocation, CitationsBlockData } from '../types/citations.js'
 import type { JSONValue } from '../types/json.js'
@@ -73,7 +76,7 @@ const DEFAULT_BEDROCK_REGION_SUPPORTS_FIP = false
 /**
  * Default request timeout in milliseconds. The AWS SDK defaults to 0 (disabled), which lets
  * a stuck connection hang indefinitely — we pick 120s to bound that. Callers can override
- * via `clientConfig.requestHandler.requestTimeout`.
+ * via `BedrockModelOptions.requestTimeout`.
  */
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000
 
@@ -331,6 +334,17 @@ export interface BedrockModelOptions extends BedrockModelConfig {
   clientConfig?: BedrockRuntimeClientConfig
 
   /**
+   * Milliseconds of stream inactivity before a Bedrock request is aborted.
+   *
+   * Applies to the default request handler and takes precedence over
+   * `clientConfig.requestHandler.requestTimeout`. Ignored when `clientConfig.requestHandler`
+   * is a constructed handler instance, whose own timeouts apply.
+   *
+   * @defaultValue 120000
+   */
+  requestTimeout?: number
+
+  /**
    * Amazon Bedrock API key for bearer token authentication.
    * When provided, requests use the API key instead of SigV4 signing.
    * @see https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html
@@ -415,7 +429,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   constructor(options?: BedrockModelOptions) {
     super()
 
-    const { region, clientConfig, apiKey, ...modelConfig } = options ?? {}
+    const { region, clientConfig, apiKey, requestTimeout, ...modelConfig } = options ?? {}
 
     // Initialize model config with default model ID if not provided
     this._config = {
@@ -432,7 +446,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       ? `${clientConfig.customUserAgent} strands-agents-ts-sdk`
       : 'strands-agents-ts-sdk'
 
-    const requestHandler = withDefaultRequestTimeout(clientConfig?.requestHandler)
+    const requestHandler = withDefaultRequestTimeout(clientConfig?.requestHandler, requestTimeout)
     this._client = new BedrockRuntimeClient({
       ...(clientConfig ?? {}),
       requestHandler,
@@ -492,22 +506,40 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
-   * Applies `cacheConfig.ttl` to a caller-placed system cache point that carries no TTL of its own.
+   * Whether to auto-inject a cache point at the end of the system prompt.
    *
-   * Bedrock rejects a TTL that exceeds an earlier cache point's, in the order toolConfig, system,
-   * messages. Filling the system point in keeps it from sitting at the default between two configured
-   * points. A TTL the caller wrote is left as written, and the fill-in stands down when the tools point
-   * carries a different TTL, leaving the caller to reconcile the two.
+   * @param system - The system content blocks that will be sent to Bedrock.
+   * @returns True if a cache point should be appended.
+   */
+  private _shouldCacheSystem(system: SystemContentBlock[] | undefined): system is SystemContentBlock[] {
+    if (!this._shouldEnableCaching()) {
+      return false
+    }
+    if (this._config.cacheConfig?.systemPromptTTL === false) {
+      return false
+    }
+    if (!system || system.length === 0) {
+      return false
+    }
+    return !system.some((block) => 'cachePoint' in block)
+  }
+
+  /**
+   * Fills the resolved system-section TTL into a system cache point that carries none of its own,
+   * whether auto-injected or caller-placed.
    *
    * @param request - The formatted request, with `system` and `toolConfig` already populated.
    */
   private _applySystemCacheTTL(request: ConverseStreamCommandInput): void {
     const system = request.system
-    if (!system) {
+    if (!system || !this._shouldEnableCaching()) {
       return
     }
-    let ttl = this._shouldEnableCaching() ? this._config.cacheConfig?.ttl || undefined : undefined
-    if (ttl) {
+    const cacheConfig = this._config.cacheConfig
+    const systemSection = resolveCacheSection(cacheConfig?.systemPromptTTL, cacheConfig?.ttl)
+    let ttl = systemSection.ttl
+
+    if (ttl && typeof cacheConfig?.systemPromptTTL !== 'string') {
       const toolsPoint = request.toolConfig?.tools?.find((tool) => 'cachePoint' in tool)
       if (toolsPoint && 'cachePoint' in toolsPoint && toolsPoint.cachePoint?.ttl !== ttl) {
         ttl = undefined
@@ -662,13 +694,41 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         // Stream the response
         if (response.stream) {
           let lastStopReason: string | undefined
+          let redactionEmitted = false
+          let sawGuardrailTrace = false
           for await (const chunk of response.stream) {
-            // Map Bedrock events to SDK events
             const result = this._mapStreamedBedrockEventToSDKEvent(chunk, lastStopReason)
             lastStopReason = result.stopReason
+            // The guardrail trace arrives with the metadata event and is authoritative for
+            // BLOCKED vs ANONYMIZED (masking) — Bedrock reports guardrail_intervened for both
+            // but only BLOCKED content warrants SDK redaction. Wait for the metadata chunk to
+            // decide, and fall back to the stop reason only when no trace was carried.
+            if (!redactionEmitted && this._config.guardrailConfig && 'metadata' in chunk) {
+              const guardrailData = chunk.metadata?.trace?.guardrail
+              if (guardrailData !== undefined) {
+                sawGuardrailTrace = true
+                if (this._hasBlockedGuardrailPolicy(guardrailData)) {
+                  redactionEmitted = true
+                  yield* this._generateRedactionEvents(guardrailData)
+                }
+              } else if (lastStopReason === 'guardrail_intervened') {
+                redactionEmitted = true
+                yield* this._generateRedactionEvents({})
+              }
+            }
             for (const event of result.events) {
               yield event
             }
+          }
+
+          // Safety net: guardrail_intervened but no metadata event ever arrived.
+          if (
+            !redactionEmitted &&
+            !sawGuardrailTrace &&
+            lastStopReason === 'guardrail_intervened' &&
+            this._config.guardrailConfig
+          ) {
+            yield* this._generateRedactionEvents({})
           }
         }
       } else {
@@ -713,6 +773,10 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       } else if (options.systemPrompt.length > 0) {
         request.system = options.systemPrompt.map((block) => this._formatContentBlock(block) as SystemContentBlock)
       }
+    }
+
+    if (this._shouldCacheSystem(request.system)) {
+      request.system!.push({ cachePoint: { type: 'default' } })
     }
 
     // Add tool configuration
@@ -1293,6 +1357,14 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         return { cachePoint }
       }
 
+      case 'audioBlock':
+        return {
+          audio: {
+            format: block.format as AudioFormat,
+            source: this._formatMediaSource(block.source),
+          },
+        }
+
       case 'imageBlock':
         return {
           image: {
@@ -1355,21 +1427,24 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
-   * Format media source (image/video) for Bedrock API.
+   * Format media source (audio/image/video) for Bedrock API.
    * Handles bytes, S3 locations, and s3:// URLs.
    *
    * @param source - Media source
    * @returns Formatted source for Bedrock API
    */
   private _formatMediaSource(
-    source: ImageSource | VideoSource
+    source: AudioSource | ImageSource | VideoSource
   ):
+    | BedrockAudioSource.BytesMember
+    | BedrockAudioSource.S3LocationMember
     | BedrockImageSource.BytesMember
     | BedrockImageSource.S3LocationMember
     | BedrockVideoSource.BytesMember
     | BedrockVideoSource.S3LocationMember
     | undefined {
     switch (source.type) {
+      case 'audioSourceBytes':
       case 'imageSourceBytes':
       case 'videoSourceBytes':
         return { bytes: source.bytes }
@@ -1386,6 +1461,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         logger.warn('source_type=<imageSourceUrl> | not supported by bedrock | skipping')
         return
 
+      case 'audioSourceS3Location':
       case 'imageSourceS3Location':
       case 'videoSourceS3Location':
         return {
@@ -1441,6 +1517,25 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       default:
         throw new Error('Invalid document source')
     }
+  }
+
+  /**
+   * Maps a Bedrock `TokenUsage` to the SDK's `Usage`. Shared by the streaming and non-streaming
+   * paths so the cache counters they surface cannot drift apart.
+   */
+  private _mapBedrockUsage(usage: BedrockTokenUsage): Usage {
+    const mapped: Usage = {
+      inputTokens: ensureDefined(usage.inputTokens, 'usage.inputTokens'),
+      outputTokens: ensureDefined(usage.outputTokens, 'usage.outputTokens'),
+      totalTokens: ensureDefined(usage.totalTokens, 'usage.totalTokens'),
+    }
+    if (usage.cacheReadInputTokens !== undefined) {
+      mapped.cacheReadInputTokens = usage.cacheReadInputTokens
+    }
+    if (usage.cacheWriteInputTokens !== undefined) {
+      mapped.cacheWriteInputTokens = usage.cacheWriteInputTokens
+    }
+    return mapped
   }
 
   private _mapBedrockEventToSDKEvent(event: ConverseCommandOutput): ModelStreamEvent[] {
@@ -1538,11 +1633,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     const usage = ensureDefined(event.usage, 'output.usage')
     const metadataEvent: ModelStreamEvent = {
       type: 'modelMetadataEvent',
-      usage: {
-        inputTokens: ensureDefined(usage.inputTokens, 'usage.inputTokens'),
-        outputTokens: ensureDefined(usage.outputTokens, 'usage.outputTokens'),
-        totalTokens: ensureDefined(usage.totalTokens, 'usage.totalTokens'),
-      },
+      usage: this._mapBedrockUsage(usage),
     }
 
     if (event.metrics) {
@@ -1554,10 +1645,16 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     // Handle trace and guardrail check for non-streaming responses
     if (event.trace) {
       metadataEvent.trace = event.trace
+    }
 
-      // Check for blocked guardrails and emit redaction events
-      if (this._config.guardrailConfig && event.trace.guardrail && stopReasonRaw === 'guardrail_intervened') {
-        for (const redactionEvent of this._generateRedactionEvents(event.trace.guardrail)) {
+    // Bedrock reports guardrail_intervened for both BLOCKED and ANONYMIZED (masking). When the
+    // trace is carried it is authoritative — only BLOCKED policies warrant redaction. When it
+    // isn't (typically guardrailConfig.trace='disabled'), fall back to the stop reason.
+    if (this._config.guardrailConfig && stopReasonRaw === 'guardrail_intervened') {
+      const guardrail = event.trace?.guardrail
+      const shouldRedact = guardrail !== undefined ? this._hasBlockedGuardrailPolicy(guardrail) : true
+      if (shouldRedact) {
+        for (const redactionEvent of this._generateRedactionEvents(guardrail ?? {})) {
           events.push(redactionEvent)
         }
       }
@@ -1715,22 +1812,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         }
 
         if (data.usage) {
-          const usage = data.usage
-
-          const usageInfo: Usage = {
-            inputTokens: ensureDefined(usage.inputTokens, 'usage.inputTokens'),
-            outputTokens: ensureDefined(usage.outputTokens, 'usage.outputTokens'),
-            totalTokens: ensureDefined(usage.totalTokens, 'usage.totalTokens'),
-          }
-
-          if (usage.cacheReadInputTokens !== undefined) {
-            usageInfo.cacheReadInputTokens = usage.cacheReadInputTokens
-          }
-          if (usage.cacheWriteInputTokens !== undefined) {
-            usageInfo.cacheWriteInputTokens = usage.cacheWriteInputTokens
-          }
-
-          event.usage = usageInfo
+          event.usage = this._mapBedrockUsage(data.usage)
         }
 
         if (data.metrics) {
@@ -1741,13 +1823,6 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
         if (data.trace) {
           event.trace = data.trace
-
-          // Check for blocked guardrails in trace and emit redaction events
-          if (this._config.guardrailConfig && data.trace.guardrail && lastStopReason === 'guardrail_intervened') {
-            for (const redactionEvent of this._generateRedactionEvents(data.trace.guardrail)) {
-              events.push(redactionEvent)
-            }
-          }
         }
 
         events.push(event)
@@ -1916,6 +1991,28 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
+   * Recursively check a guardrail trace assessment for any detected-and-blocked policy.
+   *
+   * Bedrock reports guardrail_intervened for both BLOCKED and ANONYMIZED (masking) actions, so
+   * the trace is the only signal that distinguishes them: only BLOCKED entries warrant
+   * SDK-level redaction — masked spans have already been substituted in place server-side.
+   *
+   * @param guardrailData - The guardrail trace assessment
+   * @returns True if any assessment contains action='BLOCKED' with detected=true
+   */
+  private _hasBlockedGuardrailPolicy(guardrailData: GuardrailTraceAssessment): boolean {
+    const visit = (value: unknown): boolean => {
+      if (value === null || value === undefined) return false
+      if (Array.isArray(value)) return value.some(visit)
+      if (typeof value !== 'object') return false
+      const record = value as Record<string, unknown>
+      if (record.action === 'BLOCKED' && record.detected === true) return true
+      return Object.values(record).some(visit)
+    }
+    return visit(guardrailData)
+  }
+
+  /**
    * Generate redaction events based on guardrail configuration.
    *
    * @param guardrailData - The guardrail trace assessment data
@@ -1959,26 +2056,42 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 }
 
 /**
- * Merges a default request timeout into the caller's requestHandler options.
+ * Merges a request timeout into the caller's requestHandler options.
  *
  * The SDK's `requestHandler` slot accepts either a constructed handler instance
  * or an options bag that the SDK uses to build its default handler. We only
- * inject a default in the options-bag case: a handler instance has its timeouts
- * baked in at construction time, so we pass it through untouched.
+ * inject a timeout in the options-bag case: a handler instance has its timeouts
+ * baked in at construction time, so we pass it through untouched and warn if a
+ * `requestTimeout` was given that the instance cannot honour.
  *
- * The handler-vs-options discriminator mirrors the SDK's own check — see
- * `NodeHttp2Handler.create` in `@smithy/node-http-handler`.
+ * Precedence: the `requestTimeout` option, then `requestHandler.requestTimeout`, then the default.
  */
 function withDefaultRequestTimeout(
-  handler: BedrockRuntimeClientConfig['requestHandler']
+  handler: BedrockRuntimeClientConfig['requestHandler'],
+  requestTimeout?: number
 ): NonNullable<BedrockRuntimeClientConfig['requestHandler']> {
-  if (handler && typeof (handler as { handle?: unknown }).handle === 'function') {
-    return handler
+  if (!isRequestHandlerInstance(handler)) {
+    const options = (handler ?? {}) as { requestTimeout?: number; [key: string]: unknown }
+    // Use `??` rather than spread order so an explicit `requestTimeout: undefined` still gets
+    // the default (spread would otherwise overwrite the default with `undefined`, disabling it).
+    return { ...options, requestTimeout: requestTimeout ?? options.requestTimeout ?? DEFAULT_REQUEST_TIMEOUT_MS }
   }
-  const options = (handler ?? {}) as { requestTimeout?: number; [key: string]: unknown }
-  // Use `??` rather than spread order so an explicit `requestTimeout: undefined` still gets
-  // the default (spread would otherwise overwrite the default with `undefined`, disabling it).
-  return { ...options, requestTimeout: options.requestTimeout ?? DEFAULT_REQUEST_TIMEOUT_MS }
+  if (requestTimeout !== undefined) {
+    logger.warn(
+      `request_timeout=<${requestTimeout}> | requestTimeout is ignored when clientConfig.requestHandler is a handler instance`
+    )
+  }
+  return handler
+}
+
+/**
+ * Whether the `requestHandler` slot holds a constructed handler instance rather than an options bag.
+ * Mirrors the SDK's own discriminator — see `NodeHttp2Handler.create` in `@smithy/node-http-handler`.
+ */
+function isRequestHandlerInstance(
+  handler: BedrockRuntimeClientConfig['requestHandler']
+): handler is NonNullable<BedrockRuntimeClientConfig['requestHandler']> {
+  return typeof (handler as { handle?: unknown } | undefined)?.handle === 'function'
 }
 
 /**

@@ -1,0 +1,83 @@
+---
+import { pathWithBase } from '../../util/links'
+import { LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE_LABEL } from '../../util/language-preference'
+---
+
+<div class="keep-going">
+  <span class="kicker">Keep going</span>
+  <a href={pathWithBase('/examples/')}>Examples gallery →</a>
+  <a href={pathWithBase('/docs/labs/')}>Labs projects →</a>
+  <a href={pathWithBase('/docs/contribute/')}>Contribute →</a>
+  <a id="keep-going-api-link" href={pathWithBase('/docs/api/typescript/')}>API reference →</a>
+  <a href="https://discord.gg/strands">Join Discord →</a>
+</div>
+
+<script is:inline define:vars={{ STORAGE_KEY: LANGUAGE_STORAGE_KEY, DEFAULT_LANG: DEFAULT_LANGUAGE_LABEL }}>
+  (function () {
+    function updateApiLink() {
+      var link = document.getElementById('keep-going-api-link');
+      if (!link) return;
+      var lang;
+      try {
+        lang = localStorage.getItem(STORAGE_KEY) || DEFAULT_LANG;
+      } catch (e) {
+        lang = DEFAULT_LANG;
+      }
+      var href = link.getAttribute('href') || '';
+      if (lang === 'Python') {
+        link.setAttribute('href', href.replace('typescript', 'python'));
+      } else {
+        link.setAttribute('href', href.replace('python', 'typescript'));
+      }
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', updateApiLink);
+    } else {
+      updateApiLink();
+    }
+
+    window.addEventListener('lang-preference-changed', updateApiLink);
+    window.addEventListener('storage', function (e) {
+      if (e.key === STORAGE_KEY) updateApiLink();
+    });
+  })();
+</script>
+
+<style>
+  .keep-going {
+    border-top: 1px solid #262626;
+    padding: 2.25rem 0 4.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2.5rem;
+    align-items: baseline;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 0.9375rem;
+  }
+
+  :global([data-theme='light']) .keep-going {
+    border-top-color: rgba(0, 0, 0, 0.1);
+  }
+
+  .kicker {
+    font-size: 0.75rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-4);
+    font-weight: 700;
+  }
+
+  a {
+    color: var(--sl-color-gray-2);
+    text-decoration: none;
+  }
+
+  a:hover {
+    color: #00ff77;
+  }
+
+  :global([data-theme='light']) a:hover {
+    color: #008542;
+  }
+</style>

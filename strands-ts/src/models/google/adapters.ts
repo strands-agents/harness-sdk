@@ -366,10 +366,24 @@ export function mapChunkToEvents(chunk: GenerateContentResponse, streamState: Go
 
   // Extract usage metadata if available
   if (chunk.usageMetadata) {
-    const promptTokens = chunk.usageMetadata.promptTokenCount || 0
-    const totalTokens = chunk.usageMetadata.totalTokenCount || 0
-    streamState.inputTokens = promptTokens
-    streamState.outputTokens = totalTokens - promptTokens
+    const usageMetadata = chunk.usageMetadata
+    const promptTokens = usageMetadata.promptTokenCount || 0
+    const toolUsePromptTokens = usageMetadata.toolUsePromptTokenCount || 0
+    const totalTokens = usageMetadata.totalTokenCount || 0
+    const candidatesTokens = usageMetadata.candidatesTokenCount
+    const thoughtsTokens = usageMetadata.thoughtsTokenCount || 0
+    const inputTokens = promptTokens + toolUsePromptTokens
+
+    streamState.inputTokens = inputTokens
+    streamState.outputTokens =
+      candidatesTokens === undefined ? Math.max(0, totalTokens - inputTokens) : candidatesTokens + thoughtsTokens
+    streamState.totalTokens = totalTokens
+    const cachedTokens = usageMetadata.cachedContentTokenCount
+    if (typeof cachedTokens === 'number' && cachedTokens > 0) {
+      streamState.cacheReadInputTokens = cachedTokens
+    } else {
+      delete streamState.cacheReadInputTokens
+    }
   }
 
   const candidates = chunk.candidates

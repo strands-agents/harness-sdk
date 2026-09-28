@@ -80,7 +80,7 @@ export const TYPE_ICONS: Record<string, string> = Object.fromEntries(CATALOG_TYP
 // team name). Values match the zod enum in src/content.config.ts — keep the
 // two in sync.
 export const MAINTAINED_BY_TIERS = [
-  { value: 'strands', label: 'Strands', flag: 'Built-in', title: 'Built into the Strands SDK' },
+  { value: 'strands', label: 'Strands', flag: 'Built-in', title: 'Built into the Strands Harness SDK' },
   { value: 'aws', label: 'AWS', flag: 'AWS', title: 'Maintained by AWS' },
   { value: 'partner', label: 'Partner', flag: 'Partner', title: 'Maintained by the partner behind the integration' },
   { value: 'community', label: 'Community', flag: 'Community', title: 'Maintained by a community developer' },

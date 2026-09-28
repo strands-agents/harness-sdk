@@ -17,7 +17,6 @@ import {
 } from '../../../conversation-manager/compression/context-compression.js'
 import type { InvokeModelContext } from '../../../middleware/stages.js'
 import type { MiddlewareInputHandler } from '../../../middleware/types.js'
-import type { Model } from '../../../models/model.js'
 import { DEFAULT_CONTEXT_WINDOW_LIMIT } from '../../../models/defaults.js'
 
 /** Default number of recent messages to preserve verbatim during summarization or truncation. */
@@ -181,14 +180,14 @@ export const truncateContextTool = tool({
   },
 })
 
-export function createTokenUsageMiddleware(model: Model): MiddlewareInputHandler<InvokeModelContext> {
+export function createTokenUsageMiddleware(): MiddlewareInputHandler<InvokeModelContext> {
   return async (context: InvokeModelContext): Promise<InvokeModelContext> => {
     const projectedInputTokens = context.projectedInputTokens
     if (projectedInputTokens === undefined) {
       return context
     }
 
-    const contextWindowLimit = model.getConfig().contextWindowLimit ?? DEFAULT_CONTEXT_WINDOW_LIMIT
+    const contextWindowLimit = context.model.getConfig().contextWindowLimit ?? DEFAULT_CONTEXT_WINDOW_LIMIT
     const remaining = Math.max(0, contextWindowLimit - projectedInputTokens)
     const percentUsed = ((projectedInputTokens / contextWindowLimit) * 100).toFixed(1)
 

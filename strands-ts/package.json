@@ -44,6 +44,10 @@
       "types": "./dist/src/models/vercel.d.ts",
       "default": "./dist/src/models/vercel.js"
     },
+    "./models/routing": {
+      "types": "./dist/src/models/routing/index.d.ts",
+      "default": "./dist/src/models/routing/index.js"
+    },
     "./multiagent": {
       "types": "./dist/src/multiagent/index.d.ts",
       "default": "./dist/src/multiagent/index.js"
@@ -59,6 +63,10 @@
     "./vended-tools/file-editor": {
       "types": "./dist/src/vended-tools/file-editor/index.d.ts",
       "default": "./dist/src/vended-tools/file-editor/index.js"
+    },
+    "./vended-tools/handoff-to-user": {
+      "types": "./dist/src/vended-tools/handoff-to-user/index.d.ts",
+      "default": "./dist/src/vended-tools/handoff-to-user/index.js"
     },
     "./vended-tools/http-request": {
       "types": "./dist/src/vended-tools/http-request/index.d.ts",
@@ -80,6 +88,10 @@
       "types": "./dist/src/experimental/vended-tools/stop/index.d.ts",
       "default": "./dist/src/experimental/vended-tools/stop/index.js"
     },
+    "./vended-tools/web-fetch": {
+      "types": "./dist/src/vended-tools/web-fetch/index.d.ts",
+      "default": "./dist/src/vended-tools/web-fetch/index.js"
+    },
     "./a2a": {
       "types": "./dist/src/a2a/index.d.ts",
       "default": "./dist/src/a2a/index.js"
@@ -95,6 +107,10 @@
     "./vended-memory-stores/bedrock-knowledge-base": {
       "types": "./dist/src/vended-memory-stores/bedrock-knowledge-base/index.d.ts",
       "default": "./dist/src/vended-memory-stores/bedrock-knowledge-base/index.js"
+    },
+    "./vended-memory-stores/file-memory-store": {
+      "types": "./dist/src/vended-memory-stores/file-memory-store/index.d.ts",
+      "default": "./dist/src/vended-memory-stores/file-memory-store/index.js"
     },
     "./vended-memory-stores/test-memory-store": {
       "types": "./dist/src/vended-memory-stores/test-memory-store/index.d.ts",
@@ -143,6 +159,22 @@
     "./storage": {
       "types": "./dist/src/storage/index.d.ts",
       "default": "./dist/src/storage/index.js"
+    },
+    "./storage/search": {
+      "types": "./dist/src/storage/search/index.d.ts",
+      "default": "./dist/src/storage/search/index.js"
+    },
+    "./storage/search/qmd": {
+      "node": {
+        "types": "./dist/src/storage/search/qmd.d.ts",
+        "default": "./dist/src/storage/search/qmd.js"
+      }
+    },
+    "./storage/search/bm25": {
+      "node": {
+        "types": "./dist/src/storage/search/qmd.d.ts",
+        "default": "./dist/src/storage/search/qmd.js"
+      }
     },
     "./sandbox": {
       "types": "./dist/src/sandbox/index.d.ts",
@@ -211,6 +243,8 @@
     "@cedar-policy/mcp-schema-generator-wasm": "^0.6.0",
     "@eslint/js": "^10.0.1",
     "@google/genai": "^2.6.0",
+    "@modelcontextprotocol/sdk": "^1.25.2",
+    "@modelcontextprotocol/server": "^2.0.0",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.219.0",
@@ -221,6 +255,7 @@
     "@smithy/types": "^4.15.1",
     "@types/express": "^5.0.6",
     "@types/node": "^25.9.4",
+    "@types/turndown": "^5.0.6",
     "@typescript-eslint/eslint-plugin": "^8.62.1",
     "@typescript-eslint/parser": "^8.0.0",
     "@vitest/browser": "^4.1.10",
@@ -232,11 +267,12 @@
     "openai": "^6.45.0",
     "playwright": "^1.61.0",
     "tsx": "^4.22.5",
+    "turndown": "^7.2.4",
     "typescript": "^6.0.3",
     "vitest": "^4.1.10"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "repository": {
     "type": "git",
@@ -247,11 +283,11 @@
   },
   "homepage": "https://github.com/strands-agents/harness-sdk#readme",
   "dependencies": {
-    "@smithy/fetch-http-handler": "^5.6.10",
-    "@aws-sdk/client-bedrock-runtime": "^3.1107.0",
+    "@smithy/fetch-http-handler": "^5.8.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1132.0",
     "@types/json-schema": "^7.0.15",
-    "uuid": "^14.0.1",
-    "yaml": "^2.8.3"
+    "uuid": "^14.0.2",
+    "yaml": "^2.9.1"
   },
   "peerDependencies": {
     "@a2a-js/sdk": "^0.3.10",
@@ -264,7 +300,7 @@
     "@cedar-policy/cedar-wasm": "^4.0.0",
     "@cedar-policy/mcp-schema-generator-wasm": "^0.6.0",
     "@google/genai": "^2.6.0",
-    "@modelcontextprotocol/sdk": "^1.25.2",
+    "@modelcontextprotocol/client": "^2.0.0",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.219.0",
@@ -273,8 +309,10 @@
     "@opentelemetry/sdk-trace-base": "^2.6.1",
     "@opentelemetry/sdk-trace-node": "^2.6.1",
     "@smithy/types": "^4.15.1",
+    "@tobilu/qmd": "^2.8.0",
     "express": "^5.1.0",
     "openai": "^6.45.0",
+    "turndown": "^7.2.4",
     "zod": "^4.1.12"
   },
   "peerDependenciesMeta": {
@@ -333,6 +371,12 @@
       "optional": true
     },
     "@cedar-policy/mcp-schema-generator-wasm": {
+      "optional": true
+    },
+    "@tobilu/qmd": {
+      "optional": true
+    },
+    "turndown": {
       "optional": true
     }
   },

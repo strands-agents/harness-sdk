@@ -1,23 +1,23 @@
 ---
-title: Multimodal Instruction Following Evaluator
+title: Multimodal instruction following evaluator
 description: 'Verify responses on image tasks satisfy explicit constraints like count, format, and scope with MultimodalInstructionFollowingEvaluator.'
 tags: [multimodal-evaluation, vision]
 sidebar:
-  label: "Multimodal Instruction Following"
+  label: "Multimodal instruction following"
 ---
 
 ## Overview
 
 The `MultimodalInstructionFollowingEvaluator` assesses whether an agent response satisfies the explicit constraints in the user's instruction (count, format, scope, order, completeness, and style), independently of factual accuracy.
 
-## Key Features
+## Key features
 
 - **Output-Level Evaluation**: Scores a single agent response per case
 - **Binary Scoring**: `1.0` if all constraints are satisfied, `0.0` if any constraint is violated
 - **Constraint-Focused**: Evaluates compliance with directives, not overall correctness or quality
 - **Image-Aware**: Verifies image-referential constraints (e.g., "describe only the background")
 
-## When to Use
+## When to use
 
 Use the `MultimodalInstructionFollowingEvaluator` when you need to:
 
@@ -27,7 +27,7 @@ Use the `MultimodalInstructionFollowingEvaluator` when you need to:
 - Validate order constraints ("left to right", "largest to smallest")
 - Evaluate instruction compliance independently from factual correctness
 
-## Evaluation Level
+## Evaluation level
 
 This evaluator operates at the **OUTPUT_LEVEL**, scoring a single agent response per case.
 
@@ -55,7 +55,12 @@ This evaluator operates at the **OUTPUT_LEVEL**, scoring a single agent response
 - **Type**: `str | None`
 - **Default**: `None` (uses the built-in default suffix)
 
-## Scoring System
+### `uses_environment_state` (optional)
+- **Type**: `bool`
+- **Default**: `False`
+- **Description**: Whether to include environment state in the evaluation prompt, enabling assessment of agent side effects alongside the output.
+
+## Scoring system
 
 | Score | Label | Meaning |
 |-------|-------|---------|
@@ -64,7 +69,7 @@ This evaluator operates at the **OUTPUT_LEVEL**, scoring a single agent response
 
 A response passes only if the score is `1.0`.
 
-## Basic Usage
+## Basic usage
 
 ```python
 import asyncio
@@ -102,9 +107,9 @@ async def main():
 asyncio.run(main())
 ```
 
-## Combining with Other Evaluators
+## Combining with other evaluators
 
-Pair with correctness and faithfulness to assess different failure modes separately. `Experiment.run_evaluations` returns one combined report across all evaluators — each row in `report.cases` carries an `evaluator` key naming the producing evaluator:
+Pair with correctness and faithfulness to assess different failure modes separately. `Experiment.run_evaluations` returns one combined report across all evaluators. Each row in `report.cases` carries an `evaluator` key naming the producing evaluator:
 
 ```python
 from strands_evals import Experiment
@@ -130,7 +135,7 @@ async def main():
 asyncio.run(main())
 ```
 
-## Related Evaluators
+## Related evaluators
 
 - [**MultimodalOutputEvaluator**](multimodal_output_evaluator.md): Parent class with full parameter reference
 - [**InstructionFollowingEvaluator**](instruction_following_evaluator.md): Text-only counterpart

@@ -1,0 +1,375 @@
+---
+title: Production Lifecycle Controls
+description: "Turn limits, token budgets, timeouts, cancellation, and stop reasons that keep a production Strands agent bounded, recoverable, and safe to run at scale."
+tags: [event-loop, error-handling]
+sourceLinks:
+  - path: strands-py/src/strands/agent/agent.py
+  - path: strands-py/src/strands/types/event_loop.py
+  - path: strands-ts/src/agent/agent.ts
+  - path: strands-ts/src/types/messages.ts
+---
+
+A prompt against a single agent instance can, left unbounded, loop longer than
+you want, spend more tokens than you budgeted, or keep running after the caller
+has walked away. When you run agents in production, you need to cap that work,
+stop it on demand, and read back a clear reason for why it ended.
+
+This page collects the controls the [agent loop](./agent-loop.md) exposes for
+exactly that: bounding a single call, cancelling one mid-flight, interpreting
+the stop reason it returns, recovering from tool and model errors, and running
+one agent safely across many concurrent requests. Each control works on its own;
+the [worked example](#worked-example-a-high-concurrency-service) at the end
+combines them into one request handler.
+
+## Cap the work one call can do
+
+To bound a single invocation, pass a set of limits alongside the prompt. You can
+cap the number of turns (loop iterations), the output tokens, or the total
+tokens. All three are optional, and each must be a positive integer.
+
+<Tabs>
+  <Tab label="Python">
+
+  ```python
+  from strands import Agent
+
+  agent = Agent()
+
+  result = agent(
+      "Summarize this document",
+      limits={
+          "turns": 5,
+          "output_tokens": 2000,
+          "total_tokens": 10000,
+      },
+  )
+
+  if result.stop_reason == "limit_turns":
+      print("Hit turn budget")
+  elif result.stop_reason == "limit_total_tokens":
+      print("Hit token budget")
+  ```
+
+  The same parameter works with `invoke_async` and `stream_async`.
+
+  </Tab>
+  <Tab label="TypeScript">
+
+  ```typescript
+  --8<-- "user-guide/sdk/agents/lifecycle-controls_imports.ts:limits_basic_imports"
+
+  --8<-- "user-guide/sdk/agents/lifecycle-controls.ts:limits_basic"
+  ```
+
+  The same option works with `stream`. Each cap must be a positive finite
+  number.
+
+  </Tab>
+</Tabs>
+
+Limits are checked at the top of each loop iteration, not mid-call. A single
+turn can overshoot its token budget, but the check fires before the next turn
+starts, and tools requested by the previous turn always finish first. When
+several caps trip at once, the reported stop reason follows priority order:
+turns, then total tokens, then output tokens.
+
+Limits apply to the current invocation only. A reused agent starts each call
+with fresh counters, and the message history stays in a valid, reinvokable
+state, so you can retry with a higher budget.
+
+## Know why the loop stopped
+
+Every result carries a stop reason that tells you whether the call finished, hit
+a budget, was cancelled, or was blocked. Branch on it to decide what happens
+next. Read it from <Syntax py="result.stop_reason" ts="result.stopReason" />.
+
+| Stop reason | What it means | What to do |
+|---|---|---|
+| <Syntax py="end_turn" ts="endTurn" /> | Normal completion. The model finished its response. | Return the result. |
+| <Syntax py="stop_sequence" ts="stopSequence" /> | The model hit a configured stop sequence. | Terminates normally, like `end_turn`. |
+| <Syntax py="tool_use" ts="toolUse" /> | The model requested a tool. The loop handles this internally. | Nothing; you see this only mid-loop. |
+| <Syntax py="limit_turns" ts="limitTurns" /> | The turn budget was exhausted. | Reinvoke with a higher budget, or return a partial answer. |
+| <Syntax py="limit_total_tokens" ts="limitTotalTokens" /> | The cumulative token budget was exhausted. | Same as above; history is reinvokable. |
+| <Syntax py="limit_output_tokens" ts="limitOutputTokens" /> | The output token budget was exhausted. | Same as above. |
+| `cancelled` | The agent was stopped via <Syntax py="agent.cancel()" ts="agent.cancel()" /> or a cancel signal. | Treat as a client-initiated stop. |
+| <Syntax py="max_tokens" ts="maxTokens" /> | A single model response exceeded the provider's per-call cap. Unrecoverable within the loop. | See [Handle a truncated model response](#handle-a-truncated-model-response). |
+| <Syntax py="content_filtered" ts="contentFiltered" /> | A safety mechanism blocked the response. | Handle per your application's policy. |
+| <Syntax py="guardrail_intervened" ts="guardrailIntervened" /> | A guardrail policy stopped generation. | Handle per your application's policy. |
+| `interrupt` | The agent paused for human input. | Resume with interrupt responses. See [Interrupts](../interrupts.md). |
+
+The three limit reasons signal graceful budget exhaustion, not failure. Content
+filtering and guardrail intervention both terminate the loop and should be
+handled deliberately rather than retried blindly.
+
+## Stop a running agent
+
+To stop a call from outside the loop, on a client disconnect, a timeout, or a
+"Stop" button, cancel it. The agent checks for cancellation at fixed checkpoints
+and returns a result with a `cancelled` stop reason. The cancel signal clears
+when the invocation completes, so the agent is immediately reusable.
+<Syntax py="agent.cancel()" ts="agent.cancel()" /> is idempotent; calling it more
+than once is safe.
+
+<Tabs>
+  <Tab label="Python">
+
+  ```python
+  import threading
+  import time
+
+  from strands import Agent
+
+
+  def timeout_watchdog(agent: Agent, timeout: float) -> None:
+      """Cancel the agent after a timeout period."""
+      time.sleep(timeout)
+      agent.cancel()
+
+
+  agent = Agent()
+
+  watchdog = threading.Thread(target=timeout_watchdog, args=(agent, 30.0))
+  watchdog.start()
+
+  result = agent("Analyze this large dataset")
+  watchdog.join()
+
+  if result.stop_reason == "cancelled":
+      print("Agent was cancelled due to timeout")
+  ```
+
+  `cancel()` is thread-safe. For a declarative deadline, pass your own
+  `threading.Event` as the `cancel_signal` parameter to `__call__`,
+  `invoke_async`, or `stream_async`. The agent watches both its internal signal
+  and your event, and never sets or clears the event itself.
+
+  ```python
+  import threading
+
+  from strands import Agent
+
+  agent = Agent()
+
+  cancel_signal = threading.Event()
+  threading.Timer(30.0, cancel_signal.set).start()
+
+  result = agent("Analyze this large dataset", cancel_signal=cancel_signal)
+  ```
+
+  </Tab>
+  <Tab label="TypeScript">
+
+  ```typescript
+  --8<-- "user-guide/sdk/agents/lifecycle-controls_imports.ts:cancel_timeout_imports"
+
+  --8<-- "user-guide/sdk/agents/lifecycle-controls.ts:cancel_timeout"
+  ```
+
+  For a declarative deadline, pass an `AbortSignal` as the `cancelSignal` option
+  to `invoke` or `stream`. The agent composes it with its internal controller,
+  so `agent.cancel()` and the external signal each trigger cancellation
+  independently.
+
+  ```typescript
+  --8<-- "user-guide/sdk/agents/lifecycle-controls_imports.ts:cancel_external_imports"
+
+  --8<-- "user-guide/sdk/agents/lifecycle-controls.ts:cancel_external"
+  ```
+
+  </Tab>
+</Tabs>
+
+The agent checks for cancellation before and between tool calls, so a running
+tool is not interrupted on its own. Once a tool starts, cancellation is
+cooperative: the tool decides whether to stop early. Long-running tools should
+poll the cancel signal between steps, or forward it to any API that accepts one.
+
+<Tabs>
+  <Tab label="Python">
+
+  ```python
+  from strands import tool
+  from strands.types.tools import ToolContext
+
+
+  @tool(context=True)
+  def long_job(tool_context: ToolContext) -> str:
+      """Do chunked work, checking for cancellation between chunks."""
+      for chunk in chunks:
+          if tool_context.cancel_signal.is_set():
+              return "cancelled"
+          process(chunk)
+      return "done"
+  ```
+
+  </Tab>
+  <Tab label="TypeScript">
+
+  ```typescript
+  --8<-- "user-guide/sdk/agents/lifecycle-controls_imports.ts:cancel_in_tool_imports"
+
+  --8<-- "user-guide/sdk/agents/lifecycle-controls.ts:cancel_in_tool"
+  ```
+
+  </Tab>
+</Tabs>
+
+For the full checkpoint tables and provider-level abort behavior, see
+[Cancellation](./agent-loop.md#cancellation) in the agent loop reference.
+Cancellation stops the agent entirely; it differs from an
+[interrupt](../interrupts.md), which pauses for human input and can resume.
+
+## Recover from tool and model errors
+
+A tool that fails does not crash the loop. The execution system captures the
+error, returns it to the model as an error result, and lets the model adjust or
+try an alternative. That default recovery covers most cases. Two mechanisms give
+you more control:
+
+- **Model provider errors** such as rate limits retry automatically with
+  exponential backoff. To change the attempt count, backoff, or which errors are
+  retryable, configure a strategy. See [Retry Strategies](./retry-strategies.md).
+- **Tool-level recovery** such as retrying a flaky tool, propagating an
+  unexpected exception instead of feeding it back to the model, or capping how
+  often a tool runs is done with [Hooks](./hooks.md). The hooks cookbook covers
+  [model call retry](./hooks.md#model-call-retry), [tool call retry](./hooks.md#tool-call-retry),
+  and [exception handling](./hooks.md#exception-handling).
+
+### Handle a truncated model response
+
+When a single model response exceeds the provider's per-call output cap, the
+loop cannot continue from a partial message. This is distinct from the graceful
+`limit_*` stop reasons: the loop raises
+<Syntax py="MaxTokensReachedException" ts="MaxTokensError" /> rather than
+returning a result. Reduce the context size, raise the provider's token limit,
+or split the task into smaller steps.
+
+## Run one agent across many requests
+
+An agent mutates its conversation history as each invocation runs, so overlapping
+calls on one instance would interleave their messages and corrupt the history. By
+default the agent processes one invocation at a time and rejects overlap.
+
+<Tabs>
+  <Tab label="Python">
+
+  Invoking an agent that is already running raises `ConcurrencyException`. The
+  <Syntax py="concurrent_invocation_mode" /> constructor parameter controls this:
+  it takes a `ConcurrentInvocationMode` of either `THROW` (the default) or
+  `UNSAFE_REENTRANT`.
+
+  ```python
+  from strands import Agent
+  from strands.types.exceptions import ConcurrencyException
+
+  agent = Agent()
+
+  try:
+      result = agent("Summarize this report")
+  except ConcurrencyException:
+      # Another invocation is already running on this agent instance
+      ...
+  ```
+
+  When a retry arrives for a request that is still in flight, deduplicate it
+  rather than erroring or doing the work twice. Pass
+  <Syntax py="idempotency_token" /> to any invocation method to identify the
+  logical request. A second call with the same token waits for the original and
+  returns the same `AgentResult`; a call with a different token still raises
+  `ConcurrencyException`.
+
+  ```python
+  result = agent("Process order 1234", idempotency_token="order-1234")
+  ```
+
+  `UNSAFE_REENTRANT` removes the single-invocation guard entirely, and nothing
+  then protects the history from concurrent mutation. To run independent work in
+  parallel, a separate agent per task is safer than sharing one.
+
+  </Tab>
+  <Tab label="TypeScript">
+
+  Invoking an agent that is already running throws `ConcurrentInvocationError`.
+  This SDK does not offer a configurable concurrency mode or idempotency-token
+  deduplication of retries; both are available only in the Python SDK. To run
+  independent work in parallel, use a separate agent per task.
+
+  </Tab>
+</Tabs>
+
+## Worked example: a high-concurrency service
+
+A service that fields thousands of concurrent invocations puts every control
+above to work at once. The pattern that scales is one fresh agent per request:
+it sidesteps the concurrency guard entirely, since no two requests share an
+instance. Each request gets a bounded turn count, a per-run token budget, and a
+deadline, and the handler maps the stop reason onto a typed outcome the caller
+can branch on.
+
+<Tabs>
+  <Tab label="Python">
+
+  ```python
+  import threading
+  from dataclasses import dataclass
+  from enum import Enum
+
+  from strands import Agent
+  from strands.models import BedrockModel
+
+  MODEL_ID = "global.anthropic.claude-sonnet-5"
+
+
+  class Outcome(str, Enum):
+      COMPLETED = "completed"
+      BUDGET_EXCEEDED = "budget_exceeded"
+      TIMED_OUT = "timed_out"
+
+
+  @dataclass
+  class Reply:
+      outcome: Outcome
+      text: str
+
+
+  def classify(stop_reason: str) -> Outcome:
+      if stop_reason == "cancelled":
+          return Outcome.TIMED_OUT
+      if stop_reason in ("limit_turns", "limit_total_tokens", "limit_output_tokens"):
+          return Outcome.BUDGET_EXCEEDED
+      return Outcome.COMPLETED
+
+
+  def handle_request(prompt: str, deadline_seconds: float = 20.0) -> Reply:
+      """Run one request on its own agent with bounded turns, tokens, and time."""
+      # A fresh agent per request keeps concurrent calls from sharing history
+      agent = Agent(model=BedrockModel(model_id=MODEL_ID))
+
+      cancel_signal = threading.Event()
+      threading.Timer(deadline_seconds, cancel_signal.set).start()
+
+      result = agent(
+          prompt,
+          limits={"turns": 6, "total_tokens": 20_000},
+          cancel_signal=cancel_signal,
+      )
+
+      return Reply(outcome=classify(result.stop_reason), text=str(result))
+  ```
+
+  </Tab>
+  <Tab label="TypeScript">
+
+  ```typescript
+  --8<-- "user-guide/sdk/agents/lifecycle-controls_imports.ts:worked_example_imports"
+
+  --8<-- "user-guide/sdk/agents/lifecycle-controls.ts:worked_example"
+  ```
+
+  </Tab>
+</Tabs>
+
+The handler never raises on a budget or a deadline: those come back as a
+`BUDGET_EXCEEDED` or `TIMED_OUT` outcome with the partial work intact, so the
+caller decides whether to retry, return a partial answer, or fail. Only a genuine
+error, such as a truncated model response, propagates as an exception.

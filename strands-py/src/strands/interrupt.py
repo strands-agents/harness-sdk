@@ -5,7 +5,9 @@ from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from .types.agent import AgentInput
+    from .types.content import Message
     from .types.interrupt import InterruptResponseContent
+    from .types.tools import ToolResult
 
 _AGENT_STREAM_INTERRUPT_ID_PREFIX = "v1:middleware_agent_stream:"
 """Id prefix for interrupts scoped to a whole invocation pass rather than a single tool call."""
@@ -41,6 +43,19 @@ class InterruptException(Exception):
 
 
 @dataclass
+class PendingToolExecution:
+    """State required to resume tool execution without calling the model again.
+
+    Attributes:
+        assistant_message: Assistant message containing the pending tool uses.
+        completed_tool_results: Results completed or synthesized during the interrupted execution.
+    """
+
+    assistant_message: "Message"
+    completed_tool_results: list["ToolResult"]
+
+
+@dataclass
 class _InterruptState:
     """Track the state of interrupt events raised by the user.
 
@@ -52,17 +67,14 @@ class _InterruptState:
             False because retained responses persist until their cycle ends.
         context: Additional context associated with an interrupt event.
         activated: True if agent is in an interrupt state, False otherwise.
+        pending_tool_execution: State required to resume an interrupted tool execution.
     """
 
     interrupts: dict[str, Interrupt] = field(default_factory=dict)
     context: dict[str, Any] = field(default_factory=dict)
     activated: bool = False
+    pending_tool_execution: PendingToolExecution | None = None
     _version: int = field(default=0, compare=False, repr=False)
-
-    @property
-    def has_pending_tool_execution(self) -> bool:
-        """Whether a tool execution is pending resume."""
-        return "tool_use_message" in self.context
 
     def activate(self) -> None:
         """Activate the interrupt state."""
@@ -70,13 +82,14 @@ class _InterruptState:
         self._version += 1
 
     def deactivate(self) -> None:
-        """Deacitvate the interrupt state.
+        """Deactivate the interrupt state.
 
-        Interrupts and context are cleared.
+        Interrupts, context, and pending tool execution are cleared.
         """
         self.interrupts = {}
         self.context = {}
         self.activated = False
+        self.pending_tool_execution = None
         self._version += 1
 
     def end_tool_cycle(self) -> None:
@@ -88,6 +101,7 @@ class _InterruptState:
         }
         self.context = {}
         self.activated = False
+        self.pending_tool_execution = None
         self._version += 1
 
     def end_interrupt_cycle(self) -> None:
@@ -139,11 +153,19 @@ class _InterruptState:
         self.context["responses"] = contents
         self._version += 1
 
+    def set_pending_tool_results(self, completed_tool_results: list["ToolResult"]) -> None:
+        """Update completed results for a pending tool execution."""
+        if self.pending_tool_execution is None:
+            return
+
+        self.pending_tool_execution.completed_tool_results = completed_tool_results
+        self._version += 1
+
     def _get_version(self) -> int:
         """Get the current version number of the interrupt state.
 
         The version is incremented each time the state is mutated — activate(), deactivate(),
-        resume(), end_tool_cycle(), or end_interrupt_cycle().
+        resume(), set_pending_tool_results(), end_tool_cycle(), or end_interrupt_cycle().
         Consumers can compare versions to detect changes without requiring
         explicit dirty flag clearing.
 
@@ -166,19 +188,45 @@ class _InterruptState:
                 if not interrupt_id.startswith(_AGENT_STREAM_INTERRUPT_ID_PREFIX)
             }
 
-        return {
+        data: dict[str, Any] = {
             "interrupts": {k: v.to_dict() for k, v in interrupts.items()},
             "context": self.context,
             "activated": self.activated,
         }
+        if self.pending_tool_execution is not None:
+            data["pending_tool_execution"] = asdict(self.pending_tool_execution)
+        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "_InterruptState":
-        """Initiailize interrupt state from serialized interrupt state.
+        """Initialize interrupt state from serialized interrupt state.
 
-        Interrupt state can be serialized with the `to_dict` method.
+        Interrupt state can be serialized with the `to_dict` method. Legacy tool execution context
+        is migrated into the typed pending state.
         """
         activated = data["activated"]
+        context: dict[str, Any] = data["context"].copy()
+        pending_tool_execution_data = data.get("pending_tool_execution")
+        legacy_tool_use_message = context.pop("tool_use_message", None)
+        legacy_tool_results = context.pop("tool_results", []) if legacy_tool_use_message is not None else []
+
+        pending_tool_execution: PendingToolExecution | None
+        if pending_tool_execution_data is not None:
+            try:
+                pending_tool_execution = PendingToolExecution(**pending_tool_execution_data)
+            except TypeError as error:
+                # Avoid importing the types package while this module is still initializing.
+                from .types.exceptions import SessionException
+
+                raise SessionException(f"Failed to restore pending tool execution state: {error}") from error
+        elif legacy_tool_use_message is not None:
+            pending_tool_execution = PendingToolExecution(
+                assistant_message=cast("Message", legacy_tool_use_message),
+                completed_tool_results=cast(list["ToolResult"], legacy_tool_results),
+            )
+        else:
+            pending_tool_execution = None
+
         return cls(
             interrupts={
                 interrupt_id: Interrupt(**interrupt_data)
@@ -186,6 +234,7 @@ class _InterruptState:
                 # Mirror to_dict's filter — don't revive a stale response as a standing approval.
                 if activated or not interrupt_id.startswith(_AGENT_STREAM_INTERRUPT_ID_PREFIX)
             },
-            context=data["context"],
+            context=context,
             activated=activated,
+            pending_tool_execution=pending_tool_execution,
         )

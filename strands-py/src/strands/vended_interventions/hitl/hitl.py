@@ -296,6 +296,14 @@ class HumanInTheLoop(InterventionHandler):
                         tool_name,
                     )
                     return ClassifierResult(requires_human_in_the_loop=True)
+                decision: Any = raw_result.requires_human_in_the_loop
+                if not isinstance(decision, bool):
+                    logger.warning(
+                        "tool=<%s> | classifier returned a non-boolean decision (%r), defaulting to approval required",
+                        tool_name,
+                        decision,
+                    )
+                    return ClassifierResult(requires_human_in_the_loop=True)
                 return raw_result
             except Exception as error:
                 logger.warning(

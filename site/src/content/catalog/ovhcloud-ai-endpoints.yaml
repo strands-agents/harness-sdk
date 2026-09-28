@@ -4,6 +4,7 @@ integrationType: model-provider
 maintainedBy: strands
 languages:
   python: {}
+  typescript: {}
 github: https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/openai.py
 docsPage: docs/integrations/model-providers/ovhcloud-ai-endpoints
 addedDate: 2026-03-20

@@ -50,7 +50,9 @@ from ._bedrock_kb_test_helpers import (
     wait_for_indexed,
 )
 
-pytestmark = pytest.mark.asyncio
+# Bedrock KB ingestion is eventually consistent and routinely exceeds the global 90s per-test cap
+# once indexing (up to 120s), agent turns, and the follow-on search poll are serialized; raise it.
+pytestmark = [pytest.mark.asyncio, pytest.mark.timeout(300)]
 
 # The manager's default tool names (memory_manager.py: ``config.name ... else "search_memory"`` /
 # ``"add_memory"``). Kept here so an assertion can't silently go stale if a default changes.
@@ -264,7 +266,7 @@ class TestExtraction:
 
         # No flush: the trigger fires on its own; the write is in the background.
         assert await _wait_for(lambda: len(ids) > 0)
-        assert await search_until(store, marker, lambda content: marker in content) is not None
+        assert await search_until(store, marker, lambda entry: marker in entry.content) is not None
 
         # Drain any still-in-flight background writes so they're captured before cleanup.
         await memory_manager.flush()
@@ -295,7 +297,7 @@ class TestExtraction:
         # Turn 2: the trigger fires, draining buffered messages from both turns.
         await agent.invoke_async("Thanks. Keep that in mind.")
         assert await _wait_for(lambda: len(ids) > 0)
-        assert await search_until(store, marker, lambda content: marker in content) is not None
+        assert await search_until(store, marker, lambda entry: marker in entry.content) is not None
 
         await memory_manager.flush()
 
@@ -326,7 +328,7 @@ class TestExtraction:
         # flush() bypasses the trigger schedule and force-saves the buffered turn on demand.
         await memory_manager.flush()
         assert len(ids) > 0
-        assert await search_until(store, marker, lambda content: marker in content) is not None
+        assert await search_until(store, marker, lambda entry: marker in entry.content) is not None
 
 
 # --------------------------------------------------------------------------- #
@@ -530,4 +532,4 @@ class TestAddMemoryTool:
 
         assert _has_tool_use(agent.messages, ADD_TOOL)
         assert len(ids) > 0
-        assert await search_until(store, marker, lambda content: marker in content) is not None
+        assert await search_until(store, marker, lambda entry: marker in entry.content) is not None

@@ -175,25 +175,26 @@ def _build_str_replace_result(
     Raises:
         ValueError: If ``old_str`` does not appear exactly once.
     """
-    file_content = original_content.replace("\t", "        ")
-    expanded_old = old_str.replace("\t", "        ")
-    expanded_new = new_str.replace("\t", "        ") if new_str else ""
+    if not old_str:
+        raise ValueError("No replacement was performed, old_str must not be empty.")
 
-    occurrences = file_content.count(expanded_old)
+    replacement = new_str or ""
+
+    occurrences = original_content.count(old_str)
     if occurrences == 0:
         raise ValueError(f"No replacement was performed, old_str `{old_str}` did not appear verbatim in {file_path}.")
     if occurrences > 1:
-        lines = file_content.split("\n")
-        line_numbers = [i + 1 for i, line in enumerate(lines) if expanded_old in line]
+        lines = original_content.split("\n")
+        line_numbers = [i + 1 for i, line in enumerate(lines) if old_str in line]
         raise ValueError(
             f"No replacement was performed. Multiple occurrences of old_str `{old_str}` in lines "
             f"{line_numbers}. Please ensure it is unique"
         )
 
-    new_content = file_content.replace(expanded_old, expanded_new, 1)
-    replacement_line = len(file_content[: file_content.index(expanded_old)].split("\n")) - 1
-    inserted_lines = len(expanded_new.split("\n"))
-    original_lines = len(expanded_old.split("\n"))
+    new_content = original_content.replace(old_str, replacement, 1)
+    replacement_line = len(original_content[: original_content.index(old_str)].split("\n")) - 1
+    inserted_lines = len(replacement.split("\n"))
+    original_lines = len(old_str.split("\n"))
     line_difference = inserted_lines - original_lines
 
     new_lines = new_content.split("\n")
@@ -218,10 +219,7 @@ def _build_insert_result(original_content: str, insert_line: int, new_str: str) 
     Raises:
         ValueError: If ``insert_line`` is out of bounds.
     """
-    file_text = original_content.replace("\t", "        ")
-    expanded_new = new_str.replace("\t", "        ")
-
-    file_text_lines = file_text.split("\n")
+    file_text_lines = original_content.split("\n")
     n_lines = len(file_text_lines)
 
     if insert_line < 0 or insert_line > n_lines:
@@ -230,10 +228,10 @@ def _build_insert_result(original_content: str, insert_line: int, new_str: str) 
             f"of the file: [0, {n_lines}]"
         )
 
-    new_str_lines = expanded_new.split("\n")
+    new_str_lines = new_str.split("\n")
     new_file_text_lines = (
         new_str_lines
-        if file_text == ""
+        if original_content == ""
         else [*file_text_lines[:insert_line], *new_str_lines, *file_text_lines[insert_line:]]
     )
 

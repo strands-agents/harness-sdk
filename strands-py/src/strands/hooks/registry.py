@@ -13,13 +13,16 @@ import logging
 from collections.abc import Awaitable, Generator
 from dataclasses import dataclass
 from itertools import groupby
-from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Any, Generic, Protocol, runtime_checkable
+
+from typing_extensions import TypeVar
 
 from ..interrupt import Interrupt, InterruptException
 from ._type_inference import infer_event_types
 
 if TYPE_CHECKING:
     from ..agent import Agent
+    from ..types.agent import LocalAgent
 
 logger = logging.getLogger(__name__)
 
@@ -92,15 +95,19 @@ class BaseHookEvent:
         raise AttributeError(f"Property {name} is not writable")
 
 
+_LocalAgentT = TypeVar("_LocalAgentT", bound="LocalAgent", default="Agent", covariant=True)
+"""Agent type carried by hook events."""
+
+
 @dataclass
-class HookEvent(BaseHookEvent):
+class HookEvent(BaseHookEvent, Generic[_LocalAgentT]):
     """Base class for single agent hook events.
 
     Attributes:
         agent: The agent instance that triggered this event.
     """
 
-    agent: "Agent"
+    agent: _LocalAgentT
 
 
 TEvent = TypeVar("TEvent", bound=BaseHookEvent, contravariant=True)

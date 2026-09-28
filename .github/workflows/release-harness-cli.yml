@@ -1,0 +1,448 @@
+name: "Harness CLI: Release"
+
+# Manual release of the Strands CLI (`@strands-agents/cli`) to npm. Mirrors the
+# SDK's release-typescript.yml / release-harness-ts.yml, retargeted to the CLI:
+# tag prefix `harness-cli/v*`, and the harness-cli-* reusable workflows.
+#
+# Shape: scan -> test-lint / integ / audit / pack -> inspect -> notes ->
+#        approve -> tag + release -> publish -> verify.
+#
+# The CLI depends on @strands-agents/harness and @strands-agents/sdk as version
+# RANGES (< 2.0.0 / < 1.18.0), resolved from the registry at install time -- so
+# there is no exact-pin or check-library-published gate. Exported projects pull
+# the harness from npm / PyPI too, so the tarball carries no vendored library.
+#
+# One-time setup before the first non-dry run:
+#   - GitHub environments `release-gate` and `npm` (already used by other releases).
+#   - The package must exist on npm before a trusted publisher can be added:
+#     bootstrap-publish it once by hand, then register this repo + THIS workflow
+#     file (environment `npm`) under the package's Trusted Publishing settings.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Explicit version, e.g. 1.4.0 (no leading v, no prefix).'
+        required: true
+        type: string
+      sha:
+        description: 'Optional commit SHA to release (must be an ancestor of origin/main). Defaults to current origin/main.'
+        required: false
+        default: ''
+        type: string
+      dry_run:
+        description: 'Skip approval + tag + publish. Build/inspect/notes still run so you can review the artifact on the run page.'
+        required: true
+        default: true
+        type: boolean
+      run_integ_tests:
+        description: 'Run integration tests. No effect on upstream (integ always runs there). On a fork: false skips integ; true runs integ but requires the fork to have its own AWS credentials configured.'
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: release-harness-cli
+  cancel-in-progress: false
+
+jobs:
+  scan-commits:
+    name: Resolve SHA and validate version
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions:
+      contents: read
+    outputs:
+      release_sha: ${{ steps.scan.outputs.release_sha }}
+      prev_tag: ${{ steps.scan.outputs.prev_tag }}
+      new_tag: ${{ steps.scan.outputs.new_tag }}
+      package_name: ${{ steps.scan.outputs.package_name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Resolve SHA, find previous tag, validate version
+        id: scan
+        env:
+          NEW_VERSION: ${{ inputs.version }}
+          SHA_INPUT: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+
+          # 1. Validate the typed version (bare semver, no prefix).
+          if ! [[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version '$NEW_VERSION' is not bare semver (expected MAJOR.MINOR.PATCH, no 'v')."
+            exit 1
+          fi
+
+          # 2. Resolve the SHA. Default to origin/main; a typed sha is accepted
+          #    only if it is an ancestor of origin/main.
+          if [ -n "$SHA_INPUT" ]; then
+            RELEASE_SHA=$(git rev-parse --verify "$SHA_INPUT^{commit}" 2>/dev/null) || {
+              echo "::error::sha '$SHA_INPUT' is not a valid commit."
+              exit 1
+            }
+            if ! git merge-base --is-ancestor "$RELEASE_SHA" origin/main; then
+              echo "::error::sha $RELEASE_SHA is not an ancestor of origin/main -- release only from main history."
+              exit 1
+            fi
+          else
+            RELEASE_SHA=$(git rev-parse origin/main)
+          fi
+
+          # 3. Pick tag prefix and resolve previous tag. A baseline is required.
+          TAG_PREFIX="harness-cli/v"
+          PREV_TAG=$(git tag --list "${TAG_PREFIX}*" --sort=-v:refname | head -n1)
+          if [ -z "$PREV_TAG" ]; then
+            echo "::error::No prior tag matching ${TAG_PREFIX}* -- refusing to release without a baseline. (Fork-testing? Push a baseline tag first, e.g. \`git tag ${TAG_PREFIX}0.0.1 <sha> && git push origin ${TAG_PREFIX}0.0.1\`.)"
+            exit 1
+          fi
+          PREV_VERSION="${PREV_TAG#"${TAG_PREFIX}"}"
+          NEW_TAG="${TAG_PREFIX}${NEW_VERSION}"
+
+          # 4. Reject duplicate / non-monotonic / pre-existing tags, and require a
+          #    single-step increment (major, minor, or patch).
+          if [ "$NEW_VERSION" = "$PREV_VERSION" ]; then
+            echo "::error::version $NEW_VERSION matches existing tag $PREV_TAG."
+            exit 1
+          fi
+          HIGHER=$(printf '%s\n%s\n' "$PREV_VERSION" "$NEW_VERSION" | sort -V | tail -n1)
+          if [ "$HIGHER" != "$NEW_VERSION" ]; then
+            echo "::error::version $NEW_VERSION is not greater than previous $PREV_VERSION."
+            exit 1
+          fi
+          if ! [[ "$PREV_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::previous tag version '$PREV_VERSION' is not bare semver -- cannot compute the increment baseline."
+            exit 1
+          fi
+          IFS=. read -r P_MAJ P_MIN P_PAT <<< "$PREV_VERSION"
+          VALID="$((P_MAJ+1)).0.0 ${P_MAJ}.$((P_MIN+1)).0 ${P_MAJ}.${P_MIN}.$((P_PAT+1))"
+          case " $VALID " in
+            *" $NEW_VERSION "*) ;;
+            *)
+              echo "::error::version $NEW_VERSION is not a single increment of $PREV_VERSION (expected one of: $VALID)."
+              exit 1;;
+          esac
+          if git rev-parse --verify "refs/tags/$NEW_TAG" >/dev/null 2>&1; then
+            echo "::error::tag $NEW_TAG already exists."
+            exit 1
+          fi
+
+          # 5. Sanity-check: at least one commit since prev tag.
+          COUNT=$(git rev-list --count "$PREV_TAG..$RELEASE_SHA")
+          if [ "$COUNT" = "0" ]; then
+            echo "::error::no commits between $PREV_TAG and $RELEASE_SHA -- nothing to release."
+            exit 1
+          fi
+
+          PACKAGE_NAME=$(jq -r .name strands-cli/package.json)
+
+          {
+            echo "release_sha=$RELEASE_SHA"
+            echo "prev_tag=$PREV_TAG"
+            echo "new_tag=$NEW_TAG"
+            echo "package_name=$PACKAGE_NAME"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Release scan"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Package | \`$PACKAGE_NAME\` (npm) |"
+            echo "| Previous tag | \`$PREV_TAG\` (v$PREV_VERSION) |"
+            echo "| Proposed tag | \`$NEW_TAG\` (v$NEW_VERSION) |"
+            echo "| Pinned SHA | \`$RELEASE_SHA\` |"
+            echo "| Commits since prev tag | **$COUNT** |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Build + lint + unit-test gate ──────────────────────────────────────
+  test-lint:
+    name: Harness CLI test + lint
+    needs: scan-commits
+    uses: ./.github/workflows/harness-cli-test-lint.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ needs.scan-commits.outputs.release_sha }}
+
+  # ── Integration tests ──────────────────────────────────────────────────
+  integ:
+    name: Harness CLI integration tests
+    needs: scan-commits
+    if: github.event.repository.fork != true || inputs.run_integ_tests == true
+    uses: ./.github/workflows/harness-cli-integration-test.yml
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: read
+    secrets: inherit
+    with:
+      ref: ${{ needs.scan-commits.outputs.release_sha }}
+
+  # ── Security audit (informational) ─────────────────────────────────────
+  security-audit:
+    name: Harness CLI security audit
+    needs: scan-commits
+    uses: ./.github/workflows/harness-cli-security-audit.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ needs.scan-commits.outputs.release_sha }}
+
+  # ── Pack + install smoke test (uploads harness-cli-npm-build-output) ───
+  package-pack:
+    name: Harness CLI pack install smoke test
+    needs: scan-commits
+    uses: ./.github/workflows/harness-cli-test-package-pack.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ needs.scan-commits.outputs.release_sha }}
+      version: ${{ inputs.version }}
+
+  # ── Inspect the packed tarball ─────────────────────────────────────────
+  inspect:
+    name: Inspect npm tarball
+    needs: [scan-commits, package-pack]
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions:
+      contents: read
+    steps:
+      - name: Download build output
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: harness-cli-npm-build-output
+          path: dist-npm
+
+      - name: List tarball contents + package.json
+        run: |
+          set -euo pipefail
+          for tgz in dist-npm/*.tgz; do
+            echo "::group::$tgz contents"; tar tzf "$tgz"; echo "::endgroup::"
+            echo "::group::$tgz package.json"; tar -xOzf "$tgz" package/package.json; echo "::endgroup::"
+          done
+
+      - name: Assert exactly one tarball, stamped with the typed name + version, bundling harness-py
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+          EXPECTED_NAME: ${{ needs.scan-commits.outputs.package_name }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          tgzs=(dist-npm/*.tgz)
+          if [ "${#tgzs[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly 1 tarball under dist-npm/, found ${#tgzs[@]}."
+            exit 1
+          fi
+          name=$(tar -xOzf "${tgzs[0]}" package/package.json | jq -r .name)
+          version=$(tar -xOzf "${tgzs[0]}" package/package.json | jq -r .version)
+          if [ "$name" != "$EXPECTED_NAME" ] || [ "$version" != "$EXPECTED_VERSION" ]; then
+            echo "::error::${tgzs[0]}: is $name@$version, expected $EXPECTED_NAME@$EXPECTED_VERSION."
+            exit 1
+          fi
+          echo "${tgzs[0]} is $name@$version"
+
+      - name: Upload verified tarball for publish
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: harness-cli-npm-pack-bundle
+          path: dist-npm/*.tgz
+          if-no-files-found: error
+          retention-days: 30
+
+  # ── Draft notes grouped by commit type ─────────────────────────────────
+  draft-notes:
+    name: Draft release notes (grouped by commit type)
+    needs: [scan-commits, test-lint, integ, security-audit, package-pack, inspect]
+    if: |
+      always() &&
+      needs.scan-commits.result == 'success' &&
+      needs.test-lint.result == 'success' &&
+      (needs.integ.result == 'success' || needs.integ.result == 'skipped') &&
+      needs.security-audit.result == 'success' &&
+      needs.package-pack.result == 'success' &&
+      needs.inspect.result == 'success'
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.scan-commits.outputs.release_sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Render notes
+        env:
+          PREV_TAG: ${{ needs.scan-commits.outputs.prev_tag }}
+          NEW_REF: ${{ needs.scan-commits.outputs.release_sha }}
+          NEW_TAG: ${{ needs.scan-commits.outputs.new_tag }}
+        run: |
+          set -euo pipefail
+          git log --no-merges --pretty=format:'%h%x09%s' "$PREV_TAG..$NEW_REF" \
+            | NEW_TAG="$NEW_TAG" PREV_TAG="$PREV_TAG" \
+              node .github/scripts/group-release-notes.mjs > release-notes.md
+
+      - name: Render release summary
+        env:
+          PACKAGE_NAME: ${{ needs.scan-commits.outputs.package_name }}
+          NEW_TAG: ${{ needs.scan-commits.outputs.new_tag }}
+          RELEASE_SHA: ${{ needs.scan-commits.outputs.release_sha }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          IS_FORK: ${{ github.event.repository.fork }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Release proposal"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Package | \`$PACKAGE_NAME\` (npm) |"
+            echo "| Proposed tag | \`$NEW_TAG\` |"
+            echo "| Pinned SHA | \`$RELEASE_SHA\` |"
+            echo "| Dry run | \`$DRY_RUN\` |"
+            echo "| Running on fork | \`$IS_FORK\` |"
+            echo ""
+            echo "> Reviewers: the verified tarball is uploaded as \`harness-cli-npm-pack-bundle\` on this run's page. Download and \`npm install -g\` it in a fresh tmpdir to sanity-check before approving."
+            echo ""
+            echo "### Drafted notes"
+            echo ""
+            cat release-notes.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload release notes artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: release-notes
+          path: release-notes.md
+          retention-days: 30
+
+  # ── Reviewer approval (skipped on dry runs) ────────────────────────────
+  approve-release:
+    name: Wait for reviewer approvals
+    needs: [scan-commits, draft-notes]
+    if: inputs.dry_run != true
+    runs-on: strands-agents_ubuntu-latest_4-core
+    environment:
+      name: release-gate
+    permissions: {}
+    steps:
+      - name: Acknowledge approval
+        env:
+          NEW_TAG: ${{ needs.scan-commits.outputs.new_tag }}
+          RELEASE_SHA: ${{ needs.scan-commits.outputs.release_sha }}
+        run: |
+          echo "Approved to release $NEW_TAG at $RELEASE_SHA."
+
+  # ── Tag + GitHub release (before publish) ──────────────────────────────
+  create-gh-release:
+    name: Create GitHub release
+    needs: [scan-commits, draft-notes, approve-release]
+    if: inputs.dry_run != true
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.scan-commits.outputs.release_sha }}
+          persist-credentials: true
+
+      - name: Download release notes artifact
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: release-notes
+
+      - name: Tag the pinned SHA and create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_TAG: ${{ needs.scan-commits.outputs.new_tag }}
+          RELEASE_SHA: ${{ needs.scan-commits.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          # Push the tag over git rather than through the releases API: that path
+          # returns 403 for the GITHUB_TOKEN (cli/cli#9514); a ref push works.
+          if ! git ls-remote --exit-code --tags origin "refs/tags/$NEW_TAG" >/dev/null 2>&1; then
+            git tag "$NEW_TAG" "$RELEASE_SHA"
+            git push origin "refs/tags/$NEW_TAG"
+          fi
+
+          if ! gh release view "$NEW_TAG" >/dev/null 2>&1; then
+            gh release create "$NEW_TAG" \
+              --title "$NEW_TAG" \
+              --notes-file release-notes.md
+          fi
+
+  # ── Publish to npm ─────────────────────────────────────────────────────
+  publish-npm:
+    name: Publish to npm
+    needs: [scan-commits, inspect, approve-release, create-gh-release]
+    if: inputs.dry_run != true
+    runs-on: strands-agents_ubuntu-latest_4-core
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/${{ needs.scan-commits.outputs.package_name }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Update npm to latest
+        # Trusted publishing needs npm >= 11.5.1.
+        run: npm install -g npm@latest
+
+      - name: Download verified tarball
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: harness-cli-npm-pack-bundle
+          path: dist-npm
+
+      - name: Publish to npm
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          tgzs=(dist-npm/*.tgz)
+          if [ "${#tgzs[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly 1 tarball under dist-npm/, found ${#tgzs[@]}."
+            ls -la dist-npm/ || true
+            exit 1
+          fi
+          # ./ prefix: npm treats a bare "dir/file.tgz" as a git spec.
+          npm publish "./${tgzs[0]}" --access public --tag latest
+
+  # ── Post-publish smoke check ───────────────────────────────────────────
+  verify-published:
+    name: Verify version on npm
+    needs: [scan-commits, publish-npm]
+    if: inputs.dry_run != true
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions: {}
+    steps:
+      - name: Poll npm for the new version
+        env:
+          PACKAGE_NAME: ${{ needs.scan-commits.outputs.package_name }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            if curl -sf "https://registry.npmjs.org/$PACKAGE_NAME/$VERSION?t=$(date +%s)" >/dev/null; then
+              echo "$PACKAGE_NAME@$VERSION is live on npm."
+              exit 0
+            fi
+            echo "attempt $i/30: not visible yet, retrying in 10s..."
+            sleep 10
+          done
+          echo "::error::$PACKAGE_NAME@$VERSION not visible on npm after 5 minutes."
+          exit 1

@@ -1,0 +1,210 @@
+---
+import anthropic from '../assets/logos/anthropic.svg?raw';
+import google from '../assets/logos/google.svg?raw';
+import writer from '../assets/logos/writer.svg?raw';
+import vercel from '../assets/logos/vercel.svg?raw';
+import llama from '../assets/logos/llama.svg?raw';
+import mistral from '../assets/logos/mistral.svg?raw';
+import ollama from '../assets/logos/ollama.svg?raw';
+import ollamaText from '../assets/logos/ollama-text.svg?raw';
+import openai from '../assets/logos/openai.svg?raw';
+
+// Mobile reflows these 8 providers from 2 rows of 4 into 2 columns × 4 rows.
+const row1 = [
+  { name: 'Anthropic', svg: anthropic, width: 295.273 },
+  { name: 'Google', svg: google, width: 138.154 },
+  { name: 'Writer', svg: writer, width: 111.606 },
+  { name: 'Vercel', svg: vercel, width: 172.242 },
+];
+
+const row2 = [
+  { name: 'Llama', svg: llama, width: 163.04 },
+  { name: 'Mistral', svg: mistral, width: 141.485 },
+  // Ollama is icon + wordmark side-by-side (composed inline below).
+  { name: 'Ollama', width: 173.824, composed: true },
+  { name: 'OpenAI', svg: openai, width: 156.671 },
+];
+---
+
+<section class="logo-farm" aria-label="Model providers">
+  <div class="logo-farm__inner">
+    <p class="logo-farm__eyebrow">Bring your own model — works with every major provider</p>
+    <div class="logo-farm__row">
+      {row1.map((logo) => (
+        <div class="logo-farm__cell" style={`--logo-w: ${logo.width}px;`} role="img" aria-label={logo.name}>
+          <span class="logo-farm__logo" set:html={logo.svg} />
+        </div>
+      ))}
+    </div>
+    <div class="logo-farm__row">
+      {row2.map((logo) => (
+        <div class="logo-farm__cell" style={`--logo-w: ${logo.width}px;`} role="img" aria-label={logo.name}>
+          {logo.composed ? (
+            <span class="logo-farm__logo logo-farm__logo--ollama">
+              <span class="logo-farm__ollama-icon" set:html={ollama} />
+              <span class="logo-farm__ollama-text" set:html={ollamaText} />
+            </span>
+          ) : (
+            <span class="logo-farm__logo" set:html={logo.svg} />
+          )}
+        </div>
+      ))}
+    </div>
+  </div>
+</section>
+
+<style>
+  .logo-farm {
+    background: var(--bg);
+    color: var(--fg);
+    width: 100%;
+    padding: 79px 55px;
+  }
+
+  .logo-farm__inner {
+    display: flex;
+    flex-direction: column;
+    gap: 47px;
+    max-width: 1332px;
+    margin: 0 auto;
+  }
+
+  .logo-farm__eyebrow {
+    margin: 0;
+    text-align: center;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 500;
+    font-size: 14px;
+    letter-spacing: 1.4px;
+    line-height: 1.4;
+    color: var(--use-case-muted, var(--strands-grey-600));
+  }
+
+  .logo-farm__row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    align-items: center;
+    justify-items: center;
+    gap: 48px;
+  }
+
+  .logo-farm__cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 48px;
+  }
+
+  .logo-farm__logo {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    max-width: 100%;
+  }
+
+  .logo-farm__logo :global(svg) {
+    display: block;
+    width: auto;
+    height: 36px;
+    max-width: 100%;
+  }
+
+  /* Anthropic renders taller than the others because its viewBox is a wide
+     strip; force it to the same visual height. */
+  .logo-farm__cell[aria-label='Anthropic'] :global(svg) {
+    height: 30px;
+  }
+
+  .logo-farm__cell[aria-label='Google'] :global(svg) {
+    height: 40px;
+  }
+
+  .logo-farm__cell[aria-label='Vercel'] :global(svg) {
+    height: 30px;
+  }
+
+  .logo-farm__cell[aria-label='Llama'] :global(svg) {
+    height: 40px;
+  }
+
+  .logo-farm__cell[aria-label='OpenAI'] :global(svg) {
+    height: 38px;
+  }
+
+  /* Ollama = icon + wordmark placed inline. */
+  .logo-farm__logo--ollama {
+    display: inline-flex;
+    align-items: center;
+    gap: 11px;
+  }
+
+  .logo-farm__ollama-icon :global(svg) {
+    display: block;
+    width: auto;
+    height: 38px;
+  }
+
+  .logo-farm__ollama-text :global(svg) {
+    display: block;
+    width: auto;
+    height: 30px;
+  }
+
+  /* ---------- Mobile (< 768px) ---------- */
+  @media (max-width: 767px) {
+    .logo-farm {
+      padding: 40px 19px;
+    }
+
+    .logo-farm__inner {
+      gap: 32px;
+    }
+
+    /* 4-across grid becomes 2-across; the two rows stack, giving 2×4. */
+    .logo-farm__row {
+      grid-template-columns: repeat(2, 1fr);
+      gap: 32px 24px;
+    }
+
+    .logo-farm__cell {
+      height: 40px;
+    }
+
+    .logo-farm__logo :global(svg) {
+      height: 28px;
+    }
+
+    .logo-farm__cell[aria-label='Anthropic'] :global(svg) {
+      height: 22px;
+    }
+
+    .logo-farm__cell[aria-label='Google'] :global(svg) {
+      height: 30px;
+    }
+
+    .logo-farm__cell[aria-label='Vercel'] :global(svg) {
+      height: 22px;
+    }
+
+    .logo-farm__cell[aria-label='Llama'] :global(svg) {
+      height: 30px;
+    }
+
+    .logo-farm__cell[aria-label='OpenAI'] :global(svg) {
+      height: 28px;
+    }
+
+    .logo-farm__ollama-icon :global(svg) {
+      height: 28px;
+    }
+
+    .logo-farm__ollama-text :global(svg) {
+      height: 22px;
+    }
+
+    .logo-farm__logo--ollama {
+      gap: 8px;
+    }
+  }
+</style>

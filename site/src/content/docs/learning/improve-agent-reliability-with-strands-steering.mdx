@@ -1,0 +1,117 @@
+---
+title: "Lesson 7: Improve Agent Reliability with Strands Steering"
+description: "System prompts set the agent's general personality and rules, but they're blunt. You can't easily say 'only for this next tool call, format the output as JSON' or 'when the user mentions billing, always check their account status first' without bloating the prompt with conditionals the model has to parse every single turn."
+redirectFrom:
+  - docs/community/learning/lesson7-improve-agent-reliability-with-strands-steering
+---
+
+<YouTube id="5rwTCUFV4Ak" title="Lesson 7: Improve Agent Reliability with Strands Steering" />
+*[Watch on YouTube](https://www.youtube.com/watch?v=5rwTCUFV4Ak&list=PLDzwjhH-4yhU&index=7)*
+
+:::note[About this lesson]
+The videos in this course are a snapshot in time. Strands is under active development, so the code featured on this page reflects the most up-to-date patterns, but the concepts covered in the video still apply. When in doubt, trust the code.
+:::
+
+*Code for this lesson: [`samples/07-steering`](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/07-steering)*
+
+## Keep Agents on the Rails
+
+Instructions in prompts aren't always reliably followed, especially as context grows. Steering lets you inspect and influence agent behavior at runtime. A steering handler looks at what the agent is about to do and returns one of three outcomes: **Proceed**, **Guide** (send feedback to the model and let it try again), or **Interrupt** (pause for a human).
+
+In a published benchmark, Strands steering hooks achieved a [100% pass rate across 600 evaluation runs](https://strandsagents.com/blog/steering-accuracy-beats-prompts-workflows/), compared to 82.5% for prompt-based instructions and 80.8% for graph-based workflows.
+
+## Two Types of Steering
+
+| Type | How It Works | Use Case |
+| --- | --- | --- |
+| **Deterministic** (`SteeringHandler`) | Python logic inspects the events ledger | Enforcing workflow ordering, validating parameters |
+| **LLM-based** (`LLMSteeringHandler`) | A second agent judges the output | Tone/policy compliance, nuanced quality checks |
+
+## Deterministic Steering: Enforce the Refund Workflow
+
+Our customer service agent should never process a refund without first looking up the customer and checking their order history. Rather than hoping the prompt gets followed, a `SteeringHandler` checks the ledger of previous tool calls before `process_refund` is allowed to run:
+
+```python
+from strands.vended_plugins.steering import (
+    SteeringHandler, Proceed, Guide, ToolSteeringAction, LedgerProvider,
+)
+
+class RefundWorkflowHandler(SteeringHandler):
+    name = "refund-workflow"
+
+    def __init__(self):
+        super().__init__(context_providers=[LedgerProvider()])
+
+    async def steer_before_tool(self, *, agent, tool_use, **kwargs) -> ToolSteeringAction:
+        if tool_use.get("name") != "process_refund":
+            return Proceed(reason="Not a refund operation")
+
+        ledger = self.steering_context.data.get("ledger", {})
+        tool_calls = ledger.get("tool_calls", [])
+
+        # Must look up customer first
+        customer_verified = any(
+            c["tool_name"] == "lookup_customer" and c["status"] == "success"
+            for c in tool_calls
+        )
+        if not customer_verified:
+            return Guide(reason="You must look up the customer first.")
+
+        # Must check order history
+        order_checked = any(
+            c["tool_name"] == "get_order_history" and c["status"] == "success"
+            for c in tool_calls
+        )
+        if not order_checked:
+            return Guide(reason="You must check order history first.")
+
+        return Proceed(reason="Refund workflow validated")
+```
+
+When the handler returns `Guide`, the tool call is blocked and the reason is fed back to the model, which then does the missing step and tries again.
+
+## LLM-Based Steering: Tone Guardrail
+
+Some rules can't be expressed as Python conditionals. "Don't overpromise timelines" requires judgment. An `LLMSteeringHandler` uses a second model to evaluate the response against a policy and guide the agent if it falls short:
+
+```python
+from strands.vended_plugins.steering import LLMSteeringHandler
+
+class ToneGuardrailHandler(LLMSteeringHandler):
+    name = "tone-guardrail"
+
+    def __init__(self):
+        super().__init__(
+            system_prompt="""Evaluate the customer service response against these policies:
+            - Don't overpromise timelines
+            - Acknowledge customer frustration
+            - Don't offer unauthorized compensation
+            - Keep responses concise
+            If violated, provide specific guidance on what to fix."""
+        )
+```
+
+## Composing Everything into an Agent
+
+Steering handlers are plugins, so they stack alongside skills and any other plugin:
+
+```python
+from strands import Agent
+
+agent = Agent(
+    tools=[lookup_customer, get_order_history, process_refund],
+    plugins=[
+        skills_plugin,              # On-demand workflow instructions
+        RefundWorkflowHandler(),    # Deterministic: enforce refund steps
+        tone_handler,               # LLM-based: enforce communication quality
+    ],
+    system_prompt=SYSTEM_PROMPT,
+)
+```
+
+📂 [customer_service_steering.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/07-steering/customer_service_steering.py) · [steering_handlers.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/07-steering/steering_handlers.py)
+
+## Resources
+
+- 📖 [Steering](/docs/user-guide/sdk/agents/interventions/steering/)
+- 📖 [Blog: Steering accuracy beats prompts and workflows](https://strandsagents.com/blog/steering-accuracy-beats-prompts-workflows/)

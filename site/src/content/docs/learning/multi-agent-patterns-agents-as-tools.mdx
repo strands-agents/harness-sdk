@@ -1,0 +1,109 @@
+---
+title: "Lesson 10: Multi-Agent Patterns: Agents as Tools"
+description: "This is where we cross from single-agent patterns into multi-agent orchestration, and we start with the most intuitive version: an agent that can call other agents the same way it calls any other tool."
+redirectFrom:
+  - docs/community/learning/lesson10-multi-agent-patterns-agents-as-tools
+---
+
+<YouTube id="_QcD5KBe3ZQ" title="Lesson 10: Multi-Agent Patterns: Agents as Tools" />
+*[Watch on YouTube](https://www.youtube.com/watch?v=_QcD5KBe3ZQ&list=PLDzwjhH-4yhU&index=10)*
+
+:::note[About this lesson]
+The videos in this course are a snapshot in time. Strands is under active development, so the code featured on this page reflects the most up-to-date patterns, but the concepts covered in the video still apply. When in doubt, trust the code.
+:::
+
+*Code for this lesson: [`samples/10-agents-as-tools`](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/10-agents-as-tools)*
+
+## Three Multi-Agent Patterns
+
+Strands provides three composable multi-agent patterns. Each solves a different coordination problem, and they can nest inside each other. This lesson covers the first; the next two lessons cover graphs and swarms.
+
+| Pattern | Structure | Use When |
+| --- | --- | --- |
+| **Agents as Tools** | Hub-and-spoke. Orchestrator calls specialists | Clear manager-specialist relationship, isolated context |
+| **Graph** | DAG with explicit edges | You can draw the workflow on a whiteboard |
+| **Swarm** | Autonomous handoffs, no predefined structure | The team needs to figure it out together |
+
+## Agents as Tools
+
+The simplest multi-agent pattern: one orchestrator agent calls specialist agents as tools. The orchestrator stays in control, decides when to delegate, and synthesizes the results.
+
+Each specialist gets its own isolated context window. That's the key benefit: a specialist can run noisy tools (log readers, web fetchers, verbose APIs) and process thousands of tokens of raw output, then hand back only a short conclusion. The orchestrator's context stays clean.
+
+### Pass the Agent Directly
+
+The quickest way. Put the agent in another agent's `tools` list and Strands wraps it automatically, using the agent's `name` and `description` as the tool spec:
+
+```python
+from strands import Agent
+from strands.vended_tools.web_fetch import web_fetch
+
+researcher = Agent(
+    name="researcher",
+    system_prompt="You are a research specialist. Find factual information.",
+    tools=[web_fetch],
+)
+
+writer = Agent(
+    name="writer",
+    system_prompt="You are a technical writer. Use the researcher to gather facts.",
+    tools=[researcher],  # Pass agent directly as a tool
+)
+
+writer("Research the FastAPI GitHub repo and write a 3-sentence summary.")
+```
+
+### Wrap with `@tool`
+
+For full control over the prompt, model selection, and how results are returned, wrap the specialist in a `@tool` function:
+
+```python
+from strands import Agent, tool
+from strands.models.bedrock import BedrockModel
+from strands.vended_tools.web_fetch import web_fetch
+
+orchestrator_model = BedrockModel(model_id="us.anthropic.claude-opus-5")
+specialist_model = BedrockModel(model_id="us.anthropic.claude-sonnet-5")
+
+@tool
+def research_assistant(query: str, depth: str = "normal") -> str:
+    """Research a topic and return sourced findings.
+
+    Args:
+        query: The research question
+        depth: How thorough - "quick", "normal", or "deep"
+    """
+    research_agent = Agent(
+        model=specialist_model,
+        system_prompt=f"You are a research specialist. Research depth: {depth}.",
+        tools=[web_fetch],
+        callback_handler=None,  # Run silently
+    )
+    response = research_agent(query)
+    return str(response)
+
+writer = Agent(
+    model=orchestrator_model,
+    system_prompt="You are a technical writer. Use the research assistant.",
+    tools=[research_assistant],
+)
+```
+
+📂 [agent_as_tool.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/10-agents-as-tools/agent_as_tool.py)
+
+Data flow: the orchestrator sends a string, the specialist runs its own loop, and returns a string. Context resets between calls, so each delegation starts clean.
+
+## Key Concepts
+
+- **The docstring is the routing logic.** It tells the orchestrator when to delegate. The model routes based on tool descriptions; you never write an `if` statement.
+- **Agent isolation.** Each sub-agent has its own context window, model, and tools. One agent's context doesn't leak into another's.
+- **Orchestrator control.** The orchestrator decides when to call the specialist, what to ask, and how to use the response. It's a function call, not a handoff.
+- **Model heterogeneity.** Use a stronger model for the orchestrator (which reasons about what to delegate) and a cheaper model for specialists (which do focused work).
+- **Silent sub-agents.** `callback_handler=None` on sub-agents suppresses their streaming output so only the orchestrator streams to the user.
+
+Use this pattern when you have clearly separable domains, when you want one agent synthesizing everything, or when you need request/response semantics between agents.
+
+## Resources
+
+- 📖 [Agents as Tools](/docs/user-guide/sdk/multi-agent/agents-as-tools/)
+- 📖 [Multi-Agent Patterns Overview](/docs/user-guide/sdk/multi-agent/multi-agent-patterns/)

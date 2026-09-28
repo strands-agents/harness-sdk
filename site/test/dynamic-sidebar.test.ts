@@ -2,9 +2,13 @@ import { describe, it, expect } from 'vitest'
 import { getCollection } from 'astro:content'
 import {
   buildPythonApiSidebar,
+  buildCourseSidebar,
+  getPrevNextLinks,
   getDisplayName,
   type DocInfo,
   type SidebarEntry,
+  type SidebarGroup,
+  type SidebarLink,
 } from '../src/dynamic-sidebar'
 
 describe('getDisplayName', () => {
@@ -57,8 +61,8 @@ describe('buildPythonApiSidebar', () => {
 
   it('should create nested groups for deep module paths', () => {
     const docs: DocInfo[] = [
-      { id: 'docs/api/python/strands.experimental.bidi.types.events.mdx', title: 'strands.experimental.bidi.types.events' },
-      { id: 'docs/api/python/strands.experimental.bidi.types.io.mdx', title: 'strands.experimental.bidi.types.io' },
+      { id: 'docs/api/python/strands.experimental.bidi.types.mdx', title: 'strands.experimental.bidi.types' },
+      { id: 'docs/api/python/strands.experimental.bidi.models.mdx', title: 'strands.experimental.bidi.models' },
     ]
 
     const sidebar = buildPythonApiSidebar(docs, '')
@@ -68,18 +72,13 @@ describe('buildPythonApiSidebar', () => {
     expect(sidebar[0]?.type).toBe('group')
     expect(sidebar[0]?.label).toBe('Experimental')
 
-    // Navigate to bidi > types
     const experimental = sidebar[0] as Extract<SidebarEntry, { type: 'group' }>
     const bidi = experimental.entries[0] as Extract<SidebarEntry, { type: 'group' }>
     expect(bidi.label).toBe('Bidi')
 
-    const types = bidi.entries[0] as Extract<SidebarEntry, { type: 'group' }>
-    expect(types.label).toBe('Types')
-
-    // Should have events and io links
-    expect(types.entries).toHaveLength(2)
-    expect(types.entries.map((e) => e.label)).toContain('Events')
-    expect(types.entries.map((e) => e.label)).toContain('Io')
+    expect(bidi.entries).toHaveLength(2)
+    expect(bidi.entries.map((e) => e.label)).toContain('Models')
+    expect(bidi.entries.map((e) => e.label)).toContain('Types')
   })
 
   it('should mark current page as isCurrent', () => {
@@ -138,6 +137,122 @@ describe('buildPythonApiSidebar with real collection', () => {
 
     // Should have at least some entries
     expect(sidebar.length).toBeGreaterThan(0)
+  })
+})
+
+describe('buildCourseSidebar', () => {
+  const COURSE = { title: 'Agent Fundamentals with Strands', lessonIds: [] as string[] }
+
+  function makeDocs(ids: string[]): DocInfo[] {
+    return ids.map((id) => ({ id, title: id.split('/').pop()! }))
+  }
+
+  it('returns a single group of lesson links (no back-link)', () => {
+    const ids = ['docs/learning/alpha', 'docs/learning/beta', 'docs/learning/gamma']
+    const docs = makeDocs(ids)
+    const course = { ...COURSE, lessonIds: ids }
+    const sidebar = buildCourseSidebar(docs, ids[0]!, course)
+
+    expect(sidebar).toHaveLength(1)
+    expect(sidebar[0]?.type).toBe('group')
+  })
+
+  it('respects array order — lesson 10 after lesson 9 even if passed out of order in docs', () => {
+    // Docs provided in non-numeric order; lessonIds defines the order.
+    const ids = [
+      'docs/learning/lesson-1',
+      'docs/learning/lesson-2',
+      'docs/learning/lesson-9',
+      'docs/learning/lesson-10',
+      'docs/learning/lesson-11',
+    ]
+    const docs: DocInfo[] = [
+      { id: 'docs/learning/lesson-10', title: 'Lesson 10' },
+      { id: 'docs/learning/lesson-1', title: 'Lesson 1' },
+      { id: 'docs/learning/lesson-11', title: 'Lesson 11' },
+      { id: 'docs/learning/lesson-9', title: 'Lesson 9' },
+      { id: 'docs/learning/lesson-2', title: 'Lesson 2' },
+    ]
+    const course = { ...COURSE, lessonIds: ids }
+    const sidebar = buildCourseSidebar(docs, '', course)
+
+    const group = sidebar[0] as SidebarGroup
+    const labels = group.entries.map((e) => e.label)
+    expect(labels).toEqual(['Lesson 1', 'Lesson 2', 'Lesson 9', 'Lesson 10', 'Lesson 11'])
+  })
+
+  it('marks the current lesson as isCurrent', () => {
+    const ids = ['docs/learning/alpha', 'docs/learning/beta', 'docs/learning/gamma']
+    const docs = makeDocs(ids)
+    const course = { ...COURSE, lessonIds: ids }
+    const currentSlug = 'docs/learning/beta'
+    const sidebar = buildCourseSidebar(docs, currentSlug, course)
+
+    const group = sidebar[0] as SidebarGroup
+    const links = group.entries as SidebarLink[]
+    expect(links[0]?.isCurrent).toBe(false)
+    expect(links[1]?.isCurrent).toBe(true)
+    expect(links[2]?.isCurrent).toBe(false)
+  })
+
+  it('excludes ids not in lessonIds (non-course pages under docs/learning/)', () => {
+    const docs: DocInfo[] = [
+      { id: 'docs/learning/alpha', title: 'Alpha' },
+      { id: 'docs/learning/overview', title: 'Overview' },
+    ]
+    const course = { ...COURSE, lessonIds: ['docs/learning/alpha'] }
+    const sidebar = buildCourseSidebar(docs, '', course)
+
+    const group = sidebar[0] as SidebarGroup
+    expect(group.entries).toHaveLength(1)
+    expect((group.entries[0] as SidebarLink).label).toBe('Alpha')
+  })
+
+  it('returns an empty sidebar when zero lessonIds match', () => {
+    const docs: DocInfo[] = [{ id: 'docs/learning/overview', title: 'Overview' }]
+    const sidebar = buildCourseSidebar(docs, '', { ...COURSE, lessonIds: [] })
+
+    expect(sidebar).toHaveLength(0)
+  })
+
+  it('uses course.title as the group label', () => {
+    const ids = ['docs/learning/alpha']
+    const docs = makeDocs(ids)
+    const course = { title: 'My Custom Course', lessonIds: ids }
+    const sidebar = buildCourseSidebar(docs, '', course)
+
+    const group = sidebar[0] as SidebarGroup
+    expect(group.label).toBe('My Custom Course')
+  })
+})
+
+describe('getPrevNextLinks over buildCourseSidebar lessons', () => {
+  const ids = ['docs/learning/alpha', 'docs/learning/beta', 'docs/learning/gamma']
+  const docs: DocInfo[] = [
+    { id: 'docs/learning/alpha', title: 'Alpha' },
+    { id: 'docs/learning/beta', title: 'Beta' },
+    { id: 'docs/learning/gamma', title: 'Gamma' },
+  ]
+  const course = { title: 'Test Course', lessonIds: ids }
+
+  it('first lesson has no prev and next is the second lesson', () => {
+    const sidebar = buildCourseSidebar(docs, 'docs/learning/alpha', course)
+
+    const group = sidebar[0] as SidebarGroup
+    const { prev, next } = getPrevNextLinks(group.entries)
+
+    expect(prev).toBeUndefined()
+    expect(next?.label).toBe('Beta')
+  })
+
+  it('second lesson has prev first and next third', () => {
+    const sidebar = buildCourseSidebar(docs, 'docs/learning/beta', course)
+
+    const group = sidebar[0] as SidebarGroup
+    const { prev, next } = getPrevNextLinks(group.entries)
+
+    expect(prev?.label).toBe('Alpha')
+    expect(next?.label).toBe('Gamma')
   })
 })
 

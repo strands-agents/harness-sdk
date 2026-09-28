@@ -43,7 +43,7 @@ strands-ts/
 
 ### 1. Environment Setup
 
-See [CONTRIBUTING.md - TypeScript SDK](../CONTRIBUTING.md#typescript-sdk) for prerequisites (Node.js 20+, npm), installation, and verification commands.
+See [CONTRIBUTING.md - TypeScript SDK](../CONTRIBUTING.md#typescript-sdk) for prerequisites (Node.js 22+, npm), installation, and verification commands.
 
 ### 2. Making Changes
 

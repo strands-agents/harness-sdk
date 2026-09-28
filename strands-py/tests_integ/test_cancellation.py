@@ -31,7 +31,7 @@ async def test_cancel_with_bedrock():
     model by cancelling before the model call starts.
     """
 
-    agent = Agent(model=BedrockModel(model_id="anthropic.claude-3-haiku-20240307-v1:0"))
+    agent = Agent(model=BedrockModel(model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0"))
 
     # Cancel deterministically before the model call
     async def cancel_before_model(event: BeforeModelCallEvent):
@@ -56,7 +56,7 @@ async def test_cancel_during_streaming_bedrock():
     streaming API with a real Bedrock model.
     """
 
-    agent = Agent(model=BedrockModel(model_id="anthropic.claude-3-haiku-20240307-v1:0"))
+    agent = Agent(model=BedrockModel(model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0"))
 
     events = []
     async for event in agent.stream_async(
@@ -111,7 +111,7 @@ async def test_cancel_with_tools_bedrock():
         return a * b
 
     agent = Agent(
-        model=BedrockModel(model_id="anthropic.claude-3-haiku-20240307-v1:0"),
+        model=BedrockModel(model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0"),
         tools=[slow_calculation, another_calculation],
     )
 
@@ -137,7 +137,7 @@ async def test_cancel_from_thread_bedrock():
     is executing.
     """
 
-    agent = Agent(model=BedrockModel(model_id="anthropic.claude-3-haiku-20240307-v1:0"))
+    agent = Agent(model=BedrockModel(model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0"))
 
     # Cancel deterministically from a different thread before the model call
     def cancel_before_model(event: BeforeModelCallEvent):
@@ -154,3 +154,32 @@ async def test_cancel_from_thread_bedrock():
     )
 
     assert result.stop_reason == "cancelled"
+
+
+async def test_cancel_with_external_signal_bedrock():
+    """Test an external cancel_signal during streaming with Bedrock.
+
+    Verifies that a caller-owned event injected into stream_async cancels
+    the invocation and aborts the in-flight Bedrock response.
+    """
+
+    agent = Agent(model=BedrockModel(model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0"))
+    cancel_signal = threading.Event()
+
+    events = []
+    async for event in agent.stream_async(
+        "Write a detailed story about a space adventure. Make it at least 500 words long.",
+        cancel_signal=cancel_signal,
+    ):
+        events.append(event)
+        # Cancel after receiving the first model delta event
+        if "data" in event:
+            cancel_signal.set()
+        if event.get("result"):
+            break
+
+    result_event = next((e for e in events if e.get("result")), None)
+    assert result_event is not None
+    assert result_event["result"].stop_reason == "cancelled"
+    # The caller's event is never cleared by the agent.
+    assert cancel_signal.is_set()

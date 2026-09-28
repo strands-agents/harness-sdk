@@ -25,7 +25,7 @@ from strands.hooks import (
     HookRegistry,
     MessageAddedEvent,
 )
-from strands.interrupt import Interrupt, _InterruptState
+from strands.interrupt import Interrupt, PendingToolExecution, _InterruptState
 from strands.telemetry.metrics import EventLoopMetrics
 from strands.telemetry.tracer import Tracer
 from strands.tools.executors import ConcurrentToolExecutor, SequentialToolExecutor
@@ -161,6 +161,8 @@ def agent(model, system_prompt, messages, tool_registry, thread_pool, hook_regis
     mock.tool_executor = tool_executor
     mock._interrupt_state = _InterruptState()
     mock._cancel_signal = threading.Event()
+    mock._background_tasks = None
+    mock._observe_cancellation = mock._cancel_signal.is_set
     mock._model_state = {}
     mock._system_prompt_content = None
     mock._middleware_registry = strands._middleware.MiddlewareRegistry()
@@ -410,6 +412,8 @@ async def test_event_loop_cycle_tool_result(
         system_prompt_content=unittest.mock.ANY,
         invocation_state=unittest.mock.ANY,
         model_state=unittest.mock.ANY,
+        cancel_signal=unittest.mock.ANY,
+        agent_metadata=unittest.mock.ANY,
     )
 
 
@@ -926,6 +930,7 @@ async def test_request_state_initialization(alist):
     # not setting this to False results in endless recursion
     mock_agent._interrupt_state.activated = False
     mock_agent._cancel_signal = threading.Event()
+    mock_agent._observe_cancellation = mock_agent._cancel_signal.is_set
     mock_agent._system_prompt_content = None
     mock_agent.system_prompt = None
     mock_agent._model_state = {}
@@ -933,7 +938,7 @@ async def test_request_state_initialization(alist):
     mock_agent.messages = []
     mock_agent.tool_registry.get_all_tool_specs.return_value = []
     mock_agent.event_loop_metrics.start_cycle.return_value = (0, MagicMock())
-    mock_agent.hooks.invoke_callbacks_async = AsyncMock()
+    mock_agent.hooks.invoke_callbacks_async = AsyncMock(side_effect=lambda event: (event, []))
     mock_agent._append_messages = Agent._append_messages.__get__(mock_agent, Agent)
 
     # Call without providing request_state
@@ -1169,11 +1174,15 @@ async def test_event_loop_cycle_after_tools_order_and_message(agent, model, tool
 @pytest.mark.asyncio
 @pytest.mark.parametrize("executor_type", [SequentialToolExecutor, ConcurrentToolExecutor])
 @pytest.mark.parametrize(
-    ("end_turn", "expected_text"),
-    [(True, "Turn ended early by hook after tool execution"), ("stop now", "stop now")],
+    ("end_turn", "expected_content"),
+    [
+        (True, [{"text": "Turn ended early by hook after tool execution"}]),
+        ("stop now", [{"text": "stop now"}]),
+        ([{"text": "delegated"}], [{"text": "delegated"}]),
+    ],
 )
 async def test_event_loop_cycle_after_tools_end_turn_halts_loop(
-    agent, model, tool_stream, agenerator, alist, executor_type, end_turn, expected_text
+    agent, model, tool_stream, agenerator, alist, executor_type, end_turn, expected_content
 ):
     agent.tool_executor = executor_type()
 
@@ -1191,7 +1200,8 @@ async def test_event_loop_cycle_after_tools_end_turn_halts_loop(
     assert model.stream.call_count == 1
     tru_last_message = agent.messages[-1]
     assert tru_last_message["role"] == "assistant"
-    assert tru_last_message["content"] == [{"text": expected_text}]
+    assert tru_last_message["content"] == expected_content
+    assert events[-1]["stop"][1]["content"] == expected_content
 
 
 @pytest.mark.asyncio
@@ -1323,8 +1333,10 @@ async def test_event_loop_cycle_interrupts_preserved_when_after_tools_hook_raise
 
     # Interrupt state was preserved before the exception propagated.
     assert agent._interrupt_state.activated
-    assert agent._interrupt_state.context["tool_use_message"] == agent.messages[-1]
-    assert agent._interrupt_state.context["tool_results"] == []
+    assert agent._interrupt_state.pending_tool_execution == PendingToolExecution(
+        assistant_message=agent.messages[-1],
+        completed_tool_results=[],
+    )
 
 
 @pytest.mark.asyncio
@@ -1351,13 +1363,14 @@ async def test_event_loop_cycle_after_tools_not_fired_on_before_tools_interrupt(
 
 
 @pytest.mark.asyncio
-async def test_event_loop_cycle_after_tools_empty_string_end_turn_does_not_halt(
-    agent, model, tool_stream, agenerator, alist
+@pytest.mark.parametrize("falsy_end_turn", ["", []])
+async def test_event_loop_cycle_after_tools_falsy_end_turn_does_not_halt(
+    agent, model, tool_stream, agenerator, alist, falsy_end_turn
 ):
-    def set_empty_end_turn(event):
-        event.end_turn = ""
+    def set_falsy_end_turn(event):
+        event.end_turn = falsy_end_turn
 
-    agent.hooks.add_callback(AfterToolsEvent, set_empty_end_turn)
+    agent.hooks.add_callback(AfterToolsEvent, set_falsy_end_turn)
     model.stream.side_effect = [
         agenerator(tool_stream),
         agenerator([{"contentBlockDelta": {"delta": {"text": "done"}}}, {"contentBlockStop": {}}]),
@@ -1365,9 +1378,28 @@ async def test_event_loop_cycle_after_tools_empty_string_end_turn_does_not_halt(
 
     events = await alist(strands.event_loop.event_loop.event_loop_cycle(agent, invocation_state={}))
 
-    # An empty-string end_turn is falsy, so the loop continues to the next model call.
+    # A falsy end_turn does not halt — the loop continues to the next model call.
     assert events[-1]["stop"][0] == "end_turn"
     assert model.stream.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_event_loop_cycle_after_tools_end_turn_list_not_aliased(agent, model, tool_stream, agenerator, alist):
+    hook_list = [{"text": "from hook"}]
+
+    def set_list_end_turn(event):
+        event.end_turn = hook_list
+
+    agent.hooks.add_callback(AfterToolsEvent, set_list_end_turn)
+    model.stream.side_effect = [agenerator(tool_stream)]
+
+    await alist(strands.event_loop.event_loop.event_loop_cycle(agent, invocation_state={}))
+
+    # Mutate the hook's list after the invocation returns.
+    hook_list.append({"text": "MUTATED AFTER THE FACT"})
+
+    # The committed message must be unchanged — the event loop shallow-copied.
+    assert agent.messages[-1]["content"] == [{"text": "from hook"}]
 
 
 @pytest.mark.asyncio
@@ -1755,7 +1787,11 @@ async def test_event_loop_cycle_before_tools_interrupts_and_resume_without_model
         "v1:before_tools:fc7d4db5-7c70-583b-86ca-392fc71cadf6",
     ]
     assert execution_events == []
-    assert agent._interrupt_state.context == {"tool_use_message": agent.messages[1], "tool_results": []}
+    assert agent._interrupt_state.context == {}
+    assert agent._interrupt_state.pending_tool_execution == PendingToolExecution(
+        assistant_message=agent.messages[1],
+        completed_tool_results=[],
+    )
     assert model.stream.call_count == 1
 
     agent._interrupt_state.resume(
@@ -1847,9 +1883,10 @@ async def test_event_loop_cycle_interrupt(agent, model, tool_stream, agenerator,
     tru_state = agent._interrupt_state.to_dict()
     exp_state = {
         "activated": True,
-        "context": {
-            "tool_results": [],
-            "tool_use_message": {
+        "context": {},
+        "pending_tool_execution": {
+            "completed_tool_results": [],
+            "assistant_message": {
                 "content": [
                     {
                         "toolUse": {
@@ -1912,7 +1949,10 @@ async def test_event_loop_cycle_interrupt_resume(agent, model, tool, tool_times_
         },
     ]
 
-    agent._interrupt_state.context = {"tool_use_message": tool_use_message, "tool_results": tool_results}
+    agent._interrupt_state.pending_tool_execution = PendingToolExecution(
+        assistant_message=tool_use_message,
+        completed_tool_results=tool_results,
+    )
     agent._interrupt_state.interrupts[interrupt.id] = interrupt
     agent._interrupt_state.activate()
 
@@ -2131,6 +2171,38 @@ class TestEstimateInputTokens:
         # baseline (100+30) + delta (50) = 180
         assert result == 180
         agent.model.count_tokens.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_baseline_counts_disjoint_cache_tokens(self):
+        """Baseline includes cache reads on disjoint providers (#3546).
+
+        Without counting the cache read, a large cached prompt reads as a handful of tokens and
+        proactive compaction never fires. Here inputTokens + outputTokens != totalTokens, so the
+        cache read is additional to inputTokens and must be included in the baseline.
+        """
+        agent = unittest.mock.AsyncMock()
+        agent.messages = [
+            {"role": "user", "content": [{"text": "Hi"}]},
+            {
+                "role": "assistant",
+                "content": [{"text": "Hello"}],
+                "metadata": {
+                    "usage": {
+                        "inputTokens": 10,
+                        "outputTokens": 4,
+                        "totalTokens": 5862,
+                        "cacheReadInputTokens": 5848,
+                    }
+                },
+            },
+        ]
+        agent.system_prompt = "You are helpful"
+
+        result = await strands.event_loop.event_loop._estimate_input_tokens(agent)
+
+        # total prompt (10 + 5848 cache read) + output (4) = 5862, not 14
+        assert result == 5862
+        agent.model.count_tokens.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_error_fallback_returns_none_at_call_site(self):

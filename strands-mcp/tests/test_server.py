@@ -171,7 +171,7 @@ class TestFetchDocErrors:
         tru_result = fetch_doc(uri=malicious_uri)
 
         assert "error" in tru_result
-        assert "strandsagents.com" in tru_result["error"]
+        assert tru_result["error"] == "only https://strandsagents.com URLs allowed"
 
     def test_invalid_section_returns_error(self, mock_cache, api_reference_doc):
         mock_cache.ensure_page.return_value = Page(

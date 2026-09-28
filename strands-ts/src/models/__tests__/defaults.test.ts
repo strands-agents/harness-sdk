@@ -14,6 +14,7 @@ describe('getContextWindowLimit', () => {
     expect(getContextWindowLimit('amazon.nova-pro-v1:0')).toBe(300_000)
     expect(getContextWindowLimit('amazon.nova-micro-v1:0')).toBe(128_000)
     // OpenAI
+    expect(getContextWindowLimit('gpt-6-astra')).toBe(1_050_000)
     expect(getContextWindowLimit('gpt-5.4')).toBe(1_050_000)
     expect(getContextWindowLimit('gpt-4o')).toBe(128_000)
     expect(getContextWindowLimit('o3')).toBe(200_000)

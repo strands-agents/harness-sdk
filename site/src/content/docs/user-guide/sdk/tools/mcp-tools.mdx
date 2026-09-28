@@ -1,0 +1,544 @@
+---
+title: Connect your agent to MCP tools
+description: "Connect AI agents to any MCP server for tool access. Strands agents integrate and invoke MCP tools without custom integration code."
+sidebar:
+  label: "Model Context Protocol (MCP)"
+tags: [tool-authoring, mcp]
+sourceLinks:
+  - path: strands-py/src/strands/tools/mcp/mcp_client.py
+  - path: strands-py/src/strands/tools/mcp/mcp_agent_tool.py
+  - path: strands-ts/src/mcp/client.ts
+  - path: strands-ts/src/mcp/config.ts
+  - path: strands-ts/src/mcp/config.node.ts
+  - path: strands-ts/src/tools/mcp-tool.ts
+---
+
+Connect your agent to tools that live outside your codebase: databases, SaaS APIs, and internal services exposed over the [Model Context Protocol (MCP)](https://modelcontextprotocol.io), an open standard for providing context to language models. Strands loads an MCP server's tools and hands them to the agent like any other tool, in both Python and TypeScript.
+
+## Quick Start
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from mcp import stdio_client, StdioServerParameters
+from strands import Agent
+from strands.tools.mcp import MCPClient
+
+# Create MCP client with stdio transport
+mcp_client = MCPClient(lambda: stdio_client(
+    StdioServerParameters(
+        command="uvx",
+        args=["awslabs.aws-documentation-mcp-server@latest"]
+    )
+))
+
+# Pass MCP client directly to agent - lifecycle managed automatically
+agent = Agent(tools=[mcp_client])
+agent("What is AWS Lambda?")
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/mcp-tools.ts:quick_start"
+```
+</Tab>
+</Tabs>
+
+## Integration Approaches
+
+<Tabs>
+<Tab label="Python">
+
+**Managed Integration (Recommended)**
+
+The `MCPClient` implements the `ToolProvider` interface, enabling direct usage in the Agent constructor with automatic lifecycle management:
+
+```python
+from mcp import stdio_client, StdioServerParameters
+from strands import Agent
+from strands.tools.mcp import MCPClient
+
+mcp_client = MCPClient(lambda: stdio_client(
+    StdioServerParameters(
+        command="uvx",
+        args=["awslabs.aws-documentation-mcp-server@latest"]
+    )
+))
+
+# Direct usage - connection lifecycle managed automatically
+agent = Agent(tools=[mcp_client])
+response = agent("What is AWS Lambda?")
+```
+
+**Manual Context Management**
+
+For cases requiring explicit control over the MCP session lifecycle, use context managers:
+
+```python
+with mcp_client:
+    tools = mcp_client.list_tools_sync()
+    agent = Agent(tools=tools)
+    agent("What is AWS Lambda?")  # Must be within context
+```
+</Tab>
+<Tab label="TypeScript">
+
+**Direct Integration**
+
+`McpClient` instances are passed directly to the agent. The client connects lazily on first use:
+
+```typescript
+--8<-- "user-guide/sdk/tools/mcp-tools.ts:direct_integration"
+```
+
+Tools can also be listed explicitly if needed:
+
+```typescript
+--8<-- "user-guide/sdk/tools/mcp-tools.ts:explicit_tools"
+```
+</Tab>
+</Tabs>
+
+## Choose a Transport
+
+The connection pattern above works for any transport: only the transport object you pass to the client changes. Strands supports three:
+
+- **stdio** for local processes and command-line servers that speak MCP over standard I/O.
+- **Streamable HTTP** for remote servers reachable over HTTP, including servers behind OAuth or AWS IAM authentication.
+- **Server-Sent Events (SSE)** for HTTP servers that use the older SSE transport.
+
+For the configuration of each transport, including authentication, see [MCP transports](mcp-transports.md).
+
+## Using Multiple MCP Servers
+
+Combine tools from multiple MCP servers in a single agent:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from mcp import stdio_client, StdioServerParameters
+from mcp.client.sse import sse_client
+from strands import Agent
+from strands.tools.mcp import MCPClient
+
+# Create multiple clients
+sse_mcp_client = MCPClient(lambda: sse_client("http://localhost:8000/sse"))
+stdio_mcp_client = MCPClient(lambda: stdio_client(
+    StdioServerParameters(command="python", args=["path/to/mcp_server.py"])
+))
+
+# Manual approach - explicit context management
+with sse_mcp_client, stdio_mcp_client:
+    tools = sse_mcp_client.list_tools_sync() + stdio_mcp_client.list_tools_sync()
+    agent = Agent(tools=tools)
+
+# Managed approach
+agent = Agent(tools=[sse_mcp_client, stdio_mcp_client])
+```
+
+**Load from configuration**
+
+Use `load_servers` to create clients from a dictionary or JSON file. Transport
+types are detected from `command` or `url`, and environment placeholders keep
+credentials out of the configuration:
+
+```python
+from strands import Agent
+from strands.tools.mcp import MCPClient
+
+clients = MCPClient.load_servers(
+    {
+        "mcpServers": {
+            "documentation": {
+                "command": "uvx",
+                "args": ["awslabs.aws-documentation-mcp-server@latest"],
+            },
+            "protected-api": {
+                "url": "https://api.example.com/mcp/",
+                "auth": {
+                    "client_id": "${OAUTH_CLIENT_ID}",
+                    "client_secret": "${OAUTH_CLIENT_SECRET}",
+                    "scopes": ["mcp:tools"],
+                },
+            },
+        }
+    },
+    prefix_with_server_name=True,
+)
+
+agent = Agent(tools=clients)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/mcp-tools.ts:multiple_servers"
+```
+
+**Load from configuration**
+
+In Node.js, use `loadServers` to create clients from an object or JSON file.
+Transport types are detected from `command` or `url`, and environment placeholders
+keep credentials out of the configuration:
+
+```typescript
+--8<-- "user-guide/sdk/tools/mcp-tools_imports.ts:mcp_client_imports"
+
+--8<-- "user-guide/sdk/tools/mcp-tools.ts:load_servers"
+```
+
+Set `prefixWithServerName` when servers expose tools with overlapping names.
+A server-level `prefix` overrides the generated prefix, and `prefix: ''` disables it.
+</Tab>
+</Tabs>
+
+## Client Configuration
+
+<Tabs>
+<Tab label="Python">
+
+Python's `MCPClient` supports tool filtering and name prefixing to manage tools from multiple servers.
+
+**Tool Filtering**
+
+Control which tools are loaded using the `tool_filters` parameter:
+
+```python
+from mcp import stdio_client, StdioServerParameters
+from strands.tools.mcp import MCPClient
+import re
+
+# String matching - loads only specified tools
+filtered_client = MCPClient(
+    lambda: stdio_client(StdioServerParameters(
+        command="uvx",
+        args=["awslabs.aws-documentation-mcp-server@latest"]
+    )),
+    tool_filters={"allowed": ["search_documentation", "read_documentation"]}
+)
+
+# Regex patterns
+regex_client = MCPClient(
+    lambda: stdio_client(StdioServerParameters(
+        command="uvx",
+        args=["awslabs.aws-documentation-mcp-server@latest"]
+    )),
+    tool_filters={"allowed": [re.compile(r"^search_.*")]}
+)
+
+# Combined filters - applies allowed first, then rejected
+combined_client = MCPClient(
+    lambda: stdio_client(StdioServerParameters(
+        command="uvx",
+        args=["awslabs.aws-documentation-mcp-server@latest"]
+    )),
+    tool_filters={
+        "allowed": [re.compile(r".*documentation$")],
+        "rejected": ["read_documentation"]
+    }
+)
+```
+
+**Tool Name Prefixing**
+
+Prevent name conflicts when using multiple MCP servers:
+
+```python
+aws_docs_client = MCPClient(
+    lambda: stdio_client(StdioServerParameters(
+        command="uvx",
+        args=["awslabs.aws-documentation-mcp-server@latest"]
+    )),
+    prefix="aws_docs"
+)
+
+other_client = MCPClient(
+    lambda: stdio_client(StdioServerParameters(
+        command="uvx",
+        args=["other-mcp-server@latest"]
+    )),
+    prefix="other"
+)
+
+# Tools will be named: aws_docs_search_documentation, other_search, etc.
+agent = Agent(tools=[aws_docs_client, other_client])
+```
+</Tab>
+<Tab label="TypeScript">
+
+TypeScript's `McpClient` supports tool filtering and name prefixing to manage tools from multiple servers.
+
+**Tool Filtering**
+
+Control which tools are loaded using the `toolFilters` option:
+
+```typescript
+--8<-- "user-guide/sdk/tools/mcp-tools.ts:tool_filtering"
+```
+
+String matchers match the server-side tool name exactly, and `RegExp` matchers
+match it from the start. Callback matchers receive the `McpTool` under its
+agent-facing name, so they see the prefix when one is set. An `allowed` list is
+applied first, then `rejected`, so rejection wins when both match.
+
+**Tool Name Prefixing**
+
+Prevent name conflicts when using multiple MCP servers:
+
+```typescript
+--8<-- "user-guide/sdk/tools/mcp-tools.ts:tool_prefixing"
+```
+
+A prefix only renames the tool for the agent: calls still send the original
+server tool name.
+
+Constructor defaults can be overridden per listing with
+`listTools({ prefix, toolFilters })`. Omitted fields inherit the constructor
+defaults; `prefix: ''` disables a default prefix and `toolFilters: {}` disables
+default filters. Declarative `McpClient.loadServers()` config accepts `prefix`
+and `toolFilters` too, where filter strings are regexes.
+</Tab>
+</Tabs>
+
+## Direct Tool Invocation
+
+While tools are typically invoked by the agent based on user requests, MCP tools can also be called directly:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+result = mcp_client.call_tool_sync(
+    tool_use_id="tool-123",
+    name="calculator",
+    arguments={"x": 10, "y": 20}
+)
+print(f"Result: {result['content'][0]['text']}")
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+// Get tools and find the target tool
+const tools = await mcpClient.listTools()
+const calcTool = tools.find(t => t.name === 'calculator')
+
+// Call directly through the client
+const result = await mcpClient.callTool(calcTool, { x: 10, y: 20 })
+```
+</Tab>
+</Tabs>
+
+## Implementing an MCP Server
+
+Custom MCP servers can be created to extend agent capabilities:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from mcp.server import FastMCP
+
+# Create an MCP server
+mcp = FastMCP("Calculator Server")
+
+# Define a tool
+@mcp.tool(description="Calculator tool which performs calculations")
+def calculator(x: int, y: int) -> int:
+    return x + y
+
+# Run the server with SSE transport
+mcp.run(transport="sse")
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/mcp-tools.ts:mcp_server"
+```
+</Tab>
+</Tabs>
+
+For more information on implementing MCP servers, see the [MCP documentation](https://modelcontextprotocol.io).
+
+## Advanced Usage
+
+### Elicitation
+
+An MCP server can pause a tool call to request additional input from the user. Configure an elicitation callback on the client to respond to these requests:
+
+<Tabs>
+<Tab label="Python">
+
+The server declares the schema it wants back, and the client returns a matching response:
+
+```python
+# server.py
+from mcp.server import FastMCP
+from pydantic import BaseModel, Field
+
+class ApprovalSchema(BaseModel):
+    username: str = Field(description="Who is approving?")
+
+server = FastMCP("mytools")
+
+@server.tool()
+async def delete_files(paths: list[str]) -> str:
+    result = await server.get_context().elicit(
+        message=f"Do you want to delete {paths}",
+        schema=ApprovalSchema,
+    )
+    if result.action != "accept":
+        return f"User {result.data.username} rejected deletion"
+
+    # Perform deletion...
+    return f"User {result.data.username} approved deletion"
+
+server.run()
+```
+
+```python
+# client.py
+from mcp import stdio_client, StdioServerParameters
+from mcp.types import ElicitResult
+from strands import Agent
+from strands.tools.mcp import MCPClient
+
+async def elicitation_callback(context, params):
+    print(f"ELICITATION: {params.message}")
+    # Get user confirmation...
+    return ElicitResult(
+        action="accept",
+        content={"username": "myname"}
+    )
+
+client = MCPClient(
+    lambda: stdio_client(
+        StdioServerParameters(command="python", args=["/path/to/server.py"])
+    ),
+    elicitation_callback=elicitation_callback,
+)
+
+with client:
+    agent = Agent(tools=client.list_tools_sync())
+    result = agent("Delete 'a/b/c.txt' and share the name of the approver")
+```
+</Tab>
+<Tab label="TypeScript">
+
+Pass an `elicitationCallback` when constructing the client. The callback receives the request context and the server's elicitation params, and returns an `ElicitResult`:
+
+```typescript
+--8<-- "user-guide/sdk/tools/mcp-tools.ts:elicitation"
+```
+</Tab>
+</Tabs>
+
+For more information on elicitation, see the [MCP specification](https://modelcontextprotocol.io/specification/draft/client/elicitation).
+
+### Progress Notifications
+
+MCP servers can report incremental progress during long-running tool calls. Configure a `progress_callback` on the client to receive these updates:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from mcp import stdio_client, StdioServerParameters
+from strands import Agent
+from strands.tools.mcp import MCPClient
+
+async def progress_callback(progress, total, message):
+    pct = f"{progress}/{total}" if total is not None else str(progress)
+    label = f" - {message}" if message else ""
+    print(f"Progress: {pct}{label}")
+
+client = MCPClient(
+    lambda: stdio_client(
+        StdioServerParameters(command="python", args=["/path/to/server.py"])
+    ),
+    progress_callback=progress_callback,
+)
+
+with client:
+    agent = Agent(tools=client.list_tools_sync())
+    agent("Run the long-running task")
+```
+
+The callback receives three arguments:
+
+| Argument | Type | Description |
+|---|---|---|
+| `progress` | `float` | Current progress value reported by the server |
+| `total` | `float \| None` | Total value (may be `None` if the server doesn't report it) |
+| `message` | `str \| None` | Optional human-readable status message from the server |
+
+You can also pass a `progress_callback` directly to `call_tool_sync` or `call_tool_async` to override the instance-level callback for a single call:
+
+```python
+result = client.call_tool_sync(
+    tool_use_id="tool-123",
+    name="long_running_tool",
+    arguments={"input": "data"},
+    progress_callback=my_one_off_callback,
+)
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+Progress notifications are not yet supported in the TypeScript SDK.
+
+</Tab>
+</Tabs>
+
+## Best Practices
+
+- **Tool Descriptions**: Provide clear descriptions for tools to help the agent understand when and how to use them
+- **Error Handling**: Return informative error messages when tools fail to execute properly
+- **Security**: Consider security implications when exposing tools via MCP, especially for network-accessible servers
+- **Connection Management**: In Python, always use context managers (`with` statements) to ensure proper cleanup of MCP connections
+- **Timeouts**: Set appropriate timeouts for tool calls to prevent hanging on long-running operations
+
+## Troubleshooting
+
+### MCPClientInitializationError (Python)
+
+Tools relying on an MCP connection must be used within a context manager. Operations will fail when the agent is used outside the `with` statement block.
+
+```python
+# Correct
+with mcp_client:
+    agent = Agent(tools=mcp_client.list_tools_sync())
+    response = agent("Your prompt")  # Works
+
+# Incorrect
+with mcp_client:
+    agent = Agent(tools=mcp_client.list_tools_sync())
+response = agent("Your prompt")  # Fails - outside context
+```
+
+### Connection Failures
+
+Connection failures occur when there are problems establishing a connection with the MCP server. Verify that:
+
+- The MCP server is running and accessible
+- Network connectivity is available and firewalls allow the connection
+- The URL or command is correct and properly formatted
+
+### Tool Discovery Issues
+
+If tools aren't being discovered:
+
+- Confirm the MCP server implements the `list_tools` method correctly
+- Verify all tools are registered with the server
+
+### Tool Execution Errors
+
+When tool execution fails:
+
+- Verify tool arguments match the expected schema
+- Check server logs for detailed error information

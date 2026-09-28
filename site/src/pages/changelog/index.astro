@@ -91,7 +91,7 @@ const areaCounts = getAreaCounts(allEntries)
   // prototype-chain keys like ?sdk=toString and crash every lookup below.
   const urlSdk = params.get('sdk') || ''
   const state = {
-    sdk: isKnownSdk(urlSdk) ? urlSdk : 'harness',
+    sdk: isKnownSdk(urlSdk) ? urlSdk : 'sdk',
     areas: new Set((params.get('area') || '').split(',').filter(Boolean)),
     search: params.get('q') || '',
   }
@@ -127,7 +127,7 @@ const areaCounts = getAreaCounts(allEntries)
   // Does a version belong to the current SDK + effective language view?
   function inCurrentStream(v: HTMLElement, lang: string): boolean {
     if (v.dataset.sdk !== state.sdk) return false
-    if (state.sdk === 'harness') return v.dataset.language === lang
+    if (state.sdk === 'sdk') return v.dataset.language === lang
     return true
   }
 
@@ -169,7 +169,7 @@ const areaCounts = getAreaCounts(allEntries)
 
   function syncUrl() {
     const p = new URLSearchParams()
-    if (state.sdk !== 'harness') p.set('sdk', state.sdk)
+    if (state.sdk !== 'sdk') p.set('sdk', state.sdk)
     if (state.areas.size) p.set('area', [...state.areas].join(','))
     if (state.search) p.set('q', state.search)
     const qs = p.toString()
@@ -205,7 +205,7 @@ const areaCounts = getAreaCounts(allEntries)
       const vLang = v.dataset.language
       // Version-level gate: SDK, and (for harness) one language at a time.
       let show = vSdk === state.sdk
-      if (show && vSdk === 'harness') show = vLang === lang
+      if (show && vSdk === 'sdk') show = vLang === lang
       // "Latest" badge: the newest version in the current stream, so filtering
       // or scrolling can't make you mistake an older release for the newest.
       // Independent of area/search — it marks the stream's true latest.
@@ -402,7 +402,7 @@ const areaCounts = getAreaCounts(allEntries)
       state.sdk = tSdk
       sdkBtns.forEach((b) => b.setAttribute('aria-pressed', b.dataset.clSdkBtn === tSdk ? 'true' : 'false'))
     }
-    if (tSdk === 'harness' && tLang && tLang !== effectiveLang()) {
+    if (tSdk === 'sdk' && tLang && tLang !== effectiveLang()) {
       setLang(tLang)
     }
     return true

@@ -66,10 +66,10 @@ export async function getReleases(): Promise<ChangelogRelease[]> {
 }
 
 /**
- * URL slug for a release, e.g. `harness/python-v1.43.0`, `evals/v0.2.1`.
+ * URL slug for a release, e.g. `sdk/python-v1.43.0`, `evals/v0.2.1`.
  * Derived from frontmatter (NOT collection `id`): the glob loader slugifies ids
  * with github-slugger, which strips the dots from version numbers and would
- * make `/changelog/harness/python-v1430/` (ugly and ambiguous). This keeps the
+ * make `/changelog/sdk/python-v1430/` (ugly and ambiguous). This keeps the
  * dotted version the team chose. Used for both the route param and links so
  * they always match.
  */

@@ -1,0 +1,48 @@
+---
+title: Shell language and builtins
+description: The shell language Strands Shell supports (pipelines, redirections, control flow, expansions) and its builtins, with the behaviors that diverge from Bash.
+sidebar:
+  label: "Shell language and builtins"
+---
+
+Strands Shell is Bourne-compatible: pipes, lists, loops, functions, subshells, and the
+expansions you reach for in a script all work. This page is the reference for the shell
+language itself and the builtins that back it, including where a construct diverges from
+Bash. For the external commands the shell ships (`grep`, `curl`, `jq`, and the rest), see
+the [command inventory](commands.md); for `lua`, see [Lua scripting](lua-scripting.md).
+
+## Shell language
+
+| Feature | Supported |
+|---|---|
+| Pipelines and lists | `\|`, `&&`, `\|\|`, `;` |
+| Redirections | `>`, `>>`, `<`, `2>`, `&>`, here-docs `<<` |
+| Conditionals | `if`, `elif`, `else`, `case` |
+| Loops | `for`, `while`, `until` |
+| Functions | definitions, `local` variables, `return` |
+| Grouping | command groups `{ }`, subshells `( )` |
+| Expansion | variables (`${VAR:-default}`, `${VAR%pat}`, `${#VAR}`), command substitution (`` `cmd` ``, `$(cmd)`), arithmetic `$(( ))`, globs |
+| Quoting | single, double |
+| Jobs | background `&` |
+| Scripts | `. script.sh`, `source` |
+
+## Builtins
+
+| Builtin | Notable gaps |
+|---|---|
+| `test`, `[` | No `[[ ]]`. Non-numeric or empty operands are treated as `0` (succeeds rather than erroring). |
+| `printf` | No floating-point (`%f`, `%e`, `%g` print literally); `%d` does not parse `0x` or octal prefixes. |
+| `read` | No `-a`, `-n`, or `-d`; a prefix `IFS=` is ignored; `-r` is effectively always on. |
+| `set` | No `-o`, so `set -o pipefail` fails; only `e`, `u`, and `x` are supported. |
+| `trap` | `EXIT` works; numeric signals (`trap ... 0`) are ignored; `-p` and `-l` are no-ops. |
+| `alias` | Can be defined and listed, but aliases are never expanded during execution. |
+| `readonly` | Enforced, but a violation returns exit 0; no `-p`. |
+| `local` | Works within functions; silently succeeds when used outside a function. |
+| `type` | No `-t` or `-a`. |
+| `cd` | No `CDPATH`; `-P` and `-L` are not parsed. |
+| `getopts`, `export`, `unset`, `shift`, `umask`, `hash`, `wait`, `:` | Full support. |
+| `$(( ))` arithmetic | Precedence, bitwise, ternary, hex, and octal work correctly. Malformed input returns an incorrect result with exit 0 (`$((2 3))` yields `2`, `$((1/0))` yields `0`). Post-increment `x++`/`x--` returns the value without updating the variable. |
+
+Malformed numeric input never raises: `test`, `[`, and arithmetic `$(( ))` treat a
+non-numeric or empty operand as `0`, so a typo in a comparison passes silently rather
+than erroring.

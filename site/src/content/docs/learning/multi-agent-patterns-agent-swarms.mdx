@@ -1,0 +1,101 @@
+---
+title: "Lesson 12: Multi-Agent Patterns: Agent Swarms"
+description: "In a swarm, multiple agents share a workspace or communication channel. Each agent has its own tools, its own prompt, its own specialization."
+redirectFrom:
+  - docs/community/learning/lesson12-multi-agent-patterns-agent-swarms
+---
+
+<YouTube id="yG-5rIJoh_8" title="Lesson 12: Multi-Agent Patterns: Agent Swarms" />
+*[Watch on YouTube](https://www.youtube.com/watch?v=yG-5rIJoh_8&list=PLDzwjhH-4yhU&index=12)*
+
+:::note[About this lesson]
+The videos in this course are a snapshot in time. Strands is under active development, so the code featured on this page reflects the most up-to-date patterns, but the concepts covered in the video still apply. When in doubt, trust the code.
+:::
+
+*Code for this lesson: [`samples/12-swarms`](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/12-swarms)*
+
+## Agent Swarms
+
+In a swarm, agents hand off to each other autonomously with no predefined structure. There's no orchestrator deciding who runs next and no graph fixing the order. The execution path emerges from what each agent discovers.
+
+This is the right fit when you can't draw the workflow ahead of time: debugging an incident, open-ended research, or any problem where the next step depends on what the last step found.
+
+```python
+from strands import Agent
+from strands.multiagent import Swarm
+
+triage = Agent(
+    name="triage",
+    system_prompt="Initial assessment. Hand off to the relevant specialist.",
+)
+
+log_analyst = Agent(
+    name="log_analyst",
+    system_prompt="Analyze application logs. Hand off if you find infra/deployment issues.",
+    tools=[check_application_logs],
+)
+
+metrics_analyst = Agent(
+    name="metrics_analyst",
+    system_prompt="Analyze system metrics. Hand off based on findings.",
+    tools=[check_metrics_dashboard],
+)
+
+deployment_reviewer = Agent(
+    name="deployment_reviewer",
+    system_prompt="Review recent deployments and infrastructure changes.",
+    tools=[check_recent_deployments, check_infrastructure_status],
+)
+
+debugging_swarm = Swarm(
+    [triage, log_analyst, metrics_analyst, deployment_reviewer],
+    entry_point=triage,
+    max_handoffs=10,
+    max_iterations=10,
+    execution_timeout=300.0,
+    node_timeout=120.0,
+    repetitive_handoff_detection_window=6,
+    repetitive_handoff_min_unique_agents=2,
+)
+
+result = debugging_swarm(
+    "Payment service returning 500 errors for 25% of requests. Started 30 min ago."
+)
+```
+
+📂 [debugging_swarm.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/12-swarms/debugging_swarm.py)
+
+## How Swarms Differ
+
+- **Handoff is a full transfer of control**, not a function call. When `log_analyst` hands off to `deployment_reviewer`, the log analyst is done; it doesn't get the result back.
+- **Agents share accumulated context.** Each agent sees what the previous agents found, so the investigation builds on itself.
+- **Strands injects a `handoff_to_agent` tool automatically.** You don't write handoff logic; each agent's system prompt tells it when to hand off, and the model decides.
+
+## Safety Controls
+
+Because nothing structural stops a swarm from bouncing between agents, always configure limits. Without them, swarms can ping-pong forever.
+
+| Setting | Purpose |
+| --- | --- |
+| `max_handoffs` | Total handoff cap |
+| `max_iterations` | Total agent execution cap |
+| `execution_timeout` | Wall-clock time limit for the entire swarm |
+| `node_timeout` | Time limit per agent turn |
+| `repetitive_handoff_detection_window` | Detect ping-pong loops between the same few agents |
+
+## Composing Patterns
+
+The three multi-agent patterns nest: a swarm can be a node in a graph, a graph can contain agents-as-tools, and an agent-as-tool can internally run a graph. Start with the simplest pattern that fits your coordination needs and compose up from there.
+
+| Pattern | Structure | Use When |
+| --- | --- | --- |
+| **Agents as Tools** | Hub-and-spoke. Orchestrator calls specialists | Clear manager-specialist relationship, isolated context |
+| **Graph** | DAG with explicit edges | You can draw the workflow on a whiteboard |
+| **Swarm** | Autonomous handoffs, no predefined structure | The team needs to figure it out together |
+
+## Resources
+
+- 📖 [Swarm](/docs/user-guide/sdk/multi-agent/swarm/)
+- 📖 [Multi-Agent Patterns Overview](/docs/user-guide/sdk/multi-agent/multi-agent-patterns/)
+- 📖 [Agents as Tools](/docs/user-guide/sdk/multi-agent/agents-as-tools/)
+- 📖 [Graph](/docs/user-guide/sdk/multi-agent/graph/)

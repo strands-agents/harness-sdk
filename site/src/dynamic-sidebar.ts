@@ -46,7 +46,7 @@ export interface DocInfo {
  *
  * Example:
  * - strands.agent.agent -> Agent > Agent
- * - strands.experimental.bidi.types.events -> Experimental > Bidi > Types > Events
+ * - strands.experimental.bidi.types -> Experimental > Bidi > Types
  */
 export function buildPythonApiSidebar(docs: DocInfo[], currentSlug: string): SidebarEntry[] {
   const pythonApiDocs = docs.filter(
@@ -220,6 +220,46 @@ export function buildTypeScriptApiSidebar(docs: DocInfo[], currentSlug: string):
   }
 
   return entries
+}
+
+/**
+ * Course sidebar: a group of lesson links. The course start page is reached
+ * from the /learn switcher box (see Sidebar.astro), so there is no back-link.
+ */
+export function buildCourseSidebar(
+  docs: DocInfo[],
+  currentSlug: string,
+  course: { title: string; lessonIds: string[] },
+): SidebarEntry[] {
+  const docById = new Map(docs.map((d) => [d.id, d]))
+
+  const lessonLinks: SidebarLink[] = course.lessonIds
+    .filter((id) => docById.has(id))
+    .map((id) => {
+      const doc = docById.get(id)!
+      return {
+        type: 'link',
+        label: doc.title,
+        href: pathWithBase(`/${doc.id}/`),
+        isCurrent: currentSlug === doc.id,
+        badge: undefined,
+        attrs: {},
+      }
+    })
+
+  if (lessonLinks.length === 0) {
+    return []
+  }
+
+  const group: SidebarGroup = {
+    type: 'group',
+    label: course.title,
+    entries: lessonLinks,
+    collapsed: false,
+    badge: undefined,
+  }
+
+  return [group]
 }
 
 /**

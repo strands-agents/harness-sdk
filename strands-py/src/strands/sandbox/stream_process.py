@@ -119,7 +119,7 @@ async def _stream_process(
             yield item
 
         if timed_out:
-            raise SandboxTimeoutError(timeout)
+            raise SandboxTimeoutError(timeout, "".join(out_buf), "".join(err_buf))
 
         returncode = proc.returncode if proc.returncode is not None else 1
         exit_code = _SIGNAL_EXIT_BASE - returncode if returncode < 0 else returncode

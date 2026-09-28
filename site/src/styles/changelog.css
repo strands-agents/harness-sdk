@@ -116,7 +116,9 @@
 /* "Latest" badge — marks the newest release of the active stream. */
 .cl-latest { font-size: 0.6rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
   padding: 0.1rem 0.4rem; border-radius: var(--cl-radius-pill);
-  background: var(--cl-accent-text); color: #fff; }
+  /* Fixed dark green in both themes: the dark-mode accent (#00cc60) gives
+     white text only 2.14:1. #067a39 clears AA (5.45:1) against white. */
+  background: #067a39; color: #fff; }
 /* The version number links to its per-release page on the combined index;
    inherits the heading color, accent + underline on hover. On the detail page
    it's plain text (.cl-version-numtext). */

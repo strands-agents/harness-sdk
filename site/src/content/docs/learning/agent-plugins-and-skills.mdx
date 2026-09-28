@@ -1,0 +1,110 @@
+---
+title: "Lesson 6: Agent Plugins & Skills"
+description: "Individual tools solve individual problems. But some capabilities require multiple tools working together with specific hooks and prompt instructions to function correctly. That's what a plugin is: a packaged bundle of tools + hooks + system prompt additions that you attach to an agent as a unit."
+redirectFrom:
+  - docs/community/learning/lesson6-agent-plugins-and-skills
+---
+
+<YouTube id="dnChw1mfc5M" title="Lesson 6: Agent Plugins &amp; Skills" />
+*[Watch on YouTube](https://www.youtube.com/watch?v=dnChw1mfc5M&list=PLDzwjhH-4yhU&index=6)*
+
+:::note[About this lesson]
+The videos in this course are a snapshot in time. Strands is under active development, so the code featured on this page reflects the most up-to-date patterns, but the concepts covered in the video still apply. When in doubt, trust the code.
+:::
+
+*Code for this lesson: [`samples/06-plugins-skills`](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/06-plugins-skills)*
+
+## Plugins
+
+Plugins are the extension mechanism in Strands. They let you package hooks, tools, and custom logic into reusable components that snap into any agent. Where a hook is a single behavior, a plugin bundles several primitives together so they can be shared and reused as a unit.
+
+Skills are one type of plugin that provides on-demand workflow instructions. Strands ships others too, and you can build your own for memory, orchestration, observability, governance, or custom workflows.
+
+## Skills
+
+As agents grow, system prompts bloat with irrelevant instructions. If your agent supports twenty workflows, you don't want instructions for all twenty consuming tokens on every request.
+
+Skills solve this through **progressive disclosure**: the agent only sees skill names at startup and loads full instructions on demand. Each skill is a markdown file in a subfolder containing guidance for a specific task. If a skill isn't relevant to the current request, its instructions never enter the context window. This is one example of context engineering.
+
+```python
+from strands import Agent, AgentSkills, tool
+
+# Tools for customer service operations
+@tool
+def lookup_customer(customer_id: str) -> str:
+    """Look up a customer by their ID."""
+    # ... database/API call ...
+
+@tool
+def get_order_history(customer_id: str) -> str:
+    """Get order history for a customer."""
+    # ...
+
+@tool
+def process_refund(order_id: str, amount: float) -> str:
+    """Process a refund for an order."""
+    # ...
+
+# Skills plugin discovers and registers all skills in the directory
+skills_plugin = AgentSkills(skills=["./skills"])
+
+agent = Agent(
+    tools=[lookup_customer, get_order_history, process_refund],
+    plugins=[skills_plugin],
+    system_prompt="""You are a customer service agent. When a customer needs help,
+    activate the appropriate skill for step-by-step guidance."""
+)
+```
+
+📂 [customer_service.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/06-plugins-skills/customer_service.py) · [skills/](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/06-plugins-skills/skills)
+
+The `skills/` directory in the sample has four skills: `account-troubleshooting`, `order-tracking`, `pdf-processing`, and `refund-processing`. Each is a folder with a `SKILL.md` describing when to use it and the steps to follow. This customer service agent is the running example for the rest of the course.
+
+## Goal Loop
+
+Lesson 1 said a good harness verifies whether the agent's actions actually worked. `GoalLoop` is the plugin that does that. You define what "done" means, attach it to the agent, and it handles the retry loop:
+
+1. The agent processes the prompt and produces a response.
+2. GoalLoop runs your validator against the result.
+3. If it passes, the loop terminates as "satisfied."
+4. If it fails and budget remains, GoalLoop injects the feedback as a new user message and re-invokes the agent.
+5. If the attempt limit or timeout is exhausted, the loop stops without retrying.
+
+The validator can be a natural-language goal (judged by a second model) or a plain function. Functions are the more interesting case because they can run real checks. Here a coding agent isn't finished until the test suite passes, and when tests fail the output is fed straight back to the agent as its next instruction:
+
+```python
+import asyncio
+from strands import Agent
+from strands.vended_plugins.goal import GoalLoop
+from strands.vended_tools import file_editor, shell
+
+async def tests_pass(response, agent):
+    proc = await asyncio.create_subprocess_exec(
+        "pytest", "--tb=short",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode == 0:
+        return True
+    output = (stdout.decode() + stderr.decode())[-4000:]
+    return {
+        "passed": False,
+        "feedback": f"pytest exited {proc.returncode}.\n{output}",
+    }
+
+agent = Agent(
+    tools=[file_editor, shell],
+    plugins=[GoalLoop(goal=tests_pass, max_attempts=10)],
+)
+agent("Fix the failing tests in tests/test_orders.py")
+```
+
+Every retry, the agent sees the exact pytest output from the last attempt. It stops when the suite is green or after 10 tries, whichever comes first. Always set `max_attempts` or `timeout` in production so the loop can't run away.
+
+## Resources
+
+- 📖 [Plugins](/docs/user-guide/sdk/plugins/)
+- 📖 [Skills](/docs/user-guide/sdk/plugins/skills/)
+- 📖 [Goal Loop](/docs/user-guide/sdk/plugins/goal-loop/)
+- 📖 [Hooks](/docs/user-guide/sdk/agents/hooks/)

@@ -76,6 +76,9 @@ export function createMockAgent(data?: MockAgentData): MockAgent {
     get sandbox(): Sandbox {
       return defaultSandbox.get()
     },
+    get sessionId(): string {
+      return 'test-ses'
+    },
     addHook: <T extends HookableEvent>(eventType: HookableEventConstructor<T>, callback: HookCallback<T>) => {
       trackedHooks.push({
         eventType: eventType as HookableEventConstructor<HookableEvent>,
@@ -110,11 +113,13 @@ export function textMessage(role: Role, text: string): Message {
  * @param event - The event instance to dispatch
  */
 export async function invokeTrackedHook<T extends HookableEvent>(agent: MockAgent, event: T): Promise<void> {
-  const hook = agent.trackedHooks.find((h) => h.eventType === event.constructor)
-  if (!hook) {
+  const hooks = agent.trackedHooks.filter((h) => h.eventType === event.constructor)
+  if (hooks.length === 0) {
     throw new Error(`No hook registered for event type: ${event.constructor.name}`)
   }
-  await hook.callback(event)
+  for (const hook of hooks) {
+    await hook.callback(event)
+  }
 }
 
 /**

@@ -1,22 +1,18 @@
 ---
 /**
- * Global Python/TypeScript language toggle for the site header.
- *
- * Reads and writes the same localStorage key used by AutoSyncTabs so the
- * header toggle and inline code tabs stay in sync. The key + default come
- * from the shared language-preference module (single source, shared with the
- * changelog page) and are injected into the inline script via define:vars.
- *
- * When the current page lives under a language-specific path, switching
- * language also navigates. The destination is resolved at build time against
- * the content collection (see util/language-switch.ts) and exposed on each
- * button as data-switch-href, so the client script never fabricates URLs.
+ * Global Python/TypeScript language toggle, rendered identically in the header
+ * right-cluster and the mobile menu. Reads/writes the shared AutoSyncTabs
+ * localStorage key so the toggle and inline code tabs stay in sync, and on
+ * language-specific pages navigates to the counterpart resolved at build time
+ * (see util/language-switch.ts). Event-channel and key details are inline below.
  */
 import { getCollection } from 'astro:content'
 import { LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE_LABEL } from '../util/language-preference'
 import { getLanguageSwitchTarget, type LanguageSlug } from '../util/language-switch'
 import { getApiCounterpartMap } from '../util/api-counterparts'
 import { getBase, pathWithBase } from '../util/links'
+import typescriptIcon from '../assets/lang/typescript.svg?raw'
+import pythonIcon from '../assets/lang/python.svg?raw'
 
 const allDocs = await getCollection('docs')
 const docIds = new Set(allDocs.map((doc) => doc.id))
@@ -32,37 +28,27 @@ function switchHref(lang: LanguageSlug): string | undefined {
   return target ? pathWithBase(target) : undefined
 }
 
-// On docs pages that declare a single supported language, the other button is
-// disabled: there is nothing to switch to, and a silent no-op toggle reads as
-// a bug. Non-docs pages (landing/changelog) carry no languages frontmatter,
-// so the toggle stays fully enabled there.
-const routeData = Astro.locals.starlightRoute.entry.data
-const pageLanguages = routeData.languages
+// On single-language docs pages, disable the unavailable side.
+// `starlightRoute` is a getter that throws off non-Starlight pages — try/catch required.
+let routeData
+try {
+  routeData = Astro.locals.starlightRoute?.entry.data
+} catch {
+  routeData = undefined
+}
+const pageLanguages = routeData?.languages
   ? (Array.isArray(routeData.languages) ? routeData.languages : [routeData.languages]).map((l) => l.toLowerCase())
   : undefined
-// An empty array carries no language restriction; treat it the same as an absent field.
 const resolvedLanguages = pageLanguages?.length ? pageLanguages : undefined
 const pythonDisabled = resolvedLanguages !== undefined && !resolvedLanguages.includes('python')
 const typescriptDisabled = resolvedLanguages !== undefined && !resolvedLanguages.includes('typescript')
 ---
 
-<language-toggle class="language-toggle" role="radiogroup" aria-label="Preferred language">
-  <button
-    class="lang-option"
-    role="radio"
-    aria-checked="false"
-    aria-label="Python"
-    data-lang="Python"
-    data-switch-href={switchHref('python')}
-    disabled={pythonDisabled}
-    title={pythonDisabled ? 'This page is TypeScript-only' : undefined}
-  >
-    <svg class="lang-icon" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-      <path fill="currentColor" d="M11.914 0C5.82 0 6.2 2.656 6.2 2.656l.007 2.752h5.814v.826H3.9S0 5.789 0 11.969c0 6.18 3.403 5.96 3.403 5.96h2.03v-2.867s-.109-3.42 3.35-3.42h5.766s3.24.052 3.24-3.148V3.202S18.28 0 11.914 0zM8.708 1.85a1.06 1.06 0 110 2.12 1.06 1.06 0 010-2.12z"/>
-      <path fill="currentColor" d="M12.086 24c6.094 0 5.714-2.656 5.714-2.656l-.007-2.752H11.98v-.826h8.121S24 18.211 24 12.031c0-6.18-3.403-5.96-3.403-5.96h-2.03v2.867s.109 3.42-3.35 3.42H9.451s-3.24-.052-3.24 3.148v5.292S5.72 24 12.086 24zm3.206-1.85a1.06 1.06 0 110-2.12 1.06 1.06 0 010 2.12z"/>
-    </svg>
-    <span class="lang-label">Python</span>
-  </button>
+<language-toggle
+  class="language-toggle"
+  role="radiogroup"
+  aria-label="Preferred language"
+>
   <button
     class="lang-option"
     role="radio"
@@ -73,57 +59,83 @@ const typescriptDisabled = resolvedLanguages !== undefined && !resolvedLanguages
     disabled={typescriptDisabled}
     title={typescriptDisabled ? 'This page is Python-only' : undefined}
   >
-    <svg class="lang-icon" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-      <path fill="currentColor" d="M0 12v12h24V0H0zm19.341-.956c.61.152 1.074.423 1.501.865.221.236.549.666.575.77.008.03-1.036.73-1.668 1.123-.023.015-.115-.084-.217-.236-.31-.45-.633-.644-1.128-.678-.728-.05-1.196.331-1.192.967a.88.88 0 00.102.45c.16.331.458.53 1.39.933 1.719.74 2.454 1.227 2.911 1.92.509.773.625 2.008.278 2.926-.38 1.023-1.325 1.716-2.655 1.95-.41.073-1.382.062-1.828-.018-.964-.172-1.878-.648-2.442-1.273-.221-.243-.652-.88-.625-.925.011-.016.11-.077.22-.141l.89-.514.69-.4.145.213c.201.31.643.731.91.872.766.404 1.817.347 2.335-.118a.883.883 0 00.313-.72c0-.278-.035-.4-.18-.61-.186-.266-.567-.49-1.649-.96-1.238-.533-1.771-.864-2.259-1.39a3.165 3.165 0 01-.659-1.2c-.091-.364-.114-1.27-.042-1.635.31-1.554 1.534-2.64 3.202-2.84.434-.05 1.443-.01 1.872.074zm-5.66 1.077l.007.983H10.15v8.876H7.787V12.104H4.25v-.963c0-.534.011-.98.026-.99.012-.016 2.125-.023 4.694-.018l4.665.011z"/>
-    </svg>
+    <span class="lang-icon" set:html={typescriptIcon} />
     <span class="lang-label">TypeScript</span>
+  </button>
+  <button
+    class="lang-option"
+    role="radio"
+    aria-checked="false"
+    aria-label="Python"
+    data-lang="Python"
+    data-switch-href={switchHref('python')}
+    disabled={pythonDisabled}
+    title={pythonDisabled ? 'This page is TypeScript-only' : undefined}
+  >
+    <span class="lang-icon" set:html={pythonIcon} />
+    <span class="lang-label">Python</span>
   </button>
 </language-toggle>
 
 <style>
+  /* Icon pill toggle.
+     One control with identical sizing everywhere it appears — the header, the
+     mobile menu, and the homepage code cards. Each option shows the language's
+     logo; the text label is kept for screen readers only. */
   .language-toggle {
     display: inline-flex;
-    align-items: stretch;
-    gap: 0;
-    /* Match the inline tabs: subtle bottom border as baseline */
-    border-bottom: 2px solid var(--sl-color-gray-5);
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    background: var(--toggle-bg);
+    border-radius: 999px;
   }
 
   .lang-option {
     display: inline-flex;
     align-items: center;
-    gap: 0.3rem;
-    padding: 0.25rem 0.625rem;
-    border: none;
-    background: transparent;
-    /* Inactive: regular weight, muted color, dark underline (blends with border) */
-    color: var(--sl-color-gray-3);
-    font-size: 0.8125rem;
-    font-weight: 400;
-    font-family: var(--sl-font);
+    justify-content: center;
+    padding: 6px 10px;
+    border: 1px solid var(--toggle-inactive-border);
+    border-radius: 999px;
+    background: var(--toggle-inactive-bg);
+    color: var(--toggle-inactive-fg);
     cursor: pointer;
-    transition: color 0.15s ease, box-shadow 0.15s ease, font-weight 0.15s ease;
-    white-space: nowrap;
-    line-height: 1.4;
-    /* Box-shadow underline sits on the border-bottom baseline */
-    box-shadow: 0 2px 0 0 var(--sl-color-gray-5);
-    margin-bottom: -2px;
+    transition: background 0.15s ease, color 0.15s ease;
   }
 
   .lang-option:hover {
-    color: var(--sl-color-white);
-  }
-
-  /* Active state: bold text, green underline. Colors use Starlight's
-     theme-aware custom properties so they adapt to light/dark mode. */
-  .lang-option[aria-checked='true'] {
-    font-weight: 600;
-    color: var(--sl-color-text-accent);
-    box-shadow: 0 2px 0 0 var(--sl-color-text-accent);
+    color: var(--toggle-hover-fg);
   }
 
   .lang-icon {
-    flex-shrink: 0;
+    display: inline-flex;
+  }
+
+  .lang-icon :global(svg) {
+    display: block;
+    width: 18px;
+    height: 18px;
+  }
+
+  .lang-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .lang-option[aria-checked='true'] {
+    background: var(--toggle-active-bg);
+    border-color: transparent;
+    color: var(--strands-black);
+    font-weight: 500;
+    filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.15));
   }
 
   .lang-option:disabled {
@@ -132,29 +144,26 @@ const typescriptDisabled = resolvedLanguages !== undefined && !resolvedLanguages
   }
 
   .lang-option:disabled:hover {
-    color: var(--sl-color-gray-3);
+    color: var(--toggle-inactive-fg);
   }
 
+  /* Light mode: fill the track (not a border — avoids box shrink) and drop
+     per-option borders for a clean segmented pill. */
+  :global([data-theme='light']) .language-toggle {
+    background: rgba(0, 0, 0, 0.06);
+  }
+
+  :global([data-theme='light']) .lang-option {
+    border-color: transparent;
+  }
 </style>
 
 <script is:inline define:vars={{ STORAGE_KEY: LANGUAGE_STORAGE_KEY, DEFAULT_LANG: DEFAULT_LANGUAGE_LABEL }}>
   (function () {
-    // Idempotency guard: <LanguageToggle /> can render in multiple places
-    // (desktop right-group + mobile dropdown menu). Astro inlines this script
-    // tag once per instance, but the document-level listeners and DOM-wide
-    // sync logic only need to run once. Skip on subsequent invocations.
+    // Idempotency guard: multiple instances on one page, run logic once.
     if (window.__strandsLanguageToggleInit) return;
     window.__strandsLanguageToggleInit = true;
-    // STORAGE_KEY + DEFAULT_LANG are injected via define:vars from the shared
-    // language-preference module (shared with the changelog page). The key
-    // matches the one Starlight derives by djb2-hashing the synced-tab labels.
-
-    // IMPORTANT: Keep in sync with navigation.yml navbar entries.
-    // Each entry: [navLinkLabel, pythonHref, typescriptHref]
-    var LANG_AWARE_LINKS = [
-      ['Docs', '/docs/user-guide/quickstart/python/', '/docs/user-guide/quickstart/typescript/'],
-      ['API Reference', '/docs/api/python/', '/docs/api/typescript/']
-    ];
+    // STORAGE_KEY + DEFAULT_LANG injected via define:vars from language-preference.ts.
 
     function getPreference() {
       try {
@@ -173,37 +182,7 @@ const typescriptDisabled = resolvedLanguages !== undefined && !resolvedLanguages
       }
     }
 
-    /** Rewrite nav link hrefs to match the current language preference. */
-    function updateNavLinks(lang) {
-      document.querySelectorAll('.nav-tab, .mobile-nav-link').forEach(function (link) {
-        var label = link.textContent.trim();
-        for (var i = 0; i < LANG_AWARE_LINKS.length; i++) {
-          if (label === LANG_AWARE_LINKS[i][0]) {
-            var href = lang === 'Python' ? LANG_AWARE_LINKS[i][1] : LANG_AWARE_LINKS[i][2];
-            // Preserve any base path prefix already on the link
-            var currentHref = link.getAttribute('href') || '';
-            var base = '';
-            for (var j = 0; j < LANG_AWARE_LINKS[i].length; j++) {
-              if (j === 0) continue;
-              var candidate = LANG_AWARE_LINKS[i][j];
-              var idx = currentHref.indexOf(candidate);
-              if (idx > 0) {
-                base = currentHref.substring(0, idx);
-                break;
-              }
-            }
-            link.setAttribute('href', base + href);
-            break;
-          }
-        }
-      });
-    }
-
-    /**
-     * Sync all visible Starlight tab groups to match the selected language.
-     * Delegates to Starlight's own tab switching by clicking the matching tab,
-     * so we don't duplicate Starlight's internal aria/panel management.
-     */
+    /** Sync Starlight tab groups by clicking the matching tab. */
     function syncStarlightTabs(lang) {
       document.querySelectorAll('starlight-tabs').forEach(function (tabGroup) {
         var tabs = tabGroup.querySelectorAll('[role="tab"]');
@@ -215,13 +194,7 @@ const typescriptDisabled = resolvedLanguages !== undefined && !resolvedLanguages
       });
     }
 
-    /**
-     * On single-language pages the stored preference may be the disabled
-     * language; the page then behaves as the available language. Resolved
-     * once here so the radio, nav links, and inline tabs can never disagree.
-     * The stored preference itself is untouched — it still applies on the
-     * next multi-language page.
-     */
+    /** On single-language pages, resolve to the available language (stored pref untouched). */
     function effectiveLanguage(lang) {
       var enabled = Array.prototype.filter.call(
         document.querySelectorAll('language-toggle .lang-option'),
@@ -242,57 +215,61 @@ const typescriptDisabled = resolvedLanguages !== undefined && !resolvedLanguages
       });
     }
 
-    /** Full UI sync: toggle state + nav links + inline tabs. */
+    /** Full UI sync: toggle state + inline tabs. */
     function syncAll(lang) {
       var effective = effectiveLanguage(lang);
       updateToggle(effective);
-      updateNavLinks(effective);
       syncStarlightTabs(effective);
     }
 
-    // Restore on page load
-    var current = getPreference();
-    setPreference(current);
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', function () { syncAll(current); });
-    } else {
-      syncAll(current);
+    // Guard against feedback loops.
+    var applying = false;
+
+    function applyLanguage(lang, notify) {
+      if (applying) return;
+      applying = true;
+      setPreference(lang);
+      syncAll(lang);
+      if (notify) {
+        window.dispatchEvent(new CustomEvent('lang-change', { detail: lang }));
+        window.dispatchEvent(new CustomEvent('lang-preference-changed', { detail: { lang: lang } }));
+      }
+      applying = false;
     }
 
-    // Handle toggle clicks. setPreference/syncAll run via the
-    // lang-preference-changed listener below (single execution path — calling
-    // them here too would run side effects like tab clicks twice).
+    var current = getPreference();
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function () { applyLanguage(current, false); });
+    } else {
+      applyLanguage(current, false);
+    }
+
     document.addEventListener('click', function (e) {
       var btn = e.target.closest('.lang-option');
       if (!btn || btn.disabled) return;
       var lang = btn.dataset.lang;
       if (!lang) return;
-      // Notify same-tab listeners, including our own (storage events only fire cross-tab).
-      window.dispatchEvent(new CustomEvent('lang-preference-changed', { detail: { lang: lang } }));
+      applyLanguage(lang, true);
 
-      // Navigate to the counterpart page resolved at build time, if any
       var switchHref = btn.dataset.switchHref;
       if (switchHref) {
         window.location.href = switchHref;
       }
     });
 
-    // Listen for storage changes from other tabs/windows
     window.addEventListener('storage', function (e) {
       if (e.key === STORAGE_KEY && e.newValue) {
-        syncAll(e.newValue);
+        applyLanguage(e.newValue, false);
       }
     });
 
-    // Listen for same-tab preference changes (storage events don't fire in the
-    // tab that wrote the value). Other components dispatch this when they change
-    // the language programmatically (e.g. the changelog auto-switching to Python).
+    window.addEventListener('lang-change', function (e) {
+      var lang = e && e.detail;
+      if (lang) applyLanguage(lang, false);
+    });
     window.addEventListener('lang-preference-changed', function (e) {
       var lang = e && e.detail && e.detail.lang;
-      if (lang) {
-        setPreference(lang);
-        syncAll(lang);
-      }
+      if (lang) applyLanguage(lang, false);
     });
   })();
 </script>

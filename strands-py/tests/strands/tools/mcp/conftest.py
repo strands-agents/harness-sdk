@@ -1,8 +1,50 @@
 """Shared fixtures and helpers for MCP client tests."""
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from mcp.types import ErrorData
+
+from strands.tools.mcp import _compat
+from strands.tools.mcp._compat import MCPError
+
+
+def make_mcp_error(code: int, message: str = "", data: Any = None) -> Exception:
+    """Construct the installed line's MCP error: 2.x takes (code, message, data), 1.x takes ErrorData."""
+    if _compat.MCP_V2:
+        return MCPError(code, message, data=data)
+    return MCPError(error=ErrorData(code=code, message=message, data=data))
+
+
+def assert_session_call_tool_once_with(
+    mock_session: Any,
+    name: str,
+    arguments: dict[str, Any] | None,
+    read_timeout_seconds: Any = None,
+    progress_callback: Any = None,
+    meta: Any = None,
+) -> None:
+    """Assert the exact `session.call_tool` invocation a direct tool call makes on the installed line.
+
+    The 2.x compat shim converts the timeout to float seconds and carries the
+    SEP-2322 multi round-trip keywords on every call; 1.x sends the plain form.
+    """
+    if _compat.MCP_V2:
+        mock_session.call_tool.assert_called_once_with(
+            name,
+            arguments,
+            _compat.read_timeout(read_timeout_seconds),
+            progress_callback=progress_callback,
+            meta=meta,
+            input_responses=None,
+            request_state=None,
+            allow_input_required=True,
+        )
+        return
+    mock_session.call_tool.assert_called_once_with(
+        name, arguments, read_timeout_seconds, progress_callback=progress_callback, meta=meta
+    )
 
 
 @pytest.fixture
@@ -29,6 +71,9 @@ def mock_session():
     mock_init_result = MagicMock()
     mock_init_result.instructions = None
     mock_session.initialize = AsyncMock(return_value=mock_init_result)
+    # The 2.x negotiation reads instructions from the session itself; without an
+    # explicit default the AsyncMock would hand back an auto-created attribute.
+    mock_session.instructions = None
     # Default: no task support (get_server_capabilities is sync, not async!)
     mock_session.get_server_capabilities = MagicMock(return_value=None)
 

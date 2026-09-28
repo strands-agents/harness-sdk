@@ -1,0 +1,9 @@
+name: strands-tealtiger
+description: Deterministic governance intervention — tool allowlists, PII/secret detection, prompt injection defense, cost budgets, and kill switch. No LLM, no server, <2ms.
+integrationType: intervention
+languages:
+  python:
+    package: strands-tealtiger
+github: https://github.com/agentguard-ai/tealtiger
+docsUrl: https://docs.tealtiger.ai/integrations/strands
+addedDate: 2026-08-19

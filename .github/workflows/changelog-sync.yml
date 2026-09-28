@@ -34,7 +34,7 @@ jobs:
       startsWith(github.event.release.tag_name, 'python/v') ||
       startsWith(github.event.release.tag_name, 'typescript/v') ||
       startsWith(github.event.release.tag_name, 'v'))
-    runs-on: ubuntu-latest
+    runs-on: strands-agents_ubuntu-latest_4-core
     # De-dupes runs of the same event type + tag. Deliberately does NOT
     # serialize release vs. cron: a cross-event duplicate PR has identical
     # content and is closed manually. In-flight syncs finish (no cancel).

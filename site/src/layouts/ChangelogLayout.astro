@@ -18,5 +18,10 @@ if (description) head.push({ tag: 'meta' as const, attrs: { property: 'og:descri
   frontmatter={{ title, description, template: 'splash', pagefind: false, head, hero: { actions: [] } }}
   hasSidebar={false}
 >
-  <slot />
+  {/* Splash pages omit the `id="_top"` that Starlight puts on doc-page h1s,
+      leaving the "Skip to content" link (href="#_top") with no target. Anchor
+      it here so the skip link works on changelog pages. */}
+  <div id="_top">
+    <slot />
+  </div>
 </StarlightPage>

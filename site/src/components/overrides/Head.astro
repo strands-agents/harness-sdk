@@ -130,7 +130,7 @@ const structuredData = {
 
 {head.map(({ tag: Tag, attrs, content }) => <Tag {...attrs} set:html={content} />)}
 
-<!-- Favicon - uses logo-auto.svg which adapts to light/dark mode via prefers-color-scheme -->
+<!-- Favicon: an SVG that adapts to light/dark mode via prefers-color-scheme. -->
 <link rel="icon" type="image/svg+xml" href={faviconHref} />
 
 <!-- Raw markdown twin of this page, for LLMs and tooling -->
@@ -186,7 +186,61 @@ const structuredData = {
     })
 
     const isDark = document.documentElement.dataset.theme === 'dark'
-    mermaid.initialize({ startOnLoad: false, theme: isDark ? 'dark' : 'neutral' })
+
+    const css = getComputedStyle(document.documentElement)
+    const token = (name: string, fallback: string) =>
+      css.getPropertyValue(name).trim() || fallback
+
+    if (isDark) {
+      // Dark mode keeps mermaid's built-in dark theme, which already reads well
+      // against the docs' dark surfaces. Its stock lineColor is too dim on our
+      // near-black background though, so lift just the edges.
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: 'dark',
+        themeVariables: {
+          lineColor: token('--strands-grey-400', '#b6b6b6'),
+        },
+      })
+    } else {
+      // Light mode: mermaid's stock `neutral` theme ignores the brand palette,
+      // so drive the `base` theme from the same custom properties custom.css
+      // defines. Read them at runtime so the palette stays single-sourced.
+      const surface = token('--sl-color-gray-6', '#f4f4f4')
+      const border = token('--strands-grey-200', '#d9d9d9')
+      const ink = token('--strands-charcoal-1', '#28292a')
+      const line = token('--sl-color-gray-3', '#666464')
+      const accent = token('--strands-green-3', '#02a435')
+      const accentLow = token('--strands-seafoam-green', '#e6f6e7')
+      const page = token('--strands-white', '#ffffff')
+
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: 'base',
+        themeVariables: {
+          background: 'transparent',
+          // No fontFamily override here: mermaid measures label text to size each
+          // node, and a non-resolvable value like `inherit` makes it size boxes
+          // with default metrics while CSS applies a wider font, clipping labels.
+          // Node surfaces
+          primaryColor: surface,
+          primaryTextColor: ink,
+          primaryBorderColor: border,
+          mainBkg: surface,
+          nodeBorder: border,
+          secondaryColor: accentLow,
+          tertiaryColor: page,
+          // Subgraph / cluster surfaces pick up the seafoam accent
+          clusterBkg: accentLow,
+          clusterBorder: accent,
+          // Text, edges, and edge labels
+          textColor: ink,
+          titleColor: ink,
+          lineColor: line,
+          edgeLabelBackground: page,
+        },
+      })
+    }
 
     // Only render diagrams in visible panels; defer hidden ones until shown
     const hiddenDiagrams = new Set(
@@ -219,4 +273,31 @@ const structuredData = {
       observer.observe(panel, { attributes: true, attributeFilter: ['hidden'] })
     })
   }
+</script>
+
+<script>
+  // Horizontally-scrollable regions (wide code blocks, API tables, the landing
+  // terminal) must be keyboard-focusable so keyboard-only users can scroll them
+  // (WCAG 2.1.1 — axe rule "scrollable-region-focusable"). Mark the ones that
+  // actually overflow as focusable, and label them for screen readers.
+  const markScrollable = () => {
+    const candidates = document.querySelectorAll(
+      'pre, .sl-markdown-content table, [class*="terminal__code"], .expressive-code figure > pre'
+    )
+    for (const el of candidates) {
+      if (el.hasAttribute('tabindex')) continue
+      // Overflows (either axis) and isn't already reachable via a focusable child.
+      const scrolls =
+        el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1
+      const hasFocusableChild = el.querySelector('a, button, input, textarea, select, [tabindex]')
+      if (scrolls && !hasFocusableChild) {
+        el.setAttribute('tabindex', '0')
+        if (!el.hasAttribute('role')) el.setAttribute('role', 'region')
+        if (!el.hasAttribute('aria-label')) el.setAttribute('aria-label', 'Scrollable content')
+      }
+    }
+  }
+  // Run after layout settles, and again if tab panels reveal hidden content.
+  if (document.readyState === 'complete') markScrollable()
+  else window.addEventListener('load', markScrollable)
 </script>

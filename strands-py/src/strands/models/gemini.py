@@ -248,6 +248,9 @@ class GeminiModel(Model):
                 if _has_location_source(content):
                     logger.warning("Location sources are not supported by Gemini | skipping content block")
                     continue
+                if "cachePoint" in content:
+                    logger.warning("cachePoint content block is not supported by Gemini | skipping")
+                    continue
                 parts.append(self._format_request_content_part(content, tool_use_id_to_name))
 
             contents.append(
@@ -477,15 +480,28 @@ class GeminiModel(Model):
                         return {"messageStop": {"stopReason": "end_turn"}}
 
             case "metadata":
-                input_tokens = event["data"].prompt_token_count or 0
-                total_tokens = event["data"].total_token_count or 0
+                usage_metadata = event["data"]
+                prompt_tokens = usage_metadata.prompt_token_count or 0
+                tool_use_prompt_tokens = usage_metadata.tool_use_prompt_token_count or 0
+                input_tokens = prompt_tokens + tool_use_prompt_tokens
+                total_tokens = usage_metadata.total_token_count or 0
+                candidates_tokens = usage_metadata.candidates_token_count
+                thoughts_tokens = usage_metadata.thoughts_token_count or 0
+                # Gemini's total_token_count folds four disjoint buckets (prompt + candidates +
+                # tool_use_prompt + thoughts). tool_use_prompt is input and thoughts are billed as output,
+                # so deriving output by subtraction miscounts tool_use_prompt as output; sum each side from
+                # its own fields, falling back to subtraction only when candidates is absent.
                 usage_data: Usage = {
                     "inputTokens": input_tokens,
-                    "outputTokens": max(0, total_tokens - input_tokens),
+                    "outputTokens": (
+                        candidates_tokens + thoughts_tokens
+                        if candidates_tokens is not None
+                        else max(0, total_tokens - input_tokens)
+                    ),
                     "totalTokens": total_tokens,
                 }
 
-                if cached := event["data"].cached_content_token_count:
+                if cached := usage_metadata.cached_content_token_count:
                     usage_data["cacheReadInputTokens"] = cached
 
                 return {

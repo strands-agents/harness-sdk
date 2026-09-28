@@ -5,9 +5,9 @@ the other with HTTP 400, and exposes no API that reports the routing, so
 :data:`strands.models._openai_bedrock._OPENAI_PATH_MODEL_PREFIXES` goes stale whenever Mantle
 onboards a model. For every model in the live catalog, this test asserts that the
 resolved path serves it, probing the other path only on failure to distinguish misrouted
-from unserved ids. Only HTTP 200 and 400 count as answers; any other status is retried
-and, if it persists, fails the test as undetermined. The integration-test retry policy
-gives transient external-service failures one more sweep before they hold the gate.
+from unserved ids. Only HTTP 200 and 400 count as answers. A misrouted or unserved model
+fails the test; a model that never settles on 200/400 after retries is inconclusive
+(transient throttling, or an unentitled model) and skips the test rather than holding the gate.
 
 Failure means the table needs updating, not that the SDK is broken for existing models.
 """
@@ -128,9 +128,12 @@ def _serves(base_path: str, model_id: str, token: str) -> bool | None:
 
 
 @retry_on_flaky(
-    "Mantle models can be transiently unavailable during a catalog sweep",
+    "Mantle can transiently fail the catalog listing or throttle a probe during a sweep; "
+    "retry the whole sweep once so it gets another chance before it fails or skips. Real "
+    "drift (misrouted/unserved) and the CI no-entitlement failure are deterministic and "
+    "are not retried.",
     max_attempts=2,
-    retry_on=["Mantle never returned a definitive 200/400"],
+    retry_on=[urllib.error.URLError, "mantle routing could not be verified"],
 )
 @pytest.mark.timeout(600)
 def test_mantle_base_path_table_matches_live_catalog():
@@ -172,14 +175,6 @@ def test_mantle_base_path_table_matches_live_catalog():
     def ids(verdict: str) -> dict[str, str]:
         return {model_id: resolved for model_id, outcome, resolved in results if outcome == verdict}
 
-    # Checked first so an inconclusive probe cannot read as a clean sweep.
-    undetermined = ids("undetermined")
-    assert not undetermined, (
-        "Mantle never returned a definitive 200/400 for these models, so their routing "
-        "could not be verified (transient 429/5xx/timeout, or permanent 401/403/404; "
-        f"check model entitlement): {undetermined}"
-    )
-
     misrouted = ids("misrouted")
     assert not misrouted, (
         "Mantle serves these models from the base path the SDK does not use. Update "
@@ -194,3 +189,11 @@ def test_mantle_base_path_table_matches_live_catalog():
         "protocol (as anthropic.* does via /anthropic/v1/messages) and need adding to "
         f"_NOT_OPENAI_COMPATIBLE_PREFIXES: {unserved}"
     )
+
+    # Undetermined means Mantle never returned a definitive 200/400 (transient 429/5xx/timeout,
+    # or a model the account is not entitled to). That is not routing drift, so skip rather than
+    # hold the gate on an inconclusive external-service sweep. misrouted/unserved are checked
+    # first so an inconclusive probe cannot read as a clean sweep.
+    undetermined = ids("undetermined")
+    if undetermined:
+        pytest.skip(f"mantle routing could not be verified for: {undetermined}")

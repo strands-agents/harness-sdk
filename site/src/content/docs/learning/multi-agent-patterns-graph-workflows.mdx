@@ -1,0 +1,94 @@
+---
+title: "Lesson 11: Multi-Agent Patterns: Graph Workflows"
+description: "Some workflows have a fixed structure: step A feeds into step B, step B branches based on a condition, both branches converge at step C. You don't want the model deciding whether to run step B. You want it guaranteed."
+redirectFrom:
+  - docs/community/learning/lesson11-multi-agent-patterns-graph-workflows
+---
+
+<YouTube id="jDeV2V5fJUQ" title="Lesson 11: Multi-Agent Patterns: Graph Workflows" />
+*[Watch on YouTube](https://www.youtube.com/watch?v=jDeV2V5fJUQ&list=PLDzwjhH-4yhU&index=11)*
+
+:::note[About this lesson]
+The videos in this course are a snapshot in time. Strands is under active development, so the code featured on this page reflects the most up-to-date patterns, but the concepts covered in the video still apply. When in doubt, trust the code.
+:::
+
+*Code for this lesson: [`samples/11-graphs`](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/11-graphs)*
+
+## Deterministic Control Over Execution
+
+Graphs and workflows give you deterministic control over multi-agent execution. Unlike agents-as-tools, where the orchestrator decides the flow dynamically, these patterns let you define the exact execution order, dependencies, and parallel paths upfront. Use them when you can draw the workflow on a whiteboard.
+
+## Graph
+
+Each node is a full agent; edges express dependencies. A node executes when all its incoming edges are satisfied, and the graph resolves what runs in parallel and what waits.
+
+```python
+from strands import Agent
+from strands.multiagent import GraphBuilder
+from strands.vended_tools.web_fetch import web_fetch
+
+researcher = Agent(
+    name="researcher",
+    system_prompt="Gather comprehensive information from the web.",
+    tools=[web_fetch],
+)
+
+analyst = Agent(
+    name="analyst",
+    system_prompt="Identify patterns, trends, and key insights from research.",
+)
+
+summarizer = Agent(
+    name="summarizer",
+    system_prompt="Condense raw research into concise key points.",
+)
+
+report_writer = Agent(
+    name="report_writer",
+    system_prompt="Synthesize analysis and summaries into a final report.",
+)
+
+builder = GraphBuilder()
+builder.add_node(researcher, "research")
+builder.add_node(analyst, "analysis")
+builder.add_node(summarizer, "summarize")
+builder.add_node(report_writer, "report")
+
+builder.add_edge("research", "analysis")
+builder.add_edge("research", "summarize")   # analyst + summarizer run in parallel
+builder.add_edge("analysis", "report")
+builder.add_edge("summarize", "report")      # report waits for both
+
+builder.set_execution_timeout(600)
+graph = builder.build()
+
+result = graph("Research the impact of AI on healthcare")
+```
+
+📂 [basic_graph.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/11-graphs/basic_graph.py)
+
+Data flow: entry nodes receive the original task. Downstream nodes receive the original task plus labeled outputs from their dependencies. Use `invocation_state` for metadata (user IDs, feature flags) that shouldn't be exposed to the models.
+
+Common shapes: sequential pipelines, parallel fan-out (as above), conditional branching, and cyclic feedback loops. If you build a cycle, set `set_max_node_executions` so it can't loop forever.
+
+## Key Concepts
+
+- **Nodes** are agents (or any callable). They execute when all incoming edges are satisfied.
+- **Edges** define dependencies. An edge from A to B means B waits for A.
+- **Parallel fan-out**: nodes without dependencies on each other run concurrently.
+- **Context passing**: each step receives the output of its predecessors.
+- **When to use**: pipelines with known structure, fan-out/fan-in, workflows that need guaranteed execution order, and processes requiring audit trails.
+
+## Comparison
+
+| Pattern | Flow Control | Best For |
+|---------|-------------|----------|
+| Agents as Tools | Orchestrator decides | Separable domains, synthesis |
+| Graphs | Defined by edges | Known pipelines, parallelism |
+| Swarms | Agents decide | Unknown sequences, exploration |
+
+## Resources
+
+- 📖 [Graph](/docs/user-guide/sdk/multi-agent/graph/)
+- 📖 [Workflow](/docs/user-guide/sdk/multi-agent/workflow/)
+- 📖 [Multi-Agent Patterns Overview](/docs/user-guide/sdk/multi-agent/multi-agent-patterns/)

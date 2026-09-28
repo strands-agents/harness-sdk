@@ -15,19 +15,28 @@
   --cat-accent-text: #067a39;
 }
 
-/* Starlight's splash template caps width via .sl-container; opt out like the
-   changelog does. This stylesheet only loads on /integrations. */
+/* Fill the content column (Starlight's content-panel already centers and pads
+   it to --sl-content-width, so the page shares the docs/product pages' spacing
+   and top divider). This stylesheet only loads on /integrations. */
 .sl-markdown-content :where(.cat-page) {
   max-width: none;
 }
-.content-panel .sl-container {
-  max-width: none;
+
+/* The catalog is a grid, not prose, so give it more room than the 50rem prose
+   column and let it widen on large screens: cards stay wide enough to show full
+   titles and descriptions. Scoped to this page with :has() (catalog.css only
+   loads on /integrations). */
+body:has(.cat-page) {
+  --sl-content-width: 62rem;
+}
+@media (min-width: 96rem) {
+  body:has(.cat-page) {
+    --sl-content-width: 84rem;
+  }
 }
 
 .cat-page {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 2rem 1.5rem 4rem;
+  padding-bottom: 4rem;
   font-family: var(--sl-font);
 }
 
@@ -69,9 +78,23 @@
 .cat-head-actions .cat-note {
   margin: 0;
 }
+.cat-eyebrow {
+  display: inline-block;
+  margin-bottom: 0.25rem;
+  font-family: var(--sl-font-mono);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--sl-color-accent-high, var(--accent-green));
+  text-decoration: none;
+}
+.cat-eyebrow:hover {
+  text-decoration: underline;
+}
+/* Match the site's page titles: JetBrains Mono, not the body font. */
 .cat-title {
+  font-family: var(--sl-font-mono);
   font-size: clamp(2rem, 4vw, 2.75rem);
-  font-weight: 700;
+  font-weight: 600;
   color: var(--sl-color-white);
   margin: 0;
 }
@@ -89,87 +112,33 @@
 
 /* ── Cards ──────────────────────────────────────────────────────────────── */
 
-/* Left type rail + grid, mirroring the changelog's .cl-body/.cl-rail layout. */
-.cat-body {
-  display: flex;
-  gap: 1.5rem;
-  align-items: flex-start;
-}
-.cat-rail {
-  width: 200px;
-  flex-shrink: 0;
-}
-.cat-rail-label {
-  font-size: var(--cat-text-meta);
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--sl-color-gray-3);
-  font-weight: 700;
-  margin: 0 0 0.25rem;
-  padding-left: 0.65rem;
-}
-/* Space between rail sections (Highlights, Type, Maintained by). */
-.cat-rail-list + .cat-rail-label {
-  margin-top: 0.7rem;
-}
-.cat-rail-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-.cat-rail-item {
-  margin: 0;
-  display: flex;
-}
-.cat-rail .cat-chip {
-  width: 100%;
-  text-align: left;
-  /* Starlight's content styles give buttons a bottom margin the :where reset
-     (margin-top only) doesn't touch; without this the rail rows drift apart. */
-  margin: 0;
-  padding-top: 0.14rem;
-  padding-bottom: 0.14rem;
-}
-.cat-rail .cat-count {
-  margin-left: 0.1rem;
-}
-/* A chip whose selection would match nothing stays clickable but reads muted. */
-.cat-chip--zero {
-  opacity: 0.4;
-}
-
 .cat-grid {
-  flex: 1;
   min-width: 0;
   display: grid;
-  /* min(20rem, 100%) keeps the track from forcing horizontal overflow on
-     viewports narrower than the ideal card width. */
-  grid-template-columns: repeat(auto-fill, minmax(min(20rem, 100%), 1fr));
-  /* Uniform card size regardless of content: every row shares one height and
-     each card's internals reserve fixed space (see .cat-card-desc). */
-  grid-auto-rows: 1fr;
+  /* Fit as many ~18rem tracks as the content width allows, so the grid gains
+     columns on wide screens instead of stretching a fixed three. min(100%, …)
+     keeps a single column from overflowing the narrowest viewports. */
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
+  /* Rows size to their content so full titles and descriptions are never
+     clipped; cards within a row still stretch to a shared height. */
   gap: 1.4rem;
 }
 
 .cat-card {
   position: relative;
   display: flex;
-  gap: 0.85rem;
-  /* Stretch so the content column fills the uniform card height and the
-     footer's margin-top auto can push it to the bottom edge. */
-  align-items: stretch;
+  flex-direction: column;
   /* Grid items default to min-width auto; without this a card's nowrap
      footer would widen its track past the container on narrow screens. */
   min-width: 0;
+  gap: 0.6rem;
   border: 1px solid var(--sl-color-hairline, var(--sl-color-gray-5));
   border-radius: var(--cat-radius-card);
-  /* Lighter bottom padding so the footer line hugs the card's lower edge. */
-  padding: 1.4rem 1.4rem 0.95rem;
+  padding: 1.4rem;
   background: var(--sl-color-bg-nav);
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
 }
 .cat-card:hover {
   border-color: color-mix(in srgb, var(--sl-color-accent) 45%, var(--sl-color-gray-5));
@@ -179,75 +148,10 @@
   display: none;
 }
 
-/* The CTA tile sets its own display, which outranks the [hidden] UA style
-   (same trap as .cat-card[hidden]). */
-.cat-cta[hidden] {
-  display: none;
-}
-
-/* Zero-results panel: spans the grid, offers a reset and the submission CTA. */
-.cat-empty {
-  grid-column: 1 / -1;
-  text-align: center;
-  border: 1px dashed color-mix(in srgb, var(--sl-color-gray-4) 60%, transparent);
-  border-radius: var(--cat-radius-card);
-  padding: 3rem 1.5rem;
-}
-.cat-empty[hidden] {
-  display: none;
-}
-.cat-empty-title {
-  font-weight: 600;
-  font-size: 1.15rem;
-  color: var(--sl-color-white);
-  margin-bottom: 0.35rem;
-}
-.cat-empty-body {
-  color: var(--sl-color-gray-3);
-  margin-bottom: 1.2rem;
-}
-.cat-empty-actions {
-  display: flex;
-  gap: 0.6rem;
-  justify-content: center;
-  flex-wrap: wrap;
-}
-.cat-btn-ghost {
-  font-size: 0.92rem;
-  padding: 0.45rem 1rem;
-  border: 1px solid var(--sl-color-gray-4);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--sl-color-gray-2);
-  cursor: pointer;
-}
-.cat-btn-ghost:hover {
-  border-color: var(--sl-color-gray-3);
-  color: var(--sl-color-white);
-}
-
 /* Featured entries live in the same grid (sorted first) and are marked by a
    Featured chip in the card head plus a light accent border tint. */
 .cat-card--featured {
   border-color: color-mix(in srgb, var(--sl-color-accent) 25%, var(--sl-color-gray-5));
-}
-
-/* Built-in (SDK) cards carry the badge's note-blue on the border and type
-   tile so first-party entries scan apart from the rest of the catalog. */
-.cat-card--builtin {
-  border-color: color-mix(in srgb, var(--sl-badge-note-border) 45%, var(--sl-color-gray-5));
-}
-.cat-card--builtin:hover {
-  border-color: color-mix(in srgb, var(--sl-badge-note-border) 75%, var(--sl-color-gray-5));
-  background: color-mix(in srgb, var(--sl-badge-note-bg) 12%, var(--sl-color-bg-nav));
-}
-.cat-card--builtin .cat-tile {
-  color: var(--sl-badge-note-text);
-  background: color-mix(in srgb, var(--sl-badge-note-bg) 30%, transparent);
-  border-color: color-mix(in srgb, var(--sl-badge-note-border) 35%, transparent);
-}
-.cat-card--builtin:hover .cat-card-title {
-  color: var(--sl-badge-note-text);
 }
 
 /* Whole-card click: the title link stretches over the card; secondary links
@@ -276,51 +180,45 @@
   border: 1px solid color-mix(in srgb, var(--sl-color-accent) 14%, transparent);
 }
 
-.cat-card-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-}
-
-/* Fixed card anatomy: title row, two-line description, one footer line.
-   Nothing wraps — long content ellipsizes so every card is identical. */
-.cat-card-head {
+/* Header row: the type tile beside the title/stats/flags cluster. The
+   description and footer are siblings below it and span the full card
+   width, so nothing sits indented under the icon. */
+.cat-card-header {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
+  gap: 0.85rem;
   min-width: 0;
-  /* Flags and stats wrap to a second row when space is tight; without this
-     the nowrap title is the only shrinkable item and collapses to "da…" on
-     narrow screens. */
-  flex-wrap: wrap;
-  row-gap: 0.3rem;
+}
+
+/* Head stacks vertically beside the tile: title, then the star/download
+   stats directly below it, then the flag chips on their own row. */
+.cat-card-head {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
 }
 .cat-card-title {
   font-weight: 600;
   font-size: 1.05rem;
   color: var(--sl-color-white);
   text-decoration: none;
+  /* Wrap to at most two lines rather than truncating a name mid-word. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  /* Floor before the head wraps — the name must stay readable. */
-  min-width: min(9rem, 100%);
+  max-width: 100%;
 }
 .cat-card-stats {
   display: inline-flex;
   gap: 0.55rem;
   flex-shrink: 0;
+  /* Sit tight under the title — smaller than the head's row gap. */
+  margin-top: -0.1rem;
   font-size: var(--cat-text-meta);
   color: var(--sl-color-gray-3);
-}
-.cat-card-flags {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  margin-left: auto;
-  flex-shrink: 0;
 }
 .cat-card:hover .cat-card-title {
   color: var(--cat-accent-text);
@@ -328,7 +226,16 @@
 .cat-external {
   font-size: 0.7rem;
   color: var(--sl-color-gray-3);
-  margin-left: 0.25rem;
+}
+
+/* Flag cluster is its own full-width row below the header: Featured / New /
+   Verified / maintainer chips together, left-aligned, with a gap between. */
+.cat-card-flags {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
 }
 
 /* Card flags mirror Starlight's sidebar .sl-badge treatment (see Badge.astro):
@@ -346,70 +253,26 @@
   border: 1px solid;
   border-radius: 0.25rem;
 }
-/* Verified is maintainer-granted: brand-green outline, no solid fill. */
-.cat-flag--verified {
+/* Cap the mark height (the AWS logo ships taller than the chip text) so every
+   flag chip is the same height and the flags row never varies card to card. */
+.cat-flag svg {
+  height: 0.85rem;
+  width: auto;
+}
+/* Variant colors follow the docs sidebar badges but lightened: outline-only
+   (no fill) so the flags read as quiet metadata rather than solid chips. */
+.cat-flag--new {
+  color: var(--sl-badge-tip-text);
+  background: color-mix(in srgb, var(--sl-badge-tip-bg) 35%, transparent);
+  border-color: color-mix(in srgb, var(--sl-badge-tip-border) 55%, transparent);
+}
+/* Featured/Verified are maintainer-granted: brand-green outline keeps them
+   distinct from the informational New without a solid fill. */
+.cat-flag--verified,
+.cat-flag--featured {
   color: var(--cat-accent-text);
   background: color-mix(in srgb, var(--sl-color-accent) 7%, transparent);
   border-color: color-mix(in srgb, var(--sl-color-accent) 40%, transparent);
-}
-
-/* Featured/New render as tabs seated on the card's top-right border rather
-   than chips in the title row, keeping the head to name + tier. The fill
-   matches the featured border tint so tab and border read as one shape. */
-.cat-corner {
-  position: absolute;
-  top: -1px;
-  right: 14px;
-  display: flex;
-  gap: 4px;
-  z-index: 1;
-  /* Sits above the stretched title link; without this the tabs would be a
-     click-dead zone on the card. */
-  pointer-events: none;
-}
-.cat-tab {
-  font-family: var(--sl-font-system-mono);
-  font-size: 0.62rem;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  line-height: 1;
-  padding: 0.22rem 0.5rem;
-  border-radius: 0 0 5px 5px;
-  color: var(--sl-color-black);
-}
-.cat-tab--featured {
-  background: var(--sl-color-accent);
-}
-.cat-tab--new {
-  background: var(--sl-badge-tip-border);
-}
-/* Maintainer-tier flags. Built-in (Strands) is note-blue so it reads apart
-   from the maintainer-granted green (Verified/Featured) and the informational
-   New; AWS is caution-orange; Partner stays a neutral outline. Community
-   renders no flag: it is the default tier. */
-.cat-flag--strands {
-  color: var(--sl-badge-note-text);
-  background: color-mix(in srgb, var(--sl-badge-note-bg) 35%, transparent);
-  border-color: color-mix(in srgb, var(--sl-badge-note-border) 55%, transparent);
-}
-/* Inline svg baseline-aligns and rides high; block lets the flag's flex
-   centering align marks with the neighbor chips' text. */
-.cat-flag svg {
-  display: block;
-}
-/* The AWS flag is the bare mark, no chip box; --sl-color-white flips with
-   the theme so the logo stays full-contrast in light and dark. */
-.cat-flag--aws {
-  border: none;
-  background: transparent;
-  padding: 0;
-  color: var(--sl-color-white);
-}
-.cat-flag--partner {
-  color: var(--sl-color-gray-2);
-  background: color-mix(in srgb, var(--sl-color-gray-4) 20%, transparent);
-  border-color: color-mix(in srgb, var(--sl-color-gray-4) 70%, transparent);
 }
 
 .cat-card-desc {
@@ -417,31 +280,27 @@
   font-size: 0.92rem;
   line-height: 1.6;
   margin: 0;
-  /* Uniform card heights: every description occupies exactly two lines —
-     longer text clamps, shorter text still reserves the space. */
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  min-height: 2lh;
 }
 
 .cat-card-foot {
   display: flex;
   align-items: center;
-  margin-top: auto;
   justify-content: space-between;
   gap: 0.7rem;
+  /* Pinned to the card bottom; absorbs the extra height when a card is
+     stretched to match a taller sibling in its grid row. */
+  margin-top: auto;
+  padding-top: 0.15rem;
   font-size: var(--cat-text-meta);
   color: var(--sl-color-gray-3);
   min-width: 0;
 }
 .cat-facts {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 0.7rem;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.7rem;
   min-width: 0;
-  overflow: hidden;
 }
 .cat-type {
   color: var(--sl-color-gray-3);
@@ -449,8 +308,6 @@
 }
 .cat-langs {
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .cat-stat {
   display: inline-flex;
@@ -492,6 +349,11 @@
   margin-bottom: 1.75rem;
 }
 .cat-filters-row,
+/* Inline facet bar (no modal): sits above the grid. */
+.cat-facets {
+  margin-bottom: 1.5rem;
+}
+
 .cat-facet-row {
   display: flex;
   align-items: center;
@@ -500,152 +362,8 @@
   margin-bottom: 0.7rem;
 }
 
-/* Search trigger button: styled like the global header search bar; opens the
-   dialog palette. */
-.cat-search-trigger {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex: 1 1 14rem;
-  max-width: 26rem;
-  padding: 0.5rem 0.7rem;
-  font-size: 0.9rem;
-  font-family: inherit;
-  border-radius: var(--cat-radius-control);
-  border: 1px solid var(--sl-color-gray-5);
-  background: var(--sl-color-bg);
-  color: var(--sl-color-gray-3);
-  cursor: pointer;
-  text-align: left;
-}
-.cat-search-trigger:hover {
-  border-color: var(--sl-color-gray-4);
-  color: var(--sl-color-gray-2);
-}
-.cat-search-trigger--active {
-  color: var(--sl-color-white);
-  border-color: color-mix(in srgb, var(--sl-color-accent) 45%, var(--sl-color-gray-5));
-}
-.cat-search-label {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.cat-search-icon {
-  color: var(--sl-color-gray-3);
-  flex-shrink: 0;
-}
-.cat-search-kbd {
-  font-size: 0.65rem;
-  font-family: var(--sl-font);
-  padding: 0.05rem 0.4rem;
-  border: 1px solid var(--sl-color-gray-5);
-  border-radius: 4px;
-  color: var(--sl-color-gray-3);
-  background: var(--sl-color-bg-nav);
-}
-
-/* Search dialog palette (mirrors the global Pagefind search modal shape). */
-.cat-dialog {
-  width: min(40rem, 90vw);
-  margin: 10vh auto auto;
-  padding: 0;
-  border: 1px solid var(--sl-color-gray-5);
-  border-radius: var(--cat-radius-card);
-  background: var(--sl-color-bg-nav);
-  color: var(--sl-color-gray-2);
-  box-shadow: 0 16px 48px rgb(0 0 0 / 0.35);
-}
-.cat-dialog::backdrop {
-  background: rgb(0 0 0 / 0.5);
-  backdrop-filter: blur(2px);
-}
-.cat-dialog-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  padding: 0.8rem 1rem;
-  border-bottom: 1px solid var(--sl-color-gray-5);
-  color: var(--sl-color-gray-3);
-}
-.cat-dialog-input {
-  flex: 1;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  font: inherit;
-  font-size: 1rem;
-  color: var(--sl-color-white);
-}
-.cat-dialog-close {
-  font-size: 0.65rem;
-  font-family: var(--sl-font);
-  padding: 0.15rem 0.5rem;
-  border: 1px solid var(--sl-color-gray-5);
-  border-radius: 4px;
-  color: var(--sl-color-gray-3);
-  background: transparent;
-  cursor: pointer;
-}
-.cat-dialog-close:hover {
-  color: var(--sl-color-white);
-}
-.cat-dialog-facets {
-  padding: 0.6rem 1rem 0.2rem;
-  border-bottom: 1px solid var(--sl-color-gray-5);
-}
-.cat-dialog-facets .cat-facet-row {
-  margin-bottom: 0.55rem;
-}
-.cat-dialog-facets .cat-type-rail {
-  margin-bottom: 0.55rem;
-}
-.cat-dialog-list {
-  list-style: none;
-  margin: 0;
-  padding: 0.4rem;
-  max-height: 45vh;
-  overflow: auto;
-}
-.cat-dialog-item {
-  margin: 0;
-}
-.cat-dialog-item[hidden] {
-  display: none;
-}
-.cat-dialog-item a {
-  display: flex;
-  align-items: baseline;
-  gap: 0.6rem;
-  padding: 0.5rem 0.7rem;
-  border-radius: var(--cat-radius-control);
-  text-decoration: none;
-}
-.cat-dialog-item a:hover,
-.cat-dialog-item a:focus-visible {
-  background: color-mix(in srgb, var(--sl-color-accent) 10%, transparent);
-}
-.cat-dialog-name {
-  font-weight: 600;
-  font-size: 0.95rem;
-  color: var(--sl-color-white);
-  white-space: nowrap;
-}
-.cat-dialog-desc {
-  font-size: 0.85rem;
-  color: var(--sl-color-gray-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.cat-dialog-empty {
-  text-align: center;
-  color: var(--sl-color-gray-3);
-  font-size: 0.85rem;
-  padding: 1.5rem;
-  margin: 0;
-}
+/* The search input and its results now live in the left sidebar (see
+   Sidebar.astro); the old on-page search-trigger + modal palette are gone. */
 
 /* Segmented control groups (mirrors .cl-lang / .cl-sdk). */
 .cat-seg {
@@ -674,19 +392,27 @@
 .cat-seg .cat-seg-btn + .cat-seg-btn {
   border-left: 1px solid var(--sl-color-gray-5);
 }
-.cat-seg-btn--solo {
-  border: 1px solid var(--sl-color-gray-5);
-  border-radius: var(--cat-radius-control);
-}
 .cat-seg-btn[aria-pressed='true'],
 .cat-seg-btn[aria-checked='true'] {
   background: color-mix(in srgb, var(--sl-color-accent) 14%, transparent);
   color: var(--cat-accent-text);
 }
 
+/* Vertical divider between filter groups in the facet row (language / SDK |
+   maintainer | status) so the single combined row still reads as distinct
+   controls. */
+.cat-facet-sep {
+  align-self: stretch;
+  width: 1px;
+  min-height: 1.5rem;
+  background: var(--sl-color-gray-5);
+  margin-inline: 0.2rem;
+}
+
 /* Type chip rail (mirrors .cl-area chips, laid out horizontally). */
 .cat-type-rail {
   display: flex;
+  align-items: center;
   gap: 0.35rem;
   flex-wrap: wrap;
 }
@@ -781,28 +507,17 @@
   font-size: 0.8rem;
 }
 
-@media (max-width: 800px) {
-  /* The rail collapses into a horizontal chip row above the grid. */
-  .cat-body {
+/* Below the desktop width the combined facet row would wrap and strand the
+   vertical dividers, so stack the groups instead: the language / SDK segments,
+   then the maintainer chips, then the status chips, each on its own line. */
+@media (max-width: 63.9375rem) {
+  .cat-facet-row {
     flex-direction: column;
-    gap: 1.25rem;
+    align-items: flex-start;
+    gap: 0.7rem;
   }
-  .cat-rail {
-    width: 100%;
-  }
-  .cat-rail-list {
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 0.35rem;
-  }
-  .cat-rail-item {
-    display: inline-flex;
-  }
-  .cat-rail .cat-chip {
-    width: auto;
-  }
-  .cat-rail .cat-count {
-    margin-left: 0;
+  .cat-facet-sep {
+    display: none;
   }
 }
 

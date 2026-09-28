@@ -62,7 +62,7 @@ export type ChangelogEntry = z.infer<typeof changelogEntrySchema>
 
 export const changelogFrontmatterSchema = z
   .object({
-    sdk: z.enum(['harness', 'evals']),
+    sdk: z.enum(['sdk', 'evals']),
     language: z.enum(['python', 'typescript']).optional(),
     version: z.string(),
     tag: z.string(),
@@ -74,14 +74,14 @@ export const changelogFrontmatterSchema = z
     newContributors: z.array(z.object({ login: z.string(), pr: z.number() })).default([]),
   })
   // Tie `language` to `sdk` so bad data can't create bogus streams/routes:
-  // harness releases are per-language (python|typescript); evals is python-only
+  // sdk releases are per-language (python|typescript); evals is python-only
   // and omits the field entirely.
   .superRefine((d, ctx) => {
-    if (d.sdk === 'harness' && d.language === undefined) {
+    if (d.sdk === 'sdk' && d.language === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['language'],
-        message: 'harness releases require a language (python or typescript)',
+        message: 'sdk releases require a language (python or typescript)',
       })
     }
     if (d.sdk === 'evals' && d.language !== undefined) {
@@ -189,6 +189,63 @@ const blogSchema = z.object({
   readingTime: z.string().optional(),
 })
 
+// Regex rejects protocol-relative URLs like //evil.com and /\evil.com that startsWith('/') would accept.
+const internalHref = z.string().regex(
+  /^\/(?![/\\])/,
+  'course hrefs must be site-relative (start with a single /)',
+)
+
+export const courseSchema = z.object({
+  title: z.string(),
+  number: z.number().int().positive(),
+  status: z.enum(['available', 'in-development', 'proposed']),
+  description: z.string(),
+  href: internalHref,
+  syllabusHref: internalHref.optional(),
+  // Array position is the source of truth for lesson order; titles resolved from docs at render time.
+  lessons: z
+    .array(
+      z.object({
+        href: internalHref,
+      })
+    )
+    .optional(),
+})
+export type Course = z.infer<typeof courseSchema>
+
+// Accepts unquoted YAML dates (Date) or quoted YYYY-MM-DD strings.
+// Round-trip check rejects rolled-over dates: '2026-02-30' passes the regex but coerces to a different ISO date.
+const eventDate = z
+  .union([
+    z.date(),
+    z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'event dates must be YYYY-MM-DD')
+      .superRefine((s, ctx) => {
+        const coerced = new Date(s)
+        if (isNaN(coerced.getTime()) || coerced.toISOString().slice(0, 10) !== s) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `invalid calendar date: ${s}` })
+        }
+      }),
+  ])
+  .pipe(z.coerce.date())
+
+export const eventSchema = z
+  .object({
+    title: z.string(),
+    startDate: eventDate,
+    endDate: eventDate.optional(),
+    location: z.string(),
+    href: z.string().optional(),
+    description: z.string().optional(),
+    featured: z.boolean().default(false),
+  })
+  .refine((d) => d.endDate === undefined || d.endDate >= d.startDate, {
+    message: 'endDate must not be before startDate',
+    path: ['endDate'],
+  })
+export type LearnEvent = z.infer<typeof eventSchema>
+
 export const collections = {
   authors: defineCollection({
     loader: file('src/content/authors.yaml'),
@@ -230,6 +287,20 @@ export const collections = {
         order: z.number().default(0),
       }),
   }),
+  courses: defineCollection({
+    loader: glob({
+      base: 'src/content/courses',
+      pattern: '**/*.{yml,yaml}',
+    }),
+    schema: courseSchema,
+  }),
+  events: defineCollection({
+    loader: glob({
+      base: 'src/content/events',
+      pattern: '**/*.{yml,yaml}',
+    }),
+    schema: eventSchema,
+  }),
   docs: defineCollection({
     loader: glob({
       base: 'src/content',
@@ -240,6 +311,7 @@ export const collections = {
         '404.mdx',
 
         'docs/user-guide/**/*.mdx',
+        'docs/learning/**/*.mdx',
         'docs/integrations/**/*.mdx',
         'docs/contribute/**/*.mdx',
         'docs/examples/**/[!index]*.mdx',

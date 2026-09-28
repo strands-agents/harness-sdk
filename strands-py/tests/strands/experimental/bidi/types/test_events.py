@@ -8,43 +8,26 @@ import json
 
 import pytest
 
-from strands.experimental.bidi.types.events import (
-    BidiAudioInputEvent,
-    BidiAudioStreamEvent,
-    BidiConnectionCloseEvent,
+from strands.experimental.bidi.types import (
+    BidiAudioDeltaEvent,
+    BidiAudioStartEvent,
+    BidiAudioStopEvent,
+    BidiBargeInEvent,
     BidiConnectionStartEvent,
-    BidiErrorEvent,
-    BidiImageInputEvent,
-    BidiInterruptionEvent,
-    BidiResponseCompleteEvent,
+    BidiConnectionStopEvent,
     BidiResponseStartEvent,
-    BidiTextInputEvent,
-    BidiTranscriptStreamEvent,
+    BidiResponseStopEvent,
+    BidiTranscriptDeltaEvent,
+    BidiTranscriptStartEvent,
+    BidiTranscriptStopEvent,
     BidiUsageEvent,
-    _normalize_role,
 )
+from strands.experimental.bidi.types.events import _normalize_role
 
 
 @pytest.mark.parametrize(
     "event_class,kwargs,expected_type",
     [
-        # Input events
-        (BidiTextInputEvent, {"text": "Hello", "role": "user"}, "bidi_text_input"),
-        (
-            BidiAudioInputEvent,
-            {
-                "audio": base64.b64encode(b"audio").decode("utf-8"),
-                "format": "pcm",
-                "sample_rate": 16000,
-                "channels": 1,
-            },
-            "bidi_audio_input",
-        ),
-        (
-            BidiImageInputEvent,
-            {"image": base64.b64encode(b"image").decode("utf-8"), "mime_type": "image/jpeg"},
-            "bidi_image_input",
-        ),
         # Output events
         (
             BidiConnectionStartEvent,
@@ -52,32 +35,42 @@ from strands.experimental.bidi.types.events import (
             "bidi_connection_start",
         ),
         (BidiResponseStartEvent, {"response_id": "r1"}, "bidi_response_start"),
+        (BidiTranscriptStartEvent, {"role": "user", "content_id": "u1"}, "bidi_transcript_start"),
         (
-            BidiAudioStreamEvent,
+            BidiAudioStartEvent,
+            {},
+            "bidi_audio_start",
+        ),
+        (BidiAudioStopEvent, {}, "bidi_audio_stop"),
+        (
+            BidiAudioDeltaEvent,
             {
                 "audio": base64.b64encode(b"audio").decode("utf-8"),
                 "format": "pcm",
                 "sample_rate": 24000,
                 "channels": 1,
             },
-            "bidi_audio_stream",
+            "bidi_audio_delta",
         ),
         (
-            BidiTranscriptStreamEvent,
+            BidiTranscriptDeltaEvent,
             {
-                "delta": {"text": "Hello"},
-                "text": "Hello",
+                "delta": "Hello",
                 "role": "assistant",
-                "is_final": True,
-                "current_transcript": "Hello",
+                "content_id": "t1",
             },
-            "bidi_transcript_stream",
+            "bidi_transcript_delta",
         ),
-        (BidiInterruptionEvent, {"reason": "user_speech"}, "bidi_interruption"),
         (
-            BidiResponseCompleteEvent,
-            {"response_id": "r1", "stop_reason": "complete"},
-            "bidi_response_complete",
+            BidiTranscriptStopEvent,
+            {"transcript": "Hello", "role": "assistant", "content_id": "t1"},
+            "bidi_transcript_stop",
+        ),
+        (BidiBargeInEvent, {"reason": "user_speech"}, "bidi_barge_in"),
+        (
+            BidiResponseStopEvent,
+            {"response_id": "r1"},
+            "bidi_response_stop",
         ),
         (
             BidiUsageEvent,
@@ -85,11 +78,10 @@ from strands.experimental.bidi.types.events import (
             "bidi_usage",
         ),
         (
-            BidiConnectionCloseEvent,
+            BidiConnectionStopEvent,
             {"connection_id": "c1", "reason": "complete"},
-            "bidi_connection_close",
+            "bidi_connection_stop",
         ),
-        (BidiErrorEvent, {"error": ValueError("test"), "details": None}, "bidi_error"),
     ],
 )
 def test_event_json_serialization(event_class, kwargs, expected_type):
@@ -116,52 +108,50 @@ def test_event_json_serialization(event_class, kwargs, expected_type):
             assert key in data
 
 
-def test_transcript_stream_event_delta_pattern():
-    """Test that BidiTranscriptStreamEvent follows ModelStreamEvent delta pattern."""
-    # Test partial transcript (delta)
-    partial_event = BidiTranscriptStreamEvent(
-        delta={"text": "Hello"},
-        text="Hello",
-        role="user",
-        is_final=False,
-        current_transcript=None,
-    )
-
-    assert partial_event.text == "Hello"
-    assert partial_event.role == "user"
-    assert partial_event.is_final is False
-    assert partial_event.current_transcript is None
-    assert partial_event.delta == {"text": "Hello"}
-
-    # Test final transcript with accumulated text
-    final_event = BidiTranscriptStreamEvent(
-        delta={"text": " world"},
-        text=" world",
-        role="user",
-        is_final=True,
-        current_transcript="Hello world",
-    )
-
-    assert final_event.text == " world"
-    assert final_event.role == "user"
-    assert final_event.is_final is True
-    assert final_event.current_transcript == "Hello world"
-    assert final_event.delta == {"text": " world"}
+@pytest.mark.parametrize("role", ["user", "assistant"])
+def test_transcript_start_contains_metadata(role):
+    event = BidiTranscriptStartEvent(role, "t1")
+    assert event == {"type": "bidi_transcript_start", "role": role, "content_id": "t1"}
+    assert (event.role, event.content_id) == (role, "t1")
 
 
-def test_transcript_stream_event_extends_model_stream_event():
-    """Test that BidiTranscriptStreamEvent is a ModelStreamEvent."""
-    from strands.types._events import ModelStreamEvent
+def test_response_stop_contains_id():
+    tru_event = BidiResponseStopEvent("r1")
+    exp_event = {"type": "bidi_response_stop", "response_id": "r1"}
+    assert tru_event == exp_event
+    assert tru_event.response_id == "r1"
 
-    event = BidiTranscriptStreamEvent(
-        delta={"text": "test"},
-        text="test",
-        role="assistant",
-        is_final=True,
-        current_transcript="test",
-    )
 
-    assert isinstance(event, ModelStreamEvent)
+def test_audio_start_is_marker():
+    start = BidiAudioStartEvent()
+    assert start == {"type": "bidi_audio_start"}
+
+
+def test_audio_stop_is_marker():
+    stop = BidiAudioStopEvent()
+    assert stop == {"type": "bidi_audio_stop"}
+
+
+def test_transcript_delta_event_contains_text_delta():
+    """Test that a transcript delta event contains only the incremental text."""
+    event = BidiTranscriptDeltaEvent("Hello", "user", "user-transcript")
+
+    assert event.role == "user"
+    assert event.delta == "Hello"
+
+
+def test_transcript_stop_event_contains_full_transcript():
+    """Test that a stop event carries one authoritative transcript."""
+    event = BidiTranscriptStopEvent("Hello world", "assistant", "assistant-transcript")
+
+    exp_event = {
+        "type": "bidi_transcript_stop",
+        "transcript": "Hello world",
+        "role": "assistant",
+        "content_id": "assistant-transcript",
+    }
+    assert event == exp_event
+    assert json.loads(json.dumps(event)) == exp_event
 
 
 @pytest.mark.parametrize(
@@ -203,42 +193,24 @@ def test_normalize_role_strips_whitespace(raw_role, expected):
 
 
 @pytest.mark.parametrize("raw_role", ["system", "admin", "SYSTEM", "tool", "developer", "unknown", ""])
-def test_transcript_stream_event_coerces_out_of_range_role_to_user(raw_role):
+def test_transcript_delta_event_coerces_out_of_range_role_to_user(raw_role):
     """An out-of-range transcript role is coerced to the lowest-trust role ("user")."""
-    event = BidiTranscriptStreamEvent(
-        delta={"text": "hi"},
-        text="hi",
-        role=raw_role,
-        is_final=True,
-        current_transcript="hi",
-    )
+    event = BidiTranscriptDeltaEvent(delta="hi", role=raw_role, content_id="transcript")
 
     # Attacker-controlled content is never attributed to the assistant.
     assert event.role == "user"
     assert event["role"] == "user"
 
 
-def test_transcript_stream_event_strips_whitespace_role():
+def test_transcript_delta_event_strips_whitespace_role():
     """A legitimately-spaced role is trimmed rather than mislabeled as the default."""
-    event = BidiTranscriptStreamEvent(
-        delta={"text": "hi"},
-        text="hi",
-        role=" user ",
-        is_final=True,
-        current_transcript="hi",
-    )
+    event = BidiTranscriptDeltaEvent(delta="hi", role=" user ", content_id="transcript")
 
     assert event.role == "user"
 
 
-def test_transcript_stream_event_normalizes_role_casing():
+def test_transcript_delta_event_normalizes_role_casing():
     """A supported role in mixed casing is normalized to lowercase."""
-    event = BidiTranscriptStreamEvent(
-        delta={"text": "hi"},
-        text="hi",
-        role="USER",
-        is_final=True,
-        current_transcript="hi",
-    )
+    event = BidiTranscriptDeltaEvent(delta="hi", role="USER", content_id="transcript")
 
     assert event.role == "user"

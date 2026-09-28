@@ -1,0 +1,80 @@
+---
+title: Take Strands harness to production
+description: "Strands harness returns a plain Agent, so deploying, observing, and securing it are the Strands Harness SDK's run guides. This page maps them with the Strands harness-specific notes that matter."
+sourceLinks:
+  - path: harness-py/src/strands_harness/agent.py
+  - path: harness-ts/src/agent.ts
+sidebar:
+  label: "Take Strands harness to production"
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components'
+
+Strands harness returns a plain Strands `Agent`, so taking it to production is not a separate story:
+deploying, observing, and securing a Strands harness agent are exactly the Strands Harness SDK's run guides, applied
+to the agent the factory hands you. This page points to those guides and calls out the few
+things specific to Strands harness's defaults.
+
+## The run guides
+
+<CardGrid>
+  <LinkCard
+    title="Deploy to production"
+    href="../../sdk/deploy/operating-agents-in-production/"
+    description="Ship to Lambda, Fargate, EKS, Amazon Bedrock AgentCore, and more."
+  />
+  <LinkCard
+    title="Observe your agent"
+    href="../../sdk/observability-evaluation/observability/"
+    description="Trace runs, read metrics, and debug behavior."
+  />
+  <LinkCard
+    title="Secure for production"
+    href="../../sdk/safety-security/guardrails/"
+    description="Add guardrails, redact PII, and keep message history trusted."
+  />
+</CardGrid>
+
+## Deploy
+
+Because Strands harness returns an ordinary `Agent`, every deployment target in the
+[deploy guides](../../sdk/deploy/) works with it unchanged: build the agent with
+`create_harness()` where the guide builds one with `Agent()`.
+
+Two of Strands harness's defaults write to the local filesystem, which matters when the deployment
+target has ephemeral storage. [Sessions](../configure/sessions/) and
+[long-term memory](../configure/memory/) default to directories under
+`./.agent`. On a container or serverless target, point `session={"dir": ...}` and
+`memory={"dir": ...}` at durable storage (a mounted volume, or a backend you supply through
+`memory={"stores": [...]}` or a session manager) so state survives past a single instance.
+
+## Observe
+
+Strands harness builds a standard `Agent`, so the Strands Harness SDK's telemetry works unchanged: traces, metrics,
+and logs flow the same way they do for any Strands agent. Follow
+[observe your agent](../../sdk/observability-evaluation/observability/); there is
+nothing Strands harness-specific to wire up. To evaluate quality, the
+[Evals SDK](../../evals-sdk/) tests and scores Strands harness runs like any other agent.
+
+## Secure
+
+The Strands Harness SDK's safety guides apply directly:
+[guardrails](../../sdk/safety-security/guardrails/),
+[PII redaction](../../sdk/safety-security/pii-redaction/), and
+[trusted message history](../../sdk/safety-security/trusted-message-history/) all
+work on a Strands harness agent.
+
+Two Strands harness defaults deserve a security decision before you ship. First, the
+`programmatic_tool_caller` runs model-authored code in Monty, which isolates the code but
+not the tools it calls; if the agent handles untrusted input, run it inside an
+SDK [sandbox](../../sdk/sandbox/), or drop the tool. Second, the default agent
+can run shell commands and edit files; gate what it does with
+[interventions](../configure/interventions/) and confine what it can
+reach with a sandbox.
+
+## Next steps
+
+- [Compose with the Strands Harness SDK](../composing-with-sdk/): how Strands harness
+  sits on the Strands Harness SDK, and how to reach past its defaults.
+- [Deploy to production](../../sdk/deploy/operating-agents-in-production/): the full
+  deployment guide.

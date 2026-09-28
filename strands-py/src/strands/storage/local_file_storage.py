@@ -5,16 +5,20 @@ from __future__ import annotations
 import builtins
 import os
 import uuid
+import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, overload
 
 from ..types.exceptions import StorageError
-from .storage import _NamespacedStorage, _normalize_key, _normalize_prefix
+from .search.keyword import KeywordSearchStrategy
+from .storage import _NAMESPACED, _normalize_key, _normalize_prefix
 
 if TYPE_CHECKING:
     from ..sandbox.base import Sandbox
+    from .search.types import SandboxSafeSearchStrategy, SearchStrategy
+    from .storage import StorageSearchResult
 
-_TMP_MARKER = ".__strands_tmp"
+_INTERNAL_PREFIX = ".__strands_"
 
 
 class LocalFileStorage:
@@ -32,20 +36,59 @@ class LocalFileStorage:
         ```
     """
 
-    def __init__(self, base_dir: str = "./.strands/", *, sandbox: Sandbox | None = None) -> None:
+    @overload
+    def __init__(
+        self,
+        base_dir: str = ...,
+        *,
+        sandbox: Sandbox,
+        search_strategy: SandboxSafeSearchStrategy[LocalFileStorage] | None = ...,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        base_dir: str = ...,
+        *,
+        search_strategy: SearchStrategy[LocalFileStorage] | None = ...,
+    ) -> None: ...
+
+    def __init__(
+        self,
+        base_dir: str = "./.strands/",
+        *,
+        sandbox: Sandbox | None = None,
+        search_strategy: SearchStrategy[LocalFileStorage] | None = None,
+    ) -> None:
         """Initialize local file storage.
 
         Args:
             base_dir: Root directory under which all keys are stored.
-            sandbox: Optional sandbox to route I/O through.
+            sandbox: Optional sandbox to route I/O through. Sandboxed writes
+                skip indexing to preserve isolation. Only sandbox-safe strategies
+                (those with ``requires_host_fs = False``) are accepted.
+            search_strategy: Optional search strategy. When set, ``write()``
+                automatically indexes entries and ``search()`` delegates to the
+                strategy instead of the default keyword scan.
         """
-        self._base_dir = base_dir
+        if sandbox is not None and getattr(search_strategy, "requires_host_fs", False):
+            raise ValueError(
+                f"{type(search_strategy).__name__} requires host filesystem access and cannot be used with a sandbox"
+            )
+        self._base_dir = os.path.normpath(base_dir)
         self._sandbox = sandbox
+        self._search_strategy = search_strategy
+
+    @property
+    def base_dir(self) -> str:
+        """The root directory under which all keys are stored."""
+        return self._base_dir
 
     def for_sandbox(self, sandbox: Sandbox) -> LocalFileStorage:
         """Return a copy bound to the given sandbox.
 
-        If already bound to the same sandbox, returns self.
+        Preserves the search strategy if it is sandbox-safe. Drops it with a
+        warning if the strategy requires host filesystem access.
 
         Args:
             sandbox: Sandbox to bind to.
@@ -55,7 +98,18 @@ class LocalFileStorage:
         """
         if self._sandbox is sandbox:
             return self
-        return LocalFileStorage(self._base_dir, sandbox=sandbox)
+        strategy = self._search_strategy
+        if strategy is not None and getattr(strategy, "requires_host_fs", False):
+            warnings.warn(
+                f"{type(strategy).__name__} requires host filesystem access and is not compatible with sandboxed"
+                " storage — dropping search strategy, falling back to keyword search",
+                stacklevel=2,
+            )
+            strategy = None
+        bound = LocalFileStorage(self._base_dir, sandbox=sandbox, search_strategy=strategy)  # type: ignore[arg-type]
+        if getattr(self, "_namespaced", None) is _NAMESPACED:
+            bound._namespaced = _NAMESPACED  # type: ignore[attr-defined]
+        return bound
 
     async def write(self, key: str, data: bytes) -> None:
         """Store data as a file, creating parent directories as needed.
@@ -80,7 +134,7 @@ class LocalFileStorage:
             parent = os.path.dirname(path)
             os.makedirs(parent, exist_ok=True)
 
-            tmp_path = os.path.join(parent, f"{_TMP_MARKER}_{uuid.uuid4().hex}")
+            tmp_path = os.path.join(parent, f"{_INTERNAL_PREFIX}tmp_{uuid.uuid4().hex}")
             try:
                 with open(tmp_path, "wb") as f:
                     f.write(data)
@@ -95,6 +149,12 @@ class LocalFileStorage:
             raise
         except Exception as error:
             raise StorageError(f"Failed to write '{key}'") from error
+
+        if self._search_strategy is not None:
+            try:
+                await self._search_strategy.index(self, normalized, data)
+            except Exception as error:
+                raise StorageError(f"Wrote '{key}' but indexing failed") from error
 
     async def read(self, key: str) -> bytes | None:
         """Read the file corresponding to key.
@@ -178,20 +238,41 @@ class LocalFileStorage:
         except Exception as error:
             raise StorageError(f"Failed to list keys with prefix '{query}'") from error
 
-    def namespace(self, prefix: str) -> _NamespacedStorage:
-        """Return a view of this storage with all keys prefixed.
+    async def search(self, query: str) -> builtins.list[StorageSearchResult]:
+        """Search stored content using the configured strategy.
 
-        The returned view preserves ``for_sandbox`` via delegation to the
-        underlying storage, so sandbox routing works even when storage is
-        pre-namespaced before being passed to a plugin.
+        Delegates to the search strategy when one is set, otherwise falls back
+        to keyword token-overlap scoring.
+
+        Args:
+            query: Natural-language search query.
+
+        Returns:
+            All matches with relevance scores, ranked best-first.
+        """
+        if self._search_strategy is not None:
+            return await self._search_strategy.search(self, query)
+        return await KeywordSearchStrategy().search(self, query)
+
+    def namespace(self, prefix: str) -> LocalFileStorage:
+        """Return a new LocalFileStorage scoped to a subdirectory.
+
+        Unlike a generic ``_NamespacedStorage`` wrapper, this returns a real
+        ``LocalFileStorage`` whose ``base_dir`` incorporates the prefix. This
+        preserves access to ``base_dir`` for strategies that need the filesystem
+        path (e.g. index-based search), and ``for_sandbox`` continues to work.
 
         Args:
             prefix: Prefix to prepend to all keys.
 
         Returns:
-            A namespaced storage view.
+            A new LocalFileStorage rooted at the sub-path.
         """
-        return _NamespacedStorage(self, prefix)
+        normalized = _normalize_prefix(prefix).rstrip("/")
+        sub_dir = os.path.join(self._base_dir, *normalized.split("/")) if normalized else self._base_dir
+        scoped = LocalFileStorage(sub_dir, sandbox=self._sandbox, search_strategy=self._search_strategy)  # type: ignore[arg-type]
+        scoped._namespaced = _NAMESPACED  # type: ignore[attr-defined]
+        return scoped
 
     def _path_for(self, key: str) -> str:
         """Map a normalized key to a filesystem path."""
@@ -217,7 +298,7 @@ class LocalFileStorage:
 
         for dirpath, _, filenames in os.walk(narrow_dir):
             for filename in filenames:
-                if _TMP_MARKER in filename:
+                if filename.startswith(_INTERNAL_PREFIX):
                     continue
                 full_path = os.path.join(dirpath, filename)
                 rel = os.path.relpath(full_path, self._base_dir)
@@ -242,7 +323,7 @@ class LocalFileStorage:
             return
 
         for entry in entries:
-            if _TMP_MARKER in entry.name:
+            if entry.name.startswith(_INTERNAL_PREFIX):
                 continue
             full_path = directory / entry.name
             if entry.is_dir:

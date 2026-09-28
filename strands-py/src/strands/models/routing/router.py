@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import copy
 import inspect
+import json
 import logging
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -70,17 +71,40 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_JSONValue: TypeAlias = str | int | float | bool | None | list["_JSONValue"] | dict[str, "_JSONValue"]
+
+
 @dataclass(frozen=True)
 class RoutingCandidate:
-    """A routing candidate: a model with an optional name and description.
+    """A model or model group with optional classifier-facing evidence.
 
-    ``model`` may be a nested ``ModelRouter``, which contributes one candidate: its strategy picks
-    from its own candidates, and the group performs no internal failover.
+    ``model`` may be a nested ``ModelRouter``, which contributes one opaque candidate. Its strategy selects from its
+    own candidates, and the group performs no internal failover. Metadata must be a JSON-serializable mapping;
+    classifier-based strategies may send it across provider boundaries, so it must not contain secrets. The candidate
+    stores the caller's mapping without copying, so it must not be mutated after construction.
+
+    Raises:
+        TypeError: If metadata is not a mapping with string keys.
+        ValueError: If metadata is not JSON-serializable.
     """
 
     model: Model | ModelRouter
     name: str | None = None
     description: str | None = None
+    metadata: Mapping[str, _JSONValue] | None = field(default=None, kw_only=True)
+
+    def __post_init__(self) -> None:
+        """Validate caller-owned metadata."""
+        if self.metadata is None:
+            return
+        if not isinstance(self.metadata, Mapping):
+            raise TypeError("metadata must be a mapping")
+        if not all(isinstance(key, str) for key in self.metadata):
+            raise TypeError("metadata keys must be strings")
+        try:
+            json.dumps(self.metadata, ensure_ascii=False, allow_nan=False)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"metadata must be JSON-serializable: {error}") from error
 
 
 _ROUTING_KEY_PREFIX = "strands:model_routing"
@@ -119,9 +143,9 @@ class ModelRouter(Plugin):
 
         Args:
             models: The models to route among, as a sequence. Each is a ``Model``, a nested
-                ``ModelRouter``, or a ``RoutingCandidate`` wrapping one with a name and description.
-                The first is the router's default, used when a strategy declines, and each is
-                normalized into the ``RoutingCandidate`` a strategy chooses from.
+                ``ModelRouter``, or a ``RoutingCandidate`` wrapping one with a name, description, and metadata.
+                The first is the router's default, used when a strategy declines, and each is normalized into the
+                ``RoutingCandidate`` a strategy chooses from.
             strategy: Chooses the candidate for each model call, and is asked again after a failed
                 call. Defaults to ``FallbackStrategy``, which prefers the candidate with the fewest
                 recorded failures and breaks ties by declaration order, so an invocation with no
@@ -220,18 +244,25 @@ class ModelRouter(Plugin):
         """
         candidate = await self._ask(context)
         if candidate is None:
+            candidate = self._candidates[0]
+            model = self.default_model
             logger.info(
-                "strategy=<%s> | strategy declined the opening choice, using the default model",
+                "strategy=<%s>, candidate=<%s>, model=<%s> | strategy declined the opening choice, using the "
+                "default model",
                 self._strategy_name,
+                _candidate_label(candidate),
+                _model_label(model),
             )
-            return self._candidates[0], self.default_model
+            return candidate, model
 
+        model = await self._resolve(candidate, context)
         logger.info(
-            "strategy=<%s>, candidate=<%s> | candidate selected",
+            "strategy=<%s>, candidate=<%s>, model=<%s> | candidate selected",
             self._strategy_name,
             _candidate_label(candidate),
+            _model_label(model),
         )
-        return candidate, await self._resolve(candidate, context)
+        return candidate, model
 
     # ---- Resolving a candidate to a model ----
 
@@ -432,21 +463,26 @@ CandidateInput: TypeAlias = Model | ModelRouter | RoutingCandidate
 # ---- Module helpers ----
 
 
-def _candidate_label(candidate: RoutingCandidate) -> str:
-    """Return the candidate's name, or its provider and model id when it has none."""
-    if candidate.name:
-        return candidate.name
-    provider = type(candidate.model).__name__
+def _model_label(model: Model) -> str:
+    """Return a model's provider and model id without risking the routed call."""
+    provider = type(model).__name__
     try:
-        config = candidate.model.get_config() if isinstance(candidate.model, Model) else None
+        config = model.get_config()
     except Exception:
-        # Labels are built eagerly, as log arguments and by the construction guards, so one must never
-        # fail a routed call or mask a construction error.
+        # Labels are built eagerly as log arguments, so one must never fail a routed call or mask
+        # a construction error.
         return provider
     model_id = (
         config.get("model_id") if isinstance(config, dict) else getattr(config, "model_id", None) if config else None
     )
     return f"{provider}/{model_id}" if model_id else provider
+
+
+def _candidate_label(candidate: RoutingCandidate) -> str:
+    """Return the candidate's name, or its provider and model id when it has none."""
+    if candidate.name:
+        return candidate.name
+    return _model_label(candidate.model) if isinstance(candidate.model, Model) else type(candidate.model).__name__
 
 
 def _get_routing_state(invocation_state: Mapping[str, Any], key: str) -> _RoutingState | None:

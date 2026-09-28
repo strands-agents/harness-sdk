@@ -237,6 +237,25 @@ def test_invoke_multi_modal_input(streaming_agent, yellow_img):
     assert "yellow" in text
 
 
+def test_invoke_audio_input(pineapple_audio):
+    model = BedrockModel(
+        model_id="mistral.voxtral-small-24b-2507",
+        region_name="us-east-1",
+        temperature=0,
+        max_tokens=20,
+    )
+    agent = Agent(model=model, load_tools_from_directory=False)
+    content = [
+        {"text": "Transcribe the final word spoken in the audio. Output only that word."},
+        {"audio": {"format": "mp3", "source": {"bytes": pineapple_audio}}},
+    ]
+
+    result = agent(content)
+    text = result.message["content"][0]["text"].lower()
+
+    assert "pineapple" in text
+
+
 def test_document_citations(non_streaming_agent, letter_pdf):
     content: list[ContentBlock] = [
         {
@@ -601,9 +620,10 @@ def test_prompt_caching_cache_tools_ttl():
     )
 
     # The call must succeed — Bedrock must accept cachePoint.ttl on the toolConfig checkpoint
-    # without raising a ValidationException.
+    # without raising a ValidationException. The loop only returns on a terminal stop reason, so
+    # this proves completion without depending on the model emitting text.
     result = agent("Use the lookup_fact tool to look up 'python'.")
-    assert len(str(result)) > 0
+    assert result.stop_reason == "end_turn"
 
 
 def test_prompt_caching_cache_config_auto_with_ttl(quiet_strands_logging):
@@ -671,9 +691,10 @@ def test_prompt_caching_aligned_1h_ttl_across_checkpoints(quiet_strands_logging)
         load_tools_from_directory=False,
     )
 
-    # Must succeed without ValidationException on the non-increasing TTL rule
+    # Must succeed without ValidationException on the non-increasing TTL rule. The large context
+    # exceeds the cache minimum, so a cache write reliably confirms the request was accepted.
     result = agent("What is 2+2?")
-    assert len(str(result)) > 0
+    assert result.metrics.accumulated_usage.get("cacheWriteInputTokens", 0) > 0
 
 
 def test_prompt_caching_untimed_cache_tools_inherits_the_configured_ttl(quiet_strands_logging):
@@ -698,8 +719,10 @@ def test_prompt_caching_untimed_cache_tools_inherits_the_configured_ttl(quiet_st
         load_tools_from_directory=False,
     )
 
+    # The durable prefix exceeds the cache minimum, so a cache write reliably confirms Bedrock
+    # accepted the aligned-TTL request without a ValidationException.
     result = agent("What is 2+2?")
-    assert len(str(result)) > 0
+    assert result.metrics.accumulated_usage.get("cacheWriteInputTokens", 0) > 0
 
 
 def test_bedrock_cache_point(quiet_strands_logging):
@@ -837,6 +860,8 @@ def test_a_caller_ttl_does_not_conflict_with_the_tools_ttl(quiet_strands_logging
     assert result.metrics.latest_agent_invocation.usage.get("cacheWriteInputTokens", 0) > 0
 
 
+# A ~100 KB PDF plus the SDK's throttling backoff can outlast the global 90s timeout.
+@pytest.mark.timeout(300)
 @pytest.mark.parametrize("document_format", ["csv", "pdf"])
 def test_a_cache_point_after_a_document_is_accepted(quiet_strands_logging, letter_pdf, document_format):
     """Bedrock refuses a cache point directly after a non-PDF document but allows one after a PDF.
@@ -855,6 +880,6 @@ def test_a_cache_point_after_a_document_is_accepted(quiet_strands_logging, lette
     model = BedrockModel(model_id=_CACHE_TTL_MODEL_ID, cache_config=CacheConfig(strategy="auto"))
     agent = Agent(model=model, load_tools_from_directory=False, callback_handler=None)
 
-    result = agent([{"text": _durable_prefix()}, document, {"cachePoint": {"type": "default"}}, {"text": "Summarize."}])
+    result = agent([{"text": _durable_prefix()}, document, {"cachePoint": {"type": "default"}}, {"text": "Reply OK."}])
 
     assert result.stop_reason == "end_turn"

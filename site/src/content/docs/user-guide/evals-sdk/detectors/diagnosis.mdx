@@ -1,23 +1,23 @@
 ---
-title: Session Diagnosis
+title: Session diagnosis
 description: 'Run the full failure diagnosis pipeline with diagnose_session: detect failures, analyze root causes, and get deduplicated fix recommendations.'
 tags: [failure-diagnosis, observability, error-handling]
 sidebar:
-  label: "Session Diagnosis"
+  label: "Session diagnosis"
 ---
 
 ## Overview
 
 `diagnose_session` runs the full detection-and-analysis pipeline in a single call: it detects failures, performs root cause analysis on any failures found, and returns a combined `DiagnosisResult` with deduplicated fix recommendations. It also integrates directly into the `Experiment` class via `DiagnosisConfig` for automatic diagnosis of failing evaluation cases.
 
-## Key Features
+## Key features
 
 - **Single-call pipeline**: Runs `detect_failures` then `analyze_root_cause` in sequence
 - **Deduplicated recommendations**: The `.recommendations` property returns unique fix suggestions across all root causes
 - **Experiment integration**: Wire into `Experiment` with `DiagnosisConfig` for automatic diagnosis
 - **Configurable triggers**: Run diagnosis on every case (`DiagnosisTrigger.ALWAYS`) or only on failing cases (`DiagnosisTrigger.ON_FAILURE`)
 
-## When to Use
+## When to use
 
 Use `diagnose_session` when you need to:
 
@@ -25,7 +25,7 @@ Use `diagnose_session` when you need to:
 - **Integrate diagnosis into experiments** for automatic debugging of failing cases
 - **Get a single result object** with failures, root causes, and recommendations
 
-Use the individual detectors (`detect_failures`, `analyze_root_cause`) when you need finer control — for example, running failure detection with different confidence thresholds before deciding whether to proceed with RCA.
+Use the individual detectors (`detect_failures`, `analyze_root_cause`) when you need finer control, for example running failure detection with different confidence thresholds before deciding whether to proceed with RCA.
 
 ## Parameters
 
@@ -43,7 +43,7 @@ Use the individual detectors (`detect_failures`, `analyze_root_cause`) when you 
 - **Default**: `ConfidenceLevel.LOW`
 - **Description**: Minimum confidence level for failure detection.
 
-## Basic Usage
+## Basic usage
 
 ```python
 from strands_evals.detectors import diagnose_session
@@ -66,7 +66,7 @@ for rec in result.recommendations:
     print(f"  - {rec}")
 ```
 
-## Output Structure
+## Output structure
 
 `diagnose_session` returns a `DiagnosisResult`:
 
@@ -83,9 +83,9 @@ class DiagnosisResult(BaseModel):
 
 If no failures are detected, `root_causes` will be empty and `recommendations` will return an empty list.
 
-## Integration with Experiments
+## Integration with experiments
 
-The most powerful way to use diagnosis is through the `Experiment` class. Pass a `DiagnosisConfig` to automatically diagnose cases during evaluation.
+Wire diagnosis into the `Experiment` class to diagnose cases automatically during evaluation. Pass a `DiagnosisConfig` to the experiment.
 
 ### DiagnosisConfig
 
@@ -105,7 +105,7 @@ class DiagnosisConfig(BaseModel):
 | `model` | `None` | Model for the detectors. `None` uses the default. |
 | `confidence_threshold` | `ConfidenceLevel.MEDIUM` | Minimum confidence for failure detection. |
 
-### Example: Diagnose Failing Cases
+### Example: Diagnose failing cases
 
 ```python
 import asyncio
@@ -152,7 +152,7 @@ async def main():
 report = asyncio.run(main())
 ```
 
-### Viewing Recommendations
+### Viewing recommendations
 
 Display recommendations in the evaluation report:
 
@@ -172,7 +172,7 @@ for i, rec in enumerate(report.recommendations):
         print(f"  Recommendation: {rec}")
 ```
 
-### Accessing Full Diagnosis Data
+### Accessing full diagnosis data
 
 The full diagnosis dict (failures + root causes) is available per case:
 
@@ -188,9 +188,9 @@ for i, diagnosis in enumerate(report.diagnoses):
             print(f"  [{rc['fix_type']}] {rc['fix_recommendation']}")
 ```
 
-### Trigger Modes
+### Trigger modes
 
-**`DiagnosisTrigger.ON_FAILURE` (default)**: Diagnosis runs only when at least one evaluator returns `test_pass=False` for the case. This is the most efficient option — no LLM calls are spent diagnosing passing cases.
+**`DiagnosisTrigger.ON_FAILURE` (default)**: Diagnosis runs only when at least one evaluator returns `test_pass=False` for the case. This is the most efficient option: no LLM calls are spent diagnosing passing cases.
 
 ```python
 DiagnosisConfig(trigger=DiagnosisTrigger.ON_FAILURE)
@@ -212,7 +212,7 @@ Diagnosis requires the task function to return a `Session` object as the traject
 
 If the trajectory is not a `Session` (e.g., it's a plain list of tool names), diagnosis is silently skipped for that case.
 
-## Example: Full Workflow
+## Example: Full workflow
 
 This example shows the complete workflow: run evaluations with diagnosis, then analyze the results.
 
@@ -223,22 +223,22 @@ from strands import Agent
 from strands_evals import Case, Experiment, DiagnosisConfig, eval_task, TracedHandler
 from strands_evals.detectors import ConfidenceLevel, DiagnosisTrigger
 from strands_evals.evaluators import OutputEvaluator, GoalSuccessRateEvaluator
-from strands_tools import calculator
+from strands.vended_tools import notebook
 
 @eval_task(TracedHandler())
-def math_agent():
+def notes_agent():
     return Agent(
-        tools=[calculator],
-        system_prompt="You are a math assistant. Use the calculator tool for computations.",
+        tools=[notebook],
+        system_prompt="Use the notebook tool to organize the user's notes.",
         callback_handler=None,
     )
 
 cases = [
     Case(
-        name="basic-math",
-        input="What is 15% of 230?",
-        expected_output="34.5",
-        metadata={"task_description": "Correct calculation provided"},
+        name="basic-notes",
+        input='Create a notebook named "ideas" and add three project ideas.',
+        expected_output="Three ideas were added to the ideas notebook.",
+        metadata={"task_description": "Notebook updated successfully"},
     ),
 ]
 
@@ -255,24 +255,24 @@ experiment = Experiment(
 )
 
 async def main():
-    report = await experiment.run_evaluations_async(math_agent, max_workers=1)
+    report = await experiment.run_evaluations_async(notes_agent, max_workers=1)
 
-    # The experiment already returns a single combined report across all evaluators —
+    # The experiment returns one combined report across all evaluators;
     # each row in `report.cases` carries an `evaluator` key naming the producer.
     report.display(include_recommendations=True)
 
 asyncio.run(main())
 ```
 
-## Best Practices
+## Best practices
 
-1. **Start with `DiagnosisTrigger.ON_FAILURE`** to minimize LLM costs — only diagnose cases that actually fail
+1. **Start with `DiagnosisTrigger.ON_FAILURE`** to minimize LLM costs: only diagnose cases that actually fail
 2. **Use `ConfidenceLevel.MEDIUM`** for diagnosis to balance signal and noise
 3. **Use `TracedHandler`** with the `@eval_task` decorator to automatically collect `Session` objects
 4. **Group recommendations across cases** to identify systematic issues vs. one-off problems
-5. **Use `DiagnosisTrigger.ALWAYS` sparingly** — it's useful for deep analysis but doubles the LLM cost per case
+5. **Use `DiagnosisTrigger.ALWAYS` sparingly**: it's useful for deep analysis but doubles the LLM cost per case
 
-## Related Documentation
+## Related documentation
 
 - [Failure Detection](failure_detection.md): Standalone failure detection
 - [Root Cause Analysis](root_cause_analysis.md): Standalone root cause analysis
