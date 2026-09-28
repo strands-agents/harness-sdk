@@ -3,6 +3,7 @@
 from uuid import uuid4
 
 import pytest
+from a2a.helpers import new_data_part
 from a2a.types import (
     Artifact,
     Part,
@@ -343,7 +344,7 @@ def test_task_status_message_non_text_parts_are_skipped():
         context_id="c1",
         status=TaskStatus(
             state=TaskState.TASK_STATE_COMPLETED,
-            message=A2AMessage(message_id=uuid4().hex, role=Role.ROLE_AGENT, parts=[Part(data={"a": 1})]),
+            message=A2AMessage(message_id=uuid4().hex, role=Role.ROLE_AGENT, parts=[new_data_part({"a": 1})]),
         ),
     )
 

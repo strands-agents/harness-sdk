@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any, Literal
 
+from google.protobuf.json_format import MessageToDict
+
 try:
     from a2a.client import ClientConfig
 
@@ -128,7 +130,7 @@ async def _handle_discover(agent: A2AAgent, max_bytes: int) -> _A2AClientOutput:
     except Exception as error:
         raise A2AClientError(f"Failed to discover agent card at {agent.endpoint!r}: {error}") from error
 
-    result: dict[str, Any] = agent_card.model_dump(mode="json", exclude_none=True)
+    result: dict[str, Any] = MessageToDict(agent_card)
     size = len(json.dumps(result).encode())
     if size > max_bytes:
         raise A2AClientError(f"Agent card response exceeds max_bytes limit ({size} > {max_bytes})")

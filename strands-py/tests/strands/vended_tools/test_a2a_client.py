@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 from a2a.client import ClientConfig
+from a2a.types import AgentCard
 
 import strands.vended_tools.a2a_client.a2a_client as a2a_client_module
 from strands.vended_tools.a2a_client import make_a2a_client
@@ -14,10 +15,7 @@ from strands.vended_tools.a2a_client.a2a_client import A2AClientError
 _FAKE_CARD = {
     "name": "Test Agent",
     "description": "A test agent",
-    "url": "https://agent.example.com",
     "version": "1.0.0",
-    "skills": [],
-    "capabilities": {},
     "defaultInputModes": ["text"],
     "defaultOutputModes": ["text"],
 }
@@ -28,9 +26,14 @@ _ENDPOINT = "https://agent.example.com"
 _ENDPOINTS: dict[str, ClientConfig | None] = {_ENDPOINT: None}
 
 
-class _FakeAgentCard:
-    def model_dump(self, *, mode: str, exclude_none: bool) -> dict[str, Any]:
-        return dict(_FAKE_CARD)
+def _make_card() -> AgentCard:
+    return AgentCard(
+        name="Test Agent",
+        description="A test agent",
+        version="1.0.0",
+        default_input_modes=["text"],
+        default_output_modes=["text"],
+    )
 
 
 class _FakeAgentResult:
@@ -43,8 +46,8 @@ class _FakeA2AAgent:
         self.endpoint = endpoint
         self.client_config = client_config
 
-    async def get_agent_card(self) -> _FakeAgentCard:
-        return _FakeAgentCard()
+    async def get_agent_card(self) -> AgentCard:
+        return _make_card()
 
     async def invoke_async(self, prompt: str) -> _FakeAgentResult:
         return _FakeAgentResult()
@@ -76,7 +79,7 @@ class TestDiscover:
         original = RuntimeError("connection refused")
 
         class _FailingAgent(_FakeA2AAgent):
-            async def get_agent_card(self) -> _FakeAgentCard:
+            async def get_agent_card(self) -> AgentCard:
                 raise original
 
         monkeypatch.setattr(a2a_client_module, "A2AAgent", _FailingAgent)
@@ -88,9 +91,9 @@ class TestDiscover:
     @pytest.mark.asyncio
     async def test_rejects_oversized_agent_card(self, monkeypatch):
         class _BigCardAgent(_FakeA2AAgent):
-            async def get_agent_card(self) -> _FakeAgentCard:
-                card = _FakeAgentCard()
-                card.model_dump = lambda **_: {"data": "x" * 1000}
+            async def get_agent_card(self) -> AgentCard:
+                card = _make_card()
+                card.description = "x" * 1000
                 return card
 
         monkeypatch.setattr(a2a_client_module, "A2AAgent", _BigCardAgent)
