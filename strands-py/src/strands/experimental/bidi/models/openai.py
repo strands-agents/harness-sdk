@@ -104,13 +104,20 @@ _RESTART_INSTRUCTION = (
 
 @dataclass
 class _SessionState:
-    """Connection-local transcript identities and response creation state."""
+    """Connection-local transcript identities and response creation state.
+
+    Attributes:
+        pending_input_ids: IDs of submitted inputs awaiting confirmation that they were added to the conversation.
+        input_audio_pending: Whether user speech has started but its audio has not yet been committed.
+    """
 
     started_transcripts: set[str] = field(default_factory=set)
     assistant_parts: dict[str, tuple[str, int]] = field(default_factory=dict)
     audio_responses: set[str | None] = field(default_factory=set)
     active_responses: set[str] = field(default_factory=set)
     pending_tools: set[str] = field(default_factory=set)
+    pending_input_ids: set[str] = field(default_factory=set)
+    input_audio_pending: bool = False
     response_pending: bool = False
     response_requested: bool = False
     transcription_enabled: bool = True
@@ -294,10 +301,15 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             tools: List of tools available to the model.
             messages: Conversation history to initialize with.
             **kwargs: Additional configuration options.
+
+        Raises:
+            RuntimeError: If the model has already been started.
+            ValueError: If turn detection, automatic responses, or interruption are disabled.
         """
         if self._connection_id:
             raise RuntimeError("model already started | call stop before starting again")
 
+        session_config = self._build_session_config(system_prompt, tools)
         logger.debug("openai realtime connection starting")
 
         # Initialize connection state
@@ -320,7 +332,6 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         logger.debug("connection_id=<%s> | websocket connected successfully", self._connection_id)
 
         # Configure session
-        session_config = self._build_session_config(system_prompt, tools)
         self._session_state.transcription_enabled = session_config["audio"]["input"].get("transcription") is not None
         await self._send_event({"type": "session.update", "session": session_config})
 
@@ -346,7 +357,17 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         )
         config["audio"]["output"]["voice"] = self._voice
 
-        return _merge_config(config, self._config.get("params") or {})
+        config = _merge_config(config, self._config.get("params") or {})
+        turn_detection = config["audio"]["input"]["turn_detection"]
+        if (
+            turn_detection is None
+            or not turn_detection.get("create_response", True)
+            or not turn_detection.get("interrupt_response", True)
+        ):
+            raise ValueError(
+                "OpenAIRealtimeModel requires turn detection with create_response=True and interrupt_response=True."
+            )
+        return config
 
     def _convert_tools_to_openai_format(self, tools: list[ToolSpec]) -> list[dict]:
         """Convert Strands tool specifications to OpenAI Realtime API format."""
@@ -503,12 +524,22 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
 
             openai_event = json.loads(message)
             event_type = openai_event.get("type")
-            if event_type == "response.created":
+            if event_type == "input_audio_buffer.speech_started":
+                state.input_audio_pending = True
+            elif event_type == "input_audio_buffer.committed":
+                state.input_audio_pending = False
+                # Let VAD create the response containing the committed utterance.
+                state.response_requested = True
+            elif event_type == "conversation.item.added":
+                state.pending_input_ids.discard(openai_event["item"]["id"])
+            elif event_type == "response.created":
                 response_id = openai_event["response"]["id"]
                 if response_id in state.active_responses:
                     continue
                 state.active_responses.add(response_id)
                 state.response_requested = False
+                # A response includes acknowledged inputs; later inputs still need a continuation.
+                state.response_pending = bool(state.pending_input_ids)
             elif event_type == "response.done":
                 response_id = openai_event["response"]["id"]
                 if response_id not in state.active_responses:
@@ -816,10 +847,7 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
                 raise ValueError(f"content_type={type(block)} | content not supported by OpenAI Realtime")
 
         if content:
-            await self._send_event(
-                {"type": "conversation.item.create", "item": {"type": "message", "role": "user", "content": content}}
-            )
-            await self._request_response()
+            await self._send_input_item({"type": "message", "role": "user", "content": content})
 
     async def _send_audio_content(self, audio_input: AudioDelta) -> None:
         """Internal: Send audio content to OpenAI for processing."""
@@ -848,22 +876,34 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         result_output = json.dumps(tool_result.content)
 
         item_data = {"type": "function_call_output", "call_id": tool_use_id, "output": result_output}
-        await self._send_event({"type": "conversation.item.create", "item": item_data})
-        self._session_state.pending_tools.discard(tool_use_id)
-        await self._request_response()
+        await self._send_input_item(item_data)
 
-    async def _request_response(self) -> None:
-        """Coalesce continuation requests while a native response or tool group is active."""
+    async def _send_input_item(self, item: dict[str, Any]) -> None:
+        """Send an input and track whether the next response includes it."""
         state = self._session_state
+        item = {"id": uuid.uuid4().hex, **item}
+        state.pending_input_ids.add(item["id"])
         state.response_pending = True
+        await self._send_event({"type": "conversation.item.create", "item": item})
+        if item["type"] == "function_call_output":
+            state.pending_tools.discard(item["call_id"])
         await self._flush_response_request(state)
 
     async def _flush_response_request(self, state: _SessionState) -> None:
+        """Create a response if needed, deferring while audio, another response, or tool calls are pending.
+
+        Args:
+            state: Response scheduling state for the current connection.
+        """
         async with state.lock:
+            if state.input_audio_pending:
+                return
             if not state.response_pending or state.response_requested or state.active_responses or state.pending_tools:
                 return
             state.response_pending = False
             state.response_requested = True
+            # WebSocket ordering includes all preceding inputs in this explicit request.
+            state.pending_input_ids.clear()
             try:
                 await self._send_event({"type": "response.create"})
             except BaseException:
