@@ -373,7 +373,7 @@ export interface ChatPanelSlider {
 }
 
 export interface PondFrog {
-  /** Region of the pond; frogs from one workspace share a cove. */
+  /** Resolved workspace path; display labels must not be used as grouping keys. */
   cove: string
   /** Lily pad key; a session frog and its subagents share one pad. */
   pad: string

@@ -51,6 +51,7 @@ export class ConversationManager implements ChatControllerApi {
   private _activeId: string
   private _panel: ChatPanel | undefined
   private _pondSessions: readonly SessionInfo[] = []
+  private _pondController: ChatController | undefined
   private _pondQuery = ''
   private _snapshot: ChatSnapshot
   private _nextConversation = 2
@@ -525,22 +526,26 @@ export class ConversationManager implements ChatControllerApi {
   }
 
   private async _openPondPanel(): Promise<void> {
-    this._showPondPanel()
+    if (this._pondController !== this._active.controller) this._pondSessions = []
+    this._pondController = this._active.controller
+    this._showPondPanel(true)
+    const panelId = this._panel?.id
     this._emit()
     try {
-      this._pondSessions = await this._active.controller.listSessions()
-    } catch (error) {
-      this._openError('pond unavailable', 'sessions', errorMessage(error))
-      return
-    }
-    if (this._panel?.kind === 'pond') {
+      const sessions = await this._active.controller.listSessions()
+      if (this._closed || this._disposed || this._panel?.id !== panelId) return
+      this._pondSessions = sessions
       this._showPondPanel()
       this._emit()
+    } catch (error) {
+      if (!this._closed && !this._disposed && this._panel?.id === panelId) {
+        this._openError('pond unavailable', 'sessions', errorMessage(error))
+      }
     }
   }
 
-  private _showPondPanel(): void {
-    const existingId = this._panel?.kind === 'pond' ? this._panel.id : undefined
+  private _showPondPanel(reset = false): void {
+    const existingId = !reset && this._panel?.kind === 'pond' ? this._panel.id : undefined
     const conversations = [...this._conversations.values()].map((conversation): PondConversation => {
       const snapshot = conversation.controller.getSnapshot()
       const backend = conversation.controller.backend
@@ -550,7 +555,10 @@ export class ConversationManager implements ChatControllerApi {
         current: conversation.id === this._activeId,
         status: conversationStatus(snapshot).label,
         workspace: snapshot.runtime.cwd,
-        ...(snapshot.runtime.session ? { sessionId: snapshot.runtime.session } : {}),
+        ...(conversation.controller.sessionId ? { sessionId: conversation.controller.sessionId } : {}),
+        ...(conversation.controller.sessionDirectory
+          ? { sessionDirectory: conversation.controller.sessionDirectory }
+          : {}),
         subagents: snapshot.tasks
           .filter((task) => task.source === 'background' && task.label === 'subagent')
           .map((task) => ({
@@ -579,9 +587,7 @@ export class ConversationManager implements ChatControllerApi {
       if (!this._switchConversation(task.conversationId)) {
         return false
       }
-      const opened = this._active.controller.openTaskDetail(task.taskId)
-      this._emit()
-      return opened
+      return this._active.controller.openTaskDetail(task.taskId)
     }
     if (!value) {
       return false

@@ -58,14 +58,62 @@ describe('pond content', () => {
       ['Audit the dataloader', 'strands-session:doom'],
     ])
     expect(pond).toEqual([
-      { cove: 'harness-sdk', pad: 'conversation:agent-1', kind: 'session', state: 'working', current: true },
-      { cove: 'harness-sdk', pad: 'conversation:agent-1', kind: 'subagent', state: 'working' },
-      { cove: 'harness-sdk', pad: 'session:recent', kind: 'session', state: 'awake' },
-      { cove: 'doomfly', pad: 'session:strands-session:doom', kind: 'session', state: 'asleep' },
-      { cove: 'doomfly', pad: 'session:strands-session:doom', kind: 'subagent', state: 'failed' },
+      { cove: '/work/harness-sdk', pad: 'conversation:agent-1', kind: 'session', state: 'working', current: true },
+      { cove: '/work/harness-sdk', pad: 'conversation:agent-1', kind: 'subagent', state: 'working' },
+      { cove: '/work/harness-sdk', pad: 'session:recent', kind: 'session', state: 'awake' },
+      { cove: '/work/doomfly', pad: 'session:strands-session:doom', kind: 'session', state: 'asleep' },
+      { cove: '/work/doomfly', pad: 'session:strands-session:doom', kind: 'subagent', state: 'failed' },
     ])
     expect(rows[2]!.description).toContain('active in another terminal')
     expect(readPondTaskValue(rows[1]!.value)).toEqual({ conversationId: 'agent-1', taskId: 'task-1' })
+  })
+
+  it('keeps workspaces with the same basename in separate coves', () => {
+    const { pond } = pondContent(
+      [],
+      [
+        saved('a', '/work/client-a/api', new Date(NOW).toISOString()),
+        saved('b', '/work/client-b/api', new Date(NOW).toISOString()),
+      ],
+      NOW
+    )
+    const { coves, pads } = layoutPond(pond, 160)
+    expect(coves).toHaveLength(2)
+    expect(new Set(pads.map(({ pad }) => pad.cove)).size).toBe(2)
+    expect(coves[0]!.left + coves[0]!.width).toBeLessThanOrEqual(coves[1]!.left)
+  })
+
+  it('deduplicates live sessions only within their session root', () => {
+    const { rows } = pondContent(
+      [conversation()],
+      [
+        saved('live-session', '/work/harness-sdk', new Date(NOW).toISOString()),
+        saved('live-session', '/work/other', new Date(NOW).toISOString(), { reference: 'other-root' }),
+        saved('live-session', '/work/harness-sdk', new Date(NOW).toISOString(), {
+          reference: 'custom-root',
+          directory: '/custom/sessions',
+        }),
+      ],
+      NOW
+    )
+    expect(rows.map((row) => row.value)).toEqual(['conversation:agent-1', 'custom-root', 'other-root'])
+  })
+
+  it.each(['client-a', 'needle'])('searches full workspace paths and untruncated tasks: %s', (query) => {
+    const task = `${'Long task '.repeat(30)}needle`
+    const { rows } = pondContent(
+      [conversation({ workspace: '/work/client-a/api', subagents: [{ taskId: 'one', task, status: 'working' }] })],
+      [
+        saved('old', '/work/client-a/api', '2026-01-01T00:00:00.000Z', {
+          subagents: [{ task, status: 'completed' }],
+        }),
+      ],
+      NOW,
+      query
+    )
+    expect(rows).toHaveLength(4)
+    expect(rows.filter((row) => row.label.endsWith('...'))).toHaveLength(2)
+    expect(rows.every((row) => !row.label.includes('needle'))).toBe(true)
   })
 
   it('searches every saved session and keeps whole matching pads', () => {
@@ -96,7 +144,6 @@ describe('pond layout', () => {
 
   it('keeps each cove in its own region with every pad inside it', () => {
     const layout = layoutPond(frogs, 160)
-    expect(layout.hidden).toBe(0)
     expect(layout.coves.map((cove) => cove.name)).toEqual(['a', 'b', 'c'])
     for (const placement of layout.pads) {
       const cove = layout.coves.find((candidate) => candidate.name === placement.pad.cove)!
@@ -172,6 +219,7 @@ describe('pond layout', () => {
 
 describe('saved session subagents', () => {
   it('reads subagent calls and their outcomes from the latest snapshot', async () => {
+    const longTask = `${'Investigate '.repeat(30)}needle`
     const directory = await mkdtemp(join(tmpdir(), 'strands-pond-'))
     const sessionsDirectory = join(directory, '.agent', 'sessions')
     const snapshots = join(sessionsDirectory, 'saved', 'scopes', 'agent', 'agent', 'snapshots')
@@ -181,15 +229,18 @@ describe('saved session subagents', () => {
       JSON.stringify({
         data: {
           messages: [
-            { role: 'user', content: [{ text: 'Review both files' }] },
+            { role: 'user', content: [{ text: `${'Review both files '.repeat(20)}prompt-suffix` }] },
             {
               role: 'assistant',
               content: [
                 {
-                  toolUse: { name: 'subagent', toolUseId: 'one', input: { task: 'Read a.ts', agent_type: 'explorer' } },
+                  toolUse: { name: 'subagent', toolUseId: 'one', input: { task: longTask, agent_type: 'explorer' } },
                 },
                 { toolUse: { name: 'subagent', toolUseId: 'two', input: { task: 'Read b.ts' } } },
                 { toolUse: { name: 'shell', toolUseId: 'three', input: { command: 'ls' } } },
+                ...Array.from({ length: 8 }, (_, index) => ({
+                  toolUse: { name: 'subagent', toolUseId: `pending-${index}`, input: { task: `Task ${index}` } },
+                })),
               ],
             },
             {
@@ -210,32 +261,184 @@ describe('saved session subagents', () => {
     try {
       const [session] = await sessions.list()
       expect(session?.subagents).toEqual([
-        { task: 'Read a.ts', agentType: 'explorer', status: 'completed' },
+        { task: longTask, agentType: 'explorer', status: 'completed' },
         { task: 'Read b.ts', status: 'failed' },
+        ...Array.from({ length: 8 }, (_, index) => ({ task: `Task ${index}`, status: 'pending' })),
       ])
+      const { rows } = pondContent([], [session!], Date.now(), 'needle')
+      expect(rows).toHaveLength(9)
+      expect(rows[1]!.label).toBe('Task 0')
+      expect(session!.preview!.length).toBe(120)
+      expect(pondContent([], [session!], Date.now(), 'prompt-suffix').rows).toHaveLength(9)
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
   })
 })
 
+function backend(id: string): ChatBackend {
+  return {
+    id,
+    name: id,
+    protocol: 'strands',
+    cancel: vi.fn(),
+    dispose: vi.fn(),
+    stream: async function* (): AsyncGenerator<ChatEvent, ChatRunResult, undefined> {
+      yield { type: 'textDelta', text: id }
+      return { stopReason: 'endTurn' }
+    },
+  }
+}
+
 describe('/pond', () => {
+  it.each(['dismiss', 'agents', 'new pond', 'requery'] as const)(
+    'ignores late listing errors after %s',
+    async (destination) => {
+      let reject!: (error: Error) => void
+      const pending = new Promise<readonly SessionInfo[]>((_, fail) => {
+        reject = fail
+      })
+      const primary = new ChatController(backend('main'))
+      vi.spyOn(primary, 'listSessions').mockReturnValueOnce(pending).mockResolvedValue([])
+      const manager = new ConversationManager(primary, { fork: async () => primary })
+      try {
+        const opening = manager.submit('/pond')
+        if (destination !== 'requery') manager.dismissPanel()
+        if (destination !== 'dismiss') await manager.submit(destination === 'agents' ? '/agents' : '/pond')
+        const panel = manager.getSnapshot().panel
+        reject(new Error('Late disk failure'))
+        await opening
+        expect(manager.getSnapshot().panel).toBe(panel)
+      } finally {
+        await manager.dispose()
+      }
+    }
+  )
+
+  it('does not replace a newer pond with a stale listing', async () => {
+    let finish!: (sessions: readonly SessionInfo[]) => void
+    const pending = new Promise<readonly SessionInfo[]>((resolve) => {
+      finish = resolve
+    })
+    const primary = new ChatController(backend('main'))
+    vi.spyOn(primary, 'listSessions').mockReturnValueOnce(pending).mockResolvedValue([])
+    const manager = new ConversationManager(primary, { fork: async () => primary })
+    try {
+      const opening = manager.submit('/pond')
+      manager.dismissPanel()
+      await manager.submit('/pond')
+      const panel = manager.getSnapshot().panel
+      finish([saved('stale', '/old/workspace', new Date().toISOString())])
+      await opening
+      expect(manager.getSnapshot().panel).toBe(panel)
+    } finally {
+      await manager.dispose()
+    }
+  })
+
+  it('uses the live session root when deduplicating a custom-directory session', async () => {
+    const sessions = new FileSessionRuntime(
+      { sessionId: 'duplicate', sessionDirectory: '/custom/sessions' },
+      '/custom/sessions',
+      { workspace: '/work/project' }
+    )
+    const list = [
+      saved('duplicate', '/work/project', new Date().toISOString(), { directory: '/custom/sessions' }),
+      saved('duplicate', '/work/project', new Date().toISOString(), {
+        directory: '/work/project/.agent/sessions',
+        reference: 'default-root',
+      }),
+    ]
+    vi.spyOn(sessions, 'list').mockResolvedValue(list)
+    const primary = new ChatController(backend('main'), {
+      sessions,
+      runtime: { cwd: '/work/project', session: 'Renamed session' },
+    })
+    const manager = new ConversationManager(primary, { fork: async () => primary })
+    try {
+      await manager.submit('/pond')
+      expect(manager.getSnapshot().panel!.rows.map((row) => row.value)).toEqual([
+        'conversation:agent-1',
+        'default-root',
+      ])
+    } finally {
+      await manager.dispose()
+    }
+  })
+
+  it('does not expose cached relative references from a different controller', async () => {
+    const primary = new ChatController(backend('main'))
+    const fork = new ChatController(backend('fork'))
+    vi.spyOn(primary, 'listSessions').mockResolvedValue([saved('shared-id', '/work/first', new Date().toISOString())])
+    let finish!: (sessions: readonly SessionInfo[]) => void
+    vi.spyOn(fork, 'listSessions').mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    )
+    const manager = new ConversationManager(primary, { fork: async () => fork })
+    try {
+      await manager.submit('/pond')
+      await manager.submit('/fork')
+      const opening = manager.submit('/pond')
+      expect(manager.getSnapshot().panel!.rows.some((row) => row.value === 'shared-id')).toBe(false)
+      finish([])
+      await opening
+    } finally {
+      finish([])
+      await manager.dispose()
+    }
+  })
+
+  it('shows an error when the current pond listing fails', async () => {
+    const primary = new ChatController(backend('main'))
+    vi.spyOn(primary, 'listSessions').mockRejectedValue(new Error('Disk failure'))
+    const manager = new ConversationManager(primary, { fork: async () => primary })
+    try {
+      await manager.submit('/pond')
+      expect(manager.getSnapshot().panel).toMatchObject({
+        kind: 'error',
+        rows: [{ description: 'Disk failure' }],
+      })
+    } finally {
+      await manager.dispose()
+    }
+  })
+
+  it('opens an escaped task in another conversation without a duplicate update', async () => {
+    const taskId = 'a:b%/ 🐸'
+    const primary = new ChatController({
+      ...backend('main'),
+      watchTasks(listener) {
+        listener([{ id: taskId, label: 'subagent', status: 'working', source: 'background' }])
+        return () => {}
+      },
+    })
+    const fork = new ChatController(backend('fork'))
+    const manager = new ConversationManager(primary, { fork: async () => fork })
+    try {
+      await manager.submit('/fork')
+      await manager.submit('/pond')
+      const row = manager.getSnapshot().panel!.rows.find((row) => row.value?.startsWith('pond-task:'))!
+      const updates = vi.fn()
+      manager.subscribe(updates)
+      expect(await manager.activatePanelRow(row)).toBe(true)
+      expect(manager.getSnapshot().panel).toMatchObject({ kind: 'detail' })
+      expect(manager.getSnapshot().panel!.rows[0]!.description).toBe(taskId)
+      expect(updates).toHaveBeenCalledTimes(2)
+    } finally {
+      await manager.dispose()
+    }
+  })
+
   it('opens the pond and switches to the clicked conversation', async () => {
     const run = (name: string) =>
       async function* (prompt: string): AsyncGenerator<ChatEvent, ChatRunResult, undefined> {
         yield { type: 'textDelta', text: `${name}:${prompt}` }
         return { stopReason: 'endTurn' }
       }
-    const backend = (id: string): ChatBackend => ({
-      id,
-      name: 'Strands harness',
-      protocol: 'strands',
-      stream: run(id),
-      cancel: vi.fn(),
-      dispose: vi.fn(),
-    })
-    const primary = new ChatController(backend('main'))
-    const fork = new ChatController(backend('fork'))
+    const primary = new ChatController({ ...backend('main'), stream: run('main') })
+    const fork = new ChatController({ ...backend('fork'), stream: run('fork') })
     const manager = new ConversationManager(primary, { fork: async () => fork })
 
     await manager.submit('baseline')

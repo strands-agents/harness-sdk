@@ -1,3 +1,5 @@
+import { basename } from 'node:path'
+
 import type { FrogTheme, PondFrog } from '../chat/types.js'
 import { Canvas, type Color, type FrogRenderOptions } from './frog-canvas.js'
 import { hash01 } from './frog-drawing.js'
@@ -60,8 +62,6 @@ export interface PondHitBox {
 export interface PondScene {
   lines: string[]
   hitBoxes: PondHitBox[]
-  /** Subagents beyond what a pad seats; they are listed but not drawn. */
-  hidden: number
   /** World height in rows; the view scrolls over it. */
   worldHeight: number
 }
@@ -91,7 +91,6 @@ interface CovePlacement {
 export interface PondLayout {
   pads: PadPlacement[]
   coves: CovePlacement[]
-  hidden: number
   height: number
 }
 
@@ -146,8 +145,7 @@ export function layoutPond(frogs: readonly PondFrog[], width: number): PondLayou
       })
     }
   }
-  const hidden = pads.reduce((total, { pad }) => total + Math.max(0, pad.subagents.length - MAX_PAD_SUBAGENTS), 0)
-  return { pads, coves, hidden, height: top + shelfHeight }
+  return { pads, coves, height: top + shelfHeight }
 }
 
 /** Clamps a scroll offset (in rows) to the world. */
@@ -197,7 +195,8 @@ export function renderPond(
   const { elapsedMs } = options
   drawLand(canvas, coves, elapsedMs)
   for (const cove of coves) {
-    canvas.label(cove.left + 1, cove.top, ` ${cove.name.slice(0, cove.width - 3)} `, 'mint', 'ink', 95)
+    const name = basename(cove.name) || cove.name
+    canvas.label(cove.left + 1, cove.top, ` ${name.slice(0, cove.width - 3)} `, 'mint', 'ink', 95)
   }
 
   const hitBoxes: PondHitBox[] = []
@@ -277,7 +276,7 @@ export function renderPond(
   if (highlighted && Math.floor(elapsedMs / 400) % 3 !== 2) {
     drawCursor(canvas, highlighted)
   }
-  return { lines: canvas.rows(options.color), hitBoxes: visible, hidden: world.hidden, worldHeight: world.height }
+  return { lines: canvas.rows(options.color), hitBoxes: visible, worldHeight: world.height }
 }
 
 function clipBox(box: PondHitBox, height: number): PondHitBox[] {
@@ -324,7 +323,7 @@ function pondShore(cove: CovePlacement): { x: number; y: number }[] {
   const centerY = (cove.top + 0.5 + cove.height / 2) * 2
   const radiusX = cove.width / 2 + 1
   const radiusY = cove.height - 0.5
-  const seed = keySeed(cove.name)
+  const seed = keySeed(basename(cove.name) || cove.name)
   return Array.from({ length: SHORE_VERTICES }, (_, index) => {
     const angle = (index / SHORE_VERTICES) * Math.PI * 2
     const cosine = Math.cos(angle)
@@ -382,7 +381,6 @@ function drawLilyPad(canvas: Canvas, centerX: number, centerY: number, seed: num
       y: centerY + Math.sin(angle) * PAD_RADIUS_Y * radius,
     }
   })
-  const facets = new Map<string, Color>()
   for (let py = Math.floor(centerY - PAD_RADIUS_Y - 1); py <= Math.ceil(centerY + PAD_RADIUS_Y + 1); py++) {
     for (
       let column = Math.floor(centerX - PAD_RADIUS_X - 1);
@@ -390,21 +388,16 @@ function drawLilyPad(canvas: Canvas, centerX: number, centerY: number, seed: num
       column++
     ) {
       const color = padFacetColor(vertices, notch, centerX, centerY, column, py)
-      if (color) {
-        facets.set(`${column}:${py}`, color)
+      if (!color) {
+        continue
       }
-    }
-  }
-  for (const [key, color] of facets) {
-    const [column, py] = key.split(':').map(Number) as [number, number]
-    plot(canvas, column, py, color, 20)
-    for (const [dx, dy] of [
-      [1, 0],
-      [-1, 0],
-      [0, 1],
-      [0, -1],
-    ] as const) {
-      if (!facets.has(`${column + dx}:${py + dy}`)) {
+      plot(canvas, column, py, color, 20)
+      for (const [dx, dy] of [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ] as const) {
         plot(canvas, column + dx, py + dy, 'ink', 19)
       }
     }

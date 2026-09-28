@@ -1,7 +1,7 @@
 import { basename, resolve } from 'node:path'
 
 import type { ChatPanelRow, ChatTask, PondFrog } from '../chat/controller.js'
-import type { SessionInfo } from './sessions.js'
+import { DEFAULT_SESSION_DIR, type SessionInfo } from './sessions.js'
 
 // Bounds panel size; the pond scrolls, so this is far more than one screen shows.
 const MAX_PADS = 1_000
@@ -9,6 +9,7 @@ const RECENT_MS = 7 * 24 * 60 * 60 * 1000
 // A session saved this recently is probably open in another terminal. Sessions hold no lock, so this is a guess.
 const AWAKE_MS = 5 * 60 * 1000
 const LABEL_CHARS = 60
+const MAX_SAVED_SUBAGENTS = 8
 
 export interface PondConversation {
   id: string
@@ -17,14 +18,19 @@ export interface PondConversation {
   status: 'approval' | 'working' | 'interrupting' | 'failed' | 'idle' | 'closed'
   workspace: string
   sessionId?: string
+  sessionDirectory?: string
   subagents: readonly { taskId: string; task: string; status: ChatTask['status'] }[]
 }
 
+type PondRow = ChatPanelRow & Pick<PondFrog, 'state' | 'kind'>
+
 interface Pad {
+  pad: string
   cove: string
   workspace: string
   recency: number
-  rows: { row: ChatPanelRow; frog: PondFrog }[]
+  searchText: string
+  rows: PondRow[]
 }
 
 export function pondConversationValue(conversationId: string, taskId: string): string {
@@ -48,11 +54,22 @@ export function pondContent(
   query = ''
 ): { rows: ChatPanelRow[]; pond: PondFrog[] } {
   const needle = query.trim().toLowerCase()
-  const liveSessions = new Set(conversations.flatMap((conversation) => conversation.sessionId ?? []))
+  const liveSessions = new Set(
+    conversations.flatMap((conversation) =>
+      conversation.sessionId
+        ? [sessionKey(conversation.sessionId, conversation.workspace, conversation.sessionDirectory)]
+        : []
+    )
+  )
   const livePads = conversations.map((conversation) => conversationPad(conversation, now))
   const savedPads = sessions
     // Directories without a saved conversation (such as offloaded tool output) are not sessions.
-    .filter((session) => session.messageCount !== undefined && !session.active && !liveSessions.has(session.id))
+    .filter(
+      (session) =>
+        session.messageCount !== undefined &&
+        !session.active &&
+        !liveSessions.has(sessionKey(session.id, session.workspace ?? '.', session.directory))
+    )
     .map((session) => sessionPad(session, now))
     .filter((pad) => needle !== '' || now - pad.recency <= RECENT_MS)
     .sort((left, right) => right.recency - left.recency)
@@ -68,22 +85,30 @@ export function pondContent(
       left.workspace.localeCompare(right.workspace) ||
       right.recency - left.recency
   )
-  const entries = ordered.flatMap((pad) => pad.rows)
+  const entries = ordered.flatMap(({ cove, workspace, pad, rows }) =>
+    rows.map(({ kind, state, ...row }) => ({
+      row: { ...row, section: cove },
+      frog: { cove: workspace, pad, kind, state, ...(row.current ? { current: true } : {}) },
+    }))
+  )
   return { rows: entries.map((entry) => entry.row), pond: entries.map((entry) => entry.frog) }
+}
+
+function sessionKey(id: string, workspace: string, directory?: string): string {
+  return JSON.stringify([resolve(directory ?? resolve(workspace, DEFAULT_SESSION_DIR)), id])
 }
 
 function padMatches(pad: Pad, needle: string): boolean {
   return (
     needle === '' ||
-    pad.cove.toLowerCase().includes(needle) ||
-    pad.rows.some(({ row }) => `${row.label} ${row.description}`.toLowerCase().includes(needle))
+    `${pad.workspace} ${pad.searchText}`.toLowerCase().includes(needle) ||
+    pad.rows.some((row) => `${row.label} ${row.description}`.toLowerCase().includes(needle))
   )
 }
 
 function conversationPad(conversation: PondConversation, now: number): Pad {
   const workspace = resolve(conversation.workspace)
   const cove = basename(workspace) || workspace
-  const pad = `conversation:${conversation.id}`
   const state: PondFrog['state'] =
     conversation.status === 'failed' || conversation.status === 'closed'
       ? 'failed'
@@ -91,34 +116,27 @@ function conversationPad(conversation: PondConversation, now: number): Pad {
         ? 'awake'
         : 'working'
   return {
+    pad: `conversation:${conversation.id}`,
     cove,
     workspace,
     // Live conversations outrank saved sessions; the current one leads its cove.
     recency: now + (conversation.current ? 2 : 1),
+    searchText: conversation.subagents.map((subagent) => subagent.task).join(' '),
     rows: [
       {
-        row: {
-          label: conversation.title,
-          description: `${conversation.status} · this terminal · ${cove}`,
-          value: `conversation:${encodeURIComponent(conversation.id)}`,
-          section: cove,
-          ...(conversation.current ? { current: true } : {}),
-        },
-        frog: { cove, pad, kind: 'session', state, ...(conversation.current ? { current: true } : {}) },
+        label: conversation.title,
+        description: `${conversation.status} · this terminal · ${cove}`,
+        value: `conversation:${encodeURIComponent(conversation.id)}`,
+        kind: 'session',
+        state,
+        ...(conversation.current ? { current: true } : {}),
       },
-      ...conversation.subagents.map((subagent) => ({
-        row: {
-          label: truncate(subagent.task || 'subagent'),
-          description: `subagent · ${subagent.status} · ${conversation.title}`,
-          value: pondConversationValue(conversation.id, subagent.taskId),
-          section: cove,
-        },
-        frog: {
-          cove,
-          pad,
-          kind: 'subagent' as const,
-          state: taskState(subagent.status),
-        },
+      ...conversation.subagents.map((subagent): PondRow => ({
+        label: truncate(subagent.task || 'subagent'),
+        description: `subagent · ${subagent.status} · ${conversation.title}`,
+        value: pondConversationValue(conversation.id, subagent.taskId),
+        kind: 'subagent',
+        state: taskState(subagent.status),
       })),
     ],
   }
@@ -130,42 +148,37 @@ function sessionPad(session: SessionInfo, now: number): Pad {
   const recency = session.updatedAt ? Date.parse(session.updatedAt) || 0 : 0
   const awake = now - recency <= AWAKE_MS
   const reference = session.reference ?? session.id
-  const pad = `session:${reference}`
   const title = session.name ?? (session.preview ? truncate(session.preview) : session.id)
   return {
+    pad: `session:${reference}`,
     cove,
     workspace,
     recency,
+    searchText: [
+      session.lastPrompt ?? session.preview ?? '',
+      ...(session.subagents ?? []).map((subagent) => subagent.task),
+    ].join(' '),
     rows: [
       {
-        row: {
-          label: title,
-          description: [
-            awake ? 'active in another terminal' : 'saved',
-            session.messageCount === undefined ? undefined : `${session.messageCount} messages`,
-            session.updatedAt ? relativeTime(recency, now) : undefined,
-            cove,
-          ]
-            .filter(Boolean)
-            .join(' · '),
-          value: reference,
-          section: cove,
-        },
-        frog: { cove, pad, kind: 'session', state: awake ? 'awake' : 'asleep' },
-      },
-      ...(session.subagents ?? []).map((subagent) => ({
-        row: {
-          label: truncate(subagent.task || 'subagent'),
-          description: `subagent${subagent.agentType ? ` (${subagent.agentType})` : ''} · ${subagent.status} · opens ${title}`,
-          value: reference,
-          section: cove,
-        },
-        frog: {
+        label: title,
+        description: [
+          awake ? 'active in another terminal' : 'saved',
+          session.messageCount === undefined ? undefined : `${session.messageCount} messages`,
+          session.updatedAt ? relativeTime(recency, now) : undefined,
           cove,
-          pad,
-          kind: 'subagent' as const,
-          state: subagent.status === 'failed' ? ('failed' as const) : ('asleep' as const),
-        },
+        ]
+          .filter(Boolean)
+          .join(' · '),
+        value: reference,
+        kind: 'session',
+        state: awake ? 'awake' : 'asleep',
+      },
+      ...(session.subagents ?? []).slice(-MAX_SAVED_SUBAGENTS).map((subagent): PondRow => ({
+        label: truncate(subagent.task || 'subagent'),
+        description: `subagent${subagent.agentType ? ` (${subagent.agentType})` : ''} · ${subagent.status} · opens ${title}`,
+        value: reference,
+        kind: 'subagent',
+        state: subagent.status === 'failed' ? 'failed' : 'asleep',
       })),
     ],
   }

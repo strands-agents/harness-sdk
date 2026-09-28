@@ -30,17 +30,17 @@ export interface SessionTarget {
 export interface ChatSessionRuntime {
   readonly current: string | undefined
   readonly directory: string
+  readonly currentDirectory?: string
   list(): Promise<readonly SessionInfo[]>
   resolve(reference: string): Promise<SessionTarget>
   renameCurrent?(name: string): Promise<{ sessionId: string; name: string }>
 }
 
-const MAX_SAVED_SUBAGENTS = 8
-
 interface SessionMetadata {
   messageCount: number
   updatedAt: string
   preview?: string
+  lastPrompt?: string
   subagents?: readonly SavedSubagent[]
 }
 
@@ -77,6 +77,10 @@ export class FileSessionRuntime implements ChatSessionRuntime {
 
   get current(): string | undefined {
     return this._host.sessionId === undefined ? undefined : sanitizeTerminalText(this._host.sessionId)
+  }
+
+  get currentDirectory(): string {
+    return resolve(this._host.sessionDirectory)
   }
 
   async list(): Promise<readonly SessionInfo[]> {
@@ -287,12 +291,14 @@ async function readSessionMetadata(sessionDirectory: string): Promise<SessionMet
         continue
       }
       const messages: unknown[] = snapshot.data.messages
-      const preview = messagePreview(messages)
+      const lastPrompt = lastUserPrompt(messages)
       const subagents = savedSubagents(messages)
       return {
         messageCount: messages.length,
         updatedAt: candidate.stat.mtime.toISOString(),
-        ...(preview ? { preview } : {}),
+        ...(lastPrompt
+          ? { lastPrompt, preview: lastPrompt.length > 120 ? `${lastPrompt.slice(0, 117)}...` : lastPrompt }
+          : {}),
         ...(subagents.length > 0 ? { subagents } : {}),
       }
     } catch {
@@ -306,7 +312,7 @@ export async function hasSavedSession(sessionDirectory: string, sessionId: strin
   return (await readSessionMetadata(join(resolve(sessionDirectory), sessionId))) !== undefined
 }
 
-function messagePreview(messages: readonly unknown[]): string | undefined {
+function lastUserPrompt(messages: readonly unknown[]): string | undefined {
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index]
     if (!isRecord(message) || message.role !== 'user' || !Array.isArray(message.content)) {
@@ -317,7 +323,7 @@ function messagePreview(messages: readonly unknown[]): string | undefined {
       .join(' ')
     const normalized = normalizeSessionText(text)
     if (normalized) {
-      return normalized.length <= 120 ? normalized : `${normalized.slice(0, 117)}...`
+      return normalized
     }
   }
   return undefined
@@ -333,23 +339,21 @@ function savedSubagents(messages: readonly unknown[]): SavedSubagent[] {
       results.set(block.toolResult.toolUseId, block.toolResult.status)
     }
   }
-  return blocks
-    .flatMap((block): SavedSubagent[] => {
-      const use = block.toolUse
-      if (!isRecord(use) || use.name !== 'subagent' || !isRecord(use.input) || typeof use.input.task !== 'string') {
-        return []
-      }
-      const result = typeof use.toolUseId === 'string' ? results.get(use.toolUseId) : undefined
-      const agentType = typeof use.input.agent_type === 'string' ? normalizeSessionText(use.input.agent_type) : ''
-      return [
-        {
-          task: normalizeSessionText(use.input.task).slice(0, 200),
-          ...(agentType ? { agentType } : {}),
-          status: result === undefined ? 'pending' : result === 'error' ? 'failed' : 'completed',
-        },
-      ]
-    })
-    .slice(-MAX_SAVED_SUBAGENTS)
+  return blocks.flatMap((block): SavedSubagent[] => {
+    const use = block.toolUse
+    if (!isRecord(use) || use.name !== 'subagent' || !isRecord(use.input) || typeof use.input.task !== 'string') {
+      return []
+    }
+    const result = typeof use.toolUseId === 'string' ? results.get(use.toolUseId) : undefined
+    const agentType = typeof use.input.agent_type === 'string' ? normalizeSessionText(use.input.agent_type) : ''
+    return [
+      {
+        task: normalizeSessionText(use.input.task),
+        ...(agentType ? { agentType } : {}),
+        status: result === undefined ? 'pending' : result === 'error' ? 'failed' : 'completed',
+      },
+    ]
+  })
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
