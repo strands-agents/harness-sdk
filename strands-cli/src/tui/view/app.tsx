@@ -787,6 +787,27 @@ export function ChatApp({
           return
         }
 
+        if (snapshot.panel.kind === 'rename') {
+          if (key.escape) {
+            controller.dismissPanel()
+          } else if (key.return) {
+            const name = panelQuery.trim()
+            if (name) {
+              void activateRow({ label: 'Rename', description: name, value: `rename:${name}` })
+            }
+          } else if (key.backspace || key.delete || character === '\u007f') {
+            setPanelQuery(graphemes(panelQuery).slice(0, -1).join(''))
+          } else if (key.ctrl && character === 'u') {
+            setPanelQuery('')
+          } else if (!key.ctrl && !key.meta && !key.super && character) {
+            const clean = sanitizeTerminalText(character).replaceAll('\n', ' ')
+            if (clean) {
+              setPanelQuery((query) => query + clean)
+            }
+          }
+          return
+        }
+
         const rows = panelRows ?? []
         const rowCapacity =
           snapshot.panel.kind === 'agents'
@@ -1003,6 +1024,13 @@ export function ChatApp({
             setPanelViewportStart(nextStart)
             return
           }
+        }
+        if (key.rightArrow && snapshot.panel.kind === 'skills') {
+          const selected = rows[Math.min(panelSelectionRef.current, rows.length - 1)]
+          if (selected?.value) {
+            controller.openSkillDetail(selected.value)
+          }
+          return
         }
         if (key.return) {
           const selected = rows[Math.min(panelSelectionRef.current, rows.length - 1)]

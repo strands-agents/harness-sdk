@@ -21,6 +21,7 @@ import {
 import { AgentsPanel } from './agents-panel.js'
 import { ExportPanel } from './export-panel.js'
 import { EffortSlider, ModelPicker } from './model-panel.js'
+import { RenamePanel } from './rename-panel.js'
 import { SessionsPanel } from './sessions-panel.js'
 import { PanelItemHeader, PanelOverlay, PanelTitle } from './panel-components.js'
 import { SettingsControl, SettingsPanel } from './settings-panel.js'
@@ -117,15 +118,17 @@ export function ResourcePanel({
           ? 112
           : panel.kind === 'agents'
             ? 112
-            : checklist
-              ? 96
-              : panel.kind === 'context' || panel.kind === 'effort'
-                ? 52
-                : panel.kind === 'permission' && panel.diff
-                  ? 100
-                  : panel.kind === 'permission' || panel.kind === 'error'
-                    ? 68
-                    : 84
+            : panel.kind === 'rename'
+              ? 60
+              : checklist
+                ? 96
+                : panel.kind === 'context' || panel.kind === 'effort'
+                  ? 52
+                  : panel.kind === 'permission' && panel.diff
+                    ? 100
+                    : panel.kind === 'permission' || panel.kind === 'error'
+                      ? 68
+                      : 84
   const width = Math.max(1, Math.min(preferredWidth, terminalWidth - 4))
   const color = panel.kind === 'error' ? 'red' : accent
 
@@ -318,6 +321,17 @@ export function ResourcePanel({
   if (panel.kind === 'agents') {
     return (
       <AgentsPanel {...rowProps} height={Math.max(5, terminalHeight - 8)} columns={agentGridColumns(terminalWidth)} />
+    )
+  }
+  if (panel.kind === 'rename') {
+    return (
+      <RenamePanel
+        panel={panel}
+        value={query}
+        width={width}
+        animateCursor={settings.animations}
+        {...(onPanelElement ? { onPanelElement } : {})}
+      />
     )
   }
   if (panel.kind === 'export') {

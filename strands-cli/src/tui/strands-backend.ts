@@ -31,7 +31,7 @@ import type { AgentModelRuntime } from './model/runtime.js'
 import { contextWindowLimit } from './model/context.js'
 import type { CedarPermissions, ToolPermissionBroker } from './permissions/policy.js'
 import { ShellRunner } from './chat/shell.js'
-import { clearStoredContext, persistContext, restoreContext } from './session/context.js'
+import { clearStoredContext, persistContext, restoreContext, storeContext } from './session/context.js'
 import type { LiveSteering } from './steering.js'
 import { latestRootModelUsage, RunUsage } from '../usage.js'
 
@@ -43,6 +43,7 @@ interface HarnessTodo {
 
 const TASK_REFRESH_INTERVAL_MS = 200
 const ALWAYS_BACKGROUND_TOOL_NAMES = new Set(['subagent'])
+const COMPACT_PRESERVE_RECENT_MESSAGES = 2
 
 interface StrandsChatBackendOptions {
   sourceDefinition?: Omit<NonNullable<ChatConversation['sourceSelection']>, 'selected'>
@@ -196,20 +197,50 @@ export class StrandsChatBackend implements ChatBackend {
     return this._runtime.setBackgroundTasksWaitForCompletion(waitForCompletion)
   }
 
-  async compact(): Promise<boolean> {
+  async compact(): Promise<ChatContextUsage | undefined> {
+    const agent = this._runtime.agent
+    if (agent.messages.length <= COMPACT_PRESERVE_RECENT_MESSAGES) {
+      return undefined
+    }
+    const reported = this.contextUsage()
+    const estimatedBefore = await this._estimateContextTokens()
     const manager = new SummarizingConversationManager({
       summaryRatio: 0.8,
-      preserveRecentMessages: 2,
+      preserveRecentMessages: COMPACT_PRESERVE_RECENT_MESSAGES,
     })
-    const reduced = await manager.reduce({ agent: this._runtime.agent, model: this._runtime.agent.model })
-    if (reduced) {
-      clearStoredContext(this._runtime.agent.messages.at(-1))
-      await this._runtime.agent.sessionManager?.saveSnapshot({
-        target: this._runtime.agent,
-        isLatest: true,
-      })
+    // A proactive reduce reports summarization failures by returning false rather than throwing.
+    if (!(await manager.reduce({ agent, model: agent.model }))) {
+      throw new Error('The model did not return a usable summary. Try /compact again.')
     }
-    return reduced
+    const currentTokens = compactedTokens(
+      reported?.projectedTokens ?? reported?.currentTokens,
+      estimatedBefore,
+      await this._estimateContextTokens()
+    )
+    const contextWindow = (await this._contextWindow?.()) ?? contextWindowLimit(agent.model)
+    const context: ChatContextUsage = {
+      ...(currentTokens !== undefined ? { currentTokens } : {}),
+      ...(contextWindow !== undefined ? { contextWindow } : {}),
+    }
+    if (!storeContext(this._runtime, this._contextScope, context)) {
+      clearStoredContext(agent.messages.at(-1))
+    }
+    await agent.sessionManager?.saveSnapshot({ target: agent, isLatest: true })
+    return context
+  }
+
+  /** Estimates the context size of the current conversation without a model invocation. */
+  private async _estimateContextTokens(): Promise<number | undefined> {
+    const agent = this._runtime.agent
+    try {
+      return await agent.model.countTokens(agent.messages, {
+        ...(agent.systemPrompt !== undefined && { systemPrompt: agent.systemPrompt }),
+        toolSpecs: agent.tools.map((tool) => tool.toolSpec),
+      })
+    } catch {
+      // The meter stays empty until the next model response reports usage.
+      return undefined
+    }
   }
 
   clear(): Promise<void> {
@@ -432,6 +463,21 @@ export class StrandsChatBackend implements ChatBackend {
       listener(update.tasks)
     }
   }
+}
+
+/**
+ * Offline token estimates can overcount the system prompt and tool specs by a wide margin, so a
+ * model-reported size minus the estimated reduction tracks the next reported size more closely.
+ */
+function compactedTokens(
+  reported: number | undefined,
+  estimatedBefore: number | undefined,
+  estimatedAfter: number | undefined
+): number | undefined {
+  if (reported === undefined || estimatedBefore === undefined || estimatedAfter === undefined) {
+    return estimatedAfter
+  }
+  return Math.max(0, reported - Math.max(0, estimatedBefore - estimatedAfter))
 }
 
 function readTodos(agent: Agent): ChatTask[] {

@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -604,9 +603,7 @@ describe('setup presentation', () => {
     }
   })
 
-  it('exports the saved agent from the Export card', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'strands-setup-export-'))
-    const cwd = vi.spyOn(process, 'cwd').mockReturnValue(root)
+  it('announces a newer CLI release on the opening menu', async () => {
     const input = ttyInput()
     const output = ttyOutput(120, 30)
     let frame = ''
@@ -615,21 +612,106 @@ describe('setup presentation', () => {
         frame = sanitizeTerminalText(chunk.toString())
       }
     })
-    const config = CliConfigStore.memory(
-      {},
-      { animations: false },
-      { profile: { name: 'Export fixture', skills: false, memory: false, session: false } }
+    const instance = render(
+      createElement(SetupWizard, {
+        config: CliConfigStore.memory({}, { animations: false }),
+        onComplete: () => {},
+        checkForUpdate: async () => '9.9.9',
+      }),
+      {
+        stdin: input,
+        stdout: output,
+        stderr: output,
+        interactive: true,
+        debug: true,
+        incrementalRendering: false,
+        patchConsole: false,
+        exitOnCtrlC: false,
+      }
     )
-    const instance = render(createElement(SetupWizard, { config, onComplete: () => {} }), {
-      stdin: input,
-      stdout: output,
-      stderr: output,
-      interactive: true,
-      debug: true,
-      incrementalRendering: false,
-      patchConsole: false,
-      exitOnCtrlC: false,
+    try {
+      await vi.waitFor(() =>
+        expect(frame).toContain('Strands CLI 9.9.9 is available. Run `strands update` to install it.')
+      )
+    } finally {
+      instance.unmount()
+      await instance.waitUntilExit()
+    }
+  })
+
+  it('resumes a configured harness from the Resume card', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(120, 30)
+    let frame = ''
+    output.on('data', (chunk: Buffer) => {
+      if (chunk.toString().includes('\n')) {
+        frame = sanitizeTerminalText(chunk.toString())
+      }
     })
+    const onCancel = vi.fn()
+    const instance = render(
+      createElement(SetupWizard, {
+        config: CliConfigStore.memory({}, { animations: false }),
+        onComplete: () => {},
+        onCancel,
+      }),
+      {
+        stdin: input,
+        stdout: output,
+        stderr: output,
+        interactive: true,
+        debug: true,
+        incrementalRendering: false,
+        patchConsole: false,
+        exitOnCtrlC: false,
+      }
+    )
+    const press = async (key: string): Promise<void> => {
+      input.push(key)
+      await instance.waitUntilRenderFlush()
+    }
+    try {
+      await instance.waitUntilRenderFlush()
+      expect(frame).toContain('Resume')
+      expect(frame).not.toContain('Export')
+      await press('\u001b[B')
+      await press('\u001b[C')
+      await press('\r')
+
+      expect(onCancel).toHaveBeenCalledWith(0)
+    } finally {
+      instance.unmount()
+      await instance.waitUntilExit()
+    }
+  })
+
+  it('explains how to create a harness when Resume has nothing to open', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(120, 30)
+    let frame = ''
+    output.on('data', (chunk: Buffer) => {
+      if (chunk.toString().includes('\n')) {
+        frame = sanitizeTerminalText(chunk.toString())
+      }
+    })
+    const onCancel = vi.fn()
+    const instance = render(
+      createElement(SetupWizard, {
+        config: CliConfigStore.memory({}, { animations: false }, { onboardingVersion: 0 }),
+        onComplete: () => {},
+        onCancel,
+      }),
+      {
+        stdin: input,
+        stdout: output,
+        stderr: output,
+        interactive: true,
+        debug: true,
+        incrementalRendering: false,
+        patchConsole: false,
+        exitOnCtrlC: false,
+      }
+    )
     const press = async (key: string): Promise<void> => {
       input.push(key)
       await instance.waitUntilRenderFlush()
@@ -639,22 +721,18 @@ describe('setup presentation', () => {
       await press('\u001b[B')
       await press('\u001b[C')
       await press('\r')
-      await vi.waitFor(() => expect(frame).toContain('Export your agent'))
-      expect(frame).toContain('export-fixture-typescript.zip')
 
-      await press('\u001b[C')
-      await vi.waitFor(() => expect(frame).toContain('export-fixture-python.zip'))
-      await press('\u001b[Z')
-      await press('\r')
-
-      const archive = join(root, 'export-fixture-python.zip')
-      await vi.waitFor(() => expect(existsSync(archive)).toBe(true))
-      await vi.waitFor(() => expect(frame).toContain('Saved'))
+      expect(onCancel).not.toHaveBeenCalled()
+      expect(frame).toContain('No harness is ready to resume yet.')
+      expect(frame).toContain('Choose Quickstart or Customize')
+      expect(frame).toContain('or Import')
+      expect(frame).toContain('your own.')
+      const lines = frame.split('\n')
+      const errorLine = lines.findIndex((line) => line.includes('No harness is ready to resume yet.'))
+      expect(lines[errorLine - 1]?.trim()).toBe('')
     } finally {
       instance.unmount()
       await instance.waitUntilExit()
-      cwd.mockRestore()
-      await rm(root, { recursive: true, force: true })
     }
   })
 

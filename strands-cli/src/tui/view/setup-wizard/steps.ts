@@ -29,7 +29,6 @@ import {
 } from './profile-fields.js'
 import { canChooseDirectory } from '../../terminal/directory-picker.js'
 import type { ChatSettings } from '../../chat/types.js'
-import type { AgentProjectLanguage } from '../../project/import.js'
 import { SETTING_DEFINITIONS, VISUAL_SETTING_DEFINITIONS } from '../../settings.js'
 import { PERMISSION_CHOICES, permissionToolDescription, permissionToolNames } from '../../permissions/settings.js'
 import {
@@ -54,7 +53,7 @@ export const OPENING_CHOICES = [
     description: 'Customize your harness from scratch. Model, prompt, tools, and beyond.',
   },
   { id: 'import', title: 'Import', description: 'Load in your custom harness from a file or zip.' },
-  { id: 'export', title: 'Export', description: 'Save your harness as a TypeScript or Python project.' },
+  { id: 'resume', title: 'Resume', description: 'Return to your harness and continue working.' },
 ] as const
 const SETUP_STEP_INSTRUCTIONS = {
   quickstart: ['Pick a model for your agent'],
@@ -68,14 +67,13 @@ const SETUP_STEP_INSTRUCTIONS = {
     'Review your agent',
   ],
   import: ['Choose an agent to import'],
-  export: ['Export your agent'],
 } as const satisfies Record<SetupFlow, readonly string[]>
 
 export function setupStepProgress(
   flow: SetupFlow | undefined,
   step: number
 ): { current: number; total: number; instruction: string; label?: string } | undefined {
-  if (!flow || step === 0 || step === APPEARANCE_STEP || ((flow === 'import' || flow === 'export') && step === 1)) {
+  if (!flow || step === 0 || step === APPEARANCE_STEP || (flow === 'import' && step === 1)) {
     return undefined
   }
   const instruction = SETUP_STEP_INSTRUCTIONS[flow][step - 1]!
@@ -132,40 +130,6 @@ export function wizardSettingsRows(
       activate: noop,
     })
   )
-}
-
-export function exportRows(
-  language: AgentProjectLanguage,
-  path: string,
-  exportedPath: string | undefined,
-  setLanguage: (language: AgentProjectLanguage) => void,
-  setEditing: (editing: { field: EditableField; value: string }) => void
-): WizardRow[] {
-  return [
-    {
-      id: 'export-language',
-      label: 'Language',
-      description: '',
-      choices: (['typescript', 'python'] as const).map((option) => ({
-        label: option === 'typescript' ? 'TypeScript' : 'Python',
-        value: option,
-        active: option === language,
-        activate: (): void => setLanguage(option),
-      })),
-      activate: noop,
-    },
-    {
-      id: 'export-path',
-      label: 'Save ZIP to',
-      description: path,
-      input: true,
-      field: 'exportPath',
-      activate: (): void => setEditing({ field: 'exportPath', value: path }),
-    },
-    ...(exportedPath
-      ? [{ id: 'export-saved', label: 'Saved', description: exportedPath, status: 'success' as const, activate: noop }]
-      : []),
-  ]
 }
 
 export function rowsForStep(

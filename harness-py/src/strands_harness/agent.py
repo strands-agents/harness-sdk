@@ -33,6 +33,7 @@ from strands_harness.models import (
 )
 from strands_harness.options import (
     _builtin_tool_config,
+    _check_caching,
     _memory_config,
     _normalize_builtin_tools,
     _sanitize_session_id,
@@ -256,7 +257,7 @@ def create_harness(
     mcp_servers: str | dict[str, MCPServerConfig] | None = None,
     builtin_tools: Sequence[BuiltinToolName] | BuiltinToolsConfig | None = None,
     background_tasks: bool | BackgroundTasksConfig | None = None,
-    caching: str | bool | None = _UNSET,
+    caching: Literal["auto"] | bool | None = _UNSET,
     context_manager: ContextManagerOption = defaults.DEFAULT_CONTEXT_MANAGER,
     session: bool | SessionConfig | SessionManager | None = True,
     skills: bool | SkillSources | AgentSkills | None = True,
@@ -345,8 +346,9 @@ def create_harness(
             (Bedrock and Anthropic direct set cache points and cached tools; OpenAI, Gemini, and
             bedrock-mantle cache automatically server-side). Defaults to on. ``False``/``None`` turns
             off what the harness configures, and has no effect where caching is automatic. Explicitly
-            enabling caching on a provider without it raises; on a pre-built ``Model`` instance it is
-            ignored with a warning (configure it on the instance).
+            enabling caching (``"auto"`` or ``True``) on a provider without it raises; on a pre-built
+            ``Model`` instance it is ignored with a warning (configure it on the instance). Any other
+            value raises.
         context_manager: The SDK's ``Agent(context_manager=)`` option: ``"auto"`` (the default) or
             ``"agentic"`` for an SDK preset, a ``ContextManagerConfig`` dict or a ``ContextManager``
             instance for a custom pipeline, or ``False``/``None`` to disable it. When enabled, large
@@ -411,6 +413,8 @@ def create_harness(
         del enabled_tools["web_search"]
 
     caching_explicit = caching is not _UNSET
+    if caching_explicit:
+        _check_caching(caching)
     caching_on = bool(defaults.DEFAULT_CACHING) if not caching_explicit else bool(caching)
     resolved_model = resolve_model(
         model,

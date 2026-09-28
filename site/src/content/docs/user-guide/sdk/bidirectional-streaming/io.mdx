@@ -268,7 +268,11 @@ app = FastAPI()
 
 @app.websocket("/text-chat")
 async def text_chat(websocket: WebSocket) -> None:
-    model = OpenAIRealtimeModel(model_id="gpt-realtime-2.1", api_key="<OPENAI_API_KEY>")
+    model = OpenAIRealtimeModel(
+        model_id="gpt-realtime-2.1",
+        transcription_model_id="gpt-transcribe",
+        api_key="<OPENAI_API_KEY>",
+    )
     agent = BidiAgent(model=model)
 
     try:
@@ -296,7 +300,7 @@ async def main():
 
     while True:
         output_event = json.loads(await websocket.recv())
-        if output_event["type"] == "bidi_transcript_complete":
+        if output_event["type"] == "bidi_transcript_stop":
             print(output_event["transcript"])
             break
 

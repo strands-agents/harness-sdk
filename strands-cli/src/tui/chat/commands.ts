@@ -22,7 +22,7 @@ export const LOCAL_COMMANDS: readonly LocalCommandSpec[] = [
     description: 'Browse, resume, or rename the current saved conversation',
   },
   { name: 'tools', usage: '/tools', description: 'Choose the built-in tools the agent has' },
-  { name: 'skills', usage: '/skills', description: 'Browse available and active skills' },
+  { name: 'skills', usage: '/skills', description: 'Browse and run available skills' },
   { name: 'mcp', usage: '/mcp', description: 'Show configured MCP servers and connection state' },
   { name: 'permissions', usage: '/permissions [default|bypass]', description: 'Configure tool approvals' },
   { name: 'voice', usage: '/voice [on|off|status]', description: 'Open bidirectional voice controls' },

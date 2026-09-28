@@ -183,7 +183,11 @@ export class ConversationManager implements ChatControllerApi {
       return this._forkConversation(unquote(argument))
     }
     if (command === 'rename') {
-      this._renameConversation(unquote(argument))
+      if (argument) {
+        this._renameConversation(unquote(argument))
+      } else {
+        this._openRenamePanel()
+      }
       return undefined
     }
     if (command === 'voice') {
@@ -261,6 +265,10 @@ export class ConversationManager implements ChatControllerApi {
   }
 
   async activatePanelRow(row: ChatPanelRow): Promise<boolean> {
+    if (this._panel?.kind === 'rename' && row.value?.startsWith('rename:')) {
+      this._renameConversation(row.value.slice('rename:'.length))
+      return true
+    }
     if (this._panel?.kind === 'voice') {
       return row.value ? this._voice.handlePanelAction(row.value) : false
     }
@@ -282,6 +290,10 @@ export class ConversationManager implements ChatControllerApi {
   openContextPanel(): void {
     this._panel = undefined
     this._active.controller.openContextPanel()
+  }
+
+  openSkillDetail(name: string): boolean {
+    return this._active.controller.openSkillDetail(name)
   }
 
   private get _active(): ConversationRecord {
@@ -437,6 +449,13 @@ export class ConversationManager implements ChatControllerApi {
     this._active.title = title
     this._agentMessaging?.rename(this._active.id, title)
     this._panel = undefined
+    this._emit()
+  }
+
+  private _openRenamePanel(): void {
+    this._panel = this._makePanel('rename', 'Rename agent', [
+      { label: 'Current name', description: this._active.title },
+    ])
     this._emit()
   }
 

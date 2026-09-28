@@ -5,11 +5,18 @@
  * focused.
  */
 import MobileMenuToggle from 'virtual:starlight/components/MobileMenuToggle'
+import { currentProduct } from '../../util/current-product'
 
 const { hasSidebar } = Astro.locals.starlightRoute
+
+// Product accent for the docs chrome (styled in custom.css). Labs is not a
+// product; the path check mirrors the /labs slug in Sidebar.astro.
+const accent =
+  currentProduct(Astro.url.pathname)?.accent ??
+  (Astro.url.pathname.includes('/docs/labs') ? 'blue' : undefined)
 ---
 
-<div class="page sl-flex">
+<div class="page sl-flex" data-accent={accent}>
   <header class="header"><slot name="header" /></header>
   {hasSidebar && (
     <nav class="sidebar print:hidden" aria-label={Astro.locals.t('sidebarNav.accessibleLabel')}>

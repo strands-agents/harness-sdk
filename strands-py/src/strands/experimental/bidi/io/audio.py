@@ -22,7 +22,7 @@ from .._audio.buffer import AudioBuffer
 from ..models.configs import AudioStreamConfig
 from ..models.model import AudioCapable
 from ..types.events import (
-    BidiAudioStreamEvent,
+    BidiAudioDeltaEvent,
     BidiBargeInEvent,
     BidiOutputEvent,
 )
@@ -252,7 +252,7 @@ class _AudioOutputStream(OutputStream):
         """
         await self._transcript_output(event)
 
-        if isinstance(event, BidiAudioStreamEvent):
+        if isinstance(event, BidiAudioDeltaEvent):
             self._validate_audio_event(event, self._audio_config)
 
             data = base64.b64decode(event["audio"])
@@ -291,7 +291,7 @@ class _AudioOutputStream(OutputStream):
             raise ValueError(f"AudioIO requires signed 16-bit PCM, received {config['format']}")
 
     @staticmethod
-    def _validate_audio_event(event: BidiAudioStreamEvent, config: AudioStreamConfig) -> None:
+    def _validate_audio_event(event: BidiAudioDeltaEvent, config: AudioStreamConfig) -> None:
         """Require audio to match the playback format."""
         if (event.format, event.sample_rate, event.channels) != (
             config["format"],

@@ -3,9 +3,8 @@ import type { HarnessAgentConfig } from '@strands-agents/harness'
 import type { PermissionMode, ProviderEnvironmentKey, ProviderId } from '../../config.js'
 import type { ChatSettings } from '../../chat/types.js'
 
-export type EditableField =
-  'name' | 'instructions' | 'skills' | 'memoryDir' | 'importPath' | 'exportPath' | ProviderEnvironmentKey
-export type SetupFlow = 'quickstart' | 'customize' | 'import' | 'export'
+export type EditableField = 'name' | 'instructions' | 'skills' | 'memoryDir' | 'importPath' | ProviderEnvironmentKey
+export type SetupFlow = 'quickstart' | 'customize' | 'import'
 
 export type AppearanceSettings = Pick<
   ChatSettings,

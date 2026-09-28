@@ -33,6 +33,7 @@ from strands_harness.defaults import DEFAULT_MODEL
 
 channel = os.fdopen(3, "w", buffering=1)
 pending_permissions = {}
+COMPACT_PRESERVE_RECENT_MESSAGES = 2
 
 
 def encode(value):
@@ -53,6 +54,14 @@ def send(message):
 
 def emit(event):
     send({"type": "event", "event": event})
+
+
+def compacted_tokens(reported, estimated_before, estimated_after):
+    """Offline token estimates can overcount the system prompt and tool specs by a wide margin, so a
+    model-reported size minus the estimated reduction tracks the next reported size more closely."""
+    if reported is None or estimated_before is None or estimated_after is None:
+        return estimated_after
+    return max(0, reported - max(0, estimated_before - estimated_after))
 
 
 async def authorize_tool(event):
@@ -263,6 +272,7 @@ class Runtime:
             raise
         self.agent = candidate
         self.options = options
+        self.reported_context_tokens = None
         if previous is not None and previous is not candidate:
             await self.cleanup(previous)
 
@@ -416,6 +426,42 @@ class Runtime:
     def result(self, result, *, reload=False):
         send({"type": "result", "result": result, "state": self.state(), "reload": reload})
 
+    async def estimate_context_tokens(self):
+        try:
+            return await self.agent.model.count_tokens(
+                self.agent.messages,
+                tool_specs=self.agent.tool_registry.get_all_tool_specs(),
+                system_prompt=self.agent.system_prompt,
+                system_prompt_content=self.agent._system_prompt_content,
+            )
+        except Exception:
+            # The meter stays empty until the next model response reports usage.
+            return None
+
+    async def compact(self):
+        from strands.agent.conversation_manager import SummarizingConversationManager
+
+        if len(self.agent.messages) <= COMPACT_PRESERVE_RECENT_MESSAGES:
+            return None
+        before = [id(message) for message in self.agent.messages]
+        estimated_before = await self.estimate_context_tokens()
+        manager = SummarizingConversationManager(
+            summary_ratio=0.8, preserve_recent_messages=COMPACT_PRESERVE_RECENT_MESSAGES
+        )
+        await asyncio.to_thread(manager.reduce_context, self.agent)
+        # A proactive reduce_context logs summarization failures instead of raising.
+        if [id(message) for message in self.agent.messages] == before:
+            raise RuntimeError("The model did not return a usable summary. Try /compact again.")
+        await self.save()
+        self.reported_context_tokens = compacted_tokens(
+            self.reported_context_tokens, estimated_before, await self.estimate_context_tokens()
+        )
+        context = {
+            "currentTokens": self.reported_context_tokens,
+            "contextWindow": self.agent.model.context_window_limit,
+        }
+        return {key: value for key, value in context.items() if value is not None}
+
     async def turn(self, prompt):
         self.cancel_signal.clear()
         self.reload_requested = False
@@ -454,6 +500,11 @@ class Runtime:
                 if result is None:
                     raise RuntimeError("The Python agent finished without a result")
                 if result.stop_reason != "interrupt" or not result.interrupts:
+                    self.reported_context_tokens = (
+                        result.projected_context_size
+                        if result.projected_context_size is not None
+                        else result.context_size
+                    )
                     context = {
                         "currentTokens": result.context_size,
                         "projectedTokens": result.projected_context_size,
@@ -585,13 +636,11 @@ class Runtime:
             await self.build(options, snapshot)
             self.result({"stopReason": "reset"})
         elif kind == "compact":
-            from strands.agent.conversation_manager import SummarizingConversationManager
-
-            manager = SummarizingConversationManager(summary_ratio=0.8, preserve_recent_messages=2)
-            before = len(self.agent.messages)
-            await asyncio.to_thread(manager.reduce_context, self.agent)
-            await self.save()
-            self.result({"stopReason": "compacted" if len(self.agent.messages) < before else "unchanged"})
+            context = await self.compact()
+            if context is None:
+                self.result({"stopReason": "unchanged"})
+            else:
+                self.result({"stopReason": "compacted", "context": context})
         elif kind == "skill":
             skills = self.skills()
             if not skills:

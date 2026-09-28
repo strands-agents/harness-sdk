@@ -19,11 +19,12 @@ def config_requires_model_id() -> None:
 def providers_require_model_id() -> None:
     BedrockNovaSonicModel()  # type: ignore[call-arg]
     GoogleGeminiLiveModel()  # type: ignore[call-arg]
-    OpenAIRealtimeModel()  # type: ignore[call-arg]
+    OpenAIRealtimeModel(transcription_model_id=None)  # type: ignore[call-arg]
+    OpenAIRealtimeModel(model_id="model-id")  # type: ignore[call-arg]
 
     BedrockNovaSonicModel(model_id=None)  # type: ignore[arg-type]
     GoogleGeminiLiveModel(model_id=None)  # type: ignore[arg-type]
-    OpenAIRealtimeModel(model_id=None)  # type: ignore[arg-type]
+    OpenAIRealtimeModel(model_id=None, transcription_model_id=None)  # type: ignore[arg-type]
 
 
 def providers_accept_partial_updates() -> None:
@@ -31,7 +32,7 @@ def providers_accept_partial_updates() -> None:
     for model in (
         BedrockNovaSonicModel(model_id="model-id"),
         GoogleGeminiLiveModel(model_id="model-id"),
-        OpenAIRealtimeModel(model_id="model-id"),
+        OpenAIRealtimeModel(model_id="model-id", transcription_model_id=None),
     ):
         assert_type(model.get_config(), ModelConfig)
         model.update_config()

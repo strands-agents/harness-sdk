@@ -28,6 +28,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     throw err
   }
 
+  if (args.update) {
+    const { updateCli } = await import('./update.js')
+    process.exitCode = await updateCli()
+    return
+  }
+
   const stdinIsTty = stdin.isTTY === true
   const mode = selectRunMode(args, { stdinIsTty, stdoutIsTty: stdout.isTTY === true })
   initLogging(mode)

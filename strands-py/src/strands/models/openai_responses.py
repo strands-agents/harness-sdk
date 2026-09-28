@@ -923,6 +923,11 @@ class OpenAIResponsesModel(Model):
                     if isinstance(cached, int) and cached:
                         usage_data["cacheReadInputTokens"] = cached
 
+                    # Reported first-party from GPT-5.6
+                    cache_write = getattr(tokens_details, "cache_write_tokens", None)
+                    if isinstance(cache_write, int) and cache_write:
+                        usage_data["cacheWriteInputTokens"] = cache_write
+
                 return {
                     "metadata": {
                         "usage": usage_data,

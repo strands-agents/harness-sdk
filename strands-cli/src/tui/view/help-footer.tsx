@@ -15,21 +15,25 @@ export function PanelHelpFooter({ width }: { width: number }): ReactElement | nu
     ? '↑↓ · Enter choose · Esc deny'
     : detail
       ? '↑↓ scroll · Esc back'
-      : panel.kind === 'effort'
-        ? '←→ change · Enter done · Esc close'
-        : !actionable
-          ? 'Esc close'
-          : panel.kind === 'settings'
-            ? width < 42
-              ? '↑↓ move · ←→ change · Esc back'
-              : '↑↓ · ←→ change · Tab category · Esc back'
-            : panel.kind === 'models'
-              ? 'Tab · Enter choose · Esc back'
-              : panel.kind === 'tools' || panel.kind === 'permissions'
-                ? '↑↓ · Enter toggle · Esc save'
-                : panel.filters?.length
-                  ? 'Tab category · Enter · Esc back'
-                  : '↑↓ · Enter open · Esc back'
+      : panel.kind === 'rename'
+        ? 'Enter save · Ctrl+U clear · Esc cancel'
+        : panel.kind === 'effort'
+          ? '←→ change · Enter done · Esc close'
+          : !actionable
+            ? 'Esc close'
+            : panel.kind === 'settings'
+              ? width < 42
+                ? '↑↓ move · ←→ change · Esc back'
+                : '↑↓ · ←→ change · Tab category · Esc back'
+              : panel.kind === 'models'
+                ? 'Tab · Enter choose · Esc back'
+                : panel.kind === 'tools' || panel.kind === 'permissions'
+                  ? '↑↓ · Enter toggle · Esc save'
+                  : panel.kind === 'skills'
+                    ? '↑↓ · Enter run · → details · Esc back'
+                    : panel.filters?.length
+                      ? 'Tab category · Enter · Esc back'
+                      : '↑↓ · Enter open · Esc back'
   return (
     <Box width={Math.max(1, width)} height={1} flexShrink={0}>
       <Text dimColor wrap="truncate-end">

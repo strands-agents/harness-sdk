@@ -151,7 +151,8 @@ function ChatViewContent({
   const resolvedCommandAssistance =
     commandAssistance ?? (suggestions === undefined ? commandAssistanceForInput(input) : undefined)
   const resolvedSuggestions = suggestions ?? resolvedCommandAssistance?.completions ?? []
-  const hasActivity = snapshot.completedTurns.length > 0 || snapshot.activeTurn !== undefined
+  const hasActivity =
+    snapshot.completedTurns.length > 0 || snapshot.activeTurn !== undefined || snapshot.notices.length > 0
   const startupCovered = Boolean(snapshot.panel) || resolvedCommandAssistance !== undefined
   const showQueueStatus = snapshot.queuedPrompts.length > 0 || snapshot.status === 'interrupting'
   const showVoiceStatus = snapshot.voice !== undefined && snapshot.voice.status !== 'off'

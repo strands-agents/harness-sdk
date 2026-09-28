@@ -39,7 +39,7 @@ npm install -g @strands-agents/cli   # gives you the `strands` command
 strands "summarize what this repo does"
 ```
 
-By default you get Claude Opus 4.8 on Amazon Bedrock, with reasoning, shell and file tools, web
+By default you get Claude Opus 5 on Amazon Bedrock, with reasoning, shell and file tools, web
 access, caching, todos, environment context, a `subagent` delegate, Agent Skills, resumable
 sessions, long-term memory, and automatic context management. The full-screen terminal keeps
 background delegates non-blocking and automatically continues the agent when their results arrive.
@@ -57,6 +57,12 @@ Or run it on demand without installing, using `npx`:
 
 ```bash
 npx @strands-agents/cli
+```
+
+Update a global installation with:
+
+```bash
+strands update
 ```
 
 On the first interactive launch, the intro animation plays before the setup panel opens. Quickstart
@@ -92,8 +98,8 @@ compiled output and skips all source-build behavior.
 ## Customize the agent
 
 Run `strands` or use `/setup` in chat to reopen the saved configuration. Quickstart and Customize
-edit the same profile. Import loads a harness from a file or zip, and Export saves the saved agent as a
-TypeScript or Python project.
+edit the same profile. Import loads a harness from a file or zip, and Resume returns to the configured
+harness. Use `/export` in chat to save the agent as a TypeScript or Python project.
 
 In interactive chat, the agent can also inspect and change its own configuration with `strands_config`.
 For example: “Use high reasoning, disable shell and delegation, and keep responses concise.”
@@ -471,7 +477,7 @@ Pass a `bedrock/<id>` string or a bare Amazon Bedrock model id:
 
 ```bash
 strands --model bedrock/global.anthropic.claude-sonnet-5 --effort high "explain this error"
-strands --model global.anthropic.claude-opus-4-8 "review my auth flow"
+strands --model global.anthropic.claude-opus-5 "review my auth flow"
 ```
 
 To use a preconfigured SDK `Model` instance, use the library directly (see

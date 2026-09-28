@@ -799,7 +799,8 @@ export class ChatController implements ChatControllerApi {
           ? this._selectEffort(row.value.slice('effort:'.length))
           : this._selectModel(row.value)
       case 'skills':
-        return this._openSkillDetail(row.value)
+        await this.submit(`$${row.value}`)
+        return true
       case 'tasks':
         return row.value === BACKGROUND_TASK_WAIT_TOGGLE
           ? this._toggleBackgroundTaskWaitMode()
@@ -1406,8 +1407,12 @@ export class ChatController implements ChatControllerApi {
     this._panelStack.length = 0
     this._emit()
     try {
-      if (await this._backend.compact()) {
-        this._context = {}
+      const context = await this._backend.compact()
+      if (context) {
+        this._context = { ...context }
+        this._addNotice('success', 'Compacted older conversation context into a summary')
+      } else {
+        this._addNotice('delivered', 'Nothing to compact yet')
       }
     } catch (error) {
       this._openError('compaction failed', 'compact', errorMessage(error))
@@ -1463,7 +1468,7 @@ export class ChatController implements ChatControllerApi {
     }
   }
 
-  private _openSkillDetail(name: string): boolean {
+  openSkillDetail(name: string): boolean {
     const skill = this._skillDetails.get(name)
     if (!skill) {
       return false

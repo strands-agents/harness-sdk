@@ -380,7 +380,7 @@ If you need more control over the agent lifecycle, you can manually call `start(
 import asyncio
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import BedrockNovaSonicModel
-from strands.experimental.bidi.types import BidiResponseCompleteEvent
+from strands.experimental.bidi.types import BidiResponseStopEvent
 
 async def main():
     model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
@@ -393,7 +393,7 @@ async def main():
         await agent.send("What is Python?")
         
         async for event in agent.receive():
-            if isinstance(event, BidiResponseCompleteEvent):
+            if isinstance(event, BidiResponseStopEvent):
                 break
     finally:
         # Always stop after exiting receive loop

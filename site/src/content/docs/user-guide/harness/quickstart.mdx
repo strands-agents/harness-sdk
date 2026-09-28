@@ -63,10 +63,11 @@ strands --model anthropic/claude-sonnet-5      # use a different model for this 
 
 ### Export it to code
 
-When you're ready to embed the agent in an application, run `/export` in a chat, or choose
-**Export** in setup. Either one writes a Python or TypeScript project with your choices set directly on `create_harness(...)` /
-`createHarness(...)`. The project exports a ready-to-import `agent`, so the CLI is a fast
-on-ramp to the library below: build interactively, then drop into code.
+When you're ready to embed the agent in an application, run `/export` in a chat. The
+command writes a Python or TypeScript project with your choices set directly on
+<Syntax py="create_harness(...)" ts="createHarness(...)" />. The project exports a
+ready-to-import `agent`, so the CLI is a fast on-ramp to the library below: build
+interactively, then drop into code.
 
 ## Use it as a library
 
@@ -113,7 +114,7 @@ Strands harness can search the web, compare what it finds, and save the results 
 
 <Tabs>
   <Tab label="Amazon Bedrock">
-    Bedrock is the default, using Claude Opus 4.8 in the region your AWS configuration selects.
+    Bedrock is the default, using Claude Opus 5 in the region your AWS configuration selects.
 
     <Tabs>
       <Tab label="Python">
