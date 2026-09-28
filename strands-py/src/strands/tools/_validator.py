@@ -10,6 +10,7 @@ def validate_and_prepare_tools(
     tool_uses: list[ToolUse],
     tool_results: list[ToolResult],
     invalid_tool_use_ids: list[str],
+    input_parse_errors: dict[str, str] | None = None,
 ) -> None:
     """Validate tool uses and prepare them for execution.
 
@@ -18,7 +19,12 @@ def validate_and_prepare_tools(
         tool_uses: List to populate with tool uses.
         tool_results: List to populate with tool results for invalid tools.
         invalid_tool_use_ids: List to populate with invalid tool use IDs.
+        input_parse_errors: Mapping of tool use id to parse-error detail for tool uses whose streamed
+            input was not valid JSON. Those tools are not executed; the parse error is returned to the
+            model as an error tool result so it can retry with valid JSON.
     """
+    input_parse_errors = input_parse_errors or {}
+
     # Extract tool uses from message
     for content in message["content"]:
         if isinstance(content, dict) and "toolUse" in content:
@@ -28,6 +34,20 @@ def validate_and_prepare_tools(
     # Avoid modifying original `tool_uses` variable during iteration
     tool_uses_copy = tool_uses.copy()
     for tool in tool_uses_copy:
+        parse_error = input_parse_errors.get(tool["toolUseId"])
+        if parse_error:
+            tool_uses.remove(tool)
+            invalid_tool_use_ids.append(tool["toolUseId"])
+            tool_uses.append(tool)
+            tool_results.append(
+                {
+                    "toolUseId": tool["toolUseId"],
+                    "status": "error",
+                    "content": [{"text": f"Error: {parse_error}"}],
+                }
+            )
+            continue
+
         try:
             validate_tool_use(tool)
         except InvalidToolUseNameException as e:

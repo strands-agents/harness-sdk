@@ -3829,3 +3829,78 @@ async def test_agent_span_ends_on_generator_exit():
     assert len(agent_spans) == 1
     assert agent_spans[0].status.status_code == StatusCode.UNSET
     assert agent_spans[0].attributes["strands.cancellation.type"] == "GeneratorExit"
+
+
+class _MalformedToolInputModelProvider(MockedModelProvider):
+    """Streams a tool use whose streamed input is not valid JSON, then a final text response.
+
+    ``MockedModelProvider`` always ``json.dumps`` its inputs, so it cannot exercise the malformed-input
+    path. This subclass emits a raw, unterminated JSON string for the first response.
+    """
+
+    def __init__(self):
+        super().__init__(
+            [
+                {"role": "assistant", "content": [{"text": "unused"}]},
+                {"role": "assistant", "content": [{"text": "done"}]},
+            ]
+        )
+        self._malformed_events = [
+            {"messageStart": {"role": "assistant"}},
+            {"contentBlockStart": {"start": {"toolUse": {"name": "search", "toolUseId": "t1"}}}},
+            {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"query": "unterminated'}}}},
+            {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "tool_use"}},
+        ]
+
+    async def stream(self, *args, **kwargs):
+        if self.index == 0:
+            for event in self._malformed_events:
+                yield event
+            self.index += 1
+        else:
+            async for event in super().stream(*args, **kwargs):
+                yield event
+
+
+def test_malformed_tool_input_is_reported_to_model_without_executing_tool():
+    """A tool use whose JSON input failed to parse is reported as an error tool result, not run.
+
+    The parse error itself is carried out-of-band: the tool use on the message keeps only its real
+    fields with ``input={}``, so nothing leaks into the conversation history or a session store.
+    """
+    executed: list[str] = []
+
+    @strands.tools.tool(name="search")
+    def search(query: str) -> str:
+        executed.append(query)
+        return "ok"
+
+    agent = Agent(
+        model=_MalformedToolInputModelProvider(),
+        tools=[search],
+        callback_handler=None,
+    )
+
+    result = agent("search something")
+
+    # The tool never runs with the sanitized empty input.
+    assert executed == []
+
+    # The model sees the parse failure as an error tool result so it can retry with valid JSON.
+    tool_results = [
+        content["toolResult"] for message in agent.messages for content in message["content"] if "toolResult" in content
+    ]
+    assert any(
+        tool_result["status"] == "error"
+        and "Invalid JSON in tool input for 'search'" in tool_result["content"][0]["text"]
+        for tool_result in tool_results
+    )
+
+    # The malformed tool use persisted with only its real fields; no parse-error marker anywhere.
+    tool_uses = [
+        content["toolUse"] for message in agent.messages for content in message["content"] if "toolUse" in content
+    ]
+    assert tool_uses == [{"toolUseId": "t1", "name": "search", "input": {}}]
+
+    assert result.stop_reason == "end_turn"
