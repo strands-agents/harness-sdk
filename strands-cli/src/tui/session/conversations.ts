@@ -344,6 +344,7 @@ export class ConversationManager implements ChatControllerApi {
       }
       const id = `agent-${this._nextConversation++}`
       this._addConversation(id, `${title} · ${workspace}`, controller, 'Saved session')
+      source.controller.cancelSessionNaming()
       this._activeId = id
       this._panel = undefined
       this._emit()
@@ -397,6 +398,7 @@ export class ConversationManager implements ChatControllerApi {
       const id = `agent-${this._nextConversation++}`
       const title = prompt ? conversationTitle(prompt) : `Fork ${this._nextConversation - 1}`
       this._addConversation(id, title, controller, `Fork of ${source.title}`)
+      source.controller.cancelSessionNaming()
       this._activeId = id
       this._panel = undefined
       this._emit()
@@ -434,6 +436,7 @@ export class ConversationManager implements ChatControllerApi {
     if (!this._conversations.has(id)) {
       return false
     }
+    this._active.controller.cancelSessionNaming()
     this._activeId = id
     this._panel = undefined
     this._emit()

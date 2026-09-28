@@ -490,6 +490,13 @@ the next model call, while rebuilds wait for the active turn to finish.
 
 ### Remembering a conversation
 
+Use `/sessions rename <name>` to name the current saved session. Omit the name to generate a three-word
+name from the current conversation in the background. The naming agent uses the current model without
+tools or session storage, and does not change the conversation history. A later rename or `/clear`
+cancels the pending request, as does switching conversations. Failed or invalid responses leave the
+existing name unchanged. Models with server-side conversation state or provider-side tools require an
+explicit name.
+
 Every run persists by default under `./.agent/sessions`, minting a fresh session id when you don't
 supply one, for interactive chats and one-shot `-p` runs alike. Use `/sessions` to browse and resume
 them. Pass `--session-id` to choose a memorable id or pick up that exact conversation directly:

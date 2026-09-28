@@ -105,6 +105,7 @@ export class ChatController implements ChatControllerApi {
   private _sessionCache: SessionList | undefined
   private _sessionRefresh: Promise<SessionList> | undefined
   private _sessionGeneration = 0
+  private _sessionNaming: AbortController | undefined
   private readonly _skills: ChatSkillsRuntime | undefined
   private readonly _skillNames = new Set<string>()
   private readonly _mcp: LoadedMcp | undefined
@@ -312,7 +313,7 @@ export class ChatController implements ChatControllerApi {
       return this._enqueueSubmission(prompt)
     }
     if (this._resourceChanging) {
-      return undefined
+      return this._sessionNaming ? this._enqueueSubmission(prompt) : undefined
     }
     return this._executeSubmission(prompt)
   }
@@ -655,11 +656,16 @@ export class ChatController implements ChatControllerApi {
     return false
   }
 
+  cancelSessionNaming(): void {
+    this._sessionNaming?.abort()
+  }
+
   close(exitCode = 0): void {
     if (this._closed) {
       return
     }
     this._closed = true
+    this._sessionNaming?.abort()
     this._stopWatchingUsage()
     this._backgroundContinuationPending = false
     const interrupted = this._activeProjector !== undefined || this._drainingProjector !== undefined
@@ -675,6 +681,7 @@ export class ChatController implements ChatControllerApi {
   }
 
   async dispose(): Promise<void> {
+    this._sessionNaming?.abort()
     this._stopWatchingUsage()
     if (this._activeProjector || this._drainingProjector) {
       this._presentationAbort?.abort()
@@ -1309,16 +1316,17 @@ export class ChatController implements ChatControllerApi {
   private async _handleSessionsCommand(argument: string): Promise<void> {
     const rename = /^rename(?:\s+([\s\S]+))?$/i.exec(argument)
     if (!rename) {
-      this._openError('sessions command failed', `/sessions ${argument}`, 'Use /sessions or /sessions rename <name>.')
+      this._openError('sessions command failed', `/sessions ${argument}`, 'Use /sessions or /sessions rename [name].')
       return
     }
     const name = rename[1] ?? ''
-    if (!name) {
-      this._openError('session rename failed', '/sessions rename', 'Use /sessions rename <name>.')
-      return
-    }
     if (!this._sessions?.renameCurrent || this._backend.protocol !== 'strands') {
       this._openError('session rename unavailable', name, 'The current backend does not expose a file-backed session.')
+      return
+    }
+    this._sessionNaming?.abort()
+    if (!name) {
+      void this._generateSessionName()
       return
     }
     this._resourceChanging = true
@@ -1334,6 +1342,56 @@ export class ChatController implements ChatControllerApi {
       this._openError('session rename failed', name, errorMessage(error))
     } finally {
       this._resourceChanging = false
+    }
+  }
+
+  private async _generateSessionName(): Promise<void> {
+    if (!this._backend.generateSessionName || !this._sessions!.current) {
+      this._openError('session rename unavailable', '/sessions rename', 'Use /sessions rename <name> on this backend.')
+      return
+    }
+    const request = new AbortController()
+    this._sessionNaming = request
+    const sessionId = this._sessions!.current
+    const notice = this._addNotice('running', 'Generating session name')
+    this._emit()
+    try {
+      const name = await this._backend.generateSessionName(request.signal)
+      if (request.signal.aborted || this._resourceChanging || sessionId !== this._sessions!.current) {
+        request.abort()
+        return
+      }
+      this._resourceChanging = true
+      const renamed = await this._sessions!.renameCurrent!(name).finally(() => {
+        this._resourceChanging = false
+      })
+      if (request.signal.aborted) {
+        return
+      }
+      this._runtime.session = renamed.name
+      this._invalidateSessions()
+      this._sessionCache = undefined
+      notice.status = 'success'
+      notice.text = `Session renamed: ${renamed.name}`
+      if (this._panel?.kind === 'sessions') {
+        await this._openSessionsPanel()
+      }
+    } catch (error) {
+      notice.status = 'error'
+      notice.text = `Session rename failed: ${errorMessage(error)}`
+    } finally {
+      if (request.signal.aborted) {
+        notice.status = 'delivered'
+        notice.text = 'Session naming cancelled'
+      }
+      if (this._sessionNaming === request) {
+        this._sessionNaming = undefined
+      }
+      this._emit()
+      if (!request.signal.aborted) {
+        this._startBackgroundContinuation()
+      }
+      this._startPendingSubmissions()
     }
   }
 
@@ -1436,6 +1494,7 @@ export class ChatController implements ChatControllerApi {
       )
       return
     }
+    this._sessionNaming?.abort()
     this._resourceChanging = true
     this._openPanel('progress', 'starting fresh conversation', [
       { label: this._backend.name, description: 'Rebuilding through createHarness() without restoring context.' },
