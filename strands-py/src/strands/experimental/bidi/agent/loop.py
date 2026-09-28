@@ -45,6 +45,7 @@ from ..types.events import (
     BidiTranscriptStopEvent,
     BidiUsageEvent,
 )
+from ._input_replay import _InputReplayBuffer
 from ._reconnect_timer import _ReconnectTimer, resolve_deadline_s
 
 if TYPE_CHECKING:
@@ -128,6 +129,8 @@ class _AgentLoop:
         # Incremented per reconnect so a superseded reader's events (and its stream-close
         # error) are dropped rather than forwarded after the swap.
         self._generation = 0
+        # Input audio not yet committed as a user turn, resent after a connection swap.
+        self._input_replay = _InputReplayBuffer()
 
         # Turn-boundary tracking, so a proactive reconnect waits for the current turn to
         # finish rather than cutting off a response or dropping an unanswered user turn.
@@ -182,6 +185,7 @@ class _AgentLoop:
         _telemetry.end_connection_span(self._tracer, connection_span)
         self._reset_token_tracking()
         self._reset_turn_state()
+        self._input_replay.clear()
 
         self._event_queue = asyncio.Queue(maxsize=1)
 
@@ -257,6 +261,9 @@ class _AgentLoop:
             # Let scheduled reconnects wait for the response.
             self._awaiting_response = True
             self._update_turn_state()
+
+        if not isinstance(content, BidiMessage):
+            self._input_replay.append(content, time.monotonic())
 
         await self._agent.model.send(content)
 
@@ -435,6 +442,7 @@ class _AgentLoop:
 
         try:
             self._send_gate.clear()
+            replay = self._input_replay.snapshot(time.monotonic())
             if restart_event is not None:
                 await self._event_queue.put(restart_event)
                 if not self._started:
@@ -450,6 +458,7 @@ class _AgentLoop:
                 BidiBeforeConnectionRestartEvent(self._agent, reason=reason, timeout_error=timeout_error)
             )
             await self._swap_connection(reason, timeout_error)
+            await self._replay_input(replay)
 
             self._reset_turn_state()
             self._arm_reconnect_timer()
@@ -493,6 +502,18 @@ class _AgentLoop:
 
         if restart_exception is not None:
             raise restart_exception
+
+    async def _replay_input(self, replay: list[BidiContentDelta]) -> None:
+        """Resend input audio the replaced connection received but never committed as a user turn.
+
+        Runs before the send gate reopens, so the replayed audio precedes any live input on the new
+        connection.
+        """
+        if not replay:
+            return
+        logger.debug("replayed_deltas=<%d> | replaying uncommitted input audio after restart", len(replay))
+        for delta in replay:
+            await self._agent.model.send(delta)
 
     async def _restart_model(self, restart_kwargs: dict[str, Any]) -> None:
         """Restart through the provider when supported, otherwise use ``stop()`` then ``start()``."""
@@ -616,6 +637,7 @@ class _AgentLoop:
                     self._response_active = True
                     self._awaiting_response = False
                     self._update_turn_state()
+                    self._input_replay.clear()
 
                 elif isinstance(event, BidiTranscriptStartEvent):
                     if event.role == "user":
@@ -635,6 +657,8 @@ class _AgentLoop:
                         time_to_first_audio_ms = int((time.perf_counter() - response_start_time) * 1000)
 
                 elif isinstance(event, BidiTranscriptStopEvent):
+                    if event.role == "user":
+                        self._input_replay.clear()
                     message = transcripts.pop(event.content_id)
                     await self._agent._update_message(
                         {

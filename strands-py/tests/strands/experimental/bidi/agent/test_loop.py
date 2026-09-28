@@ -13,6 +13,7 @@ from strands.experimental.bidi.hooks import BidiBargeInEvent as BidiBargeInHookE
 from strands.experimental.bidi.hooks import BidiResponseStopEvent as BidiResponseStopHookEvent
 from strands.experimental.bidi.models import BidiModel, ConnectionTimeoutError
 from strands.experimental.bidi.types import (
+    AudioDelta,
     BidiAudioDeltaEvent,
     BidiBargeInEvent,
     BidiConnectionRestartEvent,
@@ -1475,6 +1476,59 @@ async def test_proactive_reconnect_waits_for_turn_boundary(loop, agent, agenerat
     await deadline
     assert agent.model.restart.called
 
+    await loop.stop()
+
+
+@pytest.mark.asyncio
+async def test_restart_replays_uncommitted_input_audio_before_live_audio(loop, agent, agenerator):
+    """Audio the replaced connection received but never committed is resent to the new one first (#4500)."""
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([]))
+    await loop.start()
+    loop._reconnect_timer.cancel()
+    before = [AudioDelta(format="pcm", source={"bytes": bytes([n])}) for n in range(3)]
+    for delta in before:
+        await loop.send(delta)
+    agent.model.send.reset_mock()
+
+    await loop._restart_connection(None, loop._generation)
+    live = AudioDelta(format="pcm", source={"bytes": b"live"})
+    await loop.send(live)
+
+    tru_sent = [call.args[0] for call in agent.model.send.call_args_list]
+    exp_sent = [*before, live]
+    assert tru_sent == exp_sent
+
+    await loop.stop()
+
+
+@pytest.mark.asyncio
+async def test_restart_does_not_replay_audio_committed_as_a_user_turn(loop, agent):
+    """Once the provider commits the user turn, its audio is not resent after a restart (#4500)."""
+    start = BidiTranscriptStartEvent(role="user", content_id="speech")
+    stop = BidiTranscriptStopEvent(transcript="book the load", role="user", content_id="speech")
+    committed = asyncio.Event()
+
+    async def receive():
+        await committed.wait()
+        yield start
+        yield stop
+        await asyncio.Event().wait()
+
+    agent.model.receive = receive
+    await loop.start()
+    loop._reconnect_timer.cancel()
+    await loop.send(AudioDelta(format="pcm", source={"bytes": b"spoken"}))
+
+    committed.set()
+    reader = loop.receive()
+    assert await anext(reader) == start
+    assert await anext(reader) == stop
+    await reader.aclose()
+    agent.model.send.reset_mock()
+
+    await loop._restart_connection(None, loop._generation)
+
+    agent.model.send.assert_not_called()
     await loop.stop()
 
 
