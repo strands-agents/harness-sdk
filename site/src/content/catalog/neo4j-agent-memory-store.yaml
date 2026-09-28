@@ -1,0 +1,12 @@
+name: neo4j-agent-memory-store
+description: Neo4j context graph as a Strands MemoryStore, recalling entities extracted from past conversations into the agent loop through MemoryManager.
+integrationType: memory-store
+maintainedBy: partner
+languages:
+  python:
+    package: neo4j-agent-memory[strands]
+  typescript:
+    package: "@neo4j-labs/agent-memory"
+github: https://github.com/neo4j-labs/agent-memory
+docsUrl: https://neo4j.com/labs/agent-memory/how-to/integrations/aws-strands/#_memory_store
+addedDate: 2026-09-25

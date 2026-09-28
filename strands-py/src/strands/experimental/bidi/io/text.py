@@ -7,10 +7,10 @@ from prompt_toolkit import PromptSession
 
 from ....types.content import TextBlock
 from ..types.events import (
-    BidiConnectionCloseEvent,
-    BidiInterruptionEvent,
+    BidiBargeInEvent,
+    BidiConnectionStopEvent,
     BidiOutputEvent,
-    BidiTranscriptStreamEvent,
+    BidiTranscriptDeltaEvent,
 )
 from ..types.io import InputStream, OutputStream
 
@@ -36,15 +36,15 @@ class _ConsoleOutputStream(OutputStream):
 
     async def __call__(self, event: BidiOutputEvent) -> None:
         """Print text events to stdout."""
-        if isinstance(event, BidiInterruptionEvent):
-            logger.debug("reason=<%s> | text output interrupted", event["reason"])
-            print("interrupted")
+        if isinstance(event, BidiBargeInEvent):
+            logger.debug("reason=<%s> | barge-in detected", event["reason"])
+            print("barge-in")
 
-        elif isinstance(event, BidiConnectionCloseEvent):
+        elif isinstance(event, BidiConnectionStopEvent):
             if event.reason == "user_request":
                 print("user requested connection close using the stop tool.")
                 logger.debug("connection_id=<%s> | user requested connection close", event.connection_id)
-        elif isinstance(event, BidiTranscriptStreamEvent):
+        elif isinstance(event, BidiTranscriptDeltaEvent):
             logger.debug(
                 "role=<%s>, text_length=<%d> | text transcript received",
                 event.role,

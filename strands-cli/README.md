@@ -39,7 +39,7 @@ npm install -g @strands-agents/cli   # gives you the `strands` command
 strands "summarize what this repo does"
 ```
 
-By default you get Claude Opus 4.8 on Amazon Bedrock, with reasoning, shell and file tools, web
+By default you get Claude Opus 5 on Amazon Bedrock, with reasoning, shell and file tools, web
 access, caching, todos, environment context, a `subagent` delegate, Agent Skills, resumable
 sessions, long-term memory, and automatic context management. The full-screen terminal keeps
 background delegates non-blocking and automatically continues the agent when their results arrive.
@@ -59,9 +59,15 @@ Or run it on demand without installing, using `npx`:
 npx @strands-agents/cli
 ```
 
+Update a global installation with:
+
+```bash
+strands update
+```
+
 On the first interactive launch, the intro animation plays before the setup panel opens. Quickstart
 lets you choose providers and a model, then select tools, skills, MCP, and other capabilities before
-launching. Select or deselect all, or toggle individual capabilities. Manual setup also
+launching. Select or deselect all, or toggle individual capabilities. Customize setup also
 exposes the agent instructions, data paths, and approval controls. The CLI detects standard credential
 sources but never writes API keys to its config.
 
@@ -91,16 +97,13 @@ compiled output and skips all source-build behavior.
 
 ## Customize the agent
 
-Run `strands` or use `/setup` in chat to reopen the saved configuration. Quickstart and Manual
-edit the same profile. Agent Q&A first asks which model should guide the setup conversation, then
-opens the regular chat UI. This assistant model is independent of the model chosen for your custom
-agent. Setup Assistant first asks whether to start from scratch or use the detected configuration, then
-asks for your agent's name and goals. It recommends settings and keeps a draft until you agree to apply
-it. After choosing appearance preferences, your custom agent opens in a fresh chat.
+Run `strands` or use `/setup` in chat to reopen the saved configuration. Quickstart and Customize
+edit the same profile. Import loads a harness from a file or zip, and Resume returns to the configured
+harness. Use `/export` in chat to save the agent as a TypeScript or Python project.
 
 In interactive chat, the agent can also inspect and change its own configuration with `strands_config`.
 For example: “Use high reasoning, disable shell and delegation, and keep responses concise.”
-Changes are validated and applied after the turn; the conversation is retained. Quickstart, Manual,
+Changes are validated and applied after the turn; the conversation is retained. Quickstart, Customize,
 and TypeScript/Python exports use the updated profile. A failed rebuild restores the previous profile.
 For TypeScript agents loaded from source, the CLI edits the source definition and reloads it instead;
 source exports retain that code.
@@ -474,7 +477,7 @@ Pass a `bedrock/<id>` string or a bare Amazon Bedrock model id:
 
 ```bash
 strands --model bedrock/global.anthropic.claude-sonnet-5 --effort high "explain this error"
-strands --model global.anthropic.claude-opus-4-8 "review my auth flow"
+strands --model global.anthropic.claude-opus-5 "review my auth flow"
 ```
 
 To use a preconfigured SDK `Model` instance, use the library directly (see

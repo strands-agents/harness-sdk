@@ -4,7 +4,7 @@ import type { PermissionMode, ProviderEnvironmentKey, ProviderId } from '../../c
 import type { ChatSettings } from '../../chat/types.js'
 
 export type EditableField = 'name' | 'instructions' | 'skills' | 'memoryDir' | 'importPath' | ProviderEnvironmentKey
-export type SetupFlow = 'quickstart' | 'manual' | 'agent' | 'import'
+export type SetupFlow = 'quickstart' | 'customize' | 'import'
 
 export type AppearanceSettings = Pick<
   ChatSettings,

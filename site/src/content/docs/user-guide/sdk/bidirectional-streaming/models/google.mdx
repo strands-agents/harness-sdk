@@ -1,6 +1,6 @@
 ---
 title: Google Gemini Live
-description: "Build real-time voice agents with Google's Gemini Live API and Strands. Stream audio and text over WebSocket with interruptions and tool calling."
+description: "Build real-time voice agents with Google's Gemini Live API and Strands. Stream audio and text over WebSocket with barge-ins and tool calling."
 experimental: true
 tags: [bidi-streaming]
 sourceLinks:
@@ -10,11 +10,11 @@ redirectFrom:
 ---
 
 
-The [Gemini Live API](https://ai.google.dev/gemini-api/docs/live) lets developers create natural conversations by enabling a two-way WebSocket connection with the Gemini models. The Live API processes data streams in real time. Users can interrupt the AI's responses with new input, similar to a real conversation. Key features include:
+The [Gemini Live API](https://ai.google.dev/gemini-api/docs/live) lets developers create natural conversations by enabling a two-way WebSocket connection with the Gemini models. The Live API processes data streams in real time. Users can barge in with new input while the model is responding, similar to a real conversation. Key features include:
 
 - **Multimodal Streaming**: The API supports streaming of text, audio, and video data.
 - **Bidirectional Interaction**: The user and the model can provide input and output at the same time.
-- **Interruptibility**: Users can interrupt the model's response, and the model adjusts its response.
+- **Barge-in**: Users can speak during the model's response, and the model adjusts its response.
 - **Tool Use and Function Calling**: The API can use external tools to perform actions and get context while maintaining a real-time connection.
 - **Session Management**: Supports managing long conversations through sessions, providing context and continuity.
 - **Secure Authentication**: Uses tokens for secure client-side authentication.

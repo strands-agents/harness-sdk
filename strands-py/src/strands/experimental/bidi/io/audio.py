@@ -1,6 +1,6 @@
 """Send and receive audio data from devices.
 
-Reads user audio from input device and sends agent audio to output device using PyAudio. If a user interrupts the agent,
+Reads user audio from input device and sends agent audio to output device using PyAudio. If a user barges in,
 the output buffer is cleared to stop playback.
 
 Audio configuration is provided by models that implement ``AudioCapable``.
@@ -22,8 +22,8 @@ from .._audio.buffer import AudioBuffer
 from ..models.configs import AudioStreamConfig
 from ..models.model import AudioCapable
 from ..types.events import (
-    BidiAudioStreamEvent,
-    BidiInterruptionEvent,
+    BidiAudioDeltaEvent,
+    BidiBargeInEvent,
     BidiOutputEvent,
 )
 from ..types.io import InputStream, OutputStream
@@ -252,15 +252,15 @@ class _AudioOutputStream(OutputStream):
         """
         await self._transcript_output(event)
 
-        if isinstance(event, BidiAudioStreamEvent):
+        if isinstance(event, BidiAudioDeltaEvent):
             self._validate_audio_event(event, self._audio_config)
 
             data = base64.b64decode(event["audio"])
             self._buffer.put(data)
             logger.debug("audio_bytes=<%d> | audio chunk buffered for playback", len(data))
 
-        elif isinstance(event, BidiInterruptionEvent):
-            logger.debug("reason=<%s> | clearing audio buffer due to interruption", event["reason"])
+        elif isinstance(event, BidiBargeInEvent):
+            logger.debug("reason=<%s> | clearing audio buffer due to barge-in", event["reason"])
             self._buffer.clear()
             if self._audio_processor is not None:
                 self._audio_processor.clear_far_data()
@@ -291,7 +291,7 @@ class _AudioOutputStream(OutputStream):
             raise ValueError(f"AudioIO requires signed 16-bit PCM, received {config['format']}")
 
     @staticmethod
-    def _validate_audio_event(event: BidiAudioStreamEvent, config: AudioStreamConfig) -> None:
+    def _validate_audio_event(event: BidiAudioDeltaEvent, config: AudioStreamConfig) -> None:
         """Require audio to match the playback format."""
         if (event.format, event.sample_rate, event.channels) != (
             config["format"],
@@ -305,7 +305,7 @@ class AudioIO:
     """Send and receive audio data from devices using PyAudio.
 
     Reads microphone audio via ``input()``, plays agent audio via ``output()``, and displays user and assistant
-    transcripts. Interruptions clear the playback buffer to stop the agent mid-response.
+    transcripts. Barge-ins clear the playback buffer to stop the agent mid-response.
 
     When ``audio_processor=True`` or an ``AudioProcessorConfig`` is passed, the microphone signal gets audio
     processing and, when echo cancellation is enabled, the agent's speaker output is used as a reference to

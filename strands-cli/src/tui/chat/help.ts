@@ -39,7 +39,7 @@ const CONTROLS = [
 
 export function helpRows(
   backend: ChatBackend,
-  options: { sessions: boolean; skills: boolean; mcp: boolean; setup: boolean; export: boolean }
+  options: { sessions: boolean; skills: boolean; mcp: boolean; setup: boolean; tools: boolean; export: boolean }
 ): ChatPanelRow[] {
   const support: Record<string, boolean> = {
     compact: backend.compact !== undefined,
@@ -49,6 +49,7 @@ export function helpRows(
     mcp: options.mcp,
     permissions: backend.permissionStatus !== undefined,
     setup: options.setup,
+    tools: options.tools,
     export: options.export,
   }
   const managedCommands = new Set(['fork', 'agents', 'rename', 'voice'])

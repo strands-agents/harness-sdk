@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   ChatController,
   type ChatBackend,
+  type ChatContextUsage,
   type ChatEvent,
   type ChatPermissionRequest,
   type ChatRunResult,
@@ -1769,8 +1770,8 @@ describe('ChatController', () => {
         kind: 'permissions',
         title: 'permissions',
         rows: [
-          { label: 'Default (HITL)', badge: { text: 'Active' } },
-          { label: 'Bypass', tone: 'danger' },
+          { label: 'Ask when needed (HITL)', badge: { text: 'Active' } },
+          { label: 'Allow all tools', tone: 'danger' },
           { label: 'bash', control: { kind: 'toggle', checked: true } },
           { label: 'write', control: { kind: 'toggle', checked: false } },
           { label: 'config', description: '/Users/test/.strands/cli/config.json' },
@@ -1778,13 +1779,24 @@ describe('ChatController', () => {
       },
     })
     expect(controller.getSnapshot().panel?.body).toBeUndefined()
+    const permissionsPanelId = controller.getSnapshot().panel?.id
 
     await controller.activatePanelRow(controller.getSnapshot().panel!.rows[1]!)
     expect(target.setPermissionMode).toHaveBeenCalledWith('bypassPermissions')
+    expect(controller.getSnapshot().panel?.id).toBe(permissionsPanelId)
     expect(controller.getSnapshot().panel?.body).toContain('WARNING')
+    const bypassedToolRows = controller.getSnapshot().panel?.rows.slice(2, 4) ?? []
+    expect(bypassedToolRows).toMatchObject([
+      { label: 'bash', control: { kind: 'toggle', checked: true } },
+      { label: 'write', control: { kind: 'toggle', checked: true } },
+    ])
+    expect(bypassedToolRows.every((row) => row.value === undefined)).toBe(true)
 
+    await controller.submit('/permissions default')
+    expect(controller.getSnapshot().panel?.id).toBe(permissionsPanelId)
     await controller.activatePanelRow(controller.getSnapshot().panel!.rows[3]!)
     expect(target.allowPermission).toHaveBeenCalledWith('write')
+    expect(controller.getSnapshot().panel?.id).toBe(permissionsPanelId)
     expect(controller.getSnapshot().panel?.rows.find((row) => row.label === 'write')?.control).toEqual({
       kind: 'toggle',
       checked: true,
@@ -1797,8 +1809,50 @@ describe('ChatController', () => {
       checked: false,
     })
 
-    await controller.submit('/permissions default')
     expect(target.setPermissionMode).toHaveBeenLastCalledWith('default')
+  })
+
+  it('toggles built-in tools through /tools and applies the selection on close', async () => {
+    const apply = vi.fn()
+    const controller = new ChatController(backend(), {
+      builtinTools: {
+        choices: () => [
+          { name: 'shell', description: 'Run shell commands', enabled: true },
+          { name: 'web_search', description: 'Search the web', enabled: false, thirdParty: true },
+        ],
+        apply,
+      },
+    })
+
+    await controller.submit('/tools')
+    expect(controller.getSnapshot().panel).toMatchObject({
+      kind: 'tools',
+      rows: [
+        { label: 'shell', control: { kind: 'toggle', checked: true } },
+        { label: 'web_search', tone: 'warning', control: { kind: 'toggle', checked: false } },
+      ],
+    })
+    const panelId = controller.getSnapshot().panel?.id
+
+    await controller.activatePanelRow(controller.getSnapshot().panel!.rows[1]!)
+    expect(controller.getSnapshot().panel?.id).toBe(panelId)
+    expect(controller.getSnapshot().panel?.rows[1]?.control).toEqual({ kind: 'toggle', checked: true })
+    expect(apply).not.toHaveBeenCalled()
+
+    expect(controller.dismissPanel()).toBe(true)
+    expect(apply).toHaveBeenCalledWith(['shell', 'web_search'])
+    expect(controller.getSnapshot().panel).toBeUndefined()
+  })
+
+  it('closes /tools without reloading when nothing changed', async () => {
+    const apply = vi.fn()
+    const controller = new ChatController(backend(), {
+      builtinTools: { choices: () => [{ name: 'shell', description: 'Run shell commands', enabled: true }], apply },
+    })
+
+    await controller.submit('/tools')
+    controller.dismissPanel()
+    expect(apply).not.toHaveBeenCalled()
   })
 
   it('toggles reasoning visibility through terminal settings', async () => {
@@ -1844,12 +1898,12 @@ describe('ChatController', () => {
     expect(requestSetup).toHaveBeenCalledOnce()
   })
 
-  it('compacts context and clears both the conversation and visible transcript', async () => {
+  it('compacts context, keeps the visible transcript, and shows the measured context', async () => {
     const target = backend(async function* (prompt) {
       yield { type: 'textDelta', text: `reply to ${prompt}` }
       return { stopReason: 'endTurn', context: { currentTokens: 120 } }
     })
-    let compacted = false
+    let compacted: ChatContextUsage | undefined
     target.compact = vi.fn(async () => compacted)
     target.clear = vi.fn(async () => {})
     const controller = new ChatController(target, { runtime: { session: 'saved: active' } })
@@ -1861,15 +1915,18 @@ describe('ChatController', () => {
     expect(controller.getSnapshot()).toMatchObject({
       completedTurns: [{ prompt: 'Remember this' }],
       context: { currentTokens: 120 },
+      notices: [{ status: 'delivered', text: 'Nothing to compact yet' }],
     })
 
-    compacted = true
+    compacted = { currentTokens: 40, contextWindow: 1_000 }
     await controller.submit('/compact')
 
     expect(target.compact).toHaveBeenCalledTimes(2)
-    expect(controller.getSnapshot()).toMatchObject({
-      completedTurns: [{ prompt: 'Remember this' }],
-      context: {},
+    expect(controller.getSnapshot().completedTurns).toMatchObject([{ prompt: 'Remember this' }])
+    expect(controller.getSnapshot().context).toEqual({ currentTokens: 40, contextWindow: 1_000 })
+    expect(controller.getSnapshot().notices.at(-1)).toMatchObject({
+      status: 'success',
+      text: 'Compacted older conversation context into a summary',
     })
     expect(controller.getSnapshot().composerStatus).toBeUndefined()
     expect(controller.getSnapshot().panel).toBeUndefined()
@@ -1894,7 +1951,7 @@ describe('ChatController', () => {
     const target = backend()
     target.compact = vi.fn(async () => {
       await gate
-      return true
+      return {}
     })
     const controller = new ChatController(target)
 
@@ -1944,6 +2001,32 @@ describe('ChatController', () => {
     expect(activate).toHaveBeenNthCalledWith(1, 'review')
     expect(activate).toHaveBeenNthCalledWith(2, 'review')
     expect(prompts).toEqual(['this change', 'that change'])
+  })
+
+  it('runs a skill chosen from the skills panel and keeps its details reachable', async () => {
+    const prompts: string[] = []
+    const review = { name: 'review', description: 'Review code', instructions: 'Inspect carefully.', active: false }
+    const activate = vi.fn(async () => ({ ...review, active: true }))
+    const controller = new ChatController(
+      backend(async function* (prompt) {
+        prompts.push(prompt)
+        yield { type: 'textDelta', text: 'done' }
+        return { stopReason: 'endTurn' }
+      }),
+      { skills: { list: async () => [review], activate } }
+    )
+
+    await controller.submit('/skills')
+    expect(controller.openSkillDetail('review')).toBe(true)
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'detail', body: 'Inspect carefully.' })
+    controller.dismissPanel()
+
+    const row = controller.getSnapshot().panel!.rows.find((candidate) => candidate.value === 'review')!
+    await controller.activatePanelRow(row)
+
+    expect(activate).toHaveBeenCalledWith('review')
+    expect(prompts).toEqual(['Use the review skill.'])
+    expect(controller.getSnapshot().panel).toBeUndefined()
   })
 
   it('represents an empty MCP configuration as zero servers with its checked path', async () => {

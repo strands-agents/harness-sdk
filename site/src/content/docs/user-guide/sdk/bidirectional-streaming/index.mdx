@@ -1,6 +1,6 @@
 ---
 title: Build a realtime voice agent
-description: "Build a realtime agent that streams audio in and out: a persistent BidiAgent connection, a realtime model provider, and the events, I/O, and interruptions a live conversation needs."
+description: "Build a realtime agent that streams audio in and out: a persistent BidiAgent connection, a realtime model provider, and the events, I/O, and barge-ins a live conversation needs."
 experimental: true
 tags: [bidi-streaming]
 sidebar:
@@ -66,8 +66,8 @@ choosing a model provider that supports it, and handling the live stream.
     description="Handle the events the agent emits as audio, transcripts, and tool calls arrive."
   />
   <LinkCard
-    title="Interruptions"
-    href="interruption/"
+    title="Barge-in"
+    href="barge-in/"
     description="Let a user cut in mid-response and have the agent stop and listen."
   />
 </CardGrid>
@@ -112,7 +112,4 @@ running, then read [BidiAgent](agent/) to configure tools, prompts, and the
 connection lifecycle. Pick a [model provider](models/bedrock/) based on the
 provider you use and the session length you need.
 
-Building for a server rather than a local machine? Read [I/O channels](io/) to
-replace microphone-and-speaker I/O with your own transport, then
-[streaming events](events/) and [interruptions](interruption/) to drive the
-conversation from your own event loop.
+Building for a server rather than a local machine? Read [I/O channels](io/) to replace microphone-and-speaker I/O with your own transport, then [streaming events](events/) and [barge-ins](barge-in/) to drive the conversation from your own event loop.

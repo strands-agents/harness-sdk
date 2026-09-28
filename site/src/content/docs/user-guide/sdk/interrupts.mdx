@@ -348,6 +348,13 @@ Strands enforces the following rules for tool interrupts:
 - A single tool can raise multiple interrupts but only one at a time
     - In other words, within a single tool, you can interrupt, respond to that interrupt, and then proceed to interrupt again.
 - When an interrupt fires mid-batch, completed tool results are preserved so the agent skips the model call on resume and only executes remaining tools
+- When no response exists yet, `context.interrupt()` throws an [`InterruptError`](@api/typescript/InterruptError), which the agent loop catches to pause. If your tool catches errors around the call, re-throw `InterruptError`:
+
+```typescript
+--8<-- "user-guide/sdk/interrupts_imports.ts:tools_rethrow_imports"
+
+--8<-- "user-guide/sdk/interrupts.ts:tools_rethrow"
+```
 </Tab>
 </Tabs>
 

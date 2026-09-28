@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { DEFAULT_HARNESS_AGENT_CONFIG } from '@strands-agents/harness'
 
 import type { DetectedProviderEnvironment } from '../src/tui/config.js'
 import {
@@ -8,7 +9,12 @@ import {
   providerAssessment,
   quickstartDraft,
 } from '../src/tui/view/setup-wizard/providers.js'
-import { webSearchFallback, withWebSearchFallback } from '../src/tui/builtin-tools.js'
+import {
+  enabledProfileTools,
+  profileToolEnabled,
+  webSearchFallback,
+  withWebSearchFallback,
+} from '../src/tui/builtin-tools.js'
 import { CAPABILITY_DESCRIPTION_MAX_LENGTH, rowsForStep } from '../src/tui/view/setup-wizard/steps.js'
 
 describe('setup provider credentials', () => {
@@ -278,7 +284,7 @@ describe('setup provider credentials', () => {
     draft.providers = ['bedrock', 'openai']
     const rows = rowsForStep(
       1,
-      'manual',
+      'customize',
       draft,
       '',
       {},
@@ -346,8 +352,55 @@ describe('setup provider credentials', () => {
 })
 
 describe('setup web_search availability', () => {
-  it('keeps web_search in a bedrock-mantle GPT-5 profile', () => {
-    expect(quickstartDraft('bedrock-mantle', {}).profile.builtinTools).toContain('web_search')
+  it.each(['bedrock', 'bedrock-mantle', 'openai'] as const)(
+    'enables every quickstart capability except web_search for %s',
+    (provider) => {
+      const draft = quickstartDraft(provider, {})
+      expect(enabledProfileTools(draft.profile.builtinTools)).toEqual(
+        enabledProfileTools(DEFAULT_HARNESS_AGENT_CONFIG.builtinTools).filter((tool) => tool !== 'web_search')
+      )
+      expect(draft.profile.builtinPlugins).toEqual(DEFAULT_HARNESS_AGENT_CONFIG.builtinPlugins)
+      expect(draft.settings).toEqual({ mcpDiscovery: true, skillDiscovery: true, agentMessaging: true })
+    }
+  )
+
+  it('excludes web_search even when the quickstart model supports native search', () => {
+    expect(quickstartDraft('bedrock-mantle', {}).profile.builtinTools).not.toContain('web_search')
+  })
+
+  it.each([
+    ['bedrock', 'Exa', 'exa'],
+    ['bedrock-mantle', 'Native', 'native'],
+  ] as const)('offers an explicit %s web search opt-in for %s', (provider, label, mode) => {
+    const draft = quickstartDraft(provider, {})
+    let profile = draft.profile
+    const rows = rowsForStep(
+      1,
+      'quickstart',
+      draft,
+      '',
+      {},
+      {},
+      provider,
+      [provider],
+      { profiles: [], regions: [] },
+      undefined,
+      () => {},
+      (update) => {
+        profile = { ...profile, ...update }
+      },
+      () => {}
+    )
+    const webSearch = rows.find((row) => row.id === 'quickstart-web-search')
+    expect(webSearch?.choices?.map((choice) => [choice.label, choice.active])).toEqual([
+      ['Off', true],
+      [label, false],
+    ])
+
+    webSearch?.choices?.[1]?.activate()
+
+    expect(profileToolEnabled(profile.builtinTools, 'web_search')).toBe(true)
+    expect(webSearchFallback(profile.builtinTools)).toBe(mode === 'exa' ? 'exa' : undefined)
   })
 
   it('drops the plain web_search default without native search but keeps the Exa opt-in', () => {
@@ -357,38 +410,14 @@ describe('setup web_search availability', () => {
     expect(compatibleProfile(exa)).toBe(exa)
   })
 
-  it('leaves the Exa fallback unchecked on a model without native search', () => {
-    const noop = (): void => {}
-    const toolsRow = (draft: ReturnType<typeof quickstartDraft>): ReturnType<typeof rowsForStep>[number] | undefined =>
-      rowsForStep(
-        2,
-        'quickstart',
-        draft,
-        '',
-        {},
-        {},
-        'bedrock',
-        [],
-        { profiles: [], regions: [] },
-        undefined,
-        noop,
-        noop,
-        noop
-      ).find((row) => row.id === 'web_search')
-    const bedrock = toolsRow(quickstartDraft('bedrock', {}))
-    expect(bedrock?.active).toBe(false)
-    const mantle = toolsRow(quickstartDraft('bedrock-mantle', {}))
-    expect(mantle?.active).toBe(true)
-  })
-
   it.each([
-    ['tools', 2, 'bedrock'],
-    ['plugins', 3, 'bedrock'],
+    ['tools', 3, 'bedrock'],
+    ['plugins', 4, 'bedrock'],
   ] as const)('keeps %s descriptions short enough to render on one line', (_, step, provider) => {
     const noop = (): void => {}
     const rows = rowsForStep(
       step,
-      'quickstart',
+      'customize',
       quickstartDraft(provider, {}),
       '',
       {},

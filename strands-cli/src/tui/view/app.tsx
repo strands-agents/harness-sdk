@@ -763,19 +763,6 @@ export function ChatApp({
         return
       }
 
-      if (
-        snapshot.setupGuide &&
-        snapshot.panel?.kind === 'question' &&
-        editsSetupAnswer(character, key, currentEditor.input)
-      ) {
-        const result = reduceInputSequence(currentEditor, character, key, 'idle')
-        setEditor(result.state)
-        if (result.action === 'submit') {
-          void controller.submit(result.prompt)
-        }
-        return
-      }
-
       if (snapshot.panel) {
         if (snapshot.panel.kind === 'detail') {
           if (key.escape || key.return || key.backspace || key.delete || character === '\u007f') {
@@ -796,6 +783,27 @@ export function ChatApp({
             setDetailScroll(snapshot.panel.followTail ? maxScroll : 0)
           } else if (key.end) {
             setDetailScroll(snapshot.panel.followTail ? 0 : maxScroll)
+          }
+          return
+        }
+
+        if (snapshot.panel.kind === 'rename') {
+          if (key.escape) {
+            controller.dismissPanel()
+          } else if (key.return) {
+            const name = panelQuery.trim()
+            if (name) {
+              void activateRow({ label: 'Rename', description: name, value: `rename:${name}` })
+            }
+          } else if (key.backspace || key.delete || character === '\u007f') {
+            setPanelQuery(graphemes(panelQuery).slice(0, -1).join(''))
+          } else if (key.ctrl && character === 'u') {
+            setPanelQuery('')
+          } else if (!key.ctrl && !key.meta && !key.super && character) {
+            const clean = sanitizeTerminalText(character).replaceAll('\n', ' ')
+            if (clean) {
+              setPanelQuery((query) => query + clean)
+            }
           }
           return
         }
@@ -984,7 +992,8 @@ export function ChatApp({
         if (
           (snapshot.panel.kind === 'settings' ||
             snapshot.panel.kind === 'voice' ||
-            snapshot.panel.kind === 'permissions') &&
+            snapshot.panel.kind === 'permissions' ||
+            snapshot.panel.kind === 'tools') &&
           character === ' '
         ) {
           const selected = rows[Math.min(panelSelectionRef.current, rows.length - 1)]
@@ -1015,6 +1024,13 @@ export function ChatApp({
             setPanelViewportStart(nextStart)
             return
           }
+        }
+        if (key.rightArrow && snapshot.panel.kind === 'skills') {
+          const selected = rows[Math.min(panelSelectionRef.current, rows.length - 1)]
+          if (selected?.value) {
+            controller.openSkillDetail(selected.value)
+          }
+          return
         }
         if (key.return) {
           const selected = rows[Math.min(panelSelectionRef.current, rows.length - 1)]
@@ -1232,16 +1248,6 @@ export function ChatApp({
       onToolGroupElement={registerToolGroupElement}
     />
   )
-}
-
-function editsSetupAnswer(character: string, key: Key, input: string): boolean {
-  if (key.return) {
-    return input.trim().length > 0
-  }
-  if (key.escape || key.tab || key.upArrow || key.downArrow || key.pageUp || key.pageDown) {
-    return false
-  }
-  return Boolean(character || key.backspace || key.delete || key.leftArrow || key.rightArrow || key.home || key.end)
 }
 
 function useElementMap<K>(): [Map<K, DOMElement>, (key: K, element: DOMElement | null) => void] {

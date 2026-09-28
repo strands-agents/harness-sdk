@@ -3,15 +3,15 @@
 from .events import (
     BidiAfterConnectionRestartEvent,
     BidiAgentStopEvent,
+    BidiBargeInEvent,
     BidiBeforeConnectionRestartEvent,
-    BidiInterruptionEvent,
-    BidiResponseCompleteEvent,
+    BidiResponseStopEvent,
 )
 
 __all__ = [
     "BidiAgentStopEvent",
-    "BidiResponseCompleteEvent",
-    "BidiInterruptionEvent",
+    "BidiResponseStopEvent",
+    "BidiBargeInEvent",
     "BidiBeforeConnectionRestartEvent",
     "BidiAfterConnectionRestartEvent",
 ]

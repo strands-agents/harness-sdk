@@ -15,6 +15,23 @@ afterEach(() => {
 })
 
 describe('AWS credential refresh', () => {
+  it('uses us-east-1 for credential checks and Bedrock discovery when no region is configured', async () => {
+    vi.spyOn(STSClient.prototype, 'send').mockImplementation(async function (this: STSClient) {
+      expect(await this.config.region()).toBe('us-east-1')
+      return {}
+    })
+    vi.spyOn(BedrockClient.prototype, 'send').mockImplementation(async function (this: BedrockClient) {
+      expect(await this.config.region()).toBe('us-east-1')
+      return { modelSummaries: [], inferenceProfileSummaries: [] }
+    })
+
+    await expect(discoverAwsCredentials({})).resolves.toBe('valid')
+    await expect(discoverProviderModels('bedrock', {})).resolves.toMatchObject({
+      models: [],
+      available: true,
+    })
+  })
+
   it('rereads changed profile credentials and updates the shared cache used by later clients', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'strands-aws-refresh-'))
     const clients: STSClient[] = []

@@ -167,7 +167,7 @@ describe('responsive welcome art', () => {
       await view.resize(columns, rows)
       await vi.waitFor(() => {
         view.fits()
-        for (const choice of ['Quickstart', 'Q&A', 'Manual', 'Import']) {
+        for (const choice of ['Quickstart', 'Customize', 'Import']) {
           expect(view.screen()).toContain(choice)
         }
         expect(view.screen()).toContain('Shift+Tab')
