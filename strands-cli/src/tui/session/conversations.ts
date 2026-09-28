@@ -14,11 +14,13 @@ import { isUnresolvedBackgroundTask } from '../chat/controller-helpers.js'
 import { errorMessage, sanitizeTerminalText } from '../terminal/sanitize.js'
 import type { AgentMessaging } from '../messaging.js'
 import { conversationStatus, conversationTitle, readConversationValue, unquote } from './conversation-helpers.js'
-import { sessionWorkspaceLabel, type SessionTarget } from './sessions.js'
+import { pondContent, readPondTaskValue, type PondConversation } from './pond.js'
+import { sessionWorkspaceLabel, type SessionInfo, type SessionTarget } from './sessions.js'
 import type { VoiceInput } from '../voice/session.js'
 
-const MANAGER_COMMANDS = new Set(['agents', 'fork', 'rename', 'voice'])
+const MANAGER_COMMANDS = new Set(['agents', 'fork', 'pond', 'rename', 'voice'])
 const AGENTS_PANEL_TITLE = 'Agents'
+const POND_PANEL_TITLE = 'Pond'
 
 interface ConversationRecord {
   id: string
@@ -48,6 +50,8 @@ export class ConversationManager implements ChatControllerApi {
   private readonly _voice: ConversationVoice
   private _activeId: string
   private _panel: ChatPanel | undefined
+  private _pondSessions: readonly SessionInfo[] = []
+  private _pondQuery = ''
   private _snapshot: ChatSnapshot
   private _nextConversation = 2
   private _nextPanel = 1
@@ -179,6 +183,11 @@ export class ConversationManager implements ChatControllerApi {
       this._openAgentsPanel()
       return undefined
     }
+    if (command === 'pond') {
+      this._pondQuery = unquote(argument)
+      await this._openPondPanel()
+      return undefined
+    }
     if (command === 'fork') {
       return this._forkConversation(unquote(argument))
     }
@@ -275,6 +284,9 @@ export class ConversationManager implements ChatControllerApi {
     if (this._panel?.kind === 'agents') {
       const id = readConversationValue(row.value)
       return id ? this._switchConversation(id) : false
+    }
+    if (this._panel?.kind === 'pond') {
+      return this._activatePondRow(row.value)
     }
     if (!this._panel && this._snapshot.panel?.kind === 'sessions' && row.value && this._resume) {
       return this._resumeConversation(row.value)
@@ -422,6 +434,8 @@ export class ConversationManager implements ChatControllerApi {
         streamSpokenReply()
         if (this._panel?.kind === 'agents') {
           this._openAgentsPanel(false)
+        } else if (this._panel?.kind === 'pond') {
+          this._showPondPanel()
         }
         this._emit()
       }),
@@ -508,6 +522,72 @@ export class ConversationManager implements ChatControllerApi {
     if (emit) {
       this._emit()
     }
+  }
+
+  private async _openPondPanel(): Promise<void> {
+    this._showPondPanel()
+    this._emit()
+    try {
+      this._pondSessions = await this._active.controller.listSessions()
+    } catch (error) {
+      this._openError('pond unavailable', 'sessions', errorMessage(error))
+      return
+    }
+    if (this._panel?.kind === 'pond') {
+      this._showPondPanel()
+      this._emit()
+    }
+  }
+
+  private _showPondPanel(): void {
+    const existingId = this._panel?.kind === 'pond' ? this._panel.id : undefined
+    const conversations = [...this._conversations.values()].map((conversation): PondConversation => {
+      const snapshot = conversation.controller.getSnapshot()
+      const backend = conversation.controller.backend
+      return {
+        id: conversation.id,
+        title: conversation.title,
+        current: conversation.id === this._activeId,
+        status: conversationStatus(snapshot).label,
+        workspace: snapshot.runtime.cwd,
+        ...(snapshot.runtime.session ? { sessionId: snapshot.runtime.session } : {}),
+        subagents: snapshot.tasks
+          .filter((task) => task.source === 'background' && task.label === 'subagent')
+          .map((task) => ({
+            taskId: task.id,
+            task: backend.getTaskActivity?.(task.id)?.task ?? '',
+            status: task.status,
+          })),
+      }
+    })
+    const { rows, pond } = pondContent(conversations, this._pondSessions, Date.now(), this._pondQuery)
+    const title = this._pondQuery ? `${POND_PANEL_TITLE} · ${this._pondQuery}` : POND_PANEL_TITLE
+    this._panel = {
+      ...this._makePanel('pond', title, rows),
+      pond,
+      ...(existingId ? { id: existingId } : {}),
+    }
+  }
+
+  private async _activatePondRow(value: string | undefined): Promise<boolean> {
+    const conversationId = readConversationValue(value)
+    if (conversationId) {
+      return this._switchConversation(conversationId)
+    }
+    const task = readPondTaskValue(value)
+    if (task) {
+      if (!this._switchConversation(task.conversationId)) {
+        return false
+      }
+      const opened = this._active.controller.openTaskDetail(task.taskId)
+      this._emit()
+      return opened
+    }
+    if (!value) {
+      return false
+    }
+    this._panel = undefined
+    return this._resumeConversation(value)
   }
 
   private _openError(title: string, label: string, description: string): void {

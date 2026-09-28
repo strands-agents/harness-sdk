@@ -422,6 +422,7 @@ These commands are local to the full-screen Ink UI:
 | `/effort [level]`            | Open the effort slider or set the reasoning effort directly        |
 | `/fork [request]`            | Fork the current conversation into an independent agent            |
 | `/agents`                    | View conversations and live subagents                              |
+| `/pond [search]`             | See live and recent agents and subagents as frogs; click one to open it |
 | `/rename <name>`             | Rename the currently viewed agent                                  |
 | `/sessions`                  | Browse and resume saved sessions                              |
 | `/skills`                    | Browse available and active Agent Skills                           |
@@ -519,6 +520,14 @@ total updates; the context meter continues to measure the parent agent's prompt.
 
 Live subagents also appear in `/agents` while they are available for peer messages. They are
 status rows rather than switchable conversations and disappear when the delegated task finishes.
+
+`/pond` shows every conversation in this terminal and the saved sessions from the last seven days
+as frogs on lily pads. Each workspace has its own pond in a meadow, and each session's subagents sit
+around its pad. A pond that outgrows the screen scrolls with the mouse wheel and Page Up/Down, and
+the view follows the frog you select. `/pond <search>` searches every saved session, of any age,
+and keeps the pads whose workspace, title, or subagent task matches. Click a frog, or select it with the arrow keys and press Enter, to open it: a conversation
+switches in place, a saved session resumes, and a live subagent opens its activity. A saved session
+changed in the last five minutes shows as awake, because it is probably open in another terminal.
 
 Plain, print, ACP-server, and direct library invocations use the normal wait-for-completion
 behavior. Ink blocks model-family restarts, session replacement, and wait-mode changes while

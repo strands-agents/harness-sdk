@@ -56,6 +56,7 @@ import {
   type ModelPanelFocus,
 } from './interaction.js'
 import { parseFrogCommand, type FrogVariant } from './frog-easter-egg.js'
+import { clampPondScroll, pondCanvasSize, revealPondFrog } from './pond-drawing.js'
 import { maxDetailScroll, maxPermissionScroll } from './presentation.js'
 import { CustomThemeEditor, type Appearance } from './custom-theme-editor.js'
 import type { ChatPanelRow } from '../chat/types.js'
@@ -284,7 +285,15 @@ export function ChatApp({
     const resize = (): void => {
       const size = { width: stdout.columns || 80, height: stdout.rows || 24 }
       const { snapshot, panelRows } = viewPropsRef.current
-      if (snapshot.panel && panelRows) {
+      if (snapshot.panel?.kind === 'pond') {
+        const start = clampPondScroll(
+          snapshot.panel.pond ?? [],
+          pondCanvasSize(size.width, size.height),
+          panelViewportStartRef.current
+        )
+        panelViewportStartRef.current = start
+        setPanelViewportStart(start)
+      } else if (snapshot.panel && panelRows) {
         const agents = snapshot.panel.kind === 'agents'
         const capacity = agents
           ? agentGridCapacity(size.width, size.height)
@@ -427,6 +436,15 @@ export function ChatApp({
         } else if (snapshot.panel?.kind === 'permission') {
           const maxScroll = maxPermissionScroll(snapshot.panel, terminalHeight, terminalWidth)
           setDetailScroll((value) => scrollDetail(value, scroll, maxScroll, false, 3))
+        } else if (snapshot.panel?.kind === 'pond') {
+          const canvas = pondCanvasSize(terminalWidth, terminalHeight)
+          const nextStart = clampPondScroll(
+            snapshot.panel.pond ?? [],
+            canvas,
+            panelViewportStartRef.current + scroll * 3
+          )
+          panelViewportStartRef.current = nextStart
+          setPanelViewportStart(nextStart)
         } else if (snapshot.panel) {
           const rows = panelRows ?? []
           const agents = snapshot.panel.kind === 'agents'
@@ -1040,6 +1058,27 @@ export function ChatApp({
             controller.dismissPanel()
           }
           return
+        }
+        if (snapshot.panel.kind === 'pond') {
+          // The pond scrolls by pages; the arrows walk frogs and keep the selected one in view.
+          const frogs = snapshot.panel.pond ?? []
+          const canvas = pondCanvasSize(terminalWidth, terminalHeight)
+          const page = key.pageUp ? -1 : key.pageDown ? 1 : 0
+          const selection =
+            page === 0 ? moveSelection(panelSelectionRef.current, key, rows.length, rowCapacity) : undefined
+          if (selection !== undefined) {
+            panelSelectionRef.current = selection
+            setPanelSelection(selection)
+          }
+          if (page !== 0 || selection !== undefined) {
+            const start =
+              page === 0
+                ? revealPondFrog(frogs, canvas, panelViewportStartRef.current, selection!)
+                : clampPondScroll(frogs, canvas, panelViewportStartRef.current + page * Math.max(1, canvas.height - 2))
+            panelViewportStartRef.current = start
+            setPanelViewportStart(start)
+            return
+          }
         }
         const nextSelection = moveSelection(panelSelectionRef.current, key, rows.length, rowCapacity)
         if (nextSelection !== undefined) {

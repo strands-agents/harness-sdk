@@ -15,6 +15,11 @@ export const LOCAL_COMMANDS: readonly LocalCommandSpec[] = [
   { name: 'effort', usage: '/effort [level]', description: 'Show or change the reasoning effort' },
   { name: 'fork', usage: '/fork [request]', description: 'Fork this conversation into an independent agent' },
   { name: 'agents', usage: '/agents', description: 'View and switch between forked conversations' },
+  {
+    name: 'pond',
+    usage: '/pond [search]',
+    description: 'See live and recent agents and subagents as frogs in a pond',
+  },
   { name: 'rename', usage: '/rename <name>', description: 'Rename the currently viewed agent' },
   {
     name: 'sessions',

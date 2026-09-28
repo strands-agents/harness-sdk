@@ -10,7 +10,7 @@ const SESSION_REFERENCE_PREFIX = 'strands-session:'
 const SESSION_METADATA_FILE = 'cli-session.json'
 export const DEFAULT_SESSION_DIR = './.agent/sessions'
 
-interface SessionInfo extends Partial<SessionMetadata> {
+export interface SessionInfo extends Partial<SessionMetadata> {
   id: string
   name?: string
   reference?: string
@@ -35,10 +35,19 @@ export interface ChatSessionRuntime {
   renameCurrent?(name: string): Promise<{ sessionId: string; name: string }>
 }
 
+const MAX_SAVED_SUBAGENTS = 8
+
 interface SessionMetadata {
   messageCount: number
   updatedAt: string
   preview?: string
+  subagents?: readonly SavedSubagent[]
+}
+
+export interface SavedSubagent {
+  task: string
+  agentType?: string
+  status: 'completed' | 'failed' | 'pending'
 }
 
 interface SessionNameDocument {
@@ -279,10 +288,12 @@ async function readSessionMetadata(sessionDirectory: string): Promise<SessionMet
       }
       const messages: unknown[] = snapshot.data.messages
       const preview = messagePreview(messages)
+      const subagents = savedSubagents(messages)
       return {
         messageCount: messages.length,
         updatedAt: candidate.stat.mtime.toISOString(),
         ...(preview ? { preview } : {}),
+        ...(subagents.length > 0 ? { subagents } : {}),
       }
     } catch {
       continue
@@ -310,6 +321,35 @@ function messagePreview(messages: readonly unknown[]): string | undefined {
     }
   }
   return undefined
+}
+
+function savedSubagents(messages: readonly unknown[]): SavedSubagent[] {
+  const blocks = messages.flatMap((message) =>
+    isRecord(message) && Array.isArray(message.content) ? message.content.filter(isRecord) : []
+  )
+  const results = new Map<string, unknown>()
+  for (const block of blocks) {
+    if (isRecord(block.toolResult) && typeof block.toolResult.toolUseId === 'string') {
+      results.set(block.toolResult.toolUseId, block.toolResult.status)
+    }
+  }
+  return blocks
+    .flatMap((block): SavedSubagent[] => {
+      const use = block.toolUse
+      if (!isRecord(use) || use.name !== 'subagent' || !isRecord(use.input) || typeof use.input.task !== 'string') {
+        return []
+      }
+      const result = typeof use.toolUseId === 'string' ? results.get(use.toolUseId) : undefined
+      const agentType = typeof use.input.agent_type === 'string' ? normalizeSessionText(use.input.agent_type) : ''
+      return [
+        {
+          task: normalizeSessionText(use.input.task).slice(0, 200),
+          ...(agentType ? { agentType } : {}),
+          status: result === undefined ? 'pending' : result === 'error' ? 'failed' : 'completed',
+        },
+      ]
+    })
+    .slice(-MAX_SAVED_SUBAGENTS)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
