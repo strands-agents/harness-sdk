@@ -7,7 +7,21 @@ from uuid import uuid4
 
 import pytest
 from a2a.client import ClientConfig
-from a2a.types import AgentCard, Message, Part, Role, TaskState, TextPart
+from a2a.types import (
+    AgentCapabilities,
+    AgentCard,
+    AgentInterface,
+    Artifact,
+    Part,
+    Role,
+    StreamResponse,
+    Task,
+    TaskArtifactUpdateEvent,
+    TaskState,
+    TaskStatus,
+    TaskStatusUpdateEvent,
+)
+from a2a.types import Message as A2AMessage
 
 from strands.agent.a2a_agent import A2AAgent
 from strands.agent.agent_result import AgentResult
@@ -19,9 +33,9 @@ def mock_agent_card():
     return AgentCard(
         name="test-agent",
         description="Test agent",
-        url="http://localhost:8000",
+        supported_interfaces=[AgentInterface(protocol_binding="JSONRPC", url="http://localhost:8000")],
         version="1.0.0",
-        capabilities={},
+        capabilities=AgentCapabilities(),
         default_input_modes=["text/plain"],
         default_output_modes=["text/plain"],
         skills=[],
@@ -184,24 +198,32 @@ async def test_get_agent_card_preserves_custom_name_and_description(mock_agent_c
 
 @pytest.mark.asyncio
 async def test_get_agent_card_handles_empty_string_name_and_description(mock_httpx_client):
-    """Test that empty string name/description from card are preserved (not treated as None)."""
-    mock_card = MagicMock(spec=AgentCard)
-    mock_card.name = ""
-    mock_card.description = ""
+    """Test that an AgentCard with unset (empty-string) name/description leaves the agent's unset.
+
+    Protobuf string fields have no None: an unset ``name``/``description`` reads back as ``""``,
+    indistinguishable from an explicit empty value. Treating it as "unset" (rather than adopting the
+    empty string) is the safer default for a real AgentCard, where these fields are mandatory.
+    """
+    card = AgentCard(
+        name="",
+        description="",
+        supported_interfaces=[AgentInterface(protocol_binding="JSONRPC", url="http://localhost:8000")],
+        version="1.0.0",
+        capabilities=AgentCapabilities(),
+    )
 
     agent = A2AAgent(endpoint="http://localhost:8000")
 
     with patch("strands.agent.a2a_agent.httpx.AsyncClient", return_value=mock_httpx_client):
         with patch("strands.agent.a2a_agent.A2ACardResolver") as mock_resolver_class:
             mock_resolver = AsyncMock()
-            mock_resolver.get_agent_card = AsyncMock(return_value=mock_card)
+            mock_resolver.get_agent_card = AsyncMock(return_value=card)
             mock_resolver_class.return_value = mock_resolver
 
             await agent.get_agent_card()
 
-            # Empty strings should be set (not treated as falsy/None)
-            assert agent.name == ""
-            assert agent.description == ""
+            assert agent.name is None
+            assert agent.description is None
 
 
 @pytest.mark.asyncio
@@ -313,7 +335,7 @@ async def test_get_a2a_client_with_client_config_preserves_user_settings(mock_ag
         httpx_client=mock_auth_client,
         streaming=False,  # user set this to False
         polling=True,
-        supported_transports=["jsonrpc"],
+        supported_protocol_bindings=["JSONRPC"],
     )
 
     agent = A2AAgent(endpoint="http://localhost:8000", client_config=config)
@@ -333,7 +355,7 @@ async def test_get_a2a_client_with_client_config_preserves_user_settings(mock_ag
             assert created_config.httpx_client is mock_auth_client
             assert created_config.streaming is True  # overridden to True
             assert created_config.polling is True  # preserved
-            assert created_config.supported_transports == ["jsonrpc"]  # preserved
+            assert created_config.supported_protocol_bindings == ["JSONRPC"]  # preserved
 
 
 @pytest.mark.asyncio
@@ -362,7 +384,7 @@ async def test_get_a2a_client_config_without_httpx_delegates_to_factory(mock_age
     ClientFactory handles creating a default httpx client internally. We just pass
     the config with streaming=True and let the factory do its job.
     """
-    config = ClientConfig(polling=True, supported_transports=["jsonrpc"])
+    config = ClientConfig(polling=True, supported_protocol_bindings=["JSONRPC"])
     agent = A2AAgent(endpoint="http://localhost:8000", client_config=config, timeout=600)
 
     with patch.object(agent, "get_agent_card", return_value=mock_agent_card):
@@ -378,7 +400,7 @@ async def test_get_a2a_client_config_without_httpx_delegates_to_factory(mock_age
             created_config = mock_factory_class.call_args[0][0]
             assert created_config.streaming is True
             assert created_config.polling is True
-            assert created_config.supported_transports == ["jsonrpc"]
+            assert created_config.supported_protocol_bindings == ["JSONRPC"]
             assert created_config.httpx_client is None  # factory handles default
 
 
@@ -389,7 +411,7 @@ async def test_send_message_uses_provided_factory(mock_agent_card):
     mock_a2a_client = MagicMock()
 
     async def mock_send_message(*args, **kwargs):
-        yield MagicMock()
+        yield StreamResponse(message=A2AMessage(message_id=uuid4().hex, role=Role.ROLE_AGENT))
 
     mock_a2a_client.send_message = mock_send_message
     external_factory.create.return_value = mock_a2a_client
@@ -417,7 +439,7 @@ async def test_send_message_uses_client_config_httpx_client(mock_agent_card):
     mock_a2a_client = MagicMock()
 
     async def mock_send(*args, **kwargs):
-        yield MagicMock()
+        yield StreamResponse(message=A2AMessage(message_id=uuid4().hex, role=Role.ROLE_AGENT))
 
     mock_a2a_client.send_message = mock_send
 
@@ -440,10 +462,8 @@ async def test_send_message_uses_client_config_httpx_client(mock_agent_card):
 @pytest.mark.asyncio
 async def test_send_message_creates_per_call_client(a2a_agent, mock_agent_card):
     """Test _send_message creates a fresh httpx client for each call when no factory provided."""
-    mock_response = Message(
-        message_id=uuid4().hex,
-        role=Role.agent,
-        parts=[Part(TextPart(kind="text", text="Response"))],
+    mock_response = StreamResponse(
+        message=A2AMessage(message_id=uuid4().hex, role=Role.ROLE_AGENT, parts=[Part(text="Response")])
     )
 
     async def mock_send_message(*args, **kwargs):
@@ -493,10 +513,8 @@ async def test_get_a2a_client_no_config_creates_managed_httpx():
 @pytest.mark.asyncio
 async def test_invoke_async_success(a2a_agent, mock_agent_card):
     """Test successful async invocation."""
-    mock_response = Message(
-        message_id=uuid4().hex,
-        role=Role.agent,
-        parts=[Part(TextPart(kind="text", text="Response"))],
+    mock_response = StreamResponse(
+        message=A2AMessage(message_id=uuid4().hex, role=Role.ROLE_AGENT, parts=[Part(text="Response")])
     )
 
     async def mock_send_message(*args, **kwargs):
@@ -552,10 +570,8 @@ def test_call_sync(a2a_agent):
 @pytest.mark.asyncio
 async def test_stream_async_success(a2a_agent, mock_agent_card):
     """Test successful async streaming."""
-    mock_response = Message(
-        message_id=uuid4().hex,
-        role=Role.agent,
-        parts=[Part(TextPart(kind="text", text="Response"))],
+    mock_response = StreamResponse(
+        message=A2AMessage(message_id=uuid4().hex, role=Role.ROLE_AGENT, parts=[Part(text="Response")])
     )
 
     async def mock_send_message(*args, **kwargs):
@@ -585,292 +601,50 @@ async def test_stream_async_no_prompt(a2a_agent):
             pass
 
 
-# === Complete Event Tests ===
-
-
-def test_is_complete_event_message(a2a_agent):
-    """Test _is_complete_event returns True for Message."""
-    mock_message = MagicMock(spec=Message)
-
-    assert a2a_agent._is_complete_event(mock_message) is True
-
-
-def test_is_complete_event_tuple_with_none_update(a2a_agent):
-    """Test _is_complete_event returns True for tuple with None update event."""
-    mock_task = MagicMock()
-
-    assert a2a_agent._is_complete_event((mock_task, None)) is True
-
-
-def test_is_complete_event_artifact_last_chunk(a2a_agent):
-    """Test _is_complete_event handles TaskArtifactUpdateEvent last_chunk flag."""
-    from a2a.types import TaskArtifactUpdateEvent
-
-    mock_task = MagicMock()
-
-    # last_chunk=True -> complete
-    event_complete = MagicMock(spec=TaskArtifactUpdateEvent)
-    event_complete.last_chunk = True
-    assert a2a_agent._is_complete_event((mock_task, event_complete)) is True
-
-    # last_chunk=False -> not complete
-    event_incomplete = MagicMock(spec=TaskArtifactUpdateEvent)
-    event_incomplete.last_chunk = False
-    assert a2a_agent._is_complete_event((mock_task, event_incomplete)) is False
-
-    # last_chunk=None -> not complete
-    event_none = MagicMock(spec=TaskArtifactUpdateEvent)
-    event_none.last_chunk = None
-    assert a2a_agent._is_complete_event((mock_task, event_none)) is False
-
-
-def test_is_complete_event_status_update(a2a_agent):
-    """Test _is_complete_event handles TaskStatusUpdateEvent state."""
-    from a2a.types import TaskState, TaskStatusUpdateEvent
-
-    mock_task = MagicMock()
-
-    # completed state -> complete
-    event_completed = MagicMock(spec=TaskStatusUpdateEvent)
-    event_completed.status = MagicMock()
-    event_completed.status.state = TaskState.completed
-    assert a2a_agent._is_complete_event((mock_task, event_completed)) is True
-
-    # working state -> not complete
-    event_working = MagicMock(spec=TaskStatusUpdateEvent)
-    event_working.status = MagicMock()
-    event_working.status.state = TaskState.working
-    assert a2a_agent._is_complete_event((mock_task, event_working)) is False
-
-    # no status -> not complete
-    event_no_status = MagicMock(spec=TaskStatusUpdateEvent)
-    event_no_status.status = None
-    assert a2a_agent._is_complete_event((mock_task, event_no_status)) is False
-
-
-def test_is_complete_event_unknown_type(a2a_agent):
-    """Test _is_complete_event returns False for unknown event types."""
-    assert a2a_agent._is_complete_event("unknown") is False
-
-
 @pytest.mark.asyncio
-async def test_stream_async_tracks_complete_events(a2a_agent, mock_agent_card):
-    """Test stream_async uses last complete event for final result."""
-    from a2a.types import TaskState, TaskStatusUpdateEvent
-
-    mock_task = MagicMock()
-    mock_task.artifacts = None
-
-    # First event: incomplete
-    incomplete_event = MagicMock(spec=TaskStatusUpdateEvent)
-    incomplete_event.status = MagicMock()
-    incomplete_event.status.state = TaskState.working
-    incomplete_event.status.message = None
-
-    # Second event: complete
-    complete_event = MagicMock(spec=TaskStatusUpdateEvent)
-    complete_event.status = MagicMock()
-    complete_event.status.state = TaskState.completed
-    complete_event.status.message = MagicMock()
-    complete_event.status.message.parts = []
+async def test_stream_async_no_responses_emits_no_result(a2a_agent, mock_agent_card):
+    """Test that stream_async emits no AgentResultEvent when the server sends nothing at all."""
 
     async def mock_send_message(*args, **kwargs):
-        yield (mock_task, incomplete_event)
-        yield (mock_task, complete_event)
+        return
+        yield  # Make it an async generator
 
     with patch.object(a2a_agent, "get_agent_card", return_value=mock_agent_card):
         async with mock_a2a_client_context(mock_send_message):
-            events = []
-            async for event in a2a_agent.stream_async("Hello"):
-                events.append(event)
+            events = [event async for event in a2a_agent.stream_async("Hello")]
 
-            # Should have 2 stream events + 1 result event
-            assert len(events) == 3
-            assert "result" in events[2]
+            assert events == []
 
 
 @pytest.mark.asyncio
-async def test_stream_async_falls_back_to_last_event(a2a_agent, mock_agent_card):
-    """Test stream_async falls back to last event when no complete event."""
-    from a2a.types import TaskState, TaskStatusUpdateEvent
-
-    mock_task = MagicMock()
-    mock_task.artifacts = None
-
-    incomplete_event = MagicMock(spec=TaskStatusUpdateEvent)
-    incomplete_event.status = MagicMock()
-    incomplete_event.status.state = TaskState.working
-    incomplete_event.status.message = None
+async def test_stream_async_accumulates_task_lifecycle_events(a2a_agent, mock_agent_card):
+    """Test stream_async accumulates content across a full task, artifact_update, status_update stream."""
+    task = Task(id="t1", context_id="c1", status=TaskStatus(state=TaskState.TASK_STATE_SUBMITTED))
+    artifact_event = StreamResponse(
+        artifact_update=TaskArtifactUpdateEvent(
+            task_id="t1", context_id="c1", artifact=Artifact(artifact_id="a1", parts=[Part(text="final answer")])
+        )
+    )
+    status_event = StreamResponse(
+        status_update=TaskStatusUpdateEvent(
+            task_id="t1", context_id="c1", status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED)
+        )
+    )
 
     async def mock_send_message(*args, **kwargs):
-        yield (mock_task, incomplete_event)
+        yield StreamResponse(task=task)
+        yield artifact_event
+        yield status_event
 
     with patch.object(a2a_agent, "get_agent_card", return_value=mock_agent_card):
         async with mock_a2a_client_context(mock_send_message):
-            events = []
-            async for event in a2a_agent.stream_async("Hello"):
-                events.append(event)
+            events = [event async for event in a2a_agent.stream_async("Hello")]
 
-            # Should have 1 stream event + 1 result event (falls back to last)
-            assert len(events) == 2
-            assert "result" in events[1]
-
-
-# =========================================================================
-# NEW TESTS: Client-side lifecycle state handling
-# =========================================================================
-
-
-def test_is_complete_event_failed_state(a2a_agent):
-    """Test that failed state is recognized as complete."""
-    from unittest.mock import MagicMock
-
-    from a2a.types import TaskState, TaskStatusUpdateEvent
-
-    task = MagicMock()
-    status = MagicMock()
-    status.state = TaskState.failed
-    update_event = MagicMock(spec=TaskStatusUpdateEvent)
-    update_event.status = status
-
-    assert a2a_agent._is_complete_event((task, update_event)) is True
-
-
-def test_is_complete_event_canceled_state(a2a_agent):
-    """Test that canceled state is recognized as complete."""
-    from unittest.mock import MagicMock
-
-    from a2a.types import TaskState, TaskStatusUpdateEvent
-
-    task = MagicMock()
-    status = MagicMock()
-    status.state = TaskState.canceled
-    update_event = MagicMock(spec=TaskStatusUpdateEvent)
-    update_event.status = status
-
-    assert a2a_agent._is_complete_event((task, update_event)) is True
-
-
-def test_is_complete_event_rejected_state(a2a_agent):
-    """Test that rejected state is recognized as complete."""
-    from unittest.mock import MagicMock
-
-    from a2a.types import TaskState, TaskStatusUpdateEvent
-
-    task = MagicMock()
-    status = MagicMock()
-    status.state = TaskState.rejected
-    update_event = MagicMock(spec=TaskStatusUpdateEvent)
-    update_event.status = status
-
-    assert a2a_agent._is_complete_event((task, update_event)) is True
-
-
-def test_is_complete_event_input_required_state(a2a_agent):
-    """Test that input_required state is recognized as complete (pausing)."""
-    from unittest.mock import MagicMock
-
-    from a2a.types import TaskState, TaskStatusUpdateEvent
-
-    task = MagicMock()
-    status = MagicMock()
-    status.state = TaskState.input_required
-    update_event = MagicMock(spec=TaskStatusUpdateEvent)
-    update_event.status = status
-
-    assert a2a_agent._is_complete_event((task, update_event)) is True
-
-
-def test_is_complete_event_auth_required_state(a2a_agent):
-    """Test that auth_required state is recognized as complete (pausing)."""
-    from unittest.mock import MagicMock
-
-    from a2a.types import TaskState, TaskStatusUpdateEvent
-
-    task = MagicMock()
-    status = MagicMock()
-    status.state = TaskState.auth_required
-    update_event = MagicMock(spec=TaskStatusUpdateEvent)
-    update_event.status = status
-
-    assert a2a_agent._is_complete_event((task, update_event)) is True
-
-
-def test_is_complete_event_working_state_not_complete(a2a_agent):
-    """Test that working state is NOT recognized as complete."""
-    from unittest.mock import MagicMock
-
-    from a2a.types import TaskState, TaskStatusUpdateEvent
-
-    task = MagicMock()
-    status = MagicMock()
-    status.state = TaskState.working
-    update_event = MagicMock(spec=TaskStatusUpdateEvent)
-    update_event.status = status
-
-    assert a2a_agent._is_complete_event((task, update_event)) is False
-
-
-def test_is_complete_event_submitted_state_not_complete(a2a_agent):
-    """Test that submitted state is NOT recognized as complete."""
-    from unittest.mock import MagicMock
-
-    from a2a.types import TaskState, TaskStatusUpdateEvent
-
-    task = MagicMock()
-    status = MagicMock()
-    status.state = TaskState.submitted
-    update_event = MagicMock(spec=TaskStatusUpdateEvent)
-    update_event.status = status
-
-    assert a2a_agent._is_complete_event((task, update_event)) is False
-
-
-# =========================================================================
-# DEVIL'S ADVOCATE FINDINGS — Tests addressing review gaps
-# =========================================================================
-
-
-@pytest.mark.parametrize(
-    "state,expected_complete",
-    [
-        (TaskState.completed, True),
-        (TaskState.failed, True),
-        (TaskState.canceled, True),
-        (TaskState.rejected, True),
-        (TaskState.input_required, True),
-        (TaskState.auth_required, True),
-        (TaskState.working, False),
-        (TaskState.submitted, False),
-        (TaskState.unknown, False),
-    ],
-    ids=[
-        "completed-is-complete",
-        "failed-is-complete",
-        "canceled-is-complete",
-        "rejected-is-complete",
-        "input_required-is-complete",
-        "auth_required-is-complete",
-        "working-not-complete",
-        "submitted-not-complete",
-        "unknown-not-complete",
-    ],
-)
-def test_is_complete_event_all_states_parametrized(a2a_agent, state, expected_complete):
-    """Minor Finding 7: Parametrized test covering ALL TaskState values.
-
-    This replaces verbose individual tests with a single parameterized test that
-    covers all 9 TaskState values. When a2a-sdk adds new states, adding a row here
-    is trivial.
-    """
-    from unittest.mock import MagicMock
-
-    from a2a.types import TaskStatusUpdateEvent
-
-    task = MagicMock()
-    status = MagicMock()
-    status.state = state
-    update_event = MagicMock(spec=TaskStatusUpdateEvent)
-    update_event.status = status
-
-    assert a2a_agent._is_complete_event((task, update_event)) is expected_complete
+            # 3 stream events + 1 final result event
+            assert len(events) == 4
+            assert all(event.get("type") == "a2a_stream" for event in events[:3])
+            assert "result" in events[3]
+            result = events[3]["result"]
+            assert result.stop_reason == "end_turn"
+            assert result.message["content"] == [{"text": "final answer"}]
+            assert result.state.get("a2a_task_state") == "completed"

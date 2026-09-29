@@ -15,14 +15,10 @@ from typing import Any
 
 import httpx
 from a2a.client import A2ACardResolver, ClientConfig, ClientFactory
-from a2a.types import AgentCard, Message, TaskArtifactUpdateEvent, TaskStatusUpdateEvent
+from a2a.types import AgentCard, SendMessageRequest
 
 from .._async import run_async
-from ..multiagent.a2a._converters import (
-    _STATE_TO_STOP_REASON,
-    convert_input_to_message,
-    convert_response_to_agent_result,
-)
+from ..multiagent.a2a._converters import convert_input_to_message, convert_responses_to_agent_result
 from ..types._events import AgentResultEvent
 from ..types.a2a import A2AResponse, A2AStreamEvent
 from ..types.agent import AgentInput
@@ -32,13 +28,6 @@ from .base import AgentBase
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT = 300
-
-# A2A task states that indicate the response stream is complete.
-# Derived from the canonical _STATE_TO_STOP_REASON mapping in _converters.
-# Terminal states (end_turn) mean no more events; input states (interrupt) mean execution is paused.
-_TERMINAL_STATES = {state for state, reason in _STATE_TO_STOP_REASON.items() if reason == "end_turn"}
-_INPUT_STATES = {state for state, reason in _STATE_TO_STOP_REASON.items() if reason == "interrupt"}
-_COMPLETE_STATES = _TERMINAL_STATES | _INPUT_STATES
 
 
 class A2AAgent(AgentBase):
@@ -157,9 +146,9 @@ class A2AAgent(AgentBase):
 
         Yields:
             An async iterator that yields events. Each event is a dictionary:
-                - A2AStreamEvent: {"type": "a2a_stream", "event": <A2A object>}
-                  where the A2A object can be a Message, or a tuple of
-                  (Task, TaskStatusUpdateEvent) or (Task, TaskArtifactUpdateEvent).
+                - A2AStreamEvent: {"type": "a2a_stream", "event": <StreamResponse>}
+                  where the StreamResponse carries exactly one of a task, message,
+                  status_update, or artifact_update.
                 - AgentResultEvent: {"result": AgentResult} - always emitted last.
 
         Raises:
@@ -174,20 +163,14 @@ class A2AAgent(AgentBase):
                     print(f"Final result: {event['result'].message}")
             ```
         """
-        last_event = None
-        last_complete_event = None
+        responses: list[A2AResponse] = []
 
-        async for event in self._send_message(prompt):
-            last_event = event
-            if self._is_complete_event(event):
-                last_complete_event = event
-            yield A2AStreamEvent(event)
+        async for response in self._send_message(prompt):
+            responses.append(response)
+            yield A2AStreamEvent(response)
 
-        # Use the last complete event if available, otherwise fall back to last event
-        final_event = last_complete_event or last_event
-
-        if final_event is not None:
-            result = convert_response_to_agent_result(final_event)
+        if responses:
+            result = convert_responses_to_agent_result(responses)
             yield AgentResultEvent(result)
 
     async def get_agent_card(self) -> AgentCard:
@@ -214,11 +197,11 @@ class A2AAgent(AgentBase):
                 self._agent_card = await resolver.get_agent_card()
 
         # Populate name from card if not set
-        if self.name is None and self._agent_card.name is not None:
+        if self.name is None and self._agent_card.name:
             self.name = self._agent_card.name
 
         # Populate description from card if not set
-        if self.description is None and self._agent_card.description is not None:
+        if self.description is None and self._agent_card.description:
             self.description = self._agent_card.description
 
         logger.debug("agent=<%s>, endpoint=<%s> | discovered agent card", self.name, self.endpoint)
@@ -258,7 +241,7 @@ class A2AAgent(AgentBase):
             prompt: Input to send to the agent.
 
         Yields:
-            A2A response events.
+            A2A StreamResponse events.
 
         Raises:
             ValueError: If prompt is None.
@@ -267,46 +250,9 @@ class A2AAgent(AgentBase):
             raise ValueError("prompt is required for A2AAgent")
 
         message = convert_input_to_message(prompt)
+        request = SendMessageRequest(message=message)
         logger.debug("agent=<%s>, endpoint=<%s> | sending message", self.name, self.endpoint)
 
         async with self._get_a2a_client() as client:
-            async for event in client.send_message(message):
-                yield event
-
-    def _is_complete_event(self, event: A2AResponse) -> bool:
-        """Check if an A2A event represents a complete response.
-
-        Recognizes all terminal states (completed, failed, canceled, rejected)
-        and pausing states (input_required, auth_required) as complete events.
-
-        Args:
-            event: A2A event.
-
-        Returns:
-            True if the event represents a complete response.
-        """
-        # Direct Message is always complete
-        if isinstance(event, Message):
-            return True
-
-        # Handle tuple responses (Task, UpdateEvent | None)
-        if isinstance(event, tuple) and len(event) == 2:
-            task, update_event = event
-
-            # Initial task response (no update event)
-            if update_event is None:
-                return True
-
-            # Artifact update with last_chunk flag
-            if isinstance(update_event, TaskArtifactUpdateEvent):
-                if hasattr(update_event, "last_chunk") and update_event.last_chunk is not None:
-                    return update_event.last_chunk
-                return False
-
-            # Status update - check for terminal or pausing states
-            if isinstance(update_event, TaskStatusUpdateEvent):
-                if update_event.status and hasattr(update_event.status, "state"):
-                    state = update_event.status.state
-                    return state in _COMPLETE_STATES
-
-        return False
+            async for response in client.send_message(request):
+                yield response
