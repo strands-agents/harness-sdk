@@ -3,6 +3,7 @@ import { ContextOffloader } from '../plugin.js'
 import { InMemoryStorage } from '../storage.js'
 import { AfterToolCallEvent, BeforeModelCallEvent } from '../../../hooks/events.js'
 import { TextBlock, JsonBlock, ToolResultBlock } from '../../../types/messages.js'
+import type { JSONValue } from '../../../types/json.js'
 import { ImageBlock, VideoBlock, DocumentBlock } from '../../../types/media.js'
 import { createMockAgent, invokeTrackedHook } from '../../../__fixtures__/agent-helpers.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
@@ -18,13 +19,16 @@ function makeEvent(
   content: InstanceType<
     typeof TextBlock | typeof JsonBlock | typeof ImageBlock | typeof VideoBlock | typeof DocumentBlock
   >[],
-  overrides?: { status?: 'success' | 'error'; toolName?: string }
+  overrides?: { status?: 'success' | 'error'; toolName?: string; structuredContent?: JSONValue }
 ) {
   const agent = makeMockAgent()
   const result = new ToolResultBlock({
     toolUseId: 'tool-123',
     status: overrides?.status ?? 'success',
     content,
+    ...(overrides !== undefined && 'structuredContent' in overrides
+      ? { structuredContent: overrides.structuredContent }
+      : {}),
   })
   return new AfterToolCallEvent({
     agent,
@@ -145,6 +149,25 @@ describe('ContextOffloader', () => {
       expect(preview).toContain('Tool result was offloaded')
       expect(preview).toContain('[Stored references:]')
       expect(preview).not.toContain(largeText)
+    })
+
+    it.each([
+      ['object', { temperature: 72 }],
+      ['zero', 0],
+      ['empty string', ''],
+      ['false', false],
+      ['null', null],
+    ])('preserves %s structuredContent when offloading', async (_label, structuredContent) => {
+      const storage = new InMemoryStorage()
+      const plugin = new ContextOffloader({ storage, maxResultTokens: 100, previewTokens: 10 })
+      const agent = createMockAgent()
+      plugin.initAgent(agent)
+
+      const event = makeEvent([new TextBlock('a'.repeat(2000))], { structuredContent })
+      await invokeTrackedHook(agent, event)
+
+      expect((event.result.content[0] as TextBlock).text).toContain('[Offloaded:')
+      expect(event.result.structuredContent).toEqual(structuredContent)
     })
 
     it('offloads large JSON results', async () => {

@@ -212,6 +212,57 @@ describe('ToolResultBlock', () => {
       content: [new TextBlock('result')],
     })
   })
+
+  test('creates tool result block with structuredContent', () => {
+    const block = new ToolResultBlock({
+      toolUseId: '123',
+      status: 'success',
+      content: [new TextBlock('result')],
+      structuredContent: { temperature: 72 },
+    })
+
+    expect(block).toEqual({
+      type: 'toolResultBlock',
+      toolUseId: '123',
+      status: 'success',
+      content: [new TextBlock('result')],
+      structuredContent: { temperature: 72 },
+    })
+  })
+
+  test('serializes structuredContent in toJSON', () => {
+    const block = new ToolResultBlock({
+      toolUseId: '123',
+      status: 'success',
+      content: [new TextBlock('result')],
+      structuredContent: { temperature: 72 },
+    })
+
+    expect(block.toJSON()).toEqual({
+      toolResult: {
+        toolUseId: '123',
+        status: 'success',
+        content: [{ text: 'result' }],
+        structuredContent: { temperature: 72 },
+      },
+    })
+  })
+
+  test('omits structuredContent in toJSON when not set', () => {
+    const block = new ToolResultBlock({
+      toolUseId: '123',
+      status: 'success',
+      content: [new TextBlock('result')],
+    })
+
+    expect(block.toJSON()).toEqual({
+      toolResult: {
+        toolUseId: '123',
+        status: 'success',
+        content: [{ text: 'result' }],
+      },
+    })
+  })
 })
 
 describe('ReasoningBlock', () => {
@@ -745,6 +796,8 @@ describe('toJSON/fromJSON round-trips', () => {
     ['ToolResultBlock with text content',      () => new ToolResultBlock({ toolUseId: '123', status: 'success', content: [new TextBlock('Result text')] })],
     ['ToolResultBlock with json content',      () => new ToolResultBlock({ toolUseId: '456', status: 'success', content: [new JsonBlock({ json: { result: 'data' } })] })],
     ['ToolResultBlock with error status',      () => new ToolResultBlock({ toolUseId: '789', status: 'error', content: [new TextBlock('Error message')] })],
+    ['ToolResultBlock with structuredContent', () => new ToolResultBlock({ toolUseId: '123', status: 'success', content: [new TextBlock('Result text')], structuredContent: { temperature: 72 } })],
+    ['ToolResultBlock with non-object structuredContent', () => new ToolResultBlock({ toolUseId: '123', status: 'success', content: [new TextBlock('Result text')], structuredContent: [1, 2, 3] })],
     ['ReasoningBlock with text only',          () => new ReasoningBlock({ text: 'Thinking...' })],
     ['ReasoningBlock with signature',          () => new ReasoningBlock({ text: 'Thinking...', signature: 'sig123' })],
     ['ReasoningBlock with redactedContent',    () => new ReasoningBlock({ redactedContent: new Uint8Array([1, 2, 3]) })],

@@ -229,6 +229,7 @@ export abstract class ToolExecutor {
       toolUseId,
       status: result.status,
       content: result.content,
+      ...(result.structuredContent !== undefined && { structuredContent: result.structuredContent }),
       ...(result.error !== undefined && { error: result.error }),
     })
   }
