@@ -3539,6 +3539,28 @@ async def test_format_request_with_guardrail_latest_message_wraps_final_user_tex
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("blank_text", ["", "   \n"], ids=["empty", "whitespace"])
+async def test_format_request_with_guardrail_latest_message_skips_blank_text(model, blank_text):
+    """Test that blank text is not wrapped in guardContent, which Bedrock rejects.
+
+    https://github.com/strands-agents/harness-sdk/issues/4602
+    """
+    model.update_config(
+        guardrail_id="test-guardrail",
+        guardrail_version="DRAFT",
+        guardrail_latest_message=True,
+    )
+
+    messages = [{"role": "user", "content": [{"text": blank_text}, {"text": "Tell me about taxes"}]}]
+
+    request = model.format_request(messages)
+    content = request["messages"][0]["content"]
+
+    assert content[0] == {"text": blank_text}
+    assert content[1] == {"guardContent": {"text": {"text": "Tell me about taxes"}}}
+
+
+@pytest.mark.asyncio
 async def test_format_request_with_guardrail_multiple_sequential_tool_calls(model):
     """Test guardContent with multiple tool calls in sequence (no new user input between)."""
     model.update_config(
