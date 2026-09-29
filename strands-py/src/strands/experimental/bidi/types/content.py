@@ -60,8 +60,6 @@ class BidiToolMetadata(TypedDict):
 
     Attributes:
         kind: Whether the message records dispatch or the completed result.
-        tool_use_id: Original provider tool-use ID.
     """
 
     kind: Literal["tool_dispatch", "tool_result"]
-    tool_use_id: str
