@@ -376,6 +376,20 @@ export interface ToolResultBlockData {
   content: ToolResultContentData[]
 
   /**
+   * Structured data returned alongside the content blocks.
+   * Set by MCP tools from `CallToolResult.structuredContent`, which the
+   * 2026-07-28 spec allows to be any JSON value, not only an object.
+   */
+  structuredContent?: JSONValue
+
+  /**
+   * Arbitrary metadata returned by the tool.
+   * Set by MCP tools from the result-level `_meta` field, which servers use to
+   * attach data such as UI resource links, token usage or tracking information.
+   */
+  metadata?: JSONValue
+
+  /**
    * The original error object when status is 'error'.
    * Available for inspection by hooks, error handlers, and agent loop.
    * Tools must wrap non-Error thrown values into Error objects.
@@ -414,10 +428,39 @@ export class ToolResultBlock implements JSONSerializable<{ toolResult: ToolResul
    */
   readonly error?: Error
 
-  constructor(data: { toolUseId: string; status: 'success' | 'error'; content: ToolResultContent[]; error?: Error }) {
+  /**
+   * Structured data returned alongside the content blocks.
+   * Set by MCP tools from `CallToolResult.structuredContent`, which the
+   * 2026-07-28 spec allows to be any JSON value, not only an object.
+   */
+  readonly structuredContent?: JSONValue
+
+  /**
+   * Arbitrary metadata returned by the tool.
+   * Set by MCP tools from the result-level `_meta` field, which servers use to
+   * attach data such as UI resource links, token usage or tracking information.
+   */
+  readonly metadata?: JSONValue
+
+  constructor(data: {
+    toolUseId: string
+    status: 'success' | 'error'
+    content: ToolResultContent[]
+    structuredContent?: JSONValue
+    metadata?: JSONValue
+    error?: Error
+  }) {
     this.toolUseId = data.toolUseId
     this.status = data.status
     this.content = data.content
+    // `!== undefined`, not truthiness: any JSON value is a valid payload, so
+    // 0, false, '', [] and {} must all survive.
+    if (data.structuredContent !== undefined) {
+      this.structuredContent = data.structuredContent
+    }
+    if (data.metadata !== undefined) {
+      this.metadata = data.metadata
+    }
     if (data.error !== undefined) {
       this.error = data.error
     }
@@ -430,11 +473,13 @@ export class ToolResultBlock implements JSONSerializable<{ toolResult: ToolResul
    */
   toJSON(): { toolResult: ToolResultBlockData } {
     return {
-      toolResult: {
+      toolResult: omitUndefined({
         toolUseId: this.toolUseId,
         status: this.status,
         content: this.content.map((block) => block.toJSON() as ToolResultContentData),
-      },
+        structuredContent: this.structuredContent,
+        metadata: this.metadata,
+      }),
     }
   }
 
@@ -450,6 +495,10 @@ export class ToolResultBlock implements JSONSerializable<{ toolResult: ToolResul
       toolUseId: data.toolResult.toolUseId,
       status: data.toolResult.status,
       content,
+      ...(data.toolResult.structuredContent !== undefined && {
+        structuredContent: data.toolResult.structuredContent,
+      }),
+      ...(data.toolResult.metadata !== undefined && { metadata: data.toolResult.metadata }),
     })
   }
 }

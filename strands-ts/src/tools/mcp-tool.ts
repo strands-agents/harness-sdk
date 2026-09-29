@@ -72,6 +72,10 @@ export class McpTool extends Tool {
         toolUseId,
         status: rawResult.isError ? 'error' : 'success',
         content,
+        // `!== undefined`, not truthiness: the 2026-07-28 spec allows any JSON
+        // value here, so 0, false, '', [] and {} are all valid payloads.
+        ...(rawResult.structuredContent !== undefined && { structuredContent: rawResult.structuredContent }),
+        ...(rawResult._meta !== undefined && { metadata: rawResult._meta }),
       })
     } catch (error) {
       if (
@@ -192,9 +196,11 @@ export class McpTool extends Tool {
 
   /**
    * Type Guard: Checks if value matches the expected MCP SDK result shape.
-   * \{ content: unknown[]; isError?: boolean \}
+   * \{ content: unknown[]; isError?: boolean; structuredContent?: JSONValue; _meta?: JSONValue \}
    */
-  private _isMcpToolResult(value: unknown): value is { content: unknown[]; isError?: boolean } {
+  private _isMcpToolResult(
+    value: unknown
+  ): value is { content: unknown[]; isError?: boolean; structuredContent?: JSONValue; _meta?: JSONValue } {
     if (typeof value !== 'object' || value === null) {
       return false
     }
