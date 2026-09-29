@@ -3,6 +3,7 @@ title: Snapshots
 description: "Capture and restore agent state at any point in time. Use snapshots for checkpointing, undo/redo, branching conversations, and custom persistence."
 sourceLinks:
   - path: strands-py/src/strands/types/_snapshot.py
+  - path: strands-py/src/strands/experimental/bidi/agent/agent.py
   - path: strands-ts/src/agent/snapshot.ts
 ---
 
@@ -109,6 +110,11 @@ Select fields through presets, includes, and excludes. The resolution order is *
 | `interrupt_state` | Human-in-the-loop interrupt state |
 | `system_prompt` | System prompt content |
 | `model_state` | Model provider state (e.g. response IDs for stateful models) |
+
+A `BidiAgent` supports `messages`, `state`, and `system_prompt`; its `"session"` preset
+captures `messages` and `state`. Requesting another field raises `SnapshotException`, and
+`load_snapshot` requires the agent to be stopped. For persistence, see
+[bidirectional streaming sessions](../bidirectional-streaming/session-management.mdx).
 
 </Tab>
 <Tab label="TypeScript">
