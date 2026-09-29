@@ -25,7 +25,7 @@ BUILTIN_TOOL_NAMES: tuple[BuiltinToolName, ...] = (
 DEFAULT_BUILTIN_TOOLS: tuple[BuiltinToolName, ...] = BUILTIN_TOOL_NAMES
 """Built-in tools enabled when ``builtin_tools`` is omitted (``web_search`` only where the model has native search)."""
 
-BUILTIN_PLUGIN_NAMES: tuple[BuiltinPluginName, ...] = ("todos", "environment")
+BUILTIN_PLUGIN_NAMES: tuple[BuiltinPluginName, ...] = ("budget", "environment", "todos")
 """Every built-in plugin name."""
 
 DEFAULT_BUILTIN_PLUGINS: tuple[BuiltinPluginName, ...] = BUILTIN_PLUGIN_NAMES

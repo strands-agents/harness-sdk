@@ -35,7 +35,7 @@ BuiltinToolName = Literal[
 ]
 """Names accepted in ``builtin_tools``; ``web_search`` is the provider's native search where it has one."""
 
-BuiltinPluginName = Literal["todos", "environment"]
+BuiltinPluginName = Literal["budget", "environment", "todos"]
 """Names accepted in ``builtin_plugins``."""
 
 

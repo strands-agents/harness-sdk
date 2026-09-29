@@ -610,7 +610,7 @@ def test_config_rejects_missing_module():
         ("mcpServers", {"x": object()}, "mcpServers.x: "),
         ("skills", ["a", "a"], "skills: List items should be unique"),
         ("builtinPlugins", ["todos", "todos"], "builtinPlugins: List items should be unique"),
-        ("builtinPlugins", ["nope"], "builtinPlugins.0: Input should be 'todos' or 'environment'"),
+        ("builtinPlugins", ["nope"], "builtinPlugins.0: Input should be 'budget', 'environment' or 'todos'"),
         ("interventions", [""], "interventions.0: Input should be a non-empty string"),
         # Aligns with harness-ts: a blank string is not "no interventions"; use null for that.
         ("interventions", "", "interventions: Input should be a non-empty string"),

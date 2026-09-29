@@ -39,7 +39,7 @@ from strands_harness.options import (
     _sanitize_session_id,
     _session_config,
 )
-from strands_harness.plugins import EnvironmentContext, Todos
+from strands_harness.plugins import BudgetPlugin, EnvironmentContext, Todos
 from strands_harness.prompt import build_system_prompt
 from strands_harness.telemetry import setup_telemetry
 from strands_harness.tools import (
@@ -66,7 +66,7 @@ logger = logging.getLogger(__name__)
 # Built-in plugins, each toggled by name via ``builtin_plugins``. Unlike the offloader and skills
 # plugins (wired from their own options), these are opt-out feature plugins that only bundle a tool
 # and a loop-level behavior; the map is the seam to grow the set (e.g. memories) later.
-_BUILTIN_PLUGINS = {"todos": Todos, "environment": EnvironmentContext}
+_BUILTIN_PLUGINS = {"budget": BudgetPlugin, "todos": Todos, "environment": EnvironmentContext}
 
 # The delegation tool always runs in the background: its calls are long-running subtasks whose
 # intermediate work should stay out of the parent's turn.
