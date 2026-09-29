@@ -423,3 +423,38 @@ def test_convert_pydantic_with_refs():
         "name": "Person",
     }
     assert tool_spec == expected_spec
+
+
+def test_convert_pydantic_required_nested_object_stays_required():
+    """Guards https://github.com/strands-agents/harness-sdk/issues/4379.
+
+    A required nested model is listed in the parent's `required` list whichever of its own fields is declared last.
+    """
+
+    class InnerOptionalLast(BaseModel):
+        """Nested model whose last declared field is optional."""
+
+        name: str
+        note: str | None = None
+
+    class InnerRequiredLast(BaseModel):
+        """Nested model whose last declared field is required."""
+
+        note: str | None = None
+        name: str
+
+    class OuterOptionalLast(BaseModel):
+        """Outer model holding a required nested object."""
+
+        inner: InnerOptionalLast
+
+    class OuterRequiredLast(BaseModel):
+        """Outer model holding a required nested object."""
+
+        inner: InnerRequiredLast
+
+    tru_required_optional_last = convert_pydantic_to_tool_spec(OuterOptionalLast)["inputSchema"]["json"]["required"]
+    tru_required_required_last = convert_pydantic_to_tool_spec(OuterRequiredLast)["inputSchema"]["json"]["required"]
+    exp_required = ["inner"]
+    assert tru_required_optional_last == exp_required
+    assert tru_required_required_last == exp_required
