@@ -611,11 +611,18 @@ class BidiAgent(LocalAgent):
                     event = await input_()
                     await self.send(event)
 
-            await asyncio.gather(*[task(input_) for input_ in inputs])
+            async with _TaskGroup() as task_group:
+                for input_ in inputs:
+                    task_group.create_task(task(input_))
 
         async def run_outputs(inputs_task: asyncio.Task) -> None:
+            async def task(output: OutputStream, event: BidiOutputEvent) -> None:
+                await output(event)
+
             async for event in self.receive():
-                await asyncio.gather(*[output(event) for output in outputs])
+                async with _TaskGroup() as task_group:
+                    for output in outputs:
+                        task_group.create_task(task(output, event))
 
             inputs_task.cancel()
 
