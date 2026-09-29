@@ -123,18 +123,22 @@ class _ToolCaller:
                 invocation_state = kwargs
 
                 async def acall() -> ToolResult:
-                    async for event in ToolExecutor._stream(agent, tool_use, tool_results, invocation_state):
-                        if isinstance(event, ToolInterruptEvent):
-                            agent._interrupt_state.deactivate()
-                            raise RuntimeError("cannot raise interrupt in direct tool call")
+                    try:
+                        async for event in ToolExecutor._stream(agent, tool_use, tool_results, invocation_state):
+                            if isinstance(event, ToolInterruptEvent):
+                                agent._interrupt_state.deactivate()
+                                raise RuntimeError("cannot raise interrupt in direct tool call")
 
-                    tool_result = tool_results[0]
+                        tool_result = tool_results[0]
 
-                    if should_record_direct_tool_call:
-                        # Create a record of this tool execution in the message history
-                        await self._record_tool_execution(tool_use, tool_result, user_message_override)
+                        if should_record_direct_tool_call:
+                            # Create a record of this tool execution in the message history
+                            await self._record_tool_execution(tool_use, tool_result, user_message_override)
 
-                    return tool_result
+                        return tool_result
+                    finally:
+                        if isinstance(agent, Agent) and agent.memory_manager is not None:
+                            await agent.memory_manager._flush_background_tasks()
 
                 tool_result = run_async(acall)
 

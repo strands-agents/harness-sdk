@@ -1,3 +1,4 @@
+import asyncio
 import gc
 import unittest.mock
 import weakref
@@ -7,6 +8,7 @@ import pytest
 from strands import Agent, tool
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.models import BidiModel
+from strands.memory import MemoryAddToolConfig, MemoryManager
 from strands.tools.tool_provider import ToolProvider
 from strands.types.exceptions import ConcurrencyException
 
@@ -122,6 +124,87 @@ def test_agent_tool_do_not_record_tool_with_method_override(agent):
     exp_messages = []
 
     assert tru_messages == exp_messages
+
+
+def test_agent_tool_flushes_fire_and_forget_memory_writes():
+    """A synchronous direct tool call persists accepted memory writes (#4418)."""
+    completed = []
+    cancelled = []
+
+    class SlowStore:
+        name = "notes"
+        description = None
+        max_search_results = None
+        writable = True
+        extraction = False
+
+        async def search(self, query, options=None):
+            return []
+
+        async def add(self, content, metadata=None):
+            try:
+                await asyncio.sleep(0.01)
+                completed.append(content)
+            except asyncio.CancelledError:
+                cancelled.append(content)
+                raise
+
+    memory_manager = MemoryManager(
+        stores=[SlowStore()],
+        add_tool_config=MemoryAddToolConfig(wait_for_writes=False),
+        injection=False,
+    )
+    agent = Agent(memory_manager=memory_manager)
+
+    result = agent.tool.add_memory(entries=["fact"], record_direct_tool_call=False)
+
+    assert result["status"] == "success"
+    assert completed == ["fact"]
+    assert cancelled == []
+
+
+@pytest.mark.asyncio
+async def test_agent_tool_does_not_flush_memory_writes_from_another_loop(test_tool):
+    """A direct tool call leaves another loop's tracked memory writes alone (#4418)."""
+    started = asyncio.Event()
+    release = asyncio.Event()
+    completed = []
+
+    class BlockingStore:
+        name = "notes"
+        description = None
+        max_search_results = None
+        writable = True
+        extraction = False
+
+        async def search(self, query, options=None):
+            return []
+
+        async def add(self, content, metadata=None):
+            started.set()
+            await release.wait()
+            completed.append(content)
+
+    memory_manager = MemoryManager(
+        stores=[BlockingStore()],
+        add_tool_config=MemoryAddToolConfig(wait_for_writes=False),
+        injection=False,
+    )
+    agent = Agent(tools=[test_tool], memory_manager=memory_manager)
+    add_memory = next(tool for tool in memory_manager.tools if tool.tool_name == "add_memory")
+    add_result = await add_memory(entries=["pending"])
+    await started.wait()
+
+    tool_result = agent.tool.test_tool(random_string="ok", record_direct_tool_call=False)
+
+    assert add_result == {"accepted": 1}
+    assert tool_result["status"] == "success"
+    assert completed == []
+
+    release.set()
+    await memory_manager.flush()
+
+    assert completed == ["pending"]
 
 
 def test_bidi_agent_tool_recording_raises_while_running(bidi_agent):
