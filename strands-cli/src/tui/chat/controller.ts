@@ -106,6 +106,7 @@ export class ChatController implements ChatControllerApi {
   private _sessionRefresh: Promise<SessionList> | undefined
   private _sessionGeneration = 0
   private _sessionNaming: AbortController | undefined
+  private _sessionRename: Promise<unknown> = Promise.resolve()
   private readonly _skills: ChatSkillsRuntime | undefined
   private readonly _skillNames = new Set<string>()
   private readonly _mcp: LoadedMcp | undefined
@@ -313,7 +314,7 @@ export class ChatController implements ChatControllerApi {
       return this._enqueueSubmission(prompt)
     }
     if (this._resourceChanging) {
-      return this._sessionNaming ? this._enqueueSubmission(prompt) : undefined
+      return undefined
     }
     return this._executeSubmission(prompt)
   }
@@ -654,10 +655,6 @@ export class ChatController implements ChatControllerApi {
       return true
     }
     return false
-  }
-
-  cancelSessionNaming(): void {
-    this._sessionNaming?.abort()
   }
 
   close(exitCode = 0): void {
@@ -1331,7 +1328,7 @@ export class ChatController implements ChatControllerApi {
     }
     this._resourceChanging = true
     try {
-      const renamed = await this._sessions.renameCurrent(name)
+      const renamed = await this._renameSession(name)
       this._runtime.session = renamed.name
       this._invalidateSessions()
       this._sessionCache = this._sessionCache?.map((session) =>
@@ -1346,28 +1343,19 @@ export class ChatController implements ChatControllerApi {
   }
 
   private async _generateSessionName(): Promise<void> {
-    if (!this._backend.generateSessionName || !this._sessions!.current) {
+    if (!this._backend.generateSessionName || !this._sessions?.current) {
       this._openError('session rename unavailable', '/sessions rename', 'Use /sessions rename <name> on this backend.')
       return
     }
     const request = new AbortController()
     this._sessionNaming = request
-    const sessionId = this._sessions!.current
     const notice = this._addNotice('running', 'Generating session name')
     this._emit()
     try {
       const name = await this._backend.generateSessionName(request.signal)
-      if (request.signal.aborted || this._resourceChanging || sessionId !== this._sessions!.current) {
-        request.abort()
-        return
-      }
-      this._resourceChanging = true
-      const renamed = await this._sessions!.renameCurrent!(name).finally(() => {
-        this._resourceChanging = false
-      })
-      if (request.signal.aborted) {
-        return
-      }
+      request.signal.throwIfAborted()
+      const renamed = await this._renameSession(name)
+      request.signal.throwIfAborted()
       this._runtime.session = renamed.name
       this._invalidateSessions()
       this._sessionCache = undefined
@@ -1377,22 +1365,23 @@ export class ChatController implements ChatControllerApi {
         await this._openSessionsPanel()
       }
     } catch (error) {
-      notice.status = 'error'
-      notice.text = `Session rename failed: ${errorMessage(error)}`
+      notice.status = request.signal.aborted ? 'delivered' : 'error'
+      notice.text = request.signal.aborted
+        ? 'Session naming cancelled'
+        : `Session rename failed: ${errorMessage(error)}`
     } finally {
-      if (request.signal.aborted) {
-        notice.status = 'delivered'
-        notice.text = 'Session naming cancelled'
-      }
       if (this._sessionNaming === request) {
         this._sessionNaming = undefined
       }
       this._emit()
-      if (!request.signal.aborted) {
-        this._startBackgroundContinuation()
-      }
-      this._startPendingSubmissions()
     }
+  }
+
+  /** Writes run in order, so a stale generated name cannot land after a newer rename. */
+  private _renameSession(name: string): Promise<{ sessionId: string; name: string }> {
+    const renamed = this._sessionRename.then(() => this._sessions!.renameCurrent!(name))
+    this._sessionRename = renamed.catch(() => undefined)
+    return renamed
   }
 
   private async _openSkillsPanel(): Promise<void> {

@@ -490,13 +490,6 @@ the next model call, while rebuilds wait for the active turn to finish.
 
 ### Remembering a conversation
 
-Use `/sessions rename <name>` to name the current saved session. Omit the name to generate a three-word
-name from the current conversation in the background. The naming agent uses the current model without
-tools or session storage, and does not change the conversation history. A later rename or `/clear`
-cancels the pending request, as does switching conversations. Failed or invalid responses leave the
-existing name unchanged. Models with server-side conversation state or provider-side tools require an
-explicit name.
-
 Every run persists by default under `./.agent/sessions`, minting a fresh session id when you don't
 supply one, for interactive chats and one-shot `-p` runs alike. Use `/sessions` to browse and resume
 them. Pass `--session-id` to choose a memorable id or pick up that exact conversation directly:
@@ -512,6 +505,10 @@ Pass `--session off` for a throwaway run that persists nothing.
 In Ink, `/sessions` combines saved sessions from workspaces previously seen on the machine and
 can resume any of them, including from another worktree. Session data stays in each workspace's
 configured `session.dir`; the user-level catalog stores only those roots.
+
+`/sessions rename <name>` names the current saved session. Leave out the name to have the current
+model suggest a three-word name in the background from a copy of the conversation; if that fails,
+the existing name stays.
 
 ### Background Tasks
 

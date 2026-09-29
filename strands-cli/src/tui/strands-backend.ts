@@ -185,15 +185,6 @@ export class StrandsChatBackend implements ChatBackend {
     if (agent.model.stateful) {
       throw new Error('Automatic naming is unavailable for a stateful model. Use /sessions rename <name>.')
     }
-    const config = agent.model.getConfig() as Record<string, unknown>
-    const params = config.params as Record<string, unknown> | undefined
-    if (
-      [config.anthropicTools, config.builtInTools, params?.tools].some(
-        (tools) => Array.isArray(tools) && tools.length > 0
-      )
-    ) {
-      throw new Error('Automatic naming is unavailable with provider-side tools. Use /sessions rename <name>.')
-    }
     const namingAgent = new Agent({
       model: agent.model,
       messages: agent.messages.map((message) => message.clone()),
@@ -203,7 +194,7 @@ export class StrandsChatBackend implements ChatBackend {
         'Return exactly three words, separated by spaces, with no quotes, punctuation, or explanation.',
     })
     const result = await namingAgent.invoke('Return the three-word session name.', {
-      cancelSignal: AbortSignal.any([cancelSignal, AbortSignal.timeout(60_000)]),
+      cancelSignal,
       limits: { turns: 1 },
     })
     const text = result.lastMessage.content

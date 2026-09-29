@@ -257,15 +257,12 @@ describe('ConversationManager', () => {
       })
     )
     const factory = vi.fn(async () => fork)
-    const cancelPrimaryNaming = vi.spyOn(primary, 'cancelSessionNaming')
-    const cancelForkNaming = vi.spyOn(fork, 'cancelSessionNaming')
     const manager = new ConversationManager(primary, { fork: factory })
 
     await manager.submit('baseline')
     await manager.submit('/fork "investigate the parser"')
 
     expect(factory).toHaveBeenCalledWith(primary)
-    expect(cancelPrimaryNaming).toHaveBeenCalledOnce()
     expect(manager.getSnapshot().completedTurns.at(-1)).toMatchObject({
       prompt: 'investigate the parser',
       entries: [{ type: 'assistant', text: 'fork:investigate the parser' }],
@@ -279,7 +276,6 @@ describe('ConversationManager', () => {
     const main = manager.getSnapshot().panel?.rows.find((row) => row.label === 'Research Strands harness')
     expect(main).toBeDefined()
     await manager.activatePanelRow(main!)
-    expect(cancelForkNaming).toHaveBeenCalledOnce()
     expect(manager.getSnapshot().completedTurns.at(-1)).toMatchObject({
       prompt: 'baseline',
       entries: [{ type: 'assistant', text: 'main:baseline' }],
@@ -441,7 +437,6 @@ describe('ConversationManager', () => {
     const resumed = new ChatController(backend('resumed', emptyRun), {
       runtime: { cwd: target.workspace, session: `saved: ${target.sessionId}` },
     })
-    const cancelNaming = vi.spyOn(primary, 'cancelSessionNaming')
     const resume = vi.fn(async () => resumed).mockRejectedValueOnce(new Error('Session startup failed'))
     const manager = new ConversationManager(primary, { fork: async () => resumed, resume })
 
@@ -462,7 +457,6 @@ describe('ConversationManager', () => {
     await manager.activatePanelRow(row!)
 
     expect(resume).toHaveBeenCalledWith(primary, target)
-    expect(cancelNaming).toHaveBeenCalledOnce()
     expect(manager.getSnapshot().runtime).toMatchObject({
       cwd: target.workspace,
       session: `saved: ${target.sessionId}`,

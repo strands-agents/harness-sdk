@@ -109,7 +109,7 @@ function controlled(overrides: Partial<ChatBackend> = {}) {
   }
   const controller = new ChatController(backend, { sessions, runtime: { session: state.name } })
   controllers.push(controller)
-  return { controller, backend, requests, state, sessions, renameCurrent, stream }
+  return { controller, backend, requests, state, sessions, renameCurrent }
 }
 
 async function settled(controller: ChatController) {
@@ -140,53 +140,41 @@ describe('session naming backend', () => {
     }
   )
 
-  it.each(['empty history', 'stateful', 'anthropicTools', 'builtInTools', 'params.tools'])(
-    'rejects %s without calling the model',
-    async (condition) => {
-      const model = new NamingModel()
-      if (condition === 'stateful') vi.spyOn(model, 'stateful', 'get').mockReturnValue(true)
-      if (condition.endsWith('Tools') || condition === 'params.tools') {
-        vi.spyOn(model, 'getConfig').mockReturnValue({
-          ...model.getConfig(),
-          ...(condition === 'params.tools' ? { params: { tools: [{}] } } : { [condition]: [{}] }),
-        })
-      }
-      const { backend } = realBackend(model, condition === 'empty history' ? [] : history())
-      await expect(backend.generateSessionName(new AbortController().signal)).rejects.toThrow(
-        condition === 'empty history'
-          ? 'no conversation'
-          : condition === 'stateful'
-            ? 'stateful model'
-            : 'provider-side tools'
-      )
-      expect(model.respond).not.toHaveBeenCalled()
-    }
-  )
+  it.each([
+    ['empty history', 'no conversation', () => realBackend(new NamingModel(), [])],
+    [
+      'a stateful model',
+      'stateful model',
+      () => {
+        const model = new NamingModel()
+        vi.spyOn(model, 'stateful', 'get').mockReturnValue(true)
+        return realBackend(model)
+      },
+    ],
+  ] as const)('rejects %s without calling the model', async (_case, message, setup) => {
+    const { backend, model } = setup()
+    await expect(backend.generateSessionName(new AbortController().signal)).rejects.toThrow(message)
+    expect(model.respond).not.toHaveBeenCalled()
+  })
 
-  it.each(['caller', 'timeout'])(
-    'rejects %s cancellation instead of naming the session Cancelled by user',
-    async (source) => {
-      const { backend, model, agent } = realBackend()
-      const before = JSON.stringify(agent.messages)
-      const caller = new AbortController()
-      const timeout = new AbortController()
-      const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeout.signal)
-      model.respond.mockImplementation(async (_messages, options) => {
-        await new Promise<void>((resolve) =>
-          options!.cancelSignal!.addEventListener('abort', () => resolve(), { once: true })
-        )
-        return 'Cancelled by user'
-      })
-      const result = backend.generateSessionName(caller.signal)
-      const rejected = expect(result).rejects.toThrow()
-      await vi.waitFor(() => expect(model.respond).toHaveBeenCalledOnce())
-      ;(source === 'caller' ? caller : timeout).abort()
-      await rejected
-      expect(timeoutSpy).toHaveBeenCalledWith(60_000)
-      expect(model.respond.mock.calls[0]![1]!.cancelSignal!.aborted).toBe(true)
-      expect(JSON.stringify(agent.messages)).toBe(before)
-    }
-  )
+  it('stops the model call on cancellation without changing history', async () => {
+    const { backend, model, agent } = realBackend()
+    const before = JSON.stringify(agent.messages)
+    const caller = new AbortController()
+    model.respond.mockImplementation(async (_messages, options) => {
+      await new Promise<void>((resolve) =>
+        options!.cancelSignal!.addEventListener('abort', () => resolve(), { once: true })
+      )
+      return 'Cancelled by user'
+    })
+    const result = backend.generateSessionName(caller.signal)
+    const rejected = expect(result).rejects.toThrow()
+    await vi.waitFor(() => expect(model.respond).toHaveBeenCalledOnce())
+    caller.abort()
+    await rejected
+    expect(model.respond.mock.calls[0]![1]!.cancelSignal!.aborted).toBe(true)
+    expect(JSON.stringify(agent.messages)).toBe(before)
+  })
 
   it('writes a generated name through the controller without changing live or saved history', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'strands-auto-name-'))
@@ -319,14 +307,13 @@ describe('session naming controller', () => {
     expect(controller.getSnapshot().runtime.session).toBe(name)
   })
 
-  it.each(['clear', 'dispose', 'close', 'session changed'])('does not write a late result after %s', async (action) => {
+  it.each(['clear', 'dispose', 'close'])('does not write a late result after %s', async (action) => {
     const { controller, requests, state, renameCurrent } = controlled()
     await controller.submit('/sessions rename')
     if (action === 'clear') await controller.submit('/clear')
     else if (action === 'dispose') await controller.dispose()
-    else if (action === 'close') controller.close()
-    else state.current = 'session-2'
-    if (action !== 'session changed') expect(requests[0]!.signal.aborted).toBe(true)
+    else controller.close()
+    expect(requests[0]!.signal.aborted).toBe(true)
     const name = controller.getSnapshot().runtime.session
     requests[0]!.resolve('Stale Generated Name')
     await requests[0]!.promise
@@ -334,6 +321,19 @@ describe('session naming controller', () => {
     expect(renameCurrent).not.toHaveBeenCalled()
     expect(controller.getSnapshot().runtime.session).toBe(name)
     expect(state.name).toBe('Original name')
+  })
+
+  it('applies a name that arrives while another command changes resources', async () => {
+    const compact = deferred<undefined>()
+    const { controller, requests, renameCurrent } = controlled({ compact: vi.fn(() => compact.promise) })
+    await controller.submit('/sessions rename')
+    const compacting = controller.submit('/compact')
+    requests[0]!.resolve('Fix Session Naming')
+    await settled(controller)
+    compact.resolve(undefined)
+    await compacting
+    expect(renameCurrent).toHaveBeenCalledExactlyOnceWith('Fix Session Naming')
+    expect(controller.getSnapshot().runtime.session).toBe('Fix Session Naming')
   })
 
   it.each(['generation', 'persistence'])(
@@ -358,25 +358,23 @@ describe('session naming controller', () => {
     }
   )
 
-  it('queues and drains input and an explicit rename while the generated name is being saved', async () => {
-    const { controller, requests, renameCurrent, stream } = controlled()
-    const write = deferred<{ sessionId: string; name: string }>()
-    renameCurrent.mockReturnValueOnce(write.promise)
+  it('lets an explicit rename issued during the generated write win', async () => {
+    const { controller, requests, renameCurrent, state } = controlled()
+    const write = deferred<void>()
+    renameCurrent.mockImplementationOnce(async (name) => {
+      await write.promise
+      state.name = name
+      return { sessionId: state.current, name }
+    })
     await controller.submit('/sessions rename')
     requests[0]!.resolve('Fix Session Naming')
     await vi.waitFor(() => expect(renameCurrent).toHaveBeenCalledOnce())
-    const prompt = controller.submit('keep working')
     const manual = controller.submit('/sessions rename My choice')
-    expect(controller.getSnapshot().queuedPrompts.map((queued) => queued.prompt)).toEqual([
-      'keep working',
-      '/sessions rename My choice',
-    ])
-    expect(stream).not.toHaveBeenCalled()
-    write.resolve({ sessionId: 'session-1', name: 'Fix Session Naming' })
-    await Promise.all([prompt, manual])
-    expect(stream).toHaveBeenCalledExactlyOnceWith('keep working')
+    write.resolve()
+    await manual
+    await settled(controller)
     expect(renameCurrent.mock.calls.map(([name]) => name)).toEqual(['Fix Session Naming', 'My choice'])
+    expect(state.name).toBe('My choice')
     expect(controller.getSnapshot().runtime.session).toBe('My choice')
-    expect(controller.getSnapshot().queuedPrompts).toEqual([])
   })
 })
