@@ -12,9 +12,9 @@ from strands.experimental.bidi.types import (
     BidiBargeInEvent,
     BidiResponseStartEvent,
     BidiResponseStopEvent,
+    BidiTranscriptBlockEvent,
     BidiTranscriptDeltaEvent,
     BidiTranscriptStartEvent,
-    BidiTranscriptStopEvent,
 )
 
 _ANSI_ESCAPE = re.compile(r"\x1b\[[?0-9;]*[ -/]*[@-~]")
@@ -51,7 +51,7 @@ def render_live(output, console):
             [
                 BidiTranscriptStartEvent("user", "user-transcript"),
                 BidiTranscriptDeltaEvent("Next question", "user", "user-transcript"),
-                BidiTranscriptStopEvent("Next question", "user", "user-transcript"),
+                BidiTranscriptBlockEvent("Next question", "user", "user-transcript"),
             ],
             ["First response", "> Next question", "Second response"],
         ),
@@ -64,12 +64,12 @@ async def test_call_streams_turns(output, console, user_events, exp_lines):
         BidiTranscriptStartEvent("assistant", "first"),
         BidiTranscriptDeltaEvent("First", "assistant", "first"),
         BidiTranscriptDeltaEvent(" response", "assistant", "first"),
-        BidiTranscriptStopEvent("First response", "assistant", "first"),
+        BidiTranscriptBlockEvent("First response", "assistant", "first"),
         BidiResponseStopEvent("first"),
         *user_events,
         BidiTranscriptStartEvent("assistant", "second"),
         BidiTranscriptDeltaEvent("Second response", "assistant", "second"),
-        BidiTranscriptStopEvent("Second response", "assistant", "second"),
+        BidiTranscriptBlockEvent("Second response", "assistant", "second"),
         BidiResponseStopEvent("second"),
     ]:
         await output(event)
@@ -98,8 +98,8 @@ async def test_call_preserves_transcripts_across_response_events(output, console
         event,
         BidiTranscriptDeltaEvent(" please", "user", "user"),
         BidiTranscriptDeltaEvent(" there", "assistant", "assistant"),
-        BidiTranscriptStopEvent("Hello there", "assistant", "assistant"),
-        BidiTranscriptStopEvent("Wait please", "user", "user"),
+        BidiTranscriptBlockEvent("Hello there", "assistant", "assistant"),
+        BidiTranscriptBlockEvent("Wait please", "user", "user"),
     ]:
         await output(transcript_event)
 
@@ -113,8 +113,8 @@ async def test_call_preserves_transcripts_across_response_events(output, console
 @pytest.mark.parametrize(
     ("second_role", "exp_lines"),
     [
-        ("assistant", ["", "> First question", "", "", "Streamed answer", ""]),
-        ("user", ["", "> First question", "", "", "> Streamed answer", ""]),
+        ("assistant", ["", "> First question", "", "", "Final answer", ""]),
+        ("user", ["", "> First question", "", "", "> Final answer", ""]),
     ],
 )
 async def test_call_interleaves_transcripts(output, console, second_role, exp_lines):
@@ -124,7 +124,7 @@ async def test_call_interleaves_transcripts(output, console, second_role, exp_li
         BidiTranscriptStartEvent(second_role, "second"),
         BidiTranscriptDeltaEvent("Streamed answer", second_role, "second"),
         BidiTranscriptDeltaEvent(" question", "user", "first"),
-        BidiTranscriptStopEvent("Final answer", second_role, "second"),
+        BidiTranscriptBlockEvent("Final answer", second_role, "second"),
     ]:
         await output(event)
 
@@ -134,14 +134,14 @@ async def test_call_interleaves_transcripts(output, console, second_role, exp_li
 
     await output(BidiTranscriptStartEvent("user", "third"))
     await output(BidiTranscriptDeltaEvent("Next question", "user", "third"))
-    await output(BidiTranscriptStopEvent("First question", "user", "first"))
+    await output(BidiTranscriptBlockEvent("First question", "user", "first"))
 
     rendered = _ANSI_ESCAPE.sub("", console.file.getvalue())
     tru_lines = rendered.splitlines()
     assert tru_lines == exp_lines
     assert render_live(output, console) == ["", "> Next question", ""]
 
-    await output(BidiTranscriptStopEvent("Next question", "user", "third"))
+    await output(BidiTranscriptBlockEvent("Next question", "user", "third"))
     assert render_live(output, console) == ["", "> Start talking ...", ""]
     assert output._transcripts == {}
 

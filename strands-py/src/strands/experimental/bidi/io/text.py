@@ -10,7 +10,7 @@ from ..types.events import (
     BidiBargeInEvent,
     BidiConnectionStopEvent,
     BidiOutputEvent,
-    BidiTranscriptDeltaEvent,
+    BidiTextDeltaEvent,
 )
 from ..types.io import InputStream, OutputStream
 
@@ -44,10 +44,10 @@ class _ConsoleOutputStream(OutputStream):
             if event.reason == "user_request":
                 print("user requested connection close using the stop tool.")
                 logger.debug("connection_id=<%s> | user requested connection close", event.connection_id)
-        elif isinstance(event, BidiTranscriptDeltaEvent):
+        elif isinstance(event, BidiTextDeltaEvent):
             logger.debug(
-                "role=<%s>, text_length=<%d> | text transcript received",
-                event.role,
+                "content_id=<%s>, text_length=<%d> | text received",
+                event.content_id,
                 len(event.delta),
             )
             print(event.delta)

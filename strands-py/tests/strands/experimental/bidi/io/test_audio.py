@@ -165,6 +165,7 @@ async def test_audio_io_output(audio_output):
         channels=2,
         format="pcm",
         sample_rate=16000,
+        content_id="audio",
     )
     await audio_output(audio_event)
 
@@ -183,7 +184,7 @@ async def test_audio_io_output(audio_output):
     ],
 )
 async def test_audio_io_output_rejects_changed_format(audio_output, stream):
-    event = BidiAudioDeltaEvent(audio=base64.b64encode(b"audio").decode(), **stream)
+    event = BidiAudioDeltaEvent(audio=base64.b64encode(b"audio").decode(), **stream, content_id="audio")
     with pytest.raises(ValueError, match="does not match the playback format"):
         await audio_output(event)
 
@@ -201,6 +202,7 @@ async def test_audio_io_output_barge_in(audio_output):
         channels=2,
         format="pcm",
         sample_rate=16000,
+        content_id="audio",
     )
     await audio_output(audio_event)
     barge_in_event = BidiBargeInEvent(reason="user_speech")
@@ -557,6 +559,7 @@ async def test_mixed_rate_reference_matches_mic_frame_length(py_audio, agent_mix
             channels=1,
             format="pcm",
             sample_rate=24000,
+            content_id="audio",
         )
     )
     output._callback(None, frame_count=240)
@@ -592,6 +595,7 @@ async def test_output_records_reference_at_playback(py_audio, aec_agent, mock_au
             channels=1,
             format="pcm",
             sample_rate=16000,
+            content_id="audio",
         )
     )
 
@@ -624,6 +628,7 @@ async def test_output_clears_reference_on_barge_in(py_audio, aec_agent, mock_aud
             channels=1,
             format="pcm",
             sample_rate=16000,
+            content_id="audio",
         )
     )
     output._callback(None, frame_count=2)
