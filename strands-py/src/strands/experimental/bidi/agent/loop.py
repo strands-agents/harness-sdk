@@ -710,7 +710,7 @@ class _AgentLoop:
                     return
 
                 if isinstance(event, BidiToolUseBlocksEvent):
-                    self._task_pool.create(self._run_tools(event.tool_uses, generation))
+                    self._task_pool.create(self._run_tools(event.tool_uses))
 
         except Exception as error:
             model_error = error
@@ -739,7 +739,7 @@ class _AgentLoop:
                 )
                 response_span = None
 
-    async def _run_tools(self, tool_uses: list[ToolUse], generation: int) -> None:
+    async def _run_tools(self, tool_uses: list[ToolUse]) -> None:
         """Execute a provider's tool group concurrently and send its results together."""
         invocation_state = self._invocation_state
         try:
@@ -773,16 +773,6 @@ class _AgentLoop:
                 logger.info("stop_event_loop=<True> | stopping conversation")
                 connection_id = getattr(self._agent.model, "_connection_id", "unknown")
                 await self._event_queue.put(BidiConnectionStopEvent(connection_id=connection_id, reason="user_request"))
-                return
-
-            # Results from a superseded connection stay in history for reconnect replay.
-            await self._send_gate.wait()
-            if generation != self._generation:
-                logger.warning(
-                    "tool_use_ids=<%s> | tools completed across reconnect | "
-                    "results recorded, not sent to new connection",
-                    [tool_use["toolUseId"] for tool_use in tool_uses],
-                )
                 return
 
             await self.send(

@@ -2,6 +2,7 @@
 
 import asyncio
 import sys
+import threading
 import unittest.mock
 from contextlib import nullcontext
 from uuid import uuid4
@@ -20,6 +21,7 @@ from strands.experimental.bidi.types import (
     BidiTranscriptDeltaEvent,
 )
 from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent, MessageAddedEvent, MessageUpdatedEvent
+from strands.sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
 from strands.types.content import SystemContentBlock, TextBlock
 from strands.types.media import AudioBlock, ImageBlock
 from tests.fixtures.mock_hook_provider import MockHookProvider
@@ -296,6 +298,52 @@ def test_bidi_agent_storage_returns_configured_value(mock_model):
     agent = BidiAgent(model=mock_model, storage=storage)
 
     assert agent.storage is storage
+
+
+def test_bidi_agent_context_manager_is_none(mock_model):
+    agent = BidiAgent(model=mock_model)
+
+    assert agent.context_manager is None
+
+
+def test_bidi_agent_sandbox_defaults_to_host_environment(mock_model):
+    agent = BidiAgent(model=mock_model)
+
+    assert isinstance(agent.sandbox, NotASandboxLocalEnvironment)
+    assert agent.sandbox is agent.sandbox
+
+
+def test_bidi_agent_cancel_signal_is_never_set(mock_model):
+    agent = BidiAgent(model=mock_model)
+
+    assert isinstance(agent.cancel_signal, threading.Event)
+    assert not agent.cancel_signal.is_set()
+    assert agent.cancel_signal is agent.cancel_signal
+
+
+def test_bidi_agent_tool_context_receives_cancel_signal(mock_model):
+    @tool(context=True)
+    def context_tool(tool_context: ToolContext[LocalAgent]) -> str:
+        assert tool_context.cancel_signal is agent.cancel_signal
+        return "ok"
+
+    agent = BidiAgent(model=mock_model, tools=[context_tool])
+
+    assert agent.tool.context_tool(record_direct_tool_call=False)["content"] == [{"text": "ok"}]
+
+
+def test_bidi_agent_event_loop_metrics_raises(mock_model):
+    agent = BidiAgent(model=mock_model)
+
+    with pytest.raises(NotImplementedError, match="event_loop_metrics is not supported by bidirectional agents yet"):
+        _ = agent.event_loop_metrics
+
+
+def test_bidi_agent_event_loop_metrics_setter_raises(mock_model):
+    agent = BidiAgent(model=mock_model)
+
+    with pytest.raises(NotImplementedError, match="event_loop_metrics is not supported by bidirectional agents yet"):
+        agent.event_loop_metrics = unittest.mock.Mock()
 
 
 @pytest.mark.skipif(sys.version_info < (3, 12), reason="BedrockNovaSonicModel is only supported for Python 3.12+")

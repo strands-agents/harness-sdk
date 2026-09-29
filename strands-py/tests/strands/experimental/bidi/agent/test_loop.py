@@ -547,7 +547,7 @@ async def test_tool_starts_after_request_is_queued(loop, agent, superseded):
                 assert await anext(reader) == first
                 await asyncio.wait_for(loop._model_task, 2)
                 await asyncio.wait_for(tool_started.wait(), 2)
-                run_tools.assert_awaited_once_with([tool_use], loop._generation)
+                run_tools.assert_awaited_once_with([tool_use])
 
                 assert await anext(reader) == request
             assert agent.messages[0]["content"] == [{"text": "[Transcript unavailable.]"}]
@@ -1075,11 +1075,10 @@ async def test_connection_event_delivered_while_consumer_idle(loop, agent, agene
 
 
 @pytest.mark.asyncio
-async def test_tool_result_not_sent_when_completed_during_reconnect(agenerator):
-    """A tool completing inside the reconnect window must not deliver its result to the new connection.
+async def test_tool_result_sent_after_reconnect_when_completed_during_reconnect(agenerator):
+    """A tool completing inside the reconnect window sends its result once the new connection is up.
 
-    The gen re-check after the send gate reopens guards this; the window is opened by a
-    suspending before-restart hook (a public extension point).
+    The window is opened by a suspending before-restart hook (a public extension point).
     """
     order = []
     release_tool = asyncio.Event()
@@ -1092,7 +1091,7 @@ async def test_tool_result_not_sent_when_completed_during_reconnect(agenerator):
     model = unittest.mock.AsyncMock(spec=BidiModel)
     model.restart = unittest.mock.AsyncMock(side_effect=lambda *a, **k: order.append("restart"))
     model.get_connection_config.return_value = {}
-    model.send.side_effect = lambda message: order.append("send")
+    model.send.side_effect = lambda content: order.append(content)
     model.receive = unittest.mock.Mock(return_value=agenerator([]))
 
     agent = BidiAgent(model=model, tools=[slow_tool], system_prompt="hi")
@@ -1106,12 +1105,12 @@ async def test_tool_result_not_sent_when_completed_during_reconnect(agenerator):
 
     drain_task = asyncio.create_task(drain())
     tool_use = {"toolUseId": "t1", "name": "slow_tool", "input": {}}
-    tool_task = asyncio.create_task(loop._run_tools([tool_use], loop._generation))
+    tool_task = asyncio.create_task(loop._run_tools([tool_use]))
     for _ in range(10):
         await asyncio.sleep(0)
 
     async def before_restart_hook(event):
-        # Release the tool mid-reconnect: the gate is closed but the generation not yet bumped.
+        # Release the tool mid-reconnect, while the send gate is closed.
         release_tool.set()
         for _ in range(50):
             await asyncio.sleep(0)
@@ -1121,8 +1120,13 @@ async def test_tool_result_not_sent_when_completed_during_reconnect(agenerator):
     await loop._restart_connection(None, loop._generation)
     await asyncio.wait_for(tool_task, timeout=2)
     drain_task.cancel()
+    await loop.stop()
 
-    assert "send" not in order, f"stale tool result sent to new connection: {order}"
+    assert order == [
+        "restart",
+        BidiMessage(content=[ToolResultBlock(tool_use_id="t1", status="success", content=[{"text": "result"}])]),
+    ]
+    assert [message["role"] for message in agent.messages] == ["assistant", "user"]
 
 
 @pytest.mark.asyncio
@@ -1716,51 +1720,6 @@ async def test_tool_exchanges_remain_paired_when_results_finish_out_of_order(str
         assert [(message["role"], message["content"]) for message in agent.messages] == exp_messages
     finally:
         await reader.aclose()
-
-
-@pytest.mark.asyncio
-async def test_bidi_agent_loop_tool_result_not_sent_after_reconnect(loop, agent, agenerator):
-    """A tool completing after a reconnect records its result but does not send it.
-
-    The tool_use_id is scoped to the connection that issued the call; sending the result to
-    the reconnected connection would be rejected by the provider (e.g. Nova
-    "Not expecting a tool result") and end the session.
-    """
-    tool_use = {"toolUseId": "t1", "name": "time_tool", "input": {}}
-
-    agent.model.receive = unittest.mock.Mock(return_value=agenerator([]))
-    await loop.start()
-
-    # A reconnect during tool execution advances the connection generation.
-    issuing_generation = loop._generation
-    loop._generation += 1
-
-    # Drain the event queue (maxsize=1) so _run_tools' puts do not block.
-    async def drain():
-        async for _ in loop.receive():
-            pass
-
-    drain_task = asyncio.create_task(drain())
-    try:
-        await loop._run_tools([tool_use], issuing_generation)
-        await asyncio.sleep(0)
-    finally:
-        drain_task.cancel()
-
-    # The completed exchange is recorded for the provider's reconnect replay...
-    assert [message["role"] for message in agent.messages] == ["assistant", "user"]
-    assert agent.messages[0]["content"] == [{"toolUse": tool_use}]
-    assert agent.messages[-1]["content"] == [
-        {
-            "toolResult": {
-                "toolUseId": "t1",
-                "status": "success",
-                "content": [{"text": "12:00"}],
-            }
-        }
-    ]
-    # ...but the stale result is not sent to the reconnected connection.
-    agent.model.send.assert_not_called()
 
 
 @pytest.mark.asyncio
