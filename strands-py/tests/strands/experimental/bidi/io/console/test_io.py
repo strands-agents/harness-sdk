@@ -15,6 +15,7 @@ from strands.experimental.bidi.types import (
     BidiTextDeltaEvent,
     BidiTextStartEvent,
     BidiTextStopEvent,
+    BidiToolUseBlocksEvent,
     BidiTranscriptDeltaEvent,
     BidiTranscriptStartEvent,
     BidiTranscriptStopEvent,
@@ -25,6 +26,11 @@ from strands.types.content import TextBlock
 @pytest.fixture
 def console(terminal):
     return ConsoleIO()
+
+
+@pytest.fixture
+def tool_use_event():
+    return BidiToolUseBlocksEvent([{"toolUseId": name, "name": name, "input": {}} for name in ("weather", "time")])
 
 
 @pytest_asyncio.fixture
@@ -59,7 +65,7 @@ async def reader(input_stream):
 
 
 @pytest.mark.asyncio
-async def test_input_preserves_draft_during_output(console, reader, output_stream, terminal):
+async def test_input_preserves_draft_during_output(console, reader, output_stream, terminal, tool_use_event):
     async def wait_for_draft():
         while console._display.draft != "draft":
             await asyncio.sleep(0)
@@ -69,8 +75,12 @@ async def test_input_preserves_draft_during_output(console, reader, output_strea
 
     await output_stream(BidiTextStartEvent("text"))
     await output_stream(BidiTextDeltaEvent("Answer", "text"))
+    await output_stream(tool_use_event)
 
     assert console._display.draft == "draft"
+    with console._display.console.capture() as capture:
+        console._display.console.print(console._display)
+    assert "Tools: [weather, time]" in capture.get()
 
     terminal.send_text("\x7f!\r")
     tru_input = await asyncio.wait_for(reader, 2)
@@ -121,12 +131,16 @@ async def test_input_stop_releases_keyboard_after_cancellation(input_stream, rea
 
 
 @pytest.mark.asyncio
-async def test_output_completes_interleaved_content_in_order(console, output_stream, capsys):
+@pytest.mark.parametrize("tool_count, exp_tool_text", [(1, "Tools: [weather]"), (2, "Tools: [weather, time]")])
+async def test_output_completes_interleaved_content_in_order(
+    console, output_stream, capsys, tool_use_event, tool_count, exp_tool_text
+):
     for event in [
         BidiTranscriptStartEvent("user", "user"),
         BidiTranscriptDeltaEvent("Question", "user", "user"),
         BidiReasoningStartEvent("reasoning"),
         BidiReasoningDeltaEvent("Thinking", "reasoning"),
+        BidiToolUseBlocksEvent(tool_use_event.tool_uses[:tool_count]),
         BidiTextStartEvent("text"),
         BidiTextDeltaEvent("Answer", "text"),
         BidiTranscriptStartEvent("assistant", "speech"),
@@ -143,7 +157,7 @@ async def test_output_completes_interleaved_content_in_order(console, output_str
     await output_stream(BidiTranscriptStopEvent("user", "user"))
 
     tru_lines = [line.rstrip() for line in capsys.readouterr().out.splitlines() if line.strip()]
-    exp_lines = ["> Question", "Reasoning: Thinking", "Answer", "Spoken answer"]
+    exp_lines = ["> Question", "Reasoning: Thinking", exp_tool_text, "Answer", "Spoken answer"]
     assert tru_lines == exp_lines
     assert not console._display.blocks
 
@@ -172,12 +186,13 @@ async def test_output_connection_stop_flushes_partial_content(console, output_st
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("enabled", ["text", "reasoning", "transcript", None])
-async def test_output_filters_content(enabled, capsys):
+@pytest.mark.parametrize("enabled", ["text", "reasoning", "transcript", "tools", None])
+async def test_output_filters_content(enabled, capsys, tool_use_event):
     config = ConsoleIOConfig(
         show_text=enabled == "text",
         show_reasoning=enabled == "reasoning",
         show_transcript=enabled == "transcript",
+        show_tools=enabled == "tools",
     )
     console = ConsoleIO(**config)
     output = console.output()
@@ -191,6 +206,7 @@ async def test_output_filters_content(enabled, capsys):
             BidiTextDeltaEvent("Answer", "text"),
             BidiTranscriptStartEvent("assistant", "speech"),
             BidiTranscriptDeltaEvent("Spoken", "assistant", "speech"),
+            tool_use_event,
             BidiReasoningStopEvent("reasoning"),
             BidiTextStopEvent("text"),
             BidiTranscriptStopEvent("assistant", "speech"),
@@ -198,7 +214,13 @@ async def test_output_filters_content(enabled, capsys):
             await output(event)
 
         tru_output = capsys.readouterr().out.strip()
-        exp_output = {"text": "Answer", "reasoning": "Reasoning: Thinking", "transcript": "Spoken", None: ""}[enabled]
+        exp_output = {
+            "text": "Answer",
+            "reasoning": "Reasoning: Thinking",
+            "transcript": "Spoken",
+            "tools": "Tools: [weather, time]",
+            None: "",
+        }[enabled]
         assert tru_output == exp_output
 
     finally:

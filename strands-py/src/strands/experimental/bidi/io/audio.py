@@ -353,7 +353,7 @@ class AudioIO:
 
                 - audio_processor (bool | AudioProcessorConfig): Set to True to enable microphone audio processing
                   with defaults, or supply a configuration for custom options. False and None disable processing.
-                - console (ConsoleIO): Shared display. Defaults to a new ConsoleIO with only transcripts enabled
+                - console (ConsoleIO): Shared display. Defaults to a ConsoleIO with transcripts and tool calls enabled
                   and a "Speak…" placeholder.
                 - input_buffer_size (int): Maximum input buffer size (default: None). Must be between 1 and 100
                   when echo cancellation is on; defaults to 100 so the mic and reference buffers remain aligned.

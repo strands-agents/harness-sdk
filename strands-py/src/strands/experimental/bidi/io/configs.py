@@ -32,12 +32,13 @@ class AudioIOConfig(TypedDict, total=False):
 
 
 class ConsoleIOConfig(TypedDict, total=False):
-    """Configure console input display and text, reasoning, and transcript output."""
+    """Configure console input display and text, reasoning, transcript, and tool call output."""
 
     placeholder: str
     show_text: bool
     show_reasoning: bool
     show_transcript: bool
+    show_tools: bool
 
 
 __all__ = ["AudioIOConfig", "AudioProcessorConfig", "ConsoleIOConfig"]

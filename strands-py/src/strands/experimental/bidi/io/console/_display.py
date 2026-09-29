@@ -54,6 +54,15 @@ class ReasoningBlock(DisplayBlock):
         return Padding(text, (0, 0, 1, 0))
 
 
+class ToolBlock(DisplayBlock):
+    """Tool call names displayed in gray."""
+
+    def __rich__(self) -> RenderableType:
+        """Render bracketed tool names with a trailing blank line."""
+        text = Text("Tools: [", style="#808080") + self.copy() + Text("]")
+        return Padding(text, (0, 0, 1, 0))
+
+
 class Display:
     """Show active content and a draft while preserving completed text in terminal history."""
 

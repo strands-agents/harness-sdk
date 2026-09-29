@@ -144,9 +144,7 @@ asyncio.run(main())
 This creates a voice-enabled agent that captures audio from your microphone, streams
 it to the model as `AudioDelta` inputs, and plays responses through your speakers.
 
-By default, audio output displays only speech transcripts through `ConsoleIO`,
-with `"Speak…"` as its input placeholder. Pass `console=console_io` to customize
-the display.
+By default, audio output displays speech transcripts and tool call names through `ConsoleIO`, with `"Speak…"` as its input placeholder. Pass `console=console_io` to customize the display.
 
 ### Configurations
 
@@ -214,8 +212,7 @@ another encoding raises `ValueError`. Use custom I/O for other encodings.
 
 ## Console I/O
 
-Use `ConsoleIO` to type messages while the agent streams text, reasoning, and speech
-transcripts.
+Use `ConsoleIO` to type messages while the agent streams text, reasoning, speech transcripts, and tool calls.
 
 :::note[Installation Required]
 `ConsoleIO` uses the `bidi-io` extra. The example below also needs `bidi-openai`:
@@ -264,6 +261,7 @@ Ctrl-C to exit.
 | `show_text` | Display agent text responses | `False` | `True` |
 | `show_reasoning` | Display agent reasoning | `False` | `True` |
 | `show_transcript` | Display speech transcripts | `False` | `True` |
+| `show_tools` | Display tool call names | `False` | `True` |
 
 ### Type and Talk
 

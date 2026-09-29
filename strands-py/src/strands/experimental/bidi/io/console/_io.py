@@ -16,13 +16,14 @@ from ...types.events import (
     BidiTextDeltaEvent,
     BidiTextStartEvent,
     BidiTextStopEvent,
+    BidiToolUseBlocksEvent,
     BidiTranscriptDeltaEvent,
     BidiTranscriptStartEvent,
     BidiTranscriptStopEvent,
 )
 from ...types.io import InputStream, OutputStream
 from ..configs import ConsoleIOConfig
-from ._display import AssistantBlock, Display, ReasoningBlock, UserBlock
+from ._display import AssistantBlock, Display, ReasoningBlock, ToolBlock, UserBlock
 from ._keyboard import Keyboard
 
 if TYPE_CHECKING:
@@ -30,7 +31,7 @@ if TYPE_CHECKING:
 
 
 class ConsoleIO:
-    """Type messages while displaying text, reasoning, and speech transcripts.
+    """Type messages while displaying text, reasoning, speech transcripts, and tool calls.
 
     Input and output share a terminal display, so streamed content preserves the
     unfinished input line. Enter sends a message.
@@ -46,12 +47,14 @@ class ConsoleIO:
                 - show_text (bool): Display agent text responses (default: True).
                 - show_reasoning (bool): Display agent reasoning (default: True).
                 - show_transcript (bool): Display user and agent speech transcripts (default: True).
+                - show_tools (bool): Display tool call names (default: True).
         """
         self._config: ConsoleIOConfig = {
             "placeholder": "",
             "show_text": True,
             "show_reasoning": True,
             "show_transcript": True,
+            "show_tools": True,
             **config,
         }
         self._display = Display(self._config["placeholder"])
@@ -62,7 +65,7 @@ class ConsoleIO:
         return _ConsoleInputStream(self._display, self._keyboard)
 
     def output(self) -> "_ConsoleOutputStream":
-        """Return the text, reasoning, and transcript output stream."""
+        """Return the text, reasoning, transcript, and tool call output stream."""
         return _ConsoleOutputStream(self._config, self._display)
 
 
@@ -103,7 +106,7 @@ class _ConsoleInputStream(InputStream):
 
 
 class _ConsoleOutputStream(OutputStream):
-    """Display enabled text, reasoning, and transcript streams."""
+    """Display enabled text, reasoning, transcript, and tool call output."""
 
     def __init__(self, config: ConsoleIOConfig, display: Display) -> None:
         """Share the configured content filters and terminal display."""
@@ -126,6 +129,11 @@ class _ConsoleOutputStream(OutputStream):
             self._display.blocks[event.content_id] = ReasoningBlock()
         elif isinstance(event, BidiTranscriptStartEvent) and self._config["show_transcript"]:
             self._display.blocks[event.content_id] = UserBlock() if event.role == "user" else AssistantBlock()
+        elif isinstance(event, BidiToolUseBlocksEvent) and self._config["show_tools"]:
+            if not event.tool_uses:
+                return
+            names = ", ".join(tool_use["name"] for tool_use in event.tool_uses)
+            self._display.blocks[event.tool_uses[0]["toolUseId"]] = ToolBlock(names, complete=True)
         elif isinstance(event, (BidiTextDeltaEvent, BidiReasoningDeltaEvent, BidiTranscriptDeltaEvent)):
             block = self._display.blocks.get(event.content_id)
             if block is None:
