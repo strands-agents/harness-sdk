@@ -274,7 +274,16 @@ class BedrockModel(Model):
             else:
                 new_user_agent = "strands-agents"
 
-            client_config = boto_client_config.merge(
+            # Merge the caller's config over a base that carries the library
+            # default read timeout (120s). botocore's merge only lets values the
+            # caller explicitly provided override the base — a caller-provided
+            # config without a read_timeout no longer silently drops to
+            # botocore's 60s default (#4394), while an explicit read_timeout
+            # still wins.
+            client_config = BotocoreConfig(read_timeout=DEFAULT_READ_TIMEOUT).merge(
+                boto_client_config
+            )
+            client_config = client_config.merge(
                 BotocoreConfig(
                     user_agent_extra=new_user_agent,
                     **({"signature_version": UNSIGNED} if api_key else {}),
