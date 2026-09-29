@@ -50,6 +50,7 @@ from strands.experimental.bidi.types import (
     BidiTranscriptStopEvent,
     BidiUsageEvent,
 )
+from strands.experimental.bidi.types.events import BidiToolUseBlocksEvent
 from strands.types.content import TextBlock
 from strands.types.media import ImageBlock
 from strands.types.tools import ToolResultBlock
@@ -1266,21 +1267,11 @@ async def test_event_conversion(nova_model):
     ]
     assert tru_events == exp_events
 
-    # Test tool use (now returns ToolUseStreamEvent from core strands)
     tool_input = {"location": "Seattle"}
     nova_event = {"toolUse": {"toolUseId": "tool-123", "toolName": "get_weather", "content": json.dumps(tool_input)}}
-    result = nova_model._convert_nova_event(
-        nova_event,
-        response_state,
-    )[0]
-    # ToolUseStreamEvent has delta and current_tool_use, not a "type" field
-    assert "delta" in result
-    assert "toolUse" in result["delta"]
-    tool_use = result["delta"]["toolUse"]
-    assert tool_use["toolUseId"] == "tool-123"
-    assert tool_use["name"] == "get_weather"
-    assert tool_use["input"] == json.dumps(tool_input)
-    assert result["current_tool_use"]["input"] == tool_input
+    tru_events = nova_model._convert_nova_event(nova_event, response_state)
+    exp_events = [BidiToolUseBlocksEvent([{"toolUseId": "tool-123", "name": "get_weather", "input": tool_input}])]
+    assert tru_events == exp_events
 
     # Test usage metrics (now returns BidiUsageEvent)
     nova_event = {
@@ -1821,7 +1812,6 @@ async def test_tool_result_unsupported_content_type(nova_model):
 @pytest.mark.parametrize("assistant_transcript", [False, True])
 @pytest.mark.parametrize("tool_count", [1, 3])
 def test_tool_calls_keep_response_open_until_audio_ends(nova_model, assistant_transcript, tool_count):
-    from strands.types._events import ToolUseStreamEvent
 
     state = _ResponseState()
     tool_events = []
@@ -1889,10 +1879,7 @@ def test_tool_calls_keep_response_open_until_audio_ends(nova_model, assistant_tr
             else []
         ),
         *[
-            ToolUseStreamEvent(
-                delta={"toolUse": {"toolUseId": f"call-{index}", "name": "time_tool", "input": "{}"}},
-                current_tool_use={"toolUseId": f"call-{index}", "name": "time_tool", "input": {}},
-            )
+            BidiToolUseBlocksEvent([{"toolUseId": f"call-{index}", "name": "time_tool", "input": {}}])
             for index in range(tool_count)
         ],
         *([] if assistant_transcript else [BidiTranscriptStartEvent("assistant", content_id)]),

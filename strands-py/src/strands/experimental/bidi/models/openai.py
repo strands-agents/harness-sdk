@@ -14,13 +14,12 @@ import time
 import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 
 import websockets
 from typing_extensions import Unpack, override
 from websockets import ClientConnection
 
-from ....types._events import ToolUseStreamEvent
 from ....types.content import Messages, TextBlock
 from ....types.media import ImageBlock
 from ....types.tools import ToolResultBlock, ToolSpec, ToolUse
@@ -38,6 +37,7 @@ from ..types.events import (
     BidiTextDeltaEvent,
     BidiTextStartEvent,
     BidiTextStopEvent,
+    BidiToolUseBlocksEvent,
     BidiTranscriptDeltaEvent,
     BidiTranscriptStartEvent,
     BidiTranscriptStopEvent,
@@ -105,11 +105,18 @@ _RESTART_INSTRUCTION = (
 )
 
 
+class _SessionSnapshot(TypedDict):
+    """State preserved across connection restarts."""
+
+    pending_tools: set[str]
+
+
 @dataclass
 class _SessionState:
     """Connection-local transcript identities and response creation state.
 
     Attributes:
+        pending_tools: Outstanding tool call IDs carried across connection restarts.
         pending_input_ids: IDs of submitted inputs awaiting confirmation that they were added to the conversation.
         input_audio_pending: Whether user speech has started but its audio has not yet been committed.
     """
@@ -126,6 +133,14 @@ class _SessionState:
     response_requested: bool = False
     transcription_enabled: bool = True
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    def take_snapshot(self) -> _SessionSnapshot:
+        """Capture state that survives a connection restart."""
+        return {"pending_tools": self.pending_tools.copy()}
+
+    def load_snapshot(self, snapshot: _SessionSnapshot) -> None:
+        """Restore state preserved across a connection restart."""
+        self.pending_tools = snapshot["pending_tools"].copy()
 
     def start_audio(self, response_id: str | None) -> list[BidiOutputEvent]:
         """Open an audio stream before its first chunk."""
@@ -245,7 +260,6 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         # Connection state (initialized in start())
         self._connection_id: str | None = None
 
-        self._function_call_buffer: dict[str, Any] = {}
         self._session_state = _SessionState()
 
         logger.debug("model=<%s> | openai realtime model initialized", self._config["model_id"])
@@ -329,7 +343,6 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         self._connection_id = str(uuid.uuid4())
         self._start_time = int(time.time())
 
-        self._function_call_buffer = {}
         self._session_state = _SessionState()
 
         # Establish WebSocket connection
@@ -567,8 +580,8 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
                 continue
 
             for event in self._convert_openai_event(openai_event, state) or []:
-                if isinstance(event, ToolUseStreamEvent):
-                    state.pending_tools.add(event["current_tool_use"]["toolUseId"])
+                if isinstance(event, BidiToolUseBlocksEvent):
+                    state.pending_tools.update(call["toolUseId"] for call in event.tool_uses)
                 yield event
             if state is self._session_state and event_type == "response.done":
                 await self._flush_response_request(state)
@@ -665,47 +678,15 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             error_info = openai_event.get("error", {})
             raise RuntimeError(error_info.get("message", "Transcription failed."))
 
-        if event_type == "response.function_call_arguments.delta":
-            call_id = openai_event.get("call_id")
-            delta = openai_event.get("delta", "")
-            if call_id:
-                if call_id not in self._function_call_buffer:
-                    self._function_call_buffer[call_id] = {"call_id": call_id, "name": "", "arguments": delta}
-                else:
-                    self._function_call_buffer[call_id]["arguments"] += delta
-            return None
-
-        if event_type == "response.function_call_arguments.done":
-            call_id = openai_event.get("call_id")
-            if call_id and call_id in self._function_call_buffer:
-                function_call = self._function_call_buffer[call_id]
-                try:
-                    tool_use: ToolUse = {
-                        "toolUseId": call_id,
-                        "name": function_call["name"],
-                        "input": json.loads(function_call["arguments"]) if function_call["arguments"] else {},
-                    }
-                    del self._function_call_buffer[call_id]
-                    # Return ToolUseStreamEvent for consistency with standard agent
-                    return [
-                        ToolUseStreamEvent(
-                            delta={
-                                "toolUse": {
-                                    "toolUseId": tool_use["toolUseId"],
-                                    "name": tool_use["name"],
-                                    "input": json.dumps(tool_use["input"]),
-                                }
-                            },
-                            current_tool_use=dict(tool_use),
-                        )
-                    ]
-                except (json.JSONDecodeError, KeyError) as error:
-                    logger.warning("call_id=<%s>, error=<%s> | error parsing function arguments", call_id, error)
-                    del self._function_call_buffer[call_id]
+        if event_type == "response.output_item.done":
+            item = openai_event["item"]
+            if item["type"] == "function_call" and item["status"] == "completed":
+                tool_use = ToolUse(toolUseId=item["call_id"], name=item["name"], input=json.loads(item["arguments"]))
+                return [BidiToolUseBlocksEvent([tool_use])]
             return None
 
         if event_type == "response.done":
-            return self._complete_response(openai_event.get("response", {}), state)
+            return self._complete_response(openai_event["response"], state)
 
         if event_type in ("conversation.item.retrieve", "conversation.item.added"):
             item = openai_event.get("item", {})
@@ -719,7 +700,6 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
 
         if event_type in (
             "response.output_item.added",
-            "response.output_item.done",
             "response.content_part.added",
             "response.content_part.done",
         ):
@@ -730,21 +710,6 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
                 item_data.get("id") if item_data else "unknown",
             )
 
-            # Track function call names from response.output_item.added
-            if event_type == "response.output_item.added":
-                item = openai_event.get("item", {})
-                if item.get("type") == "function_call":
-                    call_id = item.get("call_id")
-                    function_name = item.get("name")
-                    if call_id and function_name:
-                        if call_id not in self._function_call_buffer:
-                            self._function_call_buffer[call_id] = {
-                                "call_id": call_id,
-                                "name": function_name,
-                                "arguments": "",
-                            }
-                        else:
-                            self._function_call_buffer[call_id]["name"] = function_name
             return None
 
         if event_type in (
@@ -752,6 +717,8 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             "input_audio_buffer.cleared",
             "session.created",
             "session.updated",
+            "response.function_call_arguments.delta",
+            "response.function_call_arguments.done",
         ):
             logger.debug("event_type=<%s> | openai event received", event_type)
             return None
@@ -980,8 +947,10 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             **restart_kwargs: Reserved for provider-specific restart options.
         """
         logger.debug("openai realtime restart starting")
+        snapshot = self._session_state.take_snapshot()
         await self.stop()
         await self.start(system_prompt, tools, messages, **restart_kwargs)
+        self._session_state.load_snapshot(snapshot)
         # Re-anchor the fresh session so it continues the conversation rather than drifting. This is
         # a best-effort nudge: if the send fails, the connection is still healthy, so log and move on
         # rather than let a failed nudge tear down the session.

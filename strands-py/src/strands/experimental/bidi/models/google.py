@@ -13,12 +13,11 @@ Key improvements over custom WebSocket implementation:
 """
 
 import base64
-import json
 import logging
 import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 
 from google import genai
 from google.genai import types as genai_types
@@ -26,7 +25,6 @@ from google.genai.types import LiveConnectConfigOrDict, LiveServerContent, LiveS
 from typing_extensions import Unpack, override
 
 from ....models._validation import validate_config_keys
-from ....types._events import ToolUseStreamEvent
 from ....types.content import Messages, TextBlock
 from ....types.media import ImageBlock
 from ....types.tools import ToolResultBlock, ToolSpec, ToolUse
@@ -47,6 +45,7 @@ from ..types.events import (
     BidiTextDeltaEvent,
     BidiTextStartEvent,
     BidiTextStopEvent,
+    BidiToolUseBlocksEvent,
     BidiTranscriptDeltaEvent,
     BidiTranscriptStartEvent,
     BidiTranscriptStopEvent,
@@ -71,13 +70,17 @@ from .model import AudioCapable, BidiModel, ConnectionTimeoutError
 logger = logging.getLogger(__name__)
 
 
+class _TurnSnapshot(TypedDict):
+    """State preserved across connection restarts."""
+
+    tool_names: dict[str, str]
+
+
 @dataclass
 class _TurnState:
-    """Per-reader tracking for Gemini's inferred turn bracketing.
+    """Track turns and outstanding tools for one connection.
 
-    A turn is open from the first model output until ``turn_complete``. Kept on the reader (created
-    in ``receive()``), not the model, so a superseded reader draining its closing session cannot
-    flip the replacing connection's turn state.
+    Each reader binds to its connection's state so it cannot alter a replacement connection.
     """
 
     response_id: str | None = None
@@ -89,6 +92,15 @@ class _TurnState:
     input_ids: set[str] = field(default_factory=set)
     response_input_ids: list[str] = field(default_factory=list)
     last_activity_input_id: str | None = None
+    tool_names: dict[str, str] = field(default_factory=dict)
+
+    def take_snapshot(self) -> _TurnSnapshot:
+        """Capture state that survives a connection restart."""
+        return {"tool_names": self.tool_names.copy()}
+
+    def load_snapshot(self, snapshot: _TurnSnapshot) -> None:
+        """Restore state preserved across a connection restart."""
+        self.tool_names = snapshot["tool_names"].copy()
 
     def stop_text(self) -> list[BidiOutputEvent]:
         """Close the current text or reasoning block."""
@@ -164,6 +176,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         self._live_session_context_manager: Any = None
         self._live_session_handle: str | None = None
         self._connection_id: str | None = None
+        self._turn_state = _TurnState()
 
     @override
     def update_config(self, **model_config: Unpack[ModelUpdateConfig]) -> None:  # type: ignore[override]
@@ -233,6 +246,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
             self._live_session_handle = None
 
         self._connection_id = str(uuid.uuid4())
+        self._turn_state = _TurnState()
 
         # Build live config — only enable initial-history mode when text content exists
         # (tool-only history is dropped by _send_message_history and would leave the server
@@ -290,7 +304,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         # self._live_session, a still-draining reader keeps its own closing session and turn state
         # rather than mutating the connection that replaced it.
         session = self._live_session
-        turn_state = _TurnState()
+        turn_state = self._turn_state
 
         # Wrap in while loop to restart after turn_complete (SDK limitation workaround)
         while True:
@@ -360,25 +374,12 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
             )
 
         if message.tool_call and message.tool_call.function_calls:
-            for func_call in message.tool_call.function_calls:
-                tool_use_event: ToolUse = {
-                    "toolUseId": cast(str, func_call.id),
-                    "name": cast(str, func_call.name),
-                    "input": func_call.args or {},
-                }
-                # Create ToolUseStreamEvent for consistency with standard agent
-                events.append(
-                    ToolUseStreamEvent(
-                        delta={
-                            "toolUse": {
-                                "toolUseId": tool_use_event["toolUseId"],
-                                "name": tool_use_event["name"],
-                                "input": json.dumps(tool_use_event["input"]),
-                            }
-                        },
-                        current_tool_use=dict(tool_use_event),
-                    )
-                )
+            tool_uses = [
+                ToolUse(toolUseId=cast(str, call.id), name=cast(str, call.name), input=call.args or {})
+                for call in message.tool_call.function_calls
+            ]
+            turn_state.tool_names.update((tool_use["toolUseId"], tool_use["name"]) for tool_use in tool_uses)
+            events.append(BidiToolUseBlocksEvent(tool_uses))
 
         if message.usage_metadata:
             events.append(self._convert_usage_metadata(message.usage_metadata))
@@ -394,7 +395,9 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         turn_complete = bool(server_content and server_content.turn_complete)
         generation_complete = bool(server_content and server_content.generation_complete)
         produced_model_output = any(
-            isinstance(event, (BidiAudioDeltaEvent, BidiTextDeltaEvent, BidiReasoningDeltaEvent, ToolUseStreamEvent))
+            isinstance(
+                event, (BidiAudioDeltaEvent, BidiTextDeltaEvent, BidiReasoningDeltaEvent, BidiToolUseBlocksEvent)
+            )
             or (isinstance(event, BidiTranscriptDeltaEvent) and event.role == "assistant")
             for event in events
         )
@@ -577,6 +580,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
     async def _send_message(self, message: BidiMessage) -> None:
         """Send one user turn or tool results."""
         parts = []
+        function_responses = []
         for block in message.content:
             if isinstance(block, TextBlock):
                 parts.append(genai_types.Part(text=block.text))
@@ -588,10 +592,14 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
                     genai_types.Part(inline_data=genai_types.Blob(data=image_bytes, mime_type=f"image/{block.format}"))
                 )
             elif isinstance(block, ToolResultBlock):
-                await self._send_tool_result(block)
+                function_responses.append(self._format_tool_result(block))
             else:
                 raise ValueError(f"content_type={type(block)} | content not supported by Gemini Live")
 
+        if function_responses:
+            await self._live_session.send_tool_response(function_responses=function_responses)
+            for response in function_responses:
+                self._turn_state.tool_names.pop(cast(str, response.id), None)
         if parts:
             await self._live_session.send_client_content(
                 turns=genai_types.Content(role="user", parts=parts), turn_complete=True
@@ -614,8 +622,8 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         # Send real-time audio input - this automatically handles VAD and barge-in
         await self._live_session.send_realtime_input(audio=audio_blob)
 
-    async def _send_tool_result(self, tool_result: ToolResultBlock) -> None:
-        """Internal: Send tool result using Gemini Live API."""
+    def _format_tool_result(self, tool_result: ToolResultBlock) -> genai_types.FunctionResponse:
+        """Convert one result for a Gemini tool-response message."""
         tool_use_id = tool_result.tool_use_id
         content = tool_result.content
 
@@ -636,14 +644,11 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
             result_data = {"result": content}
 
         # Create function response
-        func_response = genai_types.FunctionResponse(
+        return genai_types.FunctionResponse(
             id=tool_use_id,
-            name=tool_use_id,  # Gemini uses name as identifier
+            name=self._turn_state.tool_names[tool_use_id],
             response=result_data,
         )
-
-        # Send tool response
-        await self._live_session.send_tool_response(function_responses=[func_response])
 
     async def stop(self) -> None:
         """Close Gemini Live API connection."""
@@ -662,6 +667,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
 
         async def stop_connection() -> None:
             self._connection_id = None
+            self._turn_state.tool_names.clear()
 
         await stop_all(stop_session, stop_connection)
 
@@ -687,16 +693,15 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         """
         handle = restart_kwargs.pop("live_session_handle", None) or self._live_session_handle
         logger.debug("session_handle=<%s> | gemini restart starting", handle)
+        snapshot = self._turn_state.take_snapshot()
         await self.stop()
 
-        if handle is not None and await self._try_resume(system_prompt, tools, handle, **restart_kwargs):
-            logger.debug("connection_id=<%s> | gemini restart complete via resume", self._connection_id)
-            return
-
-        # No handle, or the server refused it: start fresh and replay history so the conversation
-        # continues rather than going silent.
-        await self.start(system_prompt, tools, messages, **restart_kwargs)
-        logger.debug("connection_id=<%s> | gemini restart complete via fresh session", self._connection_id)
+        if handle is None or not await self._try_resume(system_prompt, tools, handle, **restart_kwargs):
+            # No handle, or the server refused it: start fresh and replay history so the conversation
+            # continues rather than going silent.
+            await self.start(system_prompt, tools, messages, **restart_kwargs)
+        self._turn_state.load_snapshot(snapshot)
+        logger.debug("connection_id=<%s> | gemini restart complete", self._connection_id)
 
     async def _try_resume(
         self, system_prompt: str | None, tools: list[ToolSpec] | None, handle: str, **restart_kwargs: Any

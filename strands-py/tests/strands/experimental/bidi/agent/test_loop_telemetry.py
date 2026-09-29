@@ -10,6 +10,7 @@ Tests that spans are created, closed, and attributed correctly for:
 - Usage accumulation
 """
 
+import asyncio
 import unittest.mock
 
 import pytest
@@ -32,11 +33,12 @@ from strands.experimental.bidi.types import (
     BidiConnectionStopEvent,
     BidiResponseStartEvent,
     BidiResponseStopEvent,
+    BidiToolUseBlocksEvent,
     BidiTranscriptStartEvent,
     BidiUsageEvent,
 )
 from strands.telemetry.tracer import Tracer
-from strands.types._events import ToolResultMessageEvent, ToolUseStreamEvent
+from strands.types._events import ToolResultMessageEvent
 
 
 class _InMemoryExporter(SpanExporter):
@@ -257,10 +259,11 @@ async def test_response_span_omits_time_to_first_audio_when_no_audio(loop, agent
 
 
 @pytest.mark.asyncio
-async def test_tool_call_span_created(loop, agent, agenerator, otel_setup):
-    """Tool call span wraps tool execution."""
-    tool_use = {"toolUseId": "t1", "name": "mock_tool", "input": {}}
-    events = [ToolUseStreamEvent(current_tool_use=tool_use, delta="")]
+@pytest.mark.parametrize("tool_count", [1, 2])
+async def test_tool_call_span_created(loop, agent, agenerator, otel_setup, tool_count):
+    """Each call in a tool group gets its own execution span."""
+    tool_uses = [{"toolUseId": f"call-{index}", "name": "mock_tool", "input": {}} for index in range(tool_count)]
+    events = [BidiToolUseBlocksEvent(tool_uses)]
     agent.model.receive = unittest.mock.Mock(return_value=agenerator(events))
 
     await loop.start()
@@ -271,18 +274,20 @@ async def test_tool_call_span_created(loop, agent, agenerator, otel_setup):
 
     await loop.stop()
 
-    spans = otel_setup.get_finished_spans()
-    tool_spans = [s for s in spans if "execute_tool" in s.name]
-    assert len(tool_spans) == 1
-    assert tool_spans[0].attributes["gen_ai.tool.name"] == "mock_tool"
-    assert tool_spans[0].status.status_code == StatusCode.OK
+    tru_spans = sorted(
+        (span.attributes["gen_ai.tool.call.id"], span.attributes["gen_ai.tool.name"], span.status.status_code)
+        for span in otel_setup.get_finished_spans()
+        if "execute_tool" in span.name
+    )
+    exp_spans = [(call["toolUseId"], "mock_tool", StatusCode.OK) for call in tool_uses]
+    assert tru_spans == exp_spans
 
 
 @pytest.mark.asyncio
 async def test_tool_call_span_closed_on_error(loop, agent, agenerator, otel_setup):
     """Tool call span is closed with error status when tool execution raises."""
     tool_use = {"toolUseId": "t1", "name": "mock_tool", "input": {}}
-    events = [ToolUseStreamEvent(current_tool_use=tool_use, delta="")]
+    events = [BidiToolUseBlocksEvent([tool_use])]
     agent.model.receive = unittest.mock.Mock(return_value=agenerator(events))
     agent.tool_executor._stream = unittest.mock.Mock(side_effect=RuntimeError("tool boom"))
 
@@ -497,3 +502,36 @@ def test_end_session_span_latest_conventions_suppresses_deprecated_cache_name(mo
     emitted = span.set_attributes.call_args[0][0]
     assert emitted["gen_ai.usage.cache_read.input_tokens"] == 20
     assert "gen_ai.usage.cache_read_input_tokens" not in emitted
+
+
+@pytest.mark.asyncio
+async def test_tool_group_shutdown_closes_spans(loop, agent, agenerator, otel_setup):
+    started = {name: asyncio.Event() for name in ("first", "second")}
+    stopped = []
+
+    @tool
+    async def wait_for_shutdown(name: str) -> str:
+        """Wait until cancelled by the agent."""
+        started[name].set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.append(name)
+        return "done"
+
+    agent.tool_registry.register_tool(wait_for_shutdown)
+    calls = [{"toolUseId": name, "name": wait_for_shutdown.tool_name, "input": {"name": name}} for name in started]
+    agent.model.receive = unittest.mock.Mock(return_value=agenerator([BidiToolUseBlocksEvent(calls)]))
+    await loop.start()
+    try:
+        await asyncio.wait_for(asyncio.gather(*(event.wait() for event in started.values())), 2)
+    finally:
+        await loop.stop()
+    assert sorted(stopped) == ["first", "second"]
+    tru_call_ids = sorted(
+        span.attributes["gen_ai.tool.call.id"]
+        for span in otel_setup.get_finished_spans()
+        if "execute_tool" in span.name
+    )
+    exp_call_ids = ["first", "second"]
+    assert tru_call_ids == exp_call_ids

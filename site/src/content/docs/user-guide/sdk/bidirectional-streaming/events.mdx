@@ -496,31 +496,31 @@ async for event in agent.receive():
 
 ### Tool Events
 
-Events for tool execution during conversations. Bidirectional streaming reuses the standard `ToolUseStreamEvent` from Strands.
+#### BidiToolUseBlocksEvent
 
-#### ToolUseStreamEvent
-
-Emitted when the model requests tool execution. See [Tools Overview](../tools/index.md) for details.
+Emitted when the model provides a complete group of tool calls. `tool_uses` contains the calls in provider order. A provider that emits individual calls uses a one-element list.
 
 ```python
 {
-    "type": "tool_use_stream",
-    "current_tool_use": {
-        "toolUseId": "tool_123",
-        "name": "notebook",
-        "input": {"expression": "2+2"}
-    }
+    "type": "bidi_tool_use_blocks",
+    "tool_uses": [
+        {
+            "toolUseId": "tool_123",
+            "name": "get_weather",
+            "input": {"city": "Seattle"}
+        },
+        {
+            "toolUseId": "tool_456",
+            "name": "get_weather",
+            "input": {"city": "Portland"}
+        }
+    ]
 }
 ```
 
-**Properties:**
+Each call contains `toolUseId`, `name`, and `input`. The agent executes the calls concurrently and sends their results together. A response can contain multiple tool-use groups.
 
-- `current_tool_use`: Information about the tool being used
-  - `toolUseId`: Unique ID for this tool use
-  - `name`: Name of the tool
-  - `input`: Tool input parameters
-
-Tools execute in the background. `ToolResultEvent` carries the actual result, and `ToolResultMessageEvent` carries its history message. Both retain the original tool-use ID. Dispatch acknowledgements emit `MessageAddedEvent` hooks when appended to history.
+Tools execute in the background. `ToolResultEvent` carries each result as it becomes available. Once the group finishes, `ToolResultMessageEvent` carries the history message containing all its results. Results retain their original tool-use IDs. Dispatch acknowledgements emit `MessageAddedEvent` hooks when appended to history.
 
 ### Usage Events
 
@@ -632,10 +632,10 @@ async def main():
             if event_type == "bidi_transcript_block":
                 print(f"{event['role']}: {event['transcript']}")
             
-            elif event_type == "tool_use_stream":
-                tool_use = event["current_tool_use"]
-                print(f"Using tool: {tool_use['name']}")
-                print(f"   Input: {tool_use['input']}")
+            elif event_type == "bidi_tool_use_blocks":
+                for tool_use in event["tool_uses"]:
+                    print(f"Using tool: {tool_use['name']}")
+                    print(f"   Input: {tool_use['input']}")
 
 asyncio.run(main())
 ```

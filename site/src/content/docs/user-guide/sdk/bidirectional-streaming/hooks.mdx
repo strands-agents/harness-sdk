@@ -293,12 +293,6 @@ class ConversationAnalytics:
 agent = BidiAgent(hooks=[ConversationAnalytics()])
 ```
 
-### Session persistence
-
-Use `FileSessionManager` or `S3SessionManager` to persist messages and state. They
-register shared initialization and message-added hooks, plus `BidiAgentStopEvent`
-for the final sync. See [Session Management](session-management.md).
-
 ## Accessing invocation state
 
 Pass context through `start(invocation_state=...)` or `run(..., invocation_state=...)`.
@@ -343,6 +337,5 @@ For more guidance on performance, errors, and composition, see the
 ## Next steps
 
 - [Agent](agent.md) - Learn about BidiAgent configuration and lifecycle
-- [Session Management](session-management.md) - Persist conversations across sessions
 - [Events](events.md) - Complete guide to bidirectional streaming events
 - [Python API Reference](@api/python/strands.experimental.bidi.agent) - Complete API documentation

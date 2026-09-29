@@ -25,6 +25,7 @@ from strands.experimental.bidi.types import (
     BidiTextDeltaEvent,
     BidiTextStartEvent,
     BidiTextStopEvent,
+    BidiToolUseBlocksEvent,
     BidiTranscriptBlockEvent,
     BidiTranscriptDeltaEvent,
     BidiTranscriptStartEvent,
@@ -213,3 +214,13 @@ def test_transcript_delta_event_normalizes_role_casing():
     event = BidiTranscriptDeltaEvent(delta="hi", role="USER", content_id="transcript")
 
     assert event.role == "user"
+
+
+def test_tool_use_blocks_event():
+    calls = [
+        {"toolUseId": "a", "name": "lookup", "input": {"key": "first"}},
+        {"toolUseId": "b", "name": "lookup", "input": {"key": "second"}},
+    ]
+    event = BidiToolUseBlocksEvent(calls)
+    assert event == {"type": "bidi_tool_use_blocks", "tool_uses": calls}
+    assert event.tool_uses is calls

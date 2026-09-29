@@ -22,6 +22,7 @@ from strands.experimental.bidi.models.openai import (
     _RESTART_INSTRUCTION,
     OPENAI_MAX_TIMEOUT_S,
     OPENAI_PROACTIVE_RECONNECT_MARGIN_S,
+    _SessionState,
 )
 from strands.experimental.bidi.types import (
     AudioDelta,
@@ -37,6 +38,7 @@ from strands.experimental.bidi.types import (
     BidiTextDeltaEvent,
     BidiTextStartEvent,
     BidiTextStopEvent,
+    BidiToolUseBlocksEvent,
     BidiTranscriptBlockEvent,
     BidiTranscriptDeltaEvent,
     BidiTranscriptStartEvent,
@@ -836,33 +838,12 @@ async def test_event_conversion(model):
         ),
     ]
 
-    # Test function call sequence
-    item_added = {
-        "type": "response.output_item.added",
-        "item": {"type": "function_call", "call_id": "call-123", "name": "calculator"},
-    }
-    model._convert_openai_event(item_added)
-
-    args_delta = {
-        "type": "response.function_call_arguments.delta",
-        "call_id": "call-123",
-        "delta": '{"expression": "2+2"}',
-    }
-    model._convert_openai_event(args_delta)
-
-    args_done = {"type": "response.function_call_arguments.done", "call_id": "call-123"}
-    converted = model._convert_openai_event(args_done)
-    # Now returns list with ToolUseStreamEvent
-    assert isinstance(converted, list)
-    assert len(converted) == 1
-    # ToolUseStreamEvent has delta and current_tool_use, not a "type" field
-    assert "delta" in converted[0]
-    assert "toolUse" in converted[0]["delta"]
-    tool_use = converted[0]["delta"]["toolUse"]
-    assert tool_use["toolUseId"] == "call-123"
-    assert tool_use["name"] == "calculator"
-    assert json.loads(tool_use["input"]) == {"expression": "2+2"}
-    assert converted[0]["current_tool_use"]["input"] == {"expression": "2+2"}
+    for event_type in (
+        "response.output_item.added",
+        "response.function_call_arguments.delta",
+        "response.function_call_arguments.done",
+    ):
+        assert model._convert_openai_event({"type": event_type}) is None
 
     speech_started = {"type": "input_audio_buffer.speech_started", "item_id": "speech"}
     tru_events = model._convert_openai_event(speech_started)
@@ -1428,6 +1409,35 @@ def test_audio_ids_distinguish_overlapping_and_reopened_streams(model):
     assert model._session_state.audio_content_ids == {}
 
 
+@pytest.mark.parametrize(
+    ("item_type", "status", "exp_events"),
+    [
+        (
+            "function_call",
+            "completed",
+            [BidiToolUseBlocksEvent([{"toolUseId": "call-123", "name": "calculator", "input": {"expression": "2+2"}}])],
+        ),
+        ("function_call", "incomplete", None),
+        ("message", "completed", None),
+        ("function_call_output", "completed", None),
+    ],
+)
+def test_completed_output_item_emits_tool_call(model, item_type, status, exp_events):
+    native_event = {
+        "type": "response.output_item.done",
+        "item": {
+            "type": item_type,
+            "status": status,
+            "call_id": "call-123",
+            "name": "calculator",
+            "arguments": '{"expression": "2+2"}',
+        },
+    }
+
+    tru_events = model._convert_openai_event(native_event)
+    assert tru_events == exp_events
+
+
 @pytest.mark.parametrize("pending_tools", [set(), {"other-call"}])
 @pytest.mark.parametrize(
     "output_types,status",
@@ -1700,6 +1710,68 @@ async def test_restart_reestablishes_and_replays_history(mock_websockets_connect
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("restart", [True, False])
+async def test_start_resets_connection_state(model, restart):
+    """Only a restart carries outstanding tools into the fresh connection."""
+    await model.start()
+    state = model._session_state
+    state.started_transcripts["transcript"] = True
+    state.assistant_parts["response"] = ("item", 0)
+    state.audio_content_ids["response"] = "audio"
+    state.active_responses.add("response")
+    state.pending_tools.update({"a", "b"})
+    state.pending_input_ids.add("input")
+    state.input_audio_pending = True
+    state.response_pending = True
+    state.response_requested = True
+
+    if restart:
+        await model.restart()
+    else:
+        await model.stop()
+        await model.start()
+
+    exp_state = _SessionState(pending_tools={"a", "b"} if restart else set(), lock=unittest.mock.ANY)
+    assert model._session_state == exp_state
+    assert model._session_state is not state
+    assert model._session_state.pending_tools is not state.pending_tools
+    await model.stop()
+
+
+@pytest.mark.asyncio
+async def test_restart_waits_for_pending_tool_results(model, mock_websocket):
+    """A restarted connection waits for all outstanding results before requesting a response."""
+    await model.start()
+    model._session_state.pending_tools.update({"a", "b"})
+    await model.restart()
+    mock_websocket.send.reset_mock()
+
+    exp_events = []
+    for call_id in ("a", "b"):
+        await model.send(
+            BidiMessage(content=[ToolResultBlock(tool_use_id=call_id, status="success", content=[{"text": call_id}])])
+        )
+        exp_events.append(
+            {
+                "type": "conversation.item.create",
+                "item": {
+                    "id": unittest.mock.ANY,
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": json.dumps([{"text": call_id}]),
+                },
+            }
+        )
+        if call_id == "b":
+            exp_events.append({"type": "response.create"})
+
+        tru_events = [json.loads(call.args[0]) for call in mock_websocket.send.await_args_list]
+        assert tru_events == exp_events
+
+    await model.stop()
+
+
+@pytest.mark.asyncio
 async def test_restart_forwards_tools(mock_websockets_connect, model, tool_spec):
     """Tools are re-sent on restart so the new session can still call them."""
     _, mock_ws = mock_websockets_connect
@@ -1820,26 +1892,33 @@ async def test_receive_binds_websocket_per_reader(mock_websockets_connect, model
 
 
 @pytest.mark.asyncio
-async def test_tool_results_wait_for_response_and_entire_group(model, mock_websocket):
-    """Submit results immediately, then generate one continuation when the group is ready."""
+async def test_tool_results_wait_for_response_and_pending_tools(model, mock_websocket):
+    """Submit results immediately, then generate one continuation after the remaining calls finish."""
     await model.start()
     mock_websocket.send.reset_mock()
     state = model._session_state
     state.active_responses.add("response-a")
-    state.pending_tools.update(("a", "b"))
     result_a = ToolResultBlock(tool_use_id="a", status="success", content=[{"text": "A"}])
     result_b = ToolResultBlock(tool_use_id="b", status="success", content=[{"text": "B"}])
+    items = [
+        {
+            "type": "function_call",
+            "status": "completed",
+            "call_id": call_id,
+            "name": f"tool_{call_id}",
+            "arguments": "{}",
+        }
+        for call_id in ("a", "b")
+    ]
     mock_websocket.recv.side_effect = [
+        *(json.dumps({"type": "response.output_item.done", "item": item}) for item in items),
         json.dumps(
             {
                 "type": "response.done",
                 "response": {
                     "id": "response-a",
                     "status": "completed",
-                    "output": [
-                        {"type": "function_call", "call_id": "a", "name": "tool_a", "arguments": "{}"},
-                        {"type": "function_call", "call_id": "b", "name": "tool_b", "arguments": "{}"},
-                    ],
+                    "output": items,
                 },
             }
         ),
@@ -1849,6 +1928,8 @@ async def test_tool_results_wait_for_response_and_entire_group(model, mock_webso
     reader = model.receive()
     await anext(reader)  # Connection start.
 
+    assert await anext(reader) == BidiToolUseBlocksEvent([{"toolUseId": "a", "name": "tool_a", "input": {}}])
+    assert await anext(reader) == BidiToolUseBlocksEvent([{"toolUseId": "b", "name": "tool_b", "input": {}}])
     await model.send(BidiMessage(content=[result_b]))
     assert await anext(reader) == BidiResponseStopEvent("response-a")
     await model._flush_response_request(state)

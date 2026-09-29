@@ -47,7 +47,6 @@ from smithy_http.aio.crt import AWSCRTHTTPClient, AWSCRTHTTPResponse
 from typing_extensions import Unpack, override
 
 from ....models._validation import validate_config_keys, validate_region
-from ....types._events import ToolUseStreamEvent
 from ....types.content import Messages, TextBlock
 from ....types.tools import ToolResultBlock, ToolSpec, ToolUse
 from .._async import stop_all
@@ -61,6 +60,7 @@ from ..types.events import (
     BidiOutputEvent,
     BidiResponseStartEvent,
     BidiResponseStopEvent,
+    BidiToolUseBlocksEvent,
     BidiTranscriptDeltaEvent,
     BidiTranscriptStartEvent,
     BidiTranscriptStopEvent,
@@ -872,18 +872,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
                 "input": json.loads(tool_use["content"]),
             }
             self._tool_uses[tool_use_event["toolUseId"]] = (response_state.connection_id, tool_use_event)
-            return [
-                ToolUseStreamEvent(
-                    delta={
-                        "toolUse": {
-                            "toolUseId": tool_use_event["toolUseId"],
-                            "name": tool_use_event["name"],
-                            "input": json.dumps(tool_use_event["input"]),
-                        }
-                    },
-                    current_tool_use=dict(tool_use_event),
-                )
-            ]
+            return [BidiToolUseBlocksEvent([tool_use_event])]
 
         if "contentEnd" in nova_event:
             content_end = nova_event["contentEnd"]

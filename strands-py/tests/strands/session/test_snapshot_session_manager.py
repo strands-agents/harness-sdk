@@ -390,15 +390,11 @@ def test_unknown_multi_agent_save_latest_on_is_rejected(storage):
 
 
 def test_bidi_agent_is_rejected_rather_than_silently_not_persisted(storage):
-    """Attaching this single-agent manager to a BidiAgent fails loudly instead of persisting nothing.
-
-    The base SessionManager wires BidiAgent hooks to message-log methods; this manager replaces
-    that wiring, so without an explicit rejection a BidiAgent would appear persisted while
-    nothing was ever written.
-    """
+    """Initializing this manager with a BidiAgent fails rather than silently persisting nothing."""
     manager = SnapshotSessionManager("b1", storage=storage)
+    agent = BidiAgent(model=Mock(spec=BidiModel))
     with pytest.raises(NotImplementedError, match="does not support BidiAgent"):
-        BidiAgent(model=Mock(spec=BidiModel), session_manager=manager)
+        manager.initialize(agent)
 
 
 def test_child_agent_session_manager_still_blocked(storage):

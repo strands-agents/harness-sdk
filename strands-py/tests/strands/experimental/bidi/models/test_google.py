@@ -10,7 +10,6 @@ Tests the unified GoogleGeminiLiveModel interface including:
 import asyncio
 import base64
 import copy
-import json
 import unittest.mock
 
 import pytest
@@ -35,12 +34,12 @@ from strands.experimental.bidi.types import (
     BidiTextDeltaEvent,
     BidiTextStartEvent,
     BidiTextStopEvent,
+    BidiToolUseBlocksEvent,
     BidiTranscriptDeltaEvent,
     BidiTranscriptStartEvent,
     BidiTranscriptStopEvent,
     BidiUsageEvent,
 )
-from strands.types._events import ToolUseStreamEvent
 from strands.types.content import TextBlock
 from strands.types.media import ImageBlock
 from strands.types.tools import ToolResultBlock
@@ -411,9 +410,11 @@ async def test_restart_resumes_via_session_handle(mock_genai_client, model, agen
     await anext(old_reader)
     old_start = await anext(old_reader)
     assert await anext(old_reader) == BidiTranscriptDeltaEvent("Before restart", "user", old_start.content_id)
+    assert model._turn_state.input_id == old_start.content_id
 
     await model.restart(system_prompt="hi")
     await old_reader.aclose()
+    assert model._turn_state == _TurnState()
 
     assert mock_live_session_cm.__aexit__.called  # old connection torn down
     assert model._connection_id is not None  # new connection established
@@ -471,12 +472,15 @@ async def test_fresh_start_clears_tracked_handle(mock_genai_client, model):
     mock_client, _, _ = mock_genai_client
     await model.start()
     model._live_session_handle = "old-session"
+    model._turn_state.tool_names["old-call"] = "lookup"
     await model.stop()
+    assert model._turn_state.tool_names == {}
 
     # A brand-new conversation: start with no handle.
     await model.start()
 
     assert model._live_session_handle is None
+    assert model._turn_state.tool_names == {}
     config = mock_client.aio.live.connect.call_args.kwargs["config"]
     assert config["session_resumption"]["handle"] is None
 
@@ -533,19 +537,20 @@ async def test_restart_falls_back_to_fresh_session_when_resume_rejected(mock_gen
 
 
 @pytest.mark.asyncio
-async def test_turn_state_is_per_reader(mock_genai_client, model, live_message):
-    """Turn bracketing is isolated per reader, so a superseded reader draining its closing session
-    cannot corrupt the turn state of the connection that replaced it.
-    """
-    _, _, _ = mock_genai_client
+async def test_turn_state_is_per_reader(model, live_message):
+    """A superseded reader cannot change the new connection's turns or tool tracking."""
     await model.start()
 
-    old_reader = _TurnState()
-    new_reader = _TurnState()
+    old_reader = model._turn_state
+    await model.restart()
+    new_reader = model._turn_state
 
     # The superseded reader drains a model output from its closing session, opening its own turn.
-    model._convert_gemini_live_event(live_message(data=b"stale_audio"), old_reader)
+    tool_call = genai_types.LiveServerToolCall(function_calls=[{"id": "old-call", "name": "lookup", "args": {}}])
+    model._convert_gemini_live_event(live_message(data=b"stale_audio", tool_call=tool_call), old_reader)
     assert old_reader.response_id is not None
+    assert old_reader.tool_names == {"old-call": "lookup"}
+    assert new_reader == _TurnState()
 
     # The new reader's state is untouched, so its first output still opens a response.
     events = model._convert_gemini_live_event(live_message(data=b"fresh_audio"), new_reader)
@@ -785,6 +790,7 @@ async def test_send_all_content_types(mock_genai_client, model):
     )
 
     # Test tool result
+    model._turn_state.tool_names["tool-123"] = "calculator"
     tool_result = ToolResultBlock(tool_use_id="tool-123", status="success", content=[{"text": "Result: 42"}])
     assert await model.send(BidiMessage(content=[tool_result])) is None
     mock_live_session.send_tool_response.assert_called_once()
@@ -898,62 +904,19 @@ async def test_event_conversion(mock_genai_client, model, live_message, server_c
         BidiAudioDeltaEvent(expected_b64, format="pcm", sample_rate=24000, channels=1, content_id=unittest.mock.ANY),
     ]
 
-    # Test single tool call (returns list with one event)
-    mock_func_call = unittest.mock.Mock()
-    mock_func_call.id = "tool-123"
-    mock_func_call.name = "calculator"
-    mock_func_call.args = {"expression": "2+2"}
-
-    mock_tool_call = unittest.mock.Mock()
-    mock_tool_call.function_calls = [mock_func_call]
-
-    mock_tool = live_message(tool_call=mock_tool_call)
-
-    tool_events = model._convert_gemini_live_event(mock_tool, turn_state)
-    # Should return a list of ToolUseStreamEvent
-    assert isinstance(tool_events, list)
-    assert len(tool_events) == 1
-    tool_event = tool_events[0]
-    # ToolUseStreamEvent has delta and current_tool_use, not a "type" field
-    assert "delta" in tool_event
-    assert "toolUse" in tool_event["delta"]
-    assert tool_event["delta"]["toolUse"]["toolUseId"] == "tool-123"
-    assert tool_event["delta"]["toolUse"]["name"] == "calculator"
-    assert tool_event["delta"]["toolUse"]["input"] == json.dumps({"expression": "2+2"})
-    assert tool_event["current_tool_use"]["input"] == {"expression": "2+2"}
-
-    # Test multiple tool calls (returns list with multiple events)
-    mock_func_call_1 = unittest.mock.Mock()
-    mock_func_call_1.id = "tool-123"
-    mock_func_call_1.name = "calculator"
-    mock_func_call_1.args = {"expression": "2+2"}
-
-    mock_func_call_2 = unittest.mock.Mock()
-    mock_func_call_2.id = "tool-456"
-    mock_func_call_2.name = "weather"
-    mock_func_call_2.args = {"location": "Seattle"}
-
-    mock_tool_call_multi = unittest.mock.Mock()
-    mock_tool_call_multi.function_calls = [mock_func_call_1, mock_func_call_2]
-
-    mock_tool_multi = live_message(tool_call=mock_tool_call_multi)
-
-    tool_events_multi = model._convert_gemini_live_event(mock_tool_multi, turn_state)
-    # Should return a list with two ToolUseStreamEvent
-    assert isinstance(tool_events_multi, list)
-    assert len(tool_events_multi) == 2
-
-    # Verify first tool call
-    assert tool_events_multi[0]["delta"]["toolUse"]["toolUseId"] == "tool-123"
-    assert tool_events_multi[0]["delta"]["toolUse"]["name"] == "calculator"
-    assert tool_events_multi[0]["delta"]["toolUse"]["input"] == json.dumps({"expression": "2+2"})
-    assert tool_events_multi[0]["current_tool_use"]["input"] == {"expression": "2+2"}
-
-    # Verify second tool call
-    assert tool_events_multi[1]["delta"]["toolUse"]["toolUseId"] == "tool-456"
-    assert tool_events_multi[1]["delta"]["toolUse"]["name"] == "weather"
-    assert tool_events_multi[1]["delta"]["toolUse"]["input"] == json.dumps({"location": "Seattle"})
-    assert tool_events_multi[1]["current_tool_use"]["input"] == {"location": "Seattle"}
+    calls = [
+        {"id": "tool-123", "name": "calculator", "args": {"expression": "2+2"}},
+        {"id": "tool-456", "name": "weather", "args": {"location": "Seattle"}},
+    ]
+    for group in (calls[:1], calls):
+        message = genai_types.LiveServerMessage(tool_call={"function_calls": group})
+        tru_events = model._convert_gemini_live_event(message, turn_state)
+        exp_events = [
+            BidiToolUseBlocksEvent(
+                [{"toolUseId": call["id"], "name": call["name"], "input": call["args"]} for call in group]
+            )
+        ]
+        assert tru_events == exp_events
 
     # Test barge-in
     mock_barge_in = live_message(server_content=server_content(interrupted=True))
@@ -1507,10 +1470,7 @@ def test_tool_handoff_and_continuation_have_separate_responses(model, complete_w
         BidiTranscriptStartEvent("user", content_id=input_id),
         BidiTranscriptDeltaEvent("What time is it?", "user", content_id=input_id),
         BidiResponseStartEvent(response_id),
-        ToolUseStreamEvent(
-            delta={"toolUse": {"toolUseId": "tool-1", "name": "time_tool", "input": "{}"}},
-            current_tool_use={"toolUseId": "tool-1", "name": "time_tool", "input": {}},
-        ),
+        BidiToolUseBlocksEvent([{"toolUseId": "tool-1", "name": "time_tool", "input": {}}]),
         BidiTranscriptStopEvent("user", content_id=input_id),
         BidiResponseStopEvent(response_id),
         BidiResponseStartEvent(continuation_id),
@@ -1873,6 +1833,7 @@ async def test_tool_result_single_content_unwrapped(mock_genai_client, model):
     _, mock_live_session, _ = mock_genai_client
     await model.start()
 
+    model._turn_state.tool_names["tool-123"] = "calculator"
     tool_result = ToolResultBlock(tool_use_id="tool-123", status="success", content=[{"text": "Single result"}])
 
     await model.send(BidiMessage(content=[tool_result]))
@@ -1897,6 +1858,7 @@ async def test_tool_result_multiple_content_as_array(mock_genai_client, model):
     _, mock_live_session, _ = mock_genai_client
     await model.start()
 
+    model._turn_state.tool_names["tool-456"] = "calculator"
     tool_result = ToolResultBlock(
         tool_use_id="tool-456", status="success", content=[{"text": "Part 1"}, {"json": {"data": "value"}}]
     )
@@ -2075,3 +2037,30 @@ def test_live_tool_uses_structured_parameter_schema(model):
             }
         ],
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("restart", [None, "resumed", "fresh", "resume_rejected"])
+async def test_send_tool_results_preserves_group(model, mock_genai_client, restart):
+    _, session, context_manager = mock_genai_client
+    await model.start()
+    calls = [{"id": "first", "name": "lookup"}, {"id": "second", "name": "calculator"}]
+    model._convert_gemini_live_event(
+        genai_types.LiveServerMessage(tool_call={"function_calls": calls}), model._turn_state
+    )
+    if restart is not None:
+        model._live_session_handle = None if restart == "fresh" else "resume-handle"
+        if restart == "resume_rejected":
+            context_manager.__aenter__.side_effect = [RuntimeError("resume rejected"), session]
+        await model.restart()
+
+    results = [ToolResultBlock(name, "success", [{"text": name}]) for name in ("first", "second")]
+    await model.send(BidiMessage(content=results))
+    session.send_tool_response.assert_awaited_once_with(
+        function_responses=[
+            genai_types.FunctionResponse(id="first", name="lookup", response={"text": "first"}),
+            genai_types.FunctionResponse(id="second", name="calculator", response={"text": "second"}),
+        ]
+    )
+    assert model._turn_state.tool_names == {}
+    await model.stop()

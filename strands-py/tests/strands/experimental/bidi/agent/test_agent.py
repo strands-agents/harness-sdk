@@ -17,6 +17,7 @@ from strands.experimental.bidi.types import (
     BidiConnectionStartEvent,
     BidiConnectionStopEvent,
     BidiMessage,
+    BidiToolUseBlocksEvent,
     BidiTranscriptDeltaEvent,
     BidiTranscriptStartEvent,
     InputStream,
@@ -24,7 +25,6 @@ from strands.experimental.bidi.types import (
 )
 from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent, MessageAddedEvent, MessageUpdatedEvent
 from strands.sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
-from strands.types._events import ToolUseStreamEvent
 from strands.types.content import SystemContentBlock, TextBlock
 from strands.types.media import AudioBlock, ImageBlock
 from tests.fixtures.mock_hook_provider import MockHookProvider
@@ -139,6 +139,7 @@ def test_bidi_agent_init_with_various_configurations():
     assert agent.model == mock_model
     assert agent.system_prompt is None
     assert agent.system_prompt_content is None
+    assert agent._session_manager is None
     assert not agent._started
     assert agent.model._connection_id is None
 
@@ -268,7 +269,13 @@ def test_bidi_agent_init_with_unsupported_model():
         BidiAgent(model=object())
 
 
-def test_bidi_agent_session_id_without_session_manager(mock_model):
+@pytest.mark.parametrize("argument", ["session_manager", "unknown_option"])
+def test_bidi_agent_init_rejects_unknown_arguments(mock_model, argument):
+    with pytest.raises(TypeError, match=f"unexpected keyword argument '{argument}'"):
+        BidiAgent(model=mock_model, **{argument: object()})
+
+
+def test_bidi_agent_session_id(mock_model):
     """Test the generated session identifier remains stable."""
     agent = BidiAgent(model=mock_model)
 
@@ -277,16 +284,6 @@ def test_bidi_agent_session_id_without_session_manager(mock_model):
 
     assert first == second
     assert len(first) == 8
-
-
-def test_bidi_agent_session_id_delegates_to_session_manager(mock_model):
-    """Test the session manager's persistent identifier is exposed."""
-    session_manager = unittest.mock.Mock()
-    session_manager.session_id = "test-session"
-
-    agent = BidiAgent(model=mock_model, session_manager=session_manager)
-
-    assert agent.session_id == "test-session"
 
 
 def test_bidi_agent_storage_defaults_to_none(mock_model):
@@ -337,12 +334,7 @@ async def test_run_cancel_cleans_up_and_allows_reuse(mock_model):
         return "Ending conversation"
 
     mock_model.set_events(
-        [
-            ToolUseStreamEvent(
-                current_tool_use={"toolUseId": "end", "name": end_conversation.tool_name, "input": {}},
-                delta="",
-            )
-        ]
+        [BidiToolUseBlocksEvent([{"toolUseId": "end", "name": end_conversation.tool_name, "input": {}}])]
     )
     agent = BidiAgent(model=mock_model, tools=[end_conversation])
 

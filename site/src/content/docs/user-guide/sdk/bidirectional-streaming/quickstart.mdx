@@ -442,8 +442,7 @@ async def main():
 asyncio.run(main())
 ```
 
-Bidi checks for cancellation after a tool call completes and its result is
-recorded. Requests from other contexts remain pending until that checkpoint.
+Bidi checks for cancellation after a tool group completes and its results are recorded. Requests from other contexts remain pending until that checkpoint.
 
 ## Debug Logs
 

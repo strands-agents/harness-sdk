@@ -391,7 +391,7 @@ async def test_receive_text_and_reasoning(provider_config, model_kwargs, content
 
 
 @pytest.mark.asyncio
-async def test_tool_history_and_response_boundaries(agent_with_calculator, audio_generator, provider_config):
+async def test_tool_history_and_response_boundaries(agent_with_calculator, audio_generator):
     """Complete tool exchanges remain adjacent while the provider continues its response."""
     agent = agent_with_calculator
     agent.system_prompt = "Use the calculator for arithmetic. Answer with the result in one short sentence."
@@ -418,29 +418,23 @@ async def test_tool_history_and_response_boundaries(agent_with_calculator, audio
         for index, result in results:
             assert result["status"] == "success"
             tool_use_id = result["toolUseId"]
-            assert agent.messages[index]["metadata"]["custom"]["bidi"] == {
-                "kind": "tool_result",
-                "tool_use_id": tool_use_id,
-            }
-            dispatch_index, dispatch = next(
-                (position, message)
+            assert agent.messages[index]["metadata"]["custom"]["bidi"] == {"kind": "tool_result"}
+            dispatch_index = next(
+                position
                 for position, message in enumerate(agent.messages)
-                if message.get("metadata", {}).get("custom", {}).get("bidi")
-                == {"kind": "tool_dispatch", "tool_use_id": tool_use_id}
+                if message.get("metadata", {}).get("custom", {}).get("bidi") == {"kind": "tool_dispatch"}
+                and any(block.get("toolResult", {}).get("toolUseId") == tool_use_id for block in message["content"])
             )
             assert dispatch_index < index
-            assert dispatch["content"][0]["toolResult"]["toolUseId"] == tool_use_id
             assert ToolResultEvent(result) in events
             request = [block for block in agent.messages[index - 1]["content"] if "toolUse" in block]
-            assert request == [
-                {
-                    "toolUse": {
-                        "toolUseId": result["toolUseId"],
-                        "name": "calculator",
-                        "input": {"operation": "multiply", "x": 37, "y": 19},
-                    }
+            assert {
+                "toolUse": {
+                    "toolUseId": tool_use_id,
+                    "name": calculator.tool_name,
+                    "input": {"operation": "multiply", "x": 37, "y": 19},
                 }
-            ]
+            } in request
             assert agent.messages[dispatch_index - 1]["content"] == request
         events = context.get_events()
         starts = [event.response_id for event in events if isinstance(event, BidiResponseStartEvent)]
@@ -448,9 +442,10 @@ async def test_tool_history_and_response_boundaries(agent_with_calculator, audio
         assert starts == completions
         assert len(starts) == len(set(starts))
         for index, message in enumerate(agent.messages):
-            for block in message["content"]:
-                if "toolUse" in block:
-                    assert (
-                        agent.messages[index + 1]["content"][0]["toolResult"]["toolUseId"]
-                        == block["toolUse"]["toolUseId"]
-                    )
+            tool_use_ids = [block["toolUse"]["toolUseId"] for block in message["content"] if "toolUse" in block]
+            if tool_use_ids:
+                result_message = agent.messages[index + 1]
+                assert result_message["role"] == "user"
+                assert [
+                    block["toolResult"]["toolUseId"] for block in result_message["content"] if "toolResult" in block
+                ] == tool_use_ids

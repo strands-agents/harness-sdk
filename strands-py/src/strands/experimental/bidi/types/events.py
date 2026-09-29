@@ -24,7 +24,8 @@ Audio format normalization:
 import logging
 from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
-from ....types._events import ToolUseStreamEvent, TypedEvent
+from ....types._events import TypedEvent
+from ....types.tools import ToolUse
 
 if TYPE_CHECKING:
     from ..models.model import ConnectionTimeoutError
@@ -659,6 +660,23 @@ class BidiUsageEvent(TypedEvent):
         return cast(int | None, self.get("cacheWriteInputTokens"))
 
 
+class BidiToolUseBlocksEvent(TypedEvent):
+    """A complete group of tool calls requested by the model.
+
+    Parameters:
+        tool_uses: Tool calls to execute together.
+    """
+
+    def __init__(self, tool_uses: list[ToolUse]):
+        """Initialize a tool-use group."""
+        super().__init__({"type": "bidi_tool_use_blocks", "tool_uses": tool_uses})
+
+    @property
+    def tool_uses(self) -> list[ToolUse]:
+        """Tool calls in provider order."""
+        return cast(list[ToolUse], self["tool_uses"])
+
+
 class BidiConnectionStopEvent(TypedEvent):
     """Streaming connection closed.
 
@@ -720,6 +738,6 @@ BidiOutputEvent = (
     | BidiResponseStopEvent
     | BidiUsageEvent
     | BidiConnectionStopEvent
-    | ToolUseStreamEvent
+    | BidiToolUseBlocksEvent
 )
 """Union of different bidi output event types."""
