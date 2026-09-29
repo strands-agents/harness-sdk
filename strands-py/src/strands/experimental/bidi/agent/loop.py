@@ -44,7 +44,6 @@ from ..types.events import (
     BidiTranscriptStopEvent,
     BidiUsageEvent,
 )
-from ..vended_tools import stop_conversation
 from ._reconnect_timer import _ReconnectTimer, resolve_deadline_s
 
 if TYPE_CHECKING:
@@ -786,11 +785,11 @@ class _AgentLoop:
 
             await self._event_queue.put(ToolResultMessageEvent(tool_result_message))
 
-            if tool_use["name"] == stop_conversation.tool_name:
+            if self._agent.cancel_signal.is_set():
                 logger.info("tool_name=<%s> | stopping conversation", tool_use["name"])
                 connection_id = getattr(self._agent.model, "_connection_id", "unknown")
                 await self._event_queue.put(BidiConnectionStopEvent(connection_id=connection_id, reason="user_request"))
-                return  # Skip sending result to model
+                return
 
             # Wait out any in-flight reconnect (send() gates on the swap), then re-check: a tool
             # that finished across a swap must not send its result to the new connection, which

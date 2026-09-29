@@ -44,7 +44,6 @@ import asyncio
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.io import AudioIO
 from strands.experimental.bidi.models import OpenAIRealtimeModel
-from strands.experimental.bidi.vended_tools import stop_conversation
 from strands.vended_tools import notebook
 
 
@@ -55,7 +54,7 @@ async def main() -> None:
         voice="coral",
         api_key="<OPENAI_API_KEY>",
     )
-    agent = BidiAgent(model=model, tools=[notebook, stop_conversation])
+    agent = BidiAgent(model=model, tools=[notebook])
 
     audio_io = AudioIO()
     await agent.run(inputs=[audio_io.input()], outputs=[audio_io.output()])

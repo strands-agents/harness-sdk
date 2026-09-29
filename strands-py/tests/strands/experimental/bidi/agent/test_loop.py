@@ -4,7 +4,7 @@ import unittest.mock
 import pytest
 import pytest_asyncio
 
-from strands import ToolContext, tool
+from strands import LocalAgent, ToolContext, tool
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.agent.loop import _ReaderError
 from strands.experimental.bidi.hooks import BidiAgentStopEvent, BidiBeforeConnectionRestartEvent
@@ -25,7 +25,6 @@ from strands.experimental.bidi.types import (
     BidiTranscriptStopEvent,
     BidiUsageEvent,
 )
-from strands.experimental.bidi.vended_tools import stop_conversation
 from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent, MessageAddedEvent, MessageUpdatedEvent
 from strands.types._events import ToolResultEvent, ToolResultMessageEvent, ToolUseStreamEvent
 from strands.types.content import TextBlock
@@ -1763,21 +1762,32 @@ async def test_bidi_agent_loop_tool_result_not_sent_after_reconnect(loop, agent,
 
 
 @pytest.mark.asyncio
-@pytest.mark.filterwarnings("error::DeprecationWarning")
-async def test_receive_stop_conversation(loop, agent, agenerator, alist):
-    agent.tool_registry.register_tool(stop_conversation)
+@pytest.mark.parametrize("retry", [False, True])
+@pytest.mark.parametrize("cancel_source", ["tool", "hook"])
+async def test_receive_cancel_after_tool(agent, agenerator, alist, retry, cancel_source):
+    @tool(context=True)
+    def end_conversation(tool_context: ToolContext[LocalAgent]) -> str:
+        """End the conversation."""
+        if cancel_source == "tool":
+            tool_context.agent.cancel()
+        return "Ending conversation"
 
-    tool_use = {"toolUseId": "t5", "name": stop_conversation.tool_name, "input": {}}
+    def after_tool(event: AfterToolCallEvent[LocalAgent]) -> None:
+        if cancel_source == "hook":
+            event.agent.cancel()
+        event.retry = retry
+
+    agent.tool_registry.register_tool(end_conversation)
+    agent.hooks.add_callback(AfterToolCallEvent, after_tool)
+
+    tool_use = {"toolUseId": "t5", "name": end_conversation.tool_name, "input": {}}
     tool_result = {"toolUseId": "t5", "status": "success", "content": [{"text": "Ending conversation"}]}
     tool_use_event = ToolUseStreamEvent(current_tool_use=tool_use, delta="")
 
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([tool_use_event]))
 
-    await loop.start()
-    try:
-        tru_events = await alist(loop.receive())
-    finally:
-        await loop.stop()
+    async with agent:
+        tru_events = await asyncio.wait_for(alist(agent.receive()), 2)
 
     exp_result_message = {
         "role": "user",
@@ -1794,6 +1804,30 @@ async def test_receive_stop_conversation(loop, agent, agenerator, alist):
     assert tru_events == exp_events
     assert agent.messages[-1] == exp_result_message
     agent.model.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_receive_cancel_pending_until_tool_completes(streaming_agent, alist):
+    agent = streaming_agent
+    request = ToolUseStreamEvent(current_tool_use={"toolUseId": "time", "name": "time_tool", "input": {}}, delta="")
+    audio = BidiAudioDeltaEvent("audio", "pcm", 24000, 1)
+    reader = agent.receive()
+    try:
+        agent.cancel()
+        await agent.model.emit(audio)
+        assert await asyncio.wait_for(anext(reader), 2) == audio
+
+        await agent.model.emit(request)
+        tru_events = await asyncio.wait_for(alist(reader), 2)
+    finally:
+        await reader.aclose()
+
+    assert [type(event) for event in tru_events] == [
+        ToolUseStreamEvent,
+        ToolResultEvent,
+        ToolResultMessageEvent,
+        BidiConnectionStopEvent,
+    ]
 
 
 @pytest.mark.asyncio

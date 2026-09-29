@@ -406,20 +406,27 @@ See [Controlling Conversation Lifecycle](#controlling-conversation-lifecycle) fo
 
 ## Graceful Shutdown
 
-To let users end a conversation by saying "stop conversation", add the
-`stop_conversation` tool:
+To let users end a conversation by voice, define a tool that calls `agent.cancel()`:
 
 ```python
 import asyncio
+from strands import LocalAgent, ToolContext, tool
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.io import AudioIO
 from strands.experimental.bidi.models import BedrockNovaSonicModel
-from strands.experimental.bidi.vended_tools import stop_conversation
+
+
+@tool(context=True)
+def end_conversation(tool_context: ToolContext[LocalAgent]) -> str:
+    """End the conversation when the user asks to stop."""
+    tool_context.agent.cancel()
+    return "Ending conversation"
+
 
 model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 agent = BidiAgent(
     model=model,
-    tools=[stop_conversation],
+    tools=[end_conversation],
     system_prompt="You are a helpful assistant.",
 )
 
@@ -430,10 +437,13 @@ async def main():
         inputs=[audio_io.input()],
         outputs=[audio_io.output()]
     )
-    # run() returns after the agent calls stop_conversation.
+    # run() returns after the agent calls end_conversation.
 
 asyncio.run(main())
 ```
+
+Bidi checks for cancellation after a tool call completes and its result is
+recorded. Requests from other contexts remain pending until that checkpoint.
 
 ## Debug Logs
 

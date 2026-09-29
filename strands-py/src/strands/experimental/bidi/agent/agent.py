@@ -159,7 +159,6 @@ class BidiAgent(LocalAgent):
         self.messages = messages if messages is not None else []
         self._storage: Storage | None = storage
         self._sandbox: Sandbox = NotASandboxLocalEnvironment()
-        # Never set yet: bidirectional agents do not act on a cancellation signal.
         self._cancel_signal = threading.Event()
 
         # Agent identification
@@ -300,9 +299,20 @@ class BidiAgent(LocalAgent):
     def event_loop_metrics(self, value: "EventLoopMetrics") -> None:
         raise NotImplementedError("event_loop_metrics is not supported by bidirectional agents yet")
 
+    def cancel(self) -> None:
+        """Request cancellation of the current conversation.
+
+        This method is thread-safe and idempotent. Cancellation takes effect
+        only after a tool call completes.
+        """
+        self._cancel_signal.set()
+
     @property
     def cancel_signal(self) -> threading.Event:
-        """The cancellation signal; never set yet, because bidirectional agents do not act on it."""
+        """The cancellation signal for the current conversation.
+
+        Treat as read-only; call ``cancel()`` to request cancellation.
+        """
         return self._cancel_signal
 
     def add_hook(
@@ -456,7 +466,10 @@ class BidiAgent(LocalAgent):
         closes the connection to the model provider.
         """
         self._started = False
-        await self._loop.stop()
+        try:
+            await self._loop.stop()
+        finally:
+            self._cancel_signal.clear()
 
     def take_snapshot(
         self,

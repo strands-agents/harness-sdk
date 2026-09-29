@@ -32,6 +32,7 @@ def agent_tool(tool_context: ToolContext[Agent]) -> str:
 @tool(context=True)
 def local_agent_tool(tool_context: ToolContext[LocalAgent]) -> str:
     assert_type(tool_context.agent, LocalAgent)
+    tool_context.agent.cancel()
     return tool_context.agent.name
 
 
@@ -41,6 +42,7 @@ def before_tool_call(event: BeforeToolCallEvent) -> None:
 
 def before_local_tool_call(event: BeforeToolCallEvent[LocalAgent]) -> None:
     assert_type(event.agent, LocalAgent)
+    event.agent.cancel()
 
 
 async def after_local_tool_call(event: AfterToolCallEvent[LocalAgent]) -> None:
@@ -100,7 +102,6 @@ def register_hooks(agent: Agent, bidi_agent: BidiAgent, local_agent: LocalAgent)
 
 def local_agent_excludes_agent_only_members(local_agent: LocalAgent) -> None:
     local_agent.cleanup()  # type: ignore[attr-defined]
-    local_agent.cancel()  # type: ignore[attr-defined]
     local_agent.conversation_manager  # type: ignore[attr-defined]  # noqa: B018
     local_agent.tool_executor  # type: ignore[attr-defined]  # noqa: B018
 

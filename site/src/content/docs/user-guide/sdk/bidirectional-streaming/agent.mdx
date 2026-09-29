@@ -177,8 +177,11 @@ Each tool use stays adjacent to its result even when conversation continues or t
 
 Tool-result messages identify their purpose in `metadata["custom"]["bidi"]`: `kind` is `tool_dispatch` or `tool_result`, and `tool_use_id` links to the original request.
 
-When the agent calls `stop_conversation`, the agent loop records the tool result
-and emits a connection stop event without sending the result back to the model.
+To let a tool end the conversation, call `tool_context.agent.cancel()`.
+Cancellation takes effect only after a tool call completes. Requests from other
+contexts remain pending until then.
+
+See [Graceful shutdown](./quickstart.mdx#graceful-shutdown) for a custom tool example.
 
 ### Connection Lifecycle
 

@@ -87,11 +87,10 @@ Pass your I/O streams to the agent's `run()` method to connect them to the agent
 import asyncio
 
 from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.vended_tools import stop_conversation
 
 
 async def main():
-    agent = BidiAgent(tools=[stop_conversation])
+    agent = BidiAgent()
     await agent.run(inputs=[MyInputStream()], outputs=[MyOutputStream()])
 
 
@@ -100,6 +99,8 @@ asyncio.run(main())
 
 The `run()` method handles startup, execution, and shutdown for the agent and its I/O
 streams. Inputs and outputs run concurrently, so you can mix and match implementations.
+For a tool that lets users end the conversation, see
+[Graceful shutdown](./quickstart.mdx#graceful-shutdown).
 
 ## Audio I/O
 
@@ -122,11 +123,10 @@ import asyncio
 
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.io import AudioIO
-from strands.experimental.bidi.vended_tools import stop_conversation
 
 
 async def main():
-    agent = BidiAgent(tools=[stop_conversation])
+    agent = BidiAgent()
     audio_io = AudioIO(input_device_index=1)
 
     await agent.run(
@@ -223,11 +223,10 @@ import asyncio
 
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.io import ConsoleIO
-from strands.experimental.bidi.vended_tools import stop_conversation
 
 
 async def main():
-    agent = BidiAgent(tools=[stop_conversation])
+    agent = BidiAgent()
     text_io = ConsoleIO(input_prompt="> You: ")
 
     await agent.run(
