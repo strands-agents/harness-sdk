@@ -703,7 +703,7 @@ class _AgentLoop:
                     return
 
                 if isinstance(event, ToolUseStreamEvent):
-                    self._task_pool.create(self._run_tool(event["current_tool_use"], generation))
+                    self._task_pool.create(self._run_tool(event["current_tool_use"]))
 
         except Exception as error:
             model_error = error
@@ -732,15 +732,11 @@ class _AgentLoop:
                 )
                 response_span = None
 
-    async def _run_tool(self, tool_use: ToolUse, generation: int) -> None:
+    async def _run_tool(self, tool_use: ToolUse) -> None:
         """Task for running tool requested by the model using the tool executor.
 
         Args:
             tool_use: Tool use request from model.
-            generation: Connection generation that issued the tool use. If a reconnect
-                advances the generation before the tool finishes, the result is recorded
-                in history but not sent, since the new connection never issued this
-                tool_use_id and would reject the result.
         """
         logger.debug("tool_name=<%s> | tool execution starting", tool_use["name"])
 
@@ -789,18 +785,6 @@ class _AgentLoop:
                 logger.info("tool_name=<%s> | stopping conversation", tool_use["name"])
                 connection_id = getattr(self._agent.model, "_connection_id", "unknown")
                 await self._event_queue.put(BidiConnectionStopEvent(connection_id=connection_id, reason="user_request"))
-                return
-
-            # Wait out any in-flight reconnect (send() gates on the swap), then re-check: a tool
-            # that finished across a swap must not send its result to the new connection, which
-            # never issued this tool_use_id and would reject it. The exchange is already recorded
-            # in messages above for the provider's reconnect replay.
-            await self._send_gate.wait()
-            if generation != self._generation:
-                logger.warning(
-                    "tool_use_id=<%s> | tool completed across reconnect | result recorded, not sent to new connection",
-                    tool_use["toolUseId"],
-                )
                 return
 
             # Send result to model
