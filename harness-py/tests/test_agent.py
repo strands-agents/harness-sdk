@@ -572,6 +572,22 @@ def test_caching_disabled_leaves_no_cache_config():
     assert "cache_config" not in agent.model.config
 
 
+def test_caching_none_leaves_no_cache_config():
+    agent = create_harness(caching=None)
+    assert "cache_config" not in agent.model.config
+
+
+def test_caching_auto_enables_cache_config():
+    agent = create_harness(model="anthropic/claude-opus-4-8", caching="auto")
+    assert agent.model.config["cache_config"] == CacheConfig(strategy="auto", tools_ttl=True)
+
+
+@pytest.mark.parametrize("value", ["off", "false", "none", "", "on", 0, 1])
+def test_caching_rejects_values_outside_auto_bool_none(value):
+    with pytest.raises(ValueError, match=r"caching must be 'auto', True, False, or None"):
+        create_harness(model="anthropic/claude-opus-4-8", caching=value)
+
+
 @pytest.mark.parametrize("value", [False, None])
 def test_context_manager_disabled(value):
     agent = create_harness(context_manager=value)

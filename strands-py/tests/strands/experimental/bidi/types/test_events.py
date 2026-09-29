@@ -15,8 +15,17 @@ from strands.experimental.bidi.types import (
     BidiBargeInEvent,
     BidiConnectionStartEvent,
     BidiConnectionStopEvent,
+    BidiReasoningBlockEvent,
+    BidiReasoningDeltaEvent,
+    BidiReasoningStartEvent,
+    BidiReasoningStopEvent,
     BidiResponseStartEvent,
     BidiResponseStopEvent,
+    BidiTextBlockEvent,
+    BidiTextDeltaEvent,
+    BidiTextStartEvent,
+    BidiTextStopEvent,
+    BidiTranscriptBlockEvent,
     BidiTranscriptDeltaEvent,
     BidiTranscriptStartEvent,
     BidiTranscriptStopEvent,
@@ -35,13 +44,22 @@ from strands.experimental.bidi.types.events import _normalize_role
             "bidi_connection_start",
         ),
         (BidiResponseStartEvent, {"response_id": "r1"}, "bidi_response_start"),
+        (BidiTextStartEvent, {"content_id": "text"}, "bidi_text_start"),
+        (BidiTextDeltaEvent, {"delta": " Some text. ", "content_id": "text"}, "bidi_text_delta"),
+        (BidiTextStopEvent, {"content_id": "text"}, "bidi_text_stop"),
+        (BidiTextBlockEvent, {"text": " Some text. ", "content_id": "text"}, "bidi_text_block"),
+        (BidiReasoningStartEvent, {"content_id": "reasoning"}, "bidi_reasoning_start"),
+        (BidiReasoningDeltaEvent, {"delta": " Some thought. ", "content_id": "reasoning"}, "bidi_reasoning_delta"),
+        (BidiReasoningStopEvent, {"content_id": "reasoning"}, "bidi_reasoning_stop"),
+        (BidiReasoningBlockEvent, {"text": " Some thought. ", "content_id": "reasoning"}, "bidi_reasoning_block"),
         (BidiTranscriptStartEvent, {"role": "user", "content_id": "u1"}, "bidi_transcript_start"),
+        (BidiTranscriptStopEvent, {"role": "user", "content_id": "u1"}, "bidi_transcript_stop"),
         (
             BidiAudioStartEvent,
-            {},
+            {"content_id": "audio"},
             "bidi_audio_start",
         ),
-        (BidiAudioStopEvent, {}, "bidi_audio_stop"),
+        (BidiAudioStopEvent, {"content_id": "audio"}, "bidi_audio_stop"),
         (
             BidiAudioDeltaEvent,
             {
@@ -49,6 +67,7 @@ from strands.experimental.bidi.types.events import _normalize_role
                 "format": "pcm",
                 "sample_rate": 24000,
                 "channels": 1,
+                "content_id": "audio",
             },
             "bidi_audio_delta",
         ),
@@ -62,9 +81,9 @@ from strands.experimental.bidi.types.events import _normalize_role
             "bidi_transcript_delta",
         ),
         (
-            BidiTranscriptStopEvent,
+            BidiTranscriptBlockEvent,
             {"transcript": "Hello", "role": "assistant", "content_id": "t1"},
-            "bidi_transcript_stop",
+            "bidi_transcript_block",
         ),
         (BidiBargeInEvent, {"reason": "user_speech"}, "bidi_barge_in"),
         (
@@ -86,32 +105,22 @@ from strands.experimental.bidi.types.events import _normalize_role
 )
 def test_event_json_serialization(event_class, kwargs, expected_type):
     """Test that all event types are JSON serializable and deserializable."""
-    # Create event
     event = event_class(**kwargs)
-
-    # Verify type field
-    assert event["type"] == expected_type
-
-    # Serialize to JSON
-    json_str = json.dumps(event)
-    print("event_class:", event_class)
-    print(json_str)
-    # Deserialize back
-    data = json.loads(json_str)
-
-    # Verify type preserved
-    assert data["type"] == expected_type
-
-    # Verify all non-private keys preserved
-    for key in event.keys():
-        if not key.startswith("_"):
-            assert key in data
+    tru_event = json.loads(json.dumps(event))
+    assert tru_event == event
+    assert tru_event["type"] == expected_type
+    tru_attributes = {name: getattr(event, name) for name in kwargs}
+    assert tru_attributes == kwargs
 
 
 @pytest.mark.parametrize("role", ["user", "assistant"])
-def test_transcript_start_contains_metadata(role):
-    event = BidiTranscriptStartEvent(role, "t1")
-    assert event == {"type": "bidi_transcript_start", "role": role, "content_id": "t1"}
+@pytest.mark.parametrize(
+    "event_class,event_type",
+    [(BidiTranscriptStartEvent, "bidi_transcript_start"), (BidiTranscriptStopEvent, "bidi_transcript_stop")],
+)
+def test_transcript_boundaries_contain_metadata(event_class, event_type, role):
+    event = event_class(role, "t1")
+    assert event == {"type": event_type, "role": role, "content_id": "t1"}
     assert (event.role, event.content_id) == (role, "t1")
 
 
@@ -122,16 +131,6 @@ def test_response_stop_contains_id():
     assert tru_event.response_id == "r1"
 
 
-def test_audio_start_is_marker():
-    start = BidiAudioStartEvent()
-    assert start == {"type": "bidi_audio_start"}
-
-
-def test_audio_stop_is_marker():
-    stop = BidiAudioStopEvent()
-    assert stop == {"type": "bidi_audio_stop"}
-
-
 def test_transcript_delta_event_contains_text_delta():
     """Test that a transcript delta event contains only the incremental text."""
     event = BidiTranscriptDeltaEvent("Hello", "user", "user-transcript")
@@ -140,12 +139,12 @@ def test_transcript_delta_event_contains_text_delta():
     assert event.delta == "Hello"
 
 
-def test_transcript_stop_event_contains_full_transcript():
-    """Test that a stop event carries one authoritative transcript."""
-    event = BidiTranscriptStopEvent("Hello world", "assistant", "assistant-transcript")
+def test_transcript_block_event_contains_full_transcript():
+    """A block event carries the accumulated transcript."""
+    event = BidiTranscriptBlockEvent("Hello world", "assistant", "assistant-transcript")
 
     exp_event = {
-        "type": "bidi_transcript_stop",
+        "type": "bidi_transcript_block",
         "transcript": "Hello world",
         "role": "assistant",
         "content_id": "assistant-transcript",

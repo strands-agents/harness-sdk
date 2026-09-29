@@ -16,7 +16,7 @@ from strands import tool
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.hooks import BidiResponseStopEvent
 from strands.experimental.bidi.models import GoogleGeminiLiveModel, OpenAIRealtimeModel
-from strands.experimental.bidi.types import BidiResponseStartEvent, BidiTranscriptStopEvent
+from strands.experimental.bidi.types import BidiResponseStartEvent, BidiTranscriptBlockEvent
 from strands.experimental.bidi.types import BidiResponseStopEvent as BidiResponseStopStreamEvent
 from strands.types._events import ToolResultEvent
 from strands.types.media import ImageBlock
@@ -224,7 +224,7 @@ async def test_bidirectional_agent(agent_with_calculator, audio_generator, provi
         async def wait_for_user_transcripts():
             while (
                 sum(
-                    event.get("type") == "bidi_transcript_stop" and event.get("role") == "user"
+                    event.get("type") == "bidi_transcript_block" and event.get("role") == "user"
                     for event in ctx.get_events()
                 )
                 < 2
@@ -257,7 +257,7 @@ async def test_bidirectional_agent(agent_with_calculator, audio_generator, provi
         seen_transcripts = set()
         audio_active = False
         for event in ctx.get_events():
-            if event.get("type") in ("bidi_transcript_start", "bidi_transcript_delta", "bidi_transcript_stop"):
+            if event.get("type") in ("bidi_transcript_start", "bidi_transcript_delta", "bidi_transcript_block"):
                 transcript = event["content_id"]
                 if event["type"] == "bidi_transcript_start":
                     assert transcript not in seen_transcripts
@@ -265,7 +265,7 @@ async def test_bidirectional_agent(agent_with_calculator, audio_generator, provi
                     active_transcripts[transcript] = event["role"]
                 else:
                     assert active_transcripts[transcript] == event["role"]
-                    if event["type"] == "bidi_transcript_stop":
+                    if event["type"] == "bidi_transcript_block":
                         del active_transcripts[transcript]
             if event.get("type") == "bidi_audio_start":
                 assert active_response is not None
@@ -279,7 +279,7 @@ async def test_bidirectional_agent(agent_with_calculator, audio_generator, provi
                 assert active_response is None
                 active_response = event.response_id
             elif event.get("type") == "bidi_audio_delta" or (
-                event.get("type") in ("bidi_transcript_start", "bidi_transcript_delta", "bidi_transcript_stop")
+                event.get("type") in ("bidi_transcript_start", "bidi_transcript_delta", "bidi_transcript_block")
                 and event.get("role") == "assistant"
             ):
                 assert active_response is not None
@@ -345,7 +345,7 @@ async def test_send_image_and_text(provider_config, yellow_img):
         tru_response = " ".join(
             event.transcript
             for event in context.get_events()
-            if isinstance(event, BidiTranscriptStopEvent) and event.role == "assistant"
+            if isinstance(event, BidiTranscriptBlockEvent) and event.role == "assistant"
         )
         assert "yellow" in tru_response.lower()
 
@@ -354,6 +354,40 @@ async def test_send_image_and_text(provider_config, yellow_img):
         tru_content = user_messages[0]["content"]
         exp_content = [image.to_dict(), {"text": question}]
         assert tru_content == exp_content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_config", "model_kwargs", "content_type"),
+    [
+        ("openai_realtime", {"params": {"output_modalities": ["text"]}}, "text"),
+        (
+            "google_gemini_live",
+            {
+                "model_id": "gemini-3.1-flash-live-preview",
+                "params": {"thinking_config": {"thinking_level": "high", "include_thoughts": True}},
+            },
+            "reasoning",
+        ),
+    ],
+    indirect=["provider_config"],
+)
+async def test_receive_text_and_reasoning(provider_config, model_kwargs, content_type):
+    """Receive nonempty text or reasoning deltas and completed blocks."""
+    model = provider_config["model_factory"](**(provider_config["model_kwargs"] | model_kwargs))
+    agent = BidiAgent(model=model)
+
+    async with BidirectionalTestContext(agent) as context:
+        await context.send(
+            "A bag has 3 red, 4 blue, and 5 green balls. Three balls are drawn without replacement. "
+            "What is the probability that exactly two share a color and the third is a different color? "
+            "Think carefully and give a brief answer."
+        )
+        await context.wait_for_response(timeout=60)
+        events = context.get_events()
+
+    assert any(event["type"] == f"bidi_{content_type}_delta" and event["delta"].strip() for event in events)
+    assert any(event["type"] == f"bidi_{content_type}_block" and event["text"].strip() for event in events)
 
 
 @pytest.mark.asyncio
@@ -376,7 +410,7 @@ async def test_tool_history_and_response_boundaries(agent_with_calculator, audio
                 (index for index, event in enumerate(events) if event.get("type") == "tool_result"), len(events)
             )
             if results and any(
-                event.get("type") == "bidi_transcript_stop" and event.get("role") == "assistant"
+                event.get("type") == "bidi_transcript_block" and event.get("role") == "assistant"
                 for event in events[result_index + 1 :]
             ):
                 break
