@@ -372,11 +372,7 @@ class SnapshotSessionManager(SessionManager):
         from ..experimental.bidi.agent import BidiAgent
 
         if isinstance(agent, BidiAgent):
-            raise NotImplementedError(
-                f"{type(self).__name__} does not support BidiAgent persistence. "
-                "Use a message-log session manager (FileSessionManager, S3SessionManager) for "
-                "bidirectional-streaming agents."
-            )
+            raise NotImplementedError(f"{type(self).__name__} does not support BidiAgent persistence.")
         if self._storage is None:
             raw = agent.storage if agent.storage is not None else LocalFileStorage()
             self._raw_storage = raw

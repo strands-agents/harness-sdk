@@ -119,8 +119,8 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
     def sync_agent(self, agent: "LocalAgent", **kwargs: Any) -> None:
         """Serialize and update the agent into the session repository.
 
-        For Agent, only updates if state or internal state has changed. BidiAgent is
-        written on every sync, preserving its existing persistence behavior.
+        For Agent, only updates if state or internal state has changed. Other LocalAgent
+        implementations are written on every sync.
 
         Args:
             agent: Agent to sync to the session.
@@ -129,7 +129,7 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
         from ..agent.agent import Agent
 
         if not isinstance(agent, Agent):
-            # Prune held records so tracking state stays bounded for long-lived BidiAgent sessions.
+            # Prune held records so tracking state stays bounded.
             self._prune_held_records(agent)
             self.session_repository.update_agent(self.session_id, SessionAgent.from_agent(agent))
             return
