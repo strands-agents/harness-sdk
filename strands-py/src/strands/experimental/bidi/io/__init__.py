@@ -2,13 +2,13 @@
 
 from typing import TYPE_CHECKING, Any
 
-from .configs import AudioIOConfig, AudioProcessorConfig
+from .configs import AudioIOConfig, AudioProcessorConfig, ConsoleIOConfig
 
 if TYPE_CHECKING:
     from .audio import AudioIO
-    from .text import ConsoleIO
+    from .console import ConsoleIO
 
-__all__ = ["AudioIO", "AudioIOConfig", "AudioProcessorConfig", "ConsoleIO"]
+__all__ = ["AudioIO", "AudioIOConfig", "AudioProcessorConfig", "ConsoleIO", "ConsoleIOConfig"]
 
 
 def __getattr__(name: str) -> Any:
@@ -18,7 +18,7 @@ def __getattr__(name: str) -> Any:
 
         return AudioIO
     if name == "ConsoleIO":
-        from .text import ConsoleIO
+        from .console import ConsoleIO
 
         return ConsoleIO
     raise AttributeError(f"cannot import name '{name}' from '{__name__}' ({__file__})")

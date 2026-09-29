@@ -29,7 +29,7 @@ from ..types.events import (
 from ..types.io import InputStream, OutputStream
 from ..types.media import AudioDelta
 from .configs import AudioIOConfig, AudioProcessorConfig
-from .transcript import _TranscriptOutputStream
+from .console import ConsoleIO
 
 if TYPE_CHECKING:
     from .._audio.processor import AudioProcessor
@@ -178,12 +178,14 @@ class _AudioOutputStream(OutputStream):
         self,
         config: AudioIOConfig,
         *,
+        console: ConsoleIO,
         audio_processor: "AudioProcessor | None",
     ) -> None:
         """Initialize output settings.
 
         Args:
             config: Audio device configuration.
+            console: Shared terminal display.
             audio_processor: Shared audio processor that receives played audio for echo cancellation.
         """
         self._buffer_size = config.get("output_buffer_size", _AudioOutputStream._BUFFER_SIZE)
@@ -192,7 +194,7 @@ class _AudioOutputStream(OutputStream):
 
         self._audio_processor = audio_processor
         self._buffer = AudioBuffer(self._buffer_size)
-        self._transcript_output = _TranscriptOutputStream()
+        self._console_output = console.output()
 
     async def start(self, agent: "BidiAgent") -> None:
         """Start output stream.
@@ -225,7 +227,7 @@ class _AudioOutputStream(OutputStream):
             rate=self._audio_config["sample_rate"],
             stream_callback=self._callback,
         )
-        await self._transcript_output.start(agent)
+        await self._console_output.start(agent)
 
         logger.debug("audio output stream started")
 
@@ -233,7 +235,7 @@ class _AudioOutputStream(OutputStream):
         """Stop output stream."""
         logger.debug("stopping audio output stream")
 
-        await self._transcript_output.stop()
+        await self._console_output.stop()
 
         if hasattr(self, "_stream"):
             self._stream.close()
@@ -250,7 +252,7 @@ class _AudioOutputStream(OutputStream):
         Raises:
             ValueError: If the audio encoding, rate, or channels differ from the playback stream.
         """
-        await self._transcript_output(event)
+        await self._console_output(event)
 
         if isinstance(event, BidiAudioDeltaEvent):
             self._validate_audio_event(event, self._audio_config)
@@ -351,6 +353,8 @@ class AudioIO:
 
                 - audio_processor (bool | AudioProcessorConfig): Set to True to enable microphone audio processing
                   with defaults, or supply a configuration for custom options. False and None disable processing.
+                - console (ConsoleIO): Shared display. Defaults to a new ConsoleIO with only transcripts enabled
+                  and a "Speak…" placeholder.
                 - input_buffer_size (int): Maximum input buffer size (default: None). Must be between 1 and 100
                   when echo cancellation is on; defaults to 100 so the mic and reference buffers remain aligned.
                 - input_device_index (int): Specific input device (default: None = system default)
@@ -366,6 +370,7 @@ class AudioIO:
             ValueError: If the configuration is invalid.
         """
         self._config = config
+        self._console = config.get("console") or ConsoleIO(placeholder="Speak…", show_text=False, show_reasoning=False)
         audio_processor_config = self._config.get("audio_processor")
         if isinstance(audio_processor_config, dict):
             self._audio_processor_config = AudioProcessorConfig(**audio_processor_config)
@@ -447,9 +452,10 @@ class AudioIO:
         )
 
     def output(self) -> _AudioOutputStream:
-        """Return the speaker and transcript output stream."""
+        """Return the speaker and console output stream."""
         return _AudioOutputStream(
             self._config,
+            console=self._console,
             audio_processor=(
                 self._audio_processor
                 if self._audio_processor and self._audio_processor.echo_cancellation_enabled
