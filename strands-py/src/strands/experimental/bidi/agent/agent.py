@@ -108,7 +108,6 @@ class BidiAgent(LocalAgent):
         state: AgentState | dict | None = None,
         tool_executor: ToolExecutor | None = None,
         storage: Storage | None = None,
-        **kwargs: Any,
     ):
         """Initialize bidirectional agent.
 
@@ -132,7 +131,6 @@ class BidiAgent(LocalAgent):
                 auto-namespaces under its own prefix to avoid key collisions.
                 Storage specified directly on a subsystem always takes precedence over
                 this agent-level default. Defaults to None.
-            **kwargs: Additional configuration for future extensibility.
 
         Raises:
             ValueError: If model configuration is invalid or state is invalid type.

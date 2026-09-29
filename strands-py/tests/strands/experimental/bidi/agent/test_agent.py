@@ -269,6 +269,12 @@ def test_bidi_agent_init_with_unsupported_model():
         BidiAgent(model=object())
 
 
+@pytest.mark.parametrize("argument", ["session_manager", "unknown_option"])
+def test_bidi_agent_init_rejects_unknown_arguments(mock_model, argument):
+    with pytest.raises(TypeError, match=f"unexpected keyword argument '{argument}'"):
+        BidiAgent(model=mock_model, **{argument: object()})
+
+
 def test_bidi_agent_session_id(mock_model):
     """Test the generated session identifier remains stable."""
     agent = BidiAgent(model=mock_model)
