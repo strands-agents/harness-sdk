@@ -31,7 +31,7 @@ from ..hooks.events import (
     BidiResponseStopEvent as BidiResponseStopHookEvent,
 )
 from ..models import ConnectionTimeoutError, Restartable
-from ..types.content import BidiContentDelta, BidiMessage, BidiToolMetadata, BidiTranscriptMetadata
+from ..types.content import BidiContentDelta, BidiMessage, BidiToolMetadata
 from ..types.events import (
     BidiAudioDeltaEvent,
     BidiBargeInEvent,
@@ -39,12 +39,20 @@ from ..types.events import (
     BidiConnectionStopEvent,
     BidiConnectionWarningEvent,
     BidiOutputEvent,
+    BidiReasoningDeltaEvent,
+    BidiReasoningStartEvent,
+    BidiReasoningStopEvent,
     BidiResponseStartEvent,
     BidiResponseStopEvent,
+    BidiTextDeltaEvent,
+    BidiTextStartEvent,
+    BidiTextStopEvent,
+    BidiTranscriptDeltaEvent,
     BidiTranscriptStartEvent,
     BidiTranscriptStopEvent,
     BidiUsageEvent,
 )
+from ._blocks import _ReasoningBlock, _TextBlock, _TranscriptBlock
 from ._reconnect_timer import _ReconnectTimer, resolve_deadline_s
 
 if TYPE_CHECKING:
@@ -594,12 +602,14 @@ class _AgentLoop:
         response_start_time: float | None = None
         time_to_first_audio_ms: int | None = None
         model_error: Exception | None = None
-        transcripts: dict[str, Message] = {}
+        blocks: dict[str, _TextBlock] = {}
 
         try:
             async for event in self._agent.model.receive():
                 if generation != self._generation:
                     return
+
+                output_events = [event]
 
                 if isinstance(event, BidiResponseStartEvent):
                     if response_span:
@@ -617,34 +627,31 @@ class _AgentLoop:
                     self._awaiting_response = False
                     self._update_turn_state()
 
-                elif isinstance(event, BidiTranscriptStartEvent):
-                    if event.role == "user":
-                        self._awaiting_response = True
-                        self._update_turn_state()
+                elif isinstance(event, (BidiTextStartEvent, BidiReasoningStartEvent, BidiTranscriptStartEvent)):
+                    if isinstance(event, BidiTranscriptStartEvent):
+                        if event.role == "user":
+                            self._awaiting_response = True
+                            self._update_turn_state()
+                        block: _TextBlock = _TranscriptBlock(event.content_id, event.role)
+                    elif isinstance(event, BidiReasoningStartEvent):
+                        block = _ReasoningBlock(event.content_id)
+                    else:
+                        block = _TextBlock(event.content_id)
 
-                    message: Message = {
-                        "role": event.role,
-                        "content": [],
-                        "metadata": {"custom": {"bidi": BidiTranscriptMetadata(kind="transcript", status="pending")}},
-                    }
-                    await self._agent._append_messages(message)
-                    transcripts[event.content_id] = message
+                    await self._agent._append_messages(block.message)
+                    blocks[event.content_id] = block
 
                 elif isinstance(event, BidiAudioDeltaEvent):
                     if response_start_time is not None and time_to_first_audio_ms is None:
                         time_to_first_audio_ms = int((time.perf_counter() - response_start_time) * 1000)
 
-                elif isinstance(event, BidiTranscriptStopEvent):
-                    message = transcripts.pop(event.content_id)
-                    await self._agent._update_message(
-                        {
-                            **message,
-                            "content": [{"text": event.transcript}],
-                            "metadata": {
-                                "custom": {"bidi": BidiTranscriptMetadata(kind="transcript", status="complete")}
-                            },
-                        }
-                    )
+                elif isinstance(event, (BidiTextDeltaEvent, BidiReasoningDeltaEvent, BidiTranscriptDeltaEvent)):
+                    blocks[event.content_id].append(event.delta)
+
+                elif isinstance(event, (BidiTextStopEvent, BidiReasoningStopEvent, BidiTranscriptStopEvent)):
+                    block = blocks.pop(event.content_id)
+                    await self._agent._update_message(block.to_message())
+                    output_events.append(block.to_event())
 
                 elif isinstance(event, ToolUseStreamEvent):
                     tool_use = event["current_tool_use"]
@@ -697,12 +704,13 @@ class _AgentLoop:
 
                 if generation != self._generation:
                     return
-                await self._event_queue.put(event)
-                if generation != self._generation:
-                    return
+                for output_event in output_events:
+                    await self._event_queue.put(output_event)
+                    if generation != self._generation:
+                        return
 
                 if isinstance(event, ToolUseStreamEvent):
-                    self._task_pool.create(self._run_tool(event["current_tool_use"], generation))
+                    self._task_pool.create(self._run_tool(event["current_tool_use"]))
 
         except Exception as error:
             model_error = error
@@ -711,17 +719,9 @@ class _AgentLoop:
             if generation == self._generation:
                 await self._event_queue.put(_ReaderError(generation, error))
         finally:
-            for message in transcripts.values():
-                await self._agent._update_message(
-                    {
-                        **message,
-                        "content": [{"text": "[Transcript unavailable.]"}],
-                        "metadata": {
-                            "custom": {"bidi": BidiTranscriptMetadata(kind="transcript", status="incomplete")}
-                        },
-                    },
-                    strict=False,
-                )
+            for block in blocks.values():
+                await self._agent._update_message(block.to_message(complete=False), strict=False)
+
             if response_span:
                 _telemetry.end_response_span(
                     self._tracer,
@@ -731,15 +731,11 @@ class _AgentLoop:
                 )
                 response_span = None
 
-    async def _run_tool(self, tool_use: ToolUse, generation: int) -> None:
+    async def _run_tool(self, tool_use: ToolUse) -> None:
         """Task for running tool requested by the model using the tool executor.
 
         Args:
             tool_use: Tool use request from model.
-            generation: Connection generation that issued the tool use. If a reconnect
-                advances the generation before the tool finishes, the result is recorded
-                in history but not sent, since the new connection never issued this
-                tool_use_id and would reject the result.
         """
         logger.debug("tool_name=<%s> | tool execution starting", tool_use["name"])
 
@@ -809,18 +805,6 @@ class _AgentLoop:
                 connection_id = getattr(self._agent.model, "_connection_id", "unknown")
                 await self._event_queue.put(BidiConnectionStopEvent(connection_id=connection_id, reason="user_request"))
                 return  # Skip sending result to model
-
-            # Wait out any in-flight reconnect (send() gates on the swap), then re-check: a tool
-            # that finished across a swap must not send its result to the new connection, which
-            # never issued this tool_use_id and would reject it. The exchange is already recorded
-            # in messages above for the provider's reconnect replay.
-            await self._send_gate.wait()
-            if generation != self._generation:
-                logger.warning(
-                    "tool_use_id=<%s> | tool completed across reconnect | result recorded, not sent to new connection",
-                    tool_use["toolUseId"],
-                )
-                return
 
             # Send result to model
             await self.send(

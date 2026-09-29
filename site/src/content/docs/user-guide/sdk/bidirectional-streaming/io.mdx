@@ -8,9 +8,10 @@ sidebar:
 experimental: true
 tags: [bidi-streaming]
 sourceLinks:
-  - path: strands-py/src/strands/experimental/bidi/io/text.py
+  - path: strands-py/src/strands/experimental/bidi/io/console/_io.py
+  - path: strands-py/src/strands/experimental/bidi/io/console/_display.py
+  - path: strands-py/src/strands/experimental/bidi/io/console/_keyboard.py
   - path: strands-py/src/strands/experimental/bidi/io/audio.py
-  - path: strands-py/src/strands/experimental/bidi/io/transcript.py
 ---
 
 
@@ -101,6 +102,8 @@ asyncio.run(main())
 
 The `run()` method handles startup, execution, and shutdown for the agent and its I/O
 streams. Inputs and outputs run concurrently, so you can mix and match implementations.
+If an I/O task fails, `run()` cancels the remaining tasks, stops the streams, and
+re-raises the exception.
 
 ## Audio I/O
 
@@ -143,7 +146,9 @@ asyncio.run(main())
 This creates a voice-enabled agent that captures audio from your microphone, streams
 it to the model as `AudioDelta` inputs, and plays responses through your speakers.
 
-Audio output also displays live transcripts, with user speech in shaded `>` blocks and assistant speech as plain text. The next user prompt appears when response generation finishes or stops due to barge-in.
+By default, audio output displays only speech transcripts through `ConsoleIO`,
+with `"Speak…"` as its input placeholder. Pass `console=console_io` to customize
+the display.
 
 ### Configurations
 
@@ -152,6 +157,7 @@ Audio output also displays live transcripts, with user speech in shaded `>` bloc
 | Parameter | Description | Example | Default |
 | --------- | ----------- | ------- | ------- |
 | `audio_processor` | Enable microphone audio processing. Pass `True` for defaults or an `AudioProcessorConfig` for custom options. | `True` | None (disabled) |
+| `console` | Console display | `console_io` | Transcripts only |
 | `input_buffer_size` | Maximum number of audio chunks to buffer from the microphone before dropping the oldest. | `1024` | None (unbounded) |
 | `input_device_index` | Specific microphone device ID to use for audio input. | `1` | None (system default) |
 | `input_frames_per_buffer` | Number of audio frames to read per input callback (affects latency and performance). | `1024` | 512 |
@@ -208,15 +214,15 @@ another encoding raises `ValueError`. Use custom I/O for other encodings.
 2. `AudioIO` clears its output buffer to stop playback.
 3. The agent responds to the new user input.
 
-## Text I/O
+## Console I/O
 
-Strands also provides `ConsoleIO` for terminal-based text input and output using
-[prompt-toolkit](https://pypi.org/project/prompt-toolkit/).
+Use `ConsoleIO` to type messages while the agent streams text, reasoning, and speech
+transcripts.
 
 :::note[Installation Required]
-`ConsoleIO` is included with the `bidi-io` extra:
+`ConsoleIO` uses the `bidi-io` extra. The example below also needs `bidi-openai`:
 ```bash
-pip install "strands-agents[bidi-io]"
+pip install "strands-agents[bidi-io,bidi-openai]"
 ```
 :::
 
@@ -225,31 +231,78 @@ import asyncio
 
 from strands.experimental.bidi.agent import BidiAgent
 from strands.experimental.bidi.io import ConsoleIO
+from strands.experimental.bidi.models import OpenAIRealtimeModel
 from strands.experimental.tools import stop
 
 
 async def main():
-    # stop tool allows user to verbally stop agent execution.
-    agent = BidiAgent(tools=[stop])
-    text_io = ConsoleIO(input_prompt="> You: ")
+    model = OpenAIRealtimeModel(
+        model_id="gpt-realtime-2.1",
+        transcription_model_id=None,
+        params={"output_modalities": ["text"]},
+    )
+    agent = BidiAgent(model=model, tools=[stop])
+    console_io = ConsoleIO()
 
     await agent.run(
-        inputs=[text_io.input()],
-        outputs=[text_io.output()],
+        inputs=[console_io.input()],
+        outputs=[console_io.output()],
     )
 
 
-asyncio.run(main())
+try:
+    asyncio.run(main())
+except KeyboardInterrupt:
+    pass
 ```
 
-This creates a text-based agent that reads user input from the terminal and prints
-transcripts and responses to the console.
+Set `OPENAI_API_KEY` before running this example. Press Enter to send a message or
+Ctrl-C to exit.
 
 ### Configurations
 
 | Parameter | Description | Example | Default |
 | --------- | ----------- | ------- | ------- |
-| `input_prompt` | Prompt text displayed when waiting for user input | `"> You: "` | `""` (blank) |
+| `placeholder` | Hint for an empty input block | `"Type or speak…"` | `""` |
+| `show_text` | Display agent text responses | `False` | `True` |
+| `show_reasoning` | Display agent reasoning | `False` | `True` |
+| `show_transcript` | Display speech transcripts | `False` | `True` |
+
+### Type and Talk
+
+To type and speak in the same conversation, pass a shared `ConsoleIO` to `AudioIO`.
+This example uses Amazon Nova Sonic. Configure
+[AWS credentials](quickstart.mdx#configuring-credentials) and install the
+[audio extras](#audio-io) first:
+
+```python
+import asyncio
+
+from strands.experimental.bidi.agent import BidiAgent
+from strands.experimental.bidi.io import AudioIO, ConsoleIO
+from strands.experimental.tools import stop
+
+
+async def main():
+    agent = BidiAgent(tools=[stop])
+    console_io = ConsoleIO(placeholder="Type or speak…")
+    audio_io = AudioIO(console=console_io)
+
+    await agent.run(
+        inputs=[console_io.input(), audio_io.input()],
+        outputs=[audio_io.output()],
+    )
+
+
+try:
+    asyncio.run(main())
+except KeyboardInterrupt:
+    pass
+```
+
+`audio_io.output()` handles both speaker playback and console display, so register
+it as the only output. Both keyboard and microphone inputs remain active while the
+agent responds.
 
 ## WebSocket I/O
 
@@ -300,7 +353,7 @@ async def main():
 
     while True:
         output_event = json.loads(await websocket.recv())
-        if output_event["type"] == "bidi_transcript_stop":
+        if output_event["type"] == "bidi_transcript_block":
             print(output_event["transcript"])
             break
 

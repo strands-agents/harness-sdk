@@ -2,6 +2,7 @@
 
 import asyncio
 import sys
+import threading
 import unittest.mock
 from contextlib import nullcontext
 from uuid import uuid4
@@ -18,8 +19,12 @@ from strands.experimental.bidi.types import (
     BidiConnectionStopEvent,
     BidiMessage,
     BidiTranscriptDeltaEvent,
+    BidiTranscriptStartEvent,
+    InputStream,
+    OutputStream,
 )
 from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent, MessageAddedEvent, MessageUpdatedEvent
+from strands.sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
 from strands.types.content import SystemContentBlock, TextBlock
 from strands.types.media import AudioBlock, ImageBlock
 from tests.fixtures.mock_hook_provider import MockHookProvider
@@ -298,6 +303,52 @@ def test_bidi_agent_storage_returns_configured_value(mock_model):
     assert agent.storage is storage
 
 
+def test_bidi_agent_context_manager_is_none(mock_model):
+    agent = BidiAgent(model=mock_model)
+
+    assert agent.context_manager is None
+
+
+def test_bidi_agent_sandbox_defaults_to_host_environment(mock_model):
+    agent = BidiAgent(model=mock_model)
+
+    assert isinstance(agent.sandbox, NotASandboxLocalEnvironment)
+    assert agent.sandbox is agent.sandbox
+
+
+def test_bidi_agent_cancel_signal_is_never_set(mock_model):
+    agent = BidiAgent(model=mock_model)
+
+    assert isinstance(agent.cancel_signal, threading.Event)
+    assert not agent.cancel_signal.is_set()
+    assert agent.cancel_signal is agent.cancel_signal
+
+
+def test_bidi_agent_tool_context_receives_cancel_signal(mock_model):
+    @tool(context=True)
+    def context_tool(tool_context: ToolContext[LocalAgent]) -> str:
+        assert tool_context.cancel_signal is agent.cancel_signal
+        return "ok"
+
+    agent = BidiAgent(model=mock_model, tools=[context_tool])
+
+    assert agent.tool.context_tool(record_direct_tool_call=False)["content"] == [{"text": "ok"}]
+
+
+def test_bidi_agent_event_loop_metrics_raises(mock_model):
+    agent = BidiAgent(model=mock_model)
+
+    with pytest.raises(NotImplementedError, match="event_loop_metrics is not supported by bidirectional agents yet"):
+        _ = agent.event_loop_metrics
+
+
+def test_bidi_agent_event_loop_metrics_setter_raises(mock_model):
+    agent = BidiAgent(model=mock_model)
+
+    with pytest.raises(NotImplementedError, match="event_loop_metrics is not supported by bidirectional agents yet"):
+        agent.event_loop_metrics = unittest.mock.Mock()
+
+
 @pytest.mark.skipif(sys.version_info < (3, 12), reason="BedrockNovaSonicModel is only supported for Python 3.12+")
 @pytest.mark.parametrize("options", [{}, {"model": None}])
 def test_bidi_agent_init_with_default_model(options):
@@ -535,42 +586,87 @@ async def test_send_preserves_model_type_error(agent, input_data):
 
 
 @pytest.mark.asyncio
-async def test_bidi_agent_receive_events_from_model(agent):
+@pytest.mark.parametrize(
+    "events",
+    [
+        [],
+        [
+            BidiAudioDeltaEvent(audio="dGVzdA==", format="pcm", sample_rate=24000, channels=1, content_id="audio"),
+            BidiTranscriptStartEvent("assistant", content_id="assistant-transcript"),
+            BidiTranscriptDeltaEvent(delta="Hello world", role="assistant", content_id="assistant-transcript"),
+        ],
+    ],
+    ids=["empty", "content"],
+)
+async def test_bidi_agent_receive_events_from_model(agent, events):
     """Test receiving events from model."""
-    # Configure mock model to yield events
-    events = [
-        BidiAudioDeltaEvent(audio="dGVzdA==", format="pcm", sample_rate=24000, channels=1),
-        BidiTranscriptDeltaEvent(delta="Hello world", role="assistant", content_id="assistant-transcript"),
-    ]
     agent.model.set_events(events)
+    exp_events = [
+        BidiConnectionStartEvent(connection_id=unittest.mock.ANY, model=unittest.mock.ANY),
+        *events,
+        BidiConnectionStopEvent(connection_id=unittest.mock.ANY, reason="complete"),
+    ]
 
     await agent.start()
+    reader = agent.receive()
+    try:
+        tru_events = [await anext(reader) for _ in exp_events]
+        assert tru_events == exp_events
+    finally:
+        await reader.aclose()
+        await agent.stop()
 
-    received_events = []
-    async for event in agent.receive():
-        received_events.append(event)
-        if len(received_events) >= 4:  # Stop after getting expected events
-            break
 
-    # Verify event types and order
-    assert len(received_events) >= 3
-    assert isinstance(received_events[0], BidiConnectionStartEvent)
-    assert isinstance(received_events[1], BidiAudioDeltaEvent)
-    assert isinstance(received_events[2], BidiTranscriptDeltaEvent)
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_source", ["input", "output"])
+async def test_run_failure_cancels_io_before_stop(agent, failure_source):
+    """I/O failures cancel active calls before stopping their streams."""
+    input_started = asyncio.Event()
+    output_started = asyncio.Event()
+    input_cancelled = asyncio.Event()
+    output_future = asyncio.get_running_loop().create_future()
+    error = RuntimeError("stream failed")
 
-    # Test empty events
-    agent.model.set_events([])
-    await agent.stop()
-    await agent.start()
+    async def wait_input():
+        input_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            input_cancelled.set()
 
-    empty_events = []
-    async for event in agent.receive():
-        empty_events.append(event)
-        if len(empty_events) >= 2:
-            break
+    def wait_output(event):
+        output_started.set()
+        return output_future
 
-    assert len(empty_events) >= 1
-    assert isinstance(empty_events[0], BidiConnectionStartEvent)
+    async def stop_stream():
+        assert input_cancelled.is_set()
+        assert output_future.cancelled()
+
+    async def trigger_failure(*args):
+        await input_started.wait()
+        await output_started.wait()
+        raise error
+
+    input_stream = unittest.mock.AsyncMock(spec=InputStream, side_effect=wait_input)
+    output_stream = unittest.mock.Mock(spec=OutputStream, side_effect=wait_output)
+    for stream in [input_stream, output_stream]:
+        stream.stop.side_effect = stop_stream
+
+    inputs = [input_stream]
+    outputs = [output_stream]
+    if failure_source == "output":
+        outputs.append(trigger_failure)
+    else:
+        inputs.append(trigger_failure)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await asyncio.wait_for(agent.run(inputs=inputs, outputs=outputs), timeout=2)
+
+    assert exc_info.value is error
+    for stream in [input_stream, output_stream]:
+        stream.stop.assert_awaited_once()
+    assert not agent._started
+    assert not agent.model._started
 
 
 def test_bidi_agent_tool_integration(agent, mock_tool_registry):

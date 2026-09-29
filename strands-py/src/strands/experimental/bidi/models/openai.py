@@ -35,6 +35,9 @@ from ..types.events import (
     BidiOutputEvent,
     BidiResponseStartEvent,
     BidiResponseStopEvent,
+    BidiTextDeltaEvent,
+    BidiTextStartEvent,
+    BidiTextStopEvent,
     BidiTranscriptDeltaEvent,
     BidiTranscriptStartEvent,
     BidiTranscriptStopEvent,
@@ -104,13 +107,21 @@ _RESTART_INSTRUCTION = (
 
 @dataclass
 class _SessionState:
-    """Connection-local transcript identities and response creation state."""
+    """Connection-local transcript identities and response creation state.
 
-    started_transcripts: set[str] = field(default_factory=set)
+    Attributes:
+        pending_input_ids: IDs of submitted inputs awaiting confirmation that they were added to the conversation.
+        input_audio_pending: Whether user speech has started but its audio has not yet been committed.
+    """
+
+    # Open transcript IDs mapped to whether they have emitted deltas.
+    started_transcripts: dict[str, bool] = field(default_factory=dict)
     assistant_parts: dict[str, tuple[str, int]] = field(default_factory=dict)
-    audio_responses: set[str | None] = field(default_factory=set)
+    audio_content_ids: dict[str | None, str] = field(default_factory=dict)
     active_responses: set[str] = field(default_factory=set)
     pending_tools: set[str] = field(default_factory=set)
+    pending_input_ids: set[str] = field(default_factory=set)
+    input_audio_pending: bool = False
     response_pending: bool = False
     response_requested: bool = False
     transcription_enabled: bool = True
@@ -118,30 +129,39 @@ class _SessionState:
 
     def start_audio(self, response_id: str | None) -> list[BidiOutputEvent]:
         """Open an audio stream before its first chunk."""
-        if response_id in self.audio_responses:
+        if response_id in self.audio_content_ids:
             return []
-        self.audio_responses.add(response_id)
-        return [BidiAudioStartEvent()]
+        content_id = str(uuid.uuid4())
+        self.audio_content_ids[response_id] = content_id
+        return [BidiAudioStartEvent(content_id)]
 
     def stop_audio(self, response_id: str | None) -> list[BidiOutputEvent]:
         """Close an open audio stream once."""
-        if response_id not in self.audio_responses:
+        content_id = self.audio_content_ids.pop(response_id, None)
+        if content_id is None:
             return []
-        self.audio_responses.remove(response_id)
-        return [BidiAudioStopEvent()]
+        return [BidiAudioStopEvent(content_id)]
 
     def start_transcript(self, role: Role, content_id: str) -> list[BidiOutputEvent]:
         """Open a transcript once, when speech or its first text arrives."""
         if content_id in self.started_transcripts:
             return []
-        self.started_transcripts.add(content_id)
+        self.started_transcripts[content_id] = False
         return [BidiTranscriptStartEvent(role, content_id=content_id)]
 
-    def transcript_events(self, event: BidiTranscriptDeltaEvent | BidiTranscriptStopEvent) -> list[BidiOutputEvent]:
-        """Ensure the transcript starts before emitting its delta or stop."""
+    def transcript_events(self, event: BidiTranscriptDeltaEvent) -> list[BidiOutputEvent]:
+        """Ensure the transcript starts before emitting its delta."""
         events = [*self.start_transcript(event.role, event.content_id), event]
-        if isinstance(event, BidiTranscriptStopEvent):
-            self.started_transcripts.remove(event.content_id)
+        self.started_transcripts[event.content_id] = True
+        return events
+
+    def stop_transcript(self, transcript: str, role: Role, content_id: str) -> list[BidiOutputEvent]:
+        """Close a transcript, emitting final-only text as a delta."""
+        events = self.start_transcript(role, content_id)
+        has_deltas = self.started_transcripts.pop(content_id)
+        if transcript and not has_deltas:
+            events.append(BidiTranscriptDeltaEvent(transcript, role, content_id))
+        events.append(BidiTranscriptStopEvent(role, content_id))
         return events
 
 
@@ -294,10 +314,15 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             tools: List of tools available to the model.
             messages: Conversation history to initialize with.
             **kwargs: Additional configuration options.
+
+        Raises:
+            RuntimeError: If the model has already been started.
+            ValueError: If turn detection, automatic responses, or interruption are disabled.
         """
         if self._connection_id:
             raise RuntimeError("model already started | call stop before starting again")
 
+        session_config = self._build_session_config(system_prompt, tools)
         logger.debug("openai realtime connection starting")
 
         # Initialize connection state
@@ -320,7 +345,6 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         logger.debug("connection_id=<%s> | websocket connected successfully", self._connection_id)
 
         # Configure session
-        session_config = self._build_session_config(system_prompt, tools)
         self._session_state.transcription_enabled = session_config["audio"]["input"].get("transcription") is not None
         await self._send_event({"type": "session.update", "session": session_config})
 
@@ -346,7 +370,17 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         )
         config["audio"]["output"]["voice"] = self._voice
 
-        return _merge_config(config, self._config.get("params") or {})
+        config = _merge_config(config, self._config.get("params") or {})
+        turn_detection = config["audio"]["input"]["turn_detection"]
+        if (
+            turn_detection is None
+            or not turn_detection.get("create_response", True)
+            or not turn_detection.get("interrupt_response", True)
+        ):
+            raise ValueError(
+                "OpenAIRealtimeModel requires turn detection with create_response=True and interrupt_response=True."
+            )
+        return config
 
     def _convert_tools_to_openai_format(self, tools: list[ToolSpec]) -> list[dict]:
         """Convert Strands tool specifications to OpenAI Realtime API format."""
@@ -503,12 +537,22 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
 
             openai_event = json.loads(message)
             event_type = openai_event.get("type")
-            if event_type == "response.created":
+            if event_type == "input_audio_buffer.speech_started":
+                state.input_audio_pending = True
+            elif event_type == "input_audio_buffer.committed":
+                state.input_audio_pending = False
+                # Let VAD create the response containing the committed utterance.
+                state.response_requested = True
+            elif event_type == "conversation.item.added":
+                state.pending_input_ids.discard(openai_event["item"]["id"])
+            elif event_type == "response.created":
                 response_id = openai_event["response"]["id"]
                 if response_id in state.active_responses:
                     continue
                 state.active_responses.add(response_id)
                 state.response_requested = False
+                # A response includes acknowledged inputs; later inputs still need a continuation.
+                state.response_pending = bool(state.pending_input_ids)
             elif event_type == "response.done":
                 response_id = openai_event["response"]["id"]
                 if response_id not in state.active_responses:
@@ -562,10 +606,12 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             return state.start_audio(openai_event.get("response_id")) or None
 
         if event_type == "response.output_audio.delta":
+            response_id = openai_event.get("response_id")
             return [
-                *state.start_audio(openai_event.get("response_id")),
+                *state.start_audio(response_id),
                 BidiAudioDeltaEvent(
                     audio=openai_event["delta"],
+                    content_id=state.audio_content_ids[response_id],
                     **self._audio_config["output"],
                 ),
             ]
@@ -578,15 +624,23 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             if not text:
                 return None
             response_id = openai_event["response_id"]
+            is_text = event_type == "response.output_text.delta"
+            content_id = f"{response_id}:text" if is_text else response_id
             part_id = (openai_event["item_id"], openai_event["content_index"])
-            previous_part = state.assistant_parts.get(response_id)
+            previous_part = state.assistant_parts.get(content_id)
             if previous_part is not None and previous_part != part_id:
                 text = "\n\n" + text
-            state.assistant_parts[response_id] = part_id
-            return state.transcript_events(BidiTranscriptDeltaEvent(text, "assistant", content_id=response_id))
+            state.assistant_parts[content_id] = part_id
+            if is_text:
+                events = []
+                if previous_part is None:
+                    events.append(BidiTextStartEvent(content_id))
+                events.append(BidiTextDeltaEvent(text, content_id))
+                return events
+            return state.transcript_events(BidiTranscriptDeltaEvent(text, "assistant", content_id=content_id))
 
         if event_type in ("response.output_text.done", "response.output_audio_transcript.done"):
-            # Response completion closes the combined assistant transcript.
+            # Response completion closes the assistant's text and transcript streams.
             return None
 
         if event_type in (
@@ -605,9 +659,7 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             return state.transcript_events(BidiTranscriptDeltaEvent(text, role, content_id=openai_event["item_id"]))
 
         if event_type == "conversation.item.input_audio_transcription.completed":
-            return state.transcript_events(
-                BidiTranscriptStopEvent(openai_event["transcript"], "user", content_id=openai_event["item_id"])
-            )
+            return state.stop_transcript(openai_event["transcript"], "user", content_id=openai_event["item_id"])
 
         if event_type == "conversation.item.input_audio_transcription.failed":
             error_info = openai_event.get("error", {})
@@ -723,24 +775,35 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         return None
 
     def _complete_response(self, response: dict[str, Any], state: _SessionState) -> list[BidiOutputEvent]:
-        """Close audio and the combined assistant transcript before stopping the response."""
+        """Close audio, text, and transcripts before stopping the response."""
         response_id = response.get("id", "unknown")
         output = response.get("output", [])
         events = state.stop_audio(response.get("id"))
         transcript_parts = [
-            part.get("transcript", part.get("text", ""))
+            part.get("transcript", "")
             for item in output
             if item.get("type") == "message" and item.get("role") == "assistant"
             for part in item.get("content", [])
-            if part.get("type") in ("output_audio", "output_text")
+            if part.get("type") == "output_audio"
         ]
         if transcript_parts or response_id in state.assistant_parts:
-            events.extend(
-                state.transcript_events(
-                    BidiTranscriptStopEvent("\n\n".join(transcript_parts), "assistant", content_id=response_id)
-                )
-            )
+            events.extend(state.stop_transcript("\n\n".join(transcript_parts), "assistant", content_id=response_id))
         state.assistant_parts.pop(response_id, None)
+
+        text_parts = [
+            part.get("text", "")
+            for item in output
+            if item.get("type") == "message" and item.get("role") == "assistant"
+            for part in item.get("content", [])
+            if part.get("type") == "output_text"
+        ]
+        content_id = f"{response_id}:text"
+        if text_parts or content_id in state.assistant_parts:
+            if content_id not in state.assistant_parts:
+                events.append(BidiTextStartEvent(content_id))
+                events.append(BidiTextDeltaEvent("\n\n".join(text_parts), content_id))
+            events.append(BidiTextStopEvent(content_id))
+        state.assistant_parts.pop(content_id, None)
 
         events.append(BidiResponseStopEvent(response_id=response_id))
 
@@ -816,10 +879,7 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
                 raise ValueError(f"content_type={type(block)} | content not supported by OpenAI Realtime")
 
         if content:
-            await self._send_event(
-                {"type": "conversation.item.create", "item": {"type": "message", "role": "user", "content": content}}
-            )
-            await self._request_response()
+            await self._send_input_item({"type": "message", "role": "user", "content": content})
 
     async def _send_audio_content(self, audio_input: AudioDelta) -> None:
         """Internal: Send audio content to OpenAI for processing."""
@@ -848,22 +908,34 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         result_output = json.dumps(tool_result.content)
 
         item_data = {"type": "function_call_output", "call_id": tool_use_id, "output": result_output}
-        await self._send_event({"type": "conversation.item.create", "item": item_data})
-        self._session_state.pending_tools.discard(tool_use_id)
-        await self._request_response()
+        await self._send_input_item(item_data)
 
-    async def _request_response(self) -> None:
-        """Coalesce continuation requests while a native response or tool group is active."""
+    async def _send_input_item(self, item: dict[str, Any]) -> None:
+        """Send an input and track whether the next response includes it."""
         state = self._session_state
+        item = {"id": uuid.uuid4().hex, **item}
+        state.pending_input_ids.add(item["id"])
         state.response_pending = True
+        await self._send_event({"type": "conversation.item.create", "item": item})
+        if item["type"] == "function_call_output":
+            state.pending_tools.discard(item["call_id"])
         await self._flush_response_request(state)
 
     async def _flush_response_request(self, state: _SessionState) -> None:
+        """Create a response if needed, deferring while audio, another response, or tool calls are pending.
+
+        Args:
+            state: Response scheduling state for the current connection.
+        """
         async with state.lock:
+            if state.input_audio_pending:
+                return
             if not state.response_pending or state.response_requested or state.active_responses or state.pending_tools:
                 return
             state.response_pending = False
             state.response_requested = True
+            # WebSocket ordering includes all preceding inputs in this explicit request.
+            state.pending_input_ids.clear()
             try:
                 await self._send_event({"type": "response.create"})
             except BaseException:

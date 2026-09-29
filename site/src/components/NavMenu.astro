@@ -8,6 +8,8 @@ type Category = {
   description: string;
   href?: string;
   external?: boolean;
+  /** Homepage card color key (--card-accent-* in fonts.css). */
+  accent?: string;
   pages?: PageLink[];
 };
 
@@ -27,6 +29,7 @@ const { id, categories } = Astro.props;
     return href ? (
       <a
         class="nav-menu__cat"
+        data-accent={cat.accent}
         href={href}
         {...(langAware ? { 'data-lang-href': '' } : {})}
         {...(isExternal && href.startsWith('http')
@@ -42,7 +45,7 @@ const { id, categories } = Astro.props;
         <span class="nav-menu__cat-desc">{cat.description}</span>
       </a>
     ) : (
-      <span class="nav-menu__cat">
+      <span class="nav-menu__cat" data-accent={cat.accent}>
         <span class="nav-menu__cat-title">{cat.title}</span>
         <span class="nav-menu__cat-desc">{cat.description}</span>
       </span>
@@ -91,8 +94,15 @@ const { id, categories } = Astro.props;
   }
 
   .nav-menu__cat:hover .nav-menu__cat-title {
-    color: var(--accent-green);
+    color: var(--cat-accent, var(--accent-green));
+    opacity: 0.8;
   }
+
+  .nav-menu__cat[data-accent='orange'] { --cat-accent: var(--card-accent-orange); }
+  .nav-menu__cat[data-accent='teal'] { --cat-accent: var(--card-accent-teal); }
+  .nav-menu__cat[data-accent='yellow'] { --cat-accent: var(--card-accent-yellow); }
+  .nav-menu__cat[data-accent='pink'] { --cat-accent: var(--card-accent-pink); }
+  .nav-menu__cat[data-accent='blue'] { --cat-accent: var(--card-accent-blue); }
 
   .nav-menu__cat-title {
     display: inline-flex;
@@ -102,7 +112,7 @@ const { id, categories } = Astro.props;
     font-weight: 500;
     font-size: 18px;
     line-height: 1.3;
-    color: inherit;
+    color: var(--cat-accent, inherit);
   }
 
   .nav-menu__cat-desc {
