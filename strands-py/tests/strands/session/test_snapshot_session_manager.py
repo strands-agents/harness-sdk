@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from strands import tool
 from strands._context_manager.context_manager import ContextManager
 from strands.agent import AgentResult
 from strands.agent.agent import Agent
@@ -61,6 +62,15 @@ def _model(*texts):
 def _on_disk_key(session_id: str, agent_id: str) -> str:
     """The full raw-storage key for a session's latest snapshot (namespace + relative key)."""
     return f"session/{_snapshot_key(session_id, agent_id, snapshot_id=None)}"
+
+
+def _tool_result_text(agent, tool_use_id: str) -> str:
+    """The text of the tool result for ``tool_use_id`` in an agent's history."""
+    for message in agent.messages:
+        for content in message["content"]:
+            if content.get("toolResult", {}).get("toolUseId") == tool_use_id:
+                return content["toolResult"]["content"][0]["text"]
+    raise AssertionError(f"no tool result for {tool_use_id}")
 
 
 def _texts(agent) -> list[str]:
@@ -1310,3 +1320,63 @@ class TestSnapshotStashIntegration:
         raw = await storage.read(key)
         snapshot_data = json.loads(raw)
         assert snapshot_data["data"]["stash"]["location"] == "inline"
+
+    @pytest.mark.parametrize("stash_mode", ["inline", "durable"])
+    def test_resume_keeps_original_of_truncated_tool_result_retrievable(self, storage, stash_mode):
+        """After a resume, retrieve_context returns the full original of a tool result truncated before the restart."""
+        full_result = "full tool result " * 2_000
+
+        @tool
+        def fetch_result() -> str:
+            """Return a large result."""
+            return full_result
+
+        def build_agent(model):
+            storage_options = {"storage": storage} if stash_mode == "durable" else {}
+            return Agent(
+                model=model,
+                tools=[fetch_result],
+                context_manager="auto",
+                session_manager=SnapshotSessionManager("s1", storage=storage),
+                agent_id="a1",
+                callback_handler=None,
+                **storage_options,
+            )
+
+        first_agent = build_agent(
+            MockedModelProvider(
+                [
+                    {
+                        "role": "assistant",
+                        "content": [{"toolUse": {"toolUseId": "tu-1", "name": "fetch_result", "input": {}}}],
+                    },
+                    {"role": "assistant", "content": [{"text": "fetched"}]},
+                ]
+            )
+        )
+        first_agent("fetch")
+        assert _tool_result_text(first_agent, "tu-1").startswith("[Truncated:")
+
+        resumed_agent = build_agent(
+            MockedModelProvider(
+                [
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "toolUse": {
+                                    "toolUseId": "tu-2",
+                                    "name": "retrieve_context",
+                                    "input": {"reference": "tu-1_0"},
+                                }
+                            }
+                        ],
+                    },
+                    {"role": "assistant", "content": [{"text": "done"}]},
+                ]
+            )
+        )
+        resumed_agent("read it in full")
+
+        assert json.loads(_tool_result_text(resumed_agent, "tu-2")) == {"text": full_result}
+        assert asyncio.run(resumed_agent.context_manager.stash.retrieve("tu-1_0")) == {"text": full_result}

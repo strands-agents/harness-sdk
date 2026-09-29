@@ -250,6 +250,8 @@ class ContextManager(Plugin):
         """Stash any messages already on the agent that were not seen by the hook.
 
         Covers Agent(messages=[...]) and session restore, which bypass MessageAddedEvent.
+        Existing entries are kept: after a restore the stash holds the originals, while the
+        matching messages on the agent may already be offloaded previews.
         """
         if self._backfill_done or self._stash is None:
             return
@@ -257,7 +259,7 @@ class ContextManager(Plugin):
         skip = frozenset(self._retrieval_tool_use_ids)
         for message in agent.messages:
             try:
-                await self._stash.store_message(message, skip)
+                await self._stash.store_message(message, skip, keep_existing=True)
             except Exception:
                 logger.warning("agent_id=<%s> | failed to backfill stash", agent.agent_id, exc_info=True)
 
