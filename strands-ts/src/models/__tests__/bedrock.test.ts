@@ -1517,6 +1517,62 @@ describe('BedrockModel', () => {
       }
     })
 
+    it('handles cache usage metrics in non-streaming mode', async () => {
+      const mockSend = vi.fn(async () => ({
+        output: { message: { role: 'assistant', content: [{ text: 'Hello' }] } },
+        stopReason: 'end_turn',
+        usage: {
+          inputTokens: 100,
+          outputTokens: 50,
+          totalTokens: 150,
+          cacheReadInputTokens: 80,
+          cacheWriteInputTokens: 20,
+        },
+        metrics: { latencyMs: 100 },
+      }))
+      mockBedrockClientImplementation({ send: mockSend })
+
+      const provider = new BedrockModel({ stream: false })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      const events = await collectIterator(provider.stream(messages))
+
+      const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
+      expect(metadataEvent).toEqual({
+        type: 'modelMetadataEvent',
+        usage: {
+          inputTokens: 100,
+          outputTokens: 50,
+          totalTokens: 150,
+          cacheReadInputTokens: 80,
+          cacheWriteInputTokens: 20,
+        },
+        metrics: { latencyMs: 100 },
+      })
+    })
+
+    it('omits cache counters in non-streaming mode when usage does not report them', async () => {
+      const mockSend = vi.fn(async () => ({
+        output: { message: { role: 'assistant', content: [{ text: 'Hello' }] } },
+        stopReason: 'end_turn',
+        usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+        metrics: { latencyMs: 100 },
+      }))
+      mockBedrockClientImplementation({ send: mockSend })
+
+      const provider = new BedrockModel({ stream: false })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      const events = await collectIterator(provider.stream(messages))
+
+      const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
+      expect(metadataEvent).toEqual({
+        type: 'modelMetadataEvent',
+        usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+        metrics: { latencyMs: 100 },
+      })
+    })
+
     it('handles trace in metadata', async () => {
       setupMockSend(async function* () {
         yield { messageStart: { role: 'assistant' } }

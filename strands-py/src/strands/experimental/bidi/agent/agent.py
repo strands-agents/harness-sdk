@@ -16,6 +16,7 @@ Key capabilities:
 import asyncio
 import copy
 import logging
+import threading
 import uuid
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
@@ -34,6 +35,9 @@ from ....hooks import (
 )
 from ....hooks.registry import TEvent
 from ....interrupt import _InterruptState
+from ....sandbox import Sandbox
+from ....sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
+from ....storage import Storage
 from ....tools._caller import _ToolCaller
 from ....tools.executors import ConcurrentToolExecutor
 from ....tools.executors._executor import ToolExecutor
@@ -71,7 +75,9 @@ from ..types.media import AudioDelta
 from .loop import _AgentLoop
 
 if TYPE_CHECKING:
+    from ...._context_manager.context_manager import ContextManager
     from ....session.session_manager import SessionManager
+    from ....telemetry.metrics import EventLoopMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +109,7 @@ class BidiAgent(LocalAgent):
         state: AgentState | dict | None = None,
         session_manager: "SessionManager[LocalAgent] | None" = None,
         tool_executor: ToolExecutor | None = None,
+        storage: Storage | None = None,
         **kwargs: Any,
     ):
         """Initialize bidirectional agent.
@@ -123,6 +130,12 @@ class BidiAgent(LocalAgent):
             session_manager: Manager for handling agent sessions including conversation history and state.
                 If provided, enables session-based persistence and state management.
             tool_executor: Definition of tool execution strategy (e.g., sequential, concurrent, etc.).
+            storage: Default storage backend for agent subsystems.
+                When provided, subsystems that do not have their own explicit storage
+                (e.g., SessionManager) resolve from this value. Each subsystem
+                auto-namespaces under its own prefix to avoid key collisions.
+                Storage specified directly on a subsystem always takes precedence over
+                this agent-level default. Defaults to None.
             **kwargs: Additional configuration for future extensibility.
 
         Raises:
@@ -144,6 +157,10 @@ class BidiAgent(LocalAgent):
 
         _, self._system_prompt_content = split_system_prompt(system_prompt)
         self.messages = messages if messages is not None else []
+        self._storage: Storage | None = storage
+        self._sandbox: Sandbox = NotASandboxLocalEnvironment()
+        # Never set yet: bidirectional agents do not act on a cancellation signal.
+        self._cancel_signal = threading.Event()
 
         # Agent identification
         self.agent_id = _identifier.validate(agent_id or _DEFAULT_AGENT_ID, _identifier.Identifier.AGENT)
@@ -258,6 +275,35 @@ class BidiAgent(LocalAgent):
     def session_id(self) -> str:
         """Get the conversation session identifier."""
         return self._session_id
+
+    @property
+    def storage(self) -> Storage | None:
+        """Default storage backend for agent subsystems."""
+        return self._storage
+
+    @property
+    def sandbox(self) -> Sandbox:
+        """Execution environment for tool code: the host, with no isolation."""
+        return self._sandbox
+
+    @property
+    def context_manager(self) -> "ContextManager | None":
+        """The ContextManager plugin; always None because bidirectional agents do not support plugins."""
+        return None
+
+    @property
+    def event_loop_metrics(self) -> "EventLoopMetrics":
+        """Raise because bidirectional agents do not collect event loop metrics yet."""
+        raise NotImplementedError("event_loop_metrics is not supported by bidirectional agents yet")
+
+    @event_loop_metrics.setter
+    def event_loop_metrics(self, value: "EventLoopMetrics") -> None:
+        raise NotImplementedError("event_loop_metrics is not supported by bidirectional agents yet")
+
+    @property
+    def cancel_signal(self) -> threading.Event:
+        """The cancellation signal; never set yet, because bidirectional agents do not act on it."""
+        return self._cancel_signal
 
     def add_hook(
         self,

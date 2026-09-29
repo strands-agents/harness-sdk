@@ -98,6 +98,7 @@ navbar:
 # its landing/hub page and `pages` are the key links shown on mobile.
 products:
   - label: Harness
+    accent: orange
     name: Strands harness
     slug: "/harness"
     href: /docs/user-guide/harness/
@@ -110,6 +111,7 @@ products:
       - label: Configuration reference
         href: /docs/user-guide/harness/reference/configuration/
   - label: Harness SDK
+    accent: teal
     name: Strands Harness SDK
     slug: "/harness-sdk"
     href: /docs/user-guide/sdk/
@@ -126,6 +128,7 @@ products:
       - label: Deploy to production
         href: /docs/user-guide/sdk/deploy/operating-agents-in-production/
   - label: Shell
+    accent: yellow
     name: Strands Shell
     slug: "/shell"
     href: /docs/user-guide/shell/
@@ -142,6 +145,7 @@ products:
       - label: Reference
         href: /docs/user-guide/shell/reference/
   - label: Evals
+    accent: pink
     name: Strands Evals
     slug: "/evals"
     href: /docs/user-guide/evals-sdk/

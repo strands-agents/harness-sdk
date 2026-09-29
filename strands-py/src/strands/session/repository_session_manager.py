@@ -216,11 +216,7 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
         """
         from ..agent.agent import Agent
 
-        if (
-            isinstance(agent, Agent)
-            and not RepositorySessionManager._warned_storage_ignored
-            and agent.storage is not None
-        ):
+        if not RepositorySessionManager._warned_storage_ignored and agent.storage is not None:
             RepositorySessionManager._warned_storage_ignored = True
             logger.warning(
                 "agent_id=<%s> | agent-level storage is set but RepositorySessionManager does not use it;"
