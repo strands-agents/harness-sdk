@@ -42,10 +42,10 @@ from ..types.events import (
     BidiReasoningStopEvent,
     BidiResponseStartEvent,
     BidiResponseStopEvent,
-    BidiToolUseBlocksEvent,
     BidiTextDeltaEvent,
     BidiTextStartEvent,
     BidiTextStopEvent,
+    BidiToolUseBlocksEvent,
     BidiTranscriptDeltaEvent,
     BidiTranscriptStartEvent,
     BidiTranscriptStopEvent,
@@ -395,7 +395,9 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         turn_complete = bool(server_content and server_content.turn_complete)
         generation_complete = bool(server_content and server_content.generation_complete)
         produced_model_output = any(
-            isinstance(event, (BidiAudioDeltaEvent, BidiTextDeltaEvent, BidiReasoningDeltaEvent, BidiToolUseBlocksEvent))
+            isinstance(
+                event, (BidiAudioDeltaEvent, BidiTextDeltaEvent, BidiReasoningDeltaEvent, BidiToolUseBlocksEvent)
+            )
             or (isinstance(event, BidiTranscriptDeltaEvent) and event.role == "assistant")
             for event in events
         )

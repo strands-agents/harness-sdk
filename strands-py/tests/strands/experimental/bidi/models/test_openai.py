@@ -34,11 +34,11 @@ from strands.experimental.bidi.types import (
     BidiMessage,
     BidiResponseStartEvent,
     BidiResponseStopEvent,
-    BidiToolUseBlocksEvent,
     BidiTextBlockEvent,
     BidiTextDeltaEvent,
     BidiTextStartEvent,
     BidiTextStopEvent,
+    BidiToolUseBlocksEvent,
     BidiTranscriptBlockEvent,
     BidiTranscriptDeltaEvent,
     BidiTranscriptStartEvent,
@@ -1715,7 +1715,7 @@ async def test_start_resets_connection_state(model, restart):
     """Only a restart carries outstanding tools into the fresh connection."""
     await model.start()
     state = model._session_state
-    state.started_transcripts.add("transcript")
+    state.started_transcripts["transcript"] = True
     state.assistant_parts["response"] = ("item", 0)
     state.audio_content_ids["response"] = "audio"
     state.active_responses.add("response")
