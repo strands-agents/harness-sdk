@@ -1,13 +1,18 @@
+import threading
 from typing import Any
 
 from typing_extensions import assert_type
 
 from strands import Agent, LocalAgent, Snapshot, ToolContext, tool
+from strands._context_manager.context_manager import ContextManager
 from strands.experimental.bidi.agent import BidiAgent
 from strands.hooks import AfterToolCallEvent, AgentInitializedEvent, BeforeToolCallEvent, MessageAddedEvent
+from strands.sandbox import Sandbox
 from strands.session.repository_session_manager import RepositorySessionManager
 from strands.session.session_manager import SessionManager
 from strands.session.snapshot_session_manager import SnapshotSessionManager
+from strands.storage import Storage
+from strands.telemetry.metrics import EventLoopMetrics
 from strands.types.content import Message
 from strands.types.session import SessionAgent
 
@@ -95,6 +100,21 @@ def register_hooks(agent: Agent, bidi_agent: BidiAgent, local_agent: LocalAgent)
 
 def local_agent_excludes_agent_only_members(local_agent: LocalAgent) -> None:
     local_agent.cleanup()  # type: ignore[attr-defined]
+    local_agent.cancel()  # type: ignore[attr-defined]
+    local_agent.conversation_manager  # type: ignore[attr-defined]  # noqa: B018
+    local_agent.tool_executor  # type: ignore[attr-defined]  # noqa: B018
+
+
+def local_agent_services(agent: Agent, bidi_agent: BidiAgent, local_agent: LocalAgent) -> None:
+    for shared in (agent, bidi_agent, local_agent):
+        assert_type(shared.sandbox, Sandbox)
+        assert_type(shared.context_manager, ContextManager | None)
+        assert_type(shared.event_loop_metrics, EventLoopMetrics)
+        assert_type(shared.cancel_signal, threading.Event)
+    local_agent.event_loop_metrics = agent.event_loop_metrics
+    local_agent.sandbox = agent.sandbox  # type: ignore[misc]
+    local_agent.context_manager = None  # type: ignore[misc]
+    local_agent.cancel_signal = threading.Event()  # type: ignore[misc]
 
 
 def snapshot_local_agent(agent: Agent, bidi_agent: BidiAgent, local_agent: LocalAgent) -> None:
@@ -103,6 +123,14 @@ def snapshot_local_agent(agent: Agent, bidi_agent: BidiAgent, local_agent: Local
         assert_type(snapshot, Snapshot)
         shared.take_snapshot(include=["messages", "state"], exclude=["state"], app_data={"key": "value"})
         shared.load_snapshot(snapshot)
+
+
+def storage_local_agent(storage: Storage) -> None:
+    for shared in (Agent(storage=storage), BidiAgent(storage=storage)):
+        assert_type(shared.storage, Storage | None)
+    local_agent: LocalAgent = BidiAgent(storage=storage)
+    assert_type(local_agent.storage, Storage | None)
+    local_agent.storage = storage  # type: ignore[misc]
 
 
 def persist_local_agent(manager: RepositorySessionManager, agent: LocalAgent, message: Message) -> None:

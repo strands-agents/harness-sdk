@@ -6,6 +6,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from strands import Agent
+from strands.experimental.bidi.agent import BidiAgent
+from strands.experimental.bidi.models import BidiModel
 from strands.session.repository_session_manager import RepositorySessionManager
 from strands.session.snapshot_session_manager import SnapshotSessionManager
 from strands.storage.in_memory_storage import InMemoryStorage as UnifiedInMemoryStorage
@@ -202,6 +204,18 @@ class TestRepositorySessionManagerWarnOnce:
         session_mgr = RepositorySessionManager("test-session", session_repository=repository)
 
         agent = Agent(model=MockedModelProvider(SIMPLE_RESPONSE), agent_id="agent-1", storage=UnifiedInMemoryStorage())
+
+        with caplog.at_level(logging.WARNING):
+            session_mgr.initialize(agent)
+
+        assert "agent-level storage is set but RepositorySessionManager does not use it" in caplog.text
+
+    def test_warns_when_bidi_agent_has_storage(self, caplog):
+        repository = MagicMock()
+        repository.read_session = MagicMock(return_value=None)
+        repository.create_session = MagicMock()
+        session_mgr = RepositorySessionManager("test-session", session_repository=repository)
+        agent = BidiAgent(model=MagicMock(spec=BidiModel), agent_id="agent-1", storage=UnifiedInMemoryStorage())
 
         with caplog.at_level(logging.WARNING):
             session_mgr.initialize(agent)
