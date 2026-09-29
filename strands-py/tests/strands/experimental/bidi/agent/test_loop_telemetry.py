@@ -214,7 +214,7 @@ async def test_response_span_records_time_to_first_audio(loop, agent, agenerator
     """Response span records time to first audio when audio is emitted."""
     events = [
         BidiResponseStartEvent(response_id="resp-audio"),
-        BidiAudioDeltaEvent(audio="", format="pcm", sample_rate=24000, channels=1),
+        BidiAudioDeltaEvent(audio="", format="pcm", sample_rate=24000, channels=1, content_id="audio"),
         BidiResponseStopEvent(response_id="resp-audio"),
     ]
     agent.model.receive = unittest.mock.Mock(return_value=agenerator(events))

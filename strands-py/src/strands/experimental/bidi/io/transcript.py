@@ -12,9 +12,9 @@ from rich.text import Text
 
 from ..types.events import (
     BidiOutputEvent,
+    BidiTranscriptBlockEvent,
     BidiTranscriptDeltaEvent,
     BidiTranscriptStartEvent,
-    BidiTranscriptStopEvent,
     Role,
 )
 from ..types.io import OutputStream
@@ -118,12 +118,13 @@ class _TranscriptOutputStream(OutputStream):
             self._console.show_cursor()
 
     async def __call__(self, event: BidiOutputEvent) -> None:
-        """Update the transcript identified by its start, delta, or stop event."""
+        """Update a transcript's live text or render its completed block."""
         if isinstance(event, BidiTranscriptStartEvent):
             self._transcripts[event.content_id] = _Transcript(event.role)
         elif isinstance(event, BidiTranscriptDeltaEvent):
             self._transcripts[event.content_id].text += event.delta
-        elif isinstance(event, BidiTranscriptStopEvent):
+        elif isinstance(event, BidiTranscriptBlockEvent):
+            self._transcripts[event.content_id].text = event.transcript
             self._transcripts[event.content_id].complete = True
         else:
             return

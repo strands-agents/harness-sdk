@@ -175,13 +175,14 @@ class _Transcript:
 
     content_id: str
     role: Role
-    text: str = ""
+    last_character: str = ""
 
-    def append(self, delta: str) -> str:
-        """Append a transcript block while preserving word boundaries."""
-        if self.text and delta and not self.text[-1].isspace() and not delta[0].isspace():
+    def format_delta(self, delta: str) -> str:
+        """Preserve word boundaries between transcript chunks."""
+        if self.last_character and delta and not self.last_character.isspace() and not delta[0].isspace():
             delta = f" {delta}"
-        self.text += delta
+        if delta:
+            self.last_character = delta[-1]
         return delta
 
 
@@ -194,7 +195,7 @@ class _ResponseState:
         transcript: Open user or speculative assistant transcript.
         response_id: Identifier of the open response, including its user transcript.
         tool_use: Whether the response requested a tool.
-        audio_started: Whether the response's audio stream is open.
+        audio_content_id: Identifier of the response's open audio stream.
         connection_id: Connection the stream belongs to.
         idle: Set while neither the user nor Nova holds the turn on this connection.
     """
@@ -203,7 +204,7 @@ class _ResponseState:
     transcript: _Transcript | None = None
     response_id: str | None = None
     tool_use: bool = False
-    audio_started: bool = False
+    audio_content_id: str | None = None
     connection_id: str | None = None
     idle: asyncio.Event = field(default_factory=asyncio.Event, compare=False)
 
@@ -213,7 +214,7 @@ class _ResponseState:
         self.transcript = None
         self.response_id = None
         self.tool_use = False
-        self.audio_started = False
+        self.audio_content_id = None
 
 
 class BedrockNovaSonicModel(BidiModel, AudioCapable):
@@ -820,7 +821,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             transcript = response_state.transcript
             if transcript is not None and transcript.role == "user" and role != "user":
                 # Nova uses PARTIAL_TURN for user text, so a role change closes the transcript.
-                events.append(BidiTranscriptStopEvent(transcript.text, transcript.role, transcript.content_id))
+                events.append(BidiTranscriptStopEvent(transcript.role, transcript.content_id))
                 response_state.transcript = None
 
             if role in ("user", "assistant", "tool") and response_state.response_id is None:
@@ -833,9 +834,9 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
                     transcript = _Transcript(content_start["contentId"], cast(Role, role))
                     response_state.transcript = transcript
                     events.append(BidiTranscriptStartEvent(transcript.role, transcript.content_id))
-            elif role == "assistant" and content_type == "AUDIO" and not response_state.audio_started:
-                response_state.audio_started = True
-                events.append(BidiAudioStartEvent())
+            elif role == "assistant" and content_type == "AUDIO" and response_state.audio_content_id is None:
+                response_state.audio_content_id = content_start["contentId"]
+                events.append(BidiAudioStartEvent(response_state.audio_content_id))
             return events
 
         if "textOutput" in nova_event:
@@ -848,7 +849,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             transcript = cast(_Transcript, response_state.transcript)
             return [
                 BidiTranscriptDeltaEvent(
-                    delta=transcript.append(text_content),
+                    delta=transcript.format_delta(text_content),
                     role=transcript.role,
                     content_id=transcript.content_id,
                 )
@@ -858,6 +859,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             return [
                 BidiAudioDeltaEvent(
                     audio=nova_event["audioOutput"]["content"],
+                    content_id=cast(str, response_state.audio_content_id),
                     **self._audio_config["output"],
                 )
             ]
@@ -927,11 +929,11 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
     def _complete_response(self, response_state: _ResponseState) -> list[BidiOutputEvent]:
         """Close audio, transcript, and response, then clear their state."""
         events: list[BidiOutputEvent] = []
-        if response_state.audio_started:
-            events.append(BidiAudioStopEvent())
+        if response_state.audio_content_id is not None:
+            events.append(BidiAudioStopEvent(response_state.audio_content_id))
         transcript = response_state.transcript
         if transcript is not None:
-            events.append(BidiTranscriptStopEvent(transcript.text, transcript.role, transcript.content_id))
+            events.append(BidiTranscriptStopEvent(transcript.role, transcript.content_id))
         events.append(BidiResponseStopEvent(cast(str, response_state.response_id)))
         response_state.reset()
         return events

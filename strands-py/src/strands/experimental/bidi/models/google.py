@@ -39,8 +39,14 @@ from ..types.events import (
     BidiBargeInEvent,
     BidiConnectionStartEvent,
     BidiOutputEvent,
+    BidiReasoningDeltaEvent,
+    BidiReasoningStartEvent,
+    BidiReasoningStopEvent,
     BidiResponseStartEvent,
     BidiResponseStopEvent,
+    BidiTextDeltaEvent,
+    BidiTextStartEvent,
+    BidiTextStopEvent,
     BidiTranscriptDeltaEvent,
     BidiTranscriptStartEvent,
     BidiTranscriptStopEvent,
@@ -75,27 +81,35 @@ class _TurnState:
     """
 
     response_id: str | None = None
-    output_transcript: str = ""
     output_transcript_id: str | None = None
-    audio_started: bool = False
+    output_text_stop: BidiTextStopEvent | BidiReasoningStopEvent | None = None
+    audio_content_id: str | None = None
     interrupted: bool = False
     input_id: str | None = None
-    transcripts: dict[str, str] = field(default_factory=dict)
+    input_ids: set[str] = field(default_factory=set)
     response_input_ids: list[str] = field(default_factory=list)
     last_activity_input_id: str | None = None
+
+    def stop_text(self) -> list[BidiOutputEvent]:
+        """Close the current text or reasoning block."""
+        if self.output_text_stop is None:
+            return []
+        event = self.output_text_stop
+        self.output_text_stop = None
+        return [event]
 
     def start_input_transcript(self) -> BidiTranscriptStartEvent:
         """Open a user transcript when speech or its first text arrives."""
         self.input_id = str(uuid.uuid4())
-        self.transcripts[self.input_id] = ""
+        self.input_ids.add(self.input_id)
         return BidiTranscriptStartEvent("user", content_id=self.input_id)
 
     def stop_input_transcript(self, input_id: str) -> BidiTranscriptStopEvent:
         """Close one user transcript without disturbing a newer utterance."""
-        transcript = self.transcripts.pop(input_id, "")
+        self.input_ids.remove(input_id)
         if self.input_id == input_id:
             self.input_id = None
-        return BidiTranscriptStopEvent(transcript, "user", content_id=input_id)
+        return BidiTranscriptStopEvent("user", content_id=input_id)
 
 
 class GoogleGeminiLiveModel(BidiModel, AudioCapable):
@@ -329,23 +343,18 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
             turn_state.last_activity_input_id = turn_state.input_id
 
         if message.server_content:
-            events.extend(
-                self._convert_server_content(
-                    message.server_content,
-                    has_audio=bool(audio_data),
-                    turn_state=turn_state,
-                )
-            )
+            events.extend(self._convert_server_content(message.server_content, turn_state))
 
         if audio_data:
-            if not turn_state.audio_started:
-                turn_state.audio_started = True
-                events.append(BidiAudioStartEvent())
+            if turn_state.audio_content_id is None:
+                turn_state.audio_content_id = str(uuid.uuid4())
+                events.append(BidiAudioStartEvent(turn_state.audio_content_id))
             # Convert bytes to base64 string for JSON serializability
             audio_b64 = base64.b64encode(audio_data).decode("utf-8")
             events.append(
                 BidiAudioDeltaEvent(
                     audio=audio_b64,
+                    content_id=turn_state.audio_content_id,
                     **self._audio_config["output"],
                 )
             )
@@ -385,7 +394,7 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         turn_complete = bool(server_content and server_content.turn_complete)
         generation_complete = bool(server_content and server_content.generation_complete)
         produced_model_output = any(
-            isinstance(event, (BidiAudioDeltaEvent, ToolUseStreamEvent))
+            isinstance(event, (BidiAudioDeltaEvent, BidiTextDeltaEvent, BidiReasoningDeltaEvent, ToolUseStreamEvent))
             or (isinstance(event, BidiTranscriptDeltaEvent) and event.role == "assistant")
             for event in events
         )
@@ -405,35 +414,31 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
 
         if barge_in and turn_state.response_id is not None:
             turn_state.interrupted = True
-        if turn_state.audio_started and (barge_in or turn_complete or generation_complete):
-            turn_state.audio_started = False
-            wrapped.append(BidiAudioStopEvent())
+        if turn_state.audio_content_id is not None and (barge_in or turn_complete or generation_complete):
+            wrapped.append(BidiAudioStopEvent(turn_state.audio_content_id))
+            turn_state.audio_content_id = None
         if turn_complete:
             wrapped.extend(self._complete_response(turn_state))
         return wrapped
 
     def _complete_response(self, turn_state: _TurnState) -> list[BidiOutputEvent]:
-        """Close the turn's transcripts and response, preserving any newer user activity."""
+        """Close the turn's content and response, preserving any newer user activity."""
         events: list[BidiOutputEvent] = []
         input_ids_to_complete = turn_state.response_input_ids
         if turn_state.response_id is None:
             input_ids_to_complete = [turn_state.input_id] if turn_state.input_id is not None else []
         for input_id in input_ids_to_complete:
-            if input_id in turn_state.transcripts:
+            if input_id in turn_state.input_ids:
                 events.append(turn_state.stop_input_transcript(input_id))
         if turn_state.response_id is None:
             return events
 
+        events.extend(turn_state.stop_text())
         if turn_state.output_transcript_id is not None:
-            events.append(
-                BidiTranscriptStopEvent(
-                    turn_state.output_transcript, "assistant", content_id=turn_state.output_transcript_id
-                )
-            )
+            events.append(BidiTranscriptStopEvent("assistant", content_id=turn_state.output_transcript_id))
         events.append(BidiResponseStopEvent(turn_state.response_id))
         turn_state.response_id = None
         turn_state.response_input_ids = []
-        turn_state.output_transcript = ""
         turn_state.output_transcript_id = None
         turn_state.interrupted = False
         return events
@@ -441,14 +446,12 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
     def _convert_server_content(
         self,
         server_content: LiveServerContent,
-        has_audio: bool,
         turn_state: _TurnState,
     ) -> list[BidiOutputEvent]:
         """Convert the server content of a Gemini Live message.
 
         Args:
             server_content: Server content to convert.
-            has_audio: Whether the enclosing message carries audio output.
             turn_state: Per-reader transcript and response state.
 
         Returns:
@@ -470,34 +473,37 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
                 # Without a native activity boundary, finalize late text with the current turn.
                 if turn_state.response_id is not None and not turn_state.interrupted and not server_content.interrupted:
                     turn_state.response_input_ids.append(input_id)
-            turn_state.transcripts[input_id] += text
             logger.debug("text_length=<%d> | gemini input transcription detected", len(text))
             events.append(BidiTranscriptDeltaEvent(delta=text, role="user", content_id=input_id))
 
         if input_transcript and input_transcript.finished is True and turn_state.input_id is not None:
             events.append(turn_state.stop_input_transcript(turn_state.input_id))
 
-        output_text: list[str] = []
         output_transcript = server_content.output_transcription
         if output_transcript and output_transcript.text:
             text = output_transcript.text
             logger.debug("text_length=<%d> | gemini output transcription detected", len(text))
-            output_text.append(text)
-
-        if not has_audio and server_content.model_turn and server_content.model_turn.parts:
-            # Concatenate all text parts (Gemini may send multiple parts)
-            text_parts = [part.text for part in server_content.model_turn.parts if part.text]
-            if text_parts:
-                output_text.append(" ".join(text_parts))
-
-        for text in output_text:
             if turn_state.output_transcript_id is None:
                 turn_state.output_transcript_id = str(uuid.uuid4())
                 events.append(BidiTranscriptStartEvent("assistant", content_id=turn_state.output_transcript_id))
-            turn_state.output_transcript += text
             events.append(
                 BidiTranscriptDeltaEvent(delta=text, role="assistant", content_id=turn_state.output_transcript_id)
             )
+
+        if server_content.model_turn:
+            for part in server_content.model_turn.parts or []:
+                if not part.text:
+                    continue
+                is_reasoning = part.thought is True
+                stop_event = BidiReasoningStopEvent if is_reasoning else BidiTextStopEvent
+                if not isinstance(turn_state.output_text_stop, stop_event):
+                    events.extend(turn_state.stop_text())
+                    content_id = str(uuid.uuid4())
+                    turn_state.output_text_stop = stop_event(content_id)
+                    start_event_class = BidiReasoningStartEvent if is_reasoning else BidiTextStartEvent
+                    events.append(start_event_class(content_id))
+                delta_event = BidiReasoningDeltaEvent if is_reasoning else BidiTextDeltaEvent
+                events.append(delta_event(part.text, turn_state.output_text_stop.content_id))
 
         return events
 
