@@ -174,10 +174,7 @@ def session_manager_types(
     standard_manager: SessionManager = repository_manager
     shared_repository_manager: SessionManager[LocalAgent] = repository_manager
     Agent(session_manager=standard_manager)
+    Agent(session_manager=shared_repository_manager)
     Agent(session_manager=shared_manager)
     Agent(session_manager=AgentOnlySessionManager())
     Agent(session_manager=snapshot_manager)
-    BidiAgent(session_manager=shared_repository_manager)
-    BidiAgent(session_manager=shared_manager)
-    BidiAgent(session_manager=manager)  # type: ignore[arg-type]
-    BidiAgent(session_manager=snapshot_manager)  # type: ignore[arg-type]

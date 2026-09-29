@@ -139,6 +139,7 @@ def test_bidi_agent_init_with_various_configurations():
     assert agent.model == mock_model
     assert agent.system_prompt is None
     assert agent.system_prompt_content is None
+    assert agent._session_manager is None
     assert not agent._started
     assert agent.model._connection_id is None
 
@@ -268,7 +269,7 @@ def test_bidi_agent_init_with_unsupported_model():
         BidiAgent(model=object())
 
 
-def test_bidi_agent_session_id_without_session_manager(mock_model):
+def test_bidi_agent_session_id(mock_model):
     """Test the generated session identifier remains stable."""
     agent = BidiAgent(model=mock_model)
 
@@ -277,16 +278,6 @@ def test_bidi_agent_session_id_without_session_manager(mock_model):
 
     assert first == second
     assert len(first) == 8
-
-
-def test_bidi_agent_session_id_delegates_to_session_manager(mock_model):
-    """Test the session manager's persistent identifier is exposed."""
-    session_manager = unittest.mock.Mock()
-    session_manager.session_id = "test-session"
-
-    agent = BidiAgent(model=mock_model, session_manager=session_manager)
-
-    assert agent.session_id == "test-session"
 
 
 def test_bidi_agent_storage_defaults_to_none(mock_model):

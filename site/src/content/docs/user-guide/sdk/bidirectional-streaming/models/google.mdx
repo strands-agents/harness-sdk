@@ -106,9 +106,9 @@ takes precedence.
 Calling `update_config(params=...)` replaces the entire `params` dictionary. The new
 values take effect on the next `start()` or `restart()`.
 
-## Session Management
+## Session Resumption
 
-`GoogleGeminiLiveModel` does not produce a message history, so it has limited compatibility with the Strands [session manager](../session-management.md). For [connection restarts](../agent.md#connection-restart), the provider resumes the same server-side session through Gemini's [session resumption](https://ai.google.dev/gemini-api/docs/live-session) handle, carrying context across the restart without replaying history. Resumed sessions persist up to 24 hours; after that, create a new `GoogleGeminiLiveModel` instance to continue the conversation.
+For [connection restarts](../agent.md#connection-restart), the provider resumes the same server-side session through Gemini's [session resumption](https://ai.google.dev/gemini-api/docs/live-session) handle, carrying context across the restart without replaying history. Resumed sessions persist up to 24 hours; after that, create a new `GoogleGeminiLiveModel` instance to continue the conversation.
 
 ## Troubleshooting
 
