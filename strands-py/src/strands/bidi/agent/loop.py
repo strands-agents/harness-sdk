@@ -798,7 +798,7 @@ class _AgentLoop:
         tool_error: Exception | None = None
 
         try:
-            tool_events = self._agent.tool_executor._stream(
+            tool_events = self._agent._tool_executor._stream(
                 self._agent,
                 tool_use,
                 tool_results,

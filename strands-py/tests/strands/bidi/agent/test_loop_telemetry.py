@@ -289,7 +289,7 @@ async def test_tool_call_span_closed_on_error(loop, agent, agenerator, otel_setu
     tool_use = {"toolUseId": "t1", "name": "mock_tool", "input": {}}
     events = [BidiToolUseBlocksEvent([tool_use])]
     agent.model.receive = unittest.mock.Mock(return_value=agenerator(events))
-    agent.tool_executor._stream = unittest.mock.Mock(side_effect=RuntimeError("tool boom"))
+    agent._tool_executor._stream = unittest.mock.Mock(side_effect=RuntimeError("tool boom"))
 
     await loop.start()
 

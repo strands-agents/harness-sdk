@@ -40,7 +40,6 @@ from ...sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironme
 from ...storage import Storage
 from ...tools._caller import _ToolCaller
 from ...tools.executors import ConcurrentToolExecutor
-from ...tools.executors._executor import ToolExecutor
 from ...tools.registry import ToolRegistry
 from ...tools.tool_provider import ToolProvider
 from ...tools.watcher import ToolWatcher
@@ -106,7 +105,6 @@ class BidiAgent(LocalAgent):
         description: str | None = None,
         hooks: list[HookProvider] | None = None,
         state: AgentState | dict | None = None,
-        tool_executor: ToolExecutor | None = None,
         storage: Storage | None = None,
     ):
         """Initialize bidirectional agent.
@@ -124,7 +122,6 @@ class BidiAgent(LocalAgent):
             description: Description of what the Agent does.
             hooks: Optional list of hook providers to register for lifecycle events.
             state: Stateful information for the agent. Can be either an AgentState object, or a json serializable dict.
-            tool_executor: Definition of tool execution strategy (e.g., sequential, concurrent, etc.).
             storage: Default storage backend for agent subsystems.
                 When provided, subsystems that do not have their own explicit storage
                 resolve from this value. Each subsystem
@@ -174,7 +171,7 @@ class BidiAgent(LocalAgent):
 
         # Initialize tool watcher if directory loading is enabled
         if self.load_tools_from_directory:
-            self.tool_watcher = ToolWatcher(tool_registry=self.tool_registry)
+            self._tool_watcher = ToolWatcher(tool_registry=self.tool_registry)
 
         # Initialize agent state management
         if state is not None:
@@ -191,7 +188,7 @@ class BidiAgent(LocalAgent):
         self._tool_caller = _ToolCaller(self)
 
         # Initialize tool executor
-        self.tool_executor = tool_executor or ConcurrentToolExecutor()
+        self._tool_executor = ConcurrentToolExecutor()
 
         # Initialize hooks registry
         self.hooks = HookRegistry()
