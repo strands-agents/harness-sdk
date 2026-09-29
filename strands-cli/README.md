@@ -506,6 +506,10 @@ In Ink, `/sessions` combines saved sessions from workspaces previously seen on t
 can resume any of them, including from another worktree. Session data stays in each workspace's
 configured `session.dir`; the user-level catalog stores only those roots.
 
+`/sessions rename <name>` names the current saved session. Leave out the name to have the current
+model suggest a three-word name in the background from a copy of the conversation; if that fails,
+the existing name stays.
+
 ### Background Tasks
 
 `subagent` always runs in the background. Any other compatible tool may run there when the model

@@ -105,6 +105,8 @@ export class ChatController implements ChatControllerApi {
   private _sessionCache: SessionList | undefined
   private _sessionRefresh: Promise<SessionList> | undefined
   private _sessionGeneration = 0
+  private _sessionNaming: AbortController | undefined
+  private _sessionRename: Promise<unknown> = Promise.resolve()
   private readonly _skills: ChatSkillsRuntime | undefined
   private readonly _skillNames = new Set<string>()
   private readonly _mcp: LoadedMcp | undefined
@@ -660,6 +662,7 @@ export class ChatController implements ChatControllerApi {
       return
     }
     this._closed = true
+    this._sessionNaming?.abort()
     this._stopWatchingUsage()
     this._backgroundContinuationPending = false
     const interrupted = this._activeProjector !== undefined || this._drainingProjector !== undefined
@@ -675,6 +678,7 @@ export class ChatController implements ChatControllerApi {
   }
 
   async dispose(): Promise<void> {
+    this._sessionNaming?.abort()
     this._stopWatchingUsage()
     if (this._activeProjector || this._drainingProjector) {
       this._presentationAbort?.abort()
@@ -1309,21 +1313,22 @@ export class ChatController implements ChatControllerApi {
   private async _handleSessionsCommand(argument: string): Promise<void> {
     const rename = /^rename(?:\s+([\s\S]+))?$/i.exec(argument)
     if (!rename) {
-      this._openError('sessions command failed', `/sessions ${argument}`, 'Use /sessions or /sessions rename <name>.')
+      this._openError('sessions command failed', `/sessions ${argument}`, 'Use /sessions or /sessions rename [name].')
       return
     }
     const name = rename[1] ?? ''
-    if (!name) {
-      this._openError('session rename failed', '/sessions rename', 'Use /sessions rename <name>.')
-      return
-    }
     if (!this._sessions?.renameCurrent || this._backend.protocol !== 'strands') {
       this._openError('session rename unavailable', name, 'The current backend does not expose a file-backed session.')
       return
     }
+    this._sessionNaming?.abort()
+    if (!name) {
+      void this._generateSessionName()
+      return
+    }
     this._resourceChanging = true
     try {
-      const renamed = await this._sessions.renameCurrent(name)
+      const renamed = await this._renameSession(name)
       this._runtime.session = renamed.name
       this._invalidateSessions()
       this._sessionCache = this._sessionCache?.map((session) =>
@@ -1335,6 +1340,48 @@ export class ChatController implements ChatControllerApi {
     } finally {
       this._resourceChanging = false
     }
+  }
+
+  private async _generateSessionName(): Promise<void> {
+    if (!this._backend.generateSessionName || !this._sessions?.current) {
+      this._openError('session rename unavailable', '/sessions rename', 'Use /sessions rename <name> on this backend.')
+      return
+    }
+    const request = new AbortController()
+    this._sessionNaming = request
+    const notice = this._addNotice('running', 'Generating session name')
+    this._emit()
+    try {
+      const name = await this._backend.generateSessionName(request.signal)
+      request.signal.throwIfAborted()
+      const renamed = await this._renameSession(name)
+      request.signal.throwIfAborted()
+      this._runtime.session = renamed.name
+      this._invalidateSessions()
+      this._sessionCache = undefined
+      notice.status = 'success'
+      notice.text = `Session renamed: ${renamed.name}`
+      if (this._panel?.kind === 'sessions') {
+        await this._openSessionsPanel()
+      }
+    } catch (error) {
+      notice.status = request.signal.aborted ? 'delivered' : 'error'
+      notice.text = request.signal.aborted
+        ? 'Session naming cancelled'
+        : `Session rename failed: ${errorMessage(error)}`
+    } finally {
+      if (this._sessionNaming === request) {
+        this._sessionNaming = undefined
+      }
+      this._emit()
+    }
+  }
+
+  /** Writes run in order, so a stale generated name cannot land after a newer rename. */
+  private _renameSession(name: string): Promise<{ sessionId: string; name: string }> {
+    const renamed = this._sessionRename.then(() => this._sessions!.renameCurrent!(name))
+    this._sessionRename = renamed.catch(() => undefined)
+    return renamed
   }
 
   private async _openSkillsPanel(): Promise<void> {
@@ -1436,6 +1483,7 @@ export class ChatController implements ChatControllerApi {
       )
       return
     }
+    this._sessionNaming?.abort()
     this._resourceChanging = true
     this._openPanel('progress', 'starting fresh conversation', [
       { label: this._backend.name, description: 'Rebuilding through createHarness() without restoring context.' },

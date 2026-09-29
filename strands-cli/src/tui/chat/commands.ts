@@ -18,7 +18,7 @@ export const LOCAL_COMMANDS: readonly LocalCommandSpec[] = [
   { name: 'rename', usage: '/rename <name>', description: 'Rename the currently viewed agent' },
   {
     name: 'sessions',
-    usage: '/sessions [rename <name>]',
+    usage: '/sessions [rename [name]]',
     description: 'Browse, resume, or rename the current saved conversation',
   },
   { name: 'tools', usage: '/tools', description: 'Choose the built-in tools the agent has' },

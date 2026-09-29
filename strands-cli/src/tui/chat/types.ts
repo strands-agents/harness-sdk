@@ -260,6 +260,7 @@ export interface ChatBackend {
   setEffort?(effort: string): Promise<string | void>
   streamShell?(command: string): AsyncGenerator<ChatEvent, ChatRunResult, undefined>
   queueSteering?(prompt: string): boolean
+  generateSessionName?(cancelSignal: AbortSignal): Promise<string>
   forkState?(): ChatForkState
   captureConversation?(): Promise<Snapshot>
   sourceSelection?(): ChatConversation['sourceSelection']
