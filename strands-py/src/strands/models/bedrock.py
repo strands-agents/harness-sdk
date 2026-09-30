@@ -866,12 +866,7 @@ class BedrockModel(Model):
                 # Bedrock guardContent supports a narrower set of image formats than image content.
                 if idx == last_user_text_idx and ("text" in formatted_content or "image" in formatted_content):
                     if "text" in formatted_content:
-                        # Bedrock rejects a blank guardContent text block ("The guard content field in
-                        # the ContentBlock object at messages.N.content.M is blank"), and the shape
-                        # carries no minimum length so botocore cannot catch it client-side. A blank
-                        # block is reachable in normal use -- a zero-argument tool invoked through
-                        # as_tool() gives the sub-agent an empty initial prompt. Leave such text
-                        # unwrapped rather than failing the request; there is nothing to screen.
+                        # Bedrock rejects a blank guardContent block, and there is nothing to screen.
                         if formatted_content["text"].strip():
                             formatted_content = {"guardContent": {"text": {"text": formatted_content["text"]}}}
                         else:
