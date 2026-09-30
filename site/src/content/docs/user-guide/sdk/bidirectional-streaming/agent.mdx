@@ -405,12 +405,12 @@ model = BedrockNovaSonicModel(
     model_id="amazon.nova-2-sonic-v1:0",
     connection={
         "restart_after_s": 360,  # Restart this many seconds after a connection opens
-        "auto_reconnect": True,  # Set False to disable automatic restart
+        "auto_restart": True,  # Set False to disable automatic restart
     },
 )
 ```
 
-`restart_after_s` should sit at least ~10 seconds below the provider's own connection limit, because the restart may wait briefly for the current turn to finish before swapping. Setting `auto_reconnect=False` turns off both the proactive timer and reactive restart, so the connection closes at the provider's limit.
+`restart_after_s` should sit at least ~10 seconds below the provider's own connection limit, because the restart may wait briefly for the current turn to finish before swapping. Setting `auto_restart=False` turns off both the proactive timer and reactive restart, so the connection closes at the provider's limit.
 
 ### Error Handling
 

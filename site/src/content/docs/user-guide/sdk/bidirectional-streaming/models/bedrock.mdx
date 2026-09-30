@@ -135,7 +135,7 @@ For more details on this approach, please refer to the [boto3 session docs](http
 | `audio` | Input and output stream options. | `{"output": {"sample_rate": 24000}}` | [reference](@api/python/strands.bidi.models#BedrockNovaSonicAudioConfig) |
 | `voice` | Output voice identifier. Defaults to `"matthew"`. | `"tiffany"` | Nova Sonic voices |
 | `params` | Provider-specific session parameters, such as inference and turn detection configuration. | `{"inferenceConfiguration": {"temperature": 0.7}}` | [`sessionStart` fields](https://docs.aws.amazon.com/nova/latest/nova2-userguide/sonic-input-events.html) |
-| `connection` | Restart timing overrides. | `{"auto_reconnect": False}` | [reference](@api/python/strands.bidi.models#ConnectionConfig) |
+| `connection` | Restart timing overrides. | `{"auto_restart": False}` | [reference](@api/python/strands.bidi.models#ConnectionConfig) |
 
 :::caution[Conversation History Limits]
 Nova Sonic caps conversation history passed via `messages` at 50KB per message and 200KB total. Messages exceeding the per-message limit are truncated; if the total exceeds 200KB, the oldest messages are dropped until it fits. This happens silently (only visible via debug-level logs) and only applies to history provided at connection start, not to turns generated during the live conversation.

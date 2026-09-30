@@ -299,7 +299,7 @@ class _AgentLoop:
                 if isinstance(error, ConnectionTimeoutError):
                     logger.debug("model timeout error received")
                     if not self._auto_restart_enabled():
-                        logger.debug("auto_reconnect disabled | surfacing timeout to caller")
+                        logger.debug("auto_restart disabled | surfacing timeout to caller")
                         raise error
                     restart_event = BidiConnectionRestartEvent(
                         reason="timeout",
@@ -334,14 +334,14 @@ class _AgentLoop:
         """Whether the agent restarts the connection automatically.
 
         Automatic restart is the default: a provider is opted in unless it explicitly
-        declares ``auto_reconnect: False`` in its connection config.
+        declares ``auto_restart: False`` in its connection config.
         """
-        return self._agent.model.get_connection_config().get("auto_reconnect", True)
+        return self._agent.model.get_connection_config().get("auto_restart", True)
 
     def _arm_restart_timer(self) -> None:
         """Arm the proactive restart timer when the model opts in with a declared deadline.
 
-        Owns the arming policy (auto_reconnect + a declared ``restart_after_s``); the timer
+        Owns the arming policy (auto_restart + a declared ``restart_after_s``); the timer
         itself is a pure mechanism. A no-op when restart is disabled or none is declared.
         """
         if not self._auto_restart_enabled():
