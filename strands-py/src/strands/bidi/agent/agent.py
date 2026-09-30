@@ -42,7 +42,6 @@ from ...tools._caller import _ToolCaller
 from ...tools.executors import ConcurrentToolExecutor
 from ...tools.registry import ToolRegistry
 from ...tools.tool_provider import ToolProvider
-from ...tools.watcher import ToolWatcher
 from ...types._snapshot import (
     BIDI_SNAPSHOT_FIELDS,
     BIDI_SNAPSHOT_PRESETS,
@@ -99,7 +98,6 @@ class BidiAgent(LocalAgent):
         system_prompt: str | list[SystemContentBlock] | None = None,
         messages: Messages | None = None,
         record_direct_tool_call: bool = True,
-        load_tools_from_directory: bool = False,
         agent_id: str | None = None,
         name: str | None = None,
         description: str | None = None,
@@ -116,7 +114,6 @@ class BidiAgent(LocalAgent):
                 Structured blocks are retained, while their text is passed to Bidi models as a string.
             messages: Optional conversation history to initialize with.
             record_direct_tool_call: Whether to record direct tool calls in message history.
-            load_tools_from_directory: Whether to load and automatically reload tools in the `./tools/` directory.
             agent_id: Optional ID for the agent, useful for connection management and multi-agent scenarios.
             name: Name of the Agent.
             description: Description of what the Agent does.
@@ -159,19 +156,12 @@ class BidiAgent(LocalAgent):
 
         # Tool execution configuration
         self.record_direct_tool_call = record_direct_tool_call
-        self.load_tools_from_directory = load_tools_from_directory
 
         # Initialize tool registry
         self.tool_registry = ToolRegistry()
 
         if tools is not None:
             self.tool_registry.process_tools(tools)
-
-        self.tool_registry.initialize_tools(self.load_tools_from_directory)
-
-        # Initialize tool watcher if directory loading is enabled
-        if self.load_tools_from_directory:
-            self._tool_watcher = ToolWatcher(tool_registry=self.tool_registry)
 
         # Initialize agent state management
         if state is not None:
