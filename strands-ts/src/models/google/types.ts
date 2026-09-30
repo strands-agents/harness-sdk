@@ -3,7 +3,7 @@
  */
 
 import type { GoogleGenAI, GoogleGenAIOptions, Tool } from '@google/genai'
-import type { BaseModelConfig } from '../model.js'
+import type { BaseModelConfig, CacheConfig } from '../model.js'
 
 /**
  * Configuration interface for Google model provider.
@@ -52,6 +52,17 @@ export interface GoogleModelConfig extends BaseModelConfig {
    * @defaultValue false
    */
   useNativeTokenCount?: boolean
+
+  /**
+   * Prompt-caching configuration. When set, Google manages a native `CachedContent` resource holding
+   * the static prefix (system instruction + tools): `cacheKey` fixes its identity,
+   * `systemPromptTTL`/`ttl` its lifetime; other fields have no effect. Managed caching engages only
+   * when a honored field names a duration or key: a `ttl`, a `systemPromptTTL` duration string, or a
+   * `cacheKey`. The default `systemPromptTTL: true` alone does not engage - pass a duration such as
+   * `systemPromptTTL: '1h'` to cache the system prompt. A bare `{}` and an explicit `cachedContent` in
+   * `params` both leave the request unchanged.
+   */
+  cacheConfig?: CacheConfig
 }
 
 /**
