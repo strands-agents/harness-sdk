@@ -39,7 +39,7 @@ npm install -g @strands-agents/cli   # gives you the `strands` command
 strands "summarize what this repo does"
 ```
 
-By default you get Claude Opus 4.8 on Amazon Bedrock, with reasoning, shell and file tools, web
+By default you get Claude Opus 5 on Amazon Bedrock, with reasoning, shell and file tools, web
 access, caching, todos, environment context, a `subagent` delegate, Agent Skills, resumable
 sessions, long-term memory, and automatic context management. The full-screen terminal keeps
 background delegates non-blocking and automatically continues the agent when their results arrive.
@@ -371,7 +371,7 @@ directories (`./.agent/skills` by default); `--skills off` disables skills entir
 
 The Ink backend installs the Strands Harness SDK's Cedar intervention before constructing the agent
 through `createHarness()`. Cedar automatically permits workspace-local `read` calls (after
-canonical-path and symlink checks), `todo_write`, and `retrieve_offloaded_content`. Every other built-in
+canonical-path and symlink checks), `todo_write`, `retrieve_context`, and `retrieve_offloaded_content`. Every other built-in
 or MCP tool call opens a permission panel with **Allow once**, **Always allow tool**, and **Deny**.
 Always-allowed tools are written to `~/.strands/cli/config.json` and apply by exact tool name across
 launches. A denial is returned
@@ -477,7 +477,7 @@ Pass a `bedrock/<id>` string or a bare Amazon Bedrock model id:
 
 ```bash
 strands --model bedrock/global.anthropic.claude-sonnet-5 --effort high "explain this error"
-strands --model global.anthropic.claude-opus-4-8 "review my auth flow"
+strands --model global.anthropic.claude-opus-5 "review my auth flow"
 ```
 
 To use a preconfigured SDK `Model` instance, use the library directly (see

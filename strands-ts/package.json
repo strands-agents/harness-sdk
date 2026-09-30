@@ -84,6 +84,10 @@
       "types": "./dist/src/vended-tools/sleep/index.d.ts",
       "default": "./dist/src/vended-tools/sleep/index.js"
     },
+    "./vended-tools/a2a-client": {
+      "types": "./dist/src/vended-tools/a2a-client/index.d.ts",
+      "default": "./dist/src/vended-tools/a2a-client/index.js"
+    },
     "./experimental/vended-tools/stop": {
       "types": "./dist/src/experimental/vended-tools/stop/index.d.ts",
       "default": "./dist/src/experimental/vended-tools/stop/index.js"
