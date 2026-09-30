@@ -1,6 +1,6 @@
+import json
 import logging
 import re
-import tempfile
 import textwrap
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -11,12 +11,11 @@ from strands.agent.conversation_manager import NullConversationManager
 from strands.experimental.context_manager import ContextManager
 from strands.hooks import BeforeModelCallEvent
 from strands.memory import MemoryManager
-from strands.models import BedrockModel, CacheConfig, ModelRouter
+from strands.models import BedrockModel, CacheConfig, Model, ModelRouter
 from strands.sandbox.docker import DockerSandbox
 from strands.session import SnapshotSessionManager
-from strands.storage import LocalFileStorage
+from strands.storage import InMemoryStorage, LocalFileStorage
 from strands.vended_memory_stores.file_memory_store import FileMemoryStore
-from strands.vended_plugins.context_offloader import ContextOffloader, FileStorage
 from strands.vended_plugins.skills import AgentSkills
 from strands.vended_tools.file_editor import make_file_editor
 from strands.vended_tools.shell import make_shell
@@ -36,14 +35,6 @@ def _context_managed(agent: Agent) -> bool:
     return any(isinstance(p, ContextManager) for p in plugins) or not isinstance(
         agent.conversation_manager, NullConversationManager
     )
-
-
-def _offloaders(agent: Agent) -> list[ContextOffloader]:
-    return [p for p in agent._plugin_registry._plugins.values() if isinstance(p, ContextOffloader)]
-
-
-def _offload_dir(offloader: ContextOffloader) -> str:
-    return str(offloader._storage._artifact_dir)
 
 
 def _skills(agent: Agent) -> list[AgentSkills]:
@@ -70,6 +61,61 @@ def _write_skill(skills_dir: Path, name: str) -> None:
 def sample_tool(x: str) -> str:
     """A sample tool."""
     return x
+
+
+_LARGE_RESULT = "\n".join(f"Line {line_index}: quarterly budget notes." for line_index in range(400))
+
+
+@tool
+def read_large() -> str:
+    """Read a large document."""
+    return _LARGE_RESULT
+
+
+class _RetrievingModel(Model):
+    """Calls ``read_large``, then ``retrieve_context`` on the stash reference it gets back, recording each
+    tool result."""
+
+    def __init__(self) -> None:
+        self.seen_tool_results: list[str] = []
+        self._config = {"model_id": "retrieving-model", "context_window_limit": 1_000_000}
+
+    def update_config(self, **model_config):
+        self._config.update(model_config)
+
+    def get_config(self):
+        return self._config
+
+    async def structured_output(self, output_model, prompt, system_prompt=None, **kwargs):
+        raise NotImplementedError
+        yield
+
+    async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
+        tool_results = [block["toolResult"] for block in messages[-1]["content"] if "toolResult" in block]
+        if not tool_results:
+            for event in self._tool_use("read_large", {}):
+                yield event
+            return
+        result_text = "\n".join(item.get("text") or json.dumps(item.get("json")) for item in tool_results[0]["content"])
+        self.seen_tool_results.append(result_text)
+        reference = re.search(r"\[ref: ([^\]\s]+)\]", result_text)
+        if len(self.seen_tool_results) == 1 and reference:
+            for event in self._tool_use("retrieve_context", {"reference": reference.group(1)}):
+                yield event
+            return
+        yield {"messageStart": {"role": "assistant"}}
+        yield {"contentBlockStart": {"start": {}}}
+        yield {"contentBlockDelta": {"delta": {"text": "done"}}}
+        yield {"contentBlockStop": {}}
+        yield {"messageStop": {"stopReason": "end_turn"}}
+
+    def _tool_use(self, name, tool_input):
+        tool_use_id = f"tooluse-{len(self.seen_tool_results)}"
+        yield {"messageStart": {"role": "assistant"}}
+        yield {"contentBlockStart": {"start": {"toolUse": {"name": name, "toolUseId": tool_use_id}}}}
+        yield {"contentBlockDelta": {"delta": {"toolUse": {"input": json.dumps(tool_input)}}}}
+        yield {"contentBlockStop": {}}
+        yield {"messageStop": {"stopReason": "tool_use"}}
 
 
 def test_defaults():
@@ -781,37 +827,66 @@ def test_session_id_lowercased(tmp_path):
     assert agent._session_manager.session_id == "myproj-v2"
 
 
-def test_offloader_uses_temp_dir_when_session_disabled():
-    agent = create_harness(session=False)
-    offloaders = _offloaders(agent)
-    assert len(offloaders) == 1
-    assert _offload_dir(offloaders[0]).startswith(tempfile.gettempdir())
+# https://github.com/strands-agents/harness-sdk/issues/4685
+def test_offloaded_tool_result_returned_in_full_on_retrieval(tmp_path):
+    model = _RetrievingModel()
+    agent = create_harness(
+        model=model,
+        tools=[read_large],
+        session={"id": "retrieval", "dir": str(tmp_path)},
+        builtin_tools=[],
+        builtin_plugins=[],
+        memory=False,
+        skills=False,
+        callback_handler=None,
+    )
+    agent("Read the document.")
+
+    assert len(model.seen_tool_results) == 2
+    assert model.seen_tool_results[0].startswith("[Truncated:")
+    # The Python SDK returns a full retrieval as the stashed block serialized to JSON.
+    assert json.loads(model.seen_tool_results[1]) == {"text": _LARGE_RESULT}
+    assert agent.context_manager.stash_is_durable is True
+    agent_scope = Path("scopes", "agent", agent.agent_id)
+    snapshot_path = tmp_path / "session" / "retrieval" / agent_scope / "snapshots" / "snapshot_latest.json"
+    snapshot = json.loads(snapshot_path.read_text())
+    assert snapshot["data"]["stash"] == {"location": "external", "storage_type": "LocalFileStorage"}
+    assert (tmp_path / "context" / "retrieval" / agent_scope / "tooluse-0_0").is_file()
 
 
-def test_offloader_uses_session_dir_by_default(tmp_path):
-    agent = create_harness(session={"dir": str(tmp_path)})
-    offloaders = _offloaders(agent)
-    assert len(offloaders) == 1
-    assert _offload_dir(offloaders[0]) == str(tmp_path / "offloaded")
+@pytest.mark.parametrize(
+    "session_kwargs",
+    [
+        pytest.param(lambda session_dir: {"session": False}, id="without-session"),
+        pytest.param(
+            lambda session_dir: {"session": SnapshotSessionManager("mine", storage=LocalFileStorage(session_dir))},
+            id="session-manager-as-session",
+        ),
+        pytest.param(
+            lambda session_dir: {
+                "session_manager": SnapshotSessionManager("mine", storage=LocalFileStorage(session_dir))
+            },
+            id="explicit-session-manager",
+        ),
+    ],
+)
+def test_stash_in_memory_when_harness_does_not_build_the_session(session_kwargs, tmp_path):
+    agent = create_harness(**session_kwargs(str(tmp_path)))
+    assert agent.storage is None
+    assert agent.context_manager.stash_is_durable is False
 
 
-def test_offloader_disabled_when_context_manager_off():
-    agent = create_harness(context_manager=False)
-    assert _offloaders(agent) == []
+def test_explicit_storage_backs_the_stash(tmp_path):
+    storage = InMemoryStorage()
+    agent = create_harness(storage=storage, session={"dir": str(tmp_path)})
+    assert agent.storage is storage
+    assert agent.context_manager.stash_is_durable is False
 
 
-def test_offloader_uses_session_dir_when_session_active(tmp_path):
-    agent = create_harness(session={"id": "user-42", "dir": str(tmp_path)})
-    offloaders = _offloaders(agent)
-    assert len(offloaders) == 1
-    assert _offload_dir(offloaders[0]) == str(tmp_path / "offloaded")
-
-
-def test_offloader_not_double_added_when_supplied(tmp_path):
-    existing = ContextOffloader(storage=FileStorage(str(tmp_path / "custom")))
-    agent = create_harness(plugins=[existing])
-    offloaders = _offloaders(agent)
-    assert offloaders == [existing]
+def test_storage_none_falls_back_to_the_session_storage(tmp_path):
+    agent = create_harness(storage=None, session={"dir": str(tmp_path)})
+    assert isinstance(agent.storage, LocalFileStorage)
+    assert agent.context_manager.stash_is_durable is True
 
 
 def test_skills_loaded_from_dir(tmp_path):

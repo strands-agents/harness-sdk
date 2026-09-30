@@ -1,17 +1,21 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import {
   Agent,
+  type BaseModelConfig,
   BeforeModelCallEvent,
   FileStorage as SessionFileStorage,
   type InterventionHandler,
   McpClient,
   MemoryManager,
+  type Message,
+  Model,
   ModelRouter,
+  type ModelStreamEvent,
   type Plugin,
   SessionManager,
   Tool,
@@ -19,12 +23,12 @@ import {
   type ToolContext,
 } from '@strands-agents/sdk'
 import { ContextManager } from '@strands-agents/sdk/experimental'
+import { InMemoryStorage } from '@strands-agents/sdk/storage'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 import { DockerSandbox } from '@strands-agents/sdk/sandbox/docker'
 import { makeFileEditor } from '@strands-agents/sdk/vended-tools/file-editor'
 import { makeShell } from '@strands-agents/sdk/vended-tools/shell'
 import { makeShell as makeShellFactory } from '@strands-agents/sdk/vended-tools/bash'
-import { ContextOffloader, FileStorage } from '@strands-agents/sdk/vended-plugins/context-offloader'
 import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
 import { HumanInTheLoop } from '@strands-agents/sdk/vended-interventions/hitl'
 import { z } from 'zod'
@@ -73,10 +77,6 @@ function plugins(agent: Agent): Plugin[] {
   return [...registry._plugins.values(), ...(registry._pending ?? [])]
 }
 
-function offloaders(agent: Agent): ContextOffloader[] {
-  return plugins(agent).filter((p): p is ContextOffloader => p instanceof ContextOffloader)
-}
-
 function skills(agent: Agent): AgentSkills[] {
   return plugins(agent).filter((p): p is AgentSkills => p instanceof AgentSkills)
 }
@@ -93,10 +93,6 @@ function interventionHandlers(agent: Agent): InterventionHandler[] {
     .handlers
 }
 
-function offloadDir(offloader: ContextOffloader): string {
-  return (offloader as unknown as { _storage: { _artifactDir: string } })._storage._artifactDir
-}
-
 function writeSkill(skillsDir: string, name: string): void {
   const skill = join(skillsDir, name)
   mkdirSync(skill, { recursive: true })
@@ -104,6 +100,62 @@ function writeSkill(skillsDir: string, name: string): void {
     join(skill, 'SKILL.md'),
     `---\nname: ${name}\ndescription: A ${name} skill.\n---\nDo the ${name} thing.\n`
   )
+}
+
+const LARGE_RESULT = Array.from({ length: 400 }, (_, lineIndex) => `Line ${lineIndex}: quarterly budget notes.`).join(
+  '\n'
+)
+
+const readLargeTool = tool({
+  name: 'read_large',
+  description: 'Read a large document.',
+  inputSchema: z.object({}),
+  callback: () => LARGE_RESULT,
+})
+
+/** Calls `read_large`, then `retrieve_context` on the stash reference it gets back, recording each tool result. */
+class RetrievingModel extends Model {
+  readonly seenToolResults: string[] = []
+  private _config: BaseModelConfig = { modelId: 'retrieving-model', contextWindowLimit: 1_000_000 }
+
+  updateConfig(modelConfig: BaseModelConfig): void {
+    this._config = { ...this._config, ...modelConfig }
+  }
+
+  getConfig(): BaseModelConfig {
+    return this._config
+  }
+
+  async *stream(messages: Message[]): AsyncGenerator<ModelStreamEvent> {
+    const toolResult = messages.at(-1)?.content.find((block) => block.type === 'toolResultBlock')
+    if (toolResult === undefined) {
+      yield* this._toolUse('read_large', {})
+      return
+    }
+    const resultText = toolResult.content
+      .map((item) => (item.type === 'textBlock' ? item.text : JSON.stringify(item)))
+      .join('\n')
+    this.seenToolResults.push(resultText)
+    const reference = /\[ref: ([^\]\s]+)\]/.exec(resultText)?.[1]
+    if (this.seenToolResults.length === 1 && reference !== undefined) {
+      yield* this._toolUse('retrieve_context', { reference })
+      return
+    }
+    yield { type: 'modelMessageStartEvent', role: 'assistant' }
+    yield { type: 'modelContentBlockStartEvent' }
+    yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'done' } }
+    yield { type: 'modelContentBlockStopEvent' }
+    yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+  }
+
+  private async *_toolUse(name: string, input: object): AsyncGenerator<ModelStreamEvent> {
+    const toolUseId = `tooluse-${this.seenToolResults.length}`
+    yield { type: 'modelMessageStartEvent', role: 'assistant' }
+    yield { type: 'modelContentBlockStartEvent', start: { type: 'toolUseStart', name, toolUseId } }
+    yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'toolUseInputDelta', input: JSON.stringify(input) } }
+    yield { type: 'modelContentBlockStopEvent' }
+    yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' }
+  }
 }
 
 const tempDirs: string[] = []
@@ -445,7 +497,6 @@ describe('createHarness', () => {
   it('disables context management when contextManager is null', async () => {
     const agent = await createHarness({ contextManager: null })
     expect(conversationManagerName(agent)).toBe('NullConversationManager')
-    expect(offloaders(agent)).toHaveLength(0)
   })
 
   it('uses the recommended level when effort is auto', async () => {
@@ -546,30 +597,61 @@ describe('createHarness', () => {
     expect(sm.sessionId ?? sm._sessionId).toBe('myproj-v2')
   })
 
-  it('uses a temp dir for offloading when the session is disabled', async () => {
-    const agent = await createHarness({ session: false })
-    const offs = offloaders(agent)
-    expect(offs).toHaveLength(1)
-    expect(offloadDir(offs[0]).startsWith(tmpdir())).toBe(true)
-  })
-
-  it('disables the offloader when context management is off', async () => {
-    const agent = await createHarness({ contextManager: false })
-    expect(offloaders(agent)).toHaveLength(0)
-  })
-
-  it('offloads under the session dir by default', async () => {
+  // https://github.com/strands-agents/harness-sdk/issues/4685
+  it('returns an offloaded tool result to the model in full on retrieval', async () => {
     const dir = makeTempDir()
-    const agent = await createHarness({ session: { dir } })
-    const offs = offloaders(agent)
-    expect(offs).toHaveLength(1)
-    expect(offloadDir(offs[0])).toBe(`${dir}/offloaded`)
+    const model = new RetrievingModel()
+    const agent = await createHarness({
+      model,
+      tools: [readLargeTool],
+      session: { id: 'retrieval', dir },
+      builtinTools: [],
+      builtinPlugins: [],
+      memory: false,
+      skills: false,
+      printer: false,
+    })
+    await agent.invoke('Read the document.', { limits: { turns: 4 } })
+
+    expect(model.seenToolResults).toEqual([expect.stringMatching(/^\[Truncated:/), LARGE_RESULT])
+    expect(agent.contextManager?.stashIsDurable).toBe(true)
+    const agentScope = join('scopes', 'agent', agent.id)
+    const snapshot = JSON.parse(
+      readFileSync(join(dir, 'retrieval', agentScope, 'snapshots', 'snapshot_latest.json'), 'utf8')
+    )
+    expect(snapshot.data.stash).toEqual({ location: 'external', storageType: 'LocalFileStorage' })
+    expect(existsSync(join(dir, 'retrieval', 'context', 'retrieval', agentScope, 'tooluse-0_0'))).toBe(true)
+    // Every folder under the session dir is read as a session, so the stash stays inside this one.
+    expect(readdirSync(dir)).toEqual(['retrieval'])
   })
 
-  it('does not double-add an offloader supplied via plugins', async () => {
-    const existing = new ContextOffloader({ storage: new FileStorage({ artifactDir: makeTempDir() }) })
-    const agent = await createHarness({ plugins: [existing] })
-    expect(offloaders(agent)).toEqual([existing])
+  it.each([
+    ['without a session', (): HarnessAgentOptions => ({ session: false })],
+    [
+      'with a SessionManager instance as the session',
+      (): HarnessAgentOptions => ({
+        session: new SessionManager({ storage: { snapshot: new SessionFileStorage(makeTempDir()) } }),
+      }),
+    ],
+    [
+      'with an explicit sessionManager',
+      (): HarnessAgentOptions => ({
+        sessionManager: new SessionManager({ storage: { snapshot: new SessionFileStorage(makeTempDir()) } }),
+      }),
+    ],
+  ])('keeps the stash in memory %s', async (_, buildOptions) => {
+    const agent = await createHarness(buildOptions())
+    await agent.initialize()
+    expect(agent.storage).toBeUndefined()
+    expect(agent.contextManager?.stashIsDurable).toBe(false)
+  })
+
+  it('backs the stash with an explicit storage', async () => {
+    const storage = new InMemoryStorage()
+    const agent = await createHarness({ storage, session: { dir: makeTempDir() } })
+    await agent.initialize()
+    expect(agent.storage).toBe(storage)
+    expect(agent.contextManager?.stashIsDurable).toBe(false)
   })
 
   it('loads skills from the skills directory', async () => {

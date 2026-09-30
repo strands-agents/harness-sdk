@@ -1,7 +1,6 @@
 ---
 title: Build a realtime voice agent
 description: "Build a realtime agent that streams audio in and out: a persistent BidiAgent connection, a realtime model provider, and the events, I/O, and barge-ins a live conversation needs."
-experimental: true
 tags: [bidi-streaming]
 sidebar:
   label: Overview
@@ -81,9 +80,9 @@ loop streams audio both ways until you interrupt it.
 ```python
 import asyncio
 
-from strands.experimental.bidi import BidiAgent
-from strands.experimental.bidi.io import AudioIO
-from strands.experimental.bidi.models import BedrockNovaSonicModel
+from strands.bidi import BidiAgent
+from strands.bidi.io import AudioIO
+from strands.bidi.models import BedrockNovaSonicModel
 
 model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
 agent = BidiAgent(
@@ -101,7 +100,7 @@ async def main():
 asyncio.run(main())
 ```
 
-Bidirectional streaming is a Python-only experimental feature; install it with
+Bidirectional streaming is available in the Python SDK. Install it with
 `pip install "strands-agents[bidi-all]"`. The [quickstart](quickstart/) covers
 per-provider installs and credentials.
 

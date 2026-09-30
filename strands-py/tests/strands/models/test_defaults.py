@@ -16,6 +16,18 @@ class TestGetContextWindowLimit:
         assert get_context_window_limit("anthropic.claude-sonnet-4-6") == 1_000_000
         assert get_context_window_limit("anthropic.claude-haiku-4-5-20251001-v1:0") == 200_000
 
+    def test_known_anthropic_current_generation(self):
+        # Guards against the 1M-context 5.5 / 5.1 models resolving to None (#4692),
+        # which silently disables proactive compression and reports a wrong utilization.
+        assert get_context_window_limit("claude-sonnet-5-5") == 1_000_000
+        assert get_context_window_limit("claude-opus-5-5") == 1_000_000
+        assert get_context_window_limit("claude-fable-5-1") == 1_000_000
+        assert get_context_window_limit("anthropic.claude-sonnet-5-5") == 1_000_000
+        assert get_context_window_limit("anthropic.claude-opus-5-5") == 1_000_000
+        assert get_context_window_limit("anthropic.claude-fable-5-1") == 1_000_000
+        assert get_context_window_limit("global.anthropic.claude-opus-5-5") == 1_000_000
+        assert get_context_window_limit("us.anthropic.claude-fable-5-1") == 1_000_000
+
     def test_known_bedrock_nova(self):
         assert get_context_window_limit("amazon.nova-pro-v1:0") == 300_000
         assert get_context_window_limit("amazon.nova-micro-v1:0") == 128_000

@@ -316,6 +316,8 @@ const learnCategories = [
        logo down. */
     height: 84px;
     padding: 0 39px;
+    /* Keeps the right cluster from butting against the last link. */
+    gap: 32px;
   }
 
   .strands-nav__left {
@@ -337,6 +339,53 @@ const learnCategories = [
 
     .strands-nav__logo {
       justify-self: center;
+    }
+  }
+
+  /* Tighten spacing where the full-size bar would overflow, before the
+     hamburger takes over. */
+  @media (max-width: 90rem) {
+    .strands-nav__left {
+      grid-template-columns: 250px auto;
+      gap: 32px;
+    }
+
+    .strands-nav__links {
+      gap: 28px;
+    }
+
+    .strands-nav__right {
+      gap: 16px;
+    }
+  }
+
+  @media (max-width: 86rem) {
+    .strands-nav__left {
+      grid-template-columns: 235px auto;
+      gap: 20px;
+    }
+
+    .strands-nav__links {
+      gap: 20px;
+    }
+
+    .strands-nav__right {
+      gap: 12px;
+    }
+
+    .strands-nav__links a,
+    .strands-nav__trigger {
+      font-size: 16px;
+      letter-spacing: 0.5px;
+    }
+
+    .strands-nav__search {
+      padding: 6px 8px;
+    }
+
+    .strands-nav__search-label,
+    .strands-nav__github-stars {
+      display: none;
     }
   }
 
@@ -632,7 +681,10 @@ const learnCategories = [
     .strands-nav__wordmark :global(svg) {
       height: 21px;
     }
+  }
 
+  /* ---------- Collapsed (< 78rem, where the full bar no longer fits) ---------- */
+  @media (max-width: 77.9375rem) {
     /* Desktop-only links + right cluster hide. */
     .strands-nav__links,
     .strands-nav__right {

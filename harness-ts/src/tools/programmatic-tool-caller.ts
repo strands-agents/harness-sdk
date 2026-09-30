@@ -63,10 +63,6 @@ const USER_CODE_FILENAME = '<programmatic_tool_caller>'
 // Cap on the text returned to the model; a runaway `print` should not blow up the context window.
 const MAX_OUTPUT_CHARS = 200_000
 
-// `invocationState` key the SDK's `ContextOffloader` honours (`SKIP_CONTEXT_OFFLOAD_KEY`). Inner results
-// are consumed by the guest code, not the model, so a preview in place of the data would break it.
-export const SKIP_CONTEXT_OFFLOAD_KEY = 'strands:skipContextOffload'
-
 // Wall-clock ceiling for a run, tool calls included, in milliseconds.
 const DEFAULT_TIMEOUT_MS = 900_000
 
@@ -331,7 +327,8 @@ async function callTool(
   if (signal.aborted) {
     throw guestError('RuntimeError', 'programmatic_tool_caller was cancelled; no further tool calls are made.')
   }
-  const invocationState = { ...parent.invocationState, [SKIP_CONTEXT_OFFLOAD_KEY]: true }
+  // A copy, so an inner call cannot change the parent's invocation state.
+  const invocationState = { ...parent.invocationState }
   let result: ToolResultBlock
   try {
     const hooks = hookInvoker(agent, toolName)

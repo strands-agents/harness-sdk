@@ -1098,11 +1098,15 @@ const cards = [
     .forEach((btn) => {
       attachCopyButton(btn, {
         label: btn.querySelector<HTMLElement>('.toolkit__card-terminal-copy-label'),
-        getText: () =>
-          btn
+        getText: () => {
+          const code = btn
             .closest<HTMLElement>('.toolkit__card-terminal')
-            ?.querySelector<HTMLElement>('.toolkit__card-terminal-code:not([hidden]) code')
-            ?.innerText ?? '',
+            ?.querySelector<HTMLElement>('.toolkit__card-terminal-code:not([hidden]) code');
+          if (!code) return '';
+          return Array.from(code.querySelectorAll<HTMLElement>('.toolkit__card-terminal-line'))
+            .map((line) => line.textContent ?? '')
+            .join('\n');
+        },
         track: {
           surface: 'code:toolkit',
           detail: () =>
