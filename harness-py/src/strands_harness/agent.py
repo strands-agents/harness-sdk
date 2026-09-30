@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-import tempfile
 import uuid
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
@@ -18,7 +17,6 @@ from strands.session import SessionManager, SnapshotSessionManager
 from strands.storage import LocalFileStorage
 from strands.tools.mcp import MCPClient, MCPServerConfig
 from strands.types.tools import AgentTool
-from strands.vended_plugins.context_offloader import ContextOffloader, FileStorage
 from strands.vended_plugins.skills import AgentSkills, SkillSources
 from strands.vended_tools import make_shell
 
@@ -63,17 +61,14 @@ from strands_harness.types.agent import (
 
 logger = logging.getLogger(__name__)
 
-# Built-in plugins, each toggled by name via ``builtin_plugins``. Unlike the offloader and skills
-# plugins (wired from their own options), these are opt-out feature plugins that only bundle a tool
-# and a loop-level behavior; the map is the seam to grow the set (e.g. memories) later.
+# Built-in plugins, each toggled by name via ``builtin_plugins``. Unlike the skills plugin (wired from
+# its own option), these are opt-out feature plugins that only bundle a tool and a loop-level
+# behavior; the map is the seam to grow the set (e.g. memories) later.
 _BUILTIN_PLUGINS = {"todos": Todos, "environment": EnvironmentContext}
 
 # The delegation tool always runs in the background: its calls are long-running subtasks whose
 # intermediate work should stay out of the parent's turn.
 _ALWAYS_BACKGROUND_TOOL_NAMES = frozenset({"subagent"})
-
-_AUTO_MAX_RESULT_TOKENS = 1_500
-_AUTO_PREVIEW_TOKENS = 750
 
 # Sentinel for ``caching``: distinguishes "not passed" (the default, which warns on an unsupported
 # provider) from an explicit value like ``caching=None`` (off) or ``caching=True`` (which raises on
@@ -138,18 +133,6 @@ def _web_search_mode(
         raise ValueError(message)
     logger.warning(message)
     return None
-
-
-def _durable_offloader(offload_dir: str) -> Any:
-    return ContextOffloader(
-        storage=FileStorage(offload_dir),
-        max_result_tokens=_AUTO_MAX_RESULT_TOKENS,
-        preview_tokens=_AUTO_PREVIEW_TOKENS,
-    )
-
-
-def _has_offloader(plugins: list[Any]) -> bool:
-    return any(isinstance(p, ContextOffloader) for p in plugins)
 
 
 def _skills_plugin(skills: bool | SkillSources | AgentSkills | None) -> AgentSkills | None:
@@ -295,8 +278,8 @@ def create_harness(
             left off that axis.
         plugins: Consumer SDK plugins, added alongside the built-in plugins (consumer plugins run
             first). Tools a plugin vends take part in the name-collision check, and the plugins reach
-            ``subagent`` children too. A ``ContextOffloader`` or ``AgentSkills`` passed here replaces
-            the one the harness would add. Plugin *instances* are shared with children, so one that keeps
+            ``subagent`` children too. An ``AgentSkills`` passed here replaces the one the harness
+            would add. Plugin *instances* are shared with children, so one that keeps
             per-agent state must keep it in ``agent.state`` (the SDK convention), not on ``self``.
         mcp_servers: MCP servers to connect, given as the standard ``mcpServers`` config: either a
             path to a JSON file or the mapping itself (a flat ``{name: {...}}`` map, or that map under
@@ -351,14 +334,15 @@ def create_harness(
             value raises.
         context_manager: The SDK's ``Agent(context_manager=)`` option: ``"auto"`` (the default) or
             ``"agentic"`` for an SDK preset, a ``ContextManagerConfig`` dict or a ``ContextManager``
-            instance for a custom pipeline, or ``False``/``None`` to disable it. When enabled, large
-            tool results are also offloaded to disk (a preview and reference are kept in context) so
-            the agent can run longer before compacting; disabling turns this off too.
+            instance for a custom pipeline, or ``False``/``None`` to disable it. The presets offload
+            large tool results out of context (a preview and reference are kept) so the agent can run
+            longer before compacting; the model reads a result back with ``retrieve_context``.
         session: File-backed conversation persistence, on by default. ``True`` (or ``{}``) snapshots
             the run under a fresh random id in ``./.agent/sessions`` via a ``SnapshotSessionManager``;
             ``{"id": ..., "dir": ...}`` picks the id and/or root directory; a ``SessionManager``
-            instance is used verbatim; ``False``/``None`` disables it (the conversation is in-memory
-            and offloaded artifacts go to a temporary directory that does not outlive the process).
+            instance is used verbatim (pass ``storage`` with it, or offloaded artifacts are embedded in its
+            snapshots); ``False``/``None`` disables it (the conversation and offloaded artifacts stay in
+            memory).
             This does not auto-resume across runs: with no ``id`` a new run starts a new session. To
             continue a previous conversation, read the minted id off the returned agent
             (``agent.session_id``) and pass it back as ``session={"id": ...}`` on the next run. An
@@ -476,31 +460,23 @@ def create_harness(
         agent_kwargs["context_manager"] = context_manager if context_enabled else False
 
     session_manager = agent_kwargs.pop("session_manager", None)
-    session_dir: str | None = None
     if session_manager is None:
         if isinstance(session_option, SessionManager):
             session_manager = session_option
         elif session_option is not None:
             session_id = session_option.get("id")
-            session_dir = session_option.get("dir") or defaults.DEFAULT_SESSION_DIR
             resolved_id = _sanitize_session_id(session_id) if session_id else uuid.uuid4().hex[:8]
-            session_manager = SnapshotSessionManager(
-                resolved_id,
-                storage=LocalFileStorage(session_dir),
-                save_latest_on="message",
-            )
+            session_storage = LocalFileStorage(session_option.get("dir") or defaults.DEFAULT_SESSION_DIR)
+            session_manager = SnapshotSessionManager(resolved_id, storage=session_storage, save_latest_on="message")
+            # The context manager's stash goes to files, not into the snapshot rewritten on every message.
+            # Sharing the session's root is safe because storage namespaces each subsystem (``session/``,
+            # ``context/``).
+            if agent_kwargs.get("storage") is None:
+                agent_kwargs["storage"] = session_storage
 
     # Assemble plugins before the collision check so plugin-vended tools are checked too; consumer
     # plugins stay first so the tail is the harness's own.
     all_plugins: list[Any] = list(consumer_plugins)
-
-    if context_enabled and not _has_offloader(all_plugins):
-        offload_dir = (
-            os.path.join(session_dir, "offloaded")
-            if session_dir is not None
-            else tempfile.mkdtemp(prefix="strands-offload-")
-        )
-        all_plugins.append(_durable_offloader(offload_dir))
 
     if not _has_skills(all_plugins):
         skills_plugin = _skills_plugin(skills)

@@ -223,6 +223,13 @@ const PREFIX_SLUG_RULES: SlugRule[] = [
   // and only genuinely-missing old SDK deep links fall through to /sdk/*.
   { match: startsWith('docs/user-guide/harness'), to: (m) => `docs/user-guide/sdk/${m[1]}` },
 
+  // bidi graduated from strands.experimental.bidi to strands.bidi. API pages are generated, so
+  // STATIC_SLUG_REDIRECTS can't validate them as targets.
+  {
+    match: /^docs\/api\/python\/strands\.experimental\.bidi(\..+)?$/,
+    to: (m) => `docs/api/python/strands.bidi${m[1] ?? ''}`,
+  },
+
   // Changelog stream rename: the former "harness" stream is now the "sdk" stream.
   { match: startsWith('changelog/harness'), to: (m) => `changelog/sdk/${m[1]}` },
 

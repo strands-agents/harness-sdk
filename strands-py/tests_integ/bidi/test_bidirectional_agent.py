@@ -13,11 +13,11 @@ import os
 import pytest
 
 from strands import tool
-from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.hooks import BidiResponseStopEvent
-from strands.experimental.bidi.models import GoogleGeminiLiveModel, OpenAIRealtimeModel
-from strands.experimental.bidi.types import BidiResponseStartEvent, BidiTranscriptBlockEvent
-from strands.experimental.bidi.types import BidiResponseStopEvent as BidiResponseStopStreamEvent
+from strands.bidi.agent import BidiAgent
+from strands.bidi.hooks import BidiResponseStopEvent
+from strands.bidi.models import GoogleGeminiLiveModel, OpenAIRealtimeModel
+from strands.bidi.types import BidiResponseStartEvent, BidiTranscriptBlockEvent
+from strands.bidi.types import BidiResponseStopEvent as BidiResponseStopStreamEvent
 from strands.types._events import ToolResultEvent
 from strands.types.media import ImageBlock
 
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 def create_bedrock_nova_sonic_model(**kwargs):
     """Create a Nova Sonic model without importing its Python 3.12-only SDK during collection."""
-    from strands.experimental.bidi.models import BedrockNovaSonicModel
+    from strands.bidi.models import BedrockNovaSonicModel
 
     return BedrockNovaSonicModel(**kwargs)
 

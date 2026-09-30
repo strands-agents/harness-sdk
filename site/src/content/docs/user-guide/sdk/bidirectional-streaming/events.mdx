@@ -1,15 +1,14 @@
 ---
 title: Events
 description: 'Send and receive bidirectional streaming events in Strands agents. Process audio, text, and tool activity in real time over persistent connections.'
-experimental: true
 tags: [bidi-streaming]
 sourceLinks:
-  - path: strands-py/src/strands/experimental/bidi/types/agent.py
-  - path: strands-py/src/strands/experimental/bidi/types/content.py
-  - path: strands-py/src/strands/experimental/bidi/types/media.py
+  - path: strands-py/src/strands/bidi/types/agent.py
+  - path: strands-py/src/strands/bidi/types/content.py
+  - path: strands-py/src/strands/bidi/types/media.py
   - path: strands-py/src/strands/types/content.py
-  - path: strands-py/src/strands/experimental/bidi/types/events.py
-  - path: strands-py/src/strands/experimental/bidi/types/io.py
+  - path: strands-py/src/strands/bidi/types/events.py
+  - path: strands-py/src/strands/bidi/types/io.py
   - path: strands-py/src/strands/types/media.py
 ---
 
@@ -35,8 +34,8 @@ Bidirectional streaming uses a different event model than [standard streaming](.
 
 ```python
 import asyncio
-from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.models import BedrockNovaSonicModel
+from strands.bidi.agent import BidiAgent
+from strands.bidi.models import BedrockNovaSonicModel
 
 async def main():
     model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
@@ -84,7 +83,7 @@ determines the sample rate and channel count for real-time PCM audio.
 ```python
 from pathlib import Path
 
-from strands.experimental.bidi.types import AudioDelta
+from strands.bidi.types import AudioDelta
 
 audio_bytes = Path("audio-chunk.pcm").read_bytes()
 
@@ -151,7 +150,7 @@ Emitted when the streaming connection is established and ready for interaction.
 
 #### BidiConnectionRestartEvent
 
-Emitted when the agent restarts the model connection, on either reconnect path. The agent preserves the conversation history and resumes automatically. A scheduled restart fires proactively when the reconnect timer reaches the provider's limit; a timeout restart fires reactively after the model reports a timeout.
+Emitted when the agent restarts the model connection, on either restart path. The agent preserves the conversation history and resumes automatically. A scheduled restart fires proactively when the restart timer reaches the provider's limit; a timeout restart fires reactively after the model reports a timeout.
 
 ```python
 {
@@ -165,7 +164,7 @@ Emitted when the agent restarts the model connection, on either reconnect path. 
 **Properties:**
 
 - `reason`: What triggered the restart
-  - `"scheduled"`: The reconnect timer fired ahead of the provider's limit (the normal path)
+  - `"scheduled"`: The restart timer fired ahead of the provider's limit (the normal path)
   - `"timeout"`: The connection timed out and the model reported it
 - `timeout_error`: The timeout error on the reactive path; `None` when the reason is `"scheduled"`
 - `turn_interrupted`: `True` when the restart cut an in-progress or owed turn. The provider replays history as context, so that turn is not answered on its own: re-prompt or notify the user when this is set.
@@ -181,11 +180,11 @@ async for event in agent.receive():
         # Connection resumes automatically with full history.
 ```
 
-See [Connection Lifecycle](agent.md#connection-restart) for more on reconnect timing.
+See [Connection Lifecycle](agent.md#connection-restart) for more on restart timing.
 
 #### BidiConnectionWarningEvent
 
-Emitted by the proactive reconnect timer shortly before a scheduled restart. Informational only: use it to surface a "reconnecting shortly" hint in a UI.
+Emitted by the proactive restart timer shortly before a scheduled restart. Informational only: use it to surface a "restarting shortly" hint in a UI.
 
 ```python
 {
@@ -196,13 +195,13 @@ Emitted by the proactive reconnect timer shortly before a scheduled restart. Inf
 
 **Properties:**
 
-- `time_left_s`: Approximate seconds until the scheduled reconnect
+- `time_left_s`: Approximate seconds until the scheduled restart
 
 **Usage:**
 ```python
 async for event in agent.receive():
     if event["type"] == "bidi_connection_warning":
-        print(f"Reconnecting in ~{event['time_left_s']:.0f}s")
+        print(f"Restarting in ~{event['time_left_s']:.0f}s")
 ```
 
 #### BidiConnectionStopEvent
@@ -220,12 +219,7 @@ Emitted when the streaming connection is closed.
 **Properties:**
 
 - `connection_id`: Unique identifier for this streaming connection
-- `reason`: Why the connection closed
-  - `"client_disconnect"`: Client disconnected
-  - `"timeout"`: Connection timed out
-  - `"error"`: Error occurred
-  - `"complete"`: Conversation completed normally
-  - `"user_request"`: Cancellation requested through `agent.cancel()`
+- `reason`: Why the connection closed. Always `"user_request"`, emitted once a cancellation requested through `agent.cancel()` takes effect.
 
 ### Response Lifecycle Events
 
@@ -427,8 +421,8 @@ Use deltas for live updates and block events for completed text, reasoning, and
 transcripts. This function reads completed content from a started agent:
 
 ```python
-from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.types import (
+from strands.bidi.agent import BidiAgent
+from strands.bidi.types import (
     BidiReasoningBlockEvent,
     BidiTextBlockEvent,
     BidiTranscriptBlockEvent,
@@ -470,22 +464,15 @@ Signals a barge-in that stops response generation or playback, typically when th
 
 ```python
 {
-    "type": "bidi_barge_in",
-    "reason": "user_speech"
+    "type": "bidi_barge_in"
 }
 ```
-
-**Properties:**
-
-- `reason`: Why response output should stop
-  - `"user_speech"`: User started speaking (most common)
-  - `"error"`: Error stopped output
 
 **Usage:**
 ```python
 async for event in agent.receive():
     if event["type"] == "bidi_barge_in":
-        print(f"Barge-in: {event['reason']}")
+        print("Barge-in detected")
         # Audio output automatically cleared
         # Model ready for new input
 ```
@@ -558,9 +545,9 @@ Emitted periodically to report token usage with modality breakdown.
 
 ```python
 import asyncio
-from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.io import AudioIO
-from strands.experimental.bidi.models import BedrockNovaSonicModel
+from strands.bidi.agent import BidiAgent
+from strands.bidi.io import AudioIO
+from strands.bidi.models import BedrockNovaSonicModel
 
 async def main():
     model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
@@ -595,8 +582,8 @@ asyncio.run(main())
 
 ```python
 import asyncio
-from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.models import BedrockNovaSonicModel
+from strands.bidi.agent import BidiAgent
+from strands.bidi.models import BedrockNovaSonicModel
 
 async def main():
     model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
@@ -615,8 +602,8 @@ asyncio.run(main())
 
 ```python
 import asyncio
-from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.models import BedrockNovaSonicModel
+from strands.bidi.agent import BidiAgent
+from strands.bidi.models import BedrockNovaSonicModel
 from strands.vended_tools import notebook
 
 async def main():
@@ -644,8 +631,8 @@ asyncio.run(main())
 
 ```python
 import asyncio
-from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.models import BedrockNovaSonicModel
+from strands.bidi.agent import BidiAgent
+from strands.bidi.models import BedrockNovaSonicModel
 
 async def main():
     model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
@@ -670,8 +657,8 @@ asyncio.run(main())
 
 ```python
 import asyncio
-from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.models import BedrockNovaSonicModel
+from strands.bidi.agent import BidiAgent
+from strands.bidi.models import BedrockNovaSonicModel
 
 async def main():
     model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")  # 8-minute timeout
@@ -680,7 +667,7 @@ async def main():
         # Continuous conversation that handles restarts
         async for event in agent.receive():
             if event["type"] == "bidi_connection_warning":
-                print(f"Reconnecting in ~{event['time_left_s']:.0f}s")
+                print(f"Restarting in ~{event['time_left_s']:.0f}s")
 
             elif event["type"] == "bidi_connection_restart":
                 print(f"Connection restarting (reason={event['reason']})")

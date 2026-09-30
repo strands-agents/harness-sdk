@@ -371,7 +371,7 @@ directories (`./.agent/skills` by default); `--skills off` disables skills entir
 
 The Ink backend installs the Strands Harness SDK's Cedar intervention before constructing the agent
 through `createHarness()`. Cedar automatically permits workspace-local `read` calls (after
-canonical-path and symlink checks), `todo_write`, and `retrieve_offloaded_content`. Every other built-in
+canonical-path and symlink checks), `todo_write`, `retrieve_context`, and `retrieve_offloaded_content`. Every other built-in
 or MCP tool call opens a permission panel with **Allow once**, **Always allow tool**, and **Deny**.
 Always-allowed tools are written to `~/.strands/cli/config.json` and apply by exact tool name across
 launches. A denial is returned

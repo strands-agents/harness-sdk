@@ -108,7 +108,7 @@ describe('Content Collections', () => {
       titleMap.set(doc.data.title, slugs)
     }
 
-    const allowedDuplicates = new Set(['Steering'])
+    const allowedDuplicates = new Set(['Interrupts', 'Steering'])
     const collisions = [...titleMap.entries()].filter(
       ([title, slugs]) => slugs.length > 1 && !allowedDuplicates.has(title)
     )

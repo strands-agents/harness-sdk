@@ -3421,6 +3421,63 @@ async def test_format_request_with_guardrail_latest_message(model):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("blank_text", ["", "   ", "\n", " \t\n "])
+async def test_format_request_guardrail_latest_message_skips_blank_text(model, blank_text):
+    """Blank text must not be wrapped: Bedrock rejects a blank guardContent block."""
+    model.update_config(
+        guardrail_id="test-guardrail",
+        guardrail_version="DRAFT",
+        guardrail_latest_message=True,
+    )
+
+    request = model.format_request([{"role": "user", "content": [{"text": blank_text}]}])
+    content = request["messages"][0]["content"][0]
+
+    assert "guardContent" not in content
+    assert content == {"text": blank_text}
+
+
+@pytest.mark.asyncio
+async def test_format_request_guardrail_latest_message_blank_text_still_wraps_image(model):
+    """A blank text block is skipped without suppressing the guardContent wrap on a sibling image."""
+    model.update_config(
+        guardrail_id="test-guardrail",
+        guardrail_version="DRAFT",
+        guardrail_latest_message=True,
+    )
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"text": ""},
+                {"image": {"format": "png", "source": {"bytes": b"fake_image_data"}}},
+            ],
+        }
+    ]
+
+    content = model.format_request(messages)["messages"][0]["content"]
+
+    assert content[0] == {"text": ""}
+    assert "guardContent" in content[1]
+
+
+@pytest.mark.asyncio
+async def test_format_request_guardrail_latest_message_wraps_text_with_surrounding_whitespace(model):
+    """Only fully blank text is skipped; padded text is still screened, padding intact."""
+    model.update_config(
+        guardrail_id="test-guardrail",
+        guardrail_version="DRAFT",
+        guardrail_latest_message=True,
+    )
+
+    request = model.format_request([{"role": "user", "content": [{"text": "  hello  "}]}])
+    content = request["messages"][0]["content"][0]
+
+    assert content["guardContent"]["text"]["text"] == "  hello  "
+
+
+@pytest.mark.asyncio
 async def test_format_request_with_guardrail_latest_message_uses_service_model_formats(model):
     """Test that guardContent image formats are read from the botocore service model."""
     model.client.meta.service_model.shape_for.return_value.enum = ["png", "jpeg", "webp"]

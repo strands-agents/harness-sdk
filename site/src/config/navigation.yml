@@ -412,6 +412,8 @@ sidebar:
               - label: "Overview"
                 slug: docs/user-guide/sdk/bidirectional-streaming
               - docs/user-guide/sdk/bidirectional-streaming/agent
+              - docs/user-guide/sdk/bidirectional-streaming/session-management
+              - docs/user-guide/sdk/bidirectional-streaming/interrupts
               - docs/user-guide/sdk/bidirectional-streaming/models/bedrock
               - docs/user-guide/sdk/bidirectional-streaming/models/google
               - docs/user-guide/sdk/bidirectional-streaming/models/openai

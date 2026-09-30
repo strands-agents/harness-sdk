@@ -5,13 +5,12 @@ description: >-
   with input and output streams for audio and text.
 sidebar:
   label: "IO"
-experimental: true
 tags: [bidi-streaming]
 sourceLinks:
-  - path: strands-py/src/strands/experimental/bidi/io/console/_io.py
-  - path: strands-py/src/strands/experimental/bidi/io/console/_display.py
-  - path: strands-py/src/strands/experimental/bidi/io/console/_keyboard.py
-  - path: strands-py/src/strands/experimental/bidi/io/audio.py
+  - path: strands-py/src/strands/bidi/io/console/_io.py
+  - path: strands-py/src/strands/bidi/io/console/_display.py
+  - path: strands-py/src/strands/bidi/io/console/_keyboard.py
+  - path: strands-py/src/strands/bidi/io/audio.py
 ---
 
 
@@ -46,10 +45,10 @@ management.
 Implementation of these protocols will look as follows:
 
 ```python
-from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.types import BidiAgentInput
-from strands.experimental.bidi.types import BidiOutputEvent
-from strands.experimental.bidi.types import InputStream, OutputStream
+from strands.bidi.agent import BidiAgent
+from strands.bidi.types import BidiAgentInput
+from strands.bidi.types import BidiOutputEvent
+from strands.bidi.types import InputStream, OutputStream
 
 
 class MyInputStream(InputStream):
@@ -87,7 +86,7 @@ Pass your I/O streams to the agent's `run()` method to connect them to the agent
 ```python
 import asyncio
 
-from strands.experimental.bidi.agent import BidiAgent
+from strands.bidi.agent import BidiAgent
 
 
 async def main():
@@ -124,8 +123,8 @@ PyAudio is excluded from the aggregate `bidi-all` extra because of its PortAudio
 ```python
 import asyncio
 
-from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.io import AudioIO
+from strands.bidi.agent import BidiAgent
+from strands.bidi.io import AudioIO
 
 
 async def main():
@@ -174,7 +173,7 @@ pip install "strands-agents[bidi,bidi-pyaudio,bidi-aec]"
 Pass `audio_processor=True` for the defaults, or an `AudioProcessorConfig` to tune it:
 
 ```python
-from strands.experimental.bidi.io import AudioIO, AudioProcessorConfig
+from strands.bidi.io import AudioIO, AudioProcessorConfig
 
 # Echo cancellation, noise suppression, and auto gain control with defaults:
 audio_io = AudioIO(audio_processor=True)
@@ -224,9 +223,9 @@ pip install "strands-agents[bidi-io,bidi-openai]"
 ```python
 import asyncio
 
-from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.io import ConsoleIO
-from strands.experimental.bidi.models import OpenAIRealtimeModel
+from strands.bidi.agent import BidiAgent
+from strands.bidi.io import ConsoleIO
+from strands.bidi.models import OpenAIRealtimeModel
 
 
 async def main():
@@ -273,8 +272,8 @@ This example uses Amazon Nova Sonic. Configure
 ```python
 import asyncio
 
-from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.io import AudioIO, ConsoleIO
+from strands.bidi.agent import BidiAgent
+from strands.bidi.io import AudioIO, ConsoleIO
 
 
 async def main():
@@ -307,8 +306,8 @@ shows how to use WebSockets with `run()`:
 # server.py
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
-from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.models import OpenAIRealtimeModel
+from strands.bidi.agent import BidiAgent
+from strands.bidi.models import OpenAIRealtimeModel
 
 app = FastAPI()
 
