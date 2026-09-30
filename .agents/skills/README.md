@@ -2,6 +2,12 @@
 
 Skills for this repository. See [agentskills.io](https://agentskills.io/home) for the general format.
 
+## Build with Strands
+
+| Skill | Purpose |
+|-------|---------|
+| **strands** | Helps coding agents choose, scaffold, extend, and migrate applications with Strands Agents. Includes focused entry points for scaffolding an agent, adding a tool, connecting an MCP server, and porting from LangGraph. Claude Code discovers the skill in this repository through the tracked `.claude/skills` symlink. |
+
 ## PR workflow
 
 | Skill | Purpose |
@@ -42,6 +48,7 @@ Create a directory under `.agents/skills/<skill-name>/` with at least a `SKILL.m
 ```
 
 Guidelines:
+
 - Name skills as `{domain}-{action}` (e.g. `pr-create`, `docs-audit`)
 - Keep instructions specific to this repo — reference actual file paths and conventions
 - If a workflow involves unreliable CLI commands, bundle a tested script rather than inlining commands
