@@ -17,6 +17,7 @@ from strands.session import SessionManager, SnapshotSessionManager
 from strands.storage import LocalFileStorage
 from strands.tools.mcp import MCPClient, MCPServerConfig
 from strands.types.tools import AgentTool
+from strands.vended_plugins.goal import GoalLoop
 from strands.vended_plugins.skills import AgentSkills, SkillSources
 from strands.vended_tools import make_shell
 
@@ -36,8 +37,9 @@ from strands_harness.options import (
     _normalize_builtin_tools,
     _sanitize_session_id,
     _session_config,
+    _verify_config,
 )
-from strands_harness.plugins import EnvironmentContext, Todos
+from strands_harness.plugins import EnvironmentContext, Todos, Verification
 from strands_harness.prompt import build_system_prompt
 from strands_harness.telemetry import setup_telemetry
 from strands_harness.tools import (
@@ -57,6 +59,7 @@ from strands_harness.types.agent import (
     Effort,
     MemoryConfig,
     SessionConfig,
+    VerifyOption,
 )
 
 logger = logging.getLogger(__name__)
@@ -230,6 +233,25 @@ def _resolve_background_tasks(
     return resolved
 
 
+def _verification_plugin(
+    verify: VerifyOption, interventions: InterventionsOption, consumer_plugins: list[Any]
+) -> Verification | None:
+    """The verification plugin for ``verify``, refusing combinations that would silently misbehave."""
+    config = _verify_config(verify)
+    if config is None:
+        return None
+    if any(isinstance(p, GoalLoop) for p in consumer_plugins):
+        raise ValueError("verify cannot be combined with a GoalLoop in plugins: both drive the same resume.")
+    if any(isinstance(p, Verification) for p in consumer_plugins):
+        raise ValueError("verify is set and plugins already contains a Verification; pass one or the other.")
+    if config["commands"] == "auto" and interventions:
+        raise ValueError(
+            "verify='auto' cannot be combined with interventions: detected commands run project-defined scripts "
+            "outside the approval gate. Name the commands explicitly, e.g. verify='pytest -q'."
+        )
+    return Verification(**config)
+
+
 def create_harness(
     *,
     model: Model | ModelRouter | str | None = None,
@@ -247,6 +269,7 @@ def create_harness(
     memory: bool | MemoryConfig | MemoryManager | None = True,
     builtin_plugins: list[BuiltinPluginName] | None = None,
     interventions: InterventionsOption = None,
+    verify: VerifyOption = None,
     **agent_kwargs: Any,
 ) -> Agent:
     """Build a preconfigured Strands agent with the harness's defaults enabled.
@@ -378,6 +401,19 @@ def create_harness(
             ``HumanInTheLoop``/``CedarAuthorization`` instance for full control, or a list layering a
             Cedar policy with one human gate. Sugar over the SDK's handlers; a ``subagent`` child
             inherits the policy so a delegate cannot bypass it.
+        verify: The project's own checks, run when the agent finishes an invocation that called a tool
+            able to change the workspace (anything but ``read``, ``web_fetch``, ``web_search``,
+            ``todo_write``, ``search_memory`` and ``skills``); defaults to ``None`` (off). Accepts one
+            command (``"pytest -q"``), a list run in order, ``"auto"`` to detect one from the project
+            files (``package.json`` with a ``test`` script, ``pyproject.toml``, ``Cargo.toml``,
+            ``go.mod``, a ``Makefile`` with a ``test`` target), or ``{"commands": ..., "max_attempts":
+            3, "timeout": 600}``. Checks run through the agent's ``sandbox``. When one exits non-zero, its
+            output goes back to the agent, which keeps working; after ``max_attempts`` failed checks it
+            gets one final turn to report what still fails. The outcome is written to
+            ``agent.state["verification"]``. A ``subagent`` child never verifies; the parent does.
+            ``"auto"`` runs project-defined scripts outside any approval gate, so it cannot be combined
+            with ``interventions``; name the commands explicitly instead. It cannot be combined with a
+            ``GoalLoop`` in ``plugins`` either, since both drive the same resume.
     """
     setup_telemetry()
 
@@ -484,6 +520,9 @@ def create_harness(
             all_plugins.append(skills_plugin)
 
     all_plugins.extend(_select_builtin_plugins(builtin_plugins, all_plugins))
+    verification = _verification_plugin(verify, interventions, consumer_plugins)
+    if verification is not None:
+        all_plugins.append(verification)
     harness_plugins = all_plugins[len(consumer_plugins) :]
 
     # Memory is built from ``memory`` when on and nothing explicit was given. A ``MemoryManager``
