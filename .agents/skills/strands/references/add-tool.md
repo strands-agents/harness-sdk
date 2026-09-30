@@ -58,4 +58,3 @@ The callback's optional context parameter carries invocation state and agent con
 3. Invoke the agent with a request that clearly requires the tool.
 4. Check the result or trace to confirm the tool ran with the expected input.
 5. Return useful errors instead of hiding failures or leaking credentials.
-

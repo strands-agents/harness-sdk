@@ -112,4 +112,3 @@ Add only what the requested behavior needs. Then:
 3. confirm the result object is handled rather than discarded;
 4. add lifecycle limits before unattended or autonomous execution;
 5. document any model call that could not be exercised locally.
-

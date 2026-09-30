@@ -1,7 +1,8 @@
 {
-  "strands-docs": {
-    "command": "uvx",
-    "args": ["strands-agents-mcp-server"]
+  "mcpServers": {
+    "strands-docs": {
+      "command": "uvx",
+      "args": ["strands-agents-mcp-server"]
+    }
   }
 }
-
