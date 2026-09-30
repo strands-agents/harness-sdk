@@ -13,3 +13,5 @@ export {
   McpClient,
 } from './client.js'
 export type { McpLoadServersOptions, McpServerConfig, SerializableMcpToolFilters } from './config.js'
+
+export { McpTaskCancelledError } from './client.js'

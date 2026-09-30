@@ -410,3 +410,5 @@ export type {
   IntervalTriggerOptions,
   ModelExtractorOptions,
 } from './memory/index.js'
+
+export { McpTaskCancelledError } from './mcp/client.js'

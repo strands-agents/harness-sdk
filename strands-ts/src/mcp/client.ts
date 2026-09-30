@@ -1,19 +1,34 @@
 import {
   Client,
   ClientCredentialsProvider,
+  fromJsonSchema,
+  ProtocolError,
+  ProtocolErrorCode,
+  SdkError,
+  SdkErrorCode,
   StreamableHTTPClientTransport,
-  type Transport,
-  type OAuthClientProvider,
-  type ServerCapabilities,
-  type Implementation,
-  type LoggingMessageNotificationParams,
+  specTypeSchemas,
 } from '@modelcontextprotocol/client'
 import { context, propagation, trace } from '@opentelemetry/api'
+
 import type { JSONSchema, JSONValue } from '../types/json.js'
 import type { ElicitationCallback } from '../types/elicitation.js'
 import { McpTool } from '../tools/mcp-tool.js'
 import { logger } from '../logging/index.js'
 import { type McpLoadServersOptions, type McpServerConfig, mcpServerLoader } from './config.js'
+
+import type {
+  CallToolRequestOptions,
+  CallToolResult,
+  CallToolRequest,
+  Implementation,
+  JsonSchemaType,
+  LoggingMessageNotificationParams,
+  OAuthClientProvider,
+  ServerCapabilities,
+  Tool as McpSdkTool,
+  Transport,
+} from '@modelcontextprotocol/client'
 
 /**
  * Widened transport type that accepts MCP transport implementations without requiring explicit casts.
@@ -33,32 +48,8 @@ export interface RuntimeConfig {
   applicationVersion?: string
 }
 
-/**
- * Configuration for MCP task-augmented tool execution.
- *
- * WARNING: MCP Tasks is an experimental feature in both the MCP specification and this SDK.
- * The API may change without notice in future versions.
- *
- * Task-augmented execution is temporarily unavailable while task support is rebuilt on the
- * MCP tasks extension (https://github.com/strands-agents/harness-sdk/issues/1659). A client
- * constructed with `tasksConfig` throws from {@link McpClient.callTool}.
- */
-export interface TasksConfig {
-  /** Time-to-live in milliseconds for task polling. */
-  ttl?: number
-
-  /** Maximum time in milliseconds to wait for task completion during polling. */
-  pollTimeout?: number
-}
-
 /** Connection state of an MCP client. */
 export type McpConnectionState = 'disconnected' | 'connected' | 'failed'
-
-/** Options for MCP tool invocation. */
-export interface McpCallToolOptions {
-  /** AbortSignal to cancel the in-flight request. */
-  signal?: AbortSignal
-}
 
 /** OAuth client credentials for machine-to-machine authentication. */
 export interface McpClientCredentials {
@@ -93,6 +84,83 @@ export interface McpListToolsOptions {
   toolFilters?: McpToolFilters
 }
 
+const MINIMUM_POLL_INTERVAL_MS = 10
+const MAX_TIMER_DELAY_MS = 2_147_483_647
+
+/**
+ * Configuration for MCP task execution.
+ *
+ * `pollTimeout` bounds the complete automatic operation, including polling and input
+ * callbacks. `requestTimeout` limits each individual lifecycle request; progress resets
+ * it. The first limit reached ends the wait. A call's `options.timeoutMs` overrides
+ * `pollTimeout`.
+ *
+ * Field names and defaults match the Python SDK's `TasksConfig` (milliseconds instead
+ * of timedeltas), except that `ttl` is a deprecated alias of `requestTimeout` and no
+ * legacy wire time-to-live is sent.
+ */
+export interface TasksConfig {
+  /** Overall deadline in milliseconds for an automatic task operation, both protocol eras. Defaults to 300000. */
+  pollTimeout?: number
+
+  /** Timeout in milliseconds for each task lifecycle request; progress resets it. Defaults to 60000. */
+  requestTimeout?: number
+
+  /** Polling delay in milliseconds when the server omits its polling interval. Defaults to 1000. */
+  pollInterval?: number
+
+  /**
+   * Timeout in milliseconds for each task lifecycle request.
+   *
+   * @deprecated Use `requestTimeout`, which takes precedence when both are set.
+   */
+  ttl?: number
+}
+
+interface ResolvedTasksConfig {
+  pollTimeoutMs: number
+  requestTimeoutMs: number
+  pollIntervalMs: number
+}
+
+interface TaskOperation {
+  deadline: number
+  dispose: () => void
+  signal: AbortSignal
+}
+
+interface McpServerToolDefinition {
+  execution?: McpSdkTool['execution']
+  inputSchema?: JSONSchema
+  outputSchema?: JSONSchema
+}
+
+interface McpToolCallOutcome {
+  result: CallToolResult
+}
+
+type CompiledToolOutputSchema = ReturnType<typeof fromJsonSchema>
+
+/** Error thrown when a server reports a task as cancelled. */
+export class McpTaskCancelledError extends Error {
+  /** Optional server-provided context for the cancellation. */
+  public readonly statusMessage: string | undefined
+
+  public constructor(statusMessage?: string) {
+    super(statusMessage ? `MCP task was cancelled: ${statusMessage}` : 'MCP task was cancelled')
+    this.name = 'McpTaskCancelledError'
+    this.statusMessage = statusMessage
+  }
+}
+
+/** Options for MCP tool invocation. */
+export interface McpCallToolOptions {
+  /** AbortSignal to cancel the in-flight request. */
+  signal?: AbortSignal
+  /** Overrides the configured overall timeout in milliseconds for this call. */
+  timeoutMs?: number
+}
+
 /** Behavioral options shared by all MCP client configurations. */
 export interface McpClientOptions extends RuntimeConfig {
   /** Disable OpenTelemetry MCP instrumentation. */
@@ -104,12 +172,7 @@ export interface McpClientOptions extends RuntimeConfig {
   /** Filters controlling which tools this client exposes. */
   toolFilters?: McpToolFilters
 
-  /**
-   * Configuration for task-augmented tool execution (experimental).
-   *
-   * Temporarily unavailable while task support is rebuilt on the MCP tasks extension
-   * (https://github.com/strands-agents/harness-sdk/issues/1659). When set, `callTool` throws.
-   */
+  /** Enables automatic execution for legacy task tools. */
   tasksConfig?: TasksConfig
 
   /**
@@ -144,21 +207,31 @@ export type McpClientConfig = McpClientOptions & {
   headers?: Record<string, string>
 }
 
-/** MCP Client for interacting with Model Context Protocol servers. */
+/**
+ * MCP client using SDK v2, including legacy task execution.
+ *
+ * @example
+ * ```typescript
+ * const client = new McpClient({ url: 'https://example.com/mcp', tasksConfig: {} })
+ * const agent = new Agent({ tools: [client] })
+ * ```
+ */
 export class McpClient {
   /**
-   * Default TTL for task polling in milliseconds (60 seconds).
+   * Default task lifecycle request timeout in milliseconds.
    *
-   * Unused while task support is rebuilt on the MCP tasks extension (#1659).
+   * @deprecated Use {@link McpClient.DEFAULT_REQUEST_TIMEOUT}.
    */
   public static readonly DEFAULT_TTL = 60000
 
-  /**
-   * Default poll timeout for task completion in milliseconds (5 minutes).
-   *
-   * Unused while task support is rebuilt on the MCP tasks extension (#1659).
-   */
+  /** Default overall task operation deadline in milliseconds. */
   public static readonly DEFAULT_POLL_TIMEOUT = 300000
+
+  /** Default task lifecycle request timeout in milliseconds. */
+  public static readonly DEFAULT_REQUEST_TIMEOUT = 60000
+
+  /** Default polling interval when a task response omits `pollIntervalMs`. */
+  public static readonly DEFAULT_POLL_INTERVAL_MS = 1000
 
   /**
    * Parses an MCP servers config (file path or object) and returns McpClient instances.
@@ -173,48 +246,67 @@ export class McpClient {
     defaults?: McpClientOptions,
     options?: McpLoadServersOptions
   ): Promise<McpClient[]> {
-    return (await mcpServerLoader.get()(config, defaults, options)).map((c) => new McpClient(c))
+    const configs = await mcpServerLoader.get()(config, defaults, options)
+    const clients: McpClient[] = []
+    for (const resolved of configs) {
+      try {
+        clients.push(new McpClient(resolved))
+      } catch (error) {
+        if (!resolved.continueOnError) throw error
+        logger.warn(
+          `server=<${resolved.applicationName}>, error=<${error}> | MCP client config failed, skipping (continueOnError)`
+        )
+      }
+    }
+    return clients
   }
 
   private _clientName: string
   private _clientVersion: string
-  private _transport: Transport
+  private _transport: McpTransport
   private _state: McpConnectionState
   private _client: Client
   private _continueOnError: boolean
   private _logHandler: (params: LoggingMessageNotificationParams) => void
   private _disableMcpInstrumentation: boolean
-  private _tasksConfig: TasksConfig | undefined
+  private _tasksConfig: ResolvedTasksConfig | undefined
   private _elicitationCallback: ElicitationCallback | undefined
   private _prefix: string | undefined
   private _toolFilters: McpToolFilters | undefined
   /** Server-side name of each listed tool, which differs from `tool.name` when a prefix is set. */
   private _serverToolNames = new WeakMap<McpTool, string>()
+  private _serverToolDefinitions = new Map<string, McpServerToolDefinition>()
   private _registeredToolNames = new Set<string>()
   private _onToolsChanged: ((oldTools: string[], newTools: McpTool[]) => void) | undefined
   private _refreshingTools = false
   private _pendingRefresh = false
+  private _connectionPromise: Promise<void> | undefined
+  private _connectionGeneration = 0
+  private readonly _taskControllers = new Set<AbortController>()
 
   constructor(args: McpClientConfig) {
     this._clientName = args.applicationName || 'strands-agents-ts-sdk'
     this._clientVersion = args.applicationVersion || '0.0.1'
-    this._transport = McpClient._resolveTransport(args)
     this._state = 'disconnected'
     this._continueOnError = args.continueOnError ?? false
     this._logHandler = args.logHandler ?? defaultLogHandler
-    this._tasksConfig = args.tasksConfig
+    this._tasksConfig = resolveTasksConfig(args.tasksConfig)
     this._elicitationCallback = args.elicitationCallback
     this._prefix = args.prefix
     this._toolFilters = args.toolFilters
+    const capabilities = {
+      ...(this._elicitationCallback ? { elicitation: { form: {}, url: {} } } : undefined),
+    }
+
+    this._transport = McpClient._resolveTransport(args)
+
     this._client = new Client(
       {
         name: this._clientName,
         version: this._clientVersion,
       },
       {
-        ...(this._elicitationCallback ? { capabilities: { elicitation: { form: {}, url: {} } } } : undefined),
-        // Probe for protocol revision 2026-07-28 and fall back to the legacy initialize
-        // handshake, mirroring the Python SDK's negotiate_auto posture.
+        capabilities,
         versionNegotiation: { mode: 'auto' },
         listChanged: {
           tools: {
@@ -233,15 +325,9 @@ export class McpClient {
     })
 
     this._disableMcpInstrumentation = args.disableMcpInstrumentation ?? false
-
-    if (this._tasksConfig !== undefined) {
-      logger.warn(
-        `client=<${this._clientName}> | tasksConfig is set but task-augmented execution is temporarily unavailable (#1659), callTool will throw`
-      )
-    }
   }
 
-  private static _resolveTransport(args: McpClientConfig): Transport {
+  private static _resolveTransport(args: McpClientConfig): McpTransport {
     if (args.transport && args.url) {
       throw new Error('McpClientConfig: provide either "transport" or "url", not both')
     }
@@ -254,7 +340,7 @@ export class McpClient {
           'McpClientConfig: "auth", "authProvider", and "headers" require "url" (not compatible with "transport")'
         )
       }
-      return args.transport as Transport
+      return args.transport
     }
     if (args.auth && args.authProvider) {
       throw new Error('McpClientConfig: provide either "auth" or "authProvider", not both')
@@ -272,7 +358,7 @@ export class McpClient {
     return new StreamableHTTPClientTransport(url, {
       ...(authProvider && { authProvider }),
       ...(args.headers && { requestInit: { headers: args.headers } }),
-    }) as Transport
+    })
   }
 
   get client(): Client {
@@ -314,10 +400,36 @@ export class McpClient {
    * @returns A promise that resolves when the connection is established.
    */
   public async connect(reconnect: boolean = false): Promise<void> {
+    const generation = this._connectionGeneration
+    if (this._connectionPromise) {
+      try {
+        await this._connectionPromise
+      } catch (error) {
+        if (!reconnect) throw error
+      }
+      this._assertConnectionCurrent(generation)
+      if (!reconnect) return
+    }
+
     if (this._state !== 'disconnected' && !reconnect) return
 
+    const connectionPromise = this._connect(reconnect)
+    this._connectionPromise = connectionPromise
+    try {
+      await connectionPromise
+      this._assertConnectionCurrent(generation)
+    } finally {
+      if (this._connectionPromise === connectionPromise) {
+        this._connectionPromise = undefined
+      }
+    }
+  }
+
+  private async _connect(reconnect: boolean): Promise<void> {
+    const generation = this._connectionGeneration
     if (this._state === 'connected' && reconnect) {
       await this._client.close()
+      this._assertConnectionCurrent(generation)
       this._state = 'disconnected'
     }
 
@@ -331,14 +443,25 @@ export class McpClient {
     }
 
     try {
-      await this._client.connect(this._transport)
+      await this._client.connect(this._transport as Transport)
+      this._assertConnectionCurrent(generation)
       this._state = 'connected'
     } catch (error) {
+      if (generation !== this._connectionGeneration) {
+        await this._client.close()
+        this._assertConnectionCurrent(generation)
+      }
       if (!this._continueOnError) throw error
       this._state = 'failed'
       logger.warn(
         `client=<${this._clientName}>, error=<${error}> | MCP server failed to connect, continuing (continueOnError)`
       )
+    }
+  }
+
+  private _assertConnectionCurrent(generation: number): void {
+    if (generation !== this._connectionGeneration) {
+      throw new SdkError(SdkErrorCode.ConnectionClosed, 'MCP client disconnected')
     }
   }
 
@@ -348,6 +471,11 @@ export class McpClient {
    * @returns A promise that resolves when the disconnection is complete.
    */
   public async disconnect(): Promise<void> {
+    this._connectionGeneration++
+    this._state = 'disconnected'
+    for (const controller of this._taskControllers) {
+      controller.abort(new SdkError(SdkErrorCode.ConnectionClosed, 'MCP client disconnected'))
+    }
     // Must be done sequentially
     await this._client.close()
     await this._transport.close()
@@ -379,40 +507,38 @@ export class McpClient {
     const prefix = options?.prefix === undefined ? this._prefix : options.prefix
     const toolFilters = options?.toolFilters === undefined ? this._toolFilters : options.toolFilters
     const tools: McpTool[] = []
-    let cursor: string | undefined
+    const toolDefinitions = new Map<string, McpServerToolDefinition>()
+    const result = await this._client.listTools()
 
-    do {
-      const result = await this._client.listTools(cursor ? { cursor } : undefined)
-
-      for (const toolSpec of result.tools) {
-        const toolName = prefix ? `${prefix}_${toolSpec.name}` : toolSpec.name
-        if (prefix) {
-          logger.debug(`tool_rename=<${toolSpec.name}->${toolName}> | renamed tool`)
-        }
-
-        const tool = new McpTool({
-          name: toolName,
-          description: toolSpec.description || `Tool which performs ${toolSpec.name}`,
-          inputSchema: toolSpec.inputSchema as JSONSchema,
-          ...(toolSpec.outputSchema !== undefined && { outputSchema: toolSpec.outputSchema as JSONSchema }),
-          // Pass through only the annotation keys the MCP SDK's Zod schema recognizes
-          // (title, readOnlyHint, destructiveHint, idempotentHint, openWorldHint). The SDK strips
-          // unknown keys before this code runs, so new annotation vocabulary won't surface here
-          // until the SDK dependency updates. The MCP spec treats these as untrusted hints.
-          // An empty annotations object is treated the same as no annotations.
-          ...(toolSpec.annotations !== undefined &&
-            Object.keys(toolSpec.annotations).length > 0 && {
-              annotations: toolSpec.annotations,
-            }),
-          client: this,
-        })
-        this._serverToolNames.set(tool, toolSpec.name)
-
-        if (shouldIncludeTool(tool, toolSpec.name, toolFilters)) tools.push(tool)
+    for (const toolSpec of result.tools) {
+      toolDefinitions.set(toolSpec.name, toMcpServerToolDefinition(toolSpec))
+      const toolName = prefix ? `${prefix}_${toolSpec.name}` : toolSpec.name
+      if (prefix) {
+        logger.debug(`tool_rename=<${toolSpec.name}->${toolName}> | renamed tool`)
       }
 
-      cursor = result.nextCursor
-    } while (cursor)
+      const tool = new McpTool({
+        name: toolName,
+        description: toolSpec.description || `Tool which performs ${toolSpec.name}`,
+        inputSchema: toolSpec.inputSchema as JSONSchema,
+        ...(toolSpec.outputSchema !== undefined && { outputSchema: toolSpec.outputSchema as JSONSchema }),
+        // Pass through only the annotation keys the MCP SDK's Zod schema recognizes
+        // (title, readOnlyHint, destructiveHint, idempotentHint, openWorldHint). The SDK strips
+        // unknown keys before this code runs, so new annotation vocabulary won't surface here
+        // until the SDK dependency updates. The MCP spec treats these as untrusted hints.
+        // An empty annotations object is treated the same as no annotations.
+        ...(toolSpec.annotations !== undefined &&
+          Object.keys(toolSpec.annotations).length > 0 && {
+            annotations: toolSpec.annotations,
+          }),
+        client: this,
+      })
+      this._serverToolNames.set(tool, toolSpec.name)
+
+      if (shouldIncludeTool(tool, toolSpec.name, toolFilters)) tools.push(tool)
+    }
+
+    this._serverToolDefinitions = toolDefinitions
 
     // Per-call overrides are transient, so they must not become the baseline that a later
     // tools-changed refresh reports as the previously registered names.
@@ -458,28 +584,58 @@ export class McpClient {
   /**
    * Invoke a tool on the connected MCP server using an McpTool instance.
    *
+   * When `tasksConfig` is set and a legacy (2025-11-25) server executes the tool as a task,
+   * this method polls until the task reaches a terminal state and returns the final result.
+   * Direct tool results are returned unchanged.
+   *
    * @param tool - The McpTool instance to invoke.
    * @param args - The arguments to pass to the tool.
    * @param options - Optional settings for the request.
-   * @returns A promise that resolves with the result of the tool invocation.
-   * @throws Error when the client was constructed with `tasksConfig`: task-augmented execution
-   *         is temporarily unavailable while task support is rebuilt on the MCP tasks extension
-   *         (https://github.com/strands-agents/harness-sdk/issues/1659).
+   * @returns The final tool result.
+   * @throws {@link McpTaskCancelledError} When the server reports a cancelled task.
+   * @throws {@link SdkError} When a legacy task reports the `failed` status.
    */
   public async callTool(tool: McpTool, args: JSONValue, options?: McpCallToolOptions): Promise<JSONValue> {
-    if (this._tasksConfig !== undefined) {
-      throw new Error(
-        'MCP task-augmented execution is temporarily unavailable while task support is rebuilt ' +
-          'on the MCP tasks extension (https://github.com/strands-agents/harness-sdk/issues/1659). ' +
-          'Unset tasksConfig to call tools now.'
-      )
+    if (!this._tasksConfig) {
+      const outcome = await this._callToolWithTask(tool, args, {
+        ...(options?.signal && { signal: options.signal }),
+        ...(options?.timeoutMs !== undefined && { timeoutMs: options.timeoutMs }),
+      })
+      return outcome.result as JSONValue
     }
 
-    await this.connect()
+    const operation = this._createTaskOperation(options?.signal, options?.timeoutMs ?? this._tasksConfig.pollTimeoutMs)
+    try {
+      throwIfAborted(operation.signal)
+      await raceWithAbort(this.connect(), operation.signal)
+      const outcome = await this._callToolWithTask(
+        tool,
+        args,
+        { signal: operation.signal, timeoutMs: this._tasksConfig.requestTimeoutMs },
+        operation,
+        true
+      )
+      return outcome.result as JSONValue
+    } catch (error) {
+      throw operation.signal.aborted ? abortReason(operation.signal) : error
+    } finally {
+      operation.dispose()
+    }
+  }
+
+  private async _callToolWithTask(
+    tool: McpTool,
+    args: JSONValue,
+    options: McpCallToolOptions,
+    operation?: TaskOperation,
+    completeLegacyTask = false
+  ): Promise<McpToolCallOutcome> {
+    if (operation) throwIfAborted(operation.signal)
+    await (operation ? raceWithAbort(this.connect(), operation.signal) : this.connect())
     if (this._state === 'failed') throw new Error('MCP server failed to connect. Call connect(true) to retry.')
 
     if (args === null || args === undefined) {
-      return await this.callTool(tool, {}, options)
+      args = {}
     }
 
     if (typeof args !== 'object' || Array.isArray(args)) {
@@ -492,11 +648,270 @@ export class McpClient {
     const enhancedArgs = this._disableMcpInstrumentation ? args : injectTraceContext(args)
     const toolArgs = enhancedArgs as Record<string, unknown>
 
-    // When tasksConfig is undefined, call tools directly without task management
-    // Use the server-side name for server communication; tool.name may carry a prefix.
     const toolName = this._serverToolNames.get(tool) ?? tool.name
+    const params = {
+      name: toolName,
+      arguments: toolArgs,
+    }
 
-    return (await this._client.callTool({ name: toolName, arguments: toolArgs }, options)) as JSONValue
+    // The upstream codec rejects extension result types before custom result schemas run.
+    if (completeLegacyTask && this._supportsLegacyTask(toolName)) {
+      const outputSchema = compileToolOutputSchema(toolName, this._serverToolDefinitions.get(toolName)?.outputSchema)
+      const result = await this._callLegacyTask(params, operation!)
+      await validateToolOutput(toolName, outputSchema, result)
+      return { result }
+    }
+
+    return {
+      result: await this._client.callTool(params, {
+        ...(options.signal && { signal: options.signal }),
+        ...(options.timeoutMs !== undefined && {
+          timeout: options.timeoutMs,
+          maxTotalTimeout: operation
+            ? remainingTime(operation.deadline, this._tasksConfig!.pollTimeoutMs)
+            : options.timeoutMs,
+          resetTimeoutOnProgress: true,
+          // A progress token only goes on the wire when a progress handler is registered, which is
+          // what makes resetTimeoutOnProgress take effect.
+          onprogress: (): void => {},
+        }),
+      }),
+    }
+  }
+
+  private _supportsLegacyTask(toolName: string): boolean {
+    if (this._client.getNegotiatedProtocolVersion() !== '2025-11-25') return false
+    const tasks = this._client.getServerCapabilities()?.tasks
+    const support = this._serverToolDefinitions.get(toolName)?.execution?.taskSupport
+    return tasks?.requests?.tools?.call !== undefined && (support === 'optional' || support === 'required')
+  }
+
+  private async _callLegacyTask(params: CallToolRequest['params'], operation: TaskOperation): Promise<CallToolResult> {
+    const requestOptions = (): CallToolRequestOptions => ({
+      signal: operation.signal,
+      timeout: remainingTime(operation.deadline, this._tasksConfig!.requestTimeoutMs),
+      maxTotalTimeout: remainingTime(operation.deadline, this._tasksConfig!.pollTimeoutMs),
+      resetTimeoutOnProgress: true,
+      // A progress token only goes on the wire when a progress handler is registered, which is
+      // what makes resetTimeoutOnProgress take effect.
+      onprogress: (): void => {},
+    })
+    const { task } = await this._client.request(
+      { method: 'tools/call', params: { ...params, task: {} } },
+      specTypeSchemas.CreateTaskResult,
+      requestOptions()
+    )
+    let state = task
+    try {
+      while (state.status === 'working') {
+        await abortableDelay(
+          Math.max(MINIMUM_POLL_INTERVAL_MS, state.pollInterval ?? this._tasksConfig!.pollIntervalMs),
+          operation.signal
+        )
+        state = await this._client.request(
+          { method: 'tasks/get', params: { taskId: task.taskId } },
+          specTypeSchemas.GetTaskResult,
+          requestOptions()
+        )
+      }
+      if (state.status === 'cancelled') throw new McpTaskCancelledError(state.statusMessage)
+      if (state.status === 'failed')
+        throw new SdkError(
+          SdkErrorCode.InvalidResult,
+          `MCP task failed${state.statusMessage ? `: ${state.statusMessage}` : ''}`
+        )
+      // tasks/result delivers queued server requests when a legacy task requires input.
+      return await this._client.request(
+        { method: 'tasks/result', params: { taskId: task.taskId } },
+        specTypeSchemas.CallToolResult,
+        requestOptions()
+      )
+    } catch (error) {
+      if (
+        state.status !== 'completed' &&
+        state.status !== 'failed' &&
+        state.status !== 'cancelled' &&
+        this._state === 'connected' &&
+        this._client.getServerCapabilities()?.tasks?.cancel !== undefined
+      ) {
+        void this._client
+          .request({ method: 'tasks/cancel', params: { taskId: task.taskId } }, specTypeSchemas.CancelTaskResult, {
+            timeout: Math.min(1_000, this._tasksConfig!.requestTimeoutMs),
+          })
+          .catch(() => undefined)
+      }
+      throw error
+    }
+  }
+
+  private _createTaskOperation(
+    externalSignal: AbortSignal | undefined,
+    timeoutMs: number,
+    timeoutError?: Error
+  ): TaskOperation {
+    assertPositiveDuration(timeoutMs, 'MCP task overall timeout')
+    const controller = new AbortController()
+    this._taskControllers.add(controller)
+    const deadline = Date.now() + timeoutMs
+    const abortFromExternal = (): void => controller.abort(abortReason(externalSignal))
+    const timeout = setTimeout(() => {
+      controller.abort(
+        timeoutError ??
+          new SdkError(SdkErrorCode.RequestTimeout, `MCP task did not complete within ${timeoutMs}ms`, {
+            timeoutMs,
+          })
+      )
+    }, timeoutMs)
+
+    if (externalSignal?.aborted) {
+      abortFromExternal()
+    } else {
+      externalSignal?.addEventListener('abort', abortFromExternal, { once: true })
+    }
+
+    return {
+      deadline,
+      signal: controller.signal,
+      dispose: (): void => {
+        clearTimeout(timeout)
+        externalSignal?.removeEventListener('abort', abortFromExternal)
+        this._taskControllers.delete(controller)
+      },
+    }
+  }
+}
+
+function resolveTasksConfig(config: TasksConfig | undefined): ResolvedTasksConfig | undefined {
+  if (config === undefined) return undefined
+
+  const resolved = {
+    pollTimeoutMs: config.pollTimeout ?? McpClient.DEFAULT_POLL_TIMEOUT,
+    requestTimeoutMs: config.requestTimeout ?? config.ttl ?? McpClient.DEFAULT_REQUEST_TIMEOUT,
+    pollIntervalMs: config.pollInterval ?? McpClient.DEFAULT_POLL_INTERVAL_MS,
+  }
+  assertPositiveDuration(resolved.pollTimeoutMs, 'MCP task overall timeout')
+  assertPositiveDuration(resolved.requestTimeoutMs, 'MCP task request timeout')
+  assertPositiveDuration(resolved.pollIntervalMs, 'MCP task poll interval')
+  return resolved
+}
+
+function remainingTime(deadline: number, limit: number): number {
+  const remaining = deadline - Date.now()
+  if (remaining <= 0) {
+    throw new SdkError(SdkErrorCode.RequestTimeout, 'MCP task operation timed out')
+  }
+  return Math.max(1, Math.min(limit, remaining))
+}
+
+function throwIfAborted(signal: AbortSignal): void {
+  if (signal.aborted) throw abortReason(signal)
+}
+
+function abortReason(signal: AbortSignal | undefined): Error {
+  if (signal?.reason instanceof Error) return signal.reason
+  return new DOMException('The operation was aborted', 'AbortError')
+}
+
+async function abortableDelay(delayMs: number, signal: AbortSignal): Promise<undefined> {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await raceWithAbort(
+      new Promise<undefined>((resolve) => {
+        timeout = setTimeout(() => resolve(undefined), Math.min(delayMs, MAX_TIMER_DELAY_MS))
+      }),
+      signal
+    )
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+async function raceWithAbort<Result>(promise: Promise<Result>, signal: AbortSignal): Promise<Result> {
+  if (signal.aborted) throw abortReason(signal)
+
+  return await new Promise<Result>((resolve, reject) => {
+    const abort = (): void => {
+      cleanup()
+      reject(abortReason(signal))
+    }
+    const cleanup = (): void => {
+      signal.removeEventListener('abort', abort)
+    }
+
+    signal.addEventListener('abort', abort, { once: true })
+    promise.then(
+      (result) => {
+        cleanup()
+        resolve(result)
+      },
+      (error: unknown) => {
+        cleanup()
+        reject(error)
+      }
+    )
+  })
+}
+
+function assertPositiveDuration(value: number, name: string): void {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > MAX_TIMER_DELAY_MS) {
+    throw new TypeError(`${name} must be a positive safe integer no greater than ${MAX_TIMER_DELAY_MS}`)
+  }
+}
+
+function toMcpServerToolDefinition(tool: McpSdkTool): McpServerToolDefinition {
+  return {
+    inputSchema: tool.inputSchema as JSONSchema,
+    ...(tool.execution !== undefined && { execution: tool.execution }),
+    ...(tool.outputSchema !== undefined && { outputSchema: tool.outputSchema as JSONSchema }),
+  }
+}
+
+function compileToolOutputSchema(
+  toolName: string,
+  outputSchema: JSONSchema | undefined
+): CompiledToolOutputSchema | undefined {
+  if (outputSchema === undefined) return undefined
+
+  try {
+    return fromJsonSchema(outputSchema as JsonSchemaType)
+  } catch (error) {
+    const message = (error instanceof Error ? error.message : String(error)).slice(0, 200)
+    throw new ProtocolError(
+      ProtocolErrorCode.InvalidParams,
+      `Tool '${toolName}' has an invalid outputSchema: ${message}`
+    )
+  }
+}
+
+async function validateToolOutput(
+  toolName: string,
+  outputSchema: CompiledToolOutputSchema | undefined,
+  result: CallToolResult
+): Promise<void> {
+  if (outputSchema === undefined) return
+  if (result.structuredContent === undefined && !result.isError) {
+    throw new ProtocolError(
+      ProtocolErrorCode.InvalidRequest,
+      `Tool ${toolName} has an output schema but did not return structured content`
+    )
+  }
+  if (result.structuredContent === undefined || result.isError) return
+
+  try {
+    const validation = await outputSchema['~standard'].validate(result.structuredContent)
+    if (validation.issues !== undefined) {
+      const message = validation.issues.map((issue) => issue.message).join('; ')
+      throw new ProtocolError(
+        ProtocolErrorCode.InvalidParams,
+        `Structured content does not match the tool's output schema: ${message}`
+      )
+    }
+  } catch (error) {
+    if (error instanceof ProtocolError) throw error
+    throw new ProtocolError(
+      ProtocolErrorCode.InvalidParams,
+      `Failed to validate structured content: ${error instanceof Error ? error.message : String(error)}`
+    )
   }
 }
 
