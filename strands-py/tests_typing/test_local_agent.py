@@ -10,7 +10,7 @@ from strands.hooks import AfterToolCallEvent, AgentInitializedEvent, BeforeToolC
 from strands.sandbox import Sandbox
 from strands.session.repository_session_manager import RepositorySessionManager
 from strands.session.session_manager import SessionManager
-from strands.session.snapshot_session_manager import SnapshotSessionManager
+from strands.session.snapshot_session_manager import SnapshotSessionManager, SnapshotTrigger
 from strands.storage import Storage
 from strands.telemetry.metrics import EventLoopMetrics
 from strands.types.content import Message
@@ -179,3 +179,49 @@ def session_manager_types(
     Agent(session_manager=shared_manager)
     Agent(session_manager=AgentOnlySessionManager())
     Agent(session_manager=snapshot_manager)
+    BidiAgent(session_manager=shared_repository_manager)
+    BidiAgent(session_manager=shared_manager)
+    BidiAgent(session_manager=manager)  # type: ignore[arg-type]
+    BidiAgent(session_manager=snapshot_manager)
+
+
+def agent_snapshot_trigger(*, agent_data: Agent, **kwargs: Any) -> bool:
+    return agent_data.conversation_manager.removed_message_count == 0
+
+
+def local_snapshot_trigger(*, agent_data: LocalAgent, **kwargs: Any) -> bool:
+    return len(agent_data.messages) % 2 == 0
+
+
+def snapshot_manager_types(storage: Storage) -> None:
+    shared_trigger: SnapshotTrigger = local_snapshot_trigger
+    agent_only_trigger: SnapshotTrigger = agent_snapshot_trigger  # type: ignore[assignment]
+    assert_type(shared_trigger, SnapshotTrigger)
+
+    manager = SnapshotSessionManager("s1", storage=storage)
+    shared_manager: SessionManager[LocalAgent] = manager
+    Agent(session_manager=manager)
+    BidiAgent(session_manager=manager)
+    Agent(session_manager=shared_manager)
+    BidiAgent(session_manager=shared_manager)
+
+    SnapshotSessionManager("s1", storage=storage, snapshot_trigger=local_snapshot_trigger)
+    SnapshotSessionManager("s1", storage=storage, snapshot_trigger=lambda **_: True)
+    SnapshotSessionManager("s1", storage=storage, snapshot_trigger=agent_only_trigger)
+
+
+async def snapshot_manager_method_types(manager: SnapshotSessionManager, agent: Agent, bidi_agent: BidiAgent) -> None:
+    await manager.save_snapshot(agent, is_latest=True)
+    await manager.save_snapshot(bidi_agent, is_latest=True)
+    await manager.restore_snapshot(bidi_agent)
+    await manager.list_snapshot_ids(bidi_agent)
+
+
+class SharedSnapshotSessionManager(SnapshotSessionManager):
+    def sync_agent(self, agent: LocalAgent, **kwargs: Any) -> None:
+        super().sync_agent(agent, **kwargs)
+
+
+class AgentOnlySnapshotSessionManager(SnapshotSessionManager):
+    def sync_agent(self, agent: Agent, **kwargs: Any) -> None:  # type: ignore[override]
+        super().sync_agent(agent, **kwargs)

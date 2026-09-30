@@ -269,13 +269,12 @@ def test_bidi_agent_init_with_unsupported_model():
         BidiAgent(model=object())
 
 
-@pytest.mark.parametrize("argument", ["session_manager", "unknown_option"])
-def test_bidi_agent_init_rejects_unknown_arguments(mock_model, argument):
-    with pytest.raises(TypeError, match=f"unexpected keyword argument '{argument}'"):
-        BidiAgent(model=mock_model, **{argument: object()})
+def test_bidi_agent_init_rejects_unknown_arguments(mock_model):
+    with pytest.raises(TypeError, match="unexpected keyword argument 'unknown_option'"):
+        BidiAgent(model=mock_model, unknown_option=object())
 
 
-def test_bidi_agent_session_id(mock_model):
+def test_bidi_agent_session_id_without_session_manager(mock_model):
     """Test the generated session identifier remains stable."""
     agent = BidiAgent(model=mock_model)
 
@@ -284,6 +283,16 @@ def test_bidi_agent_session_id(mock_model):
 
     assert first == second
     assert len(first) == 8
+
+
+def test_bidi_agent_session_id_delegates_to_session_manager(mock_model):
+    """Test the session manager's persistent identifier is exposed."""
+    session_manager = unittest.mock.Mock()
+    session_manager.session_id = "test-session"
+
+    agent = BidiAgent(model=mock_model, session_manager=session_manager)
+
+    assert agent.session_id == "test-session"
 
 
 def test_bidi_agent_storage_defaults_to_none(mock_model):
