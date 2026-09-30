@@ -2,7 +2,7 @@
 
 from typing import Any, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, RootModel
 
 from ...types.tools import ToolSpec
 
@@ -276,6 +276,8 @@ def convert_pydantic_to_tool_spec(
 
     # Get the JSON schema
     input_schema = model.model_json_schema()
+    if issubclass(model, RootModel):
+        input_schema = _wrap_root_model_schema(input_schema)
 
     # Get model docstring for description if not provided
     model_description = description
@@ -300,6 +302,28 @@ def convert_pydantic_to_tool_spec(
         description=model_description or f"{name} structured output tool",
         inputSchema={"json": final_schema},
     )
+
+
+def _wrap_root_model_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Nest a RootModel schema under a required `root` property of an object schema.
+
+    Tool input schemas must be objects, while a RootModel's schema is the schema of its root type (e.g. an array).
+    The property is named `root` so the tool input can be passed to the model as `model(root=...)`.
+
+    Args:
+        schema: The JSON schema generated for the RootModel
+
+    Returns:
+        Object schema with the root type schema as its only property
+    """
+    wrapper_keys = ("title", "description", "$defs")
+    wrapped_schema = {key: schema[key] for key in wrapper_keys if key in schema}
+    root_schema = {key: value for key, value in schema.items() if key not in wrapper_keys}
+
+    wrapped_schema["type"] = "object"
+    wrapped_schema["properties"] = {"root": root_schema}
+    wrapped_schema["required"] = ["root"]
+    return wrapped_schema
 
 
 def _expand_nested_properties(schema: dict[str, Any], model: type[BaseModel]) -> None:
