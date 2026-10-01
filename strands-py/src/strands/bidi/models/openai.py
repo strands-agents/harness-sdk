@@ -594,7 +594,7 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         state = state if state is not None else self._session_state
 
         if event_type == "input_audio_buffer.speech_started":
-            events: list[BidiOutputEvent] = [BidiBargeInEvent()]
+            events: list[BidiOutputEvent] = []
             if state.transcription_enabled:
                 events.extend(state.start_transcript("user", openai_event["item_id"]))
             return events
@@ -745,7 +745,13 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         """Close audio, text, and transcripts before stopping the response."""
         response_id = response.get("id", "unknown")
         output = response.get("output", [])
-        events = state.stop_audio(response.get("id"))
+        events: list[BidiOutputEvent] = []
+        if (
+            response.get("status") == "cancelled"
+            and (response.get("status_details") or {}).get("reason") == "turn_detected"
+        ):
+            events.append(BidiBargeInEvent())
+        events.extend(state.stop_audio(response.get("id")))
         transcript_parts = [
             part.get("transcript", "")
             for item in output

@@ -112,8 +112,14 @@ async def test_receive_preserves_native_order_with_late_transcription(model, moc
         {"type": "response.created", "response": {"id": "r1"}},
         {"type": "response.created", "response": {"id": "r1"}},
         {"type": "response.cancelled", "response": {"id": "r1"}},
-        {"type": "response.done", "response": {"id": "r1", "status": "cancelled"}},
-        {"type": "response.done", "response": {"id": "r1", "status": "cancelled"}},
+        {
+            "type": "response.done",
+            "response": {"id": "r1", "status": "cancelled", "status_details": {"reason": "turn_detected"}},
+        },
+        {
+            "type": "response.done",
+            "response": {"id": "r1", "status": "cancelled", "status_details": {"reason": "turn_detected"}},
+        },
         {"type": "conversation.item.input_audio_transcription.delta", "item_id": "user-1", "delta": "Earlier input."},
         {"type": "response.created", "response": {"id": "r2"}},
         {"type": "response.done", "response": {"id": "r2", "status": "completed"}},
@@ -131,6 +137,7 @@ async def test_receive_preserves_native_order_with_late_transcription(model, moc
         BidiConnectionStartEvent(connection_id=unittest.mock.ANY, model=model_id),
         BidiTranscriptStartEvent("user", content_id="user-1"),
         BidiResponseStartEvent("r1"),
+        BidiBargeInEvent(),
         BidiResponseStopEvent("r1"),
         BidiTranscriptDeltaEvent("Earlier input.", "user", content_id="user-1"),
         BidiResponseStartEvent("r2"),
@@ -847,15 +854,8 @@ async def test_event_conversion(model):
 
     speech_started = {"type": "input_audio_buffer.speech_started", "item_id": "speech"}
     tru_events = model._convert_openai_event(speech_started)
-    exp_events = [
-        BidiBargeInEvent(),
-        BidiTranscriptStartEvent("user", "speech"),
-    ]
+    exp_events = [BidiTranscriptStartEvent("user", "speech")]
     assert tru_events == exp_events
-
-    response_cancelled = {"type": "response.done", "response": {"id": "resp_123", "status": "cancelled"}}
-    converted = model._convert_openai_event(response_cancelled)
-    assert converted == [BidiResponseStopEvent("resp_123")]
 
     # Test error handling - response_cancel_not_active should be suppressed
     error_cancel_not_active = {
@@ -871,6 +871,71 @@ async def test_event_conversion(model):
     assert converted is None
 
     await model.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transcription_enabled", [False, True])
+@pytest.mark.parametrize(
+    ("response_status", "exp_barge_in"),
+    [
+        pytest.param(
+            {"status": "cancelled", "status_details": {"type": "cancelled", "reason": "turn_detected"}},
+            True,
+            id="server-interruption",
+        ),
+        pytest.param(
+            {"status": "cancelled", "status_details": {"type": "cancelled", "reason": "client_cancelled"}},
+            False,
+            id="client-cancellation",
+        ),
+        pytest.param({"status": "cancelled"}, False, id="unspecified-cancellation"),
+        pytest.param({"status": "cancelled", "status_details": None}, False, id="null-cancellation-details"),
+        pytest.param({"status": "completed", "status_details": None}, False, id="completed"),
+        pytest.param(
+            {"status": "incomplete", "status_details": {"reason": "max_output_tokens"}},
+            False,
+            id="token-limit",
+        ),
+        pytest.param(
+            {"status": "failed", "status_details": {"error": {"code": "server_error"}}},
+            False,
+            id="failed",
+        ),
+    ],
+)
+async def test_receive_barge_in_requires_server_interruption(
+    model, mock_websocket, transcription_enabled, response_status, exp_barge_in
+):
+    if not transcription_enabled:
+        model.update_config(params={"audio": {"input": {"transcription": None}}})
+    audio = base64.b64encode(b"audio").decode()
+    native_events = [
+        {"type": "response.created", "response": {"id": "response"}},
+        {"type": "response.output_audio.delta", "response_id": "response", "delta": audio},
+        {"type": "input_audio_buffer.speech_started", "item_id": "speech"},
+        {"type": "response.done", "response": {"id": "response", **response_status}},
+    ]
+    mock_websocket.recv.side_effect = [json.dumps(event) for event in native_events]
+    exp_events = [
+        BidiConnectionStartEvent(unittest.mock.ANY, model.model_id),
+        BidiResponseStartEvent("response"),
+        BidiAudioStartEvent(unittest.mock.ANY),
+        BidiAudioDeltaEvent(audio, "pcm", 24000, 1, unittest.mock.ANY),
+    ]
+    if transcription_enabled:
+        exp_events.append(BidiTranscriptStartEvent("user", "speech"))
+    if exp_barge_in:
+        exp_events.append(BidiBargeInEvent())
+    exp_events.extend([BidiAudioStopEvent(unittest.mock.ANY), BidiResponseStopEvent("response")])
+
+    await model.start()
+    reader = model.receive()
+    try:
+        tru_events = [await anext(reader) for _ in exp_events]
+        assert tru_events == exp_events
+    finally:
+        await reader.aclose()
+        await model.stop()
 
 
 @pytest.mark.parametrize(
@@ -1251,7 +1316,6 @@ async def test_disabled_transcription_does_not_associate_audio_with_missing_tran
     ]
     tru_events = [event for native in native_events for event in model._convert_openai_event(native) or []]
     exp_events = [
-        BidiBargeInEvent(),
         BidiResponseStartEvent("a"),
         BidiResponseStartEvent("b"),
     ]
@@ -2000,7 +2064,6 @@ async def test_native_acknowledgments_correlate_inputs_and_late_transcripts(mode
         if event == BidiResponseStopEvent("b"):
             break
     assert tru_events == [
-        BidiBargeInEvent(),
         BidiTranscriptStartEvent("user", content_id="speech"),
         BidiResponseStartEvent("a"),
         BidiResponseStopEvent("a"),
@@ -2036,7 +2099,6 @@ async def test_history_acknowledgment_is_not_new_input(model, mock_websocket):
 )
 @pytest.mark.parametrize("acknowledged_before_response", [True, False], ids=["early-ack", "late-ack"])
 async def test_receive_defers_response_during_speech(model, mock_websocket, block, acknowledged_before_response):
-    model.update_config(params={"audio": {"input": {"transcription": None}}})
     await model.start()
     mock_websocket.send.reset_mock()
     state = model._session_state
@@ -2046,7 +2108,7 @@ async def test_receive_defers_response_during_speech(model, mock_websocket, bloc
     reader = model.receive()
     try:
         await anext(reader)
-        assert await anext(reader) == BidiBargeInEvent()
+        assert await anext(reader) == BidiTranscriptStartEvent("user", "speech")
 
         await model.send(BidiMessage(content=[block]))
         mock_websocket.send.assert_awaited_once()
