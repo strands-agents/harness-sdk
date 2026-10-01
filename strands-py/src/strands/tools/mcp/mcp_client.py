@@ -1549,10 +1549,7 @@ class MCPClient(ToolProvider):
                 deadline = asyncio.get_event_loop().time() + 5
                 while asyncio.get_event_loop().time() < deadline:
                     await asyncio.sleep(0)
-                    pending = [
-                        t for t in asyncio.all_tasks()
-                        if t is not asyncio.current_task() and not t.done()
-                    ]
+                    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
                     if not pending:
                         break
                     await asyncio.wait(
