@@ -1,6 +1,6 @@
 import type { APIRoute, GetStaticPaths } from 'astro'
 import { getCollection } from 'astro:content'
-import { renderOgImage } from '../../../util/og-image'
+import { ogImageResponse } from '../../../util/og-image'
 
 export const getStaticPaths: GetStaticPaths = async () => {
   const posts = await getCollection('blog', ({ data }) => (import.meta.env.PROD ? !data.draft : true))
@@ -11,8 +11,5 @@ export const getStaticPaths: GetStaticPaths = async () => {
 }
 
 export const GET: APIRoute = async ({ props }) => {
-  const png = await renderOgImage({ title: props.title as string, description: props.description as string })
-  return new Response(png, {
-    headers: { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=31536000, immutable' },
-  })
+  return ogImageResponse({ title: props.title as string, description: props.description as string })
 }

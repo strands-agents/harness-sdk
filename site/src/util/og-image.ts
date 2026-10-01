@@ -169,3 +169,10 @@ export async function renderOgImage(input: OgImageInput): Promise<Uint8Array<Arr
   body.set(png)
   return body
 }
+
+/** Renders the card and wraps it in a long-cached PNG response for an Astro endpoint. */
+export async function ogImageResponse(input: OgImageInput): Promise<Response> {
+  return new Response(await renderOgImage(input), {
+    headers: { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=31536000, immutable' },
+  })
+}

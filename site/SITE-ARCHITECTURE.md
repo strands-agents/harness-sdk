@@ -910,11 +910,11 @@ The blog extends the existing llms.txt system:
 
 ### OG Images
 
-Build-time OG image generation at `/blog/og/[slug].png` using `astro-og-canvas`:
-- 1200×630px images from post title + description
-- Strands branding: dark background (#0E0E0E), Strands green (#00CC5F) left border
+Build-time OG image generation with `satori` + `@resvg/resvg-js`, shared by the site-wide default (`/og-image.png`) and per-post cards (`/blog/og/[slug].png`):
+- 1200×630px images from a title + description
+- Strands branding: dark green-to-black gradient, halftone dot field, wordmark, and frog mark
 
-Implementation: `src/pages/blog/og/[slug].png.ts`
+Implementation: `src/util/og-image.ts` (renderer), `src/pages/og-image.png.ts`, `src/pages/blog/og/[slug].png.ts`
 
 ### robots.txt
 
