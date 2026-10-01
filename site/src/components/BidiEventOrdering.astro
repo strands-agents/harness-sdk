@@ -163,7 +163,7 @@ const id = `bidi-event-ordering-${scenario}`
     {diagram.arrows && (
       <defs>
         <marker id={`${id}-arrow`} viewBox="0 0 8 8" refX="8" refY="4" markerWidth="8" markerHeight="8" orient="auto">
-          <path d="M 0 0 L 8 4 L 0 8" fill="#888888" />
+          <path d="M 0 0 L 8 4 L 0 8" fill="var(--sl-color-gray-3)" />
         </marker>
       </defs>
     )}
@@ -233,24 +233,24 @@ const id = `bidi-event-ordering-${scenario}`
   }
 
   text {
-    fill: #28292a;
+    fill: var(--sl-color-text);
     text-anchor: middle;
     dominant-baseline: middle;
   }
 
   .lifelines {
     fill: none;
-    stroke: #b6b6b6;
+    stroke: var(--sl-color-gray-4);
   }
 
   .column-titles rect {
-    fill: #e6f6e7;
-    stroke: #02a435;
+    fill: var(--sl-color-accent-low);
+    stroke: var(--sl-color-accent);
   }
 
   .content-events rect {
-    fill: #f4f4f4;
-    stroke: #d9d9d9;
+    fill: var(--sl-color-gray-6);
+    stroke: var(--sl-color-gray-5);
   }
 
   .content-events .event-accent {
@@ -266,13 +266,13 @@ const id = `bidi-event-ordering-${scenario}`
   }
 
   .detail {
-    fill: #575759;
+    fill: var(--sl-color-gray-3);
     font-size: 14px;
   }
 
   .arrows {
     fill: none;
-    stroke: #888888;
+    stroke: var(--sl-color-gray-3);
   }
 
   .annotation {
