@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { useStdout } from 'ink'
+import stringWidth from 'string-width'
 
 import { Box, Text, useTheme } from '../theme.js'
 
@@ -47,7 +48,8 @@ export function SetupProgress({
     return (): void => clearInterval(timer)
   }, [enabled, target])
 
-  const barWidth = Math.max(3, width - label.length - 2)
+  const labelWidth = stringWidth(label)
+  const barWidth = width > labelWidth + 1 ? Math.max(1, width - labelWidth - 2) : 0
   const eighths = Math.round(progress * barWidth * 8)
   const fullBlocks = Math.floor(eighths / 8)
   const partialBlock = PARTIAL_BLOCKS[eighths % 8]
@@ -55,13 +57,17 @@ export function SetupProgress({
 
   return (
     <Box width={width} height={1} flexShrink={0}>
-      <Text color={accent}>
-        {'█'.repeat(fullBlocks)}
-        {partialBlock}
-      </Text>
-      <Text dimColor>{'░'.repeat(remainingBlocks)}</Text>
+      <Box width={barWidth} flexShrink={0}>
+        <Text color={accent}>
+          {'█'.repeat(fullBlocks)}
+          {partialBlock}
+        </Text>
+        <Text dimColor>{'░'.repeat(remainingBlocks)}</Text>
+      </Box>
       <Box flexGrow={1} />
-      <Text dimColor>{label}</Text>
+      <Text dimColor wrap="truncate-end">
+        {label}
+      </Text>
     </Box>
   )
 }

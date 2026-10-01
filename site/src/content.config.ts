@@ -124,6 +124,7 @@ export const catalogEntrySchema = z
       'storage',
       'integration',
       'plugin',
+      'observability',
       'agent-extension',
       'intervention',
     ]),
@@ -342,6 +343,7 @@ export const collections = {
             'storage',
             'integration',
             'plugin',
+            'observability',
             'agent-extension',
             'intervention',
           ])

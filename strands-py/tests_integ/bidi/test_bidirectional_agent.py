@@ -13,11 +13,11 @@ import os
 import pytest
 
 from strands import tool
-from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.hooks import BidiResponseStopEvent
-from strands.experimental.bidi.models import GoogleGeminiLiveModel, OpenAIRealtimeModel
-from strands.experimental.bidi.types import BidiResponseStartEvent, BidiTranscriptStopEvent
-from strands.experimental.bidi.types import BidiResponseStopEvent as BidiResponseStopStreamEvent
+from strands.bidi.agent import BidiAgent
+from strands.bidi.hooks import BidiResponseStopEvent
+from strands.bidi.models import GoogleGeminiLiveModel, OpenAIRealtimeModel
+from strands.bidi.types import BidiResponseStartEvent, BidiTranscriptBlockEvent
+from strands.bidi.types import BidiResponseStopEvent as BidiResponseStopStreamEvent
 from strands.types._events import ToolResultEvent
 from strands.types.media import ImageBlock
 
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 def create_bedrock_nova_sonic_model(**kwargs):
     """Create a Nova Sonic model without importing its Python 3.12-only SDK during collection."""
-    from strands.experimental.bidi.models import BedrockNovaSonicModel
+    from strands.bidi.models import BedrockNovaSonicModel
 
     return BedrockNovaSonicModel(**kwargs)
 
@@ -224,7 +224,7 @@ async def test_bidirectional_agent(agent_with_calculator, audio_generator, provi
         async def wait_for_user_transcripts():
             while (
                 sum(
-                    event.get("type") == "bidi_transcript_stop" and event.get("role") == "user"
+                    event.get("type") == "bidi_transcript_block" and event.get("role") == "user"
                     for event in ctx.get_events()
                 )
                 < 2
@@ -257,7 +257,7 @@ async def test_bidirectional_agent(agent_with_calculator, audio_generator, provi
         seen_transcripts = set()
         audio_active = False
         for event in ctx.get_events():
-            if event.get("type") in ("bidi_transcript_start", "bidi_transcript_delta", "bidi_transcript_stop"):
+            if event.get("type") in ("bidi_transcript_start", "bidi_transcript_delta", "bidi_transcript_block"):
                 transcript = event["content_id"]
                 if event["type"] == "bidi_transcript_start":
                     assert transcript not in seen_transcripts
@@ -265,7 +265,7 @@ async def test_bidirectional_agent(agent_with_calculator, audio_generator, provi
                     active_transcripts[transcript] = event["role"]
                 else:
                     assert active_transcripts[transcript] == event["role"]
-                    if event["type"] == "bidi_transcript_stop":
+                    if event["type"] == "bidi_transcript_block":
                         del active_transcripts[transcript]
             if event.get("type") == "bidi_audio_start":
                 assert active_response is not None
@@ -279,7 +279,7 @@ async def test_bidirectional_agent(agent_with_calculator, audio_generator, provi
                 assert active_response is None
                 active_response = event.response_id
             elif event.get("type") == "bidi_audio_delta" or (
-                event.get("type") in ("bidi_transcript_start", "bidi_transcript_delta", "bidi_transcript_stop")
+                event.get("type") in ("bidi_transcript_start", "bidi_transcript_delta", "bidi_transcript_block")
                 and event.get("role") == "assistant"
             ):
                 assert active_response is not None
@@ -345,7 +345,7 @@ async def test_send_image_and_text(provider_config, yellow_img):
         tru_response = " ".join(
             event.transcript
             for event in context.get_events()
-            if isinstance(event, BidiTranscriptStopEvent) and event.role == "assistant"
+            if isinstance(event, BidiTranscriptBlockEvent) and event.role == "assistant"
         )
         assert "yellow" in tru_response.lower()
 
@@ -357,7 +357,41 @@ async def test_send_image_and_text(provider_config, yellow_img):
 
 
 @pytest.mark.asyncio
-async def test_tool_history_and_response_boundaries(agent_with_calculator, audio_generator, provider_config):
+@pytest.mark.parametrize(
+    ("provider_config", "model_kwargs", "content_type"),
+    [
+        ("openai_realtime", {"params": {"output_modalities": ["text"]}}, "text"),
+        (
+            "google_gemini_live",
+            {
+                "model_id": "gemini-3.1-flash-live-preview",
+                "params": {"thinking_config": {"thinking_level": "high", "include_thoughts": True}},
+            },
+            "reasoning",
+        ),
+    ],
+    indirect=["provider_config"],
+)
+async def test_receive_text_and_reasoning(provider_config, model_kwargs, content_type):
+    """Receive nonempty text or reasoning deltas and completed blocks."""
+    model = provider_config["model_factory"](**(provider_config["model_kwargs"] | model_kwargs))
+    agent = BidiAgent(model=model)
+
+    async with BidirectionalTestContext(agent) as context:
+        await context.send(
+            "A bag has 3 red, 4 blue, and 5 green balls. Three balls are drawn without replacement. "
+            "What is the probability that exactly two share a color and the third is a different color? "
+            "Think carefully and give a brief answer."
+        )
+        await context.wait_for_response(timeout=60)
+        events = context.get_events()
+
+    assert any(event["type"] == f"bidi_{content_type}_delta" and event["delta"].strip() for event in events)
+    assert any(event["type"] == f"bidi_{content_type}_block" and event["text"].strip() for event in events)
+
+
+@pytest.mark.asyncio
+async def test_tool_history_and_response_boundaries(agent_with_calculator, audio_generator):
     """Complete tool exchanges remain adjacent while the provider continues its response."""
     agent = agent_with_calculator
     agent.system_prompt = "Use the calculator for arithmetic. Answer with the result in one short sentence."
@@ -376,7 +410,7 @@ async def test_tool_history_and_response_boundaries(agent_with_calculator, audio
                 (index for index, event in enumerate(events) if event.get("type") == "tool_result"), len(events)
             )
             if results and any(
-                event.get("type") == "bidi_transcript_stop" and event.get("role") == "assistant"
+                event.get("type") == "bidi_transcript_block" and event.get("role") == "assistant"
                 for event in events[result_index + 1 :]
             ):
                 break
@@ -384,29 +418,23 @@ async def test_tool_history_and_response_boundaries(agent_with_calculator, audio
         for index, result in results:
             assert result["status"] == "success"
             tool_use_id = result["toolUseId"]
-            assert agent.messages[index]["metadata"]["custom"]["bidi"] == {
-                "kind": "tool_result",
-                "tool_use_id": tool_use_id,
-            }
-            dispatch_index, dispatch = next(
-                (position, message)
+            assert agent.messages[index]["metadata"]["custom"]["bidi"] == {"kind": "tool_result"}
+            dispatch_index = next(
+                position
                 for position, message in enumerate(agent.messages)
-                if message.get("metadata", {}).get("custom", {}).get("bidi")
-                == {"kind": "tool_dispatch", "tool_use_id": tool_use_id}
+                if message.get("metadata", {}).get("custom", {}).get("bidi") == {"kind": "tool_dispatch"}
+                and any(block.get("toolResult", {}).get("toolUseId") == tool_use_id for block in message["content"])
             )
             assert dispatch_index < index
-            assert dispatch["content"][0]["toolResult"]["toolUseId"] == tool_use_id
             assert ToolResultEvent(result) in events
             request = [block for block in agent.messages[index - 1]["content"] if "toolUse" in block]
-            assert request == [
-                {
-                    "toolUse": {
-                        "toolUseId": result["toolUseId"],
-                        "name": "calculator",
-                        "input": {"operation": "multiply", "x": 37, "y": 19},
-                    }
+            assert {
+                "toolUse": {
+                    "toolUseId": tool_use_id,
+                    "name": calculator.tool_name,
+                    "input": {"operation": "multiply", "x": 37, "y": 19},
                 }
-            ]
+            } in request
             assert agent.messages[dispatch_index - 1]["content"] == request
         events = context.get_events()
         starts = [event.response_id for event in events if isinstance(event, BidiResponseStartEvent)]
@@ -414,9 +442,10 @@ async def test_tool_history_and_response_boundaries(agent_with_calculator, audio
         assert starts == completions
         assert len(starts) == len(set(starts))
         for index, message in enumerate(agent.messages):
-            for block in message["content"]:
-                if "toolUse" in block:
-                    assert (
-                        agent.messages[index + 1]["content"][0]["toolResult"]["toolUseId"]
-                        == block["toolUse"]["toolUseId"]
-                    )
+            tool_use_ids = [block["toolUse"]["toolUseId"] for block in message["content"] if "toolUse" in block]
+            if tool_use_ids:
+                result_message = agent.messages[index + 1]
+                assert result_message["role"] == "user"
+                assert [
+                    block["toolResult"]["toolUseId"] for block in result_message["content"] if "toolResult" in block
+                ] == tool_use_ids

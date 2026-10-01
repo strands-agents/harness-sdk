@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 
-import { ChatController } from '../../src/tui/chat/controller.js'
-import { runInkChat } from '../../src/tui/run.js'
 import { WorkspaceSandbox } from '../../src/tui/workspace/sandbox.js'
+
+await import('../../dist/src/tui/terminal/ink.js')
+const { ChatController } = await import('../../src/tui/chat/controller.js')
+const { runInkChat } = await import('../../src/tui/run.js')
 
 const sandbox = new WorkspaceSandbox(process.cwd())
 let shellAbort

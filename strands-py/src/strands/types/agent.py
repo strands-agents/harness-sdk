@@ -5,6 +5,7 @@ This module defines the types used for an Agent.
 
 from __future__ import annotations
 
+import threading
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeAlias, TypeVar
 
@@ -14,9 +15,13 @@ from .content import ContentBlock, Messages, SystemContentBlock
 from .interrupt import InterruptResponseContent
 
 if TYPE_CHECKING:
+    from .._context_manager.context_manager import ContextManager
     from ..agent.state import AgentState
     from ..hooks.registry import BaseHookEvent, HookCallback, HookRegistry
     from ..models.model import Model
+    from ..sandbox import Sandbox
+    from ..storage.storage import Storage
+    from ..telemetry.metrics import EventLoopMetrics
     from ..tools._caller import _ToolCaller
     from ..tools.registry import ToolRegistry
     from ._snapshot import Snapshot, SnapshotField, SnapshotPreset
@@ -42,6 +47,7 @@ class LocalAgent(Protocol):
         model: Model used by the agent.
         system_prompt: String representation of the agent's system prompt.
         tool_registry: Registry containing tools available to the agent.
+        event_loop_metrics: Aggregated metrics for the agent's loop execution.
     """
 
     _is_strands_local_agent: ClassVar[Literal[True]]
@@ -56,6 +62,7 @@ class LocalAgent(Protocol):
     model: Model
     system_prompt: str | None
     tool_registry: ToolRegistry
+    event_loop_metrics: EventLoopMetrics
 
     @property
     def tool(self) -> _ToolCaller:
@@ -75,6 +82,30 @@ class LocalAgent(Protocol):
     @property
     def session_id(self) -> str:
         """Identifier for the current conversation session."""
+        ...
+
+    @property
+    def storage(self) -> Storage | None:
+        """Default storage backend for agent subsystems."""
+        ...
+
+    @property
+    def sandbox(self) -> Sandbox:
+        """Execution environment for running commands, code, and file operations."""
+        ...
+
+    @property
+    def context_manager(self) -> ContextManager | None:
+        """The ContextManager plugin, if one is registered on this agent."""
+        ...
+
+    @property
+    def cancel_signal(self) -> threading.Event:
+        """The cancellation signal for the current invocation."""
+        ...
+
+    def cancel(self) -> None:
+        """Request cancellation at the agent's next supported checkpoint."""
         ...
 
     def add_hook(

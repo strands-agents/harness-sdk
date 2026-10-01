@@ -46,16 +46,24 @@ export function FadeIn({
   const { stdout } = useStdout()
   const enabled = animate && stdout.isTTY
   const [progress, setProgress] = useState(0)
+  const progressRef = useRef(0)
   useEffect(() => {
     if (!enabled) {
+      progressRef.current = 1
+      setProgress(1)
+      return
+    }
+    const from = progressRef.current
+    if (from === 1) {
       return
     }
     const startedAt = Date.now()
-    setProgress(0)
     const timer = setInterval(() => {
-      const next = Math.min(1, (Date.now() - startedAt) / FADE_DURATION_MS)
+      const elapsed = Math.min(1, (Date.now() - startedAt) / FADE_DURATION_MS)
+      const next = from + (1 - from) * (1 - (1 - elapsed) ** 3)
+      progressRef.current = next
       setProgress(next)
-      if (next === 1) {
+      if (elapsed === 1) {
         clearInterval(timer)
       }
     }, 32)
@@ -63,7 +71,7 @@ export function FadeIn({
   }, [enabled])
 
   return (
-    <Fade background={background} progress={enabled ? 1 - (1 - progress) ** 3 : 1}>
+    <Fade background={background} progress={enabled ? progress : 1}>
       {children}
     </Fade>
   )
@@ -138,6 +146,21 @@ export function useFadeColor(color: string | undefined): string | undefined {
     return color
   }
   return mixHexColors(fade.background, color, fade.progress)
+}
+
+export function useFadeAnsi(text: string): string {
+  const fade = useContext(FadeContext)
+  if (!fade) return text
+  return text.replace(
+    // eslint-disable-next-line no-control-regex -- ANSI color sequences begin with ESC.
+    /\u001b\[(38|48);2;(\d+);(\d+);(\d+)m/g,
+    (_match: string, layer: string, red: string, green: string, blue: string): string => {
+      const color = `#${[red, green, blue].map((channel) => Number(channel).toString(16).padStart(2, '0')).join('')}`
+      const blended = mixHexColors(fade.background, color, fade.progress)
+      const channels = [1, 3, 5].map((offset) => Number.parseInt(blended.slice(offset, offset + 2), 16))
+      return `\u001b[${layer};2;${channels.join(';')}m`
+    }
+  )
 }
 
 export function mixHexColors(from: string, to: string, progress: number): string {

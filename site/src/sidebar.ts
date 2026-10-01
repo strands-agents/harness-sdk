@@ -61,6 +61,8 @@ export interface Product {
   name: string
   /** Short brand slug used in URLs and the Projects dropdown, e.g. "/shell". */
   slug: string
+  /** Homepage card color key (--card-accent-* in fonts.css), e.g. "teal". */
+  accent?: string
   href: string
   description: string
   pages?: ProductLink[]

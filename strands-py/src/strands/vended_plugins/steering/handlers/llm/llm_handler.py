@@ -49,7 +49,8 @@ class LLMSteeringHandler(SteeringHandler):
         Args:
             system_prompt: System prompt defining steering guidance rules
             prompt_mapper: Custom prompt mapper for evaluation prompts
-            model: Optional model override for steering evaluation
+            model: Model for steering evaluation. Resolution order: this ``model`` >
+                ``agent.aux_model`` > ``agent.model``.
             context_providers: List of context providers for populating steering context.
                 Defaults to [LedgerProvider()] if None. Pass an empty list to disable
                 context providers.
@@ -79,7 +80,9 @@ class LLMSteeringHandler(SteeringHandler):
         # Create isolated agent for steering evaluation (no shared conversation state)
         from .....agent import Agent
 
-        steering_agent = Agent(system_prompt=self.system_prompt, model=self.model or agent.model, callback_handler=None)
+        steering_agent = Agent(
+            system_prompt=self.system_prompt, model=self.model or agent.aux_model, callback_handler=None
+        )
 
         # Get LLM decision
         llm_result: _LLMSteering = cast(

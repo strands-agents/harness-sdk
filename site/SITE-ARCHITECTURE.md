@@ -421,7 +421,7 @@ The index page (`src/content/docs/api/python/index.mdx`) is a permanent file (no
 ```
 strands.agent.agent      → Agent > Agent
 strands.agent.base       → Agent > Base
-strands.experimental.bidi.types → Experimental > Bidi > Types
+strands.bidi.types       → Bidi > Types
 ```
 
 ### Index Page Component (`src/components/PythonApiList.astro`)

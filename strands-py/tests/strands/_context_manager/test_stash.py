@@ -165,6 +165,34 @@ class TestStoreMessage:
         result = await stash.retrieve("tu-skip_0")
         assert result is None
 
+    @pytest.mark.asyncio
+    async def test_keep_existing_leaves_stored_entries_untouched(self, stash):
+        await stash.load_snapshot({"tu-1_0": {"text": "original result"}, "track-1_1": {"text": "original text"}})
+        message = Message(
+            role="user",
+            content=[
+                ContentBlock(
+                    toolResult=ToolResult(
+                        toolUseId="tu-1",
+                        status="success",
+                        content=[{"text": "preview result"}, {"text": "second result"}],
+                    )
+                ),
+                ContentBlock(text="preview text"),
+            ],
+            tracking_id="track-1",
+        )
+
+        await stash.store_message(message, keep_existing=True)
+
+        tru_entries = await stash.take_snapshot()
+        exp_entries = {
+            "tu-1_0": {"text": "original result"},
+            "tu-1_1": {"text": "second result"},
+            "track-1_1": {"text": "original text"},
+        }
+        assert tru_entries == exp_entries
+
 
 class TestNamespacing:
     """Tests for storage namespace isolation."""
@@ -238,6 +266,18 @@ class TestStoreMessageErrorHandling:
         )
         message = Message(role="user", content=[block])
         await stash.store_message(message)
+
+    @pytest.mark.asyncio
+    async def test_keep_existing_does_not_write_when_existence_check_fails(self):
+        stash = Stash(InMemoryStorage(), "s", "a")
+        stash._storage.read = unittest.mock.AsyncMock(side_effect=RuntimeError("read failed"))
+        stash._storage.write = unittest.mock.AsyncMock()
+        block = ContentBlock(text="hello")
+        message = Message(role="assistant", content=[block], tracking_id="track-1")
+
+        await stash.store_message(message, keep_existing=True)
+
+        stash._storage.write.assert_not_called()
 
 
 class TestStorageTypeName:

@@ -14,14 +14,14 @@ Example Usage:
     from strands.vended_tools import make_a2a_client
 
     tool = make_a2a_client(
-        allowed_endpoints={
-            "https://agent.example.com": None,
-            "https://secure-agent.example.com": ClientConfig(
+        allowed_endpoints=[
+            "https://agent.example.com",
+            ("https://secure-agent.example.com", ClientConfig(
                 httpx_client=httpx.AsyncClient(
                     headers={"Authorization": "Bearer your-token"},
                 ),
-            ),
-        }
+            )),
+        ]
     )
     agent = Agent(tools=[tool])
     ```

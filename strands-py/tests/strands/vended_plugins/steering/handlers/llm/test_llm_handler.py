@@ -165,8 +165,8 @@ async def test_steer_uses_custom_model(mock_agent_class):
 
 @pytest.mark.asyncio
 @patch("strands.agent.Agent")
-async def test_steer_uses_agent_model_when_no_custom_model(mock_agent_class):
-    """Test steer method uses agent's model when no custom model provided."""
+async def test_steer_uses_agent_aux_model_when_no_custom_model(mock_agent_class):
+    """Test steer method uses the agent's aux model when no custom model provided."""
     system_prompt = "Test prompt"
     handler = LLMSteeringHandler(system_prompt)
 
@@ -179,11 +179,12 @@ async def test_steer_uses_agent_model_when_no_custom_model(mock_agent_class):
 
     agent = Mock()
     agent.model = Mock()
+    agent.aux_model = Mock()
     tool_use = {"name": "test_tool", "input": {"param": "value"}}
 
     await handler.steer_before_tool(agent=agent, tool_use=tool_use)
 
-    mock_agent_class.assert_called_once_with(system_prompt=system_prompt, model=agent.model, callback_handler=None)
+    mock_agent_class.assert_called_once_with(system_prompt=system_prompt, model=agent.aux_model, callback_handler=None)
 
 
 def test_llm_steering_model():

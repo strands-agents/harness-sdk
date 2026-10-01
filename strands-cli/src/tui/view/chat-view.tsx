@@ -12,8 +12,8 @@ import { composerMaxRows, promptEditorHeight } from '../terminal/composer.js'
 import type { ScreenSelectionSegment } from '../terminal/mouse-input.js'
 import { VOICE_METER_WIDTH, voiceMeterFill } from '../voice/session.js'
 import type { MetadataTarget, ModelPanelFocus } from './interaction.js'
-import { contextColor, metadataPlacements } from './presentation.js'
 import { PromptEditor } from './prompt-editor.js'
+import { EffortPanel } from './effort-panel.js'
 import { ResourcePanel } from './panels.js'
 import { CommandPalette } from './command-palette.js'
 import { FROG_ANIMATION_HEIGHT, FrogEasterEgg, type FrogVariant } from './frog-easter-egg.js'
@@ -22,7 +22,7 @@ import { TranscriptViewport } from './transcript.js'
 import { PARTY_FRAME_INTERVAL_MS, usePartyFrame } from './use-party-frame.js'
 import { useSpinner } from './use-spinner.js'
 import { Box, Text, ThemeProvider, useTheme } from './theme.js'
-import { ComposerHelpFooter, PanelHelpContext } from './help-footer.js'
+import { ComposerFooter, PanelHelpContext } from './help-footer.js'
 import { FadeIn } from './fade-in.js'
 
 const MAX_VISIBLE_BACKGROUND_TASKS = 4
@@ -59,6 +59,8 @@ function ChatViewContent({
   transcriptScroll = 0,
   onMaxTranscriptScroll,
   pressedMetadata,
+  hoveredMetadata,
+  settingsHovered,
   pressedPanelFilter,
   hoveredPanelFilter,
   pressedPanelRow,
@@ -84,12 +86,12 @@ function ChatViewContent({
   expandedToolGroups,
   onToolGroupElement,
   frogBrandAnimationId,
+  introStartedAt,
   panelRows,
   frog,
   onFrogComplete,
   selection,
   voice,
-  synchronousTranscriptLayout = false,
   clipboardNotice,
   party = false,
 }: {
@@ -113,6 +115,8 @@ function ChatViewContent({
   transcriptScroll?: number
   onMaxTranscriptScroll?: (maximum: number) => void
   pressedMetadata?: MetadataTarget
+  hoveredMetadata?: MetadataTarget
+  settingsHovered?: boolean
   pressedPanelFilter?: string
   hoveredPanelFilter?: string
   pressedPanelRow?: number
@@ -138,22 +142,24 @@ function ChatViewContent({
   expandedToolGroups?: ReadonlySet<string>
   onToolGroupElement?: (id: string, element: DOMElement | null) => void
   frogBrandAnimationId?: number
+  introStartedAt?: number
   panelRows?: ChatPanel['rows']
   frog?: { id: number; variant: FrogVariant }
   onFrogComplete?: (id: number) => void
   selection?: readonly ScreenSelectionSegment[]
   voice?: ChatVoiceStore
-  synchronousTranscriptLayout?: boolean
   clipboardNotice?: { status: 'success'; characterCount: number } | { status: 'error' }
   party?: boolean
 }): ReactElement {
-  const { surface, background } = useTheme()
+  const { surface, background, canvas } = useTheme()
   const resolvedCommandAssistance =
-    commandAssistance ?? (suggestions === undefined ? commandAssistanceForInput(input) : undefined)
+    commandAssistance ??
+    (suggestions === undefined ? commandAssistanceForInput(input, actionableCommandToken) : undefined)
   const resolvedSuggestions = suggestions ?? resolvedCommandAssistance?.completions ?? []
   const hasActivity =
     snapshot.completedTurns.length > 0 || snapshot.activeTurn !== undefined || snapshot.notices.length > 0
-  const startupCovered = Boolean(snapshot.panel) || resolvedCommandAssistance !== undefined
+  const effortSlider = snapshot.panel?.kind === 'effort' ? snapshot.panel.slider : undefined
+  const showCommandPicker = resolvedCommandAssistance !== undefined && !snapshot.panel && !snapshot.activeTurn
   const showQueueStatus = snapshot.queuedPrompts.length > 0 || snapshot.status === 'interrupting'
   const showVoiceStatus = snapshot.voice !== undefined && snapshot.voice.status !== 'off'
   const activeBackgroundTasks = snapshot.tasks.filter(
@@ -168,18 +174,28 @@ function ChatViewContent({
   const composerStatusRows =
     queueStatusRows + Number(showVoiceStatus) + visibleBackgroundTasks.length + Number(hiddenBackgroundTasks > 0)
   const editorWidth = Math.max(1, terminalWidth - 2)
-  const editorMaxRows = composerMaxRows(terminalHeight, composerStatusRows)
+  const suggestionCapacity = Math.max(1, Math.min(5, terminalHeight - composerStatusRows - 10))
+  const suggestionRows = showCommandPicker
+    ? Math.min(suggestionCapacity, resolvedSuggestions.length) +
+      Number(resolvedCommandAssistance.signature !== undefined) +
+      Number(resolvedCommandAssistance.message !== undefined) +
+      1
+    : 0
+  const editorMaxRows = composerMaxRows(terminalHeight, composerStatusRows + suggestionRows)
+  const editorMaxHeight = Math.max(party ? 3 : 1, terminalHeight - composerStatusRows - suggestionRows - 2)
   const commandDeckHeight =
     composerStatusRows +
+    suggestionRows +
     promptEditorHeight(
       input,
       cursor,
       editorWidth,
       editorMaxRows,
-      Boolean(snapshot.composerStatus || snapshot.panel),
-      party
+      Boolean(!effortSlider && (snapshot.composerStatus || snapshot.panel)),
+      party,
+      editorMaxHeight
     ) +
-    3
+    2
   // A stable header element keeps the memoized transcript from re-rendering on spinner ticks.
   const { settings } = snapshot
   const frogBrandElapsedMs = useBrandAnimation(frogBrandAnimationId, settings.animations)
@@ -189,6 +205,7 @@ function ChatViewContent({
         terminalWidth={terminalWidth}
         availableHeight={terminalHeight - commandDeckHeight}
         animate={settings.animations}
+        {...(introStartedAt !== undefined ? { introStartedAt } : {})}
         theme={settings.frogTheme}
         customBase={settings.customTheme.base}
         partyElapsedMs={partyFrame * PARTY_FRAME_INTERVAL_MS}
@@ -202,6 +219,7 @@ function ChatViewContent({
       terminalHeight,
       commandDeckHeight,
       settings.animations,
+      introStartedAt,
       settings.frogTheme,
       settings.customTheme.base,
       partyFrame,
@@ -219,7 +237,7 @@ function ChatViewContent({
       paddingX={1}
       overflow="hidden"
       position="relative"
-      backgroundColor={background}
+      backgroundColor={canvas}
     >
       <Box flexDirection="column" flexGrow={1} overflowY="hidden">
         {hasActivity ? (
@@ -230,31 +248,15 @@ function ChatViewContent({
             settings={snapshot.settings}
             scrollOffset={transcriptScroll}
             layoutKey={`${terminalWidth}:${terminalHeight}:${commandDeckHeight}`}
-            synchronousLayout={synchronousTranscriptLayout}
             {...(expandedToolGroups ? { expandedToolGroups } : {})}
             {...(onToolGroupElement ? { onToolGroupElement } : {})}
             {...(onMaxTranscriptScroll ? { onMaxScrollChange: onMaxTranscriptScroll } : {})}
             {...(snapshot.activeTurn ? { activeTurn: snapshot.activeTurn } : {})}
           />
-        ) : startupCovered ? null : (
+        ) : (
           startupView
         )}
       </Box>
-      {resolvedCommandAssistance && !snapshot.panel && !snapshot.activeTurn ? (
-        <FadeIn animate={settings.animations} background={background}>
-          <CommandPalette
-            commands={resolvedSuggestions}
-            assistance={resolvedCommandAssistance}
-            selected={suggestionSelection}
-            terminalWidth={terminalWidth}
-            terminalHeight={terminalHeight}
-            bottomPadding={commandDeckHeight}
-            {...(pressedSuggestion !== undefined ? { pressed: pressedSuggestion } : {})}
-            {...(hoveredSuggestion !== undefined ? { hovered: hoveredSuggestion } : {})}
-            {...(onSuggestionElement ? { onRowElement: onSuggestionElement } : {})}
-          />
-        </FadeIn>
-      ) : null}
       <FadeIn animate={settings.animations} background={background}>
         <Box width="100%" flexShrink={0} flexDirection="column" backgroundColor={surface}>
           {showQueueStatus ? (
@@ -275,29 +277,53 @@ function ChatViewContent({
               <Text dimColor>+ {hiddenBackgroundTasks} more background tasks</Text>
             </Box>
           ) : null}
+          {showCommandPicker ? (
+            <CommandPalette
+              commands={resolvedSuggestions}
+              assistance={resolvedCommandAssistance}
+              selected={suggestionSelection}
+              width={editorWidth}
+              capacity={suggestionCapacity}
+              {...(pressedSuggestion !== undefined ? { pressed: pressedSuggestion } : {})}
+              {...(hoveredSuggestion !== undefined ? { hovered: hoveredSuggestion } : {})}
+              {...(onSuggestionElement ? { onRowElement: onSuggestionElement } : {})}
+            />
+          ) : null}
           <PromptEditor
             input={input}
             cursor={cursor}
-            agentName={snapshot.runtime.agent}
             animateCursor={settings.animations}
             width={editorWidth}
             maxRows={editorMaxRows}
+            maxHeight={editorMaxHeight}
             {...(actionableCommandToken ? { actionableCommandToken } : {})}
             {...(snapshot.composerStatus ? { busyStatus: `${composerSpinner} ${snapshot.composerStatus}` } : {})}
             {...(snapshot.panel ? { panelStatus: panelEditorStatus(snapshot.panel) } : {})}
             party={party}
             partyFrame={partyFrame}
-          />
-          <RuntimeMetadata
-            snapshot={snapshot}
-            terminalWidth={terminalWidth - 2}
-            {...(pressedMetadata ? { pressed: pressedMetadata } : {})}
-            {...(onMetadataElement ? { onElement: onMetadataElement } : {})}
-          />
+          >
+            {effortSlider && snapshot.panel ? (
+              <EffortPanel
+                panel={snapshot.panel}
+                slider={effortSlider}
+                width={Math.max(1, editorWidth - 2 - (party ? 2 : 0))}
+                {...(onPanelElement ? { onElement: onPanelElement } : {})}
+                {...(onPanelSliderElement ? { onSliderElement: onPanelSliderElement } : {})}
+              />
+            ) : null}
+          </PromptEditor>
         </Box>
-        <ComposerHelpFooter snapshot={snapshot} width={editorWidth} {...(onActionElement ? { onActionElement } : {})} />
+        <ComposerFooter
+          snapshot={snapshot}
+          width={editorWidth}
+          {...(settingsHovered !== undefined ? { settingsHovered } : {})}
+          {...(pressedMetadata ? { pressed: pressedMetadata } : {})}
+          {...(hoveredMetadata ? { hovered: hoveredMetadata } : {})}
+          {...(onMetadataElement ? { onMetadataElement } : {})}
+          {...(onActionElement ? { onActionElement } : {})}
+        />
       </FadeIn>
-      {snapshot.panel ? (
+      {snapshot.panel && !effortSlider ? (
         <FadeIn key={snapshot.panel.kind} animate={settings.animations} background={background}>
           <PanelHelpContext value={snapshot.panel}>
             <ResourcePanel
@@ -327,7 +353,6 @@ function ChatViewContent({
               {...(onPanelFilterElement ? { onFilterElement: onPanelFilterElement } : {})}
               {...(onPanelSearchElement ? { onSearchElement: onPanelSearchElement } : {})}
               {...(onPanelSliderElement ? { onSliderElement: onPanelSliderElement } : {})}
-              commandDeckHeight={commandDeckHeight}
             />
           </PanelHelpContext>
         </FadeIn>
@@ -552,49 +577,4 @@ function panelEditorStatus(panel: ChatPanel): string {
     return 'Esc to dismiss'
   }
   return panel.kind === 'permission' ? 'Permission required' : `Viewing ${panel.title}`
-}
-
-function RuntimeMetadata({
-  snapshot,
-  terminalWidth,
-  pressed,
-  onElement,
-}: {
-  snapshot: ChatSnapshot
-  terminalWidth: number
-  pressed?: MetadataTarget
-  onElement?: (target: MetadataTarget, element: DOMElement | null) => void
-}): ReactElement {
-  const palette = useTheme()
-  return (
-    <Box height={1} width="100%" flexShrink={0} overflow="hidden" paddingX={1}>
-      {metadataPlacements(snapshot, terminalWidth).map((segment) => {
-        const color =
-          pressed === segment.target
-            ? palette.hover
-            : segment.target === 'context'
-              ? contextColor(snapshot.context, palette)
-              : segment.target === 'model'
-                ? palette.accent
-                : undefined
-        return (
-          <Box key={segment.target} width={segment.width} justifyContent={segment.alignment} overflow="hidden">
-            <Box
-              ref={
-                segment.target === 'cwd'
-                  ? undefined
-                  : (element): void => {
-                      onElement?.(segment.target, element)
-                    }
-              }
-            >
-              <Text {...(color !== undefined ? { color } : {})} dimColor={segment.target === 'cwd'}>
-                {segment.text}
-              </Text>
-            </Box>
-          </Box>
-        )
-      })}
-    </Box>
-  )
 }

@@ -1,12 +1,13 @@
-import { createElement, type ReactElement } from 'react'
-import { render, type Instance } from 'ink'
+import { createElement, type ComponentProps, type ReactElement } from 'react'
+import { render, useInput, type Instance } from 'ink'
 
 import { ChatRoot, type ChatLaunch, type SetupBridge } from './view/chat-root.js'
+import type { McpTrustRequest } from './view/mcp-trust-prompt.js'
 import type { ChatControllerApi, ChatConversation } from './chat/controller.js'
 import type { CliConfigStore } from './config.js'
 import { configurationFromStore, type RequestSetup } from './agent-configuration.js'
 import { hardExitProcessTree } from './terminal/process-tree.js'
-import { enterAlternateScreen } from './terminal/terminal.js'
+import { createInkOutputs, enterAlternateScreen } from './terminal/terminal.js'
 
 interface RunInkChatOptions {
   firstRequest?: string
@@ -30,36 +31,26 @@ type ChatControllerFactory = (
 
 type ChatControllerSource = ChatControllerApi | ChatControllerFactory
 
-const SYNCHRONIZED_OUTPUT_START = '\u001b[?2026h'
-const SYNCHRONIZED_OUTPUT_END = '\u001b[?2026l'
-
-function createInkOutput(output: NodeJS.WriteStream): NodeJS.WriteStream {
-  // Apple Terminal leaves stale full-screen frames when Ink emits DEC synchronized-output markers.
-  return new Proxy(output, {
-    get(target, property): unknown {
-      if (property === 'write') {
-        const write = target.write
-        return (chunk: unknown, ...args: unknown[]): unknown =>
-          Reflect.apply(write, target, [
-            typeof chunk === 'string'
-              ? chunk.replaceAll(SYNCHRONIZED_OUTPUT_START, '').replaceAll(SYNCHRONIZED_OUTPUT_END, '')
-              : chunk,
-            ...args,
-          ])
-      }
-      const value = Reflect.get(target, property, target)
-      return typeof value === 'function' ? value.bind(target) : value
+function ChatSession({
+  onCancelStartup,
+  ...props
+}: ComponentProps<typeof ChatRoot> & { onCancelStartup(): void }): ReactElement {
+  useInput(
+    (input, key) => {
+      if (key.ctrl && input === 'c') onCancelStartup()
     },
-  })
+    { isActive: props.trustRequest !== undefined }
+  )
+  return createElement(ChatRoot, props)
 }
 
 export async function runInkChat(source: ChatControllerSource, options: RunInkChatOptions = {}): Promise<number> {
   const input = options.input ?? process.stdin
   const output = options.output ?? process.stdout
   const errorOutput = options.errorOutput ?? process.stderr
-  const inkOutput = process.env.TERM_PROGRAM === 'Apple_Terminal' ? createInkOutput(output) : output
   const alternateScreen = options.alternateScreen !== false
-  const leaveTerminalMode = alternateScreen ? enterAlternateScreen(output) : (): void => {}
+  const inkOutputs = createInkOutputs(output, errorOutput, alternateScreen)
+  let leaveTerminalMode = (): void => {}
   const renderApp = options.renderApp ?? render
   const hardExit = (exitCode: number): never => {
     leaveTerminalMode()
@@ -72,7 +63,22 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
   let pendingExitCode: number | undefined
   let replacementTask: Promise<void> | undefined
   let launchOptions: ChatLaunch | undefined
-  const setupBridge: SetupBridge = { request: (): void => {}, confirmMcp: async (): Promise<boolean> => false }
+  let trustRequest: McpTrustRequest | undefined
+  const setupBridge: SetupBridge = {
+    request: (): void => {},
+    confirmMcp: (workspace, paths): Promise<boolean> =>
+      new Promise((resolve) => {
+        trustRequest = {
+          workspace,
+          paths,
+          resolve: (trusted): void => {
+            trustRequest = undefined
+            resolve(trusted)
+          },
+        }
+        renderChat()
+      }),
+  }
   let resolveSetup: (exitCode: 0 | 130) => void = () => {}
   const setupTask = options.setup
     ? new Promise<0 | 130>((resolve) => {
@@ -105,7 +111,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
           } catch (recordingError) {
             message += `\nCould not save the setup failure: ${recordingError instanceof Error ? recordingError.message : String(recordingError)}`
           }
-          errorOutput.write(`error: Failed to apply setup: ${message}\n`)
+          inkOutputs.stderr.write(`error: Failed to apply setup: ${message}\n`)
           controller = previousController
           previousController.showError?.('Setup failed', message)
           if (pendingExitCode !== undefined) {
@@ -177,31 +183,33 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     controller?.close(pendingExitCode)
     instance?.unmount()
   }
-  const introState: { exitCode?: 0 | 130 } = options.intro === false ? { exitCode: 0 } : {}
-  let resolveIntro: (exitCode: 0 | 130) => void = () => {}
-  const introTask =
-    options.intro === false
-      ? Promise.resolve<0 | 130>(0)
-      : new Promise<0 | 130>((resolve) => {
-          resolveIntro = resolve
-        })
-  const completeIntro = (exitCode: 0 | 130): void => {
-    introState.exitCode = exitCode
-    resolveIntro(exitCode)
-    if (exitCode !== 0) {
-      closeForExit(exitCode)
-    }
-  }
   const chatRoot = (): ReactElement =>
-    createElement(ChatRoot, {
+    createElement(ChatSession, {
       ...(controller ? { controller } : {}),
       intro: options.intro !== false,
       setup: options.setup === true,
       ...(options.config ? { config: options.config } : {}),
+      ...(trustRequest ? { trustRequest } : {}),
       setupBridge,
       onSetupComplete: completeSetup,
-      onIntroComplete: completeIntro,
+      onCancelStartup: () => closeForExit(130),
     })
+  const renderChat = (): void => {
+    if (instance) {
+      instance.rerender(chatRoot())
+      return
+    }
+    if (alternateScreen) leaveTerminalMode = enterAlternateScreen(output)
+    instance = renderApp(chatRoot(), {
+      stdin: input,
+      ...inkOutputs,
+      exitOnCtrlC: false,
+      patchConsole: true,
+      // Full-frame repaints flash on terminals that ignore or lack synchronized output.
+      incrementalRendering: true,
+      maxFps: 30,
+    })
+  }
 
   const onSigint = (): void => closeForExit(130)
   const onSigterm = (): void => closeForExit(143)
@@ -216,19 +224,10 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
     } else {
       controller = source
     }
-    instance = renderApp(chatRoot(), {
-      stdin: input,
-      stdout: inkOutput,
-      stderr: errorOutput,
-      exitOnCtrlC: false,
-      patchConsole: true,
-      // Full-frame repaints flash on terminals that ignore or lack synchronized output.
-      incrementalRendering: true,
-      maxFps: 30,
-    })
+    if (controller || options.setup) renderChat()
     const setupExit = await setupTask
     if (setupExit !== 0) {
-      instance.unmount()
+      instance?.unmount()
       return setupExit
     }
     if (controllerFactory) {
@@ -252,26 +251,13 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
         controller.close(pendingExitCode)
         return pendingExitCode
       }
-      instance.rerender(chatRoot())
+      renderChat()
     }
     if (!controller) {
       throw new Error('Controller initialization did not return a controller.')
     }
-    if (introState.exitCode === 130) {
-      controller.close(introState.exitCode)
-      instance.unmount()
-      await instance.waitUntilExit()
-      return introState.exitCode
-    }
     startTasks.push(controller.start(options.firstRequest))
-    const introExit = await introTask
-    if (introExit !== 0) {
-      controller.close(introExit)
-      instance.unmount()
-      await instance.waitUntilExit()
-      return introExit
-    }
-    await instance.waitUntilExit()
+    await instance!.waitUntilExit()
     return controller.getSnapshot().exitCode ?? 0
   } finally {
     process.off('SIGINT', onSigint)

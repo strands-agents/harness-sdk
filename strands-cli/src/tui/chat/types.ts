@@ -221,6 +221,7 @@ export interface ChatConversation {
 
 export interface ChatForkState {
   messages: readonly Message[]
+  stash?: Record<string, JSONValue>
   model: string
   thinking: string | boolean | null
   backgroundTasksWaitForCompletion: boolean
@@ -261,6 +262,7 @@ export interface ChatBackend {
   streamShell?(command: string): AsyncGenerator<ChatEvent, ChatRunResult, undefined>
   queueSteering?(prompt: string): boolean
   forkState?(): ChatForkState
+  forkStash?(): Promise<Record<string, JSONValue> | undefined>
   captureConversation?(): Promise<Snapshot>
   sourceSelection?(): ChatConversation['sourceSelection']
   watchTasks?(listener: (tasks: readonly ChatTask[]) => void): () => void
