@@ -1,9 +1,14 @@
 import asyncio
+import io
 import signal
+from functools import partial
 from unittest.mock import Mock
 
 import pytest
 import pytest_asyncio
+from rich.color import Color
+from rich.console import Console
+from rich.text import Text
 
 from strands.bidi.io import ConsoleIO, ConsoleIOConfig
 from strands.bidi.types import (
@@ -24,7 +29,13 @@ from strands.types.content import TextBlock
 
 
 @pytest.fixture
-def console(terminal):
+def console(terminal, monkeypatch, request):
+    if hasattr(request, "param"):
+        options = {"force_interactive": False, "no_color": False, **request.param}
+        monkeypatch.setattr(
+            "strands.bidi.io.console._display.Console",
+            partial(Console, file=io.StringIO(), force_terminal=True, width=24, height=24, **options),
+        )
     return ConsoleIO()
 
 
@@ -156,7 +167,7 @@ async def test_output_completes_interleaved_content_in_order(
 
     await output_stream(BidiTranscriptStopEvent("user", "user"))
 
-    tru_lines = [line.rstrip() for line in capsys.readouterr().out.splitlines() if line.strip()]
+    tru_lines = [line for line in capsys.readouterr().out.splitlines() if line]
     exp_lines = ["> Question", "Reasoning: Thinking", exp_tool_text, "Answer", "Spoken answer"]
     assert tru_lines == exp_lines
     assert not console._display.blocks
@@ -170,8 +181,50 @@ async def test_stop_preserves_partial_content(console, input_stream, output_stre
     await input_stream.stop()
     await output_stream.stop()
 
-    assert capsys.readouterr().out.strip() == "Partial"
+    assert capsys.readouterr().out == "Partial\n\n"
     assert not console._display.blocks
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("complete", [True, False], ids=["completed", "shutdown"])
+@pytest.mark.parametrize(
+    ("console", "exp_background"),
+    [
+        pytest.param({"color_system": "truecolor"}, Color.parse("#f3f3f3"), id="color"),
+        pytest.param({"color_system": None}, None, id="plain"),
+        pytest.param({"color_system": "truecolor", "no_color": True}, None, id="no-color"),
+    ],
+    indirect=["console"],
+)
+async def test_output_preserves_user_background_padding(console, output_stream, complete, exp_background):
+    await output_stream(BidiTranscriptStartEvent("user", "user"))
+    await output_stream(BidiTranscriptDeltaEvent("Question", "user", "user"))
+    with console._display.console.capture() as capture:
+        if complete:
+            await output_stream(BidiTranscriptStopEvent("user", "user"))
+        else:
+            await output_stream.stop()
+
+    lines = Text.from_ansi(capture.get()).split("\n")
+    tru_lines = [
+        (
+            line.plain,
+            [line.get_style_at_offset(console._display.console, offset).bgcolor for offset in range(len(line))],
+        )
+        for line in lines
+    ]
+    if exp_background:
+        width = console._display.console.width
+        background = [exp_background] * width
+        exp_lines = [
+            (" " * width, background),
+            ("> Question".ljust(width), background),
+            (" " * width, background),
+            ("", []),
+        ]
+    else:
+        exp_lines = [("", []), ("> Question", [None] * 10), ("", []), ("", [])]
+    assert tru_lines == exp_lines
 
 
 @pytest.mark.asyncio
