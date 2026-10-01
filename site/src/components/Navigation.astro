@@ -11,22 +11,27 @@ import LanguageToggle from './LanguageToggle.astro';
 import { getStarCount } from '../util/github';
 import { products } from '../config/navbar';
 import { pathWithBase } from '../util/links';
+import { getProductNav } from '../util/product-nav';
+import MobileNavTree from './MobileNavTree.astro';
 
 const stars = await getStarCount();
 
 // The "Projects" dropdown is organized around products (Strands harness, SDK,
 // Shell, Evals) from navigation.yml, so the dropdown and the docs stay
-// aligned. Each product renders as one entry linking to its hub; `pages` drive
-// the mobile accordion. Labs (experimental projects) has its own docs hub, so
+// aligned. Each product renders as one entry linking to its hub; its full
+// docs sidebar (`nav`) drives the mobile accordion. Labs (experimental projects) has its own docs hub, so
 // it's appended here linking to that page.
 const docsCategories = [
-  ...products.map((p) => ({
-    title: p.slug,
-    description: p.description,
-    href: p.href,
-    accent: p.accent,
-    pages: p.pages,
-  })),
+  ...(await Promise.all(
+    products.map(async (p) => ({
+      title: p.slug,
+      description: p.description,
+      href: p.href,
+      accent: p.accent,
+      pages: p.pages,
+      nav: await getProductNav(p.href),
+    })),
+  )),
   {
     title: '/labs',
     description: 'Experimental projects pushing the boundaries of what agents can do.',
@@ -144,7 +149,7 @@ const learnCategories = [
         </button>
         <div class="mobile-menu__section-body">
           {section.categories.map((cat) =>
-            cat.pages ? (
+            cat.nav?.length ? (
               <div class="mobile-menu__cat" data-mobile-cat>
                 <div class="mobile-menu__cat-head">
                   {cat.href ? (
@@ -181,22 +186,9 @@ const learnCategories = [
                     </button>
                   )}
                 </div>
-                <ul class="mobile-menu__pages" role="list">
-                  {cat.pages.map((page) => (
-                    <li>
-                      <a
-                        href={page.href}
-                        class="mobile-menu__page"
-                        {...(page.langAware ? { 'data-lang-href': '' } : {})}
-                        {...(page.external && page.href.startsWith('http')
-                          ? { target: '_blank', rel: 'noopener' }
-                          : {})}
-                      >
-                        {page.label}
-                      </a>
-                    </li>
-                  ))}
-                </ul>
+                <div class="mobile-menu__pages">
+                  <MobileNavTree items={cat.nav} />
+                </div>
               </div>
             ) : (
               <a
@@ -923,19 +915,6 @@ const learnCategories = [
 
     .mobile-menu__cat.is-open .mobile-menu__pages {
       display: flex;
-    }
-
-    .mobile-menu__page {
-      font-family: 'JetBrains Mono', ui-monospace, monospace;
-      font-weight: 400;
-      font-size: 13px;
-      line-height: 1.3;
-      color: var(--strands-grey-400);
-      text-decoration: none;
-    }
-
-    .mobile-menu__page:hover {
-      color: var(--nav-fg);
     }
   }
   /* ---------- Spacebar frog easter egg ---------- */

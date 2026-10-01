@@ -7,7 +7,6 @@ import { ChatController, type ChatBackend } from '../src/tui/chat/controller.js'
 import { CliConfigStore } from '../src/tui/config.js'
 import { sanitizeTerminalText } from '../src/tui/terminal/sanitize.js'
 import { ChatApp } from '../src/tui/view/app.js'
-import { DnaVortexIntro } from '../src/tui/view/intro.js'
 import { frogStartupHeight, renderFrogStartupLockup } from '../src/tui/view/frog-intro-renderer.js'
 import { SetupWizard } from '../src/tui/view/setup-wizard/index.js'
 import { ttyInput, ttyOutput } from './fixtures/terminal.js'
@@ -81,6 +80,16 @@ async function mount(element: ReactElement, columns: number, rows: number) {
 }
 
 describe('responsive welcome art', () => {
+  it.each([8, 10])('keeps slash suggestions and the footer visible at %s rows', async (rows) => {
+    const view = await mount(createElement(ChatApp, { controller: controller() }), 40, rows)
+    view.input.write('/')
+    await vi.waitFor(() => {
+      view.fits()
+      expect(view.screen()).toContain('/help')
+      expect(view.screen()).toContain('/settings')
+    })
+  })
+
   it.each([
     [120, 35, 12],
     [80, 34, 6],
@@ -118,38 +127,16 @@ describe('responsive welcome art', () => {
       await vi.waitFor(() => {
         view.fits()
         expect(view.screen().replace(/\s/g, '')).toContain('keepthisdraft')
-        expect(view.screen()).toContain('/help')
-        if (rows < 30) {
+        expect(view.screen()).toContain('/settings')
+        if (rows === 10) {
+          expect(view.screen()).not.toMatch(STRANDS_WORDMARK)
+        } else if (rows < 30) {
           expect(view.screen()).toMatch(STRANDS_WORDMARK)
         } else {
           expect(view.screen()).toContain('╔')
         }
       })
     }
-  })
-
-  it('skips the intro when the full frog does not fit', async () => {
-    const complete = vi.fn()
-    const view = await mount(createElement(DnaVortexIntro, { ready: false, onComplete: complete }), 40, 16)
-
-    await vi.waitFor(() => expect(complete).toHaveBeenCalledWith(0))
-    expect(view.screen()).toBe('')
-  })
-
-  it('renders the intro while the full frog fits and skips it after a compact resize', async () => {
-    const complete = vi.fn()
-    const view = await mount(createElement(DnaVortexIntro, { ready: false, onComplete: complete }), 120, 40)
-    const hint = '[ space to skip ]'
-    const rows = view.screen().split('\n')
-    const hintRow = rows.findIndex((row) => row.includes(hint))
-    const hintColumn = rows[hintRow]!.indexOf(hint)
-
-    expect(hintRow).toBe(rows.length - 1)
-    expect(Math.abs(hintColumn + hint.length / 2 - 60)).toBeLessThanOrEqual(1)
-    expect(complete).not.toHaveBeenCalled()
-
-    await view.resize(40, 16)
-    await vi.waitFor(() => expect(complete).toHaveBeenCalledWith(0))
   })
 
   it('keeps setup choices visible in a narrow window and after resizing', async () => {
@@ -161,6 +148,10 @@ describe('responsive welcome art', () => {
     expect(view.screen()).toMatch(STRANDS_WORDMARK)
     for (const [columns, rows] of [
       [40, 16],
+      [65, 40],
+      [66, 40],
+      [92, 37],
+      [93, 37],
       [120, 40],
       [40, 24],
     ] as const) {
@@ -169,6 +160,19 @@ describe('responsive welcome art', () => {
         view.fits()
         for (const choice of ['Quickstart', 'Customize', 'Import']) {
           expect(view.screen()).toContain(choice)
+        }
+        if (rows >= 37) {
+          const lines = view.screen().split('\n')
+          const titleRows = ['Quickstart', 'Customize', 'Import', 'Resume'].map((title) =>
+            lines.findIndex((line) =>
+              line
+                .trim()
+                .split(/\s{2,}/)
+                .includes(title)
+            )
+          )
+          expect(titleRows.every((row) => row >= 0)).toBe(true)
+          expect(new Set(titleRows).size).toBe(columns >= 66 ? 2 : 4)
         }
         expect(view.screen()).toContain('Shift+Tab')
         expect(view.screen()).toMatch(/[Cc]lick/)

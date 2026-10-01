@@ -145,7 +145,7 @@ Optional fields (validated by Zod in `site/src/content.config.ts`):
 | `languages` | `string \| string[]` | Feature only available in specific SDK language(s) |
 | `community` | `boolean` | Marks page as community-contributed |
 | `experimental` | `boolean` | Marks feature as experimental |
-| `integrationType` | enum | `model-provider`, `tool`, `session-manager`, `integration`, `plugin`, `agent-extension` |
+| `integrationType` | enum | `model-provider`, `tool`, `session-manager`, `memory-store`, `storage`, `integration`, `plugin`, `observability`, `agent-extension`, `intervention` |
 | `category` | `string` | For TypeScript API doc grouping |
 | `redirectFrom` | `string[]` | Old slugs that should redirect here |
 | `tags` | `Tag[]` | From `site/src/config/tags.yml`; drives the build-time "Related pages" block |

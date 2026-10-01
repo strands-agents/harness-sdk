@@ -29,6 +29,7 @@ from strands.multiagent.base import Status
 from strands.session.snapshot_session_manager import (
     SnapshotSessionManager,
     _deserialize_snapshot,
+    _multi_agent_latest_key,
     _new_snapshot_id,
     _serialize_snapshot,
     _session_prefix,
@@ -310,6 +311,119 @@ def test_load_snapshot_restores_mid_run_state(storage):
     assert {n.node_id for n in graph.state.completed_nodes} == {"n1"}
     assert graph.state.execution_count == 1
     assert graph.state.execution_time == 5
+
+
+@pytest.mark.asyncio
+async def test_multi_agent_restore_without_snapshot_runs_once():
+    """A successful restore attempt with no snapshot is not repeated.
+
+    Guards https://github.com/strands-agents/harness-sdk/issues/4396:
+    restoration is complete after storage confirms that no checkpoint exists.
+    """
+
+    class CountingReadStorage(InMemoryStorage):
+        def __init__(self):
+            super().__init__()
+            self.read_calls = 0
+
+        async def read(self, key: str) -> bytes | None:
+            self.read_calls += 1
+            return await super().read(key)
+
+    storage = CountingReadStorage()
+    builder = GraphBuilder()
+    builder.add_node(Agent(model=_model("first", "second"), agent_id="n1"), "n1")
+    builder.set_entry_point("n1")
+    builder.set_graph_id("g1")
+    builder.set_session_manager(SnapshotSessionManager("mm", storage=storage))
+    graph = builder.build()
+
+    assert (await graph.invoke_async("first")).status == Status.COMPLETED
+    assert (await graph.invoke_async("second")).status == Status.COMPLETED
+    assert storage.read_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_multi_agent_restore_retries_after_storage_failure():
+    """A failed restore leaves the checkpoint intact and resumes only pending nodes.
+
+    Guards https://github.com/strands-agents/harness-sdk/issues/4396:
+    a transient restore failure must not suppress restoration on the next invocation.
+    """
+    from strands.hooks.events import BeforeNodeCallEvent
+    from strands.types._snapshot import SNAPSHOT_SCHEMA_VERSION
+
+    class FailOnceReadStorage(InMemoryStorage):
+        def __init__(self):
+            super().__init__()
+            self.read_calls = 0
+
+        async def read(self, key: str) -> bytes | None:
+            self.read_calls += 1
+            if self.read_calls == 1:
+                raise RuntimeError("transient read failure")
+            return await super().read(key)
+
+    storage = FailOnceReadStorage()
+    mid_run_state = {
+        "type": "graph",
+        "id": "g1",
+        "status": "executing",
+        "completed_nodes": ["n1"],
+        "failed_nodes": [],
+        "interrupted_nodes": [],
+        "node_results": {},
+        "next_nodes_to_execute": ["n2"],
+        "current_task": "go",
+        "execution_order": ["n1"],
+        "accumulated_usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2},
+        "accumulated_metrics": {"latencyMs": 5},
+        "execution_count": 1,
+        "execution_time": 5,
+    }
+    snapshot = Snapshot(
+        scope="multiAgent",
+        schema_version=SNAPSHOT_SCHEMA_VERSION,
+        data={"orchestrator_id": "g1", "state": mid_run_state},
+        app_data={},
+    )
+    storage_key = f"session/{_multi_agent_latest_key('mm', 'g1')}"
+    snapshot_bytes = _serialize_snapshot(snapshot)
+    await storage.write(storage_key, snapshot_bytes)
+
+    manager = SnapshotSessionManager("mm", storage=storage)
+    first_agent = Agent(model=_model("unexpected"), agent_id="n1")
+    second_agent = Agent(model=_model("done"), agent_id="n2")
+    builder = GraphBuilder()
+    builder.add_node(first_agent, "n1")
+    builder.add_node(second_agent, "n2")
+    builder.add_edge("n1", "n2")
+    builder.set_entry_point("n1")
+    builder.set_graph_id("g1")
+    builder.set_session_manager(manager)
+    graph = builder.build()
+    executed_nodes = []
+    graph.add_hook(lambda event: executed_nodes.append(event.node_id), BeforeNodeCallEvent)
+
+    with pytest.raises(RuntimeError, match="transient read failure"):
+        await graph.invoke_async("go")
+
+    assert await InMemoryStorage.read(storage, storage_key) == snapshot_bytes
+
+    result = await graph.invoke_async("go")
+
+    assert storage.read_calls == 2
+    assert result.status == Status.COMPLETED
+    assert executed_nodes == ["n2"]
+    assert {node.node_id for node in graph.state.completed_nodes} == {"n1", "n2"}
+    assert [node.node_id for node in graph.state.execution_order] == ["n1", "n2"]
+
+    persisted = _deserialize_snapshot(await InMemoryStorage.read(storage, storage_key))
+    assert set(persisted.data["state"]["completed_nodes"]) == {"n1", "n2"}
+    assert persisted.data["state"]["next_nodes_to_execute"] == []
+
+    await manager._on_before_multi_agent_invocation(BeforeMultiAgentInvocationEvent(source=graph))
+    assert storage.read_calls == 2
 
 
 def test_load_snapshot_rejects_orchestrator_id_mismatch(storage):

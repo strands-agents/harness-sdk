@@ -217,3 +217,18 @@
   name: Gautam Sirdeshmukh
   role: "Software Engineer, AWS Agentic AI"
   bio: Gautam is a software engineer at AWS Agentic AI working on the Strands Harness SDK.
+
+- id: marc-brooker
+  name: Marc Brooker
+  role: "VP and Distinguished Engineer, AWS"
+  bio: Marc Brooker is a VP and Distinguished Engineer at AWS in Seattle, working on agentic AI, especially safety and policy for AI agents. He previously worked on EC2, EBS, databases, and serverless.
+
+- id: mike-chambers
+  name: Mike Chambers
+  role: "Senior AI Specialist Developer Advocate, AWS"
+  bio: Mike Chambers is a Senior AI Specialist Developer Advocate at AWS, helping developers build with generative AI and agents.
+
+- id: fabio-nonato-de-paula
+  name: Fabio Nonato de Paula
+  role: "Principal Applied Scientist, AWS"
+  bio: Fabio Nonato de Paula is a Principal Applied Scientist at AWS working on agentic AI.

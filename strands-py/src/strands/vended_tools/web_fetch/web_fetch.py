@@ -80,8 +80,8 @@ def make_web_fetch(
             When ``None``, a new client is created per request with
             ``follow_redirects=True`` and httpx's default timeout (5s).
         model: Optional model for the analyst. Only used when ``mode='agentic'``.
-            Resolution order: this model, then the host agent's model,
-            then ``WebFetchError`` if neither is available.
+            Resolution order: this ``model`` > ``agent.aux_model`` > ``agent.model`` of the host
+            agent; ``WebFetchError`` if none is available.
         mode: Extraction mode. Defaults to ``agentic``.
 
     Returns:
@@ -155,7 +155,8 @@ def make_web_fetch(
         if not prompt.strip():
             raise WebFetchError("web_fetch: agentic mode requires a non-empty prompt.")
 
-        host_model = getattr(tool_context.agent, "model", None) if tool_context else None
+        host_agent = tool_context.agent if tool_context else None
+        host_model = getattr(host_agent, "aux_model", None) or getattr(host_agent, "model", None)
         effective_model = analyst_model or host_model
         if effective_model is None:
             raise WebFetchError(

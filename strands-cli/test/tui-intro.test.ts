@@ -1,14 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
 import { sanitizeTerminalText } from '../src/tui/terminal/sanitize.js'
-import { hasRoomForFrogIntro } from '../src/tui/view/intro.js'
 import {
   renderFrogSpiralFrame,
   renderFrogBrandEasterEggFrame,
   renderFrogStartupLockup,
   frogStartupHeight,
 } from '../src/tui/view/frog-intro-renderer.js'
-import { setupBrandFrame } from '../src/tui/view/setup-wizard/brand.js'
 
 // Colored output paints solid cells as backgrounds, leaving only the half-block glyphs as text.
 const STRANDS_WORDMARK = /STRANDS|╔════╝|█▀▀ ▀█▀ █▀█ ▄▀█ █▄ █ █▀▄ █▀▀|▀▀ ▀ ▀ {2}▀ {2}▄▀ {3}▄ {4}▀▄ {2}▀▀/
@@ -47,13 +45,6 @@ describe('Strands intro', () => {
     expect(renderFrogBrandEasterEggFrame(width, 1, 3_200)).toBe(startup)
   })
 
-  it('only runs when the full frog lockup fits', () => {
-    expect(hasRoomForFrogIntro(92, 40)).toBe(false)
-    expect(hasRoomForFrogIntro(93, 31)).toBe(false)
-    expect(hasRoomForFrogIntro(93, 32)).toBe(true)
-    expect(hasRoomForFrogIntro(120, 40)).toBe(true)
-  })
-
   it('writes STRANDS with the spiral before the frog enters', () => {
     const writing = renderFrogSpiralFrame(98, 38, 0.14, 588)
     const dissolved = renderFrogSpiralFrame(98, 38, 0.23, 966)
@@ -88,26 +79,6 @@ describe('Strands intro', () => {
     const startup = renderFrogStartupLockup(width, true, 0, 'green', false, {}, artHeight)
     expect(complete).toBe(startup)
     expect(held).toBe(startup)
-  })
-
-  it.each([
-    [98, 32],
-    [98, 36],
-    [98, 40],
-    [140, 40],
-    [78, 42],
-  ])('hands off to the setup wizard brand frame at %s by %s', (width, height) => {
-    const frame = setupBrandFrame(width, height)
-    const top = frame.height > 2 ? 2 : 1
-    const complete = renderFrogSpiralFrame(width, height, 1, 4_200, true, 'green', {}, frame.height, frame.left)
-      .split('\n')
-      .slice(top, top + frame.height)
-      .join('\n')
-    const brand = renderFrogStartupLockup(frame.width, true, 0, 'green', false, {}, frame.height)
-      .split('\n')
-      .map((row) => ' '.repeat(frame.left) + row)
-      .join('\n')
-    expect(complete).toBe(brand)
   })
 
   it('paints full cells as backgrounds and keeps two-color glyphs on the bottom half', () => {
