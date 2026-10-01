@@ -239,6 +239,34 @@ await agent.invoke("Use a random tool from the MCP server.");
 await documentationTools.disconnect();
 ```
 
+Enable automatic task execution on the same `McpClient` for modern SEP-2663 and legacy task servers:
+
+```typescript
+await using taskTools = new McpClient({
+  url: "https://example.com/mcp",
+  tasksConfig: { pollTimeout: 300_000 },
+});
+const agent = new Agent({ tools: [taskTools] });
+await agent.invoke("Run the server's task tool.");
+```
+
+`callTool()` returns the final tool result. For explicit SEP-2663 task control, use
+`callToolWithTask()`, then `getTask()`, `updateTask()`, and `cancelTask()`.
+To bound total wall-clock time, set `tasksConfig.pollTimeout`; a call's `options.timeoutMs`
+overrides that value. The field names and defaults match the Python SDK's `TasksConfig`
+(`ttl` remains as a deprecated alias of `requestTimeout`):
+
+| Setting | Scope | Default |
+| --- | --- | --- |
+| `pollTimeout` | Entire automatic operation, including polling and input callbacks | 300,000 ms |
+| `requestTimeout` | Each task lifecycle request | 60,000 ms |
+| `pollInterval` | Polling delay when the server omits its interval | 1,000 ms |
+
+The first limit reached ends the wait. Matching progress resets the request timer
+only; the overall deadline never moves. For example, with `requestTimeout: 10_000`
+and `pollTimeout: 120_000`, progress can keep a request alive beyond 10 seconds,
+but the whole operation cannot exceed 120 seconds.
+
 ### Multi-Agent Orchestration
 
 Coordinate multiple agents using built-in orchestration patterns.
@@ -345,4 +373,3 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 ## Security
 
 See [CONTRIBUTING](https://github.com/strands-agents/harness-sdk/blob/main/CONTRIBUTING.md#security-issue-notifications) for more information on reporting security issues.
-
