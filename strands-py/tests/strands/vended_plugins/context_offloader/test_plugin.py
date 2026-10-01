@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import strands
 from strands.hooks.events import AfterToolCallEvent, BeforeModelCallEvent
 from strands.types.tools import ToolContext, ToolUse
 from strands.vended_plugins.context_offloader import (
@@ -696,6 +697,40 @@ class TestRetrievalToolSearch:
         assert "2 matches" in result
         assert "> 1| foo (bar" in result
         assert "> 3| foo (bar again" in result
+
+    @pytest.mark.asyncio
+    async def test_dict_tool_result_searchable_after_offload(self, plugin, storage, tool_context, tmp_path):
+        """A dict returned by a @tool offloads as pretty-printed JSON that pattern search reaches."""
+        agent = MagicMock()
+        agent.model = MagicMock()
+        agent.model.count_tokens = AsyncMock(side_effect=_heuristic_count_tokens)
+        agent.sandbox = TestSandbox(str(tmp_path))
+
+        payload = {f"key_{i}": "v" * 30 for i in range(20)}
+        payload["needle"] = "find me"
+
+        @strands.tool
+        def dict_tool() -> dict:
+            """Returns a large dict."""
+            return payload
+
+        stream = dict_tool.stream({"toolUseId": "tool_123", "input": {}}, {})
+        wrapped = [event async for event in stream]
+        content = wrapped[-1]["tool_result"]["content"]
+
+        await plugin._handle_tool_result(_make_event(agent, content))
+
+        assert len(storage._store) == 1
+        ref = list(storage._store.keys())[0]
+        stored, content_type = await storage.retrieve(ref)
+        assert content_type == "application/json"
+        assert b"\n" in stored  # pretty-printed into multiple lines, not a single-line dump
+
+        result = await plugin.retrieve_offloaded_content(
+            reference=ref, pattern="needle", context_lines=0, tool_context=tool_context
+        )
+        assert "1 match" in result
+        assert '"needle": "find me"' in result
 
     @pytest.mark.asyncio
     async def test_raises_for_missing_reference(self, plugin, tool_context):
