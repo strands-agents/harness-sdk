@@ -374,6 +374,17 @@ export interface ChatPanelSlider {
   focused?: boolean
 }
 
+export interface PondFrog {
+  /** Resolved workspace path; display labels must not be used as grouping keys. */
+  cove: string
+  /** Lily pad key; a session frog and its subagents share one pad. */
+  pad: string
+  kind: 'session' | 'subagent'
+  /** `awake` is alive but idle; `asleep` is a recent session with no live agent. */
+  state: 'working' | 'awake' | 'asleep' | 'failed'
+  current?: boolean
+}
+
 export interface ChatPanel {
   id: string
   kind:
@@ -386,6 +397,7 @@ export interface ChatPanel {
     | 'skills'
     | 'mcp'
     | 'agents'
+    | 'pond'
     | 'rename'
     | 'permissions'
     | 'tools'
@@ -405,6 +417,8 @@ export interface ChatPanel {
   diff?: ChatDiffPreview
   followTail?: boolean
   activity?: BackgroundAgentActivity
+  /** One entry per row of a `pond` panel, in row order. */
+  pond?: readonly PondFrog[]
   settingsCategory?: SettingsCategory
   settingsCategories?: readonly {
     id: SettingsCategory

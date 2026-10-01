@@ -52,7 +52,7 @@ export function helpRows(
     tools: options.tools,
     export: options.export,
   }
-  const managedCommands = new Set(['fork', 'agents', 'rename', 'voice'])
+  const managedCommands = new Set(['fork', 'agents', 'pond', 'rename', 'voice'])
   const tools = backend.info?.().tools
   return [
     ...CONTROLS.map(([label, shortcut, description], index) => ({

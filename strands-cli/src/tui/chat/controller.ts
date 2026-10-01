@@ -839,6 +839,24 @@ export class ChatController implements ChatControllerApi {
       : Promise.resolve(undefined)
   }
 
+  get sessionId(): string | undefined {
+    return this._sessions?.current ?? this._backend.info?.().sessionId
+  }
+
+  get sessionDirectory(): string | undefined {
+    return this._sessions?.currentDirectory ?? this._backend.sessionIdentity?.sessionDirectory
+  }
+
+  listSessions(): Promise<SessionList> {
+    return this._sessions && this._backend.protocol === 'strands'
+      ? this._listSessions(this._sessions)
+      : Promise.resolve([])
+  }
+
+  openTaskDetail(taskId: string): boolean {
+    return this._openTaskDetail(`task:${encodeURIComponent(taskId)}`)
+  }
+
   sessionResumeBlockReason(): string | undefined {
     if (this.busy) {
       return 'Wait for the current turn and queued work to finish before opening another saved session.'

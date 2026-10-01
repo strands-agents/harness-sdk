@@ -21,6 +21,7 @@ import {
 import { AgentsPanel } from './agents-panel.js'
 import { ExportPanel } from './export-panel.js'
 import { EffortSlider, ModelPicker } from './model-panel.js'
+import { PondPanel } from './pond-panel.js'
 import { RenamePanel } from './rename-panel.js'
 import { SessionsPanel } from './sessions-panel.js'
 import { PanelItemHeader, PanelOverlay, PanelTitle } from './panel-components.js'
@@ -321,6 +322,17 @@ export function ResourcePanel({
   if (panel.kind === 'agents') {
     return (
       <AgentsPanel {...rowProps} height={Math.max(5, terminalHeight - 8)} columns={agentGridColumns(terminalWidth)} />
+    )
+  }
+  if (panel.kind === 'pond') {
+    return (
+      <PondPanel
+        {...rowProps}
+        terminalWidth={terminalWidth}
+        terminalHeight={terminalHeight}
+        scroll={viewportStart}
+        settings={settings}
+      />
     )
   }
   if (panel.kind === 'rename') {

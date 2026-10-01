@@ -327,6 +327,9 @@ export function panelRowCapacity(
     const sections = new Set(rows.map((row) => row.section).filter(Boolean)).size
     return Math.max(1, Math.min(10, terminalHeight - 15 - sections * 2))
   }
+  if (kind === 'pond') {
+    return Math.max(1, rows.length)
+  }
   if (kind === 'models') {
     return Math.max(1, Math.min(20, terminalHeight - 13))
   }

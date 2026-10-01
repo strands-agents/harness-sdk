@@ -168,6 +168,7 @@ interface VisualCell {
 export class Canvas implements PixelSink {
   private readonly _characters: string[]
   private readonly _cellColors: Int16Array
+  private readonly _cellBackgrounds: Int16Array
   private readonly _cellPriorities: Int16Array
   private readonly _pixelColors: Int16Array
   private readonly _pixelPriorities: Int16Array
@@ -194,12 +195,13 @@ export class Canvas implements PixelSink {
     this._pixelWidth = width * 2
     this._characters = new Array<string>(cells).fill(' ')
     this._cellColors = new Int16Array(cells).fill(-1)
+    this._cellBackgrounds = new Int16Array(cells).fill(-1)
     this._cellPriorities = new Int16Array(cells).fill(-1_000)
     this._pixelColors = new Int16Array(cells * 4).fill(-1)
     this._pixelPriorities = new Int16Array(cells * 4).fill(-1_000)
   }
 
-  set(x: number, y: number, character: string, color: Color, priority = 0): void {
+  set(x: number, y: number, character: string, color: Color, priority = 0, background?: Color): void {
     const column = Math.round(x)
     const row = Math.round(y)
     if (column < 0 || column >= this.width || row < 0 || row >= this.height || !character) {
@@ -211,7 +213,15 @@ export class Canvas implements PixelSink {
     }
     this._characters[index] = [...character][0] ?? ' '
     this._cellColors[index] = COLOR_IDS.get(this._color(x, y, color))!
+    this._cellBackgrounds[index] = background === undefined ? -1 : COLOR_IDS.get(this._color(x, y, background))!
     this._cellPriorities[index] = priority
+  }
+
+  /** Writes text cell by cell over a solid background, so labels do not punch holes in pixel art. */
+  label(x: number, y: number, text: string, color: Color, background: Color, priority = 0): void {
+    for (const [offset, character] of [...text].entries()) {
+      this.set(Math.round(x) + offset, Math.round(y), character, color, priority, background)
+    }
   }
 
   setPixel(x: number, y: number, color: Color, priority = 0): void {
@@ -289,7 +299,7 @@ export class Canvas implements PixelSink {
     const pixelPriority = Math.max(...indexes.map((index) => this._pixelPriorities[index]!))
     if (this._cellPriorities[cellIndex]! >= pixelPriority) {
       return {
-        background: -1,
+        background: this._cellBackgrounds[cellIndex]!,
         character: this._characters[cellIndex]!,
         foreground: this._cellColors[cellIndex]!,
       }
