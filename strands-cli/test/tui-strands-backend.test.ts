@@ -2,7 +2,14 @@ import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { Agent, Message, TextBlock, type AgentResult, type AgentStreamEvent } from '@strands-agents/sdk'
+import {
+  Agent,
+  Message,
+  TextBlock,
+  ToolResultBlock,
+  type AgentResult,
+  type AgentStreamEvent,
+} from '@strands-agents/sdk'
 import { resolveModel } from '@strands-agents/harness/internal'
 
 import { BackgroundAgentActivityStore } from '../src/tui/background/activity.js'
@@ -80,6 +87,31 @@ describe('StrandsChatBackend', () => {
     const fork = backend.forkState()
     expect(fork.messages).toEqual(agent.messages)
     expect(fork.messages[0]).not.toBe(agent.messages[0])
+  })
+
+  it('hands a fork the context manager stash so it can retrieve content offloaded before the fork', async () => {
+    const offloaded = new ToolResultBlock({
+      toolUseId: 'tooluse-1',
+      status: 'success',
+      content: [new TextBlock('full tool output')],
+    })
+    const agent = new Agent({
+      printer: false,
+      contextManager: 'auto',
+      messages: [new Message({ role: 'user', content: [offloaded] })],
+    })
+    await agent.initialize()
+    const backend = new StrandsChatBackend(new AgentModelRuntime(agent, { sessionId: 'session-1' }))
+
+    await expect(backend.forkStash()).resolves.toEqual({ 'tooluse-1_0': { text: 'full tool output' } })
+  })
+
+  it('hands a fork no stash when context management is off', async () => {
+    const agent = new Agent({ printer: false, contextManager: false })
+    await agent.initialize()
+    const backend = new StrandsChatBackend(new AgentModelRuntime(agent, { sessionId: 'session-1' }))
+
+    await expect(backend.forkStash()).resolves.toBeUndefined()
   })
 
   it('rejects permission changes when no permission policy is configured', async () => {
@@ -632,14 +664,16 @@ describe('StrandsChatBackend', () => {
     })
     const messages = [user]
     const saveSnapshot = vi.fn(async () => {})
+    let summaryContent = [new TextBlock('summary')]
     const model = {
       modelId: 'anthropic.claude-test',
       getConfig: () => ({ modelId: 'anthropic.claude-test', contextWindowLimit: 1_000 }),
+      countTokens: vi.fn(async () => 42),
       async *streamAggregated() {
         yield* []
         return {
           message: {
-            content: [new TextBlock('summary')],
+            content: summaryContent,
           },
         }
       },
@@ -733,7 +767,7 @@ describe('StrandsChatBackend', () => {
       new StrandsChatBackend(new AgentModelRuntime(differentModelAgent), { contextScope: '/workspace' }).contextUsage()
     ).toBeUndefined()
 
-    expect(await backend.compact()).toBe(false)
+    expect(await backend.compact()).toBeUndefined()
     expect(backend.contextUsage()).toEqual(expected)
 
     messages.unshift(
@@ -742,10 +776,35 @@ describe('StrandsChatBackend', () => {
         content: [new TextBlock('older context')],
       })
     )
-    expect(await backend.compact()).toBe(true)
-    expect(backend.contextUsage()).toBeUndefined()
-    expect(assistant.metadata?.custom?.['strands.context.v1']).toBeUndefined()
+    model.countTokens.mockResolvedValueOnce(1_500).mockResolvedValueOnce(1_400)
+    const compacted = { currentTokens: 25, contextWindow: limit ?? 1_000 }
+    expect(await backend.compact()).toEqual(compacted)
+    expect(model.countTokens).toHaveBeenLastCalledWith(messages, { systemPrompt: 'system', toolSpecs: [] })
+    expect(backend.contextUsage()).toEqual(compacted)
     expect(saveSnapshot).toHaveBeenCalledTimes(2)
+
+    model.countTokens.mockRejectedValueOnce(new Error('count failed')).mockRejectedValueOnce(new Error('count failed'))
+    messages.unshift(
+      new Message({
+        role: 'user',
+        content: [new TextBlock('more older context')],
+      })
+    )
+    expect(await backend.compact()).toEqual({ contextWindow: limit ?? 1_000 })
+    expect(backend.contextUsage()).toEqual({ contextWindow: limit ?? 1_000 })
+
+    messages.unshift(
+      new Message({
+        role: 'user',
+        content: [new TextBlock('context without a reported size')],
+      })
+    )
+    expect(await backend.compact()).toEqual({ currentTokens: 42, contextWindow: limit ?? 1_000 })
+
+    summaryContent = []
+    const beforeFailure = [...messages]
+    await expect(backend.compact()).rejects.toThrow('The model did not return a usable summary. Try /compact again.')
+    expect(messages).toEqual(beforeFailure)
   })
 
   it('includes provider-separated prompt-cache tokens in the latest context without using stale SDK totals', async () => {

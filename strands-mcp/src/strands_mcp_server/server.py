@@ -1,8 +1,12 @@
 from concurrent.futures import ThreadPoolExecutor
+from importlib import import_module
 from typing import Any, Dict, List
 from urllib.parse import urlparse
 
-from mcp.server.fastmcp import FastMCP
+try:
+    from mcp.server import FastMCP
+except ImportError:
+    FastMCP = import_module("mcp.server.mcpserver").MCPServer
 
 from .utils import cache, text_processor
 

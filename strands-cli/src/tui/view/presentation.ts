@@ -4,16 +4,18 @@ import stringWidth from 'string-width'
 import type { ChatEntry, ChatPanel, ChatSnapshot } from '../chat/controller.js'
 import { DEFAULT_CHAT_SETTINGS, type ThemeColors } from '../chat/types.js'
 import { modelDisplayName } from '../model/display.js'
-import { detailPageSize, type MetadataTarget } from './interaction.js'
+import { graphemes } from '../terminal/composer.js'
+import { detailPageSize } from './interaction.js'
 import { getTheme } from './theme.js'
 
 const METADATA_START_COLUMN = 2
 
 interface MetadataPlacement {
-  target: MetadataTarget
+  target: 'model' | 'cwd' | 'settings'
   text: string
   width: number
   alignment: 'flex-start' | 'center' | 'flex-end'
+  controls?: { target: 'model' | 'effort' | 'context'; text: string }[]
 }
 
 export function permissionPageSize(terminalHeight: number, optionRows: number): number {
@@ -189,8 +191,11 @@ function normalizeDetailText(value: string): string {
 
 export function formatContext(context: ChatSnapshot['context'], width = 10): string {
   const used = context.projectedTokens ?? context.currentTokens
-  if (used === undefined || !context.contextWindow) {
-    return `${'░'.repeat(width)} --`
+  if (!context.contextWindow) {
+    return `${'░'.repeat(width)} —`
+  }
+  if (used === undefined) {
+    return `${'░'.repeat(width)} 0%`
   }
   const percentage = (used / context.contextWindow) * 100
   const filled = used > 0 ? Math.max(1, Math.round(Math.min(1, used / context.contextWindow) * width)) : 0
@@ -220,42 +225,98 @@ export function contextColor(context: ChatSnapshot['context'], palette: ThemeCol
 }
 
 export function metadataPlacements(snapshot: ChatSnapshot, terminalWidth: number): MetadataPlacement[] {
-  const available = Math.max(1, terminalWidth - METADATA_START_COLUMN)
-  const baseWidth = Math.floor(available / 3)
-  const remainder = available % 3
-  const widths = [baseWidth + (remainder > 0 ? 1 : 0), baseWidth + (remainder > 1 ? 1 : 0), baseWidth] as const
-  const contextLabel = widths[2] >= 20 ? 'context ' : ''
-  const contextBarWidth = Math.max(1, Math.min(10, widths[2] - contextLabel.length - 7))
+  const separatorWidth = 2
+  const available = Math.max(0, Math.floor(terminalWidth) - METADATA_START_COLUMN)
+  const model = modelDisplayName(snapshot.runtime.model)
+  const effort = model && snapshot.runtime.effort ? ` • ${snapshot.runtime.effort}` : ''
+  const modelLabel = model ? `${model}${effort}` : (snapshot.runtime.effort ?? '')
+  const settingsText = truncateMetadata('/settings', available)
+  const settingsWidth = stringWidth(settingsText)
+  const leftWidth = Math.max(0, available - settingsWidth - separatorWidth)
+  const context = formatContext(snapshot.context)
+  const minimumContextWidth = stringWidth(formatContext(snapshot.context, 1))
+  const controlSeparatorWidth = modelLabel ? stringWidth(' • ') : 0
+  const minimumModelWidth = Math.min(stringWidth(modelLabel), Math.max(1, stringWidth(effort) + 1))
+  const contextBudget = Math.max(0, leftWidth - minimumModelWidth - controlSeparatorWidth)
+  const contextWidth =
+    contextBudget >= minimumContextWidth
+      ? Math.min(
+          stringWidth(context),
+          Math.max(minimumContextWidth, leftWidth - stringWidth(modelLabel) - controlSeparatorWidth)
+        )
+      : 0
+  const modelWidth = Math.min(
+    stringWidth(modelLabel),
+    Math.max(0, leftWidth - contextWidth - (contextWidth ? controlSeparatorWidth : 0))
+  )
+  const showEffort = !model || (effort && modelWidth > stringWidth(effort))
+  const modelName = truncateMetadata(model, modelWidth - (showEffort ? stringWidth(effort) : 0))
+  const effortLabel = showEffort ? truncateMetadata(snapshot.runtime.effort ?? '', modelWidth) : ''
+  const controls = [
+    { target: 'model' as const, text: modelName },
+    { target: 'effort' as const, text: effortLabel },
+    {
+      target: 'context' as const,
+      text: contextWidth ? formatContext(snapshot.context, contextWidth - minimumContextWidth + 1) : '',
+    },
+  ].filter((control) => control.text)
+  const modelText = controls.map((control) => control.text).join(' • ')
+  const pathMinimumStart = modelText ? stringWidth(modelText) + separatorWidth : 0
+  const pathMaximumEnd = Math.max(0, available - settingsWidth - separatorWidth)
+  const pathText = truncateMetadata(snapshot.runtime.cwd, Math.max(0, pathMaximumEnd - pathMinimumStart), true)
+  const pathWidth = stringWidth(pathText)
+  const pathStart = Math.max(
+    pathMinimumStart,
+    Math.min(Math.floor((available - pathWidth) / 2), pathMaximumEnd - pathWidth)
+  )
+  const modelSlotWidth = pathText ? pathStart : modelText ? available - settingsWidth : 0
   return [
     {
       target: 'model' as const,
-      value: [modelDisplayName(snapshot.runtime.model), snapshot.runtime.effort].filter(Boolean).join(' · '),
-      truncate: truncateEnd,
+      text: modelText,
+      width: modelSlotWidth,
       alignment: 'flex-start' as const,
+      controls,
     },
     {
       target: 'cwd' as const,
-      value: snapshot.runtime.cwd,
-      truncate: truncateMiddle,
-      alignment: 'center' as const,
-    },
-    {
-      target: 'context' as const,
-      value: `${contextLabel}${formatContext(snapshot.context, contextBarWidth)}`,
-      truncate: truncateEnd,
+      text: pathText,
+      width: pathWidth + (modelText ? 0 : pathStart),
       alignment: 'flex-end' as const,
     },
-  ].flatMap((value, index): MetadataPlacement[] => {
-    const width = widths[index]!
-    const text = value.truncate(value.value, width)
-    const placement = {
-      target: value.target,
-      text,
-      width,
-      alignment: value.alignment,
+    {
+      target: 'settings' as const,
+      text: settingsText,
+      width: available - modelSlotWidth - pathWidth,
+      alignment: 'flex-end' as const,
+    },
+  ].filter((placement) => placement.text)
+}
+
+function truncateMetadata(value: string, width: number, middle = false): string {
+  if (width <= 0) {
+    return ''
+  }
+  if (stringWidth(value) <= width) {
+    return value
+  }
+  if (width === 1 && /^[\x20-\x7e]*$/u.test(value)) {
+    return value[0]!
+  }
+  const segments = graphemes(value)
+  let suffix = ''
+  const suffixWidth = middle ? Math.ceil((width - 1) * 0.7) : 0
+  while (segments.length && stringWidth(segments.at(-1)! + suffix) <= suffixWidth) {
+    suffix = segments.pop()! + suffix
+  }
+  let prefix = ''
+  for (const segment of segments) {
+    if (stringWidth(prefix + segment + suffix) > width - 1) {
+      break
     }
-    return text ? [placement] : []
-  })
+    prefix += segment
+  }
+  return `${prefix}…${suffix}`
 }
 
 export function formatTurnMetrics(durationMs: number | undefined, totalTokens: number | undefined): string {
@@ -296,18 +357,6 @@ function truncateEnd(value: string, maxLength: number): string {
     return value.slice(0, maxLength)
   }
   return `${value.slice(0, maxLength - 1)}…`
-}
-
-function truncateMiddle(value: string, maxLength: number): string {
-  if (value.length <= maxLength) {
-    return value
-  }
-  if (maxLength <= 1) {
-    return value.slice(0, maxLength)
-  }
-  const suffixLength = Math.ceil((maxLength - 1) * 0.7)
-  const prefixLength = maxLength - 1 - suffixLength
-  return `${value.slice(0, prefixLength)}…${value.slice(-suffixLength)}`
 }
 
 export function formatValue(value: unknown): string {

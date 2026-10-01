@@ -2,8 +2,7 @@ import { PassThrough } from 'node:stream'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createElement } from 'react'
-import { render, renderToString, type Instance } from 'ink'
+import { render, type Instance } from 'ink'
 import { Message, TextBlock } from '@strands-agents/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -18,10 +17,9 @@ import {
 import { CliConfigStore } from '../src/tui/config.js'
 import { configurationFromStore, type RequestSetup, type SetupChange } from '../src/tui/agent-configuration.js'
 import { runInkChat } from '../src/tui/run.js'
+import * as processTree from '../src/tui/terminal/process-tree.js'
 import { ConversationManager } from '../src/tui/session/conversations.js'
 import { PythonVoiceSession } from '../src/tui/voice/session.js'
-import { sanitizeTerminalText } from '../src/tui/terminal/sanitize.js'
-import { ChatView } from '../src/tui/view/chat-view.js'
 
 function backend(): ChatBackend {
   return {
@@ -38,9 +36,8 @@ function backend(): ChatBackend {
 }
 
 describe('runInkChat', () => {
-  it('retains chat on reload or failed setup and starts fresh after Q&A', async () => {
+  it('retains chat on reload or failed setup', async () => {
     const config = CliConfigStore.memory(
-      {},
       {},
       { toolOutput: 'full', animations: false, showReasoning: false, frogTheme: 'merlin' },
       { onboardingVersion: 0, profile: { name: 'Original' } }
@@ -140,18 +137,6 @@ describe('runInkChat', () => {
       current.dismissPanel()
       await current.submit('Continue.')
       expect(current.getSnapshot().completedTurns).toHaveLength(2)
-      const beforeFreshChat = current
-      source.mockImplementationOnce(async () => {
-        current = new ChatController(backend())
-        return current
-      })
-      root.props.onSetupComplete(0, true, { newConversation: true })
-      await vi.waitFor(() => {
-        expect(root.props.controller).toBeDefined()
-        expect(root.props.controller).not.toBe(beforeFreshChat)
-      })
-      expect(source.mock.calls.at(-1)?.[2]).toBeUndefined()
-      expect(current.getSnapshot().completedTurns).toEqual([])
     } finally {
       finish()
       await running
@@ -296,72 +281,6 @@ describe('runInkChat', () => {
     }
   )
 
-  it('redraws the complete chat after splitting and resizing the terminal without losing the draft', async () => {
-    const input = Object.assign(new PassThrough(), {
-      isTTY: true,
-      setRawMode: vi.fn(),
-      ref: vi.fn(),
-      unref: vi.fn(),
-    }) as unknown as NodeJS.ReadStream
-    const output = Object.assign(new PassThrough(), {
-      isTTY: true,
-      columns: 180,
-      rows: 50,
-    }) as unknown as NodeJS.WriteStream
-    const writes: string[] = []
-    output.on('data', (chunk: Buffer) => writes.push(chunk.toString()))
-    const controller = new ChatController(backend(), { settings: { animations: false } })
-    await controller.submit('hello!')
-    let instance: Instance | undefined
-    const running = runInkChat(controller, {
-      intro: false,
-      input,
-      output,
-      errorOutput: output,
-      renderApp: (element, options) => {
-        instance = render(element, { ...options, interactive: true, patchConsole: false })
-        return instance
-      },
-    })
-
-    try {
-      await vi.waitFor(() => expect(writes.join('')).toContain('Message Test'))
-      input.push('draft')
-      await vi.waitFor(() => expect(writes.join('')).toContain('draft'))
-      for (const [columns, rows] of [
-        [90, 50],
-        [60, 25],
-        [180, 50],
-      ] as const) {
-        writes.length = 0
-        output.columns = columns
-        output.rows = rows
-        output.emit('resize')
-        await instance!.waitUntilRenderFlush()
-        const expected = sanitizeTerminalText(
-          renderToString(
-            createElement(ChatView, {
-              snapshot: controller.getSnapshot(),
-              input: 'draft',
-              cursor: 5,
-              terminalWidth: columns,
-              terminalHeight: rows,
-              synchronousTranscriptLayout: true,
-            }),
-            { columns }
-          )
-        ).trimEnd()
-        await vi.waitFor(() => {
-          const frame = writes.filter((write) => write.includes('draft')).at(-1) ?? ''
-          expect(sanitizeTerminalText(frame).trimEnd()).toBe(expected)
-        })
-      }
-    } finally {
-      controller.close(0)
-      await running
-    }
-  })
-
   it('restores the alternate screen and removes signal listeners after a normal exit', async () => {
     const target = backend()
     const controller = new ChatController(target)
@@ -414,7 +333,56 @@ describe('runInkChat', () => {
     expect(writes.at(-1)).toContain('?1049l')
   })
 
-  it('renders inside the alternate screen before initializing a controller', async () => {
+  it('cancels startup MCP trust with Ctrl-C and restores the terminal before forced exit', async () => {
+    const forcedExit = new Error('forced startup exit')
+    const input = Object.assign(new PassThrough(), {
+      isTTY: true,
+      setRawMode: vi.fn(),
+      ref: vi.fn(),
+      unref: vi.fn(),
+    }) as unknown as NodeJS.ReadStream
+    const output = Object.assign(new PassThrough(), { isTTY: true, columns: 120, rows: 40 })
+    let written = ''
+    output.on('data', (chunk: Buffer) => {
+      written += chunk.toString()
+    })
+    const sigintListeners = process.listenerCount('SIGINT')
+    const hardExit = vi.spyOn(processTree, 'hardExitProcessTree').mockImplementation(() => {
+      expect(input.setRawMode).toHaveBeenLastCalledWith(false)
+      expect(written).toContain('?1049l')
+      throw forcedExit
+    })
+    let startupSignal: AbortSignal | undefined
+    const running = runInkChat(
+      async (signal, _setup, _conversation, _launch, confirmMcp) => {
+        startupSignal = signal
+        await confirmMcp('/workspace', ['mcp.json'])
+        throw new Error('trust declined')
+      },
+      {
+        input,
+        output: output as unknown as NodeJS.WriteStream,
+        errorOutput: output as unknown as NodeJS.WriteStream,
+        renderApp: (element, options) => render(element, { ...options, interactive: true, patchConsole: false }),
+      }
+    ).catch((error: unknown) => error)
+    try {
+      await vi.waitFor(() => expect(written).toContain("Trust this project's MCP configuration?"))
+      input.push('\u0003')
+      await vi.waitFor(() => expect(startupSignal?.aborted).toBe(true))
+      expect(await running).toBe(forcedExit)
+      expect(hardExit).toHaveBeenCalledExactlyOnceWith(130)
+      expect(process.listenerCount('SIGINT')).toBe(sigintListeners)
+    } finally {
+      if (!startupSignal?.aborted) input.push('n')
+      await running
+      hardExit.mockRestore()
+      input.destroy()
+      output.destroy()
+    }
+  })
+
+  it('waits for the controller before entering the alternate screen and rendering chat', async () => {
     const controller = new ChatController(backend())
     controller.close(0)
     const writes: string[] = []
@@ -426,10 +394,13 @@ describe('runInkChat', () => {
       rerender: vi.fn(),
       clear: vi.fn(),
     } as unknown as Instance
-    const renderApp = vi.fn((_element: unknown) => instance)
-    const source = vi.fn(async () => {
+    const renderApp = vi.fn((_element: unknown) => {
       expect(writes[0]).toContain('?1049h')
-      expect(renderApp).toHaveBeenCalledOnce()
+      return instance
+    })
+    const source = vi.fn(async () => {
+      expect(writes).toEqual([])
+      expect(renderApp).not.toHaveBeenCalled()
       return controller
     })
 
@@ -439,12 +410,13 @@ describe('runInkChat', () => {
       renderApp: renderApp as never,
     })
 
-    expect(renderApp.mock.invocationCallOrder[0]).toBeLessThan(source.mock.invocationCallOrder[0]!)
-    expect(instance.rerender).toHaveBeenCalledOnce()
+    expect(renderApp).toHaveBeenCalledOnce()
+    expect(source.mock.invocationCallOrder[0]).toBeLessThan(renderApp.mock.invocationCallOrder[0]!)
+    expect(instance.rerender).not.toHaveBeenCalled()
     expect(writes.at(-1)).toContain('?1049l')
   })
 
-  it('starts the first request as soon as the controller is ready while the intro is still running', async () => {
+  it('renders and starts the first request when the controller is ready without waiting for the intro', async () => {
     const controller = new ChatController(backend())
     const start = vi.spyOn(controller, 'start')
     let resolveController!: (value: ChatController) => void
@@ -464,24 +436,32 @@ describe('runInkChat', () => {
       return instance
     })
 
-    const runTask = runInkChat(() => controllerTask, {
+    const source = vi.fn(() => controllerTask)
+    const runTask = runInkChat(source, {
       alternateScreen: false,
       firstRequest: 'hello',
       renderApp: renderApp as never,
     })
 
-    await vi.waitFor(() => expect(renderApp).toHaveBeenCalledOnce())
-    resolveController(controller)
-    await vi.waitFor(() => expect(start).toHaveBeenCalledWith('hello'))
-
-    const root = renderedRoot as {
-      props: { onIntroComplete(exitCode: 0 | 130): void }
+    try {
+      await vi.waitFor(() => expect(source).toHaveBeenCalledOnce())
+      expect(renderApp).not.toHaveBeenCalled()
+      expect(start).not.toHaveBeenCalled()
+    } finally {
+      resolveController(controller)
+      await runTask
     }
-    root.props.onIntroComplete(0)
-    await runTask
+    expect(renderApp).toHaveBeenCalledOnce()
+    expect(start).toHaveBeenCalledExactlyOnceWith('hello')
+    expect(renderApp.mock.invocationCallOrder[0]).toBeLessThan(start.mock.invocationCallOrder[0]!)
+    const root = renderedRoot as {
+      props: { controller: ChatController; intro: boolean }
+    }
+    expect(root.props.controller).toBe(controller)
+    expect(root.props.intro).toBe(true)
   })
 
-  it('plays the intro before first-run setup and waits to construct the controller', async () => {
+  it('renders explicitly requested setup and waits for its completion before constructing the controller', async () => {
     const controller = new ChatController(backend())
     controller.close(0)
     const source = vi.fn(async () => controller)
@@ -496,7 +476,7 @@ describe('runInkChat', () => {
     const runTask = runInkChat(source, {
       alternateScreen: false,
       setup: true,
-      config: CliConfigStore.memory({}, {}, {}, { onboardingVersion: 0 }),
+      config: CliConfigStore.memory({}, {}, { onboardingVersion: 0 }),
       renderApp: ((element: unknown) => {
         renderedRoot = element
         return instance
@@ -509,16 +489,12 @@ describe('runInkChat', () => {
       props: {
         intro: boolean
         setup: boolean
-        onIntroComplete(exitCode: 0 | 130): void
-        onSetupComplete(exitCode: 0 | 130): void
+        onSetupComplete(exitCode: 0 | 130, changed: boolean): void
       }
     }
     expect(root.props.intro).toBe(true)
     expect(root.props.setup).toBe(true)
-    root.props.onIntroComplete(0)
-    await Promise.resolve()
-    expect(source).not.toHaveBeenCalled()
-    root.props.onSetupComplete(0)
+    root.props.onSetupComplete(0, false)
     await runTask
 
     expect(source).toHaveBeenCalledOnce()

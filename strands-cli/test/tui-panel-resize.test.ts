@@ -33,7 +33,7 @@ function createController() {
     protocol: 'strands',
     async *stream() {
       yield* []
-      return { stopReason: 'endTurn' }
+      return { stopReason: 'endTurn', context: { projectedTokens: 100, contextWindow: 1_000 } }
     },
     cancel() {},
     info: () => ({ model: 'model-00' }),
@@ -132,7 +132,7 @@ describe('mounted panel resizing', () => {
         expect(view.screen()).toContain('Usage ping')
         expect(view.screen()).toContain('(telemetry)')
         expect(view.screen()).toContain('Esc back')
-        expect(view.screen()).toContain('/help')
+        expect(view.screen()).not.toContain('/help')
       })
     }
     await view.press('\r')
@@ -149,7 +149,7 @@ describe('mounted panel resizing', () => {
     await vi.waitFor(() => expect(view.screen()).toContain('keep this draft'))
   })
 
-  it('keeps the selected model, panel footer and composer help visible after shrinking and expanding', async () => {
+  it('keeps the selected model and panel footer visible after shrinking and expanding', async () => {
     const { controller, switchModel, setEffort } = createController()
     const view = await mount(controller)
     await controller.submit('/model')
@@ -162,10 +162,7 @@ describe('mounted panel resizing', () => {
         view.fits()
         expect(view.screen()).toContain('Model 08')
         expect(view.screen()).toContain('Esc back')
-        const lines = view.screen().split('\n')
-        expect(lines.findIndex((line) => line.includes('Esc back'))).toBeLessThan(
-          lines.findIndex((line) => line.includes('/help'))
-        )
+        expect(view.screen()).not.toContain('/help')
       })
     }
     const lines = view.screen().split('\n')
@@ -194,7 +191,6 @@ describe('mounted panel resizing', () => {
         view.fits()
         expect(view.screen()).toContain('9/9')
         expect(view.screen()).toContain(selected.label)
-        expect(view.screen()).not.toContain('╔')
       })
     }
     await view.press('\r')
@@ -203,29 +199,30 @@ describe('mounted panel resizing', () => {
     expect(manager.getSnapshot().panel?.rows.find((row) => row.current)?.value).toBe(selected.value)
   })
 
-  it('blocks covered metadata while retaining visible metadata and footer actions', async () => {
+  it('keeps metadata below panels and restores the Settings action when they close', async () => {
     const { controller } = createController()
     const view = await mount(controller)
-    await view.resize(40, 16)
+    await view.resize(40, 14)
     await vi.waitFor(() => view.fits())
     const modelTarget = view.point('model-00')
     controller.openContextPanel()
     await vi.waitFor(() => expect(view.screen()).toContain('Context usage'))
-    const covered = { column: modelTarget.column + 4, row: modelTarget.row }
-    expect(view.screen().split('\n')[covered.row - 1]).not.toContain('model-00')
-    const panelId = controller.getSnapshot().panel!.id
-    await view.click(covered)
-    expect(controller.getSnapshot().panel?.id).toBe(panelId)
+    expect(view.screen().split('\n')[modelTarget.row - 1]).toContain('model-00')
+    await view.click(modelTarget)
+    await vi.waitFor(() => expect(controller.getSnapshot().panel?.kind).toBe('models'))
 
     await view.resize(160, 40)
     await vi.waitFor(() => expect(view.screen()).toContain('model-00'))
     await view.click(view.point('model-00'))
     await vi.waitFor(() => expect(controller.getSnapshot().panel?.kind).toBe('models'))
-    await view.click(view.point('context ░'))
+    await controller.submit('measure context')
+    await vi.waitFor(() => expect(view.screen()).toContain('/settings'))
+    const settingsTarget = view.point('/settings')
+    await controller.submit('/context')
     await vi.waitFor(() => expect(controller.getSnapshot().panel?.kind).toBe('context'))
-    await view.click(view.point('/help'))
+    await view.click(settingsTarget)
     expect(controller.getSnapshot().panel).toBeUndefined()
-    await view.click(view.point('/help'))
-    await vi.waitFor(() => expect(controller.getSnapshot().panel?.kind).toBe('help'))
+    await view.click(view.point('/settings'))
+    await vi.waitFor(() => expect(controller.getSnapshot().panel?.kind).toBe('settings'))
   })
 })

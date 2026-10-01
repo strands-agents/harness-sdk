@@ -30,6 +30,7 @@ from strands.hooks import BeforeInvocationEvent, BeforeModelCallEvent, BeforeToo
 from strands.interrupt import Interrupt, PendingToolExecution
 from strands.memory import MemoryManager, MemoryManagerConfig
 from strands.models.bedrock import DEFAULT_BEDROCK_MODEL_ID, BedrockModel
+from strands.models.routing import ModelRouter
 from strands.session.repository_session_manager import RepositorySessionManager
 from strands.telemetry.tracer import Tracer, serialize
 from strands.types._events import EventLoopStopEvent, ModelStreamEvent
@@ -312,6 +313,49 @@ def test_agent__init__with_string_model_id():
 
     assert isinstance(agent.model, BedrockModel)
     assert agent.model.config["model_id"] == "nonsense"
+
+
+def test_agent__init__aux_model_defaults_to_model(mock_model):
+    agent = Agent(model=mock_model)
+
+    assert agent.aux_model is mock_model
+
+
+def test_agent__init__aux_model_explicit(mock_model):
+    aux_model = MockedModelProvider([])
+    agent = Agent(model=mock_model, aux_model=aux_model)
+
+    assert agent.aux_model is aux_model
+    assert agent.model is mock_model
+
+
+def test_agent__init__aux_model_with_string_model_id(mock_model):
+    agent = Agent(model=mock_model, aux_model="us.anthropic.claude-haiku-4-5-20251001-v1:0")
+
+    assert isinstance(agent.aux_model, BedrockModel)
+    assert agent.aux_model.config["model_id"] == "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+
+
+def test_agent__init__aux_model_rejects_model_router():
+    with pytest.raises(TypeError, match="aux_model must be a Model, a Bedrock model id, or None, got ModelRouter"):
+        Agent(aux_model=ModelRouter([MockedModelProvider([])]))
+
+
+def test_agent_aux_model_setter(mock_model):
+    agent = Agent(model=mock_model)
+    aux_model = MockedModelProvider([])
+
+    agent.aux_model = aux_model
+    assert agent.aux_model is aux_model
+
+    agent.aux_model = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    assert isinstance(agent.aux_model, BedrockModel)
+
+    agent.aux_model = None
+    assert agent.aux_model is mock_model
+
+    with pytest.raises(TypeError, match="aux_model must be a Model"):
+        agent.aux_model = ModelRouter([MockedModelProvider([])])
 
 
 def test_agent__init__nested_tools_flattening(tool_decorated, tool_module, tool_imported, tool_registry):
@@ -3133,6 +3177,115 @@ async def test_agent_async_invoke_does_not_flush_memory_manager():
     await agent.invoke_async("test")
 
     memory_manager.flush.assert_not_awaited()
+
+
+def test_agent_shutdown_flushes_memory_manager():
+    memory_manager = MemoryManager(stores=[_SearchOnlyStore()])
+    memory_manager.flush = unittest.mock.AsyncMock()
+    agent = Agent(
+        model=MockedModelProvider([{"role": "assistant", "content": [{"text": "response"}]}]),
+        memory_manager=memory_manager,
+    )
+
+    agent.shutdown()
+
+    memory_manager.flush.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_agent_shutdown_async_flushes_memory_manager():
+    memory_manager = MemoryManager(stores=[_SearchOnlyStore()])
+    memory_manager.flush = unittest.mock.AsyncMock()
+    agent = Agent(
+        model=MockedModelProvider([{"role": "assistant", "content": [{"text": "response"}]}]),
+        memory_manager=memory_manager,
+    )
+
+    await agent.shutdown_async()
+
+    memory_manager.flush.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_agent_async_context_manager_flushes_memory_manager_on_exit():
+    memory_manager = MemoryManager(stores=[_SearchOnlyStore()])
+    memory_manager.flush = unittest.mock.AsyncMock()
+    agent = Agent(
+        model=MockedModelProvider([{"role": "assistant", "content": [{"text": "response"}]}]),
+        memory_manager=memory_manager,
+    )
+
+    async with agent as entered:
+        assert entered is agent
+        await agent.invoke_async("test")
+        memory_manager.flush.assert_not_awaited()
+
+    memory_manager.flush.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_agent_async_context_manager_flushes_and_propagates_on_error():
+    memory_manager = MemoryManager(stores=[_SearchOnlyStore()])
+    memory_manager.flush = unittest.mock.AsyncMock()
+    agent = Agent(
+        model=MockedModelProvider([{"role": "assistant", "content": [{"text": "response"}]}]),
+        memory_manager=memory_manager,
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        async with agent:
+            raise RuntimeError("boom")
+
+    memory_manager.flush.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_agent_async_context_manager_without_memory_manager_is_noop():
+    agent = Agent(model=MockedModelProvider([{"role": "assistant", "content": [{"text": "response"}]}]))
+
+    async with agent:
+        pass
+
+    assert agent.memory_manager is None
+
+
+def test_agent_context_manager_flushes_memory_manager_on_exit():
+    memory_manager = MemoryManager(stores=[_SearchOnlyStore()])
+    memory_manager.flush = unittest.mock.AsyncMock()
+    agent = Agent(
+        model=MockedModelProvider([{"role": "assistant", "content": [{"text": "response"}]}]),
+        memory_manager=memory_manager,
+    )
+
+    with agent as entered:
+        assert entered is agent
+        memory_manager.flush.assert_not_awaited()
+
+    memory_manager.flush.assert_awaited_once()
+
+
+def test_agent_context_manager_flushes_and_propagates_on_error():
+    memory_manager = MemoryManager(stores=[_SearchOnlyStore()])
+    memory_manager.flush = unittest.mock.AsyncMock()
+    agent = Agent(
+        model=MockedModelProvider([{"role": "assistant", "content": [{"text": "response"}]}]),
+        memory_manager=memory_manager,
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        with agent:
+            raise RuntimeError("boom")
+
+    memory_manager.flush.assert_awaited_once()
+
+
+def test_agent_context_manager_without_memory_manager_is_noop():
+    agent = Agent(model=MockedModelProvider([{"role": "assistant", "content": [{"text": "response"}]}]))
+
+    with agent:
+        pass
+
+    assert agent.memory_manager is None
 
 
 def test_as_tool_returns_agent_tool():

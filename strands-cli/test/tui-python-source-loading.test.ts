@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ChatEvent } from '../src/tui/chat/types.js'
+import type { ChatEvent, ChatRunResult } from '../src/tui/chat/types.js'
 import { CliConfigStore } from '../src/tui/config.js'
 import { PythonBackend, type PythonOptions } from '../src/tui/project/python.js'
 import { pythonExecutable as python } from './fixtures/python-runtime.js'
@@ -71,6 +71,27 @@ describe.skipIf(!existsSync(python))('Python source loading', () => {
     }
     return events
   }
+
+  async function runTurn(backend: PythonBackend): Promise<ChatRunResult> {
+    const stream = backend.stream(JSON.stringify({ tool: 'status' }))
+    let next = await stream.next()
+    while (!next.done) {
+      next = await stream.next()
+    }
+    return next.value
+  }
+
+  it('reports context usage for imported Python agents', async () => {
+    const backend = await open(baseSource)
+
+    expect(await runTurn(backend)).toMatchObject({
+      context: {
+        currentTokens: expect.any(Number),
+        projectedTokens: expect.any(Number),
+        contextWindow: 1_000,
+      },
+    })
+  })
 
   it('runs an arbitrary exported instance unchanged and disables reconstruction', async () => {
     const authored = `${baseSource}

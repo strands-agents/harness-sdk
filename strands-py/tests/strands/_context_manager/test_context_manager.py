@@ -362,6 +362,36 @@ class TestStashBackfill:
         assert result["text"] == "pre-existing result"
 
     @pytest.mark.asyncio
+    async def test_backfill_does_not_overwrite_existing_stash_entries(self, mock_agent):
+        """A restored stash holds originals while restored messages hold their previews; the originals win."""
+        mock_agent.session_id = "test-session"
+        mock_agent.storage = None
+        mock_agent.messages = [
+            Message(role="user", content=[ContentBlock(text="seed message")], tracking_id="seed"),
+            Message(
+                role="user",
+                content=[
+                    ContentBlock(
+                        toolResult=ToolResult(
+                            toolUseId="pre-tu-1",
+                            status="success",
+                            content=[{"text": "[Truncated: 1 block, ~7,500 tokens] preview"}],
+                        )
+                    )
+                ],
+            ),
+        ]
+        cm = ContextManager(strategies=[], stash=True)
+        cm.init_agent(mock_agent)
+        await cm.stash.load_snapshot({"pre-tu-1_0": {"text": "original full result"}})
+
+        event = BeforeModelCallEvent(agent=mock_agent, projected_input_tokens=100)
+        await mock_agent.hooks.invoke_callbacks_async(event)
+
+        assert await cm.stash.retrieve("pre-tu-1_0") == {"text": "original full result"}
+        assert await cm.stash.retrieve("seed_0") == {"text": "seed message"}
+
+    @pytest.mark.asyncio
     async def test_backfill_runs_only_once(self):
         agent = unittest.mock.MagicMock()
         agent.agent_id = "test-agent"

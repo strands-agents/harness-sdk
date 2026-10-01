@@ -33,8 +33,6 @@ export async function createPythonChat(
       sessions: new FileSessionRuntime(backend, backend.sessionDirectory, { workspace: backend.cwd }),
       skills: { list: () => Promise.resolve(backend.skills), activate: (name) => backend.activateSkill(name) },
       skillNames: backend.skills.map((skill) => skill.name),
-      pinnedModels: snapshot.models.pinned,
-      setModelPinned: (model, pinned) => config.setModelPinned(model, pinned),
       setSettings: (settings) => config.setSettings(settings),
       requestSetup,
       project,

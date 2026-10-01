@@ -45,6 +45,7 @@ def mock_agent():
     agent.model.count_tokens = unittest.mock.AsyncMock(return_value=5000)
     agent.model.estimate_utilization = unittest.mock.MagicMock(return_value=0.9)
     agent.model.stream = _make_stream_events("Summary of content.")
+    agent.aux_model = agent.model
     agent.messages = []
     return agent
 
@@ -92,7 +93,7 @@ class TestSummarizeStrategyPerBlock:
     @pytest.mark.asyncio
     async def test_skips_when_no_model(self):
         agent = unittest.mock.MagicMock()
-        agent.model = None
+        agent.aux_model = None
         strategy = Offload.summarize("*").when(threshold=100)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
@@ -234,7 +235,7 @@ class TestSummarizeStrategyMessageLevel:
     @pytest.mark.asyncio
     async def test_no_model_returns_false(self):
         agent = unittest.mock.MagicMock()
-        agent.model = None
+        agent.aux_model = None
         strategy = Offload.summarize("*").when(utilization=0.8)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),

@@ -42,9 +42,14 @@ export interface McpServerConfig {
   toolFilters?: SerializableMcpToolFilters
   /** When true, this server is skipped during loadServers. */
   disabled?: boolean
-  /** When true, config or connection failures skip this server instead of throwing. */
+  /** When true, skip config/connection failures and overlong prefixed names during tool listing with warnings. */
   continueOnError?: boolean
-  /** Task-augmented tool execution configuration (experimental). */
+  /**
+   * Task-augmented tool execution configuration (experimental).
+   *
+   * Temporarily unavailable while task support is rebuilt on the MCP tasks extension
+   * (https://github.com/strands-agents/harness-sdk/issues/1659). When set, tool calls throw.
+   */
   tasksConfig?: TasksConfig
 }
 

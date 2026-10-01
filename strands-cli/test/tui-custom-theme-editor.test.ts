@@ -35,7 +35,7 @@ afterEach(async () => {
 
 async function openPicker(
   columns: number,
-  config = CliConfigStore.memory({}, {}, { animations: false, colorMode: 'auto' })
+  config = CliConfigStore.memory({}, { animations: false, colorMode: 'auto' })
 ) {
   const backend: ChatBackend = {
     id: 'appearance-picker-test',
@@ -162,7 +162,7 @@ describe('mounted custom theme editor', () => {
   })
 
   it.each([40, 80])('supports hover and click across the responsive %s×24 layout', async (columns) => {
-    const config = CliConfigStore.memory({}, {}, { animations: false, frogTheme: 'custom', colorMode: 'dark' })
+    const config = CliConfigStore.memory({}, { animations: false, frogTheme: 'custom', colorMode: 'dark' })
     const picker = await openPicker(columns, config)
     picker.layout()
     const selected = picker.palettePoint()

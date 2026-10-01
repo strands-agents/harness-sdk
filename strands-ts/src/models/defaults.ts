@@ -71,8 +71,11 @@ const CONTEXT_WINDOW_LIMITS: Record<string, number> = {
   'claude-opus-4-7-20260416': 1_000_000,
   'claude-opus-4-8': 1_000_000,
   'claude-opus-5': 1_000_000,
+  'claude-opus-5-5': 1_000_000,
   'claude-fable-5': 1_000_000,
+  'claude-fable-5-1': 1_000_000,
   'claude-sonnet-5': 1_000_000,
+  'claude-sonnet-5-5': 1_000_000,
   'claude-opus-4-5': 200_000,
   'claude-opus-4-5-20251101': 200_000,
   'claude-opus-4-20250514': 200_000,
@@ -95,8 +98,11 @@ const CONTEXT_WINDOW_LIMITS: Record<string, number> = {
   'anthropic.claude-opus-4-7': 1_000_000,
   'anthropic.claude-opus-4-8': 1_000_000,
   'anthropic.claude-opus-5': 1_000_000,
+  'anthropic.claude-opus-5-5': 1_000_000,
   'anthropic.claude-fable-5': 1_000_000,
+  'anthropic.claude-fable-5-1': 1_000_000,
   'anthropic.claude-sonnet-5': 1_000_000,
+  'anthropic.claude-sonnet-5-5': 1_000_000,
   'anthropic.claude-opus-4-5-20251101-v1:0': 200_000,
   'anthropic.claude-opus-4-20250514-v1:0': 200_000,
   'anthropic.claude-opus-4-1-20250805-v1:0': 200_000,
@@ -119,6 +125,9 @@ const CONTEXT_WINDOW_LIMITS: Record<string, number> = {
   'amazon.nova-premier-v1:0': 1_000_000,
   'amazon.nova-2-lite-v1:0': 1_000_000,
   'amazon.nova-2-pro-preview-20251202-v1:0': 1_000_000,
+
+  // Bedrock Z.AI
+  'zai.glm-4.7': 203_000,
 
   // OpenAI
   'gpt-6-astra': 1_050_000,

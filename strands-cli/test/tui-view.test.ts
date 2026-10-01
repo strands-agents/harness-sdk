@@ -8,7 +8,7 @@ import { snapshot } from './fixtures/chat-snapshot.js'
 import { ChatView } from '../src/tui/view/chat-view.js'
 import { Markdown } from '../src/tui/view/markdown.js'
 import { panelControlTarget, panelRowCapacity, revealPanelSelection } from '../src/tui/view/interaction.js'
-import { maxPermissionScroll, permissionLines } from '../src/tui/view/presentation.js'
+import { formatContext, maxPermissionScroll, permissionLines } from '../src/tui/view/presentation.js'
 import { DEFAULT_CHAT_SETTINGS, type ChatPanel } from '../src/tui/chat/controller.js'
 import { formatPermissionPanelBody, settingsRows } from '../src/tui/chat/panels.js'
 import { SETTINGS_CATEGORIES } from '../src/tui/settings.js'
@@ -20,6 +20,17 @@ afterEach(() => {
 })
 
 describe('ChatView', () => {
+  it('shows notices before the first turn below the startup banner', () => {
+    const output = renderView({
+      snapshot: snapshot({ notices: [{ id: 'notice-1', status: 'delivered', text: 'Nothing to compact yet' }] }),
+      terminalWidth: 80,
+      terminalHeight: 24,
+    })
+
+    expect(output).toContain('╚══════╝')
+    expect(output).toContain('Nothing to compact yet')
+  })
+
   it.each([
     [80, 40],
     [40, 24],
@@ -125,6 +136,72 @@ describe('ChatView', () => {
     )
     expect(output).not.toContain('┌')
     expect(output).not.toContain('┘')
+  })
+
+  it.each([
+    [120, 40, false],
+    [80, 24, false],
+    [40, 16, false],
+    [22, 10, false],
+    [80, 24, true],
+  ])('keeps /effort compact without shifting the conversation at %ix%i, party=%s', (width, height, party) => {
+    const current = snapshot({
+      completedTurns: [
+        {
+          id: 'turn-1',
+          prompt: 'hello',
+          agentName: 'Strands harness',
+          entries: [{ id: 'turn-1:1', type: 'assistant', text: 'Visible conversation\n'.repeat(30) }],
+          status: 'complete',
+        },
+      ],
+    })
+    const props = { terminalWidth: width, terminalHeight: height, party }
+    const before = renderView({ ...props, snapshot: current }, { columns: width }).split('\n')
+    const after = renderView(
+      {
+        ...props,
+        snapshot: {
+          ...current,
+          panel: {
+            id: 'effort',
+            kind: 'effort',
+            title: 'effort',
+            body: 'Grok 4.6\nus.xai.grok-4.6',
+            rows: [],
+            slider: {
+              label: 'Effort',
+              options: [
+                { id: 'low', label: 'Low' },
+                { id: 'high', label: 'High', active: true },
+              ],
+            },
+          },
+        },
+      },
+      { columns: width }
+    ).split('\n')
+    const editorRow = before.findIndex((line) => line.includes('Enter'))
+    expect(editorRow).toBeGreaterThanOrEqual(0)
+    const panelRow = after.findIndex((line) => line.includes('Reasoning effort'))
+    expect(panelRow).toBeGreaterThanOrEqual(editorRow)
+    expect(after.slice(0, editorRow)).toEqual(before.slice(0, editorRow))
+    const track = after
+      .slice(panelRow)
+      .join('\n')
+      .match(/[─┬█]+/u)?.[0]
+    expect(track).toBeDefined()
+    expect(stringWidth(track!)).toBeLessThanOrEqual(60)
+    if (width >= 40) {
+      expect(after[panelRow]).toContain('Grok 4.6')
+      expect(after.join('\n')).toContain('Enter done · Esc close')
+      expect(after.slice(0, panelRow).join('\n')).toContain('Visible conversation')
+    }
+    expect(after.findIndex((line) => line.includes('/work'))).toBe(before.findIndex((line) => line.includes('/work')))
+    expect(after.join('\n')).not.toContain('Enter send')
+    expect(after.length).toBe(before.length)
+    expect(after.length).toBeLessThanOrEqual(height)
+    expect(after.every((line) => stringWidth(line) <= width)).toBe(true)
   })
 
   it.each(['agents', 'mcp', 'settings'] as const)('renders the %s panel from its independent viewport', (kind) => {
@@ -237,7 +314,7 @@ describe('ChatView', () => {
     expect(output).toContain('/work')
   })
 
-  it('renders the composer with an integrated runtime strip and navigation footer', () => {
+  it('renders guidance inside the composer and a single metadata row below it', () => {
     const output = renderView({
       snapshot: snapshot({
         completedTurns: [
@@ -249,21 +326,26 @@ describe('ChatView', () => {
             status: 'complete',
           },
         ],
+        context: { contextWindow: 200_000 },
       }),
       terminalWidth: 100,
       terminalHeight: 40,
     })
 
-    expect(output.indexOf('answer')).toBeLessThan(output.indexOf('Message Strands harness'))
-    expect(output.indexOf('Message Strands harness')).toBeLessThan(output.lastIndexOf('bedrock/test'))
+    expect(output.indexOf('answer')).toBeLessThan(output.indexOf('Enter to send'))
+    expect(output.indexOf('Enter to send')).toBeLessThan(output.lastIndexOf('bedrock/test'))
     expect(output.split('\n').some((line) => line.trim() === 'hello')).toBe(true)
-    expect(output).toContain('context ░░░░░░░░░░ --')
-    expect(output).toContain('Shift+Enter')
+    expect(output).not.toContain('context ░')
+    expect(output).toContain('Enter to send • Ctrl+J for newline • / for commands')
+    expect(output).toContain('Ctrl+J')
     const rows = output.trimEnd().split('\n')
-    expect(rows.at(-3)).toContain('context')
+    expect(rows.at(-1)).toContain('bedrock/test')
+    expect(rows.at(-1)).toContain('/work')
     expect(rows.at(-2)?.trim()).toBe('')
-    expect(rows.at(-1)).toContain('Enter send')
-    expect(rows.at(-1)).toContain('/help')
+    expect(rows.at(-1)).toContain('/settings')
+    expect(rows.at(-1)).not.toContain('Enter')
+    expect(output).not.toContain('/setup')
+    expect(output).not.toContain('/help')
   })
 
   it('shows active background tasks immediately above the composer', () => {
@@ -297,7 +379,7 @@ describe('ChatView', () => {
     expect(output).toContain('Background task running (subagent) - task-1')
     expect(output).toContain('Background task queued (read) - task-2')
     expect(output).not.toContain('Background task completed (write) - task-3')
-    expect(output.indexOf('Background task queued (read)')).toBeLessThan(output.indexOf('Message Strands harness'))
+    expect(output.indexOf('Background task queued (read)')).toBeLessThan(output.indexOf('Enter to send'))
   })
 
   it('scrolls the startup lockup with the conversation', () => {
@@ -341,7 +423,6 @@ describe('ChatView', () => {
         }),
         terminalWidth: 100,
         terminalHeight: 40,
-        synchronousTranscriptLayout: true,
       })
     )
     expect(continuedOutput).not.toContain('╔')
@@ -351,15 +432,37 @@ describe('ChatView', () => {
     [3_497, 1_000_000, 'context █░░░░░░░░░ 0.3%'],
     [125_000, 100_000, 'context ██████████ 125%'],
   ])('shows precise context usage for %i of %i tokens', (projectedTokens, contextWindow, expected) => {
+    expect(formatContext({ projectedTokens, contextWindow })).toBe(expected.replace('context ', ''))
+  })
+
+  it('marks the context meter as unknown when the context window is unavailable', () => {
     const output = renderView({
-      snapshot: snapshot({
-        context: { projectedTokens, contextWindow },
-      }),
+      snapshot: snapshot({ context: { projectedTokens: 12_000 } }),
       terminalWidth: 100,
       terminalHeight: 40,
     })
 
-    expect(output).toContain(expected)
+    expect(output).toContain('bedrock/test')
+    expect(output).not.toContain('context ')
+    expect(output).toContain('░░░░░░░░░░ —')
+  })
+
+  it('shows only the token count in the context panel when the context window is unknown', () => {
+    const output = sanitizeTerminalText(
+      renderView({
+        snapshot: snapshot({
+          context: { projectedTokens: 12_000 },
+          panel: { id: 'context', kind: 'context', title: 'Context usage', rows: [] },
+        }),
+        terminalWidth: 100,
+        terminalHeight: 30,
+      })
+    )
+
+    expect(output).toContain('Context usage')
+    expect(output).toContain('12,000 tokens')
+    expect(output).not.toContain('/ —')
+    expect(output.slice(output.indexOf('Context usage'), output.indexOf('Esc close'))).not.toContain('░')
   })
 
   it.each([44, 100])('shows the context meter and last-turn usage at width %i', (terminalWidth) => {
@@ -387,8 +490,8 @@ describe('ChatView', () => {
 
     expect(output).toContain('Context usage')
     expect(output).toContain('59,689 / 1,050,000 tokens')
-    expect(output.trimEnd().split('\n').at(-3)).toContain('5.7%')
-    expect(output.trimEnd().split('\n').at(-1)).toContain('/help')
+    expect(output).toContain('5.7%')
+    expect(output).not.toContain('/help')
     expect(output).toMatch(/Last turn\s+71,289 tokens/)
     expect(output).toMatch(/Input\s+71,077/)
     expect(output).toMatch(/Output\s+212/)
@@ -858,7 +961,7 @@ describe('ChatView', () => {
     })
 
     expect(output).toContain('| Compacting context...')
-    expect(output).not.toContain('Message Strands harness')
+    expect(output).not.toContain('Enter to send')
   })
 
   it('renders sent peer messages as transcript message bands', () => {
@@ -901,41 +1004,43 @@ describe('ChatView', () => {
     expect(output).not.toContain('message_agent')
   })
 
-  it.each([40, 80])('keeps settings controls and footer visible at %sx24 for first and last selections', (width) => {
-    const config = { ...DEFAULT_CHAT_SETTINGS, colorMode: 'light' as const }
-    const rows = settingsRows(config, false, 'Appearance')
-    const capacity = panelRowCapacity('settings', 24, width, rows)
-    for (const selected of [0, rows.length - 1]) {
-      const output = sanitizeTerminalText(
-        renderView({
-          snapshot: snapshot({
-            settings: config,
-            panel: {
-              id: 'settings',
-              kind: 'settings',
-              title: 'Appearance',
-              rows,
-              settingsCategory: 'Appearance',
-              settingsCategories: SETTINGS_CATEGORIES,
-            },
-          }),
-          terminalWidth: width,
-          terminalHeight: 24,
-          panelSelection: selected,
-          panelViewportStart: revealPanelSelection(selected, 0, capacity, rows.length),
-        })
-      )
-      const lines = output.split('\n')
-      expect(lines.length).toBeLessThanOrEqual(24)
-      expect(output).toContain(rows[selected]!.label)
-      expect(output).toContain(selected === 0 ? 'Dark' : 'Full')
-      expect(output).toContain('←→ change')
-      expect(output).toContain('Esc back')
-      expect(lines.findIndex((line) => line.includes('Esc back'))).toBeLessThan(
-        lines.findIndex((line) => line.includes('/help'))
-      )
+  it.each([40, 80])(
+    'keeps settings controls and their hints visible at %sx24 for first and last selections',
+    (width) => {
+      const config = { ...DEFAULT_CHAT_SETTINGS, colorMode: 'light' as const }
+      const rows = settingsRows(config, 'Appearance')
+      const capacity = panelRowCapacity('settings', 24, width, rows)
+      for (const selected of [0, rows.length - 1]) {
+        const output = sanitizeTerminalText(
+          renderView({
+            snapshot: snapshot({
+              settings: config,
+              panel: {
+                id: 'settings',
+                kind: 'settings',
+                title: 'Appearance',
+                rows,
+                settingsCategory: 'Appearance',
+                settingsCategories: SETTINGS_CATEGORIES,
+              },
+            }),
+            terminalWidth: width,
+            terminalHeight: 24,
+            panelSelection: selected,
+            panelViewportStart: revealPanelSelection(selected, 0, capacity, rows.length),
+          })
+        )
+        const lines = output.split('\n')
+        expect(lines.length).toBeLessThanOrEqual(24)
+        expect(output).toContain(rows[selected]!.label)
+        expect(output).toContain(selected === 0 ? 'Dark' : 'Full')
+        expect(output).toContain('←→ change')
+        expect(output).toContain('Esc back')
+        expect(output).not.toContain('/help')
+        expect(output).not.toContain('Enter send')
+      }
     }
-  })
+  )
 
   it('renders settings with a plain title and labeled controls', () => {
     const rendered = renderView({
@@ -1028,6 +1133,11 @@ describe('ChatView', () => {
     expect(output).toContain('write')
     expect(output).toContain('━━●')
     expect(output).toContain('●━━')
+    expect(output).toContain('Enter toggle · Esc save')
+    expect(output).not.toContain('Runs without a permission prompt.')
+    expect(output).not.toContain('Uses Cedar policy')
+    const bashLine = output.split('\n').find((line) => line.includes('bash'))
+    expect(bashLine).toMatch(/bash\s{2,}━━●/)
   })
 
   it('uses provider nodes on both wide and narrow terminals', () => {
@@ -1169,9 +1279,6 @@ describe('ChatView', () => {
         expect(purpleText.join('')).toContain('Option B')
         expect(purpleText.join('')).not.toContain('Option A')
       }
-      if (kind === 'models') {
-        expect(purpleText.join('')).toContain('☆')
-      }
     }
   }, 15_000)
 
@@ -1253,14 +1360,14 @@ describe('voice input', () => {
 describe('panel helpers', () => {
   it('overlays a selection without changing the rendered text', () => {
     const props = {
-      snapshot: snapshot(),
+      snapshot: snapshot({ context: { projectedTokens: 100, contextWindow: 1_000 } }),
       terminalWidth: 80,
       terminalHeight: 16,
     }
     const output = sanitizeTerminalText(renderView(props, { columns: 80 }))
     const lines = output.split('\n')
-    const target = lines.findIndex((line) => line.includes('context ░'))
-    const column = lines[target]!.indexOf('context ░')
+    const target = lines.findIndex((line) => line.includes('bedrock/test'))
+    const column = lines[target]!.indexOf('bedrock/test')
     const selection = selectScreenText(
       lines,
       { column: column + 1, row: target + 1 },

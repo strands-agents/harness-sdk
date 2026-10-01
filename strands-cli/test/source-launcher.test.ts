@@ -51,10 +51,7 @@ describe('source launcher', () => {
 async function temporaryRepository(): Promise<string> {
   const repository = await mkdtemp(join(tmpdir(), 'strands-source-launcher-'))
   temporaryDirectories.push(repository)
-  await Promise.all([
-    mkdir(join(repository, 'strands-cli', 'src'), { recursive: true }),
-    mkdir(join(repository, 'harness-ts', 'src'), { recursive: true }),
-  ])
+  await Promise.all([mkdir(join(repository, 'strands-cli', 'src'), { recursive: true })])
   await Promise.all([
     writeFile(join(repository, 'package.json'), '{}\n'),
     writeFile(join(repository, 'package-lock.json'), '{}\n'),
@@ -62,10 +59,6 @@ async function temporaryRepository(): Promise<string> {
     writeFile(join(repository, 'strands-cli', 'tsconfig.base.json'), '{}\n'),
     writeFile(join(repository, 'strands-cli', 'src', 'tsconfig.json'), '{}\n'),
     writeFile(join(repository, 'strands-cli', 'src', 'main.ts'), 'export const version = 1\n'),
-    writeFile(join(repository, 'harness-ts', 'package.json'), '{}\n'),
-    writeFile(join(repository, 'harness-ts', 'tsconfig.base.json'), '{}\n'),
-    writeFile(join(repository, 'harness-ts', 'src', 'tsconfig.json'), '{}\n'),
-    writeFile(join(repository, 'harness-ts', 'src', 'index.ts'), 'export const marker = true\n'),
   ])
   return repository
 }

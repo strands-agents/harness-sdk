@@ -241,6 +241,12 @@ describe('parseArgs', () => {
     expect(parseArgs(['--setup']).setup).toBe(true)
   })
 
+  it('captures the update command without treating other requests as commands', () => {
+    expect(parseArgs(['update']).update).toBe(true)
+    expect(parseArgs(['summarize']).request).toBe('summarize')
+    expect(() => parseArgs(['update', 'unexpected'])).toThrow(/too many arguments/u)
+  })
+
   it('collects repeatable MCP configuration paths', () => {
     const args = parseArgs(['--mcp-config', '/tmp/mcp-a.json', '--mcp-config', '/tmp/mcp-b.json'])
     expect(args.mcpConfig).toEqual(['/tmp/mcp-a.json', '/tmp/mcp-b.json'])

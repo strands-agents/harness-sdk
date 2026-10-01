@@ -4,7 +4,7 @@ import type { ChatControllerApi, ChatPanel, ChatPanelRow, ChatPanelSlider, ChatS
 import { resolveModelTarget } from '../model/selection.js'
 import type { MouseInput } from '../terminal/mouse-input.js'
 
-export type MetadataTarget = 'model' | 'context' | 'cwd'
+export type MetadataTarget = 'model' | 'effort' | 'context' | 'cwd'
 export const MODEL_COPY_TARGET = 'model:copy-id'
 
 export type ModelPanelFocus = 'effort' | 'search' | 'providers' | 'models' | 'copy'
@@ -19,7 +19,7 @@ export function settingsLayout(
   optionWidth: number
 } {
   const contentWidth = Math.max(1, Math.min(68, panelWidth - 4))
-  const longLabel = setting === 'agentMessaging' || setting === 'setupOnLaunch' || setting === 'telemetry'
+  const longLabel = setting === 'agentMessaging' || setting === 'telemetry'
   const labelWidth =
     setting === 'frogTheme'
       ? Math.floor(contentWidth / 3)
@@ -323,7 +323,7 @@ export function panelRowCapacity(
     }
     return capacity
   }
-  if (kind === 'permissions') {
+  if (kind === 'permissions' || kind === 'tools') {
     const sections = new Set(rows.map((row) => row.section).filter(Boolean)).size
     return Math.max(1, Math.min(10, terminalHeight - 15 - sections * 2))
   }
@@ -472,7 +472,7 @@ export function shouldToggleVoiceMute(
 }
 
 export async function activateMetadataTarget(
-  controller: Pick<ChatControllerApi, 'openContextPanel' | 'openModelPanel'>,
+  controller: Pick<ChatControllerApi, 'openContextPanel' | 'openModelPanel' | 'submit'>,
   target: MetadataTarget
 ): Promise<void> {
   if (target === 'cwd') {
@@ -480,6 +480,8 @@ export async function activateMetadataTarget(
   }
   if (target === 'model') {
     await controller.openModelPanel()
+  } else if (target === 'effort') {
+    await controller.submit('/effort')
   } else {
     controller.openContextPanel()
   }

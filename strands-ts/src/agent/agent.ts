@@ -1084,6 +1084,32 @@ export class Agent implements LocalAgent, InvokableAgent {
   }
 
   /**
+   * Runs the agent's shutdown procedures at end of life. Safe to call more
+   * than once, and a no-op when there is nothing to release.
+   *
+   * Call it directly when you own the agent's lifecycle (e.g. draining on a shutdown signal), or bind
+   * the agent with `await using` to run it automatically on scope exit.
+   *
+   * @example
+   * ```typescript
+   * await using agent = await createHarness()
+   * await agent.invoke('summarize the repo')
+   * // agent.shutdown() runs here as the scope exits
+   * ```
+   */
+  async shutdown(): Promise<void> {
+    await this.memoryManager?.flush()
+  }
+
+  /**
+   * Runs {@link Agent.shutdown} when the agent leaves an `await using` scope, on normal exit and on
+   * throw, so its shutdown procedures run without a manual `finally`.
+   */
+  async [Symbol.asyncDispose](): Promise<void> {
+    await this.shutdown()
+  }
+
+  /**
    * Streams the agent execution, yielding events and returning the final result.
    *
    * The agent loop manages the conversation flow by:

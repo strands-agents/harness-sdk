@@ -98,6 +98,7 @@ navbar:
 # its landing/hub page and `pages` are the key links shown on mobile.
 products:
   - label: Harness
+    accent: orange
     name: Strands harness
     slug: "/harness"
     href: /docs/user-guide/harness/
@@ -110,6 +111,7 @@ products:
       - label: Configuration reference
         href: /docs/user-guide/harness/reference/configuration/
   - label: Harness SDK
+    accent: teal
     name: Strands Harness SDK
     slug: "/harness-sdk"
     href: /docs/user-guide/sdk/
@@ -126,6 +128,7 @@ products:
       - label: Deploy to production
         href: /docs/user-guide/sdk/deploy/operating-agents-in-production/
   - label: Shell
+    accent: yellow
     name: Strands Shell
     slug: "/shell"
     href: /docs/user-guide/shell/
@@ -142,6 +145,7 @@ products:
       - label: Reference
         href: /docs/user-guide/shell/reference/
   - label: Evals
+    accent: pink
     name: Strands Evals
     slug: "/evals"
     href: /docs/user-guide/evals-sdk/
@@ -196,6 +200,7 @@ sidebar:
       - label: Reference
         items:
           - docs/user-guide/harness/reference/configuration
+          - docs/user-guide/harness/versioning
 
   - label: Harness SDK
     items:
@@ -252,8 +257,6 @@ sidebar:
             slug: docs/user-guide/sdk/agents/interventions/human-in-the-loop
           - label: "Coordinate multiple agents"
             slug: docs/user-guide/sdk/multi-agent/multi-agent-patterns
-          - label: "Build a voice agent"
-            slug: docs/user-guide/sdk/bidirectional-streaming/quickstart
       - label: Run guides
         items:
           - label: Deploy to production
@@ -402,20 +405,21 @@ sidebar:
               - docs/user-guide/sdk/streaming/async-iterators
               - docs/user-guide/sdk/streaming/callback-handlers
               - docs/user-guide/sdk/streaming/events
-          - label: Realtime
+          - label: Voice
             items:
               - label: "Overview"
-                slug: docs/user-guide/sdk/bidirectional-streaming
-              - docs/user-guide/sdk/bidirectional-streaming/agent
-              - docs/user-guide/sdk/bidirectional-streaming/models/bedrock
-              - docs/user-guide/sdk/bidirectional-streaming/models/google
-              - docs/user-guide/sdk/bidirectional-streaming/models/openai
-              - docs/user-guide/sdk/bidirectional-streaming/io
-              - docs/user-guide/sdk/bidirectional-streaming/events
-              - docs/user-guide/sdk/bidirectional-streaming/interruption
-              - docs/user-guide/sdk/bidirectional-streaming/hooks
-              - docs/user-guide/sdk/bidirectional-streaming/session-management
-              - docs/user-guide/sdk/bidirectional-streaming/observability
+                slug: docs/user-guide/sdk/bidi
+              - docs/user-guide/sdk/bidi/agent
+              - docs/user-guide/sdk/bidi/session-management
+              - docs/user-guide/sdk/bidi/interrupts
+              - docs/user-guide/sdk/bidi/models/bedrock
+              - docs/user-guide/sdk/bidi/models/google
+              - docs/user-guide/sdk/bidi/models/openai
+              - docs/user-guide/sdk/bidi/io
+              - docs/user-guide/sdk/bidi/events
+              - docs/user-guide/sdk/bidi/barge-in
+              - docs/user-guide/sdk/bidi/hooks
+              - docs/user-guide/sdk/bidi/observability
           - label: Experimental
             items:
               - docs/user-guide/sdk/experimental/agent-config
@@ -594,6 +598,9 @@ sidebar:
             external: true
           - label: PyWebRTC Audio
             href: https://github.com/strands-labs/pywebrtc-audio
+            external: true
+          - label: Strands Decider
+            href: https://github.com/strands-labs/strands-decider
             external: true
       # Feeds llms.txt lesson listing (src/pages/llms.txt.ts extractLinks); visual sidebar built by route-middleware.
       - label: Learning

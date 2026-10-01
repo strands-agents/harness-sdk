@@ -24,6 +24,19 @@ describe('getContextWindowLimit', () => {
     expect(getContextWindowLimit('gemini-2.5-pro')).toBe(1_048_576)
   })
 
+  it('returns 1M for the current-generation Anthropic models', () => {
+    // Guards against the 1M-context 5.5 / 5.1 models resolving to undefined (#4692),
+    // which silently disables proactive compression and reports a wrong utilization.
+    expect(getContextWindowLimit('claude-sonnet-5-5')).toBe(1_000_000)
+    expect(getContextWindowLimit('claude-opus-5-5')).toBe(1_000_000)
+    expect(getContextWindowLimit('claude-fable-5-1')).toBe(1_000_000)
+    expect(getContextWindowLimit('anthropic.claude-sonnet-5-5')).toBe(1_000_000)
+    expect(getContextWindowLimit('anthropic.claude-opus-5-5')).toBe(1_000_000)
+    expect(getContextWindowLimit('anthropic.claude-fable-5-1')).toBe(1_000_000)
+    expect(getContextWindowLimit('global.anthropic.claude-opus-5-5')).toBe(1_000_000)
+    expect(getContextWindowLimit('us.anthropic.claude-fable-5-1')).toBe(1_000_000)
+  })
+
   it('strips Bedrock cross-region prefix before lookup', () => {
     expect(getContextWindowLimit('us.anthropic.claude-sonnet-4-6')).toBe(1_000_000)
     expect(getContextWindowLimit('global.anthropic.claude-sonnet-4-6')).toBe(1_000_000)

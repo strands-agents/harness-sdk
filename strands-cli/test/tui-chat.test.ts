@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   ChatController,
   type ChatBackend,
+  type ChatContextUsage,
   type ChatEvent,
   type ChatPermissionRequest,
   type ChatRunResult,
@@ -1313,7 +1314,7 @@ describe('ChatController', () => {
     })
   })
 
-  it('sets effort from /effort and opens the model panel focused on the slider without an argument', async () => {
+  it('sets effort from /effort and opens an effort-only panel without an argument', async () => {
     const target = backend()
     let effort = 'high'
     target.info = () => ({ model: 'global.anthropic.claude-opus-4-8', effort: effort === 'low' ? 'Low' : 'High' })
@@ -1338,12 +1339,32 @@ describe('ChatController', () => {
 
     await controller.submit('/effort')
     expect(controller.getSnapshot().panel).toMatchObject({
-      kind: 'models',
+      kind: 'effort',
+      rows: [],
       slider: { focused: true, options: [{ id: 'low', active: true }, { id: 'high' }] },
     })
+    expect(target.listModels).not.toHaveBeenCalled()
+
+    await controller.activatePanelRow({ label: 'Effort', description: 'High', value: 'effort:high' })
+    expect(target.setEffort).toHaveBeenLastCalledWith('high')
+    expect(controller.getSnapshot().panel?.slider?.options).toEqual([
+      { id: 'low', label: 'Low' },
+      expect.objectContaining({ id: 'high', active: true }),
+    ])
 
     await controller.submit('/model')
     expect(controller.getSnapshot().panel?.slider?.focused).toBeUndefined()
+  })
+
+  it('reports /effort as unavailable when the model has no effort levels', async () => {
+    const target = backend()
+    target.info = () => ({ model: 'ollama/llama3.2' })
+    target.listEfforts = () => []
+    const controller = new ChatController(target)
+
+    await controller.submit('/effort')
+
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'error', title: 'effort unavailable' })
   })
 
   it('reports an unsupported /effort level as an error', async () => {
@@ -1749,8 +1770,8 @@ describe('ChatController', () => {
         kind: 'permissions',
         title: 'permissions',
         rows: [
-          { label: 'Default (HITL)', badge: { text: 'Active' } },
-          { label: 'Bypass', tone: 'danger' },
+          { label: 'Ask when needed (HITL)', badge: { text: 'Active' } },
+          { label: 'Allow all tools', tone: 'danger' },
           { label: 'bash', control: { kind: 'toggle', checked: true } },
           { label: 'write', control: { kind: 'toggle', checked: false } },
           { label: 'config', description: '/Users/test/.strands/cli/config.json' },
@@ -1758,13 +1779,24 @@ describe('ChatController', () => {
       },
     })
     expect(controller.getSnapshot().panel?.body).toBeUndefined()
+    const permissionsPanelId = controller.getSnapshot().panel?.id
 
     await controller.activatePanelRow(controller.getSnapshot().panel!.rows[1]!)
     expect(target.setPermissionMode).toHaveBeenCalledWith('bypassPermissions')
+    expect(controller.getSnapshot().panel?.id).toBe(permissionsPanelId)
     expect(controller.getSnapshot().panel?.body).toContain('WARNING')
+    const bypassedToolRows = controller.getSnapshot().panel?.rows.slice(2, 4) ?? []
+    expect(bypassedToolRows).toMatchObject([
+      { label: 'bash', control: { kind: 'toggle', checked: true } },
+      { label: 'write', control: { kind: 'toggle', checked: true } },
+    ])
+    expect(bypassedToolRows.every((row) => row.value === undefined)).toBe(true)
 
+    await controller.submit('/permissions default')
+    expect(controller.getSnapshot().panel?.id).toBe(permissionsPanelId)
     await controller.activatePanelRow(controller.getSnapshot().panel!.rows[3]!)
     expect(target.allowPermission).toHaveBeenCalledWith('write')
+    expect(controller.getSnapshot().panel?.id).toBe(permissionsPanelId)
     expect(controller.getSnapshot().panel?.rows.find((row) => row.label === 'write')?.control).toEqual({
       kind: 'toggle',
       checked: true,
@@ -1777,8 +1809,50 @@ describe('ChatController', () => {
       checked: false,
     })
 
-    await controller.submit('/permissions default')
     expect(target.setPermissionMode).toHaveBeenLastCalledWith('default')
+  })
+
+  it('toggles built-in tools through /tools and applies the selection on close', async () => {
+    const apply = vi.fn()
+    const controller = new ChatController(backend(), {
+      builtinTools: {
+        choices: () => [
+          { name: 'shell', description: 'Run shell commands', enabled: true },
+          { name: 'web_search', description: 'Search the web', enabled: false, thirdParty: true },
+        ],
+        apply,
+      },
+    })
+
+    await controller.submit('/tools')
+    expect(controller.getSnapshot().panel).toMatchObject({
+      kind: 'tools',
+      rows: [
+        { label: 'shell', control: { kind: 'toggle', checked: true } },
+        { label: 'web_search', tone: 'warning', control: { kind: 'toggle', checked: false } },
+      ],
+    })
+    const panelId = controller.getSnapshot().panel?.id
+
+    await controller.activatePanelRow(controller.getSnapshot().panel!.rows[1]!)
+    expect(controller.getSnapshot().panel?.id).toBe(panelId)
+    expect(controller.getSnapshot().panel?.rows[1]?.control).toEqual({ kind: 'toggle', checked: true })
+    expect(apply).not.toHaveBeenCalled()
+
+    expect(controller.dismissPanel()).toBe(true)
+    expect(apply).toHaveBeenCalledWith(['shell', 'web_search'])
+    expect(controller.getSnapshot().panel).toBeUndefined()
+  })
+
+  it('closes /tools without reloading when nothing changed', async () => {
+    const apply = vi.fn()
+    const controller = new ChatController(backend(), {
+      builtinTools: { choices: () => [{ name: 'shell', description: 'Run shell commands', enabled: true }], apply },
+    })
+
+    await controller.submit('/tools')
+    controller.dismissPanel()
+    expect(apply).not.toHaveBeenCalled()
   })
 
   it('toggles reasoning visibility through terminal settings', async () => {
@@ -1803,7 +1877,7 @@ describe('ChatController', () => {
     })
   })
 
-  it('opens setup through /setup and settings after appearance updates', async () => {
+  it('keeps /setup available after appearance updates', async () => {
     const requestSetup = vi.fn()
     const controller = new ChatController(backend(), { requestSetup })
 
@@ -1816,20 +1890,17 @@ describe('ChatController', () => {
     await controller.activatePanelRow({ label: '', description: '', value: 'colorMode=light' })
     await controller.activatePanelRow({ label: '', description: '', value: 'settings:General' })
     const rows = controller.getSnapshot().panel?.rows ?? []
-    const setupIndex = rows.findIndex((row) => row.value === 'setup')
-    const setup = rows[setupIndex]
-    expect(setup).toMatchObject({ label: 'Setup', description: 'Providers and agent ›' })
-    expect(rows.map(({ value }) => value)).toEqual(['setupOnLaunch', 'setup', 'telemetry'])
-    expect(await controller.activatePanelRow(setup!)).toBe(true)
+    expect(rows.map(({ value }) => value)).toEqual(['telemetry'])
+    await controller.submit('/setup')
     expect(requestSetup).toHaveBeenCalledOnce()
   })
 
-  it('compacts context and clears both the conversation and visible transcript', async () => {
+  it('compacts context, keeps the visible transcript, and shows the measured context', async () => {
     const target = backend(async function* (prompt) {
       yield { type: 'textDelta', text: `reply to ${prompt}` }
       return { stopReason: 'endTurn', context: { currentTokens: 120 } }
     })
-    let compacted = false
+    let compacted: ChatContextUsage | undefined
     target.compact = vi.fn(async () => compacted)
     target.clear = vi.fn(async () => {})
     const controller = new ChatController(target, { runtime: { session: 'saved: active' } })
@@ -1841,15 +1912,18 @@ describe('ChatController', () => {
     expect(controller.getSnapshot()).toMatchObject({
       completedTurns: [{ prompt: 'Remember this' }],
       context: { currentTokens: 120 },
+      notices: [{ status: 'delivered', text: 'Nothing to compact yet' }],
     })
 
-    compacted = true
+    compacted = { currentTokens: 40, contextWindow: 1_000 }
     await controller.submit('/compact')
 
     expect(target.compact).toHaveBeenCalledTimes(2)
-    expect(controller.getSnapshot()).toMatchObject({
-      completedTurns: [{ prompt: 'Remember this' }],
-      context: {},
+    expect(controller.getSnapshot().completedTurns).toMatchObject([{ prompt: 'Remember this' }])
+    expect(controller.getSnapshot().context).toEqual({ currentTokens: 40, contextWindow: 1_000 })
+    expect(controller.getSnapshot().notices.at(-1)).toMatchObject({
+      status: 'success',
+      text: 'Compacted older conversation context into a summary',
     })
     expect(controller.getSnapshot().composerStatus).toBeUndefined()
     expect(controller.getSnapshot().panel).toBeUndefined()
@@ -1874,7 +1948,7 @@ describe('ChatController', () => {
     const target = backend()
     target.compact = vi.fn(async () => {
       await gate
-      return true
+      return {}
     })
     const controller = new ChatController(target)
 
@@ -1924,6 +1998,32 @@ describe('ChatController', () => {
     expect(activate).toHaveBeenNthCalledWith(1, 'review')
     expect(activate).toHaveBeenNthCalledWith(2, 'review')
     expect(prompts).toEqual(['this change', 'that change'])
+  })
+
+  it('runs a skill chosen from the skills panel and keeps its details reachable', async () => {
+    const prompts: string[] = []
+    const review = { name: 'review', description: 'Review code', instructions: 'Inspect carefully.', active: false }
+    const activate = vi.fn(async () => ({ ...review, active: true }))
+    const controller = new ChatController(
+      backend(async function* (prompt) {
+        prompts.push(prompt)
+        yield { type: 'textDelta', text: 'done' }
+        return { stopReason: 'endTurn' }
+      }),
+      { skills: { list: async () => [review], activate } }
+    )
+
+    await controller.submit('/skills')
+    expect(controller.openSkillDetail('review')).toBe(true)
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'detail', body: 'Inspect carefully.' })
+    controller.dismissPanel()
+
+    const row = controller.getSnapshot().panel!.rows.find((candidate) => candidate.value === 'review')!
+    await controller.activatePanelRow(row)
+
+    expect(activate).toHaveBeenCalledWith('review')
+    expect(prompts).toEqual(['Use the review skill.'])
+    expect(controller.getSnapshot().panel).toBeUndefined()
   })
 
   it('represents an empty MCP configuration as zero servers with its checked path', async () => {

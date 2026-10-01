@@ -21,17 +21,15 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { spawnSync } from 'node:child_process'
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const BUILD_INPUT_DIRECTORIES = ['strands-cli/src', 'harness-ts/src', 'harness-py/src']
+const BUILD_INPUT_DIRECTORIES = ['strands-cli/src', 'harness-py/src']
 const BUILD_INPUT_FILES = [
   'package.json',
   'package-lock.json',
   'strands-cli/package.json',
-  'strands-cli/scripts/bundle-python.js',
+  'strands-cli/scripts/copy-python-runtime.js',
+  'strands-cli/scripts/setup-source.js',
   'strands-cli/tsconfig.base.json',
   'strands-cli/src/tsconfig.json',
-  'harness-ts/package.json',
-  'harness-ts/tsconfig.base.json',
-  'harness-ts/src/tsconfig.json',
   'harness-py/pyproject.toml',
   'harness-py/README.md',
   'harness-py/LICENSE',
@@ -41,10 +39,7 @@ const BUILD_LOCK_TIMEOUT_MS = 120_000
 const BUILD_LOCK_STALE_MS = 300_000
 
 export function isSourceCheckout(packageRoot = PACKAGE_ROOT) {
-  return (
-    existsSync(join(packageRoot, 'src', 'main.ts')) &&
-    existsSync(join(packageRoot, '..', 'harness-ts', 'src', 'index.ts'))
-  )
+  return existsSync(join(packageRoot, 'src', 'main.ts'))
 }
 
 export function sourceBuildFingerprint(repositoryRoot) {
@@ -109,7 +104,6 @@ export async function ensureSourceBuild(packageRoot = PACKAGE_ROOT) {
     }
 
     for (let attempt = 0; attempt < 3; attempt++) {
-      rmSync(join(repositoryRoot, 'harness-ts', 'dist'), { recursive: true, force: true })
       rmSync(join(repositoryRoot, 'strands-cli', 'dist'), { recursive: true, force: true })
       runSourceBuild(repositoryRoot)
 
@@ -119,9 +113,7 @@ export async function ensureSourceBuild(packageRoot = PACKAGE_ROOT) {
           throw new Error(`Build completed without creating ${entrypoint}.`)
         }
         const paths = []
-        for (const directory of ['harness-ts/dist', 'strands-cli/dist']) {
-          collectFiles(join(repositoryRoot, directory), paths)
-        }
+        collectFiles(join(repositoryRoot, 'strands-cli', 'dist'), paths)
         const outputs = paths.map((path) => relative(repositoryRoot, path))
         const temporary = `${stateFile}.${process.pid}.tmp`
         writeFileSync(temporary, `${JSON.stringify({ fingerprint: completedFingerprint, outputs })}\n`)
@@ -165,7 +157,9 @@ function collectFiles(directory, paths) {
 function runSourceBuild(repositoryRoot) {
   const windows = process.platform === 'win32'
   const command = windows ? (process.env.ComSpec ?? 'cmd.exe') : 'npm'
-  const args = windows ? ['/d', '/s', '/c', 'npm run build'] : ['run', 'build']
+  const args = windows
+    ? ['/d', '/s', '/c', 'npm run build --prefix strands-cli']
+    : ['run', 'build', '--prefix', 'strands-cli']
   const result = spawnSync(command, args, {
     cwd: repositoryRoot,
     encoding: 'utf8',

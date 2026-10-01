@@ -104,7 +104,7 @@ pip install "strands-harness[openai]"      # or [anthropic], [gemini] (the `goog
 Out of the box, `create_harness()` gives you an agent that:
 
 - **Runs on frontier models with reasoning on**, across Amazon Bedrock, Anthropic, OpenAI, and
-  Google. The default is Claude Opus 4.8 on Amazon Bedrock, behind a tuned system prompt: explore
+  Google. The default is Claude Opus 5 on Amazon Bedrock, behind a tuned system prompt: explore
   before changing things, confirm before anything irreversible, verify before calling a task done.
 - **Comes with working tools**: a shell, file tools (`read`, `write`, `edit`), web access, and
   `programmatic_tool_caller`, a sandbox where it writes code that chains, loops over, and
@@ -529,6 +529,14 @@ prompt = build_system_prompt(
     context_parts=[f"Current time: {now}"],
 )
 ```
+
+## Versioning
+
+Strands harness is 0.x and versioned separately from the Strands Harness SDK. Patch releases
+(0.x.Y) carry bug fixes and new features, including new built-in tools; minor releases (0.X.0)
+carry breaking changes and say so in the release notes. Pin to a minor (`strands-harness~=0.1.0`)
+to avoid breaking changes; patch releases still add features and tools. Full policy:
+[Versioning and Support](https://strandsagents.com/docs/user-guide/harness/versioning/).
 
 ## Contributing ❤️
 

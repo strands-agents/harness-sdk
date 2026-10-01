@@ -15,17 +15,20 @@ import termios
 import time
 
 ANSI_ESCAPE = re.compile(rb"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
-CHAT_READY = b"\x1b[?1003l\x1b[?1002h"
+CHAT_READY = b"\x1b[?1002l\x1b[?1003h"
 
 
 def main() -> int:
     command = sys.argv[1:]
-    ready_marker = b"Message Lifecycle Fixture"
+    ready_marker = b"Enter to send"
     shell_mode = os.environ.get("STRANDS_CLI_TEST_SHELL_MODE")
     frog_mode = os.environ.get("STRANDS_CLI_TEST_FROG_MODE") == "true"
-    skip_intro = os.environ.get("STRANDS_CLI_TEST_SKIP_INTRO") == "true"
+    startup_typing = os.environ.get("STRANDS_CLI_TEST_STARTUP_TYPING") == "true"
+    intro = os.environ.get("STRANDS_CLI_TEST_INTRO") == "true"
+    resize = os.environ.get("STRANDS_CLI_TEST_RESIZE") == "true"
     master, slave = pty.openpty()
-    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
+    rows = 40 if startup_typing else 20 if intro else 30
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, 100, 0, 0))
     initial_terminal = termios.tcgetattr(slave)
     process = subprocess.Popen(
         command,
@@ -50,18 +53,18 @@ def main() -> int:
                 return
             transcript.extend(chunk)
 
-    def wait_for(markers: list[bytes], timeout: float = 8.0, *, styled: bool = True) -> None:
+    def wait_for(markers: list[bytes], timeout: float = 8.0, *, styled: bool = True, start: int = 0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             pump()
-            output = bytes(transcript) if styled else ANSI_ESCAPE.sub(b"", bytes(transcript))
+            output = bytes(transcript[start:]) if styled else ANSI_ESCAPE.sub(b"", bytes(transcript[start:]))
             if all(marker in output for marker in markers):
                 return
             if process.poll() is not None:
                 break
             select.select([master], [], [], 0.05)
         pump()
-        output = bytes(transcript) if styled else ANSI_ESCAPE.sub(b"", bytes(transcript))
+        output = bytes(transcript[start:]) if styled else ANSI_ESCAPE.sub(b"", bytes(transcript[start:]))
         missing = [marker.decode() for marker in markers if marker not in output]
         raise RuntimeError(f"missing markers {missing}; returncode={process.poll()}; output={transcript!r}")
 
@@ -86,13 +89,45 @@ def main() -> int:
         pump()
 
     try:
-        if skip_intro:
-            wait_for_raw_mode()
-            os.write(master, b" ")
-        elif os.environ.get("STRANDS_CLI_TEST_INTRO") == "true":
-            wait_for([b"[ space to skip ]"], styled=False)
         wait_for([ready_marker, CHAT_READY])
         wait_for_raw_mode()
+        def set_size(columns: int, height: int) -> None:
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", height, columns, 0, 0))
+            os.kill(process.pid, signal.SIGWINCH)
+
+        def settle(timeout: float = 0.15) -> None:
+            deadline = time.monotonic() + timeout
+            last = len(transcript)
+            while time.monotonic() < deadline:
+                pump()
+                if len(transcript) != last:
+                    last = len(transcript)
+                    deadline = time.monotonic() + timeout
+                else:
+                    select.select([master], [], [], 0.05)
+
+        resize_output = b""
+        burst_output = b""
+        noop_output = b""
+        if resize:
+            start = len(transcript)
+            for columns, height in [(80, 24), (40, 16), (22, 10), (160, 50), (160, 25), (100, 30)]:
+                offset = len(transcript)
+                set_size(columns, height)
+                wait_for([b"\x1b[1;1H"], timeout=2.0, start=offset)
+            resize_output = bytes(transcript[start:])
+
+            burst_start = len(transcript)
+            for columns, height in [(70, 25), (50, 18), (120, 40)]:
+                set_size(columns, height)
+            wait_for([b"\x1b[1;1H"], timeout=2.0, start=burst_start)
+            settle()
+            burst_output = bytes(transcript[burst_start:])
+
+            noop_start = len(transcript)
+            set_size(120, 40)
+            settle(0.2)
+            noop_output = bytes(transcript[noop_start:])
         if frog_mode:
             os.write(master, b"/frog peek")
             wait_for([b"/frog peek"], timeout=2.0, styled=False)
@@ -114,10 +149,13 @@ def main() -> int:
             time.sleep(0.2)
             os.write(master, b"\x03")
             wait_for([b"Cancelled", b"__SHELL_IDLE__"], timeout=4.0, styled=False)
-        for keypress in (b"junk", b"\x7f", b"\x7f", b"\x7f", b"\x7f", b"/exit"):
+        draft = b"startup draft" if startup_typing else b"junk"
+        os.write(master, draft)
+        wait_for([draft], timeout=2.0, styled=False)
+        for keypress in [b"\x7f"] * len(draft) + [b"/exit"]:
             os.write(master, keypress)
             time.sleep(0.05)
-        wait_for(["◆ /exit".encode()], timeout=2.0, styled=False)
+        wait_for([b"/exit"], timeout=2.0, styled=False)
         time.sleep(0.2)
         os.write(master, b"\r")
 
@@ -131,6 +169,9 @@ def main() -> int:
                     "returnCode": process.returncode,
                     "termiosRestored": initial_terminal == final_terminal,
                     "transcript": base64.b64encode(transcript).decode(),
+                    "resizeTranscript": base64.b64encode(resize_output).decode(),
+                    "resizeBurstTranscript": base64.b64encode(burst_output).decode(),
+                    "resizeNoopTranscript": base64.b64encode(noop_output).decode(),
                 }
             )
         )

@@ -31,7 +31,6 @@ export function ModelPicker({
   onPanelElement,
   onRowElement,
   onFilterElement,
-  onPinElement,
   onSearchElement,
   onSliderElement,
   onControlElement,
@@ -49,7 +48,6 @@ export function ModelPicker({
   pressedControl?: string
   hoveredControl?: string
   onFilterElement?: (id: string, element: DOMElement | null) => void
-  onPinElement?: (index: number, element: DOMElement | null) => void
   onSearchElement?: (element: DOMElement | null) => void
   onSliderElement?: (element: DOMElement | null) => void
   onControlElement?: (key: string, element: DOMElement | null) => void
@@ -89,7 +87,6 @@ export function ModelPicker({
       {...(pressedRow !== undefined ? { pressed: pressedRow } : {})}
       {...(hoveredRow !== undefined ? { hovered: hoveredRow } : {})}
       {...(onRowElement ? { onRowElement } : {})}
-      {...(onPinElement ? { onPinElement } : {})}
     />
   )
   return (
@@ -279,18 +276,20 @@ export function EffortSlider({
   slider,
   width,
   compact,
-  pressed,
+  pressed = false,
   hovered,
-  focused,
+  focused = false,
   onElement,
+  showStops = false,
 }: {
   slider: ChatPanelSlider
   width: number
   compact: boolean
-  pressed: boolean
+  pressed?: boolean
   hovered?: boolean
-  focused: boolean
+  focused?: boolean
   onElement?: (element: DOMElement | null) => void
+  showStops?: boolean
 }): ReactElement {
   const { accent, hover, selection } = useTheme()
   const activeIndex = Math.max(
@@ -304,6 +303,9 @@ export function EffortSlider({
   const thumbCenter = positions[activeIndex] ?? 0
   const thumbStart = Math.max(0, Math.min(width - 3, thumbCenter - 1))
   const track = Array.from({ length: width }, () => '─')
+  if (showStops) {
+    for (const position of positions) track[position] = '┬'
+  }
   track.fill('█', thumbStart, thumbStart + 3)
   const ticks = Array.from({ length: width }, () => ' ')
   for (const position of positions) {
@@ -311,23 +313,57 @@ export function EffortSlider({
   }
   return (
     <Box marginTop={compact ? 0 : 1} flexDirection="column" alignItems="center">
-      <Box>
-        <Text dimColor>{slider.label} </Text>
-        <Text
-          {...(slider.disabled ? { dimColor: true } : { color: pressed ? hover : accent })}
-          bold={slider.disabled !== true}
-        >
-          {activeOption?.label ?? 'Unavailable'}
-        </Text>
-      </Box>
+      {!showStops ? (
+        <Box>
+          <Text dimColor>{slider.label} </Text>
+          <Text
+            {...(slider.disabled ? { dimColor: true } : { color: pressed ? hover : accent })}
+            bold={slider.disabled !== true}
+          >
+            {activeOption?.label ?? 'Unavailable'}
+          </Text>
+        </Box>
+      ) : null}
       <Box
         ref={onElement}
         width={width}
-        backgroundColor={hovered || pressed || focused ? selection : undefined}
+        backgroundColor={!showStops && (hovered || pressed || focused) ? selection : undefined}
         flexDirection="column"
       >
         <Text {...(slider.disabled ? { dimColor: true } : { color: accent })}>{track.join('')}</Text>
-        {!compact ? <Text dimColor>{ticks.join('')}</Text> : null}
+        {showStops ? (
+          <Box width={width} height={1}>
+            {slider.options.map((option, index) => {
+              // Label cells follow sliderOptionAtMouse's rounding, including ties.
+              const intervals = Math.max(1, slider.options.length - 1)
+              const span = Math.max(1, width - 1)
+              const start = index === 0 ? 0 : Math.min(width, Math.ceil(((index - 0.5) * span) / intervals))
+              const end =
+                index === slider.options.length - 1
+                  ? width
+                  : Math.min(width, Math.ceil(((index + 0.5) * span) / intervals))
+              return (
+                <Box
+                  key={option.id}
+                  width={Math.max(0, end - start)}
+                  flexShrink={0}
+                  justifyContent={index === 0 ? 'flex-start' : index === positions.length - 1 ? 'flex-end' : 'center'}
+                  overflow="hidden"
+                >
+                  <Text
+                    {...(index === activeIndex ? { color: accent } : {})}
+                    dimColor={index !== activeIndex}
+                    wrap="truncate-end"
+                  >
+                    {option.label}
+                  </Text>
+                </Box>
+              )
+            })}
+          </Box>
+        ) : !compact ? (
+          <Text dimColor>{ticks.join('')}</Text>
+        ) : null}
       </Box>
     </Box>
   )
@@ -343,15 +379,13 @@ function ModelRows({
   focused,
   emptyMessage,
   onRowElement,
-  onPinElement,
 }: Pick<PanelRowsProps, 'panel' | 'rows' | 'selected' | 'start' | 'onRowElement'> & {
   pressed?: number
   hovered?: number
   focused: boolean
   emptyMessage: string
-  onPinElement?: (index: number, element: DOMElement | null) => void
 }): ReactElement {
-  const { accent, hover, selection } = useTheme()
+  const { hover, selection } = useTheme()
   return (
     <Box flexGrow={1} flexDirection="column" overflow="hidden">
       {rows.length === 0 ? (
@@ -361,32 +395,17 @@ function ModelRows({
           const index = start + visibleIndex
           const active = index === selected
           const pressedRow = index === pressed
-          const showPin = row.value && (row.pinned || index === hovered || pressedRow || (focused && active))
           return (
             <Box
               key={`${panel.id}-model-${index}`}
               ref={(element) => onRowElement?.(index, element)}
               width="100%"
               paddingX={1}
-              justifyContent="space-between"
               backgroundColor={index === hovered || pressedRow || (focused && active) ? selection : undefined}
             >
               <Text wrap="truncate-end" {...(pressedRow && row.value ? { color: hover } : {})} bold={focused && active}>
                 {row.label}
               </Text>
-              <Box flexShrink={0}>
-                {showPin ? (
-                  <Box ref={(element) => onPinElement?.(index, element)}>
-                    <Text
-                      {...(pressedRow ? { color: hover } : row.pinned ? { color: accent } : {})}
-                      dimColor={!row.pinned && !pressedRow}
-                    >
-                      {' '}
-                      {row.pinned ? '★' : '☆'}
-                    </Text>
-                  </Box>
-                ) : null}
-              </Box>
             </Box>
           )
         })
