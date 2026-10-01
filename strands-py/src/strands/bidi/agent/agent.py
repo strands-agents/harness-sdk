@@ -74,6 +74,7 @@ from .loop import _AgentLoop
 
 if TYPE_CHECKING:
     from ..._context_manager.context_manager import ContextManager
+    from ...session.session_manager import SessionManager
     from ...telemetry.metrics import EventLoopMetrics
 
 logger = logging.getLogger(__name__)
@@ -103,6 +104,7 @@ class BidiAgent(LocalAgent):
         description: str | None = None,
         hooks: list[HookProvider] | None = None,
         state: AgentState | dict | None = None,
+        session_manager: "SessionManager[LocalAgent] | None" = None,
         storage: Storage | None = None,
     ):
         """Initialize bidirectional agent.
@@ -119,9 +121,11 @@ class BidiAgent(LocalAgent):
             description: Description of what the Agent does.
             hooks: Optional list of hook providers to register for lifecycle events.
             state: Stateful information for the agent. Can be either an AgentState object, or a json serializable dict.
+            session_manager: Manager for handling agent sessions including conversation history and state.
+                If provided, enables session-based persistence and state management.
             storage: Default storage backend for agent subsystems.
                 When provided, subsystems that do not have their own explicit storage
-                resolve from this value. Each subsystem
+                (e.g., SessionManager) resolve from this value. Each subsystem
                 auto-namespaces under its own prefix to avoid key collisions.
                 Storage specified directly on a subsystem always takes precedence over
                 this agent-level default. Defaults to None.
@@ -186,8 +190,12 @@ class BidiAgent(LocalAgent):
             for hook in hooks:
                 self.hooks.add_hook(hook)
 
-        self._session_manager = None
-        self._session_id = uuid.uuid4().hex[:8]
+        self._session_manager = session_manager
+        if self._session_manager:
+            self._session_id: str = getattr(self._session_manager, "session_id", uuid.uuid4().hex[:8])
+            self.hooks.add_hook(self._session_manager)
+        else:
+            self._session_id = uuid.uuid4().hex[:8]
 
         self._loop = _AgentLoop(self)
 

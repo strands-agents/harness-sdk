@@ -21,6 +21,7 @@ def _make_mock_agent():
         {"role": "assistant", "content": [{"text": "World"}]},
     ]
     agent.model = MagicMock()
+    agent.aux_model = agent.model
     agent.take_snapshot = MagicMock(return_value=Snapshot(scope="agent", schema_version="1.0", data={}, app_data={}))
     agent.load_snapshot = MagicMock()
     agent.__hash__ = MagicMock(return_value=id(agent))
@@ -589,6 +590,22 @@ async def test_nl_judge_passes_on_first_attempt():
         system_prompt=JUDGE_SYSTEM_PROMPT,
         structured_output_model=JudgeOutcome,
     )
+
+
+@pytest.mark.asyncio
+async def test_nl_judge_uses_host_aux_model_when_no_judge_model():
+    agent = _make_mock_agent()
+    agent.aux_model = MagicMock(name="aux_model")
+    mock_judge = MagicMock()
+    mock_judge.invoke_async = AsyncMock(return_value=_mock_invoke_result(True))
+
+    with patch("strands.agent.agent.Agent", return_value=mock_judge) as mock_cls:
+        plugin = GoalLoop(goal="be concise", max_attempts=3)
+        hooks = _setup_plugin_with_hooks(plugin, agent)
+        hooks["before"][0](BeforeInvocationEvent(agent=agent))
+        await hooks["after"][0](AfterInvocationEvent(agent=agent))
+
+    assert mock_cls.call_args.kwargs["model"] is agent.aux_model
 
 
 @pytest.mark.asyncio

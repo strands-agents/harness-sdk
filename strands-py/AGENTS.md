@@ -289,6 +289,7 @@ The un-lintable rules an agent most often misses — every one is **enforced by 
 - Let a raw vendor error escape a provider boundary — translate to a typed SDK exception
 - Keep a model-provider config as a plain `dict` + `cast` — store the `TypedDict`
 - Buffer a stream into a list before yielding
+- Use `invocation_state` for SDK-internal state — it is user-only (see the [root AGENTS.md](../AGENTS.md))
 
 ## Development Commands
 

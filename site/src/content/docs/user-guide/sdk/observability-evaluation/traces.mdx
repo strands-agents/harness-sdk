@@ -310,6 +310,7 @@ Common visualization options include:
 3. **AWS X-Ray**: For AWS-based applications
 4. **Zipkin**: Lightweight distributed tracing
 5. **Opik**: For evaluating and optimizing multi-agent systems
+6. **Confident AI**: For tracing, online evals, and annotation queues
 
 ## Local Development Setup
 
@@ -550,13 +551,11 @@ There are several ways to send traces, metrics, and logs to CloudWatch. Please v
 
 ## Third-party observability backends
 
-Because Strands emits standard OpenTelemetry spans, you can point them at whichever observability backend you already use. Set the OTLP endpoint and headers (see [Environment Variables](#environment-variables)) to your provider, or follow the provider's own Strands guide:
+Because Strands emits standard OpenTelemetry spans, you can point them at whichever observability backend you already use. Set the OTLP endpoint and headers (see [Environment Variables](#environment-variables)) to your provider, or follow the provider's own Strands guide.
 
-| Backend | Integration guide |
-|---------|-------------------|
-| Langfuse | [Observability for Strands Agents with Langfuse](https://langfuse.com/docs/integrations/strands-agents) |
-| Arize Phoenix | [Strands Agents Tracing](https://arize.com/docs/phoenix/integrations/python/strands-agents/strands-agents-tracing) |
-| Braintrust | [Strands Agent SDK](https://www.braintrust.dev/docs/integrations/sdk-integrations/strands-agent) |
-| LangSmith | [Trace Strands Agents applications](https://docs.langchain.com/langsmith/trace-with-strands-agents) |
+See the [Observability section of the integrations
+page](/integrations/?type=observability) for backends with a Strands integration, such
+as Langfuse, Arize Phoenix, Braintrust, LangSmith, and Confident AI, with language support
+and a link to each provider's guide.
 
 Any OpenTelemetry-compatible backend works the same way: Strands does not require a specific provider, so you keep your existing tracing setup when you adopt it.

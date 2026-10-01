@@ -168,6 +168,15 @@ class _PassProgress:
     event_loop_produced_result: bool = False
 
 
+def _resolve_aux_model(aux_model: Model | str | None) -> Model | None:
+    """Resolve ``aux_model`` like ``model``: a string is a Bedrock model id; a ``ModelRouter`` is rejected."""
+    if aux_model is None or isinstance(aux_model, Model):
+        return aux_model
+    if isinstance(aux_model, str):
+        return BedrockModel(model_id=aux_model)
+    raise TypeError(f"aux_model must be a Model, a Bedrock model id, or None, got {type(aux_model).__name__}")
+
+
 class Agent(AgentBase, LocalAgent):
     """Core Agent implementation.
 
@@ -199,6 +208,7 @@ class Agent(AgentBase, LocalAgent):
         load_tools_from_directory: bool = False,
         trace_attributes: Mapping[str, AttributeValue] | None = None,
         *,
+        aux_model: Model | str | None = None,
         agent_id: str | None = None,
         name: str | None = None,
         description: str | None = None,
@@ -226,6 +236,14 @@ class Agent(AgentBase, LocalAgent):
             model: Provider for running inference or a string representing the model-id for Bedrock to use.
                 May also be a ``ModelRouter``, whose first candidate is resolved to a concrete model and
                 exposed as ``agent.model``. Defaults to strands.models.BedrockModel if None.
+            aux_model: Optional model for auxiliary side calls the SDK makes outside the main agent loop:
+                context summarization, memory extraction, the HITL risk classifier, LLM steering, the
+                goal judge, and the ``web_fetch`` analyst. Defaults to ``model``, so leaving it unset
+                changes nothing; set it (typically to a smaller, cheaper model) to move every side call
+                off the main model at once. Each side call resolves its model as: the component's own
+                ``model=`` > ``aux_model`` > ``model``. Accepts a ``Model`` or a Bedrock model id string,
+                like ``model``; a ``ModelRouter`` is not accepted because auxiliary calls run outside the
+                agent loop the router attaches to.
             messages: List of initial messages to pre-load into the conversation.
                 Defaults to an empty list if None.
             tools: List of tools to make available to the agent.
@@ -334,6 +352,7 @@ class Agent(AgentBase, LocalAgent):
 
         Raises:
             ValueError: If agent id contains path separators.
+            TypeError: If ``aux_model`` is not a ``Model``, a string, or ``None``.
         """
         self._model_router: ModelRouter | None = None
         if isinstance(model, ModelRouter):
@@ -345,6 +364,7 @@ class Agent(AgentBase, LocalAgent):
             self.model = BedrockModel(model_id=model)
         else:
             self.model = model
+        self._aux_model: Model | None = _resolve_aux_model(aux_model)
         self.messages = messages if messages is not None else []
         if sandbox is not None and not isinstance(sandbox, Sandbox):
             raise TypeError(f"sandbox must be a Sandbox instance or None, got {type(sandbox).__name__}")
@@ -666,6 +686,19 @@ class Agent(AgentBase, LocalAgent):
     def storage(self) -> Storage | None:
         """Default storage backend for agent subsystems."""
         return self._storage
+
+    @property
+    def aux_model(self) -> Model:
+        """Model for auxiliary side calls (summarization, memory extraction, classification, steering, web fetch).
+
+        Resolution order: the ``aux_model`` passed at construction > ``model``.
+        """
+        return self._aux_model if self._aux_model is not None else self.model
+
+    @aux_model.setter
+    def aux_model(self, aux_model: Model | str | None) -> None:
+        """Reassign the auxiliary model; ``None`` reverts to following ``model``."""
+        self._aux_model = _resolve_aux_model(aux_model)
 
     @property
     def context_manager(self) -> "ContextManager | None":

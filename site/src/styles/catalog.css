@@ -306,9 +306,6 @@ body:has(.cat-page) {
   color: var(--sl-color-gray-3);
   white-space: nowrap;
 }
-.cat-langs {
-  white-space: nowrap;
-}
 .cat-stat {
   display: inline-flex;
   align-items: center;
