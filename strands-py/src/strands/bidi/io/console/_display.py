@@ -5,7 +5,7 @@ from typing import Any
 from rich.console import Console, Group, RenderableType
 from rich.live import Live
 from rich.padding import Padding
-from rich.segment import Segments
+from rich.segment import Segment, Segments
 from rich.table import Table
 from rich.text import Text
 
@@ -94,7 +94,7 @@ class Display:
         self.started = False
         self.live.stop()
         if self.blocks:
-            self.console.print(Group(*(block for block in self.blocks.values() if block)))
+            self._print_blocks([block for block in self.blocks.values() if block])
             self.blocks.clear()
         self.console.show_cursor()
 
@@ -114,9 +114,25 @@ class Display:
                 completed.append(block)
 
         if completed:
-            self.console.print(Group(*completed))
+            self._print_blocks(completed)
         else:
             self.live.refresh()
+
+    def _print_blocks(self, blocks: list[DisplayBlock]) -> None:
+        """Trim scrollback padding while preserving visible background colors."""
+        segments = []
+        color_enabled = self.console.color_system is not None and not self.console.no_color
+        for line in self.console.render_lines(Group(*blocks), pad=False):
+            # Background-colored spaces paint the user box, including its empty padding lines.
+            if not (color_enabled and any(segment.style and segment.style.bgcolor for segment in line)):
+                while line and not line[-1].control and not line[-1].text.rstrip(" "):
+                    line.pop()
+                if line:
+                    last = line[-1]
+                    line[-1] = Segment(last.text.rstrip(" "), last.style, last.control)
+            segments.extend(line)
+            segments.append(Segment.line())
+        self.console.print(Segments(segments), end="")
 
     def __rich__(self) -> RenderableType:
         """Render the newest content and input block within the terminal height."""
