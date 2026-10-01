@@ -1,7 +1,6 @@
 import asyncio
 import io
 import signal
-import sys
 from functools import partial
 from unittest.mock import Mock
 
@@ -226,32 +225,6 @@ async def test_output_preserves_user_background_padding(console, output_stream, 
     else:
         exp_lines = [("", []), ("> Question", [None] * 10), ("", []), ("", [])]
     assert tru_lines == exp_lines
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("stream_name", ["stdout", "stderr"])
-@pytest.mark.parametrize("end", ["\n", ""])
-@pytest.mark.parametrize("message", ["Interruption confirmed.", "literal [/item]", "[red]literal[/red]"])
-@pytest.mark.parametrize("console", [{"force_interactive": True}], indirect=True)
-async def test_output_routes_prints_through_live_display(console, stream_name, end, message):
-    output = console.output()
-    original_stream = getattr(sys, stream_name)
-    await output.start(Mock())
-
-    try:
-        await output(BidiTranscriptStartEvent("assistant", "speech"))
-        await output(BidiTranscriptDeltaEvent("Once upon a time", "assistant", "speech"))
-        with console._display.console.capture() as capture:
-            print(message, file=getattr(sys, stream_name), end=end, flush=True)
-        tru_message = Text.from_ansi(capture.get()).plain.splitlines()[0]
-        exp_message = message
-        assert tru_message == exp_message
-        assert console._display.blocks["speech"].plain == "Once upon a time"
-        await output(BidiTranscriptStopEvent("assistant", "speech"))
-    finally:
-        await output.stop()
-
-    assert getattr(sys, stream_name) is original_stream
 
 
 @pytest.mark.asyncio

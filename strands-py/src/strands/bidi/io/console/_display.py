@@ -71,8 +71,7 @@ class Display:
         self.placeholder = placeholder
         self.blocks: dict[str, DisplayBlock] = {}
         self.draft = ""
-        # Redirected print output must remain literal, including flushed partial lines.
-        self.console = Console(markup=False)
+        self.console = Console()
         self.live: Live
         self.started = False
 
@@ -81,7 +80,9 @@ class Display:
         if self.started:
             return
 
-        self.live = Live(self, console=self.console, auto_refresh=False, transient=True)
+        self.live = Live(
+            self, console=self.console, auto_refresh=False, transient=True, redirect_stdout=False, redirect_stderr=False
+        )
         self.live.start(refresh=True)
         self.started = True
 
