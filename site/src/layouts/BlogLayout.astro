@@ -16,7 +16,7 @@ interface Props {
   description?: string
   ogImage?: string
   canonicalUrl?: string
-  /** Thin archive pages (tag/author) set this to keep near-duplicate content out of the index */
+  /** Thin archive pages (tag/author) set this to keep near-duplicate content out of the search engine and site search indexes */
   noindex?: boolean
   /**
    * Additional head tags (e.g. per-post JSON-LD, article OG metas). These must
@@ -62,7 +62,7 @@ head.push(...extraHead)
 ---
 
 <StarlightPage
-  frontmatter={{ title, description, template: 'splash', pagefind: false, head, hero: { actions: [] } }}
+  frontmatter={{ title, description, template: 'splash', pagefind: !noindex, head, hero: { actions: [] } }}
   hasSidebar={false}
 >
   {/* Splash pages omit the `id="_top"` that Starlight puts on doc-page h1s,
