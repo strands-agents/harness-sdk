@@ -20,6 +20,12 @@ const faviconHref = base.endsWith('/') ? `${base}favicon.svg` : `${base}/favicon
 // Self-referencing canonical (param-free) so tracking params like ?utm_source=...
 // don't get indexed as duplicate homepages. Docs/blog pages get theirs from Starlight.
 const canonicalHref = new URL(base, Astro.site ?? 'https://strandsagents.com').href;
+// Standalone pages don't inherit Starlight's head, so declare the shared
+// /og-image.png share card here too (docs/blog get theirs from Starlight).
+const ogImageHref = new URL('og-image.png', Astro.site ?? 'https://strandsagents.com').href;
+const pageTitle = 'Strands Agents | Open source SDK for AI agents in Python and TypeScript';
+const pageDescription =
+  'Open-source SDK for building and running AI agents in Python and TypeScript: lifecycle controls, tools, MCP, multi-agent, memory, streaming, guardrails, and evals.';
 ---
 
 <!doctype html>
@@ -27,13 +33,22 @@ const canonicalHref = new URL(base, Astro.site ?? 'https://strandsagents.com').h
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Strands Agents | Open source SDK for AI agents in Python and TypeScript</title>
-    <meta
-      name="description"
-      content="Open-source SDK for building and running AI agents in Python and TypeScript: lifecycle controls, tools, MCP, multi-agent, memory, streaming, guardrails, and evals."
-    />
+    <title>{pageTitle}</title>
+    <meta name="description" content={pageDescription} />
     <link rel="canonical" href={canonicalHref} />
     <link rel="icon" type="image/svg+xml" href={faviconHref} />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={canonicalHref} />
+    <meta property="og:title" content={pageTitle} />
+    <meta property="og:description" content={pageDescription} />
+    <meta property="og:image" content={ogImageHref} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Strands Agents — open source AI agent SDK" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={pageTitle} />
+    <meta name="twitter:description" content={pageDescription} />
+    <meta name="twitter:image" content={ogImageHref} />
     <script is:inline>
       // Apply the theme before first paint to avoid a flash. With no saved
       // preference, follow the system color scheme (matches Starlight's docs
