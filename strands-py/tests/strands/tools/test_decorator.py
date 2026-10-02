@@ -2,6 +2,7 @@
 Tests for the function-based tool decorator pattern.
 """
 
+import json
 import warnings
 from asyncio import Queue
 from collections.abc import AsyncGenerator
@@ -631,10 +632,14 @@ async def test_tool_decorator_preserves_non_ascii_structured_return_values(alist
     for tool, expected_fragments in (
         (dict_return_tool, ('"message": "こんにちは 🌏"',)),
         (list_return_tool, ('"你好"', '"🙂"')),
-        (model_return_tool, ('"message":"こんにちは 🌏"',)),
+        (model_return_tool, ('"message": "こんにちは 🌏"',)),
     ):
         events = await alist(tool.stream(tool_use, {}))
-        text = events[-1]["tool_result"]["content"][0]["text"]
+        block = events[-1]["tool_result"]["content"][0]
+        if "json" in block:
+            text = json.dumps(block["json"], ensure_ascii=False)
+        else:
+            text = block["text"]
 
         assert "\\u" not in text
         for fragment in expected_fragments:
@@ -922,7 +927,7 @@ async def test_return_type_validation(alist):
 
     result = (await alist(stream))[-1]
     assert result["tool_result"]["status"] == "success"
-    assert result["tool_result"]["content"][0]["text"] == '{"key": "value"}'
+    assert result["tool_result"]["content"][0]["json"] == {"key": "value"}
 
     tool_use = {"toolUseId": "test-id", "input": {"param": "str"}}
     stream = union_return_tool.stream(tool_use, {})
@@ -1029,7 +1034,7 @@ async def test_custom_tool_result_handling(alist):
 
 @pytest.mark.asyncio
 async def test_tool_result_json_serialization_dict(alist):
-    """Test that dict results are serialized as JSON."""
+    """Test that dict results are wrapped as structured JSON content."""
 
     @strands.tool
     def dict_tool() -> dict:
@@ -1040,9 +1045,10 @@ async def test_tool_result_json_serialization_dict(alist):
     stream = dict_tool.stream(tool_use, {})
 
     result = (await alist(stream))[-1]
-    text = result["tool_result"]["content"][0]["text"]
+    content = result["tool_result"]["content"][0]
 
-    assert text == '{"key": "value", "number": 42}'
+    assert content["json"] == {"key": "value", "number": 42}
+    assert "text" not in content
 
 
 @pytest.mark.asyncio
@@ -1065,7 +1071,7 @@ async def test_tool_result_json_serialization_list(alist):
 
 @pytest.mark.asyncio
 async def test_tool_result_json_serialization_pydantic(alist):
-    """Test that Pydantic model results are serialized as JSON."""
+    """Test that Pydantic model results are wrapped as structured JSON content."""
     from pydantic import BaseModel
 
     class MyModel(BaseModel):
@@ -1081,9 +1087,10 @@ async def test_tool_result_json_serialization_pydantic(alist):
     stream = pydantic_tool.stream(tool_use, {})
 
     result = (await alist(stream))[-1]
-    text = result["tool_result"]["content"][0]["text"]
+    content = result["tool_result"]["content"][0]
 
-    assert text == '{"name":"test","count":5}'
+    assert content["json"] == {"name": "test", "count": 5}
+    assert "text" not in content
 
 
 @pytest.mark.asyncio
@@ -1133,6 +1140,55 @@ async def test_tool_result_json_serialization_non_serializable(alist):
     text = result["tool_result"]["content"][0]["text"]
 
     assert text == "custom_str_repr"
+
+
+@pytest.mark.asyncio
+async def test_tool_result_dict_non_serializable_value_falls_back_to_text(alist):
+    """Test that dicts failing JSON serialization fall back to str()."""
+
+    class CustomClass:
+        def __repr__(self):
+            return "CustomClass()"
+
+    @strands.tool
+    def dict_tool() -> dict:
+        """Returns a dict with a non-serializable value."""
+        return {"key": CustomClass()}
+
+    tool_use = {"toolUseId": "test-id", "input": {}}
+    stream = dict_tool.stream(tool_use, {})
+
+    result = (await alist(stream))[-1]
+    content = result["tool_result"]["content"][0]
+
+    assert content["text"] == "{'key': CustomClass()}"
+    assert "json" not in content
+
+
+@pytest.mark.asyncio
+async def test_tool_result_pydantic_dumps_native_types_as_json_scalars(alist):
+    """Test that Pydantic results serialize native types (datetime, UUID) to JSON scalars."""
+    import uuid
+    from datetime import datetime
+
+    from pydantic import BaseModel
+
+    class MyModel(BaseModel):
+        when: datetime
+        uid: uuid.UUID
+
+    @strands.tool
+    def pydantic_tool() -> MyModel:
+        """Returns a Pydantic model with native-type fields."""
+        return MyModel(when=datetime(2026, 1, 2, 3, 4, 5), uid=uuid.UUID("c2e4b5a0-1234-5678-9abc-def012345678"))
+
+    tool_use = {"toolUseId": "test-id", "input": {}}
+    stream = pydantic_tool.stream(tool_use, {})
+
+    result = (await alist(stream))[-1]
+    content = result["tool_result"]["content"][0]
+
+    assert content["json"] == {"when": "2026-01-02T03:04:05", "uid": "c2e4b5a0-1234-5678-9abc-def012345678"}
 
 
 @pytest.mark.asyncio
