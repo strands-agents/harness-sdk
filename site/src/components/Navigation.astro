@@ -120,15 +120,20 @@ const learnCategories = [
         <span class="strands-nav__theme-icon strands-nav__theme-icon--moon" set:html={moon} />
       </button>
     </div>
-    <button
-      type="button"
-      class="strands-nav__hamburger"
-      aria-label="Open menu"
-      aria-expanded="false"
-      data-hamburger
-    >
-      <span class="strands-nav__hamburger-icon" set:html={hamburger} />
-    </button>
+    <div class="strands-nav__collapsed">
+      <button type="button" class="strands-nav__collapsed-search" data-nav-search aria-label="Search">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3" stroke-linecap="round"/></svg>
+      </button>
+      <button
+        type="button"
+        class="strands-nav__hamburger"
+        aria-label="Open menu"
+        aria-expanded="false"
+        data-hamburger
+      >
+        <span class="strands-nav__hamburger-icon" set:html={hamburger} />
+      </button>
+    </div>
   </div>
 
   <!-- Mobile menu panel (Figma 745:13162): Projects / Learn accordions of
@@ -608,6 +613,29 @@ const learnCategories = [
     white-space: nowrap;
   }
 
+  .strands-nav__collapsed {
+    display: none;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .strands-nav__collapsed-search {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    color: var(--nav-fg);
+    cursor: pointer;
+  }
+
+  .strands-nav__collapsed-search[hidden] {
+    display: none;
+  }
+
   .strands-nav__hamburger {
     display: none;
     align-items: center;
@@ -638,8 +666,8 @@ const learnCategories = [
 
   /* Below Starlight's desktop breakpoint (50rem) our single hamburger is the
      only menu control. Hide Starlight's own circular mobile menu button and its
-     slide-in sidebar overlay; in-product page navigation is the title selector
-     in the content, and the hamburger carries the product/community menus.
+     slide-in sidebar overlay; the hamburger menu carries the per-product page
+     trees as well as the product/community menus.
      Without this the two controls stack in the same corner and read as a broken
      double hamburger. Above 50rem the sidebar is the static left column. */
   @media (max-width: 49.9375rem) {
@@ -681,6 +709,10 @@ const learnCategories = [
     .strands-nav__links,
     .strands-nav__right {
       display: none;
+    }
+
+    .strands-nav__collapsed {
+      display: flex;
     }
 
     .strands-nav__hamburger {
