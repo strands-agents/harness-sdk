@@ -329,6 +329,13 @@ class ToolExecutor(abc.ABC):
                     if isinstance(event, ToolInterruptEvent):
                         for interrupt in event.interrupts:
                             agent._interrupt_state.interrupts.setdefault(interrupt.id, interrupt)
+                        # A nested agent-as-tool call attaches a snapshot of the sub-agent's own
+                        # interrupt state. Stash it in the parent's (already-persisted) interrupt
+                        # context, keyed by the tool_use_id it belongs to, so a rebuilt sub-agent
+                        # can restore it and resume its exact pending tool call after a restart.
+                        if event.sub_agent_interrupt_state is not None:
+                            snapshots = agent._interrupt_state.context.setdefault("agent_as_tool_snapshots", {})
+                            snapshots[event.tool_use_id] = event.sub_agent_interrupt_state
                         yield event
                         return
 

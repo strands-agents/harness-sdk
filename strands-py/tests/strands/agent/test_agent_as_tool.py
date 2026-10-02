@@ -497,6 +497,9 @@ async def test_stream_interrupt_yields_tool_interrupt_event(tool, mock_agent, to
     assert isinstance(events[0], ToolInterruptEvent)
     assert events[0].interrupts == interrupt_result.interrupts
     assert events[0].tool_use_id == "tool-123"
+    # The sub-agent's own interrupt state is snapshotted so it can be restored if the
+    # sub-agent is rebuilt (e.g. after a process restart) before the interrupt is resumed.
+    assert events[0].sub_agent_interrupt_state == mock_agent._interrupt_state.to_dict()
 
 
 @pytest.mark.asyncio
@@ -622,6 +625,96 @@ async def test_build_interrupt_responses(fake_agent):
     # Only interrupt_a has a response
     assert len(responses) == 1
     assert responses[0] == {"interruptResponse": {"interruptId": "id-a", "response": "yes"}}
+
+
+# --- resume across rehydration (issue #3076) ---
+
+
+@pytest.mark.asyncio
+async def test_stream_resumes_after_sub_agent_rehydration(fake_agent) -> None:
+    """A sub-agent rebuilt from scratch (e.g. after a process restart) should resume its
+    exact pending tool call from a snapshot persisted by the parent, instead of re-invoking
+    the model and raising a brand new, unmatched interrupt.
+    """
+    from strands.agent.agent import Agent
+    from strands.interrupt import PendingToolExecution
+
+    tool_use_id = "orchestrator-tool-use-1"
+
+    # --- Turn 1 (process A): the sub-agent interrupts, and the parent persists a snapshot
+    # of the sub-agent's interrupt state (as ExecuteToolStage handling does). ---
+    sub_agent_snapshot = _InterruptState(
+        interrupts={"sub-interrupt-1": Interrupt(id="sub-interrupt-1", name="approval", reason="need approval")},
+        pending_tool_execution=PendingToolExecution(
+            assistant_message={"role": "assistant", "content": [{"toolUse": {"toolUseId": "sub-tool-use-1"}}]},
+            completed_tool_results=[],
+        ),
+        activated=True,
+    ).to_dict()
+
+    orchestrator = fake_agent
+    orchestrator._interrupt_state.interrupts["sub-interrupt-1"] = Interrupt(
+        id="sub-interrupt-1", name="approval", reason="need approval"
+    )
+    orchestrator._interrupt_state.context["agent_as_tool_snapshots"] = {tool_use_id: sub_agent_snapshot}
+    orchestrator._interrupt_state.activate()
+
+    # --- Simulate the restart: round-trip the orchestrator's interrupt state through a
+    # JSON-safe dict, same as session save/restore would. ---
+    orchestrator._interrupt_state = _InterruptState.from_dict(orchestrator._interrupt_state.to_dict())
+
+    # --- Turn 2 (process B): resume with the human's response. ---
+    orchestrator._interrupt_state.resume(
+        [{"interruptResponse": {"interruptId": "sub-interrupt-1", "response": "APPROVE"}}]
+    )
+
+    # A freshly constructed sub-agent, with no memory of the interrupt at all.
+    fresh_sub_agent = Agent(name="fake_agent", callback_handler=None)
+    normal_result = AgentResult(
+        stop_reason="end_turn",
+        message={"role": "assistant", "content": [{"text": "approved and done"}]},
+        metrics=EventLoopMetrics(),
+        state={},
+    )
+    fresh_sub_agent.stream_async = MagicMock(return_value=_mock_stream_async(normal_result))
+    tool = _AgentAsTool(fresh_sub_agent, name="fake_agent", description="desc", preserve_context=True)
+
+    tool_use = {"toolUseId": tool_use_id, "name": "fake_agent", "input": {"input": "do something"}}
+    events = [event async for event in tool.stream(tool_use, {"agent": orchestrator})]
+
+    # The fresh sub-agent should have resumed with the human's response, not restarted from scratch.
+    call_args = fresh_sub_agent.stream_async.call_args
+    agent_input = call_args[0][0]
+    assert agent_input == [{"interruptResponse": {"interruptId": "sub-interrupt-1", "response": "APPROVE"}}]
+
+    result_events = [e for e in events if isinstance(e, ToolResultEvent)]
+    assert len(result_events) == 1
+    assert result_events[0]["tool_result"]["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_stream_no_snapshot_falls_back_to_normal_invocation(fake_agent) -> None:
+    """When there is no persisted snapshot for this tool_use_id, a non-interrupted sub-agent
+    should be invoked normally rather than erroring."""
+    normal_result = AgentResult(
+        stop_reason="end_turn",
+        message={"role": "assistant", "content": [{"text": "ok"}]},
+        metrics=EventLoopMetrics(),
+        state={},
+    )
+    fake_agent.stream_async = MagicMock(return_value=_mock_stream_async(normal_result))
+    tool = _AgentAsTool(fake_agent, name="fake_agent", description="desc", preserve_context=True)
+
+    orchestrator = fake_agent
+    tool_use = {"toolUseId": "no-snapshot-tool-use", "name": "fake_agent", "input": {"input": "hello"}}
+
+    events = [event async for event in tool.stream(tool_use, {"agent": orchestrator})]
+
+    call_args = fake_agent.stream_async.call_args
+    assert call_args[0][0] == "hello"
+    result_events = [e for e in events if isinstance(e, ToolResultEvent)]
+    assert len(result_events) == 1
+    assert result_events[0]["tool_result"]["status"] == "success"
 
 
 # --- concurrency ---

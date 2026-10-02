@@ -388,9 +388,34 @@ class ToolCancelEvent(TypedEvent):
 class ToolInterruptEvent(TypedEvent):
     """Event emitted when a tool is interrupted."""
 
-    def __init__(self, tool_use: ToolUse, interrupts: list[Interrupt]) -> None:
-        """Set interrupt in the event payload."""
-        super().__init__({"tool_interrupt_event": {"tool_use": tool_use, "interrupts": interrupts}})
+    def __init__(
+        self,
+        tool_use: ToolUse,
+        interrupts: list[Interrupt],
+        sub_agent_interrupt_state: dict[str, Any] | None = None,
+    ) -> None:
+        """Set interrupt in the event payload.
+
+        Args:
+            tool_use: The tool use that was interrupted.
+            interrupts: The interrupt instances raised.
+            sub_agent_interrupt_state: For an interrupt propagated up from a nested
+                agent-as-tool, a serialized snapshot (``_InterruptState.to_dict()``) of the
+                sub-agent's own interrupt state — including its pending tool execution, which
+                carries the original ``toolUseId`` the sub-agent was interrupted on. Persisting
+                this alongside the parent's interrupt state lets a freshly rebuilt sub-agent
+                (e.g. after a process restart) resume the exact pending tool call on retry
+                instead of re-invoking the model and generating a new, unmatched interrupt id.
+        """
+        super().__init__(
+            {
+                "tool_interrupt_event": {
+                    "tool_use": tool_use,
+                    "interrupts": interrupts,
+                    "sub_agent_interrupt_state": sub_agent_interrupt_state,
+                }
+            }
+        )
 
     @property
     def is_interrupt(self) -> bool:
@@ -411,6 +436,14 @@ class ToolInterruptEvent(TypedEvent):
     def interrupts(self) -> list[Interrupt]:
         """The interrupt instances."""
         return cast(list[Interrupt], self["tool_interrupt_event"]["interrupts"])
+
+    @property
+    def sub_agent_interrupt_state(self) -> dict[str, Any] | None:
+        """Serialized snapshot of a sub-agent's interrupt state.
+
+        Set only when this event propagated an interrupt up from an agent-as-tool call.
+        """
+        return cast(dict[str, Any] | None, self["tool_interrupt_event"].get("sub_agent_interrupt_state"))
 
 
 class ModelMessageEvent(TypedEvent):

@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
 from ..agent.state import AgentState
+from ..interrupt import _InterruptState
 from ..types._events import AgentAsToolStreamEvent, ToolInterruptEvent, ToolResultEvent
 from ..types.content import Messages
 from ..types.interrupt import InterruptResponseContent
@@ -203,6 +204,14 @@ class _AgentAsTool(AgentTool):
             return
 
         try:
+            # If the sub-agent has no memory of its own interrupt (e.g. it was just rebuilt
+            # from session storage), restore it from the snapshot the parent persisted when
+            # the interrupt was first propagated. This lets a freshly constructed sub-agent
+            # resume its exact pending tool call instead of re-invoking the model and raising
+            # a new, unmatched interrupt.
+            if not self._is_sub_agent_interrupted():
+                self._restore_sub_agent_interrupt_state(invocation_state, tool_use_id)
+
             # Determine if we are resuming the sub-agent from an interrupt.
             if self._is_sub_agent_interrupted():
                 prompt = self._build_interrupt_responses()
@@ -244,9 +253,12 @@ class _AgentAsTool(AgentTool):
                 )
                 return
 
-            # Propagate sub-agent interrupts to the parent agent.
+            # Propagate sub-agent interrupts to the parent agent. Attach a serialized
+            # snapshot of the sub-agent's own interrupt state (including its pending tool
+            # execution) so it can be restored onto a freshly rebuilt sub-agent on resume —
+            # see _restore_sub_agent_interrupt_state.
             if result.stop_reason == "interrupt" and result.interrupts:
-                yield ToolInterruptEvent(tool_use, list(result.interrupts))
+                yield ToolInterruptEvent(tool_use, list(result.interrupts), self._agent._interrupt_state.to_dict())
                 return
 
             if result.stop_reason == "cancelled":
@@ -340,6 +352,41 @@ class _AgentAsTool(AgentTool):
     def _is_sub_agent_interrupted(self) -> bool:
         """Check whether the wrapped agent is in an activated interrupt state."""
         return self._agent._interrupt_state.activated
+
+    def _restore_sub_agent_interrupt_state(self, invocation_state: dict[str, Any], tool_use_id: str) -> None:
+        """Restore the sub-agent's interrupt state from a snapshot persisted by the parent.
+
+        When an interrupt raised inside this tool's sub-agent is first propagated, its
+        interrupt state (including the pending tool call) is snapshotted into the parent
+        agent's own interrupt context, keyed by this tool's ``tool_use_id`` (see
+        ``ToolInterruptEvent.sub_agent_interrupt_state``). If the wrapped agent instance was
+        rebuilt since then (e.g. reconstructed from session storage in a new process), it has
+        no memory of that interrupt. Restoring the snapshot here — and overlaying the human's
+        response from the parent's own (correctly persisted) interrupt state — lets the
+        sub-agent resume its exact pending tool call instead of re-invoking the model and
+        raising a fresh, unmatched interrupt.
+
+        Args:
+            invocation_state: Context for the tool invocation; carries the calling agent.
+            tool_use_id: The tool_use_id this agent-as-tool call was invoked with.
+        """
+        parent = invocation_state.get("agent")
+        if parent is None:
+            return
+
+        snapshots = parent._interrupt_state.context.get("agent_as_tool_snapshots")
+        if not snapshots or tool_use_id not in snapshots:
+            return
+
+        self._agent._interrupt_state = _InterruptState.from_dict(snapshots[tool_use_id])
+
+        # The snapshot's interrupts carry no response — resolving one happened on the
+        # parent's own (correctly rehydrated) copy via _InterruptState.resume(). Overlay it
+        # by id so _build_interrupt_responses() has something to forward to the sub-agent.
+        for interrupt_id, interrupt in self._agent._interrupt_state.interrupts.items():
+            parent_interrupt = parent._interrupt_state.interrupts.get(interrupt_id)
+            if parent_interrupt is not None and parent_interrupt.response is not None:
+                interrupt.response = parent_interrupt.response
 
     def _build_interrupt_responses(self) -> list[InterruptResponseContent]:
         """Build interrupt response payloads from the sub-agent's interrupt state.
