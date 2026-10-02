@@ -31,7 +31,7 @@ export function promptEditorHeight(
   const rows = promptViewport(
     input,
     cursor,
-    width - stringWidth(promptPrefix) - PROMPT_PADDING_WIDTH,
+    width - stringWidth(promptPrefix) - PROMPT_PADDING_WIDTH - (party ? 2 : 0),
     Math.max(MIN_PROMPT_ROWS, maxRows)
   )
   return Math.min(maxHeight, Math.max(minimumHeight, rows.length + (party && input ? 2 : 1)))
