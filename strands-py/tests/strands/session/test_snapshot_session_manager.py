@@ -48,6 +48,8 @@ from strands.types.content import ContentBlock
 from strands.types.exceptions import ContextWindowOverflowException, SnapshotException
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
+pytestmark = pytest.mark.filterwarnings("ignore:model_id=<.*>, default_context_window_limit=:UserWarning")
+
 
 @pytest.fixture
 def temp_dir():

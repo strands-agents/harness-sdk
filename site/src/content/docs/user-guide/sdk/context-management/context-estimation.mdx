@@ -83,4 +83,6 @@ ratio = model.estimate_utilization(
 
 The method divides <Syntax py="input_tokens" ts="inputTokens" /> by the model's <Syntax py="context_window_limit" ts="contextWindowLimit" />, falling back to the 200,000 default with a warning when not configured. A return value above 1.0 means overflow.
 
+In Python, the fallback warning is a `UserWarning` from the `warnings` module. In TypeScript, the SDK logger reports it. To filter Python warnings or send them to your logs, see [Configuration warnings](../observability-evaluation/logs/#configuration-warnings).
+
 Both the built-in [context management modes](./built-in-modes) and the [conversation managers](../agents/conversation-management) use this internally for compression decisions. You can also call it directly when building custom logic.
