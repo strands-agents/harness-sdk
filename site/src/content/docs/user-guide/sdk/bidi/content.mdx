@@ -92,6 +92,8 @@ For microphone input, [`AudioIO`](io.mdx#audio-io) creates these deltas using th
 
 ## Model messages
 
-When you send text or images, the agent wraps the content in a [`BidiMessage`](@api/python/strands.bidi.types#strands.bidi.types.BidiMessage) containing an ordered list of typed blocks. It passes that message to [`BidiModel.send()`](@api/python/strands.bidi.models#strands.bidi.models.BidiModel.send), while audio deltas pass through individually.
+Your application sends user input through `agent.send()`, which prepares it for [`BidiModel.send()`](@api/python/strands.bidi.models#strands.bidi.models.BidiModel.send). Text and images become a [`BidiMessage`](@api/python/strands.bidi.types#strands.bidi.types.BidiMessage) containing an ordered list of typed blocks; audio deltas pass through individually.
 
-`BidiMessage` belongs to the model interface. Application code sends the input forms above through `agent.send()`; the agent constructs model messages and also uses them to deliver tool results. For how input and output content become conversation history, see [Messages](events.mdx#messages).
+The agent also uses `BidiMessage` to return tool results to the model, packaging each tool's output as a [`ToolResultBlock`](@api/python/strands.types.tools#strands.types.tools.ToolResultBlock). It handles this delivery automatically, so tool results aren't part of `BidiAgentInput`. You can track tool calls and results through [tool execution events](events.mdx#tool-execution).
+
+See [Messages](events.mdx#messages) for how the agent records user input and tool results alongside content assembled from stream events.
