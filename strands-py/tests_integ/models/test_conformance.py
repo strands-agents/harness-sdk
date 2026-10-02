@@ -75,7 +75,7 @@ def test_structured_output_is_forced_when_provided_in_agent_invocation(skip_for,
         age: int
         occupation: str
 
-    agent = Agent()
+    agent = Agent(model)
     result = agent("Create a profile for John who is a 25 year old dentist", structured_output_model=UserProfile)
     assert result.structured_output.name == "John"
     assert result.structured_output.age == 25
