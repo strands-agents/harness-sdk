@@ -110,7 +110,7 @@ values take effect on the next `start()` or `restart()`.
 
 ## Connection Restart
 
-The OpenAI Realtime API exposes no server-side resume handle, so when a connection nears its time limit, `BidiAgent` restarts it and replays the accumulated conversation history into the new connection. The provider then sends a short system instruction so the model continues in the same language without re-introducing itself. The agent emits a [`BidiConnectionRestartEvent`](../events.md#bidiconnectionrestartevent) when this happens; treat it as informational rather than an error.
+The OpenAI Realtime API exposes no server-side resume handle, so when a connection nears its time limit, `BidiAgent` restarts it and replays the accumulated conversation history into the new connection. The provider then sends a short system instruction so the model continues in the same language without re-introducing itself. The agent emits a [`BidiConnectionRestartEvent`](../events.md#connection-restarts) when this happens; treat it as informational rather than an error.
 
 Set `timeout_s` in the client config to control when the client-side timeout fires ahead of OpenAI's session limit (see the table above). For the full lifecycle, see [Connection Restart](../agent.md#connection-restart).
 

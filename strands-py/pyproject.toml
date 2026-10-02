@@ -104,7 +104,7 @@ dev = [
     "commitizen>=4.4.0,<5.0.0",
     "hatch>=1.0.0,<2.0.0",
     "moto>=5.1.0,<6.0.0",
-    "mypy>=1.15.0,<3.0.0",
+    "mypy>=1.15.0,<2.4.0",
     "pre-commit>=3.2.0,<4.7.0",
     "pytest>=9.0.0,<10.0.0",
     "pytest-cov>=7.0.0,<8.0.0",
@@ -136,7 +136,8 @@ raw-options.git_describe_command = ["git", "describe", "--dirty", "--tags", "--l
 installer = "uv"
 features = ["all"]
 dependencies = [
-  "mypy>=1.15.0,<3.0.0",
+  # mypy 2.4 has inference failures for async hooks and reversed message lists.
+  "mypy>=1.15.0,<2.4.0",
   "ruff>=0.16.0,<0.17.0",
   # Include required package dependencies for mypy
   "boto3-stubs[bedrock-agent,bedrock-agent-runtime,s3]>=1.26.0,<2.0.0",

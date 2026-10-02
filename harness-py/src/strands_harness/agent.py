@@ -125,13 +125,18 @@ def _web_search_mode(
         if isinstance(model, (Model, ModelRouter))
         else f"Model {model or defaults.DEFAULT_MODEL}"
     )
-    message = (
-        f"{target} has no native web search. Pass builtin_tools={{'web_search': 'exa'}} to search "
-        "through Exa (a third party), or drop 'web_search'."
-    )
     if explicit:
-        raise ValueError(message)
-    logger.warning(message)
+        raise ValueError(
+            f"{target} has no built-in web search. Pass builtin_tools={{'web_search': 'exa'}} to search "
+            "through Exa (a third party), or remove 'web_search' from builtin_tools. See https://strandsagents.com/docs/user-guide/harness/tools/web-access/#web_search"
+        )
+    # Info, not a warning: the user didn't ask for search, and nothing failed.
+    logger.info(
+        "%s has no built-in web search, so the web_search tool is disabled. To enable it through Exa "
+        "(a third party), pass builtin_tools={'web_search': 'exa'}. See %s",
+        target,
+        "https://strandsagents.com/docs/user-guide/harness/tools/web-access/#web_search",
+    )
     return None
 
 
