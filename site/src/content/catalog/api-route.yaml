@@ -1,0 +1,9 @@
+name: API Route
+description: Use API Route's OpenAI-compatible endpoint with the Strands Agents OpenAI provider in Python and TypeScript.
+integrationType: model-provider
+languages:
+  python: {}
+  typescript: {}
+github: https://github.com/DennyHo0917/api-route-examples
+docsUrl: https://github.com/DennyHo0917/api-route-examples/blob/main/docs/strands-agents.md
+addedDate: 2026-09-30
