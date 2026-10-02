@@ -438,6 +438,43 @@ async def test_stream_basic() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("finish_reason", "expected_stop_reason"),
+    [
+        ("length", "max_tokens"),
+        ("tool_calls", "tool_use"),
+        ("stop", "tool_use"),
+    ],
+)
+async def test_stream_tool_call_stop_reason(finish_reason, expected_stop_reason) -> None:
+    """A tool call cut off by the token limit is reported as max_tokens, not executed as a tool use."""
+    model = LlamaCppModel()
+
+    mock_response_lines = [
+        'data: {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_1", '
+        '"function": {"name": "write_file", "arguments": ""}}]}}]}',
+        'data: {"choices": [{"delta": {"tool_calls": [{"index": 0, '
+        '"function": {"arguments": "{\\"path\\": \\"report.md\\", \\"cont"}}]}}]}',
+        f'data: {{"choices": [{{"delta": {{}}, "finish_reason": "{finish_reason}"}}]}}',
+        "data: [DONE]",
+    ]
+
+    async def mock_aiter_lines():
+        for line in mock_response_lines:
+            yield line
+
+    mock_response = AsyncMock()
+    mock_response.aiter_lines = mock_aiter_lines
+    mock_response.raise_for_status = MagicMock()
+
+    with patch.object(model.client, "post", return_value=mock_response):
+        chunks = [chunk async for chunk in model.stream([{"role": "user", "content": [{"text": "Hi"}]}])]
+
+    stop_reasons = [chunk["messageStop"]["stopReason"] for chunk in chunks if "messageStop" in chunk]
+    assert stop_reasons == [expected_stop_reason]
+
+
+@pytest.mark.asyncio
 async def test_stream_surfaces_cache_read_tokens() -> None:
     """A reused KV prefix is surfaced as cacheReadInputTokens, like the other cache-aware providers.
 
