@@ -412,9 +412,11 @@ sidebar:
               - docs/user-guide/sdk/bidi/agent
               - docs/user-guide/sdk/bidi/session-management
               - docs/user-guide/sdk/bidi/interrupts
-              - docs/user-guide/sdk/bidi/models/bedrock
-              - docs/user-guide/sdk/bidi/models/google
-              - docs/user-guide/sdk/bidi/models/openai
+              - label: Models
+                items:
+                  - docs/user-guide/sdk/bidi/models/bedrock
+                  - docs/user-guide/sdk/bidi/models/google
+                  - docs/user-guide/sdk/bidi/models/openai
               - docs/user-guide/sdk/bidi/io
               - docs/user-guide/sdk/bidi/events
               - docs/user-guide/sdk/bidi/barge-in
