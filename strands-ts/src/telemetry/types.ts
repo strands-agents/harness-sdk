@@ -136,6 +136,8 @@ export interface EndMultiAgentSpanOptions {
   duration?: number | undefined
   /** Aggregated token usage across all node executions. */
   usage?: Usage | undefined
+  /** Aggregate result status. */
+  status?: string | undefined
 }
 
 /**
