@@ -37,7 +37,7 @@ flowchart LR
 
 ## Getting Started
 
-Pass a natural-language goal string. GoalLoop builds an internal judge agent (using the host agent's model) that grades each response against the goal and returns structured feedback on failure.
+Pass a natural-language goal string. GoalLoop builds an internal judge agent (using the host agent's <Syntax py="aux_model" ts="auxModel" />) that grades each response against the goal and returns structured feedback on failure.
 
 <Tabs>
 <Tab label="Python">
@@ -242,7 +242,7 @@ The snapshot excludes agent state (<Syntax py="state" ts="appState" />) delibera
 
 ### Custom Judge Configuration
 
-When `goal` is a string, GoalLoop builds a judge agent from the host agent's model. Override the model or system prompt to tune cost and behavior:
+When `goal` is a string, GoalLoop builds a judge agent using the host agent's <Syntax py="aux_model" ts="auxModel" />. Override the model or system prompt to tune cost and behavior:
 
 <Tabs>
 <Tab label="Python">
