@@ -121,6 +121,9 @@ const learnCategories = [
       </button>
     </div>
     <div class="strands-nav__collapsed">
+      <div class="strands-nav__lang strands-nav__collapsed-lang">
+        <LanguageToggle />
+      </div>
       <button type="button" class="strands-nav__collapsed-search" data-nav-search aria-label="Search">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3" stroke-linecap="round"/></svg>
       </button>
@@ -700,6 +703,12 @@ const learnCategories = [
 
     .strands-nav__wordmark :global(svg) {
       height: 21px;
+    }
+
+    /* Too narrow for the header; on pages with a TOC, PageSidebar puts it in the
+       "On this page" bar. */
+    .strands-nav__collapsed-lang {
+      display: none;
     }
   }
 

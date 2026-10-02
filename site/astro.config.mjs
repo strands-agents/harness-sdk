@@ -104,6 +104,7 @@ export default defineConfig({
         Hero: './src/components/overrides/Hero.astro',
         MarkdownContent: './src/components/overrides/MarkdownContent.astro',
         PageTitle: './src/components/overrides/PageTitle.astro',
+        PageSidebar: './src/components/overrides/PageSidebar.astro',
         Sidebar: './src/components/overrides/Sidebar.astro',
         PageFrame: './src/components/overrides/PageFrame.astro',
       },
