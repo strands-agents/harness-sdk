@@ -36,7 +36,7 @@
     "@strands-agents/sdk": "file:../strands-ts",
     "@types/express": "^5.0.5",
     "@types/markdown-it": "^14.2.0",
-    "@types/sanitize-html": "^2.16.0",
+    "@types/sanitize-html": "^2.16.2",
     "@types/turndown": "^5.0.6",
     "astro-og-canvas": "^0.13.2",
     "express": "^5.1.0",
