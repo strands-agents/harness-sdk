@@ -111,6 +111,21 @@ a[aria-current="page"]:hover {
 :root {
 	--sl-content-width: 50rem;
 }
+
+/* Scroll shadows on wide tables: the bg-colored "local" layers cover the
+   shadows at each end until there is more content to scroll to. */
+.sl-markdown-content table:not(:where(.not-content *, .starlight-aside *)) {
+	--table-shadow: color-mix(in srgb, var(--sl-color-white) 15%, transparent);
+	background:
+		linear-gradient(to right, var(--sl-color-bg) 30%, transparent) left / 2.5rem 100% no-repeat local,
+		linear-gradient(to left, var(--sl-color-bg) 30%, transparent) right / 2.5rem 100% no-repeat local,
+		linear-gradient(to right, var(--table-shadow), transparent) left / 0.75rem 100% no-repeat scroll,
+		linear-gradient(to left, var(--table-shadow), transparent) right / 0.75rem 100% no-repeat scroll;
+}
+:root[data-theme='dark'] .sl-markdown-content table {
+	--table-shadow: color-mix(in srgb, var(--sl-color-white) 25%, transparent);
+}
+
 /* Embed mode: html[data-embed] is set before paint by the inline script in
    overrides/Head.astro when the URL carries `?embed` (used by the
    /integrations docs drawer iframe). Hide all site chrome and collapse the
