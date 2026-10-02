@@ -734,8 +734,6 @@ const learnCategories = [
 
   /* ---------- Collapsed (< 78rem, where the full bar no longer fits) ---------- */
   @media (max-width: 77.9375rem) {
-    /* Desktop-only links + right cluster hide. */
-    .strands-nav__links,
     .strands-nav__right {
       display: none;
     }
@@ -979,6 +977,14 @@ const learnCategories = [
       display: flex;
     }
   }
+
+  /* Below 72rem the top links no longer fit beside the collapsed controls. */
+  @media (max-width: 71.9375rem) {
+    .strands-nav__links {
+      display: none;
+    }
+  }
+
   /* ---------- Spacebar frog easter egg ---------- */
   /* Each spacebar press hops the frog one step forward (the hop arc + forward
      travel are driven per-press from the script). Hidden until first press. */
@@ -1103,6 +1109,7 @@ const learnCategories = [
     let closeTimer: number | undefined;
 
     const open = () => {
+      if (document.querySelector('[data-mobile-menu].is-open')) return;
       if (closeTimer) window.clearTimeout(closeTimer);
       // Snap-close any other menu so only one can be visible at a time.
       allMenus.forEach((m) => {
