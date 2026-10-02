@@ -1011,6 +1011,49 @@ const learnCategories = [
     width: 100%;
     height: 100%;
   }
+
+  /* Phones and short landscape screens: the header (and the bars pinned under
+     it) slide away while scrolling down. */
+  @media (max-width: 49.9375rem), (max-height: 31rem) {
+    :global(.page > .header),
+    :global(mobile-starlight-toc nav),
+    :global(.sidebar-pane),
+    :global(.toc-lang),
+    :global(.cat-mobile-filters) {
+      transition: top 0.2s ease;
+    }
+    .strands-nav {
+      transition:
+        top 0.2s ease,
+        background-color 0.15s ease,
+        color 0.15s ease;
+    }
+    :global(html[data-header-hidden] .page > .header) {
+      top: calc(-1 * var(--sl-nav-height));
+    }
+    :global(html[data-header-hidden] mobile-starlight-toc nav),
+    :global(html[data-header-hidden] .toc-lang) {
+      top: -1px;
+    }
+    :global(html[data-header-hidden] .sidebar-pane),
+    :global(html[data-header-hidden] .cat-mobile-filters) {
+      top: 0;
+    }
+    :global(html[data-header-hidden] body) > .strands-nav {
+      top: -100px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    :global(.page > .header),
+    :global(mobile-starlight-toc nav),
+    :global(.sidebar-pane),
+    :global(.toc-lang),
+    :global(.cat-mobile-filters),
+    .strands-nav {
+      transition: none;
+    }
+  }
 </style>
 
 <script>
@@ -1121,9 +1164,9 @@ const learnCategories = [
       // not the page behind it (the menu can overflow the viewport).
       document.body.style.overflow = open ? 'hidden' : '';
       if (open) {
-        // Pin the fixed overlay directly below the header's rendered bottom
-        // (varies by context: 52px on docs, 40px on the homepage).
-        const bottom = navInner ? Math.round(navInner.getBoundingClientRect().bottom) : 0;
+        // Pin the fixed overlay directly below the header. Its height, not its
+        // rect, so a header still sliding back in doesn't skew the position.
+        const bottom = navInner?.offsetHeight ?? 0;
         mobileMenu.style.top = `${bottom}px`;
         revealCurrent();
       }
@@ -1181,6 +1224,33 @@ const learnCategories = [
       });
     });
   }
+
+  // Hide the header while scrolling down; any upward scroll, focus in it, or an
+  // open menu brings it back.
+  const compactHeader = window.matchMedia('(max-width: 49.9375rem), (max-height: 31rem)');
+  const navEl = document.querySelector<HTMLElement>('.strands-nav');
+  let lastScrollY = window.scrollY;
+  const setHeaderHidden = (hidden: boolean) => document.documentElement.toggleAttribute('data-header-hidden', hidden);
+  window.addEventListener(
+    'scroll',
+    () => {
+      if (!compactHeader.matches) return;
+      const y = window.scrollY;
+      if (Math.abs(y - lastScrollY) < 8) return;
+      const menuOpen = !!document.querySelector('[data-mobile-menu].is-open');
+      const focused = !!navEl?.querySelector(':focus-visible');
+      setHeaderHidden(y > lastScrollY && y > 120 && !menuOpen && !focused);
+      lastScrollY = y;
+    },
+    { passive: true }
+  );
+  navEl?.addEventListener('focusin', () => {
+    if (navEl.querySelector(':focus-visible')) setHeaderHidden(false);
+  });
+  compactHeader.addEventListener('change', () => {
+    lastScrollY = window.scrollY;
+    setHeaderHidden(false);
+  });
 
   // Spacebar easter egg: each press hops a pixel frog one step forward along
   // the bottom of the page, Chrome-dino style. Ignored while typing in a
