@@ -546,6 +546,7 @@ class BidiAgent(LocalAgent):
         """Async context manager entry point.
 
         Automatically starts the bidirectional connection when entering the context.
+        Cleans up if startup fails.
 
         Args:
             invocation_state: Optional context to pass to tools during execution.
@@ -554,9 +555,19 @@ class BidiAgent(LocalAgent):
 
         Returns:
             Self for use in the context.
+
+        Raises:
+            RuntimeError: If the agent is already started.
         """
+        if self._started:
+            raise RuntimeError("agent already started | call stop before starting again")
+
         logger.debug("context_manager=<enter> | starting agent")
-        await self.start(invocation_state)
+        try:
+            await self.start(invocation_state)
+        except BaseException:
+            await self.stop()
+            raise
         return self
 
     async def __aexit__(self, *_: Any) -> None:

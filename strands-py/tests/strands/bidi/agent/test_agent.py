@@ -422,6 +422,12 @@ async def test_bidi_agent_start_stop_lifecycle(agent):
     with pytest.raises(RuntimeError, match="agent already started"):
         await agent.start()
 
+    with pytest.raises(RuntimeError, match="agent already started"):
+        async with agent:
+            pytest.fail("Already-started agent should reject context entry")
+    assert agent._started
+    assert agent.model._connection_id == connection_id
+
     # Stop agent
     await agent.stop()
     assert not agent._started
@@ -435,6 +441,31 @@ async def test_bidi_agent_start_stop_lifecycle(agent):
     await agent.start()
     assert agent._started
     assert agent.model._connection_id != connection_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_type", [RuntimeError, asyncio.CancelledError], ids=["error", "cancellation"])
+async def test_aenter_cleans_up_failed_start(agent, error_type):
+    error = error_type("startup failed")
+    start_model = agent.model.start
+
+    async def failing_start(**kwargs):
+        await start_model(**kwargs)
+        raise error
+
+    with unittest.mock.patch.object(agent.model, "start", side_effect=failing_start):
+        with pytest.raises(error_type) as exc_info:
+            async with agent:
+                pytest.fail("Failed startup should not enter the context body")
+
+    assert exc_info.value is error
+    assert not agent._started
+    assert not agent.model._started
+    assert agent.model._connection_id is None
+
+    async with agent:
+        assert agent.model._started
+    assert not agent.model._started
 
 
 @pytest.mark.asyncio

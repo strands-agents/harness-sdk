@@ -1,0 +1,77 @@
+---
+title: Tools
+description: "Give BidiAgent tools that run while the conversation continues. Register tools, understand concurrent execution, and let users end a conversation."
+languages: [python]
+tags: [bidi-streaming, tool-execution]
+sourceLinks:
+  - path: strands-py/src/strands/bidi/agent/agent.py
+  - path: strands-py/src/strands/bidi/agent/loop.py
+  - path: strands-py/src/strands/tools/decorator.py
+  - path: strands-py/src/strands/types/tools.py
+---
+
+Give `BidiAgent` tools to look up information, call services, or take actions during a conversation. You define them as you would for `Agent`, and the model decides when to call them.
+
+Tool execution runs alongside the conversation. Users can keep talking while tools work, and results can arrive during a later response.
+
+## Register tools
+
+Pass tools to `BidiAgent(tools=...)`. This timer uses `asyncio.sleep()` to wait without blocking the conversation:
+
+```python
+import asyncio
+
+from strands import tool
+from strands.bidi.agent import BidiAgent
+
+
+@tool
+async def set_timer(seconds: int) -> str:
+    """Start a timer and report when it finishes.
+
+    Args:
+        seconds: Number of seconds to wait.
+    """
+    await asyncio.sleep(seconds)
+    return f"Your {seconds}-second timer has finished."
+
+
+agent = BidiAgent(tools=[set_timer])
+```
+
+During a conversation, the model can call this tool when you ask for a timer. You can continue asking questions while it waits.
+
+For tool descriptions, input schemas, and other ways to define tools, see [Create custom tools](../tools/custom-tools.mdx). You can also use [MCP tools](../tools/mcp-tools.mdx). Keep the client open with its context manager while the agent runs, and pass `client.list_tools_sync()` as `tools`.
+
+## Concurrent execution
+
+When the model requests multiple tools together, they run concurrently as a group. The agent sends their results to the model once every tool in the group finishes.
+
+The conversation can continue while tools run, and the model can request more tools. Each new group runs independently, so it can return results before an earlier group finishes. Running tools also continue through [barge-in](events.mdx#barge-in-1).
+
+To keep the conversation responsive, use asynchronous I/O in `async def` tools, as the timer does with `asyncio.sleep()`. The `@tool` decorator runs synchronous functions in worker threads.
+
+## End a conversation
+
+Tools can also control when a conversation ends. Here, `end_conversation` uses `ToolContext` to call [`cancel()`](@api/python/strands.bidi.agent#strands.bidi.agent.BidiAgent.cancel) when the user asks to stop:
+
+```python
+from strands import ToolContext, tool
+from strands.bidi.agent import BidiAgent
+
+
+@tool(context=True)
+def end_conversation(tool_context: ToolContext[BidiAgent]) -> str:
+    """End the conversation when the user asks to stop or says goodbye."""
+    tool_context.agent.cancel()
+    return "Ending conversation."
+
+
+agent = BidiAgent(tools=[end_conversation])
+```
+
+The docstring becomes the tool description that helps the model decide when to call it. Customize it with example phrases or the kinds of requests you want the model to recognize.
+
+When the model calls the tool, cancellation takes effect after the tool's group finishes and its results are recorded.
+
+See [Graceful shutdown](quickstart.mdx#graceful-shutdown) for a complete example using this tool with `agent.run()`.
