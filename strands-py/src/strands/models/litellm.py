@@ -399,12 +399,16 @@ class LiteLLMModel(OpenAIModel):
         Yields:
             Model events with the last being the structured output.
         """
-        if supports_response_schema(self.get_config()["model_id"]):
-            logger.debug("structuring output using response schema")
-            result = await self._structured_output_using_response_schema(output_model, prompt, system_prompt)
-        else:
-            logger.debug("model does not support response schema, structuring output using tool approach")
-            result = await self._structured_output_using_tool(output_model, prompt, system_prompt)
+        try:
+            if supports_response_schema(self.get_config()["model_id"]):
+                logger.debug("structuring output using response schema")
+                result = await self._structured_output_using_response_schema(output_model, prompt, system_prompt)
+            else:
+                logger.debug("model does not support response schema, structuring output using tool approach")
+                result = await self._structured_output_using_tool(output_model, prompt, system_prompt)
+        except ContextWindowExceededError as e:
+            logger.warning("litellm client raised context window overflow in structured_output")
+            raise ContextWindowOverflowException(e) from e
 
         yield {"output": result}
 
@@ -430,9 +434,6 @@ class LiteLLMModel(OpenAIModel):
             tool_call_data = json.loads(choice.message.content)
             # Instantiate the output model with the parsed data
             return output_model(**tool_call_data)
-        except ContextWindowExceededError as e:
-            logger.warning("litellm client raised context window overflow in structured_output")
-            raise ContextWindowOverflowException(e) from e
         except (json.JSONDecodeError, TypeError, ValueError) as e:
             raise ValueError(f"Failed to parse or load content into model: {e}") from e
 
@@ -457,9 +458,6 @@ class LiteLLMModel(OpenAIModel):
             tool_call_data = json.loads(tool_call.function.arguments)
             # Instantiate the output model with the parsed data
             return output_model(**tool_call_data)
-        except ContextWindowExceededError as e:
-            logger.warning("litellm client raised context window overflow in structured_output")
-            raise ContextWindowOverflowException(e) from e
         except (json.JSONDecodeError, TypeError, ValueError) as e:
             raise ValueError(f"Failed to parse or load content into model: {e}") from e
 
