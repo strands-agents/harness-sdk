@@ -15,6 +15,7 @@ def gemini_client():
     with unittest.mock.patch.object(strands.models.gemini.genai, "Client") as mock_client_cls:
         mock_client = mock_client_cls.return_value
         mock_client.aio = unittest.mock.AsyncMock()
+        mock_client.vertexai = False
         yield mock_client
 
 
@@ -1294,7 +1295,120 @@ async def test_stream_request_with_gemini_tools_and_function_tools(gemini_client
                     ]
                 },
                 {"code_execution": {}},
-            ]
+            ],
+            "tool_config": {"include_server_side_tool_invocations": True},
+        },
+        "contents": [{"parts": [{"text": "test"}], "role": "user"}],
+        "model": model_id,
+    }
+    gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
+
+
+@pytest.mark.asyncio
+async def test_stream_gemini_tools_sets_server_side_flag_with_tool_choice(gemini_client, messages, tool_spec, model_id):
+    google_search_tool = genai.types.Tool(google_search=genai.types.GoogleSearch())
+    model = GeminiModel(model_id=model_id, gemini_tools=[google_search_tool])
+
+    await anext(model.stream(messages, tool_specs=[tool_spec], tool_choice={"auto": {}}))
+
+    exp_request = {
+        "config": {
+            "tools": [
+                {
+                    "function_declarations": [
+                        {
+                            "description": tool_spec["description"],
+                            "name": tool_spec["name"],
+                            "parameters_json_schema": tool_spec["inputSchema"]["json"],
+                        }
+                    ]
+                },
+                {"google_search": {}},
+            ],
+            "tool_config": {
+                "function_calling_config": {"mode": "AUTO"},
+                "include_server_side_tool_invocations": True,
+            },
+        },
+        "contents": [{"parts": [{"text": "test"}], "role": "user"}],
+        "model": model_id,
+    }
+    gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
+
+
+@pytest.mark.asyncio
+async def test_stream_gemini_tools_flag_skipped_on_vertex_ai(gemini_client, messages, tool_spec, model_id):
+    """Vertex AI does not support include_server_side_tool_invocations, so the flag is omitted."""
+    gemini_client.vertexai = True
+    google_search_tool = genai.types.Tool(google_search=genai.types.GoogleSearch())
+    model = GeminiModel(model_id=model_id, gemini_tools=[google_search_tool])
+
+    await anext(model.stream(messages, tool_specs=[tool_spec]))
+
+    exp_request = {
+        "config": {
+            "tools": [
+                {
+                    "function_declarations": [
+                        {
+                            "description": tool_spec["description"],
+                            "name": tool_spec["name"],
+                            "parameters_json_schema": tool_spec["inputSchema"]["json"],
+                        }
+                    ]
+                },
+                {"google_search": {}},
+            ],
+        },
+        "contents": [{"parts": [{"text": "test"}], "role": "user"}],
+        "model": model_id,
+    }
+    gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
+
+
+@pytest.mark.parametrize(
+    ("params_tool_config", "exp_tool_config"),
+    [
+        (
+            {"function_calling_config": {"mode": "NONE"}},
+            {"function_calling_config": {"mode": "NONE"}, "include_server_side_tool_invocations": True},
+        ),
+        (
+            {"function_calling_config": {"mode": "NONE"}, "include_server_side_tool_invocations": False},
+            {"function_calling_config": {"mode": "NONE"}, "include_server_side_tool_invocations": False},
+        ),
+    ],
+    ids=["merges-flag", "preserves-explicit-false"],
+)
+@pytest.mark.asyncio
+async def test_stream_gemini_tools_flag_with_params_tool_config(
+    gemini_client, messages, tool_spec, model_id, params_tool_config, exp_tool_config
+):
+    """The flag is merged into a dict tool_config, but an explicit value is preserved."""
+    google_search_tool = genai.types.Tool(google_search=genai.types.GoogleSearch())
+    model = GeminiModel(
+        model_id=model_id,
+        gemini_tools=[google_search_tool],
+        params={"tool_config": params_tool_config},
+    )
+
+    await anext(model.stream(messages, tool_specs=[tool_spec]))
+
+    exp_request = {
+        "config": {
+            "tools": [
+                {
+                    "function_declarations": [
+                        {
+                            "description": tool_spec["description"],
+                            "name": tool_spec["name"],
+                            "parameters_json_schema": tool_spec["inputSchema"]["json"],
+                        }
+                    ]
+                },
+                {"google_search": {}},
+            ],
+            "tool_config": exp_tool_config,
         },
         "contents": [{"parts": [{"text": "test"}], "role": "user"}],
         "model": model_id,
