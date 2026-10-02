@@ -821,12 +821,36 @@ def test_untranslatable_ttl_is_ignored_and_warned(openai_client, model_id, messa
     assert "prompt_cache_retention" not in request
 
 
-def test_placement_fields_are_no_ops_warned(openai_client, model_id, messages):
+def test_system_prompt_ttl_is_a_no_op_warned(openai_client, model_id, messages):
+    """OpenAI has no auto-injection path, so system_prompt_ttl (unlike strategy) remains a no-op."""
     _ = openai_client
-    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig(strategy="anthropic", cache_key="k"))
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig(cache_key="k", system_prompt_ttl=False))
 
     with pytest.warns(UserWarning, match="have no effect"):
         model.format_request(messages)
+
+
+def test_strategy_anthropic_is_not_warned_as_unsupported(openai_client, model_id, messages, recwarn):
+    """strategy="anthropic" gates system cache-point emission (_format_system_messages), so it must
+    not be flagged as a no-op alongside genuinely unsupported fields."""
+    _ = openai_client
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig(strategy="anthropic", cache_key="k"))
+
+    model.format_request(messages)
+
+    assert not any("have no effect" in str(warning.message) for warning in recwarn.list)
+
+
+def test_cache_config_strategy_anthropic_reaches_system_cache_point(openai_client, model_id):
+    """format_request threads cache_config.strategy through to system-message formatting."""
+    _ = openai_client
+    model = OpenAIModel(model_id=model_id, cache_config=CacheConfig(strategy="anthropic"))
+    messages = [{"role": "user", "content": [{"text": "Hello"}]}]
+    system_prompt_content = [{"text": "ctx"}, {"cachePoint": {"type": "default"}}]
+
+    request = model.format_request(messages, system_prompt_content=system_prompt_content)
+
+    assert request["messages"][0]["content"][0]["cache_control"] == {"type": "ephemeral"}
 
 
 def test_format_request_with_tool_choice_auto(model, messages, tool_specs, system_prompt):
@@ -1867,20 +1891,144 @@ def test_format_request_messages_with_none_system_prompt_content():
     assert result == expected
 
 
-def test_format_request_messages_drops_cache_points():
-    """Test that cache points are dropped in OpenAI format_request_messages."""
+def test_format_request_messages_with_system_prompt_cache_point():
+    """A system prompt cache point maps to OpenAI's native prompt_cache_breakpoint by default."""
     messages = [{"role": "user", "content": [{"text": "Hello"}]}]
     system_prompt_content = [{"text": "You are a helpful assistant."}, {"cachePoint": {"type": "default"}}]
 
     result = OpenAIModel.format_request_messages(messages, system_prompt_content=system_prompt_content)
 
-    # Cache points should be dropped, only text content included
     expected = [
-        {"role": "system", "content": "You are a helpful assistant."},
+        {
+            "role": "system",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "You are a helpful assistant.",
+                    "prompt_cache_breakpoint": {"mode": "explicit"},
+                }
+            ],
+        },
         {"role": "user", "content": [{"text": "Hello", "type": "text"}]},
     ]
 
     assert result == expected
+
+
+def test_format_request_messages_with_system_prompt_cache_point_anthropic_strategy():
+    """cache_strategy="anthropic" emits cache_control instead, for Anthropic/Bedrock-fronting gateways."""
+    messages = [{"role": "user", "content": [{"text": "Hello"}]}]
+    system_prompt_content = [{"text": "You are a helpful assistant."}, {"cachePoint": {"type": "default"}}]
+
+    result = OpenAIModel.format_request_messages(
+        messages, system_prompt_content=system_prompt_content, cache_strategy="anthropic"
+    )
+
+    expected = [
+        {
+            "role": "system",
+            "content": [
+                {"type": "text", "text": "You are a helpful assistant.", "cache_control": {"type": "ephemeral"}}
+            ],
+        },
+        {"role": "user", "content": [{"text": "Hello", "type": "text"}]},
+    ]
+
+    assert result == expected
+
+
+def test_format_request_messages_with_system_prompt_cache_point_ttl():
+    """A cache point's ttl carries through to cache_control under the anthropic strategy."""
+    messages = [{"role": "user", "content": [{"text": "Hello"}]}]
+    system_prompt_content = [
+        {"text": "You are a helpful assistant."},
+        {"cachePoint": {"type": "default", "ttl": "1h"}},
+    ]
+
+    result = OpenAIModel.format_request_messages(
+        messages, system_prompt_content=system_prompt_content, cache_strategy="anthropic"
+    )
+
+    assert result[0]["content"][0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+
+
+def test_format_request_messages_native_cache_breakpoint_ignores_ttl():
+    """Unlike cache_control, the native prompt_cache_breakpoint has no per-point TTL slot."""
+    messages = [{"role": "user", "content": [{"text": "Hello"}]}]
+    system_prompt_content = [
+        {"text": "You are a helpful assistant."},
+        {"cachePoint": {"type": "default", "ttl": "1h"}},
+    ]
+
+    result = OpenAIModel.format_request_messages(messages, system_prompt_content=system_prompt_content)
+
+    assert result[0]["content"][0]["prompt_cache_breakpoint"] == {"mode": "explicit"}
+
+
+def test_format_request_messages_collapses_multiple_system_text_blocks_with_cache_point():
+    """2+ system text blocks collapse into one system message with a content array, matching the
+    litellm provider's shape, rather than splitting into several system messages of mixed shape."""
+    messages = [{"role": "user", "content": [{"text": "Hello"}]}]
+    system_prompt_content = [
+        {"text": "A"},
+        {"cachePoint": {"type": "default"}},
+        {"text": "B"},
+        {"text": "C"},
+        {"cachePoint": {"type": "default", "ttl": "1h"}},
+    ]
+
+    result = OpenAIModel.format_request_messages(
+        messages, system_prompt_content=system_prompt_content, cache_strategy="anthropic"
+    )
+
+    expected = [
+        {
+            "role": "system",
+            "content": [
+                {"type": "text", "text": "A", "cache_control": {"type": "ephemeral"}},
+                {"type": "text", "text": "B"},
+                {"type": "text", "text": "C", "cache_control": {"type": "ephemeral", "ttl": "1h"}},
+            ],
+        },
+        {"role": "user", "content": [{"text": "Hello", "type": "text"}]},
+    ]
+
+    assert result == expected
+
+
+def test_format_request_messages_keeps_first_of_adjacent_system_cache_points(caplog):
+    """A second cache point on a block that already carries one is dropped, not applied over the first."""
+    caplog.set_level(logging.WARNING, logger="strands.models.openai")
+    messages = [{"role": "user", "content": [{"text": "Hello"}]}]
+    system_prompt_content = [
+        {"text": "ctx"},
+        {"cachePoint": {"type": "default", "ttl": "1h"}},
+        {"cachePoint": {"type": "default"}},
+    ]
+
+    result = OpenAIModel.format_request_messages(
+        messages, system_prompt_content=system_prompt_content, cache_strategy="anthropic"
+    )
+
+    assert result[0]["content"][0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+    assert "stripped an extra system cache point" in caplog.text
+
+
+def test_format_request_messages_skips_leading_system_cache_point(caplog):
+    """A cache point with no preceding system text block is skipped and warned, not attached."""
+    caplog.set_level(logging.WARNING, logger="strands.models.openai")
+    messages = [{"role": "user", "content": [{"text": "Hello"}]}]
+    system_prompt_content = [{"cachePoint": {"type": "default"}}, {"text": "You are a helpful assistant."}]
+
+    result = OpenAIModel.format_request_messages(messages, system_prompt_content=system_prompt_content)
+
+    expected = [
+        {"role": "system", "content": [{"type": "text", "text": "You are a helpful assistant."}]},
+        {"role": "user", "content": [{"text": "Hello", "type": "text"}]},
+    ]
+
+    assert result == expected
+    assert "no preceding system text block accepts a cache point" in caplog.text
 
 
 @pytest.mark.asyncio
