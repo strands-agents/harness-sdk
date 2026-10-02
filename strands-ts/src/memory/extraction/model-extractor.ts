@@ -1,5 +1,6 @@
 import { Message, TextBlock, type MessageData } from '../../types/messages.js'
 import type { Model } from '../../models/model.js'
+import { ModelProxy } from '../../models/model-proxy.js'
 import type { JSONValue } from '../../types/json.js'
 import { logger } from '../../logging/logger.js'
 import { normalizeError } from '../../errors.js'
@@ -72,7 +73,10 @@ export class ModelExtractor implements Extractor {
 
     let result: Awaited<ReturnType<ReturnType<typeof model.streamAggregated>['next']>> | undefined
     try {
-      const stream = model.streamAggregated(promptMessages, { systemPrompt: this._systemPrompt })
+      // Wrap in a ModelProxy so this extraction's tokens fold into the enclosing request's
+      // usage total when a trigger captured its invocation.
+      const proxy = new ModelProxy(model)
+      const stream = proxy.streamAggregated(promptMessages, { systemPrompt: this._systemPrompt }, context?.invocation)
       // Manual .next() loop: streamAggregated returns its result as the generator return value
       // (done:true), which for-await-of discards.
       for (;;) {

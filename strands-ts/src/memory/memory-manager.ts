@@ -248,7 +248,7 @@ export class MemoryManager implements Plugin {
 
     for (const { store, config } of this._extractionStores) {
       for (const trigger of config.triggers) {
-        trigger.attach({ agent, fire: () => void coordinator.process(store) })
+        trigger.attach({ agent, fire: (invocation) => void coordinator.process(store, invocation) })
       }
     }
   }

@@ -9,6 +9,7 @@ import { Agent } from '../../agent/agent.js'
 import { Message, TextBlock } from '../../index.js'
 import { AfterModelCallEvent, BeforeModelCallEvent } from '../../hooks/events.js'
 import { ContextWindowOverflowError } from '../../errors.js'
+import { createInvocation, toInternal } from '../../agent/invocation.js'
 import { createMockAgent, invokeTrackedHook } from '../../__fixtures__/agent-helpers.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import type { BaseModelConfig } from '../../models/model.js'
@@ -156,6 +157,40 @@ describe('ConversationManager', () => {
       expect(receivedArgs).toHaveLength(1)
       expect(receivedArgs[0]!.error).toBe(error)
       expect(receivedArgs[0]!.agent).toBe(mockAgent)
+    })
+
+    it('passes reduce a handle that shares the request usage without its limits', async () => {
+      const receivedArgs: ConversationManagerReduceOptions[] = []
+      class CapturingManager extends ConversationManager {
+        readonly name = 'test:capturing'
+        reduce(args: ConversationManagerReduceOptions): boolean {
+          receivedArgs.push(args)
+          return false
+        }
+      }
+      const manager = new CapturingManager()
+      const mockAgent = createMockAgent()
+      manager.initAgent(mockAgent)
+      const request = createInvocation({ turns: 1 })
+      request.turns = 1
+
+      await invokeTrackedHook(
+        mockAgent,
+        new AfterModelCallEvent({
+          agent: mockAgent,
+          model: {} as any,
+          attemptCount: 1,
+          error: new ContextWindowOverflowError('overflow'),
+          invocationState: {},
+          invocation: request,
+        })
+      )
+
+      const handed = toInternal(receivedArgs[0]!.invocation)
+      expect({ limits: handed?.limits, sharesUsage: handed?.usage === request.usage }).toEqual({
+        limits: undefined,
+        sharesUsage: true,
+      })
     })
   })
 

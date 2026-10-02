@@ -204,6 +204,8 @@ export class MultiAgentResult {
   readonly error?: Error
   /** Aggregated token usage across all node results. */
   readonly usage: Usage
+  /** Token usage for the whole request this run took part in, including auxiliary calls; see {@link AgentResult.requestUsage}. */
+  readonly requestUsage?: Usage
   /** Interrupts aggregated across all node results. Present when any node ended INTERRUPTED. */
   readonly interrupts?: Interrupt[]
 
@@ -214,6 +216,7 @@ export class MultiAgentResult {
     duration: number
     error?: Error
     interrupts?: Interrupt[]
+    requestUsage?: Usage
   }) {
     this.status = data.status ?? this._resolveStatus(data.results)
     this.results = data.results
@@ -221,6 +224,7 @@ export class MultiAgentResult {
     this.duration = data.duration
     if ('error' in data) this.error = data.error
     this.usage = this._aggregateNodeUsage(data.results)
+    if (data.requestUsage !== undefined) this.requestUsage = data.requestUsage
     const interrupts = data.interrupts ?? data.results.flatMap((r) => r.interrupts ?? [])
     if (interrupts.length > 0) this.interrupts = interrupts
   }

@@ -6,6 +6,8 @@ import { z } from 'zod'
 import { normalizeError } from '../../errors.js'
 import { logger } from '../../logging/logger.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME, StructuredOutputTool } from '../../tools/structured-output-tool.js'
+import type { Invocation } from '../../agent/invocation.js'
+import { ModelProxy } from '../model-proxy.js'
 import { Model } from '../model.js'
 import { Message, TextBlock } from '../../types/messages.js'
 import type { SystemPrompt, ToolUseBlock } from '../../types/messages.js'
@@ -196,7 +198,8 @@ export class ClassifierStrategy implements RoutingStrategy {
       this._model,
       latestRequestText(context.messages, this._maxMessageChars),
       buildClassifierSystemPrompt(profiles, context.systemPrompt, this._systemPrompt, this._maxAgentInstructionsChars),
-      cancelSignal
+      cancelSignal,
+      context.invocation
     )
     if (selection.selectedCandidateIndex >= context.candidates.length) {
       throw new Error('classifier selected an unknown candidate')
@@ -223,15 +226,22 @@ async function invokeClassifier(
   model: Model,
   request: string,
   systemPrompt: string,
-  cancelSignal: AbortSignal
+  cancelSignal: AbortSignal,
+  invocation?: Invocation
 ): Promise<ClassifierSelection> {
   const structuredOutputTool = new StructuredOutputTool(CLASSIFIER_SELECTION)
-  const stream = model.streamAggregated([new Message({ role: 'user', content: [new TextBlock(request)] })], {
-    systemPrompt,
-    toolSpecs: [structuredOutputTool.toolSpec],
-    toolChoice: { tool: { name: structuredOutputTool.name } },
-    cancelSignal,
-  })
+  // Fold the classifier's usage into the enclosing request's total.
+  const proxy = new ModelProxy(model)
+  const stream = proxy.streamAggregated(
+    [new Message({ role: 'user', content: [new TextBlock(request)] })],
+    {
+      systemPrompt,
+      toolSpecs: [structuredOutputTool.toolSpec],
+      toolChoice: { tool: { name: structuredOutputTool.name } },
+      cancelSignal,
+    },
+    invocation
+  )
 
   let iteration = await stream.next()
   while (!iteration.done) iteration = await stream.next()

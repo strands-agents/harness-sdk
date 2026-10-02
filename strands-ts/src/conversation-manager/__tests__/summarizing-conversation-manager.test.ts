@@ -4,6 +4,7 @@ import { ContextWindowOverflowError, Message, TextBlock, ToolUseBlock, ToolResul
 import { AfterModelCallEvent, BeforeModelCallEvent } from '../../hooks/events.js'
 import { createMockAgent, invokeTrackedHook } from '../../__fixtures__/agent-helpers.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
+import { createInvocation } from '../../agent/invocation.js'
 import { Model as ModelBase } from '../../models/model.js'
 import type { Model, BaseModelConfig } from '../../models/model.js'
 
@@ -236,6 +237,31 @@ describe('SummarizingConversationManager', () => {
       // 20 * 0.8 = 16, but min(16, 20-18) = 2, so only 2 summarized
       // 1 summary + 18 remaining = 19
       expect(mockAgent.messages).toHaveLength(19)
+    })
+  })
+
+  describe('request limits', () => {
+    it('adds the summarization usage to the request total even when the request limit is used up', async () => {
+      const model = new MockMessageModel().addTurn(
+        { type: 'textBlock', text: 'Summary of conversation' },
+        { usage: { inputTokens: 4, outputTokens: 5, totalTokens: 9 } }
+      )
+      const manager = new SummarizingConversationManager({ summaryRatio: 0.5, preserveRecentMessages: 2 })
+      const mockAgent = createMockAgent({ messages: makeMessages(20) })
+      const invocation = createInvocation({ turns: 1 })
+      invocation.turns = 5
+
+      const result = await manager.reduce({
+        agent: mockAgent,
+        model: model as unknown as Model,
+        error: new ContextWindowOverflowError('overflow'),
+        invocation,
+      })
+
+      expect(result).toBe(true)
+      expect(mockAgent.messages[0]!.content).toEqual([{ type: 'textBlock', text: 'Summary of conversation' }])
+      expect(invocation.usage).toEqual({ inputTokens: 4, outputTokens: 5, totalTokens: 9 })
+      expect(invocation.turns).toBe(5)
     })
   })
 

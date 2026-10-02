@@ -3,6 +3,7 @@ import { GoalLoop } from '../plugin.js'
 import type { GoalAttempt, GoalResult, ValidationOutcome } from '../plugin.js'
 import { buildJudgePrompt, JUDGE_OUTCOME_SCHEMA } from '../judge.js'
 import { Agent } from '../../../agent/agent.js'
+import { createInvocation } from '../../../agent/invocation.js'
 import { AfterInvocationEvent } from '../../../hooks/events.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { JsonBlock, Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
@@ -837,6 +838,67 @@ describe('GoalLoop natural-language judge', () => {
     // Stream call order: host turn (no judge system prompt), then judge turn
     // (carrying the override).
     expect(systemPrompts).toContain('CUSTOM_JUDGE_RUBRIC_MARKER')
+  })
+
+  describe('request limits', () => {
+    it('keeps the attempt and stops when the request limit is reached', async () => {
+      const validator = vi.fn(() => ({ passed: false, feedback: 'try again' }))
+      const goal = new GoalLoop({ goal: validator, preserveContext: false })
+      const agent = new Agent({
+        model: new MockMessageModel()
+          .addTurn({ type: 'textBlock', text: 'first answer' })
+          .addTurn({ type: 'textBlock', text: 'second answer' }),
+        plugins: [goal],
+        printer: false,
+      })
+
+      const result = await agent.invoke('write it', { limits: { turns: 1 } })
+
+      expect(goal.lastResult(agent)).toEqual({
+        passed: false,
+        stopReason: 'limit',
+        attempts: [{ attempt: 1, passed: false, feedback: 'try again' }],
+      })
+      expect(validator).toHaveBeenCalledTimes(1)
+      expect(result.toString()).toBe('first answer')
+      expect(agent.messages.map((message) => message.role)).toEqual(['user', 'assistant'])
+    })
+
+    it('adds the judge usage to the request total and runs it past a spent limit', async () => {
+      const [judgeTurn] = buildJudgeTurn(true)
+      const judgeModel = new MockMessageModel().addTurn(judgeTurn, {
+        usage: { inputTokens: 40, outputTokens: 5, totalTokens: 45 },
+      })
+      const plugin = new GoalLoop({
+        name: 'nl-request-limits',
+        goal: 'be concise',
+        judge: { model: judgeModel },
+        maxAttempts: 1,
+      })
+      const agent = new Agent({
+        model: new MockMessageModel(),
+        messages: [
+          new Message({ role: 'user', content: [new TextBlock('explain rainbows')] }),
+          new Message({ role: 'assistant', content: [new TextBlock('rainbows are pretty')] }),
+        ],
+        plugins: [plugin],
+        printer: false,
+      })
+      const parentInvocation = createInvocation({ turns: 1 })
+      parentInvocation.turns = 5
+
+      // The spent limit stops the host before its model runs, so the judge grades the preloaded reply.
+      const result = await agent.invoke('go', { invocation: parentInvocation })
+
+      expect(result.stopReason).toBe('limitTurns')
+      expect(plugin.lastResult(agent)).toEqual({
+        passed: true,
+        stopReason: 'satisfied',
+        attempts: [{ attempt: 1, passed: true }],
+      })
+      expect(parentInvocation.usage).toEqual({ inputTokens: 40, outputTokens: 5, totalTokens: 45 })
+      expect(parentInvocation.turns).toBe(5)
+    })
   })
 })
 
