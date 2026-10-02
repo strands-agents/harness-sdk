@@ -26,6 +26,7 @@ import base64
 import json
 import logging
 import uuid
+import warnings
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from typing import Any, cast
@@ -48,7 +49,7 @@ from typing_extensions import Unpack, override
 
 from ...models._validation import validate_config_keys, validate_region
 from ...types.content import Messages, TextBlock
-from ...types.tools import ToolResultBlock, ToolSpec, ToolUse
+from ...types.tools import ToolChoice, ToolChoiceToolDict, ToolResultBlock, ToolSpec, ToolUse
 from .._async import stop_all
 from ..types.content import BidiContentDelta, BidiMessage
 from ..types.events import (
@@ -105,6 +106,20 @@ def _is_http_stream_completed_error(error: BaseException) -> bool:
     if getattr(error, "code", None) == _AWS_ERROR_HTTP_STREAM_HAS_COMPLETED:
         return True
     return isinstance(error, RuntimeError) and "AWS_ERROR_HTTP_STREAM_HAS_COMPLETED" in str(error)
+
+
+def _warn_on_unknown_tool_choice(tool_choice: ToolChoice, tools: list[ToolSpec]) -> None:
+    """Warn when the tool choice forces a tool that is not provided, since Nova Sonic ignores it silently."""
+    if "tool" not in tool_choice:
+        return
+
+    tool_name = cast(ToolChoiceToolDict, tool_choice)["tool"]["name"]
+    if tool_name not in {tool["name"] for tool in tools}:
+        warnings.warn(
+            f"tool_choice forces tool '{tool_name}', which is not among the provided tools. "
+            "Nova Sonic ignores the choice and selects tools automatically.",
+            stacklevel=2,
+        )
 
 
 class _BedrockAWSCRTHTTPClient(AWSCRTHTTPClient):
@@ -239,6 +254,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         region: str | None = None,
         audio: BedrockNovaSonicAudioConfig | None = None,
         voice: str = "matthew",
+        tool_choice: ToolChoice | None = None,
         **model_config: Unpack[ModelConfig],
     ) -> None:
         """Initialize Nova Sonic bidirectional model.
@@ -248,6 +264,10 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             region: AWS region. Cannot be combined with ``boto_session``.
             audio: Audio configuration.
             voice: Output voice identifier. Defaults to ``matthew``.
+            tool_choice: How the model selects tools on each response. ``{"any": {}}`` and ``{"tool": {"name": ...}}``
+                force a tool call on every response, including the response to a tool result that is delivered as
+                user text after a connection restart. Sent only when tools are provided. Defaults to ``None``, which
+                leaves the choice to Nova Sonic (``auto``).
             **model_config: Model configuration.
 
         Raises:
@@ -272,6 +292,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
 
         self._resolve_audio_config(audio)
         self._voice = voice
+        self._tool_choice = tool_choice
 
         self._session = boto_session or boto3.Session()
         resolved_region = region if region is not None else self._session.region_name or "us-east-1"
@@ -958,7 +979,11 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         if tools:
             tool_config = self._build_tool_configuration(tools)
             prompt_start_event["event"]["promptStart"]["toolUseOutputConfiguration"] = NOVA_TOOL_CONFIG
-            prompt_start_event["event"]["promptStart"]["toolConfiguration"] = {"tools": tool_config}
+            tool_configuration: dict[str, Any] = {"tools": tool_config}
+            if self._tool_choice:
+                _warn_on_unknown_tool_choice(self._tool_choice, tools)
+                tool_configuration["toolChoice"] = self._tool_choice
+            prompt_start_event["event"]["promptStart"]["toolConfiguration"] = tool_configuration
 
         return json.dumps(prompt_start_event)
 
