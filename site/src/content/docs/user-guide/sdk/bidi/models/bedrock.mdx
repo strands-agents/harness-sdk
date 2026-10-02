@@ -69,10 +69,7 @@ if __name__ == "__main__":
 
 ## Cross-Modal Input
 
-Nova Sonic accepts text input at any point during an active voice session, without
-interrupting or waiting on the audio stream. Send a
-[text content block](../events.md#text) the same way you would outside of a live
-conversation:
+Nova Sonic accepts text input at any point during an active voice session, without interrupting or waiting on the audio stream. Send a [text content block](../agent.md#sending-multiple-content-blocks) the same way you would outside of a live conversation:
 
 ```python
 await agent.send({"text": "What's the weather in Seattle?"})
@@ -144,7 +141,7 @@ Nova Sonic caps conversation history passed via `messages` at 50KB per message a
 
 ## Connection Restart
 
-Nova Sonic keeps a single connection open for about 8 minutes. Before the connection reaches that limit, `BidiAgent` restarts it and replays the conversation history into the new connection, so the conversation continues without a break. The agent emits a [`BidiConnectionRestartEvent`](../events.md#bidiconnectionrestartevent) when this happens; treat it as informational rather than an error.
+Nova Sonic keeps a single connection open for about 8 minutes. Before the connection reaches that limit, `BidiAgent` restarts it and replays the conversation history into the new connection, so the conversation continues without a break. The agent emits a [`BidiConnectionRestartEvent`](../events.md#connection-restarts) when this happens; treat it as informational rather than an error.
 
 See [Connection Restart](../agent.md#connection-restart) for the full lifecycle.
 

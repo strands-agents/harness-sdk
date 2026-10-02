@@ -334,6 +334,17 @@ describe('Tracer', () => {
 
       expect(mockSpan.getEvents('gen_ai.user.message')).toHaveLength(1)
     })
+
+    // Regression test for #4666: traceAttributes were missing from chat spans.
+    it('includes constructor-level trace attributes, overriding standard ones', () => {
+      const tracer = new Tracer({ 'session.id': 'sess-1', 'gen_ai.request.model': 'override' })
+
+      tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hello')], modelId: 'claude-3' })
+
+      const [, options] = getStartSpanCall()
+      expect(options.attributes['session.id']).toBe('sess-1')
+      expect(options.attributes['gen_ai.request.model']).toBe('override')
+    })
   })
 
   describe('endModelInvokeSpan', () => {
@@ -563,6 +574,19 @@ describe('Tracer', () => {
       })
     })
 
+    // Regression test for #4666: traceAttributes were missing from execute_tool spans.
+    it('includes constructor-level trace attributes', () => {
+      const tracer = new Tracer({ 'session.id': 'sess-1' })
+
+      tracer.startToolCallSpan({
+        tool: { name: 'calculator', toolUseId: 'call-1', input: { expr: '2+2' } },
+      })
+
+      const [, options] = getStartSpanCall()
+      expect(options.attributes['session.id']).toBe('sess-1')
+      expect(options.attributes['gen_ai.tool.name']).toBe('calculator')
+    })
+
     it('adds stable tool message event with serialized input', () => {
       const tracer = new Tracer()
 
@@ -725,6 +749,17 @@ describe('Tracer', () => {
 
       const [spanName, options] = getStartSpanCall()
       expect(spanName).toBe('execute_agent_loop_cycle')
+      expect(options.attributes['agent_loop.cycle_id']).toBe('cycle-42')
+    })
+
+    // Regression test for #4666: traceAttributes were missing from cycle spans.
+    it('includes constructor-level trace attributes', () => {
+      const tracer = new Tracer({ 'session.id': 'sess-1' })
+
+      tracer.startAgentLoopSpan({ cycleId: 'cycle-42', messages: [] })
+
+      const [, options] = getStartSpanCall()
+      expect(options.attributes['session.id']).toBe('sess-1')
       expect(options.attributes['agent_loop.cycle_id']).toBe('cycle-42')
     })
 

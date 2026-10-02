@@ -517,19 +517,21 @@ def test_web_search_enabled_on_supported_provider_from_default():
     assert agent.model.config["params"]["tools"] == [{"type": "web_search"}]
 
 
-def test_web_search_default_on_bedrock_warns_with_the_opt_in_and_builds(caplog):
+def test_web_search_default_on_bedrock_logs_info_not_warning_and_builds(caplog):
     import logging
 
-    with caplog.at_level(logging.WARNING, logger="strands_harness.agent"):
+    with caplog.at_level(logging.INFO, logger="strands_harness.agent"):
         agent = create_harness()
     assert "web_search" not in agent.tool_names
-    assert any("has no native web search" in r.message and "'web_search': 'exa'" in r.message for r in caplog.records)
+    notes = [r for r in caplog.records if "has no built-in web search" in r.getMessage()]
+    assert notes and all(r.levelno == logging.INFO for r in notes)
+    assert "web-access/#web_search" in notes[0].getMessage()
 
 
 def test_web_search_explicit_on_unsupported_provider_raises():
-    with pytest.raises(ValueError, match="has no native web search"):
+    with pytest.raises(ValueError, match="has no built-in web search"):
         create_harness(builtin_tools=["read", "web_search"])
-    with pytest.raises(ValueError, match="has no native web search"):
+    with pytest.raises(ValueError, match="has no built-in web search"):
         create_harness(builtin_tools={"web_search": True})
 
 
@@ -540,7 +542,7 @@ def test_web_search_exa_fallback_builds_the_tool_and_warns_about_the_third_party
         agent = create_harness(builtin_tools={"web_search": "exa"})
     assert "web_search" in agent.tool_names
     assert any("Exa (exa.ai), a third-party service" in r.message for r in caplog.records)
-    assert not any("has no native web search" in r.message for r in caplog.records)
+    assert not any("has no built-in web search" in r.getMessage() for r in caplog.records)
 
 
 def test_web_search_exa_wins_over_native_search():
