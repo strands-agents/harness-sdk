@@ -329,6 +329,8 @@ export {
   type McpServerConfig,
   type SerializableMcpToolFilters,
   McpClient,
+  McpTaskCancelledError,
+  McpTaskFailedError,
 } from './mcp/index.js'
 export type { ElicitationCallback, ElicitationContext } from './types/elicitation.js'
 

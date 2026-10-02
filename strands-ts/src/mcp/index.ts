@@ -11,5 +11,7 @@ export {
   type TasksConfig,
   type McpConnectionState,
   McpClient,
+  McpTaskCancelledError,
+  McpTaskFailedError,
 } from './client.js'
 export type { McpLoadServersOptions, McpServerConfig, SerializableMcpToolFilters } from './config.js'
