@@ -30,6 +30,21 @@ export const WEB_FETCH_DESCRIPTION_AGENTIC =
   'The prompt parameter is required.'
 
 /**
+ * A function with the same signature as `globalThis.fetch`.
+ */
+export type FetchFn = typeof globalThis.fetch
+
+/**
+ * HTTP transport for the web fetch tool.
+ *
+ * - `"curl"` (default): runs `curl` inside the agent's sandbox, so sandbox
+ *   network-isolation and egress rules cover web_fetch automatically.
+ * - A {@link FetchFn}: delegates all networking to that function, giving full
+ *   control over transport configuration.
+ */
+export type WebFetchClient = FetchFn | 'curl'
+
+/**
  * Options for {@link makeWebFetch}.
  */
 export interface MakeWebFetchOptions {
@@ -41,6 +56,11 @@ export interface MakeWebFetchOptions {
   maxBytes?: number
   /** Maximum characters of extracted content delivered to the model. Defaults to 50,000. */
   maxContentChars?: number
+  /**
+   * HTTP transport. `"curl"` (default) runs curl inside the agent's sandbox;
+   * a fetch function delegates to that function directly.
+   */
+  client?: WebFetchClient
   /**
    * Optional model for the analyst agent. Only used when `mode` is `'agentic'`.
    * Falls back to the host agent's model when not provided.
