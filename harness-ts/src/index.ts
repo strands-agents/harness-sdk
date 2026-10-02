@@ -6,8 +6,6 @@ export { createHarness, type HarnessAgentOptions } from './agent.js'
 export {
   BUILTIN_PLUGIN_NAMES,
   BUILTIN_TOOL_NAMES,
-  DEFAULT_HARNESS_AGENT_CONFIG,
-  defineHarnessAgentConfig,
   harnessAgentOptionsFromConfig,
   type BuiltinPluginName,
   type BuiltinToolName,

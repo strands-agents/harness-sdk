@@ -9,13 +9,11 @@ from typing import get_args
 import pytest
 
 from strands_harness import (
-    DEFAULT_HARNESS_AGENT_CONFIG,
     create_harness,
-    define_harness_agent_config,
     harness_agent_kwargs_from_config,
     normalize_harness_agent_config,
 )
-from strands_harness.config import _BUILTIN_TOOL_CONFIGS, _BuiltinToolsMap
+from strands_harness.config import _BUILTIN_TOOL_CONFIGS, _CONFIG_KEYS, _BuiltinToolsMap
 from strands_harness.options import (
     _BUILTIN_TOOL_CONFIG_KEYS,
     _check_builtin_tool_config_value,
@@ -25,7 +23,7 @@ from strands_harness.types.agent import BuiltinToolName
 
 
 def test_config_round_trips_complete_definition():
-    config = define_harness_agent_config(
+    config = normalize_harness_agent_config(
         {
             "name": "Reviewer",
             "description": "Reviews changes",
@@ -113,18 +111,50 @@ def test_config_module_ref_dependency_is_optional_not_nullable(dependency):
         normalize_harness_agent_config({"tools": [{"module": "./tools.py", "dependency": dependency}]})
 
 
-def test_config_maps_to_harness_agent_kwargs(tmp_path):
-    kwargs = harness_agent_kwargs_from_config(DEFAULT_HARNESS_AGENT_CONFIG, tmp_path)
+def test_config_leaves_omitted_keys_to_create_harness(tmp_path):
+    assert normalize_harness_agent_config({}) == {}
+    assert harness_agent_kwargs_from_config({}, tmp_path) == {}
 
-    assert kwargs == {
-        "name": "Strands harness",
-        "model": DEFAULT_HARNESS_AGENT_CONFIG["model"],
+
+def test_config_keeps_explicit_null_and_rejects_null_on_non_nullable_keys(tmp_path):
+    nulls = {"modelModule": None, "sandbox": None, "interventions": None}
+    assert normalize_harness_agent_config(nulls) == nulls
+    assert harness_agent_kwargs_from_config(nulls, tmp_path) == {}
+    with pytest.raises(ValueError, match="name: Input should be a valid string"):
+        normalize_harness_agent_config({"name": None})
+
+
+def test_config_forwards_set_values_except_caching_true_and_empty_description(tmp_path):
+    builtin_tools = [
+        "shell",
+        "read",
+        "write",
+        "edit",
+        "web_fetch",
+        "web_search",
+        "programmatic_tool_caller",
+        "subagent",
+    ]
+    config = normalize_harness_agent_config(
+        {
+            "description": "",
+            "effort": "auto",
+            "builtinTools": builtin_tools,
+            "caching": True,
+            "builtinPlugins": ["todos", "environment"],
+            "session": True,
+            "memory": True,
+        }
+    )
+
+    assert harness_agent_kwargs_from_config(config, tmp_path) == {
         "effort": "auto",
-        "context_manager": "auto",
+        "builtin_tools": builtin_tools,
+        "builtin_plugins": ["todos", "environment"],
         "session": True,
-        "skills": True,
         "memory": True,
     }
+    assert harness_agent_kwargs_from_config({"caching": False}, tmp_path) == {"caching": False}
 
 
 def test_config_every_create_harness_parameter_has_a_bridge_key_or_is_factory_only():
@@ -149,22 +179,20 @@ def test_config_every_create_harness_parameter_has_a_bridge_key_or_is_factory_on
         if parameter.kind is not inspect.Parameter.VAR_KEYWORD
     }
     assert params == set(bridged) | factory_only
-    assert set(bridged.values()) <= set(DEFAULT_HARNESS_AGENT_CONFIG)
+    assert set(bridged.values()) <= _CONFIG_KEYS
     # Factory-only parameters and SDK passthrough (``name``, ``sandbox``, ...) are still fed by module
     # references or ``agentConfig``, never by a dead key.
-    assert {"tools", "plugins", "mcpServers", "name", "description", "sandbox", "agentConfig"} <= set(
-        DEFAULT_HARNESS_AGENT_CONFIG
-    )
+    assert {"tools", "plugins", "mcpServers", "name", "description", "sandbox", "agentConfig"} <= _CONFIG_KEYS
 
 
 def test_config_forwards_session_off(tmp_path):
-    config = define_harness_agent_config({"session": False})
+    config = normalize_harness_agent_config({"session": False})
     kwargs = harness_agent_kwargs_from_config(config, tmp_path)
     assert kwargs["session"] is False
 
 
 def test_config_resolves_session_and_memory_dirs_against_the_project_root(tmp_path):
-    config = define_harness_agent_config({"session": {"id": "run", "dir": "./runs"}, "memory": {"dir": "mem"}})
+    config = normalize_harness_agent_config({"session": {"id": "run", "dir": "./runs"}, "memory": {"dir": "mem"}})
     kwargs = harness_agent_kwargs_from_config(config, tmp_path)
     assert kwargs["session"] == {"id": "run", "dir": str(tmp_path / "runs")}
     assert kwargs["memory"] == {"dir": str(tmp_path / "mem")}
@@ -174,22 +202,24 @@ def test_config_folds_memory_stores_into_the_memory_config(tmp_path):
     module = tmp_path / "stores.py"
     module.write_text("store = object()\n")
     reference = {"kind": "memory-store", "module": str(module), "export": "store", "language": "python"}
-    kwargs = harness_agent_kwargs_from_config(define_harness_agent_config({"memoryStores": [reference]}), tmp_path)
+    kwargs = harness_agent_kwargs_from_config(normalize_harness_agent_config({"memoryStores": [reference]}), tmp_path)
     assert len(kwargs["memory"]["stores"]) == 1
     assert "dir" not in kwargs["memory"]
 
-    off = define_harness_agent_config({"memory": False, "memoryStores": [reference]})
+    off = normalize_harness_agent_config({"memory": False, "memoryStores": [reference]})
     assert harness_agent_kwargs_from_config(off, tmp_path)["memory"] is False
 
 
 def test_config_resolves_relative_skills_and_leaves_urls_alone(tmp_path):
-    single = harness_agent_kwargs_from_config(define_harness_agent_config({"skills": "./skills"}), tmp_path)
+    single = harness_agent_kwargs_from_config(normalize_harness_agent_config({"skills": "./skills"}), tmp_path)
     assert single["skills"] == str(tmp_path / "skills")
     many = harness_agent_kwargs_from_config(
-        define_harness_agent_config({"skills": ["skills", "https://example.com/skills.git"]}), tmp_path
+        normalize_harness_agent_config({"skills": ["skills", "https://example.com/skills.git"]}), tmp_path
     )
     assert many["skills"] == [str(tmp_path / "skills"), "https://example.com/skills.git"]
-    assert harness_agent_kwargs_from_config(define_harness_agent_config({"skills": False}), tmp_path)["skills"] is False
+    assert (
+        harness_agent_kwargs_from_config(normalize_harness_agent_config({"skills": False}), tmp_path)["skills"] is False
+    )
 
 
 @pytest.mark.parametrize("value", ["", ["ok", 3], {"dir": "x"}])
@@ -198,19 +228,15 @@ def test_config_rejects_malformed_skills(value):
         normalize_harness_agent_config({"skills": value})
 
 
-def test_config_builtin_tools_list_replaces_and_default_list_is_omitted(tmp_path):
-    default = harness_agent_kwargs_from_config(
-        define_harness_agent_config({"builtinTools": list(DEFAULT_HARNESS_AGENT_CONFIG["builtinTools"])}), tmp_path
-    )
-    assert "builtin_tools" not in default
-    pinned = harness_agent_kwargs_from_config(define_harness_agent_config({"builtinTools": ["shell"]}), tmp_path)
+def test_config_builtin_tools_list_pins_exactly_those_names(tmp_path):
+    pinned = harness_agent_kwargs_from_config(normalize_harness_agent_config({"builtinTools": ["shell"]}), tmp_path)
     assert pinned["builtin_tools"] == ["shell"]
 
 
 def test_config_builtin_tools_mapping_passes_edits_and_loads_web_fetch_model(tmp_path):
     module = tmp_path / "models.py"
     module.write_text("model = object()\n")
-    config = define_harness_agent_config(
+    config = normalize_harness_agent_config(
         {
             "builtinTools": {
                 "web_search": False,
@@ -254,7 +280,7 @@ def test_config_builtin_tools_mapping_normalizes_bare_web_fetch():
     ],
 )
 def test_config_builtin_tools_object_translates_to_snake_case_kwarg(name, setting, expected, tmp_path):
-    config = define_harness_agent_config({"builtinTools": {name: setting}})
+    config = normalize_harness_agent_config({"builtinTools": {name: setting}})
     assert config["builtinTools"] == {name: setting}
     assert harness_agent_kwargs_from_config(config, tmp_path)["builtin_tools"] == {name: expected}
 
@@ -304,7 +330,7 @@ def test_config_rejects_malformed_builtin_tools(value, message):
 )
 def test_config_context_manager_passes_through_and_maps_off(value, expected, tmp_path):
     assert normalize_harness_agent_config({"contextManager": value})["contextManager"] == expected
-    kwargs = harness_agent_kwargs_from_config(define_harness_agent_config({"contextManager": value}), tmp_path)
+    kwargs = harness_agent_kwargs_from_config(normalize_harness_agent_config({"contextManager": value}), tmp_path)
     assert kwargs["context_manager"] == expected
 
 
@@ -341,12 +367,12 @@ def test_config_rejects_malformed_session_and_memory(key, value, message):
 
 
 def test_config_effort_passes_through_verbatim(tmp_path):
-    kwargs = harness_agent_kwargs_from_config(define_harness_agent_config({"effort": "xhigh"}), tmp_path)
+    kwargs = harness_agent_kwargs_from_config(normalize_harness_agent_config({"effort": "xhigh"}), tmp_path)
     assert kwargs["effort"] == "xhigh"
 
 
 def test_config_rejects_typescript_references():
-    config = define_harness_agent_config(
+    config = normalize_harness_agent_config(
         {
             "tools": [
                 {
@@ -371,7 +397,7 @@ def test_config_loads_executable_module_references(tmp_path):
         "def callback_handler(*args, **kwargs):\n"
         "    return None\n"
     )
-    config = define_harness_agent_config(
+    config = normalize_harness_agent_config(
         {
             "tools": [{"kind": "tool", "module": str(module), "export": "custom_tool", "language": "python"}],
             "interventions": ["ask", "./policy.cedar"],
@@ -410,7 +436,7 @@ def test_config_registers_and_reuses_local_dataclass_modules(tmp_path):
         "    name: str = 'custom-tool'\n"
         "default = Tool()\n"
     )
-    config = define_harness_agent_config({"tools": [{"kind": "tool", "module": "./tool.py"}]})
+    config = normalize_harness_agent_config({"tools": [{"kind": "tool", "module": "./tool.py"}]})
 
     tool = harness_agent_kwargs_from_config(config, tmp_path)["tools"][0]
 
@@ -439,7 +465,7 @@ def test_config_loads_packaged_relative_imports(tmp_path, module):
         "    name: str\n"
         "default = Tool(name + '-' + suffix)\n"
     )
-    config = define_harness_agent_config(
+    config = normalize_harness_agent_config(
         {
             "tools": [
                 {
@@ -467,7 +493,7 @@ def test_config_loads_packaged_relative_imports(tmp_path, module):
 def test_config_isolates_same_named_local_packages(tmp_path, monkeypatch):
     existing = ModuleType("shared")
     monkeypatch.setitem(sys.modules, "shared", existing)
-    config = define_harness_agent_config({"tools": [{"kind": "tool", "module": "./shared/tool.py"}]})
+    config = normalize_harness_agent_config({"tools": [{"kind": "tool", "module": "./shared/tool.py"}]})
     tools = []
     for name in ("first", "second"):
         root = tmp_path / name
@@ -484,7 +510,7 @@ def test_config_isolates_same_named_local_packages(tmp_path, monkeypatch):
 def test_config_removes_failed_module_registration(tmp_path):
     module = tmp_path / "tool.py"
     module.write_text("raise RuntimeError('module failed')\n")
-    config = define_harness_agent_config({"tools": [{"kind": "tool", "module": "./tool.py"}]})
+    config = normalize_harness_agent_config({"tools": [{"kind": "tool", "module": "./tool.py"}]})
 
     with pytest.raises(RuntimeError, match="module failed"):
         harness_agent_kwargs_from_config(config, tmp_path)
@@ -496,7 +522,7 @@ def test_config_removes_failed_module_registration(tmp_path):
 def test_config_does_not_add_flat_siblings_to_the_import_path(tmp_path):
     (tmp_path / "strands_config_flat_helper.py").write_text("default = 'helper'\n")
     (tmp_path / "tool.py").write_text("from strands_config_flat_helper import default\n")
-    config = define_harness_agent_config({"tools": [{"kind": "tool", "module": "./tool.py"}]})
+    config = normalize_harness_agent_config({"tools": [{"kind": "tool", "module": "./tool.py"}]})
     original_path = sys.path.copy()
 
     with pytest.raises(ModuleNotFoundError, match="strands_config_flat_helper"):
@@ -519,7 +545,7 @@ def test_config_does_not_add_flat_siblings_to_the_import_path(tmp_path):
     ],
 )
 def test_config_resolves_cedar_interventions_against_project_root(value, expected):
-    config = define_harness_agent_config({"interventions": value})
+    config = normalize_harness_agent_config({"interventions": value})
 
     kwargs = harness_agent_kwargs_from_config(config, "/project")
 
@@ -530,7 +556,7 @@ def test_config_resolves_cedar_interventions_against_project_root(value, expecte
 def test_config_expands_portable_mcp_environment_placeholders(monkeypatch):
     monkeypatch.setenv("MCP_TOKEN", "secret")
     monkeypatch.setenv("mcpClient", "client")
-    config = define_harness_agent_config(
+    config = normalize_harness_agent_config(
         {
             "mcpServers": {
                 "private": {
@@ -553,7 +579,7 @@ def test_config_expands_portable_mcp_environment_placeholders(monkeypatch):
 
 def test_config_rejects_missing_mcp_environment_variable(monkeypatch):
     monkeypatch.delenv("missingToken", raising=False)
-    config = define_harness_agent_config(
+    config = normalize_harness_agent_config(
         {
             "mcpServers": {
                 "private": {
@@ -573,7 +599,7 @@ def test_config_loads_file_backed_mcp_config(tmp_path, monkeypatch):
     (tmp_path / "mcp.json").write_text(
         '{"mcpServers":{"private":{"url":"https://example.com/mcp","headers":{"Authorization":"Bearer ${MCP_TOKEN}"}}}}'
     )
-    config = define_harness_agent_config({"mcpServers": "./mcp.json"})
+    config = normalize_harness_agent_config({"mcpServers": "./mcp.json"})
 
     kwargs = harness_agent_kwargs_from_config(config, tmp_path)
 
@@ -582,7 +608,7 @@ def test_config_loads_file_backed_mcp_config(tmp_path, monkeypatch):
 
 def test_config_rejects_missing_module():
     with pytest.raises(ValueError, match="tools.0.module: Field required"):
-        normalize_harness_agent_config({**DEFAULT_HARNESS_AGENT_CONFIG, "tools": [{"kind": "tool"}]})
+        normalize_harness_agent_config({"tools": [{"kind": "tool"}]})
 
 
 @pytest.mark.parametrize(
@@ -725,9 +751,9 @@ def test_config_builtin_tool_models_match_the_typed_dicts_options_accepts():
 
 
 def test_config_builtin_tools_web_search_is_a_bool_or_exa(tmp_path):
-    config = define_harness_agent_config({"builtinTools": {"web_search": "exa"}})
+    config = normalize_harness_agent_config({"builtinTools": {"web_search": "exa"}})
     assert harness_agent_kwargs_from_config(config, tmp_path)["builtin_tools"]["web_search"] == "exa"
     with pytest.raises(ValueError, match="builtinTools.web_search: Input should be a boolean or 'exa'"):
-        define_harness_agent_config({"builtinTools": {"web_search": "bing"}})
+        normalize_harness_agent_config({"builtinTools": {"web_search": "bing"}})
     with pytest.raises(ValueError, match="builtinTools.web_search: Input should be a boolean or 'exa'"):
-        define_harness_agent_config({"builtinTools": {"web_search": {"fallback": "exa"}}})
+        normalize_harness_agent_config({"builtinTools": {"web_search": {"fallback": "exa"}}})

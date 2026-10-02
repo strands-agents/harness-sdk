@@ -2,8 +2,6 @@
 
 from strands_harness.agent import create_harness
 from strands_harness.config import (
-    DEFAULT_HARNESS_AGENT_CONFIG,
-    define_harness_agent_config,
     harness_agent_kwargs_from_config,
     normalize_harness_agent_config,
 )
@@ -38,7 +36,6 @@ __all__ = [
     "BUILTIN_PLUGIN_NAMES",
     "BUILTIN_TOOL_NAMES",
     "HARNESS_CONTRACT",
-    "DEFAULT_HARNESS_AGENT_CONFIG",
     "BuiltinPluginName",
     "BuiltinToolName",
     "BuiltinToolsConfig",
@@ -58,7 +55,6 @@ __all__ = [
     "WebFetchTransport",
     "build_system_prompt",
     "create_harness",
-    "define_harness_agent_config",
     "harness_agent_kwargs_from_config",
     "normalize_harness_agent_config",
     "resolve_interventions",

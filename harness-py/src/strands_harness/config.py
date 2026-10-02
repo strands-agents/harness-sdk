@@ -33,49 +33,14 @@ from pydantic import (
 from pydantic.alias_generators import to_camel
 from pydantic_core import PydanticCustomError
 
-from strands_harness import defaults
 from strands_harness.types.agent import BuiltinPluginName, BuiltinToolName, Effort, WebFetchTransport
 
 __all__ = [
-    "DEFAULT_HARNESS_AGENT_CONFIG",
-    "define_harness_agent_config",
     "harness_agent_kwargs_from_config",
     "normalize_harness_agent_config",
 ]
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_HARNESS_AGENT_CONFIG: dict[str, Any] = {
-    "name": "Strands harness",
-    "description": "",
-    "instructions": "",
-    "model": defaults.DEFAULT_MODEL,
-    "modelModule": None,
-    "effort": defaults.DEFAULT_EFFORT,
-    "tools": [],
-    "subagents": [],
-    "mcpServers": {},
-    "builtinTools": list(defaults.DEFAULT_BUILTIN_TOOLS),
-    "caching": True,
-    "contextManager": defaults.DEFAULT_CONTEXT_MANAGER,
-    "session": True,
-    "skills": True,
-    "memory": True,
-    "memoryStores": [],
-    "plugins": [],
-    "builtinPlugins": list(defaults.DEFAULT_BUILTIN_PLUGINS),
-    "interventions": None,
-    "interventionModules": [],
-    "sandbox": None,
-    "agentConfigModules": {},
-    "dependencies": {"typescript": {}, "python": []},
-    "agentConfig": {},
-}
-
-
-def define_harness_agent_config(config: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Fill a partial portable config with the harness defaults."""
-    return normalize_harness_agent_config({**deepcopy(DEFAULT_HARNESS_AGENT_CONFIG), **(config or {})})
 
 
 def normalize_harness_agent_config(value: object) -> dict[str, Any]:
@@ -85,18 +50,14 @@ def normalize_harness_agent_config(value: object) -> dict[str, Any]:
     """
     if not isinstance(value, dict):
         raise ValueError("agent config must be an object.")
-    unknown = sorted(set(value) - set(DEFAULT_HARNESS_AGENT_CONFIG))
+    unknown = sorted(set(value) - set(_CONFIG_KEYS))
     if unknown:
         logger.warning("Ignoring unknown agent config keys: %s.", ", ".join(unknown))
-    config = {
-        **DEFAULT_HARNESS_AGENT_CONFIG,
-        **{key: item for key, item in value.items() if key in DEFAULT_HARNESS_AGENT_CONFIG},
-    }
+    config = {key: item for key, item in value.items() if key in _CONFIG_KEYS}
     try:
         parsed = _HarnessAgentConfig.model_validate(config)
     except ValidationError as error:
         raise ValueError(_describe(error, config)) from error
-    # Every top-level key is set by the merge above; nested objects keep only the keys the config spelled out.
     return parsed.model_dump(by_alias=True, exclude_unset=True)
 
 
@@ -131,58 +92,60 @@ def harness_agent_kwargs_from_config(value: object, base_dir: str | Path = ".") 
     """
     config = normalize_harness_agent_config(value)
     root = Path(base_dir).resolve()
-    tools = _load_many(config["tools"], root)
-    subagents = _load_many(config["subagents"], root, invoke=True)
-    plugins = _load_many(config["plugins"], root)
-    stores = _load_many(config["memoryStores"], root)
-    sandbox = _load_optional(config["sandbox"], root)
-    model = _load_optional(config["modelModule"], root)
-    interventions = _load_many(config["interventionModules"], root)
+    tools = _load_many(config.get("tools", []), root)
+    subagents = _load_many(config.get("subagents", []), root, invoke=True)
+    plugins = _load_many(config.get("plugins", []), root)
+    stores = _load_many(config.get("memoryStores", []), root)
+    sandbox = _load_optional(config.get("sandbox"), root)
+    model = _load_optional(config.get("modelModule"), root)
+    interventions = _load_many(config.get("interventionModules", []), root)
     agent_config_modules = {
-        key: _load_reference(reference, root) for key, reference in config["agentConfigModules"].items()
+        key: _load_reference(reference, root) for key, reference in config.get("agentConfigModules", {}).items()
     }
-    kwargs = deepcopy(config["agentConfig"])
+    kwargs = deepcopy(config.get("agentConfig", {}))
     kwargs.update(agent_config_modules)
-    kwargs.update(
-        {
-            "name": config["name"],
-            "model": config["model"] if model is None else model,
-            "effort": config["effort"],
-            "context_manager": config["contextManager"],
-            "session": _session_kwarg(config["session"], root),
-            "skills": _skills_kwarg(config["skills"], root),
-            "memory": _memory_kwarg(config["memory"], stores, root),
-        }
-    )
-    builtin_tools = _builtin_tools_kwarg(config["builtinTools"], root)
-    if builtin_tools is not None:
-        kwargs["builtin_tools"] = builtin_tools
-    if not config["caching"]:
-        kwargs["caching"] = False
-    if config["builtinPlugins"] != list(defaults.DEFAULT_BUILTIN_PLUGINS):
+    if "name" in config:
+        kwargs["name"] = config["name"]
+    if model is not None:
+        kwargs["model"] = model
+    elif "model" in config:
+        kwargs["model"] = config["model"]
+    if "effort" in config:
+        kwargs["effort"] = config["effort"]
+    if "contextManager" in config:
+        kwargs["context_manager"] = config["contextManager"]
+    if "builtinPlugins" in config:
         kwargs["builtin_plugins"] = config["builtinPlugins"]
-    if config["description"]:
+    if config.get("description"):
         kwargs["description"] = config["description"]
-    if config["instructions"]:
+    if config.get("instructions"):
         kwargs["instructions"] = config["instructions"]
+    # ``True`` is the factory's own default, so only ``False`` is forwarded; an explicit ``True`` would make
+    # unsupported providers raise instead of warn.
+    if config.get("caching") is False:
+        kwargs["caching"] = False
+    if "session" in config:
+        kwargs["session"] = _session_kwarg(config["session"], root)
+    if "skills" in config:
+        kwargs["skills"] = _skills_kwarg(config["skills"], root)
+    if "memory" in config or stores:
+        # Declared stores need memory on, so an omitted ``memory`` with stores means enabled.
+        kwargs["memory"] = _memory_kwarg(config.get("memory", True), stores, root)
+    if "builtinTools" in config:
+        kwargs["builtin_tools"] = _builtin_tools_kwarg(config["builtinTools"], root)
     # Specialist agents declared as ``subagents`` module refs are wired like any tool: each is exposed
     # via ``Agent.as_tool()`` and appended to ``tools`` (the harness has no separate subagents param).
     tools = [*tools, *(agent.as_tool() for agent in subagents)]
     if tools:
         kwargs["tools"] = tools
-    if config["mcpServers"]:
+    if config.get("mcpServers"):
         kwargs["mcp_servers"] = _python_mcp_servers(
             _expand_env(_resolve_mcp_working_directories(_mcp_server_map(config["mcpServers"], root), root))
         )
     if plugins:
         kwargs["plugins"] = plugins
-    configured_interventions = (
-        config["interventions"]
-        if isinstance(config["interventions"], list)
-        else [config["interventions"]]
-        if config["interventions"]
-        else []
-    )
+    configured = config.get("interventions")
+    configured_interventions = configured if isinstance(configured, list) else [configured] if configured else []
     intervention_values = [
         _resolve_path(value.strip(), root) if value.strip().endswith(".cedar") else value
         for value in configured_interventions
@@ -263,7 +226,11 @@ def _positive_number(value: object) -> object:
 NonBlankStr = _non_blank_str()
 _UNIQUE = AfterValidator(_unique)
 _UNSET: Any = None
-"""Unset marker for optional keys that must not be explicit null; dumps use ``exclude_unset``."""
+"""Plain ``None`` typed ``Any`` so non-nullable fields can default to it without a type error.
+
+Pydantic never validates defaults, and dumps use ``exclude_unset``, so an omitted key stays omitted while an
+explicit ``null`` is still rejected unless the field is typed ``| None``.
+"""
 
 
 class _Model(BaseModel):
@@ -399,59 +366,63 @@ _MCP_SERVERS_SHAPE = "Input should be an object or a non-empty file path"
 
 
 class _HarnessAgentConfig(_Model):
-    """``DEFAULT_HARNESS_AGENT_CONFIG`` as a schema; every key is required because defaults are merged first."""
+    """``config.json`` as a schema; every key is optional and an omitted key stays omitted."""
 
-    name: NonBlankStr
-    description: str
-    instructions: str
-    model: NonBlankStr
-    model_module: _ModelReference | None
-    effort: Effort
-    tools: list[_reference("tool")]
-    subagents: list[_reference("subagent")]
-    mcp_servers: _one_of(_MCP_SERVERS_SHAPE, (dict, _JsonObject), (str, _non_blank_str(_MCP_SERVERS_SHAPE)))
+    name: NonBlankStr = _UNSET
+    description: str = _UNSET
+    instructions: str = _UNSET
+    model: NonBlankStr = _UNSET
+    model_module: _ModelReference | None = _UNSET
+    effort: Effort = _UNSET
+    tools: list[_reference("tool")] = _UNSET
+    subagents: list[_reference("subagent")] = _UNSET
+    mcp_servers: _one_of(_MCP_SERVERS_SHAPE, (dict, _JsonObject), (str, _non_blank_str(_MCP_SERVERS_SHAPE))) = _UNSET
     builtin_tools: _one_of(
         "Input should be an array of tool names or an object of per-tool settings",
         (list, Annotated[list[BuiltinToolName], _UNIQUE]),
         (dict, _BuiltinToolsMap),
-    )
-    caching: bool
+    ) = _UNSET
+    caching: bool = _UNSET
     context_manager: _one_of(
         "Input should be one of 'auto', 'agentic', 'off'; false; or a config object",
         (str, Annotated[Literal["auto", "agentic", "off"], AfterValidator(_off_is_false)]),
         (lambda value: value is False, Literal[False]),
         (dict, _JsonObject),
-    )
+    ) = _UNSET
     session: _one_of(
         "Input should be a boolean or an object with optional id and dir", (bool, bool), (dict, _SessionConfig)
-    )
+    ) = _UNSET
     skills: _one_of(
         "Input should be a boolean, a path, or an array of paths",
         (bool, bool),
         (str, NonBlankStr),
         (list, Annotated[list[NonBlankStr], _UNIQUE]),
-    )
-    memory: _one_of("Input should be a boolean or an object with an optional dir", (bool, bool), (dict, _MemoryConfig))
-    memory_stores: list[_reference("memory-store")]
-    plugins: list[_reference("plugin")]
-    builtin_plugins: Annotated[list[BuiltinPluginName], _UNIQUE]
+    ) = _UNSET
+    memory: _one_of(
+        "Input should be a boolean or an object with an optional dir", (bool, bool), (dict, _MemoryConfig)
+    ) = _UNSET
+    memory_stores: list[_reference("memory-store")] = _UNSET
+    plugins: list[_reference("plugin")] = _UNSET
+    builtin_plugins: Annotated[list[BuiltinPluginName], _UNIQUE] = _UNSET
     interventions: _one_of(
         "Input should be a string, an array of strings, or null",
         (str, NonBlankStr),
         (list, list[NonBlankStr]),
         (type(None), None),
-    )
-    intervention_modules: list[_reference("intervention")]
-    sandbox: _reference("sandbox") | None
-    agent_config_modules: _record(_reference("agent-config"))
-    dependencies: _Dependencies
-    agent_config: _JsonObject
+    ) = _UNSET
+    intervention_modules: list[_reference("intervention")] = _UNSET
+    sandbox: _reference("sandbox") | None = _UNSET
+    agent_config_modules: _record(_reference("agent-config")) = _UNSET
+    dependencies: _Dependencies = _UNSET
+    agent_config: _JsonObject = _UNSET
 
 
-def _builtin_tools_kwarg(value: list[str] | dict[str, Any], root: Path) -> list[str] | dict[str, Any] | None:
+_CONFIG_KEYS = frozenset(field.alias for field in _HarnessAgentConfig.model_fields.values())
+
+
+def _builtin_tools_kwarg(value: list[str] | dict[str, Any], root: Path) -> list[str] | dict[str, Any]:
     if isinstance(value, list):
-        # The portable default spells out today's set; leave it to the factory so the mapping stays "defaults".
-        return None if value == list(defaults.DEFAULT_BUILTIN_TOOLS) else list(value)
+        return list(value)
     resolved: dict[str, Any] = {}
     for name, setting in value.items():
         if isinstance(setting, dict):
