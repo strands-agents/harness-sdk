@@ -406,6 +406,10 @@ Each interrupt has a server-generated id, and an answer is bound to the id of th
 }
 ```
 
+The `reason` is whatever the tool passed to `interrupt()`. A reason that is not
+JSON-encodable — a custom object, or a non-finite number like `NaN` — arrives as its
+string form instead.
+
 To answer, send a new message on the same `taskId` containing a `DataPart` that echoes the `interruptId` back with the response:
 
 ```json
