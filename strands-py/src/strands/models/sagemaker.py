@@ -1,5 +1,6 @@
 """Amazon SageMaker model provider."""
 
+import codecs
 import json
 import logging
 import os
@@ -131,8 +132,9 @@ def _parse_event_stream(body: Iterable[Any]) -> Iterator[dict[str, Any]]:
         One decoded JSON object per event.
     """
     buffer = ""
+    decoder = codecs.getincrementaldecoder("utf-8")()
     for part in body:
-        buffer += part["PayloadPart"]["Bytes"].decode("utf-8")
+        buffer += decoder.decode(part["PayloadPart"]["Bytes"])
         logger.debug("buffer=<%s> | accumulated payload part", buffer)
         while "\n" in buffer:
             line, rest = buffer.split("\n", 1)
@@ -162,6 +164,7 @@ def _parse_event_stream(body: Iterable[Any]) -> Iterator[dict[str, Any]]:
             continue
         buffer = ""
         yield parsed
+    buffer += decoder.decode(b"", final=True)
     if _strip_sse_framing(buffer) is not None:
         logger.warning("buffer=<%s> | stream ended with an undecoded partial event", buffer)
 
