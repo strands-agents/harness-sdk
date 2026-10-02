@@ -15,6 +15,7 @@ from ....types.content import ContentBlock, Message
 from ....types.exceptions import ContextWindowOverflowException
 
 if TYPE_CHECKING:
+    from ....agent.agent import Agent
     from ....models.model import Model
 
 logger = logging.getLogger(__name__)
@@ -218,6 +219,48 @@ def as_user_summary(message: Message) -> Message:
     if not text_blocks:
         raise RuntimeError("Failed to generate summary: model response contained no text")
     return {"role": "user", "content": text_blocks}
+
+
+async def compact_messages(
+    agent: "Agent", messages_to_summarize: list[Message], instructions: str | None = None
+) -> Message | None:
+    """Ask the agent's model for a signed summary of ``messages_to_summarize`` via :meth:`Model.compact`.
+
+    Args:
+        agent: The agent whose model, system prompt and tools the conversation uses.
+        messages_to_summarize: The messages to summarize.
+        instructions: Custom summarization instructions passed to the provider.
+
+    Returns:
+        The provider's summary message, or None when the model cannot compact, produced no summary, or failed;
+        the caller's own summarizer then takes over.
+    """
+    if not agent.model.supports_compaction:
+        return None
+    try:
+        return await agent.model.compact(
+            messages_to_summarize,
+            tool_specs=agent.tool_registry.get_all_tool_specs(),
+            system_prompt_content=agent.system_prompt_content,
+            instructions=instructions,
+        )
+    except Exception as error:
+        logger.warning("error=<%s> | provider compaction failed, falling back to client summary", error)
+        return None
+
+
+def strip_reasoning(messages: list[Message]) -> None:
+    """Drop reasoning blocks from ``messages`` in place.
+
+    A client-written summary rewrites the history that reasoning blocks were signed against, so models with
+    preserved thinking reject them afterwards. Removing them is the one edit those models allow.
+
+    Args:
+        messages: The messages kept after a client-side summary.
+    """
+    for message in messages:
+        if any("reasoningContent" in block for block in message["content"]):
+            message["content"] = [block for block in message["content"] if "reasoningContent" not in block]
 
 
 def matches_message_type(message: Message, filter: MessageType) -> bool:

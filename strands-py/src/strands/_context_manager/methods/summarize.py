@@ -51,7 +51,8 @@ class SummarizeConfig(TypedDict, total=False):
     Attributes:
         model: Model used for summarization. Resolution order: this ``model`` > ``agent.aux_model``
             > ``agent.model``.
-        system_prompt: Custom system prompt for the summarization model.
+        system_prompt: Custom system prompt for the summarization model. Also sent as the instructions when the
+            provider writes the summary itself (see ``Model.compact``), replacing its default prompt.
     """
 
     model: Model

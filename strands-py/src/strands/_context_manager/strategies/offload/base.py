@@ -389,7 +389,7 @@ class BaseOffloadStrategy(ABC):
         """Check whether a block is eligible for offload given target and filters."""
         if is_tool_use_block(block):
             return False
-        if "reasoningContent" in block or "cachePoint" in block:
+        if "reasoningContent" in block or "cachePoint" in block or "signature" in block:
             return False
         if is_text_block(block):
             return _target_matches_message(self._target, message)

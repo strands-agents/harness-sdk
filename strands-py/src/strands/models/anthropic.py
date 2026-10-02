@@ -77,6 +77,32 @@ _CACHEABLE_BLOCK_TYPES = frozenset({"document", "image", "text", "tool_result", 
 # ``ephemeral`` is the only cache type the Anthropic API supports
 _ANTHROPIC_CACHE_TYPE = "ephemeral"
 
+# Beta that lets a request ask for a signed summary, and that must accompany every later request carrying it.
+_COMPACT_BETA = "compact-2026-09-04"
+
+
+def _carries_compaction(messages: Messages) -> bool:
+    """Whether any message holds a signed summary from :meth:`AnthropicModel.compact`."""
+    return any("signature" in block and "text" in block for message in messages for block in message["content"])
+
+
+def _format_text(content: ContentBlock) -> dict[str, Any]:
+    """Format a text block, or the compaction block it stands for when it carries a signature."""
+    if "signature" in content:
+        return {"content": content["text"], "signature": content["signature"], "type": "compaction"}
+    return {"text": content["text"], "type": "text"}
+
+
+def _with_beta(extra_headers: dict[str, str] | None, beta: str) -> dict[str, str]:
+    """Return ``extra_headers`` with ``beta`` appended to its ``anthropic-beta`` header."""
+    headers = dict(extra_headers or {})
+    existing = headers.get("anthropic-beta")
+    if existing and beta not in [part.strip() for part in existing.split(",")]:
+        headers["anthropic-beta"] = f"{existing},{beta}"
+    elif not existing:
+        headers["anthropic-beta"] = beta
+    return headers
+
 
 class AnthropicModel(Model):
     """Anthropic model provider implementation."""
@@ -147,6 +173,7 @@ class AnthropicModel(Model):
 
         client_args = client_args or {}
         self.client = anthropic.AsyncAnthropic(**client_args)
+        self._compaction_rejected = False
 
     @override
     def update_config(self, **model_config: Unpack[AnthropicConfig]) -> None:  # type: ignore[override]
@@ -236,7 +263,7 @@ class AnthropicModel(Model):
             }
 
         if "text" in content:
-            return {"text": content["text"], "type": "text"}
+            return _format_text(content)
 
         if "citationsContent" in content:
             text = "".join(c["text"] for c in content["citationsContent"].get("content", []) if "text" in c)
@@ -529,6 +556,9 @@ class AnthropicModel(Model):
             **params,
             "tools": tools,
         }
+
+        if _carries_compaction(messages):
+            request["extra_headers"] = _with_beta(params.get("extra_headers"), _COMPACT_BETA)
 
         return request
 
@@ -864,7 +894,7 @@ class AnthropicModel(Model):
                 messages, tool_specs, system_prompt, system_prompt_content=system_prompt_content
             )
             # Keep only fields accepted by count_tokens; strip inference params (max_tokens, temperature, etc.)
-            count_tokens_fields = {"model", "messages", "tools", "tool_choice", "system"}
+            count_tokens_fields = {"model", "messages", "tools", "tool_choice", "system", "extra_headers"}
             request = {k: request[k] for k in request.keys() & count_tokens_fields}
 
             response = await self.client.messages.count_tokens(**request)
@@ -883,6 +913,78 @@ class AnthropicModel(Model):
                 e,
             )
             return await super().count_tokens(messages, tool_specs, system_prompt, system_prompt_content)
+
+    @property
+    @override
+    def supports_compaction(self) -> bool:
+        """Anthropic writes signed summaries through the compaction API, unless this model has rejected it."""
+        return not self._compaction_rejected
+
+    @override
+    async def compact(
+        self,
+        messages: Messages,
+        *,
+        tool_specs: list[ToolSpec] | None = None,
+        system_prompt: str | None = None,
+        system_prompt_content: list[SystemContentBlock] | None = None,
+        instructions: str | None = None,
+    ) -> Message | None:
+        """Ask Anthropic for a signed summary of ``messages`` (the ``compact-2026-09-04`` beta).
+
+        Args:
+            messages: The messages to summarize. Must not end on an unanswered tool call.
+            tool_specs: The conversation's tool specifications, sent so kept turns stay valid.
+            system_prompt: Plain string system prompt. Ignored when system_prompt_content is provided.
+            system_prompt_content: Structured system prompt content blocks.
+            instructions: Replaces Anthropic's summarization prompt when set.
+
+        Returns:
+            An assistant message with one text block carrying the summary and its ``signature``, or None when the
+            API produced no summary (e.g. the summarizer hit ``max_tokens`` or refused the instructions) or
+            rejected the compaction request.
+
+        Raises:
+            ContextWindowOverflowException: If the input exceeds the model's context window.
+            ModelThrottledException: If the request is throttled by Anthropic.
+        """
+        request = self.format_request(messages, tool_specs, system_prompt, system_prompt_content=system_prompt_content)
+        # Rejected on a summarization call; leave them out.
+        for field in ("stop_sequences", "tool_choice"):
+            request.pop(field, None)
+        request["extra_headers"] = _with_beta((self.config.get("params") or {}).get("extra_headers"), _COMPACT_BETA)
+        compaction: dict[str, Any] = {"type": "summarize"}
+        if instructions:
+            compaction["instructions"] = instructions
+        request["extra_body"] = {**(request.get("extra_body") or {}), "compaction": compaction}
+        # An explicit timeout keeps the SDK from refusing a non-streaming call with a large max_tokens.
+        request.setdefault("timeout", self.client.timeout)
+
+        try:
+            response = await self.client.beta.messages.create(**request)
+        except anthropic.RateLimitError as error:
+            raise ModelThrottledException(str(error)) from error
+        except anthropic.BadRequestError as error:
+            if any(overflow_message in str(error).lower() for overflow_message in AnthropicModel.OVERFLOW_MESSAGES):
+                raise ContextWindowOverflowException(str(error)) from error
+            # The model, account or gateway does not offer compaction; the caller's summarizer takes over.
+            logger.warning("model_id=<%s>, error=<%s> | compaction rejected", self.config["model_id"], error)
+            self._compaction_rejected = True
+            return None
+
+        result = response.model_dump()
+        logger.debug(
+            "stop_reason=<%s>, iterations=<%s> | compaction response",
+            result.get("stop_reason"),
+            (result.get("usage") or {}).get("iterations"),
+        )
+        blocks = [block for block in result.get("content") or [] if block.get("type") == "compaction"]
+        block = blocks[0] if blocks else {}
+        if result.get("stop_reason") != "compaction" or not block.get("content") or not block.get("signature"):
+            logger.warning("stop_reason=<%s> | compaction produced no summary", result.get("stop_reason"))
+            return None
+
+        return {"role": "assistant", "content": [{"text": block["content"], "signature": block["signature"]}]}
 
     @override
     async def stream(

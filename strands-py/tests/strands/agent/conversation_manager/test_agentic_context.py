@@ -1,6 +1,6 @@
 """Tests for the agentic context-management tools."""
 
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -47,6 +47,7 @@ async def _mock_model_stream_error(error):
 
 def mock_model(summary_text="Summary of older messages"):
     model = Mock()
+    model.supports_compaction = False
     model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream(summary_text))
     return model
 
@@ -54,7 +55,7 @@ def mock_model(summary_text="Summary of older messages"):
 def make_agent(messages, model=None):
     agent = Mock()
     agent.messages = messages
-    agent.model = model if model is not None else Mock()
+    agent.model = model if model is not None else mock_model()
     agent.aux_model = agent.model
     return agent
 
@@ -160,7 +161,7 @@ class TestSummarizeContext:
         assert messages[0]["role"] == "user"
 
     async def test_returns_failure_message_when_model_throws(self, alist):
-        model = Mock()
+        model = mock_model()
         model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream_error(RuntimeError("model error")))
         messages = make_messages(20)
         agent = make_agent(messages, model)
@@ -411,3 +412,130 @@ class TestPinContextEmptyConversation:
         agent = make_agent([])
         result = await invoke_tool(pin_context, agent, alist, select="last_turn", action="pin")
         assert result == "No messages in the conversation."
+
+
+def reasoning_msg(text: str) -> Message:
+    return {
+        "role": "assistant",
+        "content": [{"reasoningContent": {"reasoningText": {"text": "thinking", "signature": "s"}}}, {"text": text}],
+    }
+
+
+def compaction_model(summary_text="Compacted"):
+    model = mock_model()
+    model.supports_compaction = True
+    model.compact = AsyncMock(
+        return_value={"role": "assistant", "content": [{"text": summary_text, "signature": "sig-1"}]}
+    )
+    return model
+
+
+@pytest.mark.asyncio
+class TestSummarizeContextCompaction:
+    async def test_provider_summary_replaces_the_prefix_including_the_first_user_message(self, alist):
+        messages = make_messages(20)
+        agent = make_agent(messages, compaction_model())
+
+        result = await invoke_tool(summarize_context, agent, alist, keep_recent=10, summary_ratio=0.5)
+
+        assert "Summarized 10 message(s)" in result
+        assert messages[0]["role"] == "assistant"
+        assert messages[0]["content"] == [{"text": "Compacted", "signature": "sig-1"}]
+        assert "tracking_id" in messages[0]
+        assert messages[1]["content"][0]["text"] == "Message 11"
+        agent.model.stream.assert_not_called()
+        compacted = agent.model.compact.call_args.args[0]
+        assert [msg["content"][0]["text"] for msg in compacted] == [f"Message {i}" for i in range(1, 11)]
+
+    async def test_falls_back_to_client_summary_and_strips_kept_reasoning(self, alist):
+        messages = make_messages(20)
+        messages[19] = reasoning_msg("Message 20")
+        model = compaction_model()
+        model.compact = AsyncMock(return_value=None)
+        agent = make_agent(messages, model)
+
+        result = await invoke_tool(summarize_context, agent, alist, keep_recent=10, summary_ratio=0.5)
+
+        assert "Summarized" in result
+        assert messages[0]["role"] == "user"
+        agent.model.stream.assert_called_once()
+        assert messages[-1] == {"role": "assistant", "content": [{"text": "Message 20"}]}
+
+    async def test_client_summary_strips_reasoning_when_model_cannot_compact(self, alist):
+        messages = make_messages(20)
+        messages[19] = reasoning_msg("Message 20")
+        agent = make_agent(messages)
+
+        await invoke_tool(summarize_context, agent, alist, keep_recent=10, summary_ratio=0.5)
+
+        assert messages[-1] == {"role": "assistant", "content": [{"text": "Message 20"}]}
+
+    async def test_pinned_message_in_range_skips_provider_compaction(self, alist):
+        messages = make_messages(20)
+        pin_message(messages, 2)
+        agent = make_agent(messages, compaction_model())
+
+        await invoke_tool(summarize_context, agent, alist, keep_recent=10, summary_ratio=0.5)
+
+        agent.model.compact.assert_not_called()
+        agent.model.stream.assert_called_once()
+        assert messages[0]["content"][0]["text"] == "Message 1"
+        assert messages[1]["content"][0]["text"] == "Message 3"
+
+    async def test_message_type_filter_keeps_first_user_message_without_compaction(self, alist):
+        messages = [text_msg("user", "Message 1"), tool_use_msg("t1"), tool_result_msg("t1"), *make_messages(17)[3:]]
+        agent = make_agent(messages, compaction_model())
+
+        await invoke_tool(summarize_context, agent, alist, keep_recent=4, summary_ratio=0.5, message_type="messages")
+
+        agent.model.compact.assert_not_called()
+        assert messages[0]["role"] == "user"
+        assert messages[0]["content"][0]["text"] == "Message 1"
+
+    async def test_failed_compaction_keeps_first_user_message(self, alist):
+        messages = make_messages(20)
+        model = compaction_model()
+        model.compact = AsyncMock(return_value=None)
+        agent = make_agent(messages, model)
+
+        await invoke_tool(summarize_context, agent, alist, keep_recent=10, summary_ratio=0.5)
+
+        assert messages[0]["content"][0]["text"] == "Message 1"
+        assert messages[1]["role"] == "user"
+
+    async def test_compacts_again_after_a_previous_compaction(self, alist):
+        messages = make_messages(20)
+        agent = make_agent(messages, compaction_model())
+        await invoke_tool(summarize_context, agent, alist, keep_recent=10, summary_ratio=0.5)
+        messages.extend(make_messages(10))
+
+        result = await invoke_tool(summarize_context, agent, alist, keep_recent=10, summary_ratio=0.5)
+
+        assert "Summarized" in result
+        assert agent.model.compact.call_count == 2
+        agent.model.stream.assert_not_called()
+        compacted = agent.model.compact.call_args.args[0]
+        assert compacted[0]["content"] == [{"text": "Compacted", "signature": "sig-1"}]
+        assert messages[0]["content"] == [{"text": "Compacted", "signature": "sig-1"}]
+
+    async def test_pinned_first_message_skips_provider_compaction(self, alist):
+        messages = make_messages(20)
+        pin_message(messages, 0)
+        agent = make_agent(messages, compaction_model())
+
+        await invoke_tool(summarize_context, agent, alist, keep_recent=10, summary_ratio=0.5)
+
+        agent.model.compact.assert_not_called()
+        assert messages[0]["content"][0]["text"] == "Message 1"
+
+    async def test_compaction_error_falls_back_to_client_summary(self, alist):
+        messages = make_messages(20)
+        model = compaction_model()
+        model.compact = AsyncMock(side_effect=RuntimeError("compaction unavailable"))
+        agent = make_agent(messages, model)
+
+        result = await invoke_tool(summarize_context, agent, alist, keep_recent=10, summary_ratio=0.5)
+
+        assert "Summarized" in result
+        agent.model.stream.assert_called_once()
+        assert messages[0]["content"][0]["text"] == "Message 1"
