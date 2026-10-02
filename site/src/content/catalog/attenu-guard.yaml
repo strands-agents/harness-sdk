@@ -1,0 +1,10 @@
+name: attenu-guard
+description: "Per-agent permission enforcement on every tool call and every agents-as-tools / swarm / graph handoff: a sub-agent's permissions are a computed subset of its parent's, and every decision lands in a hash-chained audit log verified offline."
+integrationType: intervention
+maintainedBy: community
+languages:
+  python:
+    package: attenu-guard
+github: https://github.com/attenu-io/attenu-guard
+docsUrl: https://github.com/attenu-io/attenu-guard/tree/main/examples/integrations/strands
+addedDate: 2026-08-26
