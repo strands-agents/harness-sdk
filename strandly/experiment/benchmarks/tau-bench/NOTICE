@@ -1,0 +1,10 @@
+tau-bench
+Copyright 2024 Sierra Research
+
+Licensed under the MIT License.
+https://github.com/sierra-research/tau-bench
+
+Citation:
+  Yifei Zhou, Andrea Zanette, et al. "tau-bench: A Benchmark for Tool-Agent-User
+  Interaction in Real-World Domains." arXiv:2406.12045, 2024.
+  https://arxiv.org/abs/2406.12045
