@@ -97,6 +97,13 @@ handled under its terms; weigh that before using it for sensitive work. You can 
 the MCP server of your preferred search provider instead; see
 [connect MCP servers](../../configure/mcp-servers/).
 
+If the queries should stay inside your own AWS account, set `{"web_search": "agentcore"}` in
+`builtin_tools` instead. The harness then searches through AgentCore Web Search, reached
+through an AgentCore Gateway: set `AGENTCORE_GATEWAY_ID` to the ID or ARN of a gateway with a
+web search connector, and install the `agentcore` extra in Python
+(`pip install "strands-harness[agentcore]"`) or the optional `bedrock-agentcore` package in
+TypeScript. Searches are billed to your account, and no third party sees them.
+
 ## Selecting them
 
 Both are selected by name through `builtin_tools`. To turn either off, leave it out of the

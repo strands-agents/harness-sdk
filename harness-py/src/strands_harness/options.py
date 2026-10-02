@@ -84,8 +84,8 @@ def _normalize_builtin_tools(
 
     A list pins exactly the names given (``[]`` = none). A mapping edits the harness's default set:
     ``False`` removes a tool, ``True`` adds it, a config dict adds and configures it (the keys in
-    ``_BUILTIN_TOOL_CONFIG_KEYS``), and ``"exa"`` opts ``web_search`` into its third-party fallback;
-    ``"*"`` (default ``True``) is the starting set, written ``False`` to start from nothing. ``None`` is
+    ``_BUILTIN_TOOL_CONFIG_KEYS``), and ``"exa"``/``"agentcore"`` opt ``web_search`` into its hosted
+    fallbacks; ``"*"`` (default ``True``) is the starting set, written ``False`` to start from nothing. ``None`` is
     The harness's default set. Unknown names, unknown config keys and other values raise. The result is what
     subagents receive, so they never see a list or ``"*"``.
     """
@@ -103,8 +103,10 @@ def _normalize_builtin_tools(
                 continue
             _check_builtin_tool_name(name)
             if name == "web_search":
-                if not (isinstance(setting, bool) or setting == "exa"):
-                    raise ValueError(f"builtin_tools['web_search'] must be a bool or 'exa', got {setting!r}.")
+                if not (isinstance(setting, bool) or setting in ("exa", "agentcore")):
+                    raise ValueError(
+                        f"builtin_tools['web_search'] must be a bool, 'exa' or 'agentcore', got {setting!r}."
+                    )
                 normalized[name] = setting
                 continue
             config_keys = _BUILTIN_TOOL_CONFIG_KEYS.get(name)

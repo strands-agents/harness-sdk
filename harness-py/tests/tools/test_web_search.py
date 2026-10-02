@@ -1,6 +1,10 @@
+import sys
+from types import SimpleNamespace
+
 import pytest
 
 from strands_harness.tools import web_search as web_search_module
+from strands_harness.tools.web_search import _agentcore_backend as agentcore_backend
 from strands_harness.tools.web_search import _exa_backend as exa_backend
 from strands_harness.tools.web_search import _search_tool as search_tool
 
@@ -215,3 +219,93 @@ def test_exa_call_keeps_result_when_teardown_fails(fake_mcp):
 
     fake_mcp.stop = stop
     assert len(web_search_module._exa_call("q", 2, "k")) == 2
+
+
+class FakeAgentCoreClient:
+    """Stands in for ``bedrock_agentcore.tools.WebSearchClient``: records construction, search and close."""
+
+    calls: list = []
+    result: SimpleNamespace = SimpleNamespace(results=[])
+    setup_error: Exception | None = None
+
+    def __init__(self, **kwargs):
+        if FakeAgentCoreClient.setup_error:
+            raise FakeAgentCoreClient.setup_error
+        FakeAgentCoreClient.calls.append({"init": kwargs})
+
+    def search(self, query, *, max_results=None):
+        FakeAgentCoreClient.calls.append({"search": (query, max_results)})
+        return FakeAgentCoreClient.result
+
+    def close(self):
+        FakeAgentCoreClient.calls.append({"closed": True})
+
+
+@pytest.fixture
+def fake_agentcore(monkeypatch):
+    FakeAgentCoreClient.calls = []
+    FakeAgentCoreClient.result = SimpleNamespace(results=[])
+    FakeAgentCoreClient.setup_error = None
+    monkeypatch.setitem(sys.modules, "bedrock_agentcore.tools", SimpleNamespace(WebSearchClient=FakeAgentCoreClient))
+    return FakeAgentCoreClient
+
+
+def test_agentcore_call_maps_results_and_closes(fake_agentcore):
+    fake_agentcore.result = SimpleNamespace(
+        results=[
+            SimpleNamespace(text="one\ntwo", url="https://a", title="A\nB"),
+            SimpleNamespace(text="no url here", url=None, title="Dropped"),
+            SimpleNamespace(text="x" * 2000, url="https://c", title="C"),
+        ]
+    )
+    results = web_search_module._agentcore_call("q", 2, "my-gateway")
+    assert fake_agentcore.calls[0] == {
+        "init": {"gateway_id": "my-gateway", "timeout": web_search_module._TIMEOUT.total_seconds()}
+    }
+    assert fake_agentcore.calls[1] == {"search": ("q", 2)}
+    assert fake_agentcore.calls[-1] == {"closed": True}
+    assert results == [
+        {"title": "A B", "url": "https://a", "snippet": "one two"},
+        {"title": "C", "url": "https://c", "snippet": "x" * web_search_module._SNIPPET_CHARS},
+    ]
+
+
+def test_agentcore_call_routes_an_arn_to_gateway_arn(fake_agentcore):
+    arn = "arn:aws:bedrock:us-east-1:123456789012:gateway/my-gateway"
+    web_search_module._agentcore_call("q", 1, arn)
+    assert fake_agentcore.calls[0] == {
+        "init": {"gateway_arn": arn, "timeout": web_search_module._TIMEOUT.total_seconds()}
+    }
+
+
+def test_agentcore_call_names_the_gateway_when_setup_fails(fake_agentcore):
+    fake_agentcore.setup_error = ValueError("region could not be determined")
+    with pytest.raises(web_search_module.WebSearchError, match="^could not set up the AgentCore Web Search"):
+        web_search_module._agentcore_call("q", 1, "my-gateway")
+
+
+async def test_agentcore_backend_reads_gateway_from_env(monkeypatch):
+    monkeypatch.setenv("AGENTCORE_GATEWAY_ID", " gw-from-env ")
+    seen = {}
+
+    def fake_call(query, max_results, gateway):
+        seen.update(query=query, max_results=max_results, gateway=gateway)
+        return []
+
+    monkeypatch.setattr(web_search_module, "_agentcore_call", fake_call)
+    await agentcore_backend()("q", 3)
+    assert seen == {"query": "q", "max_results": 3, "gateway": "gw-from-env"}
+
+
+async def test_agentcore_web_search_instance_reads_gateway_per_call(monkeypatch):
+    """``agentcore_web_search`` is built at import: the gateway must be read when the tool runs, not when it is made."""
+    monkeypatch.delenv("AGENTCORE_GATEWAY_ID", raising=False)
+    assert await web_search_module.agentcore_web_search._tool_func(query="q") == (
+        "web_search failed: No AgentCore Gateway configured; set AGENTCORE_GATEWAY_ID to a gateway ID or ARN "
+        "that has a web search connector."
+    )
+    monkeypatch.setenv("AGENTCORE_GATEWAY_ID", "gw-later")
+    monkeypatch.setattr(web_search_module, "_agentcore_call", lambda *args: [])
+    assert await web_search_module.agentcore_web_search._tool_func(query="q") == "No results."
+    assert web_search_module.agentcore_web_search.tool_name == "web_search"
+    assert web_search_module.make_agentcore_web_search().tool_name == "web_search"

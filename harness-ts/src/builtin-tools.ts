@@ -19,6 +19,7 @@ import { logger } from './logging.js'
 import { resolveMemory } from './memory.js'
 import { resolveWebFetchModel, supportsMedia, supportsWebSearch } from './models.js'
 import { edit, exaWebSearch, makeRead, makeWebFetch, write } from './tools/index.js'
+import { agentCoreGateway, agentCoreWebSearch } from './tools/web-search.js'
 import { makeProgrammaticToolCaller } from './tools/programmatic-tool-caller.js'
 import { type AgentBuilder, type AgentSpec, Choice, CONTEXT_MODES, GENERALIST, makeSubagent } from './tools/subagent.js'
 import type { BuiltinToolsConfig, ToolConfig, WebSearchSetting } from './types/agent.js'
@@ -47,7 +48,7 @@ export function resolveBuiltinTools(
   if (typeof star !== 'boolean') {
     throw new TypeError(`builtinTools['*'] must be a boolean, got ${JSON.stringify(star)}.`)
   }
-  const resolved: Record<string, boolean | object | 'exa'> = Object.fromEntries(
+  const resolved: Record<string, boolean | object | 'exa' | 'agentcore'> = Object.fromEntries(
     names.map((name) => [name, star && DEFAULT_BUILTIN_TOOLS.includes(name as BuiltinToolName)])
   )
   for (const [name, setting] of Object.entries(mapping)) {
@@ -55,12 +56,14 @@ export function resolveBuiltinTools(
     if (!names.includes(name)) {
       throw new Error(`Unknown built-in tool ${JSON.stringify(name)}. Available: ${names.join(', ')}.`)
     }
-    if (typeof setting === 'boolean' || (name === 'web_search' && setting === 'exa')) {
+    if (typeof setting === 'boolean' || (name === 'web_search' && (setting === 'exa' || setting === 'agentcore'))) {
       resolved[name] = setting
       continue
     }
     if (name === 'web_search') {
-      throw new TypeError(`builtinTools.web_search must be a boolean or 'exa', got ${JSON.stringify(setting)}.`)
+      throw new TypeError(
+        `builtinTools.web_search must be a boolean, 'exa' or 'agentcore', got ${JSON.stringify(setting)}.`
+      )
     }
     if (typeof setting !== 'object' || setting === null || Array.isArray(setting)) {
       throw new TypeError(`builtinTools.${name} must be a boolean or a config object, got ${JSON.stringify(setting)}.`)
@@ -103,11 +106,11 @@ export function webSearchExplicit(value: readonly BuiltinToolName[] | BuiltinToo
     : (value as BuiltinToolsConfig | undefined)?.web_search !== undefined
 }
 
-export type WebSearchMode = 'native' | 'exa'
+export type WebSearchMode = 'native' | 'exa' | 'agentcore'
 
 /**
- * How `web_search` is served for `model`: `'exa'` (the third-party tool, whenever opted into with
- * `'exa'`), `'native'` (a model flag), or `undefined` (off).
+ * How `web_search` is served for `model`: `'exa'` or `'agentcore'` (a hosted fallback, whenever
+ * opted into by name), `'native'` (a model flag), or `undefined` (off).
  */
 export function webSearchMode(
   setting: WebSearchSetting,
@@ -122,6 +125,16 @@ export function webSearchMode(
       "web_search is opted into Exa (exa.ai), a third-party service: every search query leaves your environment and is subject to Exa's privacy policy (https://exa.ai/privacy-policy)."
     )
     return 'exa'
+  }
+  if (setting === 'agentcore') {
+    if (!agentCoreGateway()) {
+      throw new Error(
+        "builtinTools: { web_search: 'agentcore' } needs an AgentCore Gateway with a web search connector: " +
+          "set AGENTCORE_GATEWAY_ID to the gateway's ID or ARN, or use 'exa'. " +
+          'See https://strandsagents.com/docs/user-guide/harness/tools/web-access/#web_search'
+      )
+    }
+    return 'agentcore'
   }
   if (supportsWebSearch(model)) {
     return 'native'
@@ -146,8 +159,9 @@ export function webSearchMode(
 export type BuildAgent = (options: HarnessAgentOptions) => Promise<Agent>
 
 // `web_fetch` needs the agent's model to pick its default summarizer, and `subagent` the whole
-// parent config to rebuild a child. `web_search` here is the Exa tool; `createHarness` selects
-// it only when the setting is `'exa'`.
+// parent config to rebuild a child. Both hosted `web_search` fallbacks register as `web_search`;
+// the setting picks which object enters the pool, and `createHarness` selects it only when the
+// setting names one.
 export async function buildBuiltinTools(
   buildAgent: BuildAgent,
   parentConfig: HarnessAgentOptions,
@@ -169,7 +183,7 @@ export async function buildBuiltinTools(
       model: await resolveWebFetchModel(parentConfig.model, webFetch?.model),
       transport: webFetch?.transport,
     }),
-    web_search: exaWebSearch,
+    web_search: builtins.web_search === 'agentcore' ? agentCoreWebSearch : exaWebSearch,
     // The portable config spells the bound in seconds (`timeout`); the factory takes `timeoutMs`.
     programmatic_tool_caller: makeProgrammaticToolCaller({
       ...(caller.allowedTools === undefined || caller.allowedTools === null

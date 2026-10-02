@@ -170,11 +170,12 @@ export interface SubagentConfig {
   maxDepth?: number
 }
 /**
- * `web_search` setting: a boolean, or `'exa'` to serve `web_search` from Exa's hosted search on any
+ * `web_search` setting: a boolean, `'exa'` to serve `web_search` from Exa's hosted search on any
  * model, replacing the provider's native search where it has one (a third party that sees the
- * queries; keyless, `EXA_API_KEY` lifts its rate limit).
+ * queries; keyless, `EXA_API_KEY` lifts its rate limit), or `'agentcore'` to serve it from the
+ * caller's own AWS account through an AgentCore Gateway (`AGENTCORE_GATEWAY_ID` names the gateway).
  */
-export type WebSearchSetting = boolean | 'exa'
+export type WebSearchSetting = boolean | 'exa' | 'agentcore'
 
 const ReadConfigSchema = strictObject({
   media: Bool.optional(),
@@ -209,9 +210,12 @@ const SubagentConfigSchema = strictObject({
     .optional(),
 } satisfies Record<keyof SubagentConfig, z.ZodType>)
 
-const WebSearchSettingSchema = z.union([Bool, z.literal('exa', { error: "must be a boolean or 'exa'." })], {
-  error: "must be a boolean or 'exa'.",
-}) satisfies z.ZodType<WebSearchSetting>
+const WebSearchSettingSchema = z.union(
+  [Bool, z.literal('exa', { error: "must be a boolean, 'exa' or 'agentcore'." }), z.literal('agentcore')],
+  {
+    error: "must be a boolean, 'exa' or 'agentcore'.",
+  }
+) satisfies z.ZodType<WebSearchSetting>
 
 function toolSetting<T extends z.ZodType>(config: T): z.ZodOptional<z.ZodUnion<readonly [z.ZodBoolean, T]>> {
   return z.union([Bool, config], { error: 'must be a boolean or a config object.' }).optional()

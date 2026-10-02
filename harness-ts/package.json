@@ -80,6 +80,7 @@
     "@anthropic-ai/sdk": "^0.109.1",
     "@aws/bedrock-token-generator": "^1.1.0",
     "@google/genai": "^2.6.0",
+    "bedrock-agentcore": "^0.4.4",
     "openai": "^6.45.0"
   },
   "peerDependenciesMeta": {
@@ -90,6 +91,9 @@
       "optional": true
     },
     "@google/genai": {
+      "optional": true
+    },
+    "bedrock-agentcore": {
       "optional": true
     },
     "openai": {
@@ -107,6 +111,7 @@
     "@typescript-eslint/eslint-plugin": "^8.62.1",
     "@typescript-eslint/parser": "^8.0.0",
     "@vitest/coverage-v8": "^4.1.10",
+    "bedrock-agentcore": "^0.4.4",
     "eslint": "^10.6.0",
     "openai": "^6.45.0",
     "prettier": "^3.9.4",

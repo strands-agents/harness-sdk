@@ -25,6 +25,7 @@ from strands_harness import agent as agent_module
 from strands_harness.defaults import DEFAULT_BUILTIN_TOOLS, DEFAULT_SUBAGENT_MAX_DEPTH
 from strands_harness.models import resolve_web_fetch_model
 from strands_harness.options import _memory_config, _normalize_builtin_tools
+from strands_harness.tools import web_search as web_search_module
 from strands_harness.tools.subagent import build_default_subagent
 
 
@@ -557,10 +558,32 @@ def test_web_search_exa_fallback_works_on_a_model_instance():
     assert "web_search" in agent.tool_names
 
 
-def test_web_search_setting_is_a_bool_or_exa():
-    with pytest.raises(ValueError, match="must be a bool or 'exa'"):
+def test_web_search_agentcore_builds_the_tool_without_the_third_party_warning(monkeypatch, caplog):
+    monkeypatch.setenv("AGENTCORE_GATEWAY_ID", "my-gateway")
+    with caplog.at_level(logging.WARNING, logger="strands_harness.agent"):
+        agent = create_harness(model=BedrockModel(model_id="x"), builtin_tools={"web_search": "agentcore"})
+    assert "web_search" in agent.tool_names
+    assert not any("third-party" in r.getMessage() for r in caplog.records)
+
+
+def test_web_search_agentcore_serves_the_agentcore_tool_over_native_search(monkeypatch):
+    monkeypatch.setenv("AGENTCORE_GATEWAY_ID", "my-gateway")
+    agent = create_harness(model="openai/gpt-5.6-sol", builtin_tools={"web_search": "agentcore"})
+    assert "web_search" in agent.tool_names
+    assert "tools" not in agent.model.config["params"]
+    assert agent.tool_registry.registry["web_search"] is web_search_module.agentcore_web_search
+
+
+def test_web_search_agentcore_without_a_gateway_raises(monkeypatch):
+    monkeypatch.delenv("AGENTCORE_GATEWAY_ID", raising=False)
+    with pytest.raises(ValueError, match="set AGENTCORE_GATEWAY_ID"):
+        create_harness(model=BedrockModel(model_id="x"), builtin_tools={"web_search": "agentcore"})
+
+
+def test_web_search_setting_is_a_bool_or_a_hosted_fallback():
+    with pytest.raises(ValueError, match="must be a bool, 'exa' or 'agentcore'"):
         create_harness(builtin_tools={"web_search": "bing"})
-    with pytest.raises(ValueError, match="must be a bool or 'exa'"):
+    with pytest.raises(ValueError, match="must be a bool, 'exa' or 'agentcore'"):
         create_harness(builtin_tools={"web_search": {"fallback": "exa"}})
 
 

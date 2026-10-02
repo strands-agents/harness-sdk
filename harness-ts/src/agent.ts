@@ -126,7 +126,9 @@ export interface HarnessAgentOptions extends Omit<
    * provider's native web search (OpenAI, Google, GPT-5/GPT-6 models on bedrock-mantle); elsewhere it
    * is off, and naming it there throws. `{ web_search: 'exa' }` instead gives the model a
    * `web_search` tool backed by Exa's hosted search on any model, a third party that receives the
-   * queries (keyless; `EXA_API_KEY` lifts its rate limit). A `subagent` child inherits this agent's
+   * queries (keyless; `EXA_API_KEY` lifts its rate limit); `{ web_search: 'agentcore' }` backs it
+   * with AgentCore Web Search in the caller's own AWS account through an AgentCore Gateway
+   * (`AGENTCORE_GATEWAY_ID` names the gateway). A `subagent` child inherits this agent's
    * configuration, bounded by a delegation-depth guard.
    */
   builtinTools?: readonly BuiltinToolName[] | BuiltinToolsConfig
@@ -426,7 +428,7 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
   }
 
   const builtin = selectBuiltinTools(
-    enabledBuiltinTools({ ...resolvedBuiltins, web_search: webSearch === 'exa' }),
+    enabledBuiltinTools({ ...resolvedBuiltins, web_search: webSearch === 'exa' || webSearch === 'agentcore' }),
     await buildBuiltinTools(createHarness, parentConfig, resolvedBuiltins)
   )
 
