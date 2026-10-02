@@ -425,6 +425,7 @@ sidebar:
               - docs/user-guide/sdk/experimental/agent-config
       - label: Reference
         items:
+          - docs/user-guide/sdk/versioning-and-support
           # Both API references carry the same label; the sidebar shows only the
           # one matching the header language toggle (see Sidebar.astro).
           - label: "API reference"
