@@ -294,6 +294,7 @@ def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
     redacted_content = state.get("redactedContent")
 
     if current_tool_use:
+        input_parse_error: str | None = None
         if "input" not in current_tool_use:
             current_tool_use["input"] = ""
 
@@ -304,13 +305,17 @@ def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
         else:
             try:
                 current_tool_use["input"] = json.loads(raw_input)
-            except ValueError:
+            except ValueError as error:
                 logger.warning(
                     "tool_name=<%s>, raw_input=<%s> | failed to parse tool input json, defaulting to empty dict",
                     current_tool_use.get("name", "unknown"),
                     raw_input[:200] if isinstance(raw_input, str) else "",
                 )
                 current_tool_use["input"] = {}
+                input_parse_error = (
+                    f"Invalid JSON in tool input for '{current_tool_use.get('name', 'unknown')}': {error}. "
+                    "Retry with a valid JSON object."
+                )
 
         tool_use_id = current_tool_use.get("toolUseId", "")
         tool_use_name = current_tool_use.get("name", "")
@@ -325,6 +330,12 @@ def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
             )
             state["current_tool_use"] = {}
             return state
+
+        # Carry the parse error out-of-band: it must not land on the tool use (which persists to
+        # sessions and is sent back to the model) and does not belong in `input`, which holds only
+        # the tool's arguments. Tool validation later turns it into an error tool result.
+        if input_parse_error is not None:
+            state.setdefault("_tool_input_parse_errors", {})[tool_use_id] = input_parse_error
 
         tool_use = ToolUse(
             toolUseId=tool_use_id,
@@ -430,6 +441,8 @@ async def process_stream(
     chunks: AsyncIterable[StreamEvent],
     start_time: float | None = None,
     cancel_signal: threading.Event | None = None,
+    *,
+    invocation_state: dict[str, Any] | None = None,
 ) -> AsyncGenerator[TypedEvent, None]:
     """Processes the response stream from the API, constructing the final message and extracting usage metrics.
 
@@ -437,6 +450,9 @@ async def process_stream(
         chunks: The chunks of the response stream from the model.
         start_time: Time when the model request is initiated
         cancel_signal: Optional threading.Event to check for cancellation during streaming.
+        invocation_state: Caller-provided state/context passed to the agent. Tool-input parse errors are
+            recorded here, out-of-band, so tool validation can report them to the model without the
+            error ever landing on the tool use.
 
     Yields:
         The reason for stopping, the constructed message, and the usage metrics.
@@ -507,6 +523,10 @@ async def process_stream(
         )
         return
 
+    tool_input_parse_errors = state.get("_tool_input_parse_errors")
+    if tool_input_parse_errors and invocation_state is not None:
+        invocation_state.setdefault("_tool_input_parse_errors", {}).update(tool_input_parse_errors)
+
     yield ModelStopReason(stop_reason=stop_reason, message=state["message"], usage=usage, metrics=metrics)
 
 
@@ -569,5 +589,5 @@ async def stream_messages(
         **({"dynamic_trailing_blocks": dynamic_trailing_blocks} if dynamic_trailing_blocks else {}),
     )
 
-    async for event in process_stream(chunks, start_time, cancel_signal):
+    async for event in process_stream(chunks, start_time, cancel_signal, invocation_state=invocation_state):
         yield event

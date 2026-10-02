@@ -416,6 +416,12 @@ def test_handle_content_block_delta(event: ContentBlockDeltaEvent, event_type, s
                 "reasoningText": "",
                 "citationsContent": [],
                 "redactedContent": b"",
+                "_tool_input_parse_errors": {
+                    "123": (
+                        "Invalid JSON in tool input for 'test': Expecting property name enclosed in double "
+                        "quotes: line 1 column 2 (char 1). Retry with a valid JSON object."
+                    )
+                },
             },
         ),
         # Tool Use - Empty string input (zero-argument tool)
@@ -687,6 +693,32 @@ def test_handle_content_block_stop_no_warning_for_whitespace_input(mock_logger):
     strands.event_loop.streaming.handle_content_block_stop(state)
 
     mock_logger.warning.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_process_stream_records_malformed_tool_input_out_of_band(agenerator, alist):
+    response = [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockStart": {"start": {"toolUse": {"toolUseId": "t1", "name": "search"}}}},
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"query": "unterminated'}}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "tool_use"}},
+    ]
+    invocation_state: dict = {}
+
+    events = await alist(
+        strands.event_loop.streaming.process_stream(agenerator(response), invocation_state=invocation_state)
+    )
+
+    parse_errors = invocation_state["_tool_input_parse_errors"]
+    assert "Invalid JSON in tool input for 'search'" in parse_errors["t1"]
+
+    # The tool use itself is clean: only the sanitized input, no marker, so nothing leaks to a session
+    # or back to the model.
+    message = _get_message_from_event(cast(ModelStopReason, events[-1]))
+    tool_use = message["content"][0]["toolUse"]
+    assert tool_use["input"] == {}
+    assert set(tool_use.keys()) == {"toolUseId", "name", "input"}
 
 
 def test_handle_message_stop():
