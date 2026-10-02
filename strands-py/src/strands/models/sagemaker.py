@@ -672,6 +672,7 @@ class SageMakerAIModel(OpenAIModel):
 
         # Parse the payload to add response format
         payload = json.loads(request["Body"])
+        payload["stream"] = False
         payload["response_format"] = {
             "type": "json_schema",
             "json_schema": {"name": output_model.__name__, "schema": output_model.model_json_schema(), "strict": True},
