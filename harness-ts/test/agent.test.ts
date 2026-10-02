@@ -36,6 +36,7 @@ import { z } from 'zod'
 import { createHarness } from '../src/agent.js'
 import { HARNESS_CONTRACT } from '../src/prompt.js'
 import { configureLogging, resetWarnOnce } from '../src/logging.js'
+import { agentCoreWebSearch } from '../src/tools/web-search.js'
 import { makeProgrammaticToolCaller } from '../src/tools/programmatic-tool-caller.js'
 import { buildDefaultSubagent } from '../src/builtin-tools.js'
 import { AgentSpec, makeSubagent } from '../src/tools/subagent.js'
@@ -170,6 +171,7 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true })
   }
+  vi.unstubAllEnvs()
   resetWarnOnce()
 })
 
@@ -424,6 +426,36 @@ describe('createHarness', () => {
       builtinTools: { web_search: 'exa' },
     })
     expect(toolNames(agent)).toContain('web_search')
+  })
+
+  it('builds the AgentCore tool for the agentcore fallback, with no third-party warning', async () => {
+    vi.stubEnv('AGENTCORE_GATEWAY_ID', 'my-gateway')
+    const warn = vi.fn()
+    configureLogging({ debug: () => {}, info: () => {}, warn, error: () => {} })
+    const agent = await createHarness({
+      model: new BedrockModel({ modelId: 'x' }),
+      builtinTools: { web_search: 'agentcore' },
+    })
+    expect(toolNames(agent)).toContain('web_search')
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('third-party'))
+  })
+
+  it('lets an explicit AgentCore selection win over native search and serves the AgentCore tool', async () => {
+    vi.stubEnv('AGENTCORE_GATEWAY_ID', 'my-gateway')
+    const agent = await createHarness({
+      model: 'openai/gpt-5.6-sol',
+      builtinTools: { web_search: 'agentcore' },
+    })
+    expect(toolNames(agent)).toContain('web_search')
+    expect(agent.model.getConfig().params).not.toHaveProperty('tools')
+    expect(agent.tools.find((t) => t.name === 'web_search')).toBe(agentCoreWebSearch)
+  })
+
+  it('throws when the AgentCore fallback has no gateway configured', async () => {
+    vi.stubEnv('AGENTCORE_GATEWAY_ID', '')
+    await expect(createHarness({ builtinTools: { web_search: 'agentcore' } })).rejects.toThrow(
+      'set AGENTCORE_GATEWAY_ID'
+    )
   })
 
   it('only offers Bedrock Web Search on GPT-5 and GPT-6 Mantle models', async () => {

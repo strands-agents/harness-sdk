@@ -112,7 +112,7 @@ BuiltinToolsConfig = TypedDict(
         "write": bool,
         "edit": bool,
         "web_fetch": bool | WebFetchConfig,
-        "web_search": bool | Literal["exa"],
+        "web_search": bool | Literal["exa", "agentcore"],
         "programmatic_tool_caller": bool | ProgrammaticToolCallerConfig,
         "subagent": bool | SubagentConfig,
     },
@@ -134,7 +134,9 @@ Attributes:
     web_search: Search the web. On its own this is the provider's native search, and nothing where
         the provider has none; ``"exa"`` serves it from Exa's hosted search on any model, replacing
         native search where there is one (a third party that sees the queries; keyless;
-        ``EXA_API_KEY`` lifts its rate limit).
+        ``EXA_API_KEY`` lifts its rate limit); ``"agentcore"`` serves it from the caller's own AWS
+        account through an AgentCore Gateway with a web search connector (``AGENTCORE_GATEWAY_ID``
+        names the gateway; needs the ``agentcore`` extra).
     programmatic_tool_caller: Orchestrate tools from code; a :class:`ProgrammaticToolCallerConfig`
         also narrows the callable tools and bounds a run.
     subagent: Delegate to sub-agents; a :class:`SubagentConfig` also bounds delegation depth.

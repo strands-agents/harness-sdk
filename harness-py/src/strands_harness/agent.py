@@ -41,6 +41,8 @@ from strands_harness.plugins import EnvironmentContext, Todos
 from strands_harness.prompt import build_system_prompt
 from strands_harness.telemetry import setup_telemetry
 from strands_harness.tools import (
+    agentcore_gateway,
+    agentcore_web_search,
     edit,
     exa_web_search,
     make_programmatic_tool_caller,
@@ -81,18 +83,20 @@ def _builtin_tools(parent_config: dict[str, Any]) -> dict[str, Any]:
     was enabled with (``{}`` for ``True``, see ``_BUILTIN_TOOL_CONFIG_KEYS``); ``web_fetch`` also
     derives its summarizer from the agent's model, ``subagent`` takes the whole parent config so it
     can rebuild a child the way this agent was built. ``subagent``'s own delegation-depth budget
-    lives on ``agent.state``, tracked by the tool itself. ``web_search`` here is the Exa tool;
-    ``create_harness`` selects it only when the setting is ``"exa"``."""
+    lives on ``agent.state``, tracked by the tool itself. Both hosted ``web_search`` fallbacks register
+    as ``web_search``; the setting picks which object enters the pool, and ``create_harness`` selects it
+    only when the setting names one."""
     enabled = parent_config["builtin_tools"]
     web_fetch_config = _builtin_tool_config(enabled, "web_fetch")
     web_fetch_model = resolve_web_fetch_model(parent_config["model"], web_fetch_config.pop("model", None))
+    web_search_tool = agentcore_web_search if enabled.get("web_search") == "agentcore" else exa_web_search
     tools = (
         make_shell(**_builtin_tool_config(enabled, "shell")),
         make_read(**{"media": _supports_media(parent_config["model"]), **_builtin_tool_config(enabled, "read")}),
         write,
         edit,
         make_web_fetch(model=web_fetch_model, **web_fetch_config),
-        exa_web_search,
+        web_search_tool,
         make_programmatic_tool_caller(**_builtin_tool_config(enabled, "programmatic_tool_caller")),
         build_default_subagent(create_harness, parent_config, **_builtin_tool_config(enabled, "subagent")),
     )
@@ -107,9 +111,9 @@ def _select_builtin_tools(enabled: Mapping[str, Any], tools: dict[str, Any]) -> 
 
 def _web_search_mode(
     setting: Any, explicit: bool, model: Model | ModelRouter | str | None
-) -> Literal["native", "exa"] | None:
-    """How ``web_search`` is served for ``model``: ``"exa"`` (the third-party tool, whenever opted
-    into with ``"exa"``), ``"native"`` (a model flag), or ``None`` (off)."""
+) -> Literal["native", "exa", "agentcore"] | None:
+    """How ``web_search`` is served for ``model``: ``"exa"`` or ``"agentcore"`` (a hosted fallback,
+    whenever opted into by name), ``"native"`` (a model flag), or ``None`` (off)."""
     if setting is False:
         return None
     if setting == "exa":
@@ -118,6 +122,14 @@ def _web_search_mode(
             "environment and is subject to Exa's privacy policy (https://exa.ai/privacy-policy)."
         )
         return "exa"
+    if setting == "agentcore":
+        if not agentcore_gateway():
+            raise ValueError(
+                "builtin_tools={'web_search': 'agentcore'} needs an AgentCore Gateway with a web search "
+                "connector: set AGENTCORE_GATEWAY_ID to the gateway's ID or ARN, or use 'exa'. See "
+                "https://strandsagents.com/docs/user-guide/harness/tools/web-access/#web_search"
+            )
+        return "agentcore"
     if supports_web_search(model):
         return "native"
     target = (
@@ -311,7 +323,10 @@ def create_harness(
             GPT-5/GPT-6 models on bedrock-mantle). Elsewhere (Bedrock Converse, other Mantle models,
             ``Model`` instances) it is off, and naming it there raises. ``{"web_search": "exa"}``
             instead gives the model a ``web_search`` tool backed by Exa's hosted search on any model,
-            a third party that receives the queries (keyless; ``EXA_API_KEY`` lifts its rate limit).
+            a third party that receives the queries (keyless; ``EXA_API_KEY`` lifts its rate limit);
+            ``{"web_search": "agentcore"}`` backs it with AgentCore Web Search in the caller's own AWS
+            account through an AgentCore Gateway (``AGENTCORE_GATEWAY_ID`` names the gateway; needs the
+            ``agentcore`` extra).
             ``programmatic_tool_caller`` lets the model orchestrate its other tools by writing Python
             that runs in a Monty sandbox (no filesystem, network, or process access; only the other
             tools are reachable), returning only what the code prints.
@@ -456,7 +471,9 @@ def create_harness(
         "sandbox": agent_kwargs.get("sandbox"),
     }
 
-    builtin = _select_builtin_tools({**enabled_tools, "web_search": web_search == "exa"}, _builtin_tools(parent_config))
+    builtin = _select_builtin_tools(
+        {**enabled_tools, "web_search": web_search in ("exa", "agentcore")}, _builtin_tools(parent_config)
+    )
     context_enabled = context_manager is not None and context_manager is not False
     # The SDK's Agent rejects a bare config dict; build the instance from it here.
     if isinstance(context_manager, Mapping):

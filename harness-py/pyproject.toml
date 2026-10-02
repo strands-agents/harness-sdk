@@ -41,12 +41,14 @@ anthropic = ["strands-agents[anthropic]"]
 gemini = ["strands-agents[gemini]"]
 ollama = ["strands-agents[ollama]"]
 litellm = ["strands-agents[litellm]"]
+agentcore = ["bedrock-agentcore>=1.23.0,<2.0.0"]
 dev = [
     "pytest>=8.0.0,<9.0.0",
     "pytest-asyncio>=0.24.0,<1.0.0",
     "ruff>=0.16.0,<0.17.0",
     "strands-agents[openai,anthropic,gemini,ollama,litellm]",
     "openai>=2.0.0,<3.0.0",
+    "bedrock-agentcore>=1.23.0,<2.0.0",
     # The MCP test fixtures use mcp v1's FastMCP API; the SDK allows mcp 2.x, which renamed it.
     # Pin v1 for tests (within the SDK's supported range) until the fixtures migrate.
     "mcp>=1.23.0,<2.0.0",

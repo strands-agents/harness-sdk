@@ -1,12 +1,13 @@
 /**
  * web_search: search the web and return the top results as numbered sources.
  *
- * The opt-in Exa tool (`builtinTools: { web_search: 'exa' }`), built whenever the setting selects it;
- * a plain `true` on OpenAI, Gemini and Mantle GPT models is a model flag instead and this tool is
- * not built (see `agent.ts`). It is backed by Exa's hosted MCP server, a third party that receives the
- * queries; the keyless free tier covers getting started and `EXA_API_KEY` lifts the rate limit in
- * place. The tool/backend split keeps the model-facing contract fixed while the search provider
- * behind it can change.
+ * The opt-in hosted tools (`builtinTools: { web_search: 'exa' | 'agentcore' }`), built whenever the
+ * setting selects one; a plain `true` on OpenAI, Gemini and Mantle GPT models is a model flag instead
+ * and this tool is not built (see `agent.ts`). `'exa'` is backed by Exa's hosted MCP server, a third
+ * party that receives the queries; the keyless free tier covers getting started and `EXA_API_KEY`
+ * lifts the rate limit in place. `'agentcore'` is backed by AgentCore Web Search in the caller's own
+ * AWS account, reached through an AgentCore Gateway. The tool/backend split keeps the model-facing
+ * contract fixed while the search provider behind it can change.
  */
 
 import { McpClient, tool, type Tool } from '@strands-agents/sdk'
@@ -14,6 +15,7 @@ import { z } from 'zod'
 
 const EXA_MCP_URL = 'https://mcp.exa.ai/mcp'
 const EXA_TOOL = 'web_search_exa'
+const AGENTCORE_GATEWAY_ENV = 'AGENTCORE_GATEWAY_ID'
 const TIMEOUT_MS = 30_000
 const MAX_RESULTS = 10
 const SNIPPET_CHARS = 500
@@ -116,6 +118,62 @@ export function makeExaWebSearch(): Tool {
 
 /** The `web_search` tool served by Exa (`EXA_API_KEY` is read per call). */
 export const exaWebSearch = makeExaWebSearch()
+
+/** The configured AgentCore Gateway target (an ID or ARN), or `undefined`; read per call. */
+export function agentCoreGateway(): string | undefined {
+  return process.env[AGENTCORE_GATEWAY_ENV]?.trim() || undefined
+}
+
+/** One AgentCore Web Search call through `bedrock-agentcore`'s client; the client lives only for this call. */
+async function agentCoreCall(query: string, maxResults: number, gateway: string): Promise<SearchResult[]> {
+  // The optional bedrock-agentcore dependency stays lazy, like the model providers in `models.ts`.
+  const { WebSearchClient } = await import('bedrock-agentcore/web-search')
+  const client = new WebSearchClient(
+    gateway.startsWith('arn:')
+      ? { gatewayArn: gateway, timeout: TIMEOUT_MS }
+      : { gatewayId: gateway, timeout: TIMEOUT_MS }
+  )
+  let response
+  try {
+    response = await client.search(query, { maxResults })
+  } finally {
+    // a teardown error must not discard a result already in hand
+    try {
+      client.close()
+    } catch {
+      /* ignored */
+    }
+  }
+  // A result without a URL is nothing the model can follow, so it is dropped.
+  return response.results
+    .filter((result) => result.url)
+    .map((result) => ({
+      title: (result.title ?? '').split(/\s+/).filter(Boolean).join(' '),
+      url: result.url!,
+      snippet: (result.text ?? '').replace(/\s+/g, ' ').trim().slice(0, SNIPPET_CHARS),
+    }))
+}
+
+/** Search backend over AgentCore Web Search; `gateway` (an ID or ARN) defaults to `AGENTCORE_GATEWAY_ID` (read per call). */
+export function agentCoreBackend(gateway?: string): SearchBackend {
+  return async (query, maxResults) => {
+    const target = gateway ?? agentCoreGateway()
+    if (!target) {
+      throw new WebSearchError(
+        `No AgentCore Gateway configured; set ${AGENTCORE_GATEWAY_ENV} to a gateway ID or ARN that has a web search connector.`
+      )
+    }
+    return agentCoreCall(query, maxResults, target)
+  }
+}
+
+/** Build a `web_search` tool over AgentCore Web Search (`AGENTCORE_GATEWAY_ID` picks the gateway). */
+export function makeAgentCoreWebSearch(): Tool {
+  return searchTool(agentCoreBackend())
+}
+
+/** The `web_search` tool served by AgentCore (`AGENTCORE_GATEWAY_ID` is read per call). */
+export const agentCoreWebSearch = makeAgentCoreWebSearch()
 
 /** Build a `web_search` tool that formats `backend`'s results as a numbered `Sources:` list. */
 export function searchTool(backend: SearchBackend): Tool {

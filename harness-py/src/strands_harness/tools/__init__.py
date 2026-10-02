@@ -21,7 +21,13 @@ from strands_harness.tools.subagent import (
     make_subagent,
 )
 from strands_harness.tools.web_fetch import make_web_fetch
-from strands_harness.tools.web_search import exa_web_search, make_exa_web_search
+from strands_harness.tools.web_search import (
+    agentcore_gateway,
+    agentcore_web_search,
+    exa_web_search,
+    make_agentcore_web_search,
+    make_exa_web_search,
+)
 
 __all__ = [
     "DEFAULT_PROGRAMMATIC_TOOL_CALLER_DESCRIPTION",
@@ -32,7 +38,10 @@ __all__ = [
     "Open",
     "Option",
     "Preset",
+    "agentcore_gateway",
+    "agentcore_web_search",
     "edit",
+    "make_agentcore_web_search",
     "make_programmatic_tool_caller",
     "make_read",
     "make_subagent",

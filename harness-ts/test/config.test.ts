@@ -366,8 +366,8 @@ describe('HarnessAgentConfig', () => {
     [{ shell: { description: '' } }, 'builtinTools.shell.description must be a non-empty string.'],
     [{ web_fetch: { model: '' } }, 'builtinTools.web_fetch.model must be a non-empty string.'],
     [{ web_fetch: { transport: 'wget' } }, "builtinTools.web_fetch.transport must be 'curl' or 'direct'."],
-    [{ web_search: { fallback: 'exa' } }, "builtinTools.web_search must be a boolean or 'exa'."],
-    [{ web_search: 'bing' }, "builtinTools.web_search must be a boolean or 'exa'."],
+    [{ web_search: { fallback: 'exa' } }, "builtinTools.web_search must be a boolean, 'exa' or 'agentcore'."],
+    [{ web_search: 'bing' }, "builtinTools.web_search must be a boolean, 'exa' or 'agentcore'."],
     [
       { programmatic_tool_caller: { allowedTools: 'read' } },
       'builtinTools.programmatic_tool_caller.allowedTools must be an array of non-empty strings or null.',

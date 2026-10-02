@@ -1,11 +1,12 @@
 """web_search: search the web and return the top results as numbered sources.
 
-The opt-in Exa tool (``builtin_tools={"web_search": "exa"}``), built whenever the setting selects it;
-a plain ``True`` on OpenAI, Anthropic, Gemini and Mantle GPT models is a model flag instead and this
-tool is not built (see ``agent.py``). It is backed by Exa's hosted MCP server, a third party that receives the
-queries; the keyless free tier covers getting started and ``EXA_API_KEY`` lifts the rate limit in
-place. The tool/backend split keeps the model-facing contract fixed while the search provider behind
-it can change.
+The opt-in hosted tools (``builtin_tools={"web_search": "exa" | "agentcore"}``), built whenever the
+setting selects one; a plain ``True`` on OpenAI, Anthropic, Gemini and Mantle GPT models is a model
+flag instead and this tool is not built (see ``agent.py``). ``"exa"`` is backed by Exa's hosted MCP
+server, a third party that receives the queries; the keyless free tier covers getting started and
+``EXA_API_KEY`` lifts the rate limit in place. ``"agentcore"`` is backed by AgentCore Web Search in
+the caller's own AWS account, reached through an AgentCore Gateway. The tool/backend split keeps the
+model-facing contract fixed while the search provider behind it can change.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from strands.tools.mcp import MCPClient
 
 _EXA_MCP_URL = "https://mcp.exa.ai/mcp"
 _EXA_TOOL = "web_search_exa"
+_AGENTCORE_GATEWAY_ENV = "AGENTCORE_GATEWAY_ID"
 _TIMEOUT = timedelta(seconds=30)
 _MAX_RESULTS = 10
 _SNIPPET_CHARS = 500
@@ -132,3 +134,60 @@ def _search_tool(backend: SearchBackend) -> Any:
 
 exa_web_search = make_exa_web_search()
 """The ``web_search`` tool served by Exa (``EXA_API_KEY`` is read per call)."""
+
+
+def agentcore_gateway() -> str | None:
+    """The configured AgentCore Gateway target (an ID or ARN), or ``None``; read per call."""
+    return os.environ.get(_AGENTCORE_GATEWAY_ENV, "").strip() or None
+
+
+def _agentcore_call(query: str, max_results: int, gateway: str) -> list[SearchResult]:
+    """One AgentCore Web Search call through ``bedrock_agentcore``'s client; the client lives only for this call."""
+    # The optional agentcore extra stays lazy, like the model providers in ``models.py``.
+    from bedrock_agentcore.tools import WebSearchClient
+
+    gateway_args = {"gateway_arn": gateway} if gateway.startswith("arn:") else {"gateway_id": gateway}
+    try:
+        client = WebSearchClient(timeout=_TIMEOUT.total_seconds(), **gateway_args)
+    except Exception as exc:
+        raise WebSearchError(f"could not set up the AgentCore Web Search client for {gateway} ({exc})") from exc
+    try:
+        response = client.search(query, max_results=max_results)
+    finally:  # a teardown error must not discard a result already in hand
+        with contextlib.suppress(Exception):
+            client.close()
+    # A result without a URL is nothing the model can follow, so it is dropped.
+    return [
+        {
+            "title": " ".join((result.title or "").split()),
+            "url": result.url or "",
+            "snippet": re.sub(r"\s+", " ", result.text or "").strip()[:_SNIPPET_CHARS],
+        }
+        for result in response.results
+        if result.url
+    ]
+
+
+def _agentcore_backend(gateway: str | None = None) -> SearchBackend:
+    """Search backend over AgentCore Web Search; ``gateway`` (an ID or ARN) defaults to
+    ``AGENTCORE_GATEWAY_ID`` (read per call)."""
+
+    async def search(query: str, max_results: int) -> list[SearchResult]:
+        target = gateway if gateway is not None else agentcore_gateway()
+        if not target:
+            raise WebSearchError(
+                f"No AgentCore Gateway configured; set {_AGENTCORE_GATEWAY_ENV} to a gateway ID or ARN "
+                "that has a web search connector."
+            )
+        return await asyncio.to_thread(_agentcore_call, query, max_results, target)
+
+    return search
+
+
+def make_agentcore_web_search() -> Any:
+    """Build a ``web_search`` tool over AgentCore Web Search (``AGENTCORE_GATEWAY_ID`` picks the gateway)."""
+    return _search_tool(_agentcore_backend())
+
+
+agentcore_web_search = make_agentcore_web_search()
+"""The ``web_search`` tool served by AgentCore (``AGENTCORE_GATEWAY_ID`` is read per call)."""
