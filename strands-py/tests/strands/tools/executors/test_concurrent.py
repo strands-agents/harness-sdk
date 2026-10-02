@@ -218,9 +218,11 @@ async def test_concurrent_executor_base_exception_discards_completed_results(
     executor, agent, tool_results, cycle_trace, cycle_span, invocation_state, structured_output_context
 ):
     # guards against a BaseException raised by a tool being dropped (#4713)
+    weather_received = asyncio.Event()
+
     @strands.tool(name="late_raise_tool")
     async def late_raise_tool():
-        await asyncio.sleep(0.05)
+        await weather_received.wait()
         raise Abort("stop")
 
     agent.tool_registry.register_tool(late_raise_tool)
@@ -234,9 +236,14 @@ async def test_concurrent_executor_base_exception_discards_completed_results(
     )
 
     tru_events = []
-    with pytest.raises(Abort):
+
+    async def consume():
         async for event in stream:
             tru_events.append(event)
+            weather_received.set()
+
+    with pytest.raises(Abort):
+        await asyncio.wait_for(consume(), timeout=1)
 
     exp_events = [ToolResultEvent({"toolUseId": "1", "status": "success", "content": [{"text": "sunny"}]})]
     assert tru_events == exp_events
