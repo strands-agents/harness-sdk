@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
-import { Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { CachePointBlock, Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import type { MessageData } from '../../types/messages.js'
+import { ImageBlock } from '../../types/media.js'
 import { foldIntoLastUserMessage, isUserTurn, resolveTrigger, createInjectionMiddleware } from '../message-injection.js'
 import type { InvokeModelContext } from '../../middleware/index.js'
 import type { InjectionContext } from '../types.js'
@@ -65,9 +66,26 @@ describe('foldIntoLastUserMessage', () => {
       { role: 'assistant', content: [{ text: 'thinking' }], trackingId: anyTrackingId },
       {
         role: 'user',
-        content: [tr.toJSON().content[0], { text: '\n\nINJECTED' }],
+        content: [tr.toJSON().content[0], { text: 'INJECTED' }],
         trackingId: anyTrackingId,
       },
+    ])
+  })
+
+  it('omits the blank-line separator when the target message has no text block', () => {
+    const image = new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1]) } })
+    const result = foldIntoLastUserMessage([new Message({ role: 'user', content: [image] })], 'INJECTED')
+    expect(result.messages[0]!.toJSON().content).toStrictEqual([image.toJSON(), { text: 'INJECTED' }])
+  })
+
+  it('keeps the blank-line separator when a cache point follows the user text', () => {
+    const cachePoint = new CachePointBlock({ cacheType: 'default' })
+    const target = new Message({ role: 'user', content: [new TextBlock('ask'), cachePoint] })
+    const result = foldIntoLastUserMessage([target], 'INJECTED')
+    expect(result.messages[0]!.toJSON().content).toStrictEqual([
+      { text: 'ask' },
+      cachePoint.toJSON(),
+      { text: '\n\nINJECTED' },
     ])
   })
 
@@ -242,7 +260,7 @@ describe('createInjectionMiddleware', () => {
       { role: 'assistant', content: [{ text: 'a' }], trackingId: anyTrackingId },
       {
         role: 'user',
-        content: [tr.toJSON().content[0], { text: '\n\nINJECTED' }],
+        content: [tr.toJSON().content[0], { text: 'INJECTED' }],
         trackingId: anyTrackingId,
       },
     ])

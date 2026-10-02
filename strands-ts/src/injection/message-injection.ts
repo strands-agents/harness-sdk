@@ -132,7 +132,8 @@ export function foldIntoLastUserMessage(messages: Message[], text: string): { me
 
   const target = messages[targetIndex]!
   // Some providers concatenate adjacent text blocks, which would run this onto the user's own words.
-  const separator = target.content.length > 0 && !text.startsWith('\n') ? '\n\n' : ''
+  const hasText = target.content.some((block) => block.type === 'textBlock')
+  const separator = hasText && !text.startsWith('\n') ? '\n\n' : ''
   const injected = new TextBlock(`${separator}${text}`)
   const content = [...target.content, injected]
   const folded = new Message({
