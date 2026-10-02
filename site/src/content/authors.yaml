@@ -203,6 +203,10 @@
   role: "Software Engineer, AWS"
   bio: Ramon Li is a Software Engineer at AWS working on the Strands Harness SDK.
 
+- id: liz-radway
+  name: Liz Radway
+  role: "Software Engineer, AWS"
+  bio: Liz Radway is a Software Engineer at AWS working on the Strands Agents SDK.
 - id: ariel-nabavian
   name: Ariel Nabavian
   role: "Software Engineer, AWS Agentic AI"
