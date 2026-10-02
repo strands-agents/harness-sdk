@@ -58,7 +58,7 @@ const sidebar = [
 ]
 ---
 
-<StarlightPage frontmatter={{ title, description, pagefind: false, tableOfContents: false }} sidebar={sidebar}>
+<StarlightPage frontmatter={{ title, description, tableOfContents: false }} sidebar={sidebar}>
   <div class="cat-page">
     <div class="cat-head">
       <p class="cat-subtitle">Tools, model providers, and integrations built by the Strands team and community.</p>
@@ -70,7 +70,7 @@ const sidebar = [
 
     {/* Facets inline (no modal): the search input lives in the left sidebar
         and drives the same filter state document-wide. */}
-    <div class="cat-facets">
+    <div class="cat-facets" data-pagefind-ignore>
       <CatalogFacets
         maintainedBy={maintainedByFacets}
         showSdkFacet={showSdkFacet}
