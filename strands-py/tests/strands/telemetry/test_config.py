@@ -6,6 +6,17 @@ import strands.telemetry.config as telemetry_config
 from strands.telemetry import StrandsTelemetry
 
 
+@pytest.fixture(autouse=True)
+def _clear_telemetry_disabled_env(monkeypatch):
+    """Keep tests independent of ambient telemetry-disable env vars.
+
+    Tests that exercise the disabled path set one explicitly via monkeypatch; the
+    rest must see them unset so they observe the default-enabled behavior.
+    """
+    for name in telemetry_config._DISABLE_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture
 def mock_tracer_provider():
     with mock.patch("strands.telemetry.config.SDKTracerProvider") as mock_provider:
@@ -231,3 +242,30 @@ def test_get_otel_resource_respects_otel_service_name(monkeypatch):
     resource = telemetry_config.get_otel_resource()
 
     assert resource.attributes.get("service.name") == "my-service"
+
+
+@pytest.mark.parametrize("var", ["OTEL_SDK_DISABLED", "STRANDS_OTEL_DISABLED"])
+@pytest.mark.parametrize(
+    "value, expected_disabled",
+    [
+        ("true", True),
+        ("True", True),
+        ("TRUE", True),
+        ("  true  ", True),
+        ("false", False),
+        ("", False),
+        ("1", False),
+        ("yes", False),
+    ],
+)
+def test_telemetry_disabled_env_parsing(monkeypatch, var, value, expected_disabled):
+    """Each disable var is parsed case-insensitively/trimmed; only 'true' disables."""
+    monkeypatch.setenv(var, value)
+    assert telemetry_config._telemetry_disabled() is expected_disabled
+
+
+def test_telemetry_disabled_absent_is_enabled(monkeypatch):
+    """With no disable var set, instrumentation defaults to enabled."""
+    for name in telemetry_config._DISABLE_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    assert telemetry_config._telemetry_disabled() is False
