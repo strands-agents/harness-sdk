@@ -1,6 +1,7 @@
 ---
 import Navigation from '../components/Navigation.astro';
 import Search from '@astrojs/starlight/components/Search.astro';
+import AnnouncementBanner from '../components/AnnouncementBanner.astro';
 import Banner from '../components/Banner.astro';
 import InteractiveToolkit from '../components/InteractiveToolkit.astro';
 import LogoFarm from '../components/LogoFarm.astro';
@@ -53,6 +54,7 @@ const canonicalHref = new URL(base, Astro.site ?? 'https://strandsagents.com').h
     <Analytics />
   </head>
   <body>
+    <AnnouncementBanner />
     <Navigation />
     {/* Mount Starlight's Pagefind search dialog (button hidden) so the nav's
         search trigger has a modal to open — the homepage isn't a Starlight

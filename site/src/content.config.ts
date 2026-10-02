@@ -247,6 +247,17 @@ export const eventSchema = z
   })
 export type LearnEvent = z.infer<typeof eventSchema>
 
+export const announcementSchema = z.object({
+  title: z.string(),
+  href: z.string(),
+  linkText: z.string().default('Learn more'),
+  // Shown for ANNOUNCEMENT_DAYS from this date; bump it when the content is updated.
+  date: eventDate,
+  // Last day shown, overriding the ANNOUNCEMENT_DAYS window.
+  expires: eventDate.optional(),
+})
+export type Announcement = z.infer<typeof announcementSchema>
+
 export const collections = {
   authors: defineCollection({
     loader: file('src/content/authors.yaml'),
@@ -301,6 +312,13 @@ export const collections = {
       pattern: '**/*.{yml,yaml}',
     }),
     schema: eventSchema,
+  }),
+  announcements: defineCollection({
+    loader: glob({
+      base: 'src/content/announcements',
+      pattern: '**/*.{yml,yaml}',
+    }),
+    schema: announcementSchema,
   }),
   docs: defineCollection({
     loader: glob({
