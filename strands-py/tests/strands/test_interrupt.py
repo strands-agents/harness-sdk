@@ -243,6 +243,26 @@ def test_interrupt_state_resume_invalid_content():
         interrupt_state.resume([{"text": "invalid"}])
 
 
+def test_interrupt_state_resume_rejects_none_response():
+    """A None response is rejected loudly (#4470).
+
+    None marks an interrupt unanswered, so silently accepting it would leave the interrupt
+    pending and re-raise it on the next cycle instead of resuming.
+    """
+    interrupt_state = _InterruptState(
+        interrupts={"test_id": Interrupt(id="test_id", name="test_name", reason="test reason")},
+        activated=True,
+    )
+
+    exp_message = r"interrupt_id=<test_id> \| interrupt response must not be None"
+    with pytest.raises(ValueError, match=exp_message):
+        interrupt_state.resume([{"interruptResponse": {"interruptId": "test_id", "response": None}}])
+
+    tru_response = interrupt_state.interrupts["test_id"].response
+    exp_response = None
+    assert tru_response == exp_response
+
+
 def test_interrupt_resume_invalid_id():
     interrupt_state = _InterruptState(activated=True)
 
