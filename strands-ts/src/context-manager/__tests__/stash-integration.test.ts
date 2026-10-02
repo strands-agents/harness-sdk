@@ -155,6 +155,22 @@ describe('Offload strategies with stash', () => {
       const text = (block.content[0] as TextBlock).text
       expect(text).not.toContain('[Stashed]')
     })
+
+    it('leaves assistant text unchanged when the preview would not reduce it', async () => {
+      // Guards unchanged text against repeated stash markers (#4242).
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const originalBlock = new TextBlock('x'.repeat(2500))
+      const message = new Message({ role: 'assistant', content: [originalBlock] })
+      await stash.storeMessage(message)
+      const strategy = Offload.truncate('assistantText')
+      const context = makeContext([message], stash)
+
+      const firstResult = await strategy.apply(context)
+      const secondResult = await strategy.apply(context)
+
+      expect([firstResult, secondResult]).toEqual([false, false])
+      expect(message.content).toEqual([originalBlock])
+    })
   })
 
   describe('drop + stash', () => {
