@@ -643,6 +643,13 @@ const cards = [
     cursor: pointer;
   }
 
+  /* 44px hit area around the 16px icon. */
+  .toolkit__card-open::before {
+    content: '';
+    position: absolute;
+    inset: -14px;
+  }
+
   .toolkit__card-open-icon {
     display: inline-flex;
     width: 100%;

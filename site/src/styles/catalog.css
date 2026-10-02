@@ -299,7 +299,7 @@ body:has(.cat-page) {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 0.3rem 0.7rem;
+  gap: 0.3rem 0.6rem;
   min-width: 0;
 }
 .cat-type {
@@ -319,7 +319,7 @@ body:has(.cat-page) {
 .cat-links {
   display: inline-flex;
   align-items: center;
-  gap: 0.55rem;
+  gap: 0.65rem;
   flex-shrink: 0;
   white-space: nowrap;
 }
@@ -335,6 +335,12 @@ body:has(.cat-page) {
 }
 .cat-link svg {
   display: block;
+}
+/* 24px hit area around the 14px mark. */
+.cat-link::before {
+  content: '';
+  position: absolute;
+  inset: -5px;
 }
 .cat-link:hover {
   color: var(--cat-accent-text);
