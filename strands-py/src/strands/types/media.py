@@ -118,15 +118,17 @@ class AudioBlock:
 class DocumentSource(TypedDict, total=False):
     """Contains the content of a document.
 
-    Only one of `bytes` or `s3Location` should be specified.
+    Only one of `bytes`, `location`, or `text` should be specified.
 
     Attributes:
         bytes: The binary content of the document.
         location: Location of the document.
+        text: The text content of the document.
     """
 
     bytes: bytes
     location: SourceLocation
+    text: str
 
 
 class DocumentContent(TypedDict, total=False):
