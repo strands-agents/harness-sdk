@@ -90,7 +90,7 @@ def test_as_tool_custom_description_with_delegate():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("delegate", [True, False])
-async def test_tool_stream_never_sets_stop_event_loop(delegate):
+async def test_tool_stream_never_requests_stop(delegate):
     """_AgentAsTool defers all stop decisions to the plugin."""
     mock_agent = _mock_sub_agent()
     result = AgentResult(
@@ -110,7 +110,7 @@ async def test_tool_stream_never_sets_stop_event_loop(delegate):
     async for _ in tool.stream({"toolUseId": "t1", "name": "sub", "input": {"input": "hi"}}, invocation_state):
         pass
 
-    assert "stop_event_loop" not in invocation_state["request_state"]
+    assert invocation_state["request_state"] == {}
 
 
 @pytest.mark.asyncio
@@ -128,7 +128,7 @@ async def test_tool_stream_error_does_not_set_stop():
     async for _ in tool.stream({"toolUseId": "t1", "name": "sub", "input": {"input": "hi"}}, invocation_state):
         pass
 
-    assert invocation_state["request_state"].get("stop_event_loop") is not True
+    assert invocation_state["request_state"] == {}
 
 
 # --- Single-call constraint (BeforeToolsEvent) ---

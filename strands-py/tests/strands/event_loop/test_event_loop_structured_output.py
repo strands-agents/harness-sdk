@@ -66,6 +66,8 @@ def mock_agent():
     agent._interrupt_state.context = {}
     agent._cancel_signal = threading.Event()
     agent._observe_cancellation = agent._cancel_signal.is_set
+    agent._deferred_cancel = False
+    agent._cancel_message = None
     agent._model_state = {}
     agent._system_prompt_content = None
     agent._middleware_registry = MiddlewareRegistry()

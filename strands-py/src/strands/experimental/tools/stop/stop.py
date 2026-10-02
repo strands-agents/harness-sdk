@@ -3,23 +3,10 @@
 This tool is experimental and subject to change in future revisions without notice.
 
 Provides :func:`make_stop` (a factory for customized stop tools) and :data:`stop`
-(the default instance). The tool shims onto the SDK's existing loop-termination
-primitive: it sets ``invocation_state["request_state"]["stop_event_loop"] = True``,
-which the event loop already checks after tool execution
-(see :mod:`strands.event_loop.event_loop`). The tool returns the model-supplied
-message when one was given, or a default when the model passed ``None`` or an
-empty string; the returned value becomes the tool result the model sees for
-its stop request.
-
-The Python event loop halts on this flag with ``stop_reason == "tool_use"`` and
-the final ``AgentResult.message`` set to the model's tool-use assistant message
-(the batch that included the stop call). The tool's returned string appears in
-history as the corresponding ``toolResult``, not as a separate final assistant
-turn. This differs from the TypeScript side, whose ``AfterToolsEvent.endTurn``
-primitive synthesizes a new assistant message with the stop text and
-``stopReason == "endTurn"``. Callers that need the stop text as the last
-assistant message on Python should read it from the tool result on the final
-message, or append it themselves.
+(the default instance). The tool calls ``agent.cancel(message, after_current_tools=True)``:
+any sibling tools in the same batch run to completion, then the loop exits with
+``stop_reason == "cancelled"`` and the message as the final assistant message.
+The same message is returned as the tool result the model sees for its stop request.
 """
 
 from __future__ import annotations
@@ -76,9 +63,8 @@ def make_stop(
 ) -> DecoratedFunctionTool:
     """Create a stop tool that gracefully ends the agent loop.
 
-    The tool sets ``invocation_state["request_state"]["stop_event_loop"] = True``,
-    which the event loop checks after tool execution to end the loop without
-    invoking the model again.
+    The tool calls ``agent.cancel(message, after_current_tools=True)`` so the loop
+    ends after the current tool batch without invoking the model again.
 
     Args:
         name: Tool name. Defaults to ``"stop"``.
@@ -108,8 +94,7 @@ def make_stop(
                 values are rejected.
         """
         final_message = _validate_message(message, max_message_length)
-        request_state = tool_context.invocation_state.setdefault("request_state", {})
-        request_state["stop_event_loop"] = True
+        tool_context.agent.cancel(final_message, after_current_tools=True)
         return final_message
 
     return stop_tool

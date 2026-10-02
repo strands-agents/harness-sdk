@@ -436,6 +436,9 @@ class Agent(AgentBase, LocalAgent):
         self._cancel_signal = threading.Event()
         # Caller-owned external cancel signal for the current invocation, if any.
         self._external_cancel_signal: threading.Event | None = None
+        # Deferred cancellation requested via cancel(after_current_tools=True); read after the tool batch.
+        self._deferred_cancel = False
+        self._cancel_message: str | None = None
 
         self.tool_registry = ToolRegistry()
 
@@ -621,23 +624,33 @@ class Agent(AgentBase, LocalAgent):
             return MemoryManager(**memory_manager)
         raise ValueError("memory_manager must be a MemoryManager or MemoryManagerConfig")
 
-    def cancel(self) -> None:
+    def cancel(self, message: str | None = None, *, after_current_tools: bool = False) -> None:
         """Cancel the currently running agent invocation.
 
         This method is thread-safe and can be called from any context
         (e.g., another thread, web request handler, background task).
 
-        The agent will stop gracefully at the next cancellation-safe point:
+        By default the agent stops at the next cancellation-safe point:
         - During model response streaming
         - Before tool execution
         - During MCP tool execution
         - After tool execution, before the next model call
 
-        The agent will return a result with stop_reason="cancelled".
+        With ``after_current_tools=True`` the cancellation is deferred: tools already requested in
+        the current batch run to completion, and the loop exits before the next model call. This is
+        the cooperative stop a tool uses to end the loop from inside the agent.
+
+        Either way the agent returns a result with ``stop_reason="cancelled"``. When ``message`` is
+        given, it becomes the text of the final assistant message; otherwise the result carries the
+        model's last message. When several callers set a message, the last write wins.
 
         For cancellation driven from outside the agent (a client disconnect, a request
         lifecycle, a timeout), pass a ``cancel_signal`` into the invocation instead. The agent
         observes both, so either cancels independently.
+
+        Args:
+            message: Text of the final assistant message the invocation ends with.
+            after_current_tools: Let the current tool batch finish before stopping.
 
         Example:
             ```python
@@ -653,10 +666,22 @@ class Agent(AgentBase, LocalAgent):
             assert result.stop_reason == "cancelled"
             ```
 
+            Cooperative stop from inside a tool:
+            ```python
+            @tool
+            def finish(tool_context: ToolContext, summary: str) -> str:
+                tool_context.agent.cancel(summary, after_current_tools=True)
+                return summary
+            ```
+
         Note:
             Multiple calls to cancel() are safe and idempotent.
         """
-        self._cancel_signal.set()
+        self._cancel_message = message
+        if after_current_tools:
+            self._deferred_cancel = True
+        else:
+            self._cancel_signal.set()
 
     @property
     def cancel_signal(self) -> threading.Event:
@@ -1470,8 +1495,10 @@ class Agent(AgentBase, LocalAgent):
                 cancel_watcher.cancel()
             self._external_cancel_signal = None
 
-            # Clear cancel signal to allow agent reuse after cancellation
+            # Clear cancel state to allow agent reuse after cancellation
             self._cancel_signal.clear()
+            self._deferred_cancel = False
+            self._cancel_message = None
 
             self._concurrency.complete(begin.registered_token, result=result)
             if self._concurrency.mode == ConcurrentInvocationMode.THROW:

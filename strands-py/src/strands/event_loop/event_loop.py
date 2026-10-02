@@ -625,6 +625,8 @@ async def _handle_model_execution(
 
             # The last event from the chain is ModelStopReason (the authoritative result)
             stop_reason, message, usage, metrics = last_event["stop"]
+            if stop_reason == "cancelled" and agent._cancel_message is not None:
+                message["content"] = [{"text": agent._cancel_message}]
 
             invocation_state.setdefault("request_state", {})
 
@@ -987,7 +989,7 @@ async def _handle_tool_execution(
         )
         return
 
-    if invocation_state["request_state"].get("stop_event_loop", False) or structured_output_context.stop_loop:
+    if structured_output_context.stop_loop:
         yield EventLoopStopEvent(
             stop_reason,
             message,
@@ -997,7 +999,10 @@ async def _handle_tool_execution(
         )
         return
 
-    if agent._observe_cancellation():
+    if agent._deferred_cancel or agent._observe_cancellation():
+        if agent._cancel_message is not None:
+            message = {"role": "assistant", "content": [{"text": agent._cancel_message}]}
+            await agent._append_messages(message)
         yield EventLoopStopEvent(
             "cancelled",
             message,
