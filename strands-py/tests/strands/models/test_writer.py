@@ -683,3 +683,43 @@ def test_cache_config_unsupported_field_warns_and_is_not_routed(writer_client, m
         request = model.format_request(messages)
 
     assert "cache_config" not in request
+
+
+def test_context_window_limit_stays_out_of_the_request(writer_client, model_id, messages):
+    """The context window limit is SDK-side configuration and is not a Writer chat parameter."""
+    _ = writer_client
+    model = WriterModel(model_id=model_id, context_window_limit=128_000)
+
+    request = model.format_request(messages)
+
+    assert request == {
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "test"}]}],
+        "model": model_id,
+        "stream": True,
+    }
+    assert model.context_window_limit == 128_000
+
+
+@pytest.mark.asyncio
+async def test_stream_omits_context_window_limit(writer_client, model_id, messages):
+    """A configured context window limit never reaches the vendor client as a chat keyword argument."""
+    mock_delta = unittest.mock.Mock(content=None, tool_calls=None)
+    mock_usage = unittest.mock.Mock(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+
+    mock_event_1 = unittest.mock.Mock(choices=[unittest.mock.Mock(finish_reason=None, delta=mock_delta)])
+    mock_event_2 = unittest.mock.Mock(choices=[unittest.mock.Mock(finish_reason="stop", delta=mock_delta)])
+    mock_event_3 = unittest.mock.Mock()
+    mock_event_4 = unittest.mock.Mock(usage=mock_usage)
+
+    writer_client.chat.chat.return_value = mock_streaming_response(
+        [mock_event_1, mock_event_2, mock_event_3, mock_event_4]
+    )
+
+    model = WriterModel(model_id=model_id, context_window_limit=128_000)
+    [chunk async for chunk in model.stream(messages, None, None)]
+
+    writer_client.chat.chat.assert_called_once_with(
+        model=model_id,
+        messages=[{"role": "user", "content": [{"type": "text", "text": "test"}]}],
+        stream=True,
+    )
