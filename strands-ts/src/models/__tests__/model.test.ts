@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
   Message,
   TextBlock,
@@ -14,6 +14,7 @@ import { Model } from '../model.js'
 import type { BaseModelConfig, StreamOptions } from '../model.js'
 import type { ModelStreamEvent } from '../streaming.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
+import { logger } from '../../logging/logger.js'
 
 /**
  * Test model provider that throws an error from stream().
@@ -1177,6 +1178,50 @@ describe('estimateUtilization', () => {
     const provider = new TestModelProvider()
 
     expect(provider.estimateUtilization(100_000)).toBe(100_000 / 200_000)
+  })
+
+  describe('fallback warning', () => {
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('names the model id and the default when it falls back', () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const provider = new TestModelProvider()
+      provider.updateConfig({ modelId: 'fallback-named-model' })
+
+      provider.estimateUtilization(100_000)
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        'model_id=<fallback-named-model>, default_context_window_limit=<200000> | falling back to default context window limit because none is set or known for this model | utilization estimates and compression thresholds may be inaccurate | set contextWindowLimit in your model config'
+      )
+    })
+
+    it('warns once for each model id that falls back', () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const first = new TestModelProvider()
+      first.updateConfig({ modelId: 'fallback-once-model-a' })
+      const second = new TestModelProvider()
+      second.updateConfig({ modelId: 'fallback-once-model-b' })
+
+      first.estimateUtilization(1_000)
+      first.estimateUtilization(2_000)
+      second.estimateUtilization(1_000)
+
+      expect(warnSpy).toHaveBeenCalledTimes(2)
+      expect(warnSpy).toHaveBeenNthCalledWith(1, expect.stringContaining('model_id=<fallback-once-model-a>'))
+      expect(warnSpy).toHaveBeenNthCalledWith(2, expect.stringContaining('model_id=<fallback-once-model-b>'))
+    })
+
+    it('does not warn when contextWindowLimit is set', () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const provider = new TestModelProvider()
+      provider.updateConfig({ modelId: 'fallback-configured-model', contextWindowLimit: 100_000 })
+
+      provider.estimateUtilization(50_000)
+
+      expect(warnSpy).not.toHaveBeenCalled()
+    })
   })
 
   it('returns value above 1.0 when tokens exceed limit', () => {
