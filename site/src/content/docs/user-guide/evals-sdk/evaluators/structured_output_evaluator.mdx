@@ -1,0 +1,218 @@
+---
+title: Structured output similarity evaluator
+description: 'Score structured agent output field by field with StructuredOutputSimilarity, a deterministic evaluator with order-independent list matching and per-field metrics.'
+tags: [structured-output]
+sidebar:
+  label: "Structured output similarity"
+---
+
+## Overview
+
+The `StructuredOutputSimilarity` evaluator scores an agent's structured output against ground truth **field by field**, rather than comparing whole objects. Where [`Equals`](deterministic_evaluators.md) returns only `0.0` or `1.0`, `StructuredOutputSimilarity` tells you *which field to fix*: an extraction that gets nine of ten fields right is no longer indistinguishable from one that gets none right.
+
+It is deterministic and offline — no LLM judge, no credentials, no per-call cost. Configuration is derived from the Pydantic model your agent already supplies as `structured_output_model`, so no schema or annotation work is required, and every inferred decision is inspectable via `explain()`. A complete example can be found [here](https://github.com/strands-agents/harness-sdk/blob/main/site/docs/examples/evals-sdk/structured_output_evaluator.py).
+
+This evaluator requires the optional `stickler` extra:
+
+```bash
+pip install "strands-agents-evals[stickler]"
+```
+
+Without it, constructing the evaluator raises an `ImportError` naming the command above.
+
+## Key Features
+
+- **Field-Level Scoring**: Per-field scores and per-field metrics, not a single pass/fail
+- **Order-Independent List Matching**: A reordered but identical list scores `1.0`, not `0.0`
+- **Zero Configuration**: Comparators and thresholds are inferred from the Pydantic model
+- **Deterministic and Offline**: Pure computation — no LLM judge, no credentials, no per-call cost
+- **Inspectable**: `explain()` reports the comparator chosen for each field and why
+- **Dataset Metrics**: Confusion-matrix counts per dotted field path across the whole run
+
+## When to Use
+
+Use the `StructuredOutputSimilarity` evaluator when you need to:
+
+- Evaluate extraction or structured-output tasks where partial correctness matters
+- Identify *which* field regressed, not just that a case failed
+- Score outputs containing lists of nested objects, where ordering is not meaningful
+- Run evaluations in CI/CD without model credentials or inference cost
+- Track per-field accuracy across a dataset to target the worst-performing field
+
+Prefer [`Equals`](deterministic_evaluators.md) when the output is a scalar and only exact equality matters.
+
+## Parameters
+
+### `model_cls` (required)
+- **Type**: `type[BaseModel] | str`
+- **Description**: The Pydantic model to score against — the same model the agent emits as `structured_output_model`. Every case is coerced to it, and output that will not validate returns a score-`0.0` row naming why rather than raising. Also accepts a dotted path to the class, so a saved experiment reloads. For a suite that mixes output types, run one evaluator per schema with distinct `name=` values.
+
+### `match_threshold` (optional)
+- **Type**: `float`
+- **Default**: `0.7`
+- **Description**: Similarity at or above which an object counts as a match. It sets the bar for per-element matching of `list[Model]` fields, for single nested `BaseModel` fields, and for `dict` fields, and it is what the weighted score is compared against — so it drives both halves of the `test_pass` rule (see [Scoring System](#scoring-system)). Scalar field thresholds are inferred from type and field name and are unaffected.
+
+### `weight_hints` (optional)
+- **Type**: `bool`
+- **Default**: `False`
+- **Description**: Whether to infer per-field weights from the schema. Off by default so weights stay uniform and metrics are not skewed by guessed business criticality.
+
+### `name` (optional)
+- **Type**: `str | None`
+- **Default**: `None`
+- **Description**: Evaluator name, forwarded to the base `Evaluator`. On a mixed-schema run it is also the key you pass as `metrics(report, evaluator="invoice")` to keep each schema's rollup separate.
+
+## Basic Usage
+
+```python
+from pydantic import BaseModel
+from strands import Agent
+from strands_evals import Case, Experiment
+from strands_evals.evaluators import StructuredOutputSimilarity
+
+
+class LineItem(BaseModel):
+    sku: str | None = None
+    quantity: int | None = None
+
+
+class Invoice(BaseModel):
+    invoice_id: str
+    vendor_name: str
+    total_amount: float | None = None
+    line_items: list[LineItem] = []
+
+
+def extract(case: Case) -> Invoice:
+    agent = Agent(callback_handler=None)
+    result = agent(case.input, structured_output_model=Invoice)
+    return result.structured_output
+
+
+cases = [
+    Case(
+        name="invoice-0042",
+        input="INVOICE #INV-2024-0042 — Acme Corporation — 2x WM-100, 5x UC-050 — Total: $124.93",
+        expected_output=Invoice(
+            invoice_id="INV-2024-0042",
+            vendor_name="Acme Corporation",
+            total_amount=124.93,
+            line_items=[
+                LineItem(sku="WM-100", quantity=2),
+                LineItem(sku="UC-050", quantity=5),
+            ],
+        ),
+    ),
+]
+
+# The same model the agent already emits as structured_output_model.
+evaluator = StructuredOutputSimilarity(Invoice)
+
+experiment = Experiment(cases=cases, evaluators=[evaluator])
+report = experiment.run_evaluations(extract)
+report.run_display()
+```
+
+## Evaluation Output
+
+The evaluator returns one `EvaluationOutput` per case with:
+
+- **score**: Weighted mean of the per-field scores, between `0.0` and `1.0`
+- **test_pass**: Boolean — requires the weighted score to clear `match_threshold` and, when there was anything to find, `recall` to clear it too. Per-field thresholds shape each field's score but are not themselves gates
+- **reason**: The weakest imperfect fields, e.g. `"weakest fields: line_items=0.75"`, or `"all fields matched"`
+- **label**: The model class name
+- **metadata**: The field-level detail
+
+The detail rides on `metadata` rather than on the evaluator, so it stays with the report: it survives `report.model_dump_json()`, and the rollups below work on a report reloaded from disk.
+
+```python
+row = report.detailed_results[0][0]
+
+row.metadata["field_scores"]   # {"invoice_id": 1.0, ..., "line_items": 0.75}
+row.metadata["precision"]      # these three ignore correct absence, so they stay
+row.metadata["recall"]         #   meaningful on a sparse schema
+row.metadata["f1"]
+row.metadata["matched"]        # stickler's score-only view: score >= match_threshold
+row.metadata["comparison"]     # the raw comparison that metrics() aggregates
+```
+
+Across a whole run, read the rollups:
+
+```python
+StructuredOutputSimilarity.metrics(report)     # per-field confusion matrix
+StructuredOutputSimilarity.per_case(report)    # per-document field scores, as a flat table
+evaluator.explain()                            # the comparator chosen per field, and why
+```
+
+`metrics` and `per_case` are functions of a report, not of the evaluator instance — calling them with no argument raises `TypeError`. Both read only the rows carrying a comparison, so a case whose output never validated stays visible in the report while being excluded from the rollups: a run of two cases where one failed to validate reports a `document_count` of `1`.
+
+`metrics(report)` returns a single `ProcessEvaluation`. Read its `field_metrics` attribute — the rollup is a Pydantic model, not a mapping, so `metrics(report)["field_metrics"]` raises `TypeError`. `field_metrics` itself is a dict keyed by dotted path — `line_items.sku`, `line_items.quantity` — so a suite pinpoints the failing field across the dataset rather than merely flagging failure. Each entry carries the counts (`tp`/`tn`/`fn`/`fa`/`fd`, plus `fp` = `fa` + `fd`) and the derived metrics under `cm_`-prefixed keys: `cm_precision`, `cm_recall`, `cm_f1`, `cm_accuracy`. Most paths also carry a `mean_score`, but leaves under a `list[Model]` parent do not — `total_amount` has one, `line_items.sku` does not. Leaves under a single nested `BaseModel` do.
+
+```python
+metrics = StructuredOutputSimilarity.metrics(report)
+metrics.field_metrics["total_amount"]["cm_precision"]
+```
+
+For `list[Model]` fields, a child path's counts only cover element pairs that scored at or above `match_threshold`. Below that the pair is treated as atomic and no field breakdown is emitted, so its children contribute nothing — a badly wrong element drops out of its children's counts entirely and can leave them reading perfect. Counts are also per matched element rather than per document, so `line_items.sku` may total more or fewer than the document count. Read a parent path such as `line_items` alongside its children. The other two nesting shapes behave differently again. Children of a single nested `BaseModel` are emitted whenever the parent is present on both sides, whatever it scored; if either side is missing the object, only the parent path is counted. That gives object-nested children the same hazard by a second route — across a dataset, documents that dropped the object contribute `fn` to the parent and nothing at all to the children, so a child can read `cm_recall` of `1.0` while the parent reads `0.667`. A `dict[str, Model]` field emits no child paths at all, even when its values match exactly — for a dict, the parent path is all you get.
+
+:::caution[`per_case()` omits rows, so do not positionally zip it]
+`per_case(report)` is in case order, but it only returns rows carrying field scores — a case whose output failed to validate is absent, while still appearing in `report.scores` as a zero-score row, so the two sequences differ in length. Join on `case` rather than by position.
+:::
+
+## Scoring System
+
+The score is a **weighted mean of per-field scores**, ranging from `0.0` to `1.0`, where higher is better. Because it is computed rather than judged, the same inputs always produce the same score.
+
+Ordering is the clearest difference from `Equals`. Given the invoice above:
+
+| Scenario | `Equals` | `StructuredOutputSimilarity` |
+|---|---|---|
+| List reordered, content identical | `0.0` | `1.0` |
+| One quantity wrong, list reordered | `0.0` | `0.9375` |
+
+In the second row, `reason` reads `"weakest fields: line_items=0.75"`, and `field_scores` gives `1.0` for `invoice_id`, `vendor_name`, and `total_amount` against `0.75` for `line_items` — the failing field is named, not inferred.
+
+### Sparse schemas: read f1, not the score alone
+
+A field absent on both sides is credited `1.0` — a value the model correctly left blank is a value it got right. On a mostly-empty schema those credits dominate: a ten-field model whose ground truth fills two fields still scores `0.80` against a prediction that returns **nothing**.
+
+Raising `match_threshold` cannot fix this, because the score needed to pass tends toward `1.0` as the optional tail grows. This is why `test_pass` checks `recall` as well as the score: here the score of `0.80` clears the default `0.7`, but `recall` is `0.0`, so the case fails on recall alone. Each row's `metadata` surfaces recall, precision, and f1 to show why.
+
+Recall is not a complete safety net, though. It is `tp / (tp + fn)`, which counts values that were found but ignores values that were found *wrong* — those land in `fd`, in neither term. On the ten-field example above, a prediction returning one correct and one incorrect value scores `0.90` with **`recall` of `1.0`**, while `precision` is `0.5` and `f1` is `0.667`.
+
+Two consequences worth internalising:
+
+- On sparse schemas, report `f1` rather than the score or `recall` alone. `recall` ignores values returned **wrong**, so it can read `1.0` on a document containing them — but a wrong value is also not a right one, so once *every* value is wrong `tp` reaches zero and `recall` collapses to `0.0`. It reads `1.0` at best, `1.0` in the middle, and `0.0` at worst: it does not degrade with quality.
+- No scalar tells the degenerate cases apart from *one another*. Only the counts in `metrics(report)` do.
+
+Six documents on the ten-field model, all worth telling apart:
+
+| prediction | score | `test_pass` | precision / recall / f1 | counts |
+|---|---|---|---|---|
+| every value right | `1.0` | pass | `1.0` / `1.0` / `1.0` | `tp: 2, tn: 8` |
+| nothing returned | `0.80` | **fail** | `0.0` / `0.0` / `0.0` | `tn: 8, fn: 2` |
+| every value wrong | `0.80` | **fail** | `0.0` / `0.0` / `0.0` | `tn: 8, fd: 2` |
+| values invented, ground truth blank | `0.80` | **fail** | `0.0` / `0.0` / `0.0` | `tn: 8, fa: 2` |
+| genuinely blank on both sides | `1.0` | pass | `0.0` / `0.0` / `0.0` | `tn: 10` |
+| every value found, plus two invented | `0.80` | pass | `0.5` / `1.0` / `0.667` | `tp: 2, tn: 6, fa: 2` |
+
+Four of the six read `0.0` / `0.0` / `0.0` on all three scalars, and one of those four is a perfectly correct document — the one whose ground truth was legitimately blank. The gate still separates them, because it counts what there *was* to find as `tp + fn + fd`, which catches a wrong value, and requires `fa` to be zero when there was nothing to find, which catches an invention.
+
+What no scalar distinguishes is *why* a document failed, so reach for the counts: a miss is `fn`, a wrong value is `fd`, an invention is `fa`, and the genuinely blank document is the one carrying *nothing but* `tn`.
+
+The last row is the limit that remains, and it is deliberate. With something to find, the gate reads recall alone, so a prediction that finds everything and also invents extra fields passes. Ground truth is often annotated sparsely, and a precision gate would fail an agent for extracting a field the annotation merely omitted. Read `precision` from the row's `metadata` when you want the stricter check.
+
+## Best Practices
+
+1. **One evaluator per schema**: `model_cls` is required, so a suite mixing output types runs one instance per schema with distinct `name=` values, read apart via `metrics(report, evaluator=...)`
+2. **Read `metrics(report)` to choose what to fix**: the per-field confusion matrix reports how often each path is missed across the dataset — sort it yourself by `cm_recall`, or by `mean_score` if you skip the `list[Model]` children that lack one, and read parent paths beside nested ones
+3. **Audit inferences before trusting them**: call `explain()` to confirm the comparator and threshold chosen for each field
+4. **Report `f1` alongside the score on sparse schemas**: the score alone credits correct absence, and `recall` alone ignores values returned wrong
+5. **Combine with LLM evaluators**: use `StructuredOutputSimilarity` as a fast deterministic gate, then LLM-based evaluators for qualities that require judgement
+
+## Related Evaluators
+
+- [**Deterministic Evaluators**](deterministic_evaluators.md): `Equals`, `Contains`, `StartsWith`, and other code-based checks
+- [**OutputEvaluator**](output_evaluator.md): LLM-based output evaluation against a custom rubric
+- [**CorrectnessEvaluator**](correctness_evaluator.md): LLM-based factual correctness, with or without a reference
+- [**CustomEvaluator**](custom_evaluator.md): Build your own evaluation logic
