@@ -247,6 +247,23 @@ export interface InvokableAgent {
 export declare const localAgentSymbol: unique symbol
 
 /**
+ * Options for {@link LocalAgent.cancel}.
+ */
+export interface CancelOptions {
+  /**
+   * Final assistant message for the cancelled invocation. When set, the agent
+   * appends it to history and returns it as `AgentResult.lastMessage`.
+   */
+  message?: string
+
+  /**
+   * Defer cancellation until the running tool batch finishes, letting sibling
+   * tools complete normally instead of receiving cancellation errors.
+   */
+  afterCurrentTools?: boolean
+}
+
+/**
  * Interface for agents with locally accessible state, messages, tools, and hooks.
  *
  * This interface is exported for typing purposes only (e.g. in {@link ToolContext},
@@ -370,6 +387,13 @@ export interface LocalAgent {
    * The cancelSignal can also be utilized in hook callbacks.
    */
   readonly cancelSignal: AbortSignal
+
+  /**
+   * Cancels the current agent invocation, optionally after the running tool batch.
+   *
+   * @param options - Final message and deferral behavior
+   */
+  cancel(options?: CancelOptions): void
 
   /**
    * Register a hook callback for a specific event type.

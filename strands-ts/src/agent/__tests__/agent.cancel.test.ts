@@ -33,34 +33,6 @@ describe('Agent Cancellation', () => {
       expect(result.lastMessage.content[0]).toEqual(new TextBlock('Cancelled by user'))
       expect(agent.messages).toEqual([])
     })
-
-    it('cancels at top of second cycle when tool calls cancel()', async () => {
-      const executedTools: string[] = []
-
-      let agent: Agent
-      const tool = createMockTool('cancelTool', () => {
-        executedTools.push('cancelTool')
-        agent.cancel()
-        return new ToolResultBlock({
-          toolUseId: 'tool-1',
-          status: 'success',
-          content: [new TextBlock('Done')],
-        })
-      })
-
-      const model = new MockMessageModel()
-        .addTurn({ type: 'toolUseBlock', name: 'cancelTool', toolUseId: 'tool-1', input: {} })
-        .addTurn({ type: 'textBlock', text: 'Should not reach' })
-
-      agent = new Agent({ model, tools: [tool], printer: false })
-      const result = await agent.invoke('Go')
-
-      expect(result.stopReason).toBe('cancelled')
-      expect(executedTools).toEqual(['cancelTool'])
-      // messages: user, assistant(toolUse), user(toolResult), assistant(synthetic cancel)
-      expect(agent.messages).toHaveLength(4)
-      expect(agent.messages[3]!.content[0]).toEqual(new TextBlock('Cancelled by user'))
-    })
   })
 
   describe('cancel during model streaming (checkpoint B)', () => {
@@ -185,9 +157,10 @@ describe('Agent Cancellation', () => {
       expect(result.stopReason).toBe('cancelled')
       expect(executedTools).toEqual(['firstTool'])
 
-      // First tool succeeded, second was cancelled
-      // messages: user, assistant(toolUse), user(toolResults), assistant(synthetic cancel)
-      expect(agent.messages).toHaveLength(4)
+      // First tool succeeded, second was cancelled. The post-batch cancellation
+      // check ends the loop, so the model's tool-use message is the last message.
+      // messages: user, assistant(toolUse), user(toolResults)
+      expect(agent.messages).toHaveLength(3)
       const toolResultMsg = agent.messages[2]!
       expect(toolResultMsg.content[0]).toEqual(
         new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('Done')] })
@@ -195,6 +168,205 @@ describe('Agent Cancellation', () => {
       expect(toolResultMsg.content[1]).toEqual(
         new ToolResultBlock({ toolUseId: 't2', status: 'error', content: [new TextBlock('Tool execution cancelled')] })
       )
+    })
+  })
+
+  describe('cancel after the tool batch', () => {
+    it('ends the loop when a tool calls cancel(), without calling the model again', async () => {
+      const executedTools: string[] = []
+
+      let agent: Agent
+      const tool = createMockTool('cancelTool', () => {
+        executedTools.push('cancelTool')
+        agent.cancel()
+        return new ToolResultBlock({
+          toolUseId: 'tool-1',
+          status: 'success',
+          content: [new TextBlock('Done')],
+        })
+      })
+
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'cancelTool', toolUseId: 'tool-1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'Should not reach' })
+
+      agent = new Agent({ model, tools: [tool], printer: false })
+      const result = await agent.invoke('Go')
+
+      expect(result.stopReason).toBe('cancelled')
+      expect(executedTools).toEqual(['cancelTool'])
+      // messages: user, assistant(toolUse), user(toolResult)
+      expect(agent.messages).toHaveLength(3)
+      expect(result.lastMessage).toBe(agent.messages[1])
+    })
+
+    it('lets sibling tools finish, then stops with the deferred message', async () => {
+      const executedTools: string[] = []
+
+      let agent: Agent
+      const stopTool = createMockTool('stopTool', () => {
+        executedTools.push('stopTool')
+        agent.cancel({ message: 'Task complete', afterCurrentTools: true })
+        return new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('stopping')] })
+      })
+      const siblingTool = createMockTool('siblingTool', (context) => {
+        executedTools.push('siblingTool')
+        // The deferred flag must not trip the cancellation signal, or this tool
+        // would see an aborted signal and the executor would skip it.
+        expect(context.cancelSignal.aborted).toBe(false)
+        return new ToolResultBlock({ toolUseId: 't2', status: 'success', content: [new TextBlock('sibling ran')] })
+      })
+
+      const model = new MockMessageModel()
+        .addTurn([
+          { type: 'toolUseBlock', name: 'stopTool', toolUseId: 't1', input: {} },
+          { type: 'toolUseBlock', name: 'siblingTool', toolUseId: 't2', input: {} },
+        ])
+        .addTurn({ type: 'textBlock', text: 'Should not reach' })
+
+      agent = new Agent({ model, tools: [stopTool, siblingTool], toolExecutor: 'sequential', printer: false })
+      const result = await agent.invoke('Go')
+
+      expect(executedTools).toEqual(['stopTool', 'siblingTool'])
+      expect(result.stopReason).toBe('cancelled')
+      expect(result.lastMessage.content[0]).toEqual(new TextBlock('Task complete'))
+
+      // messages: user, assistant(toolUse), user(toolResults), assistant(deferred message)
+      expect(agent.messages).toHaveLength(4)
+      expect(agent.messages[3]!.role).toBe('assistant')
+      expect(agent.messages[3]!.content[0]).toEqual(new TextBlock('Task complete'))
+      const toolResultMsg = agent.messages[2]!
+      expect(toolResultMsg.content[1]).toEqual(
+        new ToolResultBlock({ toolUseId: 't2', status: 'success', content: [new TextBlock('sibling ran')] })
+      )
+    })
+
+    it('keeps the model message as lastMessage when the deferred cancel carries no message', async () => {
+      let agent: Agent
+      const tool = createMockTool('quietStop', () => {
+        agent.cancel({ afterCurrentTools: true })
+        return new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('ok')] })
+      })
+
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'quietStop', toolUseId: 't1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'Should not reach' })
+
+      agent = new Agent({ model, tools: [tool], printer: false })
+      const result = await agent.invoke('Go')
+
+      expect(result.stopReason).toBe('cancelled')
+      // messages: user, assistant(toolUse), user(toolResult)
+      expect(agent.messages).toHaveLength(3)
+      expect(result.lastMessage).toBe(agent.messages[1])
+    })
+
+    it('keeps the last message written when two tools defer in the same batch', async () => {
+      let agent: Agent
+      const firstStop = createMockTool('firstStop', () => {
+        agent.cancel({ message: 'first', afterCurrentTools: true })
+        return new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('ok')] })
+      })
+      const secondStop = createMockTool('secondStop', () => {
+        agent.cancel({ message: 'second', afterCurrentTools: true })
+        return new ToolResultBlock({ toolUseId: 't2', status: 'success', content: [new TextBlock('ok')] })
+      })
+
+      const model = new MockMessageModel()
+        .addTurn([
+          { type: 'toolUseBlock', name: 'firstStop', toolUseId: 't1', input: {} },
+          { type: 'toolUseBlock', name: 'secondStop', toolUseId: 't2', input: {} },
+        ])
+        .addTurn({ type: 'textBlock', text: 'Should not reach' })
+
+      agent = new Agent({ model, tools: [firstStop, secondStop], toolExecutor: 'sequential', printer: false })
+      const result = await agent.invoke('Go')
+
+      expect(result.stopReason).toBe('cancelled')
+      expect(result.lastMessage.content[0]).toEqual(new TextBlock('second'))
+    })
+
+    it('does not leak a deferred cancel into the next invocation', async () => {
+      let toolCalls = 0
+      let agent: Agent
+      const tool = createMockTool('maybeStop', () => {
+        toolCalls++
+        if (toolCalls === 1) {
+          agent.cancel({ message: 'done for now', afterCurrentTools: true })
+        }
+        return new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('ok')] })
+      })
+
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'maybeStop', toolUseId: 't1', input: {} })
+        .addTurn({ type: 'toolUseBlock', name: 'maybeStop', toolUseId: 't1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'All done' })
+
+      agent = new Agent({ model, tools: [tool], printer: false })
+
+      const first = await agent.invoke('Go')
+      expect(first.stopReason).toBe('cancelled')
+
+      const second = await agent.invoke('Go again')
+      expect(second.stopReason).toBe('endTurn')
+      expect(second.lastMessage.content[0]).toEqual(new TextBlock('All done'))
+      expect(agent.cancelSignal.aborted).toBe(false)
+    })
+
+    it('is a no-op when the agent is idle', async () => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'textBlock', text: 'First' })
+        .addTurn({ type: 'textBlock', text: 'Second' })
+      const agent = new Agent({ model, printer: false })
+
+      agent.cancel({ message: 'ignored', afterCurrentTools: true })
+
+      const result = await agent.invoke('Hi')
+      expect(result.stopReason).toBe('endTurn')
+      expect(result.lastMessage.content[0]).toEqual(new TextBlock('First'))
+    })
+  })
+
+  describe('cancel with a message', () => {
+    it('uses the message as the final message when cancelled during streaming', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+      const agent = new Agent({ model, printer: false })
+
+      agent.addHook(BeforeModelCallEvent, () => {
+        agent.cancel({ message: 'Stopped by the operator' })
+      })
+
+      const result = await agent.invoke('Hi')
+
+      expect(result.stopReason).toBe('cancelled')
+      expect(result.lastMessage.content[0]).toEqual(new TextBlock('Stopped by the operator'))
+      expect(agent.messages[agent.messages.length - 1]!.content[0]).toEqual(new TextBlock('Stopped by the operator'))
+    })
+
+    it('appends the message when cancelled before tool execution', async () => {
+      const tool = createMockTool('myTool', () => 'never runs')
+
+      const model = new MockMessageModel().addTurn({
+        type: 'toolUseBlock',
+        name: 'myTool',
+        toolUseId: 'tool-1',
+        input: {},
+      })
+
+      const agent = new Agent({ model, tools: [tool], printer: false })
+      agent.addHook(AfterModelCallEvent, (event) => {
+        if (event.stopData?.stopReason === 'toolUse') {
+          agent.cancel({ message: 'Aborting the batch' })
+        }
+      })
+
+      const result = await agent.invoke('Do it')
+
+      expect(result.stopReason).toBe('cancelled')
+      expect(result.lastMessage.content[0]).toEqual(new TextBlock('Aborting the batch'))
+      // messages: user, assistant(toolUse), user(cancelled toolResults), assistant(message)
+      expect(agent.messages).toHaveLength(4)
+      expect(agent.messages[3]!).toBe(result.lastMessage)
     })
   })
 
