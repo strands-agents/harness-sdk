@@ -27,7 +27,7 @@ Python supports three approaches to defining tools:
 
 TypeScript supports two main approaches:
 
-* **tool() function with [Zod](https://zod.dev/) or JSON schemas**: Create tools using the `tool()` function with either Zod schemas for type-safe validated input, or plain JSON Schema objects for schema-only definitions without runtime validation.
+* **tool() function with [Zod](https://zod.dev/), Standard Schema or JSON schemas**: Create tools using the `tool()` function with Zod schemas, or any schema that implements [Standard Schema](https://standardschema.dev/) and Standard JSON Schema, for type-safe validated input, or plain JSON Schema objects for schema-only definitions without runtime validation.
 
 * **Class-based tools extending FunctionTool**: Create tools within classes to maintain shared state and resources.
 </Tab>
@@ -70,7 +70,7 @@ Here's a simple example of a function based tool with Zod:
 --8<-- "user-guide/sdk/tools/tools.ts:basic_tool"
 ```
 
-The `tool()` function accepts either a [Zod](https://zod.dev/) schema or a plain JSON Schema object as `inputSchema`. With Zod, input is validated at runtime and the callback receives typed input. With JSON Schema, the schema is passed through as-is and the callback receives `unknown`.
+The `tool()` function accepts a [Zod](https://zod.dev/) schema, any schema that implements both [Standard Schema](https://standardschema.dev/) and Standard JSON Schema (such as ArkType), or a plain JSON Schema object as `inputSchema`. With Zod or a Standard Schema, input is validated at runtime, the callback receives typed input, and the tool's JSON Schema comes from the schema itself. With JSON Schema, the schema is passed through as-is and the callback receives `unknown`.
 
 Here's the same tool using a JSON Schema object instead:
 
@@ -155,7 +155,7 @@ def calculate_area(shape: str, radius: float = None, width: float = None, height
 </Tab>
 <Tab label="TypeScript">
 
-`inputSchema` is always provided explicitly in the `tool()` configuration, as either a Zod schema or a JSON Schema object. See the [basic example](#basic-example) above for both approaches.
+`inputSchema` is always provided explicitly in the `tool()` configuration, as a Zod schema, a Standard Schema, or a JSON Schema object. See the [basic example](#basic-example) above for both approaches.
 </Tab>
 </Tabs>
 
