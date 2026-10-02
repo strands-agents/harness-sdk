@@ -30,6 +30,8 @@
   padding: 2rem 1.5rem 4rem;
   font-family: var(--sl-font);
 }
+/* The content panel already pads the page on phones. */
+@media (max-width: 49.9375rem) { .cl-page { padding-inline: 0; } }
 
 .cl-head {
   display: flex;
@@ -51,7 +53,7 @@
 
 /* Controls stack: SDK toggle on top, language toggle beneath, right-aligned. */
 .cl-controls { display: flex; flex-direction: column; align-items: flex-end; gap: 0.6rem; }
-.cl-control-row { display: flex; align-items: center; gap: 0.6rem; }
+.cl-control-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; }
 .cl-control-label { font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--sl-color-gray-3); font-weight: 700; min-width: 4.5rem; text-align: right; }
 
