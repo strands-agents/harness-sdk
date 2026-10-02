@@ -113,6 +113,22 @@ export class ConcurrentInvocationError extends Error {
 }
 
 /**
+ * Error received by a deduplicated caller when the primary stream is abandoned
+ * before producing an AgentResult.
+ */
+export class IdempotencyAbortedError extends Error {
+  /**
+   * Creates a new IdempotencyAbortedError.
+   *
+   * @param message - Error message describing why the primary invocation ended
+   */
+  constructor(message: string) {
+    super(message)
+    this.name = 'IdempotencyAbortedError'
+  }
+}
+
+/**
  * Error thrown when a model provider returns a throttling or rate limit error.
  *
  * This error indicates that the model API has rate limited the request. Users can
