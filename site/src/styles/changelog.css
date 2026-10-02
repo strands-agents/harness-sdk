@@ -8,7 +8,7 @@
   --cl-accent-text: var(--sl-color-accent);
   /* Local tokens for values repeated with shared intent (not a full scale —
      deliberately-distinct sizes/radii are left inline). */
-  --cl-text-meta: 0.72rem;   /* secondary metadata: counts, links, authors, tags */
+  --cl-text-meta: 0.75rem;   /* secondary metadata: counts, links, authors, tags */
   --cl-radius-control: 8px;  /* interactive controls: chips, search, buttons */
   --cl-radius-pill: 999px;   /* fully-round: dots, tags, badges */
 }
@@ -54,7 +54,7 @@
 /* Controls stack: SDK toggle on top, language toggle beneath, right-aligned. */
 .cl-controls { display: flex; flex-direction: column; align-items: flex-end; gap: 0.6rem; }
 .cl-control-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; }
-.cl-control-label { font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase;
+.cl-control-label { font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--sl-color-gray-3); font-weight: 700; min-width: 4.5rem; text-align: right; }
 
 /* SDK segmented toggle */
@@ -116,7 +116,7 @@
 .cl-version-num { color: var(--sl-color-white); font-weight: 700; font-size: 1.3rem; margin: 0;
   position: relative; display: flex; align-items: center; justify-content: flex-end; gap: 0.3rem; flex-wrap: wrap; }
 /* "Latest" badge — marks the newest release of the active stream. */
-.cl-latest { font-size: 0.6rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+.cl-latest { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
   padding: 0.1rem 0.4rem; border-radius: var(--cl-radius-pill);
   /* Fixed dark green in both themes: the dark-mode accent (#00cc60) gives
      white text only 2.14:1. #067a39 clears AA (5.45:1) against white. */
@@ -178,7 +178,7 @@
 a.cl-entry-title { color: var(--sl-color-gray-1); }
 a.cl-entry-title:hover { color: var(--cl-accent-text); text-decoration: underline; text-underline-offset: 3px; }
 .cl-atag { font-size: var(--cl-text-meta); padding: 0.1rem 0.5rem; border-radius: var(--cl-radius-pill); border: 1px solid var(--sl-color-gray-5); color: var(--sl-color-gray-3); white-space: nowrap; }
-.cl-break { font-size: 0.65rem; font-weight: 700; color: var(--changelog-danger);
+.cl-break { font-size: 0.75rem; font-weight: 700; color: var(--changelog-danger);
   border: 1px solid color-mix(in srgb, var(--changelog-danger) 45%, transparent); border-radius: 4px;
   padding: 0 0.25rem; text-transform: uppercase; letter-spacing: 0.03em; }
 
@@ -222,7 +222,7 @@ a.cl-entry-title:hover { color: var(--cl-accent-text); text-decoration: underlin
   padding: 0.6rem 0.9rem; border-radius: var(--cl-radius-control); border: 1px solid var(--sl-color-gray-5); }
 .cl-pager-next { text-align: right; }
 .cl-pager-link:hover { border-color: var(--cl-accent-text); }
-.cl-pager-dir { font-size: 0.72rem; color: var(--sl-color-gray-3); text-transform: uppercase; letter-spacing: 0.05em; }
+.cl-pager-dir { font-size: 0.75rem; color: var(--sl-color-gray-3); text-transform: uppercase; letter-spacing: 0.05em; }
 .cl-pager-ver { font-size: 0.95rem; font-weight: 600; color: var(--sl-color-white); }
 
 /* visually-hidden live region announcing filter result changes to AT */
@@ -251,7 +251,7 @@ a.cl-entry-title:hover { color: var(--cl-accent-text); text-decoration: underlin
     padding: 0.4rem 0.7rem; border-radius: var(--cl-radius-control); border: 1px solid var(--sl-color-gray-5);
     color: var(--sl-color-white); background: transparent; cursor: pointer; }
   .cl-filter-btn .cl-badge { background: var(--sl-color-accent); color: var(--sl-color-text-invert);
-    font-weight: 700; border-radius: var(--cl-radius-pill); font-size: 0.55rem; padding: 0 0.3rem; }
+    font-weight: 700; border-radius: var(--cl-radius-pill); font-size: 0.75rem; padding: 0 0.3rem; }
   /* Keep entry text off the card border so it doesn't look cramped. */
   .cl-feed-inner { padding: 0 1.1rem; }
   /* Stack title over controls so the SDK/language toggles don't run off the

@@ -224,7 +224,7 @@ body:has(.cat-page) {
   color: var(--cat-accent-text);
 }
 .cat-external {
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   color: var(--sl-color-gray-3);
 }
 
