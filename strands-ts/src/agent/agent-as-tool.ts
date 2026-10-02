@@ -200,15 +200,20 @@ export class AgentAsTool extends Tool {
         cancelSignal,
       })
       let next = await gen.next()
-      while (!next.done) {
-        const event = next.value
-        if (event.type == 'toolStreamUpdateEvent') {
-          yield event.event
-        } else {
-          yield new ToolStreamEvent({ data: next.value })
-        }
+      try {
+        while (!next.done) {
+          const event = next.value
+          if (event.type == 'toolStreamUpdateEvent') {
+            yield event.event
+          } else {
+            yield new ToolStreamEvent({ data: next.value })
+          }
 
-        next = await gen.next()
+          next = await gen.next()
+        }
+      } finally {
+        // Closes the sub-agent's stream when this one is closed early, so it releases its invocation lock.
+        await gen.return(undefined as never)
       }
       const result = next.value
 

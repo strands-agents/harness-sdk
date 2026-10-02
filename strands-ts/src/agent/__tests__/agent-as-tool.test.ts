@@ -3,7 +3,7 @@ import { Agent } from '../agent.js'
 import { AgentAsTool } from '../agent-as-tool.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { collectGenerator } from '../../__fixtures__/model-test-helpers.js'
-import { createMockContext } from '../../__fixtures__/tool-helpers.js'
+import { createMockContext, createMockTool } from '../../__fixtures__/tool-helpers.js'
 import { ToolValidationError } from '../../errors.js'
 import { BeforeModelCallEvent } from '../../hooks/events.js'
 import { createErrorResult, Tool, ToolStreamEvent } from '../../tools/tool.js'
@@ -326,6 +326,44 @@ describe('AgentAsTool', () => {
 
       // Clean up first generator
       await collectGenerator(gen1)
+    })
+
+    // Guards https://github.com/strands-agents/harness-sdk/issues/4795: an early close of the orchestrator's
+    // stream must release the sub-agent so it can be invoked again.
+    it('releases the sub-agent when the orchestrator stream is closed mid-flight', async () => {
+      const sub = new Agent({
+        name: 'sub',
+        printer: false,
+        model: new MockMessageModel()
+          .addTurn({ type: 'toolUseBlock', name: 'inner', toolUseId: 'inner-1', input: {} })
+          .addTurn({ type: 'textBlock', text: 'sub done' })
+          .addTurn({ type: 'textBlock', text: 'again done' }),
+        tools: [createMockTool('inner', () => 'ok')],
+      })
+      const tool = sub.asTool()
+      const orch = new Agent({
+        printer: false,
+        model: new MockMessageModel()
+          .addTurn({ type: 'toolUseBlock', name: 'sub', toolUseId: 'outer-1', input: { input: 'go' } })
+          .addTurn({ type: 'textBlock', text: 'orch done' }),
+        tools: [tool],
+      })
+
+      for await (const event of orch.stream('go')) {
+        // Sub-agent events arrive wrapped in a ToolStreamUpdateEvent whose `event.data` is the sub-agent's event.
+        const inner = (event as { event?: { data?: { type?: string } } }).event?.data?.type
+        if (inner === 'beforeToolCallEvent') break
+      }
+
+      expect(orch.isInvoking).toBe(false)
+      expect(sub.isInvoking).toBe(false)
+      await expect(
+        collectGenerator(
+          tool.stream(createMockContext({ name: 'sub', toolUseId: 'tool-2', input: { input: 'again' } }))
+        )
+      ).resolves.toMatchObject({
+        result: expect.objectContaining({ status: 'success' }),
+      })
     })
   })
 
