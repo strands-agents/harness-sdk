@@ -15,6 +15,7 @@ import { getProductNav } from '../util/product-nav';
 import MobileNavTree from './MobileNavTree.astro';
 
 const stars = await getStarCount();
+const currentPath = Astro.url.pathname.replace(/\/?$/, '/');
 
 // The "Projects" dropdown is organized around products (Strands harness, SDK,
 // Shell, Evals) from navigation.yml, so the dropdown and the docs stay
@@ -202,6 +203,7 @@ const learnCategories = [
               <a
                 class="mobile-menu__cat mobile-menu__cat--link"
                 href={cat.href}
+                aria-current={cat.href === currentPath ? 'page' : undefined}
                 {...(cat.external && cat.href?.startsWith('http')
                   ? { target: '_blank', rel: 'noopener' }
                   : {})}
@@ -926,7 +928,8 @@ const learnCategories = [
       color: var(--nav-fg);
     }
 
-    .mobile-menu__cat.is-open .mobile-menu__cat-title {
+    .mobile-menu__cat.is-open .mobile-menu__cat-title,
+    .mobile-menu__cat--link[aria-current='page'] .mobile-menu__cat-title {
       color: var(--accent-green);
     }
 
@@ -1062,7 +1065,26 @@ const learnCategories = [
   const mobileMenu = document.querySelector<HTMLElement>('[data-mobile-menu]');
   if (hamburgerBtn && mobileMenu) {
     const sections = mobileMenu.querySelectorAll<HTMLElement>('[data-mobile-section]');
+    const allCats = mobileMenu.querySelectorAll<HTMLElement>('[data-mobile-cat]');
+    const currentLink = mobileMenu.querySelector<HTMLElement>('[aria-current="page"]');
     const navInner = document.querySelector<HTMLElement>('.strands-nav__inner');
+
+    const setOpen = (el: HTMLElement | null | undefined, toggleSelector: string, open: boolean) => {
+      if (!el) return;
+      el.classList.toggle('is-open', open);
+      el.querySelector(toggleSelector)?.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+
+    // Open on the current page's product so readers keep their place.
+    const revealCurrent = () => {
+      sections.forEach((s) => setOpen(s, '[data-section-toggle]', false));
+      allCats.forEach((c) => setOpen(c, '[data-cat-toggle]', false));
+      if (!currentLink) return;
+      setOpen(currentLink.closest<HTMLElement>('[data-mobile-section]'), '[data-section-toggle]', true);
+      setOpen(currentLink.closest<HTMLElement>('[data-mobile-cat]'), '[data-cat-toggle]', true);
+      for (let d = currentLink.closest('details'); d; d = d.parentElement?.closest('details') ?? null) d.open = true;
+      currentLink.scrollIntoView({ block: 'center' });
+    };
 
     hamburgerBtn.addEventListener('click', () => {
       const open = mobileMenu.classList.toggle('is-open');
@@ -1076,8 +1098,7 @@ const learnCategories = [
         // (varies by context: 52px on docs, 40px on the homepage).
         const bottom = navInner ? Math.round(navInner.getBoundingClientRect().bottom) : 0;
         mobileMenu.style.top = `${bottom}px`;
-        // Reset to collapsed sections each time the menu opens.
-        sections.forEach((s) => s.classList.remove('is-open'));
+        revealCurrent();
       }
     });
 
@@ -1093,7 +1114,7 @@ const learnCategories = [
         });
         // Categories start collapsed (Figma 745:13489) — pages only
         // appear once a category is tapped.
-        cats.forEach((c) => c.classList.remove('is-open'));
+        cats.forEach((c) => setOpen(c, '[data-cat-toggle]', false));
         if (willOpen) {
           section.classList.add('is-open');
           toggle.setAttribute('aria-expanded', 'true');
