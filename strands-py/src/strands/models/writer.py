@@ -446,7 +446,7 @@ class WriterModel(Model):
         yield self.format_chunk({"chunk_type": "content_block_stop", "data_type": "text"})
 
         for tool_deltas in tool_calls.values():
-            tool_start, tool_deltas = tool_deltas[0], tool_deltas[1:]
+            tool_start = tool_deltas[0]
             yield self.format_chunk({"chunk_type": "content_block_start", "data_type": "tool", "data": tool_start})
 
             for tool_delta in tool_deltas:
