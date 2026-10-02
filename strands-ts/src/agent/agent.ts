@@ -648,6 +648,7 @@ export class Agent implements LocalAgent, InvokableAgent {
 
     // Initialize tracer - OTEL returns no-op tracer if not configured
     this._tracer = new Tracer(config?.traceAttributes)
+    this.memoryManager?._setTraceAttributes(config?.traceAttributes)
 
     // Initialize meter for local metrics accumulation
     this._meter = new Meter()
