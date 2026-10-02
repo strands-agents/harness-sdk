@@ -6,6 +6,9 @@
 
 async function main() {
   const { Agent, BedrockModel, ModelRouter, tool, Tool } = await import('@strands-agents/sdk')
+  const { MockMessageModel, TestModelProvider } = await import('@strands-agents/sdk/testing')
+  const offlineModel = new MockMessageModel().addTurn({ type: 'textBlock', text: 'offline' })
+  await new Agent({ model: new TestModelProvider(() => offlineModel.stream([])), printer: false }).invoke('test')
   const { ModelRouter: ModelRouterFromSubpath } = await import('@strands-agents/sdk/models/routing')
 
   const { notebook } = await import('@strands-agents/sdk/vended-tools/notebook')

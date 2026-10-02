@@ -4,6 +4,7 @@
  */
 
 import { Agent, BedrockModel, type BedrockModelConfig } from '@strands-agents/sdk'
+import { MockMessageModel } from '@strands-agents/sdk/testing'
 import type {
   Model,
   BaseModelConfig,
@@ -15,6 +16,20 @@ import type {
   ModelContentBlockDeltaEventData,
   ModelMessageStopEventData,
 } from '@strands-agents/sdk'
+
+async function offlineModelExample() {
+  // --8<-- [start:offline]
+  const model = new MockMessageModel().addTurn({
+    type: 'textBlock',
+    text: 'Hello from an offline model.',
+  })
+  const agent = new Agent({ model, printer: false })
+
+  const result = await agent.invoke('Hello')
+  console.log(result.toString()) // Hello from an offline model.
+  console.log(model.callCount) // 1
+  // --8<-- [end:offline]
+}
 
 // Example wrapper around BedrockModel for demonstration
 class YourCustomModel extends BedrockModel {
