@@ -302,6 +302,23 @@ async def test_executor_stream_with_trace_records_metrics_on_interrupt(
     cycle_trace.add_child.assert_called_once_with(trace_arg)
 
 
+@pytest.mark.asyncio
+async def test_executor_stream_with_trace_records_interrupt_on_span(
+    executor, tracer, agent, tool_results, cycle_trace, cycle_span, invocation_state, alist
+):
+    """An interrupted tool call ends its span with the interrupt recorded as output (#4622)."""
+    tool_use: ToolUse = {"name": "interrupt_tool", "toolUseId": "test_tool_id", "input": {}}
+    stream = executor._stream_with_trace(agent, tool_use, tool_results, cycle_trace, cycle_span, invocation_state)
+
+    events = await alist(stream)
+
+    interrupt_event = next(event for event in events if isinstance(event, ToolInterruptEvent))
+    tracer.end_interrupted_tool_call_span.assert_called_once_with(
+        tracer.start_tool_call_span.return_value, "test_tool_id", interrupt_event.interrupts
+    )
+    tracer.end_tool_call_span.assert_not_called()
+
+
 @pytest.mark.parametrize(
     ("cancel_tool", "cancel_message"),
     [(True, "tool cancelled by user"), ("user cancel message", "user cancel message")],

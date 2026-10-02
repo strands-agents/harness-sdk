@@ -26,6 +26,7 @@ from ..types.traces import Attributes, AttributeValue
 from .metrics import _total_prompt_tokens
 
 if TYPE_CHECKING:
+    from ..interrupt import Interrupt
     from ..memory.types import MemoryEntry
 
 logger = logging.getLogger(__name__)
@@ -599,48 +600,62 @@ class Tracer:
             content = tool_result.get("content", [])
             attributes["gen_ai.tool.status"] = str(status) if status is not None else ""
 
-            if self.use_latest_genai_conventions:
-                # The execute_tool span convention records tool outputs in the dedicated
-                # gen_ai.tool.call.result span attribute (Opt-In), which spec-compliant
-                # consumers read on tool spans. The spec scopes the attribute to successful
-                # executions; failures are captured in the span status instead.
-                if status != "error":
-                    attributes["gen_ai.tool.call.result"] = self._redact("gen_ai.tool.call.result", serialize(content))
-                output_messages = serialize(
-                    [
-                        {
-                            "role": "tool",
-                            "parts": [
-                                {
-                                    "type": "tool_call_response",
-                                    "id": tool_result.get("toolUseId", ""),
-                                    "response": content,
-                                }
-                            ],
-                        }
-                    ]
-                )
-                self._add_event(
-                    span,
-                    "gen_ai.client.inference.operation.details",
-                    {"gen_ai.output.messages": self._redact("gen_ai.output.messages", output_messages)},
-                    to_span_attributes=self._span_attributes_only,
-                )
-            else:
-                self._add_event(
-                    span,
-                    "gen_ai.choice",
-                    event_attributes={
-                        "message": self._redact("gen_ai.output.messages", serialize(content)),
-                        "id": tool_result.get("toolUseId", ""),
-                    },
-                )
+            # The execute_tool span convention records tool outputs in the dedicated
+            # gen_ai.tool.call.result span attribute (Opt-In), which spec-compliant
+            # consumers read on tool spans. The spec scopes the attribute to successful
+            # executions; failures are captured in the span status instead.
+            if self.use_latest_genai_conventions and status != "error":
+                attributes["gen_ai.tool.call.result"] = self._redact("gen_ai.tool.call.result", serialize(content))
+            self._add_tool_output_event(span, tool_result.get("toolUseId", ""), content)
 
         if error is None and status == "error":
             error_message = next((b["text"] for b in content if "text" in b), "tool returned error status")
             self._end_span(span, attributes, error_message=error_message)
         else:
             self._end_span(span, attributes, error)
+
+    def end_interrupted_tool_call_span(self, span: Span, tool_use_id: str, interrupts: list["Interrupt"]) -> None:
+        """End a tool call span whose tool use paused on an interrupt.
+
+        The interrupts are recorded as the tool's output, so the span carries the same input and output
+        events as a completed tool call and GenAI telemetry consumers can parse it. A pause is not a
+        failure, so the span does not carry an error status.
+
+        Args:
+            span: The span to end.
+            tool_use_id: ID of the interrupted tool use.
+            interrupts: Interrupts raised for the tool use.
+        """
+        response = [{"interrupt": {"id": i.id, "name": i.name, "reason": i.reason}} for i in interrupts]
+        self._add_tool_output_event(span, tool_use_id, response)
+        self._end_span(span, {"gen_ai.tool.status": "interrupted"})
+
+    def _add_tool_output_event(self, span: Span, tool_use_id: str, response: Any) -> None:
+        """Add the output event for a tool call span in the configured semantic convention."""
+        if self.use_latest_genai_conventions:
+            output_messages = serialize(
+                [
+                    {
+                        "role": "tool",
+                        "parts": [{"type": "tool_call_response", "id": tool_use_id, "response": response}],
+                    }
+                ]
+            )
+            self._add_event(
+                span,
+                "gen_ai.client.inference.operation.details",
+                {"gen_ai.output.messages": self._redact("gen_ai.output.messages", output_messages)},
+                to_span_attributes=self._span_attributes_only,
+            )
+        else:
+            self._add_event(
+                span,
+                "gen_ai.choice",
+                event_attributes={
+                    "message": self._redact("gen_ai.output.messages", serialize(response)),
+                    "id": tool_use_id,
+                },
+            )
 
     def start_event_loop_cycle_span(
         self,
