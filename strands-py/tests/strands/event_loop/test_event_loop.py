@@ -1313,6 +1313,65 @@ async def test_event_loop_cycle_after_tools_fires_when_tool_hook_raises(agent, m
 
 
 @pytest.mark.asyncio
+async def test_event_loop_cycle_after_tools_error_persists_completed_results():
+    """Completed tool results are persisted when an AfterToolsEvent hook raises.
+
+    https://github.com/strands-agents/harness-sdk/issues/4338
+    """
+    tool_calls = 0
+
+    @strands.tool
+    def side_effect_tool() -> str:
+        """Perform a side effect."""
+        nonlocal tool_calls
+        tool_calls += 1
+        return "completed"
+
+    model = MockedModelProvider(
+        [
+            {
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "t1", "name": side_effect_tool.tool_name, "input": {}}}],
+            },
+            {"role": "assistant", "content": [{"text": "done"}]},
+        ]
+    )
+    agent = Agent(model=model, tools=[side_effect_tool], callback_handler=None)
+
+    def raise_in_after_tools(event):
+        raise RuntimeError("after tools hook failed")
+
+    def mutate_in_after_tools(event):
+        event.message["content"][0]["toolResult"]["content"] = [{"text": "mutated"}]
+
+    agent.hooks.add_callback(AfterToolsEvent, raise_in_after_tools)
+    agent.hooks.add_callback(AfterToolsEvent, mutate_in_after_tools)
+
+    with pytest.raises(EventLoopException, match="after tools hook failed"):
+        await agent.invoke_async("run the tool")
+
+    tru_tool_result_messages = [
+        message
+        for message in agent.messages
+        if message["role"] == "user" and any("toolResult" in content for content in message["content"])
+    ]
+    assert len(tru_tool_result_messages) == 1
+    assert tru_tool_result_messages[0]["content"][0]["toolResult"]["content"] == [{"text": "mutated"}]
+    assert tool_calls == 1
+
+    tru_result = await agent.invoke_async(None)
+    assert str(tru_result).strip() == "done"
+    assert tool_calls == 1
+    assert (
+        sum(
+            message["role"] == "user" and any("toolResult" in content for content in message["content"])
+            for message in agent.messages
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
 async def test_event_loop_cycle_interrupts_preserved_when_after_tools_hook_raises(
     agent, model, tool_stream, agenerator, alist
 ):
