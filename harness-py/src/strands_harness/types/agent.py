@@ -166,6 +166,25 @@ class MemoryConfig(TypedDict, total=False):
     stores: list[MemoryStore]
 
 
+class VerifyConfig(TypedDict, total=False):
+    """Verification settings for ``verify=``.
+
+    Attributes:
+        commands: Shell commands run in order, or ``"auto"`` to detect one from the project files.
+        max_attempts: Failed verifications the agent may try to fix before it must report. Default 3.
+        timeout: Seconds each command may run; a command that runs longer counts as failed. Default 600.
+    """
+
+    commands: list[str] | Literal["auto"]
+    max_attempts: int
+    timeout: float
+
+
+VerifyOption = str | list[str] | VerifyConfig | Literal[False] | None
+"""What ``verify=`` accepts: one command or ``"auto"``, a list of commands, a :class:`VerifyConfig`, or
+``False``/``None`` (off)."""
+
+
 ContextManagerStrategy = Literal["auto", "agentic"]
 """Named context-management strategies.
 
@@ -195,6 +214,8 @@ __all__ = [
     "ReadConfig",
     "ShellConfig",
     "SubagentConfig",
+    "VerifyConfig",
+    "VerifyOption",
     "WebFetchConfig",
     "WebFetchTransport",
 ]

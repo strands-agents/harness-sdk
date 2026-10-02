@@ -21,6 +21,8 @@ from strands_harness.types.agent import (
     SessionConfig,
     ShellConfig,
     SubagentConfig,
+    VerifyConfig,
+    VerifyOption,
     WebFetchConfig,
 )
 
@@ -212,3 +214,23 @@ def _builtin_tool_config(builtin_tools: Mapping[str, Any], name: str) -> dict[st
     """The config ``name`` was enabled with in normalized ``builtin_tools``; ``{}`` for a bool setting."""
     setting = builtin_tools.get(name)
     return dict(setting) if isinstance(setting, Mapping) else {}
+
+
+def _verify_config(verify: VerifyOption) -> VerifyConfig | None:
+    """``verify`` as a :class:`VerifyConfig` with ``commands`` set, or ``None`` when off. Value checks
+    (non-empty commands, positive bounds) are the plugin's."""
+    if verify is None or verify is False:
+        return None
+    if isinstance(verify, str):
+        return {"commands": verify if verify == "auto" else [verify]}
+    if isinstance(verify, list):
+        return {"commands": verify}
+    if isinstance(verify, Mapping):
+        unknown = set(verify) - set(VerifyConfig.__annotations__)
+        if unknown:
+            raise ValueError(f"Unknown verify key(s): {', '.join(sorted(unknown))}.")
+        if "commands" not in verify:
+            raise ValueError("verify config needs 'commands' (a list of commands, or 'auto').")
+        commands = verify["commands"]
+        return {**verify, "commands": [commands] if isinstance(commands, str) and commands != "auto" else commands}
+    raise ValueError(f"verify must be a command, a list of commands, 'auto', a VerifyConfig or None, got {verify!r}.")
