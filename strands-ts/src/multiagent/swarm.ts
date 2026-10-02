@@ -412,7 +412,6 @@ export class Swarm implements MultiAgent {
       if (execTimeoutHandle !== undefined) clearTimeout(execTimeoutHandle)
       this._tracer.endMultiAgentSpan(multiAgentSpan, {
         duration: Date.now() - state.startTime,
-        ...(result && { usage: result.usage }),
         ...(caughtError && { error: caughtError }),
       })
 
@@ -508,7 +507,7 @@ export class Swarm implements MultiAgent {
       }
 
       const result = next.value
-      this._tracer.endNodeSpan(nodeSpan, { status: result.status, duration: result.duration, usage: result.usage })
+      this._tracer.endNodeSpan(nodeSpan, { status: result.status, duration: result.duration })
       state.results.push(result)
 
       yield* this._emit(new AfterNodeCallEvent({ orchestrator: this, state, nodeId: node.id, invocationState }))

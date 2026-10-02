@@ -57,13 +57,6 @@ function makeAgent(id: string, text = 'reply'): Agent {
   return new Agent({ model, printer: false, id })
 }
 
-function makeAgentWithUsage(id: string, text = 'reply'): Agent {
-  const model = new MockMessageModel().addTurn(new TextBlock(text), {
-    usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
-  })
-  return new Agent({ model, printer: false, id })
-}
-
 describe('Graph tracer integration', () => {
   let graph: Graph
   let tracer: MockTracerInstance
@@ -88,19 +81,8 @@ describe('Graph tracer integration', () => {
       expect(span).toStrictEqual({ mock: 'multiAgentSpan' })
       expect(endOpts).toEqual({
         duration: expect.any(Number),
-        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
       })
       expect(endOpts.duration).toBeGreaterThanOrEqual(0)
-    })
-
-    it('passes exact usage from result to endMultiAgentSpan', async () => {
-      graph = new Graph({ id: 'test-graph', nodes: [makeAgentWithUsage('a')], edges: [] })
-      tracer = getGraphTracer()
-
-      await graph.invoke('Hello')
-
-      const [, endOpts] = tracer.endMultiAgentSpan.mock.calls[0]!
-      expect(endOpts.usage).toStrictEqual({ inputTokens: 10, outputTokens: 5, totalTokens: 15 })
     })
 
     it('ends multi-agent span with error when maxSteps exceeded', async () => {
@@ -139,7 +121,7 @@ describe('Graph tracer integration', () => {
       expect(tracer.endNodeSpan.mock.calls.length).toBe(2)
     })
 
-    it('ends node span with COMPLETED status, duration, and zero usage on success', async () => {
+    it('ends node span with COMPLETED status and duration on success', async () => {
       graph = new Graph({ nodes: [makeAgent('a')], edges: [] })
       tracer = getGraphTracer()
 
@@ -150,20 +132,8 @@ describe('Graph tracer integration', () => {
       expect(endOpts).toEqual({
         status: Status.COMPLETED,
         duration: expect.any(Number),
-        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
       })
       expect(endOpts.duration).toBeGreaterThanOrEqual(0)
-    })
-
-    it('passes exact usage from node result to endNodeSpan', async () => {
-      graph = new Graph({ nodes: [makeAgentWithUsage('a')], edges: [] })
-      tracer = getGraphTracer()
-
-      await graph.invoke('Hello')
-
-      const [, endOpts] = tracer.endNodeSpan.mock.calls[0]!
-      expect(endOpts.status).toBe(Status.COMPLETED)
-      expect(endOpts.usage).toStrictEqual({ inputTokens: 10, outputTokens: 5, totalTokens: 15 })
     })
 
     it('ends node span with FAILED status when node agent throws', async () => {

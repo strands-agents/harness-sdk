@@ -42,8 +42,6 @@ export interface EndAgentSpanOptions {
   response?: Message
   /** Error that caused the agent invocation to fail. */
   error?: Error
-  /** Accumulated token usage across all model calls in this invocation. */
-  accumulatedUsage?: Usage
   /** Reason the agent stopped (e.g., 'end_turn', 'tool_use'). */
   stopReason?: string
 }
@@ -134,8 +132,6 @@ export interface EndMultiAgentSpanOptions {
   error?: Error | undefined
   /** Total duration of the orchestration in milliseconds. */
   duration?: number | undefined
-  /** Aggregated token usage across all node executions. */
-  usage?: Usage | undefined
 }
 
 /**
@@ -158,8 +154,6 @@ export interface EndNodeSpanOptions {
   status?: string | undefined
   /** Duration of the node execution in milliseconds. */
   duration?: number | undefined
-  /** Token usage from the node execution. */
-  usage?: Usage | undefined
   /** Error that caused the node execution to fail. */
   error?: Error | undefined
 }

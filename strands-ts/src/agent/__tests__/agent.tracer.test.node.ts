@@ -664,27 +664,6 @@ describe('Agent tracer integration', () => {
     })
   })
 
-  describe('token usage accumulation', () => {
-    it('passes accumulated usage to endAgentSpan', async () => {
-      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
-      const agent = new Agent({ model })
-      const tracer = getLatestTracer()
-
-      await agent.invoke('Hi')
-
-      expect(tracer.endAgentSpan).toHaveBeenCalledWith(
-        { mock: 'agentSpan' },
-        expect.objectContaining({
-          accumulatedUsage: expect.objectContaining({
-            inputTokens: expect.any(Number),
-            outputTokens: expect.any(Number),
-            totalTokens: expect.any(Number),
-          }),
-        })
-      )
-    })
-  })
-
   describe('null span handling', () => {
     it('completes successfully when startAgentSpan returns null', async () => {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
