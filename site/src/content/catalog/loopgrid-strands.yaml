@@ -1,0 +1,17 @@
+name: loopgrid-strands
+
+description: Signed, independently verifiable decision evidence for Strands Agents using LoopGrid.
+
+integrationType: plugin
+
+languages:
+  python:
+    package: loopgrid-strands
+
+github: https://github.com/loopgridio/loopgrid-strands
+
+docsUrl: https://loopgrid.io/integrations/strands/
+
+addedDate: 2026-09-27
+
+maintainedBy: partner
