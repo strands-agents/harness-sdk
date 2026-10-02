@@ -418,6 +418,7 @@ sidebar:
                   - docs/user-guide/sdk/bidi/models/google
                   - docs/user-guide/sdk/bidi/models/openai
               - docs/user-guide/sdk/bidi/io
+              - docs/user-guide/sdk/bidi/content
               - docs/user-guide/sdk/bidi/events
               - docs/user-guide/sdk/bidi/barge-in
               - docs/user-guide/sdk/bidi/hooks
