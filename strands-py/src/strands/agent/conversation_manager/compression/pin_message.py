@@ -55,6 +55,24 @@ def is_pinned(messages: Messages, index: int) -> bool:
     return False
 
 
+def count_protected_prefix(messages: Messages) -> int:
+    """Count the leading messages protected from eviction.
+
+    ``is_pinned`` protects a pinned message's adjacent tool-pair partner as well, so the protected
+    head can extend past the explicitly pinned range.
+
+    Args:
+        messages: The full messages array.
+
+    Returns:
+        The number of leading messages that ``is_pinned`` protects.
+    """
+    count = 0
+    while count < len(messages) and is_pinned(messages, count):
+        count += 1
+    return count
+
+
 def apply_pin_first(messages: Messages, count: int) -> None:
     """Pin the first N messages in the array permanently.
 

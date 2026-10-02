@@ -1120,6 +1120,31 @@ def test_pin_first_only_applies_once():
     assert "first" in [m["content"][0]["text"] for m in agent.messages]
 
 
+def test_pin_first_head_count_includes_protected_tool_pair_partner():
+    """``pinned_head_count`` must cover the tool-pair partner that ``is_pinned`` also protects (#4087).
+
+    Trimming keeps a pinned assistant(toolUse) message's matching toolResult even though the result was
+    never explicitly pinned. A resumed session reattaches exactly ``pinned_head_count`` stored messages,
+    so that count has to include the partner or the restore drops the real tool result.
+    """
+    manager = SlidingWindowConversationManager(window_size=2, should_truncate_results=False, pin_first=2)
+    messages = [
+        {"role": "user", "content": [{"text": "use the tool"}]},
+        {"role": "assistant", "content": [{"toolUse": {"toolUseId": "tu1", "name": "echo", "input": {}}}]},
+        {
+            "role": "user",
+            "content": [
+                {"toolResult": {"toolUseId": "tu1", "status": "success", "content": [{"text": "REAL RESULT"}]}}
+            ],
+        },
+    ]
+    agent = _make_mock_agent(messages=messages)
+    manager.reduce_context(agent)
+
+    assert manager.pinned_head_count == 3
+    assert agent.messages[2]["content"][0]["toolResult"]["content"][0]["text"] == "REAL RESULT"
+
+
 def test_pinned_message_in_middle_survives_trimming():
     from strands.agent.conversation_manager.compression.pin_message import pin_message
 
