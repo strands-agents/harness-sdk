@@ -26,6 +26,12 @@ async def _store_text(stash, text):
     return await stash.store("tool-1", 0, data)
 
 
+async def _store_shell_output(stash, output):
+    shell_result = {"output": output, "error": "", "exit_code": 0}
+    data = json.dumps({"text": json.dumps(shell_result)}).encode("utf-8")
+    return await stash.store("shell-1", 0, data)
+
+
 class TestRetrievalTool:
     """Tests for the retrieve_context tool."""
 
@@ -64,6 +70,33 @@ class TestRetrievalTool:
         text = result["content"][0]["text"]
         assert "line 3" in text
         assert "line 5" in text
+
+    # Guards against offloaded shell output losing its line boundaries (#4741).
+    @pytest.mark.asyncio
+    async def test_retrieves_multiline_shell_output(self, stash):
+        output = "\n".join(f"line {i}{': MARKER' if i == 25 else ''}" for i in range(1, 51))
+        ref = await _store_shell_output(stash, output)
+        tool = _create_retrieval_tool(stash)
+
+        pattern_result = await tool._tool_func(
+            {"toolUseId": "t1", "input": {"reference": ref, "pattern": "MARKER", "context_lines": 0}}
+        )
+        pattern_text = pattern_result["content"][0]["text"]
+        assert "> 25| line 25: MARKER" in pattern_text
+
+        range_result = await tool._tool_func(
+            {
+                "toolUseId": "t1",
+                "input": {"reference": ref, "line_range": {"start": 24, "end": 26}},
+            }
+        )
+        range_text = range_result["content"][0]["text"]
+        assert "line 24" in range_text
+        assert "line 26" in range_text
+        assert "line 23" not in range_text
+
+        full_result = await tool._tool_func({"toolUseId": "t1", "input": {"reference": ref}})
+        assert full_result["content"][0]["text"] == output
 
     @pytest.mark.asyncio
     async def test_returns_error_for_unknown_reference(self, stash):

@@ -41,8 +41,33 @@ def _restore_media(data: dict[str, Any]) -> ToolResultContent | None:
     return None
 
 
+def _extract_shell_output(data: object) -> str | None:
+    """Extract stdout from a serialized shell tool result."""
+    if isinstance(data, dict):
+        if (
+            isinstance(data.get("output"), str)
+            and isinstance(data.get("error"), str)
+            and isinstance(data.get("exit_code"), int)
+        ):
+            return data["output"]
+        for key in ("text", "json"):
+            if key in data:
+                output = _extract_shell_output(data[key])
+                if output is not None:
+                    return output
+    elif isinstance(data, str):
+        try:
+            return _extract_shell_output(json.loads(data))
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def _extract_text(data: object) -> str | None:
     """Extract searchable text from decoded stash data."""
+    shell_output = _extract_shell_output(data)
+    if shell_output is not None:
+        return shell_output
     if isinstance(data, str):
         return data
     if isinstance(data, dict):
@@ -77,7 +102,8 @@ def _create_retrieval_tool(stash: Stash, max_result_tokens: int | None = None) -
                 media = _restore_media(result)
                 if media is not None:
                     return ToolResult(toolUseId=tool_use_id, status="success", content=[media])
-            full_text = json.dumps(result)
+            shell_output = _extract_shell_output(result)
+            full_text = shell_output if shell_output is not None else json.dumps(result)
             if len(full_text) > max_chars:
                 full_text = full_text[:max_chars] + "\n\n[truncated]"
             content: list[ToolResultContent] = [ToolResultContent(text=full_text)]
