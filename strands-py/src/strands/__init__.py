@@ -4,9 +4,18 @@ from . import agent, models, storage, telemetry, types
 from .agent.agent import Agent
 from .agent.base import AgentBase
 from .background_tasks import BackgroundTasksConfig
-from .event_loop._retry import ModelRetryStrategy
 from .interventions import InterventionHandler
 from .plugins import MultiAgentPlugin, Plugin
+from .retry import (
+    BackoffContext,
+    BackoffStrategy,
+    ConstantBackoff,
+    ExponentialBackoff,
+    JitterKind,
+    LinearBackoff,
+    ModelRetryStrategy,
+    RetryDecision,
+)
 from .sandbox import (
     PosixShellSandbox,
     Sandbox,
@@ -22,8 +31,14 @@ __all__ = [
     "Agent",
     "AgentBase",
     "AgentSkills",
+    "BackoffContext",
+    "BackoffStrategy",
     "BackgroundTasksConfig",
+    "ConstantBackoff",
+    "ExponentialBackoff",
     "InterventionHandler",
+    "JitterKind",
+    "LinearBackoff",
     "LocalAgent",
     "agent",
     "models",
@@ -31,6 +46,7 @@ __all__ = [
     "MultiAgentPlugin",
     "Plugin",
     "PosixShellSandbox",
+    "RetryDecision",
     "Sandbox",
     "SandboxPathNotFoundError",
     "SandboxTimeoutError",

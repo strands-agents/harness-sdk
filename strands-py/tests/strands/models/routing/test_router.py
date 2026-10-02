@@ -9,6 +9,7 @@ import pytest
 
 from strands import Agent, Plugin
 from strands.event_loop._retry import ModelRetryStrategy
+from strands.hooks import AfterModelCallEvent
 from strands.models import BedrockModel
 from strands.models.routing import (
     ModelRouter,
@@ -784,13 +785,16 @@ def _hook_scaffold(router, *, candidate_index=0, model=None):
 
 def _model_result(invocation_state, agent, *, error=None):
     """An AfterModelCallEvent stand-in; ``error=None`` means the call succeeded."""
-    return types.SimpleNamespace(
+    event = types.SimpleNamespace(
         retry=False,
         stop_response=None if error else object(),
         exception=error,
         invocation_state=invocation_state,
         agent=agent,
+        _retry_attempts_reset=False,
     )
+    event._reset_retry_attempts = lambda: setattr(event, "_retry_attempts_reset", True)
+    return event
 
 
 @pytest.mark.parametrize(
@@ -857,10 +861,13 @@ def test_fallback_resets_retry_budget_so_next_candidate_gets_fresh_retries():
     router = ModelRouter(models=[first, second])
     retry_strategy = ModelRetryStrategy(max_attempts=3, initial_delay=0, max_delay=0)
     agent = Agent(model=router, retry_strategy=retry_strategy, callback_handler=None)
+    attempt_counts = []
+    agent.hooks.add_callback(AfterModelCallEvent, lambda event: attempt_counts.append(event.attempt_count))
 
     result = agent("hello")
 
     assert result.message["content"][0]["text"] == "recovered"
+    assert attempt_counts == [1, 2, 3, 1, 2, 3]
 
 
 # --- state scoping / lifecycle ---

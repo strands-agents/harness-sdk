@@ -501,6 +501,7 @@ async def _handle_model_execution(
 
     # Retry loop - actual retry logic is handled by retry_strategy hook
     # Hooks control when to stop retrying via the event.retry flag
+    attempt_count = 1
     while True:
         try:
             # Estimate input tokens for the upcoming model call (non-fatal)
@@ -549,6 +550,7 @@ async def _handle_model_execution(
                 after_model_call_event = AfterModelCallEvent(
                     agent=agent,
                     invocation_state=invocation_state,
+                    attempt_count=attempt_count,
                     stop_response=AfterModelCallEvent.ModelStopResponse(
                         stop_reason=stop_reason,
                         message=message,
@@ -557,6 +559,7 @@ async def _handle_model_execution(
                 await agent.hooks.invoke_callbacks_async(after_model_call_event)
 
                 if after_model_call_event.retry:
+                    attempt_count = 1 if after_model_call_event._retry_attempts_reset else attempt_count + 1
                     continue
                 yield ModelStopReason(stop_reason=stop_reason, message=message, usage=usage, metrics=metrics)
                 break
@@ -638,6 +641,7 @@ async def _handle_model_execution(
             after_model_call_event = AfterModelCallEvent(
                 agent=agent,
                 invocation_state=invocation_state,
+                attempt_count=attempt_count,
                 stop_response=AfterModelCallEvent.ModelStopResponse(
                     stop_reason=stop_reason,
                     message=message,
@@ -653,6 +657,7 @@ async def _handle_model_execution(
                     "stop_reason=<%s>, retry_requested=<True> | hook requested model retry",
                     stop_reason,
                 )
+                attempt_count = 1 if after_model_call_event._retry_attempts_reset else attempt_count + 1
                 continue  # Retry the model call
 
             if stop_reason == "max_tokens":
@@ -666,6 +671,7 @@ async def _handle_model_execution(
             after_model_call_event = AfterModelCallEvent(
                 agent=agent,
                 invocation_state=invocation_state,
+                attempt_count=attempt_count,
                 exception=e,
             )
             await agent.hooks.invoke_callbacks_async(after_model_call_event)
@@ -684,6 +690,7 @@ async def _handle_model_execution(
                     type(e).__name__,
                 )
 
+                attempt_count = 1 if after_model_call_event._retry_attempts_reset else attempt_count + 1
                 continue  # Retry the model call
 
             # No retry requested, raise the exception

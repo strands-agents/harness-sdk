@@ -277,6 +277,10 @@ def test_invocation_state_is_available_in_model_call_events(agent):
     assert after_event.invocation_state == invocation_state
     assert after_event.invocation_state["session_id"] == "test-123"
     assert after_event.invocation_state["request_id"] == "req-456"
+    assert after_event.attempt_count == 1
+
+    with pytest.raises(AttributeError, match="Property attempt_count is not writable"):
+        after_event.attempt_count = 2
 
 
 def test_before_invocation_event_messages_default_none(agent):
