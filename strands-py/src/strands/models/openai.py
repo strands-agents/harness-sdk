@@ -720,6 +720,7 @@ class OpenAIModel(Model):
         Raises:
             ContextWindowOverflowException: If the input exceeds the model's context window.
             ModelThrottledException: If the request is throttled by OpenAI (rate limits).
+            ValueError: If the provider stream ends without a finish reason.
         """
         logger.debug("formatting request")
         request = self.format_request(messages, tool_specs, system_prompt, tool_choice, agent_metadata=agent_metadata)
@@ -797,7 +798,9 @@ class OpenAIModel(Model):
 
                     yield self.format_chunk({"chunk_type": "content_stop", "data_type": "tool"})
 
-                yield self.format_chunk({"chunk_type": "message_stop", "data": finish_reason or "end_turn"})
+                if finish_reason is None:
+                    raise ValueError("OpenAI stream ended without a finish reason")
+                yield self.format_chunk({"chunk_type": "message_stop", "data": finish_reason})
 
                 # Skip remaining events as we don't have use for anything except the final usage payload
                 async for event in response:

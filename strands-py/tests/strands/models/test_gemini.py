@@ -1135,30 +1135,55 @@ async def test_stream_response_none_candidates(gemini_client, model, messages, a
         ]
     )
 
-    tru_chunks = await alist(model.stream(messages))
-    exp_chunks = [
-        {"messageStart": {"role": "assistant"}},
-        {"messageStop": {"stopReason": "end_turn"}},
-        {"metadata": {"usage": {"inputTokens": 1, "outputTokens": 2, "totalTokens": 3}, "metrics": {"latencyMs": 0}}},
-    ]
-    assert tru_chunks == exp_chunks
+    with pytest.raises(ValueError, match="Gemini stream ended without a finish reason"):
+        await alist(model.stream(messages))
 
 
 @pytest.mark.asyncio
 async def test_stream_response_empty_stream(gemini_client, model, messages, agenerator, alist):
-    """Test that empty stream doesn't raise UnboundLocalError.
-
-    When the stream yields no events, the candidate variable must be initialized
-    to None to avoid UnboundLocalError when referenced in message_stop chunk.
-    """
+    """Test that an empty stream is rejected without a provider finish reason."""
     gemini_client.aio.models.generate_content_stream.return_value = agenerator([])
 
-    tru_chunks = await alist(model.stream(messages))
-    exp_chunks = [
-        {"messageStart": {"role": "assistant"}},
-        {"messageStop": {"stopReason": "end_turn"}},
+    with pytest.raises(ValueError, match="Gemini stream ended without a finish reason"):
+        await alist(model.stream(messages))
+
+
+@pytest.mark.asyncio
+async def test_stream_response_missing_finish_reason(gemini_client, model, messages, agenerator, alist):
+    response = genai.types.GenerateContentResponse.model_validate(
+        {
+            "candidates": [{"content": {"role": "model", "parts": [{"text": "Hello"}]}}],
+            "usageMetadata": {"promptTokenCount": 2, "candidatesTokenCount": 1, "totalTokenCount": 3},
+        }
+    )
+    gemini_client.aio.models.generate_content_stream.return_value = agenerator([response])
+
+    with pytest.raises(ValueError, match="Gemini stream ended without a finish reason"):
+        await alist(model.stream(messages))
+
+
+@pytest.mark.asyncio
+async def test_stream_response_preserves_finish_reason_when_final_chunk_has_no_candidates(
+    gemini_client, model, messages, agenerator, alist
+):
+    responses = [
+        genai.types.GenerateContentResponse.model_validate(
+            {
+                "candidates": [
+                    {
+                        "content": {"role": "model", "parts": [{"text": "Hello"}]},
+                        "finishReason": "STOP",
+                    }
+                ]
+            }
+        ),
+        genai.types.GenerateContentResponse(candidates=None),
     ]
-    assert tru_chunks == exp_chunks
+    gemini_client.aio.models.generate_content_stream.return_value = agenerator(responses)
+
+    chunks = await alist(model.stream(messages))
+
+    assert chunks[-1] == {"messageStop": {"stopReason": "end_turn"}}
 
 
 @pytest.mark.asyncio

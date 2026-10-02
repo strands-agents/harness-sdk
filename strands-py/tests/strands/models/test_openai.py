@@ -1318,6 +1318,16 @@ async def test_stream_empty(openai_client, model_id, model, agenerator, alist):
 
 
 @pytest.mark.asyncio
+async def test_stream_missing_finish_reason(openai_client, model, messages, agenerator, alist):
+    mock_delta = unittest.mock.Mock(content="partial", tool_calls=None, reasoning_content=None)
+    mock_event = unittest.mock.Mock(choices=[unittest.mock.Mock(finish_reason=None, delta=mock_delta)])
+    openai_client.chat.completions.create = unittest.mock.AsyncMock(return_value=agenerator([mock_event]))
+
+    with pytest.raises(ValueError, match="OpenAI stream ended without a finish reason"):
+        await alist(model.stream(messages))
+
+
+@pytest.mark.asyncio
 async def test_stream_with_empty_choices(openai_client, model, agenerator, alist):
     mock_delta = unittest.mock.Mock(content="content", tool_calls=None, reasoning_content=None)
     mock_usage = unittest.mock.Mock(prompt_tokens=10, completion_tokens=20, total_tokens=30)

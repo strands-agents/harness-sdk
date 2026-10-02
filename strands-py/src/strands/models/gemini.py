@@ -603,6 +603,7 @@ class GeminiModel(Model):
 
         Raises:
             ModelThrottledException: If the request is throttled by Gemini.
+            ValueError: If the provider stream ends without a finish reason.
         """
         request = self._format_request(
             messages, tool_specs, system_prompt, self.config.get("params"), tool_choice=tool_choice
@@ -618,10 +619,13 @@ class GeminiModel(Model):
             data_type: str | None = None
             tool_used = False
             candidate = None
+            finish_reason = None
             event = None
             async for event in response:
                 candidates = event.candidates
                 candidate = candidates[0] if candidates else None
+                if candidate and candidate.finish_reason is not None:
+                    finish_reason = candidate.finish_reason
                 content = candidate.content if candidate else None
                 parts = content.parts if content and content.parts else []
 
@@ -671,10 +675,12 @@ class GeminiModel(Model):
 
             if data_type is not None:
                 yield self._format_chunk({"chunk_type": "content_stop", "data_type": data_type})
+            if finish_reason is None:
+                raise ValueError("Gemini stream ended without a finish reason")
             yield self._format_chunk(
                 {
                     "chunk_type": "message_stop",
-                    "data": "TOOL_USE" if tool_used else (candidate.finish_reason if candidate else "STOP"),
+                    "data": "TOOL_USE" if tool_used else finish_reason,
                 }
             )
             if event and event.usage_metadata is not None:
