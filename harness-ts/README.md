@@ -72,6 +72,7 @@ await createHarness({
   skills: true, // true | dir(s)/URL(s) | an AgentSkills instance | off (null/false)
   memory: true, // true | { dir?, stores? } | a MemoryManager instance | off (null/false)
   interventions: undefined, // gate tool calls: 'ask' | 'smart' | a policy string | a .cedar file
+  verify: undefined, // run your checks before a change counts as done: 'npm test' | [...] | 'auto'
   // ...any other AgentConfig field is passed straight through to Agent
 })
 ```
@@ -502,6 +503,32 @@ implemented as middleware/guard rather than as an intervention or `beforeToolCal
 direct model calls only. This is sugar over the SDK's `HumanInTheLoop` and
 `CedarAuthorization`; pass those directly for anything the presets don't cover. (The `strands` CLI
 exposes the same via `--interventions`, prompting inline in the terminal.)
+
+## Checking its work before it says "done"
+
+By default the agent decides for itself whether a change works. Pass `verify` and the harness runs
+your project's own checks whenever the agent finishes a request that changed something:
+
+```typescript
+createHarness({ verify: 'npm test' }) // one command
+createHarness({ verify: ['npm run lint', 'npm test'] }) // several, run in order
+createHarness({ verify: 'auto' }) // detect one from the project files
+createHarness({ verify: { commands: ['npm test'], maxAttempts: 3, timeout: 600 } })
+```
+
+If every command exits `0`, the answer is returned as usual. If one fails, its exit code and the end
+of its output go back to the agent, which keeps working. After `maxAttempts` failed checks (3 by
+default) the agent gets one last turn to tell you what still fails, so it can't end on an unchecked
+"done". The outcome is saved in `agent.appState` under `verification` (`status` is `'passed'`,
+`'failed'` or `'noChecks'`), so a script or CI job can read it.
+
+A request that only read files, searched or planned runs no checks. Checks run in the agent's
+`sandbox`, a timed-out command counts as a failure, and a `subagent` child never runs them itself.
+`'auto'` picks `npm test` (a `package.json` with a `test` script), `python -m pytest -q`
+(`pyproject.toml`), `cargo test`, `go test ./...` or `make test`, and warns when it finds none.
+Because detected commands run project-defined scripts outside any approval gate, `'auto'` can't be
+combined with `interventions`; name the commands instead. `verify` can't be combined with a
+`GoalLoop` plugin either, since both drive the same retry.
 
 ## It's just a Strands Agent
 
