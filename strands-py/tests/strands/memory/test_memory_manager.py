@@ -1389,7 +1389,7 @@ async def test_init_agent_forwards_trigger_to_registered_middleware():
             "role": "user",
             "content": [
                 tool_result["content"][0],
-                {"text": '\n\n<memory>\n<entry source="s">fact</entry>\n</memory>'},
+                {"text": '<memory>\n<entry source="s">fact</entry>\n</memory>'},
             ],
         },
     ]

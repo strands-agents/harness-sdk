@@ -85,8 +85,22 @@ class TestFoldIntoLastUserMessage:
         assert result == [
             {"role": "user", "content": [{"text": "task"}]},
             {"role": "assistant", "content": [{"text": "thinking"}]},
-            {"role": "user", "content": [tr["content"][0], {"text": "\n\nINJECTED"}]},
+            {"role": "user", "content": [tr["content"][0], {"text": "INJECTED"}]},
         ]
+
+    def test_appends_text_without_separator_when_the_message_has_no_text(self):
+        image = {"image": {"format": "png", "source": {"bytes": b"png"}}}
+        messages = [{"role": "user", "content": [image]}]
+        result, dynamic_trailing_blocks = _fold_into_last_user_message(messages, "INJECTED")
+
+        assert result == [{"role": "user", "content": [image, {"text": "INJECTED"}]}]
+
+    def test_keeps_separator_when_a_cache_point_follows_the_user_text(self):
+        cache_point = {"cachePoint": {"type": "default"}}
+        messages = [{"role": "user", "content": [{"text": "ask"}, cache_point]}]
+        result, dynamic_trailing_blocks = _fold_into_last_user_message(messages, "INJECTED")
+
+        assert result == [{"role": "user", "content": [{"text": "ask"}, cache_point, {"text": "\n\nINJECTED"}]}]
 
     def test_targets_most_recent_user_message(self):
         messages = [user("first"), assistant("a"), user("second")]
@@ -216,7 +230,7 @@ class TestCreateInjectionMiddleware:
         assert result.messages == [
             {"role": "user", "content": [{"text": "task"}]},
             {"role": "assistant", "content": [{"text": "a"}]},
-            {"role": "user", "content": [tr["content"][0], {"text": "\n\nINJECTED"}]},
+            {"role": "user", "content": [tr["content"][0], {"text": "INJECTED"}]},
         ]
 
     async def test_returns_context_unchanged_when_render_yields_empty(self):
