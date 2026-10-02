@@ -57,7 +57,7 @@ await agent.invoke("Find the slowest test in this repo and explain why it's slow
 
 ```typescript
 await createHarness({
-  model: 'bedrock/global.anthropic.claude-opus-5', // "provider/name", a bare Bedrock id, or a Model instance
+  model: 'bedrock/global.anthropic.claude-opus-5-5', // "provider/name", a bare Bedrock id, or a Model instance
   effort: 'auto', // "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
   instructions: undefined, // domain text appended to the system prompt
   tools: undefined, // your tools, added alongside the built-ins
@@ -107,7 +107,7 @@ npm install @google/genai       # for google/*
 Out of the box, `createHarness()` gives you an agent that:
 
 - **Runs on frontier models with reasoning on**, across Amazon Bedrock, Anthropic, OpenAI, and
-  Google. The default is Claude Opus 5 on Amazon Bedrock, behind a tuned system prompt: explore
+  Google. The default is Claude Opus 5.5 on Amazon Bedrock, behind a tuned system prompt: explore
   before changing things, confirm before anything irreversible, verify before calling a task done.
 - **Comes with working tools**: a shell, file tools (`read`, `write`, `edit`), web access, and
   `programmatic_tool_caller`, a sandbox where it writes code that chains, loops over, and
@@ -128,10 +128,10 @@ Everything above is a default, not a constraint. Here's how to adjust each piece
 Pass a `provider/model` string, a bare model id, or a ready-made `Model` instance:
 
 ```typescript
-await createHarness({ model: 'anthropic/claude-opus-5' }) // Anthropic's API directly
+await createHarness({ model: 'anthropic/claude-opus-5-5' }) // Anthropic's API directly
 await createHarness({ model: 'openai/gpt-5.6-sol' }) // OpenAI
 await createHarness({ model: 'google/gemini-3.5-flash' }) // Google
-await createHarness({ model: 'bedrock/global.anthropic.claude-opus-5' }) // the default, spelled out
+await createHarness({ model: 'bedrock/global.anthropic.claude-opus-5-5' }) // the default, spelled out
 await createHarness({ model: 'bedrock-mantle/openai.gpt-5.6-sol' }) // Bedrock's OpenAI-compatible endpoint
 
 import { OpenAIModel } from '@strands-agents/sdk/models/openai'

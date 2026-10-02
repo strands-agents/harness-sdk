@@ -514,6 +514,7 @@ ADAPTIVE_CLAUDE = [
     "global.anthropic.claude-opus-4-7",
     "global.anthropic.claude-opus-4-8",
     "global.anthropic.claude-opus-5",
+    "global.anthropic.claude-opus-5-5",
     "global.anthropic.claude-sonnet-5",
     "global.anthropic.claude-fable-5",
     "global.anthropic.claude-fable-5-1",
@@ -612,6 +613,7 @@ def test_each_level_maps_to_a_budget_the_api_accepts(level, budget):
         ("claude-opus-4.5", 64_000),
         ("claude-opus-4-8", 128_000),
         ("claude-opus-5", 128_000),
+        ("claude-opus-5-5", 128_000),
     ],
 )
 def test_a_split_family_carries_its_version_max_tokens_ceiling(model_id, max_tokens):

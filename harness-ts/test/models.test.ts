@@ -300,6 +300,7 @@ describe('resolveModel', () => {
     'global.anthropic.claude-opus-4-7',
     'global.anthropic.claude-opus-4-8',
     'global.anthropic.claude-opus-5',
+    'global.anthropic.claude-opus-5-5',
     'global.anthropic.claude-sonnet-5',
     'global.anthropic.claude-fable-5',
     'global.anthropic.claude-fable-5-1',
@@ -339,6 +340,7 @@ describe('resolveModel', () => {
     ['claude-opus-4.5', 64_000],
     ['claude-opus-4-8', 128_000],
     ['claude-opus-5', 128_000],
+    ['claude-opus-5-5', 128_000],
   ] as const)('gives %s a max tokens ceiling of %d', async (modelId, maxTokens) => {
     const model = await resolve(`bedrock/global.anthropic.${modelId}`)
     expect(model.getConfig().maxTokens).toBe(maxTokens)

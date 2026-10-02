@@ -2,7 +2,7 @@
  * Default configuration for the harness.
  */
 
-export const DEFAULT_MODEL = 'bedrock/global.anthropic.claude-opus-5'
+export const DEFAULT_MODEL = 'bedrock/global.anthropic.claude-opus-5-5'
 
 export const DEFAULT_EFFORT = 'auto'
 
