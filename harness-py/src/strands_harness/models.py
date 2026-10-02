@@ -29,7 +29,9 @@ logger = logging.getLogger(__name__)
 
 _ANTHROPIC_MAX_TOKENS = 32_000
 # Claude calls the search directly (not from code execution), so results come back as citations
-# and the tool works on every Claude model, not only those with programmatic tool calling.
+# and the tool works on every Claude model, not only those with programmatic tool calling. The
+# type is a dated version; the current ones are listed at
+# https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool
 _ANTHROPIC_WEB_SEARCH = {"type": "web_search_20260318", "name": "web_search", "allowed_callers": ["direct"]}
 
 # Claude's real max_tokens ceiling by tier, verified live against Bedrock Converse. Applied on
@@ -275,10 +277,8 @@ class Provider(NamedTuple):
 
     ``web_search`` is enabled through model config on the providers whose SDK exposes a
     non-clobbering seam for it (OpenAI Responses ``params.tools`` for OpenAI and bedrock-mantle,
-    Gemini ``gemini_tools``); ``_has_web_search`` narrows bedrock-mantle to its GPT-5/GPT-6 models.
-    Bedrock Converse has no mechanism, and the Anthropic-direct model spreads ``params`` last so a
-    ``tools`` key would overwrite the function tools; both stay ``False`` until the SDK grows a
-    safe seam.
+    Gemini ``gemini_tools``, Anthropic-direct ``anthropic_tools``); ``_has_web_search`` narrows
+    bedrock-mantle to its GPT-5/GPT-6 models. Bedrock Converse has no mechanism.
 
     ``caching`` marks providers where prompt caching is in effect when requested, whether or not
     the harness configures anything: Bedrock and Anthropic direct (the harness sets cache points and tool caching)
