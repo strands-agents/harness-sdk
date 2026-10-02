@@ -1,0 +1,8 @@
+name: orcareplay
+description: Records a Strands agent run from outside the process and replays it offline with no model call — a CLI that wraps the process, no SDK changes.
+integrationType: integration
+languages:
+  typescript:
+    package: orcareplay
+github: https://github.com/Continuum-AI-Corp/OrcaReplay
+addedDate: 2026-09-13
