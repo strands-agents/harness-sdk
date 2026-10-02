@@ -228,7 +228,11 @@ class _AgentAsTool(AgentTool):
             )
 
             result = None
-            async for event in self._agent.stream_async(prompt, cancel_signal=cancel_signal):
+            async for event in self._agent.stream_async(
+                prompt,
+                invocation_state=invocation_state,
+                cancel_signal=cancel_signal,
+            ):
                 if "result" in event:
                     result = event["result"]
                 else:
