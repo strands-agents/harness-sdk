@@ -137,7 +137,9 @@ describe('e2e', () => {
   it('injects the environment context (project AGENTS.md)', async () => {
     // With no tools, the only way the agent can know this marker is the environment plugin injecting
     // the working directory's AGENTS.md into the turn.
-    writeFileSync(join(cwd, 'AGENTS.md'), 'Project note: the integration codeword is ZEBRAFISH.\n')
+    // ci-check (do not merge): injected codeword deliberately mismatches the assertion below so the
+    // integ suite fails on purpose, proving the harness-ts integration-test workflow goes red.
+    writeFileSync(join(cwd, 'AGENTS.md'), 'Project note: the integration codeword is NARWHAL.\n')
     const agent = await buildAgent({ builtinTools: [], builtinPlugins: ['environment'] })
     const result = await agent.invoke(`${TESTING} What is the integration codeword mentioned in this project?`)
     expect(result.toString()).toContain('ZEBRAFISH')
