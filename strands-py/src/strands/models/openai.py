@@ -864,9 +864,8 @@ class OpenAIModel(Model):
                 # parse() is non-streaming; stream=True would raise, so drop the streaming-only fields.
                 request.pop("stream", None)
                 request.pop("stream_options", None)
-                response: ParsedChatCompletion = await client.beta.chat.completions.parse(
-                    **request, response_format=output_model
-                )
+                request["response_format"] = output_model
+                response: ParsedChatCompletion = await client.beta.chat.completions.parse(**request)
             except openai.APIError as error:
                 error_kind = classify_openai_error(error)
                 if error_kind == "throttling":
