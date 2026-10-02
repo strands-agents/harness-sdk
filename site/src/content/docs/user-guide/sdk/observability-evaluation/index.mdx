@@ -1,0 +1,89 @@
+---
+title: Observe your agent
+description: "See what your agent does in production: capture traces of every model and tool call, read performance metrics, and stream logs from the SDK."
+sidebar:
+  label: Overview
+tags: [observability]
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components'
+
+Once an agent leaves your laptop, the loop you watched in the terminal runs
+where you cannot see it. Observability is how you get that view back: the SDK
+emits traces of every model and tool call, performance metrics for each run,
+and logs from its own operation, all through OpenTelemetry so the data lands in
+the tools you already run. You reach for it to debug why a run went wrong,
+measure how fast and how expensive it is, and watch for regressions as you ship
+changes.
+
+## Instrument your agent
+
+<CardGrid>
+  <LinkCard
+    title="Observability foundations"
+    href="observability/"
+    description="How traces, metrics, and logs fit together, and the practices that keep them useful."
+  />
+  <LinkCard
+    title="Trace agent execution"
+    href="traces/"
+    description="Capture the full path of a run: model interactions, tool calls, and token usage."
+  />
+  <LinkCard
+    title="Read agent metrics"
+    href="metrics/"
+    description="Track token usage, latency, tool call counts, and event loop cycles per run."
+  />
+  <LinkCard
+    title="Capture logs"
+    href="logs/"
+    description="Set log levels and handlers to surface what the SDK does under the hood."
+  />
+</CardGrid>
+
+## Turn on tracing
+
+The smallest step is to export traces. Configure an exporter before you create
+the agent, and every model and tool call it makes is captured as a span. Sending
+spans to the console needs no collector, so it is the fastest way to confirm
+tracing works before you point it at a production backend.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.telemetry import StrandsTelemetry
+
+# Print every span to the console; add setup_otlp_exporter() to ship to a collector
+StrandsTelemetry().setup_console_exporter()
+
+agent = Agent()
+agent("What is agent observability?")
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/observability-evaluation/index_imports.ts:observe_agent_imports"
+
+--8<-- "user-guide/sdk/observability-evaluation/index.ts:observe_agent"
+```
+
+</Tab>
+</Tabs>
+
+Swap the console exporter for an OTLP exporter to send the same spans to Jaeger,
+Grafana Tempo, AWS X-Ray, Datadog, or any OpenTelemetry backend.
+
+## Where to go next
+
+New to agent observability? Start with [Observability foundations](observability/)
+for the primitives and the framework, then [turn on tracing](traces/) to see a
+real run end to end. From there, add [metrics](metrics/) for performance and cost
+and [logs](logs/) for SDK-level detail.
+
+Watching an agent tells you what it did; measuring quality tells you whether it
+did the right thing. When you are ready to score behavior against a dataset, move
+on to [evaluation](../../evals-sdk/quickstart/).

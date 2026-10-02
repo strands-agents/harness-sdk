@@ -1,0 +1,80 @@
+name: "Harness CLI: Test Package Pack"
+
+# End-to-end package install smoke test for the Strands CLI (`@strands-agents/cli`).
+# Reusable; called by release-harness-cli.yml. Reproduces a real user's install:
+# `npm pack` the CLI, install the tarball in a tempdir OUTSIDE the repo tree (so
+# nothing hoists), and run the `strands` bin. The CLI's @strands-agents/harness /
+# @strands-agents/sdk deps resolve from the registry (ranged, not pinned), so only
+# the CLI tarball is packed.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+      version:
+        description: 'If set, stamp the tarball with this version via `npm version --no-git-tag-version`. Required at release time; PR-time callers leave this empty.'
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  test-package-pack:
+    name: Pack Install
+    permissions:
+      contents: read
+    runs-on: strands-agents_ubuntu-latest_4-core
+    defaults:
+      run:
+        working-directory: strands-cli
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Stamp version (release only)
+        env:
+          PINNED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -n "$PINNED_VERSION" ]; then
+            echo "Stamping $PINNED_VERSION into package.json"
+            npm version "$PINNED_VERSION" --no-git-tag-version
+          else
+            echo "No version pinned; packing with package.json as-committed."
+          fi
+
+      - name: Pack, install in a tmpdir, run the bin
+        # The tmpdir MUST live outside the monorepo so nothing hoists into resolution.
+        run: |
+          set -euo pipefail
+          TARBALL=$(npm pack --silent)
+          TARBALL_PATH="$GITHUB_WORKSPACE/strands-cli/$TARBALL"
+          echo "Packed: $TARBALL_PATH"
+
+          WORK=$(mktemp -d)
+          trap 'rm -rf "$WORK"' EXIT
+          cd "$WORK"
+          npm init -y >/dev/null
+          npm install --ignore-scripts --no-audit --no-fund "$TARBALL_PATH"
+          ./node_modules/.bin/strands --help
+
+      - name: Upload tarball for downstream inspect/publish
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: harness-cli-npm-build-output
+          path: strands-cli/*.tgz
+          if-no-files-found: error
+          retention-days: 7

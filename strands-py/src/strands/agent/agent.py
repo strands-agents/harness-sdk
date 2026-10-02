@@ -25,7 +25,6 @@ from typing import (
     TypeVar,
     Union,
     cast,
-    get_args,
 )
 
 from opentelemetry import trace as trace_api
@@ -33,6 +32,7 @@ from pydantic import BaseModel
 
 from .. import _identifier
 from .._async import run_async
+from ..background_tasks import BackgroundTasksConfig
 from ..event_loop._retry import ModelRetryStrategy
 from ..event_loop.event_loop import INITIAL_DELAY, MAX_ATTEMPTS, MAX_DELAY, event_loop_cycle
 from ..experimental.checkpoint import Checkpoint, CheckpointPosition
@@ -46,6 +46,9 @@ from ..types._snapshot import (
 )
 
 if TYPE_CHECKING:
+    from .._context_manager.context_manager import ContextManager, ContextManagerStrategy
+    from .._context_manager.types import ContextManagerConfig
+    from ..background_tasks._background_tasks import _BackgroundTasks
     from ..tools import ToolProvider
 from .._middleware import MiddlewareRegistry
 from .._middleware.stages import AgentStreamContext, AgentStreamStage
@@ -84,7 +87,7 @@ from ..tools.registry import ToolRegistry
 from ..tools.structured_output._structured_output_context import StructuredOutputContext
 from ..tools.watcher import ToolWatcher
 from ..types._events import AgentResultEvent, EventLoopStopEvent, InitEventLoopEvent, ModelStreamChunkEvent, TypedEvent
-from ..types.agent import AgentInput, ConcurrentInvocationMode, Limits, LocalAgent
+from ..types.agent import _LIMITS_KEYS, AgentInput, ConcurrentInvocationMode, Limits, LocalAgent
 from ..types.content import (
     ContentBlock,
     Message,
@@ -93,18 +96,18 @@ from ..types.content import (
     _ensure_tracking_id,
     split_system_prompt,
 )
-from ..types.exceptions import ConcurrencyException, ContextWindowOverflowException
+from ..types.exceptions import ConcurrencyException, ContextWindowOverflowException, SnapshotException
 from ..types.tools import AgentTool
 from ..types.traces import AttributeValue
 from . import _continuation
 from ._agent_as_tool import _AgentAsTool
 from ._concurrency import _ConcurrencyController
+from .agent_metadata import AgentMetadata
 from .agent_result import AgentResult
 from .base import AgentBase
 from .conversation_manager import (
     ConversationManager,
     NullConversationManager,
-    SlidingWindowConversationManager,
 )
 from .state import AgentState
 
@@ -152,29 +155,6 @@ _DEFAULT_RETRY_STRATEGY = _DefaultRetryStrategySentinel()
 _DEFAULT_AGENT_NAME = "Strands Agents"
 _DEFAULT_AGENT_ID = "default"
 
-ContextManagerStrategy = Literal["auto", "agentic"]
-"""Supported values for the ``context_manager`` parameter.
-
-- ``"auto"``: SummarizingConversationManager with proactive compression + ContextOffloader.
-- ``"agentic"``: (Experimental) Lets the model drive context management via injected tools.
-  This mode may change in future versions.
-"""
-
-_CONTEXT_MANAGER_MAX_RESULT_TOKENS = 1_500
-"""Benchmark-validated token threshold for offloading tool results."""
-
-_AGENTIC_CONTEXT_MANAGER_MAX_RESULT_TOKENS = 8_000
-"""Higher offload threshold for agentic mode - the model manages its own context, so we preserve more inline."""
-
-_CONTEXT_MANAGER_PREVIEW_TOKENS = 750
-"""Benchmark-validated preview token count for offloaded results."""
-
-_CONTEXT_MANAGER_SUMMARY_RATIO = 0.3
-"""Benchmark-validated ratio of messages to summarize on overflow."""
-
-_CONTEXT_MANAGER_COMPRESSION_THRESHOLD = 0.85
-"""Benchmark-validated context window ratio that triggers proactive compression."""
-
 
 @dataclass
 class _PassProgress:
@@ -186,6 +166,15 @@ class _PassProgress:
     """
 
     event_loop_produced_result: bool = False
+
+
+def _resolve_aux_model(aux_model: Model | str | None) -> Model | None:
+    """Resolve ``aux_model`` like ``model``: a string is a Bedrock model id; a ``ModelRouter`` is rejected."""
+    if aux_model is None or isinstance(aux_model, Model):
+        return aux_model
+    if isinstance(aux_model, str):
+        return BedrockModel(model_id=aux_model)
+    raise TypeError(f"aux_model must be a Model, a Bedrock model id, or None, got {type(aux_model).__name__}")
 
 
 class Agent(AgentBase, LocalAgent):
@@ -219,11 +208,14 @@ class Agent(AgentBase, LocalAgent):
         load_tools_from_directory: bool = False,
         trace_attributes: Mapping[str, AttributeValue] | None = None,
         *,
+        aux_model: Model | str | None = None,
         agent_id: str | None = None,
         name: str | None = None,
         description: str | None = None,
         state: AgentState | dict | None = None,
-        context_manager: ContextManagerStrategy | None = None,
+        context_manager: (
+            "ContextManagerStrategy | ContextManagerConfig | ContextManager | Literal[False] | None"
+        ) = None,
         plugins: list[Plugin] | None = None,
         hooks: list[HookProvider | HookCallback] | None = None,
         interventions: list[InterventionHandler] | None = None,
@@ -236,6 +228,7 @@ class Agent(AgentBase, LocalAgent):
         checkpointing: bool = False,
         sandbox: Sandbox | None = None,
         storage: Storage | None = None,
+        background_tasks: bool | BackgroundTasksConfig | None = None,
     ):
         """Initialize the Agent with the specified configuration.
 
@@ -243,6 +236,14 @@ class Agent(AgentBase, LocalAgent):
             model: Provider for running inference or a string representing the model-id for Bedrock to use.
                 May also be a ``ModelRouter``, whose first candidate is resolved to a concrete model and
                 exposed as ``agent.model``. Defaults to strands.models.BedrockModel if None.
+            aux_model: Optional model for auxiliary side calls the SDK makes outside the main agent loop:
+                context summarization, memory extraction, the HITL risk classifier, LLM steering, the
+                goal judge, and the ``web_fetch`` analyst. Defaults to ``model``, so leaving it unset
+                changes nothing; set it (typically to a smaller, cheaper model) to move every side call
+                off the main model at once. Each side call resolves its model as: the component's own
+                ``model=`` > ``aux_model`` > ``model``. Accepts a ``Model`` or a Bedrock model id string,
+                like ``model``; a ``ModelRouter`` is not accepted because auxiliary calls run outside the
+                agent loop the router attaches to.
             messages: List of initial messages to pre-load into the conversation.
                 Defaults to an empty list if None.
             tools: List of tools to make available to the agent.
@@ -282,16 +283,16 @@ class Agent(AgentBase, LocalAgent):
                 Defaults to None.
             state: stateful information for the agent. Can be either an AgentState object, or a json serializable dict.
                 Defaults to an empty AgentState object.
-            context_manager: Context management strategy. When set to ``"auto"``, composes
-                a ContextOffloader plugin (max_result_tokens=1500, preview_tokens=750) with a
-                SummarizingConversationManager (summary_ratio=0.3, compression_threshold=0.85)
-                using benchmark-validated defaults. If ``conversation_manager`` is also provided,
-                the user's conversation manager is used instead. Defaults to None (no context management).
-
-                Note: The offloader uses in-memory storage by default. When an agent-level
-                ``storage`` is provided, the offloader uses that instead. Alternatively,
-                provide an explicit ``ContextOffloader`` with its own storage via the
-                ``plugins`` parameter.
+            context_manager: Context management strategy.
+                ``"auto"``: Proactive truncation of tool results + summarization at 85% utilization.
+                ``"agentic"``: Model-driven context management via injected tools.
+                A :class:`~strands._context_manager.types.ContextManagerConfig` dict for custom
+                strategy pipelines.
+                A :class:`~strands._context_manager.context_manager.ContextManager` instance
+                for full control.
+                ``False``: Disable all context management.
+                When set (except ``False``), any co-provided ``conversation_manager`` is ignored.
+                Defaults to None (SlidingWindowConversationManager, no offloader).
             plugins: List of Plugin instances to extend agent functionality.
                 Plugins are initialized with the agent instance after construction and can register hooks,
                 modify agent attributes, or perform other setup tasks.
@@ -340,13 +341,18 @@ class Agent(AgentBase, LocalAgent):
                 with no isolation.
             storage: Default storage backend for agent subsystems.
                 When provided, subsystems that do not have their own explicit storage
-                (e.g., ContextOffloader) resolve from this value. Each subsystem
-                auto-namespaces under its own prefix (e.g., ``offloader/``) to avoid key
-                collisions. Storage specified directly on a subsystem always takes
-                precedence over this agent-level default. Defaults to None.
+                (e.g., SessionManager, ContextManager) resolve from this value. Each
+                subsystem auto-namespaces under its own prefix to avoid key collisions.
+                Storage specified directly on a subsystem always takes precedence over
+                this agent-level default. Defaults to None.
+            background_tasks: Background tool execution configuration. Pass ``True`` or a
+                :class:`~strands.background_tasks.BackgroundTasksConfig` to let the model run
+                tools in the background and receive their results when they finish. Defaults to
+                None (disabled).
 
         Raises:
             ValueError: If agent id contains path separators.
+            TypeError: If ``aux_model`` is not a ``Model``, a string, or ``None``.
         """
         self._model_router: ModelRouter | None = None
         if isinstance(model, ModelRouter):
@@ -358,14 +364,14 @@ class Agent(AgentBase, LocalAgent):
             self.model = BedrockModel(model_id=model)
         else:
             self.model = model
+        self._aux_model: Model | None = _resolve_aux_model(aux_model)
         self.messages = messages if messages is not None else []
         if sandbox is not None and not isinstance(sandbox, Sandbox):
             raise TypeError(f"sandbox must be a Sandbox instance or None, got {type(sandbox).__name__}")
         # Resolve once: configured sandbox, or this agent's own host default (not shared across agents).
         self._sandbox: Sandbox = sandbox or NotASandboxLocalEnvironment()
         self._storage: Storage | None = storage
-        # initializing self._system_prompt for backwards compatibility
-        self._system_prompt, self._system_prompt_content = split_system_prompt(system_prompt)
+        _, self._system_prompt_content = split_system_prompt(system_prompt)
         self._default_structured_output_model = structured_output_model
         self._structured_output_prompt = structured_output_prompt
         self.agent_id = _identifier.validate(agent_id or _DEFAULT_AGENT_ID, _identifier.Identifier.AGENT)
@@ -383,25 +389,36 @@ class Agent(AgentBase, LocalAgent):
         else:
             self.callback_handler = callback_handler
 
-        if self.model.stateful and (conversation_manager is not None or context_manager is not None):
+        if self.model.stateful and (conversation_manager is not None or context_manager not in (None, False)):
             raise ValueError(
                 "context_manager and conversation_manager cannot be used with a stateful model. "
                 "The model manages conversation state server-side."
             )
 
-        resolved_conversation_manager, resolved_plugins = self._resolve_context_manager(
-            context_manager, conversation_manager, plugins
+        from .._context_manager.context_manager import ContextManager as _ContextManager
+
+        self._context_manager_instance = _ContextManager.from_strategy(context_manager)
+        resolved_conversation_manager = _ContextManager.resolve_conversation_manager(
+            context_manager, conversation_manager
         )
+
+        if plugins and any(isinstance(p, _ContextManager) for p in plugins):
+            raise ValueError(
+                "A ContextManager was passed via plugins; pass it through the context_manager parameter instead "
+                "so session persistence can detect it"
+            )
+
+        self._context_manager: ContextManager | None = self._context_manager_instance
+
+        resolved_plugins = list(plugins) if plugins else []
+        if self._context_manager_instance is not None:
+            resolved_plugins.append(self._context_manager_instance)
 
         self.conversation_manager: ConversationManager
         if self.model.stateful:
             self.conversation_manager = NullConversationManager()
-        elif resolved_conversation_manager:
-            self.conversation_manager = resolved_conversation_manager
-        elif conversation_manager:
-            self.conversation_manager = conversation_manager
         else:
-            self.conversation_manager = SlidingWindowConversationManager()
+            self.conversation_manager = resolved_conversation_manager
 
         # Process trace attributes to ensure they're of compatible types
         self.trace_attributes: dict[str, AttributeValue] = {}
@@ -536,6 +553,12 @@ class Agent(AgentBase, LocalAgent):
 
         self.tool_executor = tool_executor or ConcurrentToolExecutor()
 
+        self._background_tasks: _BackgroundTasks | None = None
+        if background_tasks is not None and background_tasks is not False:
+            from ..background_tasks._background_tasks import _BackgroundTasks as _BackgroundTasksPlugin
+
+            self._background_tasks = _BackgroundTasksPlugin({} if background_tasks is True else background_tasks)
+
         if hooks:
             for hook in hooks:
                 if isinstance(hook, HookProvider):
@@ -558,6 +581,9 @@ class Agent(AgentBase, LocalAgent):
             for plugin in plugins_to_register:
                 self._plugin_registry.add_and_init(plugin)
 
+        if self._background_tasks is not None:
+            self._plugin_registry.add_and_init(self._background_tasks)
+
         has_agent_delegation = any(plugin.name == "strands:agent-delegation" for plugin in (plugins_to_register or []))
         if not has_agent_delegation:
             from ._agent_delegation import AgentDelegation
@@ -576,75 +602,6 @@ class Agent(AgentBase, LocalAgent):
             self._plugin_registry.add_and_init(self.memory_manager)
 
         self.hooks.invoke_callbacks(AgentInitializedEvent(agent=self))
-
-    @staticmethod
-    def _resolve_context_manager(
-        context_manager: "ContextManagerStrategy | None",
-        conversation_manager: ConversationManager | None,
-        plugins: list[Plugin] | None,
-    ) -> tuple[ConversationManager | None, list[Plugin] | None]:
-        """Resolve context_manager facade into concrete conversation_manager and plugins.
-
-        When context_manager is None, returns (None, None) and no resolution occurs.
-        When "auto", constructs a SummarizingConversationManager with proactive compression
-        plus a ContextOffloader, using benchmark-validated defaults.
-        When "agentic", constructs a SummarizingConversationManager *without* proactive
-        compression (the model drives context management via injected tools; the conversation
-        manager is only a reactive overflow safety net) plus a ContextOffloader with a higher
-        offload threshold. In both cases a user-provided conversation_manager / offloader wins.
-
-        Args:
-            context_manager: The facade value ("auto", "agentic", or None).
-            conversation_manager: User-provided conversation manager, takes precedence if set.
-            plugins: User-provided plugin list; offloader is appended if not already present.
-
-        Returns:
-            Tuple of (resolved conversation manager, resolved plugins list).
-            Both are None when context_manager is None.
-
-        Raises:
-            ValueError: If context_manager is not a supported value.
-        """
-        if context_manager is None:
-            return None, None
-
-        from ..vended_plugins.context_offloader import ContextOffloader
-        from .conversation_manager import SummarizingConversationManager
-
-        if context_manager == "auto":
-            offloader_max_result_tokens = _CONTEXT_MANAGER_MAX_RESULT_TOKENS
-            default_conversation_manager = SummarizingConversationManager(
-                summary_ratio=_CONTEXT_MANAGER_SUMMARY_RATIO,
-                proactive_compression={"compression_threshold": _CONTEXT_MANAGER_COMPRESSION_THRESHOLD},
-            )
-        elif context_manager == "agentic":
-            # No proactive compression: the model manages context via injected tools.
-            offloader_max_result_tokens = _AGENTIC_CONTEXT_MANAGER_MAX_RESULT_TOKENS
-            default_conversation_manager = SummarizingConversationManager(
-                summary_ratio=_CONTEXT_MANAGER_SUMMARY_RATIO,
-            )
-        else:
-            raise ValueError(
-                f"Unsupported context_manager value: {context_manager!r}. "
-                f"Supported values: {get_args(ContextManagerStrategy)}"
-            )
-
-        resolved_plugins = list(plugins) if plugins else []
-
-        has_offloader = any(isinstance(p, ContextOffloader) for p in resolved_plugins)
-        if not has_offloader:
-            resolved_plugins.append(
-                ContextOffloader(
-                    max_result_tokens=offloader_max_result_tokens,
-                    preview_tokens=_CONTEXT_MANAGER_PREVIEW_TOKENS,
-                )
-            )
-
-        resolved_conversation_manager = (
-            conversation_manager if conversation_manager is not None else default_conversation_manager
-        )
-
-        return resolved_conversation_manager, resolved_plugins
 
     @staticmethod
     def _resolve_memory_manager(
@@ -731,6 +688,24 @@ class Agent(AgentBase, LocalAgent):
         return self._storage
 
     @property
+    def aux_model(self) -> Model:
+        """Model for auxiliary side calls (summarization, memory extraction, classification, steering, web fetch).
+
+        Resolution order: the ``aux_model`` passed at construction > ``model``.
+        """
+        return self._aux_model if self._aux_model is not None else self.model
+
+    @aux_model.setter
+    def aux_model(self, aux_model: Model | str | None) -> None:
+        """Reassign the auxiliary model; ``None`` reverts to following ``model``."""
+        self._aux_model = _resolve_aux_model(aux_model)
+
+    @property
+    def context_manager(self) -> "ContextManager | None":
+        """The ContextManager plugin, if one is registered on this agent."""
+        return self._context_manager
+
+    @property
     def session_id(self) -> str:
         """Identifier for the current conversation session.
 
@@ -739,6 +714,12 @@ class Agent(AgentBase, LocalAgent):
         construction time (unique per agent instance but not persisted across restarts).
         """
         return self._session_id
+
+    @property
+    def _metadata(self) -> AgentMetadata:
+        """Build the agent metadata view passed to the model on stream()."""
+        session_id = getattr(self._session_manager, "session_id", None) or None
+        return AgentMetadata(session_id=session_id)
 
     @property
     def system_prompt(self) -> str | None:
@@ -751,15 +732,14 @@ class Agent(AgentBase, LocalAgent):
         Returns:
             The system prompt as a string, or None if no text content exists.
         """
-        return self._system_prompt
+        return split_system_prompt(self._system_prompt_content)[0]
 
     @system_prompt.setter
     def system_prompt(self, value: str | list[SystemContentBlock] | None) -> None:
         """Set the system prompt and update internal content representation.
 
         Accepts either a string or list of SystemContentBlock objects.
-        When set, both the backwards-compatible string representation and the internal
-        content block representation are updated to maintain consistency.
+        The string representation is derived from the stored content blocks.
 
         Args:
             value: System prompt as string, list of SystemContentBlock objects, or None.
@@ -767,7 +747,7 @@ class Agent(AgentBase, LocalAgent):
                   - list[SystemContentBlock]: Content blocks with features like caching
                   - None: Clear the system prompt
         """
-        self._system_prompt, self._system_prompt_content = split_system_prompt(value)
+        _, self._system_prompt_content = split_system_prompt(value)
 
     @property
     def system_prompt_content(self) -> list[SystemContentBlock] | None:
@@ -813,6 +793,55 @@ class Agent(AgentBase, LocalAgent):
         Mirrors the ``concurrent_invocation_mode`` constructor argument.
         """
         return self._concurrency.mode
+
+    def shutdown(self) -> None:
+        """Run the agent's shutdown procedures at end of life.
+
+        Safe to call more than once, and a no-op when there is nothing to release. Call it directly
+        when you own the agent's lifecycle (e.g. draining on a shutdown signal), or scope the agent
+        with ``with`` to run it automatically on exit. From async code use :meth:`shutdown_async` or
+        scope with ``async with``.
+        """
+        if self.memory_manager is None:
+            return
+        run_async(self.shutdown_async)
+
+    async def shutdown_async(self) -> None:
+        """Run the agent's shutdown procedures at end of life.
+
+        Asynchronous variant of :meth:`shutdown`. Safe to call more than once, and a no-op when
+        there is nothing to release.
+        """
+        if self.memory_manager is not None:
+            await self.memory_manager.flush()
+
+    def __enter__(self) -> "Agent":
+        """Enter a ``with`` scope, returning the agent unchanged.
+
+        Pairs with ``__exit__``, which runs :meth:`shutdown` when the scope exits.
+        """
+        return self
+
+    def __exit__(self, *_: Any) -> None:
+        """Run :meth:`shutdown` when leaving a ``with`` scope.
+
+        Runs on normal exit and when the block raises; any exception still propagates.
+        """
+        self.shutdown()
+
+    async def __aenter__(self) -> "Agent":
+        """Enter an ``async with`` scope, returning the agent unchanged.
+
+        Pairs with ``__aexit__``, which runs :meth:`shutdown_async` when the scope exits.
+        """
+        return self
+
+    async def __aexit__(self, *_: Any) -> None:
+        """Run :meth:`shutdown_async` when leaving an ``async with`` scope.
+
+        Runs on normal exit and when the block raises; any exception still propagates.
+        """
+        await self.shutdown_async()
 
     def __call__(
         self,
@@ -879,7 +908,7 @@ class Agent(AgentBase, LocalAgent):
             ConcurrencyException: If another invocation is already in progress on this agent instance.
             IdempotencyAbortedError: If this call is a duplicate of an inflight ``idempotency_token``
                 whose primary invocation was aborted before producing a result.
-            TypeError: If a value in ``limits`` is not a positive integer.
+            TypeError: If ``limits`` contains an unrecognized key or a value that is not a positive integer.
             Exception: Any exceptions from the agent invocation will be propagated to the caller.
         """
         return run_async(
@@ -972,7 +1001,7 @@ class Agent(AgentBase, LocalAgent):
             ConcurrencyException: If another invocation is already in progress on this agent instance.
             IdempotencyAbortedError: If this call is a duplicate of an inflight ``idempotency_token``
                 whose primary invocation was aborted before producing a result.
-            TypeError: If a value in ``limits`` is not a positive integer.
+            TypeError: If ``limits`` contains an unrecognized key or a value that is not a positive integer.
             Exception: Any exceptions from the agent invocation will be propagated to the caller.
         """
         events = self.stream_async(
@@ -1316,7 +1345,7 @@ class Agent(AgentBase, LocalAgent):
             ConcurrencyException: If another invocation is already in progress on this agent instance.
             IdempotencyAbortedError: If this call is a duplicate of an inflight ``idempotency_token``
                 whose primary invocation was aborted before producing a result.
-            TypeError: If a value in ``limits`` is not a positive integer.
+            TypeError: If ``limits`` contains an unrecognized key or a value that is not a positive integer.
             Exception: Any exceptions from the agent invocation will be propagated to the caller.
 
         Example:
@@ -1865,6 +1894,7 @@ class Agent(AgentBase, LocalAgent):
             model_id=model_id,
             tools=self.tool_names,
             system_prompt=self.system_prompt,
+            system_prompt_content=self.system_prompt_content,
             custom_trace_attributes=self.trace_attributes,
             tools_config=self.tool_registry.get_all_tools_config(),
         )
@@ -1905,20 +1935,25 @@ class Agent(AgentBase, LocalAgent):
         Each cap, when set, must be a positive ``int``. Booleans are rejected because
         ``bool`` is a subclass of ``int`` in Python and ``True``/``False`` would
         otherwise pass through as ``1``/``0``, silently no-op'ing or tripping
-        immediately.
+        immediately. Unrecognized keys are rejected for the same reason: a mistyped
+        cap name would otherwise silently apply no limit at all.
 
         Args:
             limits: The caps to validate, or ``None`` to skip.
 
         Raises:
-            TypeError: If any value is not a positive int.
+            TypeError: If any key is not a recognized cap or any value is not a
+                positive int.
         """
         if not limits:
             return
-        for key in ("turns", "output_tokens", "total_tokens"):
-            if key not in limits:
-                continue
-            value = limits[key]
+        unrecognized_keys = sorted(key for key in limits if key not in _LIMITS_KEYS)
+        if unrecognized_keys:
+            raise TypeError(
+                f"limits keys {unrecognized_keys} are not recognized caps, "
+                f"expected one of {', '.join(repr(key) for key in _LIMITS_KEYS)}"
+            )
+        for key, value in limits.items():
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise TypeError(f"limits[{key!r}] must be a positive int, got {value!r}")
 
@@ -2017,9 +2052,14 @@ class Agent(AgentBase, LocalAgent):
             snapshot: The snapshot to restore from.
 
         Raises:
-            SnapshotException: If snapshot.schema_version is not "1.0".
+            SnapshotException: If snapshot.schema_version is not "1.0" or snapshot.scope is not "agent".
+            RuntimeError: If background tasks are still tracked.
         """
+        if self._background_tasks is not None:
+            self._background_tasks.assert_can_load_snapshot()
         snapshot.validate()
+        if snapshot.scope != "agent":
+            raise SnapshotException(f"Expected snapshot scope 'agent', got {snapshot.scope!r}")
 
         data = snapshot.data
 
@@ -2035,6 +2075,8 @@ class Agent(AgentBase, LocalAgent):
             self.system_prompt = copy.deepcopy(data["system_prompt"])
         if "model_state" in data:
             self._model_state = copy.deepcopy(data["model_state"])
+        if self._background_tasks is not None and "state" in data:
+            self._background_tasks.load_state()
 
     def _redact_user_content(self, content: list[ContentBlock], redact_message: str) -> list[ContentBlock]:
         """Redact user content preserving toolResult blocks.

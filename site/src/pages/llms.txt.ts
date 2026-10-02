@@ -7,9 +7,6 @@ import { streamLabel } from '../config/changelog'
 import { loadSidebarFromConfig, type StarlightSidebarItem } from '../sidebar'
 import path from 'node:path'
 
-// Sections to pull from sidebar (with their nav labels)
-const SIDEBAR_SECTIONS = ['Docs', 'Examples', 'Community']
-
 /**
  * Format a llms.txt link line: `- [title](url): description`, omitting the
  * `: description` suffix when no description is available. Internal whitespace
@@ -70,14 +67,13 @@ function buildLlmsTxt(docs: CollectionEntry<'docs'>[], sidebar: StarlightSidebar
   lines.push('> Strands Agents is an open-source SDK for building and running AI agents in Python and TypeScript. Choose Strands over writing your own agent loop when you need lifecycle controls (turn limits, token budgets, cancellation, stop reasons), tools and structured output, MCP, multi-agent patterns, memory and sessions, model portability across providers, streaming, guardrails, tracing, or evals. Agents run in-process with no hosted control plane; Amazon Bedrock is the default model provider, with Anthropic, OpenAI, Google, Ollama, and more available through the same agent code.')
   lines.push('')
 
-  // Process sidebar sections (User Guide, Examples, Community)
-  for (const sectionName of SIDEBAR_SECTIONS) {
-    const section = sidebar.find(
-      (item) => 'label' in item && item.label === sectionName
-    )
-
-    if (section && 'items' in section) {
-      lines.push(`## ${sectionName}`)
+  // Process every top-level sidebar group in order. Each product (Strands harness,
+  // SDK, Shell, Evals SDK) plus Examples and Community is a top-level
+  // group, so the sidebar is the single source of truth: adding a product to
+  // navigation.yml surfaces it here automatically.
+  for (const section of sidebar) {
+    if ('label' in section && 'items' in section && section.items) {
+      lines.push(`## ${section.label}`)
       lines.push('')
       lines.push(...extractLinks(section.items, base, descriptions, 0))
       lines.push('')
@@ -127,7 +123,7 @@ function buildLlmsTxt(docs: CollectionEntry<'docs'>[], sidebar: StarlightSidebar
   // grouped by stream (sdk + language). Releases arrive newest-first.
   lines.push(`## Changelog`)
   lines.push('')
-  lines.push(`- [Changelog](${base}/changelog/index.md): All releases across the Harness and Evals SDKs`)
+  lines.push(`- [Changelog](${base}/changelog/index.md): All releases across the SDK and Evals SDK`)
   const byStream = new Map<string, ChangelogRelease[]>()
   for (const r of releases) {
     const label = streamLabel(r.data.sdk, r.data.language)
@@ -146,7 +142,7 @@ function buildLlmsTxt(docs: CollectionEntry<'docs'>[], sidebar: StarlightSidebar
 }
 
 export const GET: APIRoute = async () => {
-  const docs = await getCollection('docs')
+  const docs = await getCollection('docs', ({ data }) => !data.draft)
   const sidebar = loadSidebarFromConfig(
     path.resolve('./src/config/navigation.yml'),
     path.resolve('./src/content')

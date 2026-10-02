@@ -56,6 +56,13 @@ export const CATALOG_TYPES = [
     icon: 'M16 7V3h-2v4h-4V3H8v4H6v6a5 5 0 0 0 4 4.9V21h4v-3.1A5 5 0 0 0 18 13V7h-2z',
   },
   {
+    value: 'observability',
+    label: 'Observability',
+    labelPlural: 'Observability',
+    // line chart
+    icon: 'M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z',
+  },
+  {
     value: 'agent-extension',
     label: 'Agent Extension',
     labelPlural: 'Agent Extensions',
@@ -80,7 +87,7 @@ export const TYPE_ICONS: Record<string, string> = Object.fromEntries(CATALOG_TYP
 // team name). Values match the zod enum in src/content.config.ts — keep the
 // two in sync.
 export const MAINTAINED_BY_TIERS = [
-  { value: 'strands', label: 'Strands', flag: 'Built-in', title: 'Built into the Strands SDK' },
+  { value: 'strands', label: 'Strands', flag: 'Built-in', title: 'Built into the Strands Harness SDK' },
   { value: 'aws', label: 'AWS', flag: 'AWS', title: 'Maintained by AWS' },
   { value: 'partner', label: 'Partner', flag: 'Partner', title: 'Maintained by the partner behind the integration' },
   { value: 'community', label: 'Community', flag: 'Community', title: 'Maintained by a community developer' },

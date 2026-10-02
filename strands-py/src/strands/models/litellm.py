@@ -15,6 +15,7 @@ from litellm.utils import supports_response_schema
 from pydantic import BaseModel
 from typing_extensions import Unpack, override
 
+from ..agent.agent_metadata import AgentMetadata
 from ..tools import convert_pydantic_to_tool_spec
 from ..types.content import ContentBlock, Messages, SystemContentBlock
 from ..types.event_loop import Usage
@@ -330,6 +331,7 @@ class LiteLLMModel(OpenAIModel):
         *,
         tool_choice: ToolChoice | None = None,
         system_prompt_content: list[SystemContentBlock] | None = None,
+        agent_metadata: AgentMetadata | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamEvent, None]:
         """Stream conversation with the LiteLLM model.
@@ -340,6 +342,7 @@ class LiteLLMModel(OpenAIModel):
             system_prompt: System prompt to provide context to the model.
             tool_choice: Selection strategy for tool invocation.
             system_prompt_content: System prompt content blocks to provide context to the model.
+            agent_metadata: Invoking agent's metadata.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Yields:
@@ -347,7 +350,12 @@ class LiteLLMModel(OpenAIModel):
         """
         logger.debug("formatting request")
         request = self.format_request(
-            messages, tool_specs, system_prompt, tool_choice, system_prompt_content=system_prompt_content
+            messages,
+            tool_specs,
+            system_prompt,
+            tool_choice,
+            system_prompt_content=system_prompt_content,
+            agent_metadata=agent_metadata,
         )
         logger.debug("request=<%s>", request)
 

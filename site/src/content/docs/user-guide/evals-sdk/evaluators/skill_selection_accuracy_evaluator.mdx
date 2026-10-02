@@ -1,0 +1,170 @@
+---
+title: Skill selection accuracy evaluator
+description: 'Judge whether each skill your agent chose to load was the right call with SkillSelectionAccuracyEvaluator, one binary verdict per invoked skill.'
+sidebar:
+  label: "Skill selection accuracy"
+---
+
+## Overview
+
+The `SkillSelectionAccuracyEvaluator` judges whether each skill the agent invoked
+was an appropriate choice. A skill is an instruction file the harness offers the
+agent at runtime, and the agent decides which, if any, to load. This evaluator
+looks at every skill the agent chose to load and asks a judge model whether asking
+for that skill made sense given the task and the skills on offer.
+
+It scores the choice, not the outcome. If the harness refused a load, the agent
+never received the skill, but the decision to ask for it can still be right. The
+judge is told to rate the selection on that basis rather than penalize a refusal.
+
+## When to use
+
+Use the `SkillSelectionAccuracyEvaluator` when you need to:
+
+- Confirm a skill-equipped agent reaches for the right skill for a task
+- Detect skills loaded when none was needed
+- Catch a wrong skill picked over a better-fitting one
+- Debug skill selection across a suite of tasks
+
+Whether declining every skill was correct depends on the whole offered set rather
+than any one invocation, so it is a session-level question and out of scope here.
+
+## Evaluation level
+
+The evaluator reads the full agent trajectory and returns one `EvaluationOutput`
+per invoked skill. If an agent loads three skills, you receive three results. A run
+that invoked nothing has no selection to judge and returns a single
+not-applicable row, which is dropped from the aggregated score rather than counted
+as a failure.
+
+## Parameters
+
+### `version` (optional)
+- **Type**: `str`
+- **Default**: `"v0"`
+- **Description**: Prompt template version used when no `system_prompt` is supplied.
+
+### `model` (optional)
+- **Type**: `Model | str | None`
+- **Default**: `None` (uses the default Bedrock judge model)
+- **Description**: The model to use as the judge. Can be a model ID string or a `Model` instance.
+
+### `system_prompt` (optional)
+- **Type**: `str | None`
+- **Default**: `None` (uses the built-in template for `version`)
+- **Description**: Custom system prompt to guide the judge model.
+
+### `name` (optional)
+- **Type**: `str | None`
+- **Default**: `None` (falls back to the class name)
+- **Description**: Identifier used as the evaluator's tag in reports.
+
+## Scoring system
+
+The evaluator uses a binary scoring system, one result per invoked skill:
+
+- **Yes (1.0)**: Invoking the skill was an appropriate choice
+- **No (0.0)**: Invoking the skill was unjustified or a poorer fit than an alternative
+
+Not-applicable rows carry the label `not_applicable` and are dropped from the mean,
+so a run with no skill to select from does not deflate the score.
+
+## Basic usage
+
+:::caution[Required: session ID trace attributes]
+When using `StrandsInMemorySessionMapper`, include session ID trace attributes in
+your agent configuration. This keeps spans from different cases from mixing
+together in the memory exporter.
+:::
+
+```python
+import asyncio
+
+from strands import Agent, AgentSkills, Skill
+from strands_evals import Case, Experiment
+from strands_evals.evaluators import SkillSelectionAccuracyEvaluator
+from strands_evals.mappers import StrandsInMemorySessionMapper
+from strands_evals.telemetry import StrandsEvalsTelemetry
+
+telemetry = StrandsEvalsTelemetry().setup_in_memory_exporter()
+memory_exporter = telemetry.in_memory_exporter
+
+skills = [
+    Skill(
+        name="pdf-processing",
+        description="Extract text and tables from PDF files.",
+        instructions="Open the PDF, extract each page's text, and return it.",
+    ),
+    Skill(
+        name="spreadsheet-analysis",
+        description="Summarize and analyze spreadsheet data.",
+        instructions="Load the spreadsheet and compute the requested aggregates.",
+    ),
+]
+
+
+def user_task_function(case: Case) -> dict:
+    agent = Agent(
+        plugins=[AgentSkills(skills=skills)],
+        trace_attributes={
+            "gen_ai.conversation.id": case.session_id,
+            "session.id": case.session_id,
+        },
+        callback_handler=None,
+    )
+    agent_response = agent(case.input)
+
+    finished_spans = memory_exporter.get_finished_spans()
+    mapper = StrandsInMemorySessionMapper()
+    session = mapper.map_to_session(finished_spans, session_id=case.session_id)
+
+    return {"output": str(agent_response), "trajectory": session}
+
+
+test_cases = [
+    Case[str, str](
+        name="pdf-task",
+        input="Extract the text from quarterly-report.pdf",
+        metadata={"expected_skill": "pdf-processing"},
+    ),
+]
+
+evaluator = SkillSelectionAccuracyEvaluator()
+experiment = Experiment[str, str](cases=test_cases, evaluators=[evaluator])
+
+
+async def main():
+    report = await experiment.run_evaluations_async(user_task_function)
+    report.run_display()
+
+
+asyncio.run(main())
+```
+
+## Evaluation output
+
+Each `EvaluationOutput` carries:
+
+- **score**: `1.0` (Yes) or `0.0` (No)
+- **test_pass**: `True` when the score is `1.0`
+- **reason**: the skill's name followed by the judge's step-by-step reasoning
+- **label**: `"Yes"`, `"No"`, or `not_applicable`
+
+## What gets evaluated
+
+For each invoked skill, the judge sees the task, the catalog of skills the harness
+offered, the serialized trajectory, and the agent's final response. When the harness
+refused a load, the judge is also given the refusal message, because a name the
+harness did not recognize is a worse pick than a valid one it could not mount.
+
+Skill signals are recognized for the Strands `AgentSkills` plugin, Claude Code,
+Codex, Gemini CLI, OpenHands, and Google ADK, plus an agent reading a `SKILL.md`
+from disk. A harness whose skill calls match none of these yields empty results
+rather than an error, so confirm `parse_available_skills(trajectory)` from
+`strands_evals.extractors` returns your skills before trusting a score.
+
+## Related evaluators
+
+- [SkillInstructionFollowingEvaluator](skill_instruction_following_evaluator.md): Whether the agent followed each invoked skill's steps
+- [SkillInvoked](deterministic_evaluators.md): Deterministic check that a named skill was invoked
+- [ToolSelectionAccuracyEvaluator](tool_selection_evaluator.md): Whether the correct tools were selected

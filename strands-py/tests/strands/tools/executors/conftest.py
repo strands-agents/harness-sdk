@@ -122,6 +122,7 @@ def agent(tool_registry, hook_registry):
     mock_agent._interrupt_state = _InterruptState()
     mock_agent._cancel_signal = threading.Event()
     mock_agent._observe_cancellation = mock_agent._cancel_signal.is_set
+    mock_agent._background_tasks = None
     mock_agent._middleware_registry = MiddlewareRegistry()
     mock_agent.trace_attributes = {}
     return mock_agent

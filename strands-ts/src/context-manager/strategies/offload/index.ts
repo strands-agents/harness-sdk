@@ -1,7 +1,7 @@
 /**
  * Offload strategies — reduce content in the context window.
  *
- * @internal
+ * @experimental
  */
 
 import type { TruncateConfig } from '../../methods/truncate.js'

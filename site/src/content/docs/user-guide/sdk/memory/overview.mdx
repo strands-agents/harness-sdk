@@ -1,0 +1,84 @@
+---
+title: Give your agent long-term memory
+description: "Give agents long-term memory across sessions: store facts to configurable backends, recall them via tools or injection, and extract them automatically."
+tags: [memory]
+sourceLinks:
+  - path: strands-py/src/strands/memory/memory_manager.py
+  - path: strands-py/src/strands/memory/types.py
+  - path: strands-ts/src/memory/memory-manager.ts
+  - path: strands-ts/src/memory/types.ts
+addedDate: 2026-06-17
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components'
+
+By default a Strands agent starts every conversation from zero: it cannot recall a user's preferences, past decisions, or anything it learned in an earlier session. The `MemoryManager` gives an agent long-term memory that persists across sessions.
+
+Memory works through **memory stores**, the backends that hold what the agent remembers. A store can be the built-in zero-setup [test store](./test-memory-store), a managed service like [Amazon Bedrock Knowledge Bases](./bedrock-knowledge-base), or [your own implementation](./managing-memory#custom-stores). Across the stores you attach, the manager does three jobs:
+
+1. **Recall** - the agent searches stored knowledge on demand through a tool.
+2. **Injection** - the manager folds relevant knowledge into the prompt automatically, before the model runs.
+3. **Extraction** - turning conversation messages into memories and writing them to stores.
+
+Recall and injection are enabled by default when you attach a store; writing memories is opt-in.
+
+## Give your agent memory
+
+<CardGrid>
+  <LinkCard
+    title="Control what your agent remembers"
+    href="../managing-memory/"
+    description="Configure recall, injection, and extraction, and read or write memory programmatically."
+  />
+  <LinkCard
+    title="Test memory store"
+    href="../test-memory-store/"
+    description="A zero-setup store backed by a local JSON file, for prototyping and tests."
+  />
+  <LinkCard
+    title="Bedrock Knowledge Base store"
+    href="../bedrock-knowledge-base/"
+    description="A managed store with semantic search over a vector store, for production."
+  />
+  <LinkCard
+    title="Build a custom store"
+    href="../managing-memory/#custom-stores"
+    description="Back memory with any database or service by implementing the MemoryStore interface."
+  />
+</CardGrid>
+
+## A running agent with memory
+
+Attach a memory manager to an agent through the <Syntax py="memory_manager" ts="memoryManager" /> parameter. The [test store](./test-memory-store) needs no cloud account and persists to disk by default, so this agent remembers across restarts with no setup:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.memory import MemoryManager
+from strands.vended_memory_stores.test_memory_store import TestMemoryStore
+
+# Persists to ~/.strands/memory/notes.json by default.
+store = TestMemoryStore(name="notes")
+
+agent = Agent(memory_manager=MemoryManager(stores=[store]))
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/memory/overview_imports.ts:getting_started_imports"
+
+--8<-- "user-guide/sdk/memory/overview.ts:getting_started"
+```
+</Tab>
+</Tabs>
+
+With no further configuration, recall and injection are on. From here you choose a backend and control what the agent reads and writes.
+
+## Where to go next
+
+New to memory? Reach for the [test store](./test-memory-store) to give an agent memory in one line, then [control what your agent remembers](./managing-memory) to turn on writing and tune recall, injection, and extraction. For a production backend with semantic search, use the [Bedrock Knowledge Base store](./bedrock-knowledge-base).
+
+Memory is one of three ways an agent carries state. [Session management](../agents/session-management) persists the full conversation so an agent can resume where it left off; [conversation management](../agents/conversation-management) keeps a session within the model's context window; memory carries durable knowledge _across_ sessions, without replaying past conversations.

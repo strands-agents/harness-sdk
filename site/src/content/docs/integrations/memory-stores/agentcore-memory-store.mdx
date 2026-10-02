@@ -16,12 +16,12 @@ service:
 ---
 
 The [AgentCore Memory Store](https://github.com/aws/bedrock-agentcore-sdk-typescript/tree/main/src/memory/integrations/strands)
-implements the Strands [`MemoryStore`](../../user-guide/concepts/memory/overview.md#custom-stores)
+implements the Strands [`MemoryStore`](../../user-guide/sdk/memory/managing-memory.md#custom-stores)
 interface on top of Amazon Bedrock AgentCore Memory. Search maps to AgentCore's
 `retrieveMemoryRecords`, and conversation turns are ingested for
 server-side memory extraction into long-term records. Attach it to an agent through a
-[`MemoryManager`](../../user-guide/concepts/memory/overview.md) like any other store. See
-the [Getting Started](../../user-guide/concepts/memory/overview.md#getting-started) section for more information.
+[`MemoryManager`](../../user-guide/sdk/memory/overview.md) like any other store. See
+the [Getting Started](../../user-guide/sdk/memory/overview.md) section for more information.
 
 ## Requirements
 

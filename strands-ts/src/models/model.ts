@@ -13,6 +13,7 @@ import { CitationsBlock } from '../types/citations.js'
 import type { Citation, CitationGeneratedContent } from '../types/citations.js'
 import type { StateStore } from '../state-store.js'
 import type { ToolChoice, ToolSpec } from '../tools/types.js'
+import type { AgentMetadata } from '../agent/agent-metadata.js'
 import {
   ModelContentBlockDeltaEvent,
   ModelContentBlockStartEvent,
@@ -116,8 +117,15 @@ export interface CacheConfig {
    */
   messagesTTL?: boolean | CacheTTL
 
-  /** Stable identity a provider can use to route its cache. */
-  cacheKey?: string
+  /**
+   * Stable identity a prompt-cache-routing provider (OpenAI, LiteLLM) uses as its cache key. Left
+   * unset, it is derived per request as `strands-<sessionId>` whenever the agent has a session
+   * manager, so repeat runs of a session share a cache prefix with no key management. Set it to a
+   * string to pin your own key; set it to `false` to opt out of routing entirely. The resolved key
+   * (whether set or derived from the session id) is transmitted to the provider. Because the derived
+   * key is resolved per request, it is not reflected in `getConfig()`.
+   */
+  cacheKey?: string | false
 }
 
 /**
@@ -244,6 +252,9 @@ export interface StreamOptions {
 
   /** How many trailing blocks of the last user message are rebuilt on every call. */
   dynamicTrailingBlocks?: number
+
+  /** Metadata of the invoking agent, supplied per request. */
+  agentMetadata?: AgentMetadata
 }
 
 /**
@@ -531,7 +542,13 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
               } else if (accumulatedCitations.hasData()) {
                 block = new CitationsBlock({
                   citations: accumulatedCitations.citations,
-                  content: accumulatedCitations.content,
+                  // Citations deltas that ground already-streamed text carry no content of their own.
+                  content:
+                    accumulatedCitations.content.length > 0
+                      ? accumulatedCitations.content
+                      : accumulatedText
+                        ? [{ text: accumulatedText }]
+                        : [],
                 })
                 accumulatedCitations.reset()
               } else {

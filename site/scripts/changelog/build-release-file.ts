@@ -15,7 +15,7 @@ export interface BuildDeps {
 
 function fileNameFor(sdk: string, language: string | undefined, version: string): string {
   if (sdk === 'evals') return `evals/v${version}.md`
-  return `harness/${language}-v${version}.md`
+  return `sdk/${language}-v${version}.md`
 }
 
 export async function buildReleaseFile(
@@ -43,7 +43,7 @@ export async function buildReleaseFile(
   // (pre-monorepo PRs have no strands-py/strands-ts dirs; gating on empty would
   // wrongly empty those releases).
   const isMonorepoStream =
-    meta.sdk === 'harness' && (release.tag_name.startsWith('python/') || release.tag_name.startsWith('typescript/'))
+    meta.sdk === 'sdk' && (release.tag_name.startsWith('python/') || release.tag_name.startsWith('typescript/'))
 
   const dropFromStream = (enr: Enrichment) =>
     enr.docsOnly ||

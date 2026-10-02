@@ -14,7 +14,7 @@ ignores the installed line doesn't need.
 """
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from datetime import timedelta
 from typing import Any
@@ -40,8 +40,10 @@ __all__ = [
     "read_resource",
     "read_timeout",
     "resource_templates",
+    "server_task_capable",
     "streamable_http_transport",
     "structured_content",
+    "task_session_kwargs",
     "task_support",
     "tools_changed_subscription",
 ]
@@ -91,7 +93,7 @@ async def _drive_input_required(session: ClientSession, call_once: Callable[[Any
         The terminal result.
 
     Raises:
-        MCPError: An embedded input request's callback declined it.
+        MCPError: An embedded input request's callback answered with an error.
         InputRequiredRoundsExceededError: The server kept returning `InputRequiredResult` past the round cap.
     """
     from mcp.client import ClientRequestContext, InputRequiredRoundsExceededError  # type: ignore[attr-defined]
@@ -126,6 +128,8 @@ async def call_tool(
     read_timeout_seconds: timedelta | None,
     progress_callback: Any,
     meta: Any,
+    *,
+    allow_claimed: bool = False,
 ) -> Any:
     """Call a tool on an active session, on either `mcp` major line.
 
@@ -139,20 +143,27 @@ async def call_tool(
         read_timeout_seconds: Timeout for each request round, if any.
         progress_callback: Callback for progress notifications, if any.
         meta: Request metadata (`_meta`) to send with the call, if any.
+        allow_claimed: Return extension-claimed results without resolving them.
 
     Returns:
-        The terminal `CallToolResult`.
+        The terminal `CallToolResult`, or an unresolved extension result when
+        ``allow_claimed`` is enabled.
 
     Raises:
-        MCPError: An embedded input request's callback declined it.
+        MCPError: An embedded input request's callback answered with an error.
         InputRequiredRoundsExceededError: The server kept returning `InputRequiredResult` past the round cap.
     """
     if not MCP_V2:
         return await session.call_tool(
-            name, arguments, read_timeout_seconds, progress_callback=progress_callback, meta=meta
+            name,
+            arguments,
+            read_timeout_seconds,  # type: ignore[arg-type]
+            progress_callback=progress_callback,
+            meta=meta,
         )
 
     timeout = read_timeout(read_timeout_seconds)
+    claim_options = {"allow_claimed": True} if allow_claimed else {}
 
     async def call_once(input_responses: Any, request_state: str | None) -> Any:
         return await session.call_tool(  # type: ignore[call-arg]
@@ -164,6 +175,7 @@ async def call_tool(
             input_responses=input_responses,
             request_state=request_state,
             allow_input_required=True,
+            **claim_options,
         )
 
     return await _drive_input_required(session, call_once)
@@ -197,7 +209,7 @@ def client_credentials_auth(
             client_secret=client_secret,
             scope=scope,  # type: ignore[call-arg]
         )
-    return ClientCredentialsOAuthProvider(
+    return ClientCredentialsOAuthProvider(  # type: ignore[return-value]
         server_url=server_url,
         storage=storage,
         client_id=client_id,
@@ -221,7 +233,7 @@ async def get_prompt(session: ClientSession, name: str, arguments: dict[str, str
         The terminal `GetPromptResult`.
 
     Raises:
-        MCPError: An embedded input request's callback declined it.
+        MCPError: An embedded input request's callback answered with an error.
         InputRequiredRoundsExceededError: The server kept returning `InputRequiredResult` past the round cap.
     """
     if not MCP_V2:
@@ -254,7 +266,7 @@ async def read_resource(session: ClientSession, uri: Any) -> Any:
         The terminal `ReadResourceResult`.
 
     Raises:
-        MCPError: An embedded input request's callback declined it.
+        MCPError: An embedded input request's callback answered with an error.
         InputRequiredRoundsExceededError: The server kept returning `InputRequiredResult` past the round cap.
     """
     if not MCP_V2:
@@ -444,6 +456,69 @@ def task_support(tool: Any) -> str | None:
     return support
 
 
+def server_task_capable(capabilities: ServerCapabilities | None) -> bool:
+    """Check whether a server supports the installed line's task protocol.
+
+    MCP 1.x advertises the legacy task capability under ``tasks``. MCP 2.x
+    advertises finalized SEP-2663 support through the extension registry.
+
+    Args:
+        capabilities: Capabilities negotiated with the server.
+
+    Returns:
+        Whether the server advertised compatible task support.
+    """
+    if capabilities is None:
+        return False
+    if MCP_V2:
+        from .mcp_tasks import _TASKS_EXTENSION
+
+        extensions = getattr(capabilities, "extensions", None)
+        return extensions is not None and _TASKS_EXTENSION in extensions
+    return (
+        capabilities.tasks is not None
+        and capabilities.tasks.requests is not None
+        and capabilities.tasks.requests.tools is not None
+        and capabilities.tasks.requests.tools.call is not None
+    )
+
+
+def task_session_kwargs(enabled: bool) -> dict[str, Any]:
+    """Build MCP 2.x ``ClientSession`` options for finalized Tasks support.
+
+    The extension claim teaches the 2.x result codec to parse ``resultType:
+    task``. Strands consumes the task handle itself, so the claim resolver is
+    intentionally unreachable on the low-level ``ClientSession`` path.
+
+    Args:
+        enabled: Whether the caller opted into task support.
+
+    Returns:
+        Additional keyword arguments for ``ClientSession``.
+    """
+    if not enabled or not MCP_V2:
+        return {}
+
+    from mcp.client.extension import ResultClaim  # type: ignore[import-not-found]
+
+    from .mcp_tasks import _TASKS_EXTENSION, _TASKS_PROTOCOL_VERSION, MCPCreateTaskResult
+
+    async def unexpected_resolver(result: MCPCreateTaskResult, context: Any) -> Any:
+        _ = (result, context)
+        raise RuntimeError("MCP task claims are resolved by MCPClient")
+
+    claim = ResultClaim(
+        result_type="task",
+        model=MCPCreateTaskResult,
+        resolve=unexpected_resolver,
+        protocol_versions=frozenset({_TASKS_PROTOCOL_VERSION}),
+    )
+    return {
+        "extensions": {_TASKS_EXTENSION: {}},
+        "result_claims": {_TASKS_EXTENSION: (claim,)},
+    }
+
+
 async def negotiate_session(session: ClientSession) -> tuple[str | None, ServerCapabilities | None]:
     """Negotiate the connection on an entered session, on either `mcp` major line.
 
@@ -509,6 +584,101 @@ async def tools_changed_subscription(session: ClientSession) -> AsyncIterator[An
         yield subscription
 
 
+def _wrap_auth_for_httpx2(auth: httpx.Auth | None) -> Any:
+    """Translate an `httpx.Auth` handler into the auth protocol mcp 2.x expects.
+
+    mcp 2.x is built on `httpx2`, whose client rejects `httpx.Auth` instances at construction. The two Auth protocols
+    are identical apart from their request and response model classes, so an `httpx.Auth` is driven through an adapter
+    that converts the models at each step of the flow. Values that are not `httpx.Auth` instances, which includes the
+    `httpx2.Auth` implementations such as the 2.x OAuth providers, pass through unchanged.
+
+    The adapter sends whatever request the flow yields. Header and URL changes to the original request are copied back
+    onto it, and a step aimed at another URL (httpx's token-refresh pattern) is sent as its own request. Response
+    bodies handed to the flow are already decoded, so their wire framing headers (`content-encoding`,
+    `content-length`, `transfer-encoding`) are dropped. The adapter is async-only because every mcp 2.x transport
+    drives auth through an async client.
+    """
+    # Non-`httpx.Auth` values return before the httpx2 import so this path also
+    # works where httpx2 is absent (the mcp 1.x install with `MCP_V2` forced on
+    # in unit tests).
+    if not isinstance(auth, httpx.Auth):
+        return auth
+
+    import httpx2  # type: ignore[import-not-found]
+
+    wrapped = auth
+
+    def _loaded_content(request: Any) -> bytes | None:
+        # A flow may read `request.content` without declaring `requires_request_body`;
+        # hand it the body whenever httpx2 already has it in memory.
+        try:
+            return request.content  # type: ignore[no-any-return]
+        except httpx2.RequestNotRead:
+            return None
+
+    async def _outgoing_request(request: Any, translated_request: httpx.Request, step: httpx.Request) -> Any:
+        if step is translated_request:
+            request.headers = httpx2.Headers(step.headers.raw)
+            if str(step.url) != str(request.url):
+                request.url = httpx2.URL(str(step.url))
+            return request
+        # The flow issued its own request (httpx's token-refresh pattern): send
+        # that request, never the original one, so its target and body are honored.
+        # Only the timeout carries over from the original request's extensions;
+        # the rest (such as `sni_hostname`) is specific to the original host.
+        timeout_extension = {key: value for key, value in request.extensions.items() if key == "timeout"}
+        return httpx2.Request(
+            str(step.method),
+            str(step.url),
+            headers=step.headers.raw,
+            content=await step.aread(),
+            extensions=timeout_extension,
+        )
+
+    def _translate_response(response: Any, response_body: bytes, step: httpx.Request) -> httpx.Response:
+        # `response_body` is already decoded, so the wire framing headers no longer
+        # describe it; keeping `content-encoding` would make httpx decode it again.
+        headers = [
+            (name, value)
+            for name, value in response.headers.raw
+            if name.lower() not in (b"content-encoding", b"content-length", b"transfer-encoding")
+        ]
+        return httpx.Response(response.status_code, headers=headers, content=response_body, request=step)
+
+    class _HttpxAuthAdapter(httpx2.Auth):  # type: ignore[misc]
+        """Drives an `httpx.Auth` flow with httpx2 request and response models."""
+
+        requires_request_body = wrapped.requires_request_body
+        requires_response_body = wrapped.requires_response_body
+
+        async def async_auth_flow(self, request: Any) -> AsyncGenerator[Any, Any]:
+            if wrapped.requires_request_body:
+                await request.aread()
+            translated_request = httpx.Request(
+                str(request.method), str(request.url), headers=request.headers.raw, content=_loaded_content(request)
+            )
+            flow = wrapped.async_auth_flow(translated_request)
+            try:
+                step = await flow.__anext__()
+                while True:
+                    response = yield await _outgoing_request(request, translated_request, step)
+                    response_body = b""
+                    if wrapped.requires_response_body:
+                        await response.aread()
+                        response_body = response.content
+                    try:
+                        step = await flow.asend(_translate_response(response, response_body, step))
+                    except StopAsyncIteration:
+                        return
+            finally:
+                await flow.aclose()
+
+        def sync_auth_flow(self, request: Any) -> Any:
+            raise RuntimeError("this auth adapter only supports async clients; mcp 2.x transports are async")
+
+    return _HttpxAuthAdapter()
+
+
 def streamable_http_transport(
     url: str, headers: dict[str, str] | None = None, auth: httpx.Auth | None = None
 ) -> AbstractAsyncContextManager[Any]:
@@ -536,6 +706,8 @@ def streamable_http_transport(
             streamable_http_client,
         )
 
+        transport_auth = _wrap_auth_for_httpx2(auth)
+
         # `streamable_http_client` closes an HTTPX client only when it created
         # it (`client_provided` check in mcp 2.x), so a caller-provided client
         # must be closed by the caller: enter both context managers together
@@ -543,7 +715,7 @@ def streamable_http_transport(
         @asynccontextmanager
         async def _owned_client_transport() -> AsyncIterator[Any]:
             async with (
-                create_mcp_http_client(headers=headers, auth=auth) as http_client,
+                create_mcp_http_client(headers=headers, auth=transport_auth) as http_client,
                 streamable_http_client(url=url, http_client=http_client) as transport_streams,
             ):
                 yield transport_streams

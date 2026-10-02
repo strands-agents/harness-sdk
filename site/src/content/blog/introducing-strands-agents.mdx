@@ -36,7 +36,7 @@ The simplest definition of an agent is a combination of three things: 1) a model
 To define an agent with the Strands Agents SDK, you define these three components in code:
 
 - **Model**: Strands offers flexible model support. You can use any model in [Amazon Bedrock](https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-supported-models-features.html) that supports tool use and streaming, a model from Anthropic's Claude model family through the [Anthropic API](https://www.anthropic.com/api), a model from the Llama model family via Llama API, [Ollama](https://ollama.com/) for local development, and many other model providers such as OpenAI through [LiteLLM](https://docs.litellm.ai/docs/). You can additionally define your own custom model provider with Strands.
-- **Tools**: You can choose from thousands of published [Model Context Protocol (MCP)](https://modelcontextprotocol.io/examples) servers to use as tools for your agent. Strands also provides [20+ pre-built example tools](https://strandsagents.com/latest/user-guide/concepts/tools/tools_overview/#3-experimental-tools-package), including tools for manipulating files, making API requests, and interacting with AWS APIs. You can easily use any Python function as a tool, by simply using the Strands `@tool` decorator.
+- **Tools**: You can choose from thousands of published [Model Context Protocol (MCP)](https://modelcontextprotocol.io/examples) servers to use as tools for your agent. Strands also provides [20+ pre-built example tools](https://strandsagents.com/latest/user-guide/sdk/tools/tools_overview/#3-experimental-tools-package), including tools for manipulating files, making API requests, and interacting with AWS APIs. You can easily use any Python function as a tool, by simply using the Strands `@tool` decorator.
 - **Prompt**: You provide a natural language prompt that defines the task for your agent, such as answering a question from an end user. You can also provide a system prompt that provides general instructions and desired behavior for the agent.
 
 An agent interacts with its model and tools in a loop until it completes the task provided by the prompt. This agentic loop is at the core of Strands' capabilities. The Strands agentic loop takes full advantage of how powerful LLMs have become and how well they can natively reason, plan, and select tools. In each loop, Strands invokes the LLM with the prompt and agent context, along with a description of your agent's tools. The LLM can choose to respond in natural language for the agent's end user, plan out a series of steps, reflect on the agent's previous steps, and/or select one or more tools to use. When the LLM selects a tool, Strands takes care of executing the tool and providing the result back to the LLM. When the LLM completes its task, Strands returns the agent's final result.
@@ -58,7 +58,7 @@ Create a file named `agent.py` with this code:
 ```python
 from strands import Agent
 from strands.tools.mcp import MCPClient
-from strands_tools import http_request
+from strands.vended_tools import http_request
 from mcp import stdio_client, StdioServerParameters
 
 # Define a naming-focused system prompt
@@ -100,7 +100,7 @@ You will need a [GitHub personal access token](https://docs.github.com/en/authen
 Now run your agent:
 
 ```bash
-pip install strands-agents strands-agents-tools
+pip install strands-agents
 python -u agent.py
 ```
 
@@ -132,13 +132,13 @@ You can easily start building new agents today with the Strands Agents SDK in yo
 
 ## Deploy Strands Agents in production
 
-Running agents in production is a key tenet for the design of Strands. The Strands Agents project includes a [deployment toolkit](https://strandsagents.com/latest/user-guide/deploy/operating-agents-in-production/) with a set of reference implementations to help you take your agents to production. Strands is flexible enough to support a variety of architectures in production. You can use Strands to build conversational agents as well as agents that are triggered by events, run on a schedule, or run continuously. You can deploy an agent built with the Strands Agents SDK as a monolith, where both the agentic loop and the tool execution run in the same environment, or as a set of microservices. I will describe four agent architectures that we use internally at AWS with Strands Agents.
+Running agents in production is a key tenet for the design of Strands. The Strands Agents project includes a [deployment toolkit](https://strandsagents.com/latest/user-guide/sdk/deploy/operating-agents-in-production/) with a set of reference implementations to help you take your agents to production. Strands is flexible enough to support a variety of architectures in production. You can use Strands to build conversational agents as well as agents that are triggered by events, run on a schedule, or run continuously. You can deploy an agent built with the Strands Agents SDK as a monolith, where both the agentic loop and the tool execution run in the same environment, or as a set of microservices. I will describe four agent architectures that we use internally at AWS with Strands Agents.
 
 The following diagram shows an agent architecture with Strands running entirely locally in a user's environment through a client application. The [example command line tool](https://github.com/strands-agents/agent-builder) on GitHub follows this architecture for a CLI-based AI assistant for building agents.
 
 ![Agent architecture — local](https://d2908q01vomqb2.cloudfront.net/ca3512f4dfa95a03169c5a670a4c91a19b3077b4/2025/05/16/production-architectures-1.png)
 
-The next diagram shows an architecture where the agent and its tools are deployed behind an API in production. We have provided reference implementations on GitHub for how to deploy agents built with the Strands Agents SDK behind an API on AWS, using [AWS Lambda](https://strandsagents.com/latest/user-guide/deploy/deploy_to_aws_lambda/), [AWS Fargate](https://strandsagents.com/latest/user-guide/deploy/deploy_to_aws_fargate/), or [Amazon Elastic Compute Cloud (Amazon EC2)](https://strandsagents.com/latest/user-guide/deploy/deploy_to_amazon_ec2/).
+The next diagram shows an architecture where the agent and its tools are deployed behind an API in production. We have provided reference implementations on GitHub for how to deploy agents built with the Strands Agents SDK behind an API on AWS, using [AWS Lambda](https://strandsagents.com/latest/user-guide/sdk/deploy/deploy_to_aws_lambda/), [AWS Fargate](https://strandsagents.com/latest/user-guide/sdk/deploy/deploy_to_aws_fargate/), or [Amazon Elastic Compute Cloud (Amazon EC2)](https://strandsagents.com/latest/user-guide/sdk/deploy/deploy_to_amazon_ec2/).
 
 ![Agent architecture — behind an API](https://d2908q01vomqb2.cloudfront.net/ca3512f4dfa95a03169c5a670a4c91a19b3077b4/2025/05/16/production-architectures-2.png)
 

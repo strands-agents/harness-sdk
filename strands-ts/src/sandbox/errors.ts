@@ -7,9 +7,15 @@
 
 /**
  * Thrown by sandbox execution when the configured `timeout` elapses.
+ *
+ * `stdout` and `stderr` hold whatever the process wrote before it was killed.
  */
 export class SandboxTimeoutError extends Error {
-  constructor(seconds: number) {
+  constructor(
+    seconds: number,
+    readonly stdout = '',
+    readonly stderr = ''
+  ) {
     super(`Execution timed out after ${seconds} seconds`)
     this.name = 'SandboxTimeoutError'
   }

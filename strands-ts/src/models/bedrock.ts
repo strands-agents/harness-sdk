@@ -30,6 +30,7 @@ import {
   type ReasoningContentBlockDelta,
   type Tool,
   type ToolConfiguration,
+  type TokenUsage as BedrockTokenUsage,
   type ToolUseBlockDelta,
   type AudioSource as BedrockAudioSource,
   type ImageSource as BedrockImageSource,
@@ -75,7 +76,7 @@ const DEFAULT_BEDROCK_REGION_SUPPORTS_FIP = false
 /**
  * Default request timeout in milliseconds. The AWS SDK defaults to 0 (disabled), which lets
  * a stuck connection hang indefinitely — we pick 120s to bound that. Callers can override
- * via `clientConfig.requestHandler.requestTimeout`.
+ * via `BedrockModelOptions.requestTimeout`.
  */
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000
 
@@ -333,6 +334,17 @@ export interface BedrockModelOptions extends BedrockModelConfig {
   clientConfig?: BedrockRuntimeClientConfig
 
   /**
+   * Milliseconds of stream inactivity before a Bedrock request is aborted.
+   *
+   * Applies to the default request handler and takes precedence over
+   * `clientConfig.requestHandler.requestTimeout`. Ignored when `clientConfig.requestHandler`
+   * is a constructed handler instance, whose own timeouts apply.
+   *
+   * @defaultValue 120000
+   */
+  requestTimeout?: number
+
+  /**
    * Amazon Bedrock API key for bearer token authentication.
    * When provided, requests use the API key instead of SigV4 signing.
    * @see https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html
@@ -417,7 +429,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   constructor(options?: BedrockModelOptions) {
     super()
 
-    const { region, clientConfig, apiKey, ...modelConfig } = options ?? {}
+    const { region, clientConfig, apiKey, requestTimeout, ...modelConfig } = options ?? {}
 
     // Initialize model config with default model ID if not provided
     this._config = {
@@ -434,7 +446,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       ? `${clientConfig.customUserAgent} strands-agents-ts-sdk`
       : 'strands-agents-ts-sdk'
 
-    const requestHandler = withDefaultRequestTimeout(clientConfig?.requestHandler)
+    const requestHandler = withDefaultRequestTimeout(clientConfig?.requestHandler, requestTimeout)
     this._client = new BedrockRuntimeClient({
       ...(clientConfig ?? {}),
       requestHandler,
@@ -1507,6 +1519,25 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     }
   }
 
+  /**
+   * Maps a Bedrock `TokenUsage` to the SDK's `Usage`. Shared by the streaming and non-streaming
+   * paths so the cache counters they surface cannot drift apart.
+   */
+  private _mapBedrockUsage(usage: BedrockTokenUsage): Usage {
+    const mapped: Usage = {
+      inputTokens: ensureDefined(usage.inputTokens, 'usage.inputTokens'),
+      outputTokens: ensureDefined(usage.outputTokens, 'usage.outputTokens'),
+      totalTokens: ensureDefined(usage.totalTokens, 'usage.totalTokens'),
+    }
+    if (usage.cacheReadInputTokens !== undefined) {
+      mapped.cacheReadInputTokens = usage.cacheReadInputTokens
+    }
+    if (usage.cacheWriteInputTokens !== undefined) {
+      mapped.cacheWriteInputTokens = usage.cacheWriteInputTokens
+    }
+    return mapped
+  }
+
   private _mapBedrockEventToSDKEvent(event: ConverseCommandOutput): ModelStreamEvent[] {
     const events: ModelStreamEvent[] = []
 
@@ -1602,11 +1633,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     const usage = ensureDefined(event.usage, 'output.usage')
     const metadataEvent: ModelStreamEvent = {
       type: 'modelMetadataEvent',
-      usage: {
-        inputTokens: ensureDefined(usage.inputTokens, 'usage.inputTokens'),
-        outputTokens: ensureDefined(usage.outputTokens, 'usage.outputTokens'),
-        totalTokens: ensureDefined(usage.totalTokens, 'usage.totalTokens'),
-      },
+      usage: this._mapBedrockUsage(usage),
     }
 
     if (event.metrics) {
@@ -1785,22 +1812,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         }
 
         if (data.usage) {
-          const usage = data.usage
-
-          const usageInfo: Usage = {
-            inputTokens: ensureDefined(usage.inputTokens, 'usage.inputTokens'),
-            outputTokens: ensureDefined(usage.outputTokens, 'usage.outputTokens'),
-            totalTokens: ensureDefined(usage.totalTokens, 'usage.totalTokens'),
-          }
-
-          if (usage.cacheReadInputTokens !== undefined) {
-            usageInfo.cacheReadInputTokens = usage.cacheReadInputTokens
-          }
-          if (usage.cacheWriteInputTokens !== undefined) {
-            usageInfo.cacheWriteInputTokens = usage.cacheWriteInputTokens
-          }
-
-          event.usage = usageInfo
+          event.usage = this._mapBedrockUsage(data.usage)
         }
 
         if (data.metrics) {
@@ -2044,26 +2056,42 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 }
 
 /**
- * Merges a default request timeout into the caller's requestHandler options.
+ * Merges a request timeout into the caller's requestHandler options.
  *
  * The SDK's `requestHandler` slot accepts either a constructed handler instance
  * or an options bag that the SDK uses to build its default handler. We only
- * inject a default in the options-bag case: a handler instance has its timeouts
- * baked in at construction time, so we pass it through untouched.
+ * inject a timeout in the options-bag case: a handler instance has its timeouts
+ * baked in at construction time, so we pass it through untouched and warn if a
+ * `requestTimeout` was given that the instance cannot honour.
  *
- * The handler-vs-options discriminator mirrors the SDK's own check — see
- * `NodeHttp2Handler.create` in `@smithy/node-http-handler`.
+ * Precedence: the `requestTimeout` option, then `requestHandler.requestTimeout`, then the default.
  */
 function withDefaultRequestTimeout(
-  handler: BedrockRuntimeClientConfig['requestHandler']
+  handler: BedrockRuntimeClientConfig['requestHandler'],
+  requestTimeout?: number
 ): NonNullable<BedrockRuntimeClientConfig['requestHandler']> {
-  if (handler && typeof (handler as { handle?: unknown }).handle === 'function') {
-    return handler
+  if (!isRequestHandlerInstance(handler)) {
+    const options = (handler ?? {}) as { requestTimeout?: number; [key: string]: unknown }
+    // Use `??` rather than spread order so an explicit `requestTimeout: undefined` still gets
+    // the default (spread would otherwise overwrite the default with `undefined`, disabling it).
+    return { ...options, requestTimeout: requestTimeout ?? options.requestTimeout ?? DEFAULT_REQUEST_TIMEOUT_MS }
   }
-  const options = (handler ?? {}) as { requestTimeout?: number; [key: string]: unknown }
-  // Use `??` rather than spread order so an explicit `requestTimeout: undefined` still gets
-  // the default (spread would otherwise overwrite the default with `undefined`, disabling it).
-  return { ...options, requestTimeout: options.requestTimeout ?? DEFAULT_REQUEST_TIMEOUT_MS }
+  if (requestTimeout !== undefined) {
+    logger.warn(
+      `request_timeout=<${requestTimeout}> | requestTimeout is ignored when clientConfig.requestHandler is a handler instance`
+    )
+  }
+  return handler
+}
+
+/**
+ * Whether the `requestHandler` slot holds a constructed handler instance rather than an options bag.
+ * Mirrors the SDK's own discriminator — see `NodeHttp2Handler.create` in `@smithy/node-http-handler`.
+ */
+function isRequestHandlerInstance(
+  handler: BedrockRuntimeClientConfig['requestHandler']
+): handler is NonNullable<BedrockRuntimeClientConfig['requestHandler']> {
+  return typeof (handler as { handle?: unknown } | undefined)?.handle === 'function'
 }
 
 /**

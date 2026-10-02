@@ -1,109 +1,60 @@
-"""Bidirectional streaming package."""
+"""Deprecated alias for :mod:`strands.bidi`."""
 
-from typing import TYPE_CHECKING, Any
+import importlib
+import importlib.abc
+import importlib.machinery
+import importlib.util
+import sys
+import warnings
+from collections.abc import Sequence
+from types import ModuleType
 
-# Main components - Primary user interface
-# Re-export standard agent events for tool handling
-from ...types._events import (
-    ToolResultEvent,
-    ToolStreamEvent,
-    ToolUseStreamEvent,
+from strands.bidi import BidiAgent as BidiAgent
+
+from . import agent, hooks, io, models, types
+
+__all__ = ["agent", "hooks", "io", "models", "types"]
+
+_DEPRECATED_PACKAGE = __name__
+_STABLE_PACKAGE = "strands.bidi"
+# Subpackages that keep a shim file; every other submodule resolves through _StableModuleFinder.
+_SHIM_PACKAGES = frozenset(f"{_DEPRECATED_PACKAGE}.{name}" for name in ("agent", "hooks", "io", "models", "types"))
+
+
+def _stable_name(deprecated_name: str) -> str:
+    return _STABLE_PACKAGE + deprecated_name.removeprefix(_DEPRECATED_PACKAGE)
+
+
+class _StableModuleFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+    """Import deprecated submodule paths as the stable module object, so identity, patching, and pickling hold."""
+
+    def find_spec(
+        self,
+        fullname: str,
+        path: Sequence[str] | None,
+        target: ModuleType | None = None,
+    ) -> importlib.machinery.ModuleSpec | None:
+        """Claim deprecated submodules that have a stable counterpart and no shim file."""
+        if not fullname.startswith(f"{_DEPRECATED_PACKAGE}.") or fullname in _SHIM_PACKAGES:
+            return None
+        if importlib.util.find_spec(_stable_name(fullname)) is None:
+            return None
+        return importlib.machinery.ModuleSpec(fullname, self)
+
+    def create_module(self, spec: importlib.machinery.ModuleSpec) -> ModuleType | None:
+        """Use the default placeholder module, which exec_module replaces."""
+        return None
+
+    def exec_module(self, module: ModuleType) -> None:
+        """Replace the placeholder with the stable module."""
+        sys.modules[module.__name__] = importlib.import_module(_stable_name(module.__name__))
+
+
+# Ahead of the path finder, which would otherwise load a second copy of modules under aliased stable packages.
+sys.meta_path.insert(0, _StableModuleFinder())
+
+warnings.warn(
+    "strands.experimental.bidi is deprecated and will be removed in v1.60.0. Import from strands.bidi instead.",
+    DeprecationWarning,
+    stacklevel=2,
 )
-from .agent.agent import BidiAgent
-
-# Model interface (for custom implementations)
-from .models.model import BidiModel, Restartable
-
-# Built-in tools (deprecated - use strands_tools.stop instead)
-from .tools import stop_conversation
-
-# Event types - For type hints and event handling
-from .types.events import (
-    BidiAudioInputEvent,
-    BidiAudioStreamEvent,
-    BidiConnectionCloseEvent,
-    BidiConnectionRestartEvent,
-    BidiConnectionStartEvent,
-    BidiConnectionWarningEvent,
-    BidiErrorEvent,
-    BidiImageInputEvent,
-    BidiInputEvent,
-    BidiInterruptionEvent,
-    BidiOutputEvent,
-    BidiResponseCompleteEvent,
-    BidiResponseStartEvent,
-    BidiTextInputEvent,
-    BidiTranscriptStreamEvent,
-    BidiUsageEvent,
-    ModalityUsage,
-)
-
-# Reconnect configuration (declared by providers, tunable via provider_config)
-from .types.model import BidiConnectionConfig
-
-if TYPE_CHECKING:
-    from .io.audio import BidiAudioIO, BidiAudioIOConfig, BidiAudioProcessorConfig
-
-__all__ = [
-    # Main interface
-    "BidiAgent",
-    # Input Event types
-    "BidiTextInputEvent",
-    "BidiAudioInputEvent",
-    "BidiImageInputEvent",
-    "BidiInputEvent",
-    # Output Event types
-    "BidiConnectionStartEvent",
-    "BidiConnectionRestartEvent",
-    "BidiConnectionWarningEvent",
-    "BidiConnectionCloseEvent",
-    "BidiResponseStartEvent",
-    "BidiResponseCompleteEvent",
-    "BidiAudioStreamEvent",
-    "BidiTranscriptStreamEvent",
-    "BidiInterruptionEvent",
-    "BidiUsageEvent",
-    "ModalityUsage",
-    "BidiErrorEvent",
-    "BidiOutputEvent",
-    # Reconnect configuration
-    "BidiConnectionConfig",
-    # Tool Event types (reused from standard agent)
-    "ToolUseStreamEvent",
-    "ToolResultEvent",
-    "ToolStreamEvent",
-    # Model interface
-    "BidiModel",
-    "Restartable",
-    # IO channels and configuration
-    "BidiAudioProcessorConfig",
-    "BidiAudioIOConfig",
-    "BidiAudioIO",
-    "BidiTextIO",
-    # Built-in tools (deprecated)
-    "stop_conversation",
-]
-
-
-def __getattr__(name: str) -> Any:
-    """Lazy load IO implementations only when accessed.
-
-    This defers the import of optional dependencies until actually needed.
-    """
-    if name == "BidiAudioProcessorConfig":
-        from .io.audio import BidiAudioProcessorConfig
-
-        return BidiAudioProcessorConfig
-    if name == "BidiAudioIOConfig":
-        from .io.audio import BidiAudioIOConfig
-
-        return BidiAudioIOConfig
-    if name == "BidiAudioIO":
-        from .io.audio import BidiAudioIO
-
-        return BidiAudioIO
-    if name == "BidiTextIO":
-        from .io.text import BidiTextIO
-
-        return BidiTextIO
-    raise AttributeError(f"cannot import name '{name}' from '{__name__}' ({__file__})")

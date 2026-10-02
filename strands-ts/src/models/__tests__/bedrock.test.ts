@@ -7,6 +7,7 @@ import {
 } from '@aws-sdk/client-bedrock-runtime'
 import { isNode } from '../../__fixtures__/environment.js'
 import { BedrockModel } from '../bedrock.js'
+import type { BedrockModelOptions } from '../bedrock.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
 import { Message, ReasoningBlock, ToolUseBlock, ToolResultBlock, JsonBlock } from '../../types/messages.js'
 import type { SystemContentBlock } from '../../types/messages.js'
@@ -282,6 +283,45 @@ describe('BedrockModel', () => {
       const handler = { handle: vi.fn(), updateHttpClientConfig: vi.fn(), httpHandlerConfigs: vi.fn() }
       new BedrockModel({ region: 'us-west-2', clientConfig: { requestHandler: handler } })
       expect(BedrockRuntimeClient).toHaveBeenCalledWith(expect.objectContaining({ requestHandler: handler }))
+    })
+
+    it('applies the requestTimeout option to the default request handler', () => {
+      new BedrockModel({ region: 'us-west-2', requestTimeout: 600_000 })
+      expect(BedrockRuntimeClient).toHaveBeenCalledWith(
+        expect.objectContaining({ requestHandler: { requestTimeout: 600_000 } })
+      )
+    })
+
+    it('lets the requestTimeout option take precedence over clientConfig.requestHandler', () => {
+      new BedrockModel({
+        region: 'us-west-2',
+        requestTimeout: 600_000,
+        clientConfig: { requestHandler: { requestTimeout: 5_000, connectionTimeout: 1_000 } },
+      })
+      expect(BedrockRuntimeClient).toHaveBeenCalledWith(
+        expect.objectContaining({ requestHandler: { requestTimeout: 600_000, connectionTimeout: 1_000 } })
+      )
+    })
+
+    it('falls back to the default when requestTimeout is explicitly undefined', () => {
+      const options = { region: 'us-west-2', requestTimeout: undefined } as unknown as BedrockModelOptions
+      new BedrockModel(options)
+      expect(BedrockRuntimeClient).toHaveBeenCalledWith(
+        expect.objectContaining({ requestHandler: { requestTimeout: 120_000 } })
+      )
+    })
+
+    it('warns and keeps a handler instance untouched when requestTimeout is also given', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const handler = { handle: vi.fn(), updateHttpClientConfig: vi.fn(), httpHandlerConfigs: vi.fn() }
+      new BedrockModel({ region: 'us-west-2', requestTimeout: 600_000, clientConfig: { requestHandler: handler } })
+      expect(BedrockRuntimeClient).toHaveBeenCalledWith(expect.objectContaining({ requestHandler: handler }))
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'request_timeout=<600000> | requestTimeout is ignored when clientConfig.requestHandler is a handler instance'
+        )
+      )
+      warnSpy.mockRestore()
     })
 
     it('adds api key middleware when apiKey is provided', () => {
@@ -1475,6 +1515,62 @@ describe('BedrockModel', () => {
         expect(metadataEvent.usage?.cacheReadInputTokens).toBe(80)
         expect(metadataEvent.usage?.cacheWriteInputTokens).toBe(20)
       }
+    })
+
+    it('handles cache usage metrics in non-streaming mode', async () => {
+      const mockSend = vi.fn(async () => ({
+        output: { message: { role: 'assistant', content: [{ text: 'Hello' }] } },
+        stopReason: 'end_turn',
+        usage: {
+          inputTokens: 100,
+          outputTokens: 50,
+          totalTokens: 150,
+          cacheReadInputTokens: 80,
+          cacheWriteInputTokens: 20,
+        },
+        metrics: { latencyMs: 100 },
+      }))
+      mockBedrockClientImplementation({ send: mockSend })
+
+      const provider = new BedrockModel({ stream: false })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      const events = await collectIterator(provider.stream(messages))
+
+      const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
+      expect(metadataEvent).toEqual({
+        type: 'modelMetadataEvent',
+        usage: {
+          inputTokens: 100,
+          outputTokens: 50,
+          totalTokens: 150,
+          cacheReadInputTokens: 80,
+          cacheWriteInputTokens: 20,
+        },
+        metrics: { latencyMs: 100 },
+      })
+    })
+
+    it('omits cache counters in non-streaming mode when usage does not report them', async () => {
+      const mockSend = vi.fn(async () => ({
+        output: { message: { role: 'assistant', content: [{ text: 'Hello' }] } },
+        stopReason: 'end_turn',
+        usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+        metrics: { latencyMs: 100 },
+      }))
+      mockBedrockClientImplementation({ send: mockSend })
+
+      const provider = new BedrockModel({ stream: false })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      const events = await collectIterator(provider.stream(messages))
+
+      const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
+      expect(metadataEvent).toEqual({
+        type: 'modelMetadataEvent',
+        usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+        metrics: { latencyMs: 100 },
+      })
     })
 
     it('handles trace in metadata', async () => {

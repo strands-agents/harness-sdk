@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Harbor Report — Strands harness gets there for less (verified pricing)</title>
+<style>
+  :root {
+    --brand:   #00FF77;
+    --harness: #2fd07f;
+    --ink:     #ffffff;
+    --muted:   #ffffff;
+    --faint:   #ffffff;
+    --dim:     #9aa1ab;
+    --rule:    #22252b;
+    --grid:    #2b2f37;
+    --axis:    #3a3f48;
+    --card:    #0a0b0d;
+    --mono: "SF Mono", "JetBrains Mono", "Roboto Mono", "Space Mono", ui-monospace, Menlo, Consolas, monospace;
+    /* left/right gutters that line the text up with the plot area: PL/W and PR/W of
+       the SVG viewBox (74/1400, 96/1400). Percentages of the shared content box, so
+       they stay aligned with the axis at any width. */
+    --gl: 5.286%;
+    --gr: 6.857%;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 40px 28px;
+    background: #000;
+    color: var(--ink);
+    font-family: var(--mono); letter-spacing: 0.02em;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1680px; margin: 0 auto;
+    background: var(--card); border: 1px solid #33373f; border-radius: 14px;
+    padding: 44px 48px 38px; }
+
+  .eyebrow {
+    font-size: 12px; letter-spacing: 0.22em; color: var(--faint);
+    text-transform: uppercase; margin: 0 0 16px;
+  }
+
+  .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 40px 56px; flex-wrap: wrap;
+    padding: 0 var(--gr) 0 var(--gl); }
+  h1 { font-size: 74px; line-height: 1.0; font-weight: 700; margin: 0; letter-spacing: 0; max-width: 8ch; }
+  h1 .g { color: var(--brand); }
+
+  .stats { display: flex; gap: 44px; flex-wrap: wrap; padding-top: 4px; justify-content: flex-end; }
+  .stat { width: 440px; }
+  .stat .big { font-size: 60px; font-weight: 700; color: var(--brand); line-height: 1; letter-spacing: 0;
+    white-space: nowrap; text-align: left; }
+  .stat .big small { font-size: 40px; font-weight: 700; }
+  .stat .big .arrow { color: var(--brand); font-size: 1em; margin-right: 6px; }
+  .stat .cap { font-size: 24px; color: var(--muted); margin-top: 14px; line-height: 1.4; text-align: left; }
+  .stat .cap .star { font-size: 0.7em; vertical-align: super; line-height: 0; }
+
+  .subtitle { color: var(--muted); font-size: 21px; letter-spacing: 0; line-height: 1.5; margin: 28px 0 8px;
+    padding: 0 var(--gr) 0 var(--gl); }
+  .subtitle .dir { display: inline-block; width: 1.15em; height: 1.15em; vertical-align: -0.22em;
+    fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+  .subtitle .nowrap { white-space: nowrap; }
+
+  svg { display: block; overflow: visible; }
+  .gridline { stroke: var(--grid); stroke-width: 1; vector-effect: non-scaling-stroke; shape-rendering: crispEdges; }
+  .axisline { stroke: var(--axis); stroke-width: 1; vector-effect: non-scaling-stroke; shape-rendering: crispEdges; }
+  .ticktext { fill: var(--muted); font-size: 18px; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .axistitle { fill: var(--faint); font-size: 18px; letter-spacing: 0.12em; font-family: var(--mono); }
+  .frontier { fill: none; stroke: var(--harness); stroke-width: 2.2; opacity: 0.95;
+    vector-effect: non-scaling-stroke; shape-rendering: geometricPrecision;
+    stroke-linejoin: round; stroke-linecap: round; }
+  .mark { transition: opacity .12s; }
+  .lbl { font-family: var(--mono); font-size: 19px; letter-spacing: -0.08em; }
+  .lbl.harness { fill: var(--ink); font-weight: 700; }
+  .lbl.comp { fill: var(--muted); }
+  .leader { stroke: var(--axis); stroke-width: 0.8; vector-effect: non-scaling-stroke; shape-rendering: geometricPrecision; }
+
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 12px 30px; align-items: center;
+    margin: 24px 0 10px; font-size: 21px; color: var(--muted);
+    padding: 0 var(--gr) 0 var(--gl);
+  }
+  .lgi { display: inline-flex; align-items: center; gap: 9px; }
+  .lgi.strong { color: var(--ink); font-weight: 700; }
+  .lgi .fkey { width: 34px; height: 0; border-top: 2.6px solid var(--harness); }
+  .brand-mark { margin-left: auto; font-size: 17px; color: var(--ink); }
+  .brand-mark b { color: var(--ink); font-weight: 700; }
+
+  .footnote { color: #8a8f98; font-size: 21px; line-height: 1.65; margin: 18px 0 0;
+    padding: 0 var(--gr) 0 var(--gl); }
+  .footstar { color: #8a8f98; font-size: 21px; line-height: 1.6; margin: 12px 0 0; padding-left: var(--gl); }
+
+  #tip {
+    position: fixed; z-index: 50; pointer-events: none; opacity: 0; transition: opacity .1s;
+    background: #14161a; border: 1px solid var(--rule); border-radius: 8px;
+    padding: 7px 9px; font-size: 10px; max-width: 216px; box-shadow: 0 8px 24px rgba(0,0,0,.6);
+  }
+  #tip .tv { font-size: 12px; font-weight: 700; color: var(--ink); }
+  #tip .tl { color: var(--muted); margin-top: 3px; }
+  #tip b { color: var(--ink); }
+</style>
+</head>
+<body>
+<div id="scaler">
+<div class="wrap">
+  <div class="top">
+    <h1><span class="g">Strands harness</span></h1>
+    <div class="stats">
+      <div class="stat" style="max-width:480px">
+        <div class="big"><span class="arrow">▼</span>28%<small> lower cost</small></div>
+        <div class="cap">with equal or better accuracy across benchmarks<span class="star">*</span></div>
+      </div>
+    </div>
+  </div>
+
+  <p class="subtitle"><span class="nowrap"><svg class="dir" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 18 L6 6 M6 6 L14 6 M6 6 L6 14"/></svg> up and left is better</span></p>
+
+  <div id="chart"></div>
+
+  <div class="legend" id="legend"></div>
+  <p class="footnote" id="footnote"></p>
+  <p class="footstar">* DeepSeek Harness runs about 14% <b>cheaper</b> than Strands harness, though it scores lower on every benchmark. Including it brought overall cost figure down to 28% for Strands harness.</p>
+</div>
+</div>
+<div id="tip" role="tooltip" aria-hidden="true"></div>
+
+<script>
+"use strict";
+(function () {
+
+/* Per (harness × model) averages over the six benchmarks each pair completed
+   (alfworld, ContextBench, GAIA, WebShop, τ³-bench, Terminal-Bench 2.1).
+   Source of truth: bench-with-astra.xlsx, Results sheet, cost column "Cost $" as
+   provided (measured where captured, else inferred). s = mean Score %, c = mean
+   cost per task (run "Cost $" ÷ Trials) over the six benchmarks. Only pairs with
+   a real cost on all six are plotted; eve, deepagents, and GPT-6 Astra are
+   excluded (Astra's cost is missing on most benchmarks). Where bench-with-astra is
+   missing one cell for an otherwise-complete pair, it is substituted from
+   harbor-report-sep17.xlsx to complete the six: Claude Code + Fable 5 (Terminal-Bench),
+   the four oh-my-pi points (ContextBench), and Codex + GPT-5.6 Terra (alfworld). See
+   ariel-calculation.md. */
+const HARNESS = {
+  harness:           { label: "Strands harness",  shape: "circle",       hero: true, color: "var(--harness)" },
+  "claude-code":      { label: "Claude Code",      shape: "square",       color: "#e8843c" },
+  codex:              { label: "Codex",            shape: "diamond",      color: "#3f8ae0" },
+  omp:                { label: "oh-my-pi",         shape: "triangle",     color: "var(--dim)" },
+  opencode:           { label: "OpenCode",         shape: "triangleDown", color: "var(--dim)" },
+  "deepseek-harness": { label: "DeepSeek Harness", shape: "hexagon",      color: "var(--dim)" },
+};
+
+// h = harness key, m = display model, s = avg score %, c = avg cost / task ($)
+const POINTS = [
+  { h: "claude-code",      m: "Claude Fable 5",  s: 80.94, c: 1.8723 },  // Terminal-Bench cell substituted from harbor-report-sep17
+  { h: "claude-code",      m: "Claude Opus 4.8", s: 77.32, c: 0.9827 },
+  { h: "claude-code",      m: "Claude Opus 5",   s: 84.60, c: 1.0632 },  // ContextBench from harbor-report-sep17
+  { h: "claude-code",      m: "Claude Sonnet 5", s: 71.55, c: 0.9739 },
+  { h: "codex",            m: "GPT-5.6 Luna",    s: 62.66, c: 0.0284 },
+  { h: "codex",            m: "GPT-5.6 Sol",     s: 76.59, c: 0.6283 },
+  { h: "codex",            m: "GPT-5.6 Terra",   s: 59.06, c: 0.1776 },  // alfworld from harbor-report-sep17
+  { h: "deepseek-harness", m: "Claude Fable 5",  s: 80.11, c: 0.6789 },
+  { h: "deepseek-harness", m: "Claude Opus 4.8", s: 74.15, c: 0.6020 },
+  { h: "deepseek-harness", m: "Claude Opus 5",   s: 80.76, c: 0.5983 },
+  { h: "deepseek-harness", m: "Claude Sonnet 5", s: 70.69, c: 0.4063 },
+  { h: "omp",              m: "Claude Fable 5",  s: 81.21, c: 1.2912 },  // ContextBench from harbor-report-sep17
+  { h: "omp",              m: "Claude Opus 5",   s: 82.74, c: 1.0189 },  // ContextBench from harbor-report-sep17
+  { h: "omp",              m: "GPT-5.6 Luna",    s: 62.48, c: 0.0421 },  // ContextBench from harbor-report-sep17
+  { h: "omp",              m: "GPT-5.6 Sol",     s: 79.13, c: 0.7398 },  // ContextBench from harbor-report-sep17
+  { h: "opencode",         m: "Claude Opus 4.8", s: 78.97, c: 0.6328 },
+  { h: "opencode",         m: "GPT-5.6 Luna",    s: 57.76, c: 0.0136 },
+  { h: "opencode",         m: "GPT-5.6 Sol",     s: 75.88, c: 0.3976 },
+  { h: "opencode",         m: "GPT-5.6 Terra",   s: 57.18, c: 0.1277 },
+  { h: "harness",          m: "Claude Fable 5",  s: 81.11, c: 0.8286 },
+  { h: "harness",          m: "Claude Opus 4.8", s: 77.14, c: 0.4206 },
+  { h: "harness",          m: "Claude Opus 5",   s: 84.55, c: 0.6342 },
+  { h: "harness",          m: "Claude Sonnet 5", s: 75.61, c: 0.3110 },
+  { h: "harness",          m: "GPT-5.6 Luna",    s: 61.94, c: 0.0093 },
+  { h: "harness",          m: "GPT-5.6 Sol",     s: 76.72, c: 0.2934 },
+  { h: "harness",          m: "GPT-5.6 Terra",   s: 64.75, c: 0.1432 },
+];
+
+/* Efficient frontier: a point is on it when nothing scores at least as high for
+   at most the cost (and is strictly better on one axis). */
+const FRONTIER = POINTS.filter(p =>
+  !POINTS.some(q => q !== p && q.c <= p.c && q.s >= p.s && (q.c < p.c || q.s > p.s))
+).sort((a, b) => a.c - b.c);
+
+/* ---------------- geometry ---------------- */
+const W = 1400, H = 730, PL = 74, PR = 96, PT = 34, PB = 60;
+const plotW = W - PL - PR, plotH = H - PT - PB;
+const XMAX = 2.0, YMIN = 55, YMAX = 86;
+const X = c => PL + (c / XMAX) * plotW;
+const Y = s => PT + plotH - ((s - YMIN) / (YMAX - YMIN)) * plotH;
+
+const svgNS = "http://www.w3.org/2000/svg";
+const E = (tag, attrs) => { const n = document.createElementNS(svgNS, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); return n; };
+
+const svg = E("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img",
+  "aria-label": "Average score versus average cost per task for every harness and model pair; Strands harness sits on the low-cost edge of the frontier." });
+
+/* grid + axes */
+for (let s = 55; s <= 85; s += 5) {
+  svg.appendChild(E("line", { class: "gridline", x1: PL, x2: W - PR, y1: Y(s), y2: Y(s) }));
+  const t = E("text", { class: "ticktext", x: PL - 10, y: Y(s) + 4, "text-anchor": "end" });
+  t.textContent = s + "%"; svg.appendChild(t);
+}
+for (let c = 0; c <= 2.0 + 1e-9; c += 0.25) {
+  svg.appendChild(E("line", { class: "gridline", x1: X(c), x2: X(c), y1: PT, y2: PT + plotH }));
+  const t = E("text", { class: "ticktext", x: X(c), y: PT + plotH + 22, "text-anchor": "middle" });
+  t.textContent = "$" + c.toFixed(2); svg.appendChild(t);
+}
+svg.appendChild(E("line", { class: "axisline", x1: PL, x2: W - PR, y1: PT + plotH, y2: PT + plotH }));
+svg.appendChild(E("line", { class: "axisline", x1: PL, x2: PL, y1: PT, y2: PT + plotH }));
+let at = E("text", { class: "axistitle", x: PL, y: PT - 14 }); at.textContent = "AVG BENCHMARK SCORE"; svg.appendChild(at);
+at = E("text", { class: "axistitle", x: W - PR + 4, y: PT + plotH + 46, "text-anchor": "end" }); at.textContent = "AVG COST PER TASK ($)"; svg.appendChild(at);
+
+/* markers */
+function marker(shape, x, y, r, fill) {
+  const a = { fill, stroke: "var(--card)", "stroke-width": 2, "vector-effect": "non-scaling-stroke", class: "mark" };
+  switch (shape) {
+    case "square":       return E("rect", { ...a, x: x - r, y: y - r, width: 2*r, height: 2*r, rx: 1.5 });
+    case "diamond":      return E("polygon", { ...a, points: `${x},${y-r*1.3} ${x+r*1.3},${y} ${x},${y+r*1.3} ${x-r*1.3},${y}` });
+    case "triangle":     return E("polygon", { ...a, points: `${x},${y-r*1.2} ${x+r*1.1},${y+r*0.85} ${x-r*1.1},${y+r*0.85}` });
+    case "triangleDown": return E("polygon", { ...a, points: `${x},${y+r*1.2} ${x+r*1.1},${y-r*0.85} ${x-r*1.1},${y-r*0.85}` });
+    case "hexagon": {
+      const pts = [];
+      for (let i = 0; i < 6; i++) { const ang = Math.PI/6 + i*Math.PI/3; pts.push(`${(x+r*1.15*Math.cos(ang)).toFixed(1)},${(y+r*1.15*Math.sin(ang)).toFixed(1)}`); }
+      return E("polygon", { ...a, points: pts.join(" ") });
+    }
+    default:             return E("circle", { ...a, cx: x, cy: y, r });
+  }
+}
+
+const tip = document.getElementById("tip");
+function showTip(ev, p) {
+  tip.innerHTML = `<div class="tv">${HARNESS[p.h].label} · ${p.m}</div>` +
+    `<div class="tl">score <b>${p.s.toFixed(1)}%</b> · <b>$${p.c.toFixed(3)}</b>/task</div>`;
+  tip.style.opacity = "1"; tip.setAttribute("aria-hidden", "false");
+  moveTip(ev);
+}
+function moveTip(ev) {
+  const pad = 14, r = tip.getBoundingClientRect();
+  let x = ev.clientX + pad, y = ev.clientY + pad;
+  if (x + r.width > innerWidth - 8) x = ev.clientX - r.width - pad;
+  if (y + r.height > innerHeight - 8) y = ev.clientY - r.height - pad;
+  tip.style.left = Math.max(8, x) + "px"; tip.style.top = Math.max(8, y) + "px";
+}
+function hideTip() { tip.style.opacity = "0"; tip.setAttribute("aria-hidden", "true"); }
+
+// competitors first (dim, underneath), Strands harness on top (green)
+const ordered = POINTS.slice().sort((a, b) => (a.h === "harness") - (b.h === "harness"));
+ordered.forEach(p => {
+  const hero = p.h === "harness";
+  const m = marker(HARNESS[p.h].shape, X(p.c), Y(p.s), hero ? 10 : 8.5, HARNESS[p.h].color);
+  if (!hero) m.setAttribute("opacity", "0.9");
+  m.style.cursor = "crosshair";
+  m.addEventListener("pointerenter", ev => showTip(ev, p));
+  m.addEventListener("pointermove", moveTip);
+  m.addEventListener("pointerleave", hideTip);
+  svg.appendChild(m);
+});
+
+/* ---------------- labels ----------------
+   Strands harness points labelled with the model (bold); Claude Code and Codex labelled with
+   "model (harness)" so the head-to-head reads without hovering. Greedy placement
+   walks out from the mark to the first low-overlap slot; Strands harness wins ties. */
+const LF = 19, CW = 0.55;
+const RINGS = [16, 24, 34, 46];
+const DIRS = [[1,-1],[-1,-1],[0,-1],[1,0],[-1,0],[1,1],[-1,1],[0,1]];
+const CANDS = RINGS.flatMap(r => DIRS.map(([sx, sy]) => {
+  const k = sx && sy ? 0.72 : 1;
+  return { dx: sx*r*k, dy: sy*r*k + (sy>0 ? LF*0.75 : sy<0 ? -LF*0.15 : LF*0.3),
+    anchor: sx > 0 ? "start" : sx < 0 ? "end" : "middle", r };
+}));
+const bounds = { x1: PL, y1: PT - 12, x2: W - 4, y2: PT + plotH };
+const over = (a, b) => Math.max(0, Math.min(a.x2,b.x2)-Math.max(a.x1,b.x1)) * Math.max(0, Math.min(a.y2,b.y2)-Math.max(a.y1,b.y1));
+
+const taken = POINTS.map(p => ({ x1: X(p.c)-11, y1: Y(p.s)-11, x2: X(p.c)+11, y2: Y(p.s)+11 }));
+// Every label is "model (harness)"; the redundant "Claude " prefix is stripped from the
+// model name (the harness column already carries the vendor), e.g. "Fable 5 (Claude Code)".
+const shortM = m => m.replace(/^Claude /, "");
+// On narrow (mobile) widths the whole chart is scaled way down, so drop the
+// supporting competitor labels to keep it legible — the Strands (hero) points stay
+// labelled, and the legend still identifies every competitor by shape.
+const MOBILE = window.innerWidth < 620;
+const toLabel = [
+  ...POINTS.filter(p => p.h === "harness").map(p => ({ p, text: shortM(p.m) + " (Strands)", cls: "harness", prio: 0 })),
+  ...(MOBILE ? [] : POINTS.filter(p => p.h === "claude-code").map(p => ({ p, text: shortM(p.m) + " (Claude Code)", cls: "comp", prio: 1 }))),
+  ...(MOBILE ? [] : POINTS.filter(p => p.h === "codex").map(p => ({ p, text: shortM(p.m) + " (Codex)", cls: "comp", prio: 2 }))),
+].sort((a, b) => a.prio - b.prio);
+
+// Sizes to try per label, large first: a label shrinks only if it can't be placed
+// clear of a datapoint at the full size.
+const SIZES = [LF, 16, 13.5, 12];
+
+// Hand-placed labels: "harness|model" -> offset from the mark. Recomputed axis ranges
+// mean v2's forced spots no longer apply; the auto-placer handles everything.
+const FORCE = {
+  "harness|Claude Opus 4.8": { dx: 16, dy: 6, anchor: "start" },  // sit right of the dot, clear of "GPT-5.6 Sol (Strands)"
+};
+
+const harnessXY = POINTS.filter(p => p.h === "harness").map(p => ({ x: X(p.c), y: Y(p.s) }));
+toLabel.forEach(it => {
+  const x0 = X(it.p.c), y0 = Y(it.p.s);
+  const f = FORCE[it.p.h + "|" + it.p.m];
+  if (f) {
+    const fs = LF, w = it.text.length * fs * CW;
+    const ax = x0 + f.dx, ay = y0 + f.dy;
+    const x1 = f.anchor === "start" ? ax : f.anchor === "end" ? ax - w : ax - w/2;
+    const t = E("text", { class: "lbl " + it.cls, x: ax.toFixed(1), y: ay.toFixed(1),
+      "text-anchor": f.anchor, "font-size": fs });
+    t.textContent = it.text; svg.appendChild(t);
+    taken.push({ x1, y1: ay - fs*0.8, x2: x1 + w, y2: ay + fs*0.2 });
+    return;
+  }
+  let picked = null;
+  for (let si = 0; si < SIZES.length; si++) {
+    const fs = SIZES[si], w = it.text.length * fs * CW;
+    let best = null, bestPen = Infinity, bestScore = Infinity;
+    for (const c of CANDS) {
+      const ax = x0 + c.dx, ay = y0 + c.dy;
+      const x1 = c.anchor === "start" ? ax : c.anchor === "end" ? ax - w : ax - w/2;
+      const box = { x1, y1: ay - fs*0.8, x2: x1 + w, y2: ay + fs*0.2 };
+      if (box.x1 < bounds.x1 || box.x2 > bounds.x2 || box.y1 < bounds.y1 || box.y2 > bounds.y2) continue;
+      const pen = taken.reduce((s, o) => s + over(box, o), 0);
+      const score = pen + c.r * 18;
+      if (score < bestScore) { bestScore = score; bestPen = pen; best = { c, ax, ay, box, fs }; }
+      if (pen === 0 && c.r <= RINGS[0]) break;
+    }
+    if (!best) continue;
+    picked = picked || best;                 // remember the biggest that placed at all
+    // accept this size once it clears the datapoints, or if it's the smallest we try
+    if (bestPen <= 12 || si === SIZES.length - 1) { picked = best; break; }
+  }
+  if (!picked) {
+    // guarantee every Strands / Claude Code / Codex label renders, even if it overlaps
+    const fs = SIZES[SIZES.length - 1], w = it.text.length * fs * CW;
+    picked = { c: { anchor: "start" }, ax: x0 + 12, ay: y0 - 8, fs,
+      box: { x1: x0 + 12, y1: y0 - 8 - fs*0.8, x2: x0 + 12 + w, y2: y0 - 8 + fs*0.2 } };
+  }
+
+  const t = E("text", { class: "lbl " + it.cls, x: picked.ax.toFixed(1), y: picked.ay.toFixed(1),
+    "text-anchor": picked.c.anchor, "font-size": picked.fs });
+  t.textContent = it.text;
+  svg.appendChild(t);
+  taken.push(picked.box);
+});
+
+document.getElementById("chart").appendChild(svg);
+
+/* ---------------- legend ---------------- */
+const legend = document.getElementById("legend");
+Object.entries(HARNESS).forEach(([h, meta]) => {
+  const s = document.createElement("span");
+  s.className = "lgi" + (meta.hero ? " strong" : "");
+  const k = E("svg", { width: 24, height: 24, viewBox: "0 0 24 24" });
+  const mk = marker(meta.shape, 12, 12, meta.hero ? 10 : 8.5, meta.color);
+  mk.setAttribute("stroke-width", 0); k.appendChild(mk);
+  s.appendChild(k);
+  s.appendChild(document.createTextNode(meta.label));
+  legend.appendChild(s);
+});
+
+document.getElementById("footnote").textContent =
+  "Score is the average across six benchmarks: alfworld, ContextBench, GAIA, WebShop, τ³-bench and Terminal-Bench 2.1. " +
+  "Cost is the average dollars per task across those six benchmarks. Strands harness is 45% cheaper than Claude Code and Codex, while scoring virtually equal (if not better) on accuracy.";
+})();
+</script>
+<style>
+  /* Render the full wide layout in #scaler and scale it down to the iframe (column)
+     width so the clean label placement is preserved. #tip sits outside #scaler so the
+     fixed-position hover tooltip is not transformed. */
+  html, body { margin: 0; overflow: hidden; }
+  body { padding: 0; }
+  #scaler { width: 1320px; padding: 7px; transform-origin: top left; }
+</style>
+<script>
+  (function () {
+    var scaler = document.getElementById("scaler");
+    var DESIGN_W = 1320;
+    // Always scale the tuned wide layout down to the iframe (column) width, so the
+    // whole chart fits within the text column at every size — no horizontal scroll.
+    function fit() {
+      var scale = window.innerWidth / DESIGN_W;
+      scaler.style.transform = "scale(" + scale + ")";
+      // Same-origin: size our own iframe to the scaled content — no clip, no gap.
+      if (window.frameElement) {
+        window.frameElement.style.height = scaler.offsetHeight * scale + "px";
+        window.frameElement.style.aspectRatio = "auto";
+      }
+    }
+    fit();
+    window.addEventListener("resize", fit);
+    if (window.ResizeObserver) new ResizeObserver(fit).observe(scaler);
+  })();
+</script>
+</body>
+</html>

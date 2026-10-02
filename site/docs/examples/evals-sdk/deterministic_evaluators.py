@@ -36,23 +36,23 @@ experiment = Experiment(
 # --- Trajectory evaluator ---
 
 from strands_evals.extractors import tools_use_extractor
-from strands_tools import calculator
+from strands.vended_tools import sleep
 
 
 def get_response_with_tools(case: Case) -> dict:
-    agent = Agent(tools=[calculator], callback_handler=None)
+    agent = Agent(tools=[sleep], callback_handler=None)
     response = agent(case.input)
     trajectory = tools_use_extractor.extract_agent_tools_used_from_messages(agent.messages)
     return {"output": str(response), "trajectory": trajectory}
 
 
 tool_cases = [
-    Case(name="calc", input="What is 15 * 23?", expected_trajectory=["calculator"]),
+    Case(name="pause", input="Pause for 1 second using the sleep tool", expected_trajectory=["sleep"]),
 ]
 
 tool_experiment = Experiment(
     cases=tool_cases,
-    evaluators=[ToolCalled(tool_name="calculator")],
+    evaluators=[ToolCalled(tool_name="sleep")],
 )
 
 

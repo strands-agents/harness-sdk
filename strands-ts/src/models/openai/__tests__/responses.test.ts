@@ -306,6 +306,30 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(req.prompt_cache_key).toBe('explicit')
     })
 
+    it('derives prompt_cache_key from the agent metadata session when cacheKey is unset', async () => {
+      const req = await runOnce({ cacheConfig: {} }, [mkUserMessage()], { agentMetadata: { sessionId: 's1' } })
+      expect(req.prompt_cache_key).toBe('strands-s1')
+    })
+
+    it('lets a configured cacheKey win over the agent metadata session', async () => {
+      const req = await runOnce({ cacheConfig: { cacheKey: 'tenant-42' } }, [mkUserMessage()], {
+        agentMetadata: { sessionId: 's1' },
+      })
+      expect(req.prompt_cache_key).toBe('tenant-42')
+    })
+
+    it('treats a false cacheKey as an opt-out even with an agent metadata session', async () => {
+      const req = await runOnce({ cacheConfig: { cacheKey: false } }, [mkUserMessage()], {
+        agentMetadata: { sessionId: 's1' },
+      })
+      expect(req.prompt_cache_key).toBeUndefined()
+    })
+
+    it('omits prompt_cache_key when the agent metadata carries no session', async () => {
+      const req = await runOnce({ cacheConfig: {} }, [mkUserMessage()], { agentMetadata: {} })
+      expect(req.prompt_cache_key).toBeUndefined()
+    })
+
     it.each(['24h', 'in_memory'])(
       'maps retention-literal cacheConfig.ttl %s to prompt_cache_retention',
       async (ttl) => {
@@ -741,6 +765,61 @@ describe("OpenAIModel (api: 'responses')", () => {
       const metadata = events.find((e: any) => e.type === 'modelMetadataEvent') as any
       expect(metadata?.usage).toEqual({ inputTokens: 1553, outputTokens: 42, totalTokens: 1595 })
       expect(metadata?.usage).not.toHaveProperty('cacheReadInputTokens')
+    })
+
+    it('plumbs prompt-cache writes (input_tokens_details.cache_write_tokens) into cacheWriteInputTokens', async () => {
+      const client = createMockClient(async function* () {
+        yield { type: 'response.created', response: { id: 'r' } }
+        yield { type: 'response.output_text.delta', delta: 'hi' }
+        yield {
+          type: 'response.completed',
+          response: {
+            usage: {
+              input_tokens: 1553,
+              output_tokens: 42,
+              total_tokens: 1595,
+              input_tokens_details: { cached_tokens: 873, cache_write_tokens: 40 },
+            },
+          },
+        }
+      })
+      const model = new OpenAIModel({ api: 'responses', client })
+      const events = await collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('x')] })]))
+      const metadata = events.find((e: any) => e.type === 'modelMetadataEvent') as any
+      expect(metadata?.usage).toEqual({
+        inputTokens: 1553,
+        outputTokens: 42,
+        totalTokens: 1595,
+        cacheReadInputTokens: 873,
+        cacheWriteInputTokens: 40,
+      })
+    })
+
+    it('omits cacheWriteInputTokens when cache_write_tokens is 0 or absent', async () => {
+      const client = createMockClient(async function* () {
+        yield { type: 'response.created', response: { id: 'r' } }
+        yield {
+          type: 'response.completed',
+          response: {
+            usage: {
+              input_tokens: 1553,
+              output_tokens: 42,
+              total_tokens: 1595,
+              input_tokens_details: { cached_tokens: 873, cache_write_tokens: 0 },
+            },
+          },
+        }
+      })
+      const model = new OpenAIModel({ api: 'responses', client })
+      const events = await collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('x')] })]))
+      const metadata = events.find((e: any) => e.type === 'modelMetadataEvent') as any
+      expect(metadata?.usage).toEqual({
+        inputTokens: 1553,
+        outputTokens: 42,
+        totalTokens: 1595,
+        cacheReadInputTokens: 873,
+      })
+      expect(metadata?.usage).not.toHaveProperty('cacheWriteInputTokens')
     })
 
     it('emits URL citation delta from response.output_text.annotation.added', async () => {

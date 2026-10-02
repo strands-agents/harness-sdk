@@ -590,3 +590,54 @@ async def test_structured_output_stops_loop_after_extraction(mock_agent, structu
 
     # Extract_result should have been called
     structured_output_context.extract_result.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_event_loop_forces_structured_output_tool_by_name(mock_agent, agenerator, alist):
+    """Test that the forced retry names the output tool instead of using any."""
+    structured_output_context = StructuredOutputContext(structured_output_model=ProductModel)
+    mock_agent.model.stream.side_effect = [
+        agenerator(
+            [
+                {"contentBlockDelta": {"delta": {"text": "Here is the product info"}}},
+                {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "end_turn"}},
+            ]
+        ),
+        agenerator(
+            [
+                {
+                    "contentBlockStart": {
+                        "start": {
+                            "toolUse": {
+                                "toolUseId": "t1",
+                                "name": "ProductModel",
+                            }
+                        }
+                    }
+                },
+                {
+                    "contentBlockDelta": {
+                        "delta": {"toolUse": {"input": '{"title": "Book", "price": 19.99, "in_stock": true}'}}
+                    }
+                },
+                {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "tool_use"}},
+            ]
+        ),
+    ]
+
+    mock_agent.tool_executor._execute = Mock(return_value=agenerator([]))
+    test_result = ProductModel(title="Book", price=19.99, in_stock=True)
+    structured_output_context.extract_result = Mock(return_value=test_result)
+
+    stream = event_loop_cycle(
+        agent=mock_agent,
+        invocation_state={},
+        structured_output_context=structured_output_context,
+    )
+    await alist(stream)
+
+    assert mock_agent.model.stream.call_count == 2
+    forced_call = mock_agent.model.stream.call_args_list[1]
+    assert forced_call.kwargs["tool_choice"] == {"tool": {"name": "ProductModel"}}

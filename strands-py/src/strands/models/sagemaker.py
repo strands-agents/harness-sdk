@@ -16,8 +16,8 @@ from typing_extensions import Unpack, override
 from ..types.content import ContentBlock, Messages
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolResult, ToolSpec
-from ._validation import validate_config_keys, warn_on_tool_choice_not_supported
-from .model import BaseModelConfig
+from ._validation import validate_config_keys, warn_on_cache_config_not_supported, warn_on_tool_choice_not_supported
+from .model import BaseModelConfig, CacheConfig
 from .openai import OpenAIModel
 
 T = TypeVar("T", bound=BaseModel)
@@ -200,6 +200,7 @@ class SageMakerAIModel(OpenAIModel):
         Attributes:
             endpoint_name: The name of the SageMaker endpoint to invoke
             inference_component_name: The name of the inference component to use
+            cache_config: Prompt caching settings. SageMaker honors no cache fields, so any set field is ignored.
 
             additional_args: Other request parameters, as supported by https://bit.ly/sagemaker-invoke-endpoint-params
         """
@@ -209,6 +210,7 @@ class SageMakerAIModel(OpenAIModel):
         inference_component_name: str | None
         target_model: str | None | None
         target_variant: str | None | None
+        cache_config: CacheConfig | None
         additional_args: dict[str, Any] | None
 
     def __init__(
@@ -373,6 +375,10 @@ class SageMakerAIModel(OpenAIModel):
         if additional_args:
             request.update(additional_args)
 
+        # SageMaker applies no CacheConfig fields; warn that any set field is ignored.
+        warn_on_cache_config_not_supported(
+            self.endpoint_config.get("cache_config"), "SageMaker", supported=set(), stacklevel=3
+        )
         return request
 
     @override

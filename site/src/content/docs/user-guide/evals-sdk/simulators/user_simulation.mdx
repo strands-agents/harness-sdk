@@ -1,14 +1,14 @@
 ---
-title: User Simulation
+title: User simulation
 description: 'Simulate realistic end users with ActorSimulator to evaluate agents in dynamic, goal-oriented multi-turn conversations without scripted inputs.'
 tags: [simulation, conversation-management]
 ---
 
 ## Overview
 
-User simulation enables realistic multi-turn conversation evaluation by simulating end-users interacting with your agents. Using the `ActorSimulator` class configured for user simulation, you can generate dynamic, goal-oriented conversations that test your agent's ability to handle real user interactions.
+To evaluate your agent over a multi-turn conversation, you need something to play the user. `ActorSimulator` does that: it generates goal-oriented user messages, reacts to each agent response, and stops when the goal is met or a turn limit is reached.
 
-The `from_case_for_user_simulator()` factory method automatically configures the simulator with user-appropriate profiles and behaviors:
+The `from_case_for_user_simulator()` factory builds a user simulator from a `Case`, generating a user profile and goal from the case input and its `task_description` metadata:
 
 ```python
 from strands_evals import ActorSimulator, Case
@@ -25,19 +25,9 @@ user_sim = ActorSimulator.from_case_for_user_simulator(
 )
 ```
 
-## Key Features
+## When to use
 
-- **Realistic Actor Simulation**: Generates human-like responses based on actor profiles
-- **Multi-turn Conversations**: Maintains context across multiple conversation turns
-- **Automatic Profile Generation**: Creates actor profiles from test cases
-- **Goal-Oriented Behavior**: Tracks and evaluates goal completion
-- **Flexible Configuration**: Supports custom profiles, prompts, and tools
-- **Conversation Control**: Automatic stopping based on goal completion or turn limits
-- **Integration with Evaluators**: Works seamlessly with trace-based evaluators
-
-## When to Use
-
-Use user simulation when you need to:
+Reach for user simulation when you need to:
 
 - Evaluate agents in multi-turn user conversations
 - Test how agents handle realistic user behavior
@@ -46,9 +36,9 @@ Use user simulation when you need to:
 - Evaluate agents without predefined conversation scripts
 - Test conversational flow and context maintenance with users
 
-## Basic Usage
+## Basic usage
 
-### Simple User Simulation
+### Simple user simulation
 
 ```python
 from strands import Agent
@@ -91,63 +81,12 @@ while user_sim.has_next():
 print(f"Conversation completed in {len(conversation_log) // 2} turns")
 ```
 
-## Actor Profiles
+To shape the simulated user beyond the factory defaults (its profile, system
+prompt, tools, or model), see [Customizing User Simulation](customize_user_simulation.md).
 
-Actor profiles define the characteristics, context, and goals of the simulated actor.
+## Integration with evaluators
 
-### Automatic Profile Generation
-
-The simulator can automatically generate realistic profiles from test cases:
-
-```python
-from strands_evals import Case, ActorSimulator
-
-case = Case(
-    input="My order hasn't arrived yet",
-    metadata={"task_description": "Order status resolved and customer satisfied"}
-)
-
-# Profile is automatically generated from input and task_description
-user_sim = ActorSimulator.from_case_for_user_simulator(case=case)
-
-# Access the generated profile
-print(user_sim.actor_profile.traits)
-print(user_sim.actor_profile.context)
-print(user_sim.actor_profile.actor_goal)
-```
-
-### Custom Actor Profiles
-
-For more control, create custom profiles:
-
-```python
-from strands_evals.simulation import ActorSimulator
-from strands_evals.types.simulation import ActorProfile
-
-# Define custom profile
-profile = ActorProfile(
-    traits={
-        "expertise_level": "expert",
-        "communication_style": "technical",
-        "patience_level": "low",
-        "detail_preference": "high"
-    },
-    context="A software engineer debugging a production memory leak issue.",
-    actor_goal="Identify the root cause and get actionable steps to resolve the memory leak."
-)
-
-# Create simulator with custom profile
-simulator = ActorSimulator(
-    actor_profile=profile,
-    initial_query="Our service is experiencing high memory usage in production.",
-    system_prompt_template="You are simulating: {actor_profile}",
-    max_turns=10
-)
-```
-
-## Integration with Evaluators
-
-### With Trace-Based Evaluators
+### With trace-based evaluators
 
 ```python
 import asyncio
@@ -219,9 +158,9 @@ async def main():
 asyncio.run(main())
 ```
 
-## Conversation Control
+## Conversation control
 
-### Automatic Stopping
+### Automatic stopping
 
 The simulator automatically stops when:
 
@@ -242,7 +181,7 @@ while user_sim.has_next():
     pass
 ```
 
-### Manual Turn Tracking
+### Manual turn tracking
 
 ```python
 turn_count = 0
@@ -257,9 +196,9 @@ while user_sim.has_next() and turn_count < max_turns:
 print(f"Conversation ended after {turn_count} turns")
 ```
 
-## Actor Response Structure
+## Actor response structure
 
-Each actor response includes reasoning and the actual message. The reasoning field provides insight into the simulator's decision-making process, helping you understand why it responded in a particular way and whether it's behaving realistically:
+Each `act()` call returns an `AgentResult` whose `structured_output` is an `ActorResponse` with a `reasoning` field and a `message` field. The `reasoning` field shows why the simulator responded the way it did, which helps you judge whether it is behaving realistically:
 
 ```python
 user_result = user_sim.act(agent_message)
@@ -282,57 +221,7 @@ The reasoning is particularly useful for:
 - **Validation**: Ensuring the simulator is behaving realistically
 - **Analysis**: Identifying patterns in how users respond to agent behavior
 
-## Advanced Usage
-
-### Custom System Prompts
-
-```python
-custom_prompt = """
-You are simulating a user with the following profile:
-{actor_profile}
-
-Guidelines:
-- Be concise and direct
-- Ask clarifying questions when needed
-- Express satisfaction when goals are met
-- Set `stop=True` on your structured response when your goal is achieved
-"""
-
-user_sim = ActorSimulator.from_case_for_user_simulator(
-    case=case,
-    system_prompt_template=custom_prompt,
-    max_turns=10
-)
-```
-
-### Adding Custom Tools
-
-```python
-from strands import tool
-
-@tool
-def check_order_status(order_id: str) -> str:
-    """Check the status of an order."""
-    return f"Order {order_id} is in transit"
-
-user_sim = ActorSimulator.from_case_for_user_simulator(
-    case=case,
-    tools=[check_order_status],  # Additional tools for the simulator
-    max_turns=10
-)
-```
-
-### Different Model for Simulation
-
-```python
-user_sim = ActorSimulator.from_case_for_user_simulator(
-    case=case,
-    model="global.anthropic.claude-sonnet-4-6",  # Specific model
-    max_turns=10
-)
-```
-
-## Complete Example: Customer Service Evaluation
+## Complete example: Customer service evaluation
 
 ```python
 from strands import Agent
@@ -448,173 +337,16 @@ experiment = Experiment(cases=test_cases, evaluators=evaluators)
 async def main():
     report = await experiment.run_evaluations_async(customer_service_task)
 
-    # The experiment returns a single combined report — each row in `report.cases`
+    # The experiment returns a single combined report. Each row in `report.cases`
     # carries an `evaluator` key naming the producing evaluator.
     report.run_display()
 
 asyncio.run(main())
 ```
 
-## Best Practices
-
-### 1. Clear Task Descriptions
-
-```python
-# Good: Specific, measurable goal
-case = Case(
-    input="I need to book a flight",
-    metadata={
-        "task_description": "Flight booked with confirmation number, dates confirmed, payment processed"
-    }
-)
-
-# Less effective: Vague goal
-case = Case(
-    input="I need to book a flight",
-    metadata={"task_description": "Help with booking"}
-)
-```
-
-### 2. Appropriate Turn Limits
-
-```python
-# Simple queries: 3-5 turns
-user_sim = ActorSimulator.from_case_for_user_simulator(
-    case=simple_case,
-    max_turns=5
-)
-
-# Complex tasks: 8-15 turns
-user_sim = ActorSimulator.from_case_for_user_simulator(
-    case=complex_case,
-    max_turns=12
-)
-```
-
-### 3. Clear Span Collection
-
-```python
-# Always clear before agent calls to avoid capturing simulator traces
-while user_sim.has_next():
-    memory_exporter.clear()  # Clear simulator traces
-    agent_response = agent(user_message)
-    turn_spans = list(memory_exporter.get_finished_spans())  # Only agent spans
-    all_spans.extend(turn_spans)
-    user_result = user_sim.act(str(agent_response))
-    user_message = str(user_result.structured_output.message)
-```
-
-### 4. Conversation Logging
-
-```python
-# Log conversations for analysis
-conversation_log = []
-
-while user_sim.has_next():
-    agent_response = agent(user_message)
-    agent_message = str(agent_response)
-    
-    user_result = user_sim.act(agent_message)
-    user_message = str(user_result.structured_output.message)
-    
-    conversation_log.append({
-        "turn": len(conversation_log) // 2 + 1,
-        "agent": agent_message,
-        "user": user_message,
-        "user_reasoning": user_result.structured_output.reasoning
-    })
-
-# Save for review
-import json
-with open("conversation_log.json", "w") as f:
-    json.dump(conversation_log, f, indent=2)
-```
-
-## Common Patterns
-
-### Pattern 1: Goal Completion Testing
-
-```python
-def test_goal_completion(case: Case) -> bool:
-    user_sim = ActorSimulator.from_case_for_user_simulator(case=case)
-    agent = Agent(system_prompt="Your agent prompt")
-
-    user_message = case.input
-    user_result = None
-
-    while user_sim.has_next():
-        agent_response = agent(user_message)
-        user_result = user_sim.act(str(agent_response))
-        user_message = str(user_result.structured_output.message)
-
-    # Goal completion is signalled via `stop=True` (with `stop_reason="goal_completed"`
-    # to distinguish it from hitting `max_turns`).
-    return bool(
-        user_result
-        and user_result.structured_output.stop
-        and getattr(user_result.structured_output, "stop_reason", "") == "goal_completed"
-    )
-```
-
-### Pattern 2: Multi-Evaluator Assessment
-
-```python
-def comprehensive_evaluation(case: Case) -> dict:
-    # ... run conversation with simulator ...
-
-    return {
-        "output": final_message,
-        "trajectory": session,
-        "turns_taken": turn_count,
-        "goal_completed": bool(last_user_result and last_user_result.structured_output.stop),
-    }
-
-evaluators = [
-    HelpfulnessEvaluator(),
-    GoalSuccessRateEvaluator(),
-    FaithfulnessEvaluator()
-]
-
-experiment = Experiment(cases=cases, evaluators=evaluators)
-
-async def main():
-    report = await experiment.run_evaluations_async(comprehensive_evaluation)
-
-asyncio.run(main())
-```
-
-### Pattern 3: Conversation Analysis
-
-```python
-def analyze_conversation(case: Case) -> dict:
-    user_sim = ActorSimulator.from_case_for_user_simulator(case=case)
-    agent = Agent(system_prompt="Your prompt")
-    
-    metrics = {
-        "turns": 0,
-        "agent_messages": [],
-        "user_messages": [],
-        "user_reasoning": []
-    }
-    
-    user_message = case.input
-    while user_sim.has_next():
-        agent_response = agent(user_message)
-        agent_message = str(agent_response)
-        metrics["agent_messages"].append(agent_message)
-        
-        user_result = user_sim.act(agent_message)
-        user_message = str(user_result.structured_output.message)
-        metrics["user_messages"].append(user_message)
-        metrics["user_reasoning"].append(user_result.structured_output.reasoning)
-        metrics["turns"] += 1
-    
-    return metrics
-```
-
 ## Troubleshooting
 
-### Issue: Simulator Stops Too Early
+### Issue: Simulator stops too early
 
 **Solution**: Increase max_turns or check task_description clarity
 
@@ -625,7 +357,7 @@ user_sim = ActorSimulator.from_case_for_user_simulator(
 )
 ```
 
-### Issue: Simulator Doesn't Stop
+### Issue: Simulator doesn't stop
 
 **Solution**: Ensure task_description is achievable and clear
 
@@ -639,7 +371,7 @@ case = Case(
 )
 ```
 
-### Issue: Unrealistic Responses
+### Issue: Unrealistic responses
 
 **Solution**: Use custom profile or adjust system prompt
 
@@ -660,7 +392,7 @@ user_sim = ActorSimulator.from_case_for_user_simulator(
 )
 ```
 
-### Issue: Capturing Simulator Traces
+### Issue: Capturing simulator traces
 
 **Solution**: Always clear exporter before agent calls
 
@@ -672,8 +404,9 @@ while user_sim.has_next():
     # ... rest of logic ...
 ```
 
-## Related Documentation
+## Related documentation
 
+- [Customizing User Simulation](customize_user_simulation.md): Custom profiles, prompts, tools, and models
 - [Simulators Overview](index.md): Learn about the ActorSimulator and simulator framework
 - [Quickstart Guide](../quickstart.md): Get started with Strands Evals
 - [Helpfulness Evaluator](../evaluators/helpfulness_evaluator.md): Evaluate conversation helpfulness

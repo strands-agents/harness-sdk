@@ -438,7 +438,7 @@ class TestContextOffloader:
         assert len(storage._store) == 4
 
     @pytest.mark.asyncio
-    async def test_image_without_bytes_not_stored(self, plugin, storage, mock_agent):
+    async def test_image_without_bytes_kept_in_place(self, plugin, storage, mock_agent):
         content = [
             {"text": "x" * 200},
             {"image": {"format": "png", "source": {}}},
@@ -447,11 +447,77 @@ class TestContextOffloader:
 
         await plugin._handle_tool_result(event)
 
-        # Only text stored, not the empty image
+        # Only text stored; the image had no bytes to offload so it is left
+        # in place rather than replaced with a misleading ``0 bytes`` placeholder.
+        # See https://github.com/strands-agents/harness-sdk/issues/4017
         assert len(storage._store) == 1
-        placeholder = event.result["content"][1]["text"]
-        assert "0 bytes" in placeholder
-        assert "ref:" not in placeholder
+        result_content = event.result["content"]
+        # [0] = preview text, [1] = the original image block (kept as-is)
+        assert "image" in result_content[1]
+        assert result_content[1]["image"] == {"format": "png", "source": {}}
+        assert not any("0 bytes" in (b.get("text", "")) for b in result_content)
+
+    @pytest.mark.asyncio
+    async def test_document_without_bytes_kept_in_place(self, plugin, storage, mock_agent):
+        # Non-bytes document source (location/text/content) — mirrors issue #4017
+        # where the offloader would replace a 5,200-char document with a
+        # ``[document: txt, contract, 0 bytes]`` placeholder.
+        doc_block = {
+            "document": {
+                "format": "txt",
+                "name": "contract",
+                "source": {"location": {"uri": "s3://bucket/contract.txt"}},
+            }
+        }
+        content = [
+            {"text": "x" * 200},
+            doc_block,
+        ]
+        event = _make_event(mock_agent, content)
+
+        await plugin._handle_tool_result(event)
+
+        # Only text stored; the document is preserved verbatim.
+        assert len(storage._store) == 1
+        result_content = event.result["content"]
+        assert "document" in result_content[1]
+        assert result_content[1]["document"] == doc_block["document"]
+        assert not any("[document:" in (b.get("text", "")) for b in result_content)
+
+    @pytest.mark.asyncio
+    async def test_mixed_bytes_and_non_bytes_blocks(self, plugin, storage, mock_agent):
+        # Bytes document gets stored + ref emitted; non-bytes document is
+        # preserved; image without bytes is preserved. Verify the three paths
+        # coexist in a single tool result.
+        img_bytes = b"\x89PNG" + b"\x00" * 100
+        doc_bytes = b"%PDF-1.4" + b"\x00" * 100
+        doc_location = {
+            "document": {
+                "format": "txt",
+                "name": "contract",
+                "source": {"location": {"uri": "s3://bucket/contract.txt"}},
+            }
+        }
+        content = [
+            {"text": "a" * 400},  # 100 tokens > 25 max_result_tokens threshold
+            {"image": {"format": "png", "source": {"bytes": img_bytes}}},
+            {"document": {"format": "pdf", "name": "report.pdf", "source": {"bytes": doc_bytes}}},
+            doc_location,
+        ]
+        event = _make_event(mock_agent, content)
+
+        await plugin._handle_tool_result(event)
+
+        # text + image + document (bytes) stored; the non-bytes document is preserved.
+        assert len(storage._store) == 3
+
+        result_content = event.result["content"]
+        # [0] = preview, [1] = image placeholder, [2] = document placeholder,
+        # [3] = the original non-bytes document block (kept as-is)
+        assert "[Offloaded:" in result_content[0]["text"]
+        assert "[image: png" in result_content[1]["text"]
+        assert "[document: pdf, report.pdf" in result_content[2]["text"]
+        assert result_content[3] == doc_location
 
 
 class TestRetrievalTool:
@@ -867,7 +933,7 @@ class TestActionableReferences:
     """Tests that storage-specific references appear in the offloaded preview."""
 
     @pytest.mark.asyncio
-    async def test_file_storage_path_in_preview(self, tmp_path, mock_agent):
+    async def test_file_storage_bare_filename_in_preview(self, tmp_path, mock_agent):
         storage = FileStorage(artifact_dir=str(tmp_path / "artifacts"))
         plugin = ContextOffloader(storage=storage, max_result_tokens=25, preview_tokens=10)
         event = _make_event(mock_agent, "a" * 200)
@@ -875,10 +941,15 @@ class TestActionableReferences:
         await plugin._handle_tool_result(event)
 
         result_text = event.result["content"][0]["text"]
-        assert str(tmp_path / "artifacts") in result_text
+        assert str(tmp_path / "artifacts") not in result_text
+        assert ".txt" in result_text
+        ref_section = result_text.split("[Stored references:]")[1].strip()
+        ref = ref_section.split()[0]
+        assert ref.endswith(".txt"), f"expected .txt reference, got {ref!r}"
+        assert "/" not in ref and "\\" not in ref, f"reference should be a bare filename, got {ref!r}"
 
     @pytest.mark.asyncio
-    async def test_file_storage_image_placeholder_has_path(self, tmp_path, mock_agent):
+    async def test_file_storage_image_placeholder_has_bare_filename(self, tmp_path, mock_agent):
         storage = FileStorage(artifact_dir=str(tmp_path / "artifacts"))
         plugin = ContextOffloader(storage=storage, max_result_tokens=25, preview_tokens=10)
         img_bytes = b"\x89PNG" + b"\x00" * 100
@@ -891,7 +962,8 @@ class TestActionableReferences:
         await plugin._handle_tool_result(event)
 
         placeholder = event.result["content"][1]["text"]
-        assert str(tmp_path / "artifacts") in placeholder
+        assert str(tmp_path / "artifacts") not in placeholder
+        assert ".png" in placeholder
 
     @pytest.mark.asyncio
     async def test_inmemory_storage_opaque_reference_in_preview(self, mock_agent):
@@ -1175,7 +1247,6 @@ class TestUnifiedStorage:
 
     @pytest.mark.asyncio
     async def test_eviction_debug_log_on_delete_failure(self, unified_mock_agent, caplog):
-
         from strands.storage import InMemoryStorage as UnifiedInMemory
 
         storage = UnifiedInMemory()

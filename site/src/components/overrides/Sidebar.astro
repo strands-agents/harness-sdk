@@ -1,13 +1,99 @@
 ---
 /**
  * Custom Sidebar component that mimics MkDocs Material theme's navigation.sections behavior.
- * Includes an API language switcher (Python/TypeScript) that only appears on API pages.
+ * Leads with the current product/section slug (e.g. "/harness") as a plain-text
+ * title linking to the product hub, sitting just above the sidebar search box.
+ * The slug is short enough for the rail; the full product name lives in the hub
+ * hero (PageTitle.astro).
  */
-import MobileMenuFooter from 'virtual:starlight/components/MobileMenuFooter';
-import SidebarPersister from '@astrojs/starlight/components/SidebarPersister.astro';
-import SidebarSublist from './SidebarSublist.astro';
-const { sidebar } = Astro.locals.starlightRoute;
+import MobileMenuFooter from 'virtual:starlight/components/MobileMenuFooter'
+import SidebarPersister from '@astrojs/starlight/components/SidebarPersister.astro'
+import SidebarSublist from './SidebarSublist.astro'
+import { currentProduct } from '../../util/current-product'
+
+const { sidebar } = Astro.locals.starlightRoute
+const product = currentProduct(Astro.url.pathname)
+// Learning (courses) and Examples aren't products, but their sidebars lead
+// with the same bordered slug box so they match the product pages.
+const isLearning = !product && Astro.url.pathname.includes('/docs/learning/')
+const isExamples = !product && /\/examples\/?$/.test(Astro.url.pathname)
+// The catalog landing and the "Add your integration" page share the /integrations slug.
+const isIntegrations =
+  !product &&
+  (/\/integrations\/?$/.test(Astro.url.pathname) ||
+    Astro.url.pathname.includes('/docs/integrations/get-featured'))
+const isLabs = !product && Astro.url.pathname.includes('/docs/labs')
+const isContribute = !product && Astro.url.pathname.includes('/docs/contribute')
+const staticSlug = isLearning
+  ? '/learn'
+  : isExamples
+    ? '/examples'
+    : isIntegrations
+      ? '/integrations'
+      : isLabs
+        ? '/labs'
+        : isContribute
+          ? '/contribute'
+          : null
 ---
+
+<script is:inline>
+  // Language-scoped sidebar entries (Quickstart / API reference) collapse to a
+  // single row that follows the header language toggle. Mirror the stored
+  // language onto <html data-lang-pref> so CSS can hide the other language's
+  // row before the list paints, then keep it in sync as the toggle changes.
+  // Key + label values mirror src/util/language-preference.ts + LanguageToggle.astro.
+  ;(function () {
+    var KEY = 'starlight-synced-tabs__jarkqt'
+    function set(label) {
+      document.documentElement.dataset.langPref = label === 'Python' ? 'python' : 'typescript'
+    }
+    try {
+      set(localStorage.getItem(KEY) || 'TypeScript')
+    } catch (e) {
+      set('TypeScript')
+    }
+    window.addEventListener('lang-change', function (e) {
+      if (e && e.detail) set(e.detail)
+    })
+    window.addEventListener('lang-preference-changed', function (e) {
+      if (e && e.detail && e.detail.lang) set(e.detail.lang)
+    })
+    window.addEventListener('storage', function (e) {
+      if (e.key === KEY && e.newValue) set(e.newValue)
+    })
+  })()
+</script>
+
+{
+  staticSlug && (
+    <div class="product-switcher">
+      <div class="product-switcher__btn">
+        <span class="product-switcher__slug">{staticSlug}</span>
+      </div>
+    </div>
+  )
+}
+
+{
+  product && (
+    <div class="product-switcher">
+      <a class="product-switcher__btn" href={product.href}>
+        <span class="product-switcher__slug">{product.slug}</span>
+      </a>
+    </div>
+  )
+}
+
+<div class="sidebar-search">
+  <svg class="sidebar-search__icon" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
+    <path
+      fill="currentColor"
+      d="M15.5 14h-.8l-.3-.3a6.5 6.5 0 1 0-.7.7l.3.3v.8l5 5 1.5-1.5-5-5zm-6 0a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9z"
+    />
+  </svg>
+  <input type="search" class="sidebar-search__input" data-sidebar-search placeholder="Search…" aria-label="Search" />
+</div>
 
 <SidebarPersister>
   <SidebarSublist sublist={sidebar} />
@@ -17,3 +103,135 @@ const { sidebar } = Astro.locals.starlightRoute;
   <MobileMenuFooter />
 </div>
 
+<style>
+  /* Product/section slug: plain-text title sitting tight above the search box. */
+  .product-switcher {
+    margin-bottom: 0.25rem;
+  }
+
+  .product-switcher__btn {
+    display: flex;
+    align-items: center;
+    /* Horizontal padding aligns the slug with the search box's inner edge. */
+    padding: 0 12px;
+    text-decoration: none;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  .product-switcher__slug {
+    font-size: 1.75rem;
+    font-weight: 600;
+    color: var(--accent-green);
+  }
+
+  /* Sidebar search: sits just below the slug, same width/shape. */
+  .sidebar-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0.5rem;
+    padding: 0 12px;
+    border: 1px solid var(--sl-color-gray-5, var(--border));
+    border-radius: 8px;
+    color: var(--sl-color-gray-3);
+  }
+
+  .sidebar-search:focus-within {
+    border-color: var(--accent-green);
+  }
+
+  .sidebar-search__icon {
+    flex: none;
+  }
+
+  .sidebar-search__input {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 0;
+    border: none;
+    background: transparent;
+    color: var(--sl-color-white);
+    font-family: var(--sl-font);
+    font-size: 0.875rem;
+  }
+
+  .sidebar-search__input:focus {
+    outline: none;
+  }
+
+  .sidebar-search__input::placeholder {
+    color: var(--sl-color-gray-3);
+  }
+
+  /* Hide the native search clear control for a consistent look. */
+  .sidebar-search__input::-webkit-search-cancel-button {
+    -webkit-appearance: none;
+  }
+</style>
+
+<style is:global>
+  /* Language-scoped sidebar rows (Quickstart / API reference) follow the header
+     language toggle via <html data-lang-pref>. Default (attr unset) = TypeScript.
+     One row of each pair is always shown; the other is collapsed. */
+  html:not([data-lang-pref='python']) .sidebar-content li:has(> a[href*='/quickstart/python']),
+  html:not([data-lang-pref='python']) .sidebar-content li:has(> a[href*='/api/python']) {
+    display: none;
+  }
+
+  html[data-lang-pref='python'] .sidebar-content li:has(> a[href*='/quickstart/typescript']),
+  html[data-lang-pref='python'] .sidebar-content li:has(> a[href*='/api/typescript']) {
+    display: none;
+  }
+</style>
+
+<script>
+  // Sidebar search behavior is context-aware. Catalog pages (integrations,
+  // examples) own the input via their own scripts to live-filter cards; here
+  // we only handle the docs-page case: focusing the box opens the site-wide
+  // search (Pagefind), since there are no on-page cards to filter.
+  const sidebarSearch = document.querySelector<HTMLInputElement>('[data-sidebar-search]')
+  const isCatalogPage = !!document.querySelector('.cat-grid')
+  const sidebarNav = document.querySelector<HTMLElement>('.sidebar-content')
+  if (sidebarSearch && !isCatalogPage && sidebarNav) {
+    // Docs pages: filter the sidebar's own links by typed text (no global
+    // modal). Scope to the nav list and exclude the product switcher — its
+    // links (/harness, /shell, …) always stay visible. Section headers
+    // (.section-group) and collapsible groups (<details>) hide when none of
+    // their descendant links match; collapsed groups auto-open on a match.
+    const links = Array.from(sidebarNav.querySelectorAll<HTMLAnchorElement>('a')).filter(
+      (a) => !a.closest('.product-switcher'),
+    )
+    const rowOf = (a: HTMLAnchorElement): HTMLElement => a.closest('li') ?? a
+    const groups = Array.from(
+      sidebarNav.querySelectorAll<HTMLElement>('details, .section-group'),
+    ).filter((g) => !g.closest('.product-switcher'))
+    const openState = new Map(
+      groups.filter((g): g is HTMLDetailsElement => g.tagName === 'DETAILS').map((d) => [d, d.open]),
+    )
+
+    const apply = () => {
+      const q = sidebarSearch.value.trim().toLowerCase()
+      if (!q) {
+        for (const a of links) rowOf(a).hidden = false
+        for (const g of groups) {
+          g.hidden = false
+          if (g instanceof HTMLDetailsElement) g.open = openState.get(g) ?? false
+        }
+        return
+      }
+      const matched = new Set<Element>()
+      for (const a of links) {
+        const hit = (a.textContent || '').toLowerCase().includes(q)
+        rowOf(a).hidden = !hit
+        if (!hit) continue
+        let node: Element | null = a
+        while ((node = node.parentElement)) matched.add(node)
+      }
+      for (const g of groups) {
+        g.hidden = !matched.has(g)
+        if (g instanceof HTMLDetailsElement) g.open = matched.has(g)
+      }
+    }
+    sidebarSearch.addEventListener('input', apply)
+  }
+</script>

@@ -1,0 +1,9 @@
+name: pushary
+description: Customer approvals for Strands tool calls using native interrupts and snapshots, with phone decisions delivered and recorded by Pushary.
+integrationType: integration
+maintainedBy: partner
+languages:
+  python: {}
+github: https://github.com/Pushary/pushary-python
+docsUrl: https://github.com/Pushary/pushary-python/blob/main/examples/strands/README.md
+addedDate: 2026-09-15

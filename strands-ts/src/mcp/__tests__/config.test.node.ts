@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest'
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
+import { StreamableHTTPClientTransport, SSEClientTransport, Client } from '@modelcontextprotocol/client'
 import { McpClient } from '../client.js'
 import { mcpServerLoader } from '../config.js'
 
@@ -18,20 +16,15 @@ vi.mock('node:path', () => ({
   join: (...segments: string[]) => segments.join('/'),
 }))
 
-vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
+vi.mock('@modelcontextprotocol/client/stdio', () => ({
   StdioClientTransport: vi.fn(function () {}),
   getDefaultEnvironment: vi.fn(() => ({ PATH: '/usr/bin', HOME: '/home/user' })),
 }))
 
-vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
+vi.mock('@modelcontextprotocol/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@modelcontextprotocol/client')>()),
   StreamableHTTPClientTransport: vi.fn(function () {}),
-}))
-
-vi.mock('@modelcontextprotocol/sdk/client/sse.js', () => ({
   SSEClientTransport: vi.fn(function () {}),
-}))
-
-vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
   Client: vi.fn(function (this: Record<string, unknown>) {
     this.connect = vi.fn()
     this.close = vi.fn()
@@ -42,7 +35,6 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
     this.getServerCapabilities = vi.fn()
     this.getServerVersion = vi.fn()
     this.getInstructions = vi.fn()
-    this.experimental = { tasks: { callToolStream: vi.fn() } }
   }),
 }))
 
@@ -383,6 +375,56 @@ describe('McpClient.loadServers', () => {
 
       expect(client!.continueOnError).toBe(true)
       expect((await client!.listTools()).map((tool) => tool.name)).toEqual(['default_echo'])
+    })
+
+    it('prefixes tools with the server name when prefixWithServerName is set', async () => {
+      const [client] = await McpClient.loadServers({ slack: { command: 'node' } }, undefined, {
+        prefixWithServerName: true,
+      })
+      const sdkClient = vi.mocked(Client).mock.results.at(-1)!.value
+      sdkClient.listTools.mockResolvedValue({ tools: [{ name: 'search', inputSchema: {} }] })
+
+      expect((await client!.listTools()).map((tool) => tool.name)).toEqual(['slack_search'])
+    })
+
+    it('replaces unsupported tool-name characters in the server name when prefixWithServerName is set', async () => {
+      const [client] = await McpClient.loadServers({ 'awslabs.aws-docs mcp/server': { command: 'node' } }, undefined, {
+        prefixWithServerName: true,
+      })
+      const sdkClient = vi.mocked(Client).mock.results.at(-1)!.value
+      sdkClient.listTools.mockResolvedValue({ tools: [{ name: 'search', inputSchema: {} }] })
+
+      expect((await client!.listTools()).map((tool) => tool.name)).toEqual(['awslabs_aws-docs_mcp_server_search'])
+    })
+
+    it('prefers the server name over a default prefix when prefixWithServerName is set', async () => {
+      const [client] = await McpClient.loadServers(
+        { slack: { command: 'node' } },
+        { prefix: 'global' },
+        { prefixWithServerName: true }
+      )
+      const sdkClient = vi.mocked(Client).mock.results.at(-1)!.value
+      sdkClient.listTools.mockResolvedValue({ tools: [{ name: 'search', inputSchema: {} }] })
+
+      expect((await client!.listTools()).map((tool) => tool.name)).toEqual(['slack_search'])
+    })
+
+    it('lets an explicit server prefix win over prefixWithServerName', async () => {
+      const clients = await McpClient.loadServers(
+        { slack: { command: 'node', prefix: 'chat.v2' }, chorus: { command: 'node', prefix: '' } },
+        undefined,
+        { prefixWithServerName: true }
+      )
+      const [slackSdk, chorusSdk] = vi
+        .mocked(Client)
+        .mock.results.slice(-2)
+        .map((result) => result.value)
+      slackSdk.listTools.mockResolvedValue({ tools: [{ name: 'search', inputSchema: {} }] })
+      chorusSdk.listTools.mockResolvedValue({ tools: [{ name: 'search', inputSchema: {} }] })
+
+      // An explicit prefix is taken as-is: only the server-name-derived prefix is sanitized.
+      expect((await clients[0]!.listTools()).map((tool) => tool.name)).toEqual(['chat.v2_search'])
+      expect((await clients[1]!.listTools()).map((tool) => tool.name)).toEqual(['search'])
     })
 
     it('uses server name as applicationName when not in defaults', async () => {

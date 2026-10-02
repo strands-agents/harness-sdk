@@ -217,9 +217,9 @@ class TransportContextExtractingReader(ObjectProxy):
         """
         async for item in self.__wrapped__:
             if isinstance(item, SessionMessage):
-                request = item.message.root
+                request = item.message.root  # type: ignore[union-attr]
             elif type(item) is JSONRPCMessage:
-                request = item.root
+                request = item.root  # type: ignore[unreachable]
             else:
                 yield item
                 continue

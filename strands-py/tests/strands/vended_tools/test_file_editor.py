@@ -364,6 +364,37 @@ class TestInsert:
             await editor(command="insert", path=str(d), tool_context=ctx, insert_line=0, new_str="NEW")
 
 
+class TestPreservesUntouchedBytes:
+    """Guards #4049: an edit rewrites only the requested region."""
+
+    MAKEFILE = "build:\n\tgcc -o app main.c\n\ntest:\n\tpytest tests/\n"
+
+    @pytest.mark.asyncio
+    async def test_str_replace_leaves_tabs_outside_the_match(self, editor, ctx, tmp_path):
+        file_path = _write(tmp_path / "Makefile", self.MAKEFILE)
+
+        await editor(command="str_replace", path=file_path, old_str="test:", new_str="check:", tool_context=ctx)
+
+        assert (tmp_path / "Makefile").read_text() == self.MAKEFILE.replace("test:", "check:")
+
+    @pytest.mark.asyncio
+    async def test_insert_leaves_tabs_intact(self, editor, ctx, tmp_path):
+        file_path = _write(tmp_path / "Makefile", self.MAKEFILE)
+
+        await editor(command="insert", path=file_path, insert_line=0, new_str=".PHONY: build test", tool_context=ctx)
+
+        assert (tmp_path / "Makefile").read_text() == ".PHONY: build test\n" + self.MAKEFILE
+
+    @pytest.mark.asyncio
+    async def test_empty_old_str_reports_the_empty_argument(self, editor, ctx, tmp_path):
+        file_path = _write(tmp_path / "notes.txt", "alpha\nbeta\n")
+
+        with pytest.raises(ValueError, match="old_str must not be empty"):
+            await editor(command="str_replace", path=file_path, old_str="", new_str="x", tool_context=ctx)
+
+        assert (tmp_path / "notes.txt").read_text() == "alpha\nbeta\n"
+
+
 class TestFileSizeLimit:
     """The 1MB content size guard."""
 

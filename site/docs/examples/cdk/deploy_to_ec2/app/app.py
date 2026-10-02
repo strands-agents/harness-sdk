@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse, PlainTextResponse
 from pydantic import BaseModel
 import uvicorn
 from strands import Agent, tool
-from strands_tools import http_request
+from strands.vended_tools import http_request
 import os
 
 app = FastAPI(title="Weather API")

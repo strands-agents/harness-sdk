@@ -234,6 +234,38 @@ def test_cache_tools_earns_a_read_on_the_second_turn():
     )
 
 
+def test_anthropic_tools_web_search_alongside_function_tools(tools):
+    """A server-side web search runs next to the agent's function tools and its citations round-trip."""
+    model = AnthropicModel(
+        client_args={"api_key": os.getenv("ANTHROPIC_API_KEY")},
+        model_id=MODEL_ID,
+        max_tokens=1024,
+        # "direct" so citations are attached; the dynamic-filtering default runs the search inside code execution
+        anthropic_tools=[
+            {"type": "web_search_20260318", "name": "web_search", "max_uses": 2, "allowed_callers": ["direct"]}
+        ],
+    )
+    agent = Agent(model=model, tools=tools, load_tools_from_directory=False, callback_handler=None)
+
+    first = agent("Call tool_weather, then use web_search to find the current Python release. Answer in one sentence.")
+    assert first.stop_reason == "end_turn"
+    assert any(
+        "toolUse" in block and block["toolUse"]["name"] == "tool_weather"
+        for message in agent.messages
+        for block in message["content"]
+    ), "function tool was dropped from the request"
+    citations = [
+        citation
+        for block in first.message["content"]
+        if "citationsContent" in block
+        for citation in block["citationsContent"]["citations"]
+    ]
+    assert citations and citations[0]["location"]["web"]["url"].startswith("http")
+
+    second = agent("Reply DONE.")
+    assert "DONE" in str(second)
+
+
 class TestCountTokens:
     @pytest.fixture
     def model(self):

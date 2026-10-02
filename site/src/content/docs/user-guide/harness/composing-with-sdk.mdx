@@ -1,0 +1,150 @@
+---
+title: Compose with the Strands Harness SDK
+description: "Strands harness is a thin composition layer over the Strands Harness SDK. Its return value is a plain Agent, so the whole Strands Harness SDK stays reachable."
+sourceLinks:
+  - path: harness-py/src/strands_harness/agent.py
+  - path: harness-ts/src/agent.ts
+  - path: harness-py/src/strands_harness/__init__.py
+  - path: harness-ts/src/index.ts
+sidebar:
+  label: "Compose with the Strands Harness SDK"
+---
+
+Strands harness is a thin composition layer, not a framework of its own. The substance lives in the
+[Strands Harness SDK](../../sdk/): the model loop, tools, context
+management, sessions, memory, and hooks. Strands harness's job is to assemble those building blocks
+into one agent with tested defaults and a tuned system prompt, so you do not wire them up
+yourself. This page is for readers who know the Strands Harness SDK, or want to, and need to see exactly
+where Strands harness sits and how to reach past it.
+
+## The composition model
+
+The factory does three things in order: it resolves your options into concrete Strands Harness SDK objects
+(a `Model` from a `provider/name` string, a memory manager, intervention handlers), it
+assembles the built-in tools, plugins, subagents, and behaviors, and it constructs a plain
+`Agent` from the result. Nothing wraps that agent afterward. The built-in tools are
+ordinary registered tools, `todos` and `environment` are ordinary plugins, and sessions and
+memory use the Strands Harness SDK's own managers.
+
+## The return value is a plain Agent
+
+`create_harness()` returns a plain Strands `Agent`, the same class you get from the Strands Harness SDK
+directly. There is no Strands harness type around it. Because you hold a normal `Agent`, the full Strands Harness SDK
+is available and nothing about Strands harness blocks a feature the Strands Harness SDK offers.
+
+## Compose Strands Harness SDK features alongside Strands harness's defaults
+
+Any argument the factory does not name is passed straight through to the `Agent`
+constructor, and your explicit value wins over the default it corresponds to. This is the
+seam for Strands Harness SDK-native features. Pass your own `plugins` or `interventions` alongside Strands harness's
+and they compose:
+
+<Tabs>
+  <Tab label="Python">
+    ```python
+    from strands_harness import create_harness
+    from strands.vended_interventions.hitl import HumanInTheLoop
+
+    from my_plugins import MyMetricsPlugin  # your own Plugin subclass
+
+    agent = create_harness(
+        context_manager="agentic",
+        plugins=[MyMetricsPlugin()],       # runs next to Strands harness's built-in plugins
+        interventions=[HumanInTheLoop()],  # a Strands Harness SDK feature, wired straight through
+    )
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    import { createHarness } from '@strands-agents/harness'
+    import { HumanInTheLoop } from '@strands-agents/sdk/vended-interventions/hitl'
+
+    import { MyMetricsPlugin } from './my-plugins' // your own Plugin implementation
+
+    const agent = await createHarness({
+      contextManager: 'agentic',
+      plugins: [new MyMetricsPlugin()], // runs next to Strands harness's built-in plugins
+      interventions: [new HumanInTheLoop()], // a Strands Harness SDK feature, wired through
+    })
+    ```
+  </Tab>
+</Tabs>
+
+## Modify the agent after construction
+
+You can also change the agent once you have it. The system prompt, tools, and every other
+field are yours to adjust:
+
+<Tabs>
+  <Tab label="Python">
+    ```python
+    from strands_harness import create_harness
+
+    agent = create_harness()
+    agent.system_prompt += "\n\nAlways cite file paths as file:line."
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    import { createHarness } from '@strands-agents/harness'
+
+    const agent = await createHarness()
+    agent.systemPrompt += '\n\nAlways cite file paths as file:line.'
+    ```
+  </Tab>
+</Tabs>
+
+## The building blocks are exported too
+
+Strands harness exports the pieces its factory composes, so you can reuse them without building the
+whole agent:
+
+- `HARNESS_CONTRACT`: the model-neutral behavioral contract, as a string.
+- `build_system_prompt` / `buildSystemPrompt`: concatenates the contract, your
+  instructions, and any request-scoped context.
+- `resolve_memory` (Python only): Strands harness's memory manager over a store.
+- `resolve_interventions` (Python only): the intervention sugar coerced into Strands Harness SDK
+  handlers.
+
+If you build an agent from Strands Harness SDK building blocks directly, you can still borrow Strands harness's tuned
+prompt:
+
+<Tabs>
+  <Tab label="Python">
+    ```python
+    from strands import Agent
+    from strands_harness import HARNESS_CONTRACT, build_system_prompt
+
+    agent = Agent(system_prompt=build_system_prompt("You are a migration assistant."))
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    import { Agent } from '@strands-agents/sdk'
+    import { buildSystemPrompt } from '@strands-agents/harness'
+
+    const agent = new Agent({ systemPrompt: buildSystemPrompt('You are a migration assistant.') })
+    ```
+  </Tab>
+</Tabs>
+
+## When to reach for which
+
+Use Strands harness when you want a capable agent fast and its defaults fit. Reach for the Strands Harness SDK
+directly when you are building something whose shape Strands harness does not assume: a bespoke tool
+set with no shell, a custom agent loop, or an
+[orchestration of many agents](../../sdk/multi-agent/multi-agent-patterns/).
+The two are not a fork in the road. Start on Strands harness, and because it returns a plain `Agent`,
+you can drop to the raw Strands Harness SDK building blocks for the parts that need it without rewriting
+what already works.
+
+When a behavior looks wrong, it helps to confirm whether it originates in Strands harness or the
+underlying Strands Harness SDK, since Strands harness is mostly composition over Strands Harness SDK behavior.
+
+## Next steps
+
+- [SDK overview](../../sdk/): the building blocks Strands harness composes.
+- [Configuration reference](../reference/configuration/): the factory
+  options, including the passthrough to `Agent`.
+- [What the default harness does](../#what-the-default-harness-does): the
+  defaults it ships with and where to tune each one.

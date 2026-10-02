@@ -5,5 +5,5 @@ maintainedBy: strands
 languages:
   typescript: {}
 github: https://github.com/strands-agents/harness-sdk/tree/main/strands-ts/src/vended-tools/notebook
-docsPage: docs/user-guide/concepts/tools/vended-tools
+docsPage: docs/user-guide/sdk/tools/vended-tools
 addedDate: 2025-11-07

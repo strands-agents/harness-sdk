@@ -13,6 +13,7 @@ from ..experimental.checkpoint import Checkpoint
 from ..interrupt import Interrupt
 from ..telemetry.metrics import EventLoopMetrics
 from ..types.content import Message
+from ..types.session import decode_bytes_values, encode_bytes_values
 from ..types.streaming import StopReason
 
 
@@ -106,7 +107,7 @@ class AgentResult:
         if data.get("type") != "agent_result":
             raise TypeError(f"AgentResult.from_dict: unexpected type {data.get('type')!r}")
 
-        message = cast(Message, data.get("message"))
+        message = cast(Message, decode_bytes_values(data.get("message")))
         stop_reason = cast(StopReason, data.get("stop_reason"))
         checkpoint_data = data.get("checkpoint")
         checkpoint = Checkpoint.from_dict(checkpoint_data) if checkpoint_data else None
@@ -122,12 +123,15 @@ class AgentResult:
     def to_dict(self) -> dict[str, Any]:
         """Convert this AgentResult to JSON-serializable dictionary.
 
+        Binary values in ``message`` (for example Converse ``redactedContent`` blobs)
+        are base64-encoded with the same helpers used by session persistence.
+
         Returns:
             Dictionary containing serialized AgentResult data
         """
         return {
             "type": "agent_result",
-            "message": self.message,
+            "message": encode_bytes_values(self.message),
             "stop_reason": self.stop_reason,
             "checkpoint": self.checkpoint.to_dict() if self.checkpoint else None,
         }

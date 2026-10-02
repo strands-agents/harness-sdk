@@ -1,5 +1,7 @@
 """Tests for the HumanInTheLoop vended intervention handler."""
 
+import logging
+
 import pytest
 
 from strands import Agent
@@ -918,8 +920,35 @@ class TestClassifierMode:
         assert result.stop_reason == "interrupt"
         assert executed == []
 
-    def test_classifier_not_called_on_resume(self):
+    @pytest.mark.parametrize("bad_value", [None, 0, "", [], "no"])
+    def test_non_boolean_classifier_decision_fails_closed(self, bad_value, caplog):
+        from strands.vended_interventions.hitl.classifier import ClassifierResult
 
+        executed = []
+
+        @tool(name="my_tool")
+        def my_tool() -> str:
+            executed.append(True)
+            return "ran"
+
+        def bad_classifier(event, **kwargs):
+            return ClassifierResult(requires_human_in_the_loop=bad_value)
+
+        agent_model = MockedModelProvider([tool_use_message("my_tool"), text_message("Done")])
+        agent = Agent(
+            model=agent_model,
+            tools=[my_tool],
+            interventions=[HumanInTheLoop(classifier=bad_classifier)],
+        )
+
+        with caplog.at_level(logging.WARNING):
+            result = agent("Go")
+
+        assert result.stop_reason == "interrupt"
+        assert executed == []
+        assert "non-boolean decision" in caplog.text
+
+    def test_classifier_not_called_on_resume(self):
         from strands.vended_interventions.hitl.classifier import ClassifierResult
 
         executed = []
@@ -953,8 +982,6 @@ class TestClassifierMode:
         assert len(call_count) == 1
 
     def test_wildcard_with_classifier_warns(self, caplog):
-        import logging
-
         from strands.vended_interventions.hitl.classifier import ClassifierResult
 
         def my_classifier(event, **kwargs):
@@ -1011,7 +1038,7 @@ class TestBuiltInClassifier:
 
         event = MagicMock()
         event.tool_use = {"name": "tool", "input": {}}
-        event.agent.model = None
+        event.agent.aux_model = None
 
         with pytest.raises(ValueError, match="no model"):
             await classifier(event)
@@ -1070,6 +1097,31 @@ class TestBuiltInClassifier:
 
         call_kwargs = mock_agent_cls.call_args[1]
         assert call_kwargs["model"] is configured_model
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_agent_aux_model(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from strands.vended_interventions.hitl.classifier import _create_llm_risk_classifier, _RiskDecision
+
+        classifier = _create_llm_risk_classifier()
+
+        mock_result = MagicMock()
+        mock_result.structured_output = _RiskDecision(requires_approval=False, reason="safe")
+
+        event = MagicMock()
+        event.tool_use = {"name": "read", "input": {}}
+        event.agent.model = MagicMock(name="agent_model")
+        event.agent.aux_model = MagicMock(name="aux_model")
+
+        with patch("strands.agent.Agent") as mock_agent_cls:
+            mock_agent = MagicMock()
+            mock_agent.invoke_async = AsyncMock(return_value=mock_result)
+            mock_agent_cls.return_value = mock_agent
+
+            await classifier(event)
+
+        assert mock_agent_cls.call_args[1]["model"] is event.agent.aux_model
 
     @pytest.mark.asyncio
     async def test_uses_custom_system_prompt(self):

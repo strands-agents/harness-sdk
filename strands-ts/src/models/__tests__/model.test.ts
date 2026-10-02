@@ -642,6 +642,59 @@ describe('Model', () => {
       })
     })
 
+    describe('when a citations delta grounds already-streamed text', () => {
+      const citation = {
+        location: { type: 'web' as const, url: 'https://a.com' },
+        source: 'https://a.com',
+        sourceContent: [],
+        title: 'A',
+      }
+
+      it('falls back to the accumulated text when the delta carries no content', async () => {
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelMessageStartEvent', role: 'assistant' }
+          yield { type: 'modelContentBlockStartEvent' }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'Hello' } }
+          yield {
+            type: 'modelContentBlockDeltaEvent',
+            delta: { type: 'citationsDelta', citations: [citation], content: [] },
+          }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+        })
+
+        const { result } = await collectGenerator(
+          provider.streamAggregated([new Message({ role: 'user', content: [new TextBlock('Hi')] })])
+        )
+
+        expect(result.message.content).toEqual([
+          new CitationsBlock({ citations: [citation], content: [{ text: 'Hello' }] }),
+        ])
+      })
+
+      it('keeps the delta content when it carries some', async () => {
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelMessageStartEvent', role: 'assistant' }
+          yield { type: 'modelContentBlockStartEvent' }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'Hello' } }
+          yield {
+            type: 'modelContentBlockDeltaEvent',
+            delta: { type: 'citationsDelta', citations: [citation], content: [{ text: 'cited' }] },
+          }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+        })
+
+        const { result } = await collectGenerator(
+          provider.streamAggregated([new Message({ role: 'user', content: [new TextBlock('Hi')] })])
+        )
+
+        expect(result.message.content).toEqual([
+          new CitationsBlock({ citations: [citation], content: [{ text: 'cited' }] }),
+        ])
+      })
+    })
+
     describe('when a content block emits no text deltas alongside reasoning and tool use', () => {
       it('drops the resulting empty TextBlock from the aggregated message but still yields it', async () => {
         const provider = new TestModelProvider(async function* () {

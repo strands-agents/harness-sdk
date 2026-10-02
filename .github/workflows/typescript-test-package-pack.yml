@@ -93,6 +93,19 @@ jobs:
           npx tsc --noEmit
           npx tsx verify.ts
 
+          # Guard against dependency bloat (#4169). Reinstall without the
+          # test fixture's devDependencies so we measure only what a consumer
+          # ships, then check against a tight ceiling.
+          npm install --ignore-scripts --no-audit --no-fund --omit=dev "$TARBALL_PATH"
+          SIZE_BYTES=$(du -sb node_modules | cut -f1)
+          SIZE_MB=$(( SIZE_BYTES / 1048576 ))
+          echo "[pack-test] consumer node_modules install size: ${SIZE_MB} MB"
+          MAX_MB=150
+          if [ "$SIZE_MB" -gt "$MAX_MB" ]; then
+            echo "::error::Install size ${SIZE_MB} MB exceeds ${MAX_MB} MB limit. A dependency may be pulling in unexpected native binaries."
+            exit 1
+          fi
+
       # Upload for release-typescript.yml's inspect/publish path to consume.
       # PR-triggered runs also upload (short retention) — harmless.
       - name: Upload tarball for downstream inspect/publish

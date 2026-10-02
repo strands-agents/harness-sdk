@@ -1,5 +1,9 @@
 echo "Running pre-commit checks..."
 
+# Lint staged Python files (strands-py/, harness-py/) with ruff — a fast pre-filter, not full CI parity
+echo "Linting Python..."
+npm run lint:py || { echo "Python lint failed. Commit aborted."; exit 1; }
+
 # Build (required for integ type-check: workspace symlink resolves to dist/)
 echo "Building..."
 npm run build || { echo "Build failed. Commit aborted."; exit 1; }

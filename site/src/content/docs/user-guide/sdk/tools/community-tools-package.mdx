@@ -1,0 +1,24 @@
+---
+title: Community tools package
+description: 'Understand the relationship between community tools and SDK-vended tools.'
+tags: [tool-authoring]
+sidebar:
+  label: "Community Tools Package"
+---
+
+The former community tools package is not required for the examples in this
+documentation. Use [vended tools](vended-tools.md) for common file, shell, HTTP,
+notebook, sleep, stop, and web-fetch capabilities maintained with the SDK.
+
+For capabilities that do not have a vended equivalent, use one of these supported
+extension points:
+
+- Write a [custom tool](custom-tools.md).
+- Connect an [MCP server](mcp-tools.md).
+- Use the SDK-native [Graph](../multi-agent/graph.md),
+  [Swarm](../multi-agent/swarm.md), or
+  [agents-as-tools](../multi-agent/agents-as-tools.md) APIs.
+- Use [`A2AAgent`](../multi-agent/agent-to-agent.md) for remote agents.
+
+This keeps examples portable across Python and TypeScript and ties their lifecycle
+to the SDK version you install.

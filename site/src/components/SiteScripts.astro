@@ -1,7 +1,7 @@
 ---
 /**
  * Web font loading, AWS Shortbread cookie consent, and Analytics WebSDK initialization.
- * Included in both Head.astro (docs pages) and LandingLayout.astro (index page).
+ * Included by Head.astro (docs, blog, and changelog pages).
  */
 ---
 
@@ -27,6 +27,11 @@
     'use strict'
 
     function initShortbread() {
+      // The /integrations drawer embeds pages with `?embed`. Consent is handled
+      // by the top-level page, so skip the banner inside the iframe — otherwise
+      // it renders over the drawer's content.
+      if (new URLSearchParams(window.location.search).has('embed')) return
+
       const hostname = window.location.hostname
       const isLocal = hostname === 'localhost' || hostname === '127.0.0.1'
       const isCloudFrontPreview = hostname === 'd3ehv1nix5p99z.cloudfront.net'
@@ -103,3 +108,150 @@
     }
   })()
 </script>
+
+<!--
+  Restyle the AWS Shortbread cookie consent UI to match the Strands site.
+  Content, layout, and button behavior stay Shortbread's — these rules only
+  change color, font, border, and radius so the banner and its Customize modal
+  don't read as stock AWS console chrome.
+
+  The selectors are intentionally broad (every `.awsccc-u-btn`, the shared
+  `#awsccc-cb-c` container, the modal) so the same styling also covers the
+  confirmation banner Shortbread shows after Accept/Decline and the Customize
+  save flow — all of which reuse these same elements.
+
+  Site tokens are theme-aware, so the banner follows the site's light/dark
+  toggle. `!important` + the full ID chain are required to win over
+  Shortbread's own stylesheet, which ships its own OS-preference dark mode.
+-->
+<style is:global>
+  /* Banner surface (initial prompt + post-choice confirmation) */
+  #awsccc-sb-ux-c #awsccc-sb-a #awsccc-cb-c #awsccc-cb-content,
+  #awsccc-sb-ux-c #awsccc-sb-a #awsccc-cb-c.dark-mode-enabled #awsccc-cb-content {
+    background: var(--nav-bg) !important;
+    border-top: 1px solid var(--accent-green) !important;
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.25) !important;
+  }
+
+  /* Title */
+  #awsccc-sb-ux-c #awsccc-sb-a #awsccc-cb-c #awsccc-cb-title {
+    color: var(--nav-fg) !important;
+    font-family: 'JetBrains Mono', ui-monospace, monospace !important;
+    letter-spacing: 0.5px;
+  }
+
+  /* Body copy */
+  #awsccc-sb-ux-c #awsccc-sb-a #awsccc-cb-c #awsccc-cb-text,
+  #awsccc-sb-ux-c #awsccc-sb-a #awsccc-cb-c #awsccc-cb-text span {
+    color: color-mix(in srgb, var(--nav-fg) 78%, transparent) !important;
+    font-family: 'Space Grotesk', system-ui, sans-serif !important;
+  }
+
+  /* Links (banner + modal) → brand green, was AWS blue */
+  #awsccc-sb-ux-c #awsccc-sb-a a,
+  #awsccc-sb-ux-c #awsccc-sb-a a > span,
+  #awsccc-sb-ux-c #awsccc-sb-a .awsccc-u-link,
+  #awsccc-sb-ux-c #awsccc-sb-a .awsccc-u-link span,
+  #awsccc-sb-ux-c #awsccc-sb-a .dark-mode-enabled a,
+  #awsccc-sb-ux-c #awsccc-sb-a .dark-mode-enabled a > span {
+    color: var(--accent-green) !important;
+  }
+
+  /* Buttons — shared shape */
+  #awsccc-sb-ux-c #awsccc-sb-a .awsccc-u-btn {
+    font-family: 'JetBrains Mono', ui-monospace, monospace !important;
+    border-radius: 6px !important;
+  }
+
+  /* Secondary / default buttons (Decline, Customize): outlined on the site bg */
+  #awsccc-sb-ux-c #awsccc-sb-a .awsccc-u-btn,
+  #awsccc-sb-ux-c #awsccc-sb-a .awsccc-u-btn-secondary,
+  #awsccc-sb-ux-c #awsccc-sb-a #awsccc-cb-c.dark-mode-enabled .awsccc-u-btn-secondary {
+    background-color: transparent !important;
+    border: 1px solid var(--border) !important;
+  }
+  #awsccc-sb-ux-c #awsccc-sb-a .awsccc-u-btn span,
+  #awsccc-sb-ux-c #awsccc-sb-a .awsccc-u-btn-secondary span {
+    color: var(--nav-fg) !important;
+  }
+  #awsccc-sb-ux-c #awsccc-sb-a .awsccc-u-btn:hover,
+  #awsccc-sb-ux-c #awsccc-sb-a .awsccc-u-btn-secondary:hover {
+    background-color: color-mix(in srgb, var(--nav-fg) 10%, transparent) !important;
+    border-color: var(--accent-green) !important;
+  }
+
+  /* Primary button (Accept): filled brand green, text = page bg for contrast */
+  #awsccc-sb-ux-c #awsccc-sb-a .awsccc-u-btn.awsccc-u-btn-primary,
+  #awsccc-sb-ux-c #awsccc-sb-a #awsccc-cb-c.dark-mode-enabled .awsccc-u-btn-primary {
+    background-color: var(--accent-green) !important;
+    border: 1px solid var(--accent-green) !important;
+  }
+  #awsccc-sb-ux-c #awsccc-sb-a .awsccc-u-btn.awsccc-u-btn-primary span,
+  #awsccc-sb-ux-c #awsccc-sb-a #awsccc-cb-c.dark-mode-enabled .awsccc-u-btn-primary span {
+    color: var(--nav-bg) !important;
+  }
+  #awsccc-sb-ux-c #awsccc-sb-a .awsccc-u-btn.awsccc-u-btn-primary:hover {
+    background-color: color-mix(in srgb, var(--accent-green) 85%, #000) !important;
+    border-color: color-mix(in srgb, var(--accent-green) 85%, #000) !important;
+  }
+
+  /* Focus ring → brand green (was AWS cyan) */
+  #awsccc-sb-ux-c #awsccc-sb-a .awsccc-u-btn:focus:before,
+  #awsccc-sb-ux-c #awsccc-sb-a .awsccc-u-cb-focused:before {
+    box-shadow: 0 0 0 2px var(--accent-green) !important;
+  }
+
+  /* ---- Customize modal ---- */
+  #awsccc-sb-ux-c #awsccc-sb-a .awsccc-u-modal,
+  #awsccc-sb-ux-c #awsccc-sb-a .dark-mode-enabled .awsccc-u-modal {
+    background-color: var(--nav-bg) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 8px !important;
+  }
+  #awsccc-sb-ux-c #awsccc-sb-a .awsccc-u-modal-header,
+  #awsccc-sb-ux-c #awsccc-sb-a .dark-mode-enabled .awsccc-u-modal-header {
+    background-color: transparent !important;
+    border-bottom: 1px solid var(--border) !important;
+    color: var(--nav-fg) !important;
+  }
+  #awsccc-sb-ux-c #awsccc-sb-a .awsccc-u-modal-header h2 {
+    color: var(--nav-fg) !important;
+    font-family: 'JetBrains Mono', ui-monospace, monospace !important;
+  }
+  #awsccc-sb-ux-c #awsccc-sb-a .awsccc-u-modal-content,
+  #awsccc-sb-ux-c #awsccc-sb-a .dark-mode-enabled .awsccc-u-modal-content {
+    color: var(--nav-fg) !important;
+  }
+  #awsccc-sb-ux-c #awsccc-sb-a .awsccc-u-modal-footer,
+  #awsccc-sb-ux-c #awsccc-sb-a .dark-mode-enabled .awsccc-u-modal-footer {
+    border-top: 1px solid var(--border) !important;
+  }
+  #awsccc-sb-ux-c #awsccc-sb-a .awsccc-u-modal-backdrop,
+  #awsccc-sb-ux-c #awsccc-sb-a .dark-mode-enabled .awsccc-u-modal-backdrop {
+    background-color: rgba(0, 0, 0, 0.6) !important;
+  }
+  #awsccc-sb-ux-c #awsccc-sb-a .awsccc-cs-sec-container .awsccc-cs-s-title,
+  #awsccc-sb-ux-c #awsccc-sb-a .awsccc-cs-s-paragraph,
+  #awsccc-sb-ux-c #awsccc-sb-a .awsccc-u-cb-text,
+  #awsccc-sb-ux-c #awsccc-sb-a #awsccc-cs-info-container span,
+  #awsccc-sb-ux-c #awsccc-sb-a .dark-mode-enabled #awsccc-cs-l-container span {
+    color: var(--nav-fg) !important;
+  }
+  #awsccc-sb-ux-c #awsccc-sb-a .awsccc-cs-s-paragraph {
+    font-family: 'Space Grotesk', system-ui, sans-serif !important;
+  }
+  /* Form controls → brand green active state (was AWS blue) */
+  #awsccc-sb-ux-c #awsccc-sb-a .awsccc-u-cb-checkbox-active .awscc-u-cb-checkbox-rect {
+    fill: var(--accent-green) !important;
+    stroke: var(--accent-green) !important;
+  }
+  #awsccc-sb-ux-c #awsccc-sb-a .awsccc-u-rg input:checked + .awsccc-u-rg-radio,
+  #awsccc-sb-ux-c #awsccc-sb-a .dark-mode-enabled input:checked + .awsccc-u-rg-radio {
+    background-color: var(--accent-green) !important;
+    border-color: var(--accent-green) !important;
+  }
+  #awsccc-sb-ux-c #awsccc-sb-a .awsccc-u-cl-c,
+  #awsccc-sb-ux-c #awsccc-sb-a .dark-mode-enabled .awsccc-u-cl-c {
+    border-color: var(--border) !important;
+  }
+</style>

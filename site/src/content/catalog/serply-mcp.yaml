@@ -1,0 +1,8 @@
+name: serply-mcp
+description: Hosted MCP server giving Strands agents live Google Search, Scholar, News, Maps, Jobs, Bing, Amazon and Reddit search plus page scraping, with one API key header.
+integrationType: tool
+languages:
+  python: {}
+github: https://github.com/serply-inc/mcp
+docsUrl: https://serply.io/docs/guides/strands
+addedDate: 2026-09-17

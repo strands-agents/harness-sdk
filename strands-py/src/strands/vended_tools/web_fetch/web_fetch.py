@@ -80,8 +80,8 @@ def make_web_fetch(
             When ``None``, a new client is created per request with
             ``follow_redirects=True`` and httpx's default timeout (5s).
         model: Optional model for the analyst. Only used when ``mode='agentic'``.
-            Resolution order: this model, then the host agent's model,
-            then ``WebFetchError`` if neither is available.
+            Resolution order: this ``model`` > ``agent.aux_model`` > ``agent.model`` of the host
+            agent; ``WebFetchError`` if none is available.
         mode: Extraction mode. Defaults to ``agentic``.
 
     Returns:
@@ -155,7 +155,8 @@ def make_web_fetch(
         if not prompt.strip():
             raise WebFetchError("web_fetch: agentic mode requires a non-empty prompt.")
 
-        host_model = getattr(tool_context.agent, "model", None) if tool_context else None
+        host_agent = tool_context.agent if tool_context else None
+        host_model = getattr(host_agent, "aux_model", None) or getattr(host_agent, "model", None)
         effective_model = analyst_model or host_model
         if effective_model is None:
             raise WebFetchError(
@@ -212,7 +213,8 @@ async def _fetch_once(
         WebFetchError: On timeout, transport failure, HTTP error status, or
             body exceeding ``max_bytes``.
     """
-    _check_cancelled(cancel_signal)
+    if cancel_signal is not None and cancel_signal.is_set():
+        raise asyncio.CancelledError("Web fetch tool request cancelled")
 
     owns_client = client is None
     active_client = client if client is not None else httpx.AsyncClient(follow_redirects=True)
@@ -231,7 +233,8 @@ async def _fetch_once(
             chunks: list[bytes] = []
             total = 0
             async for chunk in response.aiter_bytes():
-                _check_cancelled(cancel_signal)
+                if cancel_signal is not None and cancel_signal.is_set():
+                    raise asyncio.CancelledError("Web fetch tool request cancelled")
                 total += len(chunk)
                 if total > max_bytes:
                     raise WebFetchError(f"Response body exceeded {max_bytes} bytes. Refusing to buffer more.")
@@ -261,9 +264,3 @@ def _parse_charset(content_type: str) -> str:
             if value:
                 return value
     return "utf-8"
-
-
-def _check_cancelled(cancel_signal: threading.Event | None) -> None:
-    """Raise :class:`asyncio.CancelledError` if the agent's cancel signal has been set."""
-    if cancel_signal is not None and cancel_signal.is_set():
-        raise asyncio.CancelledError("Request cancelled")

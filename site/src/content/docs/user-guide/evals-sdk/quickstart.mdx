@@ -1,109 +1,68 @@
 ---
-title: Strands Evaluation Quickstart
-description: 'Start evaluating AI agents with Strands Evaluation: install the SDK, build your first experiment, run built-in evaluators, and analyze results.'
+title: Strands evaluation quickstart
+description: "Run your first Strands evaluation: install the SDK, write an experiment, score an agent with a built-in evaluator, and read the results."
 tags: [quickstart]
 sidebar:
-  label: "Getting Started"
+  label: "Quickstart"
 redirectFrom:
   - docs/user-guide/observability-evaluation/evaluation
 ---
 
-Strands Evaluation is a framework for evaluating AI agents and LLM applications. From simple output validation to complex multi-agent interaction analysis, trajectory evaluation, and automated experiment generation, Strands Evaluation provides features to measure and improve your AI systems.
-
-## What Strands Evaluation Provides
-
-- **Multiple Evaluation Types**: Output evaluation, trajectory analysis, tool usage assessment, and interaction evaluation
-- **Dynamic Simulators**: Multi-turn conversation simulation with realistic user behavior, goal-oriented interactions, and LLM-powered tool simulation
-- **LLM-as-a-Judge**: Built-in evaluators using language models for sophisticated assessment with structured scoring
-- **Deterministic Evaluators**: Fast, code-based checks (Equals, Contains, ToolCalled, StateEquals) for CI/CD pipelines
-- **Trace-based Evaluation**: Analyze agent behavior through OpenTelemetry execution traces
-- **Remote Trace Providers**: Evaluate traces from CloudWatch, Langfuse, and other observability backends
-- **Automated Experiment Generation**: Generate comprehensive test suites from context descriptions
-- **Custom Evaluators**: Extensible framework for domain-specific evaluation logic
-- **Experiment Management**: Save, load, and version your evaluation experiments with JSON serialization
-- **Built-in Scoring Tools**: Helper functions for exact, in-order, and any-order trajectory matching
-- **Detectors**: Automatic failure detection, root cause analysis, and fix recommendations for agent traces
-
-This quickstart guide shows you how to create your first evaluation experiment, use built-in evaluators to assess agent performance, generate test cases automatically, and analyze results. After completing this guide you can create custom evaluators, implement trace-based evaluation, build comprehensive test suites, and integrate evaluation into your development workflow.
+Strands Evaluation measures an agent's quality before you ship it and after. This
+quickstart takes you to a first running evaluation: install the SDK, write one
+experiment, score an agent's output with a built-in evaluator, and read the results.
+From there, the [next steps](#next-steps) cover trajectory and helpfulness scoring, the
+CLI, custom evaluators, and automated test generation.
 
 ## Install the SDK
 
 First, ensure that you have Python 3.10+ installed.
 
-We'll create a virtual environment to install the Strands Evaluation SDK and its dependencies.
+Create and activate a virtual environment:
 
 ```bash
 python -m venv .venv
 ```
 
-And activate the virtual environment:
-
 * macOS / Linux: `source .venv/bin/activate`
 * Windows (CMD): `.venv\Scripts\activate.bat`
 * Windows (PowerShell): `.venv\Scripts\Activate.ps1`
 
-Next we'll install the `strands-agents-evals` SDK package:
+Install the evaluation SDK along with the core Strands Agents SDK and tools:
 
 ```bash
-pip install strands-agents-evals
+pip install strands-agents-evals strands-agents
 ```
 
-You'll also need the core Strands Agents SDK and tools for this guide:
+## Configure credentials
 
-```bash
-pip install strands-agents strands-agents-tools
-```
+Strands Evaluation uses the same model providers as Strands Agents. By default,
+evaluators use Amazon Bedrock with Claude as the judge model.
 
-## Configuring Credentials
+To run the example below, configure AWS credentials with permission to invoke Claude,
+using one of:
 
-Strands Evaluation uses the same model providers as Strands Agents. By default, evaluators use Amazon Bedrock with Claude 4 as the judge model.
+1. **Environment variables**: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and optionally `AWS_SESSION_TOKEN`
+2. **AWS credentials file**: `aws configure`
+3. **IAM roles**: on AWS services like EC2, ECS, or Lambda
 
-To use the examples in this guide, configure your AWS credentials with permissions to invoke Claude 4. You can set up credentials using:
+Enable model access in the Amazon Bedrock console following the
+[AWS documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access-modify.html).
 
-1. **Environment variables**: Set `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and optionally `AWS_SESSION_TOKEN`
-2. **AWS credentials file**: Configure credentials using `aws configure` CLI command
-3. **IAM roles**: If running on AWS services like EC2, ECS, or Lambda
+## Run your first evaluation
 
-Make sure to enable model access in the Amazon Bedrock console following the [AWS documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access-modify.html).
+An evaluation has three parts: a task that produces the agent's output, cases that
+define the inputs and what you expect, and an evaluator that scores each result. The
+`OutputEvaluator` scores a response against a rubric you write.
 
-## Project Setup
-
-Create a directory structure for your evaluation project:
-
-```
-my_evaluation/
-├── __init__.py
-├── basic_eval.py
-├── trajectory_eval.py
-└── requirements.txt
-```
-
-Create the directory: `mkdir my_evaluation`
-
-Create `my_evaluation/requirements.txt`:
-
-```
-strands-agents>=1.0.0
-strands-agents-tools>=0.2.0
-strands-agents-evals>=1.0.0
-```
-
-Create the `my_evaluation/__init__.py` file:
-
-```python
-from . import basic_eval, trajectory_eval
-```
-
-## Basic Output Evaluation
-
-Let's start with a simple output evaluation using the `OutputEvaluator`. Create `my_evaluation/basic_eval.py`:
+Create `basic_eval.py`:
 
 ```python
 from strands import Agent
 from strands_evals import eval_task, Case, Experiment
 from strands_evals.evaluators import OutputEvaluator
 
-# The @eval_task decorator handles boilerplate — just return an Agent
+# The @eval_task decorator handles boilerplate: just return an Agent
 @eval_task()
 def get_response():
     return Agent(
@@ -161,411 +120,27 @@ experiment.to_file("basic_evaluation")
 print("\nExperiment saved to ./basic_evaluation.json")
 ```
 
+Run it:
+
+```bash
+python -u basic_eval.py
+```
+
+`run_display()` prints each case's score, whether it passed, and the judge's reasoning,
+followed by the overall statistics. The experiment is saved to `basic_evaluation.json`,
+so you can reload or compare it later. Evaluating many cases? `Experiment` also offers
+`run_evaluations_async` to run them concurrently and return the same report.
+
 :::tip[The @eval_task decorator]
 The `@eval_task()` decorator eliminates boilerplate. Your function can return an `Agent` (auto-invoked with `case.input`), a `str`, or a `dict`. For trace-based evaluators, use `@eval_task(TracedHandler())` to automatically collect spans. See the [Task Decorator guide](how-to/eval_task.md) for details.
 :::
 
-## Tool Usage Evaluation
-
-Now let's evaluate how well agents use tools. Create `my_evaluation/trajectory_eval.py`:
-
-```python
-from strands import Agent
-from strands_evals import Case, Experiment
-from strands_evals.evaluators import TrajectoryEvaluator
-from strands_evals.extractors import tools_use_extractor
-from strands_tools import calculator, current_time
-
-# Define task function that captures tool usage
-def get_response_with_tools(case: Case) -> dict:
-    agent = Agent(
-        tools=[calculator, current_time],
-        system_prompt="You are a helpful assistant. Use tools when appropriate.",
-        callback_handler=None
-    )
-    response = agent(case.input)
-    
-    # Extract trajectory efficiently to prevent context overflow
-    trajectory = tools_use_extractor.extract_agent_tools_used_from_messages(agent.messages)
-    
-    return {"output": str(response), "trajectory": trajectory}
-
-# Create test cases with expected tool usage
-test_cases = [
-    Case[str, str](
-        name="calculation-1",
-        input="What is 15% of 230?",
-        expected_trajectory=["calculator"],
-        metadata={"category": "math", "expected_tools": ["calculator"]}
-    ),
-    Case[str, str](
-        name="time-1", 
-        input="What time is it right now?",
-        expected_trajectory=["current_time"],
-        metadata={"category": "time", "expected_tools": ["current_time"]}
-    ),
-    Case[str, str](
-        name="complex-1",
-        input="What time is it and what is 25 * 48?",
-        expected_trajectory=["current_time", "calculator"],
-        metadata={"category": "multi_tool", "expected_tools": ["current_time", "calculator"]}
-    )
-]
-
-# Create trajectory evaluator
-evaluator = TrajectoryEvaluator(
-    rubric="""
-    Evaluate the tool usage trajectory:
-    1. Correct tool selection - Were the right tools chosen for the task?
-    2. Proper sequence - Were tools used in a logical order?
-    3. Efficiency - Were unnecessary tools avoided?
-    
-    Use the built-in scoring tools to verify trajectory matches:
-    - exact_match_scorer for exact sequence matching
-    - in_order_match_scorer for ordered subset matching  
-    - any_order_match_scorer for unordered matching
-    
-    Score 1.0 if optimal tools used correctly.
-    Score 0.5 if correct tools used but suboptimal sequence.
-    Score 0.0 if wrong tools used or major inefficiencies.
-    """,
-    include_inputs=True
-)
-
-# Update evaluator with tool descriptions to prevent context overflow
-sample_agent = Agent(tools=[calculator, current_time])
-tool_descriptions = tools_use_extractor.extract_tools_description(sample_agent, is_short=True)
-evaluator.update_trajectory_description(tool_descriptions)
-
-# Create and run experiment
-experiment = Experiment[str, str](cases=test_cases, evaluators=[evaluator])
-report = experiment.run_evaluations(get_response_with_tools)
-
-# Display results
-print("=== Tool Usage Evaluation Results ===")
-report.run_display()
-
-# Save experiment
-experiment.to_file("trajectory_evaluation")
-print("\nExperiment saved to ./trajectory_evaluation.json")
-```
-
-## Trace-based Helpfulness Evaluation
-
-For more advanced evaluation, let's assess agent helpfulness using execution traces:
-
-:::caution[Required: Session ID Trace Attributes]
-When using `StrandsInMemorySessionMapper`, you **must** include session ID trace attributes in your agent configuration. This prevents spans from different test cases from being mixed together in the memory exporter.
-:::
-
-The `TracedHandler` handles all of this automatically:
-
-```python
-from strands import Agent
-from strands_evals import eval_task, TracedHandler, Case, Experiment
-from strands_evals.evaluators import HelpfulnessEvaluator
-from strands_tools import calculator
-
-@eval_task(TracedHandler())
-def user_task_function():
-    return Agent(tools=[calculator], callback_handler=None)
-
-# Create test cases for helpfulness evaluation
-test_cases = [
-    Case[str, str](
-        name="helpful-1",
-        input="I need help calculating the tip for a $45.67 restaurant bill with 18% tip.",
-        metadata={"category": "practical_help"}
-    ),
-    Case[str, str](
-        name="helpful-2",
-        input="Can you explain what 2^8 equals and show the calculation?",
-        metadata={"category": "educational"}
-    )
-]
-
-# Create helpfulness evaluator (uses seven-level scoring)
-evaluator = HelpfulnessEvaluator()
-
-# Run evaluation
-experiment = Experiment[str, str](cases=test_cases, evaluators=[evaluator])
-report = experiment.run_evaluations(user_task_function)
-
-print("=== Helpfulness Evaluation Results ===")
-report.run_display()
-```
-
-If you need more control (e.g., custom session mapping or per-case agent configuration), you can still write the task function manually:
-
-<details>
-<summary>Manual task function (without decorator)</summary>
-
-```python
-from strands import Agent
-from strands_evals import Case, Experiment
-from strands_evals.evaluators import HelpfulnessEvaluator
-from strands_evals.telemetry import StrandsEvalsTelemetry
-from strands_evals.mappers import StrandsInMemorySessionMapper
-from strands_tools import calculator
-
-telemetry = StrandsEvalsTelemetry().setup_in_memory_exporter()
-
-def user_task_function(case: Case) -> dict:
-    telemetry.in_memory_exporter.clear()
-    agent = Agent(
-        tools=[calculator],
-        trace_attributes={
-            "gen_ai.conversation.id": case.session_id,
-            "session.id": case.session_id
-        },
-        callback_handler=None
-    )
-    response = agent(case.input)
-    finished_spans = telemetry.in_memory_exporter.get_finished_spans()
-    mapper = StrandsInMemorySessionMapper()
-    session = mapper.map_to_session(finished_spans, session_id=case.session_id)
-    return {"output": str(response), "trajectory": session}
-```
-
-</details>
-
-## Running Evaluations
-
-Run your evaluations using Python:
-
-```bash
-# Run basic output evaluation
-python -u my_evaluation/basic_eval.py
-
-# Run trajectory evaluation  
-python -u my_evaluation/trajectory_eval.py
-```
-
-You'll see detailed results showing:
-- Individual test case scores and reasoning
-- Overall experiment statistics
-- Pass/fail rates by category
-- Detailed judge explanations
-
-## Command-Line Interface
-
-Installing `strands-agents-evals` also installs a `strands-evals` console script — a thin wrapper over the same Python API for CI gates and one-off checks. It's the fastest way to run an experiment without writing a runner:
-
-```bash
-# Schema-check, then run an experiment file against an agent factory
-strands-evals validate basic_evaluation.json
-strands-evals run basic_evaluation.json --agent my_agent_path:build_agent --display
-
-# One-off check with no experiment file
-strands-evals run \
-  --input "What is the capital of France?" \
-  --expected-output "Paris" \
-  --agent my_agent_path:build_agent
-```
-
-`--agent MODULE:ATTR` points at the same factory you'd pass to `experiment.run_evaluations` in Python. See the [CLI reference](cli.md) for `report`, `diagnose`, `generate`, CI exit codes, and the full flag set.
-
-## Async Evaluation
-
-For improved performance, you can run evaluations asynchronously using `run_evaluations_async`. This is particularly useful when evaluating multiple test cases, as it allows concurrent execution and significantly reduces total evaluation time.
-
-### Basic Async Example (Applies to Trace-based evaluators)
-
-Here's how to convert the basic output evaluation to use async:
-
-```python
-import asyncio
-from strands import Agent
-from strands_evals import Case, Experiment
-from strands_evals.evaluators import OutputEvaluator
-
-# Define async task function
-async def get_response_async(case: Case) -> str:
-    agent = Agent(
-        system_prompt="You are a helpful assistant that provides accurate information.",
-        callback_handler=None
-    )
-    response = await agent.invoke_async(case.input)
-    return str(response)
-
-# Create test cases (same as before)
-test_cases = [
-    Case[str, str](
-        name="knowledge-1",
-        input="What is the capital of France?",
-        expected_output="The capital of France is Paris.",
-        metadata={"category": "knowledge"}
-    ),
-    Case[str, str](
-        name="knowledge-2", 
-        input="What is 2 + 2?",
-        expected_output="4",
-        metadata={"category": "math"}
-    ),
-]
-
-# Create evaluator
-evaluator = OutputEvaluator(
-    rubric="""
-    Evaluate the response based on:
-    1. Accuracy - Is the information factually correct?
-    2. Completeness - Does it fully answer the question?
-    3. Clarity - Is it easy to understand?
-    
-    Score 1.0 if all criteria are met excellently.
-    Score 0.5 if some criteria are partially met.
-    Score 0.0 if the response is inadequate or incorrect.
-    """,
-    include_inputs=True
-)
-
-# Run async evaluation
-async def run_async_evaluation():
-    experiment = Experiment[str, str](cases=test_cases, evaluators=[evaluator])
-    report = await experiment.run_evaluations_async(get_response_async)
-
-    report.run_display()
-
-    return report
-
-# Execute the async evaluation
-if __name__ == "__main__":
-    report = asyncio.run(run_async_evaluation())
-```
-
-## Understanding Evaluation Results
-
-`EvaluationReport` exposes parallel lists indexed by case position. Each entry in `cases` is a dict carrying the case input/expected output and an `evaluator` key naming the evaluator that produced that row.
-
-```python
-# Access individual case results
-for i, case in enumerate(report.cases):
-    print(f"Case: {case.get('name')}")
-    print(f"Evaluator: {case.get('evaluator')}")
-    print(f"Score: {report.scores[i]}")
-    print(f"Passed: {report.test_passes[i]}")
-    print(f"Reason: {report.reasons[i]}")
-    print("---")
-
-# Summary statistics
-pass_rate = sum(report.test_passes) / len(report.test_passes)
-average_score = report.overall_score
-print(f"Overall pass rate: {pass_rate:.2%}")
-print(f"Average score: {average_score:.2f}")
-```
-
-## Automated Experiment Generation
-
-Generate test cases automatically from context descriptions:
-
-```python
-from strands_evals.generators import ExperimentGenerator
-from strands_evals.evaluators import TrajectoryEvaluator
-
-# Define tool context
-tool_context = """
-Available tools:
-- calculator(expression: str) -> float: Evaluate mathematical expressions
-- current_time() -> str: Get the current date and time
-- file_read(path: str) -> str: Read file contents
-"""
-
-# Generate experiment automatically
-async def generate_experiment():
-    generator = ExperimentGenerator[str, str](str, str)
-    
-    experiment = await generator.from_context_async(
-        context=tool_context,
-        num_cases=5,
-        evaluator=TrajectoryEvaluator,
-        task_description="Assistant with calculation and time tools",
-        num_topics=2  # Distribute across multiple topics
-    )
-    
-    # Save generated experiment
-    experiment.to_file("generated_experiment")
-    print("Generated experiment saved!")
-    
-    return experiment
-
-# Run the generator
-import asyncio
-generated_exp = asyncio.run(generate_experiment())
-```
-
-## Custom Evaluators
-
-Create domain-specific evaluation logic:
-
-```python
-from strands_evals.evaluators import Evaluator
-from strands_evals.types import EvaluationData, EvaluationOutput
-
-class SafetyEvaluator(Evaluator[str, str]):
-    """Evaluates responses for safety and appropriateness."""
-
-    def evaluate(self, evaluation_case: EvaluationData[str, str]) -> list[EvaluationOutput]:
-        response = evaluation_case.actual_output.lower()
-
-        # Check for safety issues
-        unsafe_patterns = ["harmful", "dangerous", "illegal", "inappropriate"]
-        safety_violations = [pattern for pattern in unsafe_patterns if pattern in response]
-
-        if not safety_violations:
-            return [EvaluationOutput(
-                score=1.0,
-                test_pass=True,
-                reason="Response is safe and appropriate",
-                label="safe"
-            )]
-        else:
-            return [EvaluationOutput(
-                score=0.0,
-                test_pass=False,
-                reason=f"Safety concerns: {', '.join(safety_violations)}",
-                label="unsafe"
-            )]
-
-# Use custom evaluator
-safety_evaluator = SafetyEvaluator()
-experiment = Experiment[str, str](cases=test_cases, evaluators=[safety_evaluator])
-```
-
-## Best Practices
-
-### Evaluation Strategy
-1. **Start Simple**: Begin with output evaluation before moving to complex trajectory analysis
-2. **Use Multiple Evaluators**: Combine output, trajectory, and helpfulness evaluators for comprehensive assessment
-3. **Create Diverse Test Cases**: Cover different categories, difficulty levels, and edge cases
-4. **Regular Evaluation**: Run evaluations frequently during development
-
-### Performance Optimization
-1. **Use Extractors**: Always use `tools_use_extractor` functions to prevent context overflow
-2. **Batch Processing**: Process multiple test cases efficiently
-3. **Choose Appropriate Models**: Use stronger judge models for complex evaluations
-4. **Cache Results**: Save experiments to avoid re-running expensive evaluations
-
-### Experiment Management
-1. **Version Control**: Save experiments with descriptive names and timestamps
-2. **Document Rubrics**: Write clear, specific evaluation criteria
-3. **Track Changes**: Monitor how evaluation scores change as you improve your agents
-4. **Share Results**: Use saved experiments to collaborate with team members
-
-## Next Steps
-
-Ready to dive deeper? Explore these resources:
-
-- [Command-Line Interface](cli.md) - Run experiments and diagnose sessions from the shell or CI
-- [Task Decorator](how-to/eval_task.md) - Simplify task functions with `@eval_task`
-- [Output Evaluator](evaluators/output_evaluator.md) - LLM-based output evaluation with custom rubrics
-- [Trajectory Evaluator](evaluators/trajectory_evaluator.md) - Tool usage and sequence evaluation
-- [Helpfulness Evaluator](evaluators/helpfulness_evaluator.md) - Seven-level helpfulness assessment
-- [Correctness Evaluator](evaluators/correctness_evaluator.md) - Factual correctness with optional reference comparison
-- [Deterministic Evaluators](evaluators/deterministic_evaluators.md) - Fast, code-based checks (Equals, Contains, ToolCalled)
-- [Custom Evaluators](evaluators/custom_evaluator.md) - Build domain-specific evaluation logic
-- [Tool Simulation](simulators/tool_simulation.md) - Test tool-using agents without real infrastructure
-- [Result Caching](how-to/result_caching.md) - Cache task results to iterate on evaluators without re-running agents
-- [Remote Trace Providers](how-to/trace_providers.md) - Evaluate traces from production backends
-- [Experiment Generator](experiment_generator.md) - Automatically generate comprehensive test suites
-- [Serialization](how-to/serialization.md) - Save, load, and version your evaluation experiments
-- [Detectors](detectors/index.md) - Automatic failure detection and root cause analysis for agent traces
+## Next steps
+
+You have a running evaluation. From here, a natural path forward:
+
+1. [Eval SOP](eval-sop.md) - follow a repeatable process for evaluating and improving an agent
+2. [Evaluators Overview](evaluators/) - pick the right built-in scorer (trajectory, helpfulness, correctness, deterministic) for what you want to measure
+3. [Custom Evaluators](evaluators/custom_evaluator.md) - build domain-specific scoring when the built-ins don't fit
+4. [Command-Line Interface](cli/index.md) - run experiments from the shell and wire evaluation into CI
+5. [Experiment Generator](experiment_generator.md) - generate a broad test suite automatically

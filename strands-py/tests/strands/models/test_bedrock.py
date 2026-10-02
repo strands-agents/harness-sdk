@@ -2387,6 +2387,25 @@ def test_format_request_message_content_normalizes_empty_tool_result_content(mod
     assert tool_result["content"] == [{"text": ""}], "Empty toolResult content should be normalized to [{'text': ''}]"
 
 
+@pytest.mark.parametrize("tool_input", [None, "", 0, False, [], "invalid", ["value"]])
+def test_format_request_message_content_normalizes_non_dict_tool_use_input(model, tool_input):
+    content = {
+        "toolUse": {
+            "toolUseId": "tool_001",
+            "name": "run_query",
+            "input": tool_input,
+        }
+    }
+
+    assert model._format_request_message_content(content) == {
+        "toolUse": {
+            "input": {},
+            "name": "run_query",
+            "toolUseId": "tool_001",
+        }
+    }
+
+
 def test_format_request_message_content_does_not_mutate_empty_tool_result(model, model_id):
     """Test that normalizing empty toolResult content does not mutate the original messages."""
     messages = [
@@ -3399,6 +3418,63 @@ async def test_format_request_with_guardrail_latest_message(model):
     # Latest user message image should also be wrapped
     assert "guardContent" in formatted_messages[2]["content"][1]
     assert formatted_messages[2]["content"][1]["guardContent"]["image"]["format"] == "png"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blank_text", ["", "   ", "\n", " \t\n "])
+async def test_format_request_guardrail_latest_message_skips_blank_text(model, blank_text):
+    """Blank text must not be wrapped: Bedrock rejects a blank guardContent block."""
+    model.update_config(
+        guardrail_id="test-guardrail",
+        guardrail_version="DRAFT",
+        guardrail_latest_message=True,
+    )
+
+    request = model.format_request([{"role": "user", "content": [{"text": blank_text}]}])
+    content = request["messages"][0]["content"][0]
+
+    assert "guardContent" not in content
+    assert content == {"text": blank_text}
+
+
+@pytest.mark.asyncio
+async def test_format_request_guardrail_latest_message_blank_text_still_wraps_image(model):
+    """A blank text block is skipped without suppressing the guardContent wrap on a sibling image."""
+    model.update_config(
+        guardrail_id="test-guardrail",
+        guardrail_version="DRAFT",
+        guardrail_latest_message=True,
+    )
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"text": ""},
+                {"image": {"format": "png", "source": {"bytes": b"fake_image_data"}}},
+            ],
+        }
+    ]
+
+    content = model.format_request(messages)["messages"][0]["content"]
+
+    assert content[0] == {"text": ""}
+    assert "guardContent" in content[1]
+
+
+@pytest.mark.asyncio
+async def test_format_request_guardrail_latest_message_wraps_text_with_surrounding_whitespace(model):
+    """Only fully blank text is skipped; padded text is still screened, padding intact."""
+    model.update_config(
+        guardrail_id="test-guardrail",
+        guardrail_version="DRAFT",
+        guardrail_latest_message=True,
+    )
+
+    request = model.format_request([{"role": "user", "content": [{"text": "  hello  "}]}])
+    content = request["messages"][0]["content"][0]
+
+    assert content["guardContent"]["text"]["text"] == "  hello  "
 
 
 @pytest.mark.asyncio
@@ -4719,13 +4795,7 @@ def test_non_streaming_reasoning_content_with_empty_reasoning_text(bedrock_clien
         "output": {
             "message": {
                 "role": "assistant",
-                "content": [
-                    {
-                        "reasoningContent": {
-                            "reasoningText": {}
-                        }
-                    }
-                ],
+                "content": [{"reasoningContent": {"reasoningText": {}}}],
             }
         },
         "stopReason": "end_turn",
@@ -5193,6 +5263,54 @@ def test_format_request_tools_ttl_false_overrides_deprecated_cache_tools(bedrock
     assert not any("cachePoint" in tool for tool in tru_request["toolConfig"]["tools"])
 
 
+def test_format_request_auto_skips_tools_cache_point_for_a_model_without_caching(bedrock_client, messages, tool_spec):
+    """cache_tools follows the resolved strategy: auto on a non-Anthropic model emits no tools cache point.
+
+    Regression guard for https://github.com/strands-agents/harness-sdk/issues/4168.
+    """
+    _ = bedrock_client
+    with pytest.warns(DeprecationWarning, match="cache_tools is deprecated"):
+        model = BedrockModel(
+            model_id="amazon.nova-pro-v1:0",
+            cache_config=CacheConfig(strategy="auto"),
+            cache_tools=CacheToolsConfig(ttl="1h"),
+        )
+
+    tru_request = model.format_request(messages, tool_specs=[tool_spec])
+
+    assert not any("cachePoint" in tool for tool in tru_request["toolConfig"]["tools"])
+
+
+def test_format_request_auto_keeps_tools_cache_point_for_a_claude_model(bedrock_client, messages, tool_spec):
+    """cache_config resolving to anthropic leaves the deprecated cache_tools point in place."""
+    _ = bedrock_client
+    with pytest.warns(DeprecationWarning, match="cache_tools is deprecated"):
+        model = BedrockModel(
+            model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+            cache_config=CacheConfig(strategy="auto"),
+            cache_tools=CacheToolsConfig(ttl="1h"),
+        )
+
+    tru_point = model.format_request(messages, tool_specs=[tool_spec])["toolConfig"]["tools"][-1]
+
+    assert tru_point == {"cachePoint": {"type": "default", "ttl": "1h"}}
+
+
+def test_format_request_auto_cache_tools_inherits_shared_ttl_for_a_claude_model(bedrock_client, messages, tool_spec):
+    """A cache_tools point with no ttl of its own still inherits cache_config.ttl under an active strategy."""
+    _ = bedrock_client
+    with pytest.warns(DeprecationWarning, match="cache_tools is deprecated"):
+        model = BedrockModel(
+            model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+            cache_config=CacheConfig(strategy="auto", ttl="1h"),
+            cache_tools=CacheToolsConfig(),
+        )
+
+    tru_point = model.format_request(messages, tool_specs=[tool_spec])["toolConfig"]["tools"][-1]
+
+    assert tru_point == {"cachePoint": {"type": "default", "ttl": "1h"}}
+
+
 def test_format_request_applies_the_configured_ttl_to_a_system_cache_point(bedrock_client, messages):
     """Bedrock rejects a TTL that exceeds an earlier checkpoint's, so a configured ttl that reached the
     message cache point but not the system point ahead of it would emit an invalid request.
@@ -5340,9 +5458,9 @@ def test_format_request_leaves_a_tools_cache_point_alone_for_a_model_without_cac
         model_id="meta.llama3-70b-instruct-v1:0", cache_config=CacheConfig(ttl="1h"), cache_tools="default"
     )
 
-    tru_point = model.format_request(messages, tool_specs=[tool_spec])["toolConfig"]["tools"][-1]
+    tru_request = model.format_request(messages, tool_specs=[tool_spec])
 
-    assert tru_point == {"cachePoint": {"type": "default"}}
+    assert not any("cachePoint" in tool for tool in tru_request["toolConfig"]["tools"])
 
 
 def test_format_request_leaves_a_tools_cache_point_alone_for_an_empty_configured_ttl(

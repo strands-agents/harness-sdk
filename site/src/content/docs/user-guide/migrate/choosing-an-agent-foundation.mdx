@@ -1,0 +1,128 @@
+---
+title: Choosing an Agent Foundation
+description: "Framework or your own agent loop? How Strands compares to a hand-written loop, OpenAI Agents SDK, LangGraph, Vercel AI SDK, and Pydantic AI."
+sidebar:
+  label: Choosing a foundation
+tags: [quickstart]
+redirectFrom:
+  - docs/user-guide/quickstart/choosing-an-agent-foundation
+---
+
+import FoundationComparison from '../../../../components/FoundationComparison.astro'
+
+You are about to build an agent, and the first decision is not which model to
+call. It is what your agent runs on: a framework, or a loop you write and own
+yourself. This page is for developers making that call, and for teams whose
+hand-written prototype is starting to sprout the same machinery every agent
+eventually needs. It compares Strands against the most common alternatives and
+says plainly when a framework earns its place and when it does not.
+
+If you already know you want a framework and just want to build, skip to the
+[Python quickstart](../sdk/quickstart/python.md) or the [TypeScript quickstart](../sdk/quickstart/typescript.md).
+
+## Framework or your own loop?
+
+Almost every agent starts as a `while` loop. You call the model, check whether
+it asked for a tool, run the tool, feed the result back, and repeat until the
+model stops asking. This is the right way to begin. The loop is a few dozen
+lines, you understand every one of them, and you depend on nothing but the model
+provider's client library.
+
+The loop stays small only while its job stays small. The moment real
+requirements arrive, the same code grows the same limbs every time. You need to
+stop a runaway agent, so you add a turn counter and a token tally. You need to
+kill an invocation when the user closes the tab, so you thread a cancellation
+signal through every await point. You add structured output, then retries around
+malformed output. A second model provider arrives and your tidy loop forks around
+two client APIs. Someone asks for traces, so you wire in OpenTelemetry by hand.
+Then a second agent, and now you are writing routing and handoff logic that is
+itself an agent loop.
+
+None of these are hard in isolation. The cost is that you are now maintaining a
+framework you did not set out to write, spread across your loop as ad hoc
+additions rather than designed as a system. A framework is the decision to get
+those jobs through one interface, tested and documented, instead of accreting
+them yourself.
+
+So the real question is not "framework or not" in the abstract. It is: **how many
+of the jobs below does your agent already need, and how many will it need soon?**
+
+## What each option gives you
+
+The columns are the realistic choices for a new agent: Strands, a hand-written
+loop, and four other frameworks. The rows are the ten jobs a production agent
+tends to accumulate. Each cell is marked **Built-in** when the option ships the
+capability as a first-class API, **Partial** when it comes through a companion
+product, adapter, or limited support, and **DIY** when you write and own it
+yourself — with the specifics named alongside.
+
+<FoundationComparison />
+
+A few honest caveats about reading this table. Every framework in it is capable,
+actively developed, and a reasonable choice for the right project, so treat the
+cells as a starting map, not a scoreboard. "DIY" is not a criticism: a job you do
+not have is a job you should not pay a dependency for. And the competitor columns
+describe documented capabilities as of writing; these libraries move quickly, so
+verify against their current docs before committing. Strands leans toward
+built-in across the row because its bet is that most agents eventually need most
+of these, and that one coherent interface beats ten bolted-on ones. That bet is
+wrong for some agents. The next section is about those.
+
+## When to keep your own loop
+
+Keep the loop you wrote when your agent is small and intends to stay that way.
+Concretely, a hand-written loop is the better call when most of these hold:
+
+- **One model, one provider.** You have no portability requirement and no plan
+  to add one. A framework's provider abstraction is overhead you will never cash
+  in.
+- **A handful of tools and a single agent.** No routing, no handoffs, no
+  sub-agents. The orchestration a multi-agent framework offers has nothing to
+  orchestrate.
+- **Short, one-shot, or tightly-scoped runs.** A classifier, an extraction step,
+  a single well-bounded task. If runs cannot go long or loop unexpectedly, the
+  turn budgets and cancellation machinery buy you little.
+- **Minimal dependencies matter more than features.** A library, an edge
+  function, or a constrained runtime where every added dependency is a real cost,
+  and you would rather own fifty lines than inherit a framework's surface area.
+- **You want full control of the loop's shape.** You are researching a novel
+  control flow the frameworks do not model, and their abstractions would fight
+  you rather than help.
+
+The trap is not choosing a loop. The trap is choosing a loop, then quietly
+rebuilding a framework inside it one requirement at a time, until you own a worse
+version of the thing you avoided, with none of the tests or docs. When you catch
+yourself writing the second token counter or the second provider adapter, that is
+the signal to reconsider, not a reason to keep going.
+
+## Where Strands fits, and how to start
+
+Reach for Strands (or another framework) when your loop has grown to need several
+of these jobs at once and you want them through one interface, with the freedom to
+change models without rewriting the agent. That is the case Strands is built for:
+[invocation limits](../sdk/agents/agent-loop.md#invocation-limits), typed
+[stop reasons](../sdk/agents/agent-loop.md), and cancellation come with the
+[agent loop](../sdk/agents/agent-loop.md); [tools](../sdk/tools/custom-tools.md)
+and [structured output](../sdk/agents/structured-output.md), an
+[MCP client](../sdk/tools/mcp-tools.md),
+[multi-agent](../sdk/multi-agent/graph.md) patterns
+([swarm](../sdk/multi-agent/swarm.md),
+[agents as tools](../sdk/multi-agent/agents-as-tools.md)),
+[session management](../sdk/agents/session-management.md) with
+[snapshots](../sdk/agents/snapshots.md),
+[streaming](../sdk/streaming/index.md),
+[guardrails and interventions](../sdk/agents/interventions/index.md),
+[OpenTelemetry-native observability](../sdk/observability-evaluation/observability.md),
+and a companion [Evals SDK](../evals-sdk/index.md) all sit behind the same agent.
+
+What Strands deliberately does not add is a platform. It runs in your own process
+as a library, with no hosted control plane, scheduler, or database to stand up
+first. The same agent code runs against Amazon Bedrock, Anthropic, OpenAI, Google,
+Ollama, or [other providers](../sdk/model-providers/index.md), so model
+portability does not cost you a rewrite.
+
+If you are moving off another framework rather than starting fresh, the
+[migration guides](./openai.md) map concepts across. Otherwise, start
+with the [Python quickstart](../sdk/quickstart/python.md) or the
+[TypeScript quickstart](../sdk/quickstart/typescript.md) and add the jobs above as you need them,
+not before.

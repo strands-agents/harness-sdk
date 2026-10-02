@@ -4,7 +4,7 @@ import { renderEntryToMarkdown } from '@util/render-to-markdown'
 import { getBase, getSiteOrigin } from '@util/links'
 
 export const GET: APIRoute = async () => {
-  const allDocs = await getCollection('docs')
+  const allDocs = await getCollection('docs', ({ data }) => !data.draft)
   // Exclude API documentation from full content
   const docs = allDocs.filter((doc) => !doc.id.startsWith('docs/api/'))
   const base = getSiteOrigin() + getBase()

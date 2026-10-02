@@ -55,6 +55,7 @@ def make_agent(messages, model=None):
     agent = Mock()
     agent.messages = messages
     agent.model = model if model is not None else Mock()
+    agent.aux_model = agent.model
     return agent
 
 
@@ -83,6 +84,15 @@ class TestSummarizeContext:
         assert "message(s)" in result
         assert len(messages) < 20
         assert messages[0]["role"] == "user"
+
+    async def test_summarizes_with_the_agent_aux_model(self, alist):
+        messages = make_messages(20)
+        agent = make_agent(messages, mock_model())
+        agent.aux_model = mock_model("Summary")
+        result = await invoke_tool(summarize_context, agent, alist, keep_recent=10, summary_ratio=0.5)
+        assert "Summarized" in result
+        agent.model.stream.assert_not_called()
+        agent.aux_model.stream.assert_called_once()
 
     async def test_assigns_a_durable_tracking_id_to_the_generated_summary(self, alist):
         # The summary message is spliced straight into agent.messages, bypassing the append

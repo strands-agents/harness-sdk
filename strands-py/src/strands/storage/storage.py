@@ -21,6 +21,14 @@ SDK constructs use this to detect whether the caller already scoped the storage,
 so the default auto-prefix can be skipped.
 """
 
+_EPHEMERAL: object = object()
+"""Internal sentinel marking a storage backend as ephemeral (data does not survive restarts).
+
+Set on :class:`InMemoryStorage` and propagated by :class:`_NamespacedStorage` so that
+consumers (e.g. the session manager's stash integration) can detect ephemeral backends
+without an ``isinstance`` check that breaks for namespaced views of ephemeral storage.
+"""
+
 
 @dataclass
 class StorageSearchResult:
@@ -203,6 +211,8 @@ class _NamespacedStorage:
         normalized = _normalize_prefix(prefix).rstrip("/")
         self._storage = storage
         self._prefix = f"{normalized}/" if normalized else ""
+        if getattr(storage, "_ephemeral", None) is _EPHEMERAL:
+            self._ephemeral = _EPHEMERAL
 
     async def write(self, key: str, data: bytes) -> None:
         """Store data under the prefixed key."""

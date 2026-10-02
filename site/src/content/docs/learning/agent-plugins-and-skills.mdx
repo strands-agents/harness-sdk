@@ -8,99 +8,103 @@ redirectFrom:
 <YouTube id="dnChw1mfc5M" title="Lesson 6: Agent Plugins &amp; Skills" />
 *[Watch on YouTube](https://www.youtube.com/watch?v=dnChw1mfc5M&list=PLDzwjhH-4yhU&index=6)*
 
-*Code for this lesson can be found
-[**here**](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/06-plugins-skills).*
+:::note[About this lesson]
+The videos in this course are a snapshot in time. Strands is under active development, so the code featured on this page reflects the most up-to-date patterns, but the concepts covered in the video still apply. When in doubt, trust the code.
+:::
 
-### The Problem of the Growing System Prompt
+*Code for this lesson: [`samples/06-plugins-skills`](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/06-plugins-skills)*
 
-So far we've been learning the building blocks for building agent harnesses in isolation
-with small focused examples. Now we're going to start composing those primitives into
-something more realistic. We're going to build out a customer service agent and use it as
-one of the examples over the next few videos.
+## Plugins
 
-One of the common issues with building larger agent systems, especially things like
-customer support agents, is that your system prompt basically never stops growing. Every
-time you add business rules, workflows, or instructions, the prompt just keeps getting
-bigger. Eventually, it becomes bloated, expensive, and harder for the model to reliably
-follow. On top of that, you're often burning tokens on instructions that are completely
-irrelevant to the current conversation.
+Plugins are the extension mechanism in Strands. They let you package hooks, tools, and custom logic into reusable components that snap into any agent. Where a hook is a single behavior, a plugin bundles several primitives together so they can be shared and reused as a unit.
 
-We're going to look at a few different ways to address this problem over the next several
-videos, but we're going to start with skills.
+Skills are one type of plugin that provides on-demand workflow instructions. Strands ships others too, and you can build your own for memory, orchestration, observability, governance, or custom workflows.
 
-### Understanding Skills and Progressive Disclosure
+## Skills
 
-Skills let you create a sort of knowledge package that contains the instructions, best
-practices, examples, and specific guidance for any given task.
+As agents grow, system prompts bloat with irrelevant instructions. If your agent supports twenty workflows, you don't want instructions for all twenty consuming tokens on every request.
 
-Using skills lets the agent dynamically load the relevant instructions for a task when it
-needs them, instead of putting everything in the system prompt or having to continually
-reprompt the agent with instructions in context. The important idea behind this is
-progressive disclosure. At startup, the agent only sees the skill names and descriptions.
-The full instructions stay out of the model's context window until the agent chooses to
-activate a skill.
+Skills solve this through **progressive disclosure**: the agent only sees skill names at startup and loads full instructions on demand. Each skill is a markdown file in a subfolder containing guidance for a specific task. If a skill isn't relevant to the current request, its instructions never enter the context window. This is one example of context engineering.
 
-This is one form of context engineering: being deliberate about what enters the context
-window and when it gets there.
+```python
+from strands import Agent, AgentSkills, tool
 
-For our customer service agent, we'll create separate skills for refund processing, for
-order tracking, and account troubleshooting. Inside of the skills directory, each skill
-has its own subfolder, and each one contains a markdown file for the instructions for that
-specific task. We're not going to go over all of these now, but they are included in the
-repository if you're interested in learning more about them.
+# Tools for customer service operations
+@tool
+def lookup_customer(customer_id: str) -> str:
+    """Look up a customer by their ID."""
+    # ... database/API call ...
 
-### Composing Primitives with Plugins
+@tool
+def get_order_history(customer_id: str) -> str:
+    """Get order history for a customer."""
+    # ...
 
-Now, skills in Strands are implemented using something called a plugin, and this is where
-the primitives you've learned so far really start to come together.
+@tool
+def process_refund(order_id: str, amount: float) -> str:
+    """Process a refund for an order."""
+    # ...
 
-A plugin modifies or extends how an agent behaves. They can package together multiple
-primitives, like model system prompt messages, tools, hooks, and logic, into one reusable
-component to improve an agent's behavior. Strands ships with several built-in plugins, and
-you can also build your own.
+# Skills plugin discovers and registers all skills in the directory
+skills_plugin = AgentSkills(skills=["./skills"])
 
-For this agent, we have a simple mocked backend with customer accounts and order history
-data. In a real system, this would be coming from a database or from an API, but
-dictionaries keep the example simple. Then we have several tools mocked up to do things
-like look up customer, get order history, and process refund. This simulates the kinds of
-operations a customer support agent might need to perform.
+agent = Agent(
+    tools=[lookup_customer, get_order_history, process_refund],
+    plugins=[skills_plugin],
+    system_prompt="""You are a customer service agent. When a customer needs help,
+    activate the appropriate skill for step-by-step guidance."""
+)
+```
 
-Then we have our system prompt, and then we use agent skills and point it at our skills
-directory. The plugin automatically discovers the available skills and registers them with
-the agent. Then we create the agent with the customer service tools, the skills plugin,
-and a system prompt telling the agent to activate skills whenever it needs workflow
-guidance.
+📂 [customer_service.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/06-plugins-skills/customer_service.py) · [skills/](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/06-plugins-skills/skills)
 
-### Running the Customer Service Agent
+The `skills/` directory in the sample has four skills: `account-troubleshooting`, `order-tracking`, `pdf-processing`, and `refund-processing`. Each is a folder with a `SKILL.md` describing when to use it and the steps to follow. This customer service agent is the running example for the rest of the course.
 
-Let's run it. So now I'm going to say, *"Help me return my order."* And our agent will
-think and return back to us. It's asking for the customer ID, which, if I scroll up to the
-mocked data, I can see the two customer IDs that we have, so I'll copy and paste that into
-our chat.
+## Goal Loop
 
-We can see it's already calling the tools. It called `lookup_customer`,
-`get_order_history`, and then it called the skills tool, which was made available to the
-agent through the plugin. Then it says:
+Lesson 1 said a good harness verifies whether the agent's actions actually worked. `GoalLoop` is the plugin that does that. You define what "done" means, attach it to the agent, and it handles the retry loop:
 
-> *"Hi Morgan, I found your account. You have two orders. Which one would you like to
-return?"* And I'll just say, *"wireless headphones,"* hit enter, and this will then call
-the return once I confirm it.
+1. The agent processes the prompt and produces a response.
+2. GoalLoop runs your validator against the result.
+3. If it passes, the loop terminates as "satisfied."
+4. If it fails and budget remains, GoalLoop injects the feedback as a new user message and re-invokes the agent.
+5. If the attempt limit or timeout is exhausted, the loop stops without retrying.
 
-There it is calling `process_refund`, and then I'll type `exit` and the program stops.
+The validator can be a natural-language goal (judged by a second model) or a plain function. Functions are the more interesting case because they can run real checks. Here a coding agent isn't finished until the test suite passes, and when tests fail the output is fed straight back to the agent as its next instruction:
 
-### The Power of Plugin Composability
+```python
+import asyncio
+from strands import Agent
+from strands.vended_plugins.goal import GoalLoop
+from strands.vended_tools import file_editor, shell
 
-Now the agent can dynamically load workflow guidance only when it actually needs it,
-instead of carrying every instruction all the time.
+async def tests_pass(response, agent):
+    proc = await asyncio.create_subprocess_exec(
+        "pytest", "--tb=short",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode == 0:
+        return True
+    output = (stdout.decode() + stderr.decode())[-4000:]
+    return {
+        "passed": False,
+        "feedback": f"pytest exited {proc.returncode}.\n{output}",
+    }
 
-This lesson focused on the skills plugin, but plugins are a broader concept. You can build
-plugins for memory systems, orchestration, observability, runtime governance, context
-management, or custom workflows specific to your domain. But the point is the
-composability and how you can apply common behavior across agents in a coherent way.
+agent = Agent(
+    tools=[file_editor, shell],
+    plugins=[GoalLoop(goal=tests_pass, max_attempts=10)],
+)
+agent("Fix the failing tests in tests/test_orders.py")
+```
 
-In the next lesson, we'll improve the reliability of the same customer service agent using
-another plugin-based pattern called steering, which lets us inject guidance and validation
-directly into the agent loop at runtime. I'll see you there.
+Every retry, the agent sees the exact pytest output from the last attempt. It stops when the suite is green or after 10 tries, whichever comes first. Always set `max_attempts` or `timeout` in production so the loop can't run away.
 
-*Learn more: [Plugins](/docs/user-guide/concepts/plugins/) ·
-[Skills](/docs/user-guide/concepts/plugins/skills/)*
+## Resources
+
+- 📖 [Plugins](/docs/user-guide/sdk/plugins/)
+- 📖 [Skills](/docs/user-guide/sdk/plugins/skills/)
+- 📖 [Goal Loop](/docs/user-guide/sdk/plugins/goal-loop/)
+- 📖 [Hooks](/docs/user-guide/sdk/agents/hooks/)

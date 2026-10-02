@@ -167,6 +167,32 @@ def test_default_startup_timeout(mock_client, transports):
     }
 
 
+def test_prefix_with_server_name_uses_config_key(mock_client, transports):
+    MCPClient.load_servers({"slack": {"command": "node"}}, prefix_with_server_name=True)
+    assert mock_client[0][1]["prefix"] == "slack"
+
+
+def test_prefix_with_server_name_sanitizes_config_key(mock_client, transports):
+    MCPClient.load_servers({"awslabs.aws-docs mcp/server": {"command": "node"}}, prefix_with_server_name=True)
+    assert mock_client[0][1]["prefix"] == "awslabs_aws-docs_mcp_server"
+    assert mock_client[0][1]["application_name"] == "awslabs.aws-docs mcp/server"
+
+
+def test_prefix_with_server_name_explicit_prefix_is_not_sanitized(mock_client, transports):
+    MCPClient.load_servers({"slack": {"command": "node", "prefix": "a.b"}}, prefix_with_server_name=True)
+    assert mock_client[0][1]["prefix"] == "a.b"
+
+
+def test_prefix_with_server_name_explicit_prefix_wins(mock_client, transports):
+    MCPClient.load_servers({"slack": {"command": "node", "prefix": "chat"}}, prefix_with_server_name=True)
+    assert mock_client[0][1]["prefix"] == "chat"
+
+
+def test_prefix_with_server_name_empty_prefix_opts_out(mock_client, transports):
+    MCPClient.load_servers({"slack": {"command": "node", "prefix": ""}}, prefix_with_server_name=True)
+    assert mock_client[0][1]["prefix"] == ""
+
+
 def test_tool_filters_compiled_to_regex(mock_client, transports):
     MCPClient.load_servers(
         {"srv": {"command": "node", "tool_filters": {"allowed": ["search_.*"], "rejected": ["^delete_"]}}}
@@ -316,6 +342,26 @@ def test_continue_on_error_passed_to_client(mock_client, transports):
     """The config flag is threaded through to the constructed client so its runtime honors it."""
     MCPClient.load_servers({"srv": {"command": "node", "continue_on_error": True}})
     assert mock_client[0][1]["continue_on_error"] is True
+
+
+def test_continue_on_error_default_skips_failed_server_and_passes_to_client(mock_client, transports):
+    clients = MCPClient.load_servers(
+        {"bad": {"command": "${MISSING_VAR_XYZ}"}, "good": {"command": "node"}}, continue_on_error=True
+    )
+    assert len(clients) == 1
+    assert mock_client[0][1]["continue_on_error"] is True
+
+
+def test_continue_on_error_server_key_overrides_default(mock_client, transports):
+    with pytest.raises(ValueError, match="MISSING_VAR_XYZ"):
+        MCPClient.load_servers(
+            {"bad": {"command": "${MISSING_VAR_XYZ}", "continue_on_error": False}}, continue_on_error=True
+        )
+
+
+def test_continue_on_error_server_key_false_overrides_default_for_client(mock_client, transports):
+    MCPClient.load_servers({"srv": {"command": "node", "continue_on_error": False}}, continue_on_error=True)
+    assert mock_client[0][1]["continue_on_error"] is False
 
 
 def test_mixed_config_non_opted_in_failure_aborts_whole_load(mock_client, transports):

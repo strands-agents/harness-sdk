@@ -123,7 +123,8 @@ class JudgeConfig:
     Harmlessly ignored when ``goal`` is a validator function — no judge is built in that case.
 
     Attributes:
-        model: Model the judge agent uses. Defaults to the host agent's model.
+        model: Model the judge agent uses. Resolution order: this ``model`` > ``agent.aux_model``
+            > ``agent.model`` of the host agent.
         system_prompt: System prompt for the judge agent. Defaults to JUDGE_SYSTEM_PROMPT.
     """
 
@@ -389,7 +390,7 @@ class GoalLoop(Plugin):
             from ...agent.agent import Agent as _Agent
 
             judge = _Agent(
-                model=self._judge_model or host_agent.model,
+                model=self._judge_model or host_agent.aux_model,
                 callback_handler=None,
                 system_prompt=self._judge_system_prompt,
                 structured_output_model=JudgeOutcome,

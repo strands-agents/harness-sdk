@@ -170,7 +170,7 @@ describe('catalog content collection', () => {
     const anthropic = entries.find((e) => e.id === 'anthropic')
     expect(anthropic).toBeDefined()
     expect(anthropic!.data.maintainedBy).toBe('strands')
-    expect(anthropic!.data.docsPage).toBe('docs/user-guide/concepts/model-providers/anthropic')
+    expect(anthropic!.data.docsPage).toBe('docs/user-guide/sdk/model-providers/anthropic')
     // The content layer silently drops entries whose YAML fails to parse;
     // matching loaded ids against the on-disk files catches that and names
     // the dropped entry, without pinning counts.

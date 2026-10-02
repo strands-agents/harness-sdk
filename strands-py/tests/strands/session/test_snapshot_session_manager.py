@@ -1,24 +1,43 @@
 """Tests for SnapshotSessionManager."""
 
 import asyncio
+import json
+import logging
 import tempfile
 import uuid
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from strands import tool
+from strands._context_manager.context_manager import ContextManager
+from strands.agent import AgentResult
 from strands.agent.agent import Agent
 from strands.agent.conversation_manager.sliding_window_conversation_manager import SlidingWindowConversationManager
-from strands.experimental.hooks.events import BidiAgentInitializedEvent
-from strands.hooks.registry import HookRegistry
+from strands.bidi.agent import BidiAgent
+from strands.bidi.hooks import BidiAgentStopEvent, BidiResponseStopEvent
+from strands.bidi.models import BidiModel
+from strands.hooks.events import (
+    AfterMultiAgentInvocationEvent,
+    AfterNodeCallEvent,
+    BeforeMultiAgentInvocationEvent,
+    MultiAgentInitializedEvent,
+)
+from strands.interrupt import Interrupt
 from strands.multiagent import GraphBuilder, Swarm
+from strands.multiagent.base import Status
 from strands.session.snapshot_session_manager import (
     SnapshotSessionManager,
+    _deserialize_snapshot,
+    _multi_agent_latest_key,
     _new_snapshot_id,
+    _serialize_snapshot,
     _session_prefix,
     _snapshot_key,
 )
 from strands.storage import LocalFileStorage
+from strands.storage.in_memory_storage import InMemoryStorage
+from strands.types._snapshot import Snapshot
 from strands.types.content import ContentBlock
 from strands.types.exceptions import ContextWindowOverflowException, SnapshotException
 from tests.fixtures.mocked_model_provider import MockedModelProvider
@@ -45,6 +64,15 @@ def _model(*texts):
 def _on_disk_key(session_id: str, agent_id: str) -> str:
     """The full raw-storage key for a session's latest snapshot (namespace + relative key)."""
     return f"session/{_snapshot_key(session_id, agent_id, snapshot_id=None)}"
+
+
+def _tool_result_text(agent, tool_use_id: str) -> str:
+    """The text of the tool result for ``tool_use_id`` in an agent's history."""
+    for message in agent.messages:
+        for content in message["content"]:
+            if content.get("toolResult", {}).get("toolUseId") == tool_use_id:
+                return content["toolResult"]["content"][0]["text"]
+    raise AssertionError(f"no tool result for {tool_use_id}")
 
 
 def _texts(agent) -> list[str]:
@@ -79,37 +107,418 @@ def test_unknown_save_latest_on_is_rejected(storage):
         SnapshotSessionManager("s1", storage=storage, save_latest_on="Invocation")  # type: ignore[arg-type]
 
 
-def test_graph_is_rejected_rather_than_silently_not_persisted(storage):
-    """Attaching this single-agent manager to a Graph fails loudly instead of persisting nothing."""
+@pytest.mark.parametrize("bad_strategy", ["Message", "invocation"])
+def test_unknown_bidi_agent_save_latest_on_is_rejected(storage, bad_strategy):
+    """The Bidi strategy has its own vocabulary; Agent-only values like "invocation" are rejected."""
+    with pytest.raises(ValueError, match="bidi_agent_save_latest_on must be one of"):
+        SnapshotSessionManager("s1", storage=storage, bidi_agent_save_latest_on=bad_strategy)
+
+
+def test_graph_snapshot_is_persisted_after_run(storage):
+    """Running a Graph with the manager writes its state to the multiAgent scope key."""
     builder = GraphBuilder()
     builder.add_node(Agent(model=_model("done"), agent_id="n1"), "n1")
-    builder.set_session_manager(SnapshotSessionManager("g1", storage=storage))
-    with pytest.raises(NotImplementedError, match="does not support multi-agent"):
-        builder.build()
+    builder.set_graph_id("g1")
+    builder.set_session_manager(SnapshotSessionManager("mm", storage=storage))
+    graph = builder.build()
+
+    asyncio.run(graph.invoke_async("go"))
+
+    key = "session/mm/scopes/multiAgent/g1/snapshots/snapshot_latest.json"
+    raw = asyncio.run(storage.read(key))
+    assert raw is not None
+    snapshot = _deserialize_snapshot(raw)
+    assert snapshot.scope == "multiAgent"
+    assert snapshot.data["orchestrator_id"] == "g1"
+    assert snapshot.data["state"]["type"] == "graph"
 
 
-def test_swarm_is_rejected_rather_than_silently_not_persisted(storage):
-    """Attaching this single-agent manager to a Swarm fails loudly instead of persisting nothing."""
-    with pytest.raises(NotImplementedError, match="does not support multi-agent"):
+def test_swarm_snapshot_is_persisted_after_run(storage):
+    """Running a Swarm with the manager writes its state to the multiAgent scope key."""
+    swarm = Swarm(
+        nodes=[Agent(model=_model("done"), agent_id="n1")],
+        session_manager=SnapshotSessionManager("mm", storage=storage),
+        id="sw1",
+    )
+
+    asyncio.run(swarm.invoke_async("go"))
+
+    key = "session/mm/scopes/multiAgent/sw1/snapshots/snapshot_latest.json"
+    raw = asyncio.run(storage.read(key))
+    assert raw is not None
+    assert _deserialize_snapshot(raw).data["state"]["type"] == "swarm"
+
+
+def test_interrupted_graph_restores_before_applying_response(storage, agenerator):
+    """A fresh Graph applies an interrupt response after restoring the persisted interrupt state."""
+    interrupt = Interrupt(id="approval", name="approval", reason="approval required")
+    interrupted_agent = Agent(model=_model("unused"), agent_id="n1")
+    interrupted_agent._interrupt_state.interrupts[interrupt.id] = interrupt
+    interrupted_agent._interrupt_state.activate()
+    interrupted_agent.stream_async = Mock(
+        return_value=agenerator(
+            [
+                {
+                    "result": AgentResult(
+                        message={},
+                        stop_reason="interrupt",
+                        state={},
+                        metrics=None,
+                        interrupts=[interrupt],
+                    )
+                }
+            ]
+        )
+    )
+
+    def _graph(agent, manager):
+        builder = GraphBuilder()
+        builder.add_node(agent, "n1")
+        builder.set_graph_id("g1")
+        builder.set_session_manager(manager)
+        return builder.build()
+
+    first = _graph(interrupted_agent, SnapshotSessionManager("mm", storage=storage))
+    interrupted_result = asyncio.run(first.invoke_async("go"))
+    assert interrupted_result.status == Status.INTERRUPTED
+
+    resumed_agent = Agent(model=_model("unused"), agent_id="n1")
+    resumed_agent.stream_async = Mock(
+        return_value=agenerator(
+            [
+                {
+                    "result": AgentResult(
+                        message={"role": "assistant", "content": [{"text": "done"}]},
+                        stop_reason="end_turn",
+                        state={},
+                        metrics=None,
+                    )
+                }
+            ]
+        )
+    )
+    resumed = _graph(resumed_agent, SnapshotSessionManager("mm", storage=storage))
+    responses = [{"interruptResponse": {"interruptId": interrupt.id, "response": "approved"}}]
+
+    result = asyncio.run(resumed.invoke_async(responses))
+
+    assert result.status == Status.COMPLETED
+    resumed_agent.stream_async.assert_called_once_with(responses, invocation_state={})
+
+
+def test_interrupted_swarm_restores_before_applying_response(storage, agenerator):
+    """A fresh Swarm applies an interrupt response after restoring the persisted interrupt state."""
+    interrupt = Interrupt(id="approval", name="approval", reason="approval required")
+    interrupted_agent = Agent(model=_model("unused"), agent_id="n1")
+    interrupted_agent._interrupt_state.interrupts[interrupt.id] = interrupt
+    interrupted_agent._interrupt_state.activate()
+    interrupted_agent.stream_async = Mock(
+        return_value=agenerator(
+            [
+                {
+                    "result": AgentResult(
+                        message={},
+                        stop_reason="interrupt",
+                        state={},
+                        metrics=None,
+                        interrupts=[interrupt],
+                    )
+                }
+            ]
+        )
+    )
+
+    first = Swarm(
+        nodes=[interrupted_agent],
+        session_manager=SnapshotSessionManager("mm-swarm", storage=storage),
+        id="sw1",
+    )
+    interrupted_result = asyncio.run(first.invoke_async("go"))
+    assert interrupted_result.status == Status.INTERRUPTED
+
+    resumed_agent = Agent(model=_model("unused"), agent_id="n1")
+    resumed_agent.stream_async = Mock(
+        return_value=agenerator(
+            [
+                {
+                    "result": AgentResult(
+                        message={"role": "assistant", "content": [{"text": "done"}]},
+                        stop_reason="end_turn",
+                        state={},
+                        metrics=None,
+                    )
+                }
+            ]
+        )
+    )
+    resumed = Swarm(
+        nodes=[resumed_agent],
+        session_manager=SnapshotSessionManager("mm-swarm", storage=storage),
+        id="sw1",
+    )
+    responses = [{"interruptResponse": {"interruptId": interrupt.id, "response": "approved"}}]
+
+    result = asyncio.run(resumed.invoke_async(responses))
+
+    assert result.status == Status.COMPLETED
+    resumed_agent.stream_async.assert_called_once_with(responses, invocation_state={})
+
+
+def test_load_snapshot_restores_mid_run_state(storage):
+    """Loading a resumable (non-terminal) snapshot restores completed nodes and the frontier.
+
+    Proves restore loads real state rather than only not crashing; the terminal-reset case is
+    covered separately by ``test_completed_orchestrator_reinvokes_from_scratch``.
+    """
+    from strands.multiagent._snapshot import load_snapshot
+    from strands.types._snapshot import SNAPSHOT_SCHEMA_VERSION, Snapshot
+
+    def _graph():
+        builder = GraphBuilder()
+        builder.add_node(Agent(model=_model("done"), agent_id="n1"), "n1")
+        builder.add_node(Agent(model=_model("done"), agent_id="n2"), "n2")
+        builder.add_edge("n1", "n2")
+        builder.set_entry_point("n1")
+        builder.set_graph_id("g1")
+        return builder.build()
+
+    mid_run_state = {
+        "type": "graph",
+        "id": "g1",
+        "status": "executing",
+        "completed_nodes": ["n1"],
+        "failed_nodes": [],
+        "interrupted_nodes": [],
+        "node_results": {},
+        "next_nodes_to_execute": ["n2"],
+        "current_task": "go",
+        "execution_order": ["n1"],
+        "accumulated_usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2},
+        "accumulated_metrics": {"latencyMs": 5},
+        "execution_count": 1,
+        "execution_time": 5,
+    }
+    snapshot = Snapshot(
+        scope="multiAgent",
+        schema_version=SNAPSHOT_SCHEMA_VERSION,
+        data={"orchestrator_id": "g1", "state": mid_run_state},
+        app_data={},
+    )
+
+    graph = _graph()
+    load_snapshot(graph, snapshot)
+
+    assert {n.node_id for n in graph.state.completed_nodes} == {"n1"}
+    assert graph.state.execution_count == 1
+    assert graph.state.execution_time == 5
+
+
+@pytest.mark.asyncio
+async def test_multi_agent_restore_without_snapshot_runs_once():
+    """A successful restore attempt with no snapshot is not repeated.
+
+    Guards https://github.com/strands-agents/harness-sdk/issues/4396:
+    restoration is complete after storage confirms that no checkpoint exists.
+    """
+
+    class CountingReadStorage(InMemoryStorage):
+        def __init__(self):
+            super().__init__()
+            self.read_calls = 0
+
+        async def read(self, key: str) -> bytes | None:
+            self.read_calls += 1
+            return await super().read(key)
+
+    storage = CountingReadStorage()
+    builder = GraphBuilder()
+    builder.add_node(Agent(model=_model("first", "second"), agent_id="n1"), "n1")
+    builder.set_entry_point("n1")
+    builder.set_graph_id("g1")
+    builder.set_session_manager(SnapshotSessionManager("mm", storage=storage))
+    graph = builder.build()
+
+    assert (await graph.invoke_async("first")).status == Status.COMPLETED
+    assert (await graph.invoke_async("second")).status == Status.COMPLETED
+    assert storage.read_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_multi_agent_restore_retries_after_storage_failure():
+    """A failed restore leaves the checkpoint intact and resumes only pending nodes.
+
+    Guards https://github.com/strands-agents/harness-sdk/issues/4396:
+    a transient restore failure must not suppress restoration on the next invocation.
+    """
+    from strands.hooks.events import BeforeNodeCallEvent
+    from strands.types._snapshot import SNAPSHOT_SCHEMA_VERSION
+
+    class FailOnceReadStorage(InMemoryStorage):
+        def __init__(self):
+            super().__init__()
+            self.read_calls = 0
+
+        async def read(self, key: str) -> bytes | None:
+            self.read_calls += 1
+            if self.read_calls == 1:
+                raise RuntimeError("transient read failure")
+            return await super().read(key)
+
+    storage = FailOnceReadStorage()
+    mid_run_state = {
+        "type": "graph",
+        "id": "g1",
+        "status": "executing",
+        "completed_nodes": ["n1"],
+        "failed_nodes": [],
+        "interrupted_nodes": [],
+        "node_results": {},
+        "next_nodes_to_execute": ["n2"],
+        "current_task": "go",
+        "execution_order": ["n1"],
+        "accumulated_usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2},
+        "accumulated_metrics": {"latencyMs": 5},
+        "execution_count": 1,
+        "execution_time": 5,
+    }
+    snapshot = Snapshot(
+        scope="multiAgent",
+        schema_version=SNAPSHOT_SCHEMA_VERSION,
+        data={"orchestrator_id": "g1", "state": mid_run_state},
+        app_data={},
+    )
+    storage_key = f"session/{_multi_agent_latest_key('mm', 'g1')}"
+    snapshot_bytes = _serialize_snapshot(snapshot)
+    await storage.write(storage_key, snapshot_bytes)
+
+    manager = SnapshotSessionManager("mm", storage=storage)
+    first_agent = Agent(model=_model("unexpected"), agent_id="n1")
+    second_agent = Agent(model=_model("done"), agent_id="n2")
+    builder = GraphBuilder()
+    builder.add_node(first_agent, "n1")
+    builder.add_node(second_agent, "n2")
+    builder.add_edge("n1", "n2")
+    builder.set_entry_point("n1")
+    builder.set_graph_id("g1")
+    builder.set_session_manager(manager)
+    graph = builder.build()
+    executed_nodes = []
+    graph.add_hook(lambda event: executed_nodes.append(event.node_id), BeforeNodeCallEvent)
+
+    with pytest.raises(RuntimeError, match="transient read failure"):
+        await graph.invoke_async("go")
+
+    assert await InMemoryStorage.read(storage, storage_key) == snapshot_bytes
+
+    result = await graph.invoke_async("go")
+
+    assert storage.read_calls == 2
+    assert result.status == Status.COMPLETED
+    assert executed_nodes == ["n2"]
+    assert {node.node_id for node in graph.state.completed_nodes} == {"n1", "n2"}
+    assert [node.node_id for node in graph.state.execution_order] == ["n1", "n2"]
+
+    persisted = _deserialize_snapshot(await InMemoryStorage.read(storage, storage_key))
+    assert set(persisted.data["state"]["completed_nodes"]) == {"n1", "n2"}
+    assert persisted.data["state"]["next_nodes_to_execute"] == []
+
+    await manager._on_before_multi_agent_invocation(BeforeMultiAgentInvocationEvent(source=graph))
+    assert storage.read_calls == 2
+
+
+def test_load_snapshot_rejects_orchestrator_id_mismatch(storage):
+    """A snapshot is refused if loaded into an orchestrator with a different id."""
+    from strands.multiagent._snapshot import load_snapshot, take_snapshot
+
+    def _swarm(swarm_id):
+        return Swarm(nodes=[Agent(model=_model("done"), agent_id="n1")], id=swarm_id)
+
+    snapshot = take_snapshot(_swarm("sw1"))
+    with pytest.raises(SnapshotException, match="orchestrator id mismatch"):
+        load_snapshot(_swarm("other"), snapshot)
+
+
+def test_load_snapshot_rejects_wrong_scope(storage):
+    """An agent-scope snapshot is refused when loaded as a multi-agent one."""
+    from strands.multiagent._snapshot import load_snapshot
+    from strands.types._snapshot import SNAPSHOT_SCHEMA_VERSION, Snapshot
+
+    agent_scoped = Snapshot(
+        scope="agent",
+        schema_version=SNAPSHOT_SCHEMA_VERSION,
+        data={"orchestrator_id": "sw1", "state": {}},
+        app_data={},
+    )
+    swarm = Swarm(nodes=[Agent(model=_model("done"), agent_id="n1")], id="sw1")
+    with pytest.raises(SnapshotException, match="Expected snapshot scope 'multiAgent'"):
+        load_snapshot(swarm, agent_scoped)
+
+
+def test_completed_orchestrator_reinvokes_from_scratch(storage):
+    """A completed run persists an empty resume frontier, so restoring it re-runs from the start.
+
+    Guards the issue's completed-then-reinvoked case: a terminal snapshot must not leave the
+    orchestrator mid-run on the next invocation.
+    """
+    from strands.multiagent._snapshot import load_snapshot, take_snapshot
+
+    def _swarm():
+        agent = Agent(model=_model("done"), agent_id="n1")
+        return Swarm(nodes=[agent], id="sw1"), agent
+
+    source, _ = _swarm()
+    asyncio.run(source.invoke_async("go"))
+    assert take_snapshot(source).data["state"]["next_nodes_to_execute"] == []
+
+    restored, restored_agent = _swarm()
+    load_snapshot(restored, take_snapshot(source))
+    result = asyncio.run(restored.invoke_async("go again"))
+
+    assert result.status == Status.COMPLETED
+    assert restored.state.task == "go again"
+    assert "User Request: go again" in "\n".join(_texts(restored_agent))
+
+
+def test_invocation_strategy_does_not_register_node_hook(storage):
+    """Under ``multi_agent_save_latest_on='invocation'`` the per-node save hook is not registered."""
+    manager = SnapshotSessionManager("mm", storage=storage, multi_agent_save_latest_on="invocation")
+    registered: list[type] = []
+    orchestrator = Mock()
+    orchestrator.add_hook = lambda callback, event_type: registered.append(event_type)
+
+    manager._init_multi_agent(MultiAgentInitializedEvent(orchestrator))
+
+    assert AfterNodeCallEvent not in registered
+    assert BeforeMultiAgentInvocationEvent in registered
+    assert AfterMultiAgentInvocationEvent in registered
+
+
+def test_node_strategy_registers_node_hook(storage):
+    """Under the default ``'node'`` strategy the per-node save hook is registered."""
+    manager = SnapshotSessionManager("mm", storage=storage)
+    registered: list[type] = []
+    orchestrator = Mock()
+    orchestrator.add_hook = lambda callback, event_type: registered.append(event_type)
+
+    manager._init_multi_agent(MultiAgentInitializedEvent(orchestrator))
+
+    assert AfterNodeCallEvent in registered
+
+
+def test_multi_agent_requires_storage_in_constructor(storage):
+    """An orchestrator has no agent to resolve storage from, so it must be given in the constructor."""
+    with pytest.raises(RuntimeError, match="requires a storage backend for multi-agent"):
         Swarm(
             nodes=[Agent(model=_model("done"), agent_id="n1")],
-            session_manager=SnapshotSessionManager("sw1", storage=storage),
+            session_manager=SnapshotSessionManager("sw1"),
+            id="sw1",
         )
 
 
-def test_bidi_agent_is_rejected_rather_than_silently_not_persisted(storage):
-    """Attaching this single-agent manager to a BidiAgent fails loudly instead of persisting nothing.
-
-    The base SessionManager wires BidiAgent hooks to message-log methods; this manager replaces
-    that wiring, so without an explicit rejection a BidiAgent would appear persisted while
-    nothing was ever written.
-    """
-    manager = SnapshotSessionManager("b1", storage=storage)
-    registry = HookRegistry()
-    manager.register_hooks(registry)
-
-    with pytest.raises(NotImplementedError, match="does not support BidiAgent"):
-        registry.invoke_callbacks(BidiAgentInitializedEvent(agent=Mock()))
+def test_unknown_multi_agent_save_latest_on_is_rejected(storage):
+    """A mistyped multi_agent_save_latest_on is rejected rather than silently registering no hooks."""
+    with pytest.raises(ValueError, match="multi_agent_save_latest_on must be one of"):
+        SnapshotSessionManager("s1", storage=storage, multi_agent_save_latest_on="Node")  # type: ignore[arg-type]
 
 
 def test_child_agent_session_manager_still_blocked(storage):
@@ -681,6 +1090,12 @@ async def test_list_snapshot_ids_pagination(storage):
     assert len(all_ids) == 3
     assert all_ids == sorted(all_ids)
 
+    # guards against a malformed key sorting ahead of valid ids and displacing them from a
+    # limited page (#4198); "000-bad" sorts before every real UUIDv7 id
+    history_prefix = "session/s1/scopes/agent/a1/snapshots/immutable_history/"
+    await storage.write(f"{history_prefix}snapshot_000-bad.json", b"invalid")
+    assert await manager.list_snapshot_ids(agent) == all_ids
+
     assert await manager.list_snapshot_ids(agent, limit=2) == all_ids[:2]
     assert await manager.list_snapshot_ids(agent, limit=0) == []
     assert await manager.list_snapshot_ids(agent, start_after=all_ids[0]) == all_ids[1:]
@@ -811,3 +1226,612 @@ async def test_wrong_shape_snapshot_raises_typed_error_on_restore(temp_dir, blob
 
     with pytest.raises(SnapshotException):
         Agent(model=_model("hi"), session_manager=SnapshotSessionManager("s1", storage=storage), agent_id="a1")
+
+
+# ---------------------------------------------------------------------------
+# Stash integration
+# ---------------------------------------------------------------------------
+
+
+class TestSnapshotStashIntegration:
+    """Tests for context-manager stash persistence through snapshots."""
+
+    @pytest.mark.asyncio
+    async def test_save_includes_inline_stash_for_ephemeral_storage(self, storage):
+        """Agent with InMemoryStorage-backed stash → stash entries are inlined in the snapshot."""
+        context_manager = ContextManager(stash={"storage": InMemoryStorage()})
+        manager = SnapshotSessionManager("s1", storage=storage)
+        agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
+        agent("go")
+
+        await context_manager.stash.load_snapshot({"ref-1": {"text": "stashed content"}})
+        manager.sync_agent(agent)
+
+        # Restore into a new agent and verify stash round-trips
+        restored_context_manager = ContextManager(stash={"storage": InMemoryStorage()})
+        manager2 = SnapshotSessionManager("s1", storage=storage)
+        Agent(model=_model("x"), session_manager=manager2, context_manager=restored_context_manager, agent_id="a1")
+
+        result = await restored_context_manager.stash.retrieve("ref-1")
+        assert result == {"text": "stashed content"}
+
+    @pytest.mark.asyncio
+    async def test_save_writes_external_ref_for_durable_storage(self, temp_dir):
+        """Agent with durable stash storage → snapshot carries an external reference, not inline data."""
+        stash_storage = LocalFileStorage(f"{temp_dir}/stash")
+        context_manager = ContextManager(stash={"storage": stash_storage})
+        session_storage = LocalFileStorage(f"{temp_dir}/session")
+        manager = SnapshotSessionManager("s1", storage=session_storage)
+        agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
+        agent("go")
+
+        await context_manager.stash.load_snapshot({"ref-1": {"text": "durable"}})
+        manager.sync_agent(agent)
+
+        # Read the raw snapshot and verify it has an external ref
+        key = _on_disk_key("s1", "a1")
+        raw = await session_storage.read(key)
+        snapshot_data = json.loads(raw)
+        stash_data = snapshot_data["data"].get("stash")
+        assert stash_data is not None
+        assert stash_data["location"] == "external"
+        assert stash_data["storage_type"] == "LocalFileStorage"
+
+    @pytest.mark.asyncio
+    async def test_save_omits_stash_when_no_context_manager(self, storage):
+        """Agent without ContextManager → snapshot has no stash key."""
+        manager = SnapshotSessionManager("s1", storage=storage)
+        agent = Agent(model=_model("hi"), session_manager=manager, agent_id="a1")
+        agent("go")
+
+        key = _on_disk_key("s1", "a1")
+        raw = await storage.read(key)
+        snapshot_data = json.loads(raw)
+        assert "stash" not in snapshot_data["data"]
+
+    @pytest.mark.asyncio
+    async def test_save_omits_stash_when_empty(self, storage):
+        """Agent with stash but no stored entries → no stash key in snapshot."""
+        context_manager = ContextManager(stash={"storage": InMemoryStorage()})
+        manager = SnapshotSessionManager("s1", storage=storage)
+        agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
+        agent("go")
+
+        await context_manager.stash.clear()
+        manager.sync_agent(agent)
+
+        key = _on_disk_key("s1", "a1")
+        raw = await storage.read(key)
+        snapshot_data = json.loads(raw)
+        assert "stash" not in snapshot_data["data"]
+
+    def test_restore_warns_on_storage_type_mismatch(self, storage, caplog):
+        """Restoring an external-ref snapshot with a different storage type logs a warning."""
+        snapshot = Snapshot(
+            scope="agent",
+            schema_version="1.0",
+            data={
+                "messages": [],
+                "state": {},
+                "stash": {"location": "external", "storage_type": "S3Storage"},
+            },
+            app_data={},
+        )
+        key = _on_disk_key("s1", "a1")
+        asyncio.run(storage.write(key, _serialize_snapshot(snapshot)))
+
+        context_manager = ContextManager(stash={"storage": InMemoryStorage()})
+        manager = SnapshotSessionManager("s1", storage=storage)
+        with caplog.at_level(logging.WARNING, logger="strands.session.snapshot_session_manager"):
+            Agent(model=_model("x"), session_manager=manager, context_manager=context_manager, agent_id="a1")
+
+        assert any("stash storage type changed" in record.message for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_delete_session_clears_stash(self, temp_dir):
+        """delete_session removes stash data in addition to snapshots."""
+        session_storage = LocalFileStorage(f"{temp_dir}/session")
+        stash_mem = InMemoryStorage()
+        context_manager = ContextManager(stash={"storage": stash_mem})
+        manager = SnapshotSessionManager("s1", storage=session_storage)
+        agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
+        agent("go")
+
+        await context_manager.stash.load_snapshot({"ref-1": {"text": "data"}})
+        assert await context_manager.stash.list() != []
+
+        await manager.delete_session()
+
+        assert await context_manager.stash.list() == []
+
+    @pytest.mark.asyncio
+    async def test_delete_session_without_initialize_clears_stash(self, temp_dir):
+        """delete_session on an uninitialized manager still clears stash data via storage fallback."""
+        shared_storage = LocalFileStorage(f"{temp_dir}/shared")
+        context_manager = ContextManager(stash={"storage": shared_storage})
+        manager = SnapshotSessionManager("s1", storage=shared_storage)
+        agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
+        agent("go")
+
+        await context_manager.stash.load_snapshot({"ref-1": {"text": "orphan"}})
+        assert await shared_storage.list("context/s1/") != []
+
+        bare_manager = SnapshotSessionManager("s1", storage=shared_storage)
+        await bare_manager.delete_session()
+
+        assert await shared_storage.list("context/s1/") == []
+
+    def test_no_context_manager_save_restore_works(self, storage):
+        """Save/restore works normally when no ContextManager is present."""
+        manager = SnapshotSessionManager("s1", storage=storage)
+        agent = Agent(model=_model("hi"), session_manager=manager, agent_id="a1")
+        agent("go")
+
+        manager2 = SnapshotSessionManager("s1", storage=storage)
+        agent2 = Agent(model=_model("x"), session_manager=manager2, agent_id="a1")
+        assert _texts(agent2) == _texts(agent)
+
+    def test_restore_succeeds_when_stash_load_fails(self, storage):
+        """A stash storage error during restore logs a warning but the agent is still restored."""
+        context_manager = ContextManager(stash={"storage": InMemoryStorage()})
+        manager = SnapshotSessionManager("s1", storage=storage)
+        agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
+        agent("go")
+
+        asyncio.run(context_manager.stash.load_snapshot({"ref-1": {"text": "data"}}))
+        manager.sync_agent(agent)
+
+        restored_context_manager = ContextManager(stash={"storage": InMemoryStorage()})
+        restored_context_manager._stash = Mock()
+        restored_context_manager._stash.load_snapshot = AsyncMock(side_effect=RuntimeError("corrupted"))
+        restored_context_manager._stash.storage_type_name = "InMemoryStorage"
+
+        manager2 = SnapshotSessionManager("s1", storage=storage)
+        agent2 = Agent(
+            model=_model("x"), session_manager=manager2, context_manager=restored_context_manager, agent_id="a1"
+        )
+        assert _texts(agent2) == _texts(agent)
+
+    @pytest.mark.asyncio
+    async def test_immutable_snapshot_includes_stash(self, temp_dir):
+        """A snapshot_trigger produces an immutable checkpoint with inline stash data."""
+        session_storage = LocalFileStorage(f"{temp_dir}/session")
+        context_manager = ContextManager(stash={"storage": InMemoryStorage()})
+        manager = SnapshotSessionManager("s1", storage=session_storage, snapshot_trigger=lambda **_: True)
+        agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
+
+        await context_manager.stash.load_snapshot({"ref-1": {"text": "immutable data"}})
+        agent("go")
+
+        immutable_prefix = f"session/{_session_prefix('s1')}scopes/agent/a1/snapshots/immutable_history/"
+        keys = await session_storage.list(immutable_prefix)
+        assert len(keys) >= 1
+
+        raw = await session_storage.read(keys[0])
+        snapshot_data = json.loads(raw)
+        assert snapshot_data["data"]["stash"]["location"] == "inline"
+        assert "ref-1" in snapshot_data["data"]["stash"]["entries"]
+
+    @pytest.mark.asyncio
+    async def test_ephemeral_detection_survives_namespacing(self, storage):
+        """An InMemoryStorage wrapped with .namespace() is still detected as ephemeral."""
+        from strands.storage.storage import _NamespacedStorage
+
+        namespaced = _NamespacedStorage(InMemoryStorage(), "tenant")
+        context_manager = ContextManager(stash={"storage": namespaced})
+        manager = SnapshotSessionManager("s1", storage=storage)
+        agent = Agent(model=_model("hi"), session_manager=manager, context_manager=context_manager, agent_id="a1")
+        agent("go")
+
+        await context_manager.stash.load_snapshot({"ref-1": {"text": "wrapped ephemeral"}})
+        manager.sync_agent(agent)
+
+        key = _on_disk_key("s1", "a1")
+        raw = await storage.read(key)
+        snapshot_data = json.loads(raw)
+        assert snapshot_data["data"]["stash"]["location"] == "inline"
+
+    @pytest.mark.parametrize("stash_mode", ["inline", "durable"])
+    def test_resume_keeps_original_of_truncated_tool_result_retrievable(self, storage, stash_mode):
+        """After a resume, retrieve_context returns the full original of a tool result truncated before the restart."""
+        full_result = "full tool result " * 2_000
+
+        @tool
+        def fetch_result() -> str:
+            """Return a large result."""
+            return full_result
+
+        def build_agent(model):
+            storage_options = {"storage": storage} if stash_mode == "durable" else {}
+            return Agent(
+                model=model,
+                tools=[fetch_result],
+                context_manager="auto",
+                session_manager=SnapshotSessionManager("s1", storage=storage),
+                agent_id="a1",
+                callback_handler=None,
+                **storage_options,
+            )
+
+        first_agent = build_agent(
+            MockedModelProvider(
+                [
+                    {
+                        "role": "assistant",
+                        "content": [{"toolUse": {"toolUseId": "tu-1", "name": "fetch_result", "input": {}}}],
+                    },
+                    {"role": "assistant", "content": [{"text": "fetched"}]},
+                ]
+            )
+        )
+        first_agent("fetch")
+        assert _tool_result_text(first_agent, "tu-1").startswith("[Truncated:")
+
+        resumed_agent = build_agent(
+            MockedModelProvider(
+                [
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "toolUse": {
+                                    "toolUseId": "tu-2",
+                                    "name": "retrieve_context",
+                                    "input": {"reference": "tu-1_0"},
+                                }
+                            }
+                        ],
+                    },
+                    {"role": "assistant", "content": [{"text": "done"}]},
+                ]
+            )
+        )
+        resumed_agent("read it in full")
+
+        assert json.loads(_tool_result_text(resumed_agent, "tu-2")) == {"text": full_result}
+        assert asyncio.run(resumed_agent.context_manager.stash.retrieve("tu-1_0")) == {"text": full_result}
+
+
+# ---------------------------------------------------------------------------
+# BidiAgent persistence
+# ---------------------------------------------------------------------------
+
+
+def _bidi_model() -> AsyncMock:
+    model = AsyncMock(spec=BidiModel)
+    model.get_connection_config.return_value = {}
+    model.stateful = False
+    return model
+
+
+def _bidi_agent(manager: SnapshotSessionManager, **kwargs) -> BidiAgent:
+    return BidiAgent(model=_bidi_model(), session_manager=manager, agent_id="b1", **kwargs)
+
+
+def _spy_writes(storage: LocalFileStorage) -> list[str]:
+    save_keys: list[str] = []
+    original = storage.write
+
+    async def _spy(key, data, **kwargs):
+        save_keys.append(key)
+        await original(key, data, **kwargs)
+
+    storage.write = _spy  # type: ignore[method-assign]
+    return save_keys
+
+
+def test_bidi_agent_registers_stop_hook_not_response_hook(storage):
+    agent = _bidi_agent(SnapshotSessionManager("s1", storage=storage))
+
+    assert BidiAgentStopEvent in agent.hooks._registered_callbacks
+    assert BidiResponseStopEvent not in agent.hooks._registered_callbacks
+
+
+@pytest.mark.asyncio
+async def test_bidi_agent_restores_across_instances_before_start(storage):
+    agent = _bidi_agent(SnapshotSessionManager("s1", storage=storage), system_prompt="You are a voice assistant.")
+    agent.state.set("favorite", "blue")
+    await agent.start()
+    await agent.send("What is the answer?")
+    await agent.stop()
+
+    agent_2 = _bidi_agent(SnapshotSessionManager("s1", storage=storage))
+    started_messages = []
+    agent_2.model.start.side_effect = lambda **kwargs: started_messages.extend(
+        json.loads(json.dumps(kwargs["messages"]))
+    )
+    await agent_2.start()
+    tru_start_kwargs = agent_2.model.start.call_args.kwargs
+    await agent_2.stop()
+
+    assert _texts(agent_2) == ["What is the answer?"]
+    assert agent_2.state.get("favorite") == "blue"
+    assert agent_2.system_prompt == "You are a voice assistant."
+    assert [content["text"] for message in started_messages for content in message["content"]] == [
+        "What is the answer?"
+    ]
+    assert tru_start_kwargs["system_prompt"] == "You are a voice assistant."
+
+
+@pytest.mark.asyncio
+async def test_bidi_agent_snapshot_contains_only_bidi_fields(storage):
+    agent = _bidi_agent(SnapshotSessionManager("s1", storage=storage), system_prompt="prompt")
+    await agent._append_messages({"role": "user", "content": [{"text": "hi"}]})
+    await agent.hooks.invoke_callbacks_async(BidiAgentStopEvent(agent=agent))
+
+    raw = await storage.read(_on_disk_key("s1", "b1"))
+    tru_fields = set(_deserialize_snapshot(raw).data)
+    exp_fields = {"messages", "state", "system_prompt"}
+    assert tru_fields == exp_fields
+
+
+@pytest.mark.asyncio
+async def test_bidi_agent_stop_strategy_saves_once_at_stop(temp_dir):
+    storage = LocalFileStorage(temp_dir)
+    save_keys = _spy_writes(storage)
+    agent = _bidi_agent(SnapshotSessionManager("s1", storage=storage, bidi_agent_save_latest_on="stop"))
+    save_keys.clear()
+
+    await agent._append_messages({"role": "user", "content": [{"text": "one"}]})
+    await agent._append_messages({"role": "assistant", "content": [{"text": "two"}]})
+    assert save_keys == []
+
+    await agent.hooks.invoke_callbacks_async(BidiAgentStopEvent(agent=agent))
+
+    assert save_keys == [_on_disk_key("s1", "b1")]
+
+
+@pytest.mark.asyncio
+async def test_bidi_agent_defaults_to_message_strategy_saving_replacements_and_at_stop(temp_dir):
+    """The Bidi default is "message": a streaming session has no invocation boundary to save at."""
+    storage = LocalFileStorage(temp_dir)
+    save_keys = _spy_writes(storage)
+    agent = _bidi_agent(SnapshotSessionManager("s1", storage=storage))
+    save_keys.clear()
+
+    placeholder = {"role": "assistant", "content": [{"text": ""}]}
+    await agent._append_messages(placeholder)
+    replacement = {
+        "role": "assistant",
+        "content": [{"text": "complete"}],
+        "tracking_id": placeholder["tracking_id"],
+    }
+    await agent._update_message(replacement)
+
+    restored = _bidi_agent(SnapshotSessionManager("s1", storage=storage))
+    assert _texts(restored) == ["complete"]
+
+    await agent.hooks.invoke_callbacks_async(BidiAgentStopEvent(agent=agent))
+    assert save_keys == [_on_disk_key("s1", "b1")] * 3
+
+
+@pytest.mark.asyncio
+async def test_bidi_agent_trigger_strategy_skips_latest_without_trigger(temp_dir):
+    storage = LocalFileStorage(temp_dir)
+    save_keys = _spy_writes(storage)
+    agent = _bidi_agent(SnapshotSessionManager("s1", storage=storage, bidi_agent_save_latest_on="trigger"))
+    save_keys.clear()
+
+    await agent._append_messages({"role": "user", "content": [{"text": "one"}]})
+    await agent.hooks.invoke_callbacks_async(BidiAgentStopEvent(agent=agent))
+
+    assert save_keys == []
+
+
+@pytest.mark.asyncio
+async def test_bidi_agent_ignores_agent_save_latest_on(temp_dir):
+    """The two strategies are independent: the Agent "message" strategy does not leak into a BidiAgent."""
+    storage = LocalFileStorage(temp_dir)
+    save_keys = _spy_writes(storage)
+    manager = SnapshotSessionManager("s1", storage=storage, save_latest_on="message", bidi_agent_save_latest_on="stop")
+    agent = _bidi_agent(manager)
+    save_keys.clear()
+
+    await agent._append_messages({"role": "user", "content": [{"text": "one"}]})
+    assert save_keys == []
+
+    await agent.hooks.invoke_callbacks_async(BidiAgentStopEvent(agent=agent))
+    assert save_keys == [_on_disk_key("s1", "b1")]
+
+
+@pytest.mark.asyncio
+async def test_agent_ignores_bidi_agent_save_latest_on(temp_dir):
+    """The two strategies are independent: the Bidi "message" default does not leak into an Agent."""
+    storage = LocalFileStorage(temp_dir)
+    save_keys = _spy_writes(storage)
+    manager = SnapshotSessionManager(
+        "s1", storage=storage, save_latest_on="trigger", bidi_agent_save_latest_on="message"
+    )
+    agent = Agent(model=_model("reply"), session_manager=manager, agent_id="a1")
+    save_keys.clear()
+
+    await agent.invoke_async("hello")
+
+    assert save_keys == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bidi_agent_save_latest_on", ["message", "stop", "trigger"])
+async def test_bidi_agent_trigger_creates_immutable_and_latest_at_stop(storage, bidi_agent_save_latest_on):
+    seen: list[BidiAgent] = []
+
+    def trigger(*, agent_data, **kwargs):
+        seen.append(agent_data)
+        return True
+
+    manager = SnapshotSessionManager(
+        "s1", storage=storage, bidi_agent_save_latest_on=bidi_agent_save_latest_on, snapshot_trigger=trigger
+    )
+    agent = _bidi_agent(manager)
+    await agent._append_messages({"role": "user", "content": [{"text": "one"}]})
+    await agent.hooks.invoke_callbacks_async(BidiAgentStopEvent(agent=agent))
+
+    assert seen == [agent]
+    assert len(await manager.list_snapshot_ids(agent)) == 1
+    assert await storage.read(_on_disk_key("s1", "b1")) is not None
+
+
+@pytest.mark.asyncio
+async def test_bidi_agent_trigger_returning_false_appends_nothing(storage):
+    manager = SnapshotSessionManager("s1", storage=storage, snapshot_trigger=lambda *, agent_data, **_: False)
+    agent = _bidi_agent(manager)
+    await agent._append_messages({"role": "user", "content": [{"text": "one"}]})
+    await agent.hooks.invoke_callbacks_async(BidiAgentStopEvent(agent=agent))
+
+    assert await manager.list_snapshot_ids(agent) == []
+    assert await storage.read(_on_disk_key("s1", "b1")) is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bidi_agent_save_latest_on", ["stop", "trigger"])
+async def test_bidi_agent_raising_trigger_still_saves_latest(storage, bidi_agent_save_latest_on):
+    def boom(*, agent_data, **kwargs):
+        raise RuntimeError("trigger blew up")
+
+    manager = SnapshotSessionManager(
+        "s1", storage=storage, bidi_agent_save_latest_on=bidi_agent_save_latest_on, snapshot_trigger=boom
+    )
+    agent = _bidi_agent(manager)
+    await agent._append_messages({"role": "user", "content": [{"text": "survived"}]})
+    await agent.hooks.invoke_callbacks_async(BidiAgentStopEvent(agent=agent))
+
+    agent_2 = _bidi_agent(
+        SnapshotSessionManager("s1", storage=storage, bidi_agent_save_latest_on=bidi_agent_save_latest_on)
+    )
+    assert _texts(agent_2) == ["survived"]
+    assert await manager.list_snapshot_ids(agent) == []
+
+
+@pytest.mark.asyncio
+async def test_bidi_agent_state_changed_by_stop_hook_is_persisted(storage):
+    class StopStateHook:
+        def register_hooks(self, registry):
+            registry.add_callback(BidiAgentStopEvent, self.on_stop)
+
+        def on_stop(self, event):
+            event.agent.state.set("turns", 1)
+
+    agent = _bidi_agent(SnapshotSessionManager("s1", storage=storage), hooks=[StopStateHook()])
+    await agent.start()
+    await agent.send("hello")
+    await agent.stop()
+
+    agent_2 = _bidi_agent(SnapshotSessionManager("s1", storage=storage))
+    assert agent_2.state.get("turns") == 1
+
+
+@pytest.mark.asyncio
+async def test_bidi_agent_stop_cleanup_failure_still_saves_latest(storage):
+    agent = _bidi_agent(SnapshotSessionManager("s1", storage=storage))
+    await agent.start()
+    await agent.send("hello")
+    agent.model.stop.side_effect = RuntimeError("provider close failed")
+
+    with pytest.raises(RuntimeError, match="provider close failed"):
+        await agent.stop()
+
+    agent_2 = _bidi_agent(SnapshotSessionManager("s1", storage=storage))
+    assert _texts(agent_2) == ["hello"]
+
+
+@pytest.mark.asyncio
+async def test_bidi_agent_time_travel_restore_while_stopped(storage):
+    manager = SnapshotSessionManager("s1", storage=storage)
+    agent = _bidi_agent(manager)
+    await agent._append_messages({"role": "user", "content": [{"text": "turn 1"}]})
+    snapshot_id = await manager.save_snapshot(agent, is_latest=False)
+    await agent._append_messages({"role": "user", "content": [{"text": "turn 2"}]})
+    await agent.hooks.invoke_callbacks_async(BidiAgentStopEvent(agent=agent))
+
+    assert await manager.list_snapshot_ids(agent) == [snapshot_id]
+    assert await manager.restore_snapshot(agent, snapshot_id=snapshot_id) is True
+    assert _texts(agent) == ["turn 1"]
+
+    assert await manager.restore_snapshot(agent) is True
+    assert _texts(agent) == ["turn 1", "turn 2"]
+
+
+@pytest.mark.asyncio
+async def test_bidi_agent_restore_snapshot_rejected_while_started(storage):
+    manager = SnapshotSessionManager("s1", storage=storage)
+    agent = _bidi_agent(manager)
+    await agent._append_messages({"role": "user", "content": [{"text": "saved"}]})
+    await manager.save_snapshot(agent, is_latest=True)
+    agent.messages.clear()
+
+    await agent.start()
+    try:
+        with pytest.raises(RuntimeError, match="agent started"):
+            await manager.restore_snapshot(agent)
+        assert agent.messages == []
+    finally:
+        await agent.stop()
+
+
+@pytest.mark.asyncio
+async def test_bidi_agent_restore_warns_on_overwrite(storage, caplog):
+    agent = _bidi_agent(SnapshotSessionManager("s1", storage=storage))
+    await agent._append_messages({"role": "user", "content": [{"text": "first"}]})
+    await agent.hooks.invoke_callbacks_async(BidiAgentStopEvent(agent=agent))
+
+    _bidi_agent(
+        SnapshotSessionManager("s1", storage=storage),
+        messages=[{"role": "user", "content": [{"text": "pre-existing"}]}],
+    )
+
+    assert "overwritten by session restore" in caplog.text
+
+
+def test_agent_falls_back_to_local_file_storage(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    agent = Agent(model=_model("reply"), session_manager=SnapshotSessionManager("s1"), agent_id="a1")
+    agent("hello")
+
+    agent_2 = Agent(model=_model("x"), session_manager=SnapshotSessionManager("s1"), agent_id="a1")
+    assert _texts(agent_2) == ["hello", "reply"]
+
+
+def test_agent_resolves_agent_level_storage(storage):
+    agent = Agent(model=_model("reply"), storage=storage, session_manager=SnapshotSessionManager("s1"), agent_id="a1")
+    agent("hello")
+
+    assert asyncio.run(storage.read(_on_disk_key("s1", "a1"))) is not None
+    agent_2 = Agent(model=_model("x"), storage=storage, session_manager=SnapshotSessionManager("s1"), agent_id="a1")
+    assert _texts(agent_2) == ["hello", "reply"]
+
+
+@pytest.mark.asyncio
+async def test_bidi_agent_falls_back_to_local_file_storage(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    manager = SnapshotSessionManager("s1")
+    agent = _bidi_agent(manager)
+    await agent._append_messages({"role": "user", "content": [{"text": "hello"}]})
+    await agent.hooks.invoke_callbacks_async(BidiAgentStopEvent(agent=agent))
+
+    agent_2 = _bidi_agent(SnapshotSessionManager("s1"))
+    assert _texts(agent_2) == ["hello"]
+
+
+@pytest.mark.asyncio
+async def test_bidi_agent_resolves_agent_level_storage(storage):
+    agent = _bidi_agent(SnapshotSessionManager("s1"), storage=storage)
+    await agent._append_messages({"role": "user", "content": [{"text": "hello"}]})
+    await agent.hooks.invoke_callbacks_async(BidiAgentStopEvent(agent=agent))
+
+    assert await storage.read(_on_disk_key("s1", "b1")) is not None
+    agent_2 = _bidi_agent(SnapshotSessionManager("s1"), storage=storage)
+    assert _texts(agent_2) == ["hello"]
+
+
+@pytest.mark.asyncio
+async def test_bidi_agent_delete_session_removes_snapshots(storage):
+    manager = SnapshotSessionManager("s1", storage=storage, snapshot_trigger=lambda *, agent_data, **_: True)
+    agent = _bidi_agent(manager)
+    await agent._append_messages({"role": "user", "content": [{"text": "hello"}]})
+    await agent.hooks.invoke_callbacks_async(BidiAgentStopEvent(agent=agent))
+    assert len(await storage.list(f"session/{_session_prefix('s1')}")) == 2
+
+    await manager.delete_session()
+
+    assert await storage.list(f"session/{_session_prefix('s1')}") == []
+    assert _texts(_bidi_agent(SnapshotSessionManager("s1", storage=storage))) == []

@@ -1,0 +1,234 @@
+---
+title: Stream event types
+description: "Reference for every event a Strands agent stream emits: lifecycle, model output, tool activity, and multi-agent coordination events, plus how to serialize them."
+sidebar:
+  label: "Event types"
+tags: [streaming]
+sourceLinks:
+  - path: strands-py/src/strands/event_loop/streaming.py
+  - path: strands-ts/src/models/streaming.ts
+---
+
+Every way of consuming a Strands stream yields the same set of events: [async iterators](./async-iterators.md) and, in Python, [callback handlers](./callback-handlers.md). They differ in their execution model, not in what they emit. This page is the reference for every event type the stream produces: lifecycle signals, model output, tool activity, and multi-agent coordination, plus how to serialize events when forwarding them over the wire.
+
+## Event Types
+
+### Lifecycle Events
+
+<Tabs>
+<Tab label="Python">
+
+- **`init_event_loop`**: True at the start of agent invocation initializing
+- **`start_event_loop`**: True when the event loop is starting
+- **`event_loop_throttled_delay`**: Delay, in seconds, that the agent loop waited before retrying a model call after a retryable failure (by default only throttling, see [Retry Strategies](../agents/retry-strategies.md))
+- **`message`**: Present when a new message is created
+- **`event`**: Raw event from the model stream
+- **`force_stop`**: True if the event loop was forced to stop
+    - **`force_stop_reason`**: Reason for forced stop
+- **`result`**: The final [`AgentResult`](@api/python/strands.agent.agent_result#AgentResult)
+</Tab>
+<Tab label="TypeScript">
+
+Each event emitted from the TypeScript agent is a class with a `type` attribute that has a unique value. When determining an event, you can use `instanceof` on the class, or an equality check on the `event.type` value. All events extend `HookableEvent`, making them both streamable and subscribable via hook callbacks.
+
+- **`BeforeInvocationEvent`**: Start of agent loop (before any iterations)
+    - **`cancel`**: Set by hook callbacks to cancel the invocation (`boolean | string`)
+- **`AfterInvocationEvent`**: End of agent loop (after all iterations complete)
+    - **`error?`**: Optional error if loop terminated due to exception
+- **`BeforeModelCallEvent`**: Before model invocation
+    - **`messages`**: Array of messages being sent to model
+    - **`cancel`**: Set by hook callbacks to cancel the model call (`boolean | string`)
+- **`AfterModelCallEvent`**: After model invocation
+    - **`message`**: Assistant message returned by model
+    - **`stopReason`**: Why generation stopped
+- **`BeforeToolsEvent`**: Before tools execution
+    - **`message`**: Assistant message containing tool use blocks
+- **`AfterToolsEvent`**: After tools execution
+    - **`message`**: User message containing tool results
+- **`AgentResultEvent`**: Final agent result
+    - **`result`**: The `AgentResult` with `stopReason`, `lastMessage`, and optional `structuredOutput`
+</Tab>
+</Tabs>
+
+### Model Stream Events
+
+<Tabs>
+<Tab label="Python">
+
+- **`data`**: Text chunk from the model's output
+- **`delta`**: Raw delta content from the model
+- **`reasoning`**: True for reasoning events
+    - **`reasoningText`**: Text from reasoning process
+    - **`reasoning_signature`**: Signature from reasoning process
+    - **`redactedContent`**: Reasoning content redacted by the model
+</Tab>
+<Tab label="TypeScript">
+
+- **`ModelStreamUpdateEvent`**: Wraps transient model streaming deltas. Access the inner event via `.event`:
+    - **`ModelMessageStartEvent`**: Start of a message from the model
+    - **`ModelContentBlockStartEvent`**: Start of a content block (text, toolUse, reasoning, etc.)
+    - **`ModelContentBlockDeltaEvent`**: Content deltas for text, tool input, or reasoning
+    - **`ModelContentBlockStopEvent`**: End of a content block
+    - **`ModelMessageStopEvent`**: End of a message
+    - **`ModelMetadataEvent`**: Usage and metrics metadata
+- **`ContentBlockEvent`**: Wraps a fully assembled content block (TextBlock, ToolUseBlock, ReasoningBlock). Access via `.contentBlock`
+- **`ModelMessageEvent`**: Wraps the complete model message after all blocks are assembled. Access via `.message`
+</Tab>
+</Tabs>
+
+### Tool Events
+
+<Tabs>
+<Tab label="Python">
+- **`current_tool_use`**: Information about the current tool being used, including:
+    - **`toolUseId`**: Unique ID for this tool use
+    - **`name`**: Name of the tool
+    - **`input`**: Tool input parameters (accumulated as streaming occurs)
+- **`tool_stream_event`**: Information about [an event streamed from a tool](../tools/custom-tools.md#tool-streaming), including:
+    - **`tool_use`**: The [`ToolUse`](@api/python/strands.types.tools#ToolUse) for the tool that streamed the event
+    - **`data`**: The data streamed from the tool
+</Tab>
+<Tab label="TypeScript">
+- **`BeforeToolCallEvent`**: Before a tool is executed
+    - **`toolUse`**: The tool use block with `name` and `input`
+- **`AfterToolCallEvent`**: After a tool finishes execution
+    - **`toolUse`**: The tool use block
+    - **`result`**: The tool result block
+- **`ToolStreamUpdateEvent`**: Wraps streaming progress events from a tool. Access via `.event`:
+    - **`data`**: The data streamed from the tool
+- **`ToolResultEvent`**: Wraps a completed tool result. Access via `.result`
+</Tab>
+</Tabs>
+
+### Multi-Agent Events
+
+<Tabs>
+<Tab label="Python">
+
+Multi-agent systems ([Graph](../multi-agent/graph.md) and [Swarm](../multi-agent/swarm.md)) emit additional coordination events:
+
+- **`multiagent_node_start`**: When a node begins execution
+    - **`type`**: `"multiagent_node_start"`
+    - **`node_id`**: Unique identifier for the node
+    - **`node_type`**: Type of node (`"agent"`, `"swarm"`, `"graph"`)
+- **`multiagent_node_stream`**: Forwarded events from agents/multi-agents with node context
+    - **`type`**: `"multiagent_node_stream"`
+    - **`node_id`**: Identifier of the node generating the event
+    - **`event`**: The original agent event (nested)
+- **`multiagent_node_stop`**: When a node completes execution
+    - **`type`**: `"multiagent_node_stop"`
+    - **`node_id`**: Unique identifier for the node
+    - **`node_result`**: Complete NodeResult with execution details, metrics, and status
+- **`multiagent_handoff`**: When control is handed off between agents (Swarm) or batch transitions (Graph)
+    - **`type`**: `"multiagent_handoff"`
+    - **`from_node_ids`**: List of node IDs completing execution
+    - **`to_node_ids`**: List of node IDs beginning execution
+    - **`message`**: Optional handoff message (typically used in Swarm)
+- **`multiagent_result`**: Final multi-agent result
+    - **`type`**: `"multiagent_result"`
+    - **`result`**: The final GraphResult or SwarmResult
+
+See [Graph streaming](../multi-agent/graph.md#streaming-events) and [Swarm streaming](../multi-agent/swarm.md#streaming-events) for usage examples.
+</Tab>
+<Tab label="TypeScript">
+
+Multi-agent systems ([Graph](../multi-agent/graph.md) and [Swarm](../multi-agent/swarm.md)) emit additional coordination events. Each event is a class with a `type` attribute, extending `HookableEvent` for both streaming and hook subscription.
+
+- **`MultiAgentInitializedEvent`**: When a multi-agent orchestrator has finished initialization
+    - **`orchestrator`**: The `MultiAgentBase` instance
+- **`BeforeMultiAgentInvocationEvent`**: Before orchestrator execution starts
+    - **`orchestrator`**: The `MultiAgentBase` instance
+    - **`state`**: The current `MultiAgentState`
+- **`BeforeNodeCallEvent`**: Before a node begins execution
+    - **`nodeId`**: Unique identifier for the node
+    - **`orchestrator`**: The `MultiAgentBase` instance
+    - **`state`**: The current `MultiAgentState`
+    - **`cancel`**: Set by hook callbacks to cancel node execution (`boolean | string`)
+- **`NodeStreamUpdateEvent`**: Forwarded events from agents or nested orchestrators with node context
+    - **`nodeId`**: Identifier of the node generating the event
+    - **`nodeType`**: Type of node (`"agentNode"`, `"multiAgentNode"`)
+    - **`state`**: The current `MultiAgentState`
+    - **`event`**: The inner `AgentStreamEvent` or `MultiAgentStreamEvent`
+- **`NodeCancelEvent`**: When a node is cancelled via `BeforeNodeCallEvent.cancel`
+    - **`nodeId`**: Unique identifier for the node
+    - **`state`**: The current `MultiAgentState`
+    - **`message`**: Cancel reason
+- **`AfterNodeCallEvent`**: After a node completes execution
+    - **`nodeId`**: Unique identifier for the node
+    - **`orchestrator`**: The `MultiAgentBase` instance
+    - **`state`**: The current `MultiAgentState`
+    - **`error?`**: Optional error if the node failed
+- **`NodeResultEvent`**: When a node finishes execution
+    - **`nodeId`**: Unique identifier for the node
+    - **`nodeType`**: Type of node (`"agentNode"`, `"multiAgentNode"`)
+    - **`state`**: The current `MultiAgentState`
+    - **`result`**: The `NodeResult` with `status`, `duration`, `content`, and optional `error`
+- **`MultiAgentHandoffEvent`**: When execution transitions between nodes
+    - **`source`**: Node ID completing execution
+    - **`targets`**: Array of node IDs beginning execution
+    - **`state`**: The current `MultiAgentState`
+- **`AfterMultiAgentInvocationEvent`**: After orchestrator execution completes
+    - **`orchestrator`**: The `MultiAgentBase` instance
+    - **`state`**: The current `MultiAgentState`
+- **`MultiAgentResultEvent`**: Final event in the multi-agent stream
+    - **`result`**: The `MultiAgentResult` with `status`, `results`, `content`, and `duration`
+
+See [Graph streaming](../multi-agent/graph.md#streaming-events) and [Swarm streaming](../multi-agent/swarm.md#streaming-events) for usage examples.
+</Tab>
+</Tabs>
+
+### Event Serialization
+
+<Tabs>
+<Tab label="Python">
+
+Python streaming events are plain dictionaries. The SDK does not include a built-in serialization filter, so you control which events and fields to forward from your processes and servers.
+
+When serving streamed responses (for example, over SSE or WebSockets), you can filter the yielded events to keep payloads compact:
+
+```python
+import json
+
+def filter_event(event: dict) -> dict | None:
+    """Filter streaming events to only forward relevant data over the wire."""
+    # Forward text deltas for real-time display
+    if "data" in event:
+        return {"type": "text", "data": event["data"]}
+
+    # Forward tool usage for progress indicators
+    if "current_tool_use" in event and event["current_tool_use"].get("name"):
+        return {"type": "tool", "name": event["current_tool_use"]["name"]}
+
+    # Forward the final result
+    if "result" in event:
+        return {"type": "result", "stop_reason": str(event["result"].stop_reason)}
+
+    # Skip everything else (lifecycle signals, raw deltas, reasoning, etc.)
+    return None
+
+
+async for event in agent.stream_async("Hello"):
+    filtered = filter_event(event)
+    if filtered:
+        await response.write(f"data: {json.dumps(filtered)}\n\n")
+```
+
+This approach lets you tailor the streamed output to your use case, for example forwarding only text deltas for a chat UI or including tool events for a progress dashboard.
+</Tab>
+<Tab label="TypeScript">
+
+Every event class implements a `toJSON()` method that `JSON.stringify()` calls automatically. Each serialized event retains its `type` discriminator and the relevant data fields (matching the general shape of the class) while excluding in-memory runtime references (`agent`, `orchestrator`, `state`, `tool`) and mutable hook properties (`cancel`, `retry`). `Error` objects are converted to `{ message: string }`. This applies to single-agent, multi-agent, and A2A events alike.
+
+You can filter which events to forward to the client:
+
+```typescript
+--8<-- "user-guide/sdk/streaming/overview.ts:event_serialization"
+```
+</Tab>
+</Tabs>
+
+## Next Steps
+
+- Consume these events in async frameworks with [Async Iterators](./async-iterators.md).
+- Intercept them with a function in synchronous Python via [Callback Handlers](./callback-handlers.md).
+- See the Agent API Reference for complete method documentation: [Python](@api/python/strands.agent.agent) | [TypeScript](@api/typescript/Agent)

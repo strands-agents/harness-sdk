@@ -40,24 +40,12 @@ const href = card.external ? card.href : pathWithBase(card.href)
   data-sdk={card.sdk}
   data-search={`${card.name} ${card.description} by ${card.maintainer}`.toLowerCase()}
 >
-  {
-    (card.featured || card.badges.includes('new')) && (
-      <span class="cat-corner">
-        {card.featured && (
-          <span class="cat-tab cat-tab--featured" title="Featured by the Strands team">
-            Featured
-          </span>
-        )}
-        {card.badges.includes('new') && <span class="cat-tab cat-tab--new">New</span>}
-      </span>
-    )
-  }
-  <span class="cat-tile" aria-hidden="true">
-    <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
-      <path fill="currentColor" d={TYPE_ICONS[card.integrationType]} />
-    </svg>
-  </span>
-  <div class="cat-card-main">
+  <div class="cat-card-header">
+    <span class="cat-tile" aria-hidden="true">
+      <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+        <path fill="currentColor" d={TYPE_ICONS[card.integrationType]} />
+      </svg>
+    </span>
     <div class="cat-card-head">
       {/* data-cat-entry marks internal docs links for the docs-drawer script
           (integrations.astro), which intercepts the click and opens the page
@@ -95,36 +83,47 @@ const href = card.external ? card.href : pathWithBase(card.href)
           )
         }
       </span>
-      {/* Badges hold the fixed right slot: every non-community card has one,
-          while stats are sparse and flow after the title instead. */}
-      {(card.badges.includes('verified') || card.maintainedBy !== 'community') && (
-        <span class="cat-card-flags">
-          {card.badges.includes('verified') && (
-            <span class="cat-flag cat-flag--verified" title="Verified by the Strands team">
-              <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true">
-                <path fill="currentColor" d={VERIFIED_ICON} />
-              </svg>
-              Verified
-            </span>
-          )}
-          {card.maintainedBy !== 'community' && (
-            <span
-              class:list={['cat-flag', `cat-flag--${card.maintainedBy}`]}
-              title={MAINTAINED_BY_TITLES[card.maintainedBy]}
-              aria-label={MAINTAINED_BY_FLAGS[card.maintainedBy]}
-            >
-              {card.maintainedBy === 'aws' ? (
-                <svg width="31" height="19" viewBox={AWS_MARK_VIEWBOX} aria-hidden="true">
-                  <path fill="currentColor" d={AWS_ICON} />
-                </svg>
-              ) : (
-                MAINTAINED_BY_FLAGS[card.maintainedBy]
-              )}
-            </span>
-          )}
-        </span>
-      )}
+      </div>
     </div>
+    {/* Flags sit on their own full-width row below the header: every
+        non-community card has at least one. Featured / New / Verified /
+        maintainer chips share one anatomy across cards. */}
+    {(card.featured ||
+      card.badges.includes('new') ||
+      card.badges.includes('verified') ||
+      card.maintainedBy !== 'community') && (
+      <div class="cat-card-flags">
+        {card.featured && (
+          <span class="cat-flag cat-flag--featured" title="Featured by the Strands team">
+            Featured
+          </span>
+        )}
+        {card.badges.includes('new') && <span class="cat-flag cat-flag--new">New</span>}
+        {card.badges.includes('verified') && (
+          <span class="cat-flag cat-flag--verified" title="Verified by the Strands team">
+            <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true">
+              <path fill="currentColor" d={VERIFIED_ICON} />
+            </svg>
+            Verified
+          </span>
+        )}
+        {card.maintainedBy !== 'community' && (
+          <span
+            class:list={['cat-flag', `cat-flag--${card.maintainedBy}`]}
+            title={MAINTAINED_BY_TITLES[card.maintainedBy]}
+            aria-label={MAINTAINED_BY_FLAGS[card.maintainedBy]}
+          >
+            {card.maintainedBy === 'aws' ? (
+              <svg width="31" height="19" viewBox={AWS_MARK_VIEWBOX} aria-hidden="true">
+                <path fill="currentColor" d={AWS_ICON} />
+              </svg>
+            ) : (
+              MAINTAINED_BY_FLAGS[card.maintainedBy]
+            )}
+          </span>
+        )}
+      </div>
+    )}
     <p class="cat-card-desc">{card.description}</p>
     <div class="cat-card-foot">
       <span class="cat-facts">
@@ -166,5 +165,4 @@ const href = card.external ? card.href : pathWithBase(card.href)
         ))}
       </span>
     </div>
-  </div>
 </article>

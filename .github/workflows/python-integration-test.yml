@@ -112,6 +112,12 @@ jobs:
             scope: bidi
             test-path: tests_integ/bidi
             artifact-name: bidi-test-results
+          # The 1.x-era MCP integration tests build servers and transports from `mcp` names that 2.x renamed, so the
+          # main scope (which resolves mcp 2.x) ignores them and this scope reruns them on a forced mcp 1.x.
+          - python-version: '3.10'
+            scope: mcp-1x
+            test-path: tests_integ/mcp
+            artifact-name: mcp-1x-test-results
     environment:
       name: ${{ needs.authorization-check.outputs.approval-env }}
       deployment: false
@@ -148,6 +154,8 @@ jobs:
           AWS_REGION: us-east-1
           AWS_REGION_NAME: us-east-1
           STRANDS_TEST_API_KEYS_SECRET_NAME: ${{ secrets.STRANDS_TEST_API_KEYS_SECRET_NAME }}
+          # Caps the hatch-test env at mcp 1.x via the pyproject override.
+          STRANDS_TEST_MCP_V1: ${{ matrix.scope == 'mcp-1x' && '1' || '' }}
         id: tests
         run: |
           hatch test ${{ matrix.test-path }}

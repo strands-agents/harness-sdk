@@ -1,5 +1,7 @@
 """Tests for InMemoryStorage."""
 
+from unittest.mock import AsyncMock
+
 import pytest
 
 from strands.storage import InMemoryStorage
@@ -100,3 +102,18 @@ class TestInMemoryStorage:
         assert len(results) == 1
         assert results[0].key == "dark-mode.md"
         assert results[0].score > 0
+
+    @pytest.mark.asyncio
+    async def test_write_indexes_with_search_strategy(self):
+        strategy = AsyncMock()
+        storage = InMemoryStorage(search_strategy=strategy)
+        await storage.write("key", b"data")
+        strategy.index.assert_awaited_once_with(storage, "key", b"data")
+
+    @pytest.mark.asyncio
+    async def test_search_delegates_to_strategy(self):
+        strategy = AsyncMock()
+        strategy.search.return_value = []
+        storage = InMemoryStorage(search_strategy=strategy)
+        await storage.search("query")
+        strategy.search.assert_awaited_once_with(storage, "query")

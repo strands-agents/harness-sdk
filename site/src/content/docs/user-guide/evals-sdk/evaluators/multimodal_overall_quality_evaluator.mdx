@@ -1,23 +1,23 @@
 ---
-title: Multimodal Overall Quality Evaluator
+title: Multimodal overall quality evaluator
 description: 'Score overall response quality on image tasks with MultimodalOverallQualityEvaluator: visual accuracy, instruction adherence, and coherence.'
 tags: [multimodal-evaluation, vision]
 sidebar:
-  label: "Multimodal Overall Quality"
+  label: "Multimodal overall quality"
 ---
 
 ## Overview
 
 The `MultimodalOverallQualityEvaluator` assesses the overall quality of an agent response across four dimensions: visual accuracy, instruction adherence, completeness, and coherence/helpfulness. It produces a single Likert-5 score.
 
-## Key Features
+## Key features
 
 - **Output-Level Evaluation**: Scores a single agent response per case
 - **Likert-5 Scoring**: Score is one of `0.0`, `0.25`, `0.5`, `0.75`, `1.0`
 - **Automatic Reference Comparison**: Appends a reference suffix to the rubric when `expected_output` is provided on the case
 - **Four-Dimension Rubric**: Evaluates visual accuracy, instruction adherence, completeness, and coherence together
 
-## When to Use
+## When to use
 
 Use the `MultimodalOverallQualityEvaluator` when you need to:
 
@@ -25,7 +25,7 @@ Use the `MultimodalOverallQualityEvaluator` when you need to:
 - Track overall quality trends across model or prompt versions
 - Grade open-ended multimodal responses where binary judgments are too coarse
 
-## Evaluation Level
+## Evaluation level
 
 This evaluator operates at the **OUTPUT_LEVEL**, scoring a single agent response per case.
 
@@ -54,7 +54,12 @@ This evaluator operates at the **OUTPUT_LEVEL**, scoring a single agent response
 - **Default**: An overall-quality-specific suffix that grades factual content rather than verbatim match
 - **Description**: Override only if you want stricter or looser reference handling than the built-in default.
 
-## Scoring System
+### `uses_environment_state` (optional)
+- **Type**: `bool`
+- **Default**: `False`
+- **Description**: Whether to include environment state in the evaluation prompt, enabling assessment of agent side effects alongside the output.
+
+## Scoring system
 
 | Score | Label | Meaning |
 |-------|-------|---------|
@@ -66,7 +71,7 @@ This evaluator operates at the **OUTPUT_LEVEL**, scoring a single agent response
 
 A response typically passes if the score is `>= 0.75`.
 
-## Basic Usage
+## Basic usage
 
 ```python
 import asyncio
@@ -101,7 +106,7 @@ async def main():
 asyncio.run(main())
 ```
 
-## Related Evaluators
+## Related evaluators
 
 - [**MultimodalOutputEvaluator**](multimodal_output_evaluator.md): Parent class with full parameter reference
 - [**MultimodalCorrectnessEvaluator**](multimodal_correctness_evaluator.md): Strict binary factual correctness

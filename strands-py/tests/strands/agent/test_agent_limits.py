@@ -6,6 +6,7 @@ import pytest
 
 from strands import Agent, tool
 from strands.hooks import AfterInvocationEvent, BeforeInvocationEvent
+from strands.types.agent import _LIMITS_KEYS
 from strands.types.event_loop import Usage
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
@@ -189,6 +190,36 @@ async def test_invalid_limits_raise_type_error(limits):
 
     with pytest.raises(TypeError):
         await agent.invoke_async("go", limits=limits)
+
+
+@pytest.mark.parametrize(
+    "limits",
+    [
+        {"max_turns": 3},
+        {"turn": 3},
+        {"turns": 3, "max_tokens": 100},
+    ],
+)
+@pytest.mark.asyncio
+async def test_unrecognized_limits_keys_raise_type_error(limits):
+    """An unrecognized cap name is rejected instead of silently applying no limit (#4354)."""
+    final = {"role": "assistant", "content": [{"text": "never reached"}]}
+    agent = Agent(model=MockedModelProvider([final]))
+
+    with pytest.raises(TypeError, match="not recognized"):
+        await agent.invoke_async("go", limits=limits)
+
+
+def test_recognized_limits_keys_are_pinned():
+    """A cap added to ``Limits`` must also be enforced in ``event_loop._check_limits``.
+
+    ``_LIMITS_KEYS`` is derived from ``Limits``, so a new cap begins passing validation with
+    no change here, while enforcement reads each cap by name and would silently ignore it.
+    """
+    tru_keys = _LIMITS_KEYS
+    exp_keys = ("turns", "output_tokens", "total_tokens")
+
+    assert tru_keys == exp_keys
 
 
 @pytest.mark.asyncio

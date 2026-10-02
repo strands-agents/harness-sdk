@@ -1,4 +1,4 @@
-export type Sdk = 'harness' | 'evals'
+export type Sdk = 'sdk' | 'evals'
 export type Language = 'python' | 'typescript'
 
 export const LANGUAGE_META: Record<Language, { label: string; short: string }> = {
@@ -7,7 +7,7 @@ export const LANGUAGE_META: Record<Language, { label: string; short: string }> =
 }
 
 export const SDK_META: Record<Sdk, { label: string; languages: Language[] }> = {
-  harness: { label: 'Harness', languages: ['python', 'typescript'] },
+  sdk: { label: 'SDK', languages: ['python', 'typescript'] },
   evals: { label: 'Evals', languages: ['python'] },
 }
 
@@ -15,10 +15,10 @@ export const SDK_META: Record<Sdk, { label: string; languages: Language[] }> = {
 // util/language-preference.ts (shared with LanguageToggle and the landing page).
 
 /**
- * Canonical human label for a release stream, e.g. "Harness Python", "Evals".
+ * Canonical human label for a release stream, e.g. "Strands harness Python", "Evals".
  * Single source so the detail page, markdown endpoints, RSS, and llms.txt don't
- * each hand-roll it (they previously drifted between "Harness Python" and
- * "Harness (python)").
+ * each hand-roll it (they previously drifted between "Strands harness Python" and
+ * "Strands harness (python)").
  */
 export function streamLabel(sdk: Sdk, language?: Language): string {
   return [SDK_META[sdk].label, language ? LANGUAGE_META[language].label : ''].filter(Boolean).join(' ')

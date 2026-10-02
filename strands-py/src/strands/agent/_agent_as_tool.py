@@ -218,8 +218,14 @@ class _AgentAsTool(AgentTool):
 
             # Forward the parent's cancellation signal so cancelling the parent also cancels
             # the sub-agent. Passed as the sub-agent's external signal: the sub-agent links it
-            # into its own event and never clears the parent's.
-            cancel_signal = getattr(invocation_state.get("agent"), "cancel_signal", None)
+            # into its own event and never clears the parent's. A framework-supplied tool
+            # context (background execution) carries the signal scoped to that call instead.
+            tool_context = kwargs.get("_tool_context")
+            cancel_signal = (
+                tool_context.cancel_signal
+                if tool_context is not None
+                else getattr(invocation_state.get("agent"), "cancel_signal", None)
+            )
 
             result = None
             async for event in self._agent.stream_async(prompt, cancel_signal=cancel_signal):

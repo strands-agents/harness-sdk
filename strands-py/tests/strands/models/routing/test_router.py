@@ -19,7 +19,9 @@ from strands.models.routing import (
 )
 from strands.models.routing.router import _candidate_label, _RoutingState
 from strands.multiagent import GraphBuilder
+from strands.session.repository_session_manager import RepositorySessionManager
 from strands.types.exceptions import ModelThrottledException
+from tests.fixtures.mock_session_repository import MockedSessionRepository
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 
@@ -213,6 +215,36 @@ async def test_custom_strategy_prefers_named_candidate():
     )
 
     assert await router._select_model(_routing_context(router.candidates)) is smart
+
+
+class _RecordsAgentMetadata(MockedModelProvider):
+    """Records the agent_metadata forwarded to stream()."""
+
+    def __init__(self, agent_responses):
+        super().__init__(agent_responses)
+        self.agent_metadata = None
+
+    async def stream(self, *args, **kwargs):
+        self.agent_metadata = kwargs.get("agent_metadata")
+        async for event in super().stream(*args, **kwargs):
+            yield event
+
+
+@pytest.mark.asyncio
+async def test_routing_forwards_agent_metadata_to_the_selected_alternate():
+    """A routed alternate receives the invoking agent's metadata, so session-based cache routing
+    reaches every candidate rather than only the default model."""
+    alternate = _RecordsAgentMetadata([{"role": "assistant", "content": [{"text": "hi"}]}])
+    router = ModelRouter(
+        models=[RoutingCandidate(_model(), name="default"), RoutingCandidate(alternate, name="alternate")],
+        strategy=_PreferByName("alternate"),
+    )
+    session_manager = RepositorySessionManager(session_id="routed", session_repository=MockedSessionRepository())
+    agent = Agent(model=router, session_manager=session_manager, retry_strategy=None, callback_handler=None)
+
+    await agent.invoke_async("question")
+
+    assert alternate.agent_metadata.session_id == "routed"
 
 
 @pytest.mark.asyncio
