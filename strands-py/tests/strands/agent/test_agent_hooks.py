@@ -374,6 +374,10 @@ async def test_hook_retry_on_successful_call():
             {"inputTokens": 1000, "outputTokens": 1000, "totalTokens": 2000},
             {"inputTokens": 7, "outputTokens": 7, "totalTokens": 14},
         ],
+        metrics=[
+            {"latencyMs": 1000},
+            {"latencyMs": 200},
+        ],
     )
 
     # Hook that retries if response is too short
@@ -411,6 +415,11 @@ async def test_hook_retry_on_successful_call():
     tru_usage = agent.event_loop_metrics.accumulated_usage
     exp_usage = {"inputTokens": 1007, "outputTokens": 1007, "totalTokens": 2014}
     assert tru_usage == exp_usage
+
+    # https://github.com/strands-agents/harness-sdk/issues/4333: retried calls still incur model latency.
+    tru_metrics = agent.event_loop_metrics.accumulated_metrics
+    exp_metrics = {"latencyMs": 1200}
+    assert tru_metrics == exp_metrics
 
 
 @pytest.mark.asyncio
