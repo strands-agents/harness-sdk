@@ -39,6 +39,26 @@ describe('LLMSteeringHandler', () => {
     expect(event.cancel).toBe(false)
   })
 
+  it('uses agent.auxModel when none is configured', async () => {
+    const agentModel = new MockMessageModel().addTurn({ type: 'textBlock', text: 'unused' })
+    const auxModel = structuredOutputModel({ type: 'proceed', reason: 'ok' })
+    const agentStreamSpy = vi.spyOn(agentModel, 'stream')
+    const auxStreamSpy = vi.spyOn(auxModel, 'stream')
+
+    const handler = new LLMSteeringHandler({
+      systemPrompt: 'You are a steering agent.',
+      contextProviders: [],
+    })
+    const agent = new Agent({ model: agentModel, auxModel, interventions: [handler] })
+    await agent.initialize()
+
+    const event = new BeforeToolCallEvent({ agent, toolUse, tool: undefined, invocationState: {} })
+    await getHookRegistry(agent).invokeCallbacks(event)
+
+    expect(auxStreamSpy).toHaveBeenCalledTimes(1)
+    expect(agentStreamSpy).not.toHaveBeenCalled()
+  })
+
   it('uses the configured model in preference to the agent model', async () => {
     const agentModel = new MockMessageModel().addTurn({ type: 'textBlock', text: 'unused' })
     const configuredModel = structuredOutputModel({ type: 'proceed', reason: 'ok' })

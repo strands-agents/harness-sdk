@@ -694,6 +694,22 @@ describe('GoalLoop natural-language judge', () => {
     })
   })
 
+  it('judges via the host agent auxModel when no judge model is configured', async () => {
+    const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'rainbows are pretty' })
+    const auxModel = new MockMessageModel().addTurn(...buildJudgeTurn(true))
+    const modelStreamSpy = vi.spyOn(model, 'stream')
+    const auxStreamSpy = vi.spyOn(auxModel, 'stream')
+
+    const plugin = new GoalLoop({ name: 'nl-aux-model', goal: 'be concise', maxAttempts: 3 })
+    const agent = new Agent({ model, auxModel, plugins: [plugin], printer: false })
+
+    await agent.invoke('explain rainbows')
+
+    expect(plugin.lastResult(agent)?.passed).toBe(true)
+    expect(modelStreamSpy).toHaveBeenCalledTimes(1)
+    expect(auxStreamSpy).toHaveBeenCalledTimes(1)
+  })
+
   it('feeds judge feedback back to the host agent', async () => {
     const model = new MockMessageModel()
       .addTurn({ type: 'textBlock', text: 'first try (long)' })

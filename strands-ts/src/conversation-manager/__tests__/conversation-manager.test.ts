@@ -157,6 +157,78 @@ describe('ConversationManager', () => {
       expect(receivedArgs[0]!.error).toBe(error)
       expect(receivedArgs[0]!.agent).toBe(mockAgent)
     })
+
+    it('passes the routed model to reduce when auxModel is unset', async () => {
+      const receivedModels: unknown[] = []
+      class CapturingManager extends ConversationManager {
+        readonly name = 'test:capturing'
+        reduce(args: ConversationManagerReduceOptions): boolean {
+          receivedModels.push(args.model)
+          return false
+        }
+      }
+
+      const manager = new CapturingManager()
+      const defaultModel = {}
+      const routedModel = {}
+      const mockAgent = createMockAgent({ extra: { model: defaultModel } as never })
+      manager.initAgent(mockAgent)
+
+      await invokeTrackedHook(
+        mockAgent,
+        new AfterModelCallEvent({
+          agent: mockAgent,
+          model: routedModel as any,
+          attemptCount: 1,
+          error: new ContextWindowOverflowError('overflow'),
+          invocationState: {},
+        })
+      )
+
+      expect(receivedModels).toEqual([routedModel])
+    })
+
+    it('passes agent.auxModel to reduce for both reactive and proactive reduction', async () => {
+      const receivedModels: unknown[] = []
+      class CapturingManager extends ConversationManager {
+        readonly name = 'test:capturing'
+        constructor() {
+          super({ proactiveCompression: { compressionThreshold: 0.5 } })
+        }
+        reduce(args: ConversationManagerReduceOptions): boolean {
+          receivedModels.push(args.model)
+          return false
+        }
+      }
+
+      const manager = new CapturingManager()
+      const mainModel = { estimateUtilization: () => 0.9 }
+      const auxModel = {}
+      const mockAgent = createMockAgent({ extra: { model: mainModel, auxModel } as never })
+      manager.initAgent(mockAgent)
+
+      await invokeTrackedHook(
+        mockAgent,
+        new AfterModelCallEvent({
+          agent: mockAgent,
+          model: mainModel as any,
+          attemptCount: 1,
+          error: new ContextWindowOverflowError('overflow'),
+          invocationState: {},
+        })
+      )
+      await invokeTrackedHook(
+        mockAgent,
+        new BeforeModelCallEvent({
+          agent: mockAgent,
+          model: mainModel as any,
+          invocationState: {},
+          projectedInputTokens: 100,
+        })
+      )
+
+      expect(receivedModels).toEqual([auxModel, auxModel])
+    })
   })
 
   describe('proactiveCompression', () => {
@@ -238,7 +310,7 @@ describe('ConversationManager', () => {
         new Message({ role: 'user', content: [new TextBlock('Message 1')] }),
         new Message({ role: 'assistant', content: [new TextBlock('Response 1')] }),
       ]
-      const mockAgent = createMockAgent({ messages })
+      const mockAgent = createMockAgent({ messages, extra: { model: mockModel } })
       manager.initAgent(mockAgent)
 
       const event = new BeforeModelCallEvent({

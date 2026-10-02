@@ -27,9 +27,8 @@ import type { Model } from '../models/model.js'
  */
 export type SummarizingConversationManagerConfig = {
   /**
-   * Model to use for generating summaries. When provided, overrides the model
-   * attached to the agent. Useful when you want to use a different model than
-   * the one attached to the agent.
+   * Model to use for generating summaries. Resolution order:
+   * `this model > agent.auxModel > agent.model`.
    */
   model?: Model
 

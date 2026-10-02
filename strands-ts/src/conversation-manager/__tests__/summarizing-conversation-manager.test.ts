@@ -319,7 +319,7 @@ describe('SummarizingConversationManager', () => {
         preserveRecentMessages: 2,
       })
       const messages = makeMessages(20)
-      const agent = createMockAgent({ messages })
+      const agent = createMockAgent({ messages, extra: { model: model as unknown as Model } })
 
       const pluginAgent = createMockAgent()
       manager.initAgent(pluginAgent)

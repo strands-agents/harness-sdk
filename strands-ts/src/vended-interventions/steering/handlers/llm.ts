@@ -130,7 +130,7 @@ export interface LLMSteeringHandlerConfig {
   /** System prompt defining the steering guidance rules. */
   systemPrompt: SystemPrompt
 
-  /** Model for steering evaluation. Defaults to the parent agent's model. */
+  /** Model for steering evaluation. Resolution order: `this model > agent.auxModel > agent.model`. */
   model?: Model
 
   /** Custom prompt builder for evaluation prompts. Defaults to defaultPromptBuilder. */
@@ -204,7 +204,7 @@ export class LLMSteeringHandler extends SteeringHandler {
   }
 
   override async observeAgent(agent: LocalAgent): Promise<void> {
-    this._agentModel = agent.model
+    this._agentModel = agent.auxModel
     await super.observeAgent(agent)
   }
 
