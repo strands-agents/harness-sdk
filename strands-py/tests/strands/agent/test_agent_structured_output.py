@@ -4,13 +4,22 @@ from unittest import mock
 from unittest.mock import Mock, patch
 
 import pytest
-from pydantic import BaseModel
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import StatusCode
+from pydantic import BaseModel, field_validator
 
 from strands import Agent
 from strands.telemetry.metrics import EventLoopMetrics
-from strands.tools.structured_output._structured_output_context import StructuredOutputContext
+from strands.telemetry.tracer import Tracer
+from strands.tools.structured_output._structured_output_context import (
+    DEFAULT_STRUCTURED_OUTPUT_MAX_ATTEMPTS,
+    StructuredOutputContext,
+)
 from strands.tools.structured_output.structured_output_tool import StructuredOutputTool
 from strands.types._events import EventLoopStopEvent
+from strands.types.exceptions import StructuredOutputException
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 
@@ -28,6 +37,17 @@ class ProductModel(BaseModel):
     title: str
     price: float
     description: str | None = None
+
+
+class ValidatorErrorModel(BaseModel):
+    """Test model whose custom validator raises a non-ValidationError."""
+
+    value: str
+
+    @field_validator("value")
+    @classmethod
+    def raise_validator_error(cls, value: str) -> str:
+        raise RuntimeError("custom validator failed")
 
 
 @pytest.fixture
@@ -411,6 +431,54 @@ class TestAgentStructuredOutputEdgeCases:
             mock_event_loop.side_effect = mock_product_cycle
             result2 = agent("Get product", structured_output_model=product_model)
             assert result2.structured_output is pm
+
+    @pytest.mark.parametrize(
+        ("output_model", "tool_input"),
+        [
+            (UserModel, {}),
+            (ValidatorErrorModel, {"value": "invalid"}),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_agent_stops_repeated_structured_output_validation_failures(self, output_model, tool_input):
+        """Guard against unbounded structured-output retries (#4482)."""
+        responses = [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "toolUse": {
+                            "toolUseId": f"invalid-{attempt}",
+                            "name": output_model.__name__,
+                            "input": tool_input,
+                        }
+                    }
+                ],
+            }
+            for attempt in range(DEFAULT_STRUCTURED_OUTPUT_MAX_ATTEMPTS)
+        ]
+        model = MockedModelProvider(responses)
+        agent = Agent(model=model, callback_handler=None)
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        tracer = Tracer()
+        tracer.tracer_provider = provider
+        tracer.tracer = provider.get_tracer(tracer.service_name)
+
+        with patch("strands.event_loop.event_loop.get_tracer", return_value=tracer):
+            with pytest.raises(
+                StructuredOutputException,
+                match=f"failed after {DEFAULT_STRUCTURED_OUTPUT_MAX_ATTEMPTS} attempts",
+            ):
+                await agent.invoke_async("Extract structured data", structured_output_model=output_model)
+
+        assert model.index == DEFAULT_STRUCTURED_OUTPUT_MAX_ATTEMPTS
+        assert len(agent.event_loop_metrics.cycle_durations) == DEFAULT_STRUCTURED_OUTPUT_MAX_ATTEMPTS
+        assert all(trace.end_time is not None for trace in agent.event_loop_metrics.traces)
+        cycle_spans = [span for span in exporter.get_finished_spans() if span.name == "execute_event_loop_cycle"]
+        assert len(cycle_spans) == DEFAULT_STRUCTURED_OUTPUT_MAX_ATTEMPTS
+        assert cycle_spans[-1].status.status_code == StatusCode.ERROR
 
 
 class TestAgentStructuredOutputPrompt:

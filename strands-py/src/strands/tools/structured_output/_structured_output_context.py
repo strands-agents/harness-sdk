@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DEFAULT_STRUCTURED_OUTPUT_PROMPT = "You must format the previous response as structured output."
+DEFAULT_STRUCTURED_OUTPUT_MAX_ATTEMPTS = 6
 
 
 class StructuredOutputContext:
@@ -38,6 +39,7 @@ class StructuredOutputContext:
         self.force_attempted: bool = False
         self.tool_choice: ToolChoice | None = None
         self.stop_loop: bool = False
+        self.validation_failure_count: int = 0
         self.expected_tool_name: str | None = None
         self.structured_output_prompt: str = structured_output_prompt or DEFAULT_STRUCTURED_OUTPUT_PROMPT
 
