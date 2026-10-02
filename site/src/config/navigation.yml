@@ -410,8 +410,6 @@ sidebar:
               - label: "Overview"
                 slug: docs/user-guide/sdk/bidi
               - docs/user-guide/sdk/bidi/agent
-              - docs/user-guide/sdk/bidi/session-management
-              - docs/user-guide/sdk/bidi/interrupts
               - label: Models
                 items:
                   - docs/user-guide/sdk/bidi/models/bedrock
@@ -421,6 +419,8 @@ sidebar:
               - docs/user-guide/sdk/bidi/events
               - docs/user-guide/sdk/bidi/barge-in
               - docs/user-guide/sdk/bidi/hooks
+              - docs/user-guide/sdk/bidi/session-management
+              - docs/user-guide/sdk/bidi/interrupts
               - docs/user-guide/sdk/bidi/observability
           - label: Experimental
             items:
