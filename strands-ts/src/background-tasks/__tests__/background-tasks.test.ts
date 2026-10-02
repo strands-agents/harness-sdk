@@ -9,7 +9,7 @@ import { ExecuteToolStage, InvokeModelStage } from '../../middleware/index.js'
 import { tool } from '../../tools/tool-factory.js'
 import { InterruptResponseContent } from '../../types/interrupt.js'
 import { ImageBlock } from '../../types/media.js'
-import { TextBlock } from '../../types/messages.js'
+import { JsonBlock, TextBlock } from '../../types/messages.js'
 import type { ToolUseBlock } from '../../types/messages.js'
 import type { ToolSpec } from '../../tools/types.js'
 import type { BackgroundTask } from '../types.js'
@@ -269,11 +269,22 @@ describe('BackgroundTasks', () => {
     await restored.invoke('Continue.')
 
     expect(deliveries(restored)).toHaveLength(1)
+    // Recovered from a snapshot: the delivering invocation is not the one that
+    // dispatched the task, so the metadata carries provenance.
+    const [inspectedMetadata, ...inspectedResult] = inspected.content
     expect(restored.messages.flatMap((message) => message.content)).toContainEqual({
       type: 'toolResultBlock',
       toolUseId: taskId,
       status: 'success',
-      content: inspected.content,
+      content: [
+        new JsonBlock({
+          json: {
+            ...((inspectedMetadata as JsonBlock).json as object),
+            startedBy: 'an earlier request in this conversation',
+          },
+        }),
+        ...inspectedResult,
+      ],
     })
     expect(persistedTasks(restored)).toBeUndefined()
   })
