@@ -60,15 +60,30 @@ const WEB_FETCH_MODELS: Record<string, string> = {
   google: 'gemini-3.5-flash',
 }
 
-// Cross-region inference profile prefixes stripped from a Bedrock model id before matching its
-// provider family. Kept byte-identical with `_BEDROCK_REGION_PREFIXES` in the Python `models.py`.
-// Providers whose endpoint can be repointed by an env var. A non-default endpoint publishes its
-// own model list, so the vended small summarizer is not guaranteed to exist on it.
-const CUSTOM_ENDPOINT_VARS: Record<string, string | undefined> = {
-  anthropic: 'ANTHROPIC_BASE_URL',
-  openai: 'OPENAI_BASE_URL',
+/**
+ * Configurable provider endpoints shared with first-party clients.
+ *
+ * @internal
+ */
+export const PROVIDER_ENDPOINTS: Readonly<
+  Record<string, Readonly<{ baseUrlEnvironmentKey: string; defaultBaseUrl: string }>>
+> = {
+  anthropic: {
+    baseUrlEnvironmentKey: 'ANTHROPIC_BASE_URL',
+    defaultBaseUrl: 'https://api.anthropic.com',
+  },
+  openai: {
+    baseUrlEnvironmentKey: 'OPENAI_BASE_URL',
+    defaultBaseUrl: 'https://api.openai.com/v1',
+  },
+  google: {
+    baseUrlEnvironmentKey: 'GOOGLE_GEMINI_BASE_URL',
+    defaultBaseUrl: 'https://generativelanguage.googleapis.com',
+  },
 }
 
+// Cross-region inference profile prefixes stripped from a Bedrock model id before matching its
+// provider family. Kept byte-identical with `_BEDROCK_REGION_PREFIXES` in the Python `models.py`.
 const BEDROCK_REGION_PREFIXES = ['global.', 'apac.', 'us.', 'eu.', 'au.', 'jp.'] as const
 
 // Reasoning levels each provider's API accepts. `'off'` is the harness's spelling of a provider's
@@ -593,6 +608,7 @@ export async function resolveWebFetchModel(
   }
   const main = mainModel ?? DEFAULT_MODEL
   const [providerName, name] = splitProvider(main)
+  const baseUrlEnvironmentKey = PROVIDER_ENDPOINTS[providerName]?.baseUrlEnvironmentKey
   let small: string | undefined
   if (providerName === 'bedrock') {
     small = bedrockWebFetchModel(name)
@@ -603,10 +619,9 @@ export async function resolveWebFetchModel(
       )
       return concreteModel(await resolveModel(main, main, 'off'))
     }
-  } else if (CUSTOM_ENDPOINT_VARS[providerName] && process.env[CUSTOM_ENDPOINT_VARS[providerName]!]) {
-    const baseUrlVar = CUSTOM_ENDPOINT_VARS[providerName]!
+  } else if (baseUrlEnvironmentKey && process.env[baseUrlEnvironmentKey]) {
     warnOnce(
-      `model=<${main}> | ${baseUrlVar} points provider <${providerName}> at a non-default endpoint, ` +
+      `model=<${main}> | ${baseUrlEnvironmentKey} points provider <${providerName}> at a non-default endpoint, ` +
         'which serves its own model list, so the vended summarizer may not exist there; reusing the ' +
         'main model. Pass builtinTools.web_fetch.model to choose a smaller one.'
     )

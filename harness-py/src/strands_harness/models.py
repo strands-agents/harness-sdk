@@ -67,12 +67,24 @@ _WEB_FETCH_MODELS = {
     "google": "gemini-3.5-flash",
 }
 
+# Configurable endpoint metadata, kept field-for-field with ``PROVIDER_ENDPOINTS`` in TypeScript.
+_PROVIDER_ENDPOINTS = {
+    "anthropic": {
+        "base_url_environment_key": "ANTHROPIC_BASE_URL",
+        "default_base_url": "https://api.anthropic.com",
+    },
+    "openai": {
+        "base_url_environment_key": "OPENAI_BASE_URL",
+        "default_base_url": "https://api.openai.com/v1",
+    },
+    "google": {
+        "base_url_environment_key": "GOOGLE_GEMINI_BASE_URL",
+        "default_base_url": "https://generativelanguage.googleapis.com",
+    },
+}
+
 # Cross-region inference profile prefixes stripped from a Bedrock model id before matching its
 # provider family. Kept byte-identical with ``models.ts``.
-# Providers whose endpoint can be repointed by an env var. A non-default endpoint publishes its
-# own model list, so the vended small summarizer is not guaranteed to exist on it.
-_CUSTOM_ENDPOINT_VARS = {"anthropic": "ANTHROPIC_BASE_URL", "openai": "OPENAI_BASE_URL"}
-
 _BEDROCK_REGION_PREFIXES = ("global.", "apac.", "us.", "eu.", "au.", "jp.")
 
 
@@ -528,6 +540,8 @@ def resolve_web_fetch_model(
         return main_model
     main = main_model if main_model is not None else defaults.DEFAULT_MODEL
     provider_name, name = _split_provider(main)
+    endpoint = _PROVIDER_ENDPOINTS.get(provider_name)
+    base_url_environment_key = endpoint["base_url_environment_key"] if endpoint else None
     if provider_name == "bedrock":
         small = _bedrock_web_fetch_model(name)
         if small is None:
@@ -537,9 +551,9 @@ def resolve_web_fetch_model(
                 "smaller one."
             )
             return _concrete_model(resolve_model(main, main, effort="off"))
-    elif (base_url_var := _CUSTOM_ENDPOINT_VARS.get(provider_name)) and os.environ.get(base_url_var):
+    elif base_url_environment_key and os.environ.get(base_url_environment_key):
         logger.warning(
-            f"model=<{main}> | {base_url_var} points provider <{provider_name}> at a non-default "
+            f"model=<{main}> | {base_url_environment_key} points provider <{provider_name}> at a non-default "
             "endpoint, which serves its own model list, so the vended summarizer may not exist "
             "there; reusing the main model. Pass web_fetch_model to choose a smaller one."
         )

@@ -807,6 +807,7 @@ describe('web_fetch summarizer on a repointed endpoint', () => {
   afterEach(() => {
     delete process.env.ANTHROPIC_BASE_URL
     delete process.env.OPENAI_BASE_URL
+    delete process.env.GOOGLE_GEMINI_BASE_URL
   })
 
   it('reuses the main model when ANTHROPIC_BASE_URL is set', async () => {
@@ -819,6 +820,12 @@ describe('web_fetch summarizer on a repointed endpoint', () => {
     process.env.OPENAI_BASE_URL = 'https://bedrock-mantle.us-west-2.api.aws/v1'
     const model = await resolveWebFetchModel('openai/gpt-oss-20b', undefined)
     expect(model.getConfig().modelId).toBe('gpt-oss-20b')
+  })
+
+  it('reuses the main model when GOOGLE_GEMINI_BASE_URL is set', async () => {
+    process.env.GOOGLE_GEMINI_BASE_URL = 'https://proxy.example'
+    const model = await resolveWebFetchModel('google/gemini-3.5-pro', undefined)
+    expect(model.getConfig().modelId).toBe('gemini-3.5-pro')
   })
 
   it('still uses the small model on the first-party endpoint', async () => {
