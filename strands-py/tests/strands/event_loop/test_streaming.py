@@ -94,6 +94,15 @@ def test_remove_blank_messages_content_text(messages, exp_result):
         ),
         pytest.param(
             [
+                {"role": "assistant", "content": [{"toolUse": {"name": "valid_name\n"}}]},
+            ],
+            [
+                {"role": "assistant", "content": [{"toolUse": {"name": "INVALID_TOOL_NAME"}}]},
+            ],
+            id="tool name with trailing newline",
+        ),
+        pytest.param(
+            [
                 {"role": "assistant", "content": [{"toolUse": {}}]},
             ],
             [
