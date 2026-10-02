@@ -84,6 +84,10 @@ def __getattr__(name: str) -> Any:
         from .sagemaker import SageMakerAIModel
 
         return SageMakerAIModel
+    if name == "SystemOneDecisionModel":
+        from .system_one import SystemOneDecisionModel
+
+        return SystemOneDecisionModel
     if name == "WriterModel":
         from .writer import WriterModel
 
