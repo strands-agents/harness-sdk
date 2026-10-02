@@ -197,6 +197,10 @@ class BedrockModel(Model):
                 See https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
             temperature: Controls randomness in generation (higher = more random)
             top_p: Controls diversity via nucleus sampling (alternative to temperature)
+            request_metadata: Key-value metadata to attach to the request for cost tracking and attribution.
+                Appears in model invocation logs for per-request finops. Max 16 entries; keys/values max 256 chars
+                and limited to letters, digits, spaces, and ":_@$#=/+,-." (e.g. "team (eng)" or "cost%" are rejected by Bedrock).
+                See https://docs.aws.amazon.com/bedrock/latest/userguide/cost-mgmt-request-metadata.html
             use_native_token_count: Whether to use the native Bedrock CountTokens API.
                 When True, count_tokens() calls the Bedrock API for accurate counts.
                 When False (default), skips the API call and uses the local estimator.
@@ -220,6 +224,7 @@ class BedrockModel(Model):
         max_tokens: int | None
         model_id: str
         include_tool_result_status: Literal["auto"] | bool | None
+        request_metadata: dict[str, str] | None
         service_tier: str | None
         stop_sequences: list[str] | None
         streaming: bool | None
@@ -456,6 +461,11 @@ class BedrockModel(Model):
                 ]
                 if value is not None
             },
+            **(
+                {"requestMetadata": self.config["request_metadata"]}
+                if self.config.get("request_metadata")
+                else {}
+            ),
             **(
                 self.config["additional_args"]
                 if "additional_args" in self.config and self.config["additional_args"] is not None
