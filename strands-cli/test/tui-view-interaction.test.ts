@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   agentGridCapacity,
   agentGridColumns,
+  cycleModelPanelFocus,
   filterPanelRows,
   moveAgentGridSelection,
   moveSelection,
@@ -32,9 +33,26 @@ describe('voice input', () => {
 
 describe('panel helpers', () => {
   const rows = [
-    { label: 'Opus', description: 'Anthropic', filter: 'bedrock' },
-    { label: 'GPT', description: 'OpenAI', filter: 'current' },
+    { label: 'Model A', description: 'Provider A', filter: 'bedrock' },
+    { label: 'Model B', description: 'Provider B', filter: 'current' },
   ]
+
+  it('tabs between /model sections and leaves search for the model list', () => {
+    const panel = {
+      id: 'models',
+      kind: 'models' as const,
+      title: 'models',
+      rows: [],
+      filters: [{ id: 'all', label: 'All' }],
+    }
+    expect(cycleModelPanelFocus('providers', panel, 1)).toBe('models')
+    expect(cycleModelPanelFocus('models', panel, 1)).toBe('providers')
+    expect(cycleModelPanelFocus('search', panel, 1)).toBe('providers')
+    expect(cycleModelPanelFocus('providers', panel, -1)).toBe('models')
+
+    const bare = { id: 'models', kind: 'models' as const, title: 'models', rows: [] }
+    expect(cycleModelPanelFocus('models', bare, 1)).toBe('models')
+  })
 
   it('presents the SDK Background Tasks management tool', () => {
     expect(toolAction('strands_manage_background_task')).toBe('Manage task')
@@ -44,23 +62,23 @@ describe('panel helpers', () => {
   })
 
   it('filters rows and accepts custom IDs for supported providers', () => {
-    expect(filterPanelRows(rows, 'open', 'all')).toEqual([rows[1]])
+    expect(filterPanelRows(rows, 'model b', 'all')).toEqual([rows[1]])
     expect(filterPanelRows(rows, '', 'bedrock')).toEqual([rows[0]])
-    expect(filterPanelRows(rows, 'anthropic.claude-new', 'bedrock', true)).toEqual([
+    expect(filterPanelRows(rows, 'vendor.test-model', 'bedrock', true)).toEqual([
       {
-        label: 'bedrock/anthropic.claude-new',
+        label: 'bedrock/vendor.test-model',
         description: 'Switch to this model ID',
-        value: 'bedrock/anthropic.claude-new',
+        value: 'bedrock/vendor.test-model',
       },
     ])
-    expect(filterPanelRows(rows, 'openai/gpt-new', 'bedrock', true)).toEqual([
+    expect(filterPanelRows(rows, 'openai/test-model', 'bedrock', true)).toEqual([
       {
-        label: 'openai/gpt-new',
+        label: 'openai/test-model',
         description: 'Switch to this model ID',
-        value: 'openai/gpt-new',
+        value: 'openai/test-model',
       },
     ])
-    expect(filterPanelRows(rows, 'unknown/gpt-new', 'bedrock', true)).toEqual([])
+    expect(filterPanelRows(rows, 'unknown/test-model', 'bedrock', true)).toEqual([])
   })
 
   it('parses mouse wheel input', () => {
@@ -97,7 +115,8 @@ describe('panel helpers', () => {
     expect(scrollAgentGridViewport(0, 1, 10, 6, 3)).toBe(3)
     expect(scrollAgentGridViewport(3, 1, 10, 6, 3)).toBe(6)
     expect(revealAgentGridSelection(8, 0, 6, 10, 3)).toBe(3)
-    expect(panelRowCapacity('models', 20)).toBe(7)
+    expect(panelRowCapacity('models', 10)).toBe(5)
+    expect(panelRowCapacity('models', 12)).toBe(7)
     expect(panelRowCapacity('sessions', 20)).toBe(10)
     expect(panelRowCapacity('settings', 20)).toBe(5)
     expect(scrollPanelViewport(0, 1, 20, 5)).toBe(1)

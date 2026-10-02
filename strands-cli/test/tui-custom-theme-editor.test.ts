@@ -19,7 +19,6 @@ const colorLevel = chalk.level
 
 beforeEach(() => {
   chalk.level = 3
-  vi.stubEnv('COLORFGBG', '15;0')
 })
 
 afterEach(async () => {
@@ -33,10 +32,7 @@ afterEach(async () => {
   vi.unstubAllEnvs()
 })
 
-async function openPicker(
-  columns: number,
-  config = CliConfigStore.memory({}, { animations: false, colorMode: 'auto' })
-) {
+async function openPicker(columns: number, config = CliConfigStore.memory({}, { animations: false })) {
   const backend: ChatBackend = {
     id: 'appearance-picker-test',
     name: 'Strands harness',
@@ -111,14 +107,13 @@ async function openPicker(
 }
 
 describe('mounted custom theme editor', () => {
-  it('navigates roles and swatches by keyboard and preserves Auto mode on apply', async () => {
+  it('navigates accent and frog colors by keyboard and applies the current terminal variant', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'strands-picker-'))
     directories.push(directory)
     const path = join(directory, 'config.json')
     const config = await CliConfigStore.load(path)
     await config.setSettings({
       animations: false,
-      colorMode: 'auto',
       frogTheme: 'custom',
       customTheme: { base: 'homeland', light: { frog: '#246810' }, dark: { frog: '#345678' } },
     })
@@ -127,15 +122,11 @@ describe('mounted custom theme editor', () => {
     await picker.press('\u001b[Z')
     await picker.press('\u001b[Z')
     await picker.press('\u001b[Z')
-    await picker.press('\u001b[Z')
     await picker.press('\u001b[C')
     expect(picker.screen()).toContain('Merlin')
     await picker.press('\t')
-    await picker.press('\u001b[D')
-    expect(picker.screen()).toContain('Editing light colors')
-    await picker.press('\t')
     await picker.press('\u001b[C')
-    expect(picker.screen()).toContain('Hover')
+    expect(picker.screen()).toContain('Frog')
     await picker.press('\t')
     await picker.press('\u001b[C')
     await picker.press('\t')
@@ -155,25 +146,22 @@ describe('mounted custom theme editor', () => {
       ...initial,
       customTheme: {
         base: 'merlin',
-        dark: { frog: '#345678' },
-        light: { frog: '#246810', hover: expect.stringMatching(/^#[\da-f]{6}$/u) },
+        dark: { frog: expect.stringMatching(/^#[\da-f]{6}$/u) },
+        light: { frog: '#246810' },
       },
     })
   })
 
   it.each([40, 80])('supports hover and click across the responsive %s×24 layout', async (columns) => {
-    const config = CliConfigStore.memory({}, { animations: false, frogTheme: 'custom', colorMode: 'dark' })
+    const config = CliConfigStore.memory({}, { animations: false, frogTheme: 'custom' })
     const picker = await openPicker(columns, config)
     picker.layout()
     const selected = picker.palettePoint()
     await picker.hover({ column: selected.column + 3, row: selected.row })
     expect(picker.screen()).toContain('◇')
     await picker.click({ column: selected.column + 3, row: selected.row })
-    await picker.click(picker.point('Light'))
-    expect(picker.screen()).toContain('Editing light colors')
     await picker.click(picker.point('Apply theme'))
     await vi.waitFor(() => expect(picker.screen()).not.toContain('Customize theme'))
-    expect(config.snapshot().settings.colorMode).toBe('dark')
     expect(config.snapshot().settings.customTheme.dark.accent).toMatch(/^#[\da-f]{6}$/u)
   })
 })

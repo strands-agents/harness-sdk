@@ -24,8 +24,7 @@ export const FROG_THEME_LABELS: Record<FrogTheme, string> = {
   custom: 'Custom',
 }
 
-export type ColorMode = 'auto' | 'light' | 'dark'
-export type ResolvedColorMode = Exclude<ColorMode, 'auto'>
+export type ResolvedColorMode = 'light' | 'dark'
 
 export const SETTINGS_CATEGORIES = [
   {
@@ -67,6 +66,8 @@ export const THEME_COLOR_KEYS = [
   'frog',
 ] as const
 
+export const CUSTOM_THEME_COLOR_KEYS = ['accent', 'frog'] as const
+
 export interface CustomTheme {
   base: Exclude<FrogTheme, 'custom'>
   light: Partial<ThemeColors>
@@ -79,7 +80,6 @@ export interface ChatSettings {
   showReasoning: boolean
   toolOutput: 'hidden' | 'compact' | 'full'
   frogTheme: FrogTheme
-  colorMode: ColorMode
   customTheme: CustomTheme
   /** Load MCP servers configured for other tools (Claude Code, Kiro, Gemini CLI, Codex). */
   mcpDiscovery: boolean
@@ -91,13 +91,14 @@ export interface ChatSettings {
   telemetry: boolean
 }
 
+export type ThemeSettings = Pick<ChatSettings, 'frogTheme' | 'customTheme'>
+
 export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   transcriptSpacing: 'comfortable',
   animations: true,
   showReasoning: true,
   toolOutput: 'compact',
   frogTheme: 'green',
-  colorMode: 'auto',
   customTheme: { base: 'green', light: {}, dark: {} },
   mcpDiscovery: false,
   skillDiscovery: false,
@@ -106,7 +107,6 @@ export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
 }
 
 export type SettingKey =
-  | 'colorMode'
   | 'frogTheme'
   | 'transcriptSpacing'
   | 'animations'
@@ -126,17 +126,6 @@ export interface SettingDefinition {
 }
 
 export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
-  {
-    key: 'colorMode',
-    label: 'Color mode',
-    section: 'Appearance',
-    control: 'segmented',
-    options: [
-      { label: 'Auto', value: 'auto' },
-      { label: 'Light', value: 'light' },
-      { label: 'Dark', value: 'dark' },
-    ],
-  },
   {
     key: 'frogTheme',
     label: 'Theme',
@@ -291,10 +280,6 @@ export function parseSettings(value: unknown, path: string): ChatSettings {
   if (frogTheme === undefined) {
     throw new Error(`Invalid CLI config at ${path}: settings.frogTheme must be one of ${FROG_THEMES.join(', ')}`)
   }
-  const colorMode = value.colorMode ?? DEFAULT_CHAT_SETTINGS.colorMode
-  if (colorMode !== 'auto' && colorMode !== 'light' && colorMode !== 'dark') {
-    throw new Error(`Invalid CLI config at ${path}: settings.colorMode must be "auto", "light", or "dark"`)
-  }
   const customTheme = parseCustomTheme(value.customTheme, path)
 
   return {
@@ -303,7 +288,6 @@ export function parseSettings(value: unknown, path: string): ChatSettings {
     showReasoning,
     toolOutput,
     frogTheme,
-    colorMode,
     customTheme,
     mcpDiscovery: booleanSetting('mcpDiscovery'),
     skillDiscovery: booleanSetting('skillDiscovery'),
@@ -324,7 +308,7 @@ function parseCustomTheme(value: unknown, path: string): CustomTheme {
   ) {
     throw new Error(`Invalid CLI config at ${path}: customTheme.base must name a preset theme`)
   }
-  const colors = (mode: 'light' | 'dark'): Partial<ThemeColors> => {
+  const colors = (mode: ResolvedColorMode): Partial<ThemeColors> => {
     const candidate = value[mode] ?? {}
     if (!isRecord(candidate)) {
       throw new Error(`Invalid CLI config at ${path}: customTheme.${mode} must be an object`)
@@ -349,11 +333,6 @@ export function parseSettingUpdate(setting: string, current: ChatSettings): Part
     return undefined
   }
   switch (name) {
-    case 'colorMode':
-      if (selected !== 'auto' && selected !== 'light' && selected !== 'dark') {
-        return undefined
-      }
-      return { colorMode: selected }
     case 'customTheme': {
       let theme: unknown
       try {

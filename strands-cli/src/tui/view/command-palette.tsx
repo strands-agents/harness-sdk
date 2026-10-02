@@ -32,7 +32,14 @@ export function CommandPalette({
     Math.min(Math.max(0, ...commands.map((command) => stringWidth(command.usage))) + 2, Math.floor((width - 3) / 2))
   )
   return (
-    <Box width={width} backgroundColor={theme.surface} flexDirection="column" flexShrink={0} overflow="hidden">
+    <Box
+      width={width}
+      borderStyle="single"
+      borderColor={theme.accent}
+      flexDirection="column"
+      flexShrink={0}
+      overflow="hidden"
+    >
       {assistance.message ? (
         <Box height={1} paddingX={1} flexShrink={0}>
           <Text dimColor wrap="truncate-end">
@@ -57,7 +64,7 @@ export function CommandPalette({
             height={1}
             flexShrink={0}
             paddingX={1}
-            backgroundColor={index === hovered || pressedRow || index === selected ? theme.selection : undefined}
+            backgroundColor={index === hovered || pressedRow ? theme.selection : undefined}
           >
             <Box width={usageWidth} marginRight={1} flexShrink={0} overflow="hidden">
               <PanelItemHeader label={command.usage} active={index === selected} pressed={pressedRow} clickable />
@@ -68,11 +75,6 @@ export function CommandPalette({
           </Box>
         )
       })}
-      <Box height={1} paddingX={1} flexShrink={0}>
-        <Text dimColor wrap="truncate-end">
-          {'─'.repeat(Math.max(0, width - 2))}
-        </Text>
-      </Box>
     </Box>
   )
 }
