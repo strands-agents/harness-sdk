@@ -193,7 +193,13 @@ class ContextManager(Plugin):
         if not self._stash_disabled:
             storage = self._stash_explicit_storage or getattr(agent, "storage", None) or InMemoryStorage()
             self._stash_is_durable = getattr(storage, "_ephemeral", None) is not _EPHEMERAL
-            self._stash = Stash(storage, agent.session_id, agent.agent_id)
+            # Only explicit stash storage may be a shared root; agent.storage is shared with other subsystems.
+            self._stash = Stash(
+                storage,
+                agent.session_id,
+                agent.agent_id,
+                scoped_view_is_root=self._stash_explicit_storage is not None,
+            )
 
         if self._stash is not None:
             stash = self._stash
