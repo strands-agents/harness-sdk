@@ -568,8 +568,13 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
           case 'modelMessageStopEvent':
             // Store message and stop reason
             if (messageRole) {
+              const hasNonBlankContent = contentBlocks.some(
+                (block) => !(block instanceof TextBlock) || block.text.trim() !== ''
+              )
               const filtered = contentBlocks.filter(
-                (block) => !(block instanceof TextBlock && block.text.trim() === '')
+                (block) =>
+                  !(block instanceof TextBlock) ||
+                  (block.text !== '' && (block.text.trim() !== '' || hasNonBlankContent))
               )
               stoppedMessage = new Message({
                 role: messageRole,
