@@ -136,6 +136,9 @@ const learnCategories = [
         data-hamburger
       >
         <span class="strands-nav__hamburger-icon" set:html={hamburger} />
+        <span class="strands-nav__hamburger-icon strands-nav__close-icon">
+          <svg aria-hidden="true" focusable="false" width="32" height="24" viewBox="0 0 32 24" fill="none"><path d="M8 4L24 20M24 4L8 20" stroke="currentColor" stroke-width="2.5" stroke-linecap="square"/></svg>
+        </span>
       </button>
     </div>
   </div>
@@ -660,6 +663,15 @@ const learnCategories = [
     height: 24px;
   }
 
+  .strands-nav__close-icon,
+  .strands-nav__hamburger[aria-expanded='true'] > .strands-nav__hamburger-icon {
+    display: none;
+  }
+
+  .strands-nav__hamburger[aria-expanded='true'] > .strands-nav__close-icon {
+    display: inline-flex;
+  }
+
   .strands-nav__hamburger-icon :global(svg) {
     width: 100%;
     height: 100%;
@@ -1086,8 +1098,23 @@ const learnCategories = [
       currentLink.scrollIntoView({ block: 'center' });
     };
 
-    hamburgerBtn.addEventListener('click', () => {
-      const open = mobileMenu.classList.toggle('is-open');
+    // The page behind the overlay is made inert; the header bar stays live so the
+    // hamburger can close it, and the search dialog host stays live so it can open.
+    let inerted: HTMLElement[] = [];
+    const setPageInert = (inert: boolean) => {
+      inerted.forEach((el) => (el.inert = false));
+      inerted = [];
+      if (!inert) return;
+      for (let el = mobileMenu.parentElement; el && el !== document.body; el = el.parentElement) {
+        const siblings = Array.from(el.parentElement?.children ?? []) as HTMLElement[];
+        inerted.push(...siblings.filter((sib) => sib !== el && !sib.inert && !sib.querySelector('site-search')));
+      }
+      inerted.forEach((el) => (el.inert = true));
+    };
+
+    const setMenuOpen = (open: boolean) => {
+      mobileMenu.classList.toggle('is-open', open);
+      setPageInert(open);
       hamburgerBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
       hamburgerBtn.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
       // Lock body scroll while the overlay is open so scrolling moves the menu,
@@ -1100,6 +1127,22 @@ const learnCategories = [
         mobileMenu.style.top = `${bottom}px`;
         revealCurrent();
       }
+    };
+
+    hamburgerBtn.addEventListener('click', () => setMenuOpen(!mobileMenu.classList.contains('is-open')));
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || !mobileMenu.classList.contains('is-open')) return;
+      setMenuOpen(false);
+      hamburgerBtn.focus();
+    });
+
+    // Search opens its own modal dialog, and the full bar returns above 78rem.
+    document.querySelectorAll('[data-nav-search]').forEach((el) => {
+      el.addEventListener('click', () => setMenuOpen(false));
+    });
+    window.matchMedia('(min-width: 78rem)').addEventListener('change', (e) => {
+      if (e.matches) setMenuOpen(false);
     });
 
     // One section open at a time (Docs / Community).
