@@ -475,6 +475,50 @@ describe('Agent interrupt system', () => {
 
       expect(finalResult.stopReason).toBe('endTurn')
     })
+
+    it('rejects a resume for an interrupt that was already answered', async () => {
+      const model = new MockMessageModel()
+        .addTurn({
+          type: 'toolUseBlock',
+          name: 'confirmTool',
+          toolUseId: 'tool-1',
+          input: {},
+        })
+        .addTurn({ type: 'textBlock', text: 'Done' })
+        // Extra turn so a phantom model call surfaces as history corruption
+        // rather than as the mock model running out of turns.
+        .addTurn({ type: 'textBlock', text: 'Phantom' })
+
+      const tool = createMockTool('confirmTool', (context) => {
+        const response = context.interrupt({ name: 'confirm', reason: 'Confirm?' })
+        return `Got: ${response}`
+      })
+
+      const agent = new Agent({ model, tools: [tool], printer: false })
+
+      const interruptResult = await agent.invoke('Test')
+      expect(interruptResult.stopReason).toBe('interrupt')
+
+      const response = new InterruptResponseContent({
+        interruptId: interruptResult.interrupts![0]!.id,
+        response: 'approved',
+      })
+
+      const finalResult = await agent.invoke([response])
+      expect(finalResult.stopReason).toBe('endTurn')
+
+      const callCountAfterResume = model.callCount
+      const rolesAfterResume = agent.messages.map((m) => m.role)
+
+      // Re-sending the same response must not be silently accepted: the interrupt
+      // is no longer active, so there is nothing to resume.
+      await expect(agent.invoke([response])).rejects.toThrow(TypeError)
+      await expect(agent.invoke([response])).rejects.toThrow(/no longer active|not in an interrupted state/i)
+
+      // No phantom model call, and no consecutive assistant messages appended.
+      expect(model.callCount).toBe(callCountAfterResume)
+      expect(agent.messages.map((m) => m.role)).toEqual(rolesAfterResume)
+    })
   })
 
   describe('multiple hook interrupts', () => {
