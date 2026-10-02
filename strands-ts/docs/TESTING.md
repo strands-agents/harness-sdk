@@ -28,6 +28,7 @@ All test fixtures are located in `src/__fixtures__/`. Use these helpers to reduc
 | `expectLoopMetrics()`  | `metrics-helpers.ts`    | Assert on `AgentMetrics` with expected cycle count, tool names, and optional token usage | [Metrics Fixtures](#metrics-fixtures-metrics-helpersts)                     |
 | `findMetricValue()`    | `metrics-helpers.ts`    | Find the latest data point value for a named OTEL metric from ResourceMetrics            | [Metrics Fixtures](#metrics-fixtures-metrics-helpersts)                     |
 | `withDefaultLocale()`  | `locale-helpers.ts`     | Assert model-facing text formats numbers the same under any host locale                  | [Locale Fixtures](#locale-fixtures-locale-helpersts)                        |
+| `createStaticToolSearch()` | `search-helpers.ts` | Create a `ToolSearchStrategy` that returns fixed tool names, for testing selection without a ranker | [Search Fixtures](#search-fixtures-search-helpersts)                       |
 
 ## Test Organization
 
@@ -667,6 +668,12 @@ const result = await withDefaultLocale('en-IN', () => middleware(context))
 expect(statusBlock.text).toContain('100,000') // not '1,00,000'
 ```
 
+### Search Fixtures (`search-helpers.ts`)
+- **`createStaticToolSearch(names)`** - A `ToolSearchStrategy` that returns `names` best-first regardless of the query or candidates. Use it to test what a context strategy does with a ranking, without depending on the default ranker.
+```typescript
+import { createStaticToolSearch } from '../../__fixtures__/search-helpers.js'
+const strategy = Hide.toolSpecs('toolSpecs', { search: createStaticToolSearch(['beta']), keep: 1 })
+```
 ## Multi-Environment Testing
 
 The SDK is designed to work seamlessly in both Node.js and browser environments. Our test suite validates this by running tests in both environments using Vitest's browser mode with Playwright.

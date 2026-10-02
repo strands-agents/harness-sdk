@@ -65,7 +65,8 @@ async function retrieveContent(
 const CHARS_PER_TOKEN = 4
 const DEFAULT_MAX_RESULT_TOKENS = 2_500
 const DEFAULT_PREVIEW_TOKENS = 1_000
-const RETRIEVAL_TOOL_NAME = 'retrieve_offloaded_content'
+/** Name of the tool offload placeholders tell the model to call. @internal */
+export const OFFLOADED_CONTENT_RETRIEVAL_TOOL_NAME = 'retrieve_offloaded_content'
 
 const retrievalInputSchema = z.object({
   reference: z.string().describe('The reference string from the offload placeholder (e.g. "mem_1_tool-123_0").'),
@@ -328,7 +329,7 @@ export class ContextOffloader implements Plugin {
     const maxChars = this._maxResultTokens * CHARS_PER_TOKEN
 
     return tool({
-      name: RETRIEVAL_TOOL_NAME,
+      name: OFFLOADED_CONTENT_RETRIEVAL_TOOL_NAME,
       description:
         'When a tool result was too large to keep in context, it was stored externally and replaced with a preview and a reference. ' +
         'Use this tool with that reference to access the stored content.\n\n' +
@@ -456,7 +457,7 @@ export class ContextOffloader implements Plugin {
     if (event.tool instanceof AgentAsTool && event.tool.delegate) return
 
     // Skip results from the retrieval tool to prevent circular offloading
-    if (this._includeRetrievalTool && event.toolUse.name === RETRIEVAL_TOOL_NAME) return
+    if (this._includeRetrievalTool && event.toolUse.name === OFFLOADED_CONTENT_RETRIEVAL_TOOL_NAME) return
 
     const content = event.result.content
     const toolUseId = event.result.toolUseId
