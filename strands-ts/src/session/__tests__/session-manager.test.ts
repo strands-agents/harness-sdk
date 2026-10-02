@@ -1,5 +1,7 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 import { SessionManager } from '../session-manager.js'
+import type { SnapshotAppDataContext } from '../session-manager.js'
+import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { MockSnapshotStorage, createTestSnapshot } from '../../__fixtures__/mock-storage-provider.js'
 import {
   InitializedEvent,
@@ -30,6 +32,7 @@ import {
   AfterNodeCallEvent,
   BeforeMultiAgentInvocationEvent,
   Graph,
+  Swarm,
   type MultiAgent,
   MultiAgentState,
   NodeResult,
@@ -99,6 +102,266 @@ describe('SessionManager', () => {
   beforeEach(() => {
     storage = new MockSnapshotStorage()
     mockAgent = createMockAgent()
+  })
+
+  describe('snapshotAppData', () => {
+    const location = { sessionId: 'app-data', scope: 'agent' as const, scopeId: 'agent' }
+
+    it.each(['message', 'invocation', 'trigger'] as const)('captures metadata for %s saves', async (saveLatestOn) => {
+      const provider = vi.fn(() => ({ experiment: { seed: 42 }, round: 3 }))
+      sessionManager = new SessionManager({
+        sessionId: location.sessionId,
+        storage: { snapshot: storage },
+        saveLatestOn,
+        snapshotTrigger: () => saveLatestOn === 'trigger',
+        snapshotAppData: provider,
+      })
+      const event =
+        saveLatestOn === 'message'
+          ? new MessageAddedEvent(createMockMessageEvent(mockAgent))
+          : new AfterInvocationEvent(createMockEvent(mockAgent))
+      await initPluginAndInvokeHook(sessionManager, event)
+      expect(provider.mock.calls).toEqual([[{ scope: 'agent', target: mockAgent, sessionId: location.sessionId }]])
+      const latest = await storage.loadSnapshot({ location })
+      expect(latest).toEqual({
+        ...mockAgent.takeSnapshot({ preset: 'session' }),
+        createdAt: expect.any(String),
+        appData: { experiment: { seed: 42 }, round: 3 },
+      })
+      if (saveLatestOn === 'trigger') {
+        const ids = await storage.listSnapshotIds({ location })
+        expect(ids).toHaveLength(1)
+        expect(await storage.loadSnapshot({ location, snapshotId: ids[0]! })).toEqual(latest)
+      }
+    })
+
+    it('captures default auto-save and trigger separately, sharing one capture within the pair', async () => {
+      const provider = vi.fn(() => ({ round: 2 }))
+      const save = vi.spyOn(storage, 'saveSnapshot')
+      sessionManager = new SessionManager({
+        storage: { snapshot: storage },
+        snapshotTrigger: () => true,
+        snapshotAppData: provider,
+      })
+      await initPluginAndInvokeHook(sessionManager, new AfterInvocationEvent(createMockEvent(mockAgent)))
+      expect(provider).toHaveBeenCalledTimes(2)
+      expect(save).toHaveBeenCalledTimes(3)
+      expect(save.mock.calls[1]![0].snapshot).toBe(save.mock.calls[2]![0].snapshot)
+    })
+
+    it('replaces appData for manual saves and leaves application variables alone on restore', async () => {
+      let metadata: Record<string, JSONValue> = { round: 1 }
+      const provider = vi.fn(() => metadata)
+      sessionManager = new SessionManager({
+        sessionId: location.sessionId,
+        storage: { snapshot: storage },
+        snapshotAppData: provider,
+      })
+      mockAgent.messages.push(MOCK_MESSAGE)
+      await sessionManager.saveSnapshot({ target: mockAgent, isLatest: false })
+      const ids = await storage.listSnapshotIds({ location })
+      expect((await storage.loadSnapshot({ location, snapshotId: ids[0]! }))?.appData).toEqual({ round: 1 })
+      metadata = {}
+      await sessionManager.saveSnapshot({ target: mockAgent, isLatest: true })
+      expect((await storage.loadSnapshot({ location }))?.appData).toEqual({})
+      mockAgent.messages.length = 0
+      expect(await sessionManager.restoreSnapshot({ target: mockAgent, snapshotId: ids[0]! })).toBe(true)
+      expect(mockAgent.messages).toEqual([MOCK_MESSAGE])
+      expect(metadata).toEqual({})
+      expect(provider).toHaveBeenCalledTimes(2)
+    })
+
+    it('detaches metadata before asynchronous stash capture and preserves stash data', async () => {
+      const metadata = { nested: { round: 1 } }
+      const stash = new Stash(new InMemoryStorage(), location.sessionId, 'agent')
+      const stashData = { saved: 'value' }
+      vi.spyOn(stash, 'takeSnapshot').mockImplementation(async () => {
+        metadata.nested.round = 99
+        return stashData
+      })
+      Object.assign(mockAgent, { contextManager: { stash } })
+      sessionManager = new SessionManager({
+        sessionId: location.sessionId,
+        storage: { snapshot: storage },
+        snapshotAppData: () => metadata,
+      })
+      await sessionManager.saveSnapshot({ target: mockAgent, isLatest: true })
+      const snapshot = await storage.loadSnapshot({ location })
+      expect({ appData: snapshot?.appData, stash: snapshot?.data.stash }).toEqual({
+        appData: { nested: { round: 1 } },
+        stash: { location: 'inline', entries: stashData },
+      })
+    })
+
+    it.each([
+      null,
+      undefined,
+      [],
+      'text',
+      1,
+      Promise.resolve({}),
+      { nested: undefined },
+      { nested: () => true },
+      { nested: Symbol('invalid') },
+      { toJSON: () => null },
+      { toJSON: () => [] },
+      { toJSON: () => 'invalid' },
+    ])('rejects invalid metadata without writing a snapshot (%#)', async (invalid) => {
+      const save = vi.spyOn(storage, 'saveSnapshot')
+      sessionManager = new SessionManager({
+        storage: { snapshot: storage },
+        snapshotAppData: () => invalid as unknown as Record<string, JSONValue>,
+      })
+      await expect(sessionManager.saveSnapshot({ target: mockAgent, isLatest: true })).rejects.toThrow()
+      expect(save).not.toHaveBeenCalled()
+    })
+
+    it('rejects circular metadata and propagates provider errors before storage', async () => {
+      const circular: Record<string, JSONValue> = {}
+      circular.self = circular
+      const failure = new Error('metadata failed')
+      const provider = vi
+        .fn(() => circular)
+        .mockImplementationOnce(() => {
+          throw failure
+        })
+      const save = vi.spyOn(storage, 'saveSnapshot')
+      sessionManager = new SessionManager({ storage: { snapshot: storage }, snapshotAppData: provider })
+      await expect(sessionManager.saveSnapshot({ target: mockAgent, isLatest: true })).rejects.toBe(failure)
+      await expect(sessionManager.saveSnapshot({ target: mockAgent, isLatest: true })).rejects.toThrow()
+      expect(save).not.toHaveBeenCalled()
+    })
+
+    it('accepts serialized records and empty objects when no provider is configured', async () => {
+      sessionManager = new SessionManager({ sessionId: location.sessionId, storage: { snapshot: storage } })
+      await sessionManager.saveSnapshot({ target: mockAgent, isLatest: true })
+      expect((await storage.loadSnapshot({ location }))?.appData).toEqual({})
+      sessionManager = new SessionManager({
+        sessionId: location.sessionId,
+        storage: { snapshot: storage },
+        snapshotAppData: () => ({ toJSON: () => ({ round: 1 }) }) as unknown as Record<string, JSONValue>,
+      })
+      await sessionManager.saveSnapshot({ target: mockAgent, isLatest: true })
+      expect((await storage.loadSnapshot({ location }))?.appData).toEqual({ round: 1 })
+    })
+
+    it('preserves custom target metadata when no provider is configured', async () => {
+      const customSnapshot = { ...mockAgent.takeSnapshot({ preset: 'session' }), appData: { custom: true } }
+      const expected = { ...customSnapshot, appData: { custom: true } }
+      vi.spyOn(mockAgent, 'takeSnapshot').mockReturnValue(customSnapshot)
+      sessionManager = new SessionManager({ sessionId: location.sessionId, storage: { snapshot: storage } })
+      await sessionManager.saveSnapshot({ target: mockAgent, isLatest: true })
+      expect(await storage.loadSnapshot({ location })).toEqual(expected)
+    })
+
+    it.each(['message', 'invocation'] as const)(
+      'persists redactions despite metadata failure under %s',
+      async (saveLatestOn) => {
+        const failure = new Error('metadata failed')
+        const provider = vi.fn(() => {
+          throw failure
+        })
+        const stash = new Stash(new InMemoryStorage(), location.sessionId, 'agent')
+        vi.spyOn(stash, 'takeSnapshot').mockResolvedValue({ saved: 'value' })
+        Object.assign(mockAgent, { contextManager: { stash } })
+        mockAgent.messages.push(new Message({ role: 'user', content: [new TextBlock('[redacted]')] }))
+        sessionManager = new SessionManager({
+          sessionId: location.sessionId,
+          storage: { snapshot: storage },
+          saveLatestOn,
+          snapshotAppData: provider,
+        })
+        const event = new AfterModelCallEvent({
+          agent: mockAgent,
+          model: new MockMessageModel(),
+          invocationState: {},
+          attemptCount: 1,
+          stopData: { message: MOCK_MESSAGE, stopReason: 'endTurn', redaction: { userMessage: '[redacted]' } },
+        })
+        await expect(initPluginAndInvokeHook(sessionManager, event)).rejects.toBe(failure)
+        expect(await storage.loadSnapshot({ location })).toEqual({
+          ...mockAgent.takeSnapshot({ preset: 'session' }),
+          createdAt: expect.any(String),
+          data: {
+            ...mockAgent.takeSnapshot({ preset: 'session' }).data,
+            stash: { location: 'inline', entries: { saved: 'value' } },
+          },
+          appData: {},
+        })
+        expect(provider).toHaveBeenCalledTimes(1)
+        const storageError = new Error('storage failed')
+        vi.spyOn(storage, 'saveSnapshot').mockRejectedValue(storageError)
+        await expect(initPluginAndInvokeHook(sessionManager, event)).rejects.toBe(storageError)
+        expect(provider).toHaveBeenCalledTimes(2)
+      }
+    )
+
+    it('uses metadata on successful redaction flushes', async () => {
+      sessionManager = new SessionManager({
+        sessionId: location.sessionId,
+        storage: { snapshot: storage },
+        snapshotAppData: () => ({ round: 1 }),
+      })
+      await initPluginAndInvokeHook(
+        sessionManager,
+        new AfterModelCallEvent({
+          agent: mockAgent,
+          model: new MockMessageModel(),
+          invocationState: {},
+          attemptCount: 1,
+          stopData: { message: MOCK_MESSAGE, stopReason: 'endTurn', redaction: { userMessage: '[redacted]' } },
+        })
+      )
+      expect((await storage.loadSnapshot({ location }))?.appData).toEqual({ round: 1 })
+    })
+
+    it.each(['graph', 'swarm'] as const)('captures %s metadata on manual and lifecycle saves', async (kind) => {
+      const provider = vi.fn((context: SnapshotAppDataContext) => ({ scope: context.scope, run: 7 }))
+      sessionManager = new SessionManager({
+        sessionId: location.sessionId,
+        storage: { snapshot: storage },
+        snapshotAppData: provider,
+      })
+      const node = new Agent({
+        id: 'node',
+        model: new MockMessageModel().addTurn(
+          kind === 'graph'
+            ? new TextBlock('done')
+            : {
+                type: 'toolUseBlock',
+                name: 'strands_structured_output',
+                toolUseId: 't1',
+                input: { message: 'done' },
+              }
+        ),
+        printer: false,
+      })
+      const config = { id: kind, nodes: [node], plugins: [sessionManager] }
+      const orchestrator = kind === 'graph' ? new Graph({ ...config, edges: [] }) : new Swarm(config)
+      const state = new MultiAgentState({ nodeIds: ['node'] })
+      state.steps = 3
+      await sessionManager.saveSnapshot({ target: orchestrator, state, isLatest: false })
+      const multiLocation = { sessionId: location.sessionId, scope: 'multiAgent' as const, scopeId: kind }
+      const ids = await storage.listSnapshotIds({ location: multiLocation })
+      const immutable = await storage.loadSnapshot({ location: multiLocation, snapshotId: ids[0]! })
+      expect(immutable?.data.state).toEqual(expect.objectContaining({ steps: 3 }))
+      expect(immutable?.appData).toEqual({ scope: 'multiAgent', run: 7 })
+      const result = await orchestrator.invoke('test')
+      expect(result.status).toBe(Status.COMPLETED)
+      expect(provider.mock.calls).toEqual(
+        Array.from({ length: 3 }, () => [
+          {
+            scope: 'multiAgent',
+            target: orchestrator,
+            sessionId: location.sessionId,
+          },
+        ])
+      )
+      expect((await storage.loadSnapshot({ location: multiLocation }))?.appData).toEqual({
+        scope: 'multiAgent',
+        run: 7,
+      })
+    })
   })
 
   describe('constructor', () => {
