@@ -2718,3 +2718,53 @@ class TestSpanAttributesOnly:
 
             mock_span.set_attributes.assert_not_called()
             mock_span.add_event.assert_not_called()
+
+
+def _start_span_calls(tracer):
+    messages = [{"role": "user", "content": [{"text": "Hello"}]}]
+    tool = {"name": "test-tool", "toolUseId": "123", "input": {"param": "value"}}
+    return {
+        "model": lambda: tracer.start_model_invoke_span(messages=messages, model_id="m", system_prompt="sys"),
+        "cycle": lambda: tracer.start_event_loop_cycle_span({"event_loop_cycle_id": "c"}, messages=messages),
+        "agent": lambda: tracer.start_agent_span(messages=messages, agent_name="a"),
+        "tool": lambda: tracer.start_tool_call_span(tool),
+    }
+
+
+@pytest.mark.parametrize("span_type", ["model", "cycle", "agent", "tool"])
+@pytest.mark.parametrize("semconv", ["", "gen_ai_latest_experimental"])
+def test_start_span_skips_serialization_when_not_recording(mock_tracer, monkeypatch, span_type, semconv):
+    """Span content is not serialized for a span that will not be exported."""
+    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", semconv)
+    tracer = Tracer()
+    tracer.tracer = mock_tracer
+
+    mock_span = mock.MagicMock()
+    mock_span.is_recording.return_value = False
+    mock_tracer.start_span.return_value = mock_span
+
+    with mock.patch("strands.telemetry.tracer.serialize") as mock_serialize:
+        span = _start_span_calls(tracer)[span_type]()
+
+    assert span is mock_span
+    mock_serialize.assert_not_called()
+    mock_span.add_event.assert_not_called()
+
+
+@pytest.mark.parametrize("span_type", ["model", "cycle", "agent", "tool"])
+@pytest.mark.parametrize("semconv", ["", "gen_ai_latest_experimental"])
+def test_start_span_serializes_when_recording(mock_tracer, monkeypatch, span_type, semconv):
+    """A recording span still receives its serialized content."""
+    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", semconv)
+    tracer = Tracer()
+    tracer.tracer = mock_tracer
+
+    mock_span = mock.MagicMock()
+    mock_span.is_recording.return_value = True
+    mock_tracer.start_span.return_value = mock_span
+
+    with mock.patch("strands.telemetry.tracer.serialize", wraps=serialize) as mock_serialize:
+        _start_span_calls(tracer)[span_type]()
+
+    mock_serialize.assert_called()
+    mock_span.add_event.assert_called()
