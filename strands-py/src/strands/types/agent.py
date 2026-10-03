@@ -104,6 +104,10 @@ class LocalAgent(Protocol):
         """The cancellation signal for the current invocation."""
         ...
 
+    def cancel(self) -> None:
+        """Request cancellation at the agent's next supported checkpoint."""
+        ...
+
     def add_hook(
         self,
         callback: HookCallback[_TEvent],

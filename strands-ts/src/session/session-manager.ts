@@ -421,13 +421,14 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
   /** Restores orchestrator state on first invocation (loads snapshot from storage once per orchestrator, then no-ops). */
   private async _onBeforeMultiAgentInvocation(event: BeforeMultiAgentInvocationEvent): Promise<void> {
     if (this._multiAgentRestoredIds.has(event.orchestrator.id)) return
-    this._multiAgentRestoredIds.add(event.orchestrator.id)
 
     const location = this._multiAgentLocation(event.orchestrator)
     const snapshot = await this._snapshotStorage.loadSnapshot({ location })
-    if (!snapshot) return
+    if (snapshot) {
+      loadMultiAgentSnapshot(event.orchestrator as Graph | Swarm, snapshot, event.state)
+    }
 
-    loadMultiAgentSnapshot(event.orchestrator as Graph | Swarm, snapshot, event.state)
+    this._multiAgentRestoredIds.add(event.orchestrator.id)
   }
 
   /** Saves latest orchestrator snapshot after each node completes. */

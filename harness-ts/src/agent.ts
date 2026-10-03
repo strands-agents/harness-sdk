@@ -3,8 +3,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { mkdtempSync, statSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { statSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   Agent,
@@ -22,7 +21,7 @@ import {
   Tool,
   type ToolList,
 } from '@strands-agents/sdk'
-import { ContextOffloader, FileStorage } from '@strands-agents/sdk/vended-plugins/context-offloader'
+import { LocalFileStorage } from '@strands-agents/sdk/storage'
 import { AgentSkills, type SkillSource } from '@strands-agents/sdk/vended-plugins/skills'
 import { EnvironmentContext, Todos } from './plugins/index.js'
 import {
@@ -56,18 +55,15 @@ import type { BuiltinPluginName, BuiltinToolName } from './config.js'
 import type { BuiltinToolsConfig, ContextManagerOption, Effort, MemoryConfig, SessionConfig } from './types/agent.js'
 
 /**
- * Built-in plugins, each toggled by name via `builtinPlugins`. Unlike the offloader and skills
- * plugins (wired from their own options), these are opt-out feature plugins that only bundle a tool
- * and a loop-level behavior; the map is the seam to grow the set (e.g. memories) later.
+ * Built-in plugins, each toggled by name via `builtinPlugins`. Unlike the skills plugin (wired from
+ * its own option), these are opt-out feature plugins that only bundle a tool and a loop-level
+ * behavior; the map is the seam to grow the set (e.g. memories) later.
  */
 const BUILTIN_PLUGINS = { todos: Todos, environment: EnvironmentContext } as const
 
 // The delegation tool always runs in the background: its calls are long-running subtasks whose
 // intermediate work should stay out of the parent's turn.
 const ALWAYS_BACKGROUND_TOOL_NAMES = new Set(['subagent'])
-
-const AUTO_MAX_RESULT_TOKENS = 1_500
-const AUTO_PREVIEW_TOKENS = 750
 
 /**
  * Options for {@link createHarness}. Every field is optional.
@@ -107,9 +103,9 @@ export interface HarnessAgentOptions extends Omit<
    */
   tools?: ToolList
   /**
-   * Consumer plugins, registered alongside the harness's. A `ContextOffloader` or `AgentSkills` instance
-   * passed here replaces the one the harness would add; a `Todos`/`EnvironmentContext` instance replaces
-   * the matching built-in plugin. A `subagent` child inherits these plugins.
+   * Consumer plugins, registered alongside the harness's. An `AgentSkills` instance passed here replaces
+   * the one the harness would add; a `Todos`/`EnvironmentContext` instance replaces the matching built-in
+   * plugin. A `subagent` child inherits these plugins.
    */
   plugins?: Plugin[]
   /**
@@ -152,10 +148,9 @@ export interface HarnessAgentOptions extends Omit<
   caching?: 'auto' | boolean | null
   /**
    * SDK context management: `'auto'` (the default) or `'agentic'` selects an SDK-managed strategy,
-   * a `ContextManager` instance is used as-is, and `false`/`null` disables it. With a preset, large
-   * tool results are also offloaded to disk (a preview and reference are kept in context) so the
-   * agent can run longer before compacting; an instance or `false` turns the harness's offloader off too,
-   * and a `ContextOffloader` in `plugins` replaces it.
+   * a `ContextManager` instance is used as-is, and `false`/`null` disables it. The presets offload
+   * large tool results out of context (a preview and reference are kept) so the agent can run longer
+   * before compacting; the model reads a result back with `retrieve_context`.
    */
   contextManager?: ContextManagerOption
   /**
@@ -163,8 +158,8 @@ export interface HarnessAgentOptions extends Omit<
    * `./.agent/sessions` under a fresh random id via a `SessionManager`, and offloaded artifacts
    * stay durable there; `{ id, dir }` picks the id (pass a previous run's `agent.sessionId` to
    * resume that conversation) and/or the root directory; a `SessionManager` instance is used
-   * as-is. `false`/`null` disables it (the conversation is in-memory and artifacts go to a
-   * temporary directory that does not outlive the process). Ignored when an explicit
+   * as-is (pass `storage` with it, or offloaded artifacts are embedded in its snapshots). `false`/`null`
+   * disables it (the conversation and offloaded artifacts stay in memory). Ignored when an explicit
    * `sessionManager` is passed.
    */
   session?: boolean | SessionConfig | SessionManager | null
@@ -217,18 +212,6 @@ function sanitizeSessionId(sessionId: string): string {
       .toLowerCase()
       .replace(/[^a-z0-9_-]/gu, '-') || 'default'
   )
-}
-
-function durableOffloader(offloadDir: string): Plugin {
-  return new ContextOffloader({
-    storage: new FileStorage({ artifactDir: offloadDir }),
-    maxResultTokens: AUTO_MAX_RESULT_TOKENS,
-    previewTokens: AUTO_PREVIEW_TOKENS,
-  })
-}
-
-function hasOffloader(plugins: readonly Plugin[]): boolean {
-  return plugins.some((p) => p instanceof ContextOffloader)
 }
 
 function isDir(path: string): boolean {
@@ -446,19 +429,14 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
     enabledBuiltinTools({ ...resolvedBuiltins, web_search: webSearch === 'exa' }),
     await buildBuiltinTools(createHarness, parentConfig, resolvedBuiltins)
   )
-  const contextEnabled = contextManagerOption !== false && contextManagerOption !== null
-  // A caller-built `ContextManager` is the whole strategy; the harness only adds its offloader to the presets.
-  const contextCustom = typeof contextManagerOption === 'object' && contextManagerOption !== null
 
   // Assemble plugins before the collision check so plugin-vended tools are checked too; consumer
   // plugins stay first so the tail is the harness's own.
   const consumerPlugins: Plugin[] = [...(consumerPluginsOption ?? [])]
   const plugins: Plugin[] = [...consumerPlugins]
 
-  // Resolved before the offloader so its artifacts land under the session directory when a session
-  // is active and in a throwaway temp dir otherwise.
   let sessionManager = agentConfig.sessionManager
-  let sessionDir = DEFAULT_SESSION_DIR
+  let storage = agentConfig.storage
   if (session && sessionManager === undefined) {
     if (session instanceof SessionManager) {
       sessionManager = session
@@ -467,19 +445,17 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
       if (sessionConfig.id !== undefined && sessionConfig.id.trim() === '') {
         throw new Error('session.id must be a non-empty string.')
       }
-      sessionDir = sessionConfig.dir ?? DEFAULT_SESSION_DIR
+      const sessionDir = sessionConfig.dir ?? DEFAULT_SESSION_DIR
+      const sessionId = sessionConfig.id ? sanitizeSessionId(sessionConfig.id) : randomUUID().slice(0, 8)
       sessionManager = new SessionManager({
-        sessionId: sessionConfig.id ? sanitizeSessionId(sessionConfig.id) : randomUUID().slice(0, 8),
+        sessionId,
         storage: { snapshot: new SessionFileStorage(sessionDir) },
         saveLatestOn: 'message',
       })
+      // The context manager's stash goes to files, not into the snapshot rewritten on every message. It
+      // lives in the session's own folder because each folder under the session dir is read as a session.
+      storage ??= new LocalFileStorage(join(sessionDir, sessionId))
     }
-  }
-
-  if (contextEnabled && !contextCustom && !hasOffloader(plugins)) {
-    const offloadDir =
-      sessionManager !== undefined ? `${sessionDir}/offloaded` : mkdtempSync(join(tmpdir(), 'strands-offload-'))
-    plugins.push(durableOffloader(offloadDir))
   }
 
   if (skills && !hasSkills(plugins)) {
@@ -522,7 +498,7 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
   // to a built-in name (e.g. `web` exposing `fetch` -> `web_fetch`) still can.
   const agentTools: ToolList = [...builtin, ...consumer]
 
-  const contextManager: AgentConfig['contextManager'] = contextEnabled ? contextManagerOption : false
+  const contextManager: AgentConfig['contextManager'] = contextManagerOption ?? false
 
   const resolvedInterventions = await resolveInterventions(interventions)
   const resolvedBackgroundTasks = resolveBackgroundTasks(
@@ -540,6 +516,7 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
     backgroundTasks: resolvedBackgroundTasks,
     contextManager,
     ...(sessionManager !== undefined && { sessionManager }),
+    ...(storage !== undefined && { storage }),
     ...(memoryManager !== undefined && { memoryManager }),
     interventions: resolvedInterventions,
   })

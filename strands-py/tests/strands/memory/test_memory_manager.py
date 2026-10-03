@@ -204,14 +204,15 @@ class _FakeAgent:
     """Minimal agent stand-in for ``init_agent`` wiring.
 
     The manager uses ``agent.add_hook(callback, event_type, *, order=...)``,
-    ``agent.model``, and ``agent._middleware_registry.add_middleware(...)`` (for
+    ``agent.aux_model``, and ``agent._middleware_registry.add_middleware(...)`` (for
     default-on injection). Recorded hooks are kept as ``(callback, event_type,
     order)`` triples so tests can fire the matching events manually; the
     middleware registry is a mock so injection registration is a no-op here.
     """
 
-    def __init__(self, model: Any = None) -> None:
+    def __init__(self, model: Any = None, aux_model: Any = None) -> None:
         self.model = model
+        self.aux_model = aux_model if aux_model is not None else model
         self.state = MagicMock()
         self.hooks: list[tuple[Any, Any, float]] = []
         self._middleware_registry = MagicMock()
@@ -1099,7 +1100,7 @@ async def test_init_agent_extractor_route_writes_each_entry_via_add():
 
 
 @pytest.mark.asyncio
-async def test_init_agent_passes_agent_model_as_default_model_to_extractor():
+async def test_init_agent_passes_agent_aux_model_as_default_model_to_extractor():
     extractor = _make_extractor([])
     store = _store(
         "s",
@@ -1108,8 +1109,8 @@ async def test_init_agent_passes_agent_model_as_default_model_to_extractor():
         extraction=ExtractionConfig(trigger=InvocationTrigger(), extractor=extractor),
     )
     mm = MemoryManager(stores=[store])
-    fake_model = SimpleNamespace(id="model")
-    agent = _FakeAgent(model=fake_model)
+    fake_aux_model = SimpleNamespace(id="aux")
+    agent = _FakeAgent(model=SimpleNamespace(id="model"), aux_model=fake_aux_model)
     await mm.init_agent(agent)
 
     await _add_messages(agent, _user_msg("hi"))
@@ -1118,7 +1119,7 @@ async def test_init_agent_passes_agent_model_as_default_model_to_extractor():
     extractor.extract.assert_called_once()
     context = _extractor_context(extractor.extract.call_args)
     assert context is not None
-    assert context.default_model is fake_model
+    assert context.default_model is fake_aux_model
 
 
 @pytest.mark.asyncio

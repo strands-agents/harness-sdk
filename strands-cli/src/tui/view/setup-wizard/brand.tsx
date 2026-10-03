@@ -22,9 +22,13 @@ export function setupBrandFrame(
 ): { left: number; width: number; height: number } {
   const left = openingGridLayout(width).left
   const brandWidth = Math.max(1, width - left)
-  const availableHeight = Math.max(1, terminalHeight - SETUP_CONTENT_MIN_HEIGHT)
+  const availableHeight = Math.max(1, terminalHeight - SETUP_CONTENT_MIN_HEIGHT - 2)
   const fullHeight = frogStartupHeight(brandWidth, Number.POSITIVE_INFINITY)
-  const height = availableHeight >= fullHeight + 2 ? fullHeight : frogStartupHeight(brandWidth, availableHeight)
+  // Compact startup sizing reserves eight surrounding rows; setup already reserves its content and padding.
+  const height =
+    availableHeight >= fullHeight
+      ? fullHeight
+      : Math.min(availableHeight, frogStartupHeight(brandWidth, availableHeight + 8))
   return { left, width: brandWidth, height }
 }
 

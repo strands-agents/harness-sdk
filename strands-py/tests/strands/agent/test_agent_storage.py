@@ -6,8 +6,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from strands import Agent
-from strands.experimental.bidi.agent import BidiAgent
-from strands.experimental.bidi.models import BidiModel
+from strands.bidi.agent import BidiAgent
+from strands.bidi.models import BidiModel
 from strands.session.repository_session_manager import RepositorySessionManager
 from strands.session.snapshot_session_manager import SnapshotSessionManager
 from strands.storage.in_memory_storage import InMemoryStorage as UnifiedInMemoryStorage

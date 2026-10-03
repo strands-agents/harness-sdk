@@ -1038,7 +1038,7 @@ class TestBuiltInClassifier:
 
         event = MagicMock()
         event.tool_use = {"name": "tool", "input": {}}
-        event.agent.model = None
+        event.agent.aux_model = None
 
         with pytest.raises(ValueError, match="no model"):
             await classifier(event)
@@ -1097,6 +1097,31 @@ class TestBuiltInClassifier:
 
         call_kwargs = mock_agent_cls.call_args[1]
         assert call_kwargs["model"] is configured_model
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_agent_aux_model(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from strands.vended_interventions.hitl.classifier import _create_llm_risk_classifier, _RiskDecision
+
+        classifier = _create_llm_risk_classifier()
+
+        mock_result = MagicMock()
+        mock_result.structured_output = _RiskDecision(requires_approval=False, reason="safe")
+
+        event = MagicMock()
+        event.tool_use = {"name": "read", "input": {}}
+        event.agent.model = MagicMock(name="agent_model")
+        event.agent.aux_model = MagicMock(name="aux_model")
+
+        with patch("strands.agent.Agent") as mock_agent_cls:
+            mock_agent = MagicMock()
+            mock_agent.invoke_async = AsyncMock(return_value=mock_result)
+            mock_agent_cls.return_value = mock_agent
+
+            await classifier(event)
+
+        assert mock_agent_cls.call_args[1]["model"] is event.agent.aux_model
 
     @pytest.mark.asyncio
     async def test_uses_custom_system_prompt(self):

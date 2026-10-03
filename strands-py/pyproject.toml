@@ -52,7 +52,7 @@ gemini = ["google-genai>=1.67.0,<3.0.0"]
 # the version lower than 1.92.0 until litellm has the python 3.14 supported version.
 litellm = ["litellm>=1.75.9,<=1.96.0", "openai>=1.68.0,<3.0.0"]
 llamaapi = ["llama-api-client>=0.1.0,<1.0.0"]
-mistral = ["mistralai>=2.0.0,<3.0.0"]
+mistral = ["mistralai>=2.0.0,<4.0.0"]
 ollama = ["ollama>=0.4.8,<1.0.0"]
 web-fetch = ["markdownify>=1.1.0,<2.0.0", "beautifulsoup4>=4.9.0,<5.0.0"]
 openai = ["openai>=1.68.0,<3.0.0", "aws-bedrock-token-generator>=1.1.0,<2.0.0"]
@@ -104,7 +104,7 @@ dev = [
     "commitizen>=4.4.0,<5.0.0",
     "hatch>=1.0.0,<2.0.0",
     "moto>=5.1.0,<6.0.0",
-    "mypy>=1.15.0,<3.0.0",
+    "mypy>=1.15.0,<2.4.0",
     "pre-commit>=3.2.0,<4.7.0",
     "pytest>=9.0.0,<10.0.0",
     "pytest-cov>=7.0.0,<8.0.0",
@@ -136,7 +136,8 @@ raw-options.git_describe_command = ["git", "describe", "--dirty", "--tags", "--l
 installer = "uv"
 features = ["all"]
 dependencies = [
-  "mypy>=1.15.0,<3.0.0",
+  # mypy 2.4 has inference failures for async hooks and reversed message lists.
+  "mypy>=1.15.0,<2.4.0",
   "ruff>=0.16.0,<0.17.0",
   # Include required package dependencies for mypy
   "boto3-stubs[bedrock-agent,bedrock-agent-runtime,s3]>=1.26.0,<2.0.0",

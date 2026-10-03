@@ -123,6 +123,15 @@ def _process_property(
             # For Optional fields, we mark as nullable but copy all properties from the non-null option
             result = non_null_type.copy() if isinstance(non_null_type, dict) else {}
 
+            # Preserve anyOf when enum/const is present — a null type with non-null enum/const values is invalid.
+            if "enum" in result or "const" in result:
+                result = {"anyOf": [non_null_type, {"type": "null"}]}
+                # Carry over top-level metadata from the original property
+                for key, value in prop.items():
+                    if key != "anyOf":
+                        result[key] = value
+                return result
+
             # For type, ensure it includes "null"
             if "type" in result and isinstance(result["type"], str):
                 result["type"] = [result["type"], "null"]
@@ -159,7 +168,7 @@ def _process_property(
         if key not in ["$ref", "anyOf"]:
             if isinstance(value, dict):
                 result[key] = _process_nested_dict(value, defs)
-            elif key == "type" and not is_required and not is_nullable:
+            elif key == "type" and not is_required and not is_nullable and "enum" not in prop and "const" not in prop:
                 # For non-required fields, ensure type is a list with "null"
                 if isinstance(value, str):
                     result[key] = [value, "null"]
@@ -326,6 +335,10 @@ def _expand_nested_properties(schema: dict[str, Any], model: type[BaseModel]) ->
 
         # If this is a BaseModel field, expand its properties with full details
         if isinstance(field_type, type) and issubclass(field_type, BaseModel):
+            # Skip properties already expanded inline (e.g. via a model_json_schema override).
+            if "properties" in prop_info:
+                continue
+
             # Get the nested model's schema with all its properties
             nested_model_schema = field_type.model_json_schema()
 

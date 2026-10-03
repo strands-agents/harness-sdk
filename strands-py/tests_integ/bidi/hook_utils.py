@@ -1,7 +1,7 @@
 """Shared utilities for testing BidiAgent hooks."""
 
 from strands import LocalAgent
-from strands.experimental.bidi.hooks import (
+from strands.bidi.hooks import (
     BidiAgentStopEvent,
     BidiBargeInEvent,
     BidiResponseStopEvent,

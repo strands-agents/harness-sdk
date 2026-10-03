@@ -6,7 +6,7 @@ import { fileURLToPath, URL } from 'node:url'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import TextCache from '#ink-text-cache'
+import TextCache from '../dist/src/tui/terminal/ink.js'
 
 const execute = promisify(execFile)
 const packageRoot = fileURLToPath(new URL('..', import.meta.url))

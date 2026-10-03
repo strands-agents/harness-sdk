@@ -81,29 +81,26 @@ main model's family, Anthropic-on-Bedrock or OpenAI-on-Bedrock). Override it wit
 
 ## web_search
 
-Where the model provider has its own search, `web_search` is a switch, not a tool object. It
-turns on the model provider's own native web search so the agent can look things up
-mid-answer. Native search exists on OpenAI, Anthropic (Python library), Google, and the GPT-5
-and GPT-6 models on `bedrock-mantle`, so `web_search` takes effect there.
+`web_search` lets the agent look things up while it answers. It isn't a separate tool: it
+turns on the web search built into the model provider. OpenAI, Anthropic,
+Google, and the GPT-5 and GPT-6 models on `bedrock-mantle` have one.
 
-On providers without native search (Amazon Bedrock Converse, other `bedrock-mantle` models, and
-`Model` instances), `web_search` is a no-op when it is on only by default: Strands harness logs a
-warning and builds the agent without it. Requesting it explicitly on such a provider (by
-listing `web_search` in your own `builtin_tools`) fails at construction instead, so a
-deliberate request never silently does nothing.
+For models that don't provide web search, the harness logs a message and builds the agent
+without it. If you asked for it explicitly in `builtin_tools`, you get an error instead, so
+the request doesn't silently do nothing.
 
-To search on those providers anyway, set `{"web_search": "exa"}` in `builtin_tools`. The
-harness then builds a `web_search` tool backed by [Exa](https://exa.ai)'s hosted search instead
-of relying on the provider. The setting is honoured on every model, so it also replaces native
-search where the provider has one. It needs no setup: the keyless free tier covers getting started.
-Exa is a third party, so every query the agent makes is sent to Exa and handled under its
-terms; weigh that before turning it on for sensitive work. Set `EXA_API_KEY` in the
-environment to lift the free tier's rate limit.
+To search with those models anyway, set `{"web_search": "exa"}` in `builtin_tools`. The
+harness then searches through [Exa](https://exa.ai) instead, on any model, including ones
+with their own search. No setup is needed to get started, and setting `EXA_API_KEY` lifts the
+free tier's rate limit. Exa is a third party, so every search query is sent to Exa and
+handled under its terms; weigh that before using it for sensitive work. You can also connect
+the MCP server of your preferred search provider instead; see
+[connect MCP servers](../../configure/mcp-servers/).
 
 ## Selecting them
 
-Both are selected by name through `builtin_tools`. Drop `web_fetch` or `web_search` from
-the list to turn either off; see
+Both are selected by name through `builtin_tools`. To turn either off, leave it out of the
+list or set it to `False`; see
 [add tools and instructions](../../configure/tools-and-instructions/) for
 how selection works. To change the summarizer model, see
 [choose a model and reasoning](../../configure/model/).

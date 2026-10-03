@@ -18,6 +18,7 @@ export type IntegrationType =
   | 'storage'
   | 'integration'
   | 'plugin'
+  | 'observability'
   | 'agent-extension'
   | 'intervention'
 

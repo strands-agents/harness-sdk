@@ -11,6 +11,7 @@ import {
 } from '@modelcontextprotocol/client'
 import { McpClient } from '../client.js'
 import { McpTool } from '../../tools/mcp-tool.js'
+import { ToolValidationError } from '../../errors.js'
 import { JsonBlock, type TextBlock, type ToolResultBlock } from '../../types/messages.js'
 import { ImageBlock } from '../../types/media.js'
 import type { LocalAgent } from '../../types/agent.js'
@@ -254,19 +255,24 @@ describe('MCP Integration', () => {
     })
 
     it('converts SDK tool specs to McpTool instances', async () => {
+      const longName = 'a'.repeat(65)
       const outputSchema = {
         type: 'object' as const,
         properties: { forecast: { type: 'string' as const } },
         required: ['forecast'],
       }
       sdkClientMock.listTools.mockResolvedValue({
-        tools: [{ name: 'weather', description: 'Get weather', inputSchema: {}, outputSchema }],
+        tools: [
+          { name: 'weather', description: 'Get weather', inputSchema: {}, outputSchema },
+          { name: longName, inputSchema: {} },
+        ],
       })
+      sdkClientMock.callTool.mockResolvedValue({ content: [] })
 
       const tools = await client.listTools()
 
       expect(sdkClientMock.connect).toHaveBeenCalled()
-      expect(tools).toHaveLength(1)
+      expect(tools.map((tool) => tool.name)).toEqual(['weather', longName])
       expect(tools[0]).toBeInstanceOf(McpTool)
       expect(tools[0]!.toolSpec).toEqual({
         name: 'weather',
@@ -274,6 +280,8 @@ describe('MCP Integration', () => {
         inputSchema: {},
         outputSchema,
       })
+      await client.callTool(tools[1]!, {})
+      expect(sdkClientMock.callTool).toHaveBeenCalledWith({ name: longName, arguments: {} }, undefined)
     })
 
     it('paginates through all pages of tools', async () => {
@@ -410,6 +418,55 @@ describe('MCP Integration', () => {
 
       expect(tools.map((tool) => tool.name)).toEqual(['server_keep_one', 'server_keep_two'])
       expect(prefixedSdkClient.callTool).toHaveBeenCalledWith({ name: 'keep_two', arguments: { value: 1 } }, undefined)
+    })
+
+    it('skips overlong names across pages and preserves the 64-character boundary', async () => {
+      // One overlong MCP name must not block the remaining tools (#4513).
+      const lenientClient = new McpClient({ transport: mockTransport, prefix: 'server', continueOnError: true })
+      const lenientSdkClient = vi.mocked(Client).mock.results.at(-1)!.value
+      lenientSdkClient.getServerVersion.mockReturnValue({ name: 'test-server', version: '1.0.0' })
+      const boundaryName = 'a'.repeat(57)
+      const overlongName = 'a'.repeat(58)
+      lenientSdkClient.listTools
+        .mockResolvedValueOnce({
+          tools: [{ name: overlongName, inputSchema: {} }],
+          nextCursor: 'second',
+        })
+        .mockResolvedValueOnce({
+          tools: [
+            { name: boundaryName, inputSchema: {} },
+            { name: 'short', inputSchema: {} },
+          ],
+        })
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+      const tools = await lenientClient.listTools()
+
+      expect(tools.map((tool) => tool.name)).toEqual([`server_${boundaryName}`, 'server_short'])
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+      const warning = warnSpy.mock.calls[0]![0]
+      for (const detail of ['test-server', overlongName, `server_${overlongName}`, '65', '64', 'prefix', 'skipping']) {
+        expect(warning).toContain(detail)
+      }
+      expect(lenientClient.connectionState).toBe('connected')
+    })
+
+    it.each([undefined, false])('throws an actionable error with continueOnError=%s', async (continueOnError) => {
+      const strictClient = new McpClient({
+        transport: mockTransport,
+        prefix: 'awslabs_aws-iac-mcp-server',
+        ...(continueOnError !== undefined && { continueOnError }),
+      })
+      const strictSdkClient = vi.mocked(Client).mock.results.at(-1)!.value
+      strictSdkClient.getServerVersion.mockReturnValue({ name: 'aws-iac', version: '1.0.0' })
+      const serverName = 'get_cloudformation_pre_deploy_validation_instructions'
+      strictSdkClient.listTools.mockResolvedValue({ tools: [{ name: serverName, inputSchema: {} }] })
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+      const discovery = strictClient.listTools()
+      await expect(discovery).rejects.toThrow(ToolValidationError)
+      await expect(discovery).rejects.toThrow(/aws-iac.*get_cloudformation.*64.*prefix/)
+      expect(warnSpy).not.toHaveBeenCalled()
     })
 
     it('surfaces tool annotations in the tool spec', async () => {
@@ -682,6 +739,8 @@ describe('MCP Integration', () => {
     }
 
     it('calls onToolsChanged with old names and new tools when list changes', async () => {
+      client = new McpClient({ transport: mockTransport, prefix: 'server', continueOnError: true })
+      sdkClientMock = vi.mocked(Client).mock.results.at(-1)!.value
       sdkClientMock.listTools.mockResolvedValue({
         tools: [{ name: 'tool_a', description: 'A', inputSchema: {} }],
       })
@@ -689,20 +748,38 @@ describe('MCP Integration', () => {
 
       const onToolsChanged = vi.fn()
       client.onToolsChanged = onToolsChanged
-
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const overlongTool = { name: 'a'.repeat(58), inputSchema: {} }
       sdkClientMock.listTools.mockResolvedValue({
         tools: [
           { name: 'tool_a', description: 'A', inputSchema: {} },
           { name: 'tool_b', description: 'B', inputSchema: {} },
+          overlongTool,
         ],
       })
 
       triggerToolsChanged()
-      await vi.waitFor(() => expect(onToolsChanged).toHaveBeenCalled())
+      await vi.waitFor(() => expect(onToolsChanged).toHaveBeenCalledTimes(1))
 
-      expect(onToolsChanged).toHaveBeenCalledWith(['tool_a'], expect.any(Array))
-      const newTools = onToolsChanged.mock.calls[0]![1] as McpTool[]
-      expect(newTools.map((t) => t.name)).toEqual(['tool_a', 'tool_b'])
+      sdkClientMock.listTools.mockResolvedValue({ tools: [overlongTool] })
+      triggerToolsChanged()
+      await vi.waitFor(() => expect(onToolsChanged).toHaveBeenCalledTimes(2))
+
+      sdkClientMock.listTools.mockResolvedValue({ tools: [{ name: 'tool_c', inputSchema: {} }] })
+      triggerToolsChanged()
+      await vi.waitFor(() => expect(onToolsChanged).toHaveBeenCalledTimes(3))
+
+      expect(
+        onToolsChanged.mock.calls.map(([oldTools, newTools]) => ({
+          oldTools,
+          newNames: (newTools as McpTool[]).map((tool) => tool.name),
+        }))
+      ).toEqual([
+        { oldTools: ['server_tool_a'], newNames: ['server_tool_a', 'server_tool_b'] },
+        { oldTools: ['server_tool_a', 'server_tool_b'], newNames: [] },
+        { oldTools: [], newNames: ['server_tool_c'] },
+      ])
+      expect(warnSpy).toHaveBeenCalledTimes(2)
     })
 
     it('updates registered tool names after each listTools call', async () => {
@@ -788,24 +865,40 @@ describe('MCP Integration', () => {
       await new Promise((r) => setTimeout(r, 0))
     })
 
-    it('logs warning and preserves registry when listTools fails during refresh', async () => {
-      sdkClientMock.listTools.mockResolvedValue({
-        tools: [{ name: 'tool_a', description: 'A', inputSchema: {} }],
-      })
-      await client.listTools()
+    it.each(['request', 'name length'])(
+      'logs warning and preserves registry when listTools fails during refresh (%s)',
+      async (failure) => {
+        client = new McpClient({ transport: mockTransport, prefix: 'server' })
+        sdkClientMock = vi.mocked(Client).mock.results.at(-1)!.value
+        sdkClientMock.listTools.mockResolvedValue({
+          tools: [{ name: 'tool_a', description: 'A', inputSchema: {} }],
+        })
+        await client.listTools()
 
-      const onToolsChanged = vi.fn()
-      client.onToolsChanged = onToolsChanged
+        const onToolsChanged = vi.fn()
+        client.onToolsChanged = onToolsChanged
+        if (failure === 'request') {
+          sdkClientMock.listTools.mockRejectedValueOnce(new Error('server disconnected'))
+        } else {
+          sdkClientMock.listTools
+            .mockResolvedValueOnce({ tools: [{ name: 'ephemeral', inputSchema: {} }], nextCursor: 'second' })
+            .mockResolvedValueOnce({ tools: [{ name: 'a'.repeat(58), inputSchema: {} }] })
+        }
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
 
-      sdkClientMock.listTools.mockRejectedValue(new Error('server disconnected'))
-      const warnSpy = vi.spyOn(logger, 'warn')
+        triggerToolsChanged()
+        await vi.waitFor(() => expect(warnSpy).toHaveBeenCalled())
+        expect(onToolsChanged).not.toHaveBeenCalled()
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('failed to refresh tools'))
 
-      triggerToolsChanged()
-      await vi.waitFor(() => expect(warnSpy).toHaveBeenCalled())
+        sdkClientMock.listTools.mockResolvedValue({ tools: [{ name: 'tool_b', inputSchema: {} }] })
+        triggerToolsChanged()
+        await vi.waitFor(() => expect(onToolsChanged).toHaveBeenCalledTimes(1))
 
-      expect(onToolsChanged).not.toHaveBeenCalled()
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('failed to refresh tools'))
-    })
+        expect(onToolsChanged.mock.calls[0]![0]).toEqual(['server_tool_a'])
+        expect((onToolsChanged.mock.calls[0]![1] as McpTool[]).map((tool) => tool.name)).toEqual(['server_tool_b'])
+      }
+    )
 
     it('coalesces notifications received during an in-flight refresh into one extra refresh', async () => {
       sdkClientMock.listTools.mockResolvedValue({

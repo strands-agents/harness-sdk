@@ -53,8 +53,15 @@ describe('skill discovery', () => {
       expect(resolveSkillPaths([], cwd)).toEqual([])
       expect(configuredSkillPaths(undefined, cwd)).toEqual([])
       expect(configuredSkillPaths('./custom/skills', cwd)).toEqual([configured])
+      // HTTPS skill sources stay URLs through CLI discovery (#4574).
+      expect(configuredSkillPaths('https://example.com/SKILL.md', cwd)).toEqual(['https://example.com/SKILL.md'])
+      expect(configuredSkillPaths(['./custom/skills', 'https://example.com/SKILL.md'], cwd)).toEqual([
+        configured,
+        'https://example.com/SKILL.md',
+      ])
 
       expect(resolveSkillPaths('./custom/skills', cwd, false)).toEqual([configured])
+      expect(resolveSkillPaths('https://example.com/SKILL.md', cwd, false)).toEqual(['https://example.com/SKILL.md'])
       expect(resolveSkillPaths(undefined, cwd, false)).toEqual([join(cwd, '.agent', 'skills')])
 
       process.env.STRANDS_CLI_SKILL_DISCOVERY = 'off'

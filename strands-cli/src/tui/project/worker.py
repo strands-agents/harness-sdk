@@ -27,6 +27,7 @@ from strands.session import SnapshotSessionManager
 from strands.storage import LocalFileStorage
 from strands.tools.mcp import MCPClient
 from strands.types.tools import ToolContext
+from strands.vended_plugins.context_offloader import ContextOffloader
 from strands.vended_plugins.skills import AgentSkills
 from strands_harness import define_harness_agent_config, harness_agent_kwargs_from_config
 from strands_harness.defaults import DEFAULT_MODEL
@@ -179,6 +180,30 @@ def local_session_directory(storage):
     if not isinstance(storage, LocalFileStorage):
         return None
     return str(Path(storage._base_dir, *parts).resolve())
+
+
+def agent_stash(agent):
+    return getattr(getattr(agent, "context_manager", None), "stash", None)
+
+
+def local_stash_directory(agent):
+    stash = agent_stash(agent)
+    base_directory = local_session_directory(getattr(stash, "_base_storage", None))
+    namespace = getattr(getattr(stash, "_storage", None), "_prefix", "")
+    if base_directory is None or not namespace:
+        return None
+    # The namespace's first segment holds every session's stash, not just this agent's.
+    return str(Path(base_directory, namespace.split("/")[0]))
+
+
+def local_offloader_directories(agent):
+    plugins = getattr(getattr(agent, "_plugin_registry", None), "_plugins", {}).values()
+    return [
+        directory
+        for plugin in plugins
+        if isinstance(plugin, ContextOffloader)
+        and (directory := local_session_directory(getattr(plugin, "_storage", None)))
+    ]
 
 
 class Runtime:
@@ -363,6 +388,7 @@ class Runtime:
         )
         storage = manager._storage if isinstance(manager, SnapshotSessionManager) else None
         session_directory = local_session_directory(storage)
+        stash_directory = local_stash_directory(self.agent)
         managed_session = session_directory is not None
         skills = self.skills()
         active = skills.get_activated_skills(self.agent) if skills else []
@@ -404,6 +430,8 @@ class Runtime:
             "messages": display_messages(self.agent),
             "privatePaths": [
                 *([session_directory] if session_directory else []),
+                *([stash_directory] if stash_directory else []),
+                *local_offloader_directories(self.agent),
                 str(Path(self.options.get("memory_dir", ".agent/memory")).resolve()),
             ],
             "tools": [
@@ -615,10 +643,19 @@ class Runtime:
         elif kind == "snapshot":
             snapshot = self.agent.take_snapshot(preset="session").to_dict()
             self.result({"stopReason": "snapshot", "finalText": json.dumps(snapshot, default=encode)})
+        elif kind == "stash":
+            stash = agent_stash(self.agent)
+            entries = await stash.take_snapshot() if stash is not None else {}
+            self.result({"stopReason": "stash", "finalText": json.dumps(entries, default=encode)})
         elif kind == "seed":
             from strands.types._snapshot import Snapshot
 
             self.agent.load_snapshot(Snapshot.from_dict(json.loads(command["snapshot"], object_hook=decode)))
+            stash = agent_stash(self.agent)
+            if stash is not None and command.get("stash"):
+                # A fork has its own session id, so the refs in its copied messages resolve only against a
+                # copy of the source's stash.
+                await stash.load_snapshot(json.loads(command["stash"], object_hook=decode))
             await self.save()
             self.result({"stopReason": "seeded"})
         elif kind == "reset":
