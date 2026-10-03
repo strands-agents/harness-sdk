@@ -15,6 +15,7 @@ from strands.multiagent.spec import (
     _default_builder,
     _resolve_spec,
 )
+from strands.sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
 from strands.tools.decorator import tool
 
 _AXES = dict(
@@ -188,3 +189,32 @@ def test_resolve_spec_fixed_empty_list_is_not_none():
         mcp_servers=[],
         tools=["read", "shell"],
     )
+
+
+def test_default_builder_propagates_sandbox():
+    """Child must inherit the parent's sandbox so tools route through it."""
+    sandbox = NotASandboxLocalEnvironment()
+    parent = Agent(sandbox=sandbox)
+    child = _default_builder(parent)(AgentSpec())
+    assert child.sandbox is sandbox
+
+
+@pytest.mark.parametrize(
+    "handler",
+    [
+        pytest.param(None, id="suppressed"),
+        pytest.param(lambda **kw: None, id="custom"),
+    ],
+)
+def test_default_builder_propagates_callback_handler(handler):
+    """callback_handler on the parent flows to the child."""
+    parent = Agent(callback_handler=handler)
+    child = _default_builder(parent)(AgentSpec())
+    assert child.callback_handler is parent.callback_handler
+
+
+def test_default_builder_propagates_trace_attributes():
+    """trace_attributes from the parent appear on the child."""
+    parent = Agent(trace_attributes={"team": "infra"})
+    child = _default_builder(parent)(AgentSpec())
+    assert child.trace_attributes == {"team": "infra"}

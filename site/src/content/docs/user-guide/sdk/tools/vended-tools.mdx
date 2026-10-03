@@ -22,6 +22,7 @@ sourceLinks:
   - path: strands-py/src/strands/vended_tools/sleep/sleep.py
   - path: strands-py/src/strands/vended_tools/web_fetch/web_fetch.py
   - path: strands-py/src/strands/vended_tools/a2a_client/a2a_client.py
+  - path: strands-py/src/strands/vended_tools/subagent/subagent.py
   - path: strands-py/src/strands/experimental/tools/stop/stop.py
 ---
 
@@ -53,6 +54,7 @@ Each tool is imported from its own subpath under `@strands-agents/sdk/vended-too
 | [Stop](#stop-experimental) | Gracefully end the agent loop when the task is complete | Python, TypeScript (Node.js, browsers) |
 | [Web Fetch](#web-fetch) | Fetch a URL and return cleaned markdown for a model to read | Python, TypeScript (Node.js) |
 | [A2A Client](#a2a-client) | Discover and send messages to remote A2A-protocol agents | Python, TypeScript (Node.js, browsers) |
+| [Subagent](#subagent) | Delegate a self-contained task to a child agent | Python |
 
 ### File editor
 
@@ -716,6 +718,67 @@ agent("What has the research agent found recently?")
 </Tabs>
 
 Full API reference: [TypeScript](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/a2a-client/README.md)
+
+---
+
+### Subagent
+
+Delegates a self-contained task to a child agent that runs in its own context and returns a final report. Use it when a subtask would otherwise flood the parent's context with intermediate work and you only need the conclusion.
+
+The `make_subagent` factory lets you control what the model can configure on each child via authority-mode axes:
+
+- **`Fixed`** — developer-pinned value; hidden from the model.
+- **`Inherit`** — value taken from the parent agent; hidden from the model.
+- **`Open`** — model supplies a free-form value (e.g. ad-hoc instructions).
+- **`Choice`** — model picks from a developer-supplied set (e.g. tools, model, context mode).
+
+**Presets** are named roles (like `"generalist"` or `"reviewer"`) that bundle a default configuration; the model selects one via an `agent_type` parameter. The built-in `GENERALIST` preset works out of the box.
+
+_Supported in: Python._
+
+**Example — quick start:**
+
+```python
+from strands import Agent
+from strands.vended_tools.subagent import make_subagent
+
+subagent = make_subagent()
+agent = Agent(
+    system_prompt="You are a manager.",
+    tools=[subagent],
+)
+agent("Research the latest Python 3.13 features and summarize them.")
+```
+
+**Example — full control with `make_subagent`:**
+
+```python
+from strands import Agent
+from strands.multiagent.spec import Choice, Option, Preset
+from strands.vended_tools.subagent import make_subagent
+
+subagent = make_subagent(
+    presets={
+        "researcher": Preset(
+            instructions="You research topics thoroughly.",
+            description="deep research on a topic",
+        ),
+        "reviewer": Preset(
+            instructions="You review code for correctness and style.",
+            description="code review",
+        ),
+    },
+    model=Choice([
+        Option("fast", "us.anthropic.claude-sonnet-4-20250514-v1:0", "quick tasks"),
+        Option("deep", "us.anthropic.claude-opus-4-20250514-v1:0", "hard problems"),
+    ]),
+    context=Choice(["none", "all", "no_tools"]),
+    inherited_tools=["read", "shell", "write"],
+    max_depth=3,
+)
+agent = Agent(tools=[subagent])
+agent("Review the changes in src/main.py for correctness.")
+```
 
 ---
 

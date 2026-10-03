@@ -30,6 +30,10 @@ The :data:`handoff_to_user` tool pauses the agent loop and surfaces a message to
 the user for human-in-the-loop input; use :func:`make_handoff_to_user` to supply
 a custom tool name or description.
 
+The :func:`make_subagent` factory produces a ``subagent`` delegation tool that runs a
+self-contained task in an isolated child agent and returns a final report.
+Authority-mode axes let the developer pin what the model can configure on each child.
+
 Example Usage:
     ```python
     from strands import Agent

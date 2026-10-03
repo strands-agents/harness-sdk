@@ -268,7 +268,7 @@ def _resolve_spec(
     default (``Fixed``/``Inherit``). An omitted ``agent_type`` falls back to the default preset, so
     a bare ``subagent(task=...)`` behaves like the default role.
     """
-    task = str(raw["task"])
+    task = raw.get("task")
     # agent_type is a closed enum: a provided value must be an exact preset name (absent = no role).
     raw_agent_type = raw.get("agent_type")
     if raw_agent_type is not None and raw_agent_type not in presets:
@@ -605,7 +605,7 @@ def make_subagent(
 
     # Default the tools axis to a multiple Choice over the inherited tools; a tools Choice must be multiple.
     if tools is None:
-        tools = Choice(list(inherited_tools), multiple=True)
+        tools = Choice(list(inherited_tools), multiple=True) if inherited_tools else Inherit()
     elif isinstance(tools, Choice):
         if not tools.options:
             raise ValueError("tools=Choice([]) offers no options; use Fixed([]) for a toolless child, or Inherit().")

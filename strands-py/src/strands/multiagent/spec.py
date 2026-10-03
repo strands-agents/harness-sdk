@@ -298,6 +298,9 @@ def _default_builder(parent: Agent) -> AgentBuilder:
             tools=child_tools,
             model=spec.model or (parent.model if parent else None),
             name=spec.name,
+            sandbox=parent.sandbox if parent else None,
+            callback_handler=parent.callback_handler if parent else None,
+            trace_attributes=parent.trace_attributes if parent else None,
         )
 
     return build
