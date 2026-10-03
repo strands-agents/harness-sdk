@@ -5,16 +5,20 @@ Sample applications demonstrating Strands Agents TypeScript SDK features.
 ## Prerequisites
 
 - Node.js 22+
+- pnpm 12
 - AWS credentials configured (for the default Bedrock model provider)
 
 ## Running an Example
 
-Each example is a standalone project. From any example directory:
+From the repository root, install the workspace and build the SDK:
 
 ```bash
-npm install
-npm start
+pnpm install --frozen-lockfile
+npm run build
+npm --prefix strands-ts/examples/first-agent start
 ```
+
+Replace `first-agent` with another Node.js example. For `browser-agent`, run `npm --prefix strands-ts/examples/browser-agent run dev`.
 
 ## Available Examples
 

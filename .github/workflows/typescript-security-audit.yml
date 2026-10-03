@@ -22,12 +22,13 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: pnpm/setup@v3
         with:
-          node-version: 22
+          runtime: node@22
+          install: false
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       # Informational: full-tree audit for visibility into pre-existing
       # advisories. Does not block merge so unrelated PRs are not held hostage
@@ -35,4 +36,4 @@ jobs:
       # vulns are gated by the repo-level Dependency Review job in ci.yml.
       - name: Run security audit (informational)
         continue-on-error: true
-        run: npm audit --audit-level=high
+        run: pnpm audit --audit-level=high

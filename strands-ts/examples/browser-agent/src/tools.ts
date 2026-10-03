@@ -35,7 +35,8 @@ export const updateCanvasTool = tool({
     }
 
     if (input.script) {
-      canvas.contentWindow.eval(input.script)
+      const iframeWindow = canvas.contentWindow as Window & typeof globalThis
+      iframeWindow.eval(input.script)
       updates.push('script executed')
     }
 

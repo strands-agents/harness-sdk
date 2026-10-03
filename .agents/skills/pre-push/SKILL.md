@@ -53,8 +53,8 @@ How that split applies to the specific things phase 2 reports:
 
 - **Lint / type errors** the autofixer couldn't resolve — usually mechanical; fix the code and re-run.
 - **Test failures** — the judgment case above: show the failing output and let the developer decide whether the code or the test is wrong.
-- **`npm audit`** — a high-severity advisory may be a pre-existing transitive dependency issue outside this change. Surface it; don't block the user's work on it. Note it and move on.
-- **Missing tool** (`hatch`/`npm` not found) — the script says how to install. Report it; don't silently work around it.
+- **`pnpm audit`** — a high-severity advisory may be a pre-existing transitive dependency issue outside this change. Surface it; don't block the user's work on it. Note it and move on.
+- **Missing tool** (`hatch`/`pnpm`/`npm` not found) — the script says how to install. Report it; don't silently work around it.
 
 After fixing anything, re-run the script to confirm green.
 

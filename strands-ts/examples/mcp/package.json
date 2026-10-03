@@ -1,20 +1,16 @@
 {
-  "name": "first-agent",
+  "name": "mcp-example",
   "private": true,
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
-    "prepare": "npm ci --prefix ../../..",
-    "clean": "rm -rf dist node_modules package-lock.json",
+    "clean": "rm -rf dist",
     "build": "tsc",
     "start": "tsc && node dist/index.js"
   },
-  "workspaces": [
-    "../../"
-  ],
   "dependencies": {
     "@modelcontextprotocol/client": "^2.0.0",
-    "@strands-agents/sdk": "*"
+    "@strands-agents/sdk": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

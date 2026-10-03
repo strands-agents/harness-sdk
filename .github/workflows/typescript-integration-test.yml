@@ -6,7 +6,8 @@ on:
     paths:
       - 'strands-ts/**'
       - 'package.json'
-      - 'package-lock.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
       - '.github/workflows/typescript-*'
   merge_group:
     types: [checks_requested]
@@ -130,15 +131,14 @@ jobs:
           allow-unsafe-pr-checkout: true  # opt back into fork-PR checkout, blocked by default in checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: pnpm/setup@v3
         with:
-          node-version: 22
-          package-manager-cache: false
+          runtime: node@22
+          install: false
 
       - name: Install dependencies
         run: |
-          npm ci --ignore-scripts
-          npm install --no-save "@tobilu/qmd@^2.8.0"
+          pnpm install --frozen-lockfile
           npm run test:browser:install
 
       - name: Build the package

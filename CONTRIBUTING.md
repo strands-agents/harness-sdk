@@ -57,7 +57,7 @@ This is a monorepo containing the Python SDK, TypeScript SDK, MCP server, and do
 | Area | Directory | Toolchain |
 |------|-----------|-----------|
 | Python SDK | `strands-py/` | hatch |
-| TypeScript SDK | `strands-ts/` | npm workspace |
+| TypeScript SDK | `strands-ts/` | pnpm workspace |
 | MCP server | `strands-mcp/` | hatch |
 | Docs site | `site/` | Astro (npm) |
 
@@ -146,14 +146,14 @@ For additional details on styling, please see our dedicated [Style Guide](./stra
 
 ### TypeScript SDK
 
-The TypeScript SDK uses an npm workspace rooted at the repository root.
+The TypeScript SDK uses a pnpm workspace rooted at the repository root. Install pnpm 12 before running these commands.
 
 ```bash
-npm ci              # install dependencies (from repo root)
-npm run build       # build
-npm test            # run unit tests
-npm run lint        # lint
-npm run type-check  # type checking
+pnpm install --frozen-lockfile # install dependencies (from repo root)
+npm run build               # build
+npm test                    # run unit tests
+npm run lint                # lint
+npm run type-check          # type checking
 ```
 
 #### Running Selective Integration Tests Locally
@@ -167,7 +167,7 @@ npm run test:integ:selective
 
 This uses Vitest's module graph to run only the `integ-node` and
 `integ-browser` specs that depend on the source files you changed. If you
-alter a structural file (`package.json`, `package-lock.json`, a `strands-ts`
+alter a structural file (`package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, a `strands-ts`
 `tsconfig`, `vitest.config.ts`, a shared integration fixture under
 `test/integ/__fixtures__/`, or a TypeScript CI workflow), the full
 integration suite runs automatically.

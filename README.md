@@ -165,9 +165,9 @@ hatch fmt         # format & lint
 
 **TypeScript SDK** (`strands-ts/`):
 ```bash
-npm ci            # install from repo root
-npm run build     # build
-npm test          # run unit tests
+pnpm install --frozen-lockfile # install from repo root
+npm run build               # build
+npm test                    # run unit tests
 ```
 
 **Documentation site** (`site/`):

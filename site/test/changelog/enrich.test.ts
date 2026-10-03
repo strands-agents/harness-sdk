@@ -135,24 +135,27 @@ describe('enrich', () => {
     expect(e.languages).toBe(null)
   })
 
-  it('a root-npm-lockfile-only PR is attributed to typescript', async () => {
-    // Guards the leak in the python/v1.51.0 changelog sync (#3712): five npm bumps
-    // that touch only the root lockfile were listed on the python stream.
-    const npmBump = async () => ({
-      labels: [],
-      merge_commit_sha: 'abc1234',
-      user: 'dependabot[bot]',
-      files: ['package-lock.json'],
-    })
-    expect((await enrichFromPr('r', 1, npmBump)).languages).toEqual(['typescript'])
-  })
+  it.each(['package-lock.json', 'pnpm-lock.yaml'])(
+    'a root %s-only PR is attributed to typescript',
+    async (lockfile) => {
+      // Guards the leak in the python/v1.51.0 changelog sync (#3712): five dependency bumps
+      // that touch only the root lockfile were listed on the python stream.
+      const dependencyBump = async () => ({
+        labels: [],
+        merge_commit_sha: 'abc1234',
+        user: 'dependabot[bot]',
+        files: [lockfile],
+      })
+      expect((await enrichFromPr('r', 1, dependencyBump)).languages).toEqual(['typescript'])
+    }
+  )
 
   it('a root lockfile alongside SDK code keeps the dir signal', async () => {
     const f = async () => ({
       labels: [],
       merge_commit_sha: 'abc1234',
       user: 'x',
-      files: ['package-lock.json', 'strands-py/pyproject.toml'],
+      files: ['pnpm-lock.yaml', 'strands-py/pyproject.toml'],
     })
     const e = await enrichFromPr('r', 1, f)
     expect(e.languages).toEqual(['python'])
@@ -183,7 +186,7 @@ describe('enrich', () => {
       labels: [],
       merge_commit_sha: 'abc1234',
       user: 'x',
-      files: ['package-lock.json', '.github/workflows/ci.yml'],
+      files: ['pnpm-lock.yaml', '.github/workflows/ci.yml'],
     })
     const e = await enrichFromPr('r', 1, f)
     expect(e.languages).toEqual([])

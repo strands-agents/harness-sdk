@@ -36,14 +36,14 @@ strands-ts/
 ├── src/**/__tests__/     # Unit tests (co-located with source)
 ├── test/integ/           # Integration tests with real providers
 ├── docs/                 # Developer documentation
-└── package.json          # SDK package config, dependencies, npm scripts
+└── package.json          # SDK package config, dependencies, scripts
 ```
 
 ## Development Workflow
 
 ### 1. Environment Setup
 
-See [CONTRIBUTING.md - TypeScript SDK](../CONTRIBUTING.md#typescript-sdk) for prerequisites (Node.js 22+, npm), installation, and verification commands.
+See [CONTRIBUTING.md - TypeScript SDK](../CONTRIBUTING.md#typescript-sdk) for prerequisites (Node.js 22+, pnpm 12), installation, and verification commands.
 
 ### 2. Making Changes
 
