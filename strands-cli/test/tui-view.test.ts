@@ -1,4 +1,5 @@
 import chalk from 'chalk'
+import headless from '@xterm/headless'
 import { createElement } from 'react'
 import { renderToString } from 'ink'
 import stringWidth from 'string-width'
@@ -745,6 +746,86 @@ describe('ChatView', () => {
     expect(fallback).not.toContain('\u001b]8;;')
     expect(sanitizeTerminalText(fallback).replace(/\s/gu, '')).toContain('(https://strandsagents.com)')
   })
+
+  // Display tabs keep rendered terminal rows aligned (#4839).
+  it.each([
+    ['fenced code', '```\n1\tMARKER\n2\n```', ' 1    MARKER', '2'],
+    ['tab-indented code', ' \t1\tMARKER\n \t2', ' 1    MARKER', '2'],
+    ['table text', '| a | b |\n| --- | --- |\n| 1\tMARKER | x |\n| NEXT | y |', ' 1    MARKER │ x', 'NEXT │ y'],
+  ])('renders tabs in %s without adding terminal rows', async (_kind, children, expectedLine, followingLine) => {
+    const level = chalk.level
+    const screen = new headless.Terminal({ cols: 80, rows: 12, allowProposedApi: true })
+    try {
+      chalk.level = 3
+      const output = renderToString(createElement(Markdown, { children }), { columns: 80 })
+      await new Promise<void>((resolve) => screen.write(output.replaceAll('\n', '\r\n'), resolve))
+      const lines = Array.from({ length: 12 }, (_, row) => screen.buffer.active.getLine(row)!.translateToString(true))
+      const markerRow = lines.findIndex((line) => line.includes('MARKER'))
+      expect(markerRow).toBeGreaterThanOrEqual(0)
+      expect(lines[markerRow + 1]!.trim()).toBe(followingLine)
+      expect(lines[markerRow]!.trimEnd()).toBe(expectedLine)
+    } finally {
+      chalk.level = level
+      screen.dispose()
+    }
+  })
+
+  // Both tool-result display modes preserve terminal row geometry (#4839).
+  it.each(['compact', 'full'] as const)(
+    'renders tool-result tabs in %s mode without adding terminal rows',
+    async (toolOutput) => {
+      const level = chalk.level
+      const screen = new headless.Terminal({ cols: 80, rows: 40, allowProposedApi: true })
+      try {
+        chalk.level = 3
+        const output = renderView(
+          {
+            snapshot: snapshot({
+              settings: {
+                ...DEFAULT_CHAT_SETTINGS,
+                toolOutput,
+                animations: false,
+                frogTheme: 'custom',
+                colorMode: 'dark',
+                customTheme: { base: 'green', light: {}, dark: { background: '#333333' } },
+              },
+              completedTurns: [
+                {
+                  id: 'turn-1',
+                  prompt: 'Read sample.tsv',
+                  agentName: 'Strands harness',
+                  status: 'complete',
+                  entries: [
+                    {
+                      id: 'read-1',
+                      type: 'tool',
+                      toolUseId: 'read-1',
+                      name: 'read',
+                      input: { path: '/tmp/sample.tsv' },
+                      status: 'success',
+                      result: [{ type: 'text', text: '12\tMARKER\n2' }],
+                    },
+                  ],
+                },
+              ],
+            }),
+            terminalWidth: 80,
+            terminalHeight: 40,
+          },
+          { columns: 80 }
+        )
+        await new Promise<void>((resolve) => screen.write(output.replaceAll('\n', '\r\n'), resolve))
+        const lines = Array.from({ length: 40 }, (_, row) => screen.buffer.active.getLine(row)!.translateToString(true))
+        const markerRow = lines.findIndex((line) => line.includes('MARKER'))
+        expect(markerRow).toBeGreaterThanOrEqual(0)
+        expect(lines[markerRow + 1]!.trim()).toBe(toolOutput === 'compact' ? '└ 2' : '2')
+        expect(lines[markerRow]).toContain('12    MARKER')
+      } finally {
+        chalk.level = level
+        screen.dispose()
+      }
+    }
+  )
 
   it('shows complete output for direct bang commands even when tool output is compact', () => {
     const output = renderView({

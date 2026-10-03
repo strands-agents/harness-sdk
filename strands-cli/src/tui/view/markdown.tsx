@@ -35,14 +35,14 @@ function renderBlock(token: Token, key: string, theme: Theme): ReactNode {
       return <Text key={key}>{renderInline((token as Tokens.Paragraph).tokens, key, theme)}</Text>
     case 'text': {
       const text = token as Tokens.Text
-      return <Text key={key}>{text.tokens ? renderInline(text.tokens, key, theme) : text.text}</Text>
+      return <Text key={key}>{text.tokens ? renderInline(text.tokens, key, theme) : displayText(text.text)}</Text>
     }
     case 'code': {
       const code = token as Tokens.Code
       return (
         <Box key={key} backgroundColor={theme.surface} paddingX={1} marginY={1} flexDirection="column">
-          {code.lang ? <Text dimColor>{code.lang}</Text> : null}
-          <Text color="green">{code.text}</Text>
+          {code.lang ? <Text dimColor>{displayText(code.lang)}</Text> : null}
+          <Text color="green">{displayText(code.text)}</Text>
         </Box>
       )
     }
@@ -71,7 +71,9 @@ function renderBlock(token: Token, key: string, theme: Theme): ReactNode {
         </Text>
       )
     default:
-      return <Text key={key}>{'text' in token && typeof token.text === 'string' ? token.text : token.raw}</Text>
+      return (
+        <Text key={key}>{displayText('text' in token && typeof token.text === 'string' ? token.text : token.raw)}</Text>
+      )
   }
 }
 
@@ -134,7 +136,7 @@ function renderInline(tokens: readonly Token[], keyPrefix: string, theme: Theme)
       case 'codespan':
         return (
           <Text key={key} color={theme.warning} backgroundColor={theme.surface}>
-            {` ${(token as Tokens.Codespan).text} `}
+            {` ${displayText((token as Tokens.Codespan).text)} `}
           </Text>
         )
       case 'link': {
@@ -144,7 +146,7 @@ function renderInline(tokens: readonly Token[], keyPrefix: string, theme: Theme)
           <Text key={key} color={theme.accent} underline>
             {target ? `\u001b]8;;${target}\u0007` : ''}
             {renderInline(link.tokens, key, theme)}
-            {target ? '\u001b]8;;\u0007' : link.text === link.href ? '' : ` (${link.href})`}
+            {target ? '\u001b]8;;\u0007' : link.text === link.href ? '' : ` (${displayText(link.href)})`}
           </Text>
         )
       }
@@ -152,7 +154,7 @@ function renderInline(tokens: readonly Token[], keyPrefix: string, theme: Theme)
         const image = token as Tokens.Image
         return (
           <Text key={key} color={theme.accent}>
-            [image: {image.text || image.href}]
+            [image: {displayText(image.text || image.href)}]
           </Text>
         )
       }
@@ -160,12 +162,19 @@ function renderInline(tokens: readonly Token[], keyPrefix: string, theme: Theme)
         return '\n'
       case 'text': {
         const text = token as Tokens.Text
-        return <Fragment key={key}>{text.tokens ? renderInline(text.tokens, key, theme) : text.text}</Fragment>
+        return (
+          <Fragment key={key}>{text.tokens ? renderInline(text.tokens, key, theme) : displayText(text.text)}</Fragment>
+        )
       }
       default:
-        return <Fragment key={key}>{'text' in token ? String(token.text) : token.raw}</Fragment>
+        return <Fragment key={key}>{displayText('text' in token ? String(token.text) : token.raw)}</Fragment>
     }
   })
+}
+
+function displayText(value: string): string {
+  // Ink does not measure terminal tab stops; keep expansion separate from Markdown parsing.
+  return value.replaceAll('\t', '    ')
 }
 
 function hyperlinkTarget(href: string): string | undefined {
