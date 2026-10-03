@@ -114,6 +114,10 @@ class MiddlewareRegistry:
         handlers = self._handlers.setdefault(stage, [])
         handlers.append(_TaggedHandler(phase="output", handler=adapted))
 
+    def has_handlers(self, stage: MiddlewareStage[Any, Any, Any]) -> bool:
+        """Return whether any handler is registered for a stage."""
+        return bool(self._handlers.get(stage))
+
     def compose(self, stage: MiddlewareStage[Any, Any, Any], terminal: MiddlewareNext) -> MiddlewareNext:
         """Compose all registered handlers for a stage into a single chain.
 
