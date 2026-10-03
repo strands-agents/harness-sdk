@@ -35,3 +35,4 @@
 
 export { setupTracer, getTracer, setupMeter, getMeter } from './config.js'
 export type { TracerConfig, MeterConfig } from './config.js'
+export { Tracer } from './tracer.js'

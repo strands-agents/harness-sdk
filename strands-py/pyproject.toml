@@ -42,6 +42,7 @@ dependencies = [
     "opentelemetry-api>=1.30.0,<2.0.0",
     "opentelemetry-sdk>=1.30.0,<2.0.0",
     "opentelemetry-instrumentation-threading>=0.51b0,<1.00b0",
+    "opentelemetry-processor-baggage>=0.51b0,<1.00b0",
 ]
 
 

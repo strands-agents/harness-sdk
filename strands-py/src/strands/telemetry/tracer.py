@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import opentelemetry.context as context_api
 import opentelemetry.trace as trace_api
+from opentelemetry import baggage as baggage_api
 from opentelemetry.instrumentation.threading import ThreadingInstrumentor
 from opentelemetry.trace import Link, Span, SpanContext, StatusCode
 
@@ -234,6 +235,11 @@ class Tracer:
         if force_root:
             # An empty context detaches the span from any (possibly ended) current span.
             context = context_api.Context()
+
+            # Preserve baggage so that invocation-scoped entries propagate to root spans.
+            current = context_api.get_current()
+            for key, value in baggage_api.get_all(context=current).items():
+                context = baggage_api.set_baggage(key, value, context=context)
         else:
             if not parent_span:
                 parent_span = trace_api.get_current_span()

@@ -2718,3 +2718,69 @@ class TestSpanAttributesOnly:
 
             mock_span.set_attributes.assert_not_called()
             mock_span.add_event.assert_not_called()
+
+
+class TestBaggagePropagation:
+    """Tests for context-scoped baggage propagation through _start_span."""
+
+    def test_span_inherits_baggage_from_otel_context(self, mock_tracer):
+        """Spans created while baggage is active on the OTel context should carry that baggage."""
+        import opentelemetry.context as context_api
+        from opentelemetry import baggage as baggage_api
+
+        with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+            tracer = Tracer()
+            tracer.tracer = mock_tracer
+
+            mock_span = mock.MagicMock()
+            mock_span.is_recording.return_value = False
+            mock_tracer.start_span.return_value = mock_span
+
+            # Attach baggage to the OTel context (simulates what Agent does at invocation scope).
+            ctx = baggage_api.set_baggage("session.id", "sess-42")
+            ctx = baggage_api.set_baggage("tenant.id", "acme", context=ctx)
+            token = context_api.attach(ctx)
+            try:
+                tracer.start_agent_span(
+                    messages=[{"role": "user", "content": [{"text": "hello"}]}],
+                    agent_name="TestAgent",
+                )
+
+                # _start_span should pass a context (or None → OTel defaults to get_current())
+                # that carries the baggage.
+                call_ctx = mock_tracer.start_span.call_args[1].get("context")
+                # When context is None, OTel uses get_current() which has baggage.
+                if call_ctx is not None:
+                    all_baggage = baggage_api.get_all(call_ctx)
+                    assert all_baggage.get("tenant.id") == "acme"
+                    assert all_baggage.get("session.id") == "sess-42"
+                # If context is None, baggage flows via the implicit current context.
+            finally:
+                context_api.detach(token)
+
+    def test_force_root_preserves_baggage_from_active_context(self, mock_tracer):
+        """force_root spans should detach from the parent span but keep baggage."""
+        import opentelemetry.context as context_api
+        from opentelemetry import baggage as baggage_api
+
+        with mock.patch("strands.telemetry.tracer.trace_api.get_tracer", return_value=mock_tracer):
+            tracer = Tracer()
+            tracer.tracer = mock_tracer
+
+            mock_span = mock.MagicMock()
+            mock_span.is_recording.return_value = False
+            mock_tracer.start_span.return_value = mock_span
+
+            # Attach baggage to the OTel context.
+            ctx = baggage_api.set_baggage("session.id", "sess-99")
+            token = context_api.attach(ctx)
+            try:
+                tracer._start_span("force-root-span", force_root=True)
+
+                call_ctx = mock_tracer.start_span.call_args[1].get("context")
+                assert call_ctx is not None, "force_root should pass an explicit context"
+
+                all_baggage = baggage_api.get_all(call_ctx)
+                assert all_baggage.get("session.id") == "sess-99"
+            finally:
+                context_api.detach(token)

@@ -26,7 +26,15 @@
  * ```
  */
 
-import { context, isSpanContextValid, ROOT_CONTEXT, SpanStatusCode, SpanKind, trace } from '@opentelemetry/api'
+import {
+  context,
+  isSpanContextValid,
+  propagation,
+  ROOT_CONTEXT,
+  SpanStatusCode,
+  SpanKind,
+  trace,
+} from '@opentelemetry/api'
 import type { Span, Tracer as OtelTracer, SpanOptions, AttributeValue, Link, SpanContext } from '@opentelemetry/api'
 import { logger } from '../logging/index.js'
 import type {
@@ -198,6 +206,12 @@ export class Tracer {
    */
   private readonly _traceAttributes: Record<string, AttributeValue>
 
+  /**
+   * Baggage entries injected into the OTel context for every span.
+   * Set via {@link updateBaggageEntries}.
+   */
+  private _baggageEntries: Record<string, string> = {}
+
   /** Root span for the current agent invocation. */
   private _agentSpan: Span | undefined
 
@@ -260,6 +274,17 @@ export class Tracer {
    */
   get localTraces(): AgentTrace[] {
     return this._traceState.traces
+  }
+
+  /**
+   * Merge baggage entries into the set injected into every span's parent context.
+   *
+   * Existing entries with the same key are overwritten; entries with different keys are preserved.
+   *
+   * @param entries - Key-value pairs to set as W3C baggage entries.
+   */
+  updateBaggageEntries(entries: Record<string, string>): void {
+    this._baggageEntries = { ...this._baggageEntries, ...entries }
   }
 
   /**
@@ -982,11 +1007,37 @@ export class Tracer {
     if (options.links) spanOptions.links = options.links
 
     // An empty root context detaches the span from any (possibly ended) current span.
-    const ctx = options.forceRoot
+    let ctx = options.forceRoot
       ? ROOT_CONTEXT
       : options.parentSpan
         ? trace.setSpan(context.active(), options.parentSpan)
         : context.active()
+
+    if (options.forceRoot) {
+      // Preserve baggage so invocation-scoped entries propagate to root spans.
+      try {
+        const bag = propagation.getBaggage(context.active())
+        if (bag) ctx = propagation.setBaggage(ctx, bag)
+      } catch {
+        // getBaggage can fail in mocked/no-op environments — fall through to ROOT_CONTEXT.
+      }
+    }
+
+    // Inject baggage entries into the span context, skipping keys that already exist in the context.
+    if (Object.keys(this._baggageEntries).length > 0) {
+      try {
+        let bag = propagation.getBaggage(ctx) ?? propagation.createBaggage()
+        for (const [key, value] of Object.entries(this._baggageEntries)) {
+          if (!bag.getEntry(key)) {
+            bag = bag.setEntry(key, { value })
+          }
+        }
+        ctx = propagation.setBaggage(ctx, bag)
+      } catch (err) {
+        logger.warn(`error=<${err}> | failed to inject baggage entries into span context`)
+      }
+    }
+
     const span = this._tracer.startSpan(options.name, spanOptions, ctx)
 
     try {

@@ -14,6 +14,7 @@ import opentelemetry.sdk.metrics as metrics_sdk
 import opentelemetry.trace as trace_api
 from opentelemetry import propagate
 from opentelemetry.baggage.propagation import W3CBaggagePropagator
+from opentelemetry.processor.baggage import BaggageSpanProcessor
 from opentelemetry.propagators.composite import CompositePropagator
 from opentelemetry.sdk.metrics.export import ConsoleMetricExporter, PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
@@ -109,6 +110,9 @@ class StrandsTelemetry:
 
         # Create tracer provider
         self.tracer_provider = SDKTracerProvider(resource=self.resource)
+
+        # Set BaggageSpanProcessor so baggage entries are stamped as span attributes.
+        self.tracer_provider.add_span_processor(BaggageSpanProcessor(lambda key: key == "session.id"))
 
         # Set as global tracer provider
         trace_api.set_tracer_provider(self.tracer_provider)

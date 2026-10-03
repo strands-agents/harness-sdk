@@ -40,6 +40,7 @@ vi.mock('../../telemetry/tracer.js', () => ({
       startNodeSpan: vi.fn().mockReturnValue({ mock: 'nodeSpan' }),
       endNodeSpan: vi.fn(),
       withSpanContext: vi.fn((_span: unknown, fn: () => unknown) => fn()),
+      updateBaggageEntries: vi.fn(),
     }
   }),
 }))

@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import type { Span, SpanAttributeValue } from '@opentelemetry/api'
-import { SpanStatusCode, trace, context } from '@opentelemetry/api'
+import { SpanStatusCode, trace, context, propagation, ROOT_CONTEXT } from '@opentelemetry/api'
 import { Tracer } from '../tracer.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock, CachePointBlock } from '../../types/messages.js'
 import { MockSpan, eventAttr } from '../../__fixtures__/mock-span.js'
@@ -57,6 +57,46 @@ describe('Tracer', () => {
       new Tracer()
 
       expect(trace.getTracer).toHaveBeenCalledWith('strands-agents')
+    })
+  })
+
+  describe('updateBaggageEntries', () => {
+    afterEach(() => {
+      vi.mocked(context.active).mockReturnValue({} as any)
+      vi.mocked(trace.setSpan).mockReset()
+    })
+
+    it('merges and injects baggage into span context', () => {
+      vi.mocked(context.active).mockReturnValue(ROOT_CONTEXT)
+
+      const tracer = new Tracer()
+      tracer.updateBaggageEntries({ 'tenant.id': 'acme' })
+      tracer.updateBaggageEntries({ 'session.id': 'sess-42' })
+
+      tracer.startAgentSpan({
+        messages: [textMessage('user', 'Hello')],
+        agentName: 'TestAgent',
+      })
+
+      const ctx = mockStartSpan.mock.calls[0]![2] as import('@opentelemetry/api').Context
+      const bag = propagation.getBaggage(ctx)
+      expect(bag).toBeDefined()
+      expect(bag!.getEntry('tenant.id')?.value).toBe('acme')
+      expect(bag!.getEntry('session.id')?.value).toBe('sess-42')
+    })
+
+    it('propagates baggage to child spans', () => {
+      vi.mocked(context.active).mockReturnValue(ROOT_CONTEXT)
+      vi.mocked(trace.setSpan).mockImplementation((ctx) => ctx)
+
+      const tracer = new Tracer()
+      tracer.updateBaggageEntries({ 'session.id': 'sess-99' })
+
+      tracer.startAgentSpan({ messages: [textMessage('user', 'Hi')], agentName: 'TestAgent' })
+      tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')], modelId: 'model-1' })
+
+      const modelCtx = mockStartSpan.mock.calls[1]![2] as import('@opentelemetry/api').Context
+      expect(propagation.getBaggage(modelCtx)!.getEntry('session.id')?.value).toBe('sess-99')
     })
   })
 

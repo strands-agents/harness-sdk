@@ -976,6 +976,11 @@ export class Agent implements LocalAgent, InvokableAgent {
     return this._meter.metrics
   }
 
+  /** The agent's OpenTelemetry tracer, for injecting custom baggage or inspecting trace state. */
+  get tracer(): Tracer {
+    return this._tracer
+  }
+
   /**
    * Whether the agent is currently processing an invocation.
    */
@@ -1562,6 +1567,7 @@ export class Agent implements LocalAgent, InvokableAgent {
 
     // Start agent trace span
     this._meter.startNewInvocation()
+    this._tracer.updateBaggageEntries({ 'session.id': this.sessionId })
     const agentModelId = this.model.modelId
     const agentSpanOptions: Parameters<Tracer['startAgentSpan']>[0] = {
       messages: inputMessages,

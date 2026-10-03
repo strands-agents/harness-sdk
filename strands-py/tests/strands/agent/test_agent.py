@@ -3873,3 +3873,54 @@ async def test_agent_span_ends_on_generator_exit():
     assert len(agent_spans) == 1
     assert agent_spans[0].status.status_code == StatusCode.UNSET
     assert agent_spans[0].attributes["strands.cancellation.type"] == "GeneratorExit"
+
+
+def test_cross_agent_session_id_baggage_isolation(agenerator):
+    """Two agents invoked sequentially must each stamp their OWN session.id on every span.
+
+    Regression test for the singleton-tracer baggage contamination bug: previously
+    ``_baggage_entries`` lived on the process-wide ``Tracer`` singleton, so the last
+    agent to call ``update_baggage_entries`` won and the loser's cycle / tool spans
+    carried the wrong id.
+    """
+    from opentelemetry.processor.baggage import ALLOW_ALL_BAGGAGE_KEYS, BaggageSpanProcessor
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(BaggageSpanProcessor(ALLOW_ALL_BAGGAGE_KEYS))
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    tracer = Tracer()
+    tracer.tracer_provider = provider
+    tracer.tracer = provider.get_tracer(tracer.service_name)
+
+    model_a = MockedModelProvider([{"role": "assistant", "content": [{"text": "hello from A"}]}])
+    model_b = MockedModelProvider([{"role": "assistant", "content": [{"text": "hello from B"}]}])
+
+    with unittest.mock.patch("strands.agent.agent.get_tracer", return_value=tracer):
+        agent_a = Agent(model=model_a, callback_handler=None, name="AgentA")
+        agent_b = Agent(model=model_b, callback_handler=None, name="AgentB")
+
+        agent_a("hi")
+        agent_b("hi")
+
+    provider.force_flush()
+    spans = exporter.get_finished_spans()
+
+    sid_a = agent_a.session_id
+    sid_b = agent_b.session_id
+    assert sid_a != sid_b, "precondition: agents must have different session ids"
+
+    for span in spans:
+        bag_session = span.attributes.get("session.id")
+        if bag_session is None:
+            continue  # span created outside baggage scope
+        span_agent = span.attributes.get("gen_ai.agent.name", "")
+        if span_agent == "AgentA":
+            assert bag_session == sid_a, (
+                f"span '{span.name}' under AgentA carries session.id={bag_session}, expected {sid_a}"
+            )
+        elif span_agent == "AgentB":
+            assert bag_session == sid_b, (
+                f"span '{span.name}' under AgentB carries session.id={bag_session}, expected {sid_b}"
+            )
