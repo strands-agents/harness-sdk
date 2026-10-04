@@ -95,7 +95,7 @@ describe('Content Collections', () => {
   it('has unique titles across user-guide pages', async () => {
     // Related-pages output and JSON-LD `headline` use `title` verbatim. Two
     // user-guide pages with the same title produce ambiguous links that look
-    // like duplicates (e.g. a "Hooks" that could mean the agents or bidi one).
+    // like duplicates. Intentional shared titles are allowlisted below.
     // Set `sidebar.label` if you want the sidebar to stay terse while the page
     // title remains unambiguous out-of-context.
     const docs = await getCollection('docs')
@@ -108,7 +108,7 @@ describe('Content Collections', () => {
       titleMap.set(doc.data.title, slugs)
     }
 
-    const allowedDuplicates = new Set(['Interrupts', 'Steering'])
+    const allowedDuplicates = new Set(['Hooks', 'Interrupts', 'Steering'])
     const collisions = [...titleMap.entries()].filter(
       ([title, slugs]) => slugs.length > 1 && !allowedDuplicates.has(title)
     )

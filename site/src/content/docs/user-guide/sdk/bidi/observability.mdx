@@ -171,7 +171,7 @@ A barge-in is recorded as a `bidi_barge_in` event on the session span.
 
 To count barge-ins, query the session span's `bidi_barge_in` events. Keeping the
 event on the session also captures barge-ins between response spans. For detection
-and playback behavior, see [Barge-in](barge-in.md).
+and playback behavior, see [Barge-in](events.mdx#barge-in-1).
 
 ## Inspecting spans locally
 
@@ -462,5 +462,5 @@ Each provider emits one span per response. Usage details vary by provider:
 - [Logs](../observability-evaluation/logs.md) - Log levels and handler configuration
 - [Events](events.md) - Complete guide to bidirectional streaming events
 - [Hooks](hooks.md) - Extend agent functionality with hooks
-- [Barge-in](barge-in.md) - How barge-in detection works
+- [Barge-in](events.mdx#barge-in-1) - Handle interrupted output and clear buffered audio
 - [Python API Reference](@api/python/strands.bidi.agent) - Complete API documentation
