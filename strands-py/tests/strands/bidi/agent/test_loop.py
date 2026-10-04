@@ -757,7 +757,7 @@ async def test_reactive_restart_failure_yields_event_before_raising(loop, agent,
 
 
 @pytest.mark.asyncio
-async def test_bidi_agent_loop_auto_reconnect_default_on(loop, agent, agenerator):
+async def test_bidi_agent_loop_auto_restart_default_on(loop, agent, agenerator):
     """Auto restart is the default: a timeout triggers restart without any opt-in."""
     # An empty connection config uses the default restart behavior.
     agent.model.get_connection_config.return_value = {}
@@ -777,9 +777,9 @@ async def test_bidi_agent_loop_auto_reconnect_default_on(loop, agent, agenerator
 
 
 @pytest.mark.asyncio
-async def test_bidi_agent_loop_auto_reconnect_opt_out_surfaces_timeout(loop, agent, agenerator):
-    """A provider opting out with auto_reconnect=False surfaces the timeout instead of restarting."""
-    agent.model.get_connection_config.return_value = {"auto_reconnect": False}
+async def test_bidi_agent_loop_auto_restart_opt_out_surfaces_timeout(loop, agent, agenerator):
+    """A provider opting out with auto_restart=False surfaces the timeout instead of restarting."""
+    agent.model.get_connection_config.return_value = {"auto_restart": False}
     timeout_error = ConnectionTimeoutError("test timeout")
     agent.model.receive = unittest.mock.Mock(side_effect=[timeout_error, agenerator([])])
 
@@ -887,9 +887,9 @@ async def test_bidi_agent_loop_no_timer_without_declared_limit(loop, agent, agen
 
 
 @pytest.mark.asyncio
-async def test_bidi_agent_loop_no_timer_when_auto_reconnect_disabled(loop, agent, agenerator):
-    """auto_reconnect=False is the only opt-out: no proactive timer arms."""
-    agent.model.get_connection_config.return_value = {"restart_after_s": 420, "auto_reconnect": False}
+async def test_bidi_agent_loop_no_timer_when_auto_restart_disabled(loop, agent, agenerator):
+    """auto_restart=False is the only opt-out: no proactive timer arms."""
+    agent.model.get_connection_config.return_value = {"restart_after_s": 420, "auto_restart": False}
     agent.model.receive = unittest.mock.Mock(return_value=agenerator([]))
 
     await loop.start()

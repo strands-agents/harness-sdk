@@ -418,7 +418,6 @@ sidebar:
               - docs/user-guide/sdk/bidi/io
               - docs/user-guide/sdk/bidi/content
               - docs/user-guide/sdk/bidi/events
-              - docs/user-guide/sdk/bidi/barge-in
               - docs/user-guide/sdk/bidi/hooks
               - docs/user-guide/sdk/bidi/session-management
               - docs/user-guide/sdk/bidi/interrupts

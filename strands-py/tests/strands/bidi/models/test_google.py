@@ -326,7 +326,7 @@ def test_connection_config_override(mock_genai_client, model_id, api_key):
     assert model.get_connection_config()["restart_after_s"] == 30
 
 
-@pytest.mark.parametrize("connection", [{"restart_after_s": 30}, {"auto_reconnect": False}, {}])
+@pytest.mark.parametrize("connection", [{"restart_after_s": 30}, {"auto_restart": False}, {}])
 def test_update_config_replaces_connection(model, model_id, connection):
     model.update_config(connection=connection)
 

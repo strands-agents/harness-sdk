@@ -314,8 +314,8 @@ class AudioIO:
     cancel echo from the mic input. A shared processor coordinates the input and output channels, so echo
     cancellation only works when both come from the *same* ``AudioIO`` instance.
 
-    Audio processing requires pywebrtc-audio (``pip install strands-agents[bidi-aec]``) and a microphone
-    sample rate of 16000, 32000, or 48000 Hz (set via the model's audio config).
+    Audio processing requires pywebrtc-audio (``pip install strands-agents[bidi-aec]``) and mono microphone
+    audio. Sample rates are set through the model's audio configuration.
 
     Device audio requires PyAudio. Install the PortAudio system library, then install
     ``strands-agents[bidi-pyaudio]``.

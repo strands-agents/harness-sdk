@@ -100,11 +100,11 @@ class ConnectionConfig(TypedDict, total=False):
             restart. Set it at least ~10s below the provider's own connection limit:
             the restart may wait briefly for the current turn to finish (aligning the swap to a
             turn boundary), and that wait plus the swap must complete before the provider's limit.
-        auto_reconnect: Whether the loop restarts the connection automatically (default True).
+        auto_restart: Whether the loop restarts the connection automatically (default True).
     """
 
     restart_after_s: int
-    auto_reconnect: bool
+    auto_restart: bool
 
 
 class ModelConfig(TypedDict, total=False):

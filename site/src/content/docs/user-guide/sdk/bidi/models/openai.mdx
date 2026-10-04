@@ -83,7 +83,7 @@ if __name__ == "__main__":
 | `transcription_model_id` | Required input transcription model identifier. Pass `None` to disable user transcription. | `"gpt-transcribe"` | [GPT-Transcribe](https://developers.openai.com/api/docs/models/gpt-transcribe) |
 | `voice` | Output voice identifier. Defaults to `"alloy"`. | `"coral"` | [Voice options](https://platform.openai.com/docs/guides/realtime-conversations#voice-options) |
 | `params` | OpenAI Realtime session parameters. Audio must remain mono PCM at 24000 Hz. | `{"max_output_tokens": 4096}` | [`session.update`](https://platform.openai.com/docs/api-reference/realtime-client-events/session/update) |
-| `connection` | Restart timing overrides. | `{"auto_reconnect": False}` | [reference](@api/python/strands.bidi.models#ConnectionConfig) |
+| `connection` | Restart timing overrides. | `{"auto_restart": False}` | [reference](@api/python/strands.bidi.models#ConnectionConfig) |
 
 ### Additional Provider Options
 

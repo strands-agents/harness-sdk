@@ -1692,7 +1692,7 @@ def test_connection_config_defaults_and_override(model_id, api_key, mock_websock
     assert tuned_model.get_connection_config()["restart_after_s"] == 25
 
 
-@pytest.mark.parametrize("connection", [{"restart_after_s": 30}, {"auto_reconnect": False}, {}])
+@pytest.mark.parametrize("connection", [{"restart_after_s": 30}, {"auto_restart": False}, {}])
 def test_update_config_replaces_connection(model, connection):
     model.update_config(connection=connection)
 

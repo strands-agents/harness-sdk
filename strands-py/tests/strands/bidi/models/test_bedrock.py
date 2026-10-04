@@ -167,7 +167,7 @@ def test_update_config_warns_invalid_keys(boto_session, model_config, invalid_ke
         model.update_config(**model_config)
 
 
-@pytest.mark.parametrize("connection", [{"restart_after_s": 30}, {"auto_reconnect": False}, {}])
+@pytest.mark.parametrize("connection", [{"restart_after_s": 30}, {"auto_restart": False}, {}])
 def test_update_config_replaces_connection(boto_session, connection):
     model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0", boto_session=boto_session)
 
@@ -956,11 +956,11 @@ async def test_connection_config_overrides_merge_over_defaults(model_id, boto_se
     model = BedrockNovaSonicModel(
         model_id=model_id,
         boto_session=boto_session,
-        connection={"auto_reconnect": False},
+        connection={"auto_restart": False},
     )
 
     # Overridden field takes the caller's value.
-    assert model.get_connection_config()["auto_reconnect"] is False
+    assert model.get_connection_config()["auto_restart"] is False
     # Untouched default is preserved.
     assert model.get_connection_config()["restart_after_s"] == 420
     # usage_is_cumulative is a separate provider trait, unaffected by connection overrides.
