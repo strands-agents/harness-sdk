@@ -206,7 +206,7 @@ It's also available on GitHub via [strands-agents/tools](https://github.com/stra
 
 Build voice agents that talk with users in real time. A `BidiAgent` holds a persistent connection to a speech model, streams audio both ways, runs tools mid-conversation, and stops speaking when the user interrupts.
 
-Install the extra for your provider. Local audio needs PortAudio (`brew install portaudio` on macOS):
+Install the extra for your provider. Local audio also needs the PortAudio system library:
 
 ```bash
 # Amazon Bedrock Nova Sonic (Python 3.12+)
@@ -241,7 +241,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-`run()` keeps the conversation open until you press Ctrl+C or a tool calls `agent.cancel()`. See the [bidirectional streaming quickstart](https://strandsagents.com/docs/user-guide/sdk/bidi/quickstart/) for more.
+`run()` keeps the conversation open until you press Ctrl+C or a tool calls `agent.cancel()`. See the [bidirectional streaming quickstart](https://strandsagents.com/docs/user-guide/sdk/bidi/quickstart/) for model configuration, custom I/O, and more.
 
 ## Documentation
 
