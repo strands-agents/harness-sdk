@@ -1,126 +1,65 @@
 ---
 title: I/O Streams
-description: >-
-  Connect microphones, speakers, consoles, and WebSockets to a Strands bidi-agent
-  with input and output streams for audio and text.
+description: "Connect microphones, speakers, terminals, and WebSockets to BidiAgent. Combine input and output streams, configure audio, and build custom adapters."
+languages: [python]
 sidebar:
-  label: "IO"
+  label: "I/O"
 tags: [bidi-streaming]
 sourceLinks:
-  - path: strands-py/src/strands/bidi/io/console/_io.py
-  - path: strands-py/src/strands/bidi/io/console/_display.py
-  - path: strands-py/src/strands/bidi/io/console/_keyboard.py
+  - path: strands-py/src/strands/bidi/agent/agent.py
+  - path: strands-py/src/strands/bidi/types/io.py
   - path: strands-py/src/strands/bidi/io/audio.py
+  - path: strands-py/src/strands/bidi/io/configs.py
+  - path: strands-py/src/strands/bidi/io/console/_io.py
+  - path: strands-py/src/strands/bidi/_audio/processor.py
 redirectFrom:
   - docs/user-guide/sdk/bidirectional-streaming/io
 ---
 
+I/O streams carry user input to `BidiAgent` and deliver its output to your application. An input stream reads text, images, or audio from a source such as a keyboard, microphone, or WebSocket. An output stream handles the agent's events to play audio, display text, or update your interface.
 
-I/O streams handle the flow of data between your application and the bidi-agent.
-They manage input sources (microphone, keyboard, WebSocket) and output destinations
-(speakers, console, UI) while the agent focuses on conversation logic and model
-communication.
+Connect these streams with [`agent.run()`](@api/python/strands.bidi.agent#strands.bidi.agent.BidiAgent.run), which starts the agent and its streams. The `inputs` and `outputs` lists can each contain multiple streams. The agent reads each input independently and sends every event to all outputs; each output chooses which events to handle.
 
-```mermaid
-flowchart LR
-    A[Microphone]
-    B[Keyboard]
-    A --> C[Bidi-Agent]
-    B --> C
-    C --> D[Speakers]
-    C --> E[Console]
-```
-
-## I/O Interfaces
-
-The bidi agent uses two protocol interfaces that define how data flows in and out of
-conversations:
-
-- `InputStream`: A callable protocol for reading data from sources such as a microphone,
-  keyboard, or WebSocket and returning `BidiAgentInput`.
-- `OutputStream`: A callable protocol for receiving `BidiOutputEvent` objects from the
-  agent and handling them appropriately.
-
-Both protocols include optional lifecycle methods (`start` and `stop`) for resource
-management.
-
-Implementation of these protocols will look as follows:
-
-```python
-from strands.bidi.agent import BidiAgent
-from strands.bidi.types import BidiAgentInput
-from strands.bidi.types import BidiOutputEvent
-from strands.bidi.types import InputStream, OutputStream
-
-
-class MyInputStream(InputStream):
-    async def start(self, agent: BidiAgent) -> None:
-        # Initialize input resources or state, using agent as needed.
-        return
-
-    async def __call__(self) -> BidiAgentInput:
-        # Read or generate input and return a BidiAgentInput value.
-        return {"text": "Hello"}
-
-    async def stop(self) -> None:
-        # Clean up any input resources or state.
-        return
-
-
-class MyOutputStream(OutputStream):
-    async def start(self, agent: BidiAgent) -> None:
-        # Initialize output resources or state, using agent as needed.
-        return
-
-    async def __call__(self, event: BidiOutputEvent) -> None:
-        # Process the event as needed for your application.
-        print(event)
-
-    async def stop(self) -> None:
-        # Clean up any output resources or state.
-        return
-```
-
-## I/O Usage
-
-Pass your I/O streams to the agent's `run()` method to connect them to the agent loop.
+A single run can span multiple model responses. This example connects an input and output stream and uses a 30-second timeout to end the conversation:
 
 ```python
 import asyncio
 
 from strands.bidi.agent import BidiAgent
+from strands.bidi.types import InputStream, OutputStream
 
 
-async def main():
+async def run_conversation(
+    input_stream: InputStream,
+    output_stream: OutputStream,
+) -> None:
     agent = BidiAgent()
-    await agent.run(inputs=[MyInputStream()], outputs=[MyOutputStream()])
-
-
-asyncio.run(main())
+    try:
+        await asyncio.wait_for(
+            agent.run(inputs=[input_stream], outputs=[output_stream]),
+            timeout=30,
+        )
+    except asyncio.TimeoutError:
+        pass
 ```
 
-The `run()` method handles startup, execution, and shutdown for the agent and its I/O
-streams. Inputs and outputs run concurrently, so you can mix and match implementations.
-If an I/O task fails, `run()` cancels the remaining tasks, stops the streams, and
-re-raises the exception.
-For a tool that lets users end the conversation, see
-[Graceful shutdown](./quickstart.mdx#graceful-shutdown).
+When the timeout expires, `asyncio.wait_for()` cancels the run. It waits for the agent and its streams to stop, then raises `TimeoutError`.
+
+Your application can also cancel the task running `run()` when a user presses a stop button or a client disconnects. To let users end the conversation through a tool, see [Graceful shutdown](quickstart.mdx#graceful-shutdown).
+
+The following sections show how to use Strands' built-in `AudioIO` and `ConsoleIO` for audio and terminal interactions.
 
 ## Audio I/O
 
-Out of the box, Strands provides `AudioIO` to connect your microphone and speakers
-to the bidi-agent. It captures microphone audio, streams it to the model in real time,
-and plays responses through the speakers using
-[PyAudio](https://pypi.org/project/PyAudio/).
+Use [`AudioIO`](@api/python/strands.bidi.io#strands.bidi.io.AudioIO) to capture microphone audio and play the assistant's speech through your speakers. It displays speech transcripts and tool call names in the terminal and handles [barge-in](events.mdx#barge-in-1) automatically by stopping interrupted playback.
 
-:::note[Installation Required]
-`AudioIO` requires the `bidi-io` and `bidi-pyaudio` extras plus the PortAudio
-system library. Install PortAudio first, then install the extras:
+Install [PortAudio](quickstart.mdx#platform-specific-audio-setup), then install the SDK with audio I/O support:
+
 ```bash
 pip install "strands-agents[bidi,bidi-io,bidi-pyaudio]"
 ```
-PyAudio is excluded from the aggregate `bidi-all` extra because of its PortAudio system dependency, so install `bidi-pyaudio` explicitly even when you already have `bidi-all`.
-:::
+
+Create an `AudioIO` instance and pass its input and output streams to `run()`:
 
 ```python
 import asyncio
@@ -129,98 +68,57 @@ from strands.bidi.agent import BidiAgent
 from strands.bidi.io import AudioIO
 
 
-async def main():
+async def main() -> None:
     agent = BidiAgent()
-    audio_io = AudioIO(input_device_index=1)
+    audio_io = AudioIO()
 
-    await agent.run(
-        inputs=[audio_io.input()],
-        outputs=[audio_io.output()],
-    )
+    try:
+        await asyncio.wait_for(
+            agent.run(inputs=[audio_io.input()], outputs=[audio_io.output()]),
+            timeout=30,
+        )
+    except asyncio.TimeoutError:
+        pass
 
 
 asyncio.run(main())
 ```
 
-This creates a voice-enabled agent that captures audio from your microphone, streams
-it to the model as `AudioDelta` inputs, and plays responses through your speakers.
+Configure voice and audio settings on the model; `AudioIO` uses that configuration for capture and playback. For device settings and other I/O options, see the [`AudioIO` API reference](@api/python/strands.bidi.io#strands.bidi.io.AudioIO.__init__).
 
-By default, audio output displays speech transcripts and tool call names through `ConsoleIO`, with `"Speak…"` as its input placeholder. Pass `console=console_io` to customize the display.
+### Audio processing
 
-### Configurations
+Use a headset to limit echo, or enable microphone processing for speaker playback. Processing applies echo cancellation, noise suppression, and automatic gain control.
 
-`AudioIO` accepts the fields of `AudioIOConfig` as keyword arguments:
-
-| Parameter | Description | Example | Default |
-| --------- | ----------- | ------- | ------- |
-| `audio_processor` | Enable microphone audio processing. Pass `True` for defaults or an `AudioProcessorConfig` for custom options. | `True` | None (disabled) |
-| `console` | Console display | `console_io` | Transcripts only |
-| `input_buffer_size` | Maximum number of audio chunks to buffer from the microphone before dropping the oldest. | `1024` | None (unbounded) |
-| `input_device_index` | Specific microphone device ID to use for audio input. | `1` | None (system default) |
-| `input_frames_per_buffer` | Number of audio frames to read per input callback (affects latency and performance). | `1024` | 512 |
-| `output_buffer_size` | Maximum number of audio chunks to buffer for speaker playback before dropping the oldest. | `2048` | None (unbounded) |
-| `output_device_index` | Specific speaker device ID to use for audio output. | `2` | None (system default) |
-| `output_frames_per_buffer` | Number of audio frames to write per output callback (affects latency and performance). | `1024` | 512 |
-
-### Audio Processing
-
-To run a voice agent over open speakers without a headset, enable microphone audio processing. It applies acoustic echo cancellation, noise suppression, and automatic gain control so the agent's own playback does not feed back into the microphone and trigger a barge-in.
-
-Audio processing depends on `pywebrtc-audio`, installed through the `bidi-aec` extra:
+Install the additional processing dependency:
 
 ```bash
-pip install "strands-agents[bidi,bidi-pyaudio,bidi-aec]"
+pip install "strands-agents[bidi-aec]"
 ```
 
-Pass `audio_processor=True` for the defaults, or an `AudioProcessorConfig` to tune it:
+Then set `audio_processor=True` on your `AudioIO` instance:
 
 ```python
-from strands.bidi.io import AudioIO, AudioProcessorConfig
+from strands.bidi.io import AudioIO
 
-# Echo cancellation, noise suppression, and auto gain control with defaults:
 audio_io = AudioIO(audio_processor=True)
-
-# Noise suppression and auto gain control without echo cancellation (for headset users):
-audio_io = AudioIO(audio_processor=AudioProcessorConfig(echo_cancellation=False))
 ```
 
-`AudioProcessorConfig` exposes two fields:
+Use input and output streams from the same `AudioIO` instance for echo cancellation. Processing requires mono microphone audio; echo cancellation also requires mono playback.
 
-| Parameter | Description | Default |
-| --------- | ----------- | ------- |
-| `echo_cancellation` | Cancel the agent's speaker audio from the microphone input. | `True` |
-| `stream_delay_ms` | Playback-to-capture delay hint in milliseconds for echo cancellation. `0` lets the canceller auto-estimate. Set a non-zero value only when echo cancellation measurably fails on hardware with large or fixed latency, such as Bluetooth. | `0` |
-
-Echo cancellation coordinates the microphone and speaker streams, so it works only
-when both come from the same `AudioIO` instance. It also requires a microphone sample
-rate of 16000, 32000, or 48000 Hz, set through the model's audio config.
-
-Configure voice and supported sample rates on the model. `AudioIO` reads
-`model.get_audio_config()`, which returns separate `input` and `output` dictionaries,
-each containing `sample_rate`, `channels`, and `format`. It uses those values to
-configure capture and playback, so you do not need to repeat them on the I/O stream.
-
-`AudioIO` requires signed 16-bit little-endian PCM. Starting a device stream with
-another encoding raises `ValueError`. Use custom I/O for other encodings.
-
-### Barge-in Handling
-
-`AudioIO` automatically handles barge-in when users start speaking mid-response:
-
-1. The agent emits a `BidiBargeInEvent`.
-2. `AudioIO` clears its output buffer to stop playback.
-3. The agent responds to the new user input.
+To customize processing, such as disabling echo cancellation when using a headset, pass an [`AudioProcessorConfig`](@api/python/strands.bidi.io#strands.bidi.io.AudioProcessorConfig) as `audio_processor`.
 
 ## Console I/O
 
-Use `ConsoleIO` to type messages while the agent streams text, reasoning, speech transcripts, and tool calls.
+Use `ConsoleIO` to type messages and display text, reasoning, speech transcripts, and tool call names.
 
-:::note[Installation Required]
-`ConsoleIO` uses the `bidi-io` extra. The example below also needs `bidi-openai`:
+This example uses [OpenAI Realtime](models/openai.mdx) with text output. Install the terminal and model dependencies:
+
 ```bash
-pip install "strands-agents[bidi-io,bidi-openai]"
+pip install "strands-agents[bidi-openai,bidi-io]"
 ```
-:::
+
+Set `OPENAI_API_KEY` to your API key, then run:
 
 ```python
 import asyncio
@@ -230,46 +128,34 @@ from strands.bidi.io import ConsoleIO
 from strands.bidi.models import OpenAIRealtimeModel
 
 
-async def main():
+async def main() -> None:
     model = OpenAIRealtimeModel(
         model_id="gpt-realtime-2.1",
         transcription_model_id=None,
         params={"output_modalities": ["text"]},
     )
     agent = BidiAgent(model=model)
-    console_io = ConsoleIO()
+    console_io = ConsoleIO(placeholder="Type a message…")
 
-    await agent.run(
-        inputs=[console_io.input()],
-        outputs=[console_io.output()],
-    )
+    try:
+        await asyncio.wait_for(
+            agent.run(inputs=[console_io.input()], outputs=[console_io.output()]),
+            timeout=30,
+        )
+    except asyncio.TimeoutError:
+        pass
 
 
-try:
-    asyncio.run(main())
-except KeyboardInterrupt:
-    pass
+asyncio.run(main())
 ```
 
-Set `OPENAI_API_KEY` before running this example. Press Enter to send a message or
-Ctrl-C to exit.
+Press Enter to send a message. `ConsoleIO` displays the text and transcripts the model emits.
 
-### Configurations
+Use `placeholder` to customize the input hint. The `show_text`, `show_reasoning`, `show_transcript`, and `show_tools` options all default to `True`; set an option to `False` to hide that content. See [`ConsoleIOConfig`](@api/python/strands.bidi.io#strands.bidi.io.ConsoleIOConfig) for the configuration reference.
 
-| Parameter | Description | Example | Default |
-| --------- | ----------- | ------- | ------- |
-| `placeholder` | Hint for an empty input block | `"Type or speak…"` | `""` |
-| `show_text` | Display agent text responses | `False` | `True` |
-| `show_reasoning` | Display agent reasoning | `False` | `True` |
-| `show_transcript` | Display speech transcripts | `False` | `True` |
-| `show_tools` | Display tool call names | `False` | `True` |
+### Type and speak
 
-### Type and Talk
-
-To type and speak in the same conversation, pass a shared `ConsoleIO` to `AudioIO`.
-This example uses Amazon Nova Sonic. Configure
-[AWS credentials](quickstart.mdx#configuring-credentials) and install the
-[audio extras](#audio-io) first:
+To type and speak in the same conversation, share a `ConsoleIO` with `AudioIO` and register both input streams:
 
 ```python
 import asyncio
@@ -278,83 +164,82 @@ from strands.bidi.agent import BidiAgent
 from strands.bidi.io import AudioIO, ConsoleIO
 
 
-async def main():
+async def main() -> None:
     agent = BidiAgent()
     console_io = ConsoleIO(placeholder="Type or speak…")
     audio_io = AudioIO(console=console_io)
 
-    await agent.run(
-        inputs=[console_io.input(), audio_io.input()],
-        outputs=[audio_io.output()],
-    )
+    try:
+        await asyncio.wait_for(
+            agent.run(
+                inputs=[console_io.input(), audio_io.input()],
+                outputs=[audio_io.output()],
+            ),
+            timeout=30,
+        )
+    except asyncio.TimeoutError:
+        pass
 
 
-try:
-    asyncio.run(main())
-except KeyboardInterrupt:
-    pass
+asyncio.run(main())
 ```
 
-`audio_io.output()` handles both speaker playback and console display, so register
-it as the only output. Both keyboard and microphone inputs remain active while the
-agent responds.
+`audio_io.output()` handles both playback and the shared console display, so register it as the only output for those destinations.
 
-## WebSocket I/O
+## Custom I/O
 
-WebSockets are a common I/O stream for bidi-agents. The following server example
-shows how to use WebSockets with `run()`:
+Connect your own input sources and output destinations to `run()` with asynchronous callables:
+
+- An input callable takes no arguments and returns one [`BidiAgentInput`](content.mdx#send-input) per call.
+- An output callable receives one [`BidiOutputEvent`](events.mdx) and chooses which events to handle.
+
+The following FastAPI example exchanges text messages with a WebSocket client, using [OpenAI Realtime](models/openai.mdx) configured for text output.
+
+Install the server and model dependencies:
+
+```bash
+pip install "strands-agents[bidi-openai]" fastapi "uvicorn[standard]"
+```
+
+Set `OPENAI_API_KEY` to your API key, then save the following as `server.py`:
 
 ```python
-# server.py
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from strands.bidi.agent import BidiAgent
 from strands.bidi.models import OpenAIRealtimeModel
+from strands.bidi.types import BidiOutputEvent, BidiTextBlockEvent
 
 app = FastAPI()
 
 
-@app.websocket("/text-chat")
-async def text_chat(websocket: WebSocket) -> None:
+@app.websocket("/conversation")
+async def conversation(websocket: WebSocket) -> None:
+    await websocket.accept()
     model = OpenAIRealtimeModel(
         model_id="gpt-realtime-2.1",
-        transcription_model_id="gpt-transcribe",
-        api_key="<OPENAI_API_KEY>",
+        transcription_model_id=None,
+        params={"output_modalities": ["text"]},
     )
     agent = BidiAgent(model=model)
 
+    async def send_text(event: BidiOutputEvent) -> None:
+        if isinstance(event, BidiTextBlockEvent):
+            await websocket.send_text(event.text)
+
     try:
-        await websocket.accept()
-        await agent.run(inputs=[websocket.receive_json], outputs=[websocket.send_json])
-    except* WebSocketDisconnect:
-        print("client disconnected")
+        await agent.run(
+            inputs=[websocket.receive_text],
+            outputs=[send_text],
+        )
+    except WebSocketDisconnect:
+        pass
 ```
 
-Start this server with `uvicorn server:app --reload`. To interact, open a separate terminal and run the following client script:
+Start the server with `uvicorn server:app --reload`, then connect a WebSocket client to `ws://localhost:8000/conversation`. Send a message such as `Say hello.` to receive a completed text response. Disconnecting the client ends the run and cleans up the agent.
 
-```python
-# client.py
-import asyncio
-import json
+To display text as it arrives or play audio, handle the corresponding [stream events](events.mdx) in your output callable. The agent waits for all outputs to finish each event, so queue audio for playback and return promptly. Clear queued audio on barge-in.
 
-import websockets
+For streams that need setup or cleanup, subclass [`InputStream`](@api/python/strands.bidi.types#strands.bidi.types.InputStream) or [`OutputStream`](@api/python/strands.bidi.types#strands.bidi.types.OutputStream) and implement `__call__()`. Override `start(agent)` to prepare resources after the agent starts and `stop()` to release them.
 
-
-async def main():
-    websocket = await websockets.connect("ws://localhost:8000/text-chat")
-
-    input_content = {"text": "Hello, how are you?"}
-    await websocket.send(json.dumps(input_content))
-
-    while True:
-        output_event = json.loads(await websocket.recv())
-        if output_event["type"] == "bidi_transcript_block":
-            print(output_event["transcript"])
-            break
-
-    await websocket.close()
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
+If startup or processing fails, `run()` cancels the remaining tasks, stops the streams and agent, and propagates the error. Make `stop()` safe to call after partial setup.
