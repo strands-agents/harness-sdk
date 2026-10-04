@@ -104,7 +104,7 @@ streams. Inputs and outputs run concurrently, so you can mix and match implement
 If an I/O task fails, `run()` cancels the remaining tasks, stops the streams, and
 re-raises the exception.
 For a tool that lets users end the conversation, see
-[Graceful shutdown](./quickstart.mdx#graceful-shutdown).
+[End the conversation by voice](./quickstart.mdx#end-the-conversation-by-voice).
 
 ## Audio I/O
 
@@ -169,7 +169,7 @@ To run a voice agent over open speakers without a headset, enable microphone aud
 Audio processing depends on `pywebrtc-audio`, installed through the `bidi-aec` extra:
 
 ```bash
-pip install "strands-agents[bidi,bidi-pyaudio,bidi-aec]"
+pip install "strands-agents[bidi,bidi-io,bidi-pyaudio,bidi-aec]"
 ```
 
 Pass `audio_processor=True` for the defaults, or an `AudioProcessorConfig` to tune it:
@@ -268,7 +268,7 @@ Ctrl-C to exit.
 
 To type and speak in the same conversation, pass a shared `ConsoleIO` to `AudioIO`.
 This example uses Amazon Nova Sonic. Configure
-[AWS credentials](quickstart.mdx#configuring-credentials) and install the
+[AWS credentials](quickstart.mdx#configure-credentials) and install the
 [audio extras](#audio-io) first:
 
 ```python
