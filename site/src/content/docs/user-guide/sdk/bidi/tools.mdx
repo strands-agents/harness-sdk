@@ -14,6 +14,10 @@ Give `BidiAgent` tools to look up information, call services, or take actions du
 
 Tool execution runs alongside the conversation. Users can keep talking while tools work, and results can arrive during a later response.
 
+:::note
+`BidiAgent` does not yet support [tool interrupts](interrupts.mdx).
+:::
+
 ## Register tools
 
 Pass tools to `BidiAgent(tools=...)`. This timer uses `asyncio.sleep()` to wait without blocking the conversation:
