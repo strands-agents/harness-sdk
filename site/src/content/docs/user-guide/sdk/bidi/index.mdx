@@ -57,19 +57,14 @@ choosing a model provider that supports it, and handling the live stream.
 
 <CardGrid>
   <LinkCard
-    title="I/O channels"
+    title="I/O Streams"
     href="io/"
     description="Wire local audio and text I/O, or implement custom channels for a web server."
   />
   <LinkCard
-    title="Streaming events"
+    title="Stream Events"
     href="events/"
-    description="Handle the events the agent emits as audio, transcripts, and tool calls arrive."
-  />
-  <LinkCard
-    title="Barge-in"
-    href="barge-in/"
-    description="Let a user cut in mid-response and have the agent stop and listen."
+    description="Handle audio, transcripts, tool calls, and barge-in through the agent's output events."
   />
 </CardGrid>
 
@@ -113,4 +108,4 @@ running, then read [BidiAgent](agent/) to configure tools, prompts, and the
 connection lifecycle. Pick a [model provider](models/bedrock/) based on the
 provider you use and the session length you need.
 
-Building for a server rather than a local machine? Read [I/O channels](io/) to replace microphone-and-speaker I/O with your own transport, then [streaming events](events/) and [barge-ins](barge-in/) to drive the conversation from your own event loop.
+For server applications, use [I/O Streams](io.mdx) to connect your own transport and [Stream Events](events.mdx) to handle output, including barge-in.
