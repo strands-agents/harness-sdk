@@ -69,7 +69,7 @@ if __name__ == "__main__":
 
 ## Cross-Modal Input
 
-Nova Sonic accepts text input at any point during an active voice session, without interrupting or waiting on the audio stream. Send a [text content block](../agent.md#sending-multiple-content-blocks) the same way you would outside of a live conversation:
+Nova Sonic accepts text input at any point during an active voice session, without interrupting or waiting on the audio stream. Send [text input](../content.mdx#send-input) the same way you would outside of a live conversation:
 
 ```python
 await agent.send({"text": "What's the weather in Seattle?"})
