@@ -327,7 +327,7 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             system_prompt: System instructions for the model.
             tools: List of tools available to the model.
             messages: Conversation history to initialize with.
-            **kwargs: Additional configuration options.
+            **kwargs: Reserved for provider-specific options; currently unused.
 
         Raises:
             RuntimeError: If the model has already been started.

@@ -107,9 +107,8 @@ class BidiConnectionRestartEvent(TypedEvent):
         reason: What triggered the restart ("timeout" reactively, "scheduled" proactively).
         timeout_error: The model's timeout error on the reactive path; None when scheduled.
         turn_interrupted: True if the restart cut off an in-progress assistant response or a
-            user turn that had not been answered yet. The new connection receives the history
-            as context, so that turn is not answered on its own; an app can re-prompt or notify
-            the user when this is set.
+            user turn that had not been answered yet. Recovery depends on the provider's replay
+            or resumption support; the application may need to re-prompt or notify the user.
     """
 
     def __init__(
@@ -622,7 +621,7 @@ class BidiUsageEvent(TypedEvent):
 
     @property
     def modality_details(self) -> list[ModalityUsage]:
-        """Optional list of token usage per modality."""
+        """Token usage per modality, or an empty list when the provider omits it."""
         return cast(list[ModalityUsage], self.get("modality_details", []))
 
     @property
@@ -654,7 +653,7 @@ class BidiToolUseBlocksEvent(TypedEvent):
 
 
 class BidiConnectionStopEvent(TypedEvent):
-    """Streaming connection closed.
+    """Streaming connection stop notification, which may precede resource cleanup.
 
     Args:
         connection_id: Unique identifier for this streaming connection (matches BidiConnectionStartEvent).
