@@ -179,7 +179,7 @@ async function runConsole(args: ParsedArgs, request: string | undefined, mode: '
 
 async function runInteractive(args: ParsedArgs, request: string | undefined): Promise<void> {
   try {
-    await import('#ink-text-cache')
+    await import('../tui/terminal/ink.js')
     // React's development timing buffer retains rendered props in Node. Load the production UI
     // without changing the environment inherited by tools and user commands.
     const nodeEnvironment = process.env.NODE_ENV
@@ -264,7 +264,7 @@ async function runInteractive(args: ParsedArgs, request: string | undefined): Pr
       {
         ...(request ? { firstRequest: request } : {}),
         intro: config.snapshot().settings.animations,
-        setup: args.setup || (!args.agent && (config.needsSetup() || config.snapshot().settings.setupOnLaunch)),
+        setup: args.setup || (!args.agent && !config.snapshot().agentProject && config.needsSetup()),
         config,
       }
     )

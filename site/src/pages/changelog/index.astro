@@ -16,7 +16,7 @@ const areaCounts = getAreaCounts(allEntries)
   <div class="cl-page">
     <ChangelogHeader />
     <div class="cl-mobile-bar">
-      <button class="cl-filter-btn" type="button" data-cl-filter-open>
+      <button class="cl-filter-btn" type="button" data-cl-filter-open aria-expanded="false">
         ☰ Filters <span class="cl-badge" data-cl-active-count hidden>0</span>
       </button>
       <span class="cl-note" data-cl-count>{releases.length} releases</span>
@@ -341,11 +341,19 @@ const areaCounts = getAreaCounts(allEntries)
   // Mobile drawer
   const rail = root.querySelector<HTMLElement>('[data-cl-rail]')
   const scrim = root.querySelector<HTMLElement>('[data-cl-scrim]')
-  root.querySelector('[data-cl-filter-open]')?.addEventListener('click', () => {
-    rail?.setAttribute('data-open', 'true'); scrim?.setAttribute('data-open', 'true')
-  })
-  scrim?.addEventListener('click', () => {
-    rail?.removeAttribute('data-open'); scrim?.removeAttribute('data-open')
+  const filterOpen = root.querySelector<HTMLButtonElement>('[data-cl-filter-open]')
+  const railClose = root.querySelector<HTMLButtonElement>('[data-cl-filter-close]')
+  function setDrawer(open: boolean) {
+    rail?.toggleAttribute('data-open', open); scrim?.toggleAttribute('data-open', open)
+    filterOpen?.setAttribute('aria-expanded', String(open))
+    if (open) railClose?.focus()
+    else if (rail?.contains(document.activeElement)) filterOpen?.focus()
+  }
+  filterOpen?.addEventListener('click', () => setDrawer(true))
+  railClose?.addEventListener('click', () => setDrawer(false))
+  scrim?.addEventListener('click', () => setDrawer(false))
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && rail?.hasAttribute('data-open')) setDrawer(false)
   })
 
   // Scroll-spy: light up the timeline rail of the version currently in the

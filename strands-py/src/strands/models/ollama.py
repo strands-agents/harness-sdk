@@ -64,7 +64,7 @@ class OllamaModel(Model):
 
         additional_args: dict[str, Any] | None
         cache_config: CacheConfig | None
-        keep_alive: str | None
+        keep_alive: float | str | None
         max_tokens: int | None
         model_id: str
         options: dict[str, Any] | None
@@ -232,7 +232,7 @@ class OllamaModel(Model):
                 }
                 for tool_spec in tool_specs or []
             ],
-            **({"keep_alive": self.config["keep_alive"]} if self.config.get("keep_alive") else {}),
+            **({"keep_alive": self.config["keep_alive"]} if self.config.get("keep_alive") is not None else {}),
             **(
                 self.config["additional_args"]
                 if "additional_args" in self.config and self.config["additional_args"] is not None

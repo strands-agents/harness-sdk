@@ -46,12 +46,7 @@ class BidiModel(Model, abc.ABC):
 
     Attributes:
         model_id: Provider model identifier.
-        usage_is_cumulative: Whether the provider reports cumulative connection token totals
-            (True) rather than per-response deltas (False, the default when absent). Providers
-            reporting deltas may omit it.
     """
-
-    usage_is_cumulative: bool
 
     @property
     def model_id(self) -> str:
@@ -158,9 +153,9 @@ class BidiModel(Model, abc.ABC):
 class ConnectionTimeoutError(Exception):
     """Persistent model connection timeout.
 
-    Bidirectional models are often configured with a connection time limit. Bedrock Nova Sonic, for example, keeps the
-    connection open for 8 minutes max. Upon receiving a timeout, the agent loop is configured to restart the model
-    connection so as to create a seamless, uninterrupted experience for the user.
+    Unless automatic restarts are disabled, the agent loop restarts the model connection
+    after a timeout. Context recovery depends on the provider's replay or resumption support;
+    a restart may interrupt an active turn.
     """
 
     def __init__(self, message: str, **restart_config: Any) -> None:
@@ -168,7 +163,7 @@ class ConnectionTimeoutError(Exception):
 
         Args:
             message: Timeout message from model.
-            **restart_config: Configure restart specific behaviors in the call to model start.
+            **restart_config: Provider options forwarded to restart(), or to start() on the fallback path.
         """
         super().__init__(message)
 

@@ -1,9 +1,19 @@
-import { createElement, useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactElement } from 'react'
+import {
+  createElement,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactElement,
+} from 'react'
 import { renderToString, useApp, useInput, useStdout, type DOMElement, type Key } from 'ink'
 
 import type { ChatControllerApi } from '../chat/controller.js'
 import { commandAssistance } from '../chat/commands.js'
 import { sanitizeTerminalText } from '../terminal/sanitize.js'
+import { useTerminalSize } from '../terminal/size.js'
 import {
   completeSuggestion,
   emptyEditor,
@@ -62,9 +72,11 @@ import type { ChatPanelRow } from '../chat/types.js'
 
 export function ChatApp({
   controller,
+  introStartedAt,
   openUrl = openExternalUrl,
 }: {
   controller: ChatControllerApi
+  introStartedAt?: number
   openUrl?: (url: string) => void
 }): ReactElement {
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
@@ -94,10 +106,7 @@ export function ChatApp({
   }, [snapshot.panel?.kind, closeAppearance])
   const { exit } = useApp()
   const { stdout } = useStdout()
-  const [terminal, setTerminal] = useState({
-    width: stdout.columns || 80,
-    height: stdout.rows || 24,
-  })
+  const { columns: width, rows: height } = useTerminalSize()
   const [editor, setEditorState] = useState<EditorState>(emptyEditor)
   const [suggestionSelection, setSuggestionSelection] = useState(0)
   const [dismissedSuggestions, setDismissedSuggestions] = useState<string>()
@@ -111,6 +120,7 @@ export function ChatApp({
   // A ref, not state: the maximum changes on every streamed line and only clamps scroll input.
   const maxTranscriptScrollRef = useRef(0)
   const [pressedMetadata, setPressedMetadata] = useState<MetadataTarget>()
+  const [hoveredMetadata, setHoveredMetadata] = useState<MetadataTarget>()
   const [pressedPanelFilter, setPressedPanelFilter] = useState<string>()
   const [pressedPanelRow, setPressedPanelRow] = useState<number>()
   const [pressedPanelControl, setPressedPanelControl] = useState<string>()
@@ -121,6 +131,7 @@ export function ChatApp({
   const [hoveredPanelFilter, setHoveredPanelFilter] = useState<string>()
   const [hoveredPanelSlider, setHoveredPanelSlider] = useState(false)
   const [hoveredSuggestion, setHoveredSuggestion] = useState<number>()
+  const [settingsHovered, setSettingsHovered] = useState(false)
   const [pressedQueuedPrompt, setPressedQueuedPrompt] = useState<QueuedPromptTarget>()
   const [editingQueuedPromptId, setEditingQueuedPromptId] = useState<string>()
   const [screenSelection, setScreenSelection] = useState<readonly ScreenSelectionSegment[]>([])
@@ -186,6 +197,8 @@ export function ChatApp({
     setHoveredPanelFilter(undefined)
     setHoveredPanelSlider(false)
     setHoveredSuggestion(undefined)
+    setSettingsHovered(false)
+    setHoveredMetadata(undefined)
   }, [])
   const resetPressed = useCallback((): void => {
     setPressedMetadata(undefined)
@@ -196,17 +209,17 @@ export function ChatApp({
     setPressedSuggestion(undefined)
     setPressedQueuedPrompt(undefined)
   }, [])
+  const actionableCommandToken = controller.actionableCommandToken(editor.input)
   const rawAssistance =
     snapshot.panel || dismissedSuggestions === editor.input || controller.busy
       ? undefined
-      : commandAssistance(editor.input)
+      : commandAssistance(editor.input, actionableCommandToken)
   const assistance =
-    rawAssistance && (rawAssistance.completions.length > 0 || /^\/[^\s]+\s$/.test(editor.input))
+    rawAssistance &&
+    (rawAssistance.message !== undefined || rawAssistance.completions.length > 0 || /^\/[^\s]+\s$/.test(editor.input))
       ? rawAssistance
       : undefined
   const suggestions = assistance?.completions ?? []
-  const startupCovered = snapshot.panel !== undefined || assistance !== undefined
-  const actionableCommandToken = controller.actionableCommandToken(editor.input)
   const panelRows = snapshot.panel
     ? filterPanelRows(
         snapshot.panel.rows,
@@ -219,8 +232,8 @@ export function ChatApp({
     snapshot,
     input: editor.input,
     cursor: editor.cursor,
-    terminalWidth: terminal.width,
-    terminalHeight: terminal.height,
+    terminalWidth: width,
+    terminalHeight: height,
     suggestions,
     ...(panelRows ? { panelRows } : {}),
     panelQuery,
@@ -280,34 +293,26 @@ export function ChatApp({
     setFrog((current) => (current?.id === id ? undefined : current))
   }, [])
 
-  useEffect(() => {
-    const resize = (): void => {
-      const size = { width: stdout.columns || 80, height: stdout.rows || 24 }
-      const { snapshot, panelRows } = viewPropsRef.current
-      if (snapshot.panel && panelRows) {
-        const agents = snapshot.panel.kind === 'agents'
-        const capacity = agents
-          ? agentGridCapacity(size.width, size.height)
-          : panelRowCapacity(snapshot.panel.kind, size.height, size.width, panelRows)
-        const start = agents
-          ? revealAgentGridSelection(
-              panelSelectionRef.current,
-              panelViewportStartRef.current,
-              capacity,
-              panelRows.length,
-              agentGridColumns(size.width)
-            )
-          : revealPanelSelection(panelSelectionRef.current, panelViewportStartRef.current, capacity, panelRows.length)
-        panelViewportStartRef.current = start
-        setPanelViewportStart(start)
-      }
-      setTerminal(size)
+  useLayoutEffect(() => {
+    const { snapshot, panelRows } = viewPropsRef.current
+    if (snapshot.panel && panelRows) {
+      const agents = snapshot.panel.kind === 'agents'
+      const capacity = agents
+        ? agentGridCapacity(width, height)
+        : panelRowCapacity(snapshot.panel.kind, height, width, panelRows)
+      const start = agents
+        ? revealAgentGridSelection(
+            panelSelectionRef.current,
+            panelViewportStartRef.current,
+            capacity,
+            panelRows.length,
+            agentGridColumns(width)
+          )
+        : revealPanelSelection(panelSelectionRef.current, panelViewportStartRef.current, capacity, panelRows.length)
+      panelViewportStartRef.current = start
+      setPanelViewportStart(start)
     }
-    stdout.on('resize', resize)
-    return (): void => {
-      stdout.off('resize', resize)
-    }
-  }, [stdout])
+  }, [width, height])
 
   useEffect(() => {
     if (snapshot.status === 'closed') {
@@ -344,12 +349,6 @@ export function ChatApp({
   }, [snapshot.panel?.id, resetPanelPosition, resetHover])
 
   useEffect(() => {
-    if (startupCovered) {
-      setFrogBrandAnimationId(undefined)
-    }
-  }, [startupCovered])
-
-  useEffect(() => {
     if (!snapshot.activeTurn && snapshot.completedTurns.length === 0) {
       setExpandedToolGroups((current) => (current.size > 0 ? new Set() : current))
     }
@@ -372,13 +371,12 @@ export function ChatApp({
     setTranscriptScroll(0)
   }, [snapshot.activeTurn?.id])
 
-  const menuOpen = snapshot.panel !== undefined || suggestions.length > 0
   useEffect(() => {
-    setTerminalMouseMotion(menuOpen, stdout)
+    setTerminalMouseMotion(true, stdout)
     return (): void => {
       setTerminalMouseMotion(false, stdout)
     }
-  }, [menuOpen, stdout])
+  }, [stdout])
 
   useEffect(
     (): (() => void) => () => {
@@ -479,13 +477,18 @@ export function ChatApp({
       const sliderHit = sliderElement ? elementContainsMouse(sliderElement, mouse) : false
       const searchElement = snapshot.panel?.kind === 'models' ? panelSearchElement.current : undefined
       const searchHit = searchElement ? elementContainsMouse(searchElement, mouse) : false
-      const frogHit = frogElement.current ? elementContainsMouse(frogElement.current, mouse) : false
+      const frogHit =
+        !snapshot.panel && suggestions.length === 0 && frogElement.current
+          ? elementContainsMouse(frogElement.current, mouse)
+          : false
       if (mouse.action === 'move' && !leftMouseDownRef.current) {
         setHoveredPanelRow(panelRowIndex)
         setHoveredPanelControl(panelControlTarget)
         setHoveredPanelFilter(panelFilterId)
         setHoveredPanelSlider(sliderHit)
         setHoveredSuggestion(suggestionIndex)
+        setSettingsHovered(footerAction === 'settings')
+        setHoveredMetadata(metadataTarget)
       }
       if (mouse.action === 'press' && button === 0) {
         resetHover()
@@ -505,7 +508,6 @@ export function ChatApp({
                       ...viewPropsRef.current,
                       input: currentEditor.input,
                       cursor: currentEditor.cursor,
-                      synchronousTranscriptLayout: true,
                     }),
                     { columns: terminalWidth }
                   )
@@ -1098,11 +1100,11 @@ export function ChatApp({
       }
 
       const phase = editingQueuedPromptId ? 'idle' : controller.busy ? 'running' : 'idle'
+      if (phase === 'idle' && viewPropsRef.current.commandAssistance && key.escape) {
+        setDismissedSuggestions(currentEditor.input)
+        return
+      }
       if (phase === 'idle' && suggestions.length > 0) {
-        if (key.escape) {
-          setDismissedSuggestions(currentEditor.input)
-          return
-        }
         const current = Math.min(suggestionSelectionRef.current, suggestions.length - 1)
         const next = moveSelection(current, key, suggestions.length, suggestions.length)
         if (next !== undefined) {
@@ -1193,18 +1195,21 @@ export function ChatApp({
   return (
     <ChatView
       {...viewProps}
+      {...(introStartedAt !== undefined ? { introStartedAt } : {})}
       snapshot={
         previewAppearance ? { ...snapshot, settings: { ...snapshot.settings, ...previewAppearance } } : snapshot
       }
       onActionElement={registerFooterElement}
+      settingsHovered={settingsHovered}
+      {...(hoveredMetadata ? { hoveredMetadata } : {})}
       {...(appearanceOpen
         ? {
             overlay: (
               <CustomThemeEditor
                 settings={snapshot.settings}
                 animate={snapshot.settings.animations}
-                width={terminal.width}
-                height={terminal.height}
+                width={width}
+                height={height}
                 onPreview={setPreviewAppearance}
                 onClose={closeAppearance}
                 onApply={async (appearance) => {

@@ -29,7 +29,7 @@ from .._identifier import Identifier, is_uuid7
 from .._identifier import new_uuid7 as _new_snapshot_id
 from .._identifier import validate as validate_identifier
 from ..bidi.agent import BidiAgent
-from ..bidi.hooks import BidiAgentStopEvent
+from ..bidi.hooks import BidiAgentStopEvent, BidiBeforeConnectionRestartEvent
 from ..hooks.events import (
     AfterInvocationEvent,
     AfterMultiAgentInvocationEvent,
@@ -75,14 +75,15 @@ _SAVE_LATEST_STRATEGIES = get_args(SaveLatestStrategy)
 BidiAgentSaveLatestStrategy = Literal["message", "stop", "trigger"]
 """Controls how often a BidiAgent's ``snapshot_latest`` is saved automatically.
 
-- ``"message"``: after every message addition or replacement, plus the stop save below (default;
+- ``"message"``: after every message addition or replacement, plus the stop/restart save below (default;
   a streaming session has no invocation boundary, so a mid-session crash resumes at the last
   completed transcript entry instead of losing the connection's whole history).
-- ``"stop"``: only when the agent stops (lower I/O; a mid-session crash loses the in-flight history).
+- ``"stop"``: after the agent stops and before a connection restart (lower I/O; a crash loses
+  history since the last save).
 - ``"trigger"``: only when ``snapshot_trigger`` fires (or manually via ``save_snapshot``).
 
-A response completing is not a save point: a streaming session spans many responses, so the
-completion save runs on ``BidiAgentStopEvent``, not ``BidiResponseStopEvent``.
+A response completing is not a save point. Stop/restart saves and ``snapshot_trigger`` evaluation
+run on ``BidiAgentStopEvent`` and ``BidiBeforeConnectionRestartEvent``.
 """
 
 _BIDI_AGENT_SAVE_LATEST_STRATEGIES = get_args(BidiAgentSaveLatestStrategy)
@@ -201,13 +202,14 @@ def _deserialize_snapshot(data: bytes) -> Snapshot:
 
 @runtime_checkable
 class SnapshotTrigger(Protocol):
-    """Decides whether to write an immutable checkpoint after an invocation."""
+    """Decides whether to write an immutable checkpoint at a persistence boundary."""
 
     def __call__(self, *, agent_data: LocalAgent, **kwargs: Any) -> bool:
         """Return True to append an immutable snapshot for the given agent.
 
         Args:
-            agent_data: The agent that just completed an invocation, or the BidiAgent that just stopped.
+            agent_data: The agent that just completed an invocation, or the BidiAgent that just
+                stopped or is about to restart its connection.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Returns:
@@ -227,8 +229,8 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
     Single agents get immutable time-travel snapshots via ``snapshot_trigger``. Graph and Swarm
     orchestrators are persisted latest-only: state is captured after each node (or each invocation,
     per ``multi_agent_save_latest_on``) and restored lazily on their first invocation. A BidiAgent
-    is restored before its connection starts and captured after each message and when it stops
-    (per ``bidi_agent_save_latest_on``).
+    is restored before its connection starts and captured after each message or stop and before
+    connection restarts (per ``bidi_agent_save_latest_on``).
 
     Example:
         ```python
@@ -266,9 +268,10 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
                 See :data:`BidiAgentSaveLatestStrategy`.
             multi_agent_save_latest_on: For Graph/Swarm orchestrators, when to overwrite the
                 orchestrator's ``snapshot_latest``. See :data:`MultiAgentSaveLatestStrategy`.
-            snapshot_trigger: Optional callback invoked after each invocation, or after a BidiAgent
-                stops; when it returns True an immutable snapshot is appended for checkpointing. An
-                immutable snapshot can also be forced at any point via :meth:`save_snapshot`.
+            snapshot_trigger: Optional callback invoked after each invocation, after a BidiAgent
+                stops, or before its connection restarts. When it returns True an immutable snapshot
+                is appended for checkpointing. An immutable snapshot can also be forced at any
+                point via :meth:`save_snapshot`.
             **kwargs: Additional keyword arguments for future extensibility.
 
         Raises:
@@ -335,8 +338,12 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
 
         if self._bidi_agent_save_latest_on == "message":
             registry.add_callback([MessageAddedEvent, MessageUpdatedEvent], self._on_bidi_message_changed)
-        # SDK_LAST so user stop hooks mutate state before the completion save captures it.
-        registry.add_callback(BidiAgentStopEvent, self._on_bidi_agent_stop, order=HookOrder.SDK_LAST)
+        # SDK_LAST so user stop/before-restart hooks mutate state before the save captures it.
+        registry.add_callback(
+            [BidiAgentStopEvent, BidiBeforeConnectionRestartEvent],
+            self._on_bidi_stop_or_restart,
+            order=HookOrder.SDK_LAST,
+        )
 
         # An orchestrator has no AgentInitializedEvent to lazily resolve storage from, so its hooks
         # are wired at its own init event.
@@ -360,8 +367,8 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
         orchestrator = event.source
         if orchestrator.id in self._multi_agent_restored_ids:
             return
-        self._multi_agent_restored_ids.add(orchestrator.id)
         await self._restore_multi_agent(orchestrator)
+        self._multi_agent_restored_ids.add(orchestrator.id)
 
     async def _on_after_node_call(self, event: AfterNodeCallEvent) -> None:
         """Save latest orchestrator snapshot after each node completes."""
@@ -624,25 +631,23 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
         """
         await self._save_on_completion(event.agent, save_latest=self._save_latest_on != "trigger")
 
-    async def _on_bidi_agent_stop(self, event: BidiAgentStopEvent) -> None:
-        """Save latest when the streaming session stops and fire the immutable-checkpoint trigger.
+    async def _on_bidi_stop_or_restart(self, event: BidiAgentStopEvent | BidiBeforeConnectionRestartEvent) -> None:
+        """Save latest and evaluate the checkpoint trigger after stopping or before restarting.
 
-        A response completing is not a session boundary; the persistent connection is. Each
-        ``stop()`` call emits this event, so a repeated ``stop()`` repeats the completion save.
-        ``"message"`` also saves here so state mutated by stop hooks is captured.
+        ``"message"`` also saves here so state mutated by stop/before-restart hooks is captured.
         """
         await self._save_on_completion(event.agent, save_latest=self._bidi_agent_save_latest_on != "trigger")
 
     async def _save_on_completion(self, agent: LocalAgent, *, save_latest: bool) -> None:
-        """Apply the completion save decision shared by Agent invocations and BidiAgent stops.
+        """Apply the save decision shared by Agent invocations and BidiAgent stop/restart hooks.
 
-        When the trigger fires, the immutable+latest write subsumes the completion save, so the
+        When the trigger fires, the immutable+latest write subsumes the latest save, so the
         agent is captured only once even when ``save_latest`` is True.
 
         Args:
-            agent: The agent whose invocation completed or whose streaming session stopped.
+            agent: The agent whose invocation completed, or the BidiAgent stopping or about to restart.
             save_latest: Whether the caller's strategy saves ``snapshot_latest`` at this boundary.
-                A raising trigger saves regardless, so the completed turn is never lost.
+                A raising trigger saves regardless, so the latest state is still persisted.
         """
         triggered = False
         trigger_failed = False
@@ -650,7 +655,7 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
             try:
                 triggered = self._snapshot_trigger(agent_data=agent)
             except Exception:
-                # A caller's trigger raising must not discard the completed turn's latest save
+                # A caller's trigger raising must not discard the latest save.
                 trigger_failed = True
                 logger.exception(
                     "agent_id=<%s>, session_id=<%s> | snapshot_trigger raised; skipping immutable checkpoint",

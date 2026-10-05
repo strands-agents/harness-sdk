@@ -96,6 +96,10 @@
       "types": "./dist/src/vended-tools/web-fetch/index.d.ts",
       "default": "./dist/src/vended-tools/web-fetch/index.js"
     },
+    "./vended-tools/mcp-router": {
+      "types": "./dist/src/vended-tools/mcp-router/index.d.ts",
+      "default": "./dist/src/vended-tools/mcp-router/index.js"
+    },
     "./a2a": {
       "types": "./dist/src/a2a/index.d.ts",
       "default": "./dist/src/a2a/index.js"
@@ -273,7 +277,7 @@
     "tsx": "^4.22.5",
     "turndown": "^7.2.4",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
   "engines": {
     "node": ">=22.0.0"

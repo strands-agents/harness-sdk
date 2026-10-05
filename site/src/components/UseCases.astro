@@ -601,6 +601,7 @@ const useCases = [
   }
 
   .terminal__copy {
+    position: relative;
     display: inline-flex;
     align-items: center;
     gap: 8px;
@@ -617,6 +618,13 @@ const useCases = [
 
   .terminal__copy:hover {
     opacity: 0.8;
+  }
+
+  /* Taller hit area without changing the terminal header height. */
+  .terminal__copy::before {
+    content: '';
+    position: absolute;
+    inset: -12px -8px;
   }
 
   .terminal__copy-icon {

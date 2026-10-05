@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { memo, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { Box, measureElement, type DOMElement } from 'ink'
 
 import type { ChatNotice, ChatSnapshot, ChatTurn } from '../chat/controller.js'
@@ -43,7 +43,6 @@ export const TranscriptViewport = memo(function TranscriptViewport({
   settings,
   scrollOffset,
   layoutKey,
-  synchronousLayout = false,
   onMaxScrollChange,
   expandedToolGroups = EMPTY_TOOL_GROUPS,
   onToolGroupElement,
@@ -55,7 +54,6 @@ export const TranscriptViewport = memo(function TranscriptViewport({
   settings: ChatSnapshot['settings']
   scrollOffset: number
   layoutKey: string
-  synchronousLayout?: boolean
   onMaxScrollChange?: (maximum: number) => void
   expandedToolGroups?: ReadonlySet<string>
   onToolGroupElement?: (id: string, element: DOMElement | null) => void
@@ -172,16 +170,7 @@ export const TranscriptViewport = memo(function TranscriptViewport({
     measurementRenders.current.count++
     setMeasurementVersion((version) => version + 1)
   }
-  useLayoutEffect(() => {
-    if (synchronousLayout) {
-      measureLayout()
-    }
-  })
-  useEffect(() => {
-    if (!synchronousLayout) {
-      measureLayout()
-    }
-  })
+  useLayoutEffect(measureLayout)
 
   return (
     <Box

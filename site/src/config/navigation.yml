@@ -257,8 +257,6 @@ sidebar:
             slug: docs/user-guide/sdk/agents/interventions/human-in-the-loop
           - label: "Coordinate multiple agents"
             slug: docs/user-guide/sdk/multi-agent/multi-agent-patterns
-          - label: "Build a voice agent"
-            slug: docs/user-guide/sdk/bidirectional-streaming/quickstart
       - label: Run guides
         items:
           - label: Deploy to production
@@ -407,26 +405,33 @@ sidebar:
               - docs/user-guide/sdk/streaming/async-iterators
               - docs/user-guide/sdk/streaming/callback-handlers
               - docs/user-guide/sdk/streaming/events
-          - label: Realtime
+          - label: Voice
             items:
               - label: "Overview"
-                slug: docs/user-guide/sdk/bidirectional-streaming
-              - docs/user-guide/sdk/bidirectional-streaming/agent
-              - docs/user-guide/sdk/bidirectional-streaming/session-management
-              - docs/user-guide/sdk/bidirectional-streaming/interrupts
-              - docs/user-guide/sdk/bidirectional-streaming/models/bedrock
-              - docs/user-guide/sdk/bidirectional-streaming/models/google
-              - docs/user-guide/sdk/bidirectional-streaming/models/openai
-              - docs/user-guide/sdk/bidirectional-streaming/io
-              - docs/user-guide/sdk/bidirectional-streaming/events
-              - docs/user-guide/sdk/bidirectional-streaming/barge-in
-              - docs/user-guide/sdk/bidirectional-streaming/hooks
-              - docs/user-guide/sdk/bidirectional-streaming/observability
+                slug: docs/user-guide/sdk/bidi
+              - docs/user-guide/sdk/bidi/quickstart
+              - docs/user-guide/sdk/bidi/agent
+              - label: Models
+                items:
+                  - label: "Overview"
+                    slug: docs/user-guide/sdk/bidi/models
+                  - docs/user-guide/sdk/bidi/models/bedrock
+                  - docs/user-guide/sdk/bidi/models/google
+                  - docs/user-guide/sdk/bidi/models/openai
+              - docs/user-guide/sdk/bidi/tools
+              - docs/user-guide/sdk/bidi/io
+              - docs/user-guide/sdk/bidi/content
+              - docs/user-guide/sdk/bidi/events
+              - docs/user-guide/sdk/bidi/hooks
+              - docs/user-guide/sdk/bidi/session-management
+              - docs/user-guide/sdk/bidi/interrupts
+              - docs/user-guide/sdk/bidi/observability
           - label: Experimental
             items:
               - docs/user-guide/sdk/experimental/agent-config
       - label: Reference
         items:
+          - docs/user-guide/sdk/versioning-and-support
           # Both API references carry the same label; the sidebar shows only the
           # one matching the header language toggle (see Sidebar.astro).
           - label: "API reference"
@@ -600,6 +605,9 @@ sidebar:
             external: true
           - label: PyWebRTC Audio
             href: https://github.com/strands-labs/pywebrtc-audio
+            external: true
+          - label: Strands Decider
+            href: https://github.com/strands-labs/strands-decider
             external: true
       # Feeds llms.txt lesson listing (src/pages/llms.txt.ts extractLinks); visual sidebar built by route-middleware.
       - label: Learning

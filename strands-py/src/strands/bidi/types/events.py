@@ -10,6 +10,8 @@ token usage, and tool-use groups. Also defines the ``AudioChannel``, ``AudioForm
 import logging
 from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
+from typing_extensions import TypedDict
+
 from ...types._events import TypedEvent
 from ...types.tools import ToolUse
 
@@ -107,9 +109,8 @@ class BidiConnectionRestartEvent(TypedEvent):
         reason: What triggered the restart ("timeout" reactively, "scheduled" proactively).
         timeout_error: The model's timeout error on the reactive path; None when scheduled.
         turn_interrupted: True if the restart cut off an in-progress assistant response or a
-            user turn that had not been answered yet. The new connection receives the history
-            as context, so that turn is not answered on its own; an app can re-prompt or notify
-            the user when this is set.
+            user turn that had not been answered yet. Recovery depends on the provider's replay
+            or resumption support; the application may need to re-prompt or notify the user.
     """
 
     def __init__(
@@ -552,33 +553,45 @@ class BidiResponseStopEvent(TypedEvent):
         return cast(str, self["response_id"])
 
 
-class ModalityUsage(dict):
-    """Token usage for a specific modality.
+class TokenDetails(TypedDict, total=False):
+    """Token counts by category for the input or output side of a usage event.
+
+    All fields are optional. Categories may overlap or be incomplete, so their
+    sum is not necessarily the event's input or output token count.
 
     Attributes:
-        modality: Type of content.
-        input_tokens: Tokens used for this modality's input.
-        output_tokens: Tokens used for this modality's output.
+        text: Text tokens.
+        audio: Audio tokens.
+        image: Image tokens.
+        video: Video tokens.
+        cache_read: Input tokens read from cache.
+        reasoning: Output reasoning or thought tokens reported by the provider.
     """
 
-    modality: Literal["text", "audio", "image", "cached"]
-    input_tokens: int
-    output_tokens: int
+    text: int
+    audio: int
+    image: int
+    video: int
+    cache_read: int
+    reasoning: int
 
 
 class BidiUsageEvent(TypedEvent):
-    """Token usage event with modality breakdown for bidirectional streaming.
+    """Additional model token usage with optional input and output breakdowns.
 
-    Tracks token consumption across different modalities (audio, text, images)
-    during bidirectional streaming sessions.
+    Each event contributes new usage to the conversation's running totals.
+    Its counts may cover part of a response or a complete model generation.
+
+    Detail maps use names such as ``audio``, ``text``, ``image``, ``cache_read``,
+    and ``reasoning``. Providers may omit details or report overlapping counts,
+    so use the reported totals rather than summing the breakdowns.
 
     Args:
-        input_tokens: Total tokens used for all input modalities.
-        output_tokens: Total tokens used for all output modalities.
-        total_tokens: Sum of input and output tokens.
-        modality_details: Optional list of token usage per modality.
-        cache_read_input_tokens: Optional tokens read from cache.
-        cache_write_input_tokens: Optional tokens written to cache.
+        input_tokens: Input tokens accounted for by this event.
+        output_tokens: Output tokens accounted for by this event.
+        total_tokens: Total tokens accounted for by this event.
+        input_token_details: Optional input token counts by category for this event.
+        output_token_details: Optional output token counts by category for this event.
     """
 
     def __init__(
@@ -586,54 +599,46 @@ class BidiUsageEvent(TypedEvent):
         input_tokens: int,
         output_tokens: int,
         total_tokens: int,
-        modality_details: list[ModalityUsage] | None = None,
-        cache_read_input_tokens: int | None = None,
-        cache_write_input_tokens: int | None = None,
-    ):
+        input_token_details: TokenDetails | None = None,
+        output_token_details: TokenDetails | None = None,
+    ) -> None:
         """Initialize usage event."""
         data: dict[str, Any] = {
             "type": "bidi_usage",
-            "inputTokens": input_tokens,
-            "outputTokens": output_tokens,
-            "totalTokens": total_tokens,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
         }
-        if modality_details is not None:
-            data["modality_details"] = modality_details
-        if cache_read_input_tokens is not None:
-            data["cacheReadInputTokens"] = cache_read_input_tokens
-        if cache_write_input_tokens is not None:
-            data["cacheWriteInputTokens"] = cache_write_input_tokens
+        if input_token_details is not None:
+            data["input_token_details"] = input_token_details
+        if output_token_details is not None:
+            data["output_token_details"] = output_token_details
         super().__init__(data)
 
     @property
     def input_tokens(self) -> int:
-        """Total tokens used for all input modalities."""
-        return cast(int, self["inputTokens"])
+        """Input tokens accounted for by this event."""
+        return cast(int, self["input_tokens"])
 
     @property
     def output_tokens(self) -> int:
-        """Total tokens used for all output modalities."""
-        return cast(int, self["outputTokens"])
+        """Output tokens accounted for by this event."""
+        return cast(int, self["output_tokens"])
 
     @property
     def total_tokens(self) -> int:
-        """Sum of input and output tokens."""
-        return cast(int, self["totalTokens"])
+        """Total tokens accounted for by this event."""
+        return cast(int, self["total_tokens"])
 
     @property
-    def modality_details(self) -> list[ModalityUsage]:
-        """Optional list of token usage per modality."""
-        return cast(list[ModalityUsage], self.get("modality_details", []))
+    def input_token_details(self) -> TokenDetails:
+        """Input token counts by category, empty when unreported."""
+        return cast(TokenDetails, self.get("input_token_details", {}))
 
     @property
-    def cache_read_input_tokens(self) -> int | None:
-        """Optional tokens read from cache."""
-        return cast(int | None, self.get("cacheReadInputTokens"))
-
-    @property
-    def cache_write_input_tokens(self) -> int | None:
-        """Optional tokens written to cache."""
-        return cast(int | None, self.get("cacheWriteInputTokens"))
+    def output_token_details(self) -> TokenDetails:
+        """Output token counts by category, empty when unreported."""
+        return cast(TokenDetails, self.get("output_token_details", {}))
 
 
 class BidiToolUseBlocksEvent(TypedEvent):
@@ -654,7 +659,7 @@ class BidiToolUseBlocksEvent(TypedEvent):
 
 
 class BidiConnectionStopEvent(TypedEvent):
-    """Streaming connection closed.
+    """Streaming connection stop notification, which may precede resource cleanup.
 
     Args:
         connection_id: Unique identifier for this streaming connection (matches BidiConnectionStartEvent).

@@ -42,9 +42,9 @@ from strands.bidi.types import (
     BidiUserContentBlock,
     BidiUserContentBlockData,
     InputStream,
-    ModalityUsage,
     OutputStream,
     Role,
+    TokenDetails,
 )
 
 __all__ = [
@@ -86,9 +86,9 @@ __all__ = [
     "BidiUserContentBlock",
     "BidiUserContentBlockData",
     "InputStream",
-    "ModalityUsage",
     "OutputStream",
     "Role",
+    "TokenDetails",
 ]
 
 

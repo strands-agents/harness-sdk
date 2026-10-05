@@ -1445,6 +1445,98 @@ describe('SessionManager — multi-agent', () => {
       expect(freshState.node('a')?.content[0]).toEqual(expect.objectContaining({ text: 'done' }))
     })
 
+    // Guards https://github.com/strands-agents/harness-sdk/issues/4396:
+    // restoration is complete after storage confirms that no checkpoint exists.
+    it('does not repeat restore after a successful read with no snapshot', async () => {
+      const { MockMessageModel } = await import('../../__fixtures__/mock-message-model.js')
+      const loadSnapshotSpy = vi.spyOn(storage, 'loadSnapshot')
+      sessionManager = new SessionManager({ sessionId: 'empty-session', storage: { snapshot: storage } })
+      const model = new MockMessageModel().addTurn(new TextBlock('first')).addTurn(new TextBlock('second'))
+      const graph = new Graph({
+        id: 'test-graph',
+        nodes: [new Agent({ id: 'a', model, printer: false })],
+        edges: [],
+        maxSteps: 10,
+        sessionManager,
+      })
+
+      await expect(graph.invoke('first')).resolves.toMatchObject({ status: Status.COMPLETED })
+      await expect(graph.invoke('second')).resolves.toMatchObject({ status: Status.COMPLETED })
+      expect(loadSnapshotSpy).toHaveBeenCalledTimes(1)
+    })
+
+    // Guards https://github.com/strands-agents/harness-sdk/issues/4396:
+    // a transient restore failure must not suppress restoration on the next invocation.
+    it('retries restore after a snapshot read failure', async () => {
+      const { MockMessageModel } = await import('../../__fixtures__/mock-message-model.js')
+      const { loadStateSerializable, serializeStateSerializable } = await import('../../types/serializable.js')
+      const { BeforeNodeCallEvent } = await import('../../multiagent/index.js')
+      const snapshot = createMultiAgentTestSnapshot()
+      const restoredState = new MultiAgentState({ nodeIds: ['a', 'b'] })
+      restoredState.steps = 1
+      const restoredNodeState = restoredState.node('a')!
+      restoredNodeState.status = Status.COMPLETED
+      restoredNodeState.results.push(
+        new NodeResult({ nodeId: 'a', status: Status.COMPLETED, duration: 100, content: [new TextBlock('done')] })
+      )
+      snapshot.data.state = serializeStateSerializable(restoredState)
+      await storage.saveSnapshot({
+        location: { sessionId: 'test-session', scope: 'multiAgent', scopeId: 'test-graph' },
+        snapshotId: 'latest',
+        isLatest: true,
+        snapshot,
+      })
+
+      const loadSnapshotSpy = vi
+        .spyOn(storage, 'loadSnapshot')
+        .mockRejectedValueOnce(new Error('transient read failure'))
+      const saveSnapshotSpy = vi.spyOn(storage, 'saveSnapshot')
+      sessionManager = new SessionManager({ sessionId: 'test-session', storage: { snapshot: storage } })
+      const firstModel = new MockMessageModel().addTurn(new TextBlock('unexpected'))
+      const secondModel = new MockMessageModel().addTurn(new TextBlock('done')).addTurn(new TextBlock('done again'))
+      const graph = new Graph({
+        id: 'test-graph',
+        nodes: [
+          new Agent({ id: 'a', model: firstModel, printer: false }),
+          new Agent({ id: 'b', model: secondModel, printer: false }),
+        ],
+        edges: [['a', 'b']],
+        maxSteps: 10,
+        sessionManager,
+      })
+      const executedNodes: string[] = []
+      graph.addHook(BeforeNodeCallEvent, (event) => {
+        executedNodes.push(event.nodeId)
+      })
+
+      await expect(graph.invoke('go')).rejects.toThrow('transient read failure')
+
+      expect(saveSnapshotSpy).not.toHaveBeenCalled()
+      expect(executedNodes).toStrictEqual([])
+
+      const result = await graph.invoke('go')
+
+      expect(loadSnapshotSpy).toHaveBeenCalledTimes(2)
+      expect(executedNodes).toStrictEqual(['b'])
+      expect(result.status).toBe(Status.COMPLETED)
+      expect(
+        result.results.filter((nodeResult) => nodeResult.status === Status.COMPLETED).map((r) => r.nodeId)
+      ).toStrictEqual(['b'])
+
+      const persistedSnapshot = saveSnapshotSpy.mock.calls.at(-1)?.[0].snapshot
+      expect(persistedSnapshot).toBeDefined()
+      if (persistedSnapshot?.data.state === undefined) throw new Error('saved snapshot has no state')
+      const persistedState = new MultiAgentState({ nodeIds: ['a', 'b'] })
+      loadStateSerializable(persistedState, persistedSnapshot.data.state)
+      expect(persistedState.node('a')?.status).toBe(Status.COMPLETED)
+      expect(persistedState.node('b')?.status).toBe(Status.COMPLETED)
+
+      executedNodes.length = 0
+      await graph.invoke('go again')
+      expect(loadSnapshotSpy).toHaveBeenCalledTimes(2)
+      expect(executedNodes).toStrictEqual(['a', 'b'])
+    })
+
     it('does not modify state when no snapshot exists', async () => {
       sessionManager = new SessionManager({ sessionId: 'empty-session', storage: { snapshot: storage } })
       sessionManager.initMultiAgent(orchestrator)

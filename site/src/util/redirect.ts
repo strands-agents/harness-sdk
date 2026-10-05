@@ -30,12 +30,9 @@ export const STATIC_SLUG_REDIRECTS: Record<string, string> = {
   'docs/user-guide/concepts/model-providers/gemini': 'docs/user-guide/sdk/model-providers/google',
 
   // bidi model providers renamed to match upstream (#3956)
-  'docs/user-guide/concepts/bidirectional-streaming/models/nova_sonic':
-    'docs/user-guide/sdk/bidirectional-streaming/models/bedrock',
-  'docs/user-guide/concepts/bidirectional-streaming/models/gemini_live':
-    'docs/user-guide/sdk/bidirectional-streaming/models/google',
-  'docs/user-guide/concepts/bidirectional-streaming/models/openai_realtime':
-    'docs/user-guide/sdk/bidirectional-streaming/models/openai',
+  'docs/user-guide/concepts/bidirectional-streaming/models/nova_sonic': 'docs/user-guide/sdk/bidi/models/bedrock',
+  'docs/user-guide/concepts/bidirectional-streaming/models/gemini_live': 'docs/user-guide/sdk/bidi/models/google',
+  'docs/user-guide/concepts/bidirectional-streaming/models/openai_realtime': 'docs/user-guide/sdk/bidi/models/openai',
 
   // python-tools was renamed to custom-tools
   'docs/user-guide/concepts/tools/python-tools': 'docs/user-guide/sdk/tools/custom-tools',
@@ -211,6 +208,13 @@ const EXACT_SLUG_RULES: SlugRule[] = [
 // concepts/ → harness/ must not shadow a specific redirectFrom (e.g. a page that
 // moved *within* concepts and then into integrations), so these run last.
 const PREFIX_SLUG_RULES: SlugRule[] = [
+  // bidirectional-streaming/ → bidi/ section rename. Listed before the section-wide
+  // harness/ and concepts/ rules so legacy bidi URLs land on bidi/ in one hop.
+  {
+    match: /^docs\/user-guide\/(?:concepts|harness|sdk)\/bidirectional-streaming(\/.+)?$/,
+    to: (m) => `docs/user-guide/sdk/bidi${m[1] ?? ''}`,
+  },
+
   // docs/community/ → docs/integrations/ section rename.
   { match: startsWith('docs/community'), to: (m) => `docs/integrations/${m[1]}` },
 
