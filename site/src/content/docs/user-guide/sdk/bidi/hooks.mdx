@@ -109,4 +109,4 @@ Use connection hooks to react to restarts and inspect their outcome:
 
 Both events include a `reason` of `"scheduled"` or `"timeout"`. For a model timeout, the before event also includes `timeout_error`. The after event's `exception` is `None` on success and contains the error on failure.
 
-See [Connection restart](agent.mdx#connection-restart) for configuration and context preservation.
+See [Connection restarts](agent.mdx#connection-restarts) for configuration and context preservation.

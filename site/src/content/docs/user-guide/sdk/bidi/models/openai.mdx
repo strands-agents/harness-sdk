@@ -83,7 +83,7 @@ if __name__ == "__main__":
 | `transcription_model_id` | Required input transcription model identifier. Pass `None` to disable user transcription. | `"gpt-transcribe"` | [GPT-Transcribe](https://developers.openai.com/api/docs/models/gpt-transcribe) |
 | `voice` | Output voice identifier. Defaults to `"alloy"`. | `"coral"` | [Voice options](https://platform.openai.com/docs/guides/realtime-conversations#voice-options) |
 | `params` | OpenAI Realtime session parameters. Audio must remain mono PCM at 24000 Hz. | `{"max_output_tokens": 4096}` | [`session.update`](https://platform.openai.com/docs/api-reference/realtime-client-events/session/update) |
-| `connection` | Restart timing overrides. | `{"auto_restart": False}` | [reference](@api/python/strands.bidi.models#ConnectionConfig) |
+| `connection` | Restart timing overrides. | `{"auto_restart": False}` | [reference](@api/python/strands.bidi.models#strands.bidi.models.ConnectionConfig) |
 
 ### Additional Provider Options
 
@@ -110,9 +110,9 @@ values take effect on the next `start()` or `restart()`.
 
 ## Connection Restart
 
-The OpenAI Realtime API exposes no server-side resume handle, so when a connection nears its time limit, `BidiAgent` restarts it and replays the accumulated conversation history into the new connection. The provider then sends a short system instruction so the model continues in the same language without re-introducing itself. The agent emits a [`BidiConnectionRestartEvent`](../events.md#connection-restarts) when this happens; treat it as informational rather than an error.
+The OpenAI Realtime API exposes no server-side resume handle, so when a connection nears its time limit, `BidiAgent` restarts it and replays the accumulated conversation history into the new connection. The provider then sends a short system instruction so the model continues in the same language without re-introducing itself. The agent emits a [`BidiConnectionRestartEvent`](../events.mdx#connection-restarts) when this happens; treat it as informational rather than an error.
 
-Set `timeout_s` in the client config to control when the client-side timeout fires ahead of OpenAI's session limit (see the table above). For the full lifecycle, see [Connection Restart](../agent.md#connection-restart).
+Set `timeout_s` in the client config to control when the client-side timeout fires ahead of OpenAI's session limit (see the table above). For the full lifecycle, see [Connection restarts](../agent.mdx#connection-restarts).
 
 ## Troubleshooting
 
@@ -128,4 +128,4 @@ Set the `OPENAI_API_KEY` environment variable or pass the key through `api_key`.
 
 - [OpenAI Realtime API](https://platform.openai.com/docs/guides/realtime)
 - [OpenAI API Reference](https://platform.openai.com/docs/api-reference/realtime)
-- [Python API Reference](@api/python/strands.bidi.models#OpenAIRealtimeModel)
+- [Python API Reference](@api/python/strands.bidi.models#strands.bidi.models.OpenAIRealtimeModel)

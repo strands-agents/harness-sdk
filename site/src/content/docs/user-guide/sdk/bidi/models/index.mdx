@@ -64,7 +64,7 @@ the connection opens, not to the connection already in progress.
 Realtime models take raw audio in and send raw audio back: mono PCM, at a sample rate
 the model defines. The model owns the audio format, so microphones, speakers, and
 client applications adapt to it rather than the other way around. Each provider page
-covers the audio options its model supports, and [I/O streams](../io.mdx) covers how
+covers the audio options its model supports, and [I/O Streams](../io.mdx) covers how
 audio devices and custom streams match the model's format.
 
 ## Connection limits
@@ -83,7 +83,7 @@ restart in one of two ways:
 
 Each provider sets its own default restart timing, and the `connection` option
 overrides it or turns automatic restarts off. For the restart sequence and the events
-it emits, see [Connection restart](../agent.mdx#connection-restart).
+it emits, see [Connection restarts](../agent.mdx#connection-restarts).
 
 ## Custom providers
 
@@ -91,5 +91,5 @@ To connect a realtime model Strands doesn't support yet, subclass `BidiModel`. A
 provider opens and closes the connection, sends user input and tool results, and
 yields Strands events as the model responds, in the order described in
 [Event ordering](../events.mdx#event-ordering). See the
-[`BidiModel` API reference](@api/python/strands.bidi.models#BidiModel) for the
+[`BidiModel` API reference](@api/python/strands.bidi.models#strands.bidi.models.BidiModel) for the
 contract, and the built-in providers in `strands/bidi/models/` for working examples.

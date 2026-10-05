@@ -125,7 +125,7 @@ Say **"Tell me three things to do in Lisbon."** While the agent is answering, sa
 The agent should stop mid-sentence and switch to Paris. This is called barge-in: the
 model hears you speaking over its reply and stops, and `AudioIO` throws away any
 audio still queued for the speakers so playback stops right away. See
-[Barge-in events](events.mdx#barge-in) to react when it happens.
+[Barge-in](events.mdx#barge-in-1) to react when it happens.
 
 ### End the conversation by voice
 
@@ -146,7 +146,7 @@ audio_io = AudioIO(audio_processor=True)
 ```
 
 `AudioIO` now subtracts the audio it plays from the microphone signal before the
-model hears it. For other audio settings, see [I/O streams](io.mdx#audio-processing).
+model hears it. For other audio settings, see [Audio processing](io.mdx#audio-processing).
 
 ## Use a different provider
 
@@ -188,7 +188,7 @@ model = OpenAIRealtimeModel(
 ## Next steps
 
 - [BidiAgent](agent.mdx): configure the agent and control its lifecycle.
-- [I/O streams](io.mdx): tune `AudioIO`, type to the agent with `ConsoleIO`, or
+- [I/O Streams](io.mdx): tune `AudioIO`, type to the agent with `ConsoleIO`, or
   connect a browser.
-- [Stream events](events.mdx): handle transcripts, tool results, and barge-ins
+- [Stream Events](events.mdx): handle transcripts, tool results, and barge-ins
   yourself.

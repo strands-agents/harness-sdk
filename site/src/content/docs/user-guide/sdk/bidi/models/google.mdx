@@ -76,10 +76,10 @@ the [Google GenAI client reference](https://googleapis.github.io/python-genai/ge
 | Parameter | Description | Example | Options |
 | --------- | ----------- | ------- | ------- |
 | `model_id` | Gemini Live model identifier. | `"gemini-3.8-live"` | [Gemini models](https://ai.google.dev/gemini-api/docs/models) |
-| `audio` | Input audio options. | `{"input": {"sample_rate": 48000}}` | [reference](@api/python/strands.bidi.models#GoogleGeminiLiveAudioConfig) |
+| `audio` | Input audio options. | `{"input": {"sample_rate": 48000}}` | [reference](@api/python/strands.bidi.models#strands.bidi.models.GoogleGeminiLiveAudioConfig) |
 | `voice` | Prebuilt output voice name. Uses the provider default when omitted. | `"Kore"` | [Voices and languages](https://docs.cloud.google.com/text-to-speech/docs/list-voices-and-types) |
 | `params` | Gemini Live session parameters. | `{"temperature": 0.7}` | [`LiveConnectConfig`](https://googleapis.github.io/python-genai/genai.html#genai.types.LiveConnectConfig) |
-| `connection` | Restart timing overrides. | `{"auto_restart": False}` | [reference](@api/python/strands.bidi.models#ConnectionConfig) |
+| `connection` | Restart timing overrides. | `{"auto_restart": False}` | [reference](@api/python/strands.bidi.models#strands.bidi.models.ConnectionConfig) |
 
 ### Additional Provider Options
 
@@ -106,7 +106,7 @@ values take effect on the next `start()` or `restart()`.
 
 ## Session Resumption
 
-For [connection restarts](../agent.md#connection-restart), the provider resumes the same server-side session through Gemini's [session resumption](https://ai.google.dev/gemini-api/docs/live-session) handle, carrying context across the restart without replaying history. Resumed sessions persist up to 24 hours; after that, create a new `GoogleGeminiLiveModel` instance to continue the conversation.
+For [connection restarts](../agent.mdx#connection-restarts), the provider resumes the same server-side session through Gemini's [session resumption](https://ai.google.dev/gemini-api/docs/live-session) handle, carrying context across the restart without replaying history. Resumed sessions persist up to 24 hours; after that, create a new `GoogleGeminiLiveModel` instance to continue the conversation.
 
 ## Troubleshooting
 
@@ -124,4 +124,4 @@ environment variable. You can obtain an API key from
 
 - [Gemini Live API](https://ai.google.dev/gemini-api/docs/live)
 - [Gemini API Reference](https://googleapis.github.io/python-genai/genai.html#)
-- [Python API Reference](@api/python/strands.bidi.models#GoogleGeminiLiveModel)
+- [Python API Reference](@api/python/strands.bidi.models#strands.bidi.models.GoogleGeminiLiveModel)

@@ -27,7 +27,7 @@ Your application consumes these events to play audio, display text, and track on
 
 ## Consume events
 
-Read events with `agent.receive()` after starting the agent. To forward events to output streams, use [`agent.run()`](io.md), which manages the agent lifecycle and sends each event to every configured output stream.
+Read events with `agent.receive()` after starting the agent. To forward events to output streams, use [`agent.run()`](io.mdx), which manages the agent lifecycle and sends each event to every configured output stream.
 
 Use `isinstance()` to access typed properties, or check the `type` string and read dictionary fields. The example below demonstrates both styles by sending a text prompt and printing completed transcripts until the first model response ends:
 
@@ -119,7 +119,7 @@ Use audio events to play the assistant's speech. Events for one audio stream sha
 | [`BidiAudioDeltaEvent`](@api/python/strands.bidi.types#strands.bidi.types.BidiAudioDeltaEvent) | The next audio chunk is in `audio`, encoded as base64. |
 | [`BidiAudioStopEvent`](@api/python/strands.bidi.types#strands.bidi.types.BidiAudioStopEvent) | The audio stream ends. |
 
-Each delta also includes the audio `format`, `sample_rate`, and `channels`. Buffered audio may still be playing when `BidiAudioStopEvent` arrives. See [`AudioIO`](io.md#audio-io) for playback handling.
+Each delta also includes the audio `format`, `sample_rate`, and `channels`. Buffered audio may still be playing when `BidiAudioStopEvent` arrives. See [`AudioIO`](io.mdx#audio-io) for playback handling.
 
 ### Transcripts
 
@@ -208,7 +208,7 @@ Use `BidiBargeInEvent` to stop presenting the current model output while the con
 
 <BidiEventOrdering scenario="barge-in" />
 
-Clear buffered audio as soon as the event arrives so playback stops promptly. [`AudioIO.output()`](io.md#audio-io) does this automatically; a custom output stream must clear its own playback queue.
+Clear buffered audio as soon as the event arrives so playback stops promptly. [`AudioIO.output()`](io.mdx#audio-io) does this automatically; a custom output stream must clear its own playback queue.
 
 ### Connection restarts
 

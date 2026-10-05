@@ -13,12 +13,12 @@ redirectFrom:
 ---
 
 
-A `BidiAgent` session is shaped differently from a request/response agent: one connection spans multiple model responses, tool calls, and possibly restarts, and a response can end because the user barged in rather than because the model finished. This page covers the traces, metrics, and logs specific to bidirectional streaming. For the tracing, metrics, and logging concepts shared by every Strands agent, see [Traces](../observability-evaluation/traces.md), [Metrics](../observability-evaluation/metrics.md), and [Logs](../observability-evaluation/logs.md).
+A `BidiAgent` session is shaped differently from a request/response agent: one connection spans multiple model responses, tool calls, and possibly restarts, and a response can end because the user barged in rather than because the model finished. This page covers the traces, metrics, and logs specific to bidirectional streaming. For the tracing, metrics, and logging concepts shared by every Strands agent, see [Traces](../observability-evaluation/traces.mdx), [Metrics](../observability-evaluation/metrics.mdx), and [Logs](../observability-evaluation/logs.mdx).
 
 ## Enabling tracing
 
 Tracing configuration is the same as for a non-streaming agent. Configure
-OpenTelemetry as described in [Traces](../observability-evaluation/traces.md) and
+OpenTelemetry as described in [Traces](../observability-evaluation/traces.mdx) and
 session spans are produced automatically.
 
 :::note[Install OpenTelemetry dependencies]
@@ -139,7 +139,7 @@ The cache-read count uses the semantic-convention name
 `gen_ai.usage.cache_read_input_tokens` is emitted alongside it unless you opt into the
 latest conventions with `OTEL_SEMCONV_STABILITY_OPT_IN="gen_ai_latest_experimental"`,
 which also switches `gen_ai.system` to `gen_ai.provider.name`. See
-[Captured Attributes](../observability-evaluation/traces.md#captured-attributes) on
+[Captured Attributes](../observability-evaluation/traces.mdx#captured-attributes) on
 the Traces page for the shared attribute set.
 
 Session token counts are written when the session span closes. A session that is still
@@ -163,7 +163,7 @@ connection gate to reopen. Check span status, rather than the presence of
 that carries the triggering timeout message.
 
 Tool calls use the same `execute_tool <tool name>` span and attributes as non-streaming
-agents. See [Tool-Level Attributes](../observability-evaluation/traces.md#tool-level-attributes).
+agents. See [Tool-Level Attributes](../observability-evaluation/traces.mdx#tool-level-attributes).
 
 ### Barge-in events
 
@@ -260,9 +260,9 @@ same session produces the following child response span:
 </details>
 
 For local trace visualization, follow the shared
-[Local Development Setup](../observability-evaluation/traces.md#local-development-setup),
+[Local Development Setup](../observability-evaluation/traces.mdx#local-development-setup),
 which covers Jaeger and console-exporter setup. See
-[Visualization and Analysis](../observability-evaluation/traces.md#visualization-and-analysis)
+[Visualization and Analysis](../observability-evaluation/traces.mdx#visualization-and-analysis)
 for other OpenTelemetry-compatible backends.
 
 ## Session metrics
@@ -305,7 +305,7 @@ class SessionStats(HookProvider):
             self.restarts += 1
 ```
 
-Pass it in with `hooks=[SessionStats()]` when constructing the agent. `BidiAfterConnectionRestartEvent.exception` is `None` when the restart succeeded, so the check above counts successful recoveries. A rising barge-in count usually points to responses that run long for a voice interface. A rising restart count points to sessions that frequently reach provider timeout conditions. The full list of lifecycle events is in [Hooks](hooks.md).
+Pass it in with `hooks=[SessionStats()]` when constructing the agent. `BidiAfterConnectionRestartEvent.exception` is `None` when the restart succeeded, so the check above counts successful recoveries. A rising barge-in count usually points to responses that run long for a voice interface. A rising restart count points to sessions that frequently reach provider timeout conditions. The full list of lifecycle events is in [Hooks](hooks.mdx).
 
 ### Tracking token usage per modality
 
@@ -344,7 +344,7 @@ response resp_01 ended
 ```
 
 `modality_details` is an empty list when the provider does not report a breakdown, so
-the loop above is safe on every provider. See [Events](events.md) for the full event
+the loop above is safe on every provider. See [Events](events.mdx) for the full event
 reference.
 
 ## Logging
@@ -376,7 +376,7 @@ DEBUG | strands.bidi.agent.loop | agent loop stopping
 
 Audio and transcript chunks are not logged, since a minute of conversation produces
 thousands of chunks. For log levels, formatters, and handler configuration, see
-[Logs](../observability-evaluation/logs.md).
+[Logs](../observability-evaluation/logs.mdx).
 
 ## Advanced configuration
 
@@ -458,9 +458,9 @@ Each provider emits one span per response. Usage details vary by provider:
 
 ## Next steps
 
-- [Traces](../observability-evaluation/traces.md) - Exporters and visualization
-- [Logs](../observability-evaluation/logs.md) - Log levels and handler configuration
-- [Events](events.md) - Complete guide to bidirectional streaming events
-- [Hooks](hooks.md) - Extend agent functionality with hooks
+- [Traces](../observability-evaluation/traces.mdx) - Exporters and visualization
+- [Logs](../observability-evaluation/logs.mdx) - Log levels and handler configuration
+- [Events](events.mdx) - Complete guide to bidirectional streaming events
+- [Hooks](hooks.mdx) - Extend agent functionality with hooks
 - [Barge-in](events.mdx#barge-in-1) - Handle interrupted output and clear buffered audio
 - [Python API Reference](@api/python/strands.bidi.agent) - Complete API documentation

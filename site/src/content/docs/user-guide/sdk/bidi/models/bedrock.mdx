@@ -130,10 +130,10 @@ For more details on this approach, please refer to the [boto3 session docs](http
 | Parameter | Description | Example | Options |
 | --------- | ----------- | ------- | ------- |
 | `model_id` | Nova Sonic model identifier. | `"amazon.nova-2-sonic-v1:0"` | Nova Sonic model IDs |
-| `audio` | Input and output stream options. | `{"output": {"sample_rate": 24000}}` | [reference](@api/python/strands.bidi.models#BedrockNovaSonicAudioConfig) |
+| `audio` | Input and output stream options. | `{"output": {"sample_rate": 24000}}` | [reference](@api/python/strands.bidi.models#strands.bidi.models.BedrockNovaSonicAudioConfig) |
 | `voice` | Output voice identifier. Defaults to `"matthew"`. | `"tiffany"` | Nova Sonic voices |
 | `params` | Provider-specific session parameters, such as inference and turn detection configuration. | `{"inferenceConfiguration": {"temperature": 0.7}}` | [`sessionStart` fields](https://docs.aws.amazon.com/nova/latest/nova2-userguide/sonic-input-events.html) |
-| `connection` | Restart timing overrides. | `{"auto_restart": False}` | [reference](@api/python/strands.bidi.models#ConnectionConfig) |
+| `connection` | Restart timing overrides. | `{"auto_restart": False}` | [reference](@api/python/strands.bidi.models#strands.bidi.models.ConnectionConfig) |
 
 :::caution[Conversation History Limits]
 Nova Sonic caps conversation history passed via `messages` at 50KB per message and 200KB total. Messages exceeding the per-message limit are truncated; if the total exceeds 200KB, the oldest messages are dropped until it fits. This happens silently (only visible via debug-level logs) and only applies to history provided at connection start, not to turns generated during the live conversation.
@@ -141,9 +141,9 @@ Nova Sonic caps conversation history passed via `messages` at 50KB per message a
 
 ## Connection Restart
 
-Nova Sonic keeps a single connection open for about 8 minutes. Before the connection reaches that limit, `BidiAgent` restarts it and replays the conversation history into the new connection, so the conversation continues without a break. The agent emits a [`BidiConnectionRestartEvent`](../events.md#connection-restarts) when this happens; treat it as informational rather than an error.
+Nova Sonic keeps a single connection open for about 8 minutes. Before the connection reaches that limit, `BidiAgent` restarts it and replays the conversation history into the new connection, so the conversation continues without a break. The agent emits a [`BidiConnectionRestartEvent`](../events.mdx#connection-restarts) when this happens; treat it as informational rather than an error.
 
-See [Connection Restart](../agent.md#connection-restart) for the full lifecycle.
+See [Connection restarts](../agent.mdx#connection-restarts) for the full lifecycle.
 
 ## Troubleshooting
 
@@ -165,4 +165,4 @@ As a reminder, Nova Sonic is only available in us-east-1, us-west-2, eu-north-1,
 
 - [Nova Sonic](https://docs.aws.amazon.com/nova/latest/nova2-userguide/using-conversational-speech.html)
 - [Experimental Bedrock Client](https://github.com/aws/aws-sdk-python/tree/develop/clients/aws-sdk-bedrock-runtime)
-- [Python API Reference](@api/python/strands.bidi.models#BedrockNovaSonicModel)
+- [Python API Reference](@api/python/strands.bidi.models#strands.bidi.models.BedrockNovaSonicModel)
