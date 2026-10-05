@@ -564,8 +564,8 @@ class TokenDetails(TypedDict, total=False):
         audio: Audio tokens.
         image: Image tokens.
         video: Video tokens.
-        cache_read: Tokens read from cache.
-        reasoning: Reasoning or thought tokens reported by the provider.
+        cache_read: Input tokens read from cache.
+        reasoning: Output reasoning or thought tokens reported by the provider.
     """
 
     text: int

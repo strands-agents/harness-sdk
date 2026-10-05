@@ -980,18 +980,26 @@ async def test_usage_metadata_emitted_alongside_session_resumption(
 
 @pytest.mark.asyncio
 async def test_usage_metadata_modality_details(mock_genai_client, model, live_message, usage_metadata):
-    """Input and output details preserve reported zeros, cache, and reasoning counts."""
+    """Details preserve known categories and zeros, omitting unsupported modalities without changing totals."""
     _, _, _ = mock_genai_client
     await model.start()
 
     message = live_message(
         usage_metadata=usage_metadata(
+            prompt_token_count=13,
+            total_token_count=33,
             prompt_tokens_details=[
                 genai_types.ModalityTokenCount(modality="AUDIO", token_count=7),
                 genai_types.ModalityTokenCount(modality="TEXT", token_count=0),
+                genai_types.ModalityTokenCount(modality="IMAGE", token_count=1),
+                genai_types.ModalityTokenCount(modality="VIDEO", token_count=2),
                 genai_types.ModalityTokenCount(modality="IMAGE"),
+                genai_types.ModalityTokenCount(modality="DOCUMENT", token_count=3),
             ],
-            response_tokens_details=[genai_types.ModalityTokenCount(modality="AUDIO", token_count=9)],
+            response_tokens_details=[
+                genai_types.ModalityTokenCount(modality="AUDIO", token_count=9),
+                genai_types.ModalityTokenCount(modality="DOCUMENT", token_count=11),
+            ],
             cached_content_token_count=4,
             thoughts_token_count=5,
         )
@@ -1001,10 +1009,10 @@ async def test_usage_metadata_modality_details(mock_genai_client, model, live_me
 
     assert events == [
         BidiUsageEvent(
-            input_tokens=10,
+            input_tokens=13,
             output_tokens=20,
-            total_tokens=30,
-            input_token_details={"audio": 7, "text": 0, "cache_read": 4},
+            total_tokens=33,
+            input_token_details={"audio": 7, "text": 0, "image": 1, "video": 2, "cache_read": 4},
             output_token_details={"audio": 9, "reasoning": 5},
         )
     ]

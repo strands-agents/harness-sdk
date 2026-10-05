@@ -525,12 +525,13 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
 
     @staticmethod
     def _modality_token_counts(details: list[genai_types.ModalityTokenCount]) -> TokenDetails:
+        names = {"TEXT": "text", "AUDIO": "audio", "IMAGE": "image", "VIDEO": "video"}
         return cast(
             TokenDetails,
             {
-                detail.modality.lower(): detail.token_count
+                names[detail.modality]: detail.token_count
                 for detail in details
-                if detail.modality is not None and detail.token_count is not None
+                if detail.modality is not None and detail.modality in names and detail.token_count is not None
             },
         )
 
