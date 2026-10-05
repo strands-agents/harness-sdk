@@ -38,10 +38,11 @@ async def _mock_model_stream_error(error):
 class MockAgent:
     """Mock agent for testing summarization.
 
-    In the default path (no summarization_agent) the manager now calls
-    ``agent.model.stream()`` directly, so the model attribute must return a
-    proper async iterable.  When used as a *summarization_agent* the manager
-    still calls ``agent("…")``, so the ``__call__`` interface is kept.
+    In the default path (no summarization_agent) the manager calls
+    ``agent.aux_model.stream()`` directly, so the model attribute must return a
+    proper async iterable; ``aux_model`` mirrors the real agent's default of
+    ``model``. When used as a *summarization_agent* the manager still calls
+    ``agent("…")``, so the ``__call__`` interface is kept.
     """
 
     def __init__(self, summary_response="This is a summary of the conversation."):
@@ -50,6 +51,7 @@ class MockAgent:
         self.messages = []
         self.model = Mock()
         self.model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream(self.summary_response))
+        self.aux_model = self.model
         self.call_tracker = Mock()
         self.tool_registry = Mock()
         self.tool_names = []
@@ -206,6 +208,7 @@ def test_reduce_context_raises_on_summarization_failure():
     failing_agent = Mock()
     failing_agent.model = Mock()
     failing_agent.model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream_error(Exception("Agent failed")))
+    failing_agent.aux_model = failing_agent.model
     failing_agent_messages: Messages = [
         {"role": "user", "content": [{"text": "Message 1"}]},
         {"role": "assistant", "content": [{"text": "Response 1"}]},
@@ -265,6 +268,7 @@ def test_generate_summary_raises_on_model_failure():
     failing_agent = Mock()
     failing_agent.model = Mock()
     failing_agent.model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream_error(Exception("Agent failed")))
+    failing_agent.aux_model = failing_agent.model
 
     manager = SummarizingConversationManager()
 
@@ -498,6 +502,7 @@ def test_default_path_does_not_modify_agent_state_on_exception():
     mock_agent.model.stream = Mock(
         side_effect=lambda *a, **kw: _mock_model_stream_error(Exception("Summarization failed"))
     )
+    mock_agent.aux_model = mock_agent.model
 
     messages: Messages = [
         {"role": "user", "content": [{"text": "Hello"}]},
@@ -869,6 +874,7 @@ def _make_summarizing_threshold_agent(messages, summary_response="Summary of con
     agent.model._utilization_limit_warned = False
     agent.model.estimate_utilization = lambda input_tokens: Model.estimate_utilization(agent.model, input_tokens)
     agent.model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream(summary_response))
+    agent.aux_model = agent.model
     return agent
 
 
@@ -933,6 +939,7 @@ def test_proactive_compression_swallows_errors():
     agent.model._utilization_limit_warned = False
     agent.model.estimate_utilization = lambda input_tokens: Model.estimate_utilization(agent.model, input_tokens)
     agent.model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream_error(RuntimeError("model failed")))
+    agent.aux_model = agent.model
 
     registry = HookRegistry()
     manager.register_hooks(registry)

@@ -70,7 +70,7 @@ export default defineConfig({
         { tag: 'meta', attrs: { property: 'og:image', content: 'https://strandsagents.com/og-image.png' } },
         { tag: 'meta', attrs: { property: 'og:image:width', content: '1200' } },
         { tag: 'meta', attrs: { property: 'og:image:height', content: '630' } },
-        { tag: 'meta', attrs: { property: 'og:image:alt', content: 'Strands Agents — open source AI agent SDK' } },
+        { tag: 'meta', attrs: { property: 'og:image:alt', content: 'Strands Agents — the open source toolkit for production agents' } },
         { tag: 'meta', attrs: { name: 'twitter:image', content: 'https://strandsagents.com/og-image.png' } },
       ],
       markdown: {
@@ -104,6 +104,7 @@ export default defineConfig({
         Hero: './src/components/overrides/Hero.astro',
         MarkdownContent: './src/components/overrides/MarkdownContent.astro',
         PageTitle: './src/components/overrides/PageTitle.astro',
+        PageSidebar: './src/components/overrides/PageSidebar.astro',
         Sidebar: './src/components/overrides/Sidebar.astro',
         PageFrame: './src/components/overrides/PageFrame.astro',
       },

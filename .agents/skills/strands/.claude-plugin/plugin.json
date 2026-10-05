@@ -1,0 +1,14 @@
+{
+  "name": "strands",
+  "displayName": "Strands Agents",
+  "version": "0.1.0",
+  "description": "Build, extend, and migrate agents with Strands Agents in Python or TypeScript, on any model provider including Claude through the Anthropic API or Amazon Bedrock.",
+  "author": {
+    "name": "Strands Agents",
+    "url": "https://strandsagents.com"
+  },
+  "homepage": "https://strandsagents.com",
+  "repository": "https://github.com/strands-agents/harness-sdk",
+  "license": "Apache-2.0",
+  "skills": ["./"]
+}

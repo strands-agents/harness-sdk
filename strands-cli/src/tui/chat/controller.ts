@@ -1737,11 +1737,6 @@ export class ChatController implements ChatControllerApi {
     if (this._panel?.kind !== 'settings') {
       return false
     }
-    if (setting === 'setup') {
-      if (!this._requestSetup) return false
-      this._requestSetup()
-      return true
-    }
     const update = parseSettingUpdate(setting, this._settings)
     if (!update) {
       return false
@@ -1758,13 +1753,7 @@ export class ChatController implements ChatControllerApi {
     this._settings = globalThis.structuredClone({ ...this._settings, ...update })
     this._panel = {
       ...this._panel,
-      rows: sanitizeRows(
-        settingsRows(
-          this._settings,
-          this._requestSetup !== undefined,
-          this._panel.settingsCategory ?? DEFAULT_SETTINGS_CATEGORY
-        )
-      ),
+      rows: sanitizeRows(settingsRows(this._settings, this._panel.settingsCategory ?? DEFAULT_SETTINGS_CATEGORY)),
     }
     this._emit()
     return true
@@ -1775,7 +1764,7 @@ export class ChatController implements ChatControllerApi {
     if (!category) {
       return false
     }
-    const rows = settingsRows(this._settings, this._requestSetup !== undefined, category.id)
+    const rows = settingsRows(this._settings, category.id)
     const options: ChatPanelOptions = {
       filters: settingsCategoryFilters(),
       settingsCategory: category.id,

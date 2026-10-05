@@ -34,6 +34,13 @@ const featuredAuthors = featuredPost ? await resolveAuthors(featuredPost.data.au
     padding: 2rem 1.5rem 4rem;
   }
 
+  /* The content panel already pads the page on phones. */
+  @media (max-width: 49.9375rem) {
+    .blog-index {
+      padding-inline: 0;
+    }
+  }
+
   .blog-index-header {
     margin-bottom: 2rem;
   }

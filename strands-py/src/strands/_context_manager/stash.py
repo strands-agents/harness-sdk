@@ -67,9 +67,14 @@ class Stash:
         """Name of the base storage class, for diagnostic logging."""
         return type(self._base_storage).__name__
 
-    async def store(self, block_id: str, block_index: int, data: bytes) -> str:
-        """Store a content block and return its deterministic reference key."""
+    async def store(self, block_id: str, block_index: int, data: bytes, *, keep_existing: bool = False) -> str:
+        """Store a content block and return its deterministic reference key.
+
+        With ``keep_existing``, an entry already stored under the key is left untouched.
+        """
         key = f"{block_id}_{block_index}"
+        if keep_existing and await self._storage.read(key) is not None:
+            return key
         await self._storage.write(key, data)
         return key
 
@@ -80,19 +85,30 @@ class Stash:
             return [f"{tool_result['toolUseId']}_{index}" for index in range(len(tool_result["content"]))]
         return [f"{message.get('tracking_id', 'unknown')}_{block_index}"]
 
-    async def store_message(self, message: Message, skip_tool_use_ids: frozenset[str] | None = None) -> None:
-        """Eagerly persist all stashable blocks from a message."""
+    async def store_message(
+        self,
+        message: Message,
+        skip_tool_use_ids: frozenset[str] | None = None,
+        *,
+        keep_existing: bool = False,
+    ) -> None:
+        """Eagerly persist all stashable blocks from a message.
+
+        With ``keep_existing``, entries already stored under a block's key are left untouched.
+        """
         for block_index, block in enumerate(message["content"]):
             if "toolResult" in block:
                 tool_result = block["toolResult"]
                 if skip_tool_use_ids and tool_result["toolUseId"] in skip_tool_use_ids:
                     continue
-                await self._store_tool_result(block)
+                await self._store_tool_result(block, keep_existing=keep_existing)
             elif "toolUse" in block or "reasoningContent" in block or "cachePoint" in block:
                 continue
             else:
                 try:
-                    await self.store(message.get("tracking_id", "unknown"), block_index, _encode(block))
+                    await self.store(
+                        message.get("tracking_id", "unknown"), block_index, _encode(block), keep_existing=keep_existing
+                    )
                 except Exception:
                     logger.warning(
                         "tracking_id=<%s>, block_index=<%s> | failed to stash block",
@@ -158,12 +174,12 @@ class Stash:
         for key in keys:
             await self._base_storage.delete(key)
 
-    async def _store_tool_result(self, block: ContentBlock) -> None:
+    async def _store_tool_result(self, block: ContentBlock, *, keep_existing: bool = False) -> None:
         """Store each sub-block of a tool result individually."""
         tool_result = block["toolResult"]
         for block_index, item in enumerate(tool_result["content"]):
             try:
-                await self.store(tool_result["toolUseId"], block_index, _encode(item))
+                await self.store(tool_result["toolUseId"], block_index, _encode(item), keep_existing=keep_existing)
             except Exception:
                 logger.warning(
                     "tool_use_id=<%s>, block_index=<%s> | failed to stash sub-block",

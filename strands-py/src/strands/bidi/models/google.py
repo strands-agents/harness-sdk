@@ -1,0 +1,780 @@
+"""Google Gemini Live model provider using the Gemini Live API and official Google GenAI SDK.
+
+Implements the BidiModel interface for Google's Gemini Live API using the
+official Google GenAI SDK for simplified and robust WebSocket communication.
+"""
+
+import base64
+import logging
+import uuid
+from collections.abc import AsyncGenerator
+from dataclasses import dataclass, field
+from typing import Any, TypedDict, cast
+
+from google import genai
+from google.genai import types as genai_types
+from google.genai.types import LiveConnectConfigOrDict, LiveServerContent, LiveServerMessage, UsageMetadata
+from typing_extensions import Unpack, override
+
+from ...models._validation import validate_config_keys
+from ...types.content import Messages, TextBlock
+from ...types.media import ImageBlock
+from ...types.tools import ToolResultBlock, ToolSpec, ToolUse
+from .._async import stop_all
+from ..types.content import BidiContentDelta, BidiMessage
+from ..types.events import (
+    BidiAudioDeltaEvent,
+    BidiAudioStartEvent,
+    BidiAudioStopEvent,
+    BidiBargeInEvent,
+    BidiConnectionStartEvent,
+    BidiOutputEvent,
+    BidiReasoningDeltaEvent,
+    BidiReasoningStartEvent,
+    BidiReasoningStopEvent,
+    BidiResponseStartEvent,
+    BidiResponseStopEvent,
+    BidiTextDeltaEvent,
+    BidiTextStartEvent,
+    BidiTextStopEvent,
+    BidiToolUseBlocksEvent,
+    BidiTranscriptDeltaEvent,
+    BidiTranscriptStartEvent,
+    BidiTranscriptStopEvent,
+    BidiUsageEvent,
+    TokenDetails,
+)
+from ..types.media import AudioDelta
+from .configs import (
+    AudioConfig,
+    AudioStreamConfig,
+    ConnectionConfig,
+    GoogleGeminiLiveAudioConfig,
+    GoogleGeminiLiveAudioStreamConfig,
+    ModelConfig,
+    ModelUpdateConfig,
+    _merge_config,
+    _validate_audio_config,
+    _validate_model_config,
+)
+from .model import AudioCapable, BidiModel, ConnectionTimeoutError
+
+logger = logging.getLogger(__name__)
+
+
+class _TurnSnapshot(TypedDict):
+    """State preserved across connection restarts."""
+
+    tool_names: dict[str, str]
+
+
+@dataclass
+class _TurnState:
+    """Track turns and outstanding tools for one connection.
+
+    Each reader binds to its connection's state so it cannot alter a replacement connection.
+    """
+
+    response_id: str | None = None
+    output_transcript_id: str | None = None
+    output_text_stop: BidiTextStopEvent | BidiReasoningStopEvent | None = None
+    audio_content_id: str | None = None
+    interrupted: bool = False
+    input_id: str | None = None
+    input_ids: set[str] = field(default_factory=set)
+    response_input_ids: list[str] = field(default_factory=list)
+    last_activity_input_id: str | None = None
+    tool_names: dict[str, str] = field(default_factory=dict)
+
+    def take_snapshot(self) -> _TurnSnapshot:
+        """Capture state that survives a connection restart."""
+        return {"tool_names": self.tool_names.copy()}
+
+    def load_snapshot(self, snapshot: _TurnSnapshot) -> None:
+        """Restore state preserved across a connection restart."""
+        self.tool_names = snapshot["tool_names"].copy()
+
+    def stop_text(self) -> list[BidiOutputEvent]:
+        """Close the current text or reasoning block."""
+        if self.output_text_stop is None:
+            return []
+        event = self.output_text_stop
+        self.output_text_stop = None
+        return [event]
+
+    def start_input_transcript(self) -> BidiTranscriptStartEvent:
+        """Open a user transcript when speech or its first text arrives."""
+        self.input_id = str(uuid.uuid4())
+        self.input_ids.add(self.input_id)
+        return BidiTranscriptStartEvent("user", content_id=self.input_id)
+
+    def stop_input_transcript(self, input_id: str) -> BidiTranscriptStopEvent:
+        """Close one user transcript without disturbing a newer utterance."""
+        self.input_ids.remove(input_id)
+        if self.input_id == input_id:
+            self.input_id = None
+        return BidiTranscriptStopEvent("user", content_id=input_id)
+
+
+class GoogleGeminiLiveModel(BidiModel, AudioCapable):
+    """Google Gemini Live implementation using the official Google GenAI SDK.
+
+    Combines model configuration and connection state in a single class.
+    Provides a clean interface to Gemini Live API using the official SDK,
+    eliminating custom WebSocket handling and providing robust error handling.
+    """
+
+    def __init__(
+        self,
+        *,
+        client_args: dict[str, Any] | None = None,
+        audio: GoogleGeminiLiveAudioConfig | None = None,
+        voice: str | None = None,
+        **model_config: Unpack[ModelConfig],
+    ) -> None:
+        """Initialize the Google Gemini Live bidirectional model.
+
+        Args:
+            client_args: Arguments for the underlying Google GenAI client.
+            audio: Audio configuration.
+            voice: Prebuilt output voice name. Omit to use the provider's default.
+            **model_config: Model configuration.
+
+        Raises:
+            ValueError: If any of the following conditions apply:
+
+                - Required model configuration fields are missing.
+                - ``model_id`` is not a non-empty string.
+                - The input sample rate is not positive.
+        """
+        _validate_model_config(model_config)
+        self._config = ModelConfig(**model_config)
+        self._config["params"] = dict(self._config.get("params") or {})
+
+        # Gemini caps a single connection at ~10 min; restart before that, resuming the same
+        # session via its handle. The GoAway message remains the reactive backstop.
+        self._config["connection"] = ConnectionConfig(**{"restart_after_s": 540, **self._config.get("connection", {})})
+        self._resolve_audio_config(audio)
+        self._voice = voice
+
+        self.client_args = dict(client_args or {})
+        self._client = genai.Client(**self.client_args)
+
+        # Connection state (initialized in start())
+        self._live_session: Any = None
+        self._live_session_context_manager: Any = None
+        self._live_session_handle: str | None = None
+        self._connection_id: str | None = None
+        self._turn_state = _TurnState()
+
+    @override
+    def update_config(self, **model_config: Unpack[ModelUpdateConfig]) -> None:  # type: ignore[override]
+        """Update the model configuration with the provided arguments.
+
+        Args:
+            **model_config: Configuration overrides.
+
+        Raises:
+            ValueError: If any of the following conditions apply:
+
+                - The resulting configuration is missing required fields.
+                - ``model_id`` is not a non-empty string.
+        """
+        _validate_model_config(self._config | model_config)
+        self._config.update(model_config)
+
+    @override
+    def get_config(self) -> ModelConfig:
+        """Return the model configuration by reference."""
+        return self._config
+
+    @override
+    def get_audio_config(self) -> AudioConfig:
+        """Get the resolved audio configuration."""
+        return self._audio_config
+
+    def _resolve_audio_config(self, config: GoogleGeminiLiveAudioConfig | None) -> None:
+        """Resolve and validate input and output audio settings."""
+        config = config or {}
+        validate_config_keys(config, GoogleGeminiLiveAudioConfig)
+
+        input_config = config.get("input", {"sample_rate": 16000})
+        validate_config_keys(input_config, GoogleGeminiLiveAudioStreamConfig)
+        sample_rate = input_config["sample_rate"]
+        if sample_rate <= 0:
+            raise ValueError(f"Unsupported sample rate: {sample_rate}. Expected a positive value.")
+
+        self._audio_config = AudioConfig(
+            input=AudioStreamConfig(sample_rate=sample_rate, channels=1, format="pcm"),
+            output=AudioStreamConfig(sample_rate=24000, channels=1, format="pcm"),
+        )
+        _validate_audio_config(self._audio_config)
+
+    async def start(
+        self,
+        system_prompt: str | None = None,
+        tools: list[ToolSpec] | None = None,
+        messages: Messages | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Establish bidirectional connection with Gemini Live API.
+
+        Args:
+            system_prompt: System instructions for the model.
+            tools: List of tools available to the model.
+            messages: Conversation history to initialize with.
+            **kwargs: Additional configuration options.
+        """
+        if self._connection_id:
+            raise RuntimeError("model already started | call stop before starting again")
+
+        # A fresh start (no handle) drops any handle from a prior session; otherwise the next
+        # proactive restart would resume that conversation into this one. Resume paths pass the
+        # handle explicitly and keep it.
+        if "live_session_handle" not in kwargs:
+            self._live_session_handle = None
+
+        self._connection_id = str(uuid.uuid4())
+        self._turn_state = _TurnState()
+
+        # Build live config — only enable initial-history mode when text content exists
+        # (tool-only history is dropped by _send_message_history and would leave the server
+        # stuck waiting for turn_complete that never arrives)
+        has_messages = (
+            messages is not None
+            and any("text" in block for message in messages for block in message["content"])
+            and "live_session_handle" not in kwargs
+        )
+        live_config = self._build_live_config(system_prompt, tools, has_messages=has_messages, **kwargs)
+
+        # Create the context manager and session
+        self._live_session_context_manager = self._client.aio.live.connect(
+            model=self._config["model_id"], config=cast(LiveConnectConfigOrDict, live_config)
+        )
+        self._live_session = await self._live_session_context_manager.__aenter__()
+
+        # Gemini itself restores message history when resuming from session
+        if messages and "live_session_handle" not in kwargs:
+            await self._send_message_history(messages)
+
+    async def _send_message_history(self, messages: Messages) -> None:
+        """Send conversation history to Gemini Live API.
+
+        Collects text content from messages into a list of turns and sends them
+        in a single send_client_content call with turn_complete=True to signal
+        that history seeding is complete and realtime mode can begin.
+        """
+        if not messages:
+            return
+
+        # Collect all content turns
+        turns_to_send: list[genai_types.Content] = []
+        for message in messages:
+            content_parts = []
+            for content_block in message["content"]:
+                if "text" in content_block:
+                    content_parts.append(genai_types.Part(text=content_block["text"]))
+
+            if content_parts:
+                role = "model" if message["role"] == "assistant" else message["role"]
+                turns_to_send.append(genai_types.Content(role=role, parts=content_parts))
+
+        if turns_to_send:
+            await self._live_session.send_client_content(turns=turns_to_send, turn_complete=True)
+
+    async def receive(self) -> AsyncGenerator[BidiOutputEvent, None]:
+        """Receive Gemini Live API events and convert to provider-agnostic format."""
+        if not self._connection_id:
+            raise RuntimeError("model not started | call start before receiving")
+
+        yield BidiConnectionStartEvent(connection_id=self._connection_id, model=self._config["model_id"])
+
+        # Bind session and turn state to this reader so that after a restart swaps
+        # self._live_session, a still-draining reader keeps its own closing session and turn state
+        # rather than mutating the connection that replaced it.
+        session = self._live_session
+        turn_state = self._turn_state
+
+        # Wrap in while loop to restart after turn_complete (SDK limitation workaround)
+        while True:
+            async for message in session.receive():
+                for event in self._convert_gemini_live_event(message, turn_state):
+                    yield event
+
+    def _convert_gemini_live_event(self, message: LiveServerMessage, turn_state: _TurnState) -> list[BidiOutputEvent]:
+        """Convert Gemini Live API events to provider-agnostic format.
+
+        Handles different types of content:
+
+        - inputTranscription: User's speech transcribed to text
+        - outputTranscription: Model's audio transcribed to text
+        - modelTurn text: Text response from the model
+        - usageMetadata: Token usage information
+
+        `usageMetadata` sits outside the `messageType` union, so it can accompany any other field and
+        is collected independently of the content events.
+
+        Args:
+            message: The Gemini Live server message to convert.
+            turn_state: The calling reader's turn bracketing state.
+
+        Returns:
+            List of event dicts (empty list if no events to emit).
+
+        Raises:
+            ConnectionTimeoutError: If Gemini responds with a go-away message.
+        """
+        if message.go_away:
+            raise ConnectionTimeoutError(
+                message.go_away.model_dump_json(), live_session_handle=self._live_session_handle
+            )
+
+        events: list[BidiOutputEvent] = []
+
+        if message.session_resumption_update:
+            resumption_update = message.session_resumption_update
+            if resumption_update.resumable and resumption_update.new_handle:
+                self._live_session_handle = resumption_update.new_handle
+                logger.debug("session_handle=<%s> | updating gemini session handle", self._live_session_handle)
+
+        audio_data = message.data
+
+        activity = message.voice_activity
+        if activity and activity.voice_activity_type == genai_types.VoiceActivityType.ACTIVITY_START:
+            if turn_state.input_id is None or turn_state.input_id == turn_state.last_activity_input_id:
+                events.append(turn_state.start_input_transcript())
+            turn_state.last_activity_input_id = turn_state.input_id
+
+        if message.server_content:
+            events.extend(self._convert_server_content(message.server_content, turn_state))
+
+        if audio_data:
+            if turn_state.audio_content_id is None:
+                turn_state.audio_content_id = str(uuid.uuid4())
+                events.append(BidiAudioStartEvent(turn_state.audio_content_id))
+            # Convert bytes to base64 string for JSON serializability
+            audio_b64 = base64.b64encode(audio_data).decode("utf-8")
+            events.append(
+                BidiAudioDeltaEvent(
+                    audio=audio_b64,
+                    content_id=turn_state.audio_content_id,
+                    **self._audio_config["output"],
+                )
+            )
+
+        if message.tool_call and message.tool_call.function_calls:
+            tool_uses = [
+                ToolUse(toolUseId=cast(str, call.id), name=cast(str, call.name), input=call.args or {})
+                for call in message.tool_call.function_calls
+            ]
+            turn_state.tool_names.update((tool_use["toolUseId"], tool_use["name"]) for tool_use in tool_uses)
+            events.append(BidiToolUseBlocksEvent(tool_uses))
+
+        if message.usage_metadata:
+            events.append(self._convert_usage_metadata(message.usage_metadata))
+
+        return self._wrap_turn_events(message, events, turn_state)
+
+    def _wrap_turn_events(
+        self, message: LiveServerMessage, events: list[BidiOutputEvent], turn_state: _TurnState
+    ) -> list[BidiOutputEvent]:
+        """Bracket assistant output from its first content through ``turn_complete``."""
+        server_content = message.server_content
+        barge_in = bool(server_content and server_content.interrupted)
+        turn_complete = bool(server_content and server_content.turn_complete)
+        generation_complete = bool(server_content and server_content.generation_complete)
+        produced_model_output = any(
+            isinstance(
+                event, (BidiAudioDeltaEvent, BidiTextDeltaEvent, BidiReasoningDeltaEvent, BidiToolUseBlocksEvent)
+            )
+            or (isinstance(event, BidiTranscriptDeltaEvent) and event.role == "assistant")
+            for event in events
+        )
+
+        # Start user transcripts before assistant output in the same native message.
+        wrapped: list[BidiOutputEvent] = [
+            event for event in events if isinstance(event, BidiTranscriptStartEvent) and event.role == "user"
+        ]
+        if produced_model_output and turn_state.response_id is None:
+            turn_state.response_id = str(uuid.uuid4())
+            turn_state.response_input_ids = [turn_state.input_id] if turn_state.input_id is not None else []
+            wrapped.append(BidiResponseStartEvent(response_id=turn_state.response_id))
+
+        wrapped.extend(
+            event for event in events if not (isinstance(event, BidiTranscriptStartEvent) and event.role == "user")
+        )
+
+        if barge_in and turn_state.response_id is not None:
+            turn_state.interrupted = True
+        if turn_state.audio_content_id is not None and (barge_in or turn_complete or generation_complete):
+            wrapped.append(BidiAudioStopEvent(turn_state.audio_content_id))
+            turn_state.audio_content_id = None
+        if turn_complete:
+            wrapped.extend(self._complete_response(turn_state))
+        return wrapped
+
+    def _complete_response(self, turn_state: _TurnState) -> list[BidiOutputEvent]:
+        """Close the turn's content and response, preserving any newer user activity."""
+        events: list[BidiOutputEvent] = []
+        input_ids_to_complete = turn_state.response_input_ids
+        if turn_state.response_id is None:
+            input_ids_to_complete = [turn_state.input_id] if turn_state.input_id is not None else []
+        for input_id in input_ids_to_complete:
+            if input_id in turn_state.input_ids:
+                events.append(turn_state.stop_input_transcript(input_id))
+        if turn_state.response_id is None:
+            return events
+
+        events.extend(turn_state.stop_text())
+        if turn_state.output_transcript_id is not None:
+            events.append(BidiTranscriptStopEvent("assistant", content_id=turn_state.output_transcript_id))
+        events.append(BidiResponseStopEvent(turn_state.response_id))
+        turn_state.response_id = None
+        turn_state.response_input_ids = []
+        turn_state.output_transcript_id = None
+        turn_state.interrupted = False
+        return events
+
+    def _convert_server_content(
+        self,
+        server_content: LiveServerContent,
+        turn_state: _TurnState,
+    ) -> list[BidiOutputEvent]:
+        """Convert the server content of a Gemini Live message.
+
+        Args:
+            server_content: Server content to convert.
+            turn_state: Per-reader transcript and response state.
+
+        Returns:
+            List of events derived from the server content.
+        """
+        events: list[BidiOutputEvent] = []
+
+        if server_content.interrupted:
+            events.append(BidiBargeInEvent())
+
+        input_transcript = server_content.input_transcription
+        if input_transcript and input_transcript.text:
+            text = input_transcript.text
+            input_id = turn_state.input_id
+            if input_id is None:
+                start_event = turn_state.start_input_transcript()
+                events.append(start_event)
+                input_id = start_event.content_id
+                # Without a native activity boundary, finalize late text with the current turn.
+                if turn_state.response_id is not None and not turn_state.interrupted and not server_content.interrupted:
+                    turn_state.response_input_ids.append(input_id)
+            logger.debug("text_length=<%d> | gemini input transcription detected", len(text))
+            events.append(BidiTranscriptDeltaEvent(delta=text, role="user", content_id=input_id))
+
+        if input_transcript and input_transcript.finished is True and turn_state.input_id is not None:
+            events.append(turn_state.stop_input_transcript(turn_state.input_id))
+
+        output_transcript = server_content.output_transcription
+        if output_transcript and output_transcript.text:
+            text = output_transcript.text
+            logger.debug("text_length=<%d> | gemini output transcription detected", len(text))
+            if turn_state.output_transcript_id is None:
+                turn_state.output_transcript_id = str(uuid.uuid4())
+                events.append(BidiTranscriptStartEvent("assistant", content_id=turn_state.output_transcript_id))
+            events.append(
+                BidiTranscriptDeltaEvent(delta=text, role="assistant", content_id=turn_state.output_transcript_id)
+            )
+
+        if server_content.model_turn:
+            for part in server_content.model_turn.parts or []:
+                if not part.text:
+                    continue
+                is_reasoning = part.thought is True
+                stop_event = BidiReasoningStopEvent if is_reasoning else BidiTextStopEvent
+                if not isinstance(turn_state.output_text_stop, stop_event):
+                    events.extend(turn_state.stop_text())
+                    content_id = str(uuid.uuid4())
+                    turn_state.output_text_stop = stop_event(content_id)
+                    start_event_class = BidiReasoningStartEvent if is_reasoning else BidiTextStartEvent
+                    events.append(start_event_class(content_id))
+                delta_event = BidiReasoningDeltaEvent if is_reasoning else BidiTextDeltaEvent
+                events.append(delta_event(part.text, turn_state.output_text_stop.content_id))
+
+        return events
+
+    def _convert_usage_metadata(self, usage: UsageMetadata) -> BidiUsageEvent:
+        """Convert Gemini usage metadata into a usage event.
+
+        Args:
+            usage: Usage metadata reported by Gemini.
+
+        Returns:
+            Usage event carrying token counts and per-modality details.
+        """
+        input_details = self._modality_token_counts(usage.prompt_tokens_details or [])
+        output_details = self._modality_token_counts(usage.response_tokens_details or [])
+        if usage.cached_content_token_count is not None:
+            input_details["cache_read"] = usage.cached_content_token_count
+        if usage.thoughts_token_count is not None:
+            output_details["reasoning"] = usage.thoughts_token_count
+
+        return BidiUsageEvent(
+            input_tokens=usage.prompt_token_count or 0,
+            output_tokens=usage.response_token_count or 0,
+            total_tokens=usage.total_token_count or 0,
+            input_token_details=input_details or None,
+            output_token_details=output_details or None,
+        )
+
+    @staticmethod
+    def _modality_token_counts(details: list[genai_types.ModalityTokenCount]) -> TokenDetails:
+        names = {"TEXT": "text", "AUDIO": "audio", "IMAGE": "image", "VIDEO": "video"}
+        return cast(
+            TokenDetails,
+            {
+                names[detail.modality]: detail.token_count
+                for detail in details
+                if detail.modality is not None and detail.modality in names and detail.token_count is not None
+            },
+        )
+
+    async def send(
+        self,
+        content: BidiMessage | BidiContentDelta,
+    ) -> None:
+        """Unified send method for all content types. Sends the given inputs to the Gemini Live API.
+
+        Dispatches to appropriate internal handler based on content type.
+
+        Args:
+            content: A complete BidiMessage or an individual AudioDelta.
+
+        Raises:
+            ValueError: If content type not supported.
+        """
+        if not self._connection_id:
+            raise RuntimeError("model not started | call start before sending")
+
+        if isinstance(content, BidiMessage):
+            await self._send_message(content)
+        elif isinstance(content, AudioDelta):
+            await self._send_audio_content(content)
+        else:
+            raise ValueError(f"content_type={type(content)} | content not supported")
+
+    async def _send_message(self, message: BidiMessage) -> None:
+        """Send one user turn or tool results."""
+        parts = []
+        function_responses = []
+        for block in message.content:
+            if isinstance(block, TextBlock):
+                parts.append(genai_types.Part(text=block.text))
+            elif isinstance(block, ImageBlock):
+                image_bytes = block.source.get("bytes")
+                if image_bytes is None:
+                    raise ValueError("image source must contain bytes for Gemini Live")
+                parts.append(
+                    genai_types.Part(inline_data=genai_types.Blob(data=image_bytes, mime_type=f"image/{block.format}"))
+                )
+            elif isinstance(block, ToolResultBlock):
+                function_responses.append(self._format_tool_result(block))
+            else:
+                raise ValueError(f"content_type={type(block)} | content not supported by Gemini Live")
+
+        if function_responses:
+            await self._live_session.send_tool_response(function_responses=function_responses)
+            for response in function_responses:
+                self._turn_state.tool_names.pop(cast(str, response.id), None)
+        if parts:
+            await self._live_session.send_client_content(
+                turns=genai_types.Content(role="user", parts=parts), turn_complete=True
+            )
+
+    async def _send_audio_content(self, audio_input: AudioDelta) -> None:
+        """Internal: Send audio content using Gemini Live API.
+
+        Gemini Live expects continuous audio streaming via send_realtime_input.
+        This automatically triggers VAD and allows users to barge in during ongoing responses.
+        """
+        audio_bytes = audio_input.source.get("bytes")
+        if audio_bytes is None:
+            raise ValueError("audio source must contain bytes for Gemini Live")
+
+        # Create audio blob for the SDK
+        mime_type = f"audio/pcm;rate={self._audio_config['input']['sample_rate']}"
+        audio_blob = genai_types.Blob(data=audio_bytes, mime_type=mime_type)
+
+        # Send real-time audio input - this automatically handles VAD and barge-in
+        await self._live_session.send_realtime_input(audio=audio_blob)
+
+    def _format_tool_result(self, tool_result: ToolResultBlock) -> genai_types.FunctionResponse:
+        """Convert one result for a Gemini tool-response message."""
+        tool_use_id = tool_result.tool_use_id
+        content = tool_result.content
+
+        # Validate all content types are supported
+        for block in content:
+            if "text" not in block and "json" not in block:
+                # Unsupported content type - raise error
+                raise ValueError(
+                    f"tool_use_id=<{tool_use_id}>, content_types=<{list(block.keys())}> | "
+                    f"Content type not supported by Gemini Live API"
+                )
+
+        # Optimize for single content item - unwrap the array
+        if len(content) == 1:
+            result_data = cast(dict[str, Any], content[0])
+        else:
+            # Multiple items - send as array
+            result_data = {"result": content}
+
+        # Create function response
+        return genai_types.FunctionResponse(
+            id=tool_use_id,
+            name=self._turn_state.tool_names[tool_use_id],
+            response=result_data,
+        )
+
+    async def stop(self) -> None:
+        """Close Gemini Live API connection."""
+
+        async def stop_session() -> None:
+            if not self._live_session_context_manager:
+                return
+
+            try:
+                await self._live_session_context_manager.__aexit__(None, None, None)
+            finally:
+                # Clear so a second stop() during restart does not
+                # re-exit an already-exited context manager.
+                self._live_session_context_manager = None
+                self._live_session = None
+
+        async def stop_connection() -> None:
+            self._connection_id = None
+            self._turn_state.tool_names.clear()
+
+        await stop_all(stop_session, stop_connection)
+
+    async def restart(
+        self,
+        system_prompt: str | None = None,
+        tools: list[ToolSpec] | None = None,
+        messages: Messages | None = None,
+        **restart_kwargs: Any,
+    ) -> None:
+        """Restart by closing the connection and resuming the same session via its handle.
+
+        Resumes the Gemini session using the last resumption handle so server-side context
+        carries across the swap without replaying history. The handle is supplied by the reactive
+        (GoAway) path via ``restart_kwargs`` or read from the tracked handle on the proactive path.
+        When no handle is available yet, falls back to a fresh connection with history replay.
+
+        Args:
+            system_prompt: System instructions for the resumed connection.
+            tools: Tool specifications for the resumed connection.
+            messages: Conversation history, replayed only when resuming without a handle.
+            **restart_kwargs: Provider restart options; ``live_session_handle`` resumes the session.
+        """
+        handle = restart_kwargs.pop("live_session_handle", None) or self._live_session_handle
+        logger.debug("session_handle=<%s> | gemini restart starting", handle)
+        snapshot = self._turn_state.take_snapshot()
+        await self.stop()
+
+        if handle is None or not await self._try_resume(system_prompt, tools, handle, **restart_kwargs):
+            # No handle, or the server refused it: start fresh and replay history so the conversation
+            # continues rather than going silent.
+            await self.start(system_prompt, tools, messages, **restart_kwargs)
+        self._turn_state.load_snapshot(snapshot)
+        logger.debug("connection_id=<%s> | gemini restart complete", self._connection_id)
+
+    async def _try_resume(
+        self, system_prompt: str | None, tools: list[ToolSpec] | None, handle: str, **restart_kwargs: Any
+    ) -> bool:
+        """Attempt to resume the session via ``handle``; report whether it succeeded.
+
+        On refusal the handle is dropped (it would fail every retry) and the half-started connection
+        torn down, leaving the model ready for a fresh start.
+
+        Args:
+            system_prompt: System instructions for the resumed connection.
+            tools: Tool specifications for the resumed connection.
+            handle: The session resumption handle to resume with.
+            **restart_kwargs: Additional provider restart options.
+
+        Returns:
+            ``True`` if the session resumed, ``False`` if the handle was refused.
+        """
+        try:
+            await self.start(system_prompt, tools, live_session_handle=handle, **restart_kwargs)
+            return True
+        except Exception as error:
+            logger.warning("error=<%s> | gemini resume failed | falling back to fresh session", error)
+            self._live_session_handle = None
+            await self._teardown_after_failed_resume()
+            return False
+
+    async def _teardown_after_failed_resume(self) -> None:
+        """Tear down the half-started connection so the caller can start fresh.
+
+        Best-effort: a failing ``__aexit__`` on the half-entered context manager must not mask the
+        resume failure or block the fresh-start fallback (stop() still clears the connection id).
+        """
+        try:
+            await self.stop()
+        except Exception as stop_error:
+            logger.debug("error=<%s> | teardown after failed resume", stop_error)
+
+    def _build_live_config(
+        self, system_prompt: str | None = None, tools: list[ToolSpec] | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
+        """Build LiveConnectConfig for the official SDK.
+
+        Model params recursively override defaults and directly supplied options.
+        """
+        config_dict: dict[str, Any] = {
+            "response_modalities": ["AUDIO"],
+            "output_audio_transcription": {},
+            "input_audio_transcription": {},
+            # Sliding-window context compression removes the ~15-min audio-only session cap, so a
+            # session resumed across proactive restarts can continue indefinitely rather than
+            # dying at the cap.
+            "context_window_compression": {"sliding_window": {}},
+        }
+
+        live_session_handle = kwargs.get("live_session_handle")
+        config_dict["session_resumption"] = {"handle": live_session_handle}
+
+        # Enables send_client_content for initial history seeding before realtime mode.
+        # Not supported on Vertex AI.
+        has_messages = kwargs.get("has_messages", False)
+        if has_messages and getattr(self._client, "vertexai", False) is not True:
+            config_dict["history_config"] = {"initial_history_in_client_content": True}
+
+        # Add system instruction if provided
+        if system_prompt:
+            config_dict["system_instruction"] = system_prompt
+
+        # Add tools if provided
+        if tools:
+            config_dict["tools"] = self._format_tools_for_live_api(tools)
+
+        if self._voice is not None:
+            config_dict["speech_config"] = {"voice_config": {"prebuilt_voice_config": {"voice_name": self._voice}}}
+
+        return _merge_config(config_dict, self._config.get("params") or {})
+
+    def _format_tools_for_live_api(self, tool_specs: list[ToolSpec]) -> list[genai_types.Tool]:
+        """Format tool specs for Gemini Live API."""
+        if not tool_specs:
+            return []
+
+        return [
+            genai_types.Tool(
+                function_declarations=[
+                    genai_types.FunctionDeclaration(
+                        description=tool_spec["description"],
+                        name=tool_spec["name"],
+                        parameters=genai_types.Schema.model_validate(tool_spec["inputSchema"]["json"]),
+                    )
+                    for tool_spec in tool_specs
+                ],
+            ),
+        ]

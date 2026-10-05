@@ -28,7 +28,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from ...agent import Agent
     from ...background_tasks._background_tasks import _BackgroundTasks
     from ...background_tasks.in_process._manager import _MiddlewareInterrupt
-    from ...experimental.bidi.agent import BidiAgent
+    from ...bidi.agent import BidiAgent
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ class ToolExecutor(abc.ABC):
         if cast(dict[str, Any], after_event.result).get("cancelled") is True:
             return False
         if not ToolExecutor._is_agent(agent):
-            return True
+            return not agent.cancel_signal.is_set()
         return not cast("Agent", agent)._observe_cancellation()
 
     async def _execute_background(

@@ -111,6 +111,38 @@ a[aria-current="page"]:hover {
 :root {
 	--sl-content-width: 50rem;
 }
+
+/* Scroll shadows on wide tables, code, and tab lists: the surface-colored
+   "local" layers cover the shadows at each end until there is more to scroll to. */
+.sl-markdown-content :is(table, .tablist-wrapper):not(:where(.not-content *, .starlight-aside *)),
+.sl-markdown-content .expressive-code .frame pre {
+	--scroll-shadow: color-mix(in srgb, var(--sl-color-white) 15%, transparent);
+	background:
+		linear-gradient(to right, var(--scroll-surface, var(--sl-color-bg)) 30%, transparent) left / 2.5rem 100% no-repeat local,
+		linear-gradient(to left, var(--scroll-surface, var(--sl-color-bg)) 30%, transparent) right / 2.5rem 100% no-repeat local,
+		linear-gradient(to right, var(--scroll-shadow), transparent) left / 0.75rem 100% no-repeat scroll,
+		linear-gradient(to left, var(--scroll-shadow), transparent) right / 0.75rem 100% no-repeat scroll;
+}
+.sl-markdown-content .expressive-code .frame pre {
+	--scroll-surface: var(--code-background);
+	background-color: var(--code-background);
+}
+:root[data-theme='dark'] .sl-markdown-content :is(table, .tablist-wrapper, .expressive-code .frame pre) {
+	--scroll-shadow: color-mix(in srgb, var(--sl-color-white) 25%, transparent);
+}
+
+/* Touch screens always show the copy button; in terminal frames it sits in the
+   empty title bar instead of over the code. */
+@media (hover: none) {
+	.expressive-code .frame.is-terminal .copy {
+		inset-block-start: 0.1875rem;
+	}
+	.expressive-code .frame.is-terminal .copy button {
+		width: 1.75rem;
+		height: 1.75rem;
+	}
+}
+
 /* Embed mode: html[data-embed] is set before paint by the inline script in
    overrides/Head.astro when the URL carries `?embed` (used by the
    /integrations docs drawer iframe). Hide all site chrome and collapse the

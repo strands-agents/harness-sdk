@@ -276,18 +276,20 @@ export function EffortSlider({
   slider,
   width,
   compact,
-  pressed,
+  pressed = false,
   hovered,
-  focused,
+  focused = false,
   onElement,
+  showStops = false,
 }: {
   slider: ChatPanelSlider
   width: number
   compact: boolean
-  pressed: boolean
+  pressed?: boolean
   hovered?: boolean
-  focused: boolean
+  focused?: boolean
   onElement?: (element: DOMElement | null) => void
+  showStops?: boolean
 }): ReactElement {
   const { accent, hover, selection } = useTheme()
   const activeIndex = Math.max(
@@ -301,6 +303,9 @@ export function EffortSlider({
   const thumbCenter = positions[activeIndex] ?? 0
   const thumbStart = Math.max(0, Math.min(width - 3, thumbCenter - 1))
   const track = Array.from({ length: width }, () => '─')
+  if (showStops) {
+    for (const position of positions) track[position] = '┬'
+  }
   track.fill('█', thumbStart, thumbStart + 3)
   const ticks = Array.from({ length: width }, () => ' ')
   for (const position of positions) {
@@ -308,23 +313,57 @@ export function EffortSlider({
   }
   return (
     <Box marginTop={compact ? 0 : 1} flexDirection="column" alignItems="center">
-      <Box>
-        <Text dimColor>{slider.label} </Text>
-        <Text
-          {...(slider.disabled ? { dimColor: true } : { color: pressed ? hover : accent })}
-          bold={slider.disabled !== true}
-        >
-          {activeOption?.label ?? 'Unavailable'}
-        </Text>
-      </Box>
+      {!showStops ? (
+        <Box>
+          <Text dimColor>{slider.label} </Text>
+          <Text
+            {...(slider.disabled ? { dimColor: true } : { color: pressed ? hover : accent })}
+            bold={slider.disabled !== true}
+          >
+            {activeOption?.label ?? 'Unavailable'}
+          </Text>
+        </Box>
+      ) : null}
       <Box
         ref={onElement}
         width={width}
-        backgroundColor={hovered || pressed || focused ? selection : undefined}
+        backgroundColor={!showStops && (hovered || pressed || focused) ? selection : undefined}
         flexDirection="column"
       >
         <Text {...(slider.disabled ? { dimColor: true } : { color: accent })}>{track.join('')}</Text>
-        {!compact ? <Text dimColor>{ticks.join('')}</Text> : null}
+        {showStops ? (
+          <Box width={width} height={1}>
+            {slider.options.map((option, index) => {
+              // Label cells follow sliderOptionAtMouse's rounding, including ties.
+              const intervals = Math.max(1, slider.options.length - 1)
+              const span = Math.max(1, width - 1)
+              const start = index === 0 ? 0 : Math.min(width, Math.ceil(((index - 0.5) * span) / intervals))
+              const end =
+                index === slider.options.length - 1
+                  ? width
+                  : Math.min(width, Math.ceil(((index + 0.5) * span) / intervals))
+              return (
+                <Box
+                  key={option.id}
+                  width={Math.max(0, end - start)}
+                  flexShrink={0}
+                  justifyContent={index === 0 ? 'flex-start' : index === positions.length - 1 ? 'flex-end' : 'center'}
+                  overflow="hidden"
+                >
+                  <Text
+                    {...(index === activeIndex ? { color: accent } : {})}
+                    dimColor={index !== activeIndex}
+                    wrap="truncate-end"
+                  >
+                    {option.label}
+                  </Text>
+                </Box>
+              )
+            })}
+          </Box>
+        ) : !compact ? (
+          <Text dimColor>{ticks.join('')}</Text>
+        ) : null}
       </Box>
     </Box>
   )

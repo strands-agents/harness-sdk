@@ -68,8 +68,23 @@ const sidebar = [
       </div>
     </div>
 
-    {/* Facets inline (no modal): the search input lives in the left sidebar
-        and drives the same filter state document-wide. */}
+    {/* The sidebar (type links + search) is hidden below 50rem; this bar stands in for it. */}
+    <div class="cat-mobile-filters">
+      <input
+        type="search"
+        class="cat-mobile-search"
+        data-cat-search
+        placeholder="Search…"
+        aria-label="Search integrations"
+      />
+      <select class="cat-mobile-type" data-cat-type-select aria-label="Integration type">
+        <option value="">All types</option>
+        {typeFacets.map((t) => <option value={t.value}>{`${t.label} (${t.count})`}</option>)}
+      </select>
+    </div>
+
+    {/* Facets inline (no modal): the search input lives in the left sidebar (or
+        the mobile filter bar) and drives the same filter state document-wide. */}
     <div class="cat-facets">
       <CatalogFacets
         maintainedBy={maintainedByFacets}
@@ -116,8 +131,9 @@ const sidebar = [
   import { CATALOG_TYPES } from '../components/catalog/types'
 
   const cards = Array.from(document.querySelectorAll<HTMLElement>('[data-cat-grid] .cat-card'))
-  // The search input lives in the left sidebar (shared across pages).
-  const searchInput = document.querySelector<HTMLInputElement>('[data-sidebar-search]')
+  // The left sidebar's search input, plus the mobile filter bar's stand-in.
+  const searchInputs = Array.from(document.querySelectorAll<HTMLInputElement>('[data-sidebar-search], [data-cat-search]'))
+  const typeSelect = document.querySelector<HTMLSelectElement>('[data-cat-type-select]')
   const typeBtns = Array.from(document.querySelectorAll<HTMLElement>('[data-cat-type]'))
   const badgeBtns = Array.from(document.querySelectorAll<HTMLElement>('[data-cat-badge]'))
   const maintainedBtns = Array.from(document.querySelectorAll<HTMLElement>('[data-cat-maintained]'))
@@ -135,7 +151,7 @@ const sidebar = [
   for (const badge of state.badges) if (!renderedBadges.has(badge)) state.badges.delete(badge)
   const renderedMaintained = new Set(maintainedBtns.map((btn) => btn.dataset.catMaintained))
   for (const by of state.maintainedBy) if (!renderedMaintained.has(by)) state.maintainedBy.delete(by)
-  // Type filtering is driven by the left sidebar (?type=), not on-page chips,
+  // Type filtering is driven by the left sidebar or mobile select (?type=), not chips,
   // so validate against the known catalog types rather than rendered buttons.
   const validTypes = new Set(CATALOG_TYPES.map((t) => t.value))
   for (const t of state.types) if (!validTypes.has(t)) state.types.delete(t)
@@ -180,6 +196,7 @@ const sidebar = [
       if (linkType === activeType) a.setAttribute('aria-current', 'page')
       else a.removeAttribute('aria-current')
     })
+    if (typeSelect) typeSelect.value = activeType
 
     for (const btn of typeBtns) btn.setAttribute('aria-pressed', String(state.types.has(btn.dataset.catType || '')))
     for (const btn of badgeBtns) btn.setAttribute('aria-pressed', String(state.badges.has(btn.dataset.catBadge || '')))
@@ -207,13 +224,20 @@ const sidebar = [
     else set.add(value)
   }
 
-  if (searchInput) {
-    searchInput.value = state.search
-    searchInput.addEventListener('input', () => {
-      state.search = searchInput.value
+  for (const input of searchInputs) {
+    input.value = state.search
+    input.addEventListener('input', () => {
+      state.search = input.value
+      for (const other of searchInputs) if (other !== input) other.value = input.value
       apply()
     })
   }
+
+  typeSelect?.addEventListener('change', () => {
+    state.types.clear()
+    if (typeSelect.value) state.types.add(typeSelect.value)
+    apply()
+  })
 
   for (const btn of typeBtns)
     btn.addEventListener('click', () => {

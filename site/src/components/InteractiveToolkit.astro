@@ -643,6 +643,13 @@ const cards = [
     cursor: pointer;
   }
 
+  /* 44px hit area around the 16px icon. */
+  .toolkit__card-open::before {
+    content: '';
+    position: absolute;
+    inset: -14px;
+  }
+
   .toolkit__card-open-icon {
     display: inline-flex;
     width: 100%;
@@ -811,7 +818,7 @@ const cards = [
     border: none;
     color: var(--terminal-fg, var(--strands-grey-600));
     font-family: inherit;
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1;
     cursor: pointer;
   }
@@ -842,7 +849,7 @@ const cards = [
   .toolkit__card-terminal-code {
     margin: 0;
     padding: 16px 20px;
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.5;
     color: var(--terminal-fg, var(--fg));
     background: transparent;
@@ -852,7 +859,7 @@ const cards = [
     margin: 0;
     padding: 16px 20px;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.5;
     color: var(--strands-grey-600);
     background: transparent;
@@ -1040,9 +1047,12 @@ const cards = [
       margin-top: 6px;
     }
 
+    .toolkit__card-tag {
+      font-size: 12px;
+    }
+
     .toolkit__card-terminal-code {
       padding: 12px 14px;
-      font-size: 10px;
     }
 
     .toolkit__card-view-more {
@@ -1098,11 +1108,15 @@ const cards = [
     .forEach((btn) => {
       attachCopyButton(btn, {
         label: btn.querySelector<HTMLElement>('.toolkit__card-terminal-copy-label'),
-        getText: () =>
-          btn
+        getText: () => {
+          const code = btn
             .closest<HTMLElement>('.toolkit__card-terminal')
-            ?.querySelector<HTMLElement>('.toolkit__card-terminal-code:not([hidden]) code')
-            ?.innerText ?? '',
+            ?.querySelector<HTMLElement>('.toolkit__card-terminal-code:not([hidden]) code');
+          if (!code) return '';
+          return Array.from(code.querySelectorAll<HTMLElement>('.toolkit__card-terminal-line'))
+            .map((line) => line.textContent ?? '')
+            .join('\n');
+        },
         track: {
           surface: 'code:toolkit',
           detail: () =>
