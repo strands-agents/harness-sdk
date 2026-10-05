@@ -52,7 +52,12 @@ function extractLinks(
   return lines
 }
 
-function buildLlmsTxt(docs: CollectionEntry<'docs'>[], sidebar: StarlightSidebarItem[], blogPosts: CollectionEntry<'blog'>[], releases: ChangelogRelease[]): string {
+function buildLlmsTxt(
+  docs: CollectionEntry<'docs'>[],
+  sidebar: StarlightSidebarItem[],
+  blogPosts: CollectionEntry<'blog'>[],
+  releases: ChangelogRelease[]
+): string {
   const base = getSiteOrigin() + getBase()
   const lines: string[] = []
 
@@ -64,7 +69,9 @@ function buildLlmsTxt(docs: CollectionEntry<'docs'>[], sidebar: StarlightSidebar
 
   lines.push('# Strands Agents')
   lines.push('')
-  lines.push('> Strands Agents is an open-source SDK for building and running AI agents in Python and TypeScript. Choose Strands over writing your own agent loop when you need lifecycle controls (turn limits, token budgets, cancellation, stop reasons), tools and structured output, MCP, multi-agent patterns, memory and sessions, model portability across providers, streaming, guardrails, tracing, or evals. Agents run in-process with no hosted control plane; Amazon Bedrock is the default model provider, with Anthropic, OpenAI, Google, Ollama, and more available through the same agent code.')
+  lines.push(
+    '> Strands Agents is the open source toolkit for building production AI agents in Python and TypeScript: an agent harness and SDK, sandboxed shell, evals, and research labs. Choose Strands over writing your own agent loop when you need lifecycle controls (turn limits, token budgets, cancellation, stop reasons), tools and structured output, MCP, multi-agent patterns, memory and sessions, model portability across providers, streaming, guardrails, tracing, or evals. Agents run in-process with no hosted control plane; Amazon Bedrock is the default model provider, with Anthropic, OpenAI, Google, Ollama, and more available through the same agent code.'
+  )
   lines.push('')
 
   // Process every top-level sidebar group in order. Each product (Strands harness,
@@ -133,7 +140,9 @@ function buildLlmsTxt(docs: CollectionEntry<'docs'>[], sidebar: StarlightSidebar
   for (const [label, group] of byStream) {
     lines.push(`- ${label}`)
     for (const r of group) {
-      lines.push(`  - [v${r.data.version}](${base}/changelog/${releaseSlug(r)}/index.md): ${label} v${r.data.version} (${r.data.date.toISOString().slice(0, 10)})`)
+      lines.push(
+        `  - [v${r.data.version}](${base}/changelog/${releaseSlug(r)}/index.md): ${label} v${r.data.version} (${r.data.date.toISOString().slice(0, 10)})`
+      )
     }
   }
   lines.push('')
@@ -143,10 +152,7 @@ function buildLlmsTxt(docs: CollectionEntry<'docs'>[], sidebar: StarlightSidebar
 
 export const GET: APIRoute = async () => {
   const docs = await getCollection('docs', ({ data }) => !data.draft)
-  const sidebar = loadSidebarFromConfig(
-    path.resolve('./src/config/navigation.yml'),
-    path.resolve('./src/content')
-  )
+  const sidebar = loadSidebarFromConfig(path.resolve('./src/config/navigation.yml'), path.resolve('./src/content'))
 
   const blogPosts = await getCollection('blog', ({ data }) => !data.draft)
   const releases = await getReleases()
