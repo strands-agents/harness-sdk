@@ -945,9 +945,8 @@ async def test_completion_end_is_not_a_turn_boundary(nova_model):
 
 @pytest.mark.asyncio
 async def test_connection_config_declared(nova_model):
-    """Nova declares its restart deadline and cumulative usage semantics."""
+    """Nova declares its restart deadline."""
     assert nova_model.get_connection_config()["restart_after_s"] == 420
-    assert nova_model.usage_is_cumulative is True
 
 
 @pytest.mark.asyncio
@@ -963,8 +962,6 @@ async def test_connection_config_overrides_merge_over_defaults(model_id, boto_se
     assert model.get_connection_config()["auto_restart"] is False
     # Untouched default is preserved.
     assert model.get_connection_config()["restart_after_s"] == 420
-    # usage_is_cumulative is a separate provider trait, unaffected by connection overrides.
-    assert model.usage_is_cumulative is True
 
 
 @pytest.mark.asyncio
@@ -1273,24 +1270,38 @@ async def test_event_conversion(nova_model):
     exp_events = [BidiToolUseBlocksEvent([{"toolUseId": "tool-123", "name": "get_weather", "input": tool_input}])]
     assert tru_events == exp_events
 
-    # Test usage metrics (now returns BidiUsageEvent)
+    # Usage reports the new speech/text counts, independently of cumulative totals.
     nova_event = {
         "usageEvent": {
             "totalTokens": 100,
             "totalInputTokens": 40,
             "totalOutputTokens": 60,
-            "details": {"total": {"output": {"speechTokens": 30}}},
+            "details": {
+                "delta": {
+                    "input": {"speechTokens": 0, "textTokens": 10},
+                    "output": {"speechTokens": 6, "textTokens": 4},
+                },
+                "total": {
+                    "input": {"speechTokens": 0, "textTokens": 40},
+                    "output": {"speechTokens": 30, "textTokens": 30},
+                },
+            },
         }
     }
-    result = nova_model._convert_nova_event(
+    tru_events = nova_model._convert_nova_event(
         nova_event,
         response_state,
-    )[0]
-    assert isinstance(result, BidiUsageEvent)
-    assert result.get("type") == "bidi_usage"
-    assert result.get("totalTokens") == 100
-    assert result.get("inputTokens") == 40
-    assert result.get("outputTokens") == 60
+    )
+    exp_events = [
+        BidiUsageEvent(
+            input_tokens=10,
+            output_tokens=10,
+            total_tokens=20,
+            input_token_details={"audio": 0, "text": 10},
+            output_token_details={"audio": 6, "text": 4},
+        )
+    ]
+    assert tru_events == exp_events
 
     # Test content start tracks role and emits BidiResponseStartEvent
     # TEXT type contentStart (matches API spec)

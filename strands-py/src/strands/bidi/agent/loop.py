@@ -578,23 +578,11 @@ class _AgentLoop:
         self._current_cache_read_tokens = 0
 
     def _record_usage(self, event: BidiUsageEvent) -> None:
-        """Update the current connection's token counts from a usage event.
-
-        Cumulative providers report a running total (replace); delta providers report
-        per-response counts (add).
-        """
-        cache_read = event.cache_read_input_tokens or 0
-
-        if getattr(self._agent.model, "usage_is_cumulative", False):
-            self._current_input_tokens = event.input_tokens
-            self._current_output_tokens = event.output_tokens
-            self._current_total_tokens = event.total_tokens
-            self._current_cache_read_tokens = cache_read
-        else:
-            self._current_input_tokens += event.input_tokens
-            self._current_output_tokens += event.output_tokens
-            self._current_total_tokens += event.total_tokens
-            self._current_cache_read_tokens += cache_read
+        """Add newly reported usage to the current connection's token counts."""
+        self._current_input_tokens += event.input_tokens
+        self._current_output_tokens += event.output_tokens
+        self._current_total_tokens += event.total_tokens
+        self._current_cache_read_tokens += event.input_token_details.get("cache_read", 0)
 
     async def _run_model(self, generation: int) -> None:
         """Task for running the model.

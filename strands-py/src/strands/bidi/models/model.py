@@ -46,12 +46,7 @@ class BidiModel(Model, abc.ABC):
 
     Attributes:
         model_id: Provider model identifier.
-        usage_is_cumulative: Whether the provider reports cumulative connection token totals
-            (True) rather than per-response deltas (False, the default when absent). Providers
-            reporting deltas may omit it.
     """
-
-    usage_is_cumulative: bool
 
     @property
     def model_id(self) -> str:

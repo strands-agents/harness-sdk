@@ -114,21 +114,11 @@ def server_content():
 
 @pytest.fixture
 def usage_metadata():
-    """Build a UsageMetadata-shaped mock with token counts and no modality details."""
+    """Build provider usage metadata with token counts and optional details."""
 
     def _build(**overrides):
-        usage = unittest.mock.Mock()
-        usage.prompt_token_count = 10
-        usage.response_token_count = 20
-        usage.total_token_count = 30
-        usage.cached_content_token_count = None
-        usage.prompt_tokens_details = None
-        usage.response_tokens_details = None
-
-        for name, value in overrides.items():
-            setattr(usage, name, value)
-
-        return usage
+        values = {"prompt_token_count": 10, "response_token_count": 20, "total_token_count": 30}
+        return genai_types.UsageMetadata(**(values | overrides))
 
     return _build
 
@@ -292,9 +282,8 @@ async def test_stop_is_idempotent(mock_genai_client, model):
 
 
 def test_connection_config_declared(model):
-    """Gemini declares a proactive restart deadline and per-response (non-cumulative) usage."""
+    """Gemini declares a proactive restart deadline."""
     assert model.get_connection_config()["restart_after_s"] == 540
-    assert model.usage_is_cumulative is False
 
 
 def test_context_window_compression_enabled_by_default(model):
@@ -953,8 +942,6 @@ async def test_usage_metadata_emitted_alongside_audio(mock_genai_client, model, 
         input_tokens=10,
         output_tokens=20,
         total_tokens=30,
-        modality_details=None,
-        cache_read_input_tokens=None,
     )
 
     await model.stop()
@@ -985,8 +972,6 @@ async def test_usage_metadata_emitted_alongside_session_resumption(
             input_tokens=10,
             output_tokens=20,
             total_tokens=30,
-            modality_details=None,
-            cache_read_input_tokens=None,
         )
     ]
 
@@ -995,23 +980,20 @@ async def test_usage_metadata_emitted_alongside_session_resumption(
 
 @pytest.mark.asyncio
 async def test_usage_metadata_modality_details(mock_genai_client, model, live_message, usage_metadata):
-    """Prompt and response token details merge into per-modality usage."""
+    """Input and output details preserve reported zeros, cache, and reasoning counts."""
     _, _, _ = mock_genai_client
     await model.start()
 
-    prompt_detail = unittest.mock.Mock()
-    prompt_detail.modality = "AUDIO"
-    prompt_detail.token_count = 7
-
-    response_detail = unittest.mock.Mock()
-    response_detail.modality = "AUDIO"
-    response_detail.token_count = 9
-
     message = live_message(
         usage_metadata=usage_metadata(
-            prompt_tokens_details=[prompt_detail],
-            response_tokens_details=[response_detail],
+            prompt_tokens_details=[
+                genai_types.ModalityTokenCount(modality="AUDIO", token_count=7),
+                genai_types.ModalityTokenCount(modality="TEXT", token_count=0),
+                genai_types.ModalityTokenCount(modality="IMAGE"),
+            ],
+            response_tokens_details=[genai_types.ModalityTokenCount(modality="AUDIO", token_count=9)],
             cached_content_token_count=4,
+            thoughts_token_count=5,
         )
     )
 
@@ -1022,8 +1004,8 @@ async def test_usage_metadata_modality_details(mock_genai_client, model, live_me
             input_tokens=10,
             output_tokens=20,
             total_tokens=30,
-            modality_details=[{"modality": "audio", "input_tokens": 7, "output_tokens": 9}],
-            cache_read_input_tokens=4,
+            input_token_details={"audio": 7, "text": 0, "cache_read": 4},
+            output_token_details={"audio": 9, "reasoning": 5},
         )
     ]
 

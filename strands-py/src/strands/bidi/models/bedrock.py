@@ -66,6 +66,7 @@ from ..types.events import (
     BidiTranscriptStopEvent,
     BidiUsageEvent,
     Role,
+    TokenDetails,
 )
 from ..types.media import AudioDelta
 from .configs import (
@@ -266,9 +267,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
         self._config["params"] = dict(self._config.get("params") or {})
 
         # Nova caps a connection at ~8 min; restart at 7 min, leaving headroom below the cap.
-        # It also reports cumulative usage totals.
         self._config["connection"] = ConnectionConfig(**{"restart_after_s": 420, **self._config.get("connection", {})})
-        self.usage_is_cumulative = True
 
         self._resolve_audio_config(audio)
         self._voice = voice
@@ -901,15 +900,26 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             return events
 
         if "usageEvent" in nova_event:
-            usage_data = nova_event["usageEvent"]
-            total_input = usage_data.get("totalInputTokens", 0)
-            total_output = usage_data.get("totalOutputTokens", 0)
+            delta = nova_event["usageEvent"]["details"]["delta"]
+            input_details: TokenDetails = {
+                "audio": delta["input"]["speechTokens"],
+                "text": delta["input"]["textTokens"],
+            }
+            output_details: TokenDetails = {
+                "audio": delta["output"]["speechTokens"],
+                "text": delta["output"]["textTokens"],
+            }
+            # Nova's delta contains disjoint speech and text counts.
+            input_tokens = input_details["audio"] + input_details["text"]
+            output_tokens = output_details["audio"] + output_details["text"]
 
             return [
                 BidiUsageEvent(
-                    input_tokens=total_input,
-                    output_tokens=total_output,
-                    total_tokens=usage_data.get("totalTokens", total_input + total_output),
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=input_tokens + output_tokens,
+                    input_token_details=input_details,
+                    output_token_details=output_details,
                 )
             ]
 

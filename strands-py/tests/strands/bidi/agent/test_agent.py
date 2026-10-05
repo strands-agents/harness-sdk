@@ -35,7 +35,6 @@ class MockBidiModel(BidiModel):
 
     def __init__(self, config=None, model_id="mock-model"):
         self._config = config or {"audio": {"input_rate": 16000, "output_rate": 24000, "channels": 1}}
-        self.usage_is_cumulative = False
         self._config["model_id"] = model_id
         self._connection_id = None
         self._started = False

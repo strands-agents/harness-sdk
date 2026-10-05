@@ -307,45 +307,33 @@ class SessionStats(HookProvider):
 
 Pass it in with `hooks=[SessionStats()]` when constructing the agent. `BidiAfterConnectionRestartEvent.exception` is `None` when the restart succeeded, so the check above counts successful recoveries. A rising barge-in count usually points to responses that run long for a voice interface. A rising restart count points to sessions that frequently reach provider timeout conditions. The full list of lifecycle events is in [Hooks](hooks.mdx).
 
-### Tracking token usage per modality
+### Tracking token usage
 
-Traces record aggregate session tokens. The per-modality breakdown is only available on
-the event stream:
+To track usage during a conversation, sum the counts in `BidiUsageEvent`. Each event
+reports additional token usage, with optional input and output details for modalities,
+cache, and reasoning:
 
 ```python
 from strands.bidi.agent import BidiAgent
-from strands.bidi.types import BidiResponseStopEvent, BidiUsageEvent
+from strands.bidi.types import BidiUsageEvent
 
 
 async def track_session(agent: BidiAgent) -> None:
+    total_tokens = 0
     async for event in agent.receive():
         if isinstance(event, BidiUsageEvent):
+            total_tokens += event.total_tokens
             print(
                 f"input={event.input_tokens} output={event.output_tokens} "
-                f"total={event.total_tokens}"
+                f"total={event.total_tokens} session_total={total_tokens}"
             )
-            for modality in event.modality_details:
-                print(
-                    f"  {modality['modality']}: "
-                    f"in={modality['input_tokens']} out={modality['output_tokens']}"
-                )
-        elif isinstance(event, BidiResponseStopEvent):
-            print(f"response {event.response_id} ended")
-            break
+            print(f"input details={event.input_token_details}")
+            print(f"output details={event.output_token_details}")
 ```
 
-Typical output for one turn:
-
-```
-input=120 output=64 total=184
-  text: in=20 out=0
-  audio: in=100 out=64
-response resp_01 ended
-```
-
-`modality_details` is an empty list when the provider does not report a breakdown, so
-the loop above is safe on every provider. See [Events](events.mdx) for the full event
-reference.
+The detail properties return empty dictionaries when the provider omits a breakdown.
+Categories can overlap or be incomplete, so use the main token counts for totals.
+See [Events](events.mdx) for the full event reference.
 
 ## Logging
 

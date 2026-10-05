@@ -42,8 +42,8 @@ from ..types.events import (
     BidiTranscriptStartEvent,
     BidiTranscriptStopEvent,
     BidiUsageEvent,
-    ModalityUsage,
     Role,
+    TokenDetails,
 )
 from ..types.media import AudioDelta
 from .configs import (
@@ -225,9 +225,6 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         _validate_model_config(model_config)
         self._config = ModelConfig(**model_config)
         self._config["params"] = dict(self._config.get("params") or {})
-
-        # OpenAI reports per-response token usage on response.done, not cumulative session totals.
-        self.usage_is_cumulative = False
 
         self.api_key = api_key if api_key is not None else os.getenv("OPENAI_API_KEY")
         if not self.api_key:
@@ -785,30 +782,26 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
         return events
 
     def _convert_usage_metadata(self, usage: dict[str, Any]) -> BidiUsageEvent:
-        """Convert response token counts and modality details into a usage event."""
-        input_details = usage.get("input_token_details", {})
-        output_details = usage.get("output_token_details", {})
-        modality_details: list[dict[str, Any]] = []
-        for modality in ("text", "audio"):
-            input_tokens = input_details.get(f"{modality}_tokens", 0)
-            output_tokens = output_details.get(f"{modality}_tokens", 0)
-            if input_tokens > 0 or output_tokens > 0:
-                modality_details.append(
-                    {"modality": modality, "input_tokens": input_tokens, "output_tokens": output_tokens}
-                )
-
-        image_tokens = input_details.get("image_tokens", 0)
-        if image_tokens > 0:
-            modality_details.append({"modality": "image", "input_tokens": image_tokens, "output_tokens": 0})
-
-        cached_tokens = input_details.get("cached_tokens", 0)
+        """Convert response token counts and their input and output breakdowns."""
         return BidiUsageEvent(
             input_tokens=usage.get("input_tokens", 0),
             output_tokens=usage.get("output_tokens", 0),
             total_tokens=usage.get("total_tokens", 0),
-            modality_details=cast(list[ModalityUsage], modality_details) if modality_details else None,
-            cache_read_input_tokens=cached_tokens if cached_tokens > 0 else None,
+            input_token_details=self._convert_token_details(usage.get("input_token_details") or {}) or None,
+            output_token_details=self._convert_token_details(usage.get("output_token_details") or {}) or None,
         )
+
+    @staticmethod
+    def _convert_token_details(details: dict[str, Any]) -> TokenDetails:
+        names = {
+            "text_tokens": "text",
+            "audio_tokens": "audio",
+            "image_tokens": "image",
+            "video_tokens": "video",
+            "cached_tokens": "cache_read",
+            "reasoning_tokens": "reasoning",
+        }
+        return cast(TokenDetails, {name: details[key] for key, name in names.items() if details.get(key) is not None})
 
     async def send(
         self,

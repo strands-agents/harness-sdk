@@ -1013,7 +1013,6 @@ async def test_restart_fences_superseded_reader_stream_close_error():
 async def test_stale_reader_event_does_not_corrupt_state_across_restart():
     """Usage is recorded before enqueueing and must not be counted again after a restart."""
     model = _StreamModel()
-    model.usage_is_cumulative = True  # like Nova: usage events report a running total
     agent = BidiAgent(model=model, system_prompt="hi")
     loop = agent._loop
 
@@ -1021,10 +1020,10 @@ async def test_stale_reader_event_does_not_corrupt_state_across_restart():
     loop._restart_timer.cancel()
 
     await model.emit(BidiUsageEvent(input_tokens=60, output_tokens=40, total_tokens=100))
-    await model.emit(BidiUsageEvent(input_tokens=90, output_tokens=60, total_tokens=150))
+    await model.emit(BidiUsageEvent(input_tokens=30, output_tokens=20, total_tokens=50))
     for _ in range(30):
         await asyncio.sleep(0)
-    # Both cumulative updates are recorded; put(usage2) is suspended on the full queue.
+    # Both increments are recorded; put(usage2) is suspended on the full queue.
     assert loop._accumulated_total_tokens == 150
 
     swap = asyncio.create_task(loop._restart_connection(None, loop._generation))
@@ -1037,6 +1036,13 @@ async def test_stale_reader_event_does_not_corrupt_state_across_restart():
 
     # Resuming the old reader must not record usage2 onto the new connection a second time.
     assert loop._accumulated_total_tokens == 150
+
+    await model.emit(BidiUsageEvent(input_tokens=5, output_tokens=5, total_tokens=10))
+    for _ in range(30):
+        await asyncio.sleep(0)
+    assert loop._accumulated_input_tokens == 95
+    assert loop._accumulated_output_tokens == 65
+    assert loop._accumulated_total_tokens == 160
 
     await loop.stop()
 
@@ -1731,14 +1737,11 @@ async def test_bidi_agent_loop_proactive_restart_completes_when_restart_suspends
 
 
 @pytest.mark.asyncio
-async def test_bidi_agent_loop_cumulative_usage_not_double_counted(loop, agent, agenerator):
-    """Cumulative providers replace running counts rather than summing successive totals."""
-    from strands.bidi.types import BidiUsageEvent
-
-    agent.model.usage_is_cumulative = True
+async def test_bidi_agent_loop_usage_deltas_accumulate(loop, agent, agenerator):
+    """Each usage event contributes additional tokens to the running totals."""
     events = [
         BidiUsageEvent(input_tokens=100, output_tokens=50, total_tokens=150),
-        BidiUsageEvent(input_tokens=250, output_tokens=120, total_tokens=370),
+        BidiUsageEvent(input_tokens=150, output_tokens=70, total_tokens=220),
     ]
     agent.model.receive = unittest.mock.Mock(return_value=agenerator(events))
 
@@ -1750,7 +1753,6 @@ async def test_bidi_agent_loop_cumulative_usage_not_double_counted(loop, agent, 
         if len(received) >= 2:
             break
 
-    # Latest cumulative total wins (370), not the sum of the two events (520).
     assert loop._accumulated_input_tokens == 250
     assert loop._accumulated_output_tokens == 120
     assert loop._accumulated_total_tokens == 370

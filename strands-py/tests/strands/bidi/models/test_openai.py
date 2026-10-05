@@ -43,6 +43,7 @@ from strands.bidi.types import (
     BidiTranscriptDeltaEvent,
     BidiTranscriptStartEvent,
     BidiTranscriptStopEvent,
+    BidiUsageEvent,
 )
 from strands.types.content import TextBlock
 from strands.types.media import ImageBlock
@@ -103,6 +104,38 @@ def system_prompt():
 @pytest.fixture
 def messages():
     return [{"role": "user", "content": [{"text": "Hello"}]}]
+
+
+@pytest.mark.parametrize("status", ["completed", "cancelled"])
+@pytest.mark.parametrize("include_details", [False, True])
+def test_response_usage_token_details(model, status, include_details):
+    """Response usage keeps totals separate from optional, overlapping breakdowns."""
+    usage = {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120}
+    if include_details:
+        usage.update(
+            input_token_details={
+                "text_tokens": 70,
+                "audio_tokens": 30,
+                "image_tokens": 0,
+                "cached_tokens": 50,
+            },
+            output_token_details={"text_tokens": 8, "audio_tokens": 12, "reasoning_tokens": 5},
+        )
+    model._convert_openai_event({"type": "response.created", "response": {"id": "r1"}})
+    tru_events = model._convert_openai_event(
+        {"type": "response.done", "response": {"id": "r1", "status": status, "usage": usage}}
+    )
+    exp_events = [
+        BidiResponseStopEvent("r1"),
+        BidiUsageEvent(
+            input_tokens=100,
+            output_tokens=20,
+            total_tokens=120,
+            input_token_details={"text": 70, "audio": 30, "image": 0, "cache_read": 50} if include_details else None,
+            output_token_details={"text": 8, "audio": 12, "reasoning": 5} if include_details else None,
+        ),
+    ]
+    assert tru_events == exp_events
 
 
 @pytest.mark.asyncio
@@ -1674,8 +1707,6 @@ def test_connection_config_defaults_and_override(model_id, api_key, mock_websock
         "restart_after_s": OPENAI_MAX_TIMEOUT_S - OPENAI_PROACTIVE_RESTART_MARGIN_S
     }
     assert default_model.get_connection_config()["restart_after_s"] < default_model.timeout_s
-    # OpenAI reports per-response usage, so it must not be treated as cumulative.
-    assert default_model.usage_is_cumulative is False
 
     # Lowering timeout_s keeps the headroom rather than recreating the tie.
     lowered_model = OpenAIRealtimeModel(
