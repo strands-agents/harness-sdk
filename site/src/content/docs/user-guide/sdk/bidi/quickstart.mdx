@@ -1,5 +1,5 @@
 ---
-title: Build a voice agent
+title: Build a Voice Agent
 description: "Talk to a Strands BidiAgent through your microphone and speakers: call a tool, talk over its reply, cancel echo, and end the conversation by voice."
 languages: [python]
 tags: [bidi-streaming, quickstart]
@@ -146,13 +146,11 @@ audio_io = AudioIO(audio_processor=True)
 ```
 
 `AudioIO` now subtracts the audio it plays from the microphone signal before the
-model hears it. This works because the input and output come from the same
-`AudioIO` instance. Two separate instances can't see each other's audio. For other
-audio settings, see [I/O streams](io.mdx#audio-processing).
+model hears it. For other audio settings, see [I/O streams](io.mdx#audio-processing).
 
 ## Use a different provider
 
-Only the model changes. Install the provider's extra and set its API key. Then, in
+Install the provider's extra and set its API key. Then, in
 `voice_agent.py`, replace the `BedrockNovaSonicModel` import with the provider's
 import and pass the new model to `BidiAgent` as `model=`:
 
@@ -186,25 +184,6 @@ model = OpenAIRealtimeModel(
 ```
 </Tab>
 </Tabs>
-
-## If the agent can't hear you or you can't hear it
-
-First check that your terminal app has microphone permission. On macOS, that's System
-Settings > Privacy & Security > Microphone.
-
-If permission is fine, `AudioIO` may be using the wrong device. Print your devices:
-
-```python
-import pyaudio
-
-audio = pyaudio.PyAudio()
-for index in range(audio.get_device_count()):
-    print(index, audio.get_device_info_by_index(index)["name"])
-audio.terminate()
-```
-
-Then pass the indexes you want, for example
-`AudioIO(input_device_index=1, output_device_index=2)`.
 
 ## Next steps
 
