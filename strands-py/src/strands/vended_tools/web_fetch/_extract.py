@@ -45,6 +45,8 @@ _DROPPED_ELEMENTS = frozenset(
     ]
 )
 
+_SCRIPT_SCHEMES = frozenset(["javascript", "vbscript"])
+
 
 def _url_scheme(url: str) -> str:
     """Return the URL scheme, stripping leading invisible characters first."""
@@ -71,12 +73,13 @@ def _sanitize_tree(soup: BeautifulSoup) -> None:
         # data: URI blobs can be enormous, so replace them with their alt text.
         if scheme == "data":
             image.replace_with(_tag_attribute(image, "alt"))
-        # javascript: sources are not useful to a model.
-        elif scheme == "javascript":
+        # Script sources are not useful to a model.
+        elif scheme in _SCRIPT_SCHEMES:
             image.decompose()
-    # Unwrap javascript: links to their text so the scheme never reaches output.
+    # Unwrap script and data: links to their text so the scheme never reaches output.
     for anchor in soup.find_all("a"):
-        if _url_scheme(_tag_attribute(anchor, "href")) == "javascript":
+        scheme = _url_scheme(_tag_attribute(anchor, "href"))
+        if scheme in _SCRIPT_SCHEMES or scheme == "data":
             anchor.unwrap()
 
 
