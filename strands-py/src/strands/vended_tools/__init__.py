@@ -17,8 +17,8 @@ requires the optional ``web-fetch`` extra (``pip install 'strands-agents[web-fet
 and is imported lazily, so accessing it without that extra raises :class:`ImportError`.
 
 The :func:`make_a2a_client` factory creates a tool that discovers and sends messages to remote A2A-protocol
-agents. Supply the required ``allowed_endpoints`` dict plus optional
-authentication via a :class:`~a2a.client.ClientConfig`, or custom size limits.
+agents. Supply the required ``allowed_endpoints`` list — each entry is either a bare URL string or a
+``(url, ClientConfig)`` tuple.
 It requires the optional ``a2a`` extra (``pip install 'strands-agents[a2a]'``)
 and is imported lazily, so accessing it without that extra raises :class:`ImportError`.
 

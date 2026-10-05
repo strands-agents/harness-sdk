@@ -866,7 +866,14 @@ class BedrockModel(Model):
                 # Bedrock guardContent supports a narrower set of image formats than image content.
                 if idx == last_user_text_idx and ("text" in formatted_content or "image" in formatted_content):
                     if "text" in formatted_content:
-                        formatted_content = {"guardContent": {"text": {"text": formatted_content["text"]}}}
+                        # Bedrock rejects a blank guardContent block, and there is nothing to screen.
+                        if formatted_content["text"].strip():
+                            formatted_content = {"guardContent": {"text": {"text": formatted_content["text"]}}}
+                        else:
+                            logger.warning(
+                                "msg_idx=<%s> | blank text | skipping guardContent wrap",
+                                idx,
+                            )
                     elif "image" in formatted_content:
                         image_format = formatted_content["image"].get("format", "")
                         supported_formats = self.client.meta.service_model.shape_for(
@@ -1120,9 +1127,10 @@ class BedrockModel(Model):
         # https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolUseBlock.html
         if "toolUse" in content:
             tool_use = content["toolUse"]
+            tool_input = tool_use.get("input")
             return {
                 "toolUse": {
-                    "input": tool_use["input"],
+                    "input": tool_input if isinstance(tool_input, dict) else {},
                     "name": tool_use["name"],
                     "toolUseId": tool_use["toolUseId"],
                 }

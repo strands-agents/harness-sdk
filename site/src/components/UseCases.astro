@@ -868,8 +868,13 @@ const useCases = [
     section.querySelectorAll<HTMLButtonElement>('.terminal__copy').forEach((btn) => {
       attachCopyButton(btn, {
         label: btn.querySelector<HTMLElement>('.terminal__copy-label'),
-        getText: () =>
-          section!.querySelector<HTMLElement>('.terminal__code:not([hidden]) code')?.innerText ?? '',
+        getText: () => {
+          const code = section!.querySelector<HTMLElement>('.terminal__code:not([hidden]) code');
+          if (!code) return '';
+          return Array.from(code.querySelectorAll<HTMLElement>('.terminal__line'))
+            .map((line) => line.textContent ?? '')
+            .join('\n');
+        },
         track: { surface: 'code:use-cases', detail: () => currentLang },
       });
     });

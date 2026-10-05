@@ -146,43 +146,26 @@ export function settingsCategoryFilters(): ChatPanelFilter[] {
   return SETTINGS_CATEGORIES.map(({ id, label }) => ({ id: `settings:${id}`, label }))
 }
 
-export function settingsRows(
-  settings: ChatSettings,
-  setupAvailable = false,
-  category?: SettingsCategory
-): ChatPanelRow[] {
-  return SETTING_DEFINITIONS.filter(({ section }) => category === undefined || section === category).flatMap(
-    ({ key, label, section, control, options }): ChatPanelRow[] => [
-      {
-        label,
-        description: settingDescription(settings, key),
-        value: key,
-        ...(category ? {} : { section }),
-        ...(category ? { filter: `settings:${category}` } : {}),
-        control:
-          control === 'toggle'
-            ? { kind: 'toggle', checked: settings[key] as boolean }
-            : {
-                kind: 'segmented',
-                options: options.map((option) => ({
-                  label: option.label,
-                  value: String(option.value),
-                  ...(settings[key] === option.value ? { active: true } : {}),
-                })),
-              },
-      },
-      ...(setupAvailable && key === 'setupOnLaunch'
-        ? [
-            {
-              label: 'Setup',
-              description: 'Providers and agent ›',
-              value: 'setup',
-              ...(category ? {} : { section: 'General' }),
-              ...(category ? { filter: `settings:${category}` } : {}),
+export function settingsRows(settings: ChatSettings, category?: SettingsCategory): ChatPanelRow[] {
+  return SETTING_DEFINITIONS.filter(({ section }) => category === undefined || section === category).map(
+    ({ key, label, section, control, options }): ChatPanelRow => ({
+      label,
+      description: settingDescription(settings, key),
+      value: key,
+      ...(category ? {} : { section }),
+      ...(category ? { filter: `settings:${category}` } : {}),
+      control:
+        control === 'toggle'
+          ? { kind: 'toggle', checked: settings[key] as boolean }
+          : {
+              kind: 'segmented',
+              options: options.map((option) => ({
+                label: option.label,
+                value: String(option.value),
+                ...(settings[key] === option.value ? { active: true } : {}),
+              })),
             },
-          ]
-        : []),
-    ]
+    })
   )
 }
 

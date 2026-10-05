@@ -854,3 +854,17 @@ def test_cache_config_unsupported_field_warns_and_is_not_routed(host, model_id, 
         request = model.format_request(messages)
 
     assert "cache_config" not in request
+
+
+@pytest.mark.parametrize("keep_alive", [0, 0.0, -1, "0", "5m"])
+def test_format_request_preserves_explicit_keep_alive(keep_alive):
+    model = OllamaModel("http://localhost:11434", model_id="test", keep_alive=keep_alive)
+    request = model.format_request([{"role": "user", "content": [{"text": "hello"}]}])
+    assert request["keep_alive"] == keep_alive
+
+
+@pytest.mark.parametrize("config", [{}, {"keep_alive": None}])
+def test_format_request_omits_unset_keep_alive(config):
+    model = OllamaModel("http://localhost:11434", model_id="test", **config)
+    request = model.format_request([{"role": "user", "content": [{"text": "hello"}]}])
+    assert "keep_alive" not in request

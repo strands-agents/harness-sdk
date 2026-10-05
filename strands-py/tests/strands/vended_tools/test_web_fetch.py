@@ -267,9 +267,17 @@ class TestAnalyst:
             await tool(url="https://example.com/", prompt="What is this about?")
 
     @pytest.mark.asyncio
-    async def test_prompt_uses_host_agent_model_when_no_factory_model(self, monkeypatch):
-        # When no factory model is set, the host agent's model is used.
-        host_model = SimpleNamespace()
+    @pytest.mark.parametrize(
+        "host_agent_attrs",
+        [
+            {"aux_model": SimpleNamespace(), "model": SimpleNamespace()},
+            {"model": SimpleNamespace()},
+        ],
+        ids=["aux_model", "model_only"],
+    )
+    async def test_prompt_uses_host_agent_aux_model_when_no_factory_model(self, monkeypatch, host_agent_attrs):
+        # When no factory model is set, the host agent's aux_model is used, or its model when
+        # the host has no aux_model attribute.
         received_model: list = []
 
         class _FakeAgent:
@@ -281,13 +289,14 @@ class TestAnalyst:
 
         monkeypatch.setattr(agent_module, "Agent", _FakeAgent)
         tool_use = ToolUse(toolUseId="wf_2", name="web_fetch", input={})
-        host_agent = SimpleNamespace(_cancel_signal=None, model=host_model)
+        host_agent = SimpleNamespace(_cancel_signal=None, **host_agent_attrs)
         ctx = ToolContext(tool_use=tool_use, agent=host_agent, invocation_state={})
 
         tool = make_web_fetch(client=self._page_client(), mode="agentic")
         tru_result = await tool(url="https://example.com/", prompt="Summarize", tool_context=ctx)
         assert tru_result == "host answer"
-        assert received_model[0] is host_model
+        exp_model = host_agent_attrs.get("aux_model", host_agent_attrs["model"])
+        assert received_model[0] is exp_model
 
     @pytest.mark.asyncio
     async def test_empty_prompt_with_model_returns_markdown(self, monkeypatch):

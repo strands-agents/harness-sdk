@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "strands-docs": {
+      "command": "uvx",
+      "args": ["--from", "strands-agents-mcp-server==0.3.0", "strands-agents-mcp-server"]
+    }
+  }
+}

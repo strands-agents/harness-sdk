@@ -8,7 +8,8 @@ import {
   type Dispatch,
   type SetStateAction,
 } from 'react'
-import { Box, useInput, useStdout, useWindowSize, type DOMElement } from 'ink'
+import { Box, useInput, useStdout, type DOMElement } from 'ink'
+import { useTerminalSize } from '../../terminal/size.js'
 import type { HarnessAgentConfig } from '@strands-agents/harness'
 import stringWidth from 'string-width'
 
@@ -27,7 +28,7 @@ import { configurationFromStore, type SetupChange } from '../../agent-configurat
 import type { ChatSettings } from '../../chat/types.js'
 import type { SettingsCategory } from '../../settings.js'
 import { DEFAULT_SETTINGS_CATEGORY, SETTINGS_CATEGORIES } from '../../settings.js'
-import { parseMouseInput } from '../../terminal/mouse-input.js'
+import { parseMouseInput, type MouseInput } from '../../terminal/mouse-input.js'
 import { emptyEditor, graphemes, reduceInputSequence } from '../../terminal/composer.js'
 import { errorMessage, sanitizeTerminalText } from '../../terminal/sanitize.js'
 import { canChooseDirectory, chooseAgentProject, chooseDirectory } from '../../terminal/directory-picker.js'
@@ -67,9 +68,9 @@ import {
   setupStepProgress,
   wizardSettingsRows,
 } from './steps.js'
-import { useBrandAnimation } from '../startup-view.js'
+import { useBrandAnimation, useBrandAnimationFrame } from '../startup-view.js'
 import { SetupBrand, setupBrandFrame } from './brand.js'
-import { OpeningMenu } from './opening-menu.js'
+import { OpeningMenu, openingGridLayout } from './opening-menu.js'
 import { SetupSettingsPanel, type SetupSettingsChoiceTarget } from './settings-panel.js'
 import { EffortSlider } from '../model-panel.js'
 import { ProviderList } from '../provider-list.js'
@@ -126,7 +127,7 @@ function SetupWizardContent({
   checkForUpdate?(): Promise<string | undefined>
 }): ReactElement {
   const { stdout } = useStdout()
-  const { columns, rows: terminalRows } = useWindowSize()
+  const { columns, rows: terminalRows } = useTerminalSize()
   const [flow, setFlow] = useState<SetupFlow>()
   const [step, setStep] = useState(appearanceOnly ? APPEARANCE_STEP : 0)
   const [settingsReturn, setSettingsReturn] = useState<{
@@ -225,6 +226,7 @@ function SetupWizardContent({
   const settingsElement = useRef<DOMElement | undefined>(undefined)
   const frogElement = useRef<DOMElement | undefined>(undefined)
   const frogPress = useRef<{ column: number; row: number } | undefined>(undefined)
+  const hoverPointer = useRef<MouseInput | undefined>(undefined)
   const pressedElement = useRef<SetupControl | undefined>(undefined)
   const width = Math.max(1, columns)
   const height = Math.max(1, terminalRows)
@@ -325,9 +327,8 @@ function SetupWizardContent({
   const lockupHeight = brandFrame.height
   const showBrand = lockupHeight > 1
   const brandHeight = showBrand ? lockupHeight + 2 : 0
-  const openingColumns = lockupWidth >= 64 ? 2 : 1
+  const { columns: openingColumns, rowGap: openingRowGap } = openingGridLayout(lockupWidth)
   const openingRows = Math.ceil(OPENING_CHOICES.length / openingColumns)
-  const openingRowGap = openingColumns === 2 ? 2 : 1
   const openingContentHeight = height - brandHeight - navigationHeight - (error ? 2 : 0)
   const openingTopGap =
     openingContentHeight >= openingRows * (openingColumns === 2 ? 9 : 5) + (openingRows - 1) * openingRowGap + 3
@@ -1423,9 +1424,23 @@ function SetupWizardContent({
   }, [stdout])
 
   useEffect(() => {
+    hoverPointer.current = undefined
     setHoveredControl(undefined)
     pressedElement.current = undefined
-  }, [step, flow, quickstartProvider, selecting?.field, modelViewportStart, width, height])
+  }, [step, flow, quickstartProvider, selecting?.field, modelViewportStart])
+
+  useEffect(() => {
+    pressedElement.current = undefined
+    frogPress.current = undefined
+    const mouse = hoverPointer.current
+    if (step !== 0 || !mouse) {
+      setHoveredControl(undefined)
+      return
+    }
+    const row = elementAtMouse(rowElements.current, mouse)
+    const settings = settingsElement.current && elementContainsMouse(settingsElement.current, mouse)
+    setHoveredControl(row ?? (settings ? 'settings' : undefined))
+  }, [width, height])
 
   useEffect(() => {
     if (isProviderSetup && !modelPanelVisible && (modelSearchFocused || selection >= quickstartModelOffset)) {
@@ -1474,14 +1489,17 @@ function SetupWizardContent({
     })
   }, [awsDiscovery.credentialStatus, config, effectiveEnvironment, isProviderSetup, ollamaDiscovery, readyProviders])
 
-  const frogElapsedMs = useBrandAnimation(frogAnimationId)
+  const frogClockMs = useBrandAnimation(frogAnimationId)
+  const frogElapsedMs = useBrandAnimationFrame(frogClockMs, brandFrame.width, brandFrame.height)
 
   useInput((input, key) => {
     if (appearanceOpen || panelTransition.transitioning) return
     const mouse = parseMouseInput(input)
     if (mouse) {
+      hoverPointer.current = mouse
       const scroll = mouseScrollDirection(mouse)
       if (scroll !== undefined) {
+        hoverPointer.current = undefined
         setHoveredControl(undefined)
         if (isProviderSetup && modelListElement.current && elementContainsMouse(modelListElement.current, mouse)) {
           setModelViewportStart((start) =>
@@ -1634,6 +1652,7 @@ function SetupWizardContent({
       return
     }
 
+    hoverPointer.current = undefined
     if (key.ctrl && input === 'c') {
       onCancel?.(130)
       return
@@ -1962,26 +1981,16 @@ function SetupWizardContent({
       ]
 
   const settingsHovered = hoveredControl === 'settings'
-  const settingsBackHovered = isSettings && settingsHovered
   const settingsButton = !appearanceOnly ? (
     <Box
       ref={(element) => {
         settingsElement.current = element ?? undefined
       }}
-      width={11}
       height={1}
-      paddingX={1}
       flexShrink={0}
-      alignItems="center"
-      justifyContent="center"
-      backgroundColor={
-        settingsBackHovered
-          ? backHoverBackground
-          : (controlBackground('settings', focusedAction === 'settings') ?? COMMAND_DECK_BACKGROUND)
-      }
     >
-      <Text color={settingsBackHovered ? palette.muted : focusedAction === 'settings' ? accent : palette.muted}>
-        {isSettings ? 'Back' : 'Settings'}
+      <Text color={settingsHovered || focusedAction === 'settings' ? accent : palette.foreground}>
+        {isSettings ? 'Back' : '/settings'}
       </Text>
     </Box>
   ) : null
@@ -1993,7 +2002,7 @@ function SetupWizardContent({
       paddingX={1}
       flexDirection="column"
       overflow="hidden"
-      backgroundColor={palette.background}
+      backgroundColor={palette.canvas}
     >
       {showBrand ? (
         <SetupBrand
@@ -2687,24 +2696,23 @@ function SetupWizardContent({
         </Fade>
       )}
       {width < 32 ? (
-        <Box height={navigationHeight} flexShrink={0} flexDirection="column">
+        <Box height={navigationHeight} flexShrink={0} flexDirection="column" paddingX={1}>
           <Box justifyContent="center">
             <Text dimColor wrap="truncate-end">
               {navigationHints[0]}
             </Text>
           </Box>
           <Box height={1} alignItems="center">
-            {settingsButton}
             <Box flexGrow={1} justifyContent="center" overflow="hidden">
               <Text dimColor wrap="truncate-end">
                 {navigationHints[1]}
               </Text>
             </Box>
+            {settingsButton}
           </Box>
         </Box>
       ) : (
-        <Box height={navigationHeight} flexShrink={0} alignItems="center">
-          {settingsButton}
+        <Box height={navigationHeight} flexShrink={0} alignItems="flex-end" paddingX={1}>
           <Box flexGrow={1} flexDirection="column" alignItems="center" overflow="hidden">
             {navigationHints.map((hint) => (
               <Text key={hint} dimColor wrap="truncate-end">
@@ -2712,6 +2720,7 @@ function SetupWizardContent({
               </Text>
             ))}
           </Box>
+          {settingsButton}
         </Box>
       )}
       {appearanceOpen ? (

@@ -101,7 +101,7 @@ const BROKEN_LINKS_TEST_DATA: [string, string][] = [
   ['../../../api-reference/python/agent/agent_result.md#strands.agent.agent_result', '@api/python/strands.agent.agent_result'],
 
   // user-guide/concepts/bidirectional-streaming/*.mdx
-  ['../../../api-reference/python/experimental/bidi/agent.md', '@api/python/strands.experimental.bidi.agent'],
+  ['../../../api-reference/python/experimental/bidi/agent.md', '@api/python/strands.bidi.agent'],
 
   // user-guide/concepts/multi-agent/graph.mdx
   ['../../../api-reference/python/multiagent/graph.md#strands.multiagent.graph.GraphNode', '@api/python/strands.multiagent.graph#GraphNode'],
@@ -167,16 +167,16 @@ const BROKEN_LINKS_TEST_DATA: [string, string][] = [
   ['../../../api-reference/python/types/tools.md#strands.types.tools.ToolUse', '@api/python/strands.types.tools#ToolUse'],
 
   // user-guide/concepts/bidirectional-streaming/models/google.mdx
-  ['../../../../api-reference/python/experimental/bidi/models.md#strands.experimental.bidi.models.AudioConfig', '@api/python/strands.experimental.bidi.models#AudioConfig'],
-  ['../../../../api-reference/python/experimental/bidi/models.md#strands.experimental.bidi.models.GoogleGeminiLiveModel', '@api/python/strands.experimental.bidi.models#GoogleGeminiLiveModel'],
+  ['../../../../api-reference/python/experimental/bidi/models.md#strands.experimental.bidi.models.AudioConfig', '@api/python/strands.bidi.models#AudioConfig'],
+  ['../../../../api-reference/python/experimental/bidi/models.md#strands.experimental.bidi.models.GoogleGeminiLiveModel', '@api/python/strands.bidi.models#GoogleGeminiLiveModel'],
 
   // user-guide/concepts/bidirectional-streaming/models/bedrock.mdx
-  ['../../../../api-reference/python/experimental/bidi/models.md#strands.experimental.bidi.models.AudioConfig', '@api/python/strands.experimental.bidi.models#AudioConfig'],
-  ['../../../../api-reference/python/experimental/bidi/models.md#strands.experimental.bidi.models.BedrockNovaSonicModel', '@api/python/strands.experimental.bidi.models#BedrockNovaSonicModel'],
+  ['../../../../api-reference/python/experimental/bidi/models.md#strands.experimental.bidi.models.AudioConfig', '@api/python/strands.bidi.models#AudioConfig'],
+  ['../../../../api-reference/python/experimental/bidi/models.md#strands.experimental.bidi.models.BedrockNovaSonicModel', '@api/python/strands.bidi.models#BedrockNovaSonicModel'],
 
   // user-guide/concepts/bidirectional-streaming/models/openai.mdx
-  ['../../../../api-reference/python/experimental/bidi/models.md#strands.experimental.bidi.models.AudioConfig', '@api/python/strands.experimental.bidi.models#AudioConfig'],
-  ['../../../../api-reference/python/experimental/bidi/models.md#strands.experimental.bidi.models.OpenAIRealtimeModel', '@api/python/strands.experimental.bidi.models#OpenAIRealtimeModel'],
+  ['../../../../api-reference/python/experimental/bidi/models.md#strands.experimental.bidi.models.AudioConfig', '@api/python/strands.bidi.models#AudioConfig'],
+  ['../../../../api-reference/python/experimental/bidi/models.md#strands.experimental.bidi.models.OpenAIRealtimeModel', '@api/python/strands.bidi.models#OpenAIRealtimeModel'],
 ]
 
 describe('API Link Converter', () => {
@@ -238,7 +238,7 @@ describe('API Link Converter', () => {
 
     it('should convert bidi package paths', () => {
       expect(convertPythonApiLink('../api-reference/python/experimental/bidi/agent.md')).toBe(
-        '@api/python/strands.experimental.bidi.agent'
+        '@api/python/strands.bidi.agent'
       )
     })
 
@@ -370,13 +370,13 @@ describe('API Link Converter', () => {
         convertApiLink(
           '../../../../api-reference/python/experimental/bidi/models.md#strands.experimental.bidi.models.AudioConfig'
         )
-      ).toBe('@api/python/strands.experimental.bidi.models#AudioConfig')
+      ).toBe('@api/python/strands.bidi.models#AudioConfig')
 
       expect(
         convertApiLink(
           '../../../../api-reference/python/experimental/bidi/models.md#strands.experimental.bidi.models.GoogleGeminiLiveModel'
         )
-      ).toBe('@api/python/strands.experimental.bidi.models#GoogleGeminiLiveModel')
+      ).toBe('@api/python/strands.bidi.models#GoogleGeminiLiveModel')
     })
 
     // user-guide/concepts/tools/custom-tools.mdx
@@ -397,7 +397,7 @@ describe('API Link Converter', () => {
       expect(convertApiLink('../../../api-reference/python/types/content.md')).toBe('@api/python/strands.types.content')
 
       expect(convertApiLink('../../../api-reference/python/experimental/bidi/agent.md')).toBe(
-        '@api/python/strands.experimental.bidi.agent'
+        '@api/python/strands.bidi.agent'
       )
     })
   })

@@ -1155,6 +1155,43 @@ def test_mcp_client_state_reset_after_timeout():
     assert not client._init_future.done()  # New future created
 
 
+def test_stop_raises_when_connection_errors_after_initialization(mock_transport, mock_session):
+    """An error raised on the background thread after initialization surfaces from stop()."""
+    connection_error = RuntimeError("connection dropped")
+    mock_transport["transport_cm"].__aexit__.side_effect = connection_error
+
+    client = MCPClient(mock_transport["transport_callable"])
+    client.start()
+
+    with pytest.raises(RuntimeError, match="Connection to the MCP server was closed") as exc_info:
+        client.stop(None, None, None)
+
+    assert exc_info.value.__cause__ is connection_error
+
+
+def test_background_thread_drains_in_flight_tasks_on_connection_error(mock_transport, mock_session):
+    """A task still running on the background loop completes before the loop shuts down after a
+    connection error, so a caller blocked on that task's result is not left hanging. See issue #4403.
+    """
+    mock_transport["transport_cm"].__aexit__.side_effect = RuntimeError("connection dropped")
+
+    client = MCPClient(mock_transport["transport_callable"])
+    client.start()
+
+    in_flight_task_completed = threading.Event()
+
+    async def in_flight_work():
+        await asyncio.sleep(0.2)
+        in_flight_task_completed.set()
+
+    asyncio.run_coroutine_threadsafe(in_flight_work(), client._background_thread_event_loop)
+
+    with pytest.raises(RuntimeError, match="Connection to the MCP server was closed"):
+        client.stop(None, None, None)
+
+    assert in_flight_task_completed.is_set()
+
+
 def test_call_tool_sync_image_content(mock_transport, mock_session):
     """A top-level ImageContent block should map to image content with decoded bytes."""
     with open("tests_integ/resources/yellow.png", "rb") as image_file:

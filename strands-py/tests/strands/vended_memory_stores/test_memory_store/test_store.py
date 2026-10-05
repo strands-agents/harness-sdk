@@ -404,6 +404,7 @@ class _FakeAgent:
 
     def __init__(self, model: Any = None) -> None:
         self.model = model
+        self.aux_model = model
         self.hooks: list[tuple[Any, Any, float]] = []
         self._middleware_registry = MagicMock()
 

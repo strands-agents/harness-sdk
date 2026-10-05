@@ -55,7 +55,7 @@ describe('TUI mouse input', () => {
     expect(frame().join('\n')).not.toContain('Choose a theme')
   })
 
-  it('activates model and context metadata from direct clicks', async () => {
+  it('activates model metadata and the Settings button from direct clicks', async () => {
     const input = ttyInput()
     const output = ttyOutput(80, 16)
     const frame = captureFrame(output)
@@ -81,13 +81,13 @@ describe('TUI mouse input', () => {
     instances.push(instance)
     await instance.waitUntilRenderFlush()
 
-    const contextTarget = findText(frame(), 'context █')
+    const contextTarget = findText(frame(), '/settings')
     const modelTarget = findText(frame(), 'bedrock/test')
 
     input.write(mouseInputSequence(0, contextTarget.column, contextTarget.row, 'M'))
     input.write(mouseInputSequence(3, contextTarget.column, contextTarget.row, 'm'))
 
-    await vi.waitFor(() => expect(controller.getSnapshot().panel?.kind).toBe('context'))
+    await vi.waitFor(() => expect(controller.getSnapshot().panel?.kind).toBe('settings'))
 
     controller.dismissPanel()
     await instance.waitUntilRenderFlush()
@@ -192,7 +192,7 @@ describe('TUI mouse input', () => {
     await vi.waitFor(() => expect(target.switchModel).toHaveBeenCalledWith(scrolledLastModel.id))
   })
 
-  it('drags the effort slider without rebuilding the model panel', async () => {
+  it.each(['/model', '/effort'])('drags the effort slider in %s without rebuilding the panel', async (command) => {
     const input = ttyInput()
     const output = ttyOutput(80, 20)
     const frame = captureFrame(output)
@@ -219,12 +219,12 @@ describe('TUI mouse input', () => {
       interactive: true,
     })
     instances.push(instance)
-    await controller.submit('/model')
+    await controller.submit(command)
     await instance.waitUntilRenderFlush()
 
     const panelId = controller.getSnapshot().panel?.id
-    const trackRow = frame().findIndex((line) => /─+███─+/.test(line))
-    const track = /─+███─+/.exec(frame()[trackRow]!)
+    const trackRow = frame().findIndex((line) => /[─┬]+███[─┬]+/u.test(line))
+    const track = /[─┬]+███[─┬]+/u.exec(frame()[trackRow]!)
     expect(trackRow).toBeGreaterThanOrEqual(0)
     expect(track).toBeDefined()
     const start = track!.index
@@ -236,14 +236,55 @@ describe('TUI mouse input', () => {
     input.write(mouseInputSequence(3, end, trackRow, 'm'))
 
     await vi.waitFor(() => expect(target.setEffort).toHaveBeenLastCalledWith('max'))
-    expect(target.listModels).toHaveBeenCalledOnce()
+    expect(target.listModels).toHaveBeenCalledTimes(command === '/model' ? 1 : 0)
     expect(controller.getSnapshot().panel).toMatchObject({
       id: panelId,
       slider: { options: expect.arrayContaining([expect.objectContaining({ id: 'max', active: true })]) },
     })
   })
 
-  it('closes the /effort panel on Enter without switching models', async () => {
+  it.each([22, 60, 80])('selects the visible effort label at %i columns', async (width) => {
+    const input = ttyInput()
+    const output = ttyOutput(width, 20)
+    const frame = captureFrame(output)
+    const target = backend()
+    target.listEfforts = () => [
+      { id: 'low', label: 'Low' },
+      { id: 'medium', label: 'Medium' },
+      { id: 'high', label: 'High', active: true },
+      { id: 'xhigh', label: 'Extra high' },
+      { id: 'max', label: 'Max' },
+    ]
+    target.setEffort = vi.fn(async (effort) => effort)
+    const controller = new ChatController(target, {
+      runtime: { version: '1.2.3', model: 'model-00', cwd: '/work' },
+      settings: { animations: false },
+    })
+    const instance = render(createElement(ChatApp, { controller }), {
+      stdin: input,
+      stdout: output,
+      stderr: ttyOutput(width, 20),
+      exitOnCtrlC: false,
+      patchConsole: false,
+      interactive: true,
+    })
+    instances.push(instance)
+    await controller.submit('/effort')
+    await instance.waitUntilRenderFlush()
+
+    const trackRow = frame().findIndex((line) => /[─┬]+███[─┬]+/u.test(line))
+    expect(trackRow).toBeGreaterThanOrEqual(0)
+    const labelRow = trackRow + 1
+    const label = /Low|L…/u.exec(frame()[labelRow]!)
+    expect(label).not.toBeNull()
+    const column = label!.index + label![0].length - 1
+    input.write(mouseInputSequence(0, column, labelRow, 'M'))
+    input.write(mouseInputSequence(3, column, labelRow, 'm'))
+
+    await vi.waitFor(() => expect(target.setEffort).toHaveBeenLastCalledWith('low'))
+  })
+
+  it.each(['\r', '\u001b'])('closes the /effort panel with %j without switching models', async (closeKey) => {
     const input = ttyInput()
     const output = ttyOutput(80, 20)
     const target = backend()
@@ -276,7 +317,7 @@ describe('TUI mouse input', () => {
 
     input.write('\u001b[C')
     await vi.waitFor(() => expect(target.setEffort).toHaveBeenLastCalledWith('high'))
-    input.write('\r')
+    input.write(closeKey)
 
     await vi.waitFor(() => expect(controller.getSnapshot().panel).toBeUndefined())
     expect(target.switchModel).not.toHaveBeenCalled()

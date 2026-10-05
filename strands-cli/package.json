@@ -7,9 +7,6 @@
     "strands": "bin/strands.js"
   },
   "exports": {},
-  "imports": {
-    "#ink-text-cache": "./dist/src/tui/terminal/ink.js"
-  },
   "files": [
     "bin",
     "dist",
@@ -92,6 +89,7 @@
     "@typescript-eslint/eslint-plugin": "^8.62.1",
     "@typescript-eslint/parser": "^8.0.0",
     "@vitest/coverage-v8": "^4.1.10",
+    "@xterm/headless": "6.0.0",
     "eslint": "^10.6.0",
     "prettier": "^3.9.4",
     "vitest": "^4.1.10"

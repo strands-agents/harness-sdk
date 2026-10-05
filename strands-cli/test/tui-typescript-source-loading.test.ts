@@ -6,6 +6,8 @@ import { URL } from 'node:url'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import { projectOptions } from '../src/tui/project/typescript.js'
+
 const run = promisify(execFile)
 const loaderUrl = new URL('../src/tui/project/typescript.ts', import.meta.url).href
 const defaults = {
@@ -76,6 +78,13 @@ console.log(JSON.stringify({options: loaded.options, agents}))
 }
 
 describe('TypeScript source loading', () => {
+  // Authored project options preserve HTTPS skill sources (#4574).
+  it('preserves HTTPS skills while resolving authored project paths', () => {
+    const url = 'https://example.com/SKILL.md'
+    expect(projectOptions({ skills: url }, root).skills).toBe(url)
+    expect(projectOptions({ skills: [url, './local-skills'] }, root).skills).toEqual([url, join(root, 'local-skills')])
+  })
+
   it('captures an authored constructor helper without changing source', async () => {
     const source = `import { createHarness } from '@strands-agents/harness'
 const build = async (overrides = {}) => createHarness({ ...${JSON.stringify(defaults)}, name: 'Authored', ...overrides })

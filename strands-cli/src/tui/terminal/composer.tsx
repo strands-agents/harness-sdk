@@ -5,7 +5,7 @@ import { commandAssistance, type LocalCommandSpec } from '../chat/commands.js'
 import { sanitizeTerminalText } from './sanitize.js'
 
 const SEGMENTER = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
-export const MIN_PROMPT_HEIGHT = 3
+export const MIN_PROMPT_HEIGHT = 7
 export const MIN_PROMPT_ROWS = 2
 export const DEFAULT_MAX_PROMPT_ROWS = 8
 export const PROMPT_PADDING_WIDTH = 2
@@ -20,19 +20,21 @@ export function promptEditorHeight(
   width = 80,
   maxRows = DEFAULT_MAX_PROMPT_ROWS,
   hasStatus = false,
-  party = false
+  party = false,
+  maxHeight = Infinity
 ): number {
+  const minimumHeight = MIN_PROMPT_HEIGHT + (party ? 2 : 0)
   if (hasStatus) {
-    return MIN_PROMPT_HEIGHT
+    return Math.min(minimumHeight, maxHeight)
   }
-  const promptPrefix = input.startsWith('!') ? '◆ shell ' : '◆ '
+  const promptPrefix = input.startsWith('!') ? '◆ shell ' : ''
   const rows = promptViewport(
     input,
     cursor,
     width - stringWidth(promptPrefix) - PROMPT_PADDING_WIDTH,
     Math.max(MIN_PROMPT_ROWS, maxRows)
   )
-  return Math.max(MIN_PROMPT_HEIGHT, rows.length + (party && input ? 2 : 1))
+  return Math.min(maxHeight, Math.max(minimumHeight, rows.length + (party && input ? 2 : 1)))
 }
 
 export interface EditorState {

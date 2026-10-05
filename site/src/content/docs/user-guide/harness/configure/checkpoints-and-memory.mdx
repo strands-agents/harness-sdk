@@ -124,8 +124,9 @@ new id can both succeed with the later write winning — effectively **last-writ
 Run one writer per session id; if you fan out, add your own lock or route each id to a
 single worker.
 
-**Isolation is by namespace and scoped stores.** Storage auto-namespaces keys per
-subsystem (`session/`, `offloader/`) so data never collides, and long-term memory
+**Isolation is by namespace and scoped stores.** Each subsystem keeps its data under its
+own namespace (the context manager's stash under `context/`, for example) so data never
+collides, and long-term memory
 supports a scoped store per tenant rather than one shared store. The session directory
 is a trusted data store: restrict filesystem permissions to the agent process, and note
 the Strands Harness SDK does not block symlinks inside it.

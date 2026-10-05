@@ -5,6 +5,7 @@ import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../type
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import type { Agent } from '../../../agent/agent.js'
 import type { ContextState } from '../../types.js'
+import { withDefaultLocale } from '../../../__fixtures__/locale-helpers.js'
 
 function makeToolResultMessage(text: string, toolUseId = 'tool-123'): Message {
   return new Message({
@@ -201,6 +202,20 @@ describe('Offload.truncate', () => {
     const previewText = (block.content[0] as TextBlock).text
     expect(previewText).toContain('[...')
     expect(previewText).toContain('chars elided')
+  })
+
+  // https://github.com/strands-agents/harness-sdk/issues/4681
+  it('formats preview counts the same regardless of the host locale', async () => {
+    const messages = [makeToolResultMessage('x'.repeat(1_000_000))]
+    const strategy = Offload.truncate('toolResults', { previewTokens: 100 })
+    const context = makeContext(messages)
+
+    await withDefaultLocale('en-IN', () => strategy.apply(context))
+
+    const block = messages[0]!.content[0] as ToolResultBlock
+    const previewText = (block.content[0] as TextBlock).text
+    expect(previewText).toContain('~250,000 tokens]')
+    expect(previewText).toContain('[... 999,600 chars elided ...]')
   })
 
   it('returns false for empty messages', async () => {
