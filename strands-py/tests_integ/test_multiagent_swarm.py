@@ -232,6 +232,7 @@ async def test_swarm_streaming(alist):
     assert len(researcher_events) > 0 or len(analyst_events) > 0, "Expected events from at least one agent"
 
 
+@pytest.mark.skip(reason="Intermittent zero token usage from Nova Pro; pending investigation.")
 @pytest.mark.asyncio
 async def test_swarm_node_result_structure():
     """Test that NodeResult properly contains AgentResult after swarm execution.
