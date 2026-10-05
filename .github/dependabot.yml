@@ -168,6 +168,30 @@ updates:
           - 'patch'
       # Major production updates aren't matched by any group, so they get individual
       # PRs — gated by the 30-day semver-major cooldown above for manual review.
+  # Standalone CDK deployment examples linked from the docs. Sample apps, so every
+  # bump across all four lands in one PR.
+  - package-ecosystem: 'npm'
+    directories:
+      - '/site/docs/examples/cdk/deploy_to_apprunner'
+      - '/site/docs/examples/cdk/deploy_to_ec2'
+      - '/site/docs/examples/cdk/deploy_to_fargate'
+      - '/site/docs/examples/cdk/deploy_to_lambda'
+    schedule:
+      interval: 'weekly'
+    open-pull-requests-limit: 100
+    labels:
+      - 'dependencies'
+    commit-message:
+      prefix: 'ci(docs)'
+    cooldown:
+      default-days: 5
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 3
+    groups:
+      cdk-examples:
+        patterns:
+          - '*'
   # Pinned analyzers for the PR complexity labeler. Isolated from the SDK
   # workspaces on purpose: they run against untrusted PR code, so they are
   # installed from their own lockfile rather than a contributor-editable one.
