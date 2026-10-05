@@ -37,9 +37,16 @@ describe('getContextWindowLimit', () => {
     expect(getContextWindowLimit('us.anthropic.claude-fable-5-1')).toBe(1_000_000)
   })
 
-  it('strips Bedrock cross-region prefix before lookup', () => {
+  it('resolves prefixed Bedrock model IDs', () => {
     expect(getContextWindowLimit('us.anthropic.claude-sonnet-4-6')).toBe(1_000_000)
     expect(getContextWindowLimit('global.anthropic.claude-sonnet-4-6')).toBe(1_000_000)
+    expect(getContextWindowLimit('openai.gpt-5.6-sol')).toBe(1_050_000)
+    expect(getContextWindowLimit('global.openai.gpt-6-astra')).toBe(1_050_000)
+    expect(getContextWindowLimit('openai.gpt-5.5')).toBe(1_050_000)
+    expect(getContextWindowLimit('us.openai.gpt-5.6-sol')).toBe(1_050_000)
+    expect(getContextWindowLimit('in.openai.gpt-5.6-luna')).toBe(1_050_000)
+    expect(getContextWindowLimit('us.xai.grok-4.6')).toBe(500_000)
+    expect(getContextWindowLimit('us.xai.grok-4.7')).toBe(500_000)
   })
 
   it('does not strip unknown prefixes', () => {

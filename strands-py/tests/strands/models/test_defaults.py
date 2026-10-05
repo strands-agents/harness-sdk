@@ -43,6 +43,14 @@ class TestGetContextWindowLimit:
         assert get_context_window_limit("gemini-2.5-flash") == 1_048_576
         assert get_context_window_limit("gemini-2.5-pro") == 1_048_576
 
+    def test_known_bedrock_openai(self):
+        assert get_context_window_limit("openai.gpt-5.5") == 1_050_000
+        assert get_context_window_limit("in.openai.gpt-5.6-luna") == 1_050_000
+
+    def test_known_bedrock_xai(self):
+        assert get_context_window_limit("us.xai.grok-4.6") == 500_000
+        assert get_context_window_limit("us.xai.grok-4.7") == 500_000
+
     def test_strips_bedrock_cross_region_prefix(self):
         assert get_context_window_limit("us.anthropic.claude-sonnet-4-6") == 1_000_000
         assert get_context_window_limit("global.anthropic.claude-sonnet-4-6") == 1_000_000
