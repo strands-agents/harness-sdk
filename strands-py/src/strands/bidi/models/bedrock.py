@@ -6,7 +6,7 @@ InvokeModelWithBidirectionalStream protocol.
 
 Nova Sonic specifics:
 
-- Hierarchical event sequences: connectionStart → promptStart → content streaming
+- Hierarchical event sequences: sessionStart → promptStart → content streaming
 - Base64-encoded audio
 - Tool execution with content containers and identifier tracking
 - 8-minute connection limits with proper cleanup sequences
@@ -350,7 +350,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
             system_prompt: System instructions for the model.
             tools: List of tools available to the model.
             messages: Conversation history to initialize with.
-            **kwargs: Additional configuration options.
+            **kwargs: Reserved for provider-specific options; currently unused.
 
         Raises:
             RuntimeError: If user calls start again without first stopping.
@@ -989,8 +989,8 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
     def _get_message_history_events(self, messages: Messages) -> list[str]:
         """Generate conversation history events from agent messages.
 
-        Converts agent message history to Nova Sonic format following the
-        contentStart/textInput/contentEnd pattern for each message.
+        Converts text blocks from agent message history to Nova Sonic format following
+        the contentStart/textInput/contentEnd pattern. Other block types are omitted.
 
         History messages are sent as non-interactive (interactive=False) so Nova Sonic
         treats them as prior context rather than new inputs requiring a response.

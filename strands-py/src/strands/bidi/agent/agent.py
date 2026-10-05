@@ -451,7 +451,7 @@ class BidiAgent(LocalAgent):
             yield event
 
     async def stop(self) -> None:
-        """End the conversation connection and cleanup all resources.
+        """End the conversation connection and clean up background tasks.
 
         Terminates the streaming connection, cancels background tasks, and
         closes the connection to the model provider.

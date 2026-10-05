@@ -93,7 +93,8 @@ class ConnectionConfig(TypedDict, total=False):
     keeps reactive-only behavior: no proactive timer, restart only after the provider reports
     a timeout.
 
-    All fields are optional. The proactive timer arms only when ``restart_after_s`` is declared.
+    All fields are optional. The proactive timer arms only when ``restart_after_s`` is positive
+    and automatic restarts are enabled.
 
     Attributes:
         restart_after_s: Seconds after a connection is established at which to proactively

@@ -269,9 +269,10 @@ def test_bidi_agent_init_with_unsupported_model():
         BidiAgent(model=object())
 
 
-def test_bidi_agent_init_rejects_unknown_arguments(mock_model):
-    with pytest.raises(TypeError, match="unexpected keyword argument 'unknown_option'"):
-        BidiAgent(model=mock_model, unknown_option=object())
+@pytest.mark.parametrize("argument", ["tool_executor", "unknown_option"])
+def test_bidi_agent_init_rejects_unknown_arguments(mock_model, argument):
+    with pytest.raises(TypeError, match=f"unexpected keyword argument '{argument}'"):
+        BidiAgent(model=mock_model, **{argument: object()})
 
 
 def test_bidi_agent_session_id_without_session_manager(mock_model):
