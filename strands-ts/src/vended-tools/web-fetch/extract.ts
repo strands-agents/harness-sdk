@@ -4,8 +4,8 @@
  * Delegates HTML-to-markdown conversion to turndown with ATX headings and
  * fenced code blocks. Non-content elements (scripts, styles, media, forms,
  * etc.) are dropped entirely. `data:` URI images are replaced with their alt
- * text (or nothing) to avoid enormous blobs in the output. `javascript:`
- * hrefs and src values are stripped silently.
+ * text (or nothing) to avoid enormous blobs in the output. `javascript:` and
+ * `vbscript:` hrefs and src values are stripped silently, as are `data:` hrefs.
  *
  * Requires `turndown` as an optional peer dependency.
  */
@@ -35,9 +35,20 @@ const DROPPED_ELEMENTS = [
   'nav',
 ]
 
+const SCRIPT_SCHEMES = new Set(['javascript:', 'vbscript:'])
+
 // Strip invisible characters before URL scheme detection.
 function _stripInvisible(value: string): string {
   return value.replace(/^[\p{Cc}\p{Cf}\p{Zs}]+/u, '')
+}
+
+// Lowercased scheme with trailing colon, or '' for relative/unparseable URLs.
+function _urlScheme(url: string): string {
+  try {
+    return new URL(_stripInvisible(url)).protocol
+  } catch {
+    return ''
+  }
 }
 
 async function loadTurndown(): Promise<typeof TurndownService> {
@@ -74,7 +85,7 @@ async function _createTurndownService(): Promise<TurndownService> {
   })
 
   // Replace data: URI images with alt text only (they can be enormous blobs).
-  // Strip javascript: src values entirely.
+  // Strip script src values entirely.
   td.addRule('safeImage', {
     filter: 'img',
     replacement: (_content, node) => {
@@ -82,27 +93,19 @@ async function _createTurndownService(): Promise<TurndownService> {
       const src = (element.getAttribute('src') ?? '').trim()
       const alt = element.getAttribute('alt') ?? ''
       if (!src) return alt
-      try {
-        const scheme = new URL(_stripInvisible(src)).protocol
-        if (scheme === 'javascript:') return ''
-        if (scheme === 'data:') return alt
-      } catch {
-        // not an absolute URL — pass through as-is
-      }
+      const scheme = _urlScheme(src)
+      if (SCRIPT_SCHEMES.has(scheme)) return ''
+      if (scheme === 'data:') return alt
       return `![${alt}](${src})`
     },
   })
 
-  // Strip javascript: hrefs — render link text only.
+  // Strip script and data: hrefs — render link text only.
   td.addRule('safeLink', {
     filter: (node) => {
       if (node.nodeName !== 'A') return false
-      const href = ((node as HTMLAnchorElement).getAttribute('href') ?? '').trim()
-      try {
-        return new URL(_stripInvisible(href)).protocol === 'javascript:'
-      } catch {
-        return false
-      }
+      const scheme = _urlScheme(((node as HTMLAnchorElement).getAttribute('href') ?? '').trim())
+      return SCRIPT_SCHEMES.has(scheme) || scheme === 'data:'
     },
     replacement: (content) => content,
   })
