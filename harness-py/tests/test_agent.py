@@ -472,8 +472,6 @@ def test_root_exports_match_the_spec_table():
         "create_harness",
         "HARNESS_CONTRACT",
         "build_system_prompt",
-        "DEFAULT_HARNESS_AGENT_CONFIG",
-        "define_harness_agent_config",
         "harness_agent_kwargs_from_config",
         "normalize_harness_agent_config",
         "BUILTIN_TOOL_NAMES",

@@ -5,12 +5,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import {
-  DEFAULT_HARNESS_AGENT_CONFIG,
-  defineHarnessAgentConfig,
-  harnessAgentOptionsFromConfig,
-  normalizeHarnessAgentConfig,
-} from '../src/config.js'
+import { harnessAgentOptionsFromConfig, normalizeHarnessAgentConfig } from '../src/config.js'
 import { configureLogging, resetWarnOnce } from '../src/logging.js'
 
 afterEach(() => {
@@ -20,7 +15,7 @@ afterEach(() => {
 
 describe('HarnessAgentConfig', () => {
   it('normalizes the complete portable definition', () => {
-    const config = defineHarnessAgentConfig({
+    const config = normalizeHarnessAgentConfig({
       name: 'Reviewer',
       description: 'Reviews changes',
       instructions: 'Be strict.',
@@ -48,33 +43,55 @@ describe('HarnessAgentConfig', () => {
     expect(normalizeHarnessAgentConfig(JSON.parse(JSON.stringify(config)))).toEqual(config)
   })
 
-  it('maps defaults through the same contract createHarness consumes', async () => {
-    await expect(harnessAgentOptionsFromConfig(DEFAULT_HARNESS_AGENT_CONFIG)).resolves.toMatchObject({
-      name: 'Strands harness',
-      model: DEFAULT_HARNESS_AGENT_CONFIG.model,
-      effort: 'auto',
-      contextManager: 'auto',
+  it('leaves omitted keys unset so createHarness applies its defaults', async () => {
+    expect(normalizeHarnessAgentConfig({})).toEqual({})
+    await expect(harnessAgentOptionsFromConfig({})).resolves.toEqual({
       memory: { dir: join(process.cwd(), '.agent/memory') },
       session: { dir: join(process.cwd(), '.agent/sessions') },
-      skills: true,
     })
-    const options = await harnessAgentOptionsFromConfig(DEFAULT_HARNESS_AGENT_CONFIG)
-    expect(options).not.toHaveProperty('builtinTools')
+  })
+
+  it('forwards set values as written, except caching: true and an empty description', async () => {
+    const config = normalizeHarnessAgentConfig({
+      description: '',
+      effort: 'auto',
+      builtinTools: [
+        'shell',
+        'read',
+        'write',
+        'edit',
+        'web_fetch',
+        'web_search',
+        'programmatic_tool_caller',
+        'subagent',
+      ],
+      caching: true,
+      builtinPlugins: ['todos', 'environment'],
+    })
+
+    const options = await harnessAgentOptionsFromConfig(config)
+    expect(options).toMatchObject({
+      effort: 'auto',
+      builtinTools: config.builtinTools,
+      builtinPlugins: ['todos', 'environment'],
+    })
+    expect(options).not.toHaveProperty('description')
     expect(options).not.toHaveProperty('caching')
+    await expect(harnessAgentOptionsFromConfig({ caching: false })).resolves.toMatchObject({ caching: false })
   })
 
   it('forwards a disabled session as off', async () => {
-    const config = defineHarnessAgentConfig({ session: false })
+    const config = normalizeHarnessAgentConfig({ session: false })
     await expect(harnessAgentOptionsFromConfig(config)).resolves.toMatchObject({ session: false })
   })
 
   it('folds contextManager "off" to false, matching Python', () => {
-    expect(defineHarnessAgentConfig({ contextManager: 'off' }).contextManager).toBe(false)
-    expect(defineHarnessAgentConfig({ contextManager: false }).contextManager).toBe(false)
+    expect(normalizeHarnessAgentConfig({ contextManager: 'off' }).contextManager).toBe(false)
+    expect(normalizeHarnessAgentConfig({ contextManager: false }).contextManager).toBe(false)
   })
 
   it('fails loudly when the runtime cannot load a referenced language', async () => {
-    const config = defineHarnessAgentConfig({
+    const config = normalizeHarnessAgentConfig({
       tools: [{ kind: 'tool', module: './tool.py', language: 'python', files: ['./tool.py'] }],
     })
 
@@ -83,7 +100,7 @@ describe('HarnessAgentConfig', () => {
 
   it('loads executable values through declared module references', async () => {
     const module = join(import.meta.dirname, 'fixtures', 'config-values.ts')
-    const config = defineHarnessAgentConfig({
+    const config = normalizeHarnessAgentConfig({
       tools: [{ kind: 'tool', module, export: 'customTool', language: 'typescript' }],
       agentConfigModules: {
         conversationManager: {
@@ -120,7 +137,7 @@ describe('HarnessAgentConfig', () => {
     ['  Require approval for writes.  ', '  Require approval for writes.  '],
     ['./policy.cedar.bak', './policy.cedar.bak'],
   ])('resolves the intervention %j against the project root when it is a Cedar file', async (value, expected) => {
-    const config = defineHarnessAgentConfig({ interventions: value })
+    const config = normalizeHarnessAgentConfig({ interventions: value })
 
     const options = await harnessAgentOptionsFromConfig(config, '/project')
 
@@ -148,7 +165,7 @@ describe('HarnessAgentConfig', () => {
         )
         await writeFile(join(packageDir, 'tool.js'), "export const customTool = { name: 'project-tool' }\n")
         await writeFile(join(packageDir, 'wrong.cjs'), "throw new Error('require export must not be loaded')\n")
-        const config = defineHarnessAgentConfig({
+        const config = normalizeHarnessAgentConfig({
           tools: [{ kind: 'tool', module, export: 'customTool' }],
         })
 
@@ -164,7 +181,7 @@ describe('HarnessAgentConfig', () => {
   it('rejects a package missing from the project even when the harness has it installed', async () => {
     const root = await mkdtemp(join(tmpdir(), 'strands-config-'))
     try {
-      const config = defineHarnessAgentConfig({
+      const config = normalizeHarnessAgentConfig({
         agentConfigModules: {
           callbackHandler: { kind: 'agent-config', module: 'zod', export: 'z' },
         },
@@ -206,7 +223,7 @@ describe('HarnessAgentConfig', () => {
         join(root, 'model.ts'),
         "import { BedrockModel } from '@strands-agents/sdk/models/bedrock'\nexport default new BedrockModel({ modelId: 'fixture' })"
       )
-      const config = defineHarnessAgentConfig({
+      const config = normalizeHarnessAgentConfig({
         tools: [{ kind: 'tool', module: './tool.ts' }],
         modelModule: { kind: 'model', module: './model.ts' },
       })
@@ -240,7 +257,7 @@ describe('HarnessAgentConfig', () => {
 
   it('expands MCP environment placeholders and unwraps the server map', async () => {
     process.env.STRANDS_TEST_MCP_TOKEN = 'secret'
-    const config = defineHarnessAgentConfig({
+    const config = normalizeHarnessAgentConfig({
       mcpServers: {
         mcpServers: {
           private: {
@@ -259,7 +276,7 @@ describe('HarnessAgentConfig', () => {
   })
 
   it('rejects a missing MCP environment variable instead of passing the placeholder through', async () => {
-    const config = defineHarnessAgentConfig({
+    const config = normalizeHarnessAgentConfig({
       mcpServers: { private: { url: 'https://example.com/mcp', headers: { Authorization: 'Bearer ${MISSING_VAR}' } } },
     })
 
@@ -280,7 +297,7 @@ describe('HarnessAgentConfig', () => {
           },
         })
       )
-      const config = defineHarnessAgentConfig({ mcpServers: './mcp.json' })
+      const config = normalizeHarnessAgentConfig({ mcpServers: './mcp.json' })
 
       await expect(harnessAgentOptionsFromConfig(config, root)).resolves.toMatchObject({
         mcpServers: {
@@ -299,7 +316,7 @@ describe('HarnessAgentConfig', () => {
   })
 
   it('resolves state directories against the project root, matching Python', async () => {
-    const config = defineHarnessAgentConfig({
+    const config = normalizeHarnessAgentConfig({
       session: { id: 'proj', dir: '.agent/sessions' },
       memory: { dir: '.agent/memory' },
       skills: ['.agent/skills', 'https://example.com/SKILL.md'],
@@ -393,7 +410,7 @@ describe('HarnessAgentConfig', () => {
   })
 
   it('maps a builtinTools mapping into createHarness options', async () => {
-    const config = defineHarnessAgentConfig({
+    const config = normalizeHarnessAgentConfig({
       builtinTools: { subagent: { maxDepth: 1 }, web_fetch: { model: 'openai/gpt-5-mini' }, shell: false },
     })
     await expect(harnessAgentOptionsFromConfig(config)).resolves.toMatchObject({
@@ -405,7 +422,7 @@ describe('HarnessAgentConfig', () => {
     const warn = vi.fn()
     configureLogging({ debug: () => {}, info: () => {}, warn, error: () => {} })
 
-    const config = normalizeHarnessAgentConfig({ ...DEFAULT_HARNESS_AGENT_CONFIG, builtinTool: ['shell'] })
+    const config = normalizeHarnessAgentConfig({ builtinTool: ['shell'] })
 
     expect(config).not.toHaveProperty('builtinTool')
     expect(warn).toHaveBeenCalledWith('Ignoring unknown agent config keys: builtinTool.')
@@ -423,7 +440,6 @@ describe('HarnessAgentConfig', () => {
   it('rejects unknown memory subkeys and names them', () => {
     expect(() =>
       normalizeHarnessAgentConfig({
-        ...DEFAULT_HARNESS_AGENT_CONFIG,
         memory: { dir: 'mem', stores: [{ kind: 'memory-store', module: 'store' }] },
       })
     ).toThrow('memory has unknown keys: stores. Allowed: dir.')
@@ -455,7 +471,6 @@ describe('HarnessAgentConfig', () => {
     configureLogging({ debug: () => {}, info: () => {}, warn, error: () => {} })
 
     const config = normalizeHarnessAgentConfig({
-      ...DEFAULT_HARNESS_AGENT_CONFIG,
       memory: false,
       memoryStores: [{ kind: 'memory-store', module: 'store' }],
     })
@@ -467,7 +482,6 @@ describe('HarnessAgentConfig', () => {
   it('rejects malformed references instead of dropping them', () => {
     expect(() =>
       normalizeHarnessAgentConfig({
-        ...DEFAULT_HARNESS_AGENT_CONFIG,
         tools: [{ kind: 'tool' }],
       })
     ).toThrow('tools[0].module must be a non-empty string')
