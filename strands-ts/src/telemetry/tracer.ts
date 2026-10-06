@@ -331,17 +331,10 @@ export class Tracer {
 
     if (!span) return
 
-    const { response, error, accumulatedUsage, stopReason } = options
+    const { response, error, stopReason } = options
 
     try {
       const attributes: Record<string, AttributeValue> = {}
-      if (accumulatedUsage) this._setUsageAttributes(attributes, accumulatedUsage)
-      // Langfuse auto-generates "generation" observations for spans with token usage,
-      // which duplicates the token counts already reported on this agent span.
-      // Setting observation.type to "span" prevents Langfuse from creating that
-      // extra generation, avoiding double-counted tokens in dashboards.
-      // See https://github.com/langfuse/langfuse/issues/7549
-      if (this._isLangfuse) attributes['langfuse.observation.type'] = 'span'
       if (response !== undefined) this._addResponseEvent(span, response, stopReason)
 
       this._endSpan(span, attributes, error)
@@ -591,7 +584,6 @@ export class Tracer {
     try {
       const attributes: Record<string, AttributeValue> = {}
       if (options.duration !== undefined) attributes['gen_ai.agent.execution_time'] = options.duration
-      if (options.usage) this._setUsageAttributes(attributes, options.usage)
 
       this._endSpan(span, attributes, options.error)
     } catch (err) {
@@ -644,7 +636,6 @@ export class Tracer {
       const attributes: Record<string, AttributeValue> = {}
       if (options.status) attributes['gen_ai.agent.status'] = options.status
       if (options.duration !== undefined) attributes['gen_ai.agent.execution_time'] = options.duration
-      if (options.usage) this._setUsageAttributes(attributes, options.usage)
 
       this._endSpan(span, attributes, options.error)
     } catch (err) {
