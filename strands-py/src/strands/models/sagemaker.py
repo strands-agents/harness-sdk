@@ -334,8 +334,17 @@ class SageMakerAIModel(OpenAIModel):
             payload["tool_choice"] = "auto"
 
         for message in payload["messages"]:  # type: ignore
-            # Assistant message must have either content or tool_calls, but not both
-            if message.get("role", "") == "assistant" and message.get("tool_calls", []) != []:
+            # An assistant turn may carry text beside its tool calls -- the model's
+            # reasoning about why it is calling the tool -- and OpenAI-compatible
+            # endpoints accept both fields together. Drop `content` only when there
+            # is nothing in it to send, which is the case this guarded: an assistant
+            # message with no content would otherwise go out as `"content": null`
+            # next to `tool_calls`.
+            if (
+                message.get("role", "") == "assistant"
+                and message.get("tool_calls", []) != []
+                and not message.get("content")
+            ):
                 message.pop("content", None)
             if message.get("role") == "tool" and self.payload_config.get("tool_results_as_user_messages", False):
                 # Convert tool message to user message
