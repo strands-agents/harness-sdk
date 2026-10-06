@@ -1,50 +1,28 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { useInput, type DOMElement } from 'ink'
 
-import {
-  FROG_THEMES,
-  FROG_THEME_LABELS,
-  THEME_COLOR_KEYS,
-  type ChatSettings,
-  type ResolvedColorMode,
-} from '../chat/types.js'
+import { CUSTOM_THEME_COLOR_KEYS, FROG_THEMES, FROG_THEME_LABELS, type ThemeSettings } from '../chat/types.js'
 import { parseMouseInput } from '../terminal/mouse-input.js'
 import { elementAtMouse, registerElement } from './interaction.js'
-import { Box, getTheme, Text, ThemeProvider } from './theme.js'
+import { Box, getTheme, Text, ThemeProvider, useTheme } from './theme.js'
 import { FadeIn } from './fade-in.js'
 
-export type Appearance = Pick<ChatSettings, 'frogTheme' | 'colorMode' | 'customTheme'>
-
-type ColorKey = (typeof THEME_COLOR_KEYS)[number]
-const EDITABLE_COLOR_KEYS = THEME_COLOR_KEYS.filter((key) => key !== 'border')
-type Focus = 'base' | 'mode' | 'role' | 'neutrals' | 'palette' | 'reset-color' | 'reset-mode' | 'apply' | 'cancel'
+type ColorKey = (typeof CUSTOM_THEME_COLOR_KEYS)[number]
+type Focus = 'base' | 'role' | 'neutrals' | 'palette' | 'reset-color' | 'reset-colors' | 'apply' | 'cancel'
 type Target =
   | 'base:previous'
   | 'base:next'
-  | 'mode:light'
-  | 'mode:dark'
   | 'role:previous'
   | 'role:next'
   | 'reset-color'
-  | 'reset-mode'
+  | 'reset-colors'
   | 'apply'
   | 'cancel'
   | `neutral:${number}`
   | `color:${number}`
 
 const COLOR_LABELS: Record<ColorKey, string> = {
-  background: 'Canvas',
-  foreground: 'Main text',
-  muted: 'Quiet text',
-  surface: 'Buttons',
-  panel: 'Panels',
-  selection: 'Selection',
-  border: 'Borders',
   accent: 'Accent',
-  hover: 'Hover',
-  success: 'Success',
-  warning: 'Warning',
-  error: 'Error',
   frog: 'Frog',
 }
 
@@ -55,17 +33,7 @@ const COLOR_ROWS = [
   { saturation: 78, lightness: 52 },
   { saturation: 68, lightness: 32 },
 ]
-const FOCUS_ORDER: Focus[] = [
-  'base',
-  'mode',
-  'role',
-  'neutrals',
-  'palette',
-  'reset-color',
-  'reset-mode',
-  'apply',
-  'cancel',
-]
+const FOCUS_ORDER: Focus[] = ['base', 'role', 'neutrals', 'palette', 'reset-color', 'reset-colors', 'apply', 'cancel']
 
 export function CustomThemeEditor({
   settings,
@@ -76,17 +44,16 @@ export function CustomThemeEditor({
   onApply,
   onClose,
 }: {
-  settings: Appearance
+  settings: ThemeSettings
   animate?: boolean
   width: number
   height: number
-  onPreview(settings: Appearance): void
-  onApply(settings: Appearance): Promise<void> | void
+  onPreview(settings: ThemeSettings): void
+  onApply(settings: ThemeSettings): Promise<void> | void
   onClose(): void
 }): ReactElement {
   const [draft, setDraft] = useState(() => globalThis.structuredClone(settings))
-  const [mode, setMode] = useState<ResolvedColorMode>(() => getTheme(settings).mode)
-  const [roleIndex, setRoleIndex] = useState(() => EDITABLE_COLOR_KEYS.indexOf('accent'))
+  const [roleIndex, setRoleIndex] = useState(() => CUSTOM_THEME_COLOR_KEYS.indexOf('accent'))
   const [focus, setFocus] = useState<Focus>('palette')
   const [neutralIndex, setNeutralIndex] = useState(0)
   const [colorIndex, setColorIndex] = useState(0)
@@ -110,15 +77,16 @@ export function CustomThemeEditor({
     [paletteColumns, paletteRowCount]
   )
   const presets = FROG_THEMES.filter((theme) => theme !== 'custom')
-  const selectedRole = EDITABLE_COLOR_KEYS[roleIndex]!
-  const visibleSettings = { ...draft, frogTheme: 'custom' as const, colorMode: mode }
-  const colors = getTheme(visibleSettings)
+  const selectedRole = CUSTOM_THEME_COLOR_KEYS[roleIndex]!
+  const visibleSettings = { ...draft, frogTheme: 'custom' as const }
+  const mode = useTheme().mode
+  const colors = getTheme(visibleSettings, mode)
   const selectedColor = colors[selectedRole]
   const customized = draft.customTheme[mode][selectedRole] !== undefined
 
   useEffect(() => {
-    onPreview({ ...draft, frogTheme: 'custom', colorMode: mode })
-  }, [draft, mode, onPreview])
+    onPreview({ ...draft, frogTheme: 'custom' })
+  }, [draft, onPreview])
 
   useEffect(() => {
     setNeutralIndex(closestColor(NEUTRALS, selectedColor))
@@ -132,7 +100,7 @@ export function CustomThemeEditor({
   }
 
   function changeRole(direction: -1 | 1): void {
-    setRoleIndex((current) => (current + direction + EDITABLE_COLOR_KEYS.length) % EDITABLE_COLOR_KEYS.length)
+    setRoleIndex((current) => (current + direction + CUSTOM_THEME_COLOR_KEYS.length) % CUSTOM_THEME_COLOR_KEYS.length)
   }
 
   function setRoleColor(color: string): void {
@@ -155,8 +123,12 @@ export function CustomThemeEditor({
     setError(undefined)
   }
 
-  function resetMode(): void {
-    setDraft((value) => ({ ...value, customTheme: { ...value.customTheme, [mode]: {} } }))
+  function resetColors(): void {
+    setDraft((value) => {
+      const variant = { ...value.customTheme[mode] }
+      for (const key of CUSTOM_THEME_COLOR_KEYS) delete variant[key]
+      return { ...value, customTheme: { ...value.customTheme, [mode]: variant } }
+    })
     setError(undefined)
   }
 
@@ -187,12 +159,10 @@ export function CustomThemeEditor({
   function activate(target: Target): void {
     if (target === 'base:previous') changeBase(-1)
     else if (target === 'base:next') changeBase(1)
-    else if (target === 'mode:light') setMode('light')
-    else if (target === 'mode:dark') setMode('dark')
     else if (target === 'role:previous') changeRole(-1)
     else if (target === 'role:next') changeRole(1)
     else if (target === 'reset-color') resetColor()
-    else if (target === 'reset-mode') resetMode()
+    else if (target === 'reset-colors') resetColors()
     else if (target === 'apply') void apply()
     else if (target === 'cancel') onClose()
     else if (target.startsWith('neutral:')) chooseNeutral(Number(target.slice('neutral:'.length)))
@@ -201,19 +171,17 @@ export function CustomThemeEditor({
 
   function activateFocus(): void {
     if (focus === 'base') changeBase(1)
-    else if (focus === 'mode') setMode(mode === 'light' ? 'dark' : 'light')
     else if (focus === 'role') changeRole(1)
     else if (focus === 'neutrals') chooseNeutral(neutralIndex)
     else if (focus === 'palette') chooseColor(colorIndex)
     else if (focus === 'reset-color') resetColor()
-    else if (focus === 'reset-mode') resetMode()
+    else if (focus === 'reset-colors') resetColors()
     else if (focus === 'apply') void apply()
     else onClose()
   }
 
   function focusForTarget(target: Target): Focus {
     if (target.startsWith('base:')) return 'base'
-    if (target.startsWith('mode:')) return 'mode'
     if (target.startsWith('role:')) return 'role'
     if (target.startsWith('neutral:')) return 'neutrals'
     if (target.startsWith('color:')) return 'palette'
@@ -251,8 +219,6 @@ export function CustomThemeEditor({
     }
     if (focus === 'base' && (key.leftArrow || key.rightArrow)) {
       changeBase(key.leftArrow ? -1 : 1)
-    } else if (focus === 'mode' && (key.leftArrow || key.rightArrow)) {
-      setMode(key.leftArrow ? 'light' : 'dark')
     } else if (focus === 'role' && (key.leftArrow || key.rightArrow || key.upArrow || key.downArrow)) {
       changeRole(key.leftArrow || key.upArrow ? -1 : 1)
     } else if (focus === 'neutrals' && (key.leftArrow || key.rightArrow)) {
@@ -279,7 +245,7 @@ export function CustomThemeEditor({
   )
 
   const action = (
-    target: Extract<Target, 'reset-color' | 'reset-mode' | 'apply' | 'cancel'>,
+    target: Extract<Target, 'reset-color' | 'reset-colors' | 'apply' | 'cancel'>,
     label: string
   ): ReactElement => (
     <Box
@@ -322,7 +288,7 @@ export function CustomThemeEditor({
               </Text>
               <Text dimColor>{customized ? 'Custom color' : 'From base'}</Text>
             </Box>
-            {!compactHeight ? <Text dimColor>Editing {mode} colors · pick a role, then a swatch</Text> : null}
+            {!compactHeight ? <Text dimColor>Pick an accent or frog color, then a swatch</Text> : null}
 
             {!compactHeight ? (
               <Box marginTop={1} height={3} paddingX={1} alignItems="center" backgroundColor={colors.background}>
@@ -349,7 +315,7 @@ export function CustomThemeEditor({
               </Box>
             ) : null}
 
-            <Box marginTop={1} justifyContent="space-between">
+            <Box marginTop={1}>
               <Box>
                 <Text dimColor>Base </Text>
                 <Box
@@ -371,35 +337,6 @@ export function CustomThemeEditor({
                 >
                   <Text color={hovered === 'base:next' ? colors.accent : colors.foreground}>›</Text>
                 </Box>
-              </Box>
-              <Box>
-                {(['light', 'dark'] as const).map((candidate) => (
-                  <Box
-                    key={candidate}
-                    ref={(element) => registerElement(elements.current, `mode:${candidate}`, element)}
-                    paddingX={1}
-                    backgroundColor={
-                      hovered === `mode:${candidate}`
-                        ? colors.selection
-                        : candidate === mode
-                          ? colors.accent
-                          : colors.surface
-                    }
-                  >
-                    <Text
-                      bold={candidate === mode}
-                      color={
-                        hovered === `mode:${candidate}`
-                          ? colors.accent
-                          : candidate === mode
-                            ? colors.panel
-                            : colors.foreground
-                      }
-                    >
-                      {candidate[0]!.toUpperCase() + candidate.slice(1)}
-                    </Text>
-                  </Box>
-                ))}
               </Box>
             </Box>
 
@@ -436,7 +373,7 @@ export function CustomThemeEditor({
                 <Box width={3} backgroundColor={selectedColor} />
                 <Text dimColor>
                   {' '}
-                  {selectedColor} · {roleIndex + 1}/{EDITABLE_COLOR_KEYS.length}
+                  {selectedColor} · {roleIndex + 1}/{CUSTOM_THEME_COLOR_KEYS.length}
                 </Text>
               </Box>
             ) : null}
@@ -458,7 +395,7 @@ export function CustomThemeEditor({
               <Box marginTop={1} flexDirection="column" alignItems="center">
                 <Box>
                   {action('reset-color', 'Reset color')}
-                  {action('reset-mode', `Reset ${mode}`)}
+                  {action('reset-colors', 'Reset colors')}
                 </Box>
                 <Box>
                   {action('apply', 'Apply theme')}
@@ -468,7 +405,7 @@ export function CustomThemeEditor({
             ) : (
               <Box marginTop={1} justifyContent="center">
                 {action('reset-color', 'Reset color')}
-                {action('reset-mode', `Reset ${mode}`)}
+                {action('reset-colors', 'Reset colors')}
                 {action('apply', 'Apply theme')}
                 {action('cancel', 'Cancel')}
               </Box>

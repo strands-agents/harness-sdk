@@ -2,7 +2,6 @@ import { homedir } from 'node:os'
 import { resolve } from 'node:path'
 
 import {
-  clonePanel,
   effortSlider,
   permissionRequestRows,
   formatPermissionPanelBody,
@@ -62,7 +61,6 @@ import {
   type ChatEvent,
   type ChatNotice,
   type ChatPanel,
-  type ChatPanelOptions,
   type ChatPanelRow,
   type ChatPermissionMode,
   type ChatPermissionRequest,
@@ -72,6 +70,7 @@ import {
   type ChatSnapshot,
   type ChatTask,
   type ChatTurn,
+  type NewChatPanel,
 } from './types.js'
 
 export * from './types.js'
@@ -789,7 +788,7 @@ export class ChatController implements ChatControllerApi {
         if (row.value.startsWith('help:command:')) {
           await this.submit(`/${row.value.slice('help:command:'.length)}`)
         } else {
-          this._pushPanel('detail', selected.label, [], { body: selected.description })
+          this._pushPanel({ kind: 'detail', title: selected.label, rows: [], body: selected.description })
         }
         return true
       }
@@ -830,7 +829,7 @@ export class ChatController implements ChatControllerApi {
   }
 
   openContextPanel(): void {
-    this._openPanel('context', 'Context usage', [])
+    this._openPanel({ kind: 'context', title: 'Context usage', rows: [] })
   }
 
   sessionTarget(reference: string): Promise<SessionTarget | undefined> {
@@ -877,6 +876,7 @@ export class ChatController implements ChatControllerApi {
       this._context = {}
       this._refreshRuntime(typeof selected === 'string' ? selected : modelId)
       this._updateOpenModelPanel(modelId)
+      this._openEffortPanelIfAvailable()
       this._emit()
       return true
     } catch (error) {
@@ -925,7 +925,7 @@ export class ChatController implements ChatControllerApi {
       context: { ...this._context },
       status: this._closed ? 'closed' : activeTurn ? 'running' : this._drainingProjector ? 'interrupting' : 'idle',
       ...(this._composerStatus ? { composerStatus: this._composerStatus } : {}),
-      ...(this._panel ? { panel: clonePanel(this._panel) } : {}),
+      ...(this._panel ? { panel: makePanel(this._panel.id, this._panel) } : {}),
       runtime: cloneRuntime(this._runtime),
       settings: globalThis.structuredClone(this._settings),
       ...(this._exitCode !== undefined ? { exitCode: this._exitCode } : {}),
@@ -944,10 +944,10 @@ export class ChatController implements ChatControllerApi {
     const argument = rest.join(' ')
     switch (command.toLowerCase()) {
       case 'help':
-        this._openPanel(
-          'help',
-          'Help',
-          helpRows(this._backend, {
+        this._openPanel({
+          kind: 'help',
+          title: 'Help',
+          rows: helpRows(this._backend, {
             sessions: this._sessions !== undefined,
             skills: this._skills !== undefined,
             mcp: this._mcp !== undefined,
@@ -955,16 +955,14 @@ export class ChatController implements ChatControllerApi {
             tools: this._builtinTools !== undefined,
             export: this._exportAgentProject !== undefined,
           }),
-          {
-            searchable: true,
-            filters: [
-              { id: 'controls', label: 'Shortcuts' },
-              { id: 'commands', label: 'Commands' },
-              { id: 'tools', label: 'Tools' },
-              { id: 'all', label: 'All' },
-            ],
-          }
-        )
+          searchable: true,
+          filters: [
+            { id: 'controls', label: 'Shortcuts' },
+            { id: 'commands', label: 'Commands' },
+            { id: 'tools', label: 'Tools' },
+            { id: 'all', label: 'All' },
+          ],
+        })
         break
       case 'context':
         this.openContextPanel()
@@ -1038,7 +1036,7 @@ export class ChatController implements ChatControllerApi {
     }
     const choices = this._builtinTools.choices()
     this._builtinToolSelection = new Set(choices.filter((choice) => choice.enabled).map((choice) => choice.name))
-    this._openPanel('tools', 'tools', builtinToolRows(choices, this._builtinToolSelection))
+    this._openPanel({ kind: 'tools', title: 'tools', rows: builtinToolRows(choices, this._builtinToolSelection) })
   }
 
   private _toggleBuiltinTool(value: string): boolean {
@@ -1051,7 +1049,7 @@ export class ChatController implements ChatControllerApi {
     }
     // Keeping the panel id keeps the cursor on the toggled row.
     const rows = builtinToolRows(this._builtinTools.choices(), this._builtinToolSelection)
-    this._panel = makePanel(this._panel.id, 'tools', 'tools', rows, {})
+    this._panel = makePanel(this._panel.id, { kind: 'tools', title: 'tools', rows })
     this._emit()
     return true
   }
@@ -1071,11 +1069,11 @@ export class ChatController implements ChatControllerApi {
   }
 
   private _openTasksPanel(): void {
-    this._openPanel(
-      'tasks',
-      `tasks (${this._tasks.length})`,
-      taskRows(this._tasks, this._backend.backgroundTasksWaitForCompletion?.())
-    )
+    this._openPanel({
+      kind: 'tasks',
+      title: `tasks (${this._tasks.length})`,
+      rows: taskRows(this._tasks, this._backend.backgroundTasksWaitForCompletion?.()),
+    })
   }
 
   private async _toggleBackgroundTaskWaitMode(): Promise<boolean> {
@@ -1094,12 +1092,16 @@ export class ChatController implements ChatControllerApi {
 
     const next = !current
     this._resourceChanging = true
-    this._openPanel('tasks', 'updating background behavior', [
-      {
-        label: 'Wait for completion',
-        description: `Rebuilding the agent with wait for completion ${next ? 'on' : 'off'}.`,
-      },
-    ])
+    this._openPanel({
+      kind: 'tasks',
+      title: 'updating background behavior',
+      rows: [
+        {
+          label: 'Wait for completion',
+          description: `Rebuilding the agent with wait for completion ${next ? 'on' : 'off'}.`,
+        },
+      ],
+    })
     try {
       await this._backend.setBackgroundTasksWaitForCompletion(next)
       this._context = {}
@@ -1115,15 +1117,25 @@ export class ChatController implements ChatControllerApi {
   }
 
   private _openEffortPanel(): void {
-    const slider = effortSlider(this._backend.listEfforts?.() ?? [])
-    if (!slider || slider.disabled) {
-      this._openError('effort unavailable', this._runtime.model, 'This model does not support reasoning effort.')
+    if (this._openEffortPanelIfAvailable()) {
       return
     }
-    this._openPanel('effort', 'effort', [], {
-      slider: { ...slider, focused: true },
+    this._openError('effort unavailable', this._runtime.model, 'This model does not support reasoning effort.')
+  }
+
+  private _openEffortPanelIfAvailable(): boolean {
+    const slider = effortSlider(this._backend.listEfforts?.() ?? [])
+    if (!slider || slider.disabled) {
+      return false
+    }
+    this._openPanel({
+      kind: 'effort',
+      title: 'effort',
+      rows: [],
+      slider,
       body: `${modelDisplayName(this._runtime.model)}\n${this._runtime.model}`,
     })
+    return true
   }
 
   async openModelPanel(): Promise<void> {
@@ -1131,21 +1143,21 @@ export class ChatController implements ChatControllerApi {
       this._openError('models unavailable', this._runtime.model, 'This backend does not expose model selection.')
       return
     }
-    const loading = this._openPanel('models', 'models', [{ label: 'loading', description: 'Discovering models.' }])
+    const loading = this._openPanel({ kind: 'models', title: 'models', rows: [], loading: true })
     try {
       const models = await this._backend.listModels()
       if (this._panel?.id !== loading.id) {
         return
       }
-      const efforts = this._backend.listEfforts?.() ?? []
-      const slider = effortSlider(efforts)
-      this._openPanel('models', `models (${models.length})`, modelRows(models, this._runtime.model), {
+      this._openPanel({
+        kind: 'models',
+        title: `models (${models.length})`,
+        rows: modelRows(models, this._runtime.model),
         searchable: true,
         filters: modelFilters(
           models.map((model) => model.catalog).filter((catalog): catalog is string => !!catalog),
           this._backend.protocol
         ),
-        ...(slider ? { slider } : {}),
         body: `${modelDisplayName(this._runtime.model)}\n${this._runtime.model}`,
       })
     } catch (error) {
@@ -1187,6 +1199,7 @@ export class ChatController implements ChatControllerApi {
         this._addNotice('delivered', `Model updated for the next model call: ${modelDisplayName(modelId)}`)
       }
       this._updateOpenModelPanel(modelId)
+      this._openEffortPanelIfAvailable()
       this._emit()
       return true
     } catch (error) {
@@ -1215,7 +1228,7 @@ export class ChatController implements ChatControllerApi {
       const selected = await this._backend.setEffort(effort)
       this._context = {}
       this._refreshRuntime()
-      if ((this._panel?.kind === 'models' || this._panel?.kind === 'effort') && this._panel.slider) {
+      if (this._panel?.kind === 'effort') {
         this._panel = {
           ...this._panel,
           slider: {
@@ -1248,9 +1261,11 @@ export class ChatController implements ChatControllerApi {
       void this._refreshSessionsPanel(sessionsRuntime, panel.id)
       return
     }
-    const loading = this._openPanel('sessions', 'sessions', [
-      { label: 'loading', description: `Reading ${sessionsRuntime.directory}` },
-    ])
+    const loading = this._openPanel({
+      kind: 'sessions',
+      title: 'sessions',
+      rows: [{ label: 'loading', description: `Reading ${sessionsRuntime.directory}` }],
+    })
     await this._refreshSessionsPanel(sessionsRuntime, loading.id)
   }
 
@@ -1293,9 +1308,19 @@ export class ChatController implements ChatControllerApi {
   private _showSessionsPanel(sessionsRuntime: ChatSessionRuntime, sessions: SessionList, panelId?: string): ChatPanel {
     const rows = sessionRows(sessions, sessionsRuntime.directory)
     if (!panelId) {
-      return this._openPanel('sessions', `sessions (${sessions.length})`, rows, { searchable: true })
+      return this._openPanel({
+        kind: 'sessions',
+        title: `sessions (${sessions.length})`,
+        rows,
+        searchable: true,
+      })
     }
-    const panel = this._makePanel('sessions', `sessions (${sessions.length})`, rows, { searchable: true })
+    const panel = this._makePanel({
+      kind: 'sessions',
+      title: `sessions (${sessions.length})`,
+      rows,
+      searchable: true,
+    })
     this._panel = { ...panel, id: panelId }
     this._emit()
     return this._panel
@@ -1342,9 +1367,11 @@ export class ChatController implements ChatControllerApi {
       this._openError('skills unavailable', 'skills', 'No skills runtime is configured for this backend.')
       return
     }
-    const loading = this._openPanel('skills', 'skills', [
-      { label: 'loading', description: 'Parsing configured skills with the Strands SDK.' },
-    ])
+    const loading = this._openPanel({
+      kind: 'skills',
+      title: 'skills',
+      rows: [{ label: 'loading', description: 'Parsing configured skills with the Strands SDK.' }],
+    })
     try {
       const skills = await this._skills.list()
       if (this._panel?.id !== loading.id) {
@@ -1355,7 +1382,10 @@ export class ChatController implements ChatControllerApi {
         this._skillDetails.set(skill.name, skill)
         this._skillNames.add(skill.name.toLowerCase())
       }
-      this._openPanel('skills', `skills (${skills.length})`, skillRows(skills), {
+      this._openPanel({
+        kind: 'skills',
+        title: `skills (${skills.length})`,
+        rows: skillRows(skills),
         searchable: true,
         ...(this._skills.paths?.length ? { body: `Checked: ${this._skills.paths.join(', ')}` } : {}),
       })
@@ -1437,9 +1467,13 @@ export class ChatController implements ChatControllerApi {
       return
     }
     this._resourceChanging = true
-    this._openPanel('progress', 'starting fresh conversation', [
-      { label: this._backend.name, description: 'Rebuilding through createHarness() without restoring context.' },
-    ])
+    this._openPanel({
+      kind: 'progress',
+      title: 'starting fresh conversation',
+      rows: [
+        { label: this._backend.name, description: 'Rebuilding through createHarness() without restoring context.' },
+      ],
+    })
     try {
       await this._backend.clear()
       this._stopWatchingUsage()
@@ -1473,7 +1507,10 @@ export class ChatController implements ChatControllerApi {
     if (!skill) {
       return false
     }
-    this._pushPanel('detail', `skill: ${skill.name}`, skillDetailRows(skill), {
+    this._pushPanel({
+      kind: 'detail',
+      title: `skill: ${skill.name}`,
+      rows: skillDetailRows(skill),
       body: skill.instructions || '(No instructions.)',
     })
     return true
@@ -1484,20 +1521,22 @@ export class ChatController implements ChatControllerApi {
       this._openError('MCP unavailable', 'mcp', 'No MCP runtime is configured.')
       return
     }
-    const loading = this._openPanel('mcp', 'MCP servers', [
-      { label: 'loading', description: 'Checking server connections and tools.' },
-    ])
+    const loading = this._openPanel({
+      kind: 'mcp',
+      title: 'MCP servers',
+      rows: [{ label: 'loading', description: 'Checking server connections and tools.' }],
+    })
     try {
       const servers = await this._mcp.list(true)
       if (this._panel?.id !== loading.id) {
         return
       }
-      this._openPanel(
-        'mcp',
-        `MCP servers (${servers.length})`,
-        mcpRows(servers),
-        mcpOptions(servers, this._mcp.paths, this._mcp.warnings)
-      )
+      this._openPanel({
+        kind: 'mcp',
+        title: `MCP servers (${servers.length})`,
+        rows: mcpRows(servers),
+        ...mcpOptions(servers, this._mcp.paths, this._mcp.warnings),
+      })
     } catch (error) {
       if (this._panel?.id === loading.id) {
         this._openError('MCP connection failed', 'mcp', errorMessage(error))
@@ -1537,21 +1576,21 @@ export class ChatController implements ChatControllerApi {
       )
       return
     }
-    const options: ChatPanelOptions = {
+    const panel = {
+      kind: 'permissions',
+      title: 'permissions',
+      rows: permissionSettingsRows(status, this._runtime.tools),
       ...(status.mode === 'bypassPermissions'
         ? { body: 'WARNING: Permission checks are bypassed. Configured interventions and sandboxing still apply.' }
         : {}),
-    }
+    } satisfies NewChatPanel
     if (refresh && this._panel?.kind === 'permissions') {
       const currentId = this._panel.id
-      this._panel = {
-        ...this._makePanel('permissions', 'permissions', permissionSettingsRows(status, this._runtime.tools), options),
-        id: currentId,
-      }
+      this._panel = { ...this._makePanel(panel), id: currentId }
       this._emit()
       return
     }
-    this._openPanel('permissions', 'permissions', permissionSettingsRows(status, this._runtime.tools), options)
+    this._openPanel(panel)
   }
 
   private async _updatePermissions(value: string): Promise<boolean> {
@@ -1627,10 +1666,10 @@ export class ChatController implements ChatControllerApi {
       return
     }
     this._exportedPath = undefined
-    this._openPanel(
-      'export',
-      `Export · ${this._backend.name}`,
-      [
+    this._openPanel({
+      kind: 'export',
+      title: `Export · ${this._backend.name}`,
+      rows: [
         {
           label: 'TypeScript',
           description: 'Runnable @strands-agents/harness project',
@@ -1642,20 +1681,18 @@ export class ChatController implements ChatControllerApi {
           value: EXPORT_PYTHON,
         },
       ].filter((row) => !this._project || row.value === `export:${this._project.language}`),
-      {
-        body: [
-          `Agent: ${this._backend.name}`,
-          `Source: ${this._project?.entrypoint ?? 'Current agent configuration'}`,
-          `Location: ${this._project?.root ?? this._runtime.cwd}`,
-          this._project
-            ? `Language: ${this._project.language === 'typescript' ? 'TypeScript' : 'Python'} · preserves authored source`
-            : 'Choose a language, then choose where to save the ZIP.',
-          ...(!canChooseDirectory()
-            ? [`Save with /export ${this._project?.language ?? '<typescript|python>'} <path.zip>.`]
-            : []),
-        ].join('\n'),
-      }
-    )
+      body: [
+        `Agent: ${this._backend.name}`,
+        `Source: ${this._project?.entrypoint ?? 'Current agent configuration'}`,
+        `Location: ${this._project?.root ?? this._runtime.cwd}`,
+        this._project
+          ? `Language: ${this._project.language === 'typescript' ? 'TypeScript' : 'Python'} · preserves authored source`
+          : 'Choose a language, then choose where to save the ZIP.',
+        ...(!canChooseDirectory()
+          ? [`Save with /export ${this._project?.language ?? '<typescript|python>'} <path.zip>.`]
+          : []),
+      ].join('\n'),
+    })
   }
 
   private async _exportAgent(language: 'typescript' | 'python', destination?: string): Promise<boolean> {
@@ -1675,22 +1712,20 @@ export class ChatController implements ChatControllerApi {
       const path = await this._exportAgentProject(language, destination)
       if (path) {
         this._exportedPath = path
-        this._openPanel(
-          'export',
-          'Export complete',
-          [
+        this._openPanel({
+          kind: 'export',
+          title: 'Export complete',
+          rows: [
             { label: 'Copy path', description: path, value: 'export:copy-path' },
             { label: 'Copy launch command', description: agentLaunchCommand(path), value: 'export:copy-command' },
           ],
-          {
-            body: [
-              `Agent: ${this._backend.name}`,
-              `Source: ${this._project?.entrypoint ?? 'Current agent configuration'}`,
-              `Language: ${language === 'typescript' ? 'TypeScript' : 'Python'}`,
-              `Saved to: ${path}`,
-            ].join('\n'),
-          }
-        )
+          body: [
+            `Agent: ${this._backend.name}`,
+            `Source: ${this._project?.entrypoint ?? 'Current agent configuration'}`,
+            `Language: ${language === 'typescript' ? 'TypeScript' : 'Python'}`,
+            `Saved to: ${path}`,
+          ].join('\n'),
+        })
       } else if (destination === undefined && !canChooseDirectory()) {
         this._openError('Export path required', '/export', `Use /export ${language} <path.zip> to save this agent.`)
       }
@@ -1765,18 +1800,21 @@ export class ChatController implements ChatControllerApi {
       return false
     }
     const rows = settingsRows(this._settings, category.id)
-    const options: ChatPanelOptions = {
+    const panel = {
+      kind: 'settings',
+      title: category.label,
+      rows,
       filters: settingsCategoryFilters(),
       settingsCategory: category.id,
       settingsCategories: SETTINGS_CATEGORIES,
-    }
+    } satisfies NewChatPanel
     if (replace) {
-      this._openPanel('settings', category.label, rows, options)
+      this._openPanel(panel)
     } else if (this._panel?.kind === 'settings') {
-      this._panel = this._makePanel('settings', category.label, rows, options)
+      this._panel = this._makePanel(panel)
       this._emit()
     } else {
-      this._pushPanel('settings', category.label, rows, options)
+      this._pushPanel(panel)
     }
     return true
   }
@@ -1796,7 +1834,10 @@ export class ChatController implements ChatControllerApi {
   }
 
   private _openPermissionPanel(request: ChatPermissionRequest): void {
-    this._pushPanel('permission', `Allow ${request.toolName}?`, permissionRequestRows(request), {
+    this._pushPanel({
+      kind: 'permission',
+      title: `Allow ${request.toolName}?`,
+      rows: permissionRequestRows(request),
       body: formatPermissionPanelBody(request),
       ...(request.diff ? { diff: request.diff } : {}),
     })
@@ -1911,7 +1952,10 @@ export class ChatController implements ChatControllerApi {
     this._stopTaskActivity()
     this._openTaskDetailId = task.id
     const activity = this._backend.getTaskActivity?.(task.id)
-    this._pushPanel('detail', taskDetailTitle(task, activity), taskDetailRows(task, activity), {
+    this._pushPanel({
+      kind: 'detail',
+      title: taskDetailTitle(task, activity),
+      rows: taskDetailRows(task, activity),
       body: activity ? '' : formatTaskActivity(task),
       followTail: true,
       ...(activity ? { activity } : {}),
@@ -2040,6 +2084,7 @@ export class ChatController implements ChatControllerApi {
         notice.status = 'delivered'
         notice.text = `Model changed to ${modelDisplayName(modelId)}`
       }
+      this._openEffortPanelIfAvailable()
     } catch (error) {
       if (notice) {
         notice.status = 'error'
@@ -2072,54 +2117,40 @@ export class ChatController implements ChatControllerApi {
           }
         : next
     })
-    const slider = effortSlider(this._backend.listEfforts?.() ?? [])
-    const updated = this._makePanel('models', panel.title, rows, {
+    const updated = this._makePanel({
+      kind: 'models',
+      title: panel.title,
+      rows,
       ...(panel.searchable !== undefined ? { searchable: panel.searchable } : {}),
       ...(panel.filters ? { filters: panel.filters } : {}),
-      ...(slider ? { slider } : {}),
       body: `${modelDisplayName(this._runtime.model)}\n${this._runtime.model}`,
     })
     this._panel = { ...updated, id: panel.id }
   }
 
-  private _openPanel(
-    kind: ChatPanel['kind'],
-    title: string,
-    rows: ChatPanel['rows'],
-    options: ChatPanelOptions = {}
-  ): ChatPanel {
+  private _openPanel(input: NewChatPanel): ChatPanel {
     this._panelStack.length = 0
-    const panel = this._makePanel(kind, title, rows, options)
+    const panel = this._makePanel(input)
     this._panel = panel
     this._emit()
     return panel
   }
 
-  private _pushPanel(
-    kind: ChatPanel['kind'],
-    title: string,
-    rows: ChatPanel['rows'],
-    options: ChatPanelOptions
-  ): ChatPanel {
+  private _pushPanel(input: NewChatPanel): ChatPanel {
     if (this._panel) {
       this._panelStack.push(this._panel)
     }
-    const panel = this._makePanel(kind, title, rows, options)
+    const panel = this._makePanel(input)
     this._panel = panel
     this._emit()
     return panel
   }
 
-  private _makePanel(
-    kind: ChatPanel['kind'],
-    title: string,
-    rows: ChatPanel['rows'],
-    options: ChatPanelOptions
-  ): ChatPanel {
-    return makePanel(`panel-${this._nextPanel++}`, kind, title, rows, options)
+  private _makePanel(input: NewChatPanel): ChatPanel {
+    return makePanel(`panel-${this._nextPanel++}`, input)
   }
 
   private _openError(title: string, label: string, description: string): void {
-    this._openPanel('error', title, [{ label, description, tone: 'danger' }])
+    this._openPanel({ kind: 'error', title, rows: [{ label, description, tone: 'danger' }] })
   }
 }

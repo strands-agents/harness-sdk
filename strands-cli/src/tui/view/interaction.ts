@@ -1,13 +1,38 @@
 import type { DOMElement, Key } from 'ink'
 
-import type { ChatControllerApi, ChatPanel, ChatPanelRow, ChatPanelSlider, ChatSnapshot } from '../chat/controller.js'
+import type {
+  ChatControllerApi,
+  ChatModelPanel,
+  ChatPanel,
+  ChatPanelRow,
+  ChatPanelSlider,
+  ChatSnapshot,
+} from '../chat/controller.js'
+import { isActiveTask } from '../chat/controller-helpers.js'
 import { resolveModelTarget } from '../model/selection.js'
+import { COMPOSER_PANEL_HEIGHT } from '../terminal/composer.js'
 import type { MouseInput } from '../terminal/mouse-input.js'
 
 export type MetadataTarget = 'model' | 'effort' | 'context' | 'cwd'
-export const MODEL_COPY_TARGET = 'model:copy-id'
+export const MAX_VISIBLE_BACKGROUND_TASKS = 4
+// Section borders, search row, search spacing, and help footer.
+const MODEL_PANEL_CHROME_ROWS = 5
 
-export type ModelPanelFocus = 'effort' | 'search' | 'providers' | 'models' | 'copy'
+export type ModelPanelFocus = 'providers' | 'search' | 'models'
+
+export function composerPanelHeight(snapshot: ChatSnapshot, terminalHeight: number, party = false): number {
+  const activeBackgroundTasks = snapshot.tasks.filter(
+    (task) => task.source === 'background' && isActiveTask(task.status)
+  ).length
+  const statusRows =
+    (snapshot.queuedPrompts.length > 0 || snapshot.status === 'interrupting'
+      ? Math.max(1, snapshot.queuedPrompts.length)
+      : 0) +
+    Number(snapshot.voice !== undefined && snapshot.voice.status !== 'off') +
+    Math.min(activeBackgroundTasks, MAX_VISIBLE_BACKGROUND_TASKS) +
+    Number(activeBackgroundTasks > MAX_VISIBLE_BACKGROUND_TASKS)
+  return Math.min(Math.max(party ? 3 : 1, terminalHeight - statusRows - 2), COMPOSER_PANEL_HEIGHT + (party ? 2 : 0))
+}
 
 export function settingsLayout(
   panelWidth: number,
@@ -258,21 +283,16 @@ export function cyclePanelFilter(filters: readonly { id: string }[], current: st
   return filters[(index + direction + filters.length) % filters.length]!.id
 }
 
+/** Tab order between the `/model` provider and model sections. */
 export function cycleModelPanelFocus(
   current: ModelPanelFocus,
-  panel: Pick<ChatPanel, 'slider' | 'filters'>,
-  direction: number,
-  includeCopy = false
+  panel: ChatModelPanel,
+  direction: number
 ): ModelPanelFocus {
-  const order: ModelPanelFocus[] = [
-    ...(panel.slider && !panel.slider.disabled ? (['effort'] as const) : []),
-    'search',
-    ...(panel.filters?.length ? (['providers'] as const) : []),
-    'models',
-    ...(includeCopy ? (['copy'] as const) : []),
-  ]
-  const currentIndex = Math.max(0, order.indexOf(current))
-  return order[(currentIndex + (direction < 0 ? -1 : 1) + order.length) % order.length]!
+  const sections: ModelPanelFocus[] = [...(panel.filters?.length ? (['providers'] as const) : []), 'models']
+  const section = current === 'search' ? 'models' : current
+  const index = Math.max(0, sections.indexOf(section))
+  return sections[(index + (direction < 0 ? -1 : 1) + sections.length) % sections.length]!
 }
 
 export function panelPageSize(terminalHeight: number): number {
@@ -328,7 +348,7 @@ export function panelRowCapacity(
     return Math.max(1, Math.min(10, terminalHeight - 15 - sections * 2))
   }
   if (kind === 'models') {
-    return Math.max(1, Math.min(20, terminalHeight - 13))
+    return Math.max(1, terminalHeight - MODEL_PANEL_CHROME_ROWS)
   }
   if (['help', 'skills', 'mcp', 'tasks'].includes(kind)) {
     const sections = new Set(rows.map((row) => row.section).filter(Boolean)).size

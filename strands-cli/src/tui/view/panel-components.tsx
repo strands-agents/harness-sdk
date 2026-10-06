@@ -39,9 +39,11 @@ export function PanelItemHeader({
   const labelColor = pressed && clickable ? hover : active || pressed ? (color ?? accent) : undefined
   return (
     <Box flexShrink={1} overflow="hidden">
-      <Text {...(markerColor ? { color: markerColor } : {})} dimColor={!active && !pressed}>
-        {active && clickable ? '› ' : '  '}
-      </Text>
+      <Box flexShrink={0}>
+        <Text {...(markerColor ? { color: markerColor } : {})} dimColor={!active && !pressed}>
+          {active && clickable ? '› ' : '  '}
+        </Text>
+      </Box>
       <Text {...(labelColor ? { color: labelColor } : {})} bold={bold || (active && !pressed)} wrap={wrap}>
         {label}
       </Text>
@@ -80,7 +82,7 @@ export function PanelOverlay({
         backgroundColor={theme.panel}
       >
         {children}
-        <PanelHelpFooter width={width - 2} />
+        <PanelHelpFooter width={Math.max(1, width - 2)} />
       </Box>
     </Box>
   )

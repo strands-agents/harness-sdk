@@ -114,7 +114,7 @@ describe('prompt editor input', () => {
       })
     )
 
-    expect(output).toContain(' 123456\n 789')
+    expect(output).toContain('│ 1234 │\n│ 5678 │\n│ 9▌')
   })
 
   it('follows the cursor after reaching the configured row cap', () => {
@@ -127,7 +127,9 @@ describe('prompt editor input', () => {
     )
 
     expect(output).not.toContain('one')
-    expect(output).toContain(' two\n three\n four')
+    expect(output).toContain('│ two')
+    expect(output).toContain('│ three')
+    expect(output).toContain('│ four▌')
   })
 
   it('reveals earlier multiline input when the cursor moves back', () => {
