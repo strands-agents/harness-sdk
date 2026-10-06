@@ -47,9 +47,14 @@
     return line.length > 120 ? line.slice(0, 119) + '…' : line
   }
 
-  // Consent is enforced by the WebSDK listener itself - events dispatched here
-  // are silently dropped if the user has not accepted performance cookies via Shortbread.
+  // Check performance consent before handing events to the WebSDK, whose own gate checks functional consent.
   function dispatchXdmEvent(eventType, awsContent, useBeacon) {
+    try {
+      if (window.strandsShortbread?.getConsentCookie()?.performance !== true) return
+    } catch {
+      return
+    }
+
     var detail = {
       eventType: eventType,
       xdm: { _aws: awsContent },
