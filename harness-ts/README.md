@@ -93,6 +93,9 @@ malformed or wrong-language references fail instead of being ignored.
 npm install @strands-agents/harness
 ```
 
+`@strands-agents/sdk` is a required peer dependency. npm 7+ and pnpm install it automatically; with
+other package managers, add `@strands-agents/sdk` alongside the harness.
+
 The default agent runs on Amazon Bedrock, which needs no extra dependency. To use another
 provider, install its peer dependency:
 
