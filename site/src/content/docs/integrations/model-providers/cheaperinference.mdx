@@ -1,0 +1,91 @@
+---
+title: Cheaper Inference
+description: 'Run Strands agents on models from many labs through Cheaper Inference, using the SDK''s built-in OpenAI provider against the OpenAI-compatible endpoint.'
+integrationType: model-provider
+---
+
+[Cheaper Inference](https://cheaperinference.com) is an OpenAI-compatible gateway to
+models from many labs behind a single API and API key.
+Each model costs 15–60% less than the list price of its lab.
+
+:::note[OpenAI compatibility]
+This integration works through the SDK's built-in
+[OpenAI provider](../../user-guide/sdk/model-providers/openai.mdx) pointed at
+Cheaper Inference's OpenAI-compatible endpoint; there is no separate Cheaper Inference
+integration. Compatible endpoints can have quirks that deviate from the exact OpenAI API
+spec, so some features may behave differently than they do against OpenAI itself.
+:::
+
+## Installation
+
+The OpenAI provider is an optional dependency. To install, run:
+
+<Tabs>
+<Tab label="Python">
+
+```bash
+pip install 'strands-agents[openai]'
+```
+</Tab>
+<Tab label="TypeScript">
+
+```bash
+npm install @strands-agents/sdk openai
+```
+</Tab>
+</Tabs>
+
+## Usage
+
+Create an [API key](https://cheaperinference.com/signup), export it as
+`CHEAPER_INFERENCE_API_KEY`, and point the provider at Cheaper Inference's endpoint:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+import os
+
+from strands import Agent
+from strands.models.openai import OpenAIModel
+
+model = OpenAIModel(
+    client_args={
+        "api_key": os.environ["CHEAPER_INFERENCE_API_KEY"],
+        "base_url": "https://api.cheaperinference.com/v1",
+    },
+    model_id="gpt-5.4-mini",
+)
+
+agent = Agent(model=model)
+response = agent("Explain tool calling in one sentence.")
+print(response)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "integrations/model-providers/cheaperinference_imports.ts:usage_imports"
+
+--8<-- "integrations/model-providers/cheaperinference.ts:usage"
+```
+</Tab>
+</Tabs>
+
+## Configuration
+
+Two client settings connect the provider to Cheaper Inference:
+
+* **API key**: from your [Cheaper Inference account](https://cheaperinference.com/signup)
+* **Base URL**: `https://api.cheaperinference.com/v1`
+
+Model IDs come from the [Cheaper Inference model list](https://cheaperinference.com/#models)
+and have no lab prefix, for example `gpt-5.4-mini` or `claude-sonnet-5`. For model
+parameters and other provider options, see the
+[OpenAI provider](../../user-guide/sdk/model-providers/openai.mdx) guide.
+
+## References
+
+* [Cheaper Inference docs](https://cheaperinference.com/docs)
+* [Cheaper Inference model list](https://cheaperinference.com/#models)
+* [OpenAI provider](../../user-guide/sdk/model-providers/openai.mdx)
