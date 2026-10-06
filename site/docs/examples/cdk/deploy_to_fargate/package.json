@@ -14,14 +14,14 @@
   },
   "devDependencies": {
     "@types/node": "22.15.3",
-    "aws-cdk": "2.1012.0",
+    "aws-cdk": "2.1144.0",
     "prettier": "~3.5.3",
     "tsx": "^4.7.0",
     "typescript": "~5.8.3",
     "vitest": "^4.1.6"
   },
   "dependencies": {
-    "aws-cdk-lib": "2.260.0",
+    "aws-cdk-lib": "2.272.0",
     "constructs": "^10.2.0"
   },
   "prettier": {
