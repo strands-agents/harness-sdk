@@ -8,7 +8,7 @@
 import type { ExecutionEventBus, RequestContext } from '@a2a-js/sdk/server'
 import type { AgentExecutor } from '@a2a-js/sdk/server'
 import { A2AError } from '@a2a-js/sdk/server'
-import type { InvokableAgent, LocalAgent } from '../types/agent.js'
+import type { AgentResult, InvokableAgent, LocalAgent } from '../types/agent.js'
 import type { Snapshot } from '../types/snapshot.js'
 import type { ContentBlock } from '../types/messages.js'
 import { ModelStreamUpdateEvent, ContentBlockEvent } from '../hooks/events.js'
@@ -61,6 +61,37 @@ function asSnapshotAgent(agent: InvokableAgent): SnapshotAgent {
 /** Whether the agent has a configured `sessionManager` (a field not declared on {@link InvokableAgent}). */
 function hasSessionManager(agent: InvokableAgent): boolean {
   return (agent as { sessionManager?: unknown }).sessionManager !== undefined
+}
+
+/** Returns client-facing result text while excluding internal reasoning content. */
+function resultToResponseText(result: AgentResult): string {
+  const hasReasoning = result.lastMessage.content.some((block) => block.type === 'reasoningBlock')
+  if (!hasReasoning) {
+    return result.toString()
+  }
+
+  if (result.interrupts?.length) {
+    return JSON.stringify(result.interrupts)
+  }
+
+  if (result.structuredOutput !== undefined) {
+    return JSON.stringify(result.structuredOutput)
+  }
+
+  const textParts: string[] = []
+  for (const block of result.lastMessage.content) {
+    if (block.type === 'textBlock') {
+      textParts.push(block.text)
+    } else if (block.type === 'citationsBlock') {
+      for (const content of block.content) {
+        if ('text' in content) {
+          textParts.push(content.text)
+        }
+      }
+    }
+  }
+
+  return textParts.join('\n')
 }
 
 /**
@@ -303,8 +334,8 @@ export class A2AExecutor implements AgentExecutor {
         contextId,
         artifact: {
           artifactId,
-          // If no deltas were streamed, publish the full result; otherwise empty to close the artifact
-          parts: [{ kind: 'text', text: isFirstChunk && next.value ? next.value.toString() : '' }],
+          // If no text was streamed, publish response-facing result text; otherwise close the text artifact
+          parts: [{ kind: 'text', text: isFirstChunk && next.value ? resultToResponseText(next.value) : '' }],
         },
         append: !isFirstChunk,
         lastChunk: true,
