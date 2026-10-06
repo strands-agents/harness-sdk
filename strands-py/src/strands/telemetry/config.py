@@ -171,9 +171,36 @@ class StrandsTelemetry:
         return self
 
     def setup_meter(
-        self, enable_console_exporter: bool = False, enable_otlp_exporter: bool = False
+        self,
+        enable_console_exporter: bool = False,
+        enable_otlp_exporter: bool = False,
+        **provider_kwargs: Any,
     ) -> "StrandsTelemetry":
-        """Initialize the OpenTelemetry Meter."""
+        """Initialize the OpenTelemetry Meter.
+
+        Args:
+            enable_console_exporter: When True, attach a console metrics exporter.
+            enable_otlp_exporter: When True, attach an OTLP metrics exporter.
+            **provider_kwargs: Optional keyword arguments passed directly to
+                OpenTelemetry's MeterProvider initializer (e.g., views,
+                shutdown_on_exit). Note that resource and metric_readers are
+                managed by this method and cannot be overridden via this
+                parameter.
+
+        Returns:
+            self: Enables method chaining.
+
+        Example:
+            Drop high-cardinality attributes (e.g. tool_use_id, event_loop_cycle_id)
+            from tool metrics by passing a View through to the underlying MeterProvider:
+
+            >>> from opentelemetry.sdk.metrics.view import View
+            >>> StrandsTelemetry().setup_meter(
+            ...     enable_otlp_exporter=True,
+            ...     views=[View(instrument_name="strands.tool.*",
+            ...                 attribute_keys={"tool_name"})],
+            ... )
+        """
         logger.info("Initializing meter")
         metrics_readers = []
         try:
@@ -190,7 +217,11 @@ class StrandsTelemetry:
         except Exception as e:
             logger.exception("error=<%s> | Failed to configure OTLP metrics exporter", e)
 
-        self.meter_provider = metrics_sdk.MeterProvider(resource=self.resource, metric_readers=metrics_readers)
+        self.meter_provider = metrics_sdk.MeterProvider(
+            resource=self.resource,
+            metric_readers=metrics_readers,
+            **provider_kwargs,
+        )
 
         # Set as global tracer provider
         metrics_api.set_meter_provider(self.meter_provider)
