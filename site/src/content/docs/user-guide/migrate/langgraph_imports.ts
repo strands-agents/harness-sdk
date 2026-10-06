@@ -1,8 +1,9 @@
 // @ts-nocheck: imports are duplicated across snippets for documentation display
 
 // --8<-- [start:graph_migrated_imports]
-import { Agent, Graph, SessionManager } from '@strands-agents/sdk'
+import { Agent, Graph, SessionManager, tool } from '@strands-agents/sdk'
 import { LocalFileStorage } from '@strands-agents/sdk/storage'
+import { z } from 'zod'
 // --8<-- [end:graph_migrated_imports]
 
 // --8<-- [start:limits_imports]
