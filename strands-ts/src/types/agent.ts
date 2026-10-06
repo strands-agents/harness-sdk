@@ -41,8 +41,10 @@ import type {
 } from '../middleware/types.js'
 import type { ToolRegistry } from '../registry/tool-registry.js'
 import type { Model } from '../models/model.js'
+import type { Invocation } from '../agent/invocation.js'
 import type { z } from 'zod'
 import { AgentMetrics } from '../telemetry/meter.js'
+import type { Usage } from '../models/streaming.js'
 
 /**
  * Arguments for invoking an agent.
@@ -136,63 +138,55 @@ export interface InvokeOptions {
    */
   cancelSignal?: AbortSignal
 
+  /** Runs this call as part of the request a hook event or {@link ToolContext.invocation} belongs to, sharing its limits and usage total (even after it returned); add `limits` only if that request has none. */
+  invocation?: Invocation
+
   /**
-   * Per-invocation budget caps. Each cap, when set, bounds the agent loop
-   * for this `invoke()` / `stream()` call only — counters are not cumulative
-   * across reuses of the same agent.
+   * Limits bounding the whole request this `invoke()` / `stream()` call sets
+   * off: this agent's loop and sub-agents added via `asTool()` share them, as
+   * does a Graph or Swarm you pass this request's `invocation` to (Graph and
+   * Swarm can't set their own `limits` yet). A hand-written tool that invokes
+   * another agent joins only by forwarding {@link ToolContext.invocation} as
+   * {@link InvokeOptions.invocation}; otherwise that sub-agent runs under its
+   * own limits, as if invoked standalone. A nested call may set its own
+   * `limits` only when the request it joins has none. Auxiliary model calls
+   * (summarization, routing, extraction, steering, HITL, goal judging) add their
+   * tokens to the shared total but are not limited. Counters reset on each
+   * reuse of the agent. {@link AgentResult.requestUsage} reports the shared total.
    *
-   * Caps are checked at the top of each loop iteration. Tools requested by
-   * the previous turn always run to completion before a cap fires, so
-   * `agent.messages` remains in a reinvokable state.
+   * Limits are checked at the top of each loop iteration, so tools requested by
+   * the previous turn run to completion first and `agent.messages` stays
+   * reinvokable. Each limit, when set, must be a positive finite number; omit a
+   * field (or `limits` itself) for no limit on that dimension.
    *
-   * Each cap, when set, must be a positive finite number. Omit any field
-   * (or `limits` itself) for no limit on that dimension.
-   *
-   * Priority on simultaneous trip (highest first): `turns`, `totalTokens`,
-   * `outputTokens`. The corresponding `stopReason` is `'limitTurns'`,
-   * `'limitTotalTokens'`, or `'limitOutputTokens'`.
+   * Priority when several trip at once (highest first): `turns`, `totalTokens`,
+   * `outputTokens`, with `stopReason` `'limitTurns'`, `'limitTotalTokens'`, or
+   * `'limitOutputTokens'`.
    */
-  limits?: {
-    /**
-     * Maximum number of agent loop iterations (turns). A turn is one model
-     * call plus any tool execution that follows. Counted against
-     * `metrics.latestAgentInvocation.cycles.length`.
-     */
-    turns?: number
-
-    /**
-     * Maximum cumulative model-generated tokens, summed across every model
-     * call in the agent loop
-     * (`metrics.latestAgentInvocation.usage.outputTokens`).
-     *
-     * Distinct from per-call provider-level `maxTokens` settings (e.g.
-     * `GoogleModelConfig.params.maxOutputTokens`), which bound a single
-     * model call's output. This cap bounds the loop's cumulative output
-     * across however many calls it makes.
-     *
-     * Soft cap: a single oversized model response can overshoot the budget.
-     * The agent stops at the first turn boundary on or after the budget is
-     * reached; it does not bound any individual model call.
-     */
-    outputTokens?: number
-
-    /**
-     * Maximum cumulative input + output tokens
-     * (`metrics.latestAgentInvocation.usage.totalTokens`). Each model
-     * call's input includes prior turns, so this counter compounds across
-     * the run — it approximates the total token spend you would be billed
-     * for.
-     *
-     * Soft cap: a single oversized model response can overshoot the budget.
-     * The agent stops at the first turn boundary on or after the budget is
-     * reached; it does not bound any individual model call.
-     */
-    totalTokens?: number
-  }
+  limits?: InvokeLimits
 }
 
 /**
- * The cap names recognized by {@link InvokeOptions.limits}.
+ * Limits for a single `invoke()` / `stream()` call, bounding the whole request
+ * it sets off. Each is optional; omit a field for no limit on that dimension.
+ * The token limits count every model call in the request, unlike a provider's
+ * per-call `maxTokens`, and are soft: the agent stops at the next turn
+ * boundary, so the last turn can overshoot, more so when sub-agents run in
+ * parallel. See {@link InvokeOptions.limits} for how they are scoped.
+ */
+export interface InvokeLimits {
+  /** Maximum agent-loop turns (one model call plus the tool calls it requests) across the whole request. */
+  turns?: number
+
+  /** Maximum model-generated tokens across every model call in the request. */
+  outputTokens?: number
+
+  /** Maximum input + output tokens across every model call in the request; input grows each turn, so this compounds. */
+  totalTokens?: number
+}
+
+/**
+ * The limit names recognized by {@link InvokeOptions.limits}.
  *
  * @internal
  */
@@ -467,6 +461,15 @@ export class AgentResult {
   readonly metrics?: AgentMetrics
 
   /**
+   * Token usage for the whole request this call ran in: this agent, sub-agents
+   * that joined it, and auxiliary calls such as summarization or interventions.
+   * The request's limits are checked against this total, unlike {@link metrics},
+   * which covers this agent only. It is the request's running total, so work
+   * that finishes after this call returns (e.g. a background task) still adds to it.
+   */
+  readonly requestUsage?: Usage
+
+  /**
    * Per-invocation state passed into the agent, threaded through hooks and
    * tools, and surfaced here at the end of the invocation. See
    * {@link InvocationState} for details. Always defined — defaults to `{}` when
@@ -495,6 +498,7 @@ export class AgentResult {
     invocationState: InvocationState
     traces?: AgentTrace[]
     metrics?: AgentMetrics
+    requestUsage?: Usage
     structuredOutput?: z.output<z.ZodType>
     interrupts?: Interrupt[]
     checkpoint?: Checkpoint
@@ -507,6 +511,9 @@ export class AgentResult {
     }
     if (data.metrics !== undefined) {
       this.metrics = data.metrics
+    }
+    if (data.requestUsage !== undefined) {
+      this.requestUsage = data.requestUsage
     }
     if (data.structuredOutput !== undefined) {
       this.structuredOutput = data.structuredOutput

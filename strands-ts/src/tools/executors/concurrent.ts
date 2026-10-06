@@ -99,14 +99,19 @@ export class ConcurrentToolExecutor extends ToolExecutor {
             error,
           })
           resultsByToolUseId.set(toolUseBlock.toolUseId, result)
-          yield new ToolResultEvent({ agent: options.agent, result, invocationState })
+          yield new ToolResultEvent({ agent: options.agent, invocation: options.invocation, result, invocationState })
           continue
         }
 
         if (winner.result.done) {
           pendingSteps.delete(index)
           resultsByToolUseId.set(toolUseBlock.toolUseId, winner.result.value)
-          yield new ToolResultEvent({ agent: options.agent, result: winner.result.value, invocationState })
+          yield new ToolResultEvent({
+            agent: options.agent,
+            invocation: options.invocation,
+            result: winner.result.value,
+            invocationState,
+          })
         } else {
           try {
             yield winner.result.value

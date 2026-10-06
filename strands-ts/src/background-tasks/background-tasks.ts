@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 import { continuations } from '../agent/continuation.js'
 import { AgentAsTool } from '../agent/agent-as-tool.js'
+import type { Invocation } from '../agent/invocation.js'
 import { AfterInvocationEvent, BeforeModelCallEvent, InitializedEvent } from '../hooks/events.js'
 import { HookOrder } from '../hooks/types.js'
 import { InterruptError } from '../interrupt.js'
@@ -188,12 +189,13 @@ export class BackgroundTasks implements Plugin {
     toolUse: ToolUseData,
     invocationState: InvocationState,
     passId: string,
-    tool: Tool
+    tool: Tool,
+    invocation?: Invocation
   ): Promise<ToolResultBlock> {
     if (this._agent.cancelSignal.aborted) return toolError(toolUse.toolUseId, 'Tool execution cancelled')
 
     try {
-      const task = await this._manager.submit(toolUse, invocationState, passId, tool)
+      const task = await this._manager.submit(toolUse, invocationState, passId, tool, invocation)
       return new ToolResultBlock({
         toolUseId: toolUse.toolUseId,
         status: 'success',

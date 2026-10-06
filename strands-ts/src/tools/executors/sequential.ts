@@ -56,7 +56,12 @@ export class SequentialToolExecutor extends ToolExecutor {
         })
         toolResultBlocks.push(cancelBlock)
         resultsByToolUseId.set(toolUseBlock.toolUseId, cancelBlock)
-        yield new ToolResultEvent({ agent: options.agent, result: cancelBlock, invocationState })
+        yield new ToolResultEvent({
+          agent: options.agent,
+          invocation: options.invocation,
+          result: cancelBlock,
+          invocationState,
+        })
         continue
       }
 
@@ -64,7 +69,12 @@ export class SequentialToolExecutor extends ToolExecutor {
         const toolResultBlock = yield* this.executeTool(options, toolUseBlock, invocationState)
         toolResultBlocks.push(toolResultBlock)
         resultsByToolUseId.set(toolUseBlock.toolUseId, toolResultBlock)
-        yield new ToolResultEvent({ agent: options.agent, result: toolResultBlock, invocationState })
+        yield new ToolResultEvent({
+          agent: options.agent,
+          invocation: options.invocation,
+          result: toolResultBlock,
+          invocationState,
+        })
       } catch (error) {
         if (error instanceof InterruptError) {
           this._storePendingToolExecution(options, assistantMessage, resultsByToolUseId)

@@ -23,7 +23,9 @@ function mockModel(summaryText = 'Summary of older messages') {
         .fn()
         .mockResolvedValueOnce({ done: false, value: undefined })
         .mockResolvedValueOnce({ done: true, value: { message } }),
-      [Symbol.asyncIterator]: vi.fn(),
+      [Symbol.asyncIterator]() {
+        return this
+      },
     })),
   }
 }
@@ -153,7 +155,9 @@ describe('summarizeContextTool', () => {
     const model = {
       streamAggregated: vi.fn(() => ({
         next: vi.fn().mockRejectedValueOnce(new Error('model error')),
-        [Symbol.asyncIterator]: vi.fn(),
+        [Symbol.asyncIterator]() {
+          return this
+        },
       })),
     }
     const messages = makeMessages(20)
