@@ -65,7 +65,7 @@ def calculator(operation: str, x: float, y: float) -> float:
 PROVIDER_CONFIGS = {
     "bedrock_nova_sonic": {
         "model_factory": create_bedrock_nova_sonic_model,
-        "model_kwargs": {"model_id": "amazon.nova-2-sonic-v1:0", "region": "us-east-1"},
+        "model_kwargs": {"model_id": "amazon.nova-2-5-sonic", "region": "us-east-1"},
         "silence_duration": 2.5,  # Nova Sonic needs 2+ seconds of silence
         "env_vars": ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
         "skip_reason": "AWS credentials not available",

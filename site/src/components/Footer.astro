@@ -418,13 +418,17 @@ const legal = [
       gap: 16px 24px;
     }
 
+    /* Line heights keep each tap target at least 24px tall. */
     .footer__link,
     .footer__pref {
       font-size: 16px;
+      line-height: 1.5;
     }
 
     .footer__legal-link {
+      display: inline-block;
       font-size: 13px;
+      line-height: 24px;
     }
   }
 </style>

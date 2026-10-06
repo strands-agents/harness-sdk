@@ -38,6 +38,7 @@ const assistantEvents = [
   'BidiAudioStopEvent',
   'BidiTranscriptStopEvent',
   'BidiTranscriptBlockEvent',
+  'BidiUsageEvent',
   'BidiResponseStopEvent',
 ]
 const userEvents = [
@@ -56,7 +57,8 @@ const diagrams: Record<Scenario, Diagram> = {
     description:
       'Two columns show a user transcript and an assistant response containing audio and transcript events. ' +
       'Each content stream follows its own start, delta, and stop sequence. Transcript blocks follow transcript stop. ' +
-      'All assistant content finishes before response stop. ' +
+      'All assistant content finishes before response stop, with token usage shown immediately before it. ' +
+      'Nova Sonic can report usage outside response boundaries. ' +
       'User transcripts can interleave independently; aligned rows do not imply timing. ' +
       'Breaks in the lifelines indicate that the conversation can continue ' +
       'before a connection-stop event signals the end of the conversation.',

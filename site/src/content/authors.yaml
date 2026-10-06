@@ -232,3 +232,13 @@
   name: Fabio Nonato de Paula
   role: "Principal Applied Scientist, AWS"
   bio: Fabio Nonato de Paula is a Principal Applied Scientist at AWS working on agentic AI.
+
+- id: morgan-willis
+  name: Morgan Willis
+  role: "Principal Developer Advocate, AWS"
+  bio: Morgan Willis is a Principal Developer Advocate at AWS working on agents.
+
+- id: rachit-mehta
+  name: Rachit Mehta
+  role: "Software Engineer, AWS Agentic AI"
+  bio: Rachit is a software engineer at AWS Agentic AI working on the Strands Harness SDK.

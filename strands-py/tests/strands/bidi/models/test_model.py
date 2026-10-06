@@ -20,7 +20,6 @@ class _Output(BaseModel):
 class _TestBidiModel(BidiModel):
     def __init__(self) -> None:
         self._model_id = "test-model"
-        self.usage_is_cumulative = False
 
     def update_config(self, **model_config: Any) -> None:
         self._model_id = model_config.get("model_id", self._model_id)

@@ -1,7 +1,7 @@
 """Protocols for bidirectional input and output streams.
 
 The protocols separate input and output concerns into independent callables
-with lifecycle methods managed by ``BidiAgent``.
+with lifecycle methods managed by ``BidiAgent.run()``.
 """
 
 from collections.abc import Awaitable
