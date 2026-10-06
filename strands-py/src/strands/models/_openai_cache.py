@@ -1,8 +1,10 @@
 """Shared prompt-caching translation for OpenAI model providers.
 
 OpenAI caches prompt prefixes automatically server-side and routes reads on a caller-supplied
-``prompt_cache_key``. It exposes no cache-point placement knobs, so of ``CacheConfig`` only
-``cache_key`` (and, when it already names a valid retention literal, ``ttl``) maps onto the request.
+``prompt_cache_key``. Cache-point *placement* (``prompt_cache_breakpoint``, or Anthropic-compatible
+``cache_control`` under ``strategy="anthropic"``) is handled by ``OpenAIModel`` system-message
+formatting, not here; this module maps only the remaining top-level ``CacheConfig`` fields,
+``cache_key`` and, when it already names a valid retention literal, ``ttl``, onto the request.
 """
 
 import warnings
@@ -41,9 +43,11 @@ def apply_cache_config(
     """Map a ``CacheConfig`` onto an OpenAI request in place.
 
     An explicit value already present in ``request`` (carried in from the user's ``params``) always
-    wins; this fills in only what ``params`` did not set. ``strategy`` and ``system_prompt_ttl`` are
-    accepted but have no effect, and a ``ttl`` that is not an OpenAI retention literal is ignored;
-    each such no-op is surfaced through ``warnings.warn`` (deduped per call site by the standard
+    wins; this fills in only what ``params`` did not set. ``strategy`` is read by system-message
+    formatting instead of this function, so it is accepted here without a warning even though this
+    function itself does nothing with it. ``system_prompt_ttl`` is a genuine no-op (OpenAI has no
+    auto-injection path), and a ``ttl`` that is not an OpenAI retention literal is ignored; each
+    such no-op is surfaced through ``warnings.warn`` (deduped per call site by the standard
     library's default filter), matching the config-validation warnings in ``_validation.py``.
 
     The prompt-cache routing key resolves as: the configured ``cache_key`` wins when set to a string,
@@ -72,4 +76,4 @@ def apply_cache_config(
                 stacklevel=4,
             )
 
-    warn_on_cache_config_not_supported(cache_config, "OpenAI", supported={"cache_key", "ttl"})
+    warn_on_cache_config_not_supported(cache_config, "OpenAI", supported={"cache_key", "ttl", "strategy"})
