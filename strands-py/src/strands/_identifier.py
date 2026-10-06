@@ -13,6 +13,7 @@ class Identifier(enum.Enum):
 
     AGENT = "agent"
     SESSION = "session"
+    ACTOR = "actor"
 
 
 def validate(id_: str, type_: Identifier) -> str:
