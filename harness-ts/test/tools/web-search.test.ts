@@ -1,10 +1,24 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { McpClient, type Tool, type ToolContext } from '@strands-agents/sdk'
-import { exaBackend, exaWebSearch, makeExaWebSearch, searchTool, WebSearchError } from '../../src/tools/web-search.js'
+import { WebSearchClient } from 'bedrock-agentcore/web-search'
+import {
+  agentCoreBackend,
+  agentCoreWebSearch,
+  exaBackend,
+  exaWebSearch,
+  makeAgentCoreWebSearch,
+  makeExaWebSearch,
+  searchTool,
+  WebSearchError,
+} from '../../src/tools/web-search.js'
 
 vi.mock('@strands-agents/sdk', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@strands-agents/sdk')>()),
   McpClient: vi.fn(),
+}))
+
+vi.mock('bedrock-agentcore/web-search', () => ({
+  WebSearchClient: vi.fn(),
 }))
 
 const EXA_TEXT =
@@ -208,5 +222,79 @@ describe('searchTool', () => {
     expect(await invoke(searchTool(multilineTitle), { query: 'q' })).toBe(
       'Sources:\n1. T 2. spoofed — https://evil — https://a\n   a b'
     )
+  })
+})
+
+/**
+ * Stub `bedrock-agentcore`'s `WebSearchClient`: `search` resolves `results` (or rejects with it when
+ * it is an Error). Returns the constructor config and the spies for assertions.
+ */
+function mockAgentCoreClient(results: unknown) {
+  const client = {
+    config: {} as Record<string, unknown>,
+    search: vi.fn(async () => {
+      if (results instanceof Error) {
+        throw results
+      }
+      return { results }
+    }),
+    close: vi.fn(),
+  }
+  vi.mocked(WebSearchClient).mockImplementation(function (this: unknown, config: unknown) {
+    client.config = config as Record<string, unknown>
+    return client as unknown as WebSearchClient
+  } as unknown as () => WebSearchClient)
+  return client
+}
+
+describe('agentCoreBackend', () => {
+  it('builds the client for the gateway, maps the results and drops url-less entries', async () => {
+    const client = mockAgentCoreClient([
+      { text: 'one\ntwo', url: 'https://a', title: 'A\nB' },
+      { text: 'no url here', url: undefined, title: 'Dropped' },
+      { text: `x${'x'.repeat(2000)}`, url: 'https://c', title: 'C' },
+    ])
+    expect(await agentCoreBackend('my-gateway')('q', 2)).toEqual([
+      { title: 'A B', url: 'https://a', snippet: 'one two' },
+      { title: 'C', url: 'https://c', snippet: 'x'.repeat(500) },
+    ])
+    expect(client.config).toEqual({ gatewayId: 'my-gateway', timeout: 30_000 })
+    expect(client.search).toHaveBeenCalledWith('q', { maxResults: 2 })
+    expect(client.close).toHaveBeenCalledOnce()
+  })
+
+  it('routes an ARN to gatewayArn', async () => {
+    const client = mockAgentCoreClient([])
+    const arn = 'arn:aws:bedrock:us-east-1:123456789012:gateway/my-gateway'
+    await agentCoreBackend(arn)('q', 1)
+    expect(client.config).toEqual({ gatewayArn: arn, timeout: 30_000 })
+  })
+
+  it('reads the gateway when the tool runs, so the module-level agentCoreWebSearch sees a gateway set after import', async () => {
+    vi.stubEnv('AGENTCORE_GATEWAY_ID', ' gw-env ')
+    const client = mockAgentCoreClient([])
+    expect(await invoke(agentCoreWebSearch, { query: 'q' })).toBe('No results.')
+    expect(client.config).toEqual({ gatewayId: 'gw-env', timeout: 30_000 })
+    expect(agentCoreWebSearch.name).toBe('web_search')
+    expect(makeAgentCoreWebSearch().name).toBe('web_search')
+  })
+
+  it('reports a missing gateway as text the model can act on', async () => {
+    vi.stubEnv('AGENTCORE_GATEWAY_ID', '')
+    expect(await invoke(agentCoreWebSearch, { query: 'q' })).toBe(
+      'web_search failed: No AgentCore Gateway configured; set AGENTCORE_GATEWAY_ID to a gateway ID or ARN that has a web search connector.'
+    )
+    await expect(agentCoreBackend()('q', 1)).rejects.toThrow(/^No AgentCore Gateway configured/)
+  })
+
+  it('surfaces search failures and keeps results when teardown fails', async () => {
+    mockAgentCoreClient(new Error('signing failed'))
+    await expect(agentCoreBackend('gw')('q', 1)).rejects.toThrow('signing failed')
+
+    const client = mockAgentCoreClient([{ text: 'x', url: 'https://a', title: 'A' }])
+    client.close.mockImplementation(() => {
+      throw new Error('pool destroyed')
+    })
+    expect(await agentCoreBackend('gw')('q', 1)).toEqual([{ title: 'A', url: 'https://a', snippet: 'x' }])
   })
 })

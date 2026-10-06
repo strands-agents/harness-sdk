@@ -93,14 +93,15 @@ describe('resolveBuiltinTools', () => {
     )
   })
 
-  it('accepts only a boolean or "exa" for web_search', () => {
+  it('accepts only a boolean, "exa" or "agentcore" for web_search', () => {
     expect(() => resolveBuiltinTools({ web_search: { fallback: 'exa' } } as never)).toThrow(
-      'builtinTools.web_search must be a boolean or \'exa\', got {"fallback":"exa"}.'
+      'builtinTools.web_search must be a boolean, \'exa\' or \'agentcore\', got {"fallback":"exa"}.'
     )
     expect(() => resolveBuiltinTools({ web_search: 'bing' } as never)).toThrow(
-      'builtinTools.web_search must be a boolean or \'exa\', got "bing".'
+      "builtinTools.web_search must be a boolean, 'exa' or 'agentcore', got \"bing\"."
     )
     expect(resolveBuiltinTools({ web_search: 'exa' }).web_search).toBe('exa')
+    expect(resolveBuiltinTools({ web_search: 'agentcore' }).web_search).toBe('agentcore')
   })
 
   it.each(Object.entries(BUILTIN_TOOL_CONFIG_KEYS))('rejects an unknown %s config key', (name, keys) => {
