@@ -5,4 +5,5 @@ languages:
   python:
     package: strands-postgresql-session-manager
 github: https://github.com/macuartin/strands-postgresql-session-manager
+docsPage: docs/integrations/session-managers/strands-postgresql-session-manager
 addedDate: 2025-12-02
