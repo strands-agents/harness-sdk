@@ -13,8 +13,8 @@ export const PLATFORM_CASE = {
   },
   mcp: {
     id: 'MCP lifecycle',
-    description: 'Configured MCP invokes and shuts down cleanly',
-    testName: 'discovers, invokes, and disposes a configured MCP server',
+    description: 'Exported MCP invokes and shuts down cleanly',
+    testName: 'discovers, invokes, and disposes an exported MCP server',
   },
   session: {
     id: 'Session resume',

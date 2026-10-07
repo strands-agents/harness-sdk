@@ -16,7 +16,6 @@ const bin = join(process.cwd(), 'dist', 'src', 'main.js')
 let root: string
 let archive: string
 let home: string
-let mcpConfig: string
 
 describe('cross-platform exported agent E2E', () => {
   beforeAll(async () => {
@@ -24,18 +23,6 @@ describe('cross-platform exported agent E2E', () => {
     home = join(root, 'home')
     await mkdir(home)
     archive = await createExportedAgent('https://skills.example.test/SKILL.md')
-    mcpConfig = join(root, 'mcp.json')
-    await writeFile(
-      mcpConfig,
-      JSON.stringify({
-        mcpServers: {
-          platform: {
-            command: process.execPath,
-            args: [resolve(import.meta.dirname, '..', 'fixtures', 'platform-integration-mcp.mjs')],
-          },
-        },
-      })
-    )
   })
 
   afterAll(async () => {
@@ -53,7 +40,7 @@ describe('cross-platform exported agent E2E', () => {
   })
 
   it(PLATFORM_CASE.mcp.testName, async () => {
-    const output = await cli('invoke the MCP probe', '--mcp-config', mcpConfig)
+    const output = await cli('invoke the MCP probe')
     expect(output).toContain('platform-mcp-ok')
     const pid = Number(output.match(/"pid":(\d+)/u)?.[1])
     expect(pid).toBeGreaterThan(0)
@@ -69,6 +56,7 @@ describe('cross-platform exported agent E2E', () => {
 
 async function createExportedAgent(skillUrl: string): Promise<string> {
   const model = await fixture('platform-integration-model.ts')
+  const mcpServer = await fixture('platform-integration-mcp.mjs')
   const localSkill = join(root, 'skills', 'local')
   await mkdir(localSkill, { recursive: true })
   await writeFile(
@@ -89,11 +77,19 @@ async function createExportedAgent(skillUrl: string): Promise<string> {
     modelModule: modelReference,
     builtinTools: [],
     builtinPlugins: [],
+    mcpServers: {
+      platform: {
+        command: 'node',
+        args: ['./platform-integration-mcp.mjs'],
+        files: ['./platform-integration-mcp.mjs'],
+      },
+    },
     memory: false,
     session: { dir: './state/sessions' },
     skills,
   })
   await writeFile(join(root, 'platform-integration-model.ts'), model)
+  await writeFile(join(root, 'platform-integration-mcp.mjs'), mcpServer)
   const destination = join(root, 'platform-agent.zip')
   await writeAgentProject(profile, 'typescript', resolveSkillPaths(skills, root, false), destination, root)
   return destination
