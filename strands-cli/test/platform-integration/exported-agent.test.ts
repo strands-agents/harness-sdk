@@ -1,7 +1,9 @@
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { existsSync } from 'node:fs'
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { delimiter, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { defineHarnessAgentConfig, type HarnessAgentConfig, type HarnessModuleReference } from '@strands-agents/harness'
@@ -9,8 +11,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { CliConfigStore } from '../../src/tui/config.js'
 import { writeAgentProject } from '../../src/tui/project/export.js'
+import {
+  importAgentProject,
+  type AgentProjectLanguage,
+  type ImportedAgentProject,
+} from '../../src/tui/project/import.js'
 import { resolveSkillPaths } from '../../src/tui/skills.js'
 import { sanitizeTerminalText } from '../../src/tui/terminal/sanitize.js'
+import { pythonEnvironment, pythonExecutable } from '../fixtures/python-runtime.js'
 import { expectRestoredTerminal, runTuiCommand } from '../tui-integration/harness.js'
 import { PLATFORM_CASE } from './catalog.js'
 
@@ -19,15 +27,26 @@ const bin = join(process.cwd(), 'dist', 'src', 'main.js')
 let root: string
 let archive: string
 let home: string
+let pythonArchive: string
+let pythonStubs: string
 let profile: HarnessAgentConfig
+let setupHome: string
 
 describe('cross-platform exported agent E2E', () => {
   beforeAll(async () => {
     root = await mkdtemp(join(tmpdir(), 'strands-platform-integration-'))
     home = join(root, 'home')
-    await mkdir(home)
-    profile = await createPlatformProfile('https://skills.example.test/SKILL.md')
+    setupHome = join(root, 'setup-home')
+    pythonStubs = join(root, 'python-stubs')
+    await Promise.all([mkdir(home), mkdir(setupHome), mkdir(pythonStubs)])
+    await copyFile(
+      resolve(import.meta.dirname, '..', 'fixtures', 'platform-integration-sitecustomize.py'),
+      join(pythonStubs, 'sitecustomize.py')
+    )
+    profile = await createPlatformProfile('https://skills.example.test/SKILL.md', 'typescript')
     archive = await exportProfile(profile, 'platform-agent.zip')
+    const exportedPythonProfile = await createPlatformProfile('https://skills.example.test/SKILL.md', 'python')
+    pythonArchive = await exportProfile(exportedPythonProfile, 'platform-python-agent.zip', 'python')
     const config = await CliConfigStore.load(join(home, '.strands', 'cli', 'config.json'))
     await config.saveSetup({
       providers: ['bedrock'],
@@ -80,6 +99,83 @@ describe('cross-platform exported agent E2E', () => {
     expectMcpStopped(finalOutput)
   })
 
+  it.skipIf(!existsSync(pythonExecutable))(PLATFORM_CASE.pythonLifecycle.testName, async () => {
+    await preparePythonArchive(pythonArchive)
+    const secondArchive = join(root, 'lifecycle-python-second.zip')
+    const result = await runTuiCommand({
+      scenario: 'lifecycle-project',
+      command: [process.execPath, bin, '--agent', pythonArchive],
+      cwd: root,
+      exportPath: secondArchive,
+      exportLanguage: 'python',
+      env: cliEnvironment(),
+      timeout: 60_000,
+    })
+    const output = sanitizeTerminalText(result.output)
+    expect(result.returnCode).toBe(0)
+    expect(output).toMatch(/LOCAL_SKILL=true.*REMOTE_SKILL=true/u)
+    expect(output).toContain('platform-mcp-ok')
+    expectMcpStopped(output)
+    expect(result.exportSaved).toBe(true)
+    expectRestoredTerminal(result)
+
+    await preparePythonArchive(secondArchive)
+    const finalOutput = await cliFor(secondArchive, 'invoke the MCP probe after re-import')
+    expect(finalOutput).toContain('platform-mcp-ok')
+    expectMcpStopped(finalOutput)
+  })
+
+  it(PLATFORM_CASE.setupImport.testName, async () => {
+    const exported = join(root, 'setup-imported-agent.zip')
+    const result = await runTuiCommand({
+      scenario: 'lifecycle-setup-import',
+      command: [process.execPath, bin, '--setup'],
+      cwd: root,
+      exportPath: exported,
+      importPath: archive,
+      env: cliEnvironment(setupHome),
+      timeout: 60_000,
+    })
+    const output = sanitizeTerminalText(result.output)
+    expect(result.returnCode).toBe(0)
+    expect(output).toMatch(/LOCAL_SKILL=true.*REMOTE_SKILL=true/u)
+    expect(output).toContain('platform-mcp-ok')
+    expectMcpStopped(output)
+    expect(result.exportSaved).toBe(true)
+    expectRestoredTerminal(result)
+
+    const setupConfig = await CliConfigStore.load(join(setupHome, '.strands', 'cli', 'config.json'))
+    expect(setupConfig.snapshot().agentProject).toMatch(/agent[/\\]agent\.ts$/u)
+    const finalOutput = await cliFor(exported, 'invoke the MCP probe after setup re-import')
+    expect(finalOutput).toContain('platform-mcp-ok')
+    expectMcpStopped(finalOutput)
+  })
+
+  it(PLATFORM_CASE.failures.testName, async () => {
+    const parentFile = join(root, 'not-a-directory')
+    await writeFile(parentFile, 'occupied')
+    const invalidDestination = join(parentFile, 'agent.zip')
+    const save = await runTuiCommand({
+      scenario: 'export-failure',
+      command: [process.execPath, bin],
+      cwd: root,
+      exportPath: invalidDestination,
+      env: cliEnvironment(),
+    })
+    expect(save.returnCode).toBe(0)
+    expect(save.exportSaved).toBe(false)
+    expect(sanitizeTerminalText(save.output)).toContain('file already exists')
+    expectRestoredTerminal(save)
+
+    const corrupt = join(root, 'corrupt-agent.zip')
+    await writeFile(corrupt, 'not a ZIP')
+    const cacheBefore = await cachedAgentEntries()
+    const failure = await cliFailure(corrupt)
+    expect(failure.code).not.toBe(0)
+    expect(failure.output).toMatch(/invalid zip|central directory/iu)
+    expect(await cachedAgentEntries()).toEqual(cacheBefore)
+  })
+
   it(PLATFORM_CASE.exportedAgent.testName, async () => {
     const output = await cli('report capabilities')
     expect(output).toContain('HISTORY=report capabilities')
@@ -103,8 +199,9 @@ describe('cross-platform exported agent E2E', () => {
   })
 })
 
-async function createPlatformProfile(skillUrl: string): Promise<HarnessAgentConfig> {
-  const model = await fixture('platform-integration-model.ts')
+async function createPlatformProfile(skillUrl: string, language: AgentProjectLanguage): Promise<HarnessAgentConfig> {
+  const modelFile = `platform-integration-model.${language === 'python' ? 'py' : 'ts'}`
+  const model = await fixture(modelFile)
   const mcpServer = await fixture('platform-integration-mcp.mjs')
   const localSkill = join(root, 'skills', 'local')
   await mkdir(localSkill, { recursive: true })
@@ -112,18 +209,18 @@ async function createPlatformProfile(skillUrl: string): Promise<HarnessAgentConf
     join(localSkill, 'SKILL.md'),
     '---\nname: local-platform-skill\ndescription: Local platform integration marker.\n---\nUse local-platform-skill.\n'
   )
-  await writeFile(join(root, 'platform-integration-model.ts'), model)
+  await writeFile(join(root, modelFile), model)
   await writeFile(join(root, 'platform-integration-mcp.mjs'), mcpServer)
   const modelReference: HarnessModuleReference = {
     kind: 'model',
-    module: './platform-integration-model.ts',
+    module: `./${modelFile}`,
     export: 'model',
-    language: 'typescript',
-    files: ['./platform-integration-model.ts'],
+    language,
+    files: [`./${modelFile}`],
   }
   const skills = [skillUrl, './skills']
   return defineHarnessAgentConfig({
-    name: 'Platform integration agent',
+    name: `Platform ${language} integration agent`,
     model: 'fixture/platform-integration',
     modelModule: modelReference,
     builtinTools: [],
@@ -136,15 +233,19 @@ async function createPlatformProfile(skillUrl: string): Promise<HarnessAgentConf
       },
     },
     memory: false,
-    session: { dir: './state/sessions' },
+    session: language === 'typescript' ? { dir: './state/sessions' } : false,
     skills,
   })
 }
 
-async function exportProfile(profile: HarnessAgentConfig, name: string): Promise<string> {
+async function exportProfile(
+  profile: HarnessAgentConfig,
+  name: string,
+  language: AgentProjectLanguage = 'typescript'
+): Promise<string> {
   const skills = Array.isArray(profile.skills) ? profile.skills : []
   const destination = join(root, name)
-  await writeAgentProject(profile, 'typescript', resolveSkillPaths(skills, root, false), destination, root)
+  await writeAgentProject(profile, language, resolveSkillPaths(skills, root, false), destination, root)
   return destination
 }
 
@@ -157,13 +258,23 @@ async function cliFor(agent: string, prompt: string, ...args: string[]): Promise
   return `${result.stdout}\n${result.stderr}`
 }
 
-function cliEnvironment(): NodeJS.ProcessEnv {
+function cliEnvironment(targetHome = home): NodeJS.ProcessEnv {
   return {
-    HOME: home,
+    AWS_EC2_METADATA_DISABLED: 'true',
+    HOME: targetHome,
     NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import=${
       pathToFileURL(resolve(import.meta.dirname, '..', 'fixtures', 'platform-integration-fetch.mjs')).href
     }`.trim(),
-    USERPROFILE: home,
+    PYTHONPYCACHEPREFIX: join(targetHome, 'python-cache'),
+    PYTHONPATH: [
+      pythonStubs,
+      resolve(process.cwd(), '..', 'harness-py', 'src'),
+      resolve(process.cwd(), '..', 'strands-py', 'src'),
+      process.env.PYTHONPATH,
+    ]
+      .filter(Boolean)
+      .join(delimiter),
+    USERPROFILE: targetHome,
   }
 }
 
@@ -179,6 +290,64 @@ async function cli(prompt: string, ...args: string[]): Promise<string> {
 
 async function fixture(name: string): Promise<string> {
   return readFile(resolve(import.meta.dirname, '..', 'fixtures', name), 'utf8')
+}
+
+async function preparePythonArchive(path: string): Promise<void> {
+  const previous = { home: process.env.HOME, userProfile: process.env.USERPROFILE }
+  process.env.HOME = home
+  process.env.USERPROFILE = home
+  let project: ImportedAgentProject
+  try {
+    project = importAgentProject(path)
+  } finally {
+    if (previous.home === undefined) delete process.env.HOME
+    else process.env.HOME = previous.home
+    if (previous.userProfile === undefined) delete process.env.USERPROFILE
+    else process.env.USERPROFILE = previous.userProfile
+  }
+  const environment = join(project.root, '.venv')
+  await rm(environment, { recursive: true, force: true })
+  await symlink(pythonEnvironment, environment, 'junction')
+  const manifests = await Promise.all(
+    ['requirements.txt', 'pyproject.toml', 'package.json', 'package-lock.json', 'npm-shrinkwrap.json'].map(
+      async (name) => {
+        try {
+          return await readFile(join(project.root, name), 'utf8')
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+          throw error
+        }
+      }
+    )
+  )
+  const fingerprint = createHash('sha256').update(JSON.stringify(manifests)).digest('hex')
+  await writeFile(join(project.root, '.strands-dependencies'), fingerprint)
+}
+
+async function cachedAgentEntries(): Promise<string[]> {
+  try {
+    return (await readdir(join(home, '.strands', 'cli', 'cache', 'agents'))).sort()
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
+}
+
+async function cliFailure(agent: string): Promise<{ code: number | string; output: string }> {
+  try {
+    await run(process.execPath, [bin, '--agent', agent, '--print', 'unused'], {
+      cwd: root,
+      timeout: 30_000,
+      env: { ...process.env, ...cliEnvironment() },
+    })
+  } catch (error) {
+    const failure = error as Error & { code?: number | string; stderr?: string; stdout?: string }
+    if (failure.code !== undefined) {
+      return { code: failure.code, output: `${failure.stdout ?? ''}\n${failure.stderr ?? ''}` }
+    }
+    throw error
+  }
+  throw new Error('Expected the CLI to reject the corrupt archive.')
 }
 
 function processRunning(pid: number): boolean {

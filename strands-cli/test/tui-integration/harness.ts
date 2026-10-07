@@ -23,7 +23,8 @@ export type TuiScenario =
   | 'startup'
   | 'startup-typing'
 
-export type TuiDriverScenario = TuiScenario | 'lifecycle-profile' | 'lifecycle-project'
+export type TuiDriverScenario =
+  TuiScenario | 'export-failure' | 'lifecycle-profile' | 'lifecycle-project' | 'lifecycle-setup-import'
 
 export interface TuiResult {
   returnCode: number
@@ -56,6 +57,8 @@ export async function runTuiCommand(options: {
   command: readonly string[]
   cwd: string
   exportPath: string
+  exportLanguage?: 'typescript' | 'python'
+  importPath?: string
   env?: NodeJS.ProcessEnv
   timeout?: number
 }): Promise<TuiResult> {
@@ -76,7 +79,9 @@ export async function runTuiCommand(options: {
       env: {
         ...process.env,
         ...options.env,
+        ...(options.exportLanguage ? { STRANDS_CLI_TEST_EXPORT_LANGUAGE: options.exportLanguage } : {}),
         STRANDS_CLI_TEST_EXPORT_PATH: options.exportPath,
+        ...(options.importPath ? { STRANDS_CLI_TEST_IMPORT_PATH: options.importPath } : {}),
         STRANDS_CLI_TEST_SCENARIO: options.scenario,
       },
     }

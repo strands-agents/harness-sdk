@@ -49,6 +49,11 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Prepare exported Python agent runtime
+        run: |
+          python -m venv ../harness-py/.venv
+          python -c "import os, pathlib, subprocess; root=pathlib.Path('../harness-py/.venv'); python=root/('Scripts/python.exe' if os.name == 'nt' else 'bin/python'); subprocess.check_call([str(python), '-m', 'pip', 'install', '--disable-pip-version-check', '-e', '../strands-py', '-e', '../harness-py'])"
+
       - name: Select test Python
         run: python -c "import os, sys; env=open(os.environ['GITHUB_ENV'], 'a'); print(f'PYTHON={sys.executable}', file=env)"
 

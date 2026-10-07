@@ -1,6 +1,11 @@
 import type { TestScenario } from '../reporting/status-table-reporter.js'
 
 export const E2E_CASE = {
+  exportedAgent: {
+    id: 'Exported agent',
+    description: 'A generated archive answers through a live provider',
+    testName: 'runs an exported agent against a live model',
+  },
   toolTurn: {
     id: 'Tool turn',
     description: 'Built CLI asks a live model to create an artifact',

@@ -22,7 +22,10 @@ async function main() {
   const followUpMode = scenario === 'follow-up'
   const approvalMode = scenario === 'approval'
   const setupExportMode = scenario === 'setup-export'
-  const lifecycleMode = scenario === 'lifecycle-profile' || scenario === 'lifecycle-project'
+  const exportFailureMode = scenario === 'export-failure'
+  const setupImportMode = scenario === 'lifecycle-setup-import'
+  const lifecycleMode =
+    scenario === 'lifecycle-profile' || scenario === 'lifecycle-project' || scenario === 'lifecycle-setup-import'
   const panelsMode = scenario === 'panels'
   const startupTyping = scenario === 'startup-typing'
   const intro = scenario === 'startup' || startupTyping
@@ -92,7 +95,11 @@ async function main() {
   let burstOutput = ''
   let noopOutput = ''
   try {
-    await waitFor(['Enter to send', CHAT_READY], lifecycleMode ? 20_000 : 8_000)
+    if (setupImportMode) {
+      await waitFor(['Quickstart', 'Import'], 20_000, false)
+    } else {
+      await waitFor(['Enter to send', CHAT_READY], lifecycleMode ? 20_000 : 8_000)
+    }
 
     if (resize) {
       const start = transcript.length
@@ -128,20 +135,69 @@ async function main() {
       noopOutput = transcript.slice(noopStart)
     }
 
-    if (lifecycleMode) {
-      const profile = scenario === 'lifecycle-profile'
-      const prompt = profile ? 'report capabilities before export' : 'invoke the MCP probe after import'
-      const markers = profile ? ['LOCAL_SKILL=true', 'REMOTE_SKILL=true'] : ['platform-mcp-ok']
+    const exportLanguage = process.env.STRANDS_CLI_TEST_EXPORT_LANGUAGE ?? 'typescript'
+    const submit = async (prompt, markers, approve = false) => {
+      const start = transcript.length
       terminal.write(prompt)
-      await waitFor([prompt], 2_000, false)
+      await waitFor([prompt], 2_000, false, start)
       terminal.write('\r')
-      await waitFor([...markers, '__PLATFORM_IDLE__'], 15_000, false)
+      if (approve) {
+        await waitFor(['Enter choose'], 8_000, false, start)
+        terminal.write('\r')
+      }
+      await waitFor(
+        [...markers, ...(exportLanguage === 'typescript' ? ['__PLATFORM_IDLE__'] : [])],
+        15_000,
+        false,
+        start
+      )
+      await settle()
+    }
+
+    if (setupImportMode) {
+      terminal.write('\u001b[B')
+      await sleep(200)
+      terminal.write('\r')
+      await waitFor(['Import an agent'], 5_000, false)
+      await sleep(400)
+      terminal.write('\r')
+      await sleep(200)
+      const path = process.env.STRANDS_CLI_TEST_IMPORT_PATH
+      terminal.write(path)
+      await waitFor([path.split(/[\\/]/u).at(-1)], 2_000, false)
+      const commitStart = transcript.length
+      terminal.write('\r')
+      await waitFor(['Click or Enter to choose'], 2_000, false, commitStart)
+      terminal.write('\u001b[Z')
+      await sleep(200)
+      const launchStart = transcript.length
+      terminal.write('\r')
+      await waitFor(['Enter to send', CHAT_READY], 30_000, true, launchStart)
+    }
+
+    if (lifecycleMode) {
+      await submit(
+        scenario === 'lifecycle-profile' ? 'report capabilities before export' : 'report capabilities after import',
+        ['LOCAL_SKILL=true', 'REMOTE_SKILL=true']
+      )
+      if (scenario !== 'lifecycle-profile') {
+        await submit('invoke the MCP probe after import', ['platform-mcp-ok'], scenario === 'lifecycle-setup-import')
+      }
+      const command = `/export ${exportLanguage} "${process.env.STRANDS_CLI_TEST_EXPORT_PATH}"`
+      terminal.write(command)
+      await waitFor([`/export ${exportLanguage}`], 2_000, false)
+      await sleep(200)
+      terminal.write('\r')
+      await waitFor(['Export complete'], 15_000, false)
+      terminal.write('\u001b')
+      await sleep(200)
+    } else if (exportFailureMode) {
       const command = `/export typescript "${process.env.STRANDS_CLI_TEST_EXPORT_PATH}"`
       terminal.write(command)
       await waitFor(['/export typescript'], 2_000, false)
       await sleep(200)
       terminal.write('\r')
-      await waitFor(['Export complete'], 15_000, false)
+      await waitFor(['file already exists'], 15_000, false)
       terminal.write('\u001b')
       await sleep(200)
     } else if (chatMode) {

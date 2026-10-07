@@ -28,7 +28,9 @@ def main() -> int:
     follow_up_mode = scenario == "follow-up"
     approval_mode = scenario == "approval"
     setup_export_mode = scenario == "setup-export"
-    lifecycle_mode = scenario in {"lifecycle-profile", "lifecycle-project"}
+    export_failure_mode = scenario == "export-failure"
+    setup_import_mode = scenario == "lifecycle-setup-import"
+    lifecycle_mode = scenario in {"lifecycle-profile", "lifecycle-project", "lifecycle-setup-import"}
     panels_mode = scenario == "panels"
     startup_typing = scenario == "startup-typing"
     intro = scenario in {"startup", "startup-typing"}
@@ -96,7 +98,10 @@ def main() -> int:
         pump()
 
     try:
-        wait_for([READY_MARKER, CHAT_READY], timeout=20.0 if lifecycle_mode else 8.0)
+        if setup_import_mode:
+            wait_for([b"Quickstart", b"Import"], timeout=20.0, styled=False)
+        else:
+            wait_for([READY_MARKER, CHAT_READY], timeout=20.0 if lifecycle_mode else 8.0)
         wait_for_raw_mode()
 
         def set_size(columns: int, height: int) -> None:
@@ -136,24 +141,70 @@ def main() -> int:
             set_size(120, 40)
             settle(0.2)
             noop_output = bytes(transcript[noop_start:])
-        if lifecycle_mode:
-            if scenario == "lifecycle-profile":
-                prompt = b"report capabilities before export"
-                markers = [b"LOCAL_SKILL=true", b"REMOTE_SKILL=true"]
-            else:
-                prompt = b"invoke the MCP probe after import"
-                markers = [b"platform-mcp-ok"]
+        export_language = os.environ.get("STRANDS_CLI_TEST_EXPORT_LANGUAGE", "typescript")
+
+        def submit(prompt: bytes, markers: list[bytes], approve: bool = False) -> None:
+            start = len(transcript)
             os.write(master, prompt)
-            wait_for([prompt], timeout=2.0, styled=False)
+            wait_for([prompt], timeout=2.0, styled=False, start=start)
             os.write(master, b"\r")
-            wait_for(markers + [b"__PLATFORM_IDLE__"], timeout=15.0, styled=False)
+            if approve:
+                wait_for([b"Enter choose"], timeout=8.0, styled=False, start=start)
+                os.write(master, b"\r")
+            idle = [b"__PLATFORM_IDLE__"] if export_language == "typescript" else []
+            wait_for(markers + idle, timeout=15.0, styled=False, start=start)
+            settle()
+
+        if setup_import_mode:
+            os.write(master, b"\x1b[B")
+            time.sleep(0.2)
+            os.write(master, b"\r")
+            wait_for([b"Import an agent"], timeout=5.0, styled=False)
+            time.sleep(0.4)
+            os.write(master, b"\r")
+            time.sleep(0.2)
+            path = os.environ["STRANDS_CLI_TEST_IMPORT_PATH"].encode()
+            os.write(master, path)
+            wait_for([os.path.basename(path)], timeout=2.0, styled=False)
+            commit_start = len(transcript)
+            os.write(master, b"\r")
+            wait_for([b"Click or Enter to choose"], timeout=2.0, styled=False, start=commit_start)
+            os.write(master, b"\x1b[Z")
+            time.sleep(0.2)
+            launch_start = len(transcript)
+            os.write(master, b"\r")
+            wait_for([READY_MARKER, CHAT_READY], timeout=30.0, start=launch_start)
+
+        if lifecycle_mode:
+            submit(
+                b"report capabilities before export"
+                if scenario == "lifecycle-profile"
+                else b"report capabilities after import",
+                [b"LOCAL_SKILL=true", b"REMOTE_SKILL=true"],
+            )
+            if scenario != "lifecycle-profile":
+                submit(
+                    b"invoke the MCP probe after import",
+                    [b"platform-mcp-ok"],
+                    approve=scenario == "lifecycle-setup-import",
+                )
+            path = os.environ["STRANDS_CLI_TEST_EXPORT_PATH"].encode()
+            command = b'/export ' + export_language.encode() + b' "' + path + b'"'
+            os.write(master, command)
+            wait_for([b"/export " + export_language.encode()], timeout=2.0, styled=False)
+            time.sleep(0.2)
+            os.write(master, b"\r")
+            wait_for([b"Export complete"], timeout=15.0, styled=False)
+            os.write(master, b"\x1b")
+            time.sleep(0.2)
+        elif export_failure_mode:
             path = os.environ["STRANDS_CLI_TEST_EXPORT_PATH"].encode()
             command = b'/export typescript "' + path + b'"'
             os.write(master, command)
             wait_for([b"/export typescript"], timeout=2.0, styled=False)
             time.sleep(0.2)
             os.write(master, b"\r")
-            wait_for([b"Export complete"], timeout=15.0, styled=False)
+            wait_for([b"file already exists"], timeout=15.0, styled=False)
             os.write(master, b"\x1b")
             time.sleep(0.2)
         elif chat_mode:
