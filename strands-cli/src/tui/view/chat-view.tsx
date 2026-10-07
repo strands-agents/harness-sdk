@@ -31,7 +31,7 @@ import { Box, Text, ThemeProvider, useTheme } from './theme.js'
 import { ComposerFooter, PanelHelpContext } from './help-footer.js'
 import { FadeIn } from './fade-in.js'
 
-export type QueuedPromptAction = 'edit' | 'up' | 'down' | 'steer'
+export type QueuedPromptAction = 'edit' | 'up' | 'down'
 export type QueuedPromptTarget = `${string}:${QueuedPromptAction}`
 
 export function ChatView(props: Parameters<typeof ChatViewContent>[0]): ReactElement {
@@ -353,6 +353,9 @@ function ChatViewContent({
               height={editorHeight}
               maxRows={editorMaxRows}
               maxHeight={editorMaxHeight}
+              {...(snapshot.status === 'running' || snapshot.status === 'interrupting'
+                ? { placeholder: 'Enter to queue • Ctrl+J for newline • / for commands' }
+                : {})}
               {...(actionableCommandToken ? { actionableCommandToken } : {})}
               {...(snapshot.composerStatus ? { busyStatus: `${composerSpinner} ${snapshot.composerStatus}` } : {})}
               {...(snapshot.panel && !composerPanel ? { panelStatus: panelEditorStatus(snapshot.panel) } : {})}
@@ -551,7 +554,6 @@ function QueuedPromptSummary({
                       { target: `${prompt.id}:up`, label: '↑', disabled: userIndex === 0 },
                       { target: `${prompt.id}:down`, label: '↓', disabled: userIndex === userPrompts.length - 1 },
                       { target: `${prompt.id}:edit`, label: 'Edit', active: editingId === prompt.id },
-                      { target: `${prompt.id}:steer`, label: 'Steer' },
                     ] as const
                   ).map((button) => (
                     <QueueButton

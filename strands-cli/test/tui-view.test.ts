@@ -347,7 +347,7 @@ describe('ChatView', () => {
     expect(plainOutput.match(/bedrock\/test/g)).toHaveLength(1)
   })
 
-  it('renders guidance inside the composer and a single metadata row below it', () => {
+  it('renders phase-appropriate guidance inside the composer and a single metadata row below it', () => {
     const output = renderView({
       snapshot: snapshot({
         completedTurns: [
@@ -378,6 +378,23 @@ describe('ChatView', () => {
     expect(rows.at(-1)).not.toContain('Enter')
     expect(output).not.toContain('/setup')
     expect(output).not.toContain('/help')
+
+    const runningOutput = renderView({
+      snapshot: snapshot({
+        activeTurn: {
+          id: 'turn-2',
+          prompt: 'work',
+          agentName: 'Strands harness',
+          entries: [],
+          status: 'running',
+        },
+        status: 'running',
+      }),
+      terminalWidth: 100,
+      terminalHeight: 40,
+    })
+    expect(runningOutput).toContain('Enter to queue • Ctrl+J for newline • / for commands')
+    expect(runningOutput).not.toContain('Enter to send')
   })
 
   it('shows active background tasks immediately above the composer', () => {
@@ -579,6 +596,53 @@ describe('ChatView', () => {
     expect(lines[nextMessage + 2]).toBe('Reasoning')
     expect(finalMetrics).toBeGreaterThan(nextMessage)
     expect(lines[finalMetrics + 1]).toBe('')
+  })
+
+  it.each(['hidden', 'compact'] as const)('does not add a blank row after reasoning with %s tools', (toolOutput) => {
+    const output = renderView({
+      snapshot: snapshot({
+        settings: { ...DEFAULT_CHAT_SETTINGS, transcriptSpacing: 'comfortable', toolOutput },
+        completedTurns: [
+          {
+            id: 'turn-1',
+            prompt: 'inspect this',
+            agentName: 'Strands harness',
+            entries: [
+              { id: 'reasoning-1', type: 'reasoning', text: 'I should inspect the files.' },
+              {
+                id: 'tool-1',
+                type: 'tool',
+                toolUseId: 'tool-use-1',
+                name: 'bash',
+                input: { command: 'npm test' },
+                status: 'success',
+              },
+              {
+                id: 'tool-2',
+                type: 'tool',
+                toolUseId: 'tool-use-2',
+                name: 'read',
+                input: { path: 'README.md' },
+                status: 'success',
+              },
+              { id: 'reasoning-2', type: 'reasoning', text: 'I have enough context.' },
+              { id: 'answer-1', type: 'assistant', text: 'Done.' },
+            ],
+            status: 'complete',
+          },
+        ],
+      }),
+      terminalWidth: 100,
+      terminalHeight: 40,
+    })
+
+    const lines = sanitizeTerminalText(output)
+      .split('\n')
+      .map((line) => line.trim())
+    expect(lines[lines.indexOf('I should inspect the files.') + 1]).toContain(
+      toolOutput === 'hidden' ? 'Run npm test' : 'Tool activity'
+    )
+    expect(lines[lines.indexOf('I have enough context.') + 1]).toBe('Strands harness')
   })
 
   it('presents maxTokens as a recoverable output limit', () => {
@@ -881,7 +945,7 @@ describe('ChatView', () => {
     expect(output).toContain('Queued 1/2')
     expect(output).toContain('Run the focused tests')
     expect(output).toContain('Edit')
-    expect(output).toContain('Steer')
+    expect(lines.find((line) => line.includes('Queued 1/2'))).not.toContain('Steer')
   })
 
   it('shows that cancellation is still draining before queued work can run', () => {
@@ -906,7 +970,7 @@ describe('ChatView', () => {
     expect(output).toContain('Interrupting')
     expect(output).toContain('1/1')
     expect(output).toContain('Use a different approach')
-    expect(output).toContain('Steer')
+    expect(output).toContain('Edit')
   })
 
   it('renders autonomous background continuations without a fake user message', () => {

@@ -301,7 +301,7 @@ describe('ChatController', () => {
     })
   })
 
-  it('queues a bang command behind a running turn instead of injecting it as steering', async () => {
+  it('queues a bang command behind a running turn', async () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => {
       release = resolve
@@ -327,9 +327,7 @@ describe('ChatController', () => {
 
     expect(target.queueSteering).not.toHaveBeenCalled()
     expect(controller.getSnapshot().queuedPrompts).toEqual([{ id: 'queued-1', prompt: '!pwd' }])
-    expect(controller.steerQueued()).toBe(true)
-    expect(target.queueSteering).not.toHaveBeenCalled()
-    expect(target.cancel).toHaveBeenCalledOnce()
+    expect(target.cancel).not.toHaveBeenCalled()
 
     release()
     await running
@@ -1073,81 +1071,6 @@ describe('ChatController', () => {
     ])
     release()
     await running
-  })
-
-  it('turns a queued prompt into live steering without cancelling the turn', async () => {
-    let release!: () => void
-    const gate = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    const target = backend(async function* () {
-      yield { type: 'textDelta', text: 'Working.' }
-      await gate
-      return { stopReason: 'endTurn' }
-    })
-    let consumeSteering = (): void => {}
-    target.queueSteering = vi.fn((_prompt, onConsumed) => {
-      consumeSteering = onConsumed
-      return true
-    })
-    target.drainSteering = () => []
-    const controller = new ChatController(target)
-
-    const running = controller.submit('first')
-    await vi.waitFor(() => expect(controller.getSnapshot().status).toBe('running'))
-    const queued = controller.submit('change direction now')
-    const queuedId = controller.getSnapshot().queuedPrompts[0]!.id
-
-    expect(controller.steerQueued(queuedId)).toBe(true)
-    expect(target.queueSteering).toHaveBeenCalledWith('change direction now', expect.any(Function))
-    expect(target.cancel).not.toHaveBeenCalled()
-    expect(controller.getSnapshot().queuedPrompts).toEqual([])
-    expect(controller.getSnapshot().pendingSteering).toEqual(['change direction now'])
-    consumeSteering()
-    expect(controller.getSnapshot().pendingSteering).toEqual([])
-    expect(controller.getSnapshot().activeTurn?.entries.at(-1)).toMatchObject({
-      type: 'user',
-      text: 'change direction now',
-    })
-    await expect(queued).resolves.toBeUndefined()
-
-    release()
-    await running
-  })
-
-  it('promotes an existing queued prompt for steering without duplicating it', async () => {
-    let release!: () => void
-    const gate = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    const prompts: string[] = []
-    const target = backend(async function* (prompt) {
-      prompts.push(prompt)
-      if (prompt === 'first') {
-        yield { type: 'textDelta', text: 'Initial direction.' }
-        await gate
-      }
-      return { stopReason: 'endTurn' }
-    })
-    const controller = new ChatController(target)
-
-    const first = controller.submit('first')
-    await vi.waitFor(() => expect(controller.getSnapshot().status).toBe('running'))
-    const second = controller.submit('ordinary follow-up')
-    const third = controller.submit('steer with this')
-    const steeringId = controller.getSnapshot().queuedPrompts[1]!.id
-
-    expect(controller.steerQueued(steeringId)).toBe(true)
-    expect(target.cancel).toHaveBeenCalledOnce()
-    expect(controller.getSnapshot()).toMatchObject({
-      status: 'interrupting',
-      queuedPrompts: [{ id: steeringId, prompt: 'steer with this' }, { prompt: 'ordinary follow-up' }],
-    })
-
-    release()
-    await Promise.all([first, second, third])
-
-    expect(prompts).toEqual(['first', 'steer with this', 'ordinary follow-up'])
   })
 
   it('closes on exit words and converts backend failures into turn errors', async () => {

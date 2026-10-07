@@ -379,7 +379,7 @@ describe('TUI mouse input', () => {
     expect(controller.getSnapshot().panel?.id).toBe(panelId)
   })
 
-  it('steers with rewritten queued text without leaving a stale composer draft', async () => {
+  it('updates queued text without leaving a stale composer draft', async () => {
     const input = ttyInput()
     const output = ttyOutput(100, 30)
     const frame = captureFrame(output)
@@ -395,8 +395,6 @@ describe('TUI mouse input', () => {
       }
       return { stopReason: 'endTurn' }
     }
-    target.queueSteering = vi.fn(() => true)
-    target.drainSteering = () => []
     const controller = new ChatController(target, {
       runtime: { version: '1.2.3', model: 'model-00', cwd: '/work' },
     })
@@ -423,17 +421,12 @@ describe('TUI mouse input', () => {
     input.write('\u007f'.repeat('original guidance'.length))
     input.write('rewritten guidance')
     await vi.waitFor(() => expect(frame().join('\n')).toContain('rewritten guidance'))
-    const steer = findText(frame(), 'Steer')
-    input.write(mouseInputSequence(0, steer.column, steer.row, 'M'))
-    input.write(mouseInputSequence(3, steer.column, steer.row, 'm'))
-
-    await vi.waitFor(() =>
-      expect(target.queueSteering).toHaveBeenCalledWith('rewritten guidance', expect.any(Function))
-    )
+    input.write('\r')
     await vi.waitFor(() => {
       const visible = frame().join('\n')
       expect(visible.match(/rewritten guidance/gu)).toHaveLength(1)
-      expect(visible).toContain('Steering · rewritten guidance')
+      expect(visible).toContain('Queued · rewritten guidance')
+      expect(visible).not.toContain('· editing')
     })
 
     release()

@@ -370,33 +370,6 @@ export class ChatController implements ChatControllerApi {
     return pending
   }
 
-  steerQueued(id = this._pendingSubmissions.find((pending) => pending.kind === 'user')?.id): boolean {
-    if (!id || this._closed) {
-      return false
-    }
-    const index = this._pendingSubmissions.findIndex((pending) => pending.id === id)
-    if (index < 0) {
-      return false
-    }
-    const pending = this._pendingSubmissions[index]!
-    if (pending.kind !== 'user') {
-      return false
-    }
-    if (!pending.prompt.startsWith('!') && this._queueLiveSteering(pending.prompt)) {
-      this._pendingSubmissions.splice(index, 1)
-      pending.resolve(undefined)
-      this._emit()
-      return true
-    }
-    if (index > 0) {
-      this._pendingSubmissions.splice(index, 1)
-      this._pendingSubmissions.unshift(pending)
-    }
-    this.cancel()
-    this._emit()
-    return true
-  }
-
   updateQueuedPrompt(id: string, prompt: string): boolean {
     const normalized = prompt.trim()
     const pending = this._pendingSubmissions.find(

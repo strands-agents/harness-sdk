@@ -38,6 +38,7 @@ export function PromptEditor({
   cursor,
   panelStatus,
   busyStatus,
+  placeholder,
   actionableCommandToken,
   width = 80,
   height: fixedHeight,
@@ -53,6 +54,7 @@ export function PromptEditor({
   cursor: number
   panelStatus?: string
   busyStatus?: string
+  placeholder?: string
   actionableCommandToken?: string
   width?: number
   height?: number
@@ -105,7 +107,9 @@ export function PromptEditor({
         <Box height={1} flexShrink={0}>
           <Text wrap="truncate-end">
             <BlinkingCursor animate={animateCursor} />
-            <Text dimColor>{promptPlaceholder(width - prefixWidth - PROMPT_PADDING_WIDTH - 1 - frameSize)}</Text>
+            <Text dimColor>
+              {placeholder ?? promptPlaceholder(width - prefixWidth - PROMPT_PADDING_WIDTH - 1 - frameSize)}
+            </Text>
           </Text>
         </Box>
       )}

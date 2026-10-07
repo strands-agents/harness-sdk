@@ -179,7 +179,7 @@ describe('prompt editor input', () => {
     expect(reduceInput(submitted.state, '', { upArrow: true }, 'idle').state.input).toBe('hello')
   })
 
-  it('queues with Enter, steers with Ctrl+G or modified Enter, and preserves drafts when interrupted', () => {
+  it('queues with Enter and preserves drafts when interrupted', () => {
     const typed = reduceInput(emptyEditor(), 'change direction', {}, 'running').state
 
     expect(reduceInput(typed, '', { return: true }, 'running')).toMatchObject({
@@ -192,14 +192,13 @@ describe('prompt editor input', () => {
       state: { input: 'change direction' },
     })
     expect(reduceInput(typed, '', { return: true, ctrl: true }, 'running')).toMatchObject({
-      action: 'steer',
+      action: 'submit',
       prompt: 'change direction',
       state: { input: '' },
     })
     expect(reduceInput(typed, 'g', { ctrl: true }, 'running')).toMatchObject({
-      action: 'steer',
-      prompt: 'change direction',
-      state: { input: '' },
+      action: 'none',
+      state: { input: 'change direction' },
     })
   })
 })

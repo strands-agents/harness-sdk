@@ -52,7 +52,6 @@ export type InputPhase = 'idle' | 'running'
 type InputResult =
   | { state: EditorState; action: 'none' }
   | { state: EditorState; action: 'submit'; prompt: string }
-  | { state: EditorState; action: 'steer'; prompt: string }
   | { state: EditorState; action: 'cancel' }
 
 export interface PromptViewportRow {
@@ -69,17 +68,9 @@ export function reduceInput(state: EditorState, character: string, key: Partial<
   if (key.escape && phase === 'running') {
     return { state, action: 'cancel' }
   }
-  if (key.ctrl && character === 'g' && phase === 'running') {
-    const submitted = submitEditor(state, state.input)
-    return submitted.action === 'submit' ? { ...submitted, action: 'steer' } : submitted
-  }
   const characters = graphemes(state.input)
   if (character === '\n' || (key.ctrl && character === 'j')) {
     return edit(state, characters, state.cursor, state.cursor, ['\n'])
-  }
-  if (key.return && phase === 'running' && (key.ctrl || key.meta || key.super)) {
-    const submitted = submitEditor(state, state.input)
-    return submitted.action === 'submit' ? { ...submitted, action: 'steer' } : submitted
   }
   if (key.return) {
     return submitEditor(state, state.input)

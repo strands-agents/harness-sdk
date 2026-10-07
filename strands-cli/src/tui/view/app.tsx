@@ -269,7 +269,7 @@ export function ChatApp({
     setTranscriptScroll((value) => Math.min(value, maximum))
   }, [])
   const dispatchPrompt = useCallback(
-    (prompt: string, steer = false): void => {
+    (prompt: string): void => {
       const command = prompt.trim().toLowerCase()
       if (command === '/party') {
         setParty((enabled) => !enabled)
@@ -286,7 +286,7 @@ export function ChatApp({
         setFrog({ id: nextFrogId.current, variant })
         return
       }
-      void (steer ? controller.steer(prompt) : controller.submit(prompt))
+      void controller.submit(prompt)
     },
     [controller, openUrl]
   )
@@ -660,15 +660,7 @@ export function ChatApp({
         if (!target) {
           return
         }
-        if (target.action === 'steer') {
-          if (editingQueuedPromptId === target.id) {
-            if (!controller.updateQueuedPrompt(target.id, currentEditor.input)) {
-              return
-            }
-            finishQueuedPromptEdit()
-          }
-          controller.steerQueued(target.id)
-        } else if (target.action === 'up' || target.action === 'down') {
+        if (target.action === 'up' || target.action === 'down') {
           controller.moveQueuedPrompt(target.id, target.action === 'up' ? -1 : 1)
         } else {
           const prompt = snapshot.queuedPrompts.find((candidate) => candidate.id === target.id)
@@ -1110,10 +1102,6 @@ export function ChatApp({
       }
 
       const result = reduceInputSequence(currentEditor, character, key, phase)
-      if (phase === 'running' && key.ctrl && character === 'g' && !currentEditor.input.trim()) {
-        controller.steerQueued()
-        return
-      }
       if (result.action === 'submit') {
         if (editingQueuedPromptId && controller.updateQueuedPrompt(editingQueuedPromptId, result.prompt)) {
           finishQueuedPromptEdit()
@@ -1121,9 +1109,6 @@ export function ChatApp({
           setEditor(result.state)
           dispatchPrompt(result.prompt)
         }
-      } else if (result.action === 'steer') {
-        setEditor(result.state)
-        dispatchPrompt(result.prompt, true)
       } else if (result.action === 'cancel') {
         setEditor(result.state)
         controller.cancel()
@@ -1204,7 +1189,7 @@ function parseQueuedPromptTarget(target: QueuedPromptTarget): { id: string; acti
   const separator = target.lastIndexOf(':')
   const id = target.slice(0, separator)
   const action = target.slice(separator + 1)
-  if (!id || (action !== 'edit' && action !== 'up' && action !== 'down' && action !== 'steer')) {
+  if (!id || (action !== 'edit' && action !== 'up' && action !== 'down')) {
     return undefined
   }
   return { id, action }
