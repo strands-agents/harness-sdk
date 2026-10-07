@@ -15,13 +15,15 @@ const areaCounts = getAreaCounts(allEntries)
 <ChangelogLayout title="Changelog" description="Every release across the Strands Agents SDKs.">
   <div class="cl-page">
     <ChangelogHeader />
-    <div class="cl-mobile-bar">
+    <div class="cl-mobile-bar" data-pagefind-ignore>
       <button class="cl-filter-btn" type="button" data-cl-filter-open aria-expanded="false">
         ☰ Filters <span class="cl-badge" data-cl-active-count hidden>0</span>
       </button>
       <span class="cl-note" data-cl-count>{releases.length} releases</span>
     </div>
-    <div class="cl-body">
+    {/* Each release has its own indexed page; keep the feed out of the index so
+        search results point at the release, not this aggregate page. */}
+    <div class="cl-body" data-pagefind-ignore>
       <ChangelogFilters areas={areaCounts} />
       <div class="cl-feed">
         <p class="cl-sr-status" role="status" aria-live="polite" data-cl-sr-status></p>

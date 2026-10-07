@@ -1,0 +1,91 @@
+---
+title: "Strands Box: The Big Picture"
+date: 2026-10-07
+description: "Strands Box, now in developer preview, is an open source local sandbox for AI agents that pairs operating-system isolation with Dogwood semantic policy. Here's why semantic policy matters, and how Box's design follows from it."
+authors:
+  - marc-brooker
+tags:
+  - Announcement
+  - Open Source
+  - Strands Box
+draft: false
+---
+
+I talk to AWS customers about agents nearly every day. I hear a lot of excitement about the results they're already seeing from agents, including for software development, operations, business processes, and directly serving their customers. I also hear a deep desire for more control, stronger security, and a deeper understanding of how their agents are working. Guided by our customers, we are investing deeply in agent safety, isolation, and policy at AWS.
+
+Last summer we released AgentCore, our platform for building and optimizing agents. AgentCore Runtime is at the center of AgentCore: a secure sandbox for running agents, where each session with each agent gets its own dedicated MicroVM (based on Firecracker, and AWS's two decades of investment in virtualization security). Later last year we released AgentCore Policy, allowing fine-grained control over how cloud-hosted agents use their tools, leveraging the Cedar policy language originally developed at AWS. This year we released [Dogwood](https://github.com/dogwood-policy/dogwood), our open source policy language, designed to bring even more power and control to defining what agents can do. Last week, we [open sourced Dogwood Local Engine](https://aws.amazon.com/blogs/opensource/introducing-the-dogwood-local-engine-temporal-governance-for-agent-actions/), providing a durable, fast, local runtime for Dogwood.
+
+Today, we're excited to announce another piece of our investment in agent safety: [Strands Box](https://github.com/strands-agents/box), an open source local sandbox for AI agents. We're releasing Box in developer preview, combining operating-system isolation with semantic policies written in Dogwood. Together, these controls let developers define what agents can access and the conditions under which they can act.
+
+Strands Box works whether your agent is using tools directly, through MCP, or generating code in shell or Python. Like Dogwood and Strands, Strands Box works with any model, locally or on any cloud. It isn't even tied to the Strands Harness SDK. You can use Box with any agent framework or harness (although, of course, we'd love it if you checked out [Strands harness](/docs/user-guide/harness/)).
+
+What we're particularly excited about in Box is semantic policy: the ability to set policy at a per-tool level, and have it deterministically enforced. For example, with Box's policy you can enforce things like "allow this agent to git push, but only if tests are passing", or "allow this agent to use the payments API, but only up to a total of $100 per day". If you've been following our work on AgentCore Policy, and our policy language Dogwood, these types of policies might sound familiar. That's no coincidence: it's the same underlying technology. Our belief that this is the right level of abstraction for agent policy flows through all the design decisions we made in Strands Box.
+
+Let's start by looking at why semantic policy matters. To do that, we need to ask why we build agents at all. We build agents because they can achieve open-ended or ambiguous goals, finding a dynamic path to solve problems without pre-set solutions. If we have a clear, unambiguous process to follow, we wouldn't build an agent. We'd save time and tokens and build a workflow instead.
+
+This is the core tension of containing agents: we want to take advantage of agents' strengths in dynamic problem solving, their ability to explore and try things, and their flexibility. At the same time, we want to set clear boundaries on what agents can do, and enforce those boundaries deterministically and securely. If the boundaries are too tight, agents become less powerful and less useful. If they're too loose, agents can do unexpected and undesirable things in their environment. To find the right balance for each agent, we need a way to set policy that's powerful, expressive, and exact. Dogwood is a perfect fit.
+
+Let's dive into how Strands Box works under the covers, and then we can get into how those decisions all flowed from policy.
+
+![Strands Box architecture: the agent sits in a kernel-enforced sandbox, and its shell scripts, Python code, MCP tool calls, and network requests can leave only through the policy layer, where Strands Shell, Monty, the MCP broker, and the network gateway ask Dogwood to allow or deny each one before it reaches commands, MCP servers, the filesystem, or the internet.](./resources/strands-box/box-architecture.png)
+
+At its heart, Strands Box is a kernel-enforced sandbox, using the same OS-provided mechanisms as many other sandbox offerings. We use these mechanisms differently from most others: instead of applying policy at the OS sandbox layer, we use it to funnel all interactions with the system and tools to the dedicated policy layer. In other words, the sandbox mechanisms make sure that the policy layer is the only way out of the box. This allows us to put the policy layer in user space, and implement system-, protocol-, and language-aware policy.
+
+We've extended [Strands Shell](https://github.com/strands-agents/shell) to allow you to express policies about the shell scripts your agent can run in Dogwood, and Pydantic's [Monty](https://github.com/pydantic/monty) to do the same for Python scripts. The same applies to MCP tools, filesystem access, and network access. For example, here's a policy that enforces that `git push` must be preceded by a successful `npm test` since the last `git add`, and within the last 15 minutes:
+
+```text title="policy.dw"
+forbid (principal, action == Box::Action::"shell:spawn", resource)
+    when { context.input.program == "git" && context.input has arg1 && context.input.arg1 == "push" }
+    unless temporal {
+       (!Box::Action::"shell:spawn"::response{ input.program: "git", input.arg1: "add" }
+       since within 15m
+       Box::Action::"shell:spawn"::response{ input.program: "npm", input.arg1: "test", input.arg_count: 1, input.cwd: "~/my-project", output.status: 0 })
+    };
+```
+
+This isn't a complete policy (for example a `git switch` could break the promise that only tested code gets committed), but shows what's possible. Dogwood allows complete policies to be written that allow list all the actions you want to do, and prevent all the actions you don't. Here's another example, limiting the agent to 60 calls to the AWS MCP server per hour.
+
+```text title="policy.dw"
+forbid (principal, action == Box::Action::"mcp:call", resource)
+when { context.input.server == "aws" && context.input.method == "tools/call" }
+when temporal {
+  exists (n: Long). (
+    (count for (t: Timepoint). where (
+      formerly within 1h (
+        Box::Action::"mcp:call"::request{ input.server: "aws", input.method: "tools/call" } && tp(t)
+      )
+    )) == n
+    && n >= 60
+  )
+};
+```
+
+This kind of thing is useful for paid APIs, APIs where you have a fixed quota to share across agents, or simply to prevent unexpected bills.
+
+Your first reaction on reading these examples may be that they're difficult to understand, and difficult to write. This is a major area of investment for us over the coming months. We want to make it easy to write, maintain, and understand the policies you need. The good news for today, though, is that frontier coding agents are already great at reading and writing Dogwood, without special skills or plugins.
+
+## There are many ways to build a sandbox
+
+Sandboxing untrusted, and partially trusted, workloads is a classic problem in computing. Since mainframes added memory protection in the 1960s, followed by microprocessor CPUs in the 1970s and 1980s, systems builders have been inventing new ways to isolate workloads. As expected for a problem with 60 years of precedent, there's no shortage of approaches. Let's dive into a few and see what they mean for the kind of policy we can express.
+
+First, we'll start with hardware-backed virtualization. The most obvious approach here is to start with MicroVMs, like [Firecracker](https://firecracker-microvm.github.io/), just like we do [in AWS Lambda](https://www.usenix.org/conference/nsdi20/presentation/agache) and AgentCore Runtime. MicroVMs have a great security posture, a small, trusted compute base, and excellent performance. A key part of that security posture comes from limiting the interactions between the untrusted guest and the trusted host, implementing only a small set of protocols. These protocols allow the host (typically the host VMM process) to work with the guest kernel to pretend to implement hardware like a hard drive or network card. This approach is great for performance and minimizing the TCB, but not great for policy.
+
+Once you get down to the level of the network card, for example, pretty much all you see on the wire is TLS ciphertexts (and maybe the occasional DNS request, depending on how DNS is set up). The community around TLS have spent a long time making exactly what we want to do here – cracking open requests and looking inside them – very difficult indeed. The case of hard drives is a little easier, often plaintext, but at this level most of what you see is read N bytes at offset X, or write these bytes at offset Y. You could carefully reverse engineer these requests to figure out what the guest OS is doing, but that would be very fiddly, quite stateful, and likely brittle. Device emulation is an awkward place to implement rich policy, but a great place to implement the most trusted blunt policy (e.g. all network requests must go to this gateway, block all others).
+
+Second, let's jump up to the syscall level, where container security mechanisms typically sit. There's a lot more flexibility at this level (especially with things like [`SECCOMP_RET_USER_NOTIF`](https://docs.kernel.org/userspace-api/seccomp_filter.html), and macOS 27's new [Endpoint Security](https://developer.apple.com/documentation/endpointsecurity/es_new_descendants_client(_:_:))), with more semantic information about what processes are doing. At the filesystem level you get things like open this file, or write to this file, and at the network level you get things like listen on this port, or connect to this host. It's easier to write rich policy at this level without tracking a lot of state. It's a pretty much perfect place to implement policy like the agent can read files in this path, but not write to them. On the network side, though, you're probably still seeing ciphertexts, and are limited in what you can express. The other challenge at this level is that syscall interfaces are large and constantly growing, creating an ongoing compatibility challenge. An allow list is the most secure, but needs to constantly grow as applications use new kernel features to avoid compatibility problems. A deny list is less secure, and needs to grow as kernels add interfaces that might allow for sandbox escape. Another problem is that filtering syscalls is an awkward mechanism that makes it difficult to implement some functionality, and while it's possible to modify the syscalls themselves, this is unreliable (at least on Linux, where it causes potential TOCTOU problems).
+
+Some sandboxes, notably gVisor, have approached part of these problems by pretending to be a kernel, emulating the syscalls rather than trying to filter them. This approach has proven to be highly effective, but still doesn't get up to a high enough semantic level to implement policy as rich as we would like. At this level we could crack open `execve` and friends to implement policy on `git` invocations, but it would be significantly more difficult to implement semantic policy on MCP calls.
+
+So, with Strands Box, we've chosen a two-pronged approach. Isolate using kernel-level isolation mechanisms, and intercept interactions with the world by providing only one route out of the sandbox: through the policy layer. This allows us to see, and apply policy to, MCP requests, shell programs, Python programs, filesystem, and network accesses.
+
+## There is no free lunch
+
+While we believe our approach is the right one to address the real-world agent isolation challenges we hear from our customers, none of the options in this space come without trade-offs. In particular, Strands Box has more code it needs to trust (security folks would call this the trusted computing base), including complex code like interpreters and protocol interceptors. We have built that code in Rust, and invested in testing, fuzzing, and validation, to improve security. But the reality is that more code means more opportunity for bugs, and in this space, bugs could mean bypassed policy.
+
+We will continue to invest deeply in simplifying, testing, and validating Box's security model. But we recommend for multi-tenant deployments in the cloud that you pair it with a dedicated per-session MicroVM. The easiest way to do this is with AgentCore Runtime, simply running Box inside an AgentCore agent. But you can build the same architecture on EC2, Lambda, or Fargate. This approach allows you to set the finest-grained policy locally on Box, implement tool call policy using AgentCore Policy, and have a strong MicroVM boundary between the different sessions of your agent.
+
+## The bigger picture
+
+Strands Box is the latest step in a long journey of investment in agent safety, policy, and isolation from AWS. We are continuing to invest deeply in this area, including inside the AWS cloud in services like Bedrock and AgentCore, and in open source with Dogwood, Strands, and other upcoming launches. With twenty years of ongoing investment and expertise in virtualization and workload isolation, and over ten years of deep investments in automated reasoning and the mathematical foundations of computing, we're very excited about the expertise we're able to bring to bear, and the roadmap to come.
+
+The innovation we're most proud of here is bringing local semantic policy to agents, including agents which call tools by generating code. We believe that this is a critical capability for agent governance, and we're open sourcing it to invite everybody to build on our investments here.

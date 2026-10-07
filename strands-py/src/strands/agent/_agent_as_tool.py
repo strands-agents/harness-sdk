@@ -10,12 +10,16 @@ import copy
 import logging
 import threading
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 from typing_extensions import override
 
 from ..agent.state import AgentState
+from ..interrupt import Interrupt, _InterruptState
 from ..types._events import AgentAsToolStreamEvent, ToolInterruptEvent, ToolResultEvent
+from ..types._snapshot import Snapshot
 from ..types.content import Messages
+from ..types.exceptions import SnapshotException
 from ..types.interrupt import InterruptResponseContent
 from ..types.tools import AgentTool, ToolGenerator, ToolResultContent, ToolSpec, ToolUse
 
@@ -28,6 +32,8 @@ DELEGATION_DESCRIPTION_SUFFIX = (
     " Calling this tool will return its response directly to the user as the final answer."
     " It should be the only tool called in the turn."
 )
+
+_INTERRUPTED_TURNS_KEY = "sub_agent_interrupted_turns"
 
 
 class _AgentAsTool(AgentTool):
@@ -77,6 +83,9 @@ class _AgentAsTool(AgentTool):
                 values they had at construction time before each call, ensuring every
                 invocation starts from the same baseline regardless of any external
                 interactions with the agent. Defaults to False.
+                When False, the orchestrator also stores the agent's interrupted turn so a
+                sub-agent interrupt can be resumed after a restart; when True the agent keeps
+                its own state, so it needs its own session manager for that.
             delegate: When True, the orchestrator treats this tool's result as the final
                 response and exits without an additional model call. The tool's description
                 is automatically suffixed with an instruction telling the model that this
@@ -183,6 +192,9 @@ class _AgentAsTool(AgentTool):
             prompt = str(tool_input)
 
         tool_use_id = tool_use["toolUseId"]
+        parent = invocation_state.get("agent")
+        # Sub-agent interrupt ids are namespaced per tool call, since two sub-agents can raise the same id.
+        prefix = f"v1:agent_as_tool:{quote(tool_use_id, safe='')}:"
 
         # Serialize access to the underlying agent. _reset_agent_state() mutates
         # the agent before stream_async acquires its own lock, so a concurrent
@@ -203,14 +215,12 @@ class _AgentAsTool(AgentTool):
             return
 
         try:
-            # Determine if we are resuming the sub-agent from an interrupt.
-            if self._is_sub_agent_interrupted():
-                prompt = self._build_interrupt_responses()
-                logger.debug(
-                    "tool_name=<%s>, tool_use_id=<%s> | resuming sub-agent from interrupt",
-                    self._tool_name,
-                    tool_use_id,
-                )
+            if parent is not None and self._is_resuming(parent, prefix):
+                resumed = self._resume_from_interrupt(parent, tool_use, prefix)
+                if not isinstance(resumed, list):
+                    yield resumed
+                    return
+                prompt = resumed
             elif not self._preserve_context:
                 self._reset_agent_state(tool_use_id)
 
@@ -246,7 +256,11 @@ class _AgentAsTool(AgentTool):
 
             # Propagate sub-agent interrupts to the parent agent.
             if result.stop_reason == "interrupt" and result.interrupts:
-                yield ToolInterruptEvent(tool_use, list(result.interrupts))
+                interrupts = list(result.interrupts)
+                if parent is not None:
+                    self._store_interrupted_turn(parent, tool_use_id)
+                    interrupts = [Interrupt(f"{prefix}{i.id}", i.name, i.reason) for i in interrupts]
+                yield ToolInterruptEvent(tool_use, interrupts)
                 return
 
             if result.stop_reason == "cancelled":
@@ -323,7 +337,7 @@ class _AgentAsTool(AgentTool):
     def _reset_agent_state(self, tool_use_id: str) -> None:
         """Reset the wrapped agent to its initial state.
 
-        Restores messages and state to the values captured at construction time.
+        Restores messages, state and interrupt state to the values captured at construction time.
         This mirrors the pattern used by ``GraphNode.reset_executor_state()``.
 
         Args:
@@ -336,25 +350,97 @@ class _AgentAsTool(AgentTool):
         )
         self._agent.messages = copy.deepcopy(self._initial_messages)
         self._agent.state = AgentState(self._initial_state.get())
+        self._agent._interrupt_state = _InterruptState()
 
-    def _is_sub_agent_interrupted(self) -> bool:
-        """Check whether the wrapped agent is in an activated interrupt state."""
-        return self._agent._interrupt_state.activated
+    def _is_resuming(self, parent: Agent, prefix: str) -> bool:
+        """Whether the parent is holding an interrupt raised by this tool call."""
+        state = parent._interrupt_state
+        return state.activated and any(interrupt_id.startswith(prefix) for interrupt_id in state.interrupts)
 
-    def _build_interrupt_responses(self) -> list[InterruptResponseContent]:
-        """Build interrupt response payloads from the sub-agent's interrupt state.
+    def _store_interrupted_turn(self, parent: Agent, tool_use_id: str) -> None:
+        """Store an ephemeral sub-agent's interrupted turn in the parent's interrupt state.
 
-        The parent agent's ``_interrupt_state.resume()`` sets ``.response`` on the shared
-        ``Interrupt`` objects (registered by the executor), so we re-package them in the
-        format expected by ``Agent.stream_async``.
-
-        Returns:
-            List of interrupt response content blocks for resuming the sub-agent.
+        A ``preserve_context=True`` sub-agent keeps its own state instead, and needs its own session
+        manager for the interrupt to be resumable after a restart.
         """
+        if self._preserve_context:
+            if getattr(self._agent, "_session_manager", None) is None:
+                logger.warning(
+                    "tool_name=<%s>, tool_use_id=<%s> | interrupted sub-agent has preserve_context=True and no "
+                    "session manager, so its interrupt cannot be resumed after a restart",
+                    self._tool_name,
+                    tool_use_id,
+                )
+            return
+
+        turns = parent._interrupt_state.context.setdefault(_INTERRUPTED_TURNS_KEY, {})
+        turns[tool_use_id] = copy.deepcopy(self._agent.take_snapshot(preset="session").to_dict())
+
+    def _resume_from_interrupt(
+        self, parent: Agent, tool_use: ToolUse, prefix: str
+    ) -> list[InterruptResponseContent] | ToolInterruptEvent | ToolResultEvent:
+        """Restore the sub-agent's interrupted turn and map the parent's responses back to its interrupt ids.
+
+        Returns the responses to resume with, or the event that ends the call instead: the interrupt
+        raised again if the stored turn could not be loaded, or an error result if there is no turn.
+        """
+        tool_use_id = tool_use["toolUseId"]
+        turns = parent._interrupt_state.context.get(_INTERRUPTED_TURNS_KEY) or {}
+        turn = turns.get(tool_use_id)
+        if turn is not None:
+            try:
+                self._agent.load_snapshot(Snapshot.from_dict(turn))
+            except (SnapshotException, ValueError, KeyError, TypeError) as error:
+                logger.error(
+                    "tool_name=<%s>, tool_use_id=<%s> | failed to restore interrupted sub-agent turn: %s",
+                    self._tool_name,
+                    tool_use_id,
+                    error,
+                )
+                # Keep the turn and raise its interrupts again, so the response can be applied on a later attempt.
+                awaited = (turn.get("data") or {}).get("interrupt_state", {}).get("interrupts") or {}
+                pending = [
+                    interrupt
+                    for interrupt_id, interrupt in parent._interrupt_state.interrupts.items()
+                    if interrupt_id.startswith(prefix) and interrupt_id[len(prefix) :] in awaited
+                ]
+                if pending:
+                    return ToolInterruptEvent(tool_use, pending)
+            else:
+                del turns[tool_use_id]
+        if not self._agent._interrupt_state.activated:
+            if turn is None:
+                logger.error(
+                    "tool_name=<%s>, tool_use_id=<%s> | cannot resume: the interrupted sub-agent turn is not available",
+                    self._tool_name,
+                    tool_use_id,
+                )
+            return ToolResultEvent(
+                {
+                    "toolUseId": tool_use_id,
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": f"Agent '{self._tool_name}' did NOT run and the human's response was NOT applied: "
+                            "its interrupted turn is not available. Do not report the requested action as "
+                            "completed; tell the user it failed and ask them to respond again."
+                        }
+                    ],
+                }
+            )
+
+        logger.debug(
+            "tool_name=<%s>, tool_use_id=<%s> | resuming sub-agent from interrupt", self._tool_name, tool_use_id
+        )
         return [
-            {"interruptResponse": {"interruptId": interrupt.id, "response": interrupt.response}}
-            for interrupt in self._agent._interrupt_state.interrupts.values()
-            if interrupt.response is not None
+            {
+                "interruptResponse": {
+                    "interruptId": response["interruptResponse"]["interruptId"][len(prefix) :],
+                    "response": response["interruptResponse"]["response"],
+                }
+            }
+            for response in parent._interrupt_state.context.get("responses") or []
+            if response["interruptResponse"]["interruptId"].startswith(prefix)
         ]
 
     @override
