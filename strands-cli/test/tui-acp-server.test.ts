@@ -363,6 +363,7 @@ describe('ACP server', () => {
       expect(cliAgent.messages).toHaveLength(2)
       const snapshot: ChatSnapshot = {
         completedTurns: projectMessages(cliAgent.messages, 'Strands harness'),
+        pendingSteering: [],
         queuedPrompts: [],
         notices: [],
         tasks: [],

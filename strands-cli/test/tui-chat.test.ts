@@ -1008,6 +1008,8 @@ describe('ChatController', () => {
       }
       return { stopReason: 'endTurn' }
     })
+    target.queueSteering = vi.fn(() => true)
+    target.drainSteering = vi.fn().mockReturnValueOnce(['change direction now']).mockReturnValue([])
     const controller = new ChatController(target)
 
     const first = controller.submit('first')
@@ -1015,6 +1017,8 @@ describe('ChatController', () => {
     const queued = controller.submit('ordinary follow-up')
     const steering = controller.steer('change direction now')
 
+    expect(target.cancel).not.toHaveBeenCalled()
+    expect(controller.cancel()).toBe(true)
     expect(target.cancel).toHaveBeenCalledOnce()
     expect(controller.getSnapshot().queuedPrompts.map((prompt) => prompt.prompt)).toEqual([
       'change direction now',
@@ -1042,20 +1046,31 @@ describe('ChatController', () => {
       await gate
       return { stopReason: 'endTurn' }
     })
-    target.queueSteering = vi.fn(() => true)
+    let consumeSteering = (): void => {}
+    target.queueSteering = vi.fn((_prompt, onConsumed) => {
+      consumeSteering = onConsumed
+      return true
+    })
+    target.drainSteering = () => []
     const controller = new ChatController(target)
 
     const running = controller.submit('first')
     await vi.waitFor(() => expect(controller.getSnapshot().status).toBe('running'))
     await controller.steer('change direction now')
 
-    expect(target.queueSteering).toHaveBeenCalledWith('change direction now')
+    expect(target.queueSteering).toHaveBeenCalledWith('change direction now', expect.any(Function))
     expect(target.cancel).not.toHaveBeenCalled()
     expect(controller.getSnapshot()).toMatchObject({
-      notices: [],
+      pendingSteering: ['change direction now'],
       queuedPrompts: [],
     })
 
+    consumeSteering()
+    expect(controller.getSnapshot().pendingSteering).toEqual([])
+    expect(controller.getSnapshot().activeTurn?.entries).toEqual([
+      expect.objectContaining({ type: 'assistant', text: 'Working.' }),
+      expect.objectContaining({ type: 'user', text: 'change direction now' }),
+    ])
     release()
     await running
   })
@@ -1070,7 +1085,12 @@ describe('ChatController', () => {
       await gate
       return { stopReason: 'endTurn' }
     })
-    target.queueSteering = vi.fn(() => true)
+    let consumeSteering = (): void => {}
+    target.queueSteering = vi.fn((_prompt, onConsumed) => {
+      consumeSteering = onConsumed
+      return true
+    })
+    target.drainSteering = () => []
     const controller = new ChatController(target)
 
     const running = controller.submit('first')
@@ -1079,9 +1099,16 @@ describe('ChatController', () => {
     const queuedId = controller.getSnapshot().queuedPrompts[0]!.id
 
     expect(controller.steerQueued(queuedId)).toBe(true)
-    expect(target.queueSteering).toHaveBeenCalledWith('change direction now')
+    expect(target.queueSteering).toHaveBeenCalledWith('change direction now', expect.any(Function))
     expect(target.cancel).not.toHaveBeenCalled()
     expect(controller.getSnapshot().queuedPrompts).toEqual([])
+    expect(controller.getSnapshot().pendingSteering).toEqual(['change direction now'])
+    consumeSteering()
+    expect(controller.getSnapshot().pendingSteering).toEqual([])
+    expect(controller.getSnapshot().activeTurn?.entries.at(-1)).toMatchObject({
+      type: 'user',
+      text: 'change direction now',
+    })
     await expect(queued).resolves.toBeUndefined()
 
     release()
@@ -1372,7 +1399,7 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().runtime).toMatchObject({ model: 'ollama/qwen3:8b', effort: 'Auto' })
   })
 
-  it('defers the latest model change and settles a superseded notice', async () => {
+  it('keeps live controls available and defers the latest model change', async () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => {
       release = resolve
@@ -1403,9 +1430,11 @@ describe('ChatController', () => {
     const running = controller.submit('long task')
     await vi.waitFor(() => expect(controller.getSnapshot().status).toBe('running'))
 
-    controller.openContextPanel()
+    await controller.submit('/settings')
+    expect(controller.getSnapshot().panel?.kind).toBe('settings')
+    await controller.submit('/context')
     expect(controller.getSnapshot().panel?.kind).toBe('context')
-    await controller.openModelPanel()
+    await controller.submit('/model')
     expect(controller.getSnapshot().panel?.kind).toBe('models')
     expect(controller.getSnapshot().queuedPrompts).toEqual([])
     expect(target.cancel).not.toHaveBeenCalled()

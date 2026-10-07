@@ -229,6 +229,20 @@ function EntryView({
 }): ReactElement {
   const theme = useTheme()
   const marginTop = settings.transcriptSpacing === 'comfortable' ? 1 : 0
+  if (entry.type === 'user') {
+    return (
+      <Box
+        width="100%"
+        flexDirection="column"
+        paddingX={1}
+        marginTop={1}
+        marginBottom={settings.transcriptSpacing === 'compact' ? 1 : 0}
+        backgroundColor={theme.surface}
+      >
+        <Text>{entry.text}</Text>
+      </Box>
+    )
+  }
   if (entry.type === 'reasoning') {
     if (!settings.showReasoning) {
       return <></>

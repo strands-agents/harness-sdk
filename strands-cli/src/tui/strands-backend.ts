@@ -166,8 +166,13 @@ export class StrandsChatBackend implements ChatBackend {
     return this._shell.stream(command)
   }
 
-  queueSteering(prompt: string): boolean {
-    return this._steering?.enqueue(this._runtime.agent, prompt) ?? false
+  queueSteering(prompt: string, onConsumed: () => void): boolean {
+    this._steering?.observeAgent(this._runtime.agent)
+    return this._steering?.enqueue(this._runtime.agent, prompt, onConsumed) ?? false
+  }
+
+  drainSteering(): string[] {
+    return this._steering?.drain(this._runtime.agent) ?? []
   }
 
   forkState(): ChatForkState {

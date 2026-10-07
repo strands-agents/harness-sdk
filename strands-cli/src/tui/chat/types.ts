@@ -261,7 +261,8 @@ export interface ChatBackend {
   listEfforts?(): readonly ChatEffortOption[]
   setEffort?(effort: string): Promise<string | void>
   streamShell?(command: string): AsyncGenerator<ChatEvent, ChatRunResult, undefined>
-  queueSteering?(prompt: string): boolean
+  queueSteering?(prompt: string, onConsumed: () => void): boolean
+  drainSteering?(): string[]
   forkState?(): ChatForkState
   forkStash?(): Promise<Record<string, JSONValue> | undefined>
   captureConversation?(): Promise<Snapshot>
@@ -286,6 +287,11 @@ export interface ChatBackend {
 }
 
 export type ChatEntry =
+  | {
+      id: string
+      type: 'user'
+      text: string
+    }
   | {
       id: string
       type: 'reasoning'
@@ -450,6 +456,7 @@ export interface ChatVoiceStore {
 export interface ChatSnapshot {
   completedTurns: readonly ChatTurn[]
   activeTurn?: ChatTurn
+  pendingSteering: readonly string[]
   queuedPrompts: readonly {
     id: string
     prompt: string

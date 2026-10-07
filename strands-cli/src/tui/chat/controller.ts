@@ -76,6 +76,7 @@ import {
 export * from './types.js'
 
 const EXIT_WORDS = new Set(['exit', 'quit'])
+const LIVE_LOCAL_COMMAND_NAMES = new Set(['help', 'settings', 'context', 'model'])
 const MAX_PENDING_PEER_MESSAGES = 32
 const TOOL_OUTPUT_EMIT_INTERVAL_MS = 32
 
@@ -92,6 +93,7 @@ interface PendingUserSubmission {
 }
 
 type PendingSubmission = PendingUserSubmission | { kind: 'peer'; id: string; message: PeerMessage }
+type PendingSteering = { prompt: string }
 
 export class ChatController implements ChatControllerApi {
   readonly peerEndpointId: string | undefined
@@ -123,6 +125,7 @@ export class ChatController implements ChatControllerApi {
   private _drainingProjector: TurnProjector | undefined
   private _presentationAbort: AbortController | undefined
   private readonly _pendingSubmissions: PendingSubmission[] = []
+  private readonly _pendingSteering: PendingSteering[] = []
   private _pendingSubmissionRun: Promise<void> | undefined
   private _stopWatchingTasks: (() => void) | undefined
   private _stopWatchingPermissions: (() => void) | undefined
@@ -299,7 +302,7 @@ export class ChatController implements ChatControllerApi {
       this.close()
       return undefined
     }
-    if (/^\/help(?:\s|$)/iu.test(prompt) && !this._resourceChanging && this._panel?.kind !== 'permission') {
+    if (isLiveLocalCommand(prompt) && !this._resourceChanging && this._panel?.kind !== 'permission') {
       return this._executeSubmission(prompt)
     }
     if (
@@ -359,10 +362,8 @@ export class ChatController implements ChatControllerApi {
     if (!this.busy) {
       return this._executeSubmission(prompt)
     }
-    if (this._activeProjector && this._backend.queueSteering) {
-      if (this._backend.queueSteering(prompt)) {
-        return undefined
-      }
+    if (this._queueLiveSteering(prompt)) {
+      return undefined
     }
     const pending = this._enqueueSubmission(prompt, true)
     this.cancel()
@@ -381,13 +382,11 @@ export class ChatController implements ChatControllerApi {
     if (pending.kind !== 'user') {
       return false
     }
-    if (!pending.prompt.startsWith('!') && this._activeProjector && this._backend.queueSteering) {
-      if (this._backend.queueSteering(pending.prompt)) {
-        this._pendingSubmissions.splice(index, 1)
-        pending.resolve(undefined)
-        this._emit()
-        return true
-      }
+    if (!pending.prompt.startsWith('!') && this._queueLiveSteering(pending.prompt)) {
+      this._pendingSubmissions.splice(index, 1)
+      pending.resolve(undefined)
+      this._emit()
+      return true
     }
     if (index > 0) {
       this._pendingSubmissions.splice(index, 1)
@@ -556,6 +555,7 @@ export class ChatController implements ChatControllerApi {
       projector.fail(error)
     } finally {
       clearTimeout(toolOutputEmitTimer)
+      this._queueUndeliveredSteering(this._backend.drainSteering?.() ?? [])
       const wasDetachedByCancellation = this._drainingProjector === projector
       if (!wasDetachedByCancellation) {
         this._completedTurns.push(projector.snapshot())
@@ -636,6 +636,7 @@ export class ChatController implements ChatControllerApi {
 
   cancel(): boolean {
     if (this._activeProjector) {
+      const undeliveredSteering = this._backend.drainSteering?.() ?? []
       const projector = this._activeProjector
       projector.markCancelled()
       this._completedTurns.push(projector.snapshot())
@@ -643,6 +644,7 @@ export class ChatController implements ChatControllerApi {
       this._drainingProjector = projector
       this._presentationAbort?.abort()
       this._backend.cancel()
+      this._queueUndeliveredSteering(undeliveredSteering)
       this._emit()
       return true
     }
@@ -667,6 +669,8 @@ export class ChatController implements ChatControllerApi {
       this._hardExitCode = this._exitCode
       this._activeProjector?.markCancelled()
       this._presentationAbort?.abort()
+      this._backend.drainSteering?.()
+      this._pendingSteering.length = 0
       this._backend.cancel()
     }
     this._resolvePendingSubmissions()
@@ -677,6 +681,8 @@ export class ChatController implements ChatControllerApi {
     this._stopWatchingUsage()
     if (this._activeProjector || this._drainingProjector) {
       this._presentationAbort?.abort()
+      this._backend.drainSteering?.()
+      this._pendingSteering.length = 0
       this._backend.cancel()
     }
     this._resolvePendingSubmissions()
@@ -705,6 +711,51 @@ export class ChatController implements ChatControllerApi {
       this._emit()
       this._startPendingSubmissions()
     })
+  }
+
+  private _queueLiveSteering(prompt: string): boolean {
+    if (!this._activeProjector || !this._backend.queueSteering) {
+      return false
+    }
+    const projector = this._activeProjector
+    let receipt: PendingSteering | undefined
+    let consumed = false
+    const queued = this._backend.queueSteering(prompt, () => {
+      if (consumed) {
+        return
+      }
+      consumed = true
+      projector.appendUserMessage(prompt)
+      if (receipt) {
+        const index = this._pendingSteering.indexOf(receipt)
+        if (index >= 0) {
+          this._pendingSteering.splice(index, 1)
+        }
+      }
+      this._emit()
+    })
+    if (!queued) {
+      return false
+    }
+    if (consumed) {
+      return true
+    }
+    receipt = { prompt }
+    this._pendingSteering.push(receipt)
+    this._emit()
+    return true
+  }
+
+  private _queueUndeliveredSteering(prompts: readonly string[]): void {
+    for (const prompt of prompts) {
+      const index = this._pendingSteering.findIndex((pending) => pending.prompt === prompt)
+      if (index >= 0) {
+        this._pendingSteering.splice(index, 1)
+      }
+    }
+    for (const prompt of [...prompts].reverse()) {
+      void this._enqueueSubmission(prompt, true)
+    }
   }
 
   private _startPendingSubmissions(): void {
@@ -910,6 +961,7 @@ export class ChatController implements ChatControllerApi {
     return {
       completedTurns: [...this._completedTurns],
       ...(activeTurn ? { activeTurn } : {}),
+      pendingSteering: this._pendingSteering.map(({ prompt }) => sanitizeTerminalText(prompt)),
       queuedPrompts: this._pendingSubmissions.map((pending) => ({
         id: pending.id,
         prompt: sanitizeTerminalText(pending.kind === 'peer' ? pending.message.body : pending.prompt),
@@ -2153,4 +2205,9 @@ export class ChatController implements ChatControllerApi {
   private _openError(title: string, label: string, description: string): void {
     this._openPanel({ kind: 'error', title, rows: [{ label, description, tone: 'danger' }] })
   }
+}
+
+function isLiveLocalCommand(prompt: string): boolean {
+  const invocation = parseCommandInvocation(prompt)
+  return invocation?.prefix === '/' && LIVE_LOCAL_COMMAND_NAMES.has(invocation.name.toLowerCase())
 }

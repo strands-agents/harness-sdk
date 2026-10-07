@@ -7,7 +7,7 @@ const CONTROLS = [
   [
     'Steer running work',
     'Ctrl+G',
-    'Ctrl+G sends your draft immediately; with an empty draft it steers the first queued message.',
+    'Ctrl+G sends your draft at the next safe point; with an empty draft it steers the first queued message.',
   ],
   [
     'Interrupt or exit',
