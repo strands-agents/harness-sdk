@@ -1,5 +1,7 @@
 import type { Tool } from '../tools/tool.js'
+import type { ToolProvider } from '../tools/tool-provider.js'
 import { ToolValidationError, ToolNotFoundError } from '../errors.js'
+import { logger } from '../logging/index.js'
 
 /** @internal Maximum tool-name length accepted by the registry. */
 export const MAX_TOOL_NAME_LENGTH = 64
@@ -9,6 +11,9 @@ export const MAX_TOOL_NAME_LENGTH = 64
  */
 export class ToolRegistry {
   private _tools: Map<string, Tool> = new Map()
+  private _toolProviders: ToolProvider[] = []
+  /** Identifies this registry as a single consumer across every provider it registers. */
+  private readonly _registryId = globalThis.crypto.randomUUID()
 
   /**
    * Creates a new ToolRegistry, optionally pre-populated with tools.
@@ -18,6 +23,56 @@ export class ToolRegistry {
   constructor(tools?: Tool[]) {
     if (tools) {
       this.add(tools)
+    }
+  }
+
+  /**
+   * Registers a {@link ToolProvider}, counting this registry as one of its consumers.
+   *
+   * Does not load the provider's tools — the caller awaits {@link ToolProvider.loadTools} and
+   * registers the results separately, since loading is async and this method is not.
+   *
+   * @param provider - The tool provider to register.
+   */
+  addProvider(provider: ToolProvider): void {
+    this._toolProviders.push(provider)
+    provider.addConsumer(this._registryId)
+  }
+
+  /**
+   * Tool providers registered via {@link addProvider}.
+   *
+   * @returns The registered providers, in registration order.
+   */
+  get toolProviders(): readonly ToolProvider[] {
+    return this._toolProviders
+  }
+
+  /**
+   * Removes this registry as a consumer from every registered tool provider.
+   *
+   * Attempts every provider even if one fails, to minimize resource leakage, then throws the
+   * first failure (if any) once all removals have settled.
+   */
+  async cleanup(): Promise<void> {
+    const results = await Promise.allSettled(
+      this._toolProviders.map((provider) => this._removeProviderConsumer(provider))
+    )
+
+    const firstFailure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+    if (firstFailure) {
+      throw firstFailure.reason
+    }
+  }
+
+  private async _removeProviderConsumer(provider: ToolProvider): Promise<void> {
+    const providerName = provider.constructor.name
+    try {
+      await provider.removeConsumer(this._registryId)
+      logger.debug(`provider=<${providerName}> | removed provider consumer`)
+    } catch (error) {
+      logger.error(`provider=<${providerName}>, error=<${error}> | failed to remove provider consumer`)
+      throw error
     }
   }
 

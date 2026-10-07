@@ -27,6 +27,7 @@ import { deepCopy } from '../types/json.js'
 import type { JSONValue } from '../types/json.js'
 import { McpClient } from '../mcp/index.js'
 import { isValidToolName, type Tool } from '../tools/tool.js'
+import { ToolProvider } from '../tools/tool-provider.js'
 import type { ToolChoice, ToolSpec } from '../tools/types.js'
 import { cloneSystemPrompt, systemPromptFromData } from '../types/messages.js'
 import { normalizeError, ConcurrentInvocationError, StructuredOutputError } from '../errors.js'
@@ -135,7 +136,7 @@ import type { BackgroundTasksConfig } from '../background-tasks/types.js'
  * {@link Agent.asTool}, so they can be passed directly without calling
  * `.asTool()` explicitly.
  */
-export type ToolList = (Tool | McpClient | Agent | ToolList)[]
+export type ToolList = (Tool | McpClient | Agent | ToolProvider | ToolList)[]
 
 /**
  * Strategy for executing tool calls that the model emits in a single assistant turn.
@@ -552,12 +553,15 @@ export class Agent implements LocalAgent, InvokableAgent {
       this._conversationManager = resolveConversationManager(config?.contextManager, config?.conversationManager)
     }
 
-    const { tools, mcpClients } = flattenTools(config?.tools ?? [])
+    const { tools, mcpClients, toolProviders } = flattenTools(config?.tools ?? [])
     if (config?.contextManager === 'agentic') {
       tools.push(summarizeContextTool, truncateContextTool, pinContextTool)
     }
     this._toolRegistry = new ToolRegistry(tools)
     this._mcpClients = mcpClients
+    for (const provider of toolProviders) {
+      this._toolRegistry.addProvider(provider)
+    }
 
     // Initialize hooks registry
     this._hooksRegistry = new HookRegistryImplementation()
@@ -816,6 +820,14 @@ export class Agent implements LocalAgent, InvokableAgent {
           oldTools.forEach((name) => this._toolRegistry.remove(name))
           this._toolRegistry.addOrReplace(newTools)
         }
+      })
+    )
+
+    // Load tools from tool providers, registered as consumers in the constructor
+    await Promise.all(
+      this._toolRegistry.toolProviders.map(async (provider) => {
+        const tools = await provider.loadTools()
+        this._toolRegistry.add(tools)
       })
     )
 
@@ -1087,6 +1099,10 @@ export class Agent implements LocalAgent, InvokableAgent {
    * Runs the agent's shutdown procedures at end of life. Safe to call more
    * than once, and a no-op when there is nothing to release.
    *
+   * Releases every {@link ToolProvider} registered via `tools` (removing this agent's tool
+   * registry as a consumer, which lets a provider with no other consumers release its own
+   * resources) in addition to flushing the memory manager.
+   *
    * Call it directly when you own the agent's lifecycle (e.g. draining on a shutdown signal), or bind
    * the agent with `await using` to run it automatically on scope exit.
    *
@@ -1098,6 +1114,7 @@ export class Agent implements LocalAgent, InvokableAgent {
    * ```
    */
   async shutdown(): Promise<void> {
+    await this._toolRegistry.cleanup()
     await this.memoryManager?.flush()
   }
 
@@ -2706,23 +2723,27 @@ function normalizeToolUseNames(messages: Message[]): Message[] {
  * @param tools - Tools or nested arrays of tools
  * @returns Flat array of tools and MCP clients
  */
-function flattenTools(toolList: ToolList): { tools: Tool[]; mcpClients: McpClient[] } {
+function flattenTools(toolList: ToolList): { tools: Tool[]; mcpClients: McpClient[]; toolProviders: ToolProvider[] } {
   const tools: Tool[] = []
   const mcpClients: McpClient[] = []
+  const toolProviders: ToolProvider[] = []
 
   for (const item of toolList) {
     if (Array.isArray(item)) {
-      const { tools: nestedTools, mcpClients: nestedMcpClients } = flattenTools(item)
-      tools.push(...nestedTools)
-      mcpClients.push(...nestedMcpClients)
+      const flattened = flattenTools(item)
+      tools.push(...flattened.tools)
+      mcpClients.push(...flattened.mcpClients)
+      toolProviders.push(...flattened.toolProviders)
     } else if (item instanceof Agent) {
       tools.push(item.asTool())
     } else if (item instanceof McpClient) {
       mcpClients.push(item)
+    } else if (item instanceof ToolProvider) {
+      toolProviders.push(item)
     } else {
       tools.push(item)
     }
   }
 
-  return { tools, mcpClients }
+  return { tools, mcpClients, toolProviders }
 }
