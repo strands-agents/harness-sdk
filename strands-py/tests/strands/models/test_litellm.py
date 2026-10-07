@@ -672,74 +672,82 @@ def test_apply_proxy_prefix_disabled():
 
 
 @pytest.mark.parametrize(
-    ("usage_fields", "exp_cache"),
+    ("usage_factory", "usage_fields", "exp_cache"),
     [
-        ({}, {}),
-        ({"prompt_tokens_details": None, "cache_creation_input_tokens": None}, {}),
-        ({"cache_creation_input_tokens": 10}, {"cacheWriteInputTokens": 10}),
-        ({"cache_creation_input_tokens": 0}, {"cacheWriteInputTokens": 0}),
+        (Usage, {}, {}),
+        (Usage, {"prompt_tokens_details": None, "cache_creation_input_tokens": None}, {}),
+        (Usage, {"cache_creation_input_tokens": 10}, {"cacheWriteInputTokens": 10}),
+        (Usage, {"cache_creation_input_tokens": 0}, {"cacheWriteInputTokens": 0}),
         (
+            Usage,
             {"cache_read_input_tokens": 25, "cache_creation_input_tokens": 10},
             {"cacheReadInputTokens": 25, "cacheWriteInputTokens": 10},
         ),
         (
+            Usage,
             {"cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
             {"cacheReadInputTokens": 0, "cacheWriteInputTokens": 0},
         ),
         (
+            Usage,
             {"prompt_tokens_details": {"cached_tokens": 25, "cache_write_tokens": 10}},
             {"cacheReadInputTokens": 25, "cacheWriteInputTokens": 10},
         ),
         (
+            Usage,
             {"prompt_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 2713}},
             {"cacheReadInputTokens": 0, "cacheWriteInputTokens": 2713},
         ),
         (
+            Usage,
             {"prompt_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0}},
             {"cacheReadInputTokens": 0, "cacheWriteInputTokens": 0},
         ),
-    ],
-)
-def test_format_chunk_metadata_with_cache_tokens(usage_fields, exp_cache, model):
-    usage = Usage(prompt_tokens=100, completion_tokens=50, total_tokens=150, **usage_fields)
-    tru_usage = model.format_chunk({"chunk_type": "metadata", "data": usage})["metadata"]["usage"]
-    exp_usage = {"inputTokens": 100, "outputTokens": 50, "totalTokens": 150, **exp_cache}
-    assert tru_usage == exp_usage
-
-
-@pytest.mark.parametrize(
-    ("cache_write", "tokens_details", "exp_cache"),
-    [
-        (10, None, {"cacheWriteInputTokens": 10}),
-        (0, None, {"cacheWriteInputTokens": 0}),
-        (None, None, {}),
-        ("10", None, {}),
-        (10, SimpleNamespace(cached_tokens=25), {"cacheReadInputTokens": 25, "cacheWriteInputTokens": 10}),
         (
-            10,
-            SimpleNamespace(cached_tokens=25, cache_write_tokens=None),
+            SimpleNamespace,
+            {"prompt_tokens_details": None, "cache_creation_input_tokens": 10},
+            {"cacheWriteInputTokens": 10},
+        ),
+        (
+            SimpleNamespace,
+            {"prompt_tokens_details": None, "cache_creation_input_tokens": 0},
+            {"cacheWriteInputTokens": 0},
+        ),
+        (SimpleNamespace, {"prompt_tokens_details": None, "cache_creation_input_tokens": None}, {}),
+        (SimpleNamespace, {"prompt_tokens_details": None, "cache_creation_input_tokens": "10"}, {}),
+        (
+            SimpleNamespace,
+            {"prompt_tokens_details": SimpleNamespace(cached_tokens=25), "cache_creation_input_tokens": 10},
             {"cacheReadInputTokens": 25, "cacheWriteInputTokens": 10},
         ),
         (
-            10,
-            SimpleNamespace(cached_tokens=25, cache_write_tokens=20),
+            SimpleNamespace,
+            {
+                "prompt_tokens_details": SimpleNamespace(cached_tokens=25, cache_write_tokens=None),
+                "cache_creation_input_tokens": 10,
+            },
+            {"cacheReadInputTokens": 25, "cacheWriteInputTokens": 10},
+        ),
+        (
+            SimpleNamespace,
+            {
+                "prompt_tokens_details": SimpleNamespace(cached_tokens=25, cache_write_tokens=20),
+                "cache_creation_input_tokens": 10,
+            },
             {"cacheReadInputTokens": 25, "cacheWriteInputTokens": 20},
         ),
         (
-            10,
-            SimpleNamespace(cached_tokens=0, cache_write_tokens=0),
+            SimpleNamespace,
+            {
+                "prompt_tokens_details": SimpleNamespace(cached_tokens=0, cache_write_tokens=0),
+                "cache_creation_input_tokens": 10,
+            },
             {"cacheReadInputTokens": 0, "cacheWriteInputTokens": 0},
         ),
     ],
 )
-def test_format_chunk_metadata_with_legacy_cache_tokens(cache_write, tokens_details, exp_cache, model):
-    usage = SimpleNamespace(
-        prompt_tokens=100,
-        completion_tokens=50,
-        total_tokens=150,
-        prompt_tokens_details=tokens_details,
-        cache_creation_input_tokens=cache_write,
-    )
+def test_format_chunk_metadata_with_cache_tokens(usage_factory, usage_fields, exp_cache, model):
+    usage = usage_factory(prompt_tokens=100, completion_tokens=50, total_tokens=150, **usage_fields)
     tru_usage = model.format_chunk({"chunk_type": "metadata", "data": usage})["metadata"]["usage"]
     exp_usage = {"inputTokens": 100, "outputTokens": 50, "totalTokens": 150, **exp_cache}
     assert tru_usage == exp_usage
