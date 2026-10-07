@@ -62,3 +62,6 @@ jobs:
         env:
           STRANDS_CLI_TEST_DIST: 'true'
         run: npm run test:tui-integration
+
+      - name: Run deterministic platform E2E scenarios
+        run: npm run test:platform-integration

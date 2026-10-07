@@ -24,6 +24,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:package-install": "node scripts/test-package-install.mjs",
+    "test:platform-integration": "vitest run --config vitest.platform-integration.config.ts",
     "test:tui-integration": "vitest run --config vitest.tui-integration.config.ts",
     "lint": "eslint bin scripts src test",
     "lint:fix": "eslint bin scripts src test --fix",

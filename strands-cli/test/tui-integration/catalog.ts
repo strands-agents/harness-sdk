@@ -11,6 +11,24 @@ export const TUI_CASE = {
     description: 'Prompt -> streamed reply -> clean exit',
     testName: 'submits a prompt, renders the streamed response, and exits cleanly',
   },
+  followUp: {
+    id: 'Follow-up',
+    scenario: 'follow-up',
+    description: 'A second prompt keeps prior conversation state',
+    testName: 'submits a follow-up turn before exiting',
+  },
+  approval: {
+    id: 'Approval',
+    scenario: 'approval',
+    description: 'Keyboard approval resumes the pending turn',
+    testName: 'approves a pending tool request and resumes the turn',
+  },
+  setupExport: {
+    id: 'Setup + export',
+    scenario: 'setup-export',
+    description: 'Setup request reaches an explicit ZIP save',
+    testName: 'opens setup and saves an export to an explicit path',
+  },
   panels: {
     id: 'Slash panels',
     scenario: 'panels',

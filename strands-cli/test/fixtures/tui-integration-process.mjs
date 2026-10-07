@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { writeFile } from 'node:fs/promises'
+
 await import('../../dist/src/tui/terminal/ink.js')
 const tuiRoot = process.env.STRANDS_CLI_TEST_DIST === 'true' ? '../../dist/src/tui' : '../../src/tui'
 const [{ WorkspaceSandbox }, { ChatController }, { runInkChat }] = await Promise.all([
@@ -11,8 +13,12 @@ const [{ WorkspaceSandbox }, { ChatController }, { runInkChat }] = await Promise
 const sandbox = new WorkspaceSandbox(process.cwd())
 const scenario = process.env.STRANDS_CLI_TEST_SCENARIO ?? 'exit'
 const chatMode = scenario === 'chat'
+const followUpMode = scenario === 'follow-up'
+const approvalMode = scenario === 'approval'
 const shellMode = scenario === 'shell-command' || scenario === 'shell-interrupt'
 let shellAbort
+let approvalRelease
+let turn = 0
 const backend = {
   id: 'lifecycle-fixture',
   name: 'Lifecycle Fixture',
@@ -21,8 +27,33 @@ const backend = {
     return { model: 'fixture/model-alpha', effort: 'Medium' }
   },
   async *stream() {
-    yield { type: 'textDelta', text: chatMode ? 'Fixture reply' : '' }
+    turn += 1
+    if (approvalMode) {
+      yield {
+        type: 'permission',
+        request: {
+          id: 'approval-fixture',
+          toolName: 'write',
+          input: { path: 'approved.txt', content: 'approved' },
+          options: [
+            { id: 'allow', label: 'Allow once', kind: 'allow_once' },
+            { id: 'reject', label: 'Reject', kind: 'reject_once' },
+          ],
+        },
+      }
+      await new Promise((resolve) => {
+        approvalRelease = resolve
+      })
+      yield { type: 'textDelta', text: 'Approval accepted' }
+    } else {
+      yield { type: 'textDelta', text: chatMode ? 'Fixture reply' : followUpMode ? `Fixture turn ${turn}` : '' }
+    }
     return { stopReason: 'endTurn' }
+  },
+  respondPermission(requestId, optionId) {
+    if (requestId !== 'approval-fixture' || optionId !== 'allow') return false
+    approvalRelease?.()
+    return true
   },
   listModels() {
     return [
@@ -101,8 +132,17 @@ const backend = {
   },
 }
 
-const controller = new ChatController(backend, { settings: { animations: false } })
-const idleMarker = shellMode ? '__SHELL_IDLE__' : chatMode ? '__CHAT_IDLE__' : undefined
+const controller = new ChatController(backend, {
+  settings: { animations: false },
+  requestSetup: () => process.stderr.write('__SETUP_REQUESTED__\n'),
+  exportAgentProject: async (_language, destination) => {
+    const path = destination ?? process.env.STRANDS_CLI_TEST_EXPORT_PATH
+    if (!path) return undefined
+    await writeFile(path, 'integration export')
+    return path
+  },
+})
+const idleMarker = shellMode ? '__SHELL_IDLE__' : chatMode || followUpMode || approvalMode ? '__CHAT_IDLE__' : undefined
 if (idleMarker) {
   let observedActivity = false
   controller.subscribe(() => {

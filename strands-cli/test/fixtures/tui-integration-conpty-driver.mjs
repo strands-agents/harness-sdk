@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { Buffer } from 'node:buffer'
+import { existsSync } from 'node:fs'
 import { setTimeout } from 'node:timers'
 import nodePty from 'node-pty'
 
@@ -18,6 +19,9 @@ async function main() {
   const shellMode = { 'shell-command': 'command', 'shell-interrupt': 'interrupt' }[scenario]
   const frogMode = scenario === 'frog'
   const chatMode = scenario === 'chat'
+  const followUpMode = scenario === 'follow-up'
+  const approvalMode = scenario === 'approval'
+  const setupExportMode = scenario === 'setup-export'
   const panelsMode = scenario === 'panels'
   const startupTyping = scenario === 'startup-typing'
   const intro = scenario === 'startup' || startupTyping
@@ -128,6 +132,38 @@ async function main() {
       await waitFor(['hello from integration'], 2_000, false)
       terminal.write('\r')
       await waitFor(['Fixture reply', '__CHAT_IDLE__'], 8_000, false)
+    } else if (followUpMode) {
+      for (const [prompt, reply] of [
+        ['first turn', 'Fixture turn 1'],
+        ['second turn', 'Fixture turn 2'],
+      ]) {
+        terminal.write(prompt)
+        await waitFor([prompt], 2_000, false)
+        terminal.write('\r')
+        await waitFor([reply, '__CHAT_IDLE__'], 8_000, false)
+      }
+    } else if (approvalMode) {
+      terminal.write('request approval')
+      await waitFor(['request approval'], 2_000, false)
+      await sleep(200)
+      terminal.write('\r')
+      await waitFor(['Allow once'], 8_000, false)
+      terminal.write('\r')
+      await waitFor(['Approval accepted', '__CHAT_IDLE__'], 8_000, false)
+    } else if (setupExportMode) {
+      terminal.write('/setup')
+      await waitFor(['/setup'], 2_000, false)
+      await sleep(200)
+      terminal.write('\r')
+      await waitFor(['__SETUP_REQUESTED__'], 8_000, false)
+      const command = `/export typescript ${process.env.STRANDS_CLI_TEST_EXPORT_PATH}`
+      terminal.write(command)
+      await waitFor(['/export typescript'], 2_000, false)
+      await sleep(200)
+      terminal.write('\r')
+      await waitFor(['Export complete'], 8_000, false)
+      terminal.write('\u001b')
+      await sleep(200)
     } else if (panelsMode) {
       for (const [command, markers] of [
         ['/help', ['Send a message']],
@@ -187,6 +223,7 @@ async function main() {
         resizeTranscript: Buffer.from(resizeOutput).toString('base64'),
         resizeBurstTranscript: Buffer.from(burstOutput).toString('base64'),
         resizeNoopTranscript: Buffer.from(noopOutput).toString('base64'),
+        exportSaved: existsSync(process.env.STRANDS_CLI_TEST_EXPORT_PATH),
       })
     )
   } catch (error) {

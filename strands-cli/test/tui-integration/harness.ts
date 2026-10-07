@@ -1,4 +1,8 @@
 import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { URL, fileURLToPath } from 'node:url'
 import { expect } from 'vitest'
@@ -6,7 +10,18 @@ import { expect } from 'vitest'
 const execFileAsync = promisify(execFile)
 
 export type TuiScenario =
-  'chat' | 'exit' | 'frog' | 'panels' | 'resize' | 'shell-command' | 'shell-interrupt' | 'startup' | 'startup-typing'
+  | 'approval'
+  | 'chat'
+  | 'exit'
+  | 'follow-up'
+  | 'frog'
+  | 'panels'
+  | 'resize'
+  | 'setup-export'
+  | 'shell-command'
+  | 'shell-interrupt'
+  | 'startup'
+  | 'startup-typing'
 
 export interface TuiResult {
   returnCode: number
@@ -15,6 +30,7 @@ export interface TuiResult {
   resizeOutput: string
   resizeBurstOutput: string
   resizeNoopOutput: string
+  exportSaved: boolean
 }
 
 export async function runTuiScenario(scenario: TuiScenario): Promise<TuiResult> {
@@ -27,32 +43,39 @@ export async function runTuiScenario(scenario: TuiScenario): Promise<TuiResult> 
   )
   const loader = fileURLToPath(new URL('../fixtures/strands-cli-routing-source-loader.mjs', import.meta.url))
   const fixture = fileURLToPath(new URL('../fixtures/tui-integration-process.mjs', import.meta.url))
-  const { stdout } = await execFileAsync(
-    windows ? process.execPath : (process.env.PYTHON ?? 'python3'),
-    [driver, process.execPath, '--no-warnings=ExperimentalWarning', '--experimental-loader', loader, fixture],
-    {
-      cwd: fileURLToPath(new URL('../..', import.meta.url)),
-      timeout: 25_000,
-      maxBuffer: 2 * 1024 * 1024,
-      env: {
-        ...process.env,
-        STRANDS_CLI_TEST_SCENARIO: scenario,
-      },
+  const exportPath = join(tmpdir(), `strands-tui-export-${randomUUID()}.zip`)
+  try {
+    const { stdout } = await execFileAsync(
+      windows ? process.execPath : (process.env.PYTHON ?? 'python3'),
+      [driver, process.execPath, '--no-warnings=ExperimentalWarning', '--experimental-loader', loader, fixture],
+      {
+        cwd: fileURLToPath(new URL('../..', import.meta.url)),
+        timeout: 25_000,
+        maxBuffer: 2 * 1024 * 1024,
+        env: {
+          ...process.env,
+          STRANDS_CLI_TEST_EXPORT_PATH: exportPath,
+          STRANDS_CLI_TEST_SCENARIO: scenario,
+        },
+      }
+    )
+    const result = JSON.parse(stdout) as Omit<TuiResult, 'output' | 'resizeOutput'> & {
+      transcript: string
+      resizeTranscript: string
+      resizeBurstTranscript: string
+      resizeNoopTranscript: string
     }
-  )
-  const result = JSON.parse(stdout) as Omit<TuiResult, 'output' | 'resizeOutput'> & {
-    transcript: string
-    resizeTranscript: string
-    resizeBurstTranscript: string
-    resizeNoopTranscript: string
-  }
-  return {
-    returnCode: result.returnCode,
-    termiosRestored: result.termiosRestored,
-    output: decode(result.transcript),
-    resizeOutput: decode(result.resizeTranscript),
-    resizeBurstOutput: decode(result.resizeBurstTranscript),
-    resizeNoopOutput: decode(result.resizeNoopTranscript),
+    return {
+      returnCode: result.returnCode,
+      termiosRestored: result.termiosRestored,
+      output: decode(result.transcript),
+      resizeOutput: decode(result.resizeTranscript),
+      resizeBurstOutput: decode(result.resizeBurstTranscript),
+      resizeNoopOutput: decode(result.resizeNoopTranscript),
+      exportSaved: result.exportSaved,
+    }
+  } finally {
+    await rm(exportPath, { force: true })
   }
 }
 

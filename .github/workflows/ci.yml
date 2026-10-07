@@ -166,6 +166,16 @@ jobs:
     with:
       ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
+  cli-package:
+    name: Strands CLI Package
+    needs: detect-changes
+    if: needs.detect-changes.outputs.strands-cli == 'true'
+    uses: ./.github/workflows/harness-cli-test-package-pack.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
   pr-metrics:
     name: PR Metrics Scripts
     needs: detect-changes
@@ -204,6 +214,7 @@ jobs:
         harness-typescript,
         cli,
         cli-tui-integration,
+        cli-package,
         pr-metrics,
       ]
     runs-on: strands-agents_ubuntu-latest_4-core
@@ -211,5 +222,5 @@ jobs:
     steps:
       - uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # release/v1
         with:
-          allowed-skips: dependency-review, python, typescript, docs, mcp, harness-python, harness-typescript, cli, cli-tui-integration, pr-metrics
+          allowed-skips: dependency-review, python, typescript, docs, mcp, harness-python, harness-typescript, cli, cli-tui-integration, cli-package, pr-metrics
           jobs: ${{ toJSON(needs) }}

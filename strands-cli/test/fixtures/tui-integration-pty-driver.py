@@ -25,6 +25,9 @@ def main() -> int:
     shell_mode = {"shell-command": "command", "shell-interrupt": "interrupt"}.get(scenario)
     frog_mode = scenario == "frog"
     chat_mode = scenario == "chat"
+    follow_up_mode = scenario == "follow-up"
+    approval_mode = scenario == "approval"
+    setup_export_mode = scenario == "setup-export"
     panels_mode = scenario == "panels"
     startup_typing = scenario == "startup-typing"
     intro = scenario in {"startup", "startup-typing"}
@@ -137,6 +140,35 @@ def main() -> int:
             wait_for([b"hello from integration"], timeout=2.0, styled=False)
             os.write(master, b"\r")
             wait_for([b"Fixture reply", b"__CHAT_IDLE__"], styled=False)
+        elif follow_up_mode:
+            for prompt, reply in [(b"first turn", b"Fixture turn 1"), (b"second turn", b"Fixture turn 2")]:
+                os.write(master, prompt)
+                wait_for([prompt], timeout=2.0, styled=False)
+                os.write(master, b"\r")
+                wait_for([reply, b"__CHAT_IDLE__"], styled=False)
+        elif approval_mode:
+            os.write(master, b"request approval")
+            wait_for([b"request approval"], timeout=2.0, styled=False)
+            time.sleep(0.2)
+            os.write(master, b"\r")
+            wait_for([b"Allow once"], styled=False)
+            os.write(master, b"\r")
+            wait_for([b"Approval accepted", b"__CHAT_IDLE__"], styled=False)
+        elif setup_export_mode:
+            os.write(master, b"/setup")
+            wait_for([b"/setup"], timeout=2.0, styled=False)
+            time.sleep(0.2)
+            os.write(master, b"\r")
+            wait_for([b"__SETUP_REQUESTED__"], styled=False)
+            path = os.environ["STRANDS_CLI_TEST_EXPORT_PATH"].encode()
+            command = b"/export typescript " + path
+            os.write(master, command)
+            wait_for([b"/export typescript"], timeout=2.0, styled=False)
+            time.sleep(0.2)
+            os.write(master, b"\r")
+            wait_for([b"Export complete"], styled=False)
+            os.write(master, b"\x1b")
+            time.sleep(0.2)
         elif panels_mode:
             panels = [
                 (b"/help", [b"Send a message"]),
@@ -196,6 +228,7 @@ def main() -> int:
                     "resizeTranscript": base64.b64encode(resize_output).decode(),
                     "resizeBurstTranscript": base64.b64encode(burst_output).decode(),
                     "resizeNoopTranscript": base64.b64encode(noop_output).decode(),
+                    "exportSaved": os.path.isfile(os.environ["STRANDS_CLI_TEST_EXPORT_PATH"]),
                 }
             )
         )
