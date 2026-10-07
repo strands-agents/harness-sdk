@@ -1,10 +1,10 @@
 import type { ReactElement } from 'react'
 import type { DOMElement } from 'ink'
 
-import type { ChatModelPanel, ChatPanelFilter, ChatPanelRow, ChatPanelSlider } from '../chat/controller.js'
+import type { ChatModelPanel, ChatPanelRow, ChatPanelSlider } from '../chat/controller.js'
 import type { ModelPanelFocus } from './interaction.js'
 import type { PanelRowsProps } from './panel-components.js'
-import { ProviderList } from './provider-list.js'
+import { PanelSection, PanelSectionList } from './panel-sections.js'
 import { BlinkingCursor } from './text-input.js'
 import { Box, Text, useTheme } from './theme.js'
 import { useSpinner } from './use-spinner.js'
@@ -59,9 +59,10 @@ export function ModelPicker({
       : 'No models available. Configure this provider with /setup.'
   return (
     <Box flexGrow={1} height={height} overflow="hidden">
-      <ProviderColumn
-        filters={filters}
-        filter={filter}
+      <PanelSectionList
+        title="Providers"
+        items={filters}
+        selected={filter}
         focused={focus === 'providers'}
         width={Math.max(1, Math.floor(width / 3))}
         height={height}
@@ -69,15 +70,14 @@ export function ModelPicker({
         {...(hoveredFilter ? { hovered: hoveredFilter } : {})}
         {...(onFilterElement ? { onElement: onFilterElement } : {})}
       />
-      <Box
-        flexGrow={1}
-        flexDirection="column"
-        overflow="hidden"
-        borderStyle="single"
-        borderColor={focus === 'models' || focus === 'search' ? accent : undefined}
-        borderDimColor={focus === 'providers'}
-      >
-        <Box paddingX={1} marginBottom={1} justifyContent="space-between">
+      <PanelSection
+        focused={focus !== 'providers'}
+        meta={
+          allRows.length > rows.length
+            ? `${start + 1}-${Math.min(start + rows.length, allRows.length)} / ${allRows.length}`
+            : `${allRows.length}`
+        }
+        header={
           <Box ref={onSearchElement} flexShrink={1}>
             <Box flexShrink={0} marginRight={1}>
               <Text {...(focus === 'search' ? { color: accent } : { dimColor: true })}>/</Text>
@@ -87,14 +87,8 @@ export function ModelPicker({
               {focus === 'search' ? <BlinkingCursor animate={animate} /> : null}
             </Text>
           </Box>
-          <Box flexShrink={0} marginLeft={1}>
-            <Text dimColor>
-              {allRows.length > rows.length
-                ? `${start + 1}-${Math.min(start + rows.length, allRows.length)} / ${allRows.length}`
-                : `${allRows.length}`}
-            </Text>
-          </Box>
-        </Box>
+        }
+      >
         <ModelRows
           panel={panel}
           rows={rows}
@@ -106,54 +100,7 @@ export function ModelPicker({
           {...(hoveredRow !== undefined ? { hovered: hoveredRow } : {})}
           {...(onRowElement ? { onRowElement } : {})}
         />
-      </Box>
-    </Box>
-  )
-}
-
-function ProviderColumn({
-  width,
-  height,
-  ...props
-}: {
-  width: number
-  height: number
-  filters: readonly ChatPanelFilter[]
-  filter: string
-  focused: boolean
-  pressed?: string
-  hovered?: string
-  onElement?: (id: string, element: DOMElement | null) => void
-}): ReactElement {
-  const { accent } = useTheme()
-  const capacity = Math.max(1, height - 3)
-  const index = Math.max(
-    0,
-    props.filters.findIndex((item) => item.id === props.filter)
-  )
-  const start = Math.max(0, Math.min(index - capacity + 1, props.filters.length - capacity))
-  return (
-    <Box
-      width={width}
-      height={height}
-      flexShrink={0}
-      flexDirection="column"
-      overflow="hidden"
-      borderStyle="single"
-      borderColor={props.focused ? accent : undefined}
-      borderDimColor={!props.focused}
-      paddingLeft={1}
-    >
-      <Text dimColor>Providers</Text>
-      <ProviderList
-        items={props.filters.slice(start, start + capacity)}
-        selected={props.filter}
-        width={Math.max(1, width - 3)}
-        focused={props.focused}
-        {...(props.hovered ? { hovered: props.hovered } : {})}
-        {...(props.pressed ? { pressed: props.pressed } : {})}
-        {...(props.onElement ? { onElement: props.onElement } : {})}
-      />
+      </PanelSection>
     </Box>
   )
 }

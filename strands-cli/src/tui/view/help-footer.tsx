@@ -42,7 +42,7 @@ export function PanelHelpFooter({
             : panel.kind === 'settings'
               ? width < 42
                 ? '↑↓ move · ←→ change · Esc back'
-                : '↑↓ · ←→ change · Tab category · Esc back'
+                : '↑↓ · ←→ change · Tab section · Esc back'
               : panel.kind === 'models'
                 ? width < 53
                   ? 'Ctrl+Y · Tab · / · ↑↓ · Enter · Esc'

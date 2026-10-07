@@ -1,14 +1,4 @@
-export const FROG_THEMES = [
-  'green',
-  'minimal',
-  'homeland',
-  'merlin',
-  'kikker',
-  'circuit',
-  'spectre',
-  'solar',
-  'custom',
-] as const
+export const FROG_THEMES = ['green', 'minimal', 'homeland', 'merlin', 'kikker', 'circuit', 'spectre', 'solar'] as const
 
 export type FrogTheme = (typeof FROG_THEMES)[number]
 
@@ -21,7 +11,6 @@ export const FROG_THEME_LABELS: Record<FrogTheme, string> = {
   kikker: 'Kikker',
   spectre: 'Spectre',
   solar: 'Solar',
-  custom: 'Custom',
 }
 
 export type ResolvedColorMode = 'light' | 'dark'
@@ -66,21 +55,12 @@ export const THEME_COLOR_KEYS = [
   'frog',
 ] as const
 
-export const CUSTOM_THEME_COLOR_KEYS = ['accent', 'frog'] as const
-
-export interface CustomTheme {
-  base: Exclude<FrogTheme, 'custom'>
-  light: Partial<ThemeColors>
-  dark: Partial<ThemeColors>
-}
-
 export interface ChatSettings {
   transcriptSpacing: 'compact' | 'comfortable'
   animations: boolean
   showReasoning: boolean
   toolOutput: 'hidden' | 'compact' | 'full'
   frogTheme: FrogTheme
-  customTheme: CustomTheme
   /** Load MCP servers configured for other tools (Claude Code, Kiro, Gemini CLI, Codex). */
   mcpDiscovery: boolean
   /** Load Agent Skills from other tools' and the workspace's conventional directories. */
@@ -91,7 +71,7 @@ export interface ChatSettings {
   telemetry: boolean
 }
 
-export type ThemeSettings = Pick<ChatSettings, 'frogTheme' | 'customTheme'>
+export type ThemeSettings = Pick<ChatSettings, 'frogTheme'>
 
 export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   transcriptSpacing: 'comfortable',
@@ -99,7 +79,6 @@ export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   showReasoning: true,
   toolOutput: 'compact',
   frogTheme: 'green',
-  customTheme: { base: 'green', light: {}, dark: {} },
   mcpDiscovery: false,
   skillDiscovery: false,
   agentMessaging: true,
@@ -272,15 +251,11 @@ export function parseSettings(value: unknown, path: string): ChatSettings {
   if (toolOutput !== 'hidden' && toolOutput !== 'compact' && toolOutput !== 'full') {
     throw new Error(`Invalid CLI config at ${path}: settings.toolOutput must be "hidden", "compact", or "full"`)
   }
-  const selectedFrogTheme =
-    value.frogTheme === 'aurora' || value.frogTheme === 'moonlight' || value.frogTheme === 'magma'
-      ? DEFAULT_CHAT_SETTINGS.frogTheme
-      : (value.frogTheme ?? DEFAULT_CHAT_SETTINGS.frogTheme)
+  const selectedFrogTheme = legacyFrogTheme(value) ?? value.frogTheme
   const frogTheme = FROG_THEMES.find((theme) => theme === selectedFrogTheme)
   if (frogTheme === undefined) {
     throw new Error(`Invalid CLI config at ${path}: settings.frogTheme must be one of ${FROG_THEMES.join(', ')}`)
   }
-  const customTheme = parseCustomTheme(value.customTheme, path)
 
   return {
     transcriptSpacing,
@@ -288,7 +263,6 @@ export function parseSettings(value: unknown, path: string): ChatSettings {
     showReasoning,
     toolOutput,
     frogTheme,
-    customTheme,
     mcpDiscovery: booleanSetting('mcpDiscovery'),
     skillDiscovery: booleanSetting('skillDiscovery'),
     agentMessaging: booleanSetting('agentMessaging'),
@@ -296,35 +270,17 @@ export function parseSettings(value: unknown, path: string): ChatSettings {
   }
 }
 
-function parseCustomTheme(value: unknown, path: string): CustomTheme {
-  if (value === undefined) {
-    return globalThis.structuredClone(DEFAULT_CHAT_SETTINGS.customTheme)
+/** The preset that replaces a removed theme saved by an earlier version, if `settings` names one. */
+function legacyFrogTheme(settings: Record<string, unknown>): FrogTheme | undefined {
+  if (settings.frogTheme === undefined || ['aurora', 'moonlight', 'magma'].includes(settings.frogTheme as string)) {
+    return DEFAULT_CHAT_SETTINGS.frogTheme
   }
-  if (
-    !isRecord(value) ||
-    typeof value.base !== 'string' ||
-    value.base === 'custom' ||
-    !FROG_THEMES.includes(value.base as FrogTheme)
-  ) {
-    throw new Error(`Invalid CLI config at ${path}: customTheme.base must name a preset theme`)
+  if (settings.frogTheme !== 'custom') {
+    return undefined
   }
-  const colors = (mode: ResolvedColorMode): Partial<ThemeColors> => {
-    const candidate = value[mode] ?? {}
-    if (!isRecord(candidate)) {
-      throw new Error(`Invalid CLI config at ${path}: customTheme.${mode} must be an object`)
-    }
-    const result: Partial<ThemeColors> = {}
-    for (const key of THEME_COLOR_KEYS) {
-      const color = candidate[key]
-      if (color === undefined) continue
-      if (typeof color !== 'string' || !/^#[\da-f]{6}$/iu.test(color)) {
-        throw new Error(`Invalid CLI config at ${path}: customTheme.${mode}.${key} must be a #RRGGBB color`)
-      }
-      result[key] = color.toLowerCase()
-    }
-    return result
-  }
-  return { base: value.base as CustomTheme['base'], light: colors('light'), dark: colors('dark') }
+  // Custom themes layered colors over a preset; keep that preset.
+  const base = isRecord(settings.customTheme) ? settings.customTheme.base : undefined
+  return FROG_THEMES.find((theme) => theme === base) ?? DEFAULT_CHAT_SETTINGS.frogTheme
 }
 
 export function parseSettingUpdate(setting: string, current: ChatSettings): Partial<ChatSettings> | undefined {
@@ -333,37 +289,6 @@ export function parseSettingUpdate(setting: string, current: ChatSettings): Part
     return undefined
   }
   switch (name) {
-    case 'customTheme': {
-      let theme: unknown
-      try {
-        theme = JSON.parse(decodeURIComponent(selected ?? ''))
-      } catch {
-        return undefined
-      }
-      if (
-        !isRecord(theme) ||
-        Object.keys(theme).some((key) => !['base', 'light', 'dark'].includes(key)) ||
-        theme.base === 'custom' ||
-        !FROG_THEMES.includes(theme.base as FrogTheme)
-      ) {
-        return undefined
-      }
-      for (const mode of ['light', 'dark'] as const) {
-        const colors = theme[mode]
-        if (
-          !isRecord(colors) ||
-          Object.entries(colors).some(
-            ([key, color]) =>
-              !THEME_COLOR_KEYS.includes(key as (typeof THEME_COLOR_KEYS)[number]) ||
-              typeof color !== 'string' ||
-              !/^#[\da-f]{6}$/iu.test(color)
-          )
-        ) {
-          return undefined
-        }
-      }
-      return { frogTheme: 'custom', customTheme: theme as unknown as CustomTheme }
-    }
     case 'transcriptSpacing':
       if (selected !== undefined && selected !== 'compact' && selected !== 'comfortable') {
         return undefined

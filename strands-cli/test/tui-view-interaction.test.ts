@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   agentGridCapacity,
   agentGridColumns,
+  composerPanelHeight,
   cycleModelPanelFocus,
   filterPanelRows,
   moveAgentGridSelection,
@@ -15,11 +16,16 @@ import {
   scrollAgentGridViewport,
   scrollPanelViewport,
   scrollTranscript,
+  settingArrowValue,
   shouldToggleVoiceMute,
 } from '../src/tui/view/interaction.js'
+import { COMPOSER_PANEL_HEIGHT } from '../src/tui/terminal/composer.js'
 import { planTranscriptLayout, transcriptWindow } from '../src/tui/view/transcript-layout.js'
 import { summarizeToolInput, toolAction } from '../src/tui/view/presentation.js'
 import { parseMouseInput, selectScreenText } from '../src/tui/terminal/mouse-input.js'
+import { settingsRows } from '../src/tui/chat/panels.js'
+import { DEFAULT_CHAT_SETTINGS } from '../src/tui/settings.js'
+import { snapshot } from './fixtures/chat-snapshot.js'
 
 describe('voice input', () => {
   it('uses a single empty-editor Space tap for mute without consuming typed spaces', () => {
@@ -52,6 +58,31 @@ describe('panel helpers', () => {
 
     const bare = { id: 'models', kind: 'models' as const, title: 'models', rows: [] }
     expect(cycleModelPanelFocus('models', bare, 1)).toBe('models')
+  })
+
+  it('gives /model and /settings two extra composer rows', () => {
+    const panel = (kind: 'models' | 'settings' | 'context') => ({
+      id: kind,
+      kind,
+      title: kind,
+      rows: [],
+    })
+
+    expect(composerPanelHeight(snapshot({ panel: panel('models') }), 24)).toBe(COMPOSER_PANEL_HEIGHT + 2)
+    expect(composerPanelHeight(snapshot({ panel: panel('settings') }), 24)).toBe(COMPOSER_PANEL_HEIGHT + 2)
+    expect(composerPanelHeight(snapshot({ panel: panel('context') }), 24)).toBe(COMPOSER_PANEL_HEIGHT)
+  })
+
+  it('maps ←→ on a settings row to its neighboring option, and to Off and On for a toggle', () => {
+    const [theme, , animations, , toolOutput] = settingsRows(DEFAULT_CHAT_SETTINGS, 'Appearance')
+
+    expect(settingArrowValue(theme!, -1)).toBeUndefined()
+    expect(settingArrowValue(theme!, 1)).toBe('frogTheme=minimal')
+    expect(settingArrowValue(toolOutput!, -1)).toBe('toolOutput=hidden')
+    expect(settingArrowValue(toolOutput!, 1)).toBe('toolOutput=full')
+    expect(settingArrowValue(animations!, 1)).toBeUndefined()
+    expect(settingArrowValue(animations!, -1)).toBe('animations')
+    expect(settingArrowValue({ label: 'note', description: '' }, 1)).toBeUndefined()
   })
 
   it('presents the SDK Background Tasks management tool', () => {
@@ -118,7 +149,7 @@ describe('panel helpers', () => {
     expect(panelRowCapacity('models', 10)).toBe(5)
     expect(panelRowCapacity('models', 12)).toBe(7)
     expect(panelRowCapacity('sessions', 20)).toBe(10)
-    expect(panelRowCapacity('settings', 20)).toBe(5)
+    expect(panelRowCapacity('settings', 10)).toBe(5)
     expect(scrollPanelViewport(0, 1, 20, 5)).toBe(1)
     expect(scrollPanelViewport(15, 1, 20, 5)).toBe(15)
     expect(scrollPanelViewport(8, -1, 20, 5, 3)).toBe(5)

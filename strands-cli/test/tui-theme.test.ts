@@ -10,7 +10,12 @@ import { PanelOverlay } from '../src/tui/view/panel-components.js'
 import { contextColor, detailLines, permissionLines } from '../src/tui/view/presentation.js'
 import { PromptEditor } from '../src/tui/view/prompt-editor.js'
 import { SettingsControl } from '../src/tui/view/settings-panel.js'
-import { currentColorMode, observeTerminalColorMode, subscribeColorMode } from '../src/tui/view/theme-detection.js'
+import {
+  currentCanvasColor,
+  currentColorMode,
+  observeTerminalColorMode,
+  subscribeColorMode,
+} from '../src/tui/view/theme-detection.js'
 import { getTheme, Text, ThemeProvider } from '../src/tui/view/theme.js'
 import { ChatView } from '../src/tui/view/chat-view.js'
 import { SetupWizard } from '../src/tui/view/setup-wizard/index.js'
@@ -47,7 +52,7 @@ function luminance(hex: string): number {
 }
 
 describe('theme resolution', () => {
-  it.each(FROG_THEMES.filter((name) => name !== 'custom'))('provides readable light and dark colors for %s', (name) => {
+  it.each(FROG_THEMES)('provides readable light and dark colors for %s', (name) => {
     for (const mode of ['light', 'dark'] as const) {
       const theme = getTheme(settings(name), mode)
       expect(theme.mode).toBe(mode)
@@ -69,31 +74,10 @@ describe('theme resolution', () => {
     }
   })
 
-  it('resolves the supplied terminal mode', () => {
-    expect(getTheme(settings(), 'dark').mode).toBe('dark')
-    expect(getTheme(settings(), 'light').mode).toBe('light')
-  })
-
-  it('merges only the active custom variant over its selected base without modifying settings', () => {
-    const custom: ChatSettings = {
-      ...settings('custom'),
-      customTheme: {
-        base: 'merlin',
-        light: { accent: '#654321', frog: '#236741' },
-        dark: { frog: '#b0c0d0' },
-      },
-    }
-    const before = globalThis.structuredClone(custom)
-    expect(getTheme(custom, 'light')).toEqual({
-      ...getTheme(settings('merlin'), 'light'),
-      ...custom.customTheme.light,
-    })
-    expect(getTheme(custom, 'dark')).toEqual({
-      ...getTheme(settings('merlin'), 'dark'),
-      ...custom.customTheme.dark,
-    })
-    expect(custom).toEqual(before)
-    expect(getTheme({ ...custom, frogTheme: 'green' }, 'light')).toEqual(getTheme(settings(), 'light'))
+  it('exposes the terminal canvas color with a palette fallback', () => {
+    expect(getTheme(settings(), 'dark').canvas).toBe('#101213')
+    expect(getTheme(settings(), 'light').canvas).toBe('#ffffff')
+    expect(getTheme(settings(), 'dark', '#1b1f27').canvas).toBe('#1b1f27')
   })
 
   it('keeps preset mascot colors independent of their UI accent', () => {
@@ -122,6 +106,8 @@ describe('terminal background detection', () => {
 
     await observer.ready
     expect(getTheme(settings()).mode).toBe(mode)
+    expect(currentCanvasColor()).toBe(mode === 'dark' ? '#000000' : '#ffffff')
+    expect(getTheme(settings()).canvas).toBe(currentCanvasColor())
     expect(observer.input.read()?.toString()).toBe('x')
     expect(input.setRawMode).toHaveBeenCalledExactlyOnceWith(true)
     observer.dispose()
@@ -156,11 +142,13 @@ describe('terminal background detection', () => {
       input.write('\u001b]11;rgb:0000/0000/0000\u001b\\')
       await watcher.ready
       terminalWrites = ''
+      changed.mockClear()
       input.write('a\u001b[?997;')
       input.write('2nb')
       await vi.waitFor(() => expect(terminalWrites).toContain('\u001b]11;?\u001b\\'))
       input.write('\u001b]11;rgb:ffff/ffff/ffff\u001b\\')
       await vi.waitFor(() => expect(currentColorMode()).toBe('light'))
+      expect(currentCanvasColor()).toBe('#ffffff')
       expect(changed).toHaveBeenCalledOnce()
       expect(forwarded).toBe('ab')
       input.write('\u001b[?997;1n')
@@ -278,15 +266,8 @@ describe('themed Ink output', () => {
     expect(output).not.toContain('\u001b[2m')
   })
 
-  it('propagates custom accent colors through child views', () => {
-    const custom: ChatSettings = {
-      ...settings('custom'),
-      customTheme: {
-        base: 'homeland',
-        light: { accent: '#284567' },
-        dark: {},
-      },
-    }
+  it('propagates the theme accent through child views', () => {
+    const custom = settings('homeland')
     const theme = getTheme(custom, 'light')
     const output = renderToString(
       h(ThemeProvider, {
@@ -321,7 +302,7 @@ describe('themed Ink output', () => {
     expect(output).not.toContain(ansi('#181a1b', true))
   })
 
-  it('updates mounted memoized content on terminal mode and custom-color changes', async () => {
+  it('updates mounted memoized content on terminal mode and theme changes', async () => {
     const source = ttyInput()
     const output = ttyOutput(80, 24)
     const writes: string[] = []
@@ -348,14 +329,9 @@ describe('themed Ink output', () => {
       await instance.waitUntilRenderFlush()
       expect(writes.join('')).toContain(ansi(getTheme(settings(), 'light').accent))
       writes.length = 0
-      instance.rerender(
-        tree({
-          ...settings('custom'),
-          customTheme: { base: 'green', light: { accent: '#123456' }, dark: {} },
-        })
-      )
+      instance.rerender(tree(settings('merlin')))
       await instance.waitUntilRenderFlush()
-      expect(writes.join('')).toContain(ansi('#123456'))
+      expect(writes.join('')).toContain(ansi(getTheme(settings('merlin'), 'light').accent))
       expect(writes.join('')).not.toContain('\u001b]11;?')
     } finally {
       source.write('\u001b[?997;1n')

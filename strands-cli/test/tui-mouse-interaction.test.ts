@@ -16,31 +16,6 @@ afterEach(() => {
 })
 
 describe('TUI mouse input', () => {
-  it.each([80, 60])('traverses inline Theme segments at %i columns', async (width) => {
-    const input = ttyInput()
-    const output = ttyOutput(width, 30)
-    const frame = captureFrame(output)
-    const controller = new ChatController(backend(), {
-      runtime: { version: '1.2.3', model: 'model-00', cwd: '/work' },
-    })
-    const instance = render(createElement(ChatApp, { controller }), {
-      stdin: input,
-      stdout: output,
-      stderr: ttyOutput(width, 30),
-      exitOnCtrlC: false,
-      patchConsole: false,
-      interactive: true,
-    })
-    instances.push(instance)
-    await controller.submit('/settings')
-    await instance.waitUntilRenderFlush()
-    await vi.waitFor(() => expect(controller.getSnapshot().panel).toMatchObject({ settingsCategory: 'Appearance' }))
-
-    input.write('\u001b[C')
-    await vi.waitFor(() => expect(controller.getSnapshot().settings.frogTheme).toBe('minimal'))
-    expect(frame().join('\n')).not.toContain('Choose a theme')
-  })
-
   it('activates model metadata and the Settings button from direct clicks', async () => {
     const input = ttyInput()
     const output = ttyOutput(80, 16)
@@ -354,7 +329,7 @@ describe('TUI mouse input', () => {
     await vi.waitFor(() => expect(frame().join('\n')).not.toContain('Models'))
   })
 
-  it.each([80, 60])('clicks live theme settings and opens the custom editor at %i columns', async (width) => {
+  it.each([80, 60])('clicks and steps through live theme settings at %i columns', async (width) => {
     const input = ttyInput()
     const output = ttyOutput(width, 30)
     const frame = captureFrame(output)
@@ -375,25 +350,94 @@ describe('TUI mouse input', () => {
     await vi.waitFor(() => expect(controller.getSnapshot().panel).toMatchObject({ settingsCategory: 'Appearance' }))
     await instance.waitUntilRenderFlush()
 
-    for (const theme of ['Classic', 'Minimal', 'Homeland', 'Merlin', 'Kikker', 'Cyborg', 'Spectre', 'Custom']) {
-      expect(frame().join('\n')).toContain(theme)
-    }
+    // Themes share one row that scrolls with the active theme; its overflow marker steps to the next hidden theme.
+    expect(frame().join('\n')).toContain('Classic')
+    expect(frame().join('\n')).not.toContain('Solar')
 
     const panelId = controller.getSnapshot().panel?.id
-    const kikker = findText(frame(), 'Kikker')
-    input.write(mouseInputSequence(0, kikker.column, kikker.row, 'M'))
-    input.write(mouseInputSequence(3, kikker.column, kikker.row, 'm'))
-    await vi.waitFor(() => expect(controller.getSnapshot().settings.frogTheme).toBe('kikker'))
+    const lines = frame()
+    const themeRow = lines.findIndex((line) => line.includes('› Theme'))
+    const next = { column: lines[themeRow]!.lastIndexOf('›'), row: themeRow }
+    input.write(mouseInputSequence(0, next.column, next.row, 'M'))
+    input.write(mouseInputSequence(3, next.column, next.row, 'm'))
+    await vi.waitFor(() => expect(controller.getSnapshot().settings.frogTheme).not.toBe('green'))
     expect(controller.getSnapshot().panel?.id).toBe(panelId)
 
-    const custom = findText(frame(), 'Custom')
-    input.write(mouseInputSequence(0, custom.column, custom.row, 'M'))
-    input.write(mouseInputSequence(3, custom.column, custom.row, 'm'))
-    await vi.waitFor(() => expect(frame().join('\n')).toContain('Customize theme'))
-    input.write('\u001b')
-    await vi.waitFor(() => expect(frame().join('\n')).not.toContain('Customize theme'))
-    expect(controller.getSnapshot().settings.frogTheme).toBe('kikker')
+    while (controller.getSnapshot().settings.frogTheme !== 'solar') {
+      const theme = controller.getSnapshot().settings.frogTheme
+      input.write('\u001b[C')
+      await vi.waitFor(() => expect(controller.getSnapshot().settings.frogTheme).not.toBe(theme))
+    }
+    await instance.waitUntilRenderFlush()
+    const solarLines = frame()
+    expect(solarLines[themeRow]).toContain('Solar')
+    expect(solarLines[themeRow]).not.toMatch(/Solar.*›/u)
+    const previous = { column: solarLines[themeRow]!.indexOf('‹'), row: themeRow }
+    input.write(mouseInputSequence(0, previous.column, previous.row, 'M'))
+    input.write(mouseInputSequence(3, previous.column, previous.row, 'm'))
+    await vi.waitFor(() => expect(controller.getSnapshot().settings.frogTheme).not.toBe('solar'))
     expect(controller.getSnapshot().panel?.id).toBe(panelId)
+  })
+
+  it('steers with rewritten queued text without leaving a stale composer draft', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 30)
+    const frame = captureFrame(output)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const target = backend()
+    target.stream = async function* (prompt) {
+      yield { type: 'textDelta', text: 'Working.' }
+      if (prompt === 'first') {
+        await gate
+      }
+      return { stopReason: 'endTurn' }
+    }
+    target.queueSteering = vi.fn(() => true)
+    target.drainSteering = () => []
+    const controller = new ChatController(target, {
+      runtime: { version: '1.2.3', model: 'model-00', cwd: '/work' },
+    })
+    const instance = render(createElement(ChatApp, { controller }), {
+      stdin: input,
+      stdout: output,
+      stderr: ttyOutput(100, 30),
+      exitOnCtrlC: false,
+      patchConsole: false,
+      interactive: true,
+    })
+    instances.push(instance)
+
+    const running = controller.submit('first')
+    await vi.waitFor(() => expect(controller.getSnapshot().status).toBe('running'))
+    const queued = controller.submit('original guidance')
+    await instance.waitUntilRenderFlush()
+
+    const edit = findText(frame(), 'Edit')
+    input.write(mouseInputSequence(0, edit.column, edit.row, 'M'))
+    input.write(mouseInputSequence(3, edit.column, edit.row, 'm'))
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('original guidance · editing'))
+
+    input.write('\u007f'.repeat('original guidance'.length))
+    input.write('rewritten guidance')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('rewritten guidance'))
+    const steer = findText(frame(), 'Steer')
+    input.write(mouseInputSequence(0, steer.column, steer.row, 'M'))
+    input.write(mouseInputSequence(3, steer.column, steer.row, 'm'))
+
+    await vi.waitFor(() =>
+      expect(target.queueSteering).toHaveBeenCalledWith('rewritten guidance', expect.any(Function))
+    )
+    await vi.waitFor(() => {
+      const visible = frame().join('\n')
+      expect(visible.match(/rewritten guidance/gu)).toHaveLength(1)
+      expect(visible).toContain('Steering · rewritten guidance')
+    })
+
+    release()
+    await Promise.all([running, queued])
   })
 
   it('dismisses a non-permission panel only when clicking outside its bounds', async () => {

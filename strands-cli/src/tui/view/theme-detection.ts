@@ -11,10 +11,15 @@ const COLOR_SCHEME_NOTIFICATIONS = { enable: '\u001b[?2031h', disable: '\u001b[?
 const THEME_RESPONSE = new RegExp(String.raw`\x1b\[\?997;[12]n|\x1b\]11;[^\x07\x1b]*(?:\x07|\x1b\\)`, 'giu')
 const QUERY_TIMEOUT_MS = 100
 let detectedMode: ResolvedColorMode = 'dark'
+let detectedCanvas: string | undefined
 const modeListeners = new Set<() => void>()
 
 export function currentColorMode(): ResolvedColorMode {
   return detectedMode
+}
+
+export function currentCanvasColor(): string | undefined {
+  return detectedCanvas
 }
 
 export function subscribeColorMode(listener: () => void): () => void {
@@ -56,9 +61,9 @@ export function observeTerminalColorMode(
       if (pendingTimer) clearTimeout(pendingTimer)
       const result = readThemeResponses(pending + decoder.write(chunk), {
         background: (value) => {
-          const mode = parseBackgroundMode(value)
-          if (mode) {
-            setColorMode(mode)
+          const canvas = parseBackgroundColor(value)
+          if (canvas) {
+            setTerminalBackground(canvas)
             finishInitialQuery()
           }
         },
@@ -154,16 +159,32 @@ function incompleteResponseStart(value: string): number {
   return BACKGROUND_RESPONSE_PREFIX.startsWith(suffix) || COLOR_SCHEME_REPORT_PREFIX.startsWith(suffix) ? escape : -1
 }
 
-function parseBackgroundMode(response: string): ResolvedColorMode | undefined {
+function parseBackgroundColor(response: string): string | undefined {
   const terminatorLength = response.endsWith('\u001b\\') ? 2 : 1
   const match = BACKGROUND_VALUE.exec(response.slice(BACKGROUND_RESPONSE_PREFIX.length, -terminatorLength))
   if (!match) return undefined
-  const channels = [match[1]!, match[2]!, match[3]!].map(
-    (value) => Number.parseInt(value, 16) / (16 ** value.length - 1)
+  // Terminals report up to 16 bits per channel; reduce to the 8-bit depth SGR colors can express.
+  const channels = [match[1]!, match[2]!, match[3]!].map((value) =>
+    Math.round((Number.parseInt(value, 16) / (16 ** value.length - 1)) * 255)
   )
-  const linear = channels.map((channel) => (channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4))
+  return `#${channels.map((channel) => channel.toString(16).padStart(2, '0')).join('')}`
+}
+
+function backgroundMode(canvas: string): ResolvedColorMode {
+  const linear = [1, 3, 5].map((offset) => {
+    const channel = Number.parseInt(canvas.slice(offset, offset + 2), 16) / 255
+    return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+  })
   const luminance = linear[0]! * 0.2126 + linear[1]! * 0.7152 + linear[2]! * 0.0722
   return luminance > 0.179 ? 'light' : 'dark'
+}
+
+function setTerminalBackground(canvas: string): void {
+  const mode = backgroundMode(canvas)
+  if (canvas === detectedCanvas && mode === detectedMode) return
+  detectedCanvas = canvas
+  detectedMode = mode
+  for (const listener of modeListeners) listener()
 }
 
 function setColorMode(mode: ResolvedColorMode): void {

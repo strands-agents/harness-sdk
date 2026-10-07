@@ -16,10 +16,11 @@ import {
   type ThemeSettings,
   type ThemeColors,
 } from '../chat/types.js'
-import { currentColorMode, subscribeColorMode } from './theme-detection.js'
+import { currentCanvasColor, currentColorMode, subscribeColorMode } from './theme-detection.js'
 import { useFadeAnsi, useFadeColor } from './fade-in.js'
 
-export type Theme = ThemeColors & { mode: ResolvedColorMode }
+// `canvas` is the terminal's reported background color; the palette background stands in when the terminal does not report one.
+export type Theme = ThemeColors & { mode: ResolvedColorMode; canvas: string }
 
 const BASE_COLORS = {
   dark: {
@@ -59,7 +60,7 @@ const ACCENTS = {
   circuit: { light: '#234e96', dark: '#79aaff' },
   spectre: { light: '#a71935', dark: '#ff6b82' },
   solar: { light: '#805400', dark: '#ffd166' },
-} satisfies Record<Exclude<FrogTheme, 'custom'>, Record<ResolvedColorMode, string>>
+} satisfies Record<FrogTheme, Record<ResolvedColorMode, string>>
 
 const FROG_COLORS = {
   green: { light: '#5ab36e', dark: '#81ff9d' },
@@ -70,18 +71,17 @@ const FROG_COLORS = {
   circuit: { light: '#7a7f86', dark: '#aeb6bf' },
   spectre: { light: '#111317', dark: '#181b21' },
   solar: { light: '#b77900', dark: '#ffd166' },
-} satisfies Record<Exclude<FrogTheme, 'custom'>, Record<ResolvedColorMode, string>>
+} satisfies Record<FrogTheme, Record<ResolvedColorMode, string>>
 
-export function getTheme(settings: ThemeSettings, detectedMode?: ResolvedColorMode): Theme {
+export function getTheme(settings: ThemeSettings, detectedMode?: ResolvedColorMode, canvas?: string): Theme {
   const mode = detectedMode ?? currentColorMode()
-  const base = settings.frogTheme === 'custom' ? settings.customTheme.base : settings.frogTheme
-  const custom = settings.frogTheme === 'custom' ? settings.customTheme[mode] : undefined
+  // A supplied mode renders a preview, not the live terminal, so the detected canvas does not apply.
+  const detectedCanvas = detectedMode === undefined ? currentCanvasColor() : undefined
   return {
     ...BASE_COLORS[mode],
-    accent: ACCENTS[base][mode],
-    frog: FROG_COLORS[base][mode],
-    ...(custom?.accent ? { accent: custom.accent } : {}),
-    ...(custom?.frog ? { frog: custom.frog } : {}),
+    accent: ACCENTS[settings.frogTheme][mode],
+    frog: FROG_COLORS[settings.frogTheme][mode],
+    canvas: canvas ?? detectedCanvas ?? BASE_COLORS[mode].background,
     mode,
   }
 }
@@ -100,8 +100,10 @@ export function ThemeProvider({
   children: ReactNode
 }): ReactElement {
   const terminalMode = useSyncExternalStore(subscribeColorMode, currentColorMode, currentColorMode)
+  const terminalCanvas = useSyncExternalStore(subscribeColorMode, currentCanvasColor, currentCanvasColor)
   const mode = detectedMode ?? terminalMode
-  const theme = useMemo(() => getTheme(settings, mode), [settings.frogTheme, settings.customTheme, mode])
+  const canvas = detectedMode === undefined ? terminalCanvas : undefined
+  const theme = useMemo(() => getTheme(settings, mode, canvas), [settings.frogTheme, mode, canvas])
   return <ThemeContext value={theme}>{children}</ThemeContext>
 }
 

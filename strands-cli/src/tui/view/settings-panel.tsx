@@ -1,12 +1,322 @@
 import type { ReactElement } from 'react'
 import type { DOMElement } from 'ink'
+import stringWidth from 'string-width'
 
-import type { ChatPanelRow } from '../chat/controller.js'
-import type { FrogTheme, ThemeSettings } from '../chat/types.js'
-import { DEFAULT_CHAT_SETTINGS } from '../settings.js'
-import { panelControlTarget, settingsLayout, settingsThemeLayout } from './interaction.js'
+import type { ChatPanel, ChatPanelRow } from '../chat/controller.js'
+import type { FrogTheme } from '../chat/types.js'
+import { panelControlTarget, settingsLayout, settingsThemeLayout, type SettingsPanelFocus } from './interaction.js'
 import { PanelItemHeader, PanelOverlay, PanelTitle, type PanelRowsProps } from './panel-components.js'
+import { PanelSection, PanelSectionList } from './panel-sections.js'
 import { Box, getTheme, Text, useTheme, type Theme } from './theme.js'
+
+type SegmentedControl = Extract<NonNullable<ChatPanelRow['control']>, { kind: 'segmented' }>
+
+/** `/settings` inside the prompt editor: categories on the left, the category's settings on the right. */
+export function SettingsPicker({
+  panel,
+  rows,
+  allRows,
+  selected,
+  start,
+  width,
+  height,
+  focus,
+  pressedRow,
+  hoveredRow,
+  pressedControl,
+  hoveredControl,
+  pressedFilter,
+  hoveredFilter,
+  onRowElement,
+  onControlElement,
+  onFilterElement,
+}: Omit<PanelRowsProps, 'panel' | 'onPanelElement'> & {
+  panel: Extract<ChatPanel, { kind: 'settings' }>
+  allRows: readonly ChatPanelRow[]
+  height: number
+  focus: SettingsPanelFocus
+  pressedControl?: string
+  hoveredControl?: string
+  pressedFilter?: string
+  hoveredFilter?: string
+  onControlElement?: (key: string, element: DOMElement | null) => void
+  onFilterElement?: (id: string, element: DOMElement | null) => void
+}): ReactElement {
+  const { accent, hover, selection } = useTheme()
+  // Fits the category labels plus border, padding, and marker, within the third /model gives its providers.
+  const listWidth = Math.max(
+    1,
+    Math.min(Math.floor(width / 3), Math.max(0, ...(panel.filters ?? []).map(({ label }) => stringWidth(label))) + 5)
+  )
+  // Section borders and row padding.
+  const rowWidth = Math.max(1, width - listWidth - 4)
+  // Labels take what the widest control leaves, but at least half the row; the marker and gap add three columns.
+  const labelWidth = Math.min(
+    Math.max(0, ...allRows.map((row) => stringWidth(row.label))) + 3,
+    Math.max(Math.floor(rowWidth / 2), rowWidth - Math.max(0, ...allRows.map(minimumControlWidth)))
+  )
+  const category = panel.settingsCategories?.find(({ id }) => id === panel.settingsCategory)
+  const focused = focus === 'settings'
+  return (
+    <Box flexGrow={1} height={height} overflow="hidden">
+      <PanelSectionList
+        title="Settings"
+        items={panel.filters ?? []}
+        selected={`settings:${panel.settingsCategory}`}
+        focused={focus === 'categories'}
+        width={listWidth}
+        height={height}
+        {...(pressedFilter ? { pressed: pressedFilter } : {})}
+        {...(hoveredFilter ? { hovered: hoveredFilter } : {})}
+        {...(onFilterElement ? { onElement: onFilterElement } : {})}
+      />
+      <PanelSection
+        focused={focused}
+        header={
+          <Box flexShrink={1} overflow="hidden">
+            <Text dimColor wrap="truncate-end">
+              {settingDetail(allRows[hoveredRow ?? selected]) ?? category?.description ?? ''}
+            </Text>
+          </Box>
+        }
+        {...(allRows.length > rows.length
+          ? { meta: `${start + 1}-${Math.min(start + rows.length, allRows.length)} / ${allRows.length}` }
+          : {})}
+      >
+        {rows.map((row, visibleIndex) => {
+          const index = start + visibleIndex
+          const active = focused && index === selected
+          const rowPressed = index === pressedRow
+          return (
+            <Box
+              key={`${panel.id}-setting-${index}`}
+              ref={(element) => onRowElement?.(index, element)}
+              width="100%"
+              height={1}
+              flexShrink={0}
+              paddingX={1}
+              backgroundColor={index === hoveredRow || rowPressed ? selection : undefined}
+            >
+              <Box width={labelWidth} flexShrink={0} paddingRight={1} overflow="hidden">
+                <Text
+                  wrap="truncate-end"
+                  {...(rowPressed ? { color: hover } : active ? { color: accent } : {})}
+                  bold={active}
+                >
+                  {active ? '› ' : '  '}
+                  {row.label}
+                </Text>
+              </Box>
+              {row.control?.kind === 'toggle' ? (
+                <SettingToggle
+                  checked={row.control.checked}
+                  target={panelControlTarget(index, 'toggle')}
+                  {...(pressedControl ? { pressedControl } : {})}
+                  {...(hoveredControl ? { hoveredControl } : {})}
+                  {...(onControlElement ? { onControlElement } : {})}
+                />
+              ) : row.control ? (
+                <SettingOptions
+                  control={row.control}
+                  rowIndex={index}
+                  width={Math.max(1, rowWidth - labelWidth)}
+                  themeSwatches={row.value === 'frogTheme'}
+                  {...(pressedControl ? { pressedControl } : {})}
+                  {...(hoveredControl ? { hoveredControl } : {})}
+                  {...(onControlElement ? { onControlElement } : {})}
+                />
+              ) : null}
+            </Box>
+          )
+        })}
+      </PanelSection>
+    </Box>
+  )
+}
+
+// A toggle, or one option framed by both overflow markers.
+function minimumControlWidth(row: ChatPanelRow): number {
+  if (row.control?.kind === 'toggle') {
+    return stringWidth(' ●━━ Off ')
+  }
+  return row.control ? Math.max(...row.control.options.map((option) => stringWidth(option.label))) + 6 : 0
+}
+
+// Setting descriptions read `value · detail`; the row's control already shows the value.
+function settingDetail(row: ChatPanelRow | undefined): string | undefined {
+  return row?.description.split(' · ').slice(1).join(' · ') || undefined
+}
+
+function SettingToggle({
+  checked,
+  target,
+  pressedControl,
+  hoveredControl,
+  onControlElement,
+}: {
+  checked: boolean
+  target: string
+  pressedControl?: string
+  hoveredControl?: string
+  onControlElement?: (key: string, element: DOMElement | null) => void
+}): ReactElement {
+  const { accent, hover, mode, selection } = useTheme()
+  return (
+    <Box
+      ref={(element) => onControlElement?.(target, element)}
+      flexShrink={0}
+      {...(hoveredControl === target || pressedControl === target
+        ? { backgroundColor: hoverBackground(selection, mode) }
+        : {})}
+    >
+      <Text
+        {...(pressedControl === target ? { color: hover } : checked ? { color: accent } : {})}
+        bold={checked}
+        dimColor={!checked && pressedControl !== target}
+      >
+        {checked ? ' ━━● On ' : ' ●━━ Off '}
+      </Text>
+    </Box>
+  )
+}
+
+/** One row of options that scrolls to keep the active option in view when they do not all fit. */
+function SettingOptions({
+  control,
+  rowIndex,
+  width,
+  themeSwatches = false,
+  pressedControl,
+  hoveredControl,
+  onControlElement,
+}: {
+  control: SegmentedControl
+  rowIndex: number
+  width: number
+  /** Renders each option as a swatch of the theme it names. */
+  themeSwatches?: boolean
+  pressedControl?: string
+  hoveredControl?: string
+  onControlElement?: (key: string, element: DOMElement | null) => void
+}): ReactElement {
+  const current = useTheme()
+  const active = Math.max(
+    0,
+    control.options.findIndex((option) => option.active)
+  )
+  const { start, end } = visibleOptions(
+    control.options.map((option) => stringWidth(option.label) + 2),
+    active,
+    width
+  )
+  return (
+    <Box flexShrink={1} overflow="hidden">
+      {start > 0 ? (
+        <OverflowMarker
+          label="‹ "
+          target={panelControlTarget(rowIndex, control.options[start - 1]!.value)}
+          {...(pressedControl ? { pressedControl } : {})}
+          {...(hoveredControl ? { hoveredControl } : {})}
+          {...(onControlElement ? { onControlElement } : {})}
+        />
+      ) : null}
+      {control.options.slice(start, end).map((option, visibleIndex) => {
+        const target = panelControlTarget(rowIndex, option.value)
+        const pressed = pressedControl === target
+        // A theme option previews its own accent.
+        const preview = themeSwatches ? getTheme({ frogTheme: option.value as FrogTheme }, current.mode) : current
+        const background = option.active ? preview.accent : undefined
+        const highlighted = pressed || hoveredControl === target
+        const textColor = option.active ? preview.panel : themeSwatches ? preview.accent : undefined
+        return (
+          <Box
+            key={option.value}
+            ref={(element) => onControlElement?.(target, element)}
+            // Only an active option wider than the row shrinks; the visible window otherwise fits.
+            flexShrink={1}
+            overflow="hidden"
+            marginLeft={visibleIndex > 0 ? 1 : 0}
+            // Lightened so a hovered option stands out from its hovered row.
+            {...(highlighted
+              ? { backgroundColor: hoverBackground(background ?? current.selection, current.mode) }
+              : background
+                ? { backgroundColor: background }
+                : {})}
+          >
+            <Text
+              {...(pressed ? { color: current.hover } : textColor ? { color: textColor } : {})}
+              bold={option.active === true}
+              dimColor={!themeSwatches && !option.active && !pressed}
+              wrap="truncate-end"
+            >
+              {' '}
+              {option.label}{' '}
+            </Text>
+          </Box>
+        )
+      })}
+      {end < control.options.length ? (
+        <OverflowMarker
+          label=" ›"
+          target={panelControlTarget(rowIndex, control.options[end]!.value)}
+          {...(pressedControl ? { pressedControl } : {})}
+          {...(hoveredControl ? { hoveredControl } : {})}
+          {...(onControlElement ? { onControlElement } : {})}
+        />
+      ) : null}
+    </Box>
+  )
+}
+
+/** Steps to the nearest hidden option on its side. */
+function OverflowMarker({
+  label,
+  target,
+  pressedControl,
+  hoveredControl,
+  onControlElement,
+}: {
+  label: string
+  target: string
+  pressedControl?: string
+  hoveredControl?: string
+  onControlElement?: (key: string, element: DOMElement | null) => void
+}): ReactElement {
+  const { accent, hover } = useTheme()
+  const pressed = pressedControl === target
+  const hovered = hoveredControl === target
+  return (
+    <Box ref={(element) => onControlElement?.(target, element)} flexShrink={0}>
+      <Text {...(pressed ? { color: hover } : hovered ? { color: accent } : {})} dimColor={!pressed && !hovered}>
+        {label}
+      </Text>
+    </Box>
+  )
+}
+
+function visibleOptions(widths: readonly number[], active: number, width: number): { start: number; end: number } {
+  // Options are separated by one column; hidden options cost a two-column marker on that side.
+  const fits = (start: number, end: number): boolean =>
+    widths.slice(start, end).reduce((total, value) => total + value, end - start - 1) +
+      (start > 0 ? 2 : 0) +
+      (end < widths.length ? 2 : 0) <=
+    width
+  let start = active
+  let end = Math.min(widths.length, active + 1)
+  // Grow one option per side per pass so the active option stays near the middle.
+  for (let grew = true; grew;) {
+    grew = false
+    if (end < widths.length && fits(start, end + 1)) {
+      end++
+      grew = true
+    }
+    if (start > 0 && fits(start - 1, end)) {
+      start--
+      grew = true
+    }
+  }
+  return { start, end }
+}
 
 export function SettingsPanel({
   panel,
@@ -20,7 +330,6 @@ export function SettingsPanel({
   hoveredControl,
   pressedFilter,
   hoveredFilter,
-  appearance,
   embedded = false,
   height,
   onPanelElement,
@@ -32,7 +341,6 @@ export function SettingsPanel({
   hoveredControl?: string
   pressedFilter?: string
   hoveredFilter?: string
-  appearance?: ThemeSettings
   embedded?: boolean
   height?: number
   onControlElement?: (key: string, element: DOMElement | null) => void
@@ -208,7 +516,6 @@ export function SettingsPanel({
                         control={row.control}
                         rowIndex={index}
                         spacious={settings}
-                        {...(appearance ? { appearance } : {})}
                         {...(row.value ? { setting: row.value } : {})}
                         {...(themeRow ? { maxThemeRows: themeRows } : {})}
                         {...(settings
@@ -249,7 +556,6 @@ export function SettingsControl({
   control,
   rowIndex,
   setting,
-  appearance,
   spacious = false,
   columns = 1,
   optionWidth = 14,
@@ -262,7 +568,6 @@ export function SettingsControl({
   control: NonNullable<ChatPanelRow['control']>
   rowIndex: number
   setting?: string
-  appearance?: ThemeSettings
   spacious?: boolean
   columns?: number
   optionWidth?: number
@@ -315,7 +620,6 @@ export function SettingsControl({
         optionWidth={optionWidth}
         {...(themeOptionHeight !== undefined ? { optionHeight: themeOptionHeight } : {})}
         {...(maxThemeRows !== undefined ? { maxRows: maxThemeRows } : {})}
-        {...(appearance ? { appearance } : {})}
         {...(pressedControl ? { pressedControl } : {})}
         {...(hoveredControl ? { hoveredControl } : {})}
         {...(onControlElement ? { onControlElement } : {})}
@@ -337,7 +641,6 @@ export function SettingsControl({
         const label = spacious
           ? option.label.padStart((optionWidth - 3 + option.label.length) / 2).padEnd(optionWidth - 3)
           : option.label
-        const customTheme = setting === 'frogTheme' && option.value === 'custom'
         return (
           <Box
             key={option.value}
@@ -346,7 +649,7 @@ export function SettingsControl({
             {...(spacious ? { width: optionWidth, paddingRight: 1, backgroundColor: panel } : {})}
           >
             <Text
-              inverse={!spacious && option.active === true && !customTheme}
+              inverse={!spacious && option.active === true}
               {...(spacious ? { backgroundColor: hovered ? hoverBackground(background, mode) : background } : {})}
               {...(spacious && option.active
                 ? { color: panel }
@@ -359,8 +662,7 @@ export function SettingsControl({
               bold={spacious && option.active === true}
             >
               {' '}
-              {customTheme && option.active ? '◆ ' : null}
-              {customTheme ? <RainbowLabel label={option.label} /> : label}{' '}
+              {label}{' '}
             </Text>
           </Box>
         )
@@ -376,7 +678,6 @@ function ThemeChoices({
   optionWidth,
   optionHeight = 3,
   maxRows,
-  appearance,
   pressedControl,
   hoveredControl,
   onControlElement,
@@ -387,7 +688,6 @@ function ThemeChoices({
   optionWidth: number
   optionHeight?: number
   maxRows?: number
-  appearance?: ThemeSettings
   pressedControl?: string
   hoveredControl?: string
   onControlElement?: (key: string, element: DOMElement | null) => void
@@ -406,15 +706,8 @@ function ThemeChoices({
         const target = panelControlTarget(rowIndex, option.value)
         const pressed = pressedControl === target
         const hovered = hoveredControl === target
-        const preview = getTheme(
-          {
-            frogTheme: option.value as FrogTheme,
-            customTheme: appearance?.customTheme ?? DEFAULT_CHAT_SETTINGS.customTheme,
-          },
-          current.mode
-        )
-        const customTheme = option.value === 'custom'
-        const background = option.active && !customTheme ? preview.accent : current.selection
+        const preview = getTheme({ frogTheme: option.value as FrogTheme }, current.mode)
+        const background = option.active ? preview.accent : current.selection
         return (
           <Box key={option.value} width={optionWidth} height={optionHeight} paddingRight={1}>
             <Box
@@ -427,31 +720,13 @@ function ThemeChoices({
               backgroundColor={hovered || pressed ? hoverBackground(background, preview.mode) : background}
             >
               <Text color={option.active ? preview.panel : preview.accent} bold>
-                {customTheme && option.active ? <Text color={current.accent}>◆ </Text> : null}
-                {customTheme ? <RainbowLabel label={option.label} /> : option.label}
+                {option.label}
               </Text>
             </Box>
           </Box>
         )
       })}
     </Box>
-  )
-}
-
-function RainbowLabel({ label }: { label: string }): ReactElement {
-  const { mode } = useTheme()
-  const colors =
-    mode === 'dark'
-      ? ['#ff6b82', '#ffb454', '#ffe066', '#68f58a', '#5ad3f4', '#79aaff', '#c49bff']
-      : ['#b42332', '#934600', '#766000', '#166534', '#006581', '#234e96', '#7036a8']
-  return (
-    <Text>
-      {[...label].map((character, index) => (
-        <Text key={`${character}-${index}`} color={colors[index % colors.length]!}>
-          {character}
-        </Text>
-      ))}
-    </Text>
   )
 }
 

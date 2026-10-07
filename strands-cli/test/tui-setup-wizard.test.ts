@@ -1054,8 +1054,7 @@ describe('setup refresh', () => {
 describe('setup theme', () => {
   it('uses the same complete settings list as the regular settings panel', () => {
     const update = vi.fn()
-    const openThemePicker = vi.fn()
-    const setupRows = wizardSettingsRows(DEFAULT_CHAT_SETTINGS, update, openThemePicker, 'all')
+    const setupRows = wizardSettingsRows(DEFAULT_CHAT_SETTINGS, update, 'all')
     const regularRows = settingsRows(DEFAULT_CHAT_SETTINGS)
     const theme = setupRows[0]!
     const regularTheme = regularRows[0]!.control
@@ -1066,8 +1065,7 @@ describe('setup theme', () => {
       regularTheme?.kind === 'segmented' ? regularTheme.options.map(({ label }) => label) : []
     )
     theme.choices?.at(-1)?.activate()
-    expect(openThemePicker).toHaveBeenCalledOnce()
-    expect(update).not.toHaveBeenCalled()
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ frogTheme: 'solar' }))
   })
 
   it('shows and persists non-visual settings from the setup panel', async () => {
@@ -1116,7 +1114,7 @@ describe('setup theme', () => {
     }
   })
 
-  it('persists a custom theme applied from setup settings', async () => {
+  it('persists a theme applied from setup settings', async () => {
     const config = CliConfigStore.memory({}, { animations: false })
     const input = ttyInput()
     const output = ttyOutput(120, 24)
@@ -1142,23 +1140,18 @@ describe('setup theme', () => {
       await instance.waitUntilRenderFlush()
       await press('\u0013')
       await press('\r')
-      await vi.waitFor(() => expect(frame).toContain('Custom'))
+      await vi.waitFor(() => expect(frame).toContain('Solar'))
       const themeLines = frame.split('\n')
       const firstThemeLine = themeLines.find((line) => line.includes('Classic'))
       expect(firstThemeLine).toMatch(/Classic.*Minimal.*Homeland/u)
       expect(themeLines.find((line) => line.includes('Merlin'))).toMatch(/Merlin.*Kikker.*Cyborg/u)
-      expect(themeLines.find((line) => line.includes('Spectre'))).toMatch(/Spectre.*Custom/u)
+      expect(themeLines.find((line) => line.includes('Spectre'))).toMatch(/Spectre.*Solar/u)
       expect(themeLines.every((line) => stringWidth(line) <= 120)).toBe(true)
-      const customRow = themeLines.findIndex((line) => line.includes('Custom'))
-      const customColumn = stringWidth(themeLines[customRow]!.slice(0, themeLines[customRow]!.indexOf('Custom'))) + 1
-      await press(mouseInputSequence(0, customColumn, customRow + 1, 'M'))
-      await press(mouseInputSequence(3, customColumn, customRow + 1, 'm'))
-      await vi.waitFor(() => expect(frame).toContain('Customize theme'))
-      await press('\t')
-      await press('\t')
-      await press('\t')
-      await press('\r')
-      await vi.waitFor(() => expect(config.snapshot().settings.frogTheme).toBe('custom'))
+      const solarRow = themeLines.findIndex((line) => line.includes('Solar'))
+      const solarColumn = stringWidth(themeLines[solarRow]!.slice(0, themeLines[solarRow]!.indexOf('Solar'))) + 1
+      await press(mouseInputSequence(0, solarColumn, solarRow + 1, 'M'))
+      await press(mouseInputSequence(3, solarColumn, solarRow + 1, 'm'))
+      await vi.waitFor(() => expect(config.snapshot().settings.frogTheme).toBe('solar'))
     } finally {
       instance.unmount()
       await instance.waitUntilExit()

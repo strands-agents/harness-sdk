@@ -7,11 +7,16 @@ import { snapshot } from './fixtures/chat-snapshot.js'
 
 import { ChatView } from '../src/tui/view/chat-view.js'
 import { Markdown } from '../src/tui/view/markdown.js'
-import { panelControlTarget, panelRowCapacity, revealPanelSelection } from '../src/tui/view/interaction.js'
+import {
+  composerPanelHeight,
+  panelControlTarget,
+  panelRowCapacity,
+  revealPanelSelection,
+} from '../src/tui/view/interaction.js'
 import { formatContext, maxPermissionScroll, permissionLines } from '../src/tui/view/presentation.js'
 import { DEFAULT_CHAT_SETTINGS, type ChatPanel } from '../src/tui/chat/controller.js'
-import { formatPermissionPanelBody, settingsRows } from '../src/tui/chat/panels.js'
-import { SETTINGS_CATEGORIES } from '../src/tui/settings.js'
+import { formatPermissionPanelBody, settingsCategoryFilters, settingsRows } from '../src/tui/chat/panels.js'
+import { SETTINGS_CATEGORIES, type SettingsCategory } from '../src/tui/settings.js'
 import { sanitizeTerminalText } from '../src/tui/terminal/sanitize.js'
 import { selectScreenText } from '../src/tui/terminal/mouse-input.js'
 
@@ -143,7 +148,7 @@ describe('ChatView', () => {
     [22, 10, false],
     [80, 24, true],
   ])(
-    'replaces the command palette with /effort without shifting the conversation at %ix%i, party=%s',
+    'overlays the command palette and /effort without shifting the conversation at %ix%i, party=%s',
     (width, height, party) => {
       const current = snapshot({
         completedTurns: [
@@ -151,12 +156,19 @@ describe('ChatView', () => {
             id: 'turn-1',
             prompt: 'hello',
             agentName: 'Strands harness',
-            entries: [{ id: 'turn-1:1', type: 'assistant', text: 'Visible conversation\n'.repeat(30) }],
+            entries: [
+              {
+                id: 'turn-1:1',
+                type: 'assistant',
+                text: Array.from({ length: 30 }, (_, index) => `Visible conversation ${index}`).join('\n'),
+              },
+            ],
             status: 'complete',
           },
         ],
       })
       const props = { terminalWidth: width, terminalHeight: height, party }
+      const baseline = renderView({ ...props, snapshot: current }, { columns: width }).split('\n')
       const before = renderView({ ...props, input: '/effort', cursor: 7, snapshot: current }, { columns: width }).split(
         '\n'
       )
@@ -191,8 +203,19 @@ describe('ChatView', () => {
       const panelRow = after.findIndex((line) => line.includes('Reasoning effort'))
       expect(panelRow).toBeGreaterThanOrEqual(0)
       if (width >= 40) {
+        const paletteTop = before
+          .slice(0, paletteRow + 1)
+          .map((line) => line.includes('┌'))
+          .lastIndexOf(true)
+        const panelTop = after
+          .slice(0, panelRow + 1)
+          .map((line) => line.includes('┌'))
+          .lastIndexOf(true)
+        expect(paletteTop).toBeGreaterThanOrEqual(0)
+        expect(panelTop).toBeGreaterThanOrEqual(0)
+        expect(before.slice(0, paletteTop)).toEqual(baseline.slice(0, paletteTop))
+        expect(after.slice(0, panelTop)).toEqual(baseline.slice(0, panelTop))
         expect(panelRow).toBeGreaterThanOrEqual(paletteRow)
-        expect(after.slice(0, paletteRow)).toEqual(before.slice(0, paletteRow))
       }
       const track = after
         .slice(panelRow)
@@ -322,7 +345,6 @@ describe('ChatView', () => {
     expect(output).toContain('[48;2;129;255;157m ')
     expect(output).toMatch(/[▗▖▄▝▐▞▟▘▚▌▙▀▜▛]/u)
     expect(plainOutput.match(/bedrock\/test/g)).toHaveLength(1)
-    expect(output).toContain('/work')
   })
 
   it('renders guidance inside the composer and a single metadata row below it', () => {
@@ -348,7 +370,6 @@ describe('ChatView', () => {
     expect(output.split('\n').some((line) => line.trim() === 'hello')).toBe(true)
     expect(output).not.toContain('context ░')
     expect(output).toContain('Enter to send • Ctrl+J for newline • / for commands')
-    expect(output).toContain('Ctrl+J')
     const rows = output.trimEnd().split('\n')
     expect(rows.at(-1)).toContain('bedrock/test')
     expect(rows.at(-1)).toContain('/work')
@@ -827,9 +848,14 @@ describe('ChatView', () => {
           id: 'turn-1',
           prompt: 'Inspect the repository',
           agentName: 'Strands harness',
-          entries: [{ id: 'turn-1:1', type: 'assistant', text: 'I am inspecting the files.' }],
+          entries: [
+            { id: 'turn-1:1', type: 'assistant', text: 'I am inspecting the files.' },
+            { id: 'turn-1:2', type: 'user', text: 'Focus on the failing test' },
+            { id: 'turn-1:3', type: 'assistant', text: 'I am changing direction.' },
+          ],
           status: 'running',
         },
+        pendingSteering: ['Use parser diagnostics'],
         queuedPrompts: [
           { id: 'queued-1', prompt: 'Run the focused tests' },
           { id: 'queued-2', prompt: 'Then summarize the result' },
@@ -843,7 +869,13 @@ describe('ChatView', () => {
       terminalHeight: 40,
     })
 
+    const lines = output.split('\n')
+    const steeringRow = lines.findIndex((line) => line.includes('Focus on the failing test'))
     expect(output).toContain('I am inspecting the files.')
+    expect(output).toContain('Focus on the failing test')
+    expect(lines[steeringRow + 1]).toBe('')
+    expect(output).toContain('I am changing direction.')
+    expect(output).toContain('Steering · Use parser diagnostics')
     expect(output).toContain('* Working (esc to interrupt)')
     expect(output).toContain('Steer toward the failing test')
     expect(output).toContain('Queued 1/2')
@@ -1015,97 +1047,92 @@ describe('ChatView', () => {
     expect(output).not.toContain('message_agent')
   })
 
-  it.each([40, 80])(
-    'keeps settings controls and their hints visible at %sx24 for first and last selections',
-    (width) => {
-      const config = DEFAULT_CHAT_SETTINGS
-      const rows = settingsRows(config, 'Appearance')
-      const capacity = panelRowCapacity('settings', 24, width, rows)
-      for (const selected of [0, rows.length - 1]) {
-        const output = sanitizeTerminalText(
-          renderView({
-            snapshot: snapshot({
-              settings: config,
-              panel: {
-                id: 'settings',
-                kind: 'settings',
-                title: 'Appearance',
-                rows,
-                settingsCategory: 'Appearance',
-                settingsCategories: SETTINGS_CATEGORIES,
-              },
-            }),
-            terminalWidth: width,
-            terminalHeight: 24,
-            panelSelection: selected,
-            panelViewportStart: revealPanelSelection(selected, 0, capacity, rows.length),
-          })
-        )
-        const lines = output.split('\n')
-        expect(lines.length).toBeLessThanOrEqual(24)
-        expect(output).toContain(rows[selected]!.label)
-        expect(output).toContain(selected === 0 ? 'Custom' : 'Full')
-        expect(output).toContain('←→ change')
-        expect(output).toContain('Esc back')
-        expect(output).not.toContain('/help')
-        expect(output).not.toContain('Enter send')
-      }
+  it.each([40, 80])('renders every /settings row inside the composer at %sx24', (width) => {
+    const rows = settingsRows(DEFAULT_CHAT_SETTINGS, 'Appearance')
+    let lines: string[] = []
+    let output = ''
+    for (const [selected, row] of rows.entries()) {
+      lines = sanitizeTerminalText(
+        renderView({
+          snapshot: snapshot({ panel: settingsPanel('Appearance') }),
+          terminalWidth: width,
+          terminalHeight: 24,
+          panelSelection: selected,
+        })
+      ).split('\n')
+      output = lines.join('\n')
+      expect(output).toContain(`› ${row.label.slice(0, 6)}`)
     }
-  )
+    expect(lines.length).toBeLessThanOrEqual(24)
+    expect(output).toContain('Classic')
+    expect(output).toContain('━━● On')
+    expect(output).toContain('←→ change')
+    expect(output).toContain('Esc back')
+    expect(output).not.toContain('Enter send')
+    // The panel replaces the prompt, so the composer footer stays on the last row.
+    expect(lines.at(-1)).toContain('/settings')
+  })
 
-  it('renders settings with a plain title and labeled controls', () => {
-    const rendered = renderView({
-      snapshot: snapshot({
-        settings: { ...DEFAULT_CHAT_SETTINGS, showReasoning: false },
-        panel: {
-          id: 'settings',
-          kind: 'settings',
-          title: 'Settings',
-          rows: [
-            {
-              label: 'transcript spacing',
-              description: 'comfortable',
-              value: 'transcriptSpacing',
-              section: 'Appearance',
-              control: {
-                kind: 'segmented',
-                options: [
-                  { label: 'Compact', value: 'compact' },
-                  { label: 'Comfortable', value: 'comfortable', active: true },
-                ],
-              },
-            },
-            {
-              label: 'animations',
-              description: 'on',
-              value: 'animations',
-              section: 'Appearance',
-              control: { kind: 'toggle', checked: true },
-            },
-            {
-              label: 'reasoning',
-              description: 'hidden',
-              value: 'showReasoning',
-              section: 'Appearance',
-              control: { kind: 'toggle', checked: false },
-            },
-          ],
-        },
-      }),
-      terminalWidth: 100,
-      terminalHeight: 30,
-    })
-    const output = sanitizeTerminalText(rendered)
+  it('scrolls /settings rows in a short terminal and reports the visible range', () => {
+    const rows = settingsRows(DEFAULT_CHAT_SETTINGS, 'Appearance')
+    const height = composerPanelHeight(snapshot({ panel: settingsPanel('Appearance') }), 10)
+    const capacity = panelRowCapacity('settings', height, rows)
+    expect(capacity).toBeLessThan(rows.length)
+    const selected = rows.length - 1
+    const output = sanitizeTerminalText(
+      renderView({
+        snapshot: snapshot({ panel: settingsPanel('Appearance') }),
+        terminalWidth: 80,
+        terminalHeight: 10,
+        panelSelection: selected,
+        panelViewportStart: revealPanelSelection(selected, 0, capacity, rows.length),
+      })
+    )
 
-    expect(output).toContain('Appearance')
-    expect(output).toContain('transcript spacing')
-    expect(output).toContain('Compact')
-    expect(output).toContain('Comfortable')
-    expect(output).toContain('━━●')
-    expect(output).toContain('●━━')
-    expect(output).toContain('Settings')
-    expect(output).toContain('On')
-    expect(output).toContain('Off')
+    expect(output).toContain(`${rows.length - capacity + 1}-${rows.length} / ${rows.length}`)
+    expect(output).toContain('› Tool output')
+    expect(output).not.toContain('Transcript spacing')
+  })
+
+  it('lays out /settings categories beside the settings of the selected category', () => {
+    const output = sanitizeTerminalText(
+      renderView({
+        snapshot: snapshot({ panel: settingsPanel('Auto-Discovery') }),
+        terminalWidth: 100,
+        terminalHeight: 30,
+        settingsPanelFocus: 'categories',
+      })
+    )
+    const lines = output.split('\n')
+
+    for (const { label } of SETTINGS_CATEGORIES) {
+      expect(output).toContain(label)
+    }
+    expect(lines.find((line) => line.includes('Settings'))).toContain('only explicit --mcp-config sources load')
+    expect(lines.find((line) => line.includes('Auto-Discovery'))).toContain('›')
+    expect(lines.find((line) => line.includes('MCP'))).toContain('●━━ Off')
+    expect(lines.find((line) => line.includes('Agents (peer-to-peer'))).toContain('━━● On')
+    expect(lines.filter((line) => line.includes('›'))).toHaveLength(1)
+    expect(output).toContain('Tab section')
+  })
+
+  it('keeps the active theme in view when the theme options overflow the row', () => {
+    const output = sanitizeTerminalText(
+      renderView({
+        snapshot: snapshot({
+          settings: { ...DEFAULT_CHAT_SETTINGS, frogTheme: 'solar' },
+          panel: settingsPanel('Appearance', { ...DEFAULT_CHAT_SETTINGS, frogTheme: 'solar' }),
+        }),
+        terminalWidth: 80,
+        terminalHeight: 24,
+      })
+    )
+    const theme = output.split('\n').find((line) => line.includes('› Theme'))
+
+    expect(theme).toContain('‹')
+    expect(theme).toContain('Solar')
+    expect(theme).not.toContain('Classic')
+    expect(theme).not.toMatch(/Solar.*›/u)
   })
 
   it('renders permission tool grants as toggles', () => {
@@ -1156,7 +1183,7 @@ describe('ChatView', () => {
     [90, 16, false],
     [90, 30, true],
   ])(
-    'keeps /model command, loading, and loaded states at the same height at %ix%i, party=%s',
+    'renders /model loading and loaded states two rows taller than the command at %ix%i, party=%s',
     (terminalWidth, terminalHeight, party) => {
       const models: ChatPanel = {
         id: 'models',
@@ -1199,8 +1226,8 @@ describe('ChatView', () => {
       const model = envelope(modelLines, 'Tab section')
       const commandHeight = command.bottom - command.top + 1
 
-      expect(loading.bottom - loading.top + 1).toBe(commandHeight)
-      expect(model.bottom - model.top + 1).toBe(commandHeight)
+      expect(loading.bottom - loading.top + 1).toBe(commandHeight + 2)
+      expect(model.bottom - model.top + 1).toBe(commandHeight + 2)
       expect({ left: loading.left, right: loading.right }).toEqual({ left: command.left, right: command.right })
       expect({ left: model.left, right: model.right }).toEqual({ left: command.left, right: command.right })
     }
@@ -1460,6 +1487,18 @@ describe('panel helpers', () => {
     expect(highlighted).toBe(output)
   })
 })
+
+function settingsPanel(category: SettingsCategory, settings = DEFAULT_CHAT_SETTINGS): ChatPanel {
+  return {
+    id: `settings-${category}`,
+    kind: 'settings',
+    title: category,
+    rows: settingsRows(settings, category),
+    filters: settingsCategoryFilters(),
+    settingsCategory: category,
+    settingsCategories: SETTINGS_CATEGORIES,
+  }
+}
 
 function renderView(
   props: Omit<Parameters<typeof ChatView>[0], 'input' | 'cursor'> & { input?: string; cursor?: number },

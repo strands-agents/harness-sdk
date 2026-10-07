@@ -8,7 +8,7 @@ export type SetupFlow = 'quickstart' | 'customize' | 'import'
 
 export type AppearanceSettings = Pick<
   ChatSettings,
-  'frogTheme' | 'customTheme' | 'transcriptSpacing' | 'animations' | 'showReasoning' | 'toolOutput'
+  'frogTheme' | 'transcriptSpacing' | 'animations' | 'showReasoning' | 'toolOutput'
 >
 
 export interface SetupDraft {

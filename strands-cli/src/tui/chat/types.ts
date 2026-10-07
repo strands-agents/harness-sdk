@@ -15,13 +15,11 @@ export {
   FROG_THEMES,
   FROG_THEME_LABELS,
   THEME_COLOR_KEYS,
-  CUSTOM_THEME_COLOR_KEYS,
   type ChatSettings,
   type FrogTheme,
   type ResolvedColorMode,
   type ThemeColors,
   type ThemeSettings,
-  type CustomTheme,
   type SettingsCategory,
 } from '../settings.js'
 

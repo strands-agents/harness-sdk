@@ -1,10 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import {
-  ChatController,
-  DEFAULT_CHAT_SETTINGS,
-  type ChatBackend,
-  type CustomTheme,
-} from '../src/tui/chat/controller.js'
+import { ChatController, DEFAULT_CHAT_SETTINGS, type ChatBackend } from '../src/tui/chat/controller.js'
 import { settingsRows } from '../src/tui/chat/panels.js'
 
 const backend: ChatBackend = {
@@ -41,42 +36,34 @@ describe('appearance settings controller', () => {
           { label: 'Cyborg', value: 'circuit' },
           { label: 'Spectre', value: 'spectre' },
           { label: 'Solar', value: 'solar' },
-          { label: 'Custom', value: 'custom' },
         ],
       },
     })
   })
 
-  it('atomically selects custom colors and isolates nested state from callers and snapshots', async () => {
-    const customTheme: CustomTheme = { base: 'merlin', light: { accent: '#123456' }, dark: { frog: '#abcdef' } }
+  it('applies a theme selection', async () => {
     const setSettings = vi.fn(async () => {})
-    const controller = new ChatController(backend, { settings: { customTheme }, setSettings })
-    customTheme.light.accent = '#000000'
-    expect(controller.getSnapshot().settings.customTheme.light.accent).toBe('#123456')
+    const controller = new ChatController(backend, { setSettings })
     await controller.submit('/settings')
-    expect(await setting(controller, `customTheme=${encodeURIComponent(JSON.stringify(customTheme))}`)).toBe(true)
-    expect(setSettings).toHaveBeenCalledWith({ frogTheme: 'custom', customTheme })
-    controller.getSnapshot().settings.customTheme.dark.frog = '#000000'
-    await setting(controller, 'animations')
-    expect(controller.getSnapshot().settings.customTheme.dark.frog).toBe('#abcdef')
-    expect(controller.getSnapshot().settings.frogTheme).toBe('custom')
-    expect(DEFAULT_CHAT_SETTINGS.customTheme).toEqual({ base: 'green', light: {}, dark: {} })
+    expect(await setting(controller, 'frogTheme=solar')).toBe(true)
+    expect(setSettings).toHaveBeenCalledWith({ frogTheme: 'solar' })
+    expect(controller.getSnapshot().settings.frogTheme).toBe('solar')
     await controller.dispose()
   })
 
-  it.each([
-    'customTheme=%',
-    `customTheme=${encodeURIComponent(JSON.stringify({ base: 'green', light: {}, dark: { accent: 'red' } }))}`,
-  ])('rejects malformed appearance input: %s', async (value) => {
-    const setSettings = vi.fn()
-    const controller = new ChatController(backend, { setSettings })
-    await controller.submit('/settings')
-    const before = globalThis.structuredClone(controller.getSnapshot().settings)
-    expect(await setting(controller, value)).toBe(false)
-    expect(setSettings).not.toHaveBeenCalled()
-    expect(controller.getSnapshot().settings).toEqual(before)
-    await controller.dispose()
-  })
+  it.each(['frogTheme=custom', 'frogTheme=%', `customTheme=${encodeURIComponent(JSON.stringify({ base: 'green' }))}`])(
+    'rejects unknown appearance input: %s',
+    async (value) => {
+      const setSettings = vi.fn()
+      const controller = new ChatController(backend, { setSettings })
+      await controller.submit('/settings')
+      const before = globalThis.structuredClone(controller.getSnapshot().settings)
+      expect(await setting(controller, value)).toBe(false)
+      expect(setSettings).not.toHaveBeenCalled()
+      expect(controller.getSnapshot().settings).toEqual(before)
+      await controller.dispose()
+    }
+  )
 
   it('retains the old settings if persistence fails', async () => {
     const controller = new ChatController(backend, {
@@ -85,9 +72,7 @@ describe('appearance settings controller', () => {
       },
     })
     await controller.submit('/settings')
-    expect(
-      await setting(controller, `customTheme=${encodeURIComponent(JSON.stringify(DEFAULT_CHAT_SETTINGS.customTheme))}`)
-    ).toBe(false)
+    expect(await setting(controller, 'frogTheme=solar')).toBe(false)
     expect(controller.getSnapshot().settings.frogTheme).toBe('green')
     expect(controller.getSnapshot().panel?.kind).toBe('error')
     await controller.dispose()

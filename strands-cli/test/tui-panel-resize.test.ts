@@ -118,16 +118,18 @@ describe('mounted panel resizing', () => {
     await view.press('keep this draft')
     await controller.submit('/settings')
     await vi.waitFor(() => expect(view.screen()).toContain('Auto-Discovery'))
-    for (let index = 0; index < 2; index++) await view.press('\t')
+    await view.press('\t')
+    for (let index = 0; index < 2; index++) await view.press('\u001b[B')
     await vi.waitFor(() => expect(view.screen()).toContain('Usage ping (telemetry)'))
-    await view.press('\u001b[B')
+    await view.press('\t')
 
     for (const [width, height] of terminalSizes) {
       await view.resize(width, height)
       await vi.waitFor(() => {
         view.fits()
-        expect(view.screen()).toContain('Usage ping')
-        expect(view.screen()).toContain('(telemetry)')
+        // Narrow terminals truncate the label beside its control.
+        expect(view.screen()).toContain(width >= 80 ? '› Usage ping (telemetry)' : '› Usage p')
+        expect(view.screen()).toContain('━━● On')
         expect(view.screen()).toContain('Esc back')
         expect(view.screen()).not.toContain('/help')
       })
@@ -138,6 +140,7 @@ describe('mounted panel resizing', () => {
     await vi.waitFor(() => expect(controller.getSnapshot().panel).toBeUndefined())
     await controller.submit('/settings')
     await view.press('\t')
+    await view.press('\u001b[B')
     await vi.waitFor(() => expect(view.screen()).toContain('Skills'))
     await view.click(view.pointOnRow('Skills', 'Off'))
     await vi.waitFor(() => expect(controller.getSnapshot().settings.skillDiscovery).toBe(true))

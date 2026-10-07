@@ -16,6 +16,7 @@ import {
   panelControlTarget,
   panelRowCapacity,
   type ModelPanelFocus,
+  type SettingsPanelFocus,
 } from './interaction.js'
 import {
   contextColor,
@@ -33,7 +34,7 @@ import { RenamePanel } from './rename-panel.js'
 import { SessionsPanel } from './sessions-panel.js'
 import { PanelItemHeader, PanelOverlay, PanelTitle } from './panel-components.js'
 import { PanelHelpFooter } from './help-footer.js'
-import { SettingsControl, SettingsPanel } from './settings-panel.js'
+import { SettingsControl, SettingsPanel, SettingsPicker } from './settings-panel.js'
 import { BlinkingCursor } from './text-input.js'
 import { Box, Text, useTheme } from './theme.js'
 
@@ -69,6 +70,7 @@ export function ResourcePanel({
   query,
   filter,
   modelPanelFocus,
+  settingsPanelFocus,
   pressedFilter,
   hoveredFilter,
   pressedRow,
@@ -96,6 +98,7 @@ export function ResourcePanel({
   query: string
   filter: string
   modelPanelFocus: ModelPanelFocus
+  settingsPanelFocus: SettingsPanelFocus
   pressedFilter?: string
   hoveredFilter?: string
   pressedRow?: number
@@ -204,35 +207,49 @@ export function ResourcePanel({
       />
     )
   }
-  if (panel.kind === 'models') {
+  if (panel.kind === 'models' || panel.kind === 'settings') {
     const height = composer?.height ?? COMPOSER_PANEL_HEIGHT
-    const capacity = panelRowCapacity(panel.kind, height, terminalWidth, allRows)
+    const capacity = panelRowCapacity(panel.kind, height, allRows)
     const start = Math.max(0, Math.min(viewportStart, allRows.length - capacity))
     const rows = allRows.slice(start, start + capacity)
-    const modelId = allRows[hoveredRow ?? selected]?.value
+    const modelId = panel.kind === 'models' ? allRows[hoveredRow ?? selected]?.value : undefined
+    const sectionProps = {
+      rows,
+      allRows,
+      selected,
+      start,
+      width,
+      // The help footer takes the last row.
+      height: Math.max(1, height - 1),
+      ...(pressedRow !== undefined ? { pressedRow } : {}),
+      ...(hoveredRow !== undefined ? { hoveredRow } : {}),
+      ...(onRowElement ? { onRowElement } : {}),
+      ...(pressedFilter ? { pressedFilter } : {}),
+      ...(hoveredFilter ? { hoveredFilter } : {}),
+      ...(onFilterElement ? { onFilterElement } : {}),
+    }
     return (
       <Box ref={onPanelElement} width={width} height={height} overflow="hidden" flexDirection="column">
-        <ModelPicker
-          panel={panel}
-          rows={rows}
-          selected={selected}
-          start={start}
-          width={width}
-          // The help footer takes the last row.
-          height={Math.max(1, height - 1)}
-          allRows={allRows}
-          query={query}
-          filter={filter}
-          focus={modelPanelFocus}
-          animate={settings.animations}
-          {...(pressedRow !== undefined ? { pressedRow } : {})}
-          {...(hoveredRow !== undefined ? { hoveredRow } : {})}
-          {...(onRowElement ? { onRowElement } : {})}
-          {...(pressedFilter ? { pressedFilter } : {})}
-          {...(hoveredFilter ? { hoveredFilter } : {})}
-          {...(onFilterElement ? { onFilterElement } : {})}
-          {...(onSearchElement ? { onSearchElement } : {})}
-        />
+        {panel.kind === 'models' ? (
+          <ModelPicker
+            {...sectionProps}
+            panel={panel}
+            query={query}
+            filter={filter}
+            focus={modelPanelFocus}
+            animate={settings.animations}
+            {...(onSearchElement ? { onSearchElement } : {})}
+          />
+        ) : (
+          <SettingsPicker
+            {...sectionProps}
+            panel={panel}
+            focus={settingsPanelFocus}
+            {...(pressedControl ? { pressedControl } : {})}
+            {...(hoveredControl ? { hoveredControl } : {})}
+            {...(onControlElement ? { onControlElement } : {})}
+          />
+        )}
         <PanelHelpFooter width={width} {...(modelId ? { modelId } : {})} />
       </Box>
     )
@@ -240,7 +257,7 @@ export function ResourcePanel({
   const capacity =
     panel.kind === 'agents'
       ? agentGridCapacity(terminalWidth, terminalHeight)
-      : panelRowCapacity(panel.kind, terminalHeight, terminalWidth, allRows)
+      : panelRowCapacity(panel.kind, terminalHeight, allRows)
   const start = Math.max(0, Math.min(viewportStart, allRows.length - capacity))
   const rows = allRows.slice(start, start + capacity)
   const rowProps = {
@@ -260,18 +277,45 @@ export function ResourcePanel({
   const errorHeight = panel.kind === 'error' ? compactErrorPanelHeight(rows, width, terminalHeight) : undefined
   if (panel.kind === 'context') {
     const used = context.projectedTokens ?? context.currentTokens
+    const wide = width >= 64
+    const contentWidth = Math.min(wide ? 96 : 52, width)
+    const columnWidth = wide ? Math.floor((contentWidth - 4) / 2) : contentWidth
+    const stats = [
+      ['Input', context.inputTokens],
+      ['Output', context.outputTokens],
+      ['Cache read', context.cacheReadInputTokens],
+      ['Cache write', context.cacheWriteInputTokens],
+    ] as const
+    const stat = ([label, tokens]: (typeof stats)[number], statWidth?: number): ReactElement => (
+      <Box key={label} {...(statWidth === undefined ? {} : { width: statWidth })} justifyContent="space-between">
+        <Text dimColor>{label}</Text>
+        <Text>{tokens?.toLocaleString() ?? '—'}</Text>
+      </Box>
+    )
     return (
-      <PanelOverlay width={width} {...(onPanelElement ? { onElement: onPanelElement } : {})}>
-        <Box flexDirection="column" overflow="hidden">
-          <Box justifyContent="space-between">
+      <Box
+        ref={onPanelElement}
+        width={width}
+        {...(composer ? { height: composer.height } : {})}
+        flexDirection="column"
+        alignItems="center"
+        overflow="hidden"
+      >
+        <Box
+          width={contentWidth}
+          flexGrow={1}
+          overflow="hidden"
+          {...(wide
+            ? { flexDirection: 'row', justifyContent: 'space-between', paddingTop: 1 }
+            : { flexDirection: 'column' })}
+        >
+          <Box width={columnWidth} flexShrink={0} flexDirection="column">
             <Text bold color={accent} wrap="truncate-end">
               {panel.title}
             </Text>
-          </Box>
-          <Box marginTop={1} flexDirection="column">
             {context.contextWindow ? (
               <Text color={contextColor(context, palette)} wrap="truncate-end">
-                {formatContext(context, Math.max(1, width - 12))}
+                {formatContext(context, Math.max(1, columnWidth - 12))}
               </Text>
             ) : null}
             <Text dimColor wrap="truncate-end">
@@ -279,36 +323,30 @@ export function ResourcePanel({
               {context.contextWindow ? ` / ${context.contextWindow.toLocaleString()}` : ''} tokens
             </Text>
           </Box>
-          <Box marginTop={1} flexDirection="column">
+          <Box width={columnWidth} flexShrink={0} flexDirection="column" {...(wide ? {} : { marginTop: 1 })}>
             <Box justifyContent="space-between">
               <Text bold>Last turn</Text>
               <Text>{context.totalTokens?.toLocaleString() ?? '—'} tokens</Text>
             </Box>
-            {(
-              [
-                ['Input', context.inputTokens],
-                ['Output', context.outputTokens],
-                ['Cache read', context.cacheReadInputTokens],
-                ['Cache write', context.cacheWriteInputTokens],
-              ] as const
-            ).map(([label, tokens]) => (
-              <Box key={label} justifyContent="space-between">
-                <Text dimColor>{label}</Text>
-                <Text>{tokens?.toLocaleString() ?? '—'}</Text>
-              </Box>
-            ))}
+            {wide
+              ? stats.map((entry) => stat(entry))
+              : [stats.slice(0, 2), stats.slice(2)].map((pair) => (
+                  <Box key={pair[0]![0]} justifyContent="space-between">
+                    {pair.map((entry) => stat(entry, Math.floor((contentWidth - 2) / 2)))}
+                  </Box>
+                ))}
           </Box>
         </Box>
-      </PanelOverlay>
+        <PanelHelpFooter width={contentWidth} centered />
+      </Box>
     )
   }
-  if (panel.kind === 'settings' || panel.kind === 'voice') {
+  if (panel.kind === 'voice') {
     return (
       <SettingsPanel
         height={terminalHeight}
         {...(pressedFilter ? { pressedFilter } : {})}
         {...(hoveredFilter ? { hoveredFilter } : {})}
-        appearance={settings}
         {...(pressedControl ? { pressedControl } : {})}
         {...(hoveredControl ? { hoveredControl } : {})}
         {...rowProps}

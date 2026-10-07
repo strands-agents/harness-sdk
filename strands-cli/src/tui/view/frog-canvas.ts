@@ -31,8 +31,6 @@ type FrogPalette = Record<Color, Rgb>
 
 export interface FrogRenderOptions {
   colorMode?: ResolvedColorMode
-  frogColor?: string
-  customBase?: Exclude<FrogTheme, 'custom'>
 }
 
 const FROG_PALETTES = {
@@ -144,7 +142,7 @@ const FROG_PALETTES = {
     dim: [96, 70, 31],
     tongue: [255, 143, 105],
   },
-} satisfies Record<Exclude<FrogTheme, 'custom'>, FrogPalette>
+} satisfies Record<FrogTheme, FrogPalette>
 
 const PARTY_COLORS = ['pink', 'yellow', 'cyan', 'purple', 'orange', 'lime', 'blue'] as const
 const COLOR_NAMES = Object.keys(BASE_PALETTE) as Color[]
@@ -175,7 +173,7 @@ export class Canvas implements PixelSink {
   private readonly _partyOffset: number
   private readonly _foregroundCodes: readonly string[]
   private readonly _backgroundCodes: readonly string[]
-  readonly theme: Exclude<FrogTheme, 'custom'>
+  readonly theme: FrogTheme
   readonly colorMode: ResolvedColorMode
 
   constructor(
@@ -188,7 +186,7 @@ export class Canvas implements PixelSink {
   ) {
     const cells = width * height
     this._partyOffset = Math.floor(partyElapsedMs / 80)
-    this.theme = _party ? 'green' : theme === 'custom' ? (options.customBase ?? 'green') : theme
+    this.theme = _party ? 'green' : theme
     this.colorMode = options.colorMode ?? 'dark'
     const palette = frogPalette(this.theme, _party ? { colorMode: options.colorMode ?? 'dark' } : options)
     this._foregroundCodes = colorCodes(palette, 38)
@@ -372,7 +370,7 @@ function anchorGlyphToBottom(visual: VisualCell): VisualCell {
   }
 }
 
-function frogPalette(theme: Exclude<FrogTheme, 'custom'>, options: FrogRenderOptions): FrogPalette {
+function frogPalette(theme: FrogTheme, options: FrogRenderOptions): FrogPalette {
   const palette: FrogPalette = { ...FROG_PALETTES[theme] }
   if (options.colorMode === 'light') {
     for (const name of COLOR_NAMES) {
@@ -387,21 +385,6 @@ function frogPalette(theme: Exclude<FrogTheme, 'custom'>, options: FrogRenderOpt
       palette.ink = palette.lime
     } else if (theme === 'spectre') {
       palette.ink = [17, 19, 25]
-    }
-  }
-  if (options.frogColor && /^#[\da-f]{6}$/i.test(options.frogColor)) {
-    const rgb: Rgb = [
-      Number.parseInt(options.frogColor.slice(1, 3), 16),
-      Number.parseInt(options.frogColor.slice(3, 5), 16),
-      Number.parseInt(options.frogColor.slice(5, 7), 16),
-    ]
-    palette.lime = rgb
-    palette.green = mixColor(rgb, [0, 0, 0], 0.18)
-    palette.emerald = mixColor(rgb, [0, 0, 0], 0.35)
-    palette.forest = mixColor(rgb, [0, 0, 0], 0.5)
-    palette.mint = mixColor(rgb, [255, 255, 255], 0.45)
-    if (theme === 'minimal') {
-      palette.ink = rgb
     }
   }
   return palette

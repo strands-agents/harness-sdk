@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useSyncExternalStore, type ReactElement, type ReactNode } from 'react'
+import { useCallback, useMemo, useSyncExternalStore, type ReactElement } from 'react'
 import type { DOMElement } from 'ink'
 
 import type { ChatPanel, ChatSnapshot, ChatTask, ChatVoiceStore } from '../chat/controller.js'
@@ -13,9 +13,11 @@ import type { ScreenSelectionSegment } from '../terminal/mouse-input.js'
 import { VOICE_METER_WIDTH, voiceMeterFill } from '../voice/session.js'
 import {
   composerPanelHeight,
+  isComposerPanel,
   MAX_VISIBLE_BACKGROUND_TASKS,
   type MetadataTarget,
   type ModelPanelFocus,
+  type SettingsPanelFocus,
 } from './interaction.js'
 import { PromptEditor, promptContentSize } from './prompt-editor.js'
 import { ResourcePanel } from './panels.js'
@@ -41,7 +43,6 @@ export function ChatView(props: Parameters<typeof ChatViewContent>[0]): ReactEle
 }
 
 function ChatViewContent({
-  overlay,
   onActionElement,
   snapshot,
   input,
@@ -57,6 +58,7 @@ function ChatViewContent({
   panelQuery = '',
   panelFilter = 'all',
   modelPanelFocus = 'models',
+  settingsPanelFocus = 'settings',
   detailScroll = 0,
   transcriptScroll = 0,
   onMaxTranscriptScroll,
@@ -96,7 +98,6 @@ function ChatViewContent({
   clipboardNotice,
   party = false,
 }: {
-  overlay?: ReactNode
   onActionElement?: (action: 'settings' | 'setup' | 'help', element: DOMElement | null) => void
   snapshot: ChatSnapshot
   input: string
@@ -112,6 +113,7 @@ function ChatViewContent({
   panelQuery?: string
   panelFilter?: string
   modelPanelFocus?: ModelPanelFocus
+  settingsPanelFocus?: SettingsPanelFocus
   detailScroll?: number
   transcriptScroll?: number
   onMaxTranscriptScroll?: (maximum: number) => void
@@ -151,17 +153,18 @@ function ChatViewContent({
   clipboardNotice?: { status: 'success'; characterCount: number } | { status: 'error' }
   party?: boolean
 }): ReactElement {
-  const { background } = useTheme()
+  const { canvas } = useTheme()
   const resolvedCommandAssistance =
     commandAssistance ??
     (suggestions === undefined ? commandAssistanceForInput(input, actionableCommandToken) : undefined)
   const resolvedSuggestions = suggestions ?? resolvedCommandAssistance?.completions ?? []
   const hasActivity =
     snapshot.completedTurns.length > 0 || snapshot.activeTurn !== undefined || snapshot.notices.length > 0
-  const composerPanel =
-    snapshot.panel?.kind === 'models' || snapshot.panel?.kind === 'effort' ? snapshot.panel : undefined
+  const composerPanel = isComposerPanel(snapshot.panel?.kind) ? snapshot.panel : undefined
   const composerPanelOutlined =
-    composerPanel?.kind === 'effort' || (composerPanel?.kind === 'models' && composerPanel.loading === true)
+    composerPanel?.kind === 'effort' ||
+    composerPanel?.kind === 'context' ||
+    (composerPanel?.kind === 'models' && composerPanel.loading === true)
   const showCommandPicker = resolvedCommandAssistance !== undefined && !snapshot.panel && !snapshot.activeTurn
   const showQueueStatus = snapshot.queuedPrompts.length > 0 || snapshot.status === 'interrupting'
   const showVoiceStatus = snapshot.voice !== undefined && snapshot.voice.status !== 'off'
@@ -175,7 +178,11 @@ function ChatViewContent({
   const partyFrame = usePartyFrame(party && snapshot.settings.animations)
   const queueStatusRows = showQueueStatus ? Math.max(1, snapshot.queuedPrompts.length) : 0
   const composerStatusRows =
-    queueStatusRows + Number(showVoiceStatus) + visibleBackgroundTasks.length + Number(hiddenBackgroundTasks > 0)
+    snapshot.pendingSteering.length +
+    queueStatusRows +
+    Number(showVoiceStatus) +
+    visibleBackgroundTasks.length +
+    Number(hiddenBackgroundTasks > 0)
   const editorWidth = Math.max(1, terminalWidth - 2)
   const suggestionCapacity = Math.max(1, Math.min(5, terminalHeight - composerStatusRows - 10))
   const suggestionRows = showCommandPicker
@@ -197,7 +204,11 @@ function ChatViewContent({
         party,
         editorMaxHeight
       )
-  const commandDeckHeight = composerStatusRows + suggestionRows + editorHeight + 2
+  const restingEditorHeight = composerPanel
+    ? promptEditorHeight('', 0, editorWidth, editorMaxRows, false, party, editorMaxHeight)
+    : editorHeight
+  const commandDeckHeight = composerStatusRows + restingEditorHeight + 2
+  const expandedCommandDeckHeight = composerStatusRows + suggestionRows + editorHeight + 2
   // A stable header element keeps the memoized transcript from re-rendering on spinner ticks.
   const { settings } = snapshot
   const frogBrandElapsedMs = useBrandAnimation(frogBrandAnimationId, settings.animations)
@@ -209,7 +220,6 @@ function ChatViewContent({
         animate={settings.animations}
         {...(introStartedAt !== undefined ? { introStartedAt } : {})}
         theme={settings.frogTheme}
-        customBase={settings.customTheme.base}
         partyElapsedMs={partyFrame * PARTY_FRAME_INTERVAL_MS}
         {...(frogBrandAnimationId !== undefined ? { frogBrandElapsedMs } : {})}
         {...(onFrogElement ? { onFrogElement } : {})}
@@ -223,7 +233,6 @@ function ChatViewContent({
       settings.animations,
       introStartedAt,
       settings.frogTheme,
-      settings.customTheme.base,
       partyFrame,
       frogBrandAnimationId,
       frogBrandElapsedMs,
@@ -249,6 +258,7 @@ function ChatViewContent({
         query={panelQuery}
         filter={panelFilter}
         modelPanelFocus={modelPanelFocus}
+        settingsPanelFocus={settingsPanelFocus}
         detailScroll={detailScroll}
         rows={panelRows ?? snapshot.panel.rows}
         {...(pressedPanelFilter ? { pressedFilter: pressedPanelFilter } : {})}
@@ -293,68 +303,79 @@ function ChatViewContent({
           startupView
         )}
       </Box>
-      <FadeIn animate={settings.animations} background={background}>
-        <Box width="100%" flexShrink={0} flexDirection="column">
-          {showQueueStatus ? (
-            <QueuedPromptSummary
-              prompts={snapshot.queuedPrompts}
-              interrupting={snapshot.status === 'interrupting'}
-              {...(pressedQueuedPrompt ? { pressed: pressedQueuedPrompt } : {})}
-              {...(editingQueuedPromptId ? { editingId: editingQueuedPromptId } : {})}
-              {...(onQueuedPromptElement ? { onActionElement: onQueuedPromptElement } : {})}
-            />
-          ) : null}
-          {showVoiceStatus ? <VoiceStatus snapshot={snapshot.voice!} {...(voice ? { voice } : {})} /> : null}
-          {visibleBackgroundTasks.map((task) => (
-            <BackgroundTaskStatus key={task.id} task={task} spinner={backgroundTaskSpinner} />
-          ))}
-          {hiddenBackgroundTasks > 0 ? (
-            <Box height={1} flexShrink={0} paddingX={1} overflow="hidden">
-              <Text dimColor>+ {hiddenBackgroundTasks} more background tasks</Text>
-            </Box>
-          ) : null}
-          {showCommandPicker ? (
-            <CommandPalette
-              commands={resolvedSuggestions}
-              assistance={resolvedCommandAssistance}
-              selected={suggestionSelection}
+      <Box height={commandDeckHeight} flexShrink={0} />
+      <FadeIn animate={settings.animations} background={canvas}>
+        <Box
+          position="absolute"
+          marginTop={Math.max(0, terminalHeight - expandedCommandDeckHeight)}
+          width="100%"
+          height={expandedCommandDeckHeight}
+          flexDirection="column"
+          backgroundColor={canvas}
+        >
+          <Box width="100%" flexShrink={0} flexDirection="column">
+            {snapshot.pendingSteering.length > 0 ? <SteeringSummary prompts={snapshot.pendingSteering} /> : null}
+            {showQueueStatus ? (
+              <QueuedPromptSummary
+                prompts={snapshot.queuedPrompts}
+                interrupting={snapshot.status === 'interrupting'}
+                {...(pressedQueuedPrompt ? { pressed: pressedQueuedPrompt } : {})}
+                {...(editingQueuedPromptId ? { editingId: editingQueuedPromptId } : {})}
+                {...(onQueuedPromptElement ? { onActionElement: onQueuedPromptElement } : {})}
+              />
+            ) : null}
+            {showVoiceStatus ? <VoiceStatus snapshot={snapshot.voice!} {...(voice ? { voice } : {})} /> : null}
+            {visibleBackgroundTasks.map((task) => (
+              <BackgroundTaskStatus key={task.id} task={task} spinner={backgroundTaskSpinner} />
+            ))}
+            {hiddenBackgroundTasks > 0 ? (
+              <Box height={1} flexShrink={0} paddingX={1} overflow="hidden">
+                <Text dimColor>+ {hiddenBackgroundTasks} more background tasks</Text>
+              </Box>
+            ) : null}
+            {showCommandPicker ? (
+              <CommandPalette
+                commands={resolvedSuggestions}
+                assistance={resolvedCommandAssistance}
+                selected={suggestionSelection}
+                width={editorWidth}
+                capacity={suggestionCapacity}
+                {...(pressedSuggestion !== undefined ? { pressed: pressedSuggestion } : {})}
+                {...(hoveredSuggestion !== undefined ? { hovered: hoveredSuggestion } : {})}
+                {...(onSuggestionElement ? { onRowElement: onSuggestionElement } : {})}
+              />
+            ) : null}
+            <PromptEditor
+              input={input}
+              cursor={cursor}
+              animateCursor={settings.animations}
               width={editorWidth}
-              capacity={suggestionCapacity}
-              {...(pressedSuggestion !== undefined ? { pressed: pressedSuggestion } : {})}
-              {...(hoveredSuggestion !== undefined ? { hovered: hoveredSuggestion } : {})}
-              {...(onSuggestionElement ? { onRowElement: onSuggestionElement } : {})}
-            />
-          ) : null}
-          <PromptEditor
-            input={input}
-            cursor={cursor}
-            animateCursor={settings.animations}
+              height={editorHeight}
+              maxRows={editorMaxRows}
+              maxHeight={editorMaxHeight}
+              {...(actionableCommandToken ? { actionableCommandToken } : {})}
+              {...(snapshot.composerStatus ? { busyStatus: `${composerSpinner} ${snapshot.composerStatus}` } : {})}
+              {...(snapshot.panel && !composerPanel ? { panelStatus: panelEditorStatus(snapshot.panel) } : {})}
+              party={party}
+              partyFrame={partyFrame}
+              transparent={composerPanel !== undefined && !composerPanelOutlined}
+            >
+              {composerPanel ? panelView : null}
+            </PromptEditor>
+          </Box>
+          <ComposerFooter
+            snapshot={snapshot}
             width={editorWidth}
-            height={editorHeight}
-            maxRows={editorMaxRows}
-            maxHeight={editorMaxHeight}
-            {...(actionableCommandToken ? { actionableCommandToken } : {})}
-            {...(snapshot.composerStatus ? { busyStatus: `${composerSpinner} ${snapshot.composerStatus}` } : {})}
-            {...(snapshot.panel && !composerPanel ? { panelStatus: panelEditorStatus(snapshot.panel) } : {})}
-            party={party}
-            partyFrame={partyFrame}
-            transparent={composerPanel?.kind === 'models' && !composerPanelOutlined}
-          >
-            {composerPanel ? panelView : null}
-          </PromptEditor>
+            {...(settingsHovered !== undefined ? { settingsHovered } : {})}
+            {...(pressedMetadata ? { pressed: pressedMetadata } : {})}
+            {...(hoveredMetadata ? { hovered: hoveredMetadata } : {})}
+            {...(onMetadataElement ? { onMetadataElement } : {})}
+            {...(onActionElement ? { onActionElement } : {})}
+          />
         </Box>
-        <ComposerFooter
-          snapshot={snapshot}
-          width={editorWidth}
-          {...(settingsHovered !== undefined ? { settingsHovered } : {})}
-          {...(pressedMetadata ? { pressed: pressedMetadata } : {})}
-          {...(hoveredMetadata ? { hovered: hoveredMetadata } : {})}
-          {...(onMetadataElement ? { onMetadataElement } : {})}
-          {...(onActionElement ? { onActionElement } : {})}
-        />
       </FadeIn>
       {snapshot.panel && !composerPanel ? (
-        <FadeIn key={snapshot.panel.kind} animate={settings.animations} background={background}>
+        <FadeIn key={snapshot.panel.kind} animate={settings.animations} background={canvas}>
           {panelView}
         </FadeIn>
       ) : null}
@@ -367,7 +388,6 @@ function ChatViewContent({
           top={Math.max(0, terminalHeight - commandDeckHeight - FROG_ANIMATION_HEIGHT)}
           animate={snapshot.settings.animations}
           theme={snapshot.settings.frogTheme}
-          customBase={snapshot.settings.customTheme.base}
           onComplete={onFrogComplete}
         />
       ) : null}
@@ -386,7 +406,7 @@ function ChatViewContent({
         <Box
           position="absolute"
           width="100%"
-          marginTop={Math.max(0, terminalHeight - commandDeckHeight - 1)}
+          marginTop={Math.max(0, terminalHeight - expandedCommandDeckHeight - 1)}
           paddingRight={1}
           justifyContent="flex-end"
         >
@@ -397,7 +417,6 @@ function ChatViewContent({
           </Text>
         </Box>
       ) : null}
-      {overlay}
     </Box>
   )
 }
@@ -461,6 +480,22 @@ function VoiceStatus({
 
 function emptySubscribe(): () => void {
   return () => {}
+}
+
+function SteeringSummary({ prompts }: { prompts: ChatSnapshot['pendingSteering'] }): ReactElement {
+  const { warning } = useTheme()
+  return (
+    <Box flexDirection="column" flexShrink={0} overflow="hidden">
+      {prompts.map((prompt, index) => (
+        <Box key={`${index}:${prompt}`} height={1} flexShrink={0} paddingX={1} overflow="hidden">
+          <Text wrap="truncate-end">
+            <Text color={warning}>↳ Steering{prompts.length > 1 ? ` ${index + 1}/${prompts.length}` : ''}</Text>
+            <Text dimColor> · {prompt.replaceAll('\n', ' ')}</Text>
+          </Text>
+        </Box>
+      ))}
+    </Box>
+  )
 }
 
 function QueuedPromptSummary({

@@ -41,7 +41,6 @@ describe('CliConfigStore', () => {
         showReasoning: true,
         toolOutput: 'compact',
         frogTheme: 'green',
-        customTheme: { base: 'green', light: {}, dark: {} },
         mcpDiscovery: false,
         skillDiscovery: false,
         agentMessaging: true,

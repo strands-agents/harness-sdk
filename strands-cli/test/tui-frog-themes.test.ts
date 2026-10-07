@@ -2,7 +2,7 @@ import { stripVTControlCharacters } from 'node:util'
 import stringWidth from 'string-width'
 import { describe, expect, it } from 'vitest'
 
-import { FROG_THEMES, type FrogTheme } from '../src/tui/chat/types.js'
+import { FROG_THEMES } from '../src/tui/chat/types.js'
 import {
   renderFrogAnimationRuns,
   renderFrogBrandEasterEggFrame,
@@ -11,12 +11,11 @@ import {
   type FrogRenderOptions,
 } from '../src/tui/view/frog-intro-renderer.js'
 
-const BASES = FROG_THEMES.filter((theme) => theme !== 'custom')
 const VARIANTS = ['hop', 'fly', 'peek', 'firefly'] as const
 
 describe('frog themes', () => {
   it.each(FROG_THEMES)('renders %s in startup, intro, click, and all overlay animations', (theme) => {
-    const options: FrogRenderOptions = { colorMode: 'dark', customBase: 'merlin', frogColor: '#ac73df' }
+    const options: FrogRenderOptions = { colorMode: 'dark' }
     const frames = [
       renderFrogStartupLockup(98, true, 960, theme, false, options),
       renderFrogSpiralFrame(98, 24, 0.3, 960, true, theme, options),
@@ -38,22 +37,15 @@ describe('frog themes', () => {
   })
 
   it('shares Classic artwork with Kikker and keeps other theme shapes distinct', () => {
-    const frames = BASES.map((theme) => renderFrogStartupLockup(98, false, 960, theme))
+    const frames = FROG_THEMES.map((theme) => renderFrogStartupLockup(98, false, 960, theme))
 
-    expect(new Set(frames).size).toBe(BASES.length - 1)
-    expect(frames[BASES.indexOf('kikker')]).toBe(frames[BASES.indexOf('green')])
-    expect(frames[BASES.indexOf('merlin')]).toContain('★')
-    expect(frames[BASES.indexOf('minimal')]).not.toMatch(/[★✦╱╲]/u)
+    expect(new Set(frames).size).toBe(FROG_THEMES.length - 1)
+    expect(frames[FROG_THEMES.indexOf('kikker')]).toBe(frames[FROG_THEMES.indexOf('green')])
+    expect(frames[FROG_THEMES.indexOf('merlin')]).toContain('★')
+    expect(frames[FROG_THEMES.indexOf('minimal')]).not.toMatch(/[★✦╱╲]/u)
   })
 
-  it('uses the selected artwork and color for Custom in every render path', () => {
-    const options: FrogRenderOptions = { customBase: 'merlin', frogColor: '#0cabcd' }
-
-    expect(renderPaths('custom', options)).toEqual(renderPaths('merlin', options))
-    expect(renderFrogStartupLockup(98, true, 960, 'custom', false, options)).toContain(';2;12;171;205m')
-  })
-
-  it.each(BASES)('keeps %s inside narrow terminals and preserves sparse overlay runs', (theme) => {
+  it.each(FROG_THEMES)('keeps %s inside narrow terminals and preserves sparse overlay runs', (theme) => {
     for (const width of [1, 24, 67, 68]) {
       const startup = renderFrogStartupLockup(width, true, 960, theme, false, {}, 12)
       const intro = renderFrogSpiralFrame(width, 14, 0.98, 960, true, theme)
@@ -81,8 +73,8 @@ describe('frog themes', () => {
     expect(peek.every((run) => stringWidth(run.text) < 40)).toBe(true)
   })
 
-  it.each(BASES)('ends the %s intro on the startup lockup', (theme) => {
-    const options: FrogRenderOptions = { frogColor: '#ac73df' }
+  it.each(FROG_THEMES)('ends the %s intro on the startup lockup', (theme) => {
+    const options: FrogRenderOptions = { colorMode: 'dark' }
     const complete = renderFrogSpiralFrame(98, 38, 1, 4_200, true, theme, options).split('\n').slice(2, 14).join('\n')
 
     expect(complete).toBe(renderFrogStartupLockup(98, true, 0, theme, false, options))
@@ -124,15 +116,8 @@ describe('frog palettes', () => {
     expect(spectre).toContain(';2;255;55;76m')
   })
 
-  it('uses Classic for an unspecified Custom base and ignores invalid color strings', () => {
-    const classic = renderFrogStartupLockup(98, true)
-
-    expect(renderFrogStartupLockup(98, true, 0, 'custom')).toBe(classic)
-    expect(renderFrogStartupLockup(98, true, 0, 'custom', false, { frogColor: 'undefined' })).toBe(classic)
-  })
-
   it('preserves the shared party palette and motion across themes', () => {
-    const options: FrogRenderOptions = { colorMode: 'light', customBase: 'spectre', frogColor: '#0cabcd' }
+    const options: FrogRenderOptions = { colorMode: 'light' }
     const party = renderFrogStartupLockup(98, true, 960, 'green', true, { colorMode: 'light' })
 
     for (const theme of FROG_THEMES) {
@@ -141,12 +126,3 @@ describe('frog palettes', () => {
     expect(renderFrogStartupLockup(98, true, 1_040, 'green', true, options)).not.toBe(party)
   })
 })
-
-function renderPaths(theme: FrogTheme, options: FrogRenderOptions) {
-  return [
-    renderFrogStartupLockup(98, true, 960, theme, false, options),
-    renderFrogSpiralFrame(98, 24, 0.98, 960, true, theme, options),
-    renderFrogBrandEasterEggFrame(98, 0.3, 960, true, theme, false, 960, options),
-    ...VARIANTS.map((variant) => renderFrogAnimationRuns(98, 14, variant, 0.66, 960, true, theme, options)),
-  ]
-}
