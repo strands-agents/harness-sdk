@@ -965,6 +965,7 @@ describe('interactive runtime lifecycle', () => {
         cwd: secondWorkspace,
         paths: [explicitMcp],
         strictPaths: [explicitMcp],
+        backgroundConnect: true,
       })
       expect(controller.getSnapshot().runtime).toMatchObject({
         cwd: secondWorkspace,

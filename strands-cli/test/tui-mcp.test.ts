@@ -243,6 +243,42 @@ describe('loadMcp', () => {
     await loaded.dispose()
   })
 
+  it('answers listTools without blocking on a slow server and delivers its tools once connected', async () => {
+    vi.useFakeTimers()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const connect = vi.spyOn(McpClient.prototype, 'connect').mockImplementation(async function (this: unknown) {
+      await gate
+      ;(this as { _state: string })._state = 'connected'
+    })
+    const tools = [{ name: 'slow_tool' }] as unknown as Awaited<ReturnType<McpClient['listTools']>>
+    const listTools = vi.spyOn(McpClient.prototype, 'listTools').mockResolvedValue(tools)
+
+    const loaded = await loadMcp({ paths: [], servers: { slow: { command: 'slow-server' } }, backgroundConnect: true })
+    try {
+      const client = loaded.clients[0]!
+      expect(connect).toHaveBeenCalledTimes(1)
+
+      const pending = client.listTools()
+      await vi.advanceTimersByTimeAsync(2_000)
+      await expect(pending).resolves.toEqual([])
+      expect(listTools).not.toHaveBeenCalled()
+      expect(connect).toHaveBeenCalledTimes(1)
+
+      const changed = vi.fn()
+      client.onToolsChanged = changed
+      release()
+      vi.useRealTimers()
+      await vi.waitFor(() => expect(changed).toHaveBeenCalledWith([], tools))
+    } finally {
+      vi.useRealTimers()
+      vi.spyOn(McpClient.prototype, 'disconnect').mockResolvedValue(undefined)
+      await loaded.dispose()
+    }
+  })
+
   it('expands environment references in authored stdio tool filters', async () => {
     vi.stubEnv('STRANDS_TEST_ALLOWED_TOOL', '^read_')
     const loaded = await loadMcp({

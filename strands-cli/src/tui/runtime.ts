@@ -260,6 +260,7 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
     const mcp = await loadMcp({
       ...(await workspaceMcpOptions(options, initialWorkspace, workspace, config.snapshot().settings.mcpDiscovery)),
       ...(configuredMcpServers ? { servers: configuredMcpServers } : {}),
+      backgroundConnect: true,
     })
     const configuredTools: NonNullable<HarnessAgentOptions['tools']> = [
       ...(restoredAgentOptions.tools ?? []),
