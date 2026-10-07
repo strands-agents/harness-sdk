@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 
-import { WorkspaceSandbox } from '../../src/tui/workspace/sandbox.js'
-
 await import('../../dist/src/tui/terminal/ink.js')
-const { ChatController } = await import('../../src/tui/chat/controller.js')
-const { runInkChat } = await import('../../src/tui/run.js')
+const tuiRoot = process.env.STRANDS_CLI_TEST_DIST === 'true' ? '../../dist/src/tui' : '../../src/tui'
+const [{ WorkspaceSandbox }, { ChatController }, { runInkChat }] = await Promise.all([
+  import(`${tuiRoot}/workspace/sandbox.js`),
+  import(`${tuiRoot}/chat/controller.js`),
+  import(`${tuiRoot}/run.js`),
+])
 
 const sandbox = new WorkspaceSandbox(process.cwd())
 let shellAbort

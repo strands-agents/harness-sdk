@@ -14,7 +14,7 @@ const execFileAsync = promisify(execFile)
 
 interface PtyResult {
   returnCode: number
-  termiosRestored: boolean
+  termiosRestored: boolean | null
   transcript: string
   resizeTranscript: string
   resizeBurstTranscript: string
@@ -28,11 +28,14 @@ async function runPtySmoke(
   frog = false,
   resize = false
 ): Promise<PtyResult & { output: string }> {
-  const driver = fileURLToPath(new URL('./fixtures/tui-pty-driver.py', import.meta.url))
+  const windows = process.platform === 'win32'
+  const driver = fileURLToPath(
+    new URL(windows ? './fixtures/tui-conpty-driver.mjs' : './fixtures/tui-pty-driver.py', import.meta.url)
+  )
   const loader = fileURLToPath(new URL('./fixtures/strands-cli-routing-source-loader.mjs', import.meta.url))
   const fixture = fileURLToPath(new URL('./fixtures/tui-lifecycle-process.mjs', import.meta.url))
   const { stdout } = await execFileAsync(
-    process.env.PYTHON ?? 'python3',
+    windows ? process.execPath : (process.env.PYTHON ?? 'python3'),
     [driver, process.execPath, '--no-warnings=ExperimentalWarning', '--experimental-loader', loader, fixture],
     {
       cwd: fileURLToPath(new URL('..', import.meta.url)),
@@ -58,7 +61,9 @@ function expectRestoredTerminal(result: PtyResult & { output: string }): void {
   const enableMouse = '\u001b[?1002h\u001b[?1006h'
   const disableMouse = '\u001b[?1006l\u001b[?1003l\u001b[?1002l'
 
-  expect(result.termiosRestored).toBe(true)
+  if (result.termiosRestored !== null) {
+    expect(result.termiosRestored).toBe(true)
+  }
   expect(result.output.split(enterAlternateScreen).length - 1).toBe(1)
   expect(result.output.split(leaveAlternateScreen).length - 1).toBe(1)
   expect(result.output.split(enableMouse).length - 1).toBe(1)
@@ -68,7 +73,7 @@ function expectRestoredTerminal(result: PtyResult & { output: string }): void {
   expect(result.output.slice(result.output.lastIndexOf(leaveAlternateScreen))).not.toContain(enableMouse)
 }
 
-describe.skipIf(process.platform === 'win32')('TUI PTY lifecycle', () => {
+describe('TUI PTY lifecycle', () => {
   it('resizes the real PTY without blanking and restores the terminal after /exit', async () => {
     const result = await runPtySmoke(false, undefined, false, false, true)
     const frames = Buffer.from(result.resizeTranscript, 'base64').toString()

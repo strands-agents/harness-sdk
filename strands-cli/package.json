@@ -24,6 +24,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage --exclude test/tui-pty-lifecycle.test.ts && vitest run test/tui-pty-lifecycle.test.ts",
+    "test:platform": "vitest run test/tui-pty-lifecycle.test.ts",
     "lint": "eslint bin scripts src test",
     "lint:fix": "eslint bin scripts src test --fix",
     "format": "prettier --write bin scripts src test",
@@ -91,6 +92,7 @@
     "@vitest/coverage-v8": "^4.1.10",
     "@xterm/headless": "6.0.0",
     "eslint": "^10.6.0",
+    "node-pty": "^1.1.0",
     "prettier": "^3.9.4",
     "vitest": "^4.1.10"
   }
