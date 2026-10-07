@@ -9,19 +9,51 @@ const [{ WorkspaceSandbox }, { ChatController }, { runInkChat }] = await Promise
 ])
 
 const sandbox = new WorkspaceSandbox(process.cwd())
+const scenario = process.env.STRANDS_CLI_TEST_SCENARIO ?? 'exit'
+const chatMode = scenario === 'chat'
+const shellMode = scenario === 'shell-command' || scenario === 'shell-interrupt'
 let shellAbort
 const backend = {
   id: 'lifecycle-fixture',
   name: 'Lifecycle Fixture',
   protocol: 'strands',
   info() {
-    return { model: 'test' }
+    return { model: 'fixture/model-alpha', effort: 'Medium' }
   },
   async *stream() {
-    yield { type: 'textDelta', text: '' }
+    yield { type: 'textDelta', text: chatMode ? 'Fixture reply' : '' }
     return { stopReason: 'endTurn' }
   },
-  ...(process.env.STRANDS_CLI_TEST_SHELL_MODE
+  listModels() {
+    return [
+      {
+        id: 'fixture/model-alpha',
+        name: 'Fixture Model Alpha',
+        description: 'Active integration-test model.',
+        catalog: 'fixture',
+        active: true,
+      },
+      {
+        id: 'fixture/model-beta',
+        name: 'Fixture Model Beta',
+        description: 'Alternate integration-test model.',
+        catalog: 'fixture',
+      },
+    ]
+  },
+  modelChangeMode() {
+    return 'live'
+  },
+  async switchModel() {},
+  listEfforts() {
+    return [
+      { id: 'low', label: 'Low' },
+      { id: 'medium', label: 'Medium', active: true },
+      { id: 'high', label: 'High' },
+    ]
+  },
+  async setEffort() {},
+  ...(shellMode
     ? {
         async *streamShell(command) {
           const toolUseId = 'shell-fixture'
@@ -70,18 +102,19 @@ const backend = {
 }
 
 const controller = new ChatController(backend, { settings: { animations: false } })
-if (process.env.STRANDS_CLI_TEST_SHELL_MODE) {
-  let observedShellActivity = false
+const idleMarker = shellMode ? '__SHELL_IDLE__' : chatMode ? '__CHAT_IDLE__' : undefined
+if (idleMarker) {
+  let observedActivity = false
   controller.subscribe(() => {
     const status = controller.getSnapshot().status
     if (status === 'running' || status === 'interrupting') {
-      observedShellActivity = true
-    } else if (observedShellActivity && status === 'idle') {
-      observedShellActivity = false
-      process.stderr.write('__SHELL_IDLE__\n')
+      observedActivity = true
+    } else if (observedActivity && status === 'idle') {
+      observedActivity = false
+      process.stderr.write(`${idleMarker}\n`)
     }
   })
 }
 process.exitCode = await runInkChat(controller, {
-  intro: process.env.STRANDS_CLI_TEST_INTRO === 'true',
+  intro: scenario === 'startup' || scenario === 'startup-typing',
 })

@@ -11,14 +11,17 @@ const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, mil
 async function main() {
   const [command, ...args] = process.argv.slice(2)
   if (!command) {
-    throw new Error('missing child command')
+    throw new Error('missing TUI child command')
   }
 
-  const shellMode = process.env.STRANDS_CLI_TEST_SHELL_MODE
-  const frogMode = process.env.STRANDS_CLI_TEST_FROG_MODE === 'true'
-  const startupTyping = process.env.STRANDS_CLI_TEST_STARTUP_TYPING === 'true'
-  const intro = process.env.STRANDS_CLI_TEST_INTRO === 'true'
-  const resize = process.env.STRANDS_CLI_TEST_RESIZE === 'true'
+  const scenario = process.env.STRANDS_CLI_TEST_SCENARIO ?? 'exit'
+  const shellMode = { 'shell-command': 'command', 'shell-interrupt': 'interrupt' }[scenario]
+  const frogMode = scenario === 'frog'
+  const chatMode = scenario === 'chat'
+  const panelsMode = scenario === 'panels'
+  const startupTyping = scenario === 'startup-typing'
+  const intro = scenario === 'startup' || startupTyping
+  const resize = scenario === 'resize'
   const rows = startupTyping ? 40 : intro ? 20 : 30
   let transcript = ''
   let returnCode
@@ -120,7 +123,27 @@ async function main() {
       noopOutput = transcript.slice(noopStart)
     }
 
-    if (frogMode) {
+    if (chatMode) {
+      terminal.write('hello from integration')
+      await waitFor(['hello from integration'], 2_000, false)
+      terminal.write('\r')
+      await waitFor(['Fixture reply', '__CHAT_IDLE__'], 8_000, false)
+    } else if (panelsMode) {
+      for (const [command, markers] of [
+        ['/help', ['Send a message']],
+        ['/model', ['Fixture Model Alpha', 'Fixture Model Beta']],
+        ['/effort', ['Reasoning effort', 'Medium']],
+        ['/settings', ['Appearance', 'Auto-Discovery']],
+      ]) {
+        const start = transcript.length
+        terminal.write(command)
+        await waitFor([command], 2_000, false, start)
+        terminal.write('\r')
+        await waitFor(markers, 8_000, false, start)
+        terminal.write('\u001b')
+        await sleep(200)
+      }
+    } else if (frogMode) {
       terminal.write('/frog peek')
       await waitFor(['/frog peek'], 2_000, false)
       terminal.write('\r')

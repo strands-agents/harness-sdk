@@ -16,16 +16,19 @@ import time
 
 ANSI_ESCAPE = re.compile(rb"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 CHAT_READY = b"\x1b[?1002l\x1b[?1003h"
+READY_MARKER = b"Enter to send"
 
 
 def main() -> int:
     command = sys.argv[1:]
-    ready_marker = b"Enter to send"
-    shell_mode = os.environ.get("STRANDS_CLI_TEST_SHELL_MODE")
-    frog_mode = os.environ.get("STRANDS_CLI_TEST_FROG_MODE") == "true"
-    startup_typing = os.environ.get("STRANDS_CLI_TEST_STARTUP_TYPING") == "true"
-    intro = os.environ.get("STRANDS_CLI_TEST_INTRO") == "true"
-    resize = os.environ.get("STRANDS_CLI_TEST_RESIZE") == "true"
+    scenario = os.environ.get("STRANDS_CLI_TEST_SCENARIO", "exit")
+    shell_mode = {"shell-command": "command", "shell-interrupt": "interrupt"}.get(scenario)
+    frog_mode = scenario == "frog"
+    chat_mode = scenario == "chat"
+    panels_mode = scenario == "panels"
+    startup_typing = scenario == "startup-typing"
+    intro = scenario in {"startup", "startup-typing"}
+    resize = scenario == "resize"
     master, slave = pty.openpty()
     rows = 40 if startup_typing else 20 if intro else 30
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, 100, 0, 0))
@@ -89,8 +92,9 @@ def main() -> int:
         pump()
 
     try:
-        wait_for([ready_marker, CHAT_READY])
+        wait_for([READY_MARKER, CHAT_READY])
         wait_for_raw_mode()
+
         def set_size(columns: int, height: int) -> None:
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", height, columns, 0, 0))
             os.kill(process.pid, signal.SIGWINCH)
@@ -128,7 +132,27 @@ def main() -> int:
             set_size(120, 40)
             settle(0.2)
             noop_output = bytes(transcript[noop_start:])
-        if frog_mode:
+        if chat_mode:
+            os.write(master, b"hello from integration")
+            wait_for([b"hello from integration"], timeout=2.0, styled=False)
+            os.write(master, b"\r")
+            wait_for([b"Fixture reply", b"__CHAT_IDLE__"], styled=False)
+        elif panels_mode:
+            panels = [
+                (b"/help", [b"Send a message"]),
+                (b"/model", [b"Fixture Model Alpha", b"Fixture Model Beta"]),
+                (b"/effort", [b"Reasoning effort", b"Medium"]),
+                (b"/settings", [b"Appearance", b"Auto-Discovery"]),
+            ]
+            for command, markers in panels:
+                start = len(transcript)
+                os.write(master, command)
+                wait_for([command], timeout=2.0, styled=False, start=start)
+                os.write(master, b"\r")
+                wait_for(markers, styled=False, start=start)
+                os.write(master, b"\x1b")
+                time.sleep(0.2)
+        elif frog_mode:
             os.write(master, b"/frog peek")
             wait_for([b"/frog peek"], timeout=2.0, styled=False)
             os.write(master, b"\r")

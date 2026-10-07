@@ -23,15 +23,15 @@
     "start": "node bin/strands.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage --exclude test/tui-pty-lifecycle.test.ts && vitest run test/tui-pty-lifecycle.test.ts",
-    "test:platform": "vitest run test/tui-pty-lifecycle.test.ts",
+    "test:coverage": "vitest run --coverage",
+    "test:tui-integration": "vitest run --config vitest.tui-integration.config.ts",
     "lint": "eslint bin scripts src test",
     "lint:fix": "eslint bin scripts src test --fix",
     "format": "prettier --write bin scripts src test",
     "format:check": "prettier --check bin scripts src test",
     "type-check": "tsc --noEmit --project src/tsconfig.json",
     "type-check:test": "tsc --noEmit --project tsconfig.json",
-    "check": "npm run lint && npm run format:check && npm run type-check && npm run type-check:test && npm run test:coverage",
+    "check": "npm run lint && npm run format:check && npm run type-check && npm run type-check:test && npm run test:coverage && npm run test:tui-integration",
     "test:integ": "vitest run --config vitest.integration.config.ts"
   },
   "keywords": [
