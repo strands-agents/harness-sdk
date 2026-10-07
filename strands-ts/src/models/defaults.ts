@@ -129,6 +129,18 @@ const CONTEXT_WINDOW_LIMITS: Record<string, number> = {
   // Bedrock Z.AI
   'zai.glm-4.7': 203_000,
 
+  // Bedrock OpenAI
+  'openai.gpt-6-astra': 1_050_000,
+  'openai.gpt-5.6-sol': 1_050_000,
+  'openai.gpt-5.6-terra': 1_050_000,
+  'openai.gpt-5.6-luna': 1_050_000,
+  'openai.gpt-5.5': 1_050_000,
+  'openai.gpt-5.4': 1_050_000,
+
+  // Bedrock xAI
+  'xai.grok-4.6': 500_000,
+  'xai.grok-4.7': 500_000,
+
   // OpenAI
   'gpt-6-astra': 1_050_000,
   'gpt-5.6': 1_050_000,
@@ -181,7 +193,7 @@ const CONTEXT_WINDOW_LIMITS: Record<string, number> = {
  *
  * @see https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html
  */
-const BEDROCK_REGION_PREFIXES = new Set(['us', 'eu', 'ap', 'global', 'apac', 'au', 'jp', 'us-gov'])
+const BEDROCK_REGION_PREFIXES = new Set(['us', 'eu', 'ap', 'global', 'apac', 'au', 'in', 'jp', 'us-gov'])
 
 /**
  * Looks up the context window limit for a model ID.
