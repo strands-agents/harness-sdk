@@ -48,6 +48,8 @@
     -   [LinearBackoff](/docs/api/typescript/LinearBackoff/index.md)
     -   [MaxTokensError](/docs/api/typescript/MaxTokensError/index.md)
     -   [McpClient](/docs/api/typescript/McpClient/index.md)
+    -   [McpTaskCancelledError](/docs/api/typescript/McpTaskCancelledError/index.md)
+    -   [McpTaskFailedError](/docs/api/typescript/McpTaskFailedError/index.md)
     -   [MemoryManager](/docs/api/typescript/MemoryManager/index.md)
     -   [Message](/docs/api/typescript/Message/index.md)
     -   [MessageAddedEvent](/docs/api/typescript/MessageAddedEvent/index.md)

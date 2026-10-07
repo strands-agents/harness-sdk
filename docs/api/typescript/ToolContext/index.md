@@ -64,7 +64,7 @@ Execution-scoped cancellation signal for this tool call.
 interrupt<T>(params): T;
 ```
 
-Defined in: [src/interrupt.ts:383](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L383)
+Defined in: [src/interrupt.ts:398](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/interrupt.ts#L398)
 
 #### Type Parameters
 

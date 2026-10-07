@@ -1,6 +1,13 @@
-Defined in: [src/mcp/client.ts:150](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L150)
+Defined in: [src/mcp/client.ts:236](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L236)
 
-MCP Client for interacting with Model Context Protocol servers.
+MCP client using SDK v2, including legacy task execution.
+
+## Example
+
+```typescript
+const client = new McpClient({ url: 'https://example.com/mcp', tasksConfig: {} })
+const agent = new Agent({ tools: [client] })
+```
 
 ## Constructors
 
@@ -10,7 +17,7 @@ MCP Client for interacting with Model Context Protocol servers.
 new McpClient(args): McpClient;
 ```
 
-Defined in: [src/mcp/client.ts:200](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L200)
+Defined in: [src/mcp/client.ts:304](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L304)
 
 #### Parameters
 
@@ -24,17 +31,19 @@ Defined in: [src/mcp/client.ts:200](https://github.com/strands-agents/harness-sd
 
 ## Properties
 
-### DEFAULT\_TTL
+### ~DEFAULT\_TTL~
 
 ```ts
 readonly static DEFAULT_TTL: 60000 = 60000;
 ```
 
-Defined in: [src/mcp/client.ts:156](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L156)
+Defined in: [src/mcp/client.ts:242](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L242)
 
-Default TTL for task polling in milliseconds (60 seconds).
+Default task lifecycle request timeout in milliseconds.
 
-Unused while task support is rebuilt on the MCP tasks extension (#1659).
+#### Deprecated
+
+Use [McpClient.DEFAULT\_REQUEST\_TIMEOUT](#default_request_timeout).
 
 ---
 
@@ -44,11 +53,33 @@ Unused while task support is rebuilt on the MCP tasks extension (#1659).
 readonly static DEFAULT_POLL_TIMEOUT: 300000 = 300000;
 ```
 
-Defined in: [src/mcp/client.ts:163](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L163)
+Defined in: [src/mcp/client.ts:245](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L245)
 
-Default poll timeout for task completion in milliseconds (5 minutes).
+Default overall task operation deadline in milliseconds.
 
-Unused while task support is rebuilt on the MCP tasks extension (#1659).
+---
+
+### DEFAULT\_REQUEST\_TIMEOUT
+
+```ts
+readonly static DEFAULT_REQUEST_TIMEOUT: 60000 = 60000;
+```
+
+Defined in: [src/mcp/client.ts:248](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L248)
+
+Default task lifecycle request timeout in milliseconds.
+
+---
+
+### DEFAULT\_POLL\_INTERVAL\_MS
+
+```ts
+readonly static DEFAULT_POLL_INTERVAL_MS: 1000 = 1000;
+```
+
+Defined in: [src/mcp/client.ts:251](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L251)
+
+Default polling interval when a task response omits `pollIntervalMs`.
 
 ## Accessors
 
@@ -60,7 +91,7 @@ Unused while task support is rebuilt on the MCP tasks extension (#1659).
 get client(): Client;
 ```
 
-Defined in: [src/mcp/client.ts:280](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L280)
+Defined in: [src/mcp/client.ts:381](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L381)
 
 ##### Returns
 
@@ -76,7 +107,7 @@ Defined in: [src/mcp/client.ts:280](https://github.com/strands-agents/harness-sd
 get serverCapabilities(): any;
 ```
 
-Defined in: [src/mcp/client.ts:284](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L284)
+Defined in: [src/mcp/client.ts:385](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L385)
 
 ##### Returns
 
@@ -92,7 +123,7 @@ Defined in: [src/mcp/client.ts:284](https://github.com/strands-agents/harness-sd
 get serverVersion(): any;
 ```
 
-Defined in: [src/mcp/client.ts:288](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L288)
+Defined in: [src/mcp/client.ts:389](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L389)
 
 ##### Returns
 
@@ -108,7 +139,7 @@ Defined in: [src/mcp/client.ts:288](https://github.com/strands-agents/harness-sd
 get serverInstructions(): string;
 ```
 
-Defined in: [src/mcp/client.ts:292](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L292)
+Defined in: [src/mcp/client.ts:393](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L393)
 
 ##### Returns
 
@@ -124,7 +155,7 @@ Defined in: [src/mcp/client.ts:292](https://github.com/strands-agents/harness-sd
 get connectionState(): McpConnectionState;
 ```
 
-Defined in: [src/mcp/client.ts:296](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L296)
+Defined in: [src/mcp/client.ts:397](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L397)
 
 ##### Returns
 
@@ -140,7 +171,7 @@ Defined in: [src/mcp/client.ts:296](https://github.com/strands-agents/harness-sd
 get clientName(): string;
 ```
 
-Defined in: [src/mcp/client.ts:300](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L300)
+Defined in: [src/mcp/client.ts:401](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L401)
 
 ##### Returns
 
@@ -156,7 +187,7 @@ Defined in: [src/mcp/client.ts:300](https://github.com/strands-agents/harness-sd
 get continueOnError(): boolean;
 ```
 
-Defined in: [src/mcp/client.ts:304](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L304)
+Defined in: [src/mcp/client.ts:405](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L405)
 
 ##### Returns
 
@@ -172,7 +203,7 @@ Defined in: [src/mcp/client.ts:304](https://github.com/strands-agents/harness-sd
 set onToolsChanged(callback): void;
 ```
 
-Defined in: [src/mcp/client.ts:448](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L448)
+Defined in: [src/mcp/client.ts:593](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L593)
 
 Sets a callback invoked when the MCP server’s tool list changes at runtime.
 
@@ -198,7 +229,7 @@ static loadServers(
 ): Promise<McpClient[]>;
 ```
 
-Defined in: [src/mcp/client.ts:173](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L173)
+Defined in: [src/mcp/client.ts:261](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L261)
 
 Parses an MCP servers config (file path or object) and returns McpClient instances.
 
@@ -221,10 +252,10 @@ An array of McpClient instances ready to be passed to an Agent.
 ### connect()
 
 ```ts
-connect(reconnect?): Promise<void>;
+connect(reconnect?, options?): Promise<void>;
 ```
 
-Defined in: [src/mcp/client.ts:318](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L318)
+Defined in: [src/mcp/client.ts:421](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L421)
 
 Connects the MCP client to the server.
 
@@ -235,6 +266,8 @@ Called lazily before any operation that requires a connection. When `continueOnE
 | Parameter | Type | Default value | Description |
 | --- | --- | --- | --- |
 | `reconnect` | `boolean` | `false` | When true, forces a reconnect even if already connected or failed. |
+| `options?` | { `signal?`: `AbortSignal`; } | `undefined` | Optional abort signal that stops this caller’s wait. The connection attempt itself continues for other callers awaiting it. |
+| `options.signal?` | `AbortSignal` | `undefined` | \- |
 
 #### Returns
 
@@ -250,7 +283,7 @@ A promise that resolves when the connection is established.
 disconnect(): Promise<void>;
 ```
 
-Defined in: [src/mcp/client.ts:352](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L352)
+Defined in: [src/mcp/client.ts:494](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L494)
 
 Disconnects the MCP client from the server and cleans up resources.
 
@@ -268,7 +301,7 @@ A promise that resolves when the disconnection is complete.
 asyncDispose: Promise<void>;
 ```
 
-Defined in: [src/mcp/client.ts:363](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L363)
+Defined in: [src/mcp/client.ts:510](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L510)
 
 Enables the `await using` pattern for automatic resource cleanup. Delegates to [McpClient.disconnect](#disconnect).
 
@@ -284,7 +317,7 @@ Enables the `await using` pattern for automatic resource cleanup. Delegates to [
 listTools(options?): Promise<McpTool[]>;
 ```
 
-Defined in: [src/mcp/client.ts:379](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L379)
+Defined in: [src/mcp/client.ts:526](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L526)
 
 Lists the tools available on the server and returns them as executable McpTool instances.
 
@@ -318,9 +351,11 @@ callTool(
 ): Promise<JSONValue>;
 ```
 
-Defined in: [src/mcp/client.ts:485](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L485)
+Defined in: [src/mcp/client.ts:633](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L633)
 
 Invoke a tool on the connected MCP server using an McpTool instance.
+
+When `tasksConfig` is set and a legacy (2025-11-25) server executes the tool as a task, this method polls until the task reaches a terminal state and returns the final result. Direct tool results are returned unchanged.
 
 #### Parameters
 
@@ -334,8 +369,12 @@ Invoke a tool on the connected MCP server using an McpTool instance.
 
 `Promise`<[`JSONValue`](/docs/api/typescript/JSONValue/index.md)\>
 
-A promise that resolves with the result of the tool invocation.
+The final tool result.
 
 #### Throws
 
-Error when the client was constructed with `tasksConfig`: task-augmented execution is temporarily unavailable while task support is rebuilt on the MCP tasks extension ([https://github.com/strands-agents/harness-sdk/issues/1659](https://github.com/strands-agents/harness-sdk/issues/1659)).
+[McpTaskCancelledError](/docs/api/typescript/McpTaskCancelledError/index.md) When the server reports a cancelled task.
+
+#### Throws
+
+[McpTaskFailedError](/docs/api/typescript/McpTaskFailedError/index.md) When a legacy task reports the `failed` status.

@@ -276,7 +276,7 @@ async def stream(messages: Messages,
                  **kwargs: Any) -> AsyncGenerator[StreamEvent, None]
 ```
 
-Defined in: [src/strands/models/openai.py:697](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/openai.py#L697)
+Defined in: [src/strands/models/openai.py:698](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/openai.py#L698)
 
 Stream conversation with the OpenAI model.
 
@@ -309,7 +309,7 @@ async def structured_output(
         **kwargs: Any) -> AsyncGenerator[dict[str, T | Any], None]
 ```
 
-Defined in: [src/strands/models/openai.py:840](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/openai.py#L840)
+Defined in: [src/strands/models/openai.py:841](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/openai.py#L841)
 
 Get structured output from the model.
 

@@ -224,6 +224,7 @@ The table below compares feature availability between the Python and TypeScript 
 ## Related pages
 
 - [Choosing an Agent Foundation](/docs/user-guide/migrate/choosing-an-agent-foundation/index.md) (1 shared tag)
+- [Get started with Strands Box](/docs/user-guide/box/getting-started/index.md) (1 shared tag)
 - [Python Quickstart](/docs/user-guide/sdk/quickstart/python/index.md) (1 shared tag)
 - [Strands evaluation quickstart](/docs/user-guide/evals-sdk/quickstart/index.md) (1 shared tag)
 - [Strands Shell quickstart](/docs/user-guide/shell/quickstart/index.md) (1 shared tag)

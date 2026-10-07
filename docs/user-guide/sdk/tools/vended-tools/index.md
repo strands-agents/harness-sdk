@@ -32,6 +32,7 @@ const agent = new Agent({
 | [Stop](#stop-experimental) | Gracefully end the agent loop when the task is complete | Python, TypeScript (Node.js, browsers) |
 | [Web Fetch](#web-fetch) | Fetch a URL and return cleaned markdown for a model to read | Python, TypeScript (Node.js) |
 | [A2A Client](#a2a-client) | Discover and send messages to remote A2A-protocol agents | Python, TypeScript (Node.js, browsers) |
+| [Subagent](#subagent) | Delegate a self-contained task to a child agent | Python |
 
 ### File editor
 
@@ -737,6 +738,80 @@ Full API reference: [TypeScript](https://github.com/strands-agents/harness-sdk/b
 
 ---
 
+### Subagent
+
+Delegates a self-contained task to a child agent that runs in its own context and returns a final report. Use it when a subtask would otherwise flood the parent’s context with intermediate work and you only need the conclusion. The model writes the task each time it calls the tool; the child cannot ask follow-up questions, so the task must include all the context it needs.
+
+The `make_subagent` factory uses [axis policies](#axis-policies) to control what the model can configure on each child. The configurable axes are `instructions`, `tools`, `mcp_servers``mcpServers`, `model`, and `context`. The parent also passes a task to the child.
+
+By default, the child sees only the task (`context=Fixed("none")`), but you can share the parent’s conversation by setting `context` to a `Choice` over `"none"`, `"all"` (full history including tool calls), and `"no_tools"` (text turns only). When a non-`"none"` option is available, the model can also pass `last_messages` to limit how many parent messages to share.
+
+*Supported in: Python.*
+
+**Example — quick start:**
+
+```python
+from strands import Agent
+from strands.vended_tools.subagent import subagent
+
+agent = Agent(
+    system_prompt="You are a manager.",
+    tools=[subagent],
+)
+agent("Research the latest Python 3.13 features and summarize them.")
+```
+
+**Example — full control with `make_subagent`:**
+
+```python
+from strands import Agent
+from strands.multiagent.spec import Choice, Option, Preset
+from strands.vended_tools.subagent import make_subagent
+
+subagent = make_subagent(
+    presets={
+        "researcher": Preset(
+            instructions="You research topics thoroughly.",
+            description="deep research on a topic",
+        ),
+        "reviewer": Preset(
+            instructions="You review code for correctness and style.",
+            description="code review",
+        ),
+    },
+    model=Choice([
+        Option("fast", "us.anthropic.claude-sonnet-4-20250514-v1:0", "quick tasks"),
+        Option("deep", "us.anthropic.claude-opus-4-20250514-v1:0", "hard problems"),
+    ]),
+    context=Choice(["none", "all", "no_tools"]),
+    tools=Choice(["read", "shell", "write"], multiple=True),
+    max_depth=3,
+)
+agent = Agent(tools=[subagent])
+agent("Review the changes in src/main.py for correctness.")
+```
+
+---
+
+## Axis policies
+
+Some vended tools let the model configure child agents at runtime. Axis policies control how much freedom the model has over each parameter. Import them from `strands.multiagent``@strands-agents/sdk/multiagent`.
+
+| Policy | Effect | Model sees a parameter? |
+| --- | --- | --- |
+| `Inherit()``new Inherit()` | Child inherits the parent’s value | No |
+| `Fixed(value)``new Fixed(value)` | Developer pins the value | No |
+| `Open()``new Open()` | Model writes a free-form value | Yes (string) |
+| `Choice([...], multiple=True)``new Choice([...], true)` | Model picks from a set | Yes (enum) |
+
+Use `Option` inside a `Choice` to map model-facing names to runtime values. Bundle axis defaults into a `Preset` that the model selects via `agent_type`.
+
+Tools that accept axis policies use a default builder to turn resolved specs into child agents. By default, it produces child agents that inherit the parent’s tools, model, and MCP servers. Each child gets `context_manager="auto"` and accesses the parent’s long-term memory through inherited memory tools.
+
+To replace the default builder, pass any callable that takes an `AgentSpec` and returns an `Agent`.
+
+---
+
 ## Using multiple tools together
 
 Combine vended tools in one agent to cover a multi-step workflow:
@@ -817,4 +892,5 @@ Tool names are stable and will not change. In minor versions, a tool’s descrip
 - [harness-sdk/strands-py/src/strands/vended_tools/sleep/sleep.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/sleep/sleep.py)
 - [harness-sdk/strands-py/src/strands/vended_tools/web_fetch/web_fetch.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/web_fetch/web_fetch.py)
 - [harness-sdk/strands-py/src/strands/vended_tools/a2a_client/a2a_client.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/a2a_client/a2a_client.py)
+- [harness-sdk/strands-py/src/strands/vended_tools/subagent/subagent.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_tools/subagent/subagent.py)
 - [harness-sdk/strands-py/src/strands/experimental/tools/stop/stop.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/experimental/tools/stop/stop.py)

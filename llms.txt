@@ -205,6 +205,33 @@
 - Reference
   - [Reference](https://strandsagents.com/docs/user-guide/shell/reference/index.md): The one place to look up Strands Shell's surface, the command-line interface, the Python and Node.js API, the command inventory, the configuration and TOML schema, and the MCP server tools.
 
+## Box
+
+- Get started
+  - [Overview](https://strandsagents.com/docs/user-guide/box/index.md): Strands Box is an open source sandbox engine for AI agents. It pairs OS isolation with Dogwood policies that decide an agent's commands, file operations, network requests, and MCP calls.
+  - [getting-started](https://strandsagents.com/docs/user-guide/box/getting-started/index.md): Download Strands Box on macOS, put the Strands CLI in a box by hand, watch the box refuse a write, read the decision log, and add a permit.
+- How-to guides
+  - [run-strands-harness](https://strandsagents.com/docs/user-guide/box/guides/run-strands-harness/index.md): Run an agent you build with the Strands harness under a Strands Box policy on macOS, with only its shell tool, so the policy decides every command it runs and every file a command touches.
+  - [run-claude-code](https://strandsagents.com/docs/user-guide/box/guides/run-claude-code/index.md): Run Claude Code under a Strands Box policy on macOS, with its own file tools kept out of the project so every read, write, and delete goes through the box's shell and the policy.
+  - [run-codex-cli](https://strandsagents.com/docs/user-guide/box/guides/run-codex-cli/index.md): Run OpenAI Codex CLI under a Strands Box policy on macOS, with Codex's own sandbox off and the project out of its own reach, so every command and file goes through the box's shell and the policy.
+  - [run-pi](https://strandsagents.com/docs/user-guide/box/guides/run-pi/index.md): Run the pi coding agent under a Strands Box policy on macOS, with the project out of its own reach so its bash tool, which runs the box's shell, is its only way to a project file.
+  - [grant-files](https://strandsagents.com/docs/user-guide/box/guides/grant-files/index.md): Give a box's agent and tools read, write, list, and exec access to host paths with box.toml filesystem lists, and gate interpreter file access with fs policy rules.
+  - [network-and-credentials](https://strandsagents.com/docs/user-guide/box/guides/network-and-credentials/index.md): Permit outbound hosts with net:connect and http:request policy rules, and bind API keys, Basic auth, query credentials, or AWS SigV4 signing to destinations in box.toml.
+  - [add-a-tool](https://strandsagents.com/docs/user-guide/box/guides/add-a-tool/index.md): Let a boxed agent run a host binary such as git in its own sandbox, start a local stdio MCP server, or call a remote MCP server, each gated by policy.
+  - [write-a-policy](https://strandsagents.com/docs/user-guide/box/guides/write-a-policy/index.md): Write Dogwood permit and forbid rules for a box, add temporal rules that depend on earlier actions, fix load errors, and read decision records to see what policy decided.
+  - [write-shell-policy](https://strandsagents.com/docs/user-guide/box/guides/write-shell-policy/index.md): Write Dogwood rules for the commands a boxed agent runs in Strands Shell, the files they touch, the host programs it starts, the programs it builds, and a cap on a command.
+  - [record-telemetry](https://strandsagents.com/docs/user-guide/box/guides/record-telemetry/index.md): Choose where a Strands Box box writes its policy decisions, control-plane records, and the agent's own spans, logs, and metrics, filter them with include, and read the records file with jq.
+  - [strands-cli-telemetry](https://strandsagents.com/docs/user-guide/box/guides/strands-cli-telemetry/index.md): Add the Strands CLI's own spans and metrics to the records file from Getting started, beside the box's decisions, and read both together with otel-tui or jq.
+- Security
+  - [Security model](https://strandsagents.com/docs/user-guide/box/security/index.md): What Strands Box protects, what it trusts, how it enforces sandbox grants, credentials, and policy, and the residual risks an operator should plan for.
+  - [agent-and-tool-containment](https://strandsagents.com/docs/user-guide/box/security/agent-and-tool-containment/index.md): How a Strands Box contains the agent, each tool, and each MCP server in separate sandboxes, which enforcement point decides each action, and where the boundaries differ.
+- Reference
+  - [configuration](https://strandsagents.com/docs/user-guide/box/reference/configuration/index.md): Every Strands Box box.toml key, including agent, tool, egress, mcp, and telemetry tables, with types, allowed values, defaults, validation rules, and a complete example.
+  - [cli](https://strandsagents.com/docs/user-guide/box/reference/cli/index.md): Commands, flags, exit codes, signals, and environment variables for the box (strands-box) command-line tool.
+  - [policy-actions](https://strandsagents.com/docs/user-guide/box/reference/policy-actions/index.md): Every Strands Box policy action, the enforcement point that raises it, its context.input and output fields, event types, decision causes, and fixed load-time checks.
+  - [shell](https://strandsagents.com/docs/user-guide/box/reference/shell/index.md): How a box runs the agent's shell commands in Strands Shell, which commands it implements, where a program outside it runs, the box.toml keys that decide that, and the exit statuses.
+  - [python](https://strandsagents.com/docs/user-guide/box/reference/python/index.md): How a box runs the agent's Python scripts in Monty, the modules and file operations a script can use, fetch() for HTTP, the limits and exit statuses, and the rules to write.
+
 ## Evals SDK
 
 - Get started
@@ -468,6 +495,8 @@
 - [strands.vended_tools.shell.types](https://strandsagents.com/docs/api/python/strands.vended_tools.shell.types/index.md)
 - [strands.vended_tools.sleep.sleep](https://strandsagents.com/docs/api/python/strands.vended_tools.sleep.sleep/index.md)
 - [strands.vended_tools.sleep.types](https://strandsagents.com/docs/api/python/strands.vended_tools.sleep.types/index.md)
+- [strands.vended_tools.subagent.subagent](https://strandsagents.com/docs/api/python/strands.vended_tools.subagent.subagent/index.md)
+- [strands.vended_tools.subagent.types](https://strandsagents.com/docs/api/python/strands.vended_tools.subagent.types/index.md)
 - [strands.vended_tools.web_fetch.types](https://strandsagents.com/docs/api/python/strands.vended_tools.web_fetch.types/index.md)
 - [strands.vended_tools.web_fetch.web_fetch](https://strandsagents.com/docs/api/python/strands.vended_tools.web_fetch.web_fetch/index.md)
 
@@ -636,6 +665,8 @@
 - [McpListToolsOptions](https://strandsagents.com/docs/api/typescript/McpListToolsOptions/index.md)
 - [McpLoadServersOptions](https://strandsagents.com/docs/api/typescript/McpLoadServersOptions/index.md)
 - [McpServerConfig](https://strandsagents.com/docs/api/typescript/McpServerConfig/index.md)
+- [McpTaskCancelledError](https://strandsagents.com/docs/api/typescript/McpTaskCancelledError/index.md)
+- [McpTaskFailedError](https://strandsagents.com/docs/api/typescript/McpTaskFailedError/index.md)
 - [McpToolFilterCallback](https://strandsagents.com/docs/api/typescript/McpToolFilterCallback/index.md)
 - [McpToolFilters](https://strandsagents.com/docs/api/typescript/McpToolFilters/index.md)
 - [McpToolMatcher](https://strandsagents.com/docs/api/typescript/McpToolMatcher/index.md)
@@ -802,6 +833,7 @@
 
 ## Blog
 
+- [Strands Box: The Big Picture](https://strandsagents.com/blog/strands-box-the-big-picture/index.md): Strands Box, now in developer preview, is an open source local sandbox for AI agents that pairs operating-system isolation with Dogwood semantic policy. Here's why semantic policy matters, and how Box's design follows from it.
 - [Bidi Agents now GA](https://strandsagents.com/blog/bidi-agents-now-ga/index.md): The easiest way to create voice agents with direct support for Amazon Nova Sonic, OpenAI, and Gemini models.
 - [Introducing Strands Decider 2B: a small, open source, decision model](https://strandsagents.com/blog/introducing-strands-decider/index.md): Strands Decider 2B is a small, open source, decision model optimized for fast experimentation, local development, and innovation.
 - [Introducing Strands harness: frontier performance with 28% lower token cost](https://strandsagents.com/blog/introducing-strands-harness/index.md): Strands harness is a fully assembled, customizable, state-of-the-art agent you run locally or deploy anywhere.

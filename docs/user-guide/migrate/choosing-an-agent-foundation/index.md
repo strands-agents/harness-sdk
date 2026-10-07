@@ -56,6 +56,7 @@ If you are moving off another framework rather than starting fresh, the [migrati
 ## Related pages
 
 - [Get started](/docs/user-guide/sdk/quickstart/overview/index.md) (1 shared tag)
+- [Get started with Strands Box](/docs/user-guide/box/getting-started/index.md) (1 shared tag)
 - [Python Quickstart](/docs/user-guide/sdk/quickstart/python/index.md) (1 shared tag)
 - [Strands evaluation quickstart](/docs/user-guide/evals-sdk/quickstart/index.md) (1 shared tag)
 - [Strands Shell quickstart](/docs/user-guide/shell/quickstart/index.md) (1 shared tag)

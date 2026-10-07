@@ -2,7 +2,7 @@
 type McpToolFilterCallback = (tool) => boolean;
 ```
 
-Defined in: [src/mcp/client.ts:74](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L74)
+Defined in: [src/mcp/client.ts:65](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/mcp/client.ts#L65)
 
 Decides whether a tool matches a filter. Receives the tool under its agent-facing name.
 

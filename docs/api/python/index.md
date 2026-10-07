@@ -201,6 +201,9 @@
     -   **Sleep**
         -   [Sleep](/docs/api/python/strands.vended_tools.sleep.sleep)
         -   [Types](/docs/api/python/strands.vended_tools.sleep.types)
+    -   **Subagent**
+        -   [Subagent](/docs/api/python/strands.vended_tools.subagent.subagent)
+        -   [Types](/docs/api/python/strands.vended_tools.subagent.types)
     -   **Web Fetch**
         -   [Types](/docs/api/python/strands.vended_tools.web_fetch.types)
         -   [Web Fetch](/docs/api/python/strands.vended_tools.web_fetch.web_fetch)

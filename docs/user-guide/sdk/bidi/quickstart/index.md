@@ -157,6 +157,7 @@ model = OpenAIRealtimeModel(
 
 - [Choosing an Agent Foundation](/docs/user-guide/migrate/choosing-an-agent-foundation/index.md) (1 shared tag)
 - [Get started](/docs/user-guide/sdk/quickstart/overview/index.md) (1 shared tag)
+- [Get started with Strands Box](/docs/user-guide/box/getting-started/index.md) (1 shared tag)
 - [Python Quickstart](/docs/user-guide/sdk/quickstart/python/index.md) (1 shared tag)
 - [Strands evaluation quickstart](/docs/user-guide/evals-sdk/quickstart/index.md) (1 shared tag)
 - [Strands Shell quickstart](/docs/user-guide/shell/quickstart/index.md) (1 shared tag)
@@ -164,7 +165,6 @@ model = OpenAIRealtimeModel(
 - [BidiAgent](/docs/user-guide/sdk/bidi/agent/index.md) (1 shared tag)
 - [Bidirectional Streaming](/docs/user-guide/sdk/bidi/index.md) (1 shared tag)
 - [Bidirectional Streaming Models](/docs/user-guide/sdk/bidi/models/index.md) (1 shared tag)
-- [Google Gemini Live](/docs/user-guide/sdk/bidi/models/google/index.md) (1 shared tag)
 
 
 ## Implementation
