@@ -31,12 +31,16 @@ export const SETTINGS_CATEGORIES = [
     label: 'Appearance',
   },
   {
+    id: 'Agent',
+    label: 'Agent',
+  },
+  {
     id: 'Auto-Discovery',
     label: 'Auto-Discovery',
   },
   {
-    id: 'General',
-    label: 'General',
+    id: 'Privacy',
+    label: 'Privacy',
   },
 ] as const
 
@@ -196,15 +200,15 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
   },
   {
     key: 'contextOffloadThreshold',
-    label: 'Context offload threshold',
-    section: 'General',
+    label: 'Context offloading',
+    section: 'Agent',
     control: 'segmented',
     options: CONTEXT_OFFLOAD_THRESHOLD_OPTIONS,
   },
   {
     key: 'telemetry',
-    label: 'Usage ping (telemetry)',
-    section: 'General',
+    label: 'Anonymous usage',
+    section: 'Privacy',
     control: 'toggle',
     options: [
       { label: 'On', value: true },

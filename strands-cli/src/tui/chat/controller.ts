@@ -23,6 +23,7 @@ import {
   mcpRows,
   mcpOptions,
   BACKGROUND_TASK_WAIT_TOGGLE,
+  SETTINGS_SETUP_ACTION,
 } from './panels.js'
 import { LOCAL_COMMAND_NAMES, parseCommandInvocation } from './commands.js'
 import { helpRows } from './help.js'
@@ -833,6 +834,13 @@ export class ChatController implements ChatControllerApi {
       case 'tools':
         return this._toggleBuiltinTool(row.value)
       case 'settings':
+        if (row.value === SETTINGS_SETUP_ACTION) {
+          if (!this._requestSetup) {
+            return false
+          }
+          this._requestSetup()
+          return true
+        }
         return row.value.startsWith('settings:')
           ? this._openSettingsCategory(row.value)
           : this._updateSetting(row.value)
@@ -1813,7 +1821,13 @@ export class ChatController implements ChatControllerApi {
     this._settings = globalThis.structuredClone({ ...this._settings, ...update })
     this._panel = {
       ...this._panel,
-      rows: sanitizeRows(settingsRows(this._settings, this._panel.settingsCategory ?? DEFAULT_SETTINGS_CATEGORY)),
+      rows: sanitizeRows(
+        settingsRows(
+          this._settings,
+          this._panel.settingsCategory ?? DEFAULT_SETTINGS_CATEGORY,
+          this._requestSetup !== undefined
+        )
+      ),
     }
     this._emit()
     return true
@@ -1824,7 +1838,7 @@ export class ChatController implements ChatControllerApi {
     if (!category) {
       return false
     }
-    const rows = settingsRows(this._settings, category.id)
+    const rows = settingsRows(this._settings, category.id, this._requestSetup !== undefined)
     const panel = {
       kind: 'settings',
       title: category.label,

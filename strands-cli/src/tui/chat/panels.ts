@@ -29,6 +29,7 @@ import {
 import { SETTINGS_CATEGORIES, SETTING_DEFINITIONS, settingDescription } from '../settings.js'
 
 export const BACKGROUND_TASK_WAIT_TOGGLE = 'background-tasks:toggle-wait-for-completion'
+export const SETTINGS_SETUP_ACTION = 'settings-action:setup'
 
 export function permissionRequestRows(request: ChatPermissionRequest): ChatPanelRow[] {
   return request.options.map((option) => ({
@@ -120,8 +121,12 @@ export function settingsCategoryFilters(): ChatPanelFilter[] {
   return SETTINGS_CATEGORIES.map(({ id, label }) => ({ id: `settings:${id}`, label }))
 }
 
-export function settingsRows(settings: ChatSettings, category?: SettingsCategory): ChatPanelRow[] {
-  return SETTING_DEFINITIONS.filter(({ section }) => category === undefined || section === category).map(
+export function settingsRows(
+  settings: ChatSettings,
+  category?: SettingsCategory,
+  includeSetupAction = false
+): ChatPanelRow[] {
+  const rows = SETTING_DEFINITIONS.filter(({ section }) => category === undefined || section === category).map(
     ({ key, label, section, control, options }): ChatPanelRow => ({
       label,
       description: settingDescription(settings, key),
@@ -141,6 +146,16 @@ export function settingsRows(settings: ChatSettings, category?: SettingsCategory
             },
     })
   )
+  return includeSetupAction && category === 'Agent'
+    ? [
+        ...rows,
+        {
+          label: 'Providers & default agent',
+          description: 'Open setup',
+          value: SETTINGS_SETUP_ACTION,
+        },
+      ]
+    : rows
 }
 
 export function taskRows(tasks: readonly ChatTask[], waitForCompletion: boolean | undefined): ChatPanelRow[] {

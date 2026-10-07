@@ -24,7 +24,7 @@ afterEach(async () => {
   }
 })
 
-function createController() {
+function createController(options: { requestSetup?: () => void } = {}) {
   const switchModel = vi.fn(async (_model: string) => {})
   const backend: ChatBackend = {
     id: 'panel-resize-test',
@@ -50,6 +50,7 @@ function createController() {
   const controller = new ChatController(backend, {
     settings: { animations: false },
     runtime: { model: 'model-00', cwd: '/work' },
+    ...(options.requestSetup ? { requestSetup: options.requestSetup } : {}),
   })
   return { controller, switchModel }
 }
@@ -112,6 +113,20 @@ async function mount(controller: ChatControllerApi) {
 }
 
 describe('mounted panel resizing', () => {
+  it('opens setup from the Agent settings action', async () => {
+    const requestSetup = vi.fn()
+    const { controller } = createController({ requestSetup })
+    const view = await mount(controller)
+
+    await controller.submit('/settings')
+    await view.press('\t')
+    await view.press('\u001b[B')
+    await vi.waitFor(() => expect(view.screen()).toContain('Open setup'))
+    await view.click(view.pointOnRow('Providers & default agent', 'Open setup'))
+
+    expect(requestSetup).toHaveBeenCalledOnce()
+  })
+
   it('keeps the selected setting visible and preserves the composer draft', async () => {
     const { controller } = createController()
     const view = await mount(controller)
@@ -119,16 +134,17 @@ describe('mounted panel resizing', () => {
     await controller.submit('/settings')
     await vi.waitFor(() => expect(view.screen()).toContain('Auto-Discovery'))
     await view.press('\t')
-    for (let index = 0; index < 2; index++) await view.press('\u001b[B')
-    await vi.waitFor(() => expect(view.screen()).toContain('Usage ping (telemetry)'))
+    for (let index = 0; index < 3; index++) await view.press('\u001b[B')
+    await vi.waitFor(() => expect(view.screen()).toContain('Anonymous usage'))
     await view.press('\t')
+    await view.press('\u001b[B')
 
     for (const [width, height] of terminalSizes) {
       await view.resize(width, height)
       await vi.waitFor(() => {
         view.fits()
         // Narrow terminals truncate the label beside its control.
-        expect(view.screen()).toContain(width >= 80 ? '› Usage ping (telemetry)' : '› Usage p')
+        expect(view.screen()).toContain(width >= 80 ? '› Anonymous usage' : '› Anonym')
         expect(view.screen()).toContain('━━● On')
         expect(view.screen()).toContain('Esc back')
         expect(view.screen()).not.toContain('/help')
@@ -140,6 +156,7 @@ describe('mounted panel resizing', () => {
     await vi.waitFor(() => expect(controller.getSnapshot().panel).toBeUndefined())
     await controller.submit('/settings')
     await view.press('\t')
+    await view.press('\u001b[B')
     await view.press('\u001b[B')
     await vi.waitFor(() => expect(view.screen()).toContain('Skills'))
     await view.click(view.pointOnRow('Skills', 'Off'))

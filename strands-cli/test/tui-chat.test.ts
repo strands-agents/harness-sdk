@@ -242,7 +242,7 @@ describe('ChatController', () => {
     const controller = new ChatController(backend(), { setSettings })
 
     await controller.submit('/settings')
-    await controller.activatePanelRow({ label: '', description: '', value: 'settings:General' })
+    await controller.activatePanelRow({ label: '', description: '', value: 'settings:Agent' })
     const threshold = controller.getSnapshot().panel!.rows.find((row) => row.value === 'contextOffloadThreshold')!
 
     expect(threshold).toMatchObject({
@@ -1819,10 +1819,10 @@ describe('ChatController', () => {
     requestSetup.mockClear()
     await controller.submit('/settings')
     await controller.activatePanelRow({ label: '', description: '', value: 'frogTheme=minimal' })
-    await controller.activatePanelRow({ label: '', description: '', value: 'settings:General' })
+    await controller.activatePanelRow({ label: '', description: '', value: 'settings:Agent' })
     const rows = controller.getSnapshot().panel?.rows ?? []
-    expect(rows.map(({ value }) => value)).toEqual(['contextOffloadThreshold', 'telemetry'])
-    await controller.submit('/setup')
+    expect(rows.map(({ value }) => value)).toEqual(['contextOffloadThreshold', 'settings-action:setup'])
+    expect(await controller.activatePanelRow(rows[1]!)).toBe(true)
     expect(requestSetup).toHaveBeenCalledOnce()
   })
 

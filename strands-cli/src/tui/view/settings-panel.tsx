@@ -48,7 +48,7 @@ export function SettingsPicker({
   onControlElement?: (key: string, element: DOMElement | null) => void
   onFilterElement?: (id: string, element: DOMElement | null) => void
 }): ReactElement {
-  const { accent, hover, selection } = useTheme()
+  const { accent, hover, panel: panelColor, selection } = useTheme()
   const listWidth = sectionedPanelSidebarWidth(
     width,
     Math.max(0, ...(panel.filters ?? []).map(({ label }) => stringWidth(label))) + 5
@@ -118,6 +118,17 @@ export function SettingsPicker({
                     {...(hoveredControl ? { hoveredControl } : {})}
                     {...(onControlElement ? { onControlElement } : {})}
                   />
+                ) : row.value ? (
+                  <Box
+                    flexShrink={1}
+                    overflow="hidden"
+                    backgroundColor={rowPressed ? hover : active ? accent : selection}
+                  >
+                    <Text {...(active ? { color: panelColor } : {})} bold={active} wrap="truncate-end">
+                      {' '}
+                      {row.description}{' '}
+                    </Text>
+                  </Box>
                 ) : null}
               </Box>
             )
@@ -132,6 +143,9 @@ export function SettingsPicker({
 function minimumControlWidth(row: ChatPanelRow): number {
   if (row.control?.kind === 'toggle') {
     return stringWidth(' ●━━ Off ')
+  }
+  if (!row.control && row.value) {
+    return stringWidth(row.description) + 2
   }
   return row.control ? Math.max(...row.control.options.map((option) => stringWidth(option.label))) + 6 : 0
 }

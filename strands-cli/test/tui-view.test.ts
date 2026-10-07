@@ -1181,18 +1181,30 @@ describe('ChatView', () => {
     ).toBeGreaterThan(2)
     expect(output).toContain('Tab section')
 
-    const generalOutput = sanitizeTerminalText(
+    const agentOutput = sanitizeTerminalText(
       renderView({
-        snapshot: snapshot({ panel: settingsPanel('General') }),
+        snapshot: snapshot({ panel: settingsPanel('Agent', DEFAULT_CHAT_SETTINGS, true) }),
         terminalWidth,
         terminalHeight: 30,
       })
     )
-    expect(generalOutput).toContain('Context offload threshold')
+    expect(agentOutput).toContain('Context offloading')
+    expect(agentOutput).toContain('Providers & default agent')
+    expect(agentOutput).toContain('Open setup')
     for (const option of ['Default', '1.5K', '2.5K', '5K', '10K']) {
-      expect(generalOutput).toContain(option)
+      expect(agentOutput).toContain(option)
     }
-    expect(generalOutput.split('\n').every((line) => stringWidth(line) <= terminalWidth)).toBe(true)
+    expect(agentOutput.split('\n').every((line) => stringWidth(line) <= terminalWidth)).toBe(true)
+
+    const privacyOutput = sanitizeTerminalText(
+      renderView({
+        snapshot: snapshot({ panel: settingsPanel('Privacy') }),
+        terminalWidth,
+        terminalHeight: 30,
+      })
+    )
+    expect(privacyOutput).toContain('Anonymous usage')
+    expect(privacyOutput).toContain('━━● On')
 
     const models: ChatPanel = {
       id: 'models',
@@ -1239,8 +1251,9 @@ describe('ChatView', () => {
 
   it.each([
     ['Appearance', 'Theme, transcript, reasoning, tool output, and animations'],
+    ['Agent', 'tool-result tokens'],
     ['Auto-Discovery', 'only explicit --mcp-config sources load'],
-    ['General', 'one anonymous ping per launch'],
+    ['Privacy', 'one anonymous ping per launch'],
   ] as const)('omits the %s description header', (category, description) => {
     const output = sanitizeTerminalText(
       renderView({
@@ -1251,6 +1264,39 @@ describe('ChatView', () => {
     )
 
     expect(output).not.toContain(description)
+  })
+
+  it.each([40, 80, 150])('keeps every /settings section in one centered %i-column frame', (terminalWidth) => {
+    const sections = [
+      ['Appearance', 'Theme'],
+      ['Agent', 'Context'],
+      ['Auto-Discovery', 'MCP'],
+      ['Privacy', 'Anonym'],
+    ] as const
+    let expectedBounds: { top: number; bottom: number; left: number; right: number } | undefined
+
+    for (const [category, rowLabel] of sections) {
+      const lines = sanitizeTerminalText(
+        renderView({
+          snapshot: snapshot({
+            panel: settingsPanel(category, DEFAULT_CHAT_SETTINGS, category === 'Agent'),
+          }),
+          terminalWidth,
+          terminalHeight: 24,
+        })
+      ).split('\n')
+      const top = lines.findIndex((line) => /┌.*┐┌.*┐/u.test(line))
+      const bottom = lines.findIndex((line, index) => index > top && /└.*┘└.*┘/u.test(line))
+      const row = lines.findIndex((line) => line.includes(rowLabel))
+      const border = lines[top]!
+      const bounds = { top, bottom, left: border.indexOf('┌'), right: border.lastIndexOf('┐') }
+
+      expect(lines.every((line) => stringWidth(line) <= terminalWidth)).toBe(true)
+      expect(row - top).toBeGreaterThan(2)
+      expect(bottom - row).toBeGreaterThan(2)
+      expectedBounds ??= bounds
+      expect(bounds).toEqual(expectedBounds)
+    }
   })
 
   it('keeps the active theme in view when the theme options overflow the row', () => {
@@ -1625,12 +1671,16 @@ describe('panel helpers', () => {
   })
 })
 
-function settingsPanel(category: SettingsCategory, settings = DEFAULT_CHAT_SETTINGS): ChatPanel {
+function settingsPanel(
+  category: SettingsCategory,
+  settings = DEFAULT_CHAT_SETTINGS,
+  includeSetupAction = false
+): ChatPanel {
   return {
     id: `settings-${category}`,
     kind: 'settings',
     title: category,
-    rows: settingsRows(settings, category),
+    rows: settingsRows(settings, category, includeSetupAction),
     filters: settingsCategoryFilters(),
     settingsCategory: category,
     settingsCategories: SETTINGS_CATEGORIES,

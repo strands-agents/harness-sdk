@@ -92,7 +92,8 @@ describe('panel helpers', () => {
     expect(composerPanelHeight(snapshot({ panel: settingsPanel('Auto-Discovery') }), 24)).toBe(
       COMPOSER_RESOURCE_PANEL_HEIGHT
     )
-    expect(composerPanelHeight(snapshot({ panel: settingsPanel('General') }), 24)).toBe(COMPOSER_RESOURCE_PANEL_HEIGHT)
+    expect(composerPanelHeight(snapshot({ panel: settingsPanel('Agent') }), 24)).toBe(COMPOSER_RESOURCE_PANEL_HEIGHT)
+    expect(composerPanelHeight(snapshot({ panel: settingsPanel('Privacy') }), 24)).toBe(COMPOSER_RESOURCE_PANEL_HEIGHT)
     expect(composerPanelHeight(snapshot({ panel: effortPanel }), 24)).toBe(COMPOSER_RESOURCE_PANEL_HEIGHT)
     expect(composerPanelHeight(snapshot({ panel: panel('context') }), 24)).toBe(COMPOSER_RESOURCE_PANEL_HEIGHT)
   })
@@ -105,7 +106,7 @@ describe('panel helpers', () => {
 
   it('maps ←→ on a settings row to its neighboring option, and to Off and On for a toggle', () => {
     const [theme, , animations, , toolOutput] = settingsRows(DEFAULT_CHAT_SETTINGS, 'Appearance')
-    const [contextOffloadThreshold] = settingsRows(DEFAULT_CHAT_SETTINGS, 'General')
+    const [contextOffloadThreshold] = settingsRows(DEFAULT_CHAT_SETTINGS, 'Agent')
 
     expect(settingArrowValue(theme!, -1)).toBeUndefined()
     expect(settingArrowValue(theme!, 1)).toBe('frogTheme=minimal')
