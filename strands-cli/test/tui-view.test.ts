@@ -1181,6 +1181,19 @@ describe('ChatView', () => {
     ).toBeGreaterThan(2)
     expect(output).toContain('Tab section')
 
+    const generalOutput = sanitizeTerminalText(
+      renderView({
+        snapshot: snapshot({ panel: settingsPanel('General') }),
+        terminalWidth,
+        terminalHeight: 30,
+      })
+    )
+    expect(generalOutput).toContain('Context offload threshold')
+    for (const option of ['Default', '1.5K', '2.5K', '5K', '10K']) {
+      expect(generalOutput).toContain(option)
+    }
+    expect(generalOutput.split('\n').every((line) => stringWidth(line) <= terminalWidth)).toBe(true)
+
     const models: ChatPanel = {
       id: 'models',
       kind: 'models',

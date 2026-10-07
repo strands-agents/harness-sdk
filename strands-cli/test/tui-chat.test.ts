@@ -237,6 +237,33 @@ describe('ChatController', () => {
     })
   })
 
+  it('selects a context offload threshold from settings', async () => {
+    const setSettings = vi.fn(async () => {})
+    const controller = new ChatController(backend(), { setSettings })
+
+    await controller.submit('/settings')
+    await controller.activatePanelRow({ label: '', description: '', value: 'settings:General' })
+    const threshold = controller.getSnapshot().panel!.rows.find((row) => row.value === 'contextOffloadThreshold')!
+
+    expect(threshold).toMatchObject({
+      description: 'Default · tool-result tokens · applies at next launch',
+      control: {
+        kind: 'segmented',
+        options: [
+          { label: 'Default', value: 'default', active: true },
+          { label: '1.5K', value: '1500' },
+          { label: '2.5K', value: '2500' },
+          { label: '5K', value: '5000' },
+          { label: '10K', value: '10000' },
+        ],
+      },
+    })
+
+    expect(await controller.activatePanelRow({ ...threshold, value: 'contextOffloadThreshold=5000' })).toBe(true)
+    expect(setSettings).toHaveBeenCalledWith({ contextOffloadThreshold: 5_000 })
+    expect(controller.getSnapshot().settings.contextOffloadThreshold).toBe(5_000)
+  })
+
   it('runs bang commands through the active backend shell stream', async () => {
     const modelPrompts: string[] = []
     const shellCommands: string[] = []
@@ -1794,7 +1821,7 @@ describe('ChatController', () => {
     await controller.activatePanelRow({ label: '', description: '', value: 'frogTheme=minimal' })
     await controller.activatePanelRow({ label: '', description: '', value: 'settings:General' })
     const rows = controller.getSnapshot().panel?.rows ?? []
-    expect(rows.map(({ value }) => value)).toEqual(['telemetry'])
+    expect(rows.map(({ value }) => value)).toEqual(['contextOffloadThreshold', 'telemetry'])
     await controller.submit('/setup')
     expect(requestSetup).toHaveBeenCalledOnce()
   })

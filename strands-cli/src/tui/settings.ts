@@ -15,6 +15,16 @@ export const FROG_THEME_LABELS: Record<FrogTheme, string> = {
 
 export type ResolvedColorMode = 'light' | 'dark'
 
+export const CONTEXT_OFFLOAD_THRESHOLD_OPTIONS = [
+  { label: 'Default', value: 'default' },
+  { label: '1.5K', value: 1_500 },
+  { label: '2.5K', value: 2_500 },
+  { label: '5K', value: 5_000 },
+  { label: '10K', value: 10_000 },
+] as const
+
+export type ContextOffloadThreshold = (typeof CONTEXT_OFFLOAD_THRESHOLD_OPTIONS)[number]['value']
+
 export const SETTINGS_CATEGORIES = [
   {
     id: 'Appearance',
@@ -66,6 +76,8 @@ export interface ChatSettings {
   agentMessaging: boolean
   /** Send one anonymous usage ping per interactive start (see README → Telemetry). */
   telemetry: boolean
+  /** Tool-result token cutoff for context offloading, or the selected context-manager preset's default. */
+  contextOffloadThreshold: ContextOffloadThreshold
 }
 
 export type ThemeSettings = Pick<ChatSettings, 'frogTheme'>
@@ -80,6 +92,7 @@ export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   skillDiscovery: false,
   agentMessaging: true,
   telemetry: true,
+  contextOffloadThreshold: 'default',
 }
 
 export type SettingKey =
@@ -92,13 +105,14 @@ export type SettingKey =
   | 'skillDiscovery'
   | 'agentMessaging'
   | 'telemetry'
+  | 'contextOffloadThreshold'
 
 export interface SettingDefinition {
   key: SettingKey
   label: string
   section: SettingsCategory
   control: 'segmented' | 'toggle'
-  options: readonly { label: string; value: string | boolean }[]
+  options: readonly { label: string; value: string | number | boolean }[]
 }
 
 export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
@@ -181,6 +195,13 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
     ],
   },
   {
+    key: 'contextOffloadThreshold',
+    label: 'Context offload threshold',
+    section: 'General',
+    control: 'segmented',
+    options: CONTEXT_OFFLOAD_THRESHOLD_OPTIONS,
+  },
+  {
     key: 'telemetry',
     label: 'Usage ping (telemetry)',
     section: 'General',
@@ -218,6 +239,8 @@ export function settingDescription(settings: ChatSettings, key: SettingKey): str
       return settings.telemetry
         ? 'on · one anonymous ping per launch: CLI version, provider, built-in tools and plugins · applies at next launch'
         : 'off · nothing is sent · applies at next launch'
+    case 'contextOffloadThreshold':
+      return `${CONTEXT_OFFLOAD_THRESHOLD_OPTIONS.find(({ value }) => value === settings.contextOffloadThreshold)!.label} · tool-result tokens · applies at next launch`
     default:
       return settings[key]
   }
@@ -253,6 +276,12 @@ export function parseSettings(value: unknown, path: string): ChatSettings {
   if (frogTheme === undefined) {
     throw new Error(`Invalid CLI config at ${path}: settings.frogTheme must be one of ${FROG_THEMES.join(', ')}`)
   }
+  const contextOffloadThreshold = value.contextOffloadThreshold ?? DEFAULT_CHAT_SETTINGS.contextOffloadThreshold
+  if (!CONTEXT_OFFLOAD_THRESHOLD_OPTIONS.some(({ value: option }) => option === contextOffloadThreshold)) {
+    throw new Error(
+      `Invalid CLI config at ${path}: settings.contextOffloadThreshold must be "default", 1500, 2500, 5000, or 10000`
+    )
+  }
 
   return {
     transcriptSpacing,
@@ -264,6 +293,7 @@ export function parseSettings(value: unknown, path: string): ChatSettings {
     skillDiscovery: booleanSetting('skillDiscovery'),
     agentMessaging: booleanSetting('agentMessaging'),
     telemetry: booleanSetting('telemetry'),
+    contextOffloadThreshold: contextOffloadThreshold as ContextOffloadThreshold,
   }
 }
 
@@ -312,6 +342,13 @@ export function parseSettingUpdate(setting: string, current: ChatSettings): Part
     case 'frogTheme': {
       const frogTheme = FROG_THEMES.find((theme) => theme === selected)
       return frogTheme === undefined ? undefined : { frogTheme }
+    }
+    case 'contextOffloadThreshold': {
+      const threshold =
+        selected === 'default'
+          ? 'default'
+          : CONTEXT_OFFLOAD_THRESHOLD_OPTIONS.find(({ value }) => String(value) === selected)?.value
+      return threshold === undefined ? undefined : { contextOffloadThreshold: threshold }
     }
     default:
       return undefined

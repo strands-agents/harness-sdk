@@ -45,6 +45,7 @@ describe('CliConfigStore', () => {
         skillDiscovery: false,
         agentMessaging: true,
         telemetry: true,
+        contextOffloadThreshold: 'default',
       },
     })
     expect(config.needsSetup()).toBe(true)
@@ -154,6 +155,15 @@ describe('CliConfigStore', () => {
 
     await expect(CliConfigStore.load(path)).rejects.toThrow(
       `Invalid CLI config at ${path}: settings.mcpDiscovery must be a boolean`
+    )
+  })
+
+  it('rejects unsupported context offload thresholds', async () => {
+    const path = join(await temporaryDirectory(), 'config.json')
+    await writeFile(path, JSON.stringify({ settings: { contextOffloadThreshold: 2_000 } }))
+
+    await expect(CliConfigStore.load(path)).rejects.toThrow(
+      `Invalid CLI config at ${path}: settings.contextOffloadThreshold must be "default", 1500, 2500, 5000, or 10000`
     )
   })
 

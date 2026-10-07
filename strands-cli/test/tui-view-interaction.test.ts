@@ -105,6 +105,7 @@ describe('panel helpers', () => {
 
   it('maps ←→ on a settings row to its neighboring option, and to Off and On for a toggle', () => {
     const [theme, , animations, , toolOutput] = settingsRows(DEFAULT_CHAT_SETTINGS, 'Appearance')
+    const [contextOffloadThreshold] = settingsRows(DEFAULT_CHAT_SETTINGS, 'General')
 
     expect(settingArrowValue(theme!, -1)).toBeUndefined()
     expect(settingArrowValue(theme!, 1)).toBe('frogTheme=minimal')
@@ -112,6 +113,8 @@ describe('panel helpers', () => {
     expect(settingArrowValue(toolOutput!, 1)).toBe('toolOutput=full')
     expect(settingArrowValue(animations!, 1)).toBeUndefined()
     expect(settingArrowValue(animations!, -1)).toBe('animations')
+    expect(settingArrowValue(contextOffloadThreshold!, -1)).toBeUndefined()
+    expect(settingArrowValue(contextOffloadThreshold!, 1)).toBe('contextOffloadThreshold=1500')
     expect(settingArrowValue({ label: 'note', description: '' }, 1)).toBeUndefined()
   })
 

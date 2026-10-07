@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { createHarness, type HarnessAgentConfig, type HarnessAgentOptions } from '@strands-agents/harness'
 import { resolveInterventions } from '@strands-agents/harness/internal'
 import type { Message, Agent, Tool } from '@strands-agents/sdk'
+import { Offload } from '@strands-agents/sdk/experimental'
 import { ContextInjector } from '@strands-agents/sdk/vended-plugins'
 import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
 
@@ -19,6 +20,7 @@ import {
   type ChatDiffPreview,
   type ChatForkState,
   type ChatSettings,
+  type ContextOffloadThreshold,
 } from './chat/controller.js'
 import { isUnresolvedBackgroundTask } from './chat/controller-helpers.js'
 import { ConversationManager } from './session/conversations.js'
@@ -85,6 +87,7 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
   const sessionCatalog = await loadSessionCatalog(options.sessionCatalogPath)
 
   const config = options.config ?? (await CliConfigStore.load(options.configPath))
+  const launchSettings = config.snapshot().settings
   const configuredInterventions = await resolveInterventions(options.agentOptions?.interventions)
   const configuredSessionId = configuredSessionSettings.id
   const {
@@ -155,9 +158,12 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
       throw new Error('Runtime is disposed.')
     }
     const agentOptions = { ...controllerOptions, ...overrides }
-    requireBedrockRegion(agentOptions.model)
+    const resolvedAgentOptions = options.project
+      ? agentOptions
+      : withContextOffloadThreshold(agentOptions, launchSettings.contextOffloadThreshold)
+    requireBedrockRegion(resolvedAgentOptions.model)
     const agent = await (options.buildAgent ?? createHarness)({
-      ...agentOptions,
+      ...resolvedAgentOptions,
       tools: [...configuredTools],
       plugins: [
         ...(agentOptions.plugins ?? []),
@@ -545,6 +551,29 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
   } catch (error) {
     await disposeShared()
     throw error
+  }
+}
+
+function withContextOffloadThreshold(
+  options: HarnessAgentOptions,
+  threshold: ContextOffloadThreshold
+): HarnessAgentOptions {
+  const contextManager = options.contextManager
+  if (
+    threshold === 'default' ||
+    (contextManager !== undefined && contextManager !== 'auto' && contextManager !== 'agentic')
+  ) {
+    return options
+  }
+  const summarizeUtilization = contextManager === 'agentic' ? 1 : 0.85
+  return {
+    ...options,
+    contextManager: {
+      strategies: [
+        Offload.truncate('toolResults', { previewTokens: 750 }).when({ threshold }),
+        Offload.summarize('*').when({ utilization: summarizeUtilization, preserveRecent: 4 }),
+      ],
+    },
   }
 }
 

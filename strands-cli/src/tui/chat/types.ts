@@ -12,10 +12,12 @@ import type { ChatSettings, SettingsCategory } from '../settings.js'
 
 export {
   DEFAULT_CHAT_SETTINGS,
+  CONTEXT_OFFLOAD_THRESHOLD_OPTIONS,
   FROG_THEMES,
   FROG_THEME_LABELS,
   THEME_COLOR_KEYS,
   type ChatSettings,
+  type ContextOffloadThreshold,
   type FrogTheme,
   type ResolvedColorMode,
   type ThemeColors,
