@@ -168,6 +168,7 @@ html[data-embed] .integrations-back {
 .page[data-accent='yellow'] { --product-accent: var(--card-accent-yellow); }
 .page[data-accent='pink'] { --product-accent: var(--card-accent-pink); }
 .page[data-accent='blue'] { --product-accent: var(--card-accent-blue); }
+.page[data-accent='purple'] { --product-accent: var(--card-accent-purple); }
 .page[data-accent] .product-switcher__slug {
 	color: var(--product-accent);
 }

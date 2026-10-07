@@ -38,12 +38,8 @@ const agent = new strands.Agent({
 const app = express()
 
 // Health check endpoint (REQUIRED)
-app.get('/ping', (_, res) =>
-  res.json({
-    status: 'Healthy',
-    time_of_last_update: Math.floor(Date.now() / 1000),
-  })
-)
+// Omit time_of_last_update: a timestamp that advances on every ping keeps the session alive until maxLifetime.
+app.get('/ping', (_, res) => res.json({ status: 'Healthy' }))
 
 // Agent invocation endpoint (REQUIRED)
 // AWS sends binary payload, so we use express.raw middleware

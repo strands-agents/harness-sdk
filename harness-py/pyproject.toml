@@ -26,11 +26,11 @@ classifiers = [
 ]
 # [otel] pulls the OTLP exporter: telemetry is on by default (wired when a collector endpoint is
 # configured), so the exporter must always be importable, not an optional extra.
-# 1.55.1 is the first release with Background Tasks and its public BackgroundTasksConfig export.
+# SDK 1.57.2 preserves original stashed content when restoring sessions.
 # pydantic-monty is the sandbox programmatic_tool_caller runs model-authored code in; it is a hard
 # dependency because the tool is on by default. Pinned exactly while Monty is pre-1.0 and its API moves.
 dependencies = [
-    "strands-agents[otel]>=1.56.0,<2.0.0",
+    "strands-agents[otel]>=1.57.2,<2.0.0",
     "pydantic-monty==0.0.23",
     "pydantic>=2.5,<3",
 ]

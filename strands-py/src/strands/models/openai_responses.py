@@ -927,12 +927,12 @@ class OpenAIResponsesModel(Model):
 
                 if tokens_details := getattr(event["data"], "input_tokens_details", None):
                     cached = getattr(tokens_details, "cached_tokens", None)
-                    if isinstance(cached, int) and cached:
+                    if isinstance(cached, int):
                         usage_data["cacheReadInputTokens"] = cached
 
                     # Reported first-party from GPT-5.6
                     cache_write = getattr(tokens_details, "cache_write_tokens", None)
-                    if isinstance(cache_write, int) and cache_write:
+                    if isinstance(cache_write, int):
                         usage_data["cacheWriteInputTokens"] = cache_write
 
                 return {

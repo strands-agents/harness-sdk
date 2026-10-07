@@ -376,7 +376,7 @@ export function _defaultBuilder(parent: Agent): AgentBuilder {
     for (const tool of parent.toolRegistry.list()) {
       if (tool instanceof McpTool) {
         // MCP tools flow through mcpServers to avoid duplicates with their client.
-        const client = (tool as unknown as { mcpClient: McpClient }).mcpClient
+        const client = tool.mcpClient
         if (client.clientName) {
           mcpClients.set(client.clientName, client)
         }

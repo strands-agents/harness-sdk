@@ -65,9 +65,14 @@ const extraHead: HeadEntry[] = [
   title={title}
   description={description}
   ogImage={ogImageUrl}
+  ogImageAlt={title}
   canonicalUrl={canonicalUrl}
   extraHead={extraHead}
 >
+
+  <div class="reading-progress" aria-hidden="true">
+    <div class="reading-progress__bar" data-reading-progress></div>
+  </div>
 
   <div class="blog-wrapper">
     <article class="blog-post">
@@ -103,7 +108,52 @@ const extraHead: HeadEntry[] = [
   </div>
 </BlogLayout>
 
+<script>
+  // Fill the bar as the post body scrolls past the bottom of the viewport.
+  const bar = document.querySelector<HTMLElement>('[data-reading-progress]')
+  const content = document.querySelector<HTMLElement>('.blog-post-content')
+  if (bar && content) {
+    let queued = false
+    const update = () => {
+      queued = false
+      const { top, height } = content.getBoundingClientRect()
+      const scrollable = height - window.innerHeight
+      const progress = scrollable > 0 ? -top / scrollable : top < 0 ? 1 : 0
+      bar.style.transform = `scaleX(${Math.min(1, Math.max(0, progress))})`
+    }
+    const queue = () => {
+      if (queued) return
+      queued = true
+      requestAnimationFrame(update)
+    }
+    window.addEventListener('scroll', queue, { passive: true })
+    window.addEventListener('resize', queue)
+    update()
+  }
+</script>
+
 <style>
+  .reading-progress {
+    position: fixed;
+    top: var(--sl-nav-height);
+    left: 0;
+    right: 0;
+    height: 3px;
+    z-index: var(--sl-z-index-navbar);
+    pointer-events: none;
+  }
+
+  .reading-progress__bar {
+    height: 100%;
+    background: var(--strands-green);
+    transform: scaleX(0);
+    transform-origin: left;
+  }
+
+  :global(html[data-embed]) .reading-progress {
+    display: none;
+  }
+
   .blog-wrapper {
     max-width: 820px;
     margin: 0 auto;

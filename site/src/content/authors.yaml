@@ -193,6 +193,11 @@
   role: "Sr. Technical Content Creator, AWS"
   bio: Tim Moreton is a Sr. Technical Content Creator at AWS working on Strands Agents and agentic AI.
 
+- id: fernando-dingler
+  name: Fernando Dingler
+  role: "Principal Engineer, AWS"
+  bio: Fernando Dingler is a Principal Engineer at AWS working on Strands Agents and Strands Box.
+
 - id: chen-wu
   name: Chen Wu
   role: "Principal Applied Scientist, AWS"

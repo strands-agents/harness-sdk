@@ -29,7 +29,7 @@ export class McpTool extends Tool {
   readonly name: string
   readonly description: string
   readonly toolSpec: ToolSpec
-  private readonly mcpClient: McpClient
+  private readonly _mcpClient: McpClient
 
   constructor(config: McpToolConfig) {
     super()
@@ -42,7 +42,16 @@ export class McpTool extends Tool {
       ...(config.outputSchema !== undefined && { outputSchema: config.outputSchema }),
       ...(config.annotations !== undefined && { annotations: config.annotations }),
     }
-    this.mcpClient = config.client
+    this._mcpClient = config.client
+  }
+
+  /**
+   * The MCP client this tool belongs to.
+   *
+   * @returns The client supplied when this tool was constructed.
+   */
+  get mcpClient(): McpClient {
+    return this._mcpClient
   }
 
   // eslint-disable-next-line require-yield

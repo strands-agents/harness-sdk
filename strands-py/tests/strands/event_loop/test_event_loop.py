@@ -1328,6 +1328,9 @@ async def test_event_loop_cycle_interrupts_preserved_when_after_tools_hook_raise
     agent.hooks.add_callback(AfterToolsEvent, raise_in_after_tools)
     model.stream.side_effect = [agenerator(tool_stream)]
 
+    # A key the loop does not own, e.g. an agent-as-tool's parked sub-agent turn.
+    agent._interrupt_state.context["sub_agent_interrupted_turns"] = {"tool-1": {"scope": "agent"}}
+
     with pytest.raises(EventLoopException, match="after tools hook failed"):
         await alist(strands.event_loop.event_loop.event_loop_cycle(agent, invocation_state={}))
 
@@ -1337,6 +1340,7 @@ async def test_event_loop_cycle_interrupts_preserved_when_after_tools_hook_raise
         assistant_message=agent.messages[-1],
         completed_tool_results=[],
     )
+    assert agent._interrupt_state.context["sub_agent_interrupted_turns"] == {"tool-1": {"scope": "agent"}}
 
 
 @pytest.mark.asyncio
