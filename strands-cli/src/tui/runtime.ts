@@ -290,6 +290,8 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
       sandbox,
       interventions: [liveSteering, cedarPermissions, ...configuredInterventions],
     }
+    // Exported source factories retain authored options unless the override contains the key.
+    if (configuredMcpServers) Reflect.set(controllerOptions, 'mcpServers', undefined)
 
     const configSnapshot = config.snapshot()
     let exportProfile = {

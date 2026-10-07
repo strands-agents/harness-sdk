@@ -1,6 +1,11 @@
 import type { TestScenario } from '../reporting/status-table-reporter.js'
 
 export const PLATFORM_CASE = {
+  lifecycle: {
+    id: 'Agent lifecycle',
+    description: 'Talk -> export -> import -> talk -> re-export -> talk',
+    testName: 'uses an agent across repeated export and import boundaries',
+  },
   exportedAgent: {
     id: 'Exported agent',
     description: 'ZIP imports and runs through the compiled CLI',

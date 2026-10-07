@@ -23,6 +23,8 @@ export type TuiScenario =
   | 'startup'
   | 'startup-typing'
 
+export type TuiDriverScenario = TuiScenario | 'lifecycle-profile' | 'lifecycle-project'
+
 export interface TuiResult {
   returnCode: number
   termiosRestored: boolean | null
@@ -34,6 +36,29 @@ export interface TuiResult {
 }
 
 export async function runTuiScenario(scenario: TuiScenario): Promise<TuiResult> {
+  const loader = fileURLToPath(new URL('../fixtures/strands-cli-routing-source-loader.mjs', import.meta.url))
+  const fixture = fileURLToPath(new URL('../fixtures/tui-integration-process.mjs', import.meta.url))
+  const exportPath = join(tmpdir(), `strands-tui-export-${randomUUID()}.zip`)
+  try {
+    return await runTuiCommand({
+      scenario,
+      command: [process.execPath, '--no-warnings=ExperimentalWarning', '--experimental-loader', loader, fixture],
+      cwd: fileURLToPath(new URL('../..', import.meta.url)),
+      exportPath,
+    })
+  } finally {
+    await rm(exportPath, { force: true })
+  }
+}
+
+export async function runTuiCommand(options: {
+  scenario: TuiDriverScenario
+  command: readonly string[]
+  cwd: string
+  exportPath: string
+  env?: NodeJS.ProcessEnv
+  timeout?: number
+}): Promise<TuiResult> {
   const windows = process.platform === 'win32'
   const driver = fileURLToPath(
     new URL(
@@ -41,41 +66,35 @@ export async function runTuiScenario(scenario: TuiScenario): Promise<TuiResult> 
       import.meta.url
     )
   )
-  const loader = fileURLToPath(new URL('../fixtures/strands-cli-routing-source-loader.mjs', import.meta.url))
-  const fixture = fileURLToPath(new URL('../fixtures/tui-integration-process.mjs', import.meta.url))
-  const exportPath = join(tmpdir(), `strands-tui-export-${randomUUID()}.zip`)
-  try {
-    const { stdout } = await execFileAsync(
-      windows ? process.execPath : (process.env.PYTHON ?? 'python3'),
-      [driver, process.execPath, '--no-warnings=ExperimentalWarning', '--experimental-loader', loader, fixture],
-      {
-        cwd: fileURLToPath(new URL('../..', import.meta.url)),
-        timeout: 25_000,
-        maxBuffer: 2 * 1024 * 1024,
-        env: {
-          ...process.env,
-          STRANDS_CLI_TEST_EXPORT_PATH: exportPath,
-          STRANDS_CLI_TEST_SCENARIO: scenario,
-        },
-      }
-    )
-    const result = JSON.parse(stdout) as Omit<TuiResult, 'output' | 'resizeOutput'> & {
-      transcript: string
-      resizeTranscript: string
-      resizeBurstTranscript: string
-      resizeNoopTranscript: string
+  const { stdout } = await execFileAsync(
+    windows ? process.execPath : (process.env.PYTHON ?? 'python3'),
+    [driver, ...options.command],
+    {
+      cwd: options.cwd,
+      timeout: options.timeout ?? 25_000,
+      maxBuffer: 2 * 1024 * 1024,
+      env: {
+        ...process.env,
+        ...options.env,
+        STRANDS_CLI_TEST_EXPORT_PATH: options.exportPath,
+        STRANDS_CLI_TEST_SCENARIO: options.scenario,
+      },
     }
-    return {
-      returnCode: result.returnCode,
-      termiosRestored: result.termiosRestored,
-      output: decode(result.transcript),
-      resizeOutput: decode(result.resizeTranscript),
-      resizeBurstOutput: decode(result.resizeBurstTranscript),
-      resizeNoopOutput: decode(result.resizeNoopTranscript),
-      exportSaved: result.exportSaved,
-    }
-  } finally {
-    await rm(exportPath, { force: true })
+  )
+  const result = JSON.parse(stdout) as Omit<TuiResult, 'output' | 'resizeOutput'> & {
+    transcript: string
+    resizeTranscript: string
+    resizeBurstTranscript: string
+    resizeNoopTranscript: string
+  }
+  return {
+    returnCode: result.returnCode,
+    termiosRestored: result.termiosRestored,
+    output: decode(result.transcript),
+    resizeOutput: decode(result.resizeTranscript),
+    resizeBurstOutput: decode(result.resizeBurstTranscript),
+    resizeNoopOutput: decode(result.resizeNoopTranscript),
+    exportSaved: result.exportSaved,
   }
 }
 

@@ -22,6 +22,7 @@ async function main() {
   const followUpMode = scenario === 'follow-up'
   const approvalMode = scenario === 'approval'
   const setupExportMode = scenario === 'setup-export'
+  const lifecycleMode = scenario === 'lifecycle-profile' || scenario === 'lifecycle-project'
   const panelsMode = scenario === 'panels'
   const startupTyping = scenario === 'startup-typing'
   const intro = scenario === 'startup' || startupTyping
@@ -91,7 +92,7 @@ async function main() {
   let burstOutput = ''
   let noopOutput = ''
   try {
-    await waitFor(['Enter to send', CHAT_READY])
+    await waitFor(['Enter to send', CHAT_READY], lifecycleMode ? 20_000 : 8_000)
 
     if (resize) {
       const start = transcript.length
@@ -127,7 +128,23 @@ async function main() {
       noopOutput = transcript.slice(noopStart)
     }
 
-    if (chatMode) {
+    if (lifecycleMode) {
+      const profile = scenario === 'lifecycle-profile'
+      const prompt = profile ? 'report capabilities before export' : 'invoke the MCP probe after import'
+      const markers = profile ? ['LOCAL_SKILL=true', 'REMOTE_SKILL=true'] : ['platform-mcp-ok']
+      terminal.write(prompt)
+      await waitFor([prompt], 2_000, false)
+      terminal.write('\r')
+      await waitFor([...markers, '__PLATFORM_IDLE__'], 15_000, false)
+      const command = `/export typescript "${process.env.STRANDS_CLI_TEST_EXPORT_PATH}"`
+      terminal.write(command)
+      await waitFor(['/export typescript'], 2_000, false)
+      await sleep(200)
+      terminal.write('\r')
+      await waitFor(['Export complete'], 15_000, false)
+      terminal.write('\u001b')
+      await sleep(200)
+    } else if (chatMode) {
       terminal.write('hello from integration')
       await waitFor(['hello from integration'], 2_000, false)
       terminal.write('\r')

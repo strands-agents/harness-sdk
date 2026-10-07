@@ -28,6 +28,7 @@ def main() -> int:
     follow_up_mode = scenario == "follow-up"
     approval_mode = scenario == "approval"
     setup_export_mode = scenario == "setup-export"
+    lifecycle_mode = scenario in {"lifecycle-profile", "lifecycle-project"}
     panels_mode = scenario == "panels"
     startup_typing = scenario == "startup-typing"
     intro = scenario in {"startup", "startup-typing"}
@@ -95,7 +96,7 @@ def main() -> int:
         pump()
 
     try:
-        wait_for([READY_MARKER, CHAT_READY])
+        wait_for([READY_MARKER, CHAT_READY], timeout=20.0 if lifecycle_mode else 8.0)
         wait_for_raw_mode()
 
         def set_size(columns: int, height: int) -> None:
@@ -135,7 +136,27 @@ def main() -> int:
             set_size(120, 40)
             settle(0.2)
             noop_output = bytes(transcript[noop_start:])
-        if chat_mode:
+        if lifecycle_mode:
+            if scenario == "lifecycle-profile":
+                prompt = b"report capabilities before export"
+                markers = [b"LOCAL_SKILL=true", b"REMOTE_SKILL=true"]
+            else:
+                prompt = b"invoke the MCP probe after import"
+                markers = [b"platform-mcp-ok"]
+            os.write(master, prompt)
+            wait_for([prompt], timeout=2.0, styled=False)
+            os.write(master, b"\r")
+            wait_for(markers + [b"__PLATFORM_IDLE__"], timeout=15.0, styled=False)
+            path = os.environ["STRANDS_CLI_TEST_EXPORT_PATH"].encode()
+            command = b'/export typescript "' + path + b'"'
+            os.write(master, command)
+            wait_for([b"/export typescript"], timeout=2.0, styled=False)
+            time.sleep(0.2)
+            os.write(master, b"\r")
+            wait_for([b"Export complete"], timeout=15.0, styled=False)
+            os.write(master, b"\x1b")
+            time.sleep(0.2)
+        elif chat_mode:
             os.write(master, b"hello from integration")
             wait_for([b"hello from integration"], timeout=2.0, styled=False)
             os.write(master, b"\r")
