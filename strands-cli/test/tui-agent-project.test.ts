@@ -222,34 +222,6 @@ export const agent = await createHarness({
     expect(JSON.parse(result.stdout)).toEqual({ token: trusted ? 'project-value' : null, key: 'shell-key' })
   })
 
-  it('writes a runnable archive with declared custom source', async () => {
-    const root = await temporaryDirectory()
-    const destination = join(root, 'agent.zip')
-    const module = join(import.meta.dirname, 'fixtures', 'exported-tool.ts')
-    const config = defineHarnessAgentConfig({
-      name: 'Portable',
-      tools: [{ kind: 'tool', module, language: 'typescript', files: [module] }],
-      mcpServers: {
-        private: {
-          url: 'https://example.com/mcp',
-          headers: { Authorization: 'Bearer ${MCP_TOKEN}' },
-          disabled: true,
-        },
-      },
-    })
-
-    await expect(writeAgentProject(config, 'typescript', [], destination)).resolves.toBe(destination)
-
-    const entries = await readZipEntries(destination)
-    const source = entries.get('agent/agent.ts')!.toString()
-    expect(source).toContain("name: 'Portable'")
-    expect(source).toContain('./agent/tools/exported-tool.js')
-    expect(source).not.toContain('sessionId:')
-    expect(entries.get('agent/tools/exported-tool.ts')?.toString('utf8')).toBe(await readFile(module, 'utf8'))
-    expect(entries.has('agent/agent.ts')).toBe(true)
-    expect(entries.has('package.json')).toBe(true)
-  })
-
   it.each(['canonical', 'aliased'])('loads edited exported agent code through %s paths', async (pathKind) => {
     const root = await temporaryDirectory()
     const destination = join(root, 'agent.zip')

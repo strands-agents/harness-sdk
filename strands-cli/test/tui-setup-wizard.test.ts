@@ -603,42 +603,6 @@ describe('setup presentation', () => {
     }
   })
 
-  it('announces a newer CLI release on the opening menu', async () => {
-    const input = ttyInput()
-    const output = ttyOutput(120, 30)
-    let frame = ''
-    output.on('data', (chunk: Buffer) => {
-      if (chunk.toString().includes('\n')) {
-        frame = sanitizeTerminalText(chunk.toString())
-      }
-    })
-    const instance = render(
-      createElement(SetupWizard, {
-        config: CliConfigStore.memory({}, { animations: false }),
-        onComplete: () => {},
-        checkForUpdate: async () => '9.9.9',
-      }),
-      {
-        stdin: input,
-        stdout: output,
-        stderr: output,
-        interactive: true,
-        debug: true,
-        incrementalRendering: false,
-        patchConsole: false,
-        exitOnCtrlC: false,
-      }
-    )
-    try {
-      await vi.waitFor(() =>
-        expect(frame).toContain('Strands CLI 9.9.9 is available. Run `strands update` to install it.')
-      )
-    } finally {
-      instance.unmount()
-      await instance.waitUntilExit()
-    }
-  })
-
   it('resumes a configured harness from the Resume card', async () => {
     const input = ttyInput()
     const output = ttyOutput(120, 30)

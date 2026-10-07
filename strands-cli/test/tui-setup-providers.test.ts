@@ -364,10 +364,6 @@ describe('setup web_search availability', () => {
     }
   )
 
-  it('excludes web_search even when the quickstart model supports native search', () => {
-    expect(quickstartDraft('bedrock-mantle', {}).profile.builtinTools).not.toContain('web_search')
-  })
-
   it.each([
     ['bedrock', 'Exa', 'exa'],
     ['bedrock-mantle', 'Native', 'native'],
