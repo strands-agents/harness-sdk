@@ -1137,9 +1137,9 @@ describe('ChatView', () => {
     expect(lines.at(-1)).toContain('/settings')
   })
 
-  it('scrolls /settings rows in a short terminal and reports the visible range', () => {
+  it('scrolls /settings rows in a short terminal', () => {
     const rows = settingsRows(DEFAULT_CHAT_SETTINGS, 'Appearance')
-    const height = composerPanelHeight(snapshot({ panel: settingsPanel('Appearance') }), 10)
+    const height = composerPanelHeight(snapshot({ panel: settingsPanel('Appearance') }), 7)
     const capacity = panelRowCapacity('settings', height, rows)
     expect(capacity).toBeLessThan(rows.length)
     const selected = rows.length - 1
@@ -1147,22 +1147,22 @@ describe('ChatView', () => {
       renderView({
         snapshot: snapshot({ panel: settingsPanel('Appearance') }),
         terminalWidth: 80,
-        terminalHeight: 10,
+        terminalHeight: 7,
         panelSelection: selected,
         panelViewportStart: revealPanelSelection(selected, 0, capacity, rows.length),
       })
     )
 
-    expect(output).toContain(`${rows.length - capacity + 1}-${rows.length} / ${rows.length}`)
     expect(output).toContain('› Tool output')
     expect(output).not.toContain('Transcript spacing')
   })
 
   it('lays out /settings categories beside the settings of the selected category', () => {
+    const terminalWidth = 100
     const output = sanitizeTerminalText(
       renderView({
         snapshot: snapshot({ panel: settingsPanel('Auto-Discovery') }),
-        terminalWidth: 100,
+        terminalWidth,
         terminalHeight: 30,
         settingsPanelFocus: 'categories',
       })
@@ -1172,12 +1172,72 @@ describe('ChatView', () => {
     for (const { label } of SETTINGS_CATEGORIES) {
       expect(output).toContain(label)
     }
-    expect(lines.find((line) => line.includes('Settings'))).toContain('only explicit --mcp-config sources load')
     expect(lines.find((line) => line.includes('Auto-Discovery'))).toContain('›')
     expect(lines.find((line) => line.includes('MCP'))).toContain('●━━ Off')
     expect(lines.find((line) => line.includes('Agents (peer-to-peer'))).toContain('━━● On')
     expect(lines.filter((line) => line.includes('›'))).toHaveLength(1)
+    expect(
+      lines.findIndex((line) => line.includes('MCP')) - lines.findIndex((line) => line.includes('┌'))
+    ).toBeGreaterThan(2)
     expect(output).toContain('Tab section')
+
+    const models: ChatPanel = {
+      id: 'models',
+      kind: 'models',
+      title: 'models',
+      filters: [{ id: 'all', label: 'All' }],
+      rows: [{ label: 'Model', description: 'bedrock/model', value: 'bedrock/model' }],
+    }
+    const modelLines = sanitizeTerminalText(
+      renderView({
+        snapshot: snapshot({ panel: models }),
+        terminalWidth,
+        terminalHeight: 30,
+        panelRows: models.rows,
+      })
+    ).split('\n')
+    const settingsBorder = lines.find((line) => /┌.*┐┌.*┐/u.test(line))!
+    const expectedBounds = { left: settingsBorder.indexOf('┌'), right: settingsBorder.lastIndexOf('┐') }
+    const effort: ChatPanel = {
+      id: 'effort',
+      kind: 'effort',
+      title: 'effort',
+      rows: [],
+      slider: { label: 'Effort', options: [{ id: 'medium', label: 'Medium', active: true }] },
+    }
+    const context: ChatPanel = { id: 'context', kind: 'context', title: 'Context usage', rows: [] }
+    for (const panelLines of [
+      modelLines,
+      ...[effort, context].map((panel) =>
+        sanitizeTerminalText(
+          renderView({
+            snapshot: snapshot({ panel }),
+            terminalWidth,
+            terminalHeight: 30,
+            panelRows: panel.rows,
+          })
+        ).split('\n')
+      ),
+    ]) {
+      const border = panelLines.find((line) => line.includes('┌'))!
+      expect({ left: border.indexOf('┌'), right: border.lastIndexOf('┐') }).toEqual(expectedBounds)
+    }
+  })
+
+  it.each([
+    ['Appearance', 'Theme, transcript, reasoning, tool output, and animations'],
+    ['Auto-Discovery', 'only explicit --mcp-config sources load'],
+    ['General', 'one anonymous ping per launch'],
+  ] as const)('omits the %s description header', (category, description) => {
+    const output = sanitizeTerminalText(
+      renderView({
+        snapshot: snapshot({ panel: settingsPanel(category) }),
+        terminalWidth: 100,
+        terminalHeight: 30,
+      })
+    )
+
+    expect(output).not.toContain(description)
   })
 
   it('keeps the active theme in view when the theme options overflow the row', () => {

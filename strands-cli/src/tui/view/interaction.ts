@@ -15,8 +15,12 @@ import type { MouseInput } from '../terminal/mouse-input.js'
 
 export type MetadataTarget = 'model' | 'effort' | 'context' | 'cwd'
 export const MAX_VISIBLE_BACKGROUND_TASKS = 4
+export const COMPOSER_RESOURCE_PANEL_HEIGHT = COMPOSER_PANEL_HEIGHT + 2
+const SECTIONED_PANEL_SIDEBAR_DIVISOR = 3
 // Section borders, header row, header spacing, and help footer.
-const SECTIONED_PANEL_CHROME_ROWS = 5
+const MODEL_PANEL_CHROME_ROWS = 5
+// Section borders and help footer.
+const SETTINGS_PANEL_CHROME_ROWS = 3
 
 export type ModelPanelFocus = 'providers' | 'search' | 'models'
 export type SettingsPanelFocus = 'categories' | 'settings'
@@ -30,7 +34,7 @@ export function composerPanelHeight(snapshot: ChatSnapshot, terminalHeight: numb
   const activeBackgroundTasks = snapshot.tasks.filter(
     (task) => task.source === 'background' && isActiveTask(task.status)
   ).length
-  const extraRows = snapshot.panel?.kind === 'models' || snapshot.panel?.kind === 'settings' ? 2 : 0
+  const panelHeight = isComposerPanel(snapshot.panel?.kind) ? COMPOSER_RESOURCE_PANEL_HEIGHT : COMPOSER_PANEL_HEIGHT
   const statusRows =
     snapshot.pendingSteering.length +
     (snapshot.queuedPrompts.length > 0 || snapshot.status === 'interrupting'
@@ -39,10 +43,11 @@ export function composerPanelHeight(snapshot: ChatSnapshot, terminalHeight: numb
     Number(snapshot.voice !== undefined && snapshot.voice.status !== 'off') +
     Math.min(activeBackgroundTasks, MAX_VISIBLE_BACKGROUND_TASKS) +
     Number(activeBackgroundTasks > MAX_VISIBLE_BACKGROUND_TASKS)
-  return Math.min(
-    Math.max(party ? 3 : 1, terminalHeight - statusRows - 2),
-    COMPOSER_PANEL_HEIGHT + extraRows + (party ? 2 : 0)
-  )
+  return Math.min(Math.max(party ? 3 : 1, terminalHeight - statusRows - 2), panelHeight + (party ? 2 : 0))
+}
+
+export function sectionedPanelSidebarWidth(panelWidth: number, preferredWidth = Infinity): number {
+  return Math.max(1, Math.min(Math.floor(panelWidth / SECTIONED_PANEL_SIDEBAR_DIVISOR), preferredWidth))
 }
 
 export function settingsLayout(
@@ -328,8 +333,11 @@ export function panelRowCapacity(
     const sections = new Set(rows.map((row) => row.section).filter(Boolean)).size
     return Math.max(1, Math.min(10, terminalHeight - 15 - sections * 2))
   }
-  if (kind === 'models' || kind === 'settings') {
-    return Math.max(1, terminalHeight - SECTIONED_PANEL_CHROME_ROWS)
+  if (kind === 'models') {
+    return Math.max(1, terminalHeight - MODEL_PANEL_CHROME_ROWS)
+  }
+  if (kind === 'settings') {
+    return Math.max(1, terminalHeight - SETTINGS_PANEL_CHROME_ROWS)
   }
   if (['help', 'skills', 'mcp', 'tasks'].includes(kind)) {
     const sections = new Set(rows.map((row) => row.section).filter(Boolean)).size

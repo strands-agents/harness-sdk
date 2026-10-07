@@ -4,7 +4,13 @@ import stringWidth from 'string-width'
 
 import type { ChatPanel, ChatPanelRow } from '../chat/controller.js'
 import type { FrogTheme } from '../chat/types.js'
-import { panelControlTarget, settingsLayout, settingsThemeLayout, type SettingsPanelFocus } from './interaction.js'
+import {
+  panelControlTarget,
+  sectionedPanelSidebarWidth,
+  settingsLayout,
+  settingsThemeLayout,
+  type SettingsPanelFocus,
+} from './interaction.js'
 import { PanelItemHeader, PanelOverlay, PanelTitle, type PanelRowsProps } from './panel-components.js'
 import { PanelSection, PanelSectionList } from './panel-sections.js'
 import { Box, getTheme, Text, useTheme, type Theme } from './theme.js'
@@ -43,10 +49,9 @@ export function SettingsPicker({
   onFilterElement?: (id: string, element: DOMElement | null) => void
 }): ReactElement {
   const { accent, hover, selection } = useTheme()
-  // Fits the category labels plus border, padding, and marker, within the third /model gives its providers.
-  const listWidth = Math.max(
-    1,
-    Math.min(Math.floor(width / 3), Math.max(0, ...(panel.filters ?? []).map(({ label }) => stringWidth(label))) + 5)
+  const listWidth = sectionedPanelSidebarWidth(
+    width,
+    Math.max(0, ...(panel.filters ?? []).map(({ label }) => stringWidth(label))) + 5
   )
   // Section borders and row padding.
   const rowWidth = Math.max(1, width - listWidth - 4)
@@ -55,7 +60,6 @@ export function SettingsPicker({
     Math.max(0, ...allRows.map((row) => stringWidth(row.label))) + 3,
     Math.max(Math.floor(rowWidth / 2), rowWidth - Math.max(0, ...allRows.map(minimumControlWidth)))
   )
-  const category = panel.settingsCategories?.find(({ id }) => id === panel.settingsCategory)
   const focused = focus === 'settings'
   return (
     <Box flexGrow={1} height={height} overflow="hidden">
@@ -70,65 +74,55 @@ export function SettingsPicker({
         {...(hoveredFilter ? { hovered: hoveredFilter } : {})}
         {...(onFilterElement ? { onElement: onFilterElement } : {})}
       />
-      <PanelSection
-        focused={focused}
-        header={
-          <Box flexShrink={1} overflow="hidden">
-            <Text dimColor wrap="truncate-end">
-              {settingDetail(allRows[hoveredRow ?? selected]) ?? category?.description ?? ''}
-            </Text>
-          </Box>
-        }
-        {...(allRows.length > rows.length
-          ? { meta: `${start + 1}-${Math.min(start + rows.length, allRows.length)} / ${allRows.length}` }
-          : {})}
-      >
-        {rows.map((row, visibleIndex) => {
-          const index = start + visibleIndex
-          const active = focused && index === selected
-          const rowPressed = index === pressedRow
-          return (
-            <Box
-              key={`${panel.id}-setting-${index}`}
-              ref={(element) => onRowElement?.(index, element)}
-              width="100%"
-              height={1}
-              flexShrink={0}
-              paddingX={1}
-              backgroundColor={index === hoveredRow || rowPressed ? selection : undefined}
-            >
-              <Box width={labelWidth} flexShrink={0} paddingRight={1} overflow="hidden">
-                <Text
-                  wrap="truncate-end"
-                  {...(rowPressed ? { color: hover } : active ? { color: accent } : {})}
-                  bold={active}
-                >
-                  {active ? '› ' : '  '}
-                  {row.label}
-                </Text>
+      <PanelSection focused={focused} height={height}>
+        <Box flexGrow={1} flexDirection="column" justifyContent="center">
+          {rows.map((row, visibleIndex) => {
+            const index = start + visibleIndex
+            const active = focused && index === selected
+            const rowPressed = index === pressedRow
+            return (
+              <Box
+                key={`${panel.id}-setting-${index}`}
+                ref={(element) => onRowElement?.(index, element)}
+                width="100%"
+                height={1}
+                flexShrink={0}
+                paddingX={1}
+                backgroundColor={index === hoveredRow || rowPressed ? selection : undefined}
+              >
+                <Box width={labelWidth} flexShrink={0} paddingRight={1} overflow="hidden">
+                  <Text
+                    wrap="truncate-end"
+                    {...(rowPressed ? { color: hover } : active ? { color: accent } : {})}
+                    bold={active}
+                  >
+                    {active ? '› ' : '  '}
+                    {row.label}
+                  </Text>
+                </Box>
+                {row.control?.kind === 'toggle' ? (
+                  <SettingToggle
+                    checked={row.control.checked}
+                    target={panelControlTarget(index, 'toggle')}
+                    {...(pressedControl ? { pressedControl } : {})}
+                    {...(hoveredControl ? { hoveredControl } : {})}
+                    {...(onControlElement ? { onControlElement } : {})}
+                  />
+                ) : row.control ? (
+                  <SettingOptions
+                    control={row.control}
+                    rowIndex={index}
+                    width={Math.max(1, rowWidth - labelWidth)}
+                    themeSwatches={row.value === 'frogTheme'}
+                    {...(pressedControl ? { pressedControl } : {})}
+                    {...(hoveredControl ? { hoveredControl } : {})}
+                    {...(onControlElement ? { onControlElement } : {})}
+                  />
+                ) : null}
               </Box>
-              {row.control?.kind === 'toggle' ? (
-                <SettingToggle
-                  checked={row.control.checked}
-                  target={panelControlTarget(index, 'toggle')}
-                  {...(pressedControl ? { pressedControl } : {})}
-                  {...(hoveredControl ? { hoveredControl } : {})}
-                  {...(onControlElement ? { onControlElement } : {})}
-                />
-              ) : row.control ? (
-                <SettingOptions
-                  control={row.control}
-                  rowIndex={index}
-                  width={Math.max(1, rowWidth - labelWidth)}
-                  themeSwatches={row.value === 'frogTheme'}
-                  {...(pressedControl ? { pressedControl } : {})}
-                  {...(hoveredControl ? { hoveredControl } : {})}
-                  {...(onControlElement ? { onControlElement } : {})}
-                />
-              ) : null}
-            </Box>
-          )
-        })}
+            )
+          })}
+        </Box>
       </PanelSection>
     </Box>
   )
@@ -140,11 +134,6 @@ function minimumControlWidth(row: ChatPanelRow): number {
     return stringWidth(' ●━━ Off ')
   }
   return row.control ? Math.max(...row.control.options.map((option) => stringWidth(option.label))) + 6 : 0
-}
-
-// Setting descriptions read `value · detail`; the row's control already shows the value.
-function settingDetail(row: ChatPanelRow | undefined): string | undefined {
-  return row?.description.split(' · ').slice(1).join(' · ') || undefined
 }
 
 function SettingToggle({

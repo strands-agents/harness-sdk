@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   agentGridCapacity,
   agentGridColumns,
+  COMPOSER_RESOURCE_PANEL_HEIGHT,
   composerPanelHeight,
   cycleModelPanelFocus,
   filterPanelRows,
@@ -10,8 +11,9 @@ import {
   moveSelection,
   mouseScrollDirection,
   panelRowCapacity,
-  revealPanelSelection,
   revealAgentGridSelection,
+  revealPanelSelection,
+  sectionedPanelSidebarWidth,
   scrollDetail,
   scrollAgentGridViewport,
   scrollPanelViewport,
@@ -19,12 +21,11 @@ import {
   settingArrowValue,
   shouldToggleVoiceMute,
 } from '../src/tui/view/interaction.js'
-import { COMPOSER_PANEL_HEIGHT } from '../src/tui/terminal/composer.js'
 import { planTranscriptLayout, transcriptWindow } from '../src/tui/view/transcript-layout.js'
 import { summarizeToolInput, toolAction } from '../src/tui/view/presentation.js'
 import { parseMouseInput, selectScreenText } from '../src/tui/terminal/mouse-input.js'
-import { settingsRows } from '../src/tui/chat/panels.js'
-import { DEFAULT_CHAT_SETTINGS } from '../src/tui/settings.js'
+import { settingsCategoryFilters, settingsRows } from '../src/tui/chat/panels.js'
+import { DEFAULT_CHAT_SETTINGS, SETTINGS_CATEGORIES, type SettingsCategory } from '../src/tui/settings.js'
 import { snapshot } from './fixtures/chat-snapshot.js'
 
 describe('voice input', () => {
@@ -60,17 +61,46 @@ describe('panel helpers', () => {
     expect(cycleModelPanelFocus('models', bare, 1)).toBe('models')
   })
 
-  it('gives /model and /settings two extra composer rows', () => {
-    const panel = (kind: 'models' | 'settings' | 'context') => ({
+  it('uses one shared height for composer resource panels', () => {
+    const panel = (kind: 'models' | 'context') => ({
       id: kind,
       kind,
       title: kind,
       rows: [],
     })
+    const settingsPanel = (category: SettingsCategory) => ({
+      id: `settings-${category}`,
+      kind: 'settings' as const,
+      title: category,
+      rows: settingsRows(DEFAULT_CHAT_SETTINGS, category),
+      filters: settingsCategoryFilters(),
+      settingsCategory: category,
+      settingsCategories: SETTINGS_CATEGORIES,
+    })
 
-    expect(composerPanelHeight(snapshot({ panel: panel('models') }), 24)).toBe(COMPOSER_PANEL_HEIGHT + 2)
-    expect(composerPanelHeight(snapshot({ panel: panel('settings') }), 24)).toBe(COMPOSER_PANEL_HEIGHT + 2)
-    expect(composerPanelHeight(snapshot({ panel: panel('context') }), 24)).toBe(COMPOSER_PANEL_HEIGHT)
+    const effortPanel = {
+      id: 'effort',
+      kind: 'effort' as const,
+      title: 'effort',
+      rows: [],
+      slider: { label: 'Effort', options: [{ id: 'medium', label: 'Medium', active: true }] },
+    }
+    expect(composerPanelHeight(snapshot({ panel: panel('models') }), 24)).toBe(COMPOSER_RESOURCE_PANEL_HEIGHT)
+    expect(composerPanelHeight(snapshot({ panel: settingsPanel('Appearance') }), 24)).toBe(
+      COMPOSER_RESOURCE_PANEL_HEIGHT
+    )
+    expect(composerPanelHeight(snapshot({ panel: settingsPanel('Auto-Discovery') }), 24)).toBe(
+      COMPOSER_RESOURCE_PANEL_HEIGHT
+    )
+    expect(composerPanelHeight(snapshot({ panel: settingsPanel('General') }), 24)).toBe(COMPOSER_RESOURCE_PANEL_HEIGHT)
+    expect(composerPanelHeight(snapshot({ panel: effortPanel }), 24)).toBe(COMPOSER_RESOURCE_PANEL_HEIGHT)
+    expect(composerPanelHeight(snapshot({ panel: panel('context') }), 24)).toBe(COMPOSER_RESOURCE_PANEL_HEIGHT)
+  })
+
+  it('uses one-third of sectioned panels for their sidebar', () => {
+    expect(sectionedPanelSidebarWidth(150)).toBe(50)
+    expect(sectionedPanelSidebarWidth(80)).toBe(26)
+    expect(sectionedPanelSidebarWidth(150, 20)).toBe(20)
   })
 
   it('maps ←→ on a settings row to its neighboring option, and to Off and On for a toggle', () => {
@@ -149,7 +179,7 @@ describe('panel helpers', () => {
     expect(panelRowCapacity('models', 10)).toBe(5)
     expect(panelRowCapacity('models', 12)).toBe(7)
     expect(panelRowCapacity('sessions', 20)).toBe(10)
-    expect(panelRowCapacity('settings', 10)).toBe(5)
+    expect(panelRowCapacity('settings', 10)).toBe(7)
     expect(scrollPanelViewport(0, 1, 20, 5)).toBe(1)
     expect(scrollPanelViewport(15, 1, 20, 5)).toBe(15)
     expect(scrollPanelViewport(8, -1, 20, 5, 3)).toBe(5)

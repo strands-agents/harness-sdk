@@ -425,7 +425,7 @@ export type NewChatPanel =
   | (ChatPanelBase & {
       kind: 'settings'
       settingsCategory?: SettingsCategory
-      settingsCategories?: readonly { id: SettingsCategory; label: string; description: string }[]
+      settingsCategories?: readonly { id: SettingsCategory; label: string }[]
     })
 
 export type ChatPanel = NewChatPanel & { id: string }

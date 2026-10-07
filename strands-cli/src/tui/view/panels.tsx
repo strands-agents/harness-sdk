@@ -8,11 +8,12 @@ import type {
   ChatPermissionPanel,
   ChatSettings,
 } from '../chat/controller.js'
-import { COMPOSER_PANEL_HEIGHT } from '../terminal/composer.js'
 import {
   agentGridCapacity,
   agentGridColumns,
+  COMPOSER_RESOURCE_PANEL_HEIGHT,
   detailPageSize,
+  isComposerPanel,
   panelControlTarget,
   panelRowCapacity,
   type ModelPanelFocus,
@@ -118,26 +119,21 @@ export function ResourcePanel({
   const { surface, warning, selection, accent } = palette
   // Tool lists render as a checklist with a warning-colored body.
   const checklist = panel.kind === 'permissions' || panel.kind === 'tools'
-  const preferredWidth =
-    panel.kind === 'detail'
+  const preferredWidth = isComposerPanel(panel.kind)
+    ? terminalWidth - 4
+    : panel.kind === 'detail'
       ? 100
-      : panel.kind === 'models'
-        ? 144
-        : panel.kind === 'settings'
-          ? 112
-          : panel.kind === 'agents'
-            ? 112
-            : panel.kind === 'rename'
-              ? 60
-              : checklist
-                ? 96
-                : panel.kind === 'context'
-                  ? 52
-                  : panel.kind === 'permission' && panel.diff
-                    ? 100
-                    : panel.kind === 'permission' || panel.kind === 'error'
-                      ? 68
-                      : 84
+      : panel.kind === 'agents'
+        ? 112
+        : panel.kind === 'rename'
+          ? 60
+          : checklist
+            ? 96
+            : panel.kind === 'permission' && panel.diff
+              ? 100
+              : panel.kind === 'permission' || panel.kind === 'error'
+                ? 68
+                : 84
   const width = composer?.width ?? Math.max(1, Math.min(preferredWidth, terminalWidth - 4))
   const color = panel.kind === 'error' ? 'red' : accent
 
@@ -208,7 +204,7 @@ export function ResourcePanel({
     )
   }
   if (panel.kind === 'models' || panel.kind === 'settings') {
-    const height = composer?.height ?? COMPOSER_PANEL_HEIGHT
+    const height = composer?.height ?? COMPOSER_RESOURCE_PANEL_HEIGHT
     const capacity = panelRowCapacity(panel.kind, height, allRows)
     const start = Math.max(0, Math.min(viewportStart, allRows.length - capacity))
     const rows = allRows.slice(start, start + capacity)
@@ -301,40 +297,39 @@ export function ResourcePanel({
         alignItems="center"
         overflow="hidden"
       >
-        <Box
-          width={contentWidth}
-          flexGrow={1}
-          overflow="hidden"
-          {...(wide
-            ? { flexDirection: 'row', justifyContent: 'space-between', paddingTop: 1 }
-            : { flexDirection: 'column' })}
-        >
-          <Box width={columnWidth} flexShrink={0} flexDirection="column">
-            <Text bold color={accent} wrap="truncate-end">
-              {panel.title}
-            </Text>
-            {context.contextWindow ? (
-              <Text color={contextColor(context, palette)} wrap="truncate-end">
-                {formatContext(context, Math.max(1, columnWidth - 12))}
+        <Box width={contentWidth} flexGrow={1} flexDirection="column" justifyContent="center" overflow="hidden">
+          <Box
+            width="100%"
+            overflow="hidden"
+            {...(wide ? { flexDirection: 'row', justifyContent: 'space-between' } : { flexDirection: 'column' })}
+          >
+            <Box width={columnWidth} flexShrink={0} flexDirection="column">
+              <Text bold color={accent} wrap="truncate-end">
+                {panel.title}
               </Text>
-            ) : null}
-            <Text dimColor wrap="truncate-end">
-              {used?.toLocaleString() ?? '—'}
-              {context.contextWindow ? ` / ${context.contextWindow.toLocaleString()}` : ''} tokens
-            </Text>
-          </Box>
-          <Box width={columnWidth} flexShrink={0} flexDirection="column" {...(wide ? {} : { marginTop: 1 })}>
-            <Box justifyContent="space-between">
-              <Text bold>Last turn</Text>
-              <Text>{context.totalTokens?.toLocaleString() ?? '—'} tokens</Text>
+              {context.contextWindow ? (
+                <Text color={contextColor(context, palette)} wrap="truncate-end">
+                  {formatContext(context, Math.max(1, columnWidth - 12))}
+                </Text>
+              ) : null}
+              <Text dimColor wrap="truncate-end">
+                {used?.toLocaleString() ?? '—'}
+                {context.contextWindow ? ` / ${context.contextWindow.toLocaleString()}` : ''} tokens
+              </Text>
             </Box>
-            {wide
-              ? stats.map((entry) => stat(entry))
-              : [stats.slice(0, 2), stats.slice(2)].map((pair) => (
-                  <Box key={pair[0]![0]} justifyContent="space-between">
-                    {pair.map((entry) => stat(entry, Math.floor((contentWidth - 2) / 2)))}
-                  </Box>
-                ))}
+            <Box width={columnWidth} flexShrink={0} flexDirection="column" {...(wide ? {} : { marginTop: 1 })}>
+              <Box justifyContent="space-between">
+                <Text bold>Last turn</Text>
+                <Text>{context.totalTokens?.toLocaleString() ?? '—'} tokens</Text>
+              </Box>
+              {wide
+                ? stats.map((entry) => stat(entry))
+                : [stats.slice(0, 2), stats.slice(2)].map((pair) => (
+                    <Box key={pair[0]![0]} justifyContent="space-between">
+                      {pair.map((entry) => stat(entry, Math.floor((contentWidth - 2) / 2)))}
+                    </Box>
+                  ))}
+            </Box>
           </Box>
         </Box>
         <PanelHelpFooter width={contentWidth} centered />

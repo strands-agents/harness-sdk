@@ -2,7 +2,7 @@ import type { ReactElement } from 'react'
 import type { DOMElement } from 'ink'
 
 import type { ChatModelPanel, ChatPanelRow, ChatPanelSlider } from '../chat/controller.js'
-import type { ModelPanelFocus } from './interaction.js'
+import { sectionedPanelSidebarWidth, type ModelPanelFocus } from './interaction.js'
 import type { PanelRowsProps } from './panel-components.js'
 import { PanelSection, PanelSectionList } from './panel-sections.js'
 import { BlinkingCursor } from './text-input.js'
@@ -64,7 +64,7 @@ export function ModelPicker({
         items={filters}
         selected={filter}
         focused={focus === 'providers'}
-        width={Math.max(1, Math.floor(width / 3))}
+        width={sectionedPanelSidebarWidth(width)}
         height={height}
         {...(pressedFilter ? { pressed: pressedFilter } : {})}
         {...(hoveredFilter ? { hovered: hoveredFilter } : {})}

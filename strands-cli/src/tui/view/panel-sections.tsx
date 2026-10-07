@@ -61,36 +61,45 @@ export function PanelSectionList({
   )
 }
 
-/** Bordered content section with a one-row header, separated from its rows by a blank line. */
+/** Bordered content section with an optional one-row header. */
 export function PanelSection({
   header,
   meta,
   focused,
+  width,
+  height,
   children,
 }: {
-  header: ReactNode
+  header?: ReactNode
   meta?: string
   focused: boolean
+  width?: number
+  height?: number
   children: ReactNode
 }): ReactElement {
   const { accent } = useTheme()
   return (
     <Box
-      flexGrow={1}
+      flexGrow={width === undefined ? 1 : 0}
+      flexShrink={width === undefined ? 1 : 0}
+      {...(width === undefined ? {} : { width })}
+      {...(height === undefined ? {} : { height })}
       flexDirection="column"
       overflow="hidden"
       borderStyle="single"
       borderColor={focused ? accent : undefined}
       borderDimColor={!focused}
     >
-      <Box paddingX={1} marginBottom={1} justifyContent="space-between">
-        {header}
-        {meta ? (
-          <Box flexShrink={0} marginLeft={1}>
-            <Text dimColor>{meta}</Text>
-          </Box>
-        ) : null}
-      </Box>
+      {header || meta ? (
+        <Box paddingX={1} marginBottom={1} justifyContent="space-between">
+          {header}
+          {meta ? (
+            <Box flexShrink={0} marginLeft={1}>
+              <Text dimColor>{meta}</Text>
+            </Box>
+          ) : null}
+        </Box>
+      ) : null}
       {children}
     </Box>
   )

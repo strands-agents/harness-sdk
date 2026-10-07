@@ -262,10 +262,9 @@ export function makePanel(id: string, panel: NewChatPanel): ChatPanel {
         kind: panel.kind,
         ...(panel.settingsCategories
           ? {
-              settingsCategories: panel.settingsCategories.map(({ id: categoryId, label, description }) => ({
+              settingsCategories: panel.settingsCategories.map(({ id: categoryId, label }) => ({
                 id: categoryId,
                 label: sanitizeTerminalText(label),
-                description: sanitizeTerminalText(description),
               })),
             }
           : {}),

@@ -19,17 +19,14 @@ export const SETTINGS_CATEGORIES = [
   {
     id: 'Appearance',
     label: 'Appearance',
-    description: 'Theme, transcript, reasoning, tool output, and animations',
   },
   {
     id: 'Auto-Discovery',
     label: 'Auto-Discovery',
-    description: 'MCP servers, agent skills, and peer-to-peer messaging',
   },
   {
     id: 'General',
     label: 'General',
-    description: 'Launch behavior and telemetry',
   },
 ] as const
 
