@@ -186,6 +186,31 @@ Future versions will include more detailed logging for tool operations and event
 </Tab>
 </Tabs>
 
+## Configuration Warnings
+
+<Tabs>
+<Tab label="Python">
+
+The SDK reports problems with how you configure it through Python's [`warnings`](https://docs.python.org/3/library/warnings.html) module, not through the `strands` logger. Examples are an invalid config field, a deprecated argument, and a model without a known context window limit. These warnings are usually `UserWarning`s.
+
+By default, Python prints the first occurrence of each warning message for each code location. To control these warnings:
+
+- Filter them with the `-W` option, the `PYTHONWARNINGS` environment variable, or `warnings.filterwarnings()`.
+- Send them to your logs with `logging.captureWarnings(True)`. Python then routes them to the `py.warnings` logger.
+
+```python
+import logging
+
+logging.basicConfig(format="%(levelname)s | %(name)s | %(message)s")
+logging.captureWarnings(True)
+```
+</Tab>
+<Tab label="TypeScript">
+
+The SDK reports configuration problems through the same logger as its other warnings. To control them, configure the logger as shown in [Configuring Logging](#configuring-logging).
+</Tab>
+</Tabs>
+
 ## Advanced Configuration
 
 <Tabs>

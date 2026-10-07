@@ -60,6 +60,23 @@ class TestGetContextWindowLimit:
             == 1_050_000
         )
 
+    def test_resolves_one_entry_from_every_provider_prefixed_form(self):
+        assert get_context_window_limit("gpt-6-astra") == 1_050_000
+        assert get_context_window_limit("openai.gpt-6-astra") == 1_050_000
+        assert get_context_window_limit("global.openai.gpt-6-astra") == 1_050_000
+
+        assert get_context_window_limit("glm-4.7") == 203_000
+        assert get_context_window_limit("zai.glm-4.7") == 203_000
+        assert get_context_window_limit("global.zai.glm-4.7") == 203_000
+
+        assert get_context_window_limit("nova-pro-v1:0") == 300_000
+        assert get_context_window_limit("amazon.nova-pro-v1:0") == 300_000
+        assert get_context_window_limit("us.amazon.nova-pro-v1:0") == 300_000
+
+        assert get_context_window_limit("claude-haiku-4-5-20251001-v1:0") == 200_000
+        assert get_context_window_limit("anthropic.claude-haiku-4-5-20251001-v1:0") == 200_000
+        assert get_context_window_limit("eu.anthropic.claude-haiku-4-5-20251001-v1:0") == 200_000
+
     def test_strips_any_prefix_as_fallback(self):
         # Any prefix before the first dot is stripped if direct lookup fails
         assert get_context_window_limit("custom.anthropic.claude-sonnet-4-6") == 1_000_000
