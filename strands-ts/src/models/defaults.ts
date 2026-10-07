@@ -5,6 +5,8 @@
  * on model configurations to pin behavior across upgrades.
  */
 
+import { logger } from '../logging/logger.js'
+
 export const MODEL_DEFAULTS = {
   anthropic: {
     modelId: 'claude-sonnet-4-6',
@@ -56,8 +58,8 @@ export const DEFAULT_CONTEXT_WINDOW_LIMIT = 200_000
  * Values sourced from provider documentation and
  * https://github.com/BerriAI/litellm/blob/litellm_internal_staging/model_prices_and_context_window.json
  *
- * For Bedrock models with cross-region prefixes (e.g. `us.`, `eu.`, `global.`),
- * {@link getContextWindowLimit} strips the prefix before lookup so only the base model ID is needed here.
+ * Keys are base model IDs. {@link getContextWindowLimit} strips region and provider prefixes
+ * (e.g. `global.`, `us.`, `openai.`, `anthropic.`) before lookup, so one entry covers every prefixed form.
  */
 const CONTEXT_WINDOW_LIMITS: Record<string, number> = {
   // Anthropic (direct API)
@@ -90,44 +92,35 @@ const CONTEXT_WINDOW_LIMITS: Record<string, number> = {
   'claude-3-opus-20240229': 200_000,
   'claude-3-haiku-20240307': 200_000,
 
-  // Bedrock Anthropic (base model IDs — cross-region prefixes stripped by getContextWindowLimit)
-  'anthropic.claude-sonnet-4-6': 1_000_000,
-  'anthropic.claude-sonnet-4-20250514-v1:0': 1_000_000,
-  'anthropic.claude-sonnet-4-5-20250929-v1:0': 200_000,
-  'anthropic.claude-opus-4-6-v1': 1_000_000,
-  'anthropic.claude-opus-4-7': 1_000_000,
-  'anthropic.claude-opus-4-8': 1_000_000,
-  'anthropic.claude-opus-5': 1_000_000,
-  'anthropic.claude-opus-5-5': 1_000_000,
-  'anthropic.claude-fable-5': 1_000_000,
-  'anthropic.claude-fable-5-1': 1_000_000,
-  'anthropic.claude-sonnet-5': 1_000_000,
-  'anthropic.claude-sonnet-5-5': 1_000_000,
-  'anthropic.claude-opus-4-5-20251101-v1:0': 200_000,
-  'anthropic.claude-opus-4-20250514-v1:0': 200_000,
-  'anthropic.claude-opus-4-1-20250805-v1:0': 200_000,
-  'anthropic.claude-haiku-4-5-20251001-v1:0': 200_000,
-  'anthropic.claude-haiku-4-5@20251001': 200_000,
-  'anthropic.claude-3-7-sonnet-20250219-v1:0': 200_000,
-  'anthropic.claude-3-7-sonnet-20240620-v1:0': 200_000,
-  'anthropic.claude-3-5-sonnet-20241022-v2:0': 200_000,
-  'anthropic.claude-3-5-sonnet-20240620-v1:0': 200_000,
-  'anthropic.claude-3-5-haiku-20241022-v1:0': 200_000,
-  'anthropic.claude-3-opus-20240229-v1:0': 200_000,
-  'anthropic.claude-3-haiku-20240307-v1:0': 200_000,
-  'anthropic.claude-3-sonnet-20240229-v1:0': 200_000,
-  'anthropic.claude-mythos-preview': 1_000_000,
+  // Anthropic (Bedrock model IDs)
+  'claude-sonnet-4-20250514-v1:0': 1_000_000,
+  'claude-sonnet-4-5-20250929-v1:0': 200_000,
+  'claude-opus-4-6-v1': 1_000_000,
+  'claude-opus-4-5-20251101-v1:0': 200_000,
+  'claude-opus-4-20250514-v1:0': 200_000,
+  'claude-opus-4-1-20250805-v1:0': 200_000,
+  'claude-haiku-4-5-20251001-v1:0': 200_000,
+  'claude-haiku-4-5@20251001': 200_000,
+  'claude-3-7-sonnet-20250219-v1:0': 200_000,
+  'claude-3-7-sonnet-20240620-v1:0': 200_000,
+  'claude-3-5-sonnet-20241022-v2:0': 200_000,
+  'claude-3-5-sonnet-20240620-v1:0': 200_000,
+  'claude-3-5-haiku-20241022-v1:0': 200_000,
+  'claude-3-opus-20240229-v1:0': 200_000,
+  'claude-3-haiku-20240307-v1:0': 200_000,
+  'claude-3-sonnet-20240229-v1:0': 200_000,
+  'claude-mythos-preview': 1_000_000,
 
-  // Bedrock Amazon Nova
-  'amazon.nova-pro-v1:0': 300_000,
-  'amazon.nova-lite-v1:0': 300_000,
-  'amazon.nova-micro-v1:0': 128_000,
-  'amazon.nova-premier-v1:0': 1_000_000,
-  'amazon.nova-2-lite-v1:0': 1_000_000,
-  'amazon.nova-2-pro-preview-20251202-v1:0': 1_000_000,
+  // Amazon Nova
+  'nova-pro-v1:0': 300_000,
+  'nova-lite-v1:0': 300_000,
+  'nova-micro-v1:0': 128_000,
+  'nova-premier-v1:0': 1_000_000,
+  'nova-2-lite-v1:0': 1_000_000,
+  'nova-2-pro-preview-20251202-v1:0': 1_000_000,
 
-  // Bedrock Z.AI
-  'zai.glm-4.7': 203_000,
+  // Z.AI
+  'glm-4.7': 203_000,
 
   // OpenAI
   'gpt-6-astra': 1_050_000,
@@ -177,31 +170,24 @@ const CONTEXT_WINDOW_LIMITS: Record<string, number> = {
 }
 
 /**
- * Known Bedrock cross-region routing prefixes.
- *
- * @see https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html
- */
-const BEDROCK_REGION_PREFIXES = new Set(['us', 'eu', 'ap', 'global', 'apac', 'au', 'jp', 'us-gov'])
-
-/**
  * Looks up the context window limit for a model ID.
  *
- * For Bedrock cross-region model IDs (e.g. `us.anthropic.claude-sonnet-4-6`),
- * the region prefix is stripped before lookup.
+ * If the direct lookup fails, region and provider prefixes (e.g. `global.`, `openai.`) are stripped
+ * one at a time, so `global.openai.gpt-6-astra` resolves to the `gpt-6-astra` entry.
  *
  * @param modelId - The model ID to look up
  * @returns The context window limit in tokens, or undefined if not found
  */
 export function getContextWindowLimit(modelId: string): number | undefined {
-  const direct = CONTEXT_WINDOW_LIMITS[modelId]
-  if (direct !== undefined) return direct
+  if (Object.hasOwn(CONTEXT_WINDOW_LIMITS, modelId)) return CONTEXT_WINDOW_LIMITS[modelId]
 
-  // Strip known Bedrock cross-region prefixes
-  const dotIndex = modelId.indexOf('.')
-  if (dotIndex !== -1) {
-    const prefix = modelId.substring(0, dotIndex)
-    if (BEDROCK_REGION_PREFIXES.has(prefix)) {
-      return CONTEXT_WINDOW_LIMITS[modelId.substring(dotIndex + 1)]
+  // Strip prefixes before each dot and retry
+  let stripped = modelId
+  while (stripped.includes('.')) {
+    stripped = stripped.substring(stripped.indexOf('.') + 1)
+    if (Object.hasOwn(CONTEXT_WINDOW_LIMITS, stripped)) {
+      logger.debug(`model_id=<${modelId}>, stripped_id=<${stripped}> | resolved context window limit via prefix strip`)
+      return CONTEXT_WINDOW_LIMITS[stripped]
     }
   }
 

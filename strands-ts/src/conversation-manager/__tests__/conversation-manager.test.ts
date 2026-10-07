@@ -311,7 +311,7 @@ describe('ConversationManager', () => {
       expect(manager.reduceCallCount).toBe(1)
       expect(warnOnce).toHaveBeenCalledWith(
         expect.anything(),
-        expect.stringContaining('contextWindowLimit is not set on the model, using default of 200000')
+        expect.stringContaining('falling back to default context window limit')
       )
     })
 

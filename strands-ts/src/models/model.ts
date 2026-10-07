@@ -386,12 +386,13 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    * @returns Token usage ratio (0–1+; above 1.0 means overflow)
    */
   estimateUtilization(inputTokens: number): number {
-    let contextWindowLimit = this.getConfig().contextWindowLimit
+    const { modelId, contextWindowLimit: configuredLimit } = this.getConfig()
+    let contextWindowLimit = configuredLimit
     if (!contextWindowLimit) {
       contextWindowLimit = DEFAULT_CONTEXT_WINDOW_LIMIT
       warnOnce(
         logger,
-        `contextWindowLimit is not set on the model, using default of ${DEFAULT_CONTEXT_WINDOW_LIMIT} for utilization estimate | set contextWindowLimit in your model config for accurate results`
+        `model_id=<${modelId}>, default_context_window_limit=<${DEFAULT_CONTEXT_WINDOW_LIMIT}> | falling back to default context window limit because none is set or known for this model | utilization estimates and compression thresholds may be inaccurate | set contextWindowLimit in your model config`
       )
     }
 
