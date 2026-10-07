@@ -1,6 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+const childProcess = vi.hoisted(() => ({ spawn: vi.fn() }))
+
+vi.mock('node:child_process', () => ({ spawn: childProcess.spawn }))
 
 import { copyTerminalText, enterAlternateScreen, setTerminalMouseMotion } from '../src/tui/terminal/terminal.js'
+
+afterEach(() => {
+  childProcess.spawn.mockReset()
+  vi.restoreAllMocks()
+})
 
 describe('terminal lifecycle', () => {
   it('enters and leaves the alternate screen with one mouse-reporting lifecycle', () => {
@@ -36,5 +45,14 @@ describe('terminal lifecycle', () => {
     copyTerminalText('hello\nworld', { write: (value) => writes.push(value) })
 
     expect(writes).toEqual([`\u001b]52;c;${Buffer.from('hello\nworld').toString('base64')}\u001b\\`])
+  })
+
+  it('keeps the session alive when the native clipboard cannot start', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
+    childProcess.spawn.mockImplementation(() => {
+      throw Object.assign(new Error('spawn EPERM'), { code: 'EPERM' })
+    })
+
+    await expect(copyTerminalText('selected text', { isTTY: true, write: () => {} })).resolves.toBe(false)
   })
 })
