@@ -103,6 +103,28 @@ _RESTART_INSTRUCTION = (
 )
 
 
+def _format_input_image(block: ImageBlock) -> dict[str, Any]:
+    """Format an image block as a Realtime API input_image part.
+
+    Args:
+        block: Image block to format.
+
+    Returns:
+        Realtime API input_image part.
+
+    Raises:
+        ValueError: If the image source has no bytes.
+    """
+    image_bytes = block.source.get("bytes")
+    if image_bytes is None:
+        raise ValueError("image source must contain bytes for OpenAI Realtime")
+    image = base64.b64encode(image_bytes).decode("utf-8")
+    input_image: dict[str, Any] = {"type": "input_image", "image_url": f"data:image/{block.format};base64,{image}"}
+    if block.detail is not None:
+        input_image["detail"] = block.detail
+    return input_image
+
+
 class _SessionSnapshot(TypedDict):
     """State preserved across connection restarts."""
 
@@ -833,11 +855,7 @@ class OpenAIRealtimeModel(BidiModel, AudioCapable):
             if isinstance(block, TextBlock):
                 content.append({"type": "input_text", "text": block.text})
             elif isinstance(block, ImageBlock):
-                image_bytes = block.source.get("bytes")
-                if image_bytes is None:
-                    raise ValueError("image source must contain bytes for OpenAI Realtime")
-                image = base64.b64encode(image_bytes).decode("utf-8")
-                content.append({"type": "input_image", "image_url": f"data:image/{block.format};base64,{image}"})
+                content.append(_format_input_image(block))
             elif isinstance(block, ToolResultBlock):
                 await self._send_tool_result(block)
             else:
