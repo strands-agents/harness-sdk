@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
+import { TUI_CASE } from './catalog.js'
 import { expectRestoredTerminal, runTuiScenario } from './harness.js'
 
 describe('TUI terminal integration', () => {
-  it('resizes without blanking and coalesces resize bursts', async () => {
-    const result = await runTuiScenario('resize')
+  it(TUI_CASE.resize.testName, async () => {
+    const result = await runTuiScenario(TUI_CASE.resize.scenario)
 
     expect(result.returnCode).toBe(0)
     expect(result.resizeOutput.split('\u001b[1;1H')).toHaveLength(7)
@@ -16,8 +17,8 @@ describe('TUI terminal integration', () => {
     expectRestoredTerminal(result)
   })
 
-  it('accepts typed edits and restores the terminal after /exit', async () => {
-    const result = await runTuiScenario('exit')
+  it(TUI_CASE.exit.testName, async () => {
+    const result = await runTuiScenario(TUI_CASE.exit.scenario)
 
     expect(result.returnCode).toBe(0)
     expectRestoredTerminal(result)

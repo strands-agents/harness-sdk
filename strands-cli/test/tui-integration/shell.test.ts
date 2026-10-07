@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
 import { sanitizeTerminalText } from '../../src/tui/terminal/sanitize.js'
+import { TUI_CASE } from './catalog.js'
 import { expectRestoredTerminal, runTuiScenario } from './harness.js'
 
 describe('TUI shell integration', () => {
-  it('runs a bang command and renders its complete output', async () => {
-    const result = await runTuiScenario('shell-command')
+  it(TUI_CASE.shellCommand.testName, async () => {
+    const result = await runTuiScenario(TUI_CASE.shellCommand.scenario)
     const clean = sanitizeTerminalText(result.output)
 
     expect(result.returnCode).toBe(0)
@@ -14,8 +15,8 @@ describe('TUI shell integration', () => {
     expectRestoredTerminal(result)
   })
 
-  it('delivers Ctrl-C to the active bang command without exiting', async () => {
-    const result = await runTuiScenario('shell-interrupt')
+  it(TUI_CASE.shellInterrupt.testName, async () => {
+    const result = await runTuiScenario(TUI_CASE.shellInterrupt.scenario)
     const clean = sanitizeTerminalText(result.output)
 
     expect(result.returnCode).toBe(0)

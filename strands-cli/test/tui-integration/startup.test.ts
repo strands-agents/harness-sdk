@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
 import { sanitizeTerminalText } from '../../src/tui/terminal/sanitize.js'
+import { TUI_CASE } from './catalog.js'
 import { expectRestoredTerminal, runTuiScenario } from './harness.js'
 
 const STRANDS_WORDMARK = /STRANDS|╔════╝|█▀▀ ▀█▀ █▀█ ▄▀█ █▄ █ █▀▄ █▀▀|▀▀ ▀ ▀ {2}▀ {2}▄▀ {3}▄ {4}▀▄ {2}▀▀/
 
 describe('TUI startup integration', () => {
-  it('bypasses the intro when the full frog does not fit', async () => {
-    const result = await runTuiScenario('startup')
+  it(TUI_CASE.startupFit.testName, async () => {
+    const result = await runTuiScenario(TUI_CASE.startupFit.scenario)
     const beforePrompt = result.output.slice(0, result.output.indexOf('Enter to send'))
 
     expect(result.returnCode).toBe(0)
@@ -18,8 +19,8 @@ describe('TUI startup integration', () => {
     expectRestoredTerminal(result)
   })
 
-  it('accepts spaced text immediately after startup', async () => {
-    const result = await runTuiScenario('startup-typing')
+  it(TUI_CASE.startupInput.testName, async () => {
+    const result = await runTuiScenario(TUI_CASE.startupInput.scenario)
     const clean = sanitizeTerminalText(result.output)
 
     expect(result.returnCode).toBe(0)
