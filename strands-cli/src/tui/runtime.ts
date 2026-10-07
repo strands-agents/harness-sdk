@@ -41,7 +41,7 @@ import {
   restoreSessionAgentDefinition,
 } from './session/agent-definition.js'
 import { DEFAULT_SESSION_DIR, FileSessionRuntime, SessionRootCatalog, type SessionTarget } from './session/sessions.js'
-import { configuredSkillPaths, FileSkillsRuntime, resolveSkillPaths, type SkillPathsOption } from './skills.js'
+import { FileSkillsRuntime, resolveSkillPaths, type SkillPathsOption } from './skills.js'
 import { StrandsChatBackend } from './strands-backend.js'
 import { LiveSteering } from './steering.js'
 import { DEFAULT_STREAM_PRESENTATION } from './stream-presentation.js'
@@ -252,7 +252,7 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
       ? baseAgentOptions
       : await restoreSessionAgentDefinition(baseAgentOptions, workspace)
     const skillPaths = resolveSkillPaths(configuredSkillSources, workspace, config.snapshot().settings.skillDiscovery)
-    const profileSkillPaths = configuredSkillPaths(configuredSkillSources, workspace)
+    const profileSkillPaths = resolveSkillPaths(configuredSkillSources, workspace, false)
     const sandbox =
       configuredSandbox === undefined || configuredSandbox === false
         ? new WorkspaceSandbox(workspace)

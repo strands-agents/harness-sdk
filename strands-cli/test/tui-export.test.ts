@@ -57,19 +57,19 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true })
 })
 
-function config(): CliConfigStore {
+function config(agentProfile = profile): CliConfigStore {
   return CliConfigStore.memory(
     {},
     { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false },
-    { profile, profileBaseDir: workspace }
+    { profile: agentProfile, profileBaseDir: workspace }
   )
 }
 
-async function profileChat(): Promise<ChatControllerApi> {
+async function profileChat(agentProfile = profile): Promise<ChatControllerApi> {
   const controller = await createInteractiveChat({
-    config: config(),
-    agentProfile: profile,
-    agentOptions: { ...(await harnessAgentOptionsFromConfig(profile, workspace)), backgroundTasks: false },
+    config: config(agentProfile),
+    agentProfile,
+    agentOptions: { ...(await harnessAgentOptionsFromConfig(agentProfile, workspace)), backgroundTasks: false },
     cwd: workspace,
     sessionCatalogPath: join(root, 'catalog.json'),
   })
@@ -103,18 +103,21 @@ function row(controller: ChatController, label: string): ChatPanelRow {
 }
 
 it.each(['typescript', 'python'] as const)('writes a %s profile ZIP to an explicit path', async (language) => {
-  const controller = await profileChat()
+  const skill = join(workspace, '.agent', 'skills', 'review')
+  await mkdir(skill, { recursive: true })
+  await writeFile(join(skill, 'SKILL.md'), '# Review')
+  const controller = await profileChat(defineHarnessAgentConfig({ ...profile, skills: true }))
   const name = `my ${language} agent.zip`
   await controller.submit(`/export ${language} ${name}`)
 
   const path = join(workspace, name)
+  const entries = unzipSync(await readFile(path))
   expect(controller.getSnapshot().panel).toMatchObject({
     title: 'Export complete',
     body: expect.stringContaining(path),
   })
-  expect(unzipSync(await readFile(path))).toHaveProperty(
-    language === 'typescript' ? 'agent/agent.ts' : 'agent/agent.py'
-  )
+  expect(entries).toHaveProperty(language === 'typescript' ? 'agent/agent.ts' : 'agent/agent.py')
+  expect(Buffer.from(entries['agent/skills/review/SKILL.md']!).toString('utf8')).toBe('# Review')
   expect(picker.chooseSaveFile).not.toHaveBeenCalled()
 })
 
@@ -228,9 +231,21 @@ describe('export completion', () => {
 
 describe('exportSavedAgent', () => {
   it('writes the saved profile to a path relative to the working directory', async () => {
-    const archive = await exportSavedAgent({ profile }, 'typescript', 'saved-agent', workspace)
+    const skill = join(workspace, '.agent', 'skills', 'review')
+    await mkdir(skill, { recursive: true })
+    await writeFile(join(skill, 'SKILL.md'), '# Review')
+    const skillsProfile = defineHarnessAgentConfig({ ...profile, skills: true })
+    const archive = await exportSavedAgent(
+      { profile: skillsProfile, profileBaseDir: workspace },
+      'typescript',
+      'saved-agent',
+      workspace
+    )
+    const entries = unzipSync(await readFile(archive))
+
     expect(archive).toBe(join(workspace, 'saved-agent.zip'))
-    expect(Object.keys(unzipSync(await readFile(archive)))).toContain('package.json')
+    expect(Object.keys(entries)).toContain('package.json')
+    expect(Buffer.from(entries['agent/skills/review/SKILL.md']!).toString('utf8')).toBe('# Review')
   })
 
   it('sends agents authored in code to /export', async () => {

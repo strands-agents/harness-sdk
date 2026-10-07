@@ -10,7 +10,7 @@ import { normalizeHarnessAgentConfig } from '@strands-agents/harness/internal'
 import { ZipFile } from 'yazl'
 
 import { webFetchModelId } from '../builtin-tools.js'
-import { configuredSkillPaths } from '../skills.js'
+import { resolveSkillPaths } from '../skills.js'
 import { PROVIDER_PACKAGES } from '../provider/packages.js'
 import { chooseSaveFile } from '../terminal/directory-picker.js'
 import { agentProjectSource } from './source.js'
@@ -70,7 +70,7 @@ export async function exportSavedAgent(
   return writeAgentProject(
     saved.profile,
     language,
-    configuredSkillPaths(typeof skills === 'object' ? [...skills] : skills, baseDir),
+    resolveSkillPaths(typeof skills === 'object' ? [...skills] : skills, baseDir, false),
     zipPath,
     baseDir,
     false
