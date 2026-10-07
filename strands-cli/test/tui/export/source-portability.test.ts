@@ -1,7 +1,7 @@
 import { defineHarnessAgentConfig } from '@strands-agents/harness'
 import { expect, it } from 'vitest'
 
-import { agentProjectSource } from '../src/tui/project/source.js'
+import { agentProjectSource } from '../../../src/tui/project/source.js'
 
 it('recases Python background task options without dropping them', () => {
   const source = agentProjectSource(

@@ -11,8 +11,9 @@ const picker = vi.hoisted(() => ({
   chooseSaveFile: vi.fn<() => Promise<string | undefined>>(),
 }))
 
-vi.mock('../src/tui/terminal/directory-picker.js', () => ({
+vi.mock('../../../src/tui/terminal/directory-picker.js', () => ({
   canChooseDirectory: () => picker.available,
+  canChooseSaveFile: () => picker.available,
   chooseSaveFile: picker.chooseSaveFile,
 }))
 
@@ -21,10 +22,10 @@ import {
   type ChatBackend,
   type ChatControllerApi,
   type ChatPanelRow,
-} from '../src/tui/chat/controller.js'
-import { CliConfigStore } from '../src/tui/config.js'
-import { createInteractiveChat } from '../src/tui/runtime.js'
-import { exportSavedAgent } from '../src/tui/project/export.js'
+} from '../../../src/tui/chat/controller.js'
+import { CliConfigStore } from '../../../src/tui/config.js'
+import { createInteractiveChat } from '../../../src/tui/runtime.js'
+import { exportSavedAgent } from '../../../src/tui/project/export.js'
 
 const model = 'bedrock/anthropic.claude-haiku-4-5-20251001-v1:0'
 const profile = defineHarnessAgentConfig({

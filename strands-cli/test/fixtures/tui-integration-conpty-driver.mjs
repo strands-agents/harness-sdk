@@ -173,6 +173,7 @@ async function main() {
       const launchStart = transcript.length
       terminal.write('\r')
       await waitFor(['Enter to send', CHAT_READY], 30_000, true, launchStart)
+      await sleep(300)
     }
 
     if (lifecycleMode) {

@@ -1,7 +1,7 @@
 import { defineHarnessAgentConfig } from '@strands-agents/harness'
 import { expect, it } from 'vitest'
 
-import { agentProjectSource } from '../src/tui/project/source.js'
+import { agentProjectSource } from '../../../src/tui/project/source.js'
 
 it.each(['python', 'python3', 'python.exe', 'python3.exe'])(
   'uses the exported agent interpreter for an unqualified %s MCP command',

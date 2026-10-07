@@ -7,8 +7,8 @@ import { defineHarnessAgentConfig } from '@strands-agents/harness'
 import { unzipSync } from 'fflate'
 import { afterEach, beforeEach, expect, it } from 'vitest'
 
-import { exportSourceProject, writeAgentProject } from '../src/tui/project/export.js'
-import { importAgentProject } from '../src/tui/project/import.js'
+import { exportSourceProject, writeAgentProject } from '../../../src/tui/project/export.js'
+import { importAgentProject } from '../../../src/tui/project/import.js'
 
 const run = promisify(execFile)
 let root: string
@@ -72,7 +72,7 @@ it('builds and runs a packaged local tool after its original source is removed',
   const project = importAgentProject(archive)
   await rm(source, { recursive: true })
   // The CLI installs standalone, so its deps live under strands-cli/node_modules, not a hoisted ../../node_modules.
-  await symlink(resolve(import.meta.dirname, '../node_modules'), join(project.root, 'node_modules'), 'junction')
+  await symlink(resolve(import.meta.dirname, '../../../node_modules'), join(project.root, 'node_modules'), 'junction')
   await run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'build'], { cwd: project.root })
   const { stdout } = await run(
     process.execPath,
@@ -126,10 +126,20 @@ it('emits a truthful generated README and no unused instructions file', async ()
   const readme = Buffer.from(entries['README.md']!).toString()
   expect(readme).toContain('Edit `agent/agent.ts`')
   expect(readme).toContain("import { agent } from './dist/agent/agent.js'")
+  expect(readme).toContain('## Setup on Windows PowerShell')
+  expect(readme).toContain('Copy-Item .env.example .env')
   expect(readme).not.toContain('createAgent(options)')
   expect(readme).not.toContain('agent/instructions.md')
   expect(entries).not.toHaveProperty('agent/instructions.md')
   expect(Buffer.from(entries['agent/agent.ts']!).toString()).toContain("instructions: 'Embedded instructions'")
+})
+
+it('rejects archive names that Windows cannot extract', async () => {
+  const skill = join(root, 'CON')
+  await file(join(skill, 'SKILL.md'), '# Reserved')
+  await expect(
+    writeAgentProject(defineHarnessAgentConfig({ skills: [skill] }), 'typescript', [skill], join(root, 'agent.zip'))
+  ).rejects.toThrow('not portable to Windows')
 })
 
 it('preserves executable helpers through export and import', async () => {

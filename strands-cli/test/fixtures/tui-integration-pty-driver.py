@@ -174,6 +174,7 @@ def main() -> int:
             launch_start = len(transcript)
             os.write(master, b"\r")
             wait_for([READY_MARKER, CHAT_READY], timeout=30.0, start=launch_start)
+            time.sleep(0.3)
 
         if lifecycle_mode:
             submit(

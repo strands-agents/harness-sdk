@@ -18,6 +18,7 @@ import { promisify } from 'node:util'
 import { unzipSync } from 'fflate'
 
 import { userDirectory } from '../config.js'
+import { assertPortablePathComponent } from './packaging.js'
 
 const MAX_PROJECT_BYTES = 50 * 1024 * 1024
 const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
@@ -53,16 +54,26 @@ export function extractAgentArchive(path: string): string {
 
   let bytes = 0
   let count = 0
+  const names = new Set<string>()
   const files = unzipSync(archive, {
     filter: (entry) => {
       const name = entry.name.replace(/\/$/u, '')
+      const parts = name.split('/')
       if (
         name.includes('\\') ||
         /^[a-z]:/iu.test(name) ||
-        name.split('/').some((part) => part === '..' || part === '.' || !part)
+        parts.some((part) => part === '..' || part === '.' || !part)
       ) {
         throw new Error(`Unsafe path in agent ZIP: ${JSON.stringify(entry.name)}`)
       }
+      for (const part of parts) {
+        assertPortablePathComponent(part)
+      }
+      const key = name.toLowerCase()
+      if (names.has(key)) {
+        throw new Error(`Duplicate path in agent ZIP: ${JSON.stringify(entry.name)}`)
+      }
+      names.add(key)
       bytes += entry.originalSize
       if (bytes > MAX_PROJECT_BYTES || ++count > 10_000) {
         throw new Error('The agent ZIP exceeds 50 MB of extracted files or 10,000 entries.')
