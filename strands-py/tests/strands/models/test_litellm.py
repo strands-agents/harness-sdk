@@ -1,4 +1,5 @@
 import unittest.mock
+from types import SimpleNamespace
 from unittest.mock import call
 
 import pydantic
@@ -294,8 +295,8 @@ async def test_stream(litellm_acompletion, api_key, model_id, model, agenerator,
         {
             "metadata": {
                 "usage": {
-                    "cacheReadInputTokens": mock_event_9.usage.prompt_tokens_details.cached_tokens,
-                    "cacheWriteInputTokens": mock_event_9.usage.prompt_tokens_details.cache_write_tokens,
+                    "cacheReadInputTokens": 10,
+                    "cacheWriteInputTokens": 10,
                     "inputTokens": mock_event_9.usage.prompt_tokens,
                     "outputTokens": mock_event_9.usage.completion_tokens,
                     "totalTokens": mock_event_9.usage.total_tokens,
@@ -701,6 +702,44 @@ def test_apply_proxy_prefix_disabled():
 )
 def test_format_chunk_metadata_with_cache_tokens(usage_fields, exp_cache, model):
     usage = Usage(prompt_tokens=100, completion_tokens=50, total_tokens=150, **usage_fields)
+    tru_usage = model.format_chunk({"chunk_type": "metadata", "data": usage})["metadata"]["usage"]
+    exp_usage = {"inputTokens": 100, "outputTokens": 50, "totalTokens": 150, **exp_cache}
+    assert tru_usage == exp_usage
+
+
+@pytest.mark.parametrize(
+    ("cache_write", "tokens_details", "exp_cache"),
+    [
+        (10, None, {"cacheWriteInputTokens": 10}),
+        (0, None, {"cacheWriteInputTokens": 0}),
+        (None, None, {}),
+        ("10", None, {}),
+        (10, SimpleNamespace(cached_tokens=25), {"cacheReadInputTokens": 25, "cacheWriteInputTokens": 10}),
+        (
+            10,
+            SimpleNamespace(cached_tokens=25, cache_write_tokens=None),
+            {"cacheReadInputTokens": 25, "cacheWriteInputTokens": 10},
+        ),
+        (
+            10,
+            SimpleNamespace(cached_tokens=25, cache_write_tokens=20),
+            {"cacheReadInputTokens": 25, "cacheWriteInputTokens": 20},
+        ),
+        (
+            10,
+            SimpleNamespace(cached_tokens=0, cache_write_tokens=0),
+            {"cacheReadInputTokens": 0, "cacheWriteInputTokens": 0},
+        ),
+    ],
+)
+def test_format_chunk_metadata_with_legacy_cache_tokens(cache_write, tokens_details, exp_cache, model):
+    usage = SimpleNamespace(
+        prompt_tokens=100,
+        completion_tokens=50,
+        total_tokens=150,
+        prompt_tokens_details=tokens_details,
+        cache_creation_input_tokens=cache_write,
+    )
     tru_usage = model.format_chunk({"chunk_type": "metadata", "data": usage})["metadata"]["usage"]
     exp_usage = {"inputTokens": 100, "outputTokens": 50, "totalTokens": 150, **exp_cache}
     assert tru_usage == exp_usage

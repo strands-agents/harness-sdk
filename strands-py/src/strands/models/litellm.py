@@ -269,8 +269,8 @@ class LiteLLMModel(OpenAIModel):
     def format_chunk(self, event: dict[str, Any], **kwargs: Any) -> StreamEvent:
         """Format a LiteLLM response event into a standardized message chunk.
 
-        Extends OpenAI's format_chunk to extract thought signatures that LiteLLM embeds in
-        tool call IDs for Gemini thinking models.
+        Extends OpenAI's format_chunk to support legacy Anthropic cache usage and extract
+        thought signatures that LiteLLM embeds in tool call IDs for Gemini thinking models.
 
         Args:
             event: A response event from the LiteLLM model.
@@ -282,18 +282,24 @@ class LiteLLMModel(OpenAIModel):
         Raises:
             RuntimeError: If chunk_type is not recognized.
         """
+        chunk = super().format_chunk(event)
+
+        if event["chunk_type"] == "metadata":
+            # Older LiteLLM versions report Anthropic cache writes outside prompt_tokens_details.
+            usage = chunk["metadata"]["usage"]
+            cache_write = getattr(event["data"], "cache_creation_input_tokens", None)
+            if "cacheWriteInputTokens" not in usage and isinstance(cache_write, int):
+                usage["cacheWriteInputTokens"] = cache_write
+
         # Extract thought signature from tool call content_start events.
         # The full encoded ID is kept in toolUseId so that tool result messages continue to match.
         if event["chunk_type"] == "content_start" and event.get("data_type") == "tool":
             signature = self._extract_thought_signature(event.get("data"))
-            chunk = super().format_chunk(event)
             if signature:
                 tool_use_dict = cast(dict, chunk["contentBlockStart"]["start"]["toolUse"])
                 tool_use_dict["reasoningSignature"] = signature
-            return chunk
 
-        # For all other cases, use the parent implementation
-        return super().format_chunk(event)
+        return chunk
 
     @override
     async def stream(
