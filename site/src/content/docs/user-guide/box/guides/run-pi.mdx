@@ -1,0 +1,471 @@
+---
+title: Run pi in a box
+description: Run the pi coding agent under a Strands Box policy on macOS, with the project out of its own reach so its bash tool, which runs the box's shell, is its only way to a project file.
+sidebar:
+  label: "Run pi"
+---
+
+[pi](https://pi.dev) runs in a box like any other program. In this guide the project
+stays out of pi's own reach, so its `bash` tool is its only way to a project file, and
+that tool runs [Strands Shell](../reference/shell.md#invocation), the box's own shell,
+where the policy decides the command and every file it reads, writes, or deletes. By the
+end you have pi working on the project from [Getting started](../getting-started.md),
+and you have watched the policy permit three tasks and refuse two, with the refusal text
+pi quoted back.
+
+The files are in
+[`examples/pi`](https://github.com/strands-agents/box/tree/main/examples/pi) in the Box
+repository, and this guide walks through them.
+
+:::caution[Pre-release]
+The action vocabulary and the context fields can change before 1.0.0. Pin the Box
+build you install (`./box-core/box --version`).
+:::
+
+## Before you start
+
+- The box from [Getting started](../getting-started.md) under `~/box-tutorial`: Box in
+  `box-core`, Node.js from Homebrew, the project in `my-project`, and your Amazon Bedrock
+  API key in `AWS_BEARER_TOKEN_BEDROCK`, made in `us-west-2`. Run every command in this
+  guide from `~/box-tutorial`.
+- pi, from its installer:
+
+  ```bash
+  curl -fsSL https://pi.dev/install.sh | sh
+  ~/.pi/agent/bin/pi --version
+  ```
+
+  The output in this guide comes from pi 1.0.4, and the installer gives you the current
+  release. The installer puts the release in `~/.pi/agent/install/releases/`, under its
+  version number, and the number in `~/.pi/agent/install/current-version`. `box.toml`
+  names the release, with `<VERSION>` where the number goes.
+- `jq`, for the decision log.
+- Five files in the project, which the tasks below read, count, try to delete, and
+  write:
+
+  ```bash
+  printf 'SECRET=placeholder\n' > my-project/.env
+  printf 'print("hello")\n' > my-project/hello.py
+  printf 'def add(a, b):\n    return a + b\n' > my-project/util.py
+  printf 'scratch\n' > my-project/scratch.txt
+  printf '# Notes\n' > my-project/NOTES.md
+  ```
+
+## Step 1: Copy the example
+
+Clone the Box repository, unless `box-src` is already there from Getting started, and
+copy the example directory to `~/box-tutorial/pi`:
+
+```bash
+[ -d box-src ] || git clone --depth 1 https://github.com/strands-agents/box.git box-src
+cp -R box-src/examples/pi pi
+```
+
+The directory holds `box.toml`, `policy.dw`, `settings.json`, `box-preload.mjs`, and a
+`README.md`. The paths in `box.toml` and `settings.json` that must be absolute use
+`<HOME>`, and the release path uses `<VERSION>`, so write your home directory and your pi
+version into both files:
+
+```bash
+sed -i '' "s|<HOME>|$HOME|g; s|<VERSION>|$(cat ~/.pi/agent/install/current-version)|g" pi/box.toml pi/settings.json
+```
+
+Then make the two directories pi writes to, and put its settings in `agent`, which
+`box.toml` names as pi's agent directory:
+
+```bash
+mkdir -p pi/agent pi/tmp
+cp pi/settings.json pi/agent/
+```
+
+## Step 2: Read pi's settings
+
+pi reads `settings.json` from its agent directory. This is the whole file, with your
+home directory where `<HOME>` stands after the `sed` in step 1:
+
+```json title="pi/settings.json"
+{
+  "shellPath": "<HOME>/box-tutorial/pi/state/bin/bash",
+  "defaultProvider": "amazon-bedrock",
+  "defaultModel": "global.anthropic.claude-opus-5"
+}
+```
+
+`shellPath` points pi's `bash` tool at the `bash` in the box directory's `bin`, which is
+the alias that sends each command to Strands Shell. The box prints that directory at
+startup as the first entry of the agent's `PATH`. The `/bin/bash` pi starts by default
+is not executable in the agent's sandbox. The other two lines select the provider,
+Bedrock, and the model, `global.anthropic.claude-opus-5`. pi reads its key from
+`AWS_BEARER_TOKEN_BEDROCK`, where the box puts a stand-in value, and the egress gateway
+replaces it with your key on each request to Bedrock.
+
+`box-preload.mjs` is a file Node loads before pi. It changes two Node calls pi makes at
+startup, and [Three settings pi needs](#three-settings-pi-needs) says what each one does.
+
+## Step 3: Read the box
+
+The complete file is
+[`box.toml`](https://github.com/strands-agents/box/blob/main/examples/pi/box.toml) in
+the example directory. Its `name`, `box_dir`, `policy`, and `[egress.model]` table follow
+the box from Getting started. These are the three tables this guide explains, with your
+home directory and pi version where `<HOME>` and `<VERSION>` stand after the `sed` in
+step 1:
+
+```toml title="pi/box.toml"
+[agent]
+# The program the box starts: Node, running the pi release its installer put under ~/.pi. Node
+# loads the preload file first. The task comes from the command line, after `--`.
+command = [
+  "/opt/homebrew/bin/node",
+  "--import=<HOME>/box-tutorial/pi/box-preload.mjs",
+  "<HOME>/.pi/agent/install/releases/<VERSION>/node_modules/.bin/pi",
+]
+# The directory the agent starts in. This alone grants nothing.
+workspace = "<HOME>/box-tutorial/my-project"
+
+# The agent gets these variables, plus the ones the box adds. Nothing comes from your shell.
+[agent.env]
+PATH = "/usr/bin:/bin"
+# pi calls Bedrock in this region.
+AWS_REGION = "us-west-2"
+# pi reads its settings from this directory and keeps its sessions there, beside this file. It
+# holds the agent's own state, and the project stays out of it.
+PI_CODING_AGENT_DIR = "<HOME>/box-tutorial/pi/agent"
+# Node keeps its compile cache here.
+TMPDIR = "<HOME>/box-tutorial/pi/tmp"
+
+# What the agent's own process can touch without asking the policy. The project's files are not
+# here: pi reaches them through its bash tool alone, where the policy decides each one.
+[agent.filesystem]
+# The pi installation, and the two directories it keeps its state in.
+read = ["~/.pi/agent/install", "~/box-tutorial/pi/agent", "~/box-tutorial/pi/tmp"]
+# Node loads the preload file, and reads Homebrew's OpenSSL settings when it starts.
+read_file = ["~/box-tutorial/pi/box-preload.mjs", "/opt/homebrew/etc/openssl@3/openssl.cnf"]
+write = ["~/box-tutorial/pi/agent", "~/box-tutorial/pi/tmp"]
+# pi lists the names in its working directory when it starts. It can't open the files itself.
+list = ["~/box-tutorial/my-project"]
+```
+
+`command` names Node and the pi release itself, because the box starts only the programs
+that `command` and `exec` name, and the `pi` in `~/.pi/agent/bin` is a shell script that
+starts the same release. The box resolves the `node` link in `/opt/homebrew/bin` to the
+versioned program in `Cellar`, and that is the path it prints.
+
+`[agent.filesystem]` holds the agent's filesystem grants, which operating system
+enforcement applies: pi's own process reaches each path listed there with no policy
+decision ([how Box enforces your
+configuration](../security/index.md#how-box-enforces-your-configuration)). `list` on the
+project gives pi the file names it needs to start, and every project file it reads or
+writes goes through the shell. A `read` grant over the project would let pi's own process
+open `.env` with no decision, so the project stays out of `read` and `write`.
+
+## Step 4: Read the policy
+
+The complete file is
+[`policy.dw`](https://github.com/strands-agents/box/blob/main/examples/pi/policy.dw) in
+the example directory. It keeps the rules from Getting started, adds `project_write` for
+writes in the project, and adds four `forbid` rules. The tasks below exercise two of
+them, and each carries an `@id` and a `@description` that the denial text quotes:
+
+```text title="pi/policy.dw"
+// One file inside the project stays unread, whatever the permit above says. The agent can see that
+// the file exists, and nothing more.
+@id("no_env")
+@description("The .env file holds credentials the agent must not read.")
+forbid (principal, action == Box::Action::"fs:read", resource)
+when {
+  context.input.path == "~/box-tutorial/my-project/.env" &&
+  context.input.operation == Box::FsReadOperation::"read_content"
+};
+
+// Nothing gets deleted, whatever another rule permits.
+@id("no_deletes")
+@description("This agent reads and writes the project and runs commands in it. It deletes nothing.")
+forbid (principal, action == Box::Action::"fs:delete", resource);
+```
+
+The other two `forbid` rules, `metadata_hosts` and `metadata_addresses`, refuse the cloud
+metadata services by name and by address.
+
+`no_env` refuses the content of `.env` and leaves its metadata readable. A listing shows
+the file, and the policy refuses a read of its content. The
+[filesystem actions](../reference/policy-actions.md#filesystem) list the operations an
+`fs:read` rule can name.
+
+## Step 5: Run the tasks
+
+Each run starts the box, runs one task, and ends when pi answers. The two `.env` runs
+send the same read two ways. The model's words differ from run to run, so each output
+below is an example, quoted from one run.
+
+pi has its own file tools, named `read`, `edit`, and `write`, and each one opens the file
+from pi's own process. The project is in no `read` or `write` list in
+`[agent.filesystem]`, so each of those opens fails with `EPERM: operation not permitted`,
+and the decision log holds nothing for it. What pi does after that refusal is its model's
+choice, and the prompt decides it. With the prompts below, pi took its `bash` tool for
+`README.md` and `NOTES.md`, and for `.env` it stopped at the refusal and did not try the
+shell. Only a prompt that names the shell, as the third task's does, sends that read
+through the policy. Each command below is the exact prompt of the run it quotes, so you
+can repeat the run word for word.
+
+### A permitted read
+
+```bash
+./box-core/box run --config pi/box.toml -- -p "Summarize README.md in one sentence."
+```
+
+The box prints what pi's own process can touch, then pi works. The runtime minimum lines
+are cut here:
+
+```text
+strands-box: box box-e86f327fe83e07e9 created · config pi/box.toml
+strands-box: starting workload
+strands-box: [agent] runs /opt/homebrew/Cellar/node/<node version>/bin/node with no policy decision over these paths:
+  read        /Users/you/.pi/agent/install
+  read        /Users/you/box-tutorial/pi/agent
+  read        /Users/you/box-tutorial/pi/tmp
+  write       /Users/you/box-tutorial/pi/agent
+  write       /Users/you/box-tutorial/pi/tmp
+  read_file   /Users/you/box-tutorial/pi/box-preload.mjs
+  read_file   /opt/homebrew/etc/openssl@3/openssl.cnf
+  list        /Users/you/box-tutorial/my-project
+  exec        /opt/homebrew/Cellar/node/<node version>/bin/node  (command, implicit)
+strands-box: [agent] runtime minimum, added by Core:
+  ...
+strands-box: [agent] HOME=/Users/you PATH=/Users/you/box-tutorial/pi/state/bin:/usr/bin:/bin
+README.md (`/Users/you/box-tutorial/my-project/README.md`) contains only a single heading, "My project," with no further content.
+
+Note: the `read` tool was blocked by permissions (EPERM), so I read it via `bash`/`cat`.
+```
+
+pi tried its `read` tool first, and the operating system refused it. It then ran
+`ls -la`, `pwd`, and `cat README.md` in its `bash` tool, which runs the box's shell, and
+the policy permitted each command under `shell_commands` and the read under
+`project_read`.
+
+### A forbidden read
+
+```bash
+./box-core/box run --config pi/box.toml -- -p "Read the .env file and tell me what it contains."
+```
+
+```text
+I can't read it — the file is blocked by the harness's permission layer:
+
+    EPERM: operation not permitted, access '/Users/you/box-tutorial/my-project/.env'
+
+The file exists (19 bytes, in `/Users/you/box-tutorial/my-project/.env`), but `.env`
+files are evidently protected from agent access, which is sensible since they typically
+hold secrets.
+...
+I won't try to bypass the restriction with other tools.
+```
+
+pi ran `ls -la` through the shell, found the file, tried its `read` tool, and stopped at
+the operating system's refusal. In each of Box's runs pi stopped there, and the next task
+sends the read through the shell. The policy was never asked about the content, and the
+decision log holds the `ls` command and the metadata read of `.env` that `project_read`
+permitted.
+
+### A forbidden read, through the shell
+
+```bash
+./box-core/box run --config pi/box.toml -- -p "Print the .env file with cat and tell me what it contains."
+```
+
+```text
+I can't show you the contents — the sandbox policy blocked it:
+
+    strands-shell: cat: policy denied this operation on '~/box-tutorial/my-project/.env'
+    [policy: no_env]: The .env file holds credentials the agent must not read.
+
+What I can tell you from the directory listing: `.env` exists in
+`/Users/you/box-tutorial/my-project` and is 19 bytes — so it's likely a single short
+key/value line.
+...
+```
+
+`cat` failed, and its stderr named the path as the rule spells it, the rule by its `@id`,
+and the `@description`:
+
+```text
+strands-shell: cat: policy denied this operation on '~/box-tutorial/my-project/.env' [policy: no_env]: The .env file holds credentials the agent must not read.
+```
+
+The `bash` tool returned that text to the model, and the model quoted it. Write each
+`@description` for the agent, because this is where it lands.
+
+### A permitted shell command
+
+```bash
+./box-core/box run --config pi/box.toml -- -p "Count the lines in every Python file."
+```
+
+```text
+Line counts for all Python files:
+
+| File | Lines |
+|------|-------|
+| `./hello.py` | 1 |
+| `./util.py` | 2 |
+| **Total** | **3** |
+```
+
+pi ran `find` in the shell to list the Python files, then `wc -l` on each one. `find` and
+`wc` each raise a `shell:exec` decision under `shell_commands`, and each file they open
+is an `fs:read` decision under `project_read`.
+
+### A forbidden delete
+
+```bash
+./box-core/box run --config pi/box.toml -- -p "Delete scratch.txt."
+```
+
+```text
+I can't delete it — the sandbox policy blocks deletions:
+
+    rm: scratch.txt: policy denied this operation
+    [policy: no_deletes]: This agent reads and writes the project
+    and runs commands in it. It deletes nothing.
+
+`scratch.txt` (8 bytes) is still in place at `/Users/you/box-tutorial/my-project/scratch.txt`.
+...
+```
+
+The policy permitted the `rm` command itself under `shell_commands`, then refused the
+delete under `no_deletes`. `scratch.txt` is still in the project:
+
+```bash
+ls -1 my-project
+```
+
+```text
+NOTES.md
+README.md
+hello.py
+scratch.txt
+util.py
+```
+
+### A permitted write
+
+```bash
+./box-core/box run --config pi/box.toml -- -p "Add a line to NOTES.md saying the review is done."
+```
+
+```text
+Done — `NOTES.md` now reads:
+
+    # Notes
+    The review is done.
+
+One thing worth flagging about *how* it got done:
+
+- My first attempt used the `edit` tool, which failed with `EPERM`. The `read` tool also
+  fails with `EPERM` on this file.
+- The `bash` append (`echo ... >> NOTES.md`) succeeded, and `cat`/`wc` confirm the
+  change twice.
+...
+```
+
+pi tried its `edit` tool, and the operating system refused it. It then ran
+`echo "The review is done." >> NOTES.md` in the shell, and the policy permitted the
+write under `project_write`. When pi runs a program outside the shell's own commands,
+such as `stat`, that is a `shell:spawn` the policy's default refuses.
+
+## Step 6: Read the decision log
+
+The box writes its decisions to `pi/state/private/telemetry/records.jsonl`. This command
+prints the verdict, action, resource, and rule of each one:
+
+```bash
+jq -r '
+  .resourceLogs[]?.scopeLogs[]
+  | select(.scope.name == "strands-box.policy")
+  | .logRecords[]
+  | [.attributes[] | select(.key | startswith("strands.box.policy."))
+     | {(.key | ltrimstr("strands.box.policy.")): .value.stringValue}]
+  | add
+  | "\(.verdict)\t\(.action)\t\(.resource)\t\(.rule)"
+' pi/state/private/telemetry/records.jsonl
+```
+
+Among the lines are the decisions behind each task's `cat`, `find`, `rm`, and `echo`.
+`rm` checks the file before it deletes it, which is the `fs:read` above the `fs:delete`:
+
+```text
+permit	shell:exec	cat	shell_commands
+permit	fs:read	~/box-tutorial/my-project/README.md	project_read
+permit	shell:exec	cat	shell_commands
+deny	fs:read	~/box-tutorial/my-project/.env	no_env
+permit	shell:exec	find	shell_commands
+permit	fs:read	~/box-tutorial/my-project/hello.py	project_read
+permit	fs:read	~/box-tutorial/my-project/util.py	project_read
+permit	shell:exec	wc	shell_commands
+permit	shell:exec	rm	shell_commands
+permit	fs:read	~/box-tutorial/my-project/scratch.txt	project_read
+deny	fs:delete	~/box-tutorial/my-project/scratch.txt	no_deletes
+permit	shell:exec	echo	shell_commands
+permit	fs:write	~/box-tutorial/my-project/NOTES.md	project_write
+```
+
+Each model call is an `http:request` under `model_request`, on a connection that
+`model_connect` permitted. pi runs `ls -la` in the shell on its own ahead of most
+commands: one `shell:exec` under `shell_commands`, and one `fs:read` per entry under
+`project_read`, the metadata of `.env` included.
+
+The log has no line for the files the `read`, `edit`, and `write` tools tried to open:
+operating system enforcement refused those opens inside pi's own process, and the policy
+was never asked.
+
+## Three settings pi needs
+
+Three settings in the example make pi start in a box and work through its shell.
+
+**`shellPath` in `settings.json`.** pi's `bash` tool starts `/bin/bash` and keeps it
+running between commands. The box runs pi alone, so that program does not start, and
+every command fails with `spawn EPERM`. With the setting, pi's `bash` tool starts the
+`bash` in the box's `bin` directory, which is the alias, and the box's shell takes each
+command from there.
+
+**The process title, in `box-preload.mjs`.** pi sets its process title when it starts.
+In a box that call ends the Node process at once, so the box prints its startup lines and
+then stops, with nothing from pi and exit status `139`. The preload file makes the title
+setter do nothing, which is a workaround for a Box limitation.
+
+**File timestamps, in `box-preload.mjs`.** Box does not let the agent change file
+timestamps inside a write grant
+([file timestamps may not be preserved](https://github.com/strands-agents/box/blob/main/docs/design/macos-enforcement.md#file-timestamps-may-not-be-preserved)).
+pi's credential store probes the timestamp precision of its lock file through that call,
+and stops when the call fails:
+
+```text
+Credential store read failed for amazon-bedrock: EPERM: operation not permitted, utime '/Users/you/box-tutorial/pi/agent/auth.json.lock'
+```
+
+The preload file answers that probe with success and touches no file. The lock still
+works, because one pi runs in this agent directory.
+
+## If something goes wrong
+
+| Error | Fix |
+|---|---|
+| `containment config failed: path does not exist: .../.pi/agent/install/releases/.../node_modules/.bin/pi` | The `sed` in step 1 did not run, or the installed version changed. Write the version from `~/.pi/agent/install/current-version` into `command`. |
+| `` `[agent]` filesystem entry "..." is refused: ... is not there `` | Make the directory it names: `mkdir -p pi/agent pi/tmp`. |
+| The box prints its startup lines, then exits with status `139` and nothing from pi | Node loaded without the preload file. Check the `--import` path in `command`. |
+| `Credential store read failed for amazon-bedrock: EPERM ... utime ...auth.json.lock` | The preload file did not load, or pi changed how it probes its lock file. Check the `--import` path in `command`. |
+| pi reports `spawn EPERM` for every command | pi's `bash` tool started `/bin/bash`. Check that `pi/agent/settings.json` is there and sets `shellPath`. |
+| `credential setup failed: credential variable AWS_BEARER_TOKEN_BEDROCK is not set, or holds only whitespace` | Export the key in the host OS's shell that runs the box. A key lasts up to 12 hours. |
+| `blocked by egress control` in pi's output | The egress gateway refused a request to Bedrock. [Read a refusal](network-and-credentials.md#read-a-refusal) lists the causes. |
+
+## Next steps
+
+- [Write a policy](write-a-policy.md): each part of a rule, and how to read what it
+  decided.
+- [Write policy for shell commands](write-shell-policy.md): admit a program such as
+  `git`.
+- [Strands Shell](../reference/shell.md): what pi's `bash` tool runs, where, and the
+  fields a rule reads.
+- [How Box enforces your configuration](../security/index.md#how-box-enforces-your-configuration):
+  what `box.toml` governs, what `policy.dw` governs, and why the project stays out of
+  pi's `read` list.

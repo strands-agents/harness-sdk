@@ -83,6 +83,7 @@
   --card-accent-yellow: #946e00; /* amber, 4.68:1 on white (mobile cards shrink to 15px → need 4.5) */
   --card-accent-orange: #b35900; /* darker orange, 4.82:1 on white — /harness */
   --card-accent-teal: #0f766e; /* darker teal, 5.47:1 on white — /harness */
+  --card-accent-purple: #7c3aed; /* violet, 5.7:1 on white — /box */
 
   /* CTA link text on white surfaces: darker green clears AA (5.45:1). */
   --cta-green: #007a3d;
@@ -162,6 +163,7 @@
   --card-accent-yellow: var(--strands-yellow); /* #f6bc00 — 12.11:1 on black */
   --card-accent-orange: #ff8a3d; /* warm orange, 8.98:1 on black — /harness */
   --card-accent-teal: #2dd4bf; /* bright teal, 11.3:1 on black — /harness */
+  --card-accent-purple: #a78bfa; /* light violet, 7.72:1 on black — /box */
 
   /* CTA link text on black: bright brand green (6.36:1). */
   --cta-green: var(--strands-green);

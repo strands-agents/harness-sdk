@@ -15,7 +15,7 @@ const head = [
 if (description) head.push({ tag: 'meta' as const, attrs: { property: 'og:description', content: description } })
 ---
 <StarlightPage
-  frontmatter={{ title, description, template: 'splash', pagefind: false, head, hero: { actions: [] } }}
+  frontmatter={{ title, description, template: 'splash', head, hero: { actions: [] } }}
   hasSidebar={false}
 >
   {/* Splash pages omit the `id="_top"` that Starlight puts on doc-page h1s,

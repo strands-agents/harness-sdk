@@ -12,7 +12,7 @@
 # `addedDate` on the group (pages set it in frontmatter) and the badge derives
 # from it for 30 days.
 #
-# IA: the docs are organized around products (Strands harness, SDK, Shell,
+# IA: the docs are organized around products (Strands harness, SDK, Shell, Box,
 # Evals SDK). Each product's basePath(s) scope the left sidebar (via
 # route-middleware) to just that product's pages, and every product's sidebar
 # follows the same shape: Get started -> Build guides -> Run guides ->
@@ -46,6 +46,10 @@ navbar:
     href: /docs/user-guide/shell/
     basePath:
       - /docs/user-guide/shell/
+  - label: Box
+    href: /docs/user-guide/box/
+    basePath:
+      - /docs/user-guide/box/
   - label: Evals
     href: /docs/user-guide/evals-sdk/
     basePath:
@@ -127,6 +131,23 @@ products:
         href: /docs/user-guide/sdk/memory/overview/
       - label: Deploy to production
         href: /docs/user-guide/sdk/deploy/operating-agents-in-production/
+  - label: Box
+    accent: purple
+    name: Strands Box
+    slug: "/box"
+    href: /docs/user-guide/box/
+    description: An agent sandbox that pairs OS containment with Dogwood policy.
+    pages:
+      - label: Overview
+        href: /docs/user-guide/box/
+      - label: Getting started
+        href: /docs/user-guide/box/getting-started/
+      - label: Write a policy
+        href: /docs/user-guide/box/guides/write-a-policy/
+      - label: Security model
+        href: /docs/user-guide/box/security/
+      - label: box.toml reference
+        href: /docs/user-guide/box/reference/configuration/
   - label: Shell
     accent: yellow
     name: Strands Shell
@@ -472,6 +493,42 @@ sidebar:
           - label: "Reference"
             slug: docs/user-guide/shell/reference
 
+  - label: Box
+    items:
+      - label: Get started
+        badge:
+          text: Pre-release
+          variant: caution
+        items:
+          - label: "Overview"
+            slug: docs/user-guide/box
+          - docs/user-guide/box/getting-started
+      - label: How-to guides
+        items:
+          - docs/user-guide/box/guides/run-strands-harness
+          - docs/user-guide/box/guides/run-claude-code
+          - docs/user-guide/box/guides/run-codex-cli
+          - docs/user-guide/box/guides/run-pi
+          - docs/user-guide/box/guides/grant-files
+          - docs/user-guide/box/guides/network-and-credentials
+          - docs/user-guide/box/guides/add-a-tool
+          - docs/user-guide/box/guides/write-a-policy
+          - docs/user-guide/box/guides/write-shell-policy
+          - docs/user-guide/box/guides/record-telemetry
+          - docs/user-guide/box/guides/strands-cli-telemetry
+      - label: Security
+        items:
+          - label: "Security model"
+            slug: docs/user-guide/box/security
+          - docs/user-guide/box/security/agent-and-tool-containment
+      - label: Reference
+        items:
+          - docs/user-guide/box/reference/configuration
+          - docs/user-guide/box/reference/cli
+          - docs/user-guide/box/reference/policy-actions
+          - docs/user-guide/box/reference/shell
+          - docs/user-guide/box/reference/python
+
   - label: Evals SDK
     items:
       - label: Get started
@@ -659,6 +716,9 @@ github:
         - label: Shell
           href: https://github.com/strands-agents/shell
           icon: SH
+        - label: Box
+          href: https://github.com/strands-agents/box
+          icon: BX
     - title: Organizations
       links:
         - label: strands-agents
