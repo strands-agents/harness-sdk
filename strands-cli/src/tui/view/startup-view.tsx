@@ -23,7 +23,6 @@ export function StartupView({
   frogBrandElapsedMs,
   onFrogElement,
   theme,
-  customBase,
   party = false,
   partyElapsedMs = 0,
 }: {
@@ -34,16 +33,11 @@ export function StartupView({
   frogBrandElapsedMs?: number
   onFrogElement?: (element: DOMElement | null) => void
   theme: FrogTheme
-  customBase?: Exclude<FrogTheme, 'custom'>
   party?: boolean
   partyElapsedMs?: number
 }): ReactElement {
   const palette = useTheme()
-  const frogOptions = {
-    colorMode: palette.mode,
-    ...(theme === 'custom' ? { frogColor: palette.frog } : {}),
-    ...(customBase ? { customBase } : {}),
-  }
+  const frogOptions = { colorMode: palette.mode }
   const maxWidth = Math.max(1, terminalWidth - 2)
   // Sized to the artwork so the column centers it.
   const lockupWidth = frogStartupWidth(maxWidth, frogStartupHeight(maxWidth, availableHeight))

@@ -147,7 +147,7 @@ export function createConfigurationTool(options: ConfigurationToolOptions): {
         settings: {
           type: 'object',
           description:
-            'CLI presentation and discovery settings. Appearance options include colorMode, frogTheme, transcriptSpacing, animations, showReasoning, and toolOutput.',
+            'CLI presentation and discovery settings. Appearance options include frogTheme, transcriptSpacing, animations, showReasoning, and toolOutput.',
           properties: CONFIGURATION_SETTING_PROPERTIES,
           additionalProperties: false,
         },

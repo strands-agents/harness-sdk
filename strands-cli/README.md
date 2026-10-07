@@ -116,8 +116,8 @@ The CLI chooses a mode from its flags and terminal streams:
 | -------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | **Ink**        | stdin and stdout are terminals               | Full-screen interactive UI with panels, slash commands, mouse support, and streaming updates |
 | **Plain**      | stdin is a terminal but stdout is redirected | Readline chat with unstyled output; an initial request is answered before the prompt         |
-| **Print**      | `--print` is set, or stdin is piped          | One request, then exit; styling follows whether stdout is a terminal                          |
-| **ACP server** | `--acp-server` is set                        | Serve the agent over newline-delimited ACP on stdin/stdout                                        |
+| **Print**      | `--print` is set, or stdin is piped          | One request, then exit; styling follows whether stdout is a terminal                         |
+| **ACP server** | `--acp-server` is set                        | Serve the agent over newline-delimited ACP on stdin/stdout                                   |
 
 Examples:
 
@@ -147,30 +147,30 @@ supported.
 
 Run `strands --help` for the parser's current list.
 
-| Flag                              | Applies to   | Description                                                                                |
-| --------------------------------- | ------------ | ------------------------------------------------------------------------------------------ |
-| `-p`, `--print`                   | Print        | Answer once and exit                                                                       |
-| `--prompt <text>`                 | All          | Initial request; equivalent to the positional request                                      |
-| `--acp-server`                    | ACP server   | Serve the agent over ACP; cannot be combined with a request, `--print`, or `--setup`             |
-| `--setup`                         | Ink          | Open the provider and default-agent setup wizard                                           |
-| `--agent <path>`                  | All          | Load an agent ZIP, project folder, or `agent.ts`/`agent.py`                              |
-| `--env-file <path>`               | All          | Load an explicitly trusted env file; repeat for several files, later files win           |
-| `--set <field=value>`             | Harness backend | Override any portable config field; repeatable and JSON-aware                              |
-| `--name <name>`                   | Harness backend | Override the agent name for this invocation                                                |
-| `--description <text>`            | Harness backend | Override the agent description for this invocation                                         |
-| `--model <model>`                 | Harness backend | A `provider/model` string or bare Amazon Bedrock model id                                         |
-| `--effort <level>`                | Harness backend | Reasoning effort: `auto` (default), `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` |
-| `--instructions <text>`           | Harness backend | Append domain instructions to the system prompt                                            |
-| `--builtin-tools <tools>`         | Harness backend | Comma-separated built-ins, or `""` for none; defaults to `shell,read,write,edit,web_fetch,web_search,programmatic_tool_caller,subagent` |
-| `--builtin-plugins <plugins>`     | Harness backend | Comma-separated built-ins, or `""` for none; defaults to `todos,environment`               |
-| `--caching <mode>`                | Harness backend | Prompt caching: `auto` (default) or `off`                                                  |
-| `--context-manager <mode>`        | Harness backend | `auto` (default), `agentic`, or `off`; object forms go through `--set`                     |
-| `--session <mode>`                | Harness backend | Conversation persistence: `on` (default) or `off`                                          |
-| `--session-id <id>`               | Harness backend | Resume a conversation by id (defaults to a fresh one); writes `session.id`                  |
-| `--skills <dirs>`                 | Harness backend | Comma-separated Agent Skills directories or URLs, or `off`; defaults to `./.agent/skills`  |
-| `--memory <mode>`                 | Harness backend | Long-term memory: `on` (default) or `off`                                                  |
-| `--interventions <policy>`        | Harness backend | Gate tool calls with `ask`, `smart`, a `.cedar` policy file, or a natural-language rule    |
-| `--mcp-config <path>`             | All modes    | Add an MCP configuration file; repeat for multiple files                                   |
+| Flag                          | Applies to      | Description                                                                                                                             |
+| ----------------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `-p`, `--print`               | Print           | Answer once and exit                                                                                                                    |
+| `--prompt <text>`             | All             | Initial request; equivalent to the positional request                                                                                   |
+| `--acp-server`                | ACP server      | Serve the agent over ACP; cannot be combined with a request, `--print`, or `--setup`                                                    |
+| `--setup`                     | Ink             | Open the provider and default-agent setup wizard                                                                                        |
+| `--agent <path>`              | All             | Load an agent ZIP, project folder, or `agent.ts`/`agent.py`                                                                             |
+| `--env-file <path>`           | All             | Load an explicitly trusted env file; repeat for several files, later files win                                                          |
+| `--set <field=value>`         | Harness backend | Override any portable config field; repeatable and JSON-aware                                                                           |
+| `--name <name>`               | Harness backend | Override the agent name for this invocation                                                                                             |
+| `--description <text>`        | Harness backend | Override the agent description for this invocation                                                                                      |
+| `--model <model>`             | Harness backend | A `provider/model` string or bare Amazon Bedrock model id                                                                               |
+| `--effort <level>`            | Harness backend | Reasoning effort: `auto` (default), `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`                                        |
+| `--instructions <text>`       | Harness backend | Append domain instructions to the system prompt                                                                                         |
+| `--builtin-tools <tools>`     | Harness backend | Comma-separated built-ins, or `""` for none; defaults to `shell,read,write,edit,web_fetch,web_search,programmatic_tool_caller,subagent` |
+| `--builtin-plugins <plugins>` | Harness backend | Comma-separated built-ins, or `""` for none; defaults to `todos,environment`                                                            |
+| `--caching <mode>`            | Harness backend | Prompt caching: `auto` (default) or `off`                                                                                               |
+| `--context-manager <mode>`    | Harness backend | `auto` (default), `agentic`, or `off`; object forms go through `--set`                                                                  |
+| `--session <mode>`            | Harness backend | Conversation persistence: `on` (default) or `off`                                                                                       |
+| `--session-id <id>`           | Harness backend | Resume a conversation by id (defaults to a fresh one); writes `session.id`                                                              |
+| `--skills <dirs>`             | Harness backend | Comma-separated Agent Skills directories or URLs, or `off`; defaults to `./.agent/skills`                                               |
+| `--memory <mode>`             | Harness backend | Long-term memory: `on` (default) or `off`                                                                                               |
+| `--interventions <policy>`    | Harness backend | Gate tool calls with `ask`, `smart`, a `.cedar` policy file, or a natural-language rule                                                 |
+| `--mcp-config <path>`         | All modes       | Add an MCP configuration file; repeat for multiple files                                                                                |
 
 Explicit CLI values apply only to the current invocation. Dedicated flags override `--set`, which
 overrides the saved profile; imported agents take their configuration from their code:
@@ -210,12 +210,11 @@ models on `bedrock-mantle`, Anthropic). On a model without native search the Too
 
 ## Appearance
 
-`/settings` offers **Auto**, **Light**, and **Dark** color modes. Auto uses the terminal's
-`COLORFGBG` background hint when available and otherwise defaults to dark.
-Choose **Theme** to preview Classic, Minimal, Homeland, Merlin, Kikker, Cyborg, Spectre,
-or Custom. Arrow keys and clicks preview; Enter applies; Esc cancels.
-Custom supports separate light and dark colors, a base theme, and per-variant reset.
-Saved Magma selections migrate to Classic.
+The CLI observes the terminal's reported background color and automatically uses a matching
+high-contrast palette, defaulting to a dark background when unavailable.
+Choose **Theme** to switch between Classic, Minimal, Homeland, Merlin, Kikker, Cyborg, Spectre,
+or Solar; arrow keys and clicks apply the theme immediately.
+Saved Custom themes migrate to the theme they were based on, and saved Magma selections to Classic.
 The welcome banner shrinks with the terminal, keeping the composer visible.
 `/settings` also links to `/setup` for providers and the default agent.
 
@@ -262,15 +261,15 @@ cross-language, lacks packageable source, or would embed an MCP secret. Credenti
 sessions, memory contents, and running processes are runtime state and are intentionally not exported.
 Machine-discovered MCP servers and skills are not part of the portable definition.
 
-| Provider       | Model prefix      | Credential source                                                                |
-| -------------- | ----------------- | -------------------------------------------------------------------------------- |
-| Amazon Bedrock | `bedrock/`        | Standard AWS SDK credential chain                                                |
-| Bedrock Mantle | `bedrock-mantle/` | Standard AWS SDK credential chain                                                |
-| Anthropic      | `anthropic/`      | `ANTHROPIC_API_KEY`                                                              |
-| OpenAI         | `openai/`         | `OPENAI_API_KEY`                                                                 |
-| Google Gemini  | `google/`         | `GEMINI_API_KEY`                                                                 |
-| Ollama         | `ollama/`         | Auto-detected locally; `OLLAMA_HOST` only for a custom server                   |
-| LiteLLM proxy  | `litellm/`        | Auto-detected locally; `LITELLM_BASE_URL` for a custom proxy, optional key       |
+| Provider       | Model prefix      | Credential source                                                          |
+| -------------- | ----------------- | -------------------------------------------------------------------------- |
+| Amazon Bedrock | `bedrock/`        | Standard AWS SDK credential chain                                          |
+| Bedrock Mantle | `bedrock-mantle/` | Standard AWS SDK credential chain                                          |
+| Anthropic      | `anthropic/`      | `ANTHROPIC_API_KEY`                                                        |
+| OpenAI         | `openai/`         | `OPENAI_API_KEY`                                                           |
+| Google Gemini  | `google/`         | `GEMINI_API_KEY`                                                           |
+| Ollama         | `ollama/`         | Auto-detected locally; `OLLAMA_HOST` only for a custom server              |
+| LiteLLM proxy  | `litellm/`        | Auto-detected locally; `LITELLM_BASE_URL` for a custom proxy, optional key |
 
 The CLI does not store provider secrets. Setup detects credentials from the process environment,
 explicitly selected env files, AWS profiles, and other credential sources supported by the
@@ -411,28 +410,28 @@ than an operating-system sandbox.
 
 These commands are local to the full-screen Ink UI:
 
-| Command                      | Action                                                             |
-| ---------------------------- | ------------------------------------------------------------------ |
+| Command                    | Action                                                             |
+| -------------------------- | ------------------------------------------------------------------ |
 | `/help`                    | Browse controls, commands, and the current agent's available tools |
-| `/context`                   | Show context usage and prompt-cache activity                       |
-| `/compact`                   | Summarize older conversation context                               |
-| `/clear`                     | Rebuild the agent with a fresh conversation                             |
-| `/tasks`                     | Show tasks and configure background completion behavior            |
-| `/model [model-id]`          | Browse or change the active model                                  |
-| `/effort [level]`            | Open the effort slider or set the reasoning effort directly        |
-| `/fork [request]`            | Fork the current conversation into an independent agent            |
-| `/agents`                    | View conversations and live subagents                              |
-| `/rename <name>`             | Rename the currently viewed agent                                  |
-| `/sessions`                  | Browse and resume saved sessions                              |
-| `/skills`                    | Browse available and active Agent Skills                           |
-| `/mcp`                       | Connect to configured MCP servers and show their tools and state   |
-| `/permissions`               | Configure persistent tool approvals                           |
-| `/voice [on\|off\|status]`   | Open bidirectional voice controls                                  |
-| `/settings`                  | Configure presentation and inspect the active runtime              |
-| `/setup`                     | Configure providers and the default agent                     |
-| `/export`                    | Write the agent as a runnable TypeScript or Python project         |
-| `!<command>`                 | Run a shell command in the active agent's sandbox             |
-| `/exit`                      | Exit the CLI                                                          |
+| `/context`                 | Show context usage and prompt-cache activity                       |
+| `/compact`                 | Summarize older conversation context                               |
+| `/clear`                   | Rebuild the agent with a fresh conversation                        |
+| `/tasks`                   | Show tasks and configure background completion behavior            |
+| `/model [model-id]`        | Browse or change the active model                                  |
+| `/effort [level]`          | Open the effort slider or set the reasoning effort directly        |
+| `/fork [request]`          | Fork the current conversation into an independent agent            |
+| `/agents`                  | View conversations and live subagents                              |
+| `/rename <name>`           | Rename the currently viewed agent                                  |
+| `/sessions`                | Browse and resume saved sessions                                   |
+| `/skills`                  | Browse available and active Agent Skills                           |
+| `/mcp`                     | Connect to configured MCP servers and show their tools and state   |
+| `/permissions`             | Configure persistent tool approvals                                |
+| `/voice [on\|off\|status]` | Open bidirectional voice controls                                  |
+| `/settings`                | Configure presentation and inspect the active runtime              |
+| `/setup`                   | Configure providers and the default agent                          |
+| `/export`                  | Write the agent as a runnable TypeScript or Python project         |
+| `!<command>`               | Run a shell command in the active agent's sandbox                  |
+| `/exit`                    | Exit the CLI                                                       |
 
 Slash commands provide inline signatures and argument completion. Press Tab or Enter
 on a completion to replace the current argument token.
@@ -542,7 +541,13 @@ Each time the interactive TUI starts with the built-in profile, `strands` sends 
 and plugins are actually in use. The whole payload is:
 
 ```json
-{ "v": 1, "cli_version": "0.1.0", "provider": "bedrock", "builtin_tools": ["shell", "read"], "builtin_plugins": ["todos"] }
+{
+  "v": 1,
+  "cli_version": "0.1.0",
+  "provider": "bedrock",
+  "builtin_tools": ["shell", "read"],
+  "builtin_plugins": ["todos"]
+}
 ```
 
 `provider` is one of the shipped provider names and is omitted for a custom model module. The payload

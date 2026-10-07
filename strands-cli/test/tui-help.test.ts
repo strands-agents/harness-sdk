@@ -41,6 +41,8 @@ describe('help', () => {
       'Commands',
       'Available tools',
     ])
+    expect(panel!.rows).not.toEqual(expect.arrayContaining([expect.objectContaining({ label: 'Steer running work' })]))
+    expect(panel!.rows.map((candidate) => candidate.description).join('\n')).not.toContain('Ctrl+G')
     expect(stream).not.toHaveBeenCalled()
     await controller.dispose()
   })

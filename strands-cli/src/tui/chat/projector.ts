@@ -87,6 +87,13 @@ export class TurnProjector {
     }
   }
 
+  appendUserMessage(text: string): void {
+    const clean = sanitizeTerminalText(text)
+    if (clean) {
+      this._turn.entries.push({ id: this._entryId(), type: 'user', text: clean })
+    }
+  }
+
   markCancelled(): void {
     this._finishTiming()
     this._turn.status = 'cancelled'
@@ -422,6 +429,7 @@ function appendText(
 
 function cloneChatEntry(entry: MutableChatEntry): ChatEntry {
   switch (entry.type) {
+    case 'user':
     case 'reasoning':
     case 'assistant':
       return { ...entry }

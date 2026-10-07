@@ -237,6 +237,33 @@ describe('ChatController', () => {
     })
   })
 
+  it('selects a context offload threshold from settings', async () => {
+    const setSettings = vi.fn(async () => {})
+    const controller = new ChatController(backend(), { setSettings })
+
+    await controller.submit('/settings')
+    await controller.activatePanelRow({ label: '', description: '', value: 'settings:Agent' })
+    const threshold = controller.getSnapshot().panel!.rows.find((row) => row.value === 'contextOffloadThreshold')!
+
+    expect(threshold).toMatchObject({
+      description: 'Default · tool-result tokens · applies at next launch',
+      control: {
+        kind: 'segmented',
+        options: [
+          { label: 'Default', value: 'default', active: true },
+          { label: '1.5K', value: '1500' },
+          { label: '2.5K', value: '2500' },
+          { label: '5K', value: '5000' },
+          { label: '10K', value: '10000' },
+        ],
+      },
+    })
+
+    expect(await controller.activatePanelRow({ ...threshold, value: 'contextOffloadThreshold=5000' })).toBe(true)
+    expect(setSettings).toHaveBeenCalledWith({ contextOffloadThreshold: 5_000 })
+    expect(controller.getSnapshot().settings.contextOffloadThreshold).toBe(5_000)
+  })
+
   it('runs bang commands through the active backend shell stream', async () => {
     const modelPrompts: string[] = []
     const shellCommands: string[] = []
@@ -301,7 +328,7 @@ describe('ChatController', () => {
     })
   })
 
-  it('queues a bang command behind a running turn instead of injecting it as steering', async () => {
+  it('queues a bang command behind a running turn', async () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => {
       release = resolve
@@ -327,9 +354,7 @@ describe('ChatController', () => {
 
     expect(target.queueSteering).not.toHaveBeenCalled()
     expect(controller.getSnapshot().queuedPrompts).toEqual([{ id: 'queued-1', prompt: '!pwd' }])
-    expect(controller.steerQueued()).toBe(true)
-    expect(target.queueSteering).not.toHaveBeenCalled()
-    expect(target.cancel).toHaveBeenCalledOnce()
+    expect(target.cancel).not.toHaveBeenCalled()
 
     release()
     await running
@@ -552,9 +577,11 @@ describe('ChatController', () => {
       })
     )
     expect(detailUpdates).toHaveBeenCalledOnce()
-    expect(controller.getSnapshot().panel?.activity?.entries).toContainEqual(
-      expect.objectContaining({ type: 'tool', name: 'read', status: 'success' })
-    )
+    expect(controller.getSnapshot().panel).toMatchObject({
+      activity: {
+        entries: expect.arrayContaining([expect.objectContaining({ type: 'tool', name: 'read', status: 'success' })]),
+      },
+    })
 
     expect(controller.dismissPanel()).toBe(true)
     expect(stopActivity).toHaveBeenCalledOnce()
@@ -1006,6 +1033,8 @@ describe('ChatController', () => {
       }
       return { stopReason: 'endTurn' }
     })
+    target.queueSteering = vi.fn(() => true)
+    target.drainSteering = vi.fn().mockReturnValueOnce(['change direction now']).mockReturnValue([])
     const controller = new ChatController(target)
 
     const first = controller.submit('first')
@@ -1013,6 +1042,8 @@ describe('ChatController', () => {
     const queued = controller.submit('ordinary follow-up')
     const steering = controller.steer('change direction now')
 
+    expect(target.cancel).not.toHaveBeenCalled()
+    expect(controller.cancel()).toBe(true)
     expect(target.cancel).toHaveBeenCalledOnce()
     expect(controller.getSnapshot().queuedPrompts.map((prompt) => prompt.prompt)).toEqual([
       'change direction now',
@@ -1040,85 +1071,33 @@ describe('ChatController', () => {
       await gate
       return { stopReason: 'endTurn' }
     })
-    target.queueSteering = vi.fn(() => true)
+    let consumeSteering = (): void => {}
+    target.queueSteering = vi.fn((_prompt, onConsumed) => {
+      consumeSteering = onConsumed
+      return true
+    })
+    target.drainSteering = () => []
     const controller = new ChatController(target)
 
     const running = controller.submit('first')
     await vi.waitFor(() => expect(controller.getSnapshot().status).toBe('running'))
     await controller.steer('change direction now')
 
-    expect(target.queueSteering).toHaveBeenCalledWith('change direction now')
+    expect(target.queueSteering).toHaveBeenCalledWith('change direction now', expect.any(Function))
     expect(target.cancel).not.toHaveBeenCalled()
     expect(controller.getSnapshot()).toMatchObject({
-      notices: [],
+      pendingSteering: ['change direction now'],
       queuedPrompts: [],
     })
 
+    consumeSteering()
+    expect(controller.getSnapshot().pendingSteering).toEqual([])
+    expect(controller.getSnapshot().activeTurn?.entries).toEqual([
+      expect.objectContaining({ type: 'assistant', text: 'Working.' }),
+      expect.objectContaining({ type: 'user', text: 'change direction now' }),
+    ])
     release()
     await running
-  })
-
-  it('turns a queued prompt into live steering without cancelling the turn', async () => {
-    let release!: () => void
-    const gate = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    const target = backend(async function* () {
-      yield { type: 'textDelta', text: 'Working.' }
-      await gate
-      return { stopReason: 'endTurn' }
-    })
-    target.queueSteering = vi.fn(() => true)
-    const controller = new ChatController(target)
-
-    const running = controller.submit('first')
-    await vi.waitFor(() => expect(controller.getSnapshot().status).toBe('running'))
-    const queued = controller.submit('change direction now')
-    const queuedId = controller.getSnapshot().queuedPrompts[0]!.id
-
-    expect(controller.steerQueued(queuedId)).toBe(true)
-    expect(target.queueSteering).toHaveBeenCalledWith('change direction now')
-    expect(target.cancel).not.toHaveBeenCalled()
-    expect(controller.getSnapshot().queuedPrompts).toEqual([])
-    await expect(queued).resolves.toBeUndefined()
-
-    release()
-    await running
-  })
-
-  it('promotes an existing queued prompt for steering without duplicating it', async () => {
-    let release!: () => void
-    const gate = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    const prompts: string[] = []
-    const target = backend(async function* (prompt) {
-      prompts.push(prompt)
-      if (prompt === 'first') {
-        yield { type: 'textDelta', text: 'Initial direction.' }
-        await gate
-      }
-      return { stopReason: 'endTurn' }
-    })
-    const controller = new ChatController(target)
-
-    const first = controller.submit('first')
-    await vi.waitFor(() => expect(controller.getSnapshot().status).toBe('running'))
-    const second = controller.submit('ordinary follow-up')
-    const third = controller.submit('steer with this')
-    const steeringId = controller.getSnapshot().queuedPrompts[1]!.id
-
-    expect(controller.steerQueued(steeringId)).toBe(true)
-    expect(target.cancel).toHaveBeenCalledOnce()
-    expect(controller.getSnapshot()).toMatchObject({
-      status: 'interrupting',
-      queuedPrompts: [{ id: steeringId, prompt: 'steer with this' }, { prompt: 'ordinary follow-up' }],
-    })
-
-    release()
-    await Promise.all([first, second, third])
-
-    expect(prompts).toEqual(['first', 'steer with this', 'ordinary follow-up'])
   })
 
   it('closes on exit words and converts backend failures into turn errors', async () => {
@@ -1138,23 +1117,10 @@ describe('ChatController', () => {
     expect(controller.getSnapshot()).toMatchObject({ status: 'closed', exitCode: 0 })
   })
 
-  it.each([true, false])('shows all built-in provider filters when discovery returns models: %s', async (hasModels) => {
+  it('shows all built-in provider filters when discovery returns no models', async () => {
     const target = backend()
-    target.info = () => ({ model: 'bedrock/anthropic.claude-current' })
-    target.listModels = vi.fn(() =>
-      hasModels
-        ? [
-            {
-              id: 'anthropic.claude-current',
-              name: 'Current model',
-              description: '',
-              value: 'bedrock/anthropic.claude-current',
-              catalog: 'bedrock',
-              active: true,
-            },
-          ]
-        : []
-    )
+    target.info = () => ({ model: 'bedrock/current-model' })
+    target.listModels = vi.fn(() => [])
     const controller = new ChatController(target)
 
     await controller.openModelPanel()
@@ -1171,9 +1137,7 @@ describe('ChatController', () => {
       { id: 'litellm', label: 'LiteLLM' },
     ])
     expect(panel.rows).toHaveLength(1)
-    expect(panel.rows.flatMap((row) => (row.value ? [row.value] : []))).toEqual(
-      hasModels ? ['bedrock/anthropic.claude-current'] : []
-    )
+    expect(panel.rows.flatMap((row) => (row.value ? [row.value] : []))).toEqual([])
     expect(target.listModels).toHaveBeenCalledOnce()
   })
 
@@ -1205,13 +1169,13 @@ describe('ChatController', () => {
         context: { currentTokens: 800, projectedTokens: 850, contextWindow: 200_000 },
       }
     })
-    const currentId = 'global.anthropic.claude-opus-4-8'
-    const nextId = 'bedrock/anthropic.claude-sonnet-5'
+    const currentId = 'bedrock/current-model'
+    const nextId = 'bedrock/next-model'
     let currentModel = currentId
     target.info = () => ({ model: currentModel })
     target.listModels = () => [
-      { id: currentId, name: 'Claude Opus 4.8', description: 'current', active: true },
-      { id: nextId, name: 'Claude Sonnet 5', description: 'other family' },
+      { id: currentId, name: 'Current Model', description: 'current', active: true },
+      { id: nextId, name: 'Next Model', description: 'other model' },
     ]
     target.modelChangeMode = () => 'restart'
     target.switchModel = vi.fn()
@@ -1226,100 +1190,63 @@ describe('ChatController', () => {
     await controller.submit('/model')
     expect(controller.getSnapshot().panel?.kind).toBe('models')
     expect(controller.getSnapshot().panel?.rows[0]).toMatchObject({
-      label: 'Claude Opus 4.8',
+      label: 'Current Model',
       badge: { text: 'current', tone: 'success' },
     })
     expect(controller.getSnapshot().panel?.rows[1]).toMatchObject({
-      label: 'Claude Sonnet 5',
+      label: 'Next Model',
     })
     expect(controller.getSnapshot().panel?.rows[1]?.badge).toBeUndefined()
     expect(controller.getSnapshot().panel?.rows[1]?.tone).toBeUndefined()
-    expect(controller.getSnapshot().panel?.body).toBe('Claude Opus 4.8\nglobal.anthropic.claude-opus-4-8')
+    expect(controller.getSnapshot().panel?.body).toBe('bedrock/current-model\nbedrock/current-model')
     const nextIndex = controller.getSnapshot().panel?.rows.findIndex((row) => row.value === nextId) ?? -1
     expect(nextIndex).toBeGreaterThanOrEqual(0)
     await controller.activatePanelRow(controller.getSnapshot().panel!.rows[nextIndex]!)
     expect(target.restartModel).toHaveBeenCalledWith(nextId)
     expect(controller.getSnapshot().panel).toMatchObject({
       kind: 'models',
-      body: `Claude Sonnet 5\n${nextId}`,
-      rows: [{ label: 'Claude Opus 4.8' }, { label: 'Claude Sonnet 5', badge: { text: 'current', tone: 'success' } }],
+      body: `${nextId}\n${nextId}`,
+      rows: [{ label: 'Current Model' }, { label: 'Next Model', badge: { text: 'current', tone: 'success' } }],
     })
     expect(controller.getSnapshot().runtime.model).toBe(nextId)
     expect(controller.getSnapshot().context).toEqual({})
   })
 
-  it('changes effort from the model panel without invoking model selection', async () => {
+  it('continues to effort after selecting a model that supports it', async () => {
     const target = backend()
-    let effort = 'high'
-    target.info = () => ({
-      model: 'global.anthropic.claude-opus-4-8',
-      effort: effort === 'off' ? 'Model default' : 'High',
-    })
-    target.listModels = vi.fn(() => [
-      {
-        id: 'global.anthropic.claude-opus-4-8',
-        name: 'Claude Opus 4.8',
-        description: '',
-        active: true,
-      },
-    ])
-    target.listEfforts = () => [
-      {
-        id: 'off',
-        label: 'Model default',
-        ...(effort === 'off' ? { active: true } : {}),
-      },
-      { id: 'high', label: 'High', ...(effort === 'high' ? { active: true } : {}) },
+    let model = 'bedrock/current-model'
+    target.info = () => ({ model, effort: 'Low' })
+    target.listModels = () => [
+      { id: model, name: 'Current Model', description: '', active: true },
+      { id: 'bedrock/next-model', name: 'Next Model', description: '' },
     ]
-    target.switchModel = vi.fn()
-    target.restartModel = vi.fn()
-    target.setEffort = vi.fn(async (selected) => {
-      effort = selected
+    target.listEfforts = vi.fn(() => [
+      { id: 'low', label: 'Low', active: true },
+      { id: 'high', label: 'High' },
+    ])
+    target.switchModel = vi.fn(async (selected) => {
+      model = selected
       return selected
     })
     const controller = new ChatController(target)
 
-    await controller.submit('/model')
-    const panelId = controller.getSnapshot().panel?.id
+    await controller.openModelPanel()
+    expect(controller.getSnapshot().panel).not.toHaveProperty('slider')
+    expect(target.listEfforts).not.toHaveBeenCalled()
+    await controller.activatePanelRow(controller.getSnapshot().panel!.rows[1]!)
 
     expect(controller.getSnapshot().panel).toMatchObject({
-      body: 'Claude Opus 4.8\nglobal.anthropic.claude-opus-4-8',
-      slider: {
-        label: 'Effort',
-        options: [
-          { id: 'off', label: 'Model default' },
-          { id: 'high', label: 'High', active: true },
-        ],
-      },
-    })
-    expect(controller.getSnapshot().panel?.rows).toHaveLength(1)
-    await controller.activatePanelRow({
-      label: 'Effort',
-      description: 'Model default',
-      value: 'effort:off',
-    })
-
-    expect(target.setEffort).toHaveBeenCalledWith('off')
-    expect(target.listModels).toHaveBeenCalledOnce()
-    expect(target.switchModel).not.toHaveBeenCalled()
-    expect(target.restartModel).not.toHaveBeenCalled()
-    expect(controller.getSnapshot()).toMatchObject({
-      panel: {
-        id: panelId,
-        slider: {
-          options: [{ id: 'off', active: true }, { id: 'high' }],
-        },
-      },
-      runtime: { effort: 'Model default' },
+      kind: 'effort',
+      body: 'bedrock/next-model\nbedrock/next-model',
     })
   })
 
   it('sets effort from /effort and opens an effort-only panel without an argument', async () => {
     const target = backend()
     let effort = 'high'
-    target.info = () => ({ model: 'global.anthropic.claude-opus-4-8', effort: effort === 'low' ? 'Low' : 'High' })
+    target.info = () => ({ model: 'bedrock/current-model', effort: effort === 'low' ? 'Low' : 'High' })
     target.listModels = vi.fn(() => [
-      { id: 'global.anthropic.claude-opus-4-8', name: 'Claude Opus 4.8', description: '', active: true },
+      { id: 'bedrock/current-model', name: 'Current Model', description: '', active: true },
     ])
     target.listEfforts = () => [
       { id: 'low', label: 'Low', ...(effort === 'low' ? { active: true } : {}) },
@@ -1341,19 +1268,19 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().panel).toMatchObject({
       kind: 'effort',
       rows: [],
-      slider: { focused: true, options: [{ id: 'low', active: true }, { id: 'high' }] },
+      slider: { options: [{ id: 'low', active: true }, { id: 'high' }] },
     })
     expect(target.listModels).not.toHaveBeenCalled()
 
     await controller.activatePanelRow({ label: 'Effort', description: 'High', value: 'effort:high' })
     expect(target.setEffort).toHaveBeenLastCalledWith('high')
-    expect(controller.getSnapshot().panel?.slider?.options).toEqual([
+    expect(controller.getSnapshot().panel).toHaveProperty('slider.options', [
       { id: 'low', label: 'Low' },
       expect.objectContaining({ id: 'high', active: true }),
     ])
 
     await controller.submit('/model')
-    expect(controller.getSnapshot().panel?.slider?.focused).toBeUndefined()
+    expect(controller.getSnapshot().panel?.kind).toBe('models')
   })
 
   it('reports /effort as unavailable when the model has no effort levels', async () => {
@@ -1386,7 +1313,7 @@ describe('ChatController', () => {
 
   it('catches invalid model arguments before backend mode selection can escape the TUI', async () => {
     const target = backend()
-    target.info = () => ({ model: 'ollama/qwen3:8b', effort: 'Auto' })
+    target.info = () => ({ model: 'ollama/test-model', effort: 'Auto' })
     target.modelChangeMode = (model) => {
       resolveModelTarget(model)
       return 'restart'
@@ -1399,7 +1326,7 @@ describe('ChatController', () => {
       kind: 'error',
       rows: [{ description: 'Unsupported model provider "unknown". Use /model to choose a model.' }],
     })
-    expect(controller.getSnapshot().runtime).toMatchObject({ model: 'ollama/qwen3:8b', effort: 'Auto' })
+    expect(controller.getSnapshot().runtime).toMatchObject({ model: 'ollama/test-model', effort: 'Auto' })
     expect(target.restartModel).not.toHaveBeenCalled()
   })
 
@@ -1422,29 +1349,14 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().runtime).toMatchObject({ model: 'ollama/qwen3:8b', effort: 'Auto' })
   })
 
-  it('disables effort in the model panel when the model has no effort choices', async () => {
-    const target = backend()
-    target.listModels = () => [{ id: 'openai.gpt-5', name: 'GPT-5', description: '', active: true }]
-    target.listEfforts = () => [{ id: 'off', label: 'Model default', active: true }]
-    const controller = new ChatController(target)
-
-    await controller.submit('/model')
-
-    expect(controller.getSnapshot().panel?.slider).toEqual({
-      label: 'Effort',
-      options: [{ id: 'off', label: 'Model default', active: true }],
-      disabled: true,
-    })
-  })
-
-  it('defers the latest model change and settles a superseded notice', async () => {
+  it('keeps live controls available and defers the latest model change', async () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => {
       release = resolve
     })
-    const currentId = 'global.anthropic.claude-opus-4-8'
-    const nextId = 'bedrock/anthropic.claude-sonnet-5'
-    const latestId = 'bedrock/anthropic.claude-opus-5'
+    const currentId = 'bedrock/current-model'
+    const nextId = 'bedrock/next-model'
+    const latestId = 'bedrock/latest-model'
     let currentModel = currentId
     const target = backend(async function* () {
       yield { type: 'textDelta', text: 'Working.' }
@@ -1453,9 +1365,9 @@ describe('ChatController', () => {
     })
     target.info = () => ({ model: currentModel })
     target.listModels = () => [
-      { id: currentId, name: 'Claude Opus 4.8', description: 'current', active: true },
-      { id: nextId, name: 'Claude Sonnet 5', description: 'other family' },
-      { id: latestId, name: 'Claude Opus 5', description: 'latest choice' },
+      { id: currentId, name: 'Current Model', description: 'current', active: true },
+      { id: nextId, name: 'Next Model', description: 'other model' },
+      { id: latestId, name: 'Latest Model', description: 'latest choice' },
     ]
     target.modelChangeMode = () => 'restart'
     target.switchModel = vi.fn()
@@ -1468,9 +1380,11 @@ describe('ChatController', () => {
     const running = controller.submit('long task')
     await vi.waitFor(() => expect(controller.getSnapshot().status).toBe('running'))
 
-    controller.openContextPanel()
+    await controller.submit('/settings')
+    expect(controller.getSnapshot().panel?.kind).toBe('settings')
+    await controller.submit('/context')
     expect(controller.getSnapshot().panel?.kind).toBe('context')
-    await controller.openModelPanel()
+    await controller.submit('/model')
     expect(controller.getSnapshot().panel?.kind).toBe('models')
     expect(controller.getSnapshot().queuedPrompts).toEqual([])
     expect(target.cancel).not.toHaveBeenCalled()
@@ -1482,7 +1396,7 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().notices).toEqual([
       expect.objectContaining({
         status: 'running',
-        text: 'Model change queued for after the current turn: Claude Sonnet 5',
+        text: 'Model change queued for after the current turn: bedrock/next-model',
       }),
     ])
 
@@ -1493,11 +1407,11 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().notices).toEqual([
       expect.objectContaining({
         status: 'delivered',
-        text: 'Model change to Claude Sonnet 5 superseded by Claude Opus 5',
+        text: 'Model change to bedrock/next-model superseded by bedrock/latest-model',
       }),
       expect.objectContaining({
         status: 'running',
-        text: 'Model change queued for after the current turn: Claude Opus 5',
+        text: 'Model change queued for after the current turn: bedrock/latest-model',
       }),
     ])
 
@@ -1509,7 +1423,7 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().runtime.model).toBe(latestId)
     expect(controller.getSnapshot().notices[1]).toMatchObject({
       status: 'delivered',
-      text: 'Model changed to Claude Opus 5',
+      text: 'Model changed to bedrock/latest-model',
     })
   })
 
@@ -1855,6 +1769,23 @@ describe('ChatController', () => {
     expect(apply).not.toHaveBeenCalled()
   })
 
+  it('shows /model as loading until models are discovered', async () => {
+    let resolveModels: (models: Awaited<ReturnType<NonNullable<ChatBackend['listModels']>>>) => void = () => {}
+    const target = backend()
+    target.listModels = () => new Promise((resolve) => (resolveModels = resolve))
+    const controller = new ChatController(target)
+
+    const opening = controller.submit('/model')
+    await vi.waitFor(() =>
+      expect(controller.getSnapshot().panel).toMatchObject({ kind: 'models', loading: true, rows: [] })
+    )
+
+    resolveModels([{ id: 'bedrock/test', name: 'Test', description: '', active: true }])
+    await opening
+    expect(controller.getSnapshot().panel).not.toHaveProperty('loading')
+    expect(controller.getSnapshot().panel?.rows).toHaveLength(1)
+  })
+
   it('toggles reasoning visibility through terminal settings', async () => {
     const controller = new ChatController(backend())
 
@@ -1887,11 +1818,11 @@ describe('ChatController', () => {
     expect(controller.getSnapshot().completedTurns).toEqual([])
     requestSetup.mockClear()
     await controller.submit('/settings')
-    await controller.activatePanelRow({ label: '', description: '', value: 'colorMode=light' })
-    await controller.activatePanelRow({ label: '', description: '', value: 'settings:General' })
+    await controller.activatePanelRow({ label: '', description: '', value: 'frogTheme=minimal' })
+    await controller.activatePanelRow({ label: '', description: '', value: 'settings:Agent' })
     const rows = controller.getSnapshot().panel?.rows ?? []
-    expect(rows.map(({ value }) => value)).toEqual(['telemetry'])
-    await controller.submit('/setup')
+    expect(rows.map(({ value }) => value)).toEqual(['contextOffloadThreshold', 'settings-action:setup'])
+    expect(await controller.activatePanelRow(rows[1]!)).toBe(true)
     expect(requestSetup).toHaveBeenCalledOnce()
   })
 

@@ -13,9 +13,9 @@ import { strToU8, unzipSync, zipSync } from 'fflate'
 import * as harness from '@strands-agents/harness'
 import { defineHarnessAgentConfig, harnessAgentOptionsFromConfig } from '@strands-agents/harness'
 
-import { writeAgentProject } from '../src/tui/project/export.js'
-import { importAgentProject } from '../src/tui/project/import.js'
-import { applyProviderEnvironmentValues, CliConfigStore } from '../src/tui/config.js'
+import { writeAgentProject } from '../../../src/tui/project/export.js'
+import { importAgentProject } from '../../../src/tui/project/import.js'
+import { applyProviderEnvironmentValues, CliConfigStore } from '../../../src/tui/config.js'
 
 const temporaryDirectories: string[] = []
 
@@ -66,14 +66,20 @@ describe('agent projects', () => {
       expect(entries.has('strands.agent.json')).toBe(false)
       expect(entries.has('run.ts')).toBe(false)
       expect(entries.has('run.py')).toBe(false)
-      expect(entries.get('README.md')?.toString()).toContain('strands --agent .')
+      const readme = entries.get('README.md')!.toString()
+      expect(readme).toContain('strands --agent .')
+      expect(readme).toContain('## Setup on Windows PowerShell')
+      expect(readme).toContain('Copy-Item .env.example .env')
+      if (language === 'python') {
+        expect(readme).toContain('.\\.venv\\Scripts\\Activate.ps1')
+      }
     }
   )
 
   it.each([false, true])('preserves resolved factory options with custom modules: %s', async (custom) => {
     const root = await temporaryDirectory()
     const destination = join(root, 'agent.zip')
-    const module = join(import.meta.dirname, 'fixtures', 'exported-tool.ts')
+    const module = resolve(import.meta.dirname, '../../fixtures/exported-tool.ts')
     const config = defineHarnessAgentConfig({
       instructions: "It's \"quoted\" 'text', newlines\nand ${literal} \\ paths 🐸",
       ...(custom
@@ -207,8 +213,8 @@ export const agent = await createHarness({
 `
     )
     const script = `
-      const { CliConfigStore } = await import(${JSON.stringify(new URL('../src/tui/config.ts', import.meta.url).href)})
-      const { loadTypescriptProject } = await import(${JSON.stringify(new URL('../src/tui/project/typescript.ts', import.meta.url).href)})
+      const { CliConfigStore } = await import(${JSON.stringify(new URL('../../../src/tui/config.ts', import.meta.url).href)})
+      const { loadTypescriptProject } = await import(${JSON.stringify(new URL('../../../src/tui/project/typescript.ts', import.meta.url).href)})
       const config = CliConfigStore.memory()
       config.useEnvironmentFiles(${JSON.stringify(trusted ? [join(root, '.env')] : [])})
       const source = await loadTypescriptProject(${JSON.stringify(importAgentProject(root))}, () => config.applyProviderEnvironment())
@@ -220,34 +226,6 @@ export const agent = await createHarness({
       { env: { ...process.env, projectToken: undefined, OPENAI_API_KEY: 'shell-key' } }
     )
     expect(JSON.parse(result.stdout)).toEqual({ token: trusted ? 'project-value' : null, key: 'shell-key' })
-  })
-
-  it('writes a runnable archive with declared custom source', async () => {
-    const root = await temporaryDirectory()
-    const destination = join(root, 'agent.zip')
-    const module = join(import.meta.dirname, 'fixtures', 'exported-tool.ts')
-    const config = defineHarnessAgentConfig({
-      name: 'Portable',
-      tools: [{ kind: 'tool', module, language: 'typescript', files: [module] }],
-      mcpServers: {
-        private: {
-          url: 'https://example.com/mcp',
-          headers: { Authorization: 'Bearer ${MCP_TOKEN}' },
-          disabled: true,
-        },
-      },
-    })
-
-    await expect(writeAgentProject(config, 'typescript', [], destination)).resolves.toBe(destination)
-
-    const entries = await readZipEntries(destination)
-    const source = entries.get('agent/agent.ts')!.toString()
-    expect(source).toContain("name: 'Portable'")
-    expect(source).toContain('./agent/tools/exported-tool.js')
-    expect(source).not.toContain('sessionId:')
-    expect(entries.get('agent/tools/exported-tool.ts')?.toString('utf8')).toBe(await readFile(module, 'utf8'))
-    expect(entries.has('agent/agent.ts')).toBe(true)
-    expect(entries.has('package.json')).toBe(true)
   })
 
   it.each(['canonical', 'aliased'])('loads edited exported agent code through %s paths', async (pathKind) => {
@@ -290,7 +268,7 @@ export const agent = await createHarness({
       project.entrypoint = join(alias, 'agent', 'agent.ts')
     }
     const script = `
-      const { loadTypescriptProject } = await import(${JSON.stringify(new URL('../src/tui/project/typescript.ts', import.meta.url).href)})
+      const { loadTypescriptProject } = await import(${JSON.stringify(new URL('../../../src/tui/project/typescript.ts', import.meta.url).href)})
       const source = await loadTypescriptProject(${JSON.stringify(project)})
       const agent = await source.createAgent({ printer: false })
       await agent.initialize()
@@ -342,6 +320,56 @@ export const agent = await createHarness({
       expect(dependencies['@cedar-policy/cedar-wasm']).toBeTruthy()
       expect(dependencies['@strands-agents/harness']).toMatch(/^\^\d/)
     }
+  })
+
+  it.each(['typescript', 'python'] as const)('preserves URL and local skill sources for %s', async (language) => {
+    const root = await temporaryDirectory()
+    const skill = join(root, 'skills', 'review')
+    await mkdir(skill, { recursive: true })
+    await writeFile(join(skill, 'SKILL.md'), '# Review')
+    const url = 'https://example.com/remote/SKILL.md'
+    const destination = join(root, 'agent.zip')
+
+    await writeAgentProject(
+      defineHarnessAgentConfig({ skills: [url, join(root, 'skills')] }),
+      language,
+      [url, join(root, 'skills')],
+      destination
+    )
+
+    const entries = await readZipEntries(destination)
+    const source = entries.get(language === 'python' ? 'agent/agent.py' : 'agent/agent.ts')!.toString()
+    expect(source).toContain(url)
+    expect(source).not.toContain(language === 'python' ? `project_path("${url}")` : `projectPath('${url}')`)
+    expect(source).toContain(language === 'python' ? 'project_path("./agent/skills")' : "projectPath('./agent/skills')")
+    expect(entries.get('agent/skills/review/SKILL.md')?.toString()).toBe('# Review')
+  })
+
+  it.each(['typescript', 'python'] as const)('preserves a URL-only skill source for %s', async (language) => {
+    const root = await temporaryDirectory()
+    const url = 'https://example.com/remote/SKILL.md'
+    const destination = join(root, 'agent.zip')
+
+    await writeAgentProject(defineHarnessAgentConfig({ skills: [url] }), language, [url], destination)
+
+    const entries = await readZipEntries(destination)
+    const source = entries.get(language === 'python' ? 'agent/agent.py' : 'agent/agent.ts')!.toString()
+    expect(source).toContain(url)
+    expect(source).not.toContain('skills=False')
+    expect(source).not.toContain('skills: false')
+  })
+
+  it('rejects an explicit local skill source that would otherwise be omitted', async () => {
+    const root = await temporaryDirectory()
+    const missing = join(root, 'missing-skills')
+    await expect(
+      writeAgentProject(
+        defineHarnessAgentConfig({ skills: [missing] }),
+        'typescript',
+        [missing],
+        join(root, 'agent.zip')
+      )
+    ).rejects.toThrow('Configured skill source')
   })
 
   it.each([
@@ -580,7 +608,7 @@ export const agent = await createHarness({
       const toolDir = join(root, 'tool')
       await mkdir(toolDir)
       const module = join(toolDir, 'exported-tool.ts')
-      await writeFile(module, await readFile(join(import.meta.dirname, 'fixtures', 'exported-tool.ts')))
+      await writeFile(module, await readFile(resolve(import.meta.dirname, '../../fixtures/exported-tool.ts')))
       await writeFile(join(toolDir, secretName), 'not-a-real-secret')
       const config = defineHarnessAgentConfig({
         tools: [{ kind: 'tool', module, language: 'typescript', files: [toolDir] }],
@@ -603,7 +631,7 @@ export const agent = await createHarness({
     await writeFile(join(toolDir, '__pycache__', 'tool.pyc'), '')
     await writeFile(join(toolDir, '.env.example'), 'API_KEY=')
     const module = join(toolDir, 'exported-tool.ts')
-    await writeFile(module, await readFile(join(import.meta.dirname, 'fixtures', 'exported-tool.ts')))
+    await writeFile(module, await readFile(resolve(import.meta.dirname, '../../fixtures/exported-tool.ts')))
     const config = defineHarnessAgentConfig({
       tools: [{ kind: 'tool', module, language: 'typescript', files: [toolDir] }],
     })
@@ -623,7 +651,7 @@ export const agent = await createHarness({
     const toolDir = join(root, 'tool')
     await mkdir(toolDir)
     const module = join(toolDir, 'exported-tool.ts')
-    await writeFile(module, await readFile(join(import.meta.dirname, 'fixtures', 'exported-tool.ts')))
+    await writeFile(module, await readFile(resolve(import.meta.dirname, '../../fixtures/exported-tool.ts')))
     await symlink(outside, join(toolDir, 'linked'))
     const config = defineHarnessAgentConfig({
       tools: [{ kind: 'tool', module, language: 'typescript', files: [toolDir] }],

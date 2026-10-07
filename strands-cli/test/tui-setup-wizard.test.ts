@@ -603,42 +603,6 @@ describe('setup presentation', () => {
     }
   })
 
-  it('announces a newer CLI release on the opening menu', async () => {
-    const input = ttyInput()
-    const output = ttyOutput(120, 30)
-    let frame = ''
-    output.on('data', (chunk: Buffer) => {
-      if (chunk.toString().includes('\n')) {
-        frame = sanitizeTerminalText(chunk.toString())
-      }
-    })
-    const instance = render(
-      createElement(SetupWizard, {
-        config: CliConfigStore.memory({}, { animations: false }),
-        onComplete: () => {},
-        checkForUpdate: async () => '9.9.9',
-      }),
-      {
-        stdin: input,
-        stdout: output,
-        stderr: output,
-        interactive: true,
-        debug: true,
-        incrementalRendering: false,
-        patchConsole: false,
-        exitOnCtrlC: false,
-      }
-    )
-    try {
-      await vi.waitFor(() =>
-        expect(frame).toContain('Strands CLI 9.9.9 is available. Run `strands update` to install it.')
-      )
-    } finally {
-      instance.unmount()
-      await instance.waitUntilExit()
-    }
-  })
-
   it('resumes a configured harness from the Resume card', async () => {
     const input = ttyInput()
     const output = ttyOutput(120, 30)
@@ -1054,11 +1018,10 @@ describe('setup refresh', () => {
 describe('setup theme', () => {
   it('uses the same complete settings list as the regular settings panel', () => {
     const update = vi.fn()
-    const openThemePicker = vi.fn()
-    const setupRows = wizardSettingsRows(DEFAULT_CHAT_SETTINGS, update, openThemePicker, 'all')
+    const setupRows = wizardSettingsRows(DEFAULT_CHAT_SETTINGS, update, 'all')
     const regularRows = settingsRows(DEFAULT_CHAT_SETTINGS)
-    const theme = setupRows[1]!
-    const regularTheme = regularRows[1]!.control
+    const theme = setupRows[0]!
+    const regularTheme = regularRows[0]!.control
 
     expect(setupRows.map(({ label }) => label)).toEqual(regularRows.map(({ label }) => label))
     expect(regularTheme?.kind).toBe('segmented')
@@ -1066,8 +1029,7 @@ describe('setup theme', () => {
       regularTheme?.kind === 'segmented' ? regularTheme.options.map(({ label }) => label) : []
     )
     theme.choices?.at(-1)?.activate()
-    expect(openThemePicker).toHaveBeenCalledOnce()
-    expect(update).not.toHaveBeenCalled()
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ frogTheme: 'solar' }))
   })
 
   it('shows and persists non-visual settings from the setup panel', async () => {
@@ -1096,9 +1058,11 @@ describe('setup theme', () => {
       await instance.waitUntilRenderFlush()
       await press('\u0013')
       await vi.waitFor(() => expect(frame).toContain('Auto-Discovery'))
-      expect(frame).toContain('Color mode')
+      expect(frame).not.toContain('Color mode')
       expect(frame).toContain('Transcript spacing')
       expect(frame).not.toContain('Presentation')
+      await press('\t')
+      expect(frame).toContain('Context offloading')
       await press('\t')
       expect(frame).toContain('Skills')
       expect(frame).toContain('Agents (peer-to-peer messaging)')
@@ -1106,7 +1070,7 @@ describe('setup theme', () => {
       await press('\u001b[C')
       await vi.waitFor(() => expect(config.snapshot().settings.mcpDiscovery).toBe(true))
       await press('\t')
-      expect(frame).toContain('Usage ping (telemetry)')
+      expect(frame).toContain('Anonymous usage')
       await press('\u001b[B')
       await press('\u001b[C')
       await vi.waitFor(() => expect(config.snapshot().settings.telemetry).toBe(false))
@@ -1116,7 +1080,7 @@ describe('setup theme', () => {
     }
   })
 
-  it('persists a custom theme applied from setup settings', async () => {
+  it('persists a theme applied from setup settings', async () => {
     const config = CliConfigStore.memory({}, { animations: false })
     const input = ttyInput()
     const output = ttyOutput(120, 24)
@@ -1142,22 +1106,18 @@ describe('setup theme', () => {
       await instance.waitUntilRenderFlush()
       await press('\u0013')
       await press('\r')
-      await vi.waitFor(() => expect(frame).toContain('Custom'))
+      await vi.waitFor(() => expect(frame).toContain('Solar'))
       const themeLines = frame.split('\n')
-      const colorModeLine = themeLines.find((line) => /Auto.*Light.*Dark/u.test(line))
       const firstThemeLine = themeLines.find((line) => line.includes('Classic'))
       expect(firstThemeLine).toMatch(/Classic.*Minimal.*Homeland/u)
       expect(themeLines.find((line) => line.includes('Merlin'))).toMatch(/Merlin.*Kikker.*Cyborg/u)
-      expect(themeLines.find((line) => line.includes('Spectre'))).toMatch(/Spectre.*Custom/u)
-      expect(colorModeLine).toBeDefined()
+      expect(themeLines.find((line) => line.includes('Spectre'))).toMatch(/Spectre.*Solar/u)
       expect(themeLines.every((line) => stringWidth(line) <= 120)).toBe(true)
-      await press('\u001b[B')
-      await press('\u001b[D')
-      await press('\t')
-      await press('\t')
-      await press('\t')
-      await press('\r')
-      await vi.waitFor(() => expect(config.snapshot().settings.frogTheme).toBe('custom'))
+      const solarRow = themeLines.findIndex((line) => line.includes('Solar'))
+      const solarColumn = stringWidth(themeLines[solarRow]!.slice(0, themeLines[solarRow]!.indexOf('Solar'))) + 1
+      await press(mouseInputSequence(0, solarColumn, solarRow + 1, 'M'))
+      await press(mouseInputSequence(3, solarColumn, solarRow + 1, 'm'))
+      await vi.waitFor(() => expect(config.snapshot().settings.frogTheme).toBe('solar'))
     } finally {
       instance.unmount()
       await instance.waitUntilExit()

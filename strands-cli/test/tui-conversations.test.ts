@@ -336,7 +336,7 @@ describe('ConversationManager', () => {
     expect(manager.getSnapshot().panel?.rows.every((row) => row.section === undefined)).toBe(true)
   })
 
-  it.each(['/goal Keep it concise', '/loop Finish the tests', '/loop --background --for 30m Finish the tests'])(
+  it.each(['/goal Keep it concise', '/loop Finish the tests'])(
     'rejects %s without starting or forking an agent',
     async (command) => {
       const stream = vi.fn(emptyRun)

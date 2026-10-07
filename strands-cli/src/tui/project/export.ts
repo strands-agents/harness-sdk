@@ -10,14 +10,14 @@ import { normalizeHarnessAgentConfig } from '@strands-agents/harness/internal'
 import { ZipFile } from 'yazl'
 
 import { webFetchModelId } from '../builtin-tools.js'
-import { configuredSkillPaths } from '../skills.js'
+import { resolveSkillPaths } from '../skills.js'
 import { PROVIDER_PACKAGES } from '../provider/packages.js'
 import { chooseSaveFile } from '../terminal/directory-picker.js'
 import { agentProjectSource } from './source.js'
 import { AGENT_ENTRYPOINT_FILE, regularFile, resolveProjectEntrypoint } from './archive.js'
 import type { AgentProjectLanguage, ImportedAgentProject } from './import.js'
 import { portableConfig, validateNoConfigSecrets } from './configuration.js'
-import { containsPath, type PackagedSource } from './packaging.js'
+import { assertPortablePathComponent, containsPath, type PackagedSource } from './packaging.js'
 
 const MAX_PROJECT_BYTES = 50 * 1024 * 1024
 
@@ -65,12 +65,12 @@ export async function exportSavedAgent(
   }
   const baseDir = saved.profileBaseDir ?? cwd
   const skills = saved.profile.skills
-  const path = destination.startsWith('~/') ? resolve(homedir(), destination.slice(2)) : resolve(cwd, destination)
+  const path = /^~[/\\]/u.test(destination) ? resolve(homedir(), destination.slice(2)) : resolve(cwd, destination)
   const zipPath = path.toLowerCase().endsWith('.zip') ? path : `${path}.zip`
   return writeAgentProject(
     saved.profile,
     language,
-    configuredSkillPaths(typeof skills === 'object' ? [...skills] : skills, baseDir),
+    resolveSkillPaths(typeof skills === 'object' ? [...skills] : skills, baseDir, false),
     zipPath,
     baseDir,
     false
@@ -85,10 +85,15 @@ export async function writeAgentProject(
   baseDir = process.cwd(),
   overwrite = true
 ): Promise<string> {
-  const skills = discoverSkillPackages(skillPaths.map((path) => resolve(baseDir, path)))
+  const localSkillPaths = skillPaths
+    .filter((path) => !path.startsWith('https://'))
+    .map((path) => resolve(baseDir, path))
+  const optionalSkillPaths = new Set(profile.skills === true ? [resolve(baseDir, '.agent', 'skills')] : [])
+  const skills = discoverSkillPackages(localSkillPaths, optionalSkillPaths)
+  const exportedSkillSources = portableSkillSources(skillPaths, skills.length > 0)
   const privatePaths = resolvePrivatePaths(profilePrivatePaths(profile), baseDir)
   const sources: PackagedSource[] = []
-  const config = portableConfig(profile, language, skills.length > 0, sources, baseDir)
+  const config = portableConfig(profile, language, exportedSkillSources, sources, baseDir)
   const files = language === 'typescript' ? typescriptProject(config) : pythonProject(config)
   const zip = new ZipFile()
   let bytes = 0
@@ -99,6 +104,7 @@ export async function writeAgentProject(
     }
   }
   for (const [path, contents] of Object.entries(files)) {
+    assertPortableArchivePath(path)
     const buffer = Buffer.from(contents)
     addBytes(buffer.length)
     zip.addBuffer(buffer, path, { compress: false, mode: 0o100644 })
@@ -108,10 +114,12 @@ export async function writeAgentProject(
   }
   for (const source of sources) {
     if ('contents' in source) {
+      assertPortableArchivePath(`agent/${source.destination}`)
       const buffer = Buffer.from(source.contents)
       addBytes(buffer.length)
       zip.addBuffer(buffer, `agent/${source.destination}`, { compress: false, mode: 0o100644 })
     } else if (source.directoryOnly) {
+      assertPortableArchivePath(`agent/${source.destination}`)
       zip.addEmptyDirectory(`agent/${source.destination}`)
     } else {
       addPath(zip, source.source, `agent/${source.destination}`, addBytes, privatePaths)
@@ -211,7 +219,7 @@ export async function exportSourceProject(
 
 function resolvePrivatePaths(paths: readonly string[], baseDir: string): string[] {
   return paths.map((path) => {
-    const absolute = resolve(baseDir, path === '~' || path.startsWith('~/') ? join(homedir(), path.slice(1)) : path)
+    const absolute = resolve(baseDir, path === '~' || /^~[/\\]/u.test(path) ? join(homedir(), path.slice(1)) : path)
     try {
       return realpathSync(absolute)
     } catch (error) {
@@ -423,17 +431,35 @@ function environmentTemplate(config: HarnessAgentConfig): string {
 
 function projectReadme(config: HarnessAgentConfig, language: AgentProjectLanguage): string {
   const python = language === 'python'
+  const install = python
+    ? ['python3 -m venv .venv', 'source .venv/bin/activate', 'python -m pip install -r requirements.txt']
+    : ['npm install']
+  const windowsInstall = python
+    ? ['python -m venv .venv', '.\\.venv\\Scripts\\Activate.ps1', 'python -m pip install -r requirements.txt']
+    : ['npm install']
+  if (python && Object.keys(config.dependencies.typescript).length > 0) {
+    install.push('npm install')
+    windowsInstall.push('npm install')
+  }
   return [
     `# ${config.name}`,
     '',
     config.description,
     '',
+    '## Setup on macOS or Linux',
+    '',
     '```bash',
-    ...(python
-      ? ['python3 -m venv .venv', 'source .venv/bin/activate', 'python -m pip install -r requirements.txt']
-      : ['npm install']),
-    ...(python && Object.keys(config.dependencies.typescript).length > 0 ? ['npm install'] : []),
+    ...install,
     'cp .env.example .env',
+    '# Set credentials in .env or use your existing provider credential chain.',
+    'strands --agent . --env-file .env',
+    '```',
+    '',
+    '## Setup on Windows PowerShell',
+    '',
+    '```powershell',
+    ...windowsInstall,
+    'Copy-Item .env.example .env',
     '# Set credentials in .env or use your existing provider credential chain.',
     'strands --agent . --env-file .env',
     '```',
@@ -459,14 +485,29 @@ function projectReadme(config: HarnessAgentConfig, language: AgentProjectLanguag
   ].join('\n')
 }
 
-function discoverSkillPackages(paths: readonly string[]): SkillPackage[] {
+function portableSkillSources(paths: readonly string[], hasLocalSkills: boolean): string[] {
+  const sources: string[] = []
+  let includedLocalSkills = false
+  for (const path of paths) {
+    if (path.startsWith('https://')) {
+      if (!sources.includes(path)) sources.push(path)
+    } else if (hasLocalSkills && !includedLocalSkills) {
+      sources.push('./agent/skills')
+      includedLocalSkills = true
+    }
+  }
+  return sources
+}
+
+function discoverSkillPackages(paths: readonly string[], optionalPaths: ReadonlySet<string>): SkillPackage[] {
   const packages = new Map<string, SkillPackage>()
   for (const path of paths) {
     let details
     try {
       details = lstatSync(path)
-    } catch {
-      continue
+    } catch (error) {
+      if (optionalPaths.has(path) && (error as NodeJS.ErrnoException).code === 'ENOENT') continue
+      throw new Error(`Configured skill source ${JSON.stringify(path)} cannot be read.`, { cause: error })
     }
     const candidates =
       details.isFile() && basename(path).toLowerCase() === 'skill.md'
@@ -479,16 +520,21 @@ function discoverSkillPackages(paths: readonly string[]): SkillPackage[] {
                 .map((entry) => join(path, entry.name))
                 .filter(hasSkillFile)
             : []
+    if (candidates.length === 0 && !optionalPaths.has(path)) {
+      throw new Error(`Configured skill source ${JSON.stringify(path)} contains no SKILL.md.`)
+    }
     for (const candidate of candidates) {
-      const id = safeComponent(basename(candidate))
+      const id = basename(candidate)
+      assertPortablePathComponent(id)
       const resolved = realpathSync(candidate)
-      const existing = packages.get(id)
+      const key = id.toLowerCase()
+      const existing = packages.get(key)
       if (existing && existing.path !== resolved) {
         throw new Error(
           `Two skills share the folder name ${JSON.stringify(id)} (${existing.path} and ${resolved}); rename one before export.`
         )
       }
-      packages.set(id, { id, path: resolved })
+      packages.set(key, { id, path: resolved })
     }
   }
   return [...packages.values()].sort((left, right) => left.id.localeCompare(right.id))
@@ -520,6 +566,7 @@ function addPath(
   addBytes: (size: number) => void,
   privatePaths: readonly string[]
 ): void {
+  assertPortableArchivePath(destination)
   if (privatePaths.some((path) => containsPath(path, source))) {
     throw new Error('Keep exported source outside the configured session and memory directories.')
   }
@@ -546,8 +593,14 @@ function addDirectory(
     zip.addEmptyDirectory(destination)
   }
   const visit = (directory: string): void => {
+    const names = new Set<string>()
     for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-      safeComponent(entry.name)
+      assertPortablePathComponent(entry.name)
+      const key = entry.name.toLowerCase()
+      if (names.has(key)) {
+        throw new Error(`Directory ${JSON.stringify(directory)} contains names that collide on Windows.`)
+      }
+      names.add(key)
       const path = join(directory, entry.name)
       if (IGNORED_DIRECTORIES.has(entry.name) || excluded.has(relative(root, path))) {
         continue
@@ -686,11 +739,10 @@ function writeZip(zip: ZipFile, destination: string, overwrite: boolean): Promis
   })
 }
 
-function safeComponent(value: string): string {
-  if (!value || value.includes('/') || value.includes('\\') || value === '.' || value === '..') {
-    throw new Error('Exported projects contain an unsafe path component.')
+function assertPortableArchivePath(path: string): void {
+  for (const component of path.split('/')) {
+    assertPortablePathComponent(component)
   }
-  return value
 }
 
 function slug(value: string): string {

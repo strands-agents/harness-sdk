@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { createHarness, type HarnessAgentConfig, type HarnessAgentOptions } from '@strands-agents/harness'
 import { resolveInterventions } from '@strands-agents/harness/internal'
 import type { Message, Agent, Tool } from '@strands-agents/sdk'
+import { Offload } from '@strands-agents/sdk/experimental'
 import { ContextInjector } from '@strands-agents/sdk/vended-plugins'
 import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
 
@@ -19,6 +20,7 @@ import {
   type ChatDiffPreview,
   type ChatForkState,
   type ChatSettings,
+  type ContextOffloadThreshold,
 } from './chat/controller.js'
 import { isUnresolvedBackgroundTask } from './chat/controller-helpers.js'
 import { ConversationManager } from './session/conversations.js'
@@ -41,7 +43,7 @@ import {
   restoreSessionAgentDefinition,
 } from './session/agent-definition.js'
 import { DEFAULT_SESSION_DIR, FileSessionRuntime, SessionRootCatalog, type SessionTarget } from './session/sessions.js'
-import { configuredSkillPaths, FileSkillsRuntime, resolveSkillPaths, type SkillPathsOption } from './skills.js'
+import { FileSkillsRuntime, resolveSkillPaths, type SkillPathsOption } from './skills.js'
 import { StrandsChatBackend } from './strands-backend.js'
 import { LiveSteering } from './steering.js'
 import { DEFAULT_STREAM_PRESENTATION } from './stream-presentation.js'
@@ -85,6 +87,7 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
   const sessionCatalog = await loadSessionCatalog(options.sessionCatalogPath)
 
   const config = options.config ?? (await CliConfigStore.load(options.configPath))
+  const launchSettings = config.snapshot().settings
   const configuredInterventions = await resolveInterventions(options.agentOptions?.interventions)
   const configuredSessionId = configuredSessionSettings.id
   const {
@@ -155,9 +158,12 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
       throw new Error('Runtime is disposed.')
     }
     const agentOptions = { ...controllerOptions, ...overrides }
-    requireBedrockRegion(agentOptions.model)
+    const resolvedAgentOptions = options.project
+      ? agentOptions
+      : withContextOffloadThreshold(agentOptions, launchSettings.contextOffloadThreshold)
+    requireBedrockRegion(resolvedAgentOptions.model)
     const agent = await (options.buildAgent ?? createHarness)({
-      ...agentOptions,
+      ...resolvedAgentOptions,
       tools: [...configuredTools],
       plugins: [
         ...(agentOptions.plugins ?? []),
@@ -252,7 +258,7 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
       ? baseAgentOptions
       : await restoreSessionAgentDefinition(baseAgentOptions, workspace)
     const skillPaths = resolveSkillPaths(configuredSkillSources, workspace, config.snapshot().settings.skillDiscovery)
-    const profileSkillPaths = configuredSkillPaths(configuredSkillSources, workspace)
+    const profileSkillPaths = resolveSkillPaths(configuredSkillSources, workspace, false)
     const sandbox =
       configuredSandbox === undefined || configuredSandbox === false
         ? new WorkspaceSandbox(workspace)
@@ -260,6 +266,7 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
     const mcp = await loadMcp({
       ...(await workspaceMcpOptions(options, initialWorkspace, workspace, config.snapshot().settings.mcpDiscovery)),
       ...(configuredMcpServers ? { servers: configuredMcpServers } : {}),
+      backgroundConnect: true,
     })
     const configuredTools: NonNullable<HarnessAgentOptions['tools']> = [
       ...(restoredAgentOptions.tools ?? []),
@@ -283,6 +290,8 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
       sandbox,
       interventions: [liveSteering, cedarPermissions, ...configuredInterventions],
     }
+    // Exported source factories retain authored options unless the override contains the key.
+    if (configuredMcpServers) Reflect.set(controllerOptions, 'mcpServers', undefined)
 
     const configSnapshot = config.snapshot()
     let exportProfile = {
@@ -544,6 +553,29 @@ export async function createInteractiveChat(options: CreateInteractiveChatOption
   } catch (error) {
     await disposeShared()
     throw error
+  }
+}
+
+function withContextOffloadThreshold(
+  options: HarnessAgentOptions,
+  threshold: ContextOffloadThreshold
+): HarnessAgentOptions {
+  const contextManager = options.contextManager
+  if (
+    threshold === 'default' ||
+    (contextManager !== undefined && contextManager !== 'auto' && contextManager !== 'agentic')
+  ) {
+    return options
+  }
+  const summarizeUtilization = contextManager === 'agentic' ? 1 : 0.85
+  return {
+    ...options,
+    contextManager: {
+      strategies: [
+        Offload.truncate('toolResults', { previewTokens: 750 }).when({ threshold }),
+        Offload.summarize('*').when({ utilization: summarizeUtilization, preserveRecent: 4 }),
+      ],
+    },
   }
 }
 

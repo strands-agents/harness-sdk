@@ -1,0 +1,72 @@
+name: 'Harness CLI: TUI Integration Test'
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to test; defaults to the selected branch
+        required: false
+        type: string
+
+jobs:
+  tui-integration:
+    name: ${{ matrix.os-name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os-name: macOS
+            runner: macos-latest
+          - os-name: Windows
+            runner: strands-agents_windows-latest_4-core
+    defaults:
+      run:
+        working-directory: strands-cli
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Prepare exported Python agent runtime
+        run: |
+          python -m venv ../harness-py/.venv
+          python -c "import os, pathlib, subprocess; root=pathlib.Path('../harness-py/.venv'); python=root/('Scripts/python.exe' if os.name == 'nt' else 'bin/python'); subprocess.check_call([str(python), '-m', 'pip', 'install', '--disable-pip-version-check', '-e', '../strands-py', '-e', '../harness-py'])"
+
+      - name: Select test Python
+        run: python -c "import os, sys; env=open(os.environ['GITHUB_ENV'], 'a'); print(f'PYTHON={sys.executable}', file=env)"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run TUI integration scenarios
+        env:
+          STRANDS_CLI_TEST_DIST: 'true'
+        run: npm run test:tui-integration
+
+      - name: Run deterministic platform E2E scenarios
+        run: npm run test:platform-integration

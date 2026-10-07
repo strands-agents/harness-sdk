@@ -350,6 +350,7 @@ describe('runInkChat', () => {
     const hardExit = vi.spyOn(processTree, 'hardExitProcessTree').mockImplementation(() => {
       expect(input.setRawMode).toHaveBeenLastCalledWith(false)
       expect(written).toContain('?1049l')
+      expect(written).toContain('?2031l')
       throw forcedExit
     })
     let startupSignal: AbortSignal | undefined

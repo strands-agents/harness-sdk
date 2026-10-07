@@ -1,0 +1,126 @@
+import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { promisify } from 'node:util'
+import { URL, fileURLToPath } from 'node:url'
+import { expect } from 'vitest'
+
+const execFileAsync = promisify(execFile)
+
+export type TuiScenario =
+  | 'approval'
+  | 'chat'
+  | 'exit'
+  | 'follow-up'
+  | 'frog'
+  | 'panels'
+  | 'resize'
+  | 'setup-export'
+  | 'shell-command'
+  | 'shell-interrupt'
+  | 'startup'
+  | 'startup-typing'
+
+export type TuiDriverScenario =
+  TuiScenario | 'export-failure' | 'lifecycle-profile' | 'lifecycle-project' | 'lifecycle-setup-import'
+
+export interface TuiResult {
+  returnCode: number
+  termiosRestored: boolean | null
+  output: string
+  resizeOutput: string
+  resizeBurstOutput: string
+  resizeNoopOutput: string
+  exportSaved: boolean
+}
+
+export async function runTuiScenario(scenario: TuiScenario): Promise<TuiResult> {
+  const loader = fileURLToPath(new URL('../fixtures/strands-cli-routing-source-loader.mjs', import.meta.url))
+  const fixture = fileURLToPath(new URL('../fixtures/tui-integration-process.mjs', import.meta.url))
+  const exportPath = join(tmpdir(), `strands-tui-export-${randomUUID()}.zip`)
+  try {
+    return await runTuiCommand({
+      scenario,
+      command: [process.execPath, '--no-warnings=ExperimentalWarning', '--experimental-loader', loader, fixture],
+      cwd: fileURLToPath(new URL('../..', import.meta.url)),
+      exportPath,
+    })
+  } finally {
+    await rm(exportPath, { force: true })
+  }
+}
+
+export async function runTuiCommand(options: {
+  scenario: TuiDriverScenario
+  command: readonly string[]
+  cwd: string
+  exportPath: string
+  exportLanguage?: 'typescript' | 'python'
+  importPath?: string
+  env?: NodeJS.ProcessEnv
+  timeout?: number
+}): Promise<TuiResult> {
+  const windows = process.platform === 'win32'
+  const driver = fileURLToPath(
+    new URL(
+      windows ? '../fixtures/tui-integration-conpty-driver.mjs' : '../fixtures/tui-integration-pty-driver.py',
+      import.meta.url
+    )
+  )
+  const { stdout } = await execFileAsync(
+    windows ? process.execPath : (process.env.PYTHON ?? 'python3'),
+    [driver, ...options.command],
+    {
+      cwd: options.cwd,
+      timeout: options.timeout ?? 25_000,
+      maxBuffer: 2 * 1024 * 1024,
+      env: {
+        ...process.env,
+        ...options.env,
+        ...(options.exportLanguage ? { STRANDS_CLI_TEST_EXPORT_LANGUAGE: options.exportLanguage } : {}),
+        STRANDS_CLI_TEST_EXPORT_PATH: options.exportPath,
+        ...(options.importPath ? { STRANDS_CLI_TEST_IMPORT_PATH: options.importPath } : {}),
+        STRANDS_CLI_TEST_SCENARIO: options.scenario,
+      },
+    }
+  )
+  const result = JSON.parse(stdout) as Omit<TuiResult, 'output' | 'resizeOutput'> & {
+    transcript: string
+    resizeTranscript: string
+    resizeBurstTranscript: string
+    resizeNoopTranscript: string
+  }
+  return {
+    returnCode: result.returnCode,
+    termiosRestored: result.termiosRestored,
+    output: decode(result.transcript),
+    resizeOutput: decode(result.resizeTranscript),
+    resizeBurstOutput: decode(result.resizeBurstTranscript),
+    resizeNoopOutput: decode(result.resizeNoopTranscript),
+    exportSaved: result.exportSaved,
+  }
+}
+
+export function expectRestoredTerminal(result: TuiResult): void {
+  const enterAlternateScreen = '\u001b[?1049h'
+  const leaveAlternateScreen = '\u001b[?1049l'
+  const enableMouse = '\u001b[?1002h\u001b[?1006h'
+  const disableMouse = '\u001b[?1006l\u001b[?1003l\u001b[?1002l'
+
+  if (result.termiosRestored !== null) {
+    expect(result.termiosRestored).toBe(true)
+  }
+  expect(result.output.split(enterAlternateScreen).length - 1).toBe(1)
+  expect(result.output.split(leaveAlternateScreen).length - 1).toBe(1)
+  expect(result.output.split(enableMouse).length - 1).toBe(1)
+  expect(result.output.split(disableMouse).length - 1).toBe(1)
+  expect(result.output.indexOf(enterAlternateScreen)).toBeLessThan(result.output.indexOf(leaveAlternateScreen))
+  expect(result.output.indexOf(enableMouse)).toBeLessThan(result.output.indexOf(disableMouse))
+  expect(result.output.slice(result.output.lastIndexOf(leaveAlternateScreen))).not.toContain(enableMouse)
+}
+
+function decode(value: string): string {
+  return Buffer.from(value, 'base64').toString()
+}

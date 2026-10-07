@@ -104,6 +104,22 @@ describe('interactiveBackgroundTasks', () => {
 })
 
 describe('interactive runtime lifecycle', () => {
+  it('applies an explicit context offload threshold to preset context management', async () => {
+    mocks.createHarness.mockResolvedValueOnce(fakeAgent('old'))
+    const controller = await createInteractiveChat({
+      config: CliConfigStore.memory({}, { contextOffloadThreshold: 2_500 }),
+    })
+
+    try {
+      const contextManager = mocks.createHarness.mock.calls[0]?.[0].contextManager as {
+        strategies: readonly { _threshold?: number; _utilizationThreshold?: number }[]
+      }
+      expect(contextManager.strategies).toMatchObject([{ _threshold: 2_500 }, { _utilizationThreshold: 0.85 }])
+    } finally {
+      await controller.dispose()
+    }
+  })
+
   it('loads authored MCP servers through the CLI runtime', async () => {
     const servers = { authored: { command: 'node', args: ['./server.mjs'] } }
     mocks.createHarness.mockResolvedValueOnce(fakeAgent('old'))
@@ -965,6 +981,7 @@ describe('interactive runtime lifecycle', () => {
         cwd: secondWorkspace,
         paths: [explicitMcp],
         strictPaths: [explicitMcp],
+        backgroundConnect: true,
       })
       expect(controller.getSnapshot().runtime).toMatchObject({
         cwd: secondWorkspace,

@@ -8,7 +8,7 @@ export type SetupFlow = 'quickstart' | 'customize' | 'import'
 
 export type AppearanceSettings = Pick<
   ChatSettings,
-  'frogTheme' | 'colorMode' | 'customTheme' | 'transcriptSpacing' | 'animations' | 'showReasoning' | 'toolOutput'
+  'frogTheme' | 'transcriptSpacing' | 'animations' | 'showReasoning' | 'toolOutput'
 >
 
 export interface SetupDraft {
@@ -33,7 +33,7 @@ export interface WizardRow {
   selectOptions?: readonly SelectOption[]
   status?: 'success' | 'warning' | 'error'
   descriptionColor?: string
-  choices?: readonly { label: string; value?: string | boolean; active: boolean; activate(): void }[]
+  choices?: readonly { label: string; value?: string | number | boolean; active: boolean; activate(): void }[]
   activate(): void
 }
 

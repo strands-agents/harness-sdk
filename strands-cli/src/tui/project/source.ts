@@ -102,12 +102,14 @@ export function agentProjectSource(config: HarnessAgentConfig, language: AgentPr
     options.delete(optionName('contextManager'))
   }
   if (!sameJson(config.skills, DEFAULT_HARNESS_AGENT_CONFIG.skills)) {
+    const skill = (value: string): string =>
+      value.startsWith('https://') ? literal(value) : projectPath(literal(value))
     expression(
       'skills',
       typeof config.skills === 'string'
-        ? projectPath(literal(config.skills))
+        ? skill(config.skills)
         : Array.isArray(config.skills)
-          ? `[${config.skills.map((skill) => projectPath(literal(skill))).join(', ')}]`
+          ? `[${config.skills.map(skill).join(', ')}]`
           : literal(config.skills)
     )
   } else {

@@ -114,7 +114,7 @@ describe('prompt editor input', () => {
       })
     )
 
-    expect(output).toContain(' 123456\n 789')
+    expect(output).toContain('│ 1234 │\n│ 5678 │\n│ 9▌')
   })
 
   it('follows the cursor after reaching the configured row cap', () => {
@@ -127,7 +127,9 @@ describe('prompt editor input', () => {
     )
 
     expect(output).not.toContain('one')
-    expect(output).toContain(' two\n three\n four')
+    expect(output).toContain('│ two')
+    expect(output).toContain('│ three')
+    expect(output).toContain('│ four▌')
   })
 
   it('reveals earlier multiline input when the cursor moves back', () => {
@@ -177,7 +179,7 @@ describe('prompt editor input', () => {
     expect(reduceInput(submitted.state, '', { upArrow: true }, 'idle').state.input).toBe('hello')
   })
 
-  it('queues with Enter, steers with Ctrl+G or modified Enter, and preserves drafts when interrupted', () => {
+  it('queues with Enter and preserves drafts when interrupted', () => {
     const typed = reduceInput(emptyEditor(), 'change direction', {}, 'running').state
 
     expect(reduceInput(typed, '', { return: true }, 'running')).toMatchObject({
@@ -190,14 +192,13 @@ describe('prompt editor input', () => {
       state: { input: 'change direction' },
     })
     expect(reduceInput(typed, '', { return: true, ctrl: true }, 'running')).toMatchObject({
-      action: 'steer',
+      action: 'submit',
       prompt: 'change direction',
       state: { input: '' },
     })
     expect(reduceInput(typed, 'g', { ctrl: true }, 'running')).toMatchObject({
-      action: 'steer',
-      prompt: 'change direction',
-      state: { input: '' },
+      action: 'none',
+      state: { input: 'change direction' },
     })
   })
 })

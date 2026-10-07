@@ -50,6 +50,20 @@ export function packageName(value: string, used: Set<string>): string {
   return result
 }
 
+export function assertPortablePathComponent(value: string): void {
+  if (
+    !value ||
+    value === '.' ||
+    value === '..' ||
+    /[/\\<>:"|?*]/u.test(value) ||
+    [...value].some((character) => (character.codePointAt(0) ?? 0) < 32) ||
+    /[ .]$/u.test(value) ||
+    /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(value)
+  ) {
+    throw new Error(`Path component ${JSON.stringify(value)} is not portable to Windows.`)
+  }
+}
+
 export function containsPath(root: string, path: string): boolean {
   const result = relative(root, path)
   return !result.startsWith(`..${sep}`) && result !== '..' && !isAbsolute(result)

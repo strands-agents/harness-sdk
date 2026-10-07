@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { defineHarnessAgentConfig, type HarnessAgentConfig } from '@strands-agents/harness'
 
-import { agentProjectSource } from '../src/tui/project/source.js'
+import { agentProjectSource } from '../../../src/tui/project/source.js'
 
 const store = { kind: 'memory-store' as const, module: './memory/store.ts' }
 
@@ -49,5 +49,11 @@ describe('agentProjectSource skills', () => {
 
   it('emits explicit skill paths', () => {
     expect(source({ skills: ['./skills'] })).toContain("skills: [projectPath('./skills')],")
+  })
+
+  it('preserves skill URLs without treating them as project paths', () => {
+    const url = 'https://example.com/review/SKILL.md'
+    expect(source({ skills: [url, './skills'] })).toContain(`skills: ['${url}', projectPath('./skills')],`)
+    expect(source({ skills: [url, './skills'] }, 'python')).toContain(`skills=["${url}", project_path("./skills")],`)
   })
 })

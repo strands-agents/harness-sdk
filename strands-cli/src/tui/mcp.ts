@@ -24,7 +24,7 @@ export interface LoadedMcp {
   dispose(): Promise<void>
 }
 
-export async function loadMcp(options: LoadMcpOptions = {}): Promise<LoadedMcp> {
+export async function loadMcp(options: LoadMcpOptions & { backgroundConnect?: boolean } = {}): Promise<LoadedMcp> {
   const { definitions, paths, warnings } = await readMcpDefinitions(options)
   const clientsByName = new Map(
     await Promise.all(
@@ -34,6 +34,11 @@ export async function loadMcp(options: LoadMcpOptions = {}): Promise<LoadedMcp> 
     )
   )
   const clients = [...clientsByName.values()].filter((client) => client !== undefined)
+  if (options.backgroundConnect) {
+    for (const client of clients) {
+      deferConnection(client)
+    }
+  }
   return {
     clients,
     paths: paths.map(sanitizeTerminalText),
@@ -63,6 +68,86 @@ export async function loadMcp(options: LoadMcpOptions = {}): Promise<LoadedMcp> 
 }
 
 const CLIENT_DEFAULTS = { applicationVersion: HARNESS_VERSION }
+
+// How long a server may hold up agent construction before its tools are delivered asynchronously.
+const BACKGROUND_CONNECT_GRACE_MS = 2_000
+
+type McpTools = Awaited<ReturnType<McpClient['listTools']>>
+type ToolsChangedCallback = (oldTools: string[], newTools: McpTools) => void
+
+/**
+ * `Agent.initialize()` awaits `listTools()` on every MCP client, so one unresponsive server (for
+ * example a stdio server waiting on a companion app) stalls startup until the MCP request timeout.
+ * Deferral starts the connection immediately, answers `listTools()` with no tools once the grace
+ * period lapses, and delivers the real list through `onToolsChanged` when the connection lands —
+ * the same callback the agent's tool registry already tracks for server-initiated tool changes.
+ */
+function deferConnection(client: McpClient, graceMs = BACKGROUND_CONNECT_GRACE_MS): void {
+  const baseListTools = client.listTools.bind(client)
+  const baseConnect = client.connect.bind(client)
+  let connecting: Promise<void> | undefined
+  let toolsChanged: ToolsChangedCallback | undefined
+  let pendingTools: McpTools | undefined
+
+  // Single-flight: the SDK's connect() starts a second transport handshake when called while one
+  // is already in flight, which deferral makes likely (the agent and the /mcp panel both connect).
+  client.connect = (reconnect = false): Promise<void> => {
+    if (reconnect || client.connectionState !== 'disconnected') {
+      return baseConnect(reconnect)
+    }
+    connecting ??= baseConnect(false).catch((error: unknown) => {
+      connecting = undefined
+      throw error
+    })
+    return connecting
+  }
+
+  // Capture the agent's subscription so tools that arrive before it exists are not dropped.
+  Object.defineProperty(client, 'onToolsChanged', {
+    configurable: true,
+    set(callback: ToolsChangedCallback | undefined) {
+      toolsChanged = callback
+      Reflect.set(McpClient.prototype, 'onToolsChanged', callback, client)
+      if (callback && pendingTools) {
+        const tools = pendingTools
+        pendingTools = undefined
+        callback([], tools)
+      }
+    },
+  })
+
+  // Reading through a function keeps TypeScript from narrowing the state across awaits.
+  const connectionState = (): McpClient['connectionState'] => client.connectionState
+  client.listTools = async (listOptions?: Parameters<McpClient['listTools']>[0]): Promise<McpTools> => {
+    if (connectionState() !== 'disconnected') {
+      return baseListTools(listOptions)
+    }
+    const connected = client.connect().then(() => true)
+    const ready = await Promise.race([
+      connected,
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), graceMs).unref?.()),
+    ])
+    if (ready) {
+      return connectionState() === 'connected' ? baseListTools(listOptions) : []
+    }
+    void connected
+      .then(async () => {
+        if (connectionState() !== 'connected') {
+          return
+        }
+        const tools = await baseListTools(listOptions)
+        if (toolsChanged) {
+          toolsChanged([], tools)
+        } else {
+          pendingTools = tools
+        }
+      })
+      .catch(() => undefined)
+    return []
+  }
+
+  void client.connect().catch(() => undefined)
+}
 
 /**
  * Tool names are only unique within one server, so each client's tools are namespaced by its config

@@ -1,13 +1,54 @@
 import type { DOMElement, Key } from 'ink'
 
-import type { ChatControllerApi, ChatPanel, ChatPanelRow, ChatPanelSlider, ChatSnapshot } from '../chat/controller.js'
+import type {
+  ChatControllerApi,
+  ChatModelPanel,
+  ChatPanel,
+  ChatPanelRow,
+  ChatPanelSlider,
+  ChatSnapshot,
+} from '../chat/controller.js'
+import { isActiveTask } from '../chat/controller-helpers.js'
 import { resolveModelTarget } from '../model/selection.js'
+import { COMPOSER_PANEL_HEIGHT } from '../terminal/composer.js'
 import type { MouseInput } from '../terminal/mouse-input.js'
 
 export type MetadataTarget = 'model' | 'effort' | 'context' | 'cwd'
-export const MODEL_COPY_TARGET = 'model:copy-id'
+export const MAX_VISIBLE_BACKGROUND_TASKS = 4
+export const COMPOSER_RESOURCE_PANEL_HEIGHT = COMPOSER_PANEL_HEIGHT + 2
+const SECTIONED_PANEL_SIDEBAR_DIVISOR = 3
+// Section borders, header row, header spacing, and help footer.
+const MODEL_PANEL_CHROME_ROWS = 5
+// Section borders and help footer.
+const SETTINGS_PANEL_CHROME_ROWS = 3
 
-export type ModelPanelFocus = 'effort' | 'search' | 'providers' | 'models' | 'copy'
+export type ModelPanelFocus = 'providers' | 'search' | 'models'
+export type SettingsPanelFocus = 'categories' | 'settings'
+
+/** Panels that render inside the prompt editor instead of over the conversation. */
+export function isComposerPanel(kind: ChatPanel['kind'] | undefined): boolean {
+  return kind === 'models' || kind === 'effort' || kind === 'settings' || kind === 'context'
+}
+
+export function composerPanelHeight(snapshot: ChatSnapshot, terminalHeight: number, party = false): number {
+  const activeBackgroundTasks = snapshot.tasks.filter(
+    (task) => task.source === 'background' && isActiveTask(task.status)
+  ).length
+  const panelHeight = isComposerPanel(snapshot.panel?.kind) ? COMPOSER_RESOURCE_PANEL_HEIGHT : COMPOSER_PANEL_HEIGHT
+  const statusRows =
+    snapshot.pendingSteering.length +
+    (snapshot.queuedPrompts.length > 0 || snapshot.status === 'interrupting'
+      ? Math.max(1, snapshot.queuedPrompts.length)
+      : 0) +
+    Number(snapshot.voice !== undefined && snapshot.voice.status !== 'off') +
+    Math.min(activeBackgroundTasks, MAX_VISIBLE_BACKGROUND_TASKS) +
+    Number(activeBackgroundTasks > MAX_VISIBLE_BACKGROUND_TASKS)
+  return Math.min(Math.max(party ? 3 : 1, terminalHeight - statusRows - 2), panelHeight + (party ? 2 : 0))
+}
+
+export function sectionedPanelSidebarWidth(panelWidth: number, preferredWidth = Infinity): number {
+  return Math.max(1, Math.min(Math.floor(panelWidth / SECTIONED_PANEL_SIDEBAR_DIVISOR), preferredWidth))
+}
 
 export function settingsLayout(
   panelWidth: number,
@@ -53,28 +94,21 @@ export function settingsThemeLayout(panelWidth: number): {
   }
 }
 
-export function adjacentSettingOption(
-  control: NonNullable<ChatPanelRow['control']>,
-  key: Partial<Key>,
-  columns: number
-): number | undefined {
-  if (control.kind !== 'segmented') {
+/** The settings row activation for ← or →: the neighboring option, or Off and On for a toggle. */
+export function settingArrowValue(row: ChatPanelRow, direction: -1 | 1): string | undefined {
+  const { control, value } = row
+  if (!value || !control) {
     return undefined
+  }
+  if (control.kind === 'toggle') {
+    return control.checked === direction > 0 ? undefined : value
   }
   const active = Math.max(
     0,
     control.options.findIndex((option) => option.active)
   )
-  if (key.leftArrow || key.rightArrow) {
-    return Math.max(0, Math.min(control.options.length - 1, active + (key.leftArrow ? -1 : 1)))
-  }
-  if (key.upArrow && active >= columns) {
-    return active - columns
-  }
-  if (key.downArrow && Math.floor(active / columns) < Math.floor((control.options.length - 1) / columns)) {
-    return Math.min(control.options.length - 1, active + columns)
-  }
-  return undefined
+  const option = control.options[active + direction]
+  return option ? `${value}=${option.value}` : undefined
 }
 
 const AGENT_GRID_TILE_ROWS = 8
@@ -247,6 +281,22 @@ function customModelSpecifier(query: string): string | undefined {
   }
 }
 
+export function initialPanelFilter(panel: ChatPanel | undefined): string {
+  if (panel?.kind === 'help') {
+    return 'controls'
+  }
+  if (panel?.kind === 'settings' && panel.settingsCategory) {
+    return `settings:${panel.settingsCategory}`
+  }
+  if (panel?.kind === 'models') {
+    const current = panel.rows.find((row) => row.badge?.text === 'current')?.filter
+    if (current && panel.filters?.some((filter) => filter.id === current)) {
+      return current
+    }
+  }
+  return 'all'
+}
+
 export function cyclePanelFilter(filters: readonly { id: string }[], current: string, direction: number): string {
   if (filters.length === 0) {
     return current
@@ -258,21 +308,16 @@ export function cyclePanelFilter(filters: readonly { id: string }[], current: st
   return filters[(index + direction + filters.length) % filters.length]!.id
 }
 
+/** Tab order between the `/model` provider and model sections. */
 export function cycleModelPanelFocus(
   current: ModelPanelFocus,
-  panel: Pick<ChatPanel, 'slider' | 'filters'>,
-  direction: number,
-  includeCopy = false
+  panel: ChatModelPanel,
+  direction: number
 ): ModelPanelFocus {
-  const order: ModelPanelFocus[] = [
-    ...(panel.slider && !panel.slider.disabled ? (['effort'] as const) : []),
-    'search',
-    ...(panel.filters?.length ? (['providers'] as const) : []),
-    'models',
-    ...(includeCopy ? (['copy'] as const) : []),
-  ]
-  const currentIndex = Math.max(0, order.indexOf(current))
-  return order[(currentIndex + (direction < 0 ? -1 : 1) + order.length) % order.length]!
+  const sections: ModelPanelFocus[] = [...(panel.filters?.length ? (['providers'] as const) : []), 'models']
+  const section = current === 'search' ? 'models' : current
+  const index = Math.max(0, sections.indexOf(section))
+  return sections[(index + (direction < 0 ? -1 : 1) + sections.length) % sections.length]!
 }
 
 export function panelPageSize(terminalHeight: number): number {
@@ -282,53 +327,17 @@ export function panelPageSize(terminalHeight: number): number {
 export function panelRowCapacity(
   kind: ChatPanel['kind'],
   terminalHeight: number,
-  terminalWidth = 80,
   rows: readonly ChatPanelRow[] = []
 ): number {
-  if (kind === 'settings') {
-    if (rows.length === 0) {
-      return Math.max(1, Math.floor((terminalHeight - 10) / 2))
-    }
-    const heights = rows.map((row) => {
-      const { columns, labelWidth } = settingsLayout(Math.min(84, terminalWidth - 4), row.value)
-      let labelHeight = 1
-      let lineWidth = 0
-      for (const word of row.label.split(' ')) {
-        if (lineWidth && lineWidth + 1 + word.length > labelWidth) {
-          labelHeight++
-          lineWidth = 0
-        }
-        lineWidth += (lineWidth ? 1 : 0) + word.length
-      }
-      const controlRows = row.control?.kind === 'segmented' ? Math.ceil(row.control.options.length / columns) : 1
-      if (row.value === 'frogTheme') {
-        const { columns: themeColumns, optionHeight } = settingsThemeLayout(terminalWidth - 4)
-        const themeOptions = row.control?.kind === 'segmented' ? row.control.options.length : 1
-        return 2 + Math.ceil(themeOptions / themeColumns) * optionHeight
-      }
-      return 1 + Math.max(labelHeight, controlRows)
-    })
-    let capacity = Math.max(1, rows.length)
-    for (let start = 0; start < rows.length; start++) {
-      let height = 0
-      for (let index = start; index < rows.length; index++) {
-        const row = rows[index]!
-        const section = row.section && (index === start || row.section !== rows[index - 1]?.section)
-        height += heights[index]! + (section ? (index === start ? 2 : 3) : 0)
-        if (height > terminalHeight - 10) {
-          capacity = Math.min(capacity, Math.max(1, index - start))
-          break
-        }
-      }
-    }
-    return capacity
-  }
   if (kind === 'permissions' || kind === 'tools') {
     const sections = new Set(rows.map((row) => row.section).filter(Boolean)).size
     return Math.max(1, Math.min(10, terminalHeight - 15 - sections * 2))
   }
   if (kind === 'models') {
-    return Math.max(1, Math.min(20, terminalHeight - 13))
+    return Math.max(1, terminalHeight - MODEL_PANEL_CHROME_ROWS)
+  }
+  if (kind === 'settings') {
+    return Math.max(1, terminalHeight - SETTINGS_PANEL_CHROME_ROWS)
   }
   if (['help', 'skills', 'mcp', 'tasks'].includes(kind)) {
     const sections = new Set(rows.map((row) => row.section).filter(Boolean)).size

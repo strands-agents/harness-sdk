@@ -47,11 +47,7 @@ export function SetupBrand({
 }): ReactElement {
   const palette = useTheme()
   const frogTheme = appearance.frogTheme
-  const frogOptions = {
-    colorMode: palette.mode,
-    customBase: appearance.customTheme.base,
-    ...(frogTheme === 'custom' ? { frogColor: palette.frog } : {}),
-  }
+  const frogOptions = { colorMode: palette.mode }
   const { left, width, height } = frame
   const frogHitbox = frogStartupHitbox(width, height)
   return (

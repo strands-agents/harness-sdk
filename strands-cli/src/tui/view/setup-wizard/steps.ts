@@ -91,11 +91,9 @@ export const CAPABILITY_DESCRIPTION_MAX_LENGTH = 44
 const noop = (): void => {}
 
 export function appearanceSettings(settings: ChatSettings): AppearanceSettings {
-  const { frogTheme, colorMode, customTheme, transcriptSpacing, animations, showReasoning, toolOutput } = settings
+  const { frogTheme, transcriptSpacing, animations, showReasoning, toolOutput } = settings
   return {
     frogTheme,
-    colorMode,
-    customTheme: globalThis.structuredClone(customTheme),
     transcriptSpacing,
     animations,
     showReasoning,
@@ -106,7 +104,6 @@ export function appearanceSettings(settings: ChatSettings): AppearanceSettings {
 export function wizardSettingsRows(
   settings: ChatSettings,
   update: (settings: ChatSettings) => void,
-  openThemePicker: () => void,
   scope: 'visual' | 'all' = 'visual'
 ): WizardRow[] {
   return (scope === 'all' ? SETTING_DEFINITIONS : VISUAL_SETTING_DEFINITIONS).map(
@@ -120,11 +117,7 @@ export function wizardSettingsRows(
         value,
         active: settings[key] === value,
         activate: (): void => {
-          if (key === 'frogTheme' && value === 'custom') {
-            openThemePicker()
-          } else {
-            update({ ...settings, [key]: value } as ChatSettings)
-          }
+          update({ ...settings, [key]: value } as ChatSettings)
         },
       })),
       activate: noop,

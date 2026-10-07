@@ -9,6 +9,8 @@ export const MIN_PROMPT_HEIGHT = 7
 export const MIN_PROMPT_ROWS = 2
 export const DEFAULT_MAX_PROMPT_ROWS = 8
 export const PROMPT_PADDING_WIDTH = 2
+// Fixed height shared by command-plus-input, loading, and inline panel states.
+export const COMPOSER_PANEL_HEIGHT = MIN_PROMPT_HEIGHT + 3
 
 export function composerMaxRows(terminalHeight: number, statusRows = 0): number {
   return Math.max(MIN_PROMPT_ROWS, Math.min(12, Math.floor(terminalHeight) - 10 - Math.max(0, statusRows)))
@@ -31,10 +33,10 @@ export function promptEditorHeight(
   const rows = promptViewport(
     input,
     cursor,
-    width - stringWidth(promptPrefix) - PROMPT_PADDING_WIDTH,
+    width - stringWidth(promptPrefix) - PROMPT_PADDING_WIDTH - 2,
     Math.max(MIN_PROMPT_ROWS, maxRows)
   )
-  return Math.min(maxHeight, Math.max(minimumHeight, rows.length + (party && input ? 2 : 1)))
+  return Math.min(maxHeight, Math.max(minimumHeight, rows.length + 2))
 }
 
 export interface EditorState {
@@ -50,7 +52,6 @@ export type InputPhase = 'idle' | 'running'
 type InputResult =
   | { state: EditorState; action: 'none' }
   | { state: EditorState; action: 'submit'; prompt: string }
-  | { state: EditorState; action: 'steer'; prompt: string }
   | { state: EditorState; action: 'cancel' }
 
 export interface PromptViewportRow {
@@ -67,17 +68,9 @@ export function reduceInput(state: EditorState, character: string, key: Partial<
   if (key.escape && phase === 'running') {
     return { state, action: 'cancel' }
   }
-  if (key.ctrl && character === 'g' && phase === 'running') {
-    const submitted = submitEditor(state, state.input)
-    return submitted.action === 'submit' ? { ...submitted, action: 'steer' } : submitted
-  }
   const characters = graphemes(state.input)
   if (character === '\n' || (key.ctrl && character === 'j')) {
     return edit(state, characters, state.cursor, state.cursor, ['\n'])
-  }
-  if (key.return && phase === 'running' && (key.ctrl || key.meta || key.super)) {
-    const submitted = submitEditor(state, state.input)
-    return submitted.action === 'submit' ? { ...submitted, action: 'steer' } : submitted
   }
   if (key.return) {
     return submitEditor(state, state.input)

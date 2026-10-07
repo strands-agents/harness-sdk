@@ -45,7 +45,6 @@ import {
 import { wrapLines } from '../presentation.js'
 import { Text, ThemeProvider, useTheme } from '../theme.js'
 import { BlinkingCursor, EditableText } from '../text-input.js'
-import { CustomThemeEditor, type Appearance } from '../custom-theme-editor.js'
 import { Fade, mixHexColors, useFadeTransition } from '../fade-in.js'
 
 import {
@@ -139,22 +138,6 @@ function SetupWizardContent({
   const [panelSettings, setPanelSettings] = useState<ChatSettings>(() =>
     globalThis.structuredClone({ ...config.snapshot().settings, ...initialSettings })
   )
-  const [appearanceOpen, setAppearanceOpen] = useState(false)
-  const priorAppearance = useRef(appearance)
-  const openAppearance = useCallback((): void => {
-    priorAppearance.current = appearance
-    setAppearanceOpen(true)
-  }, [appearance])
-  const previewAppearance = useCallback(
-    (next: Appearance): void => {
-      setAppearance((current) => ({ ...current, ...next }))
-    },
-    [setAppearance]
-  )
-  function closeAppearance(): void {
-    setAppearance(priorAppearance.current)
-    setAppearanceOpen(false)
-  }
   const palette = useTheme()
   const { surface: COMMAND_DECK_BACKGROUND, panel: PANEL_BACKGROUND, selection: PANEL_SELECTION } = palette
   const panelTransition = useFadeTransition(appearance.animations)
@@ -264,19 +247,6 @@ function SetupWizardContent({
   const isSettings = isAppearance && settingsReturn !== undefined
   const progress = appearanceOnly || isSettings ? undefined : setupStepProgress(flow, step)
   const progressHeight = progress ? 3 : 0
-  const updateAppearance = useCallback(
-    (next: AppearanceSettings): void => {
-      setAppearance(next)
-      setPanelSettings((current) => ({ ...current, ...next }))
-      if (isSettings) {
-        setError(undefined)
-        void config
-          .setSettings(next)
-          .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
-      }
-    },
-    [config, isSettings, setAppearance]
-  )
   const updateSettings = useCallback(
     (next: ChatSettings): void => {
       setPanelSettings(next)
@@ -398,7 +368,6 @@ function SetupWizardContent({
       ? wizardSettingsRows(
           { ...panelSettings, ...draft.settings, ...appearance },
           isSettings ? updateSettings : updateSetupSettings,
-          openAppearance,
           'all'
         ).filter(({ section }) => section === settingsCategory)
       : rowsForStep(
@@ -441,7 +410,6 @@ function SetupWizardContent({
   }, [
     appearance,
     panelSettings,
-    openAppearance,
     updateSetupSettings,
     updateSettings,
     isAppearance,
@@ -1493,7 +1461,7 @@ function SetupWizardContent({
   const frogElapsedMs = useBrandAnimationFrame(frogClockMs, brandFrame.width, brandFrame.height)
 
   useInput((input, key) => {
-    if (appearanceOpen || panelTransition.transitioning) return
+    if (panelTransition.transitioning) return
     const mouse = parseMouseInput(input)
     if (mouse) {
       hoverPointer.current = mouse
@@ -1996,14 +1964,7 @@ function SetupWizardContent({
   ) : null
 
   return (
-    <Box
-      width={width}
-      height={height}
-      paddingX={1}
-      flexDirection="column"
-      overflow="hidden"
-      backgroundColor={palette.canvas}
-    >
+    <Box width={width} height={height} paddingX={1} flexDirection="column" overflow="hidden">
       {showBrand ? (
         <SetupBrand
           frame={brandFrame}
@@ -2404,7 +2365,6 @@ function SetupWizardContent({
                                   slider={reasoningSlider}
                                   width={26}
                                   compact={false}
-                                  pressed={false}
                                   focused={reasoningRowIndex === selection}
                                   onElement={(element) => {
                                     setupEffortSliderElement.current = element
@@ -2428,7 +2388,6 @@ function SetupWizardContent({
                 <SetupSettingsPanel
                   rows={visibleRows}
                   category={settingsCategory}
-                  settings={{ ...panelSettings, ...draft.settings, ...appearance }}
                   start={viewportStart}
                   selected={selection}
                   width={bubbleWidth}
@@ -2723,20 +2682,6 @@ function SetupWizardContent({
           {settingsButton}
         </Box>
       )}
-      {appearanceOpen ? (
-        <CustomThemeEditor
-          settings={priorAppearance.current}
-          animate={appearance.animations}
-          width={width}
-          height={height}
-          onPreview={previewAppearance}
-          onClose={closeAppearance}
-          onApply={(next) => {
-            priorAppearance.current = { ...appearance, ...next }
-            updateAppearance(priorAppearance.current)
-          }}
-        />
-      ) : null}
     </Box>
   )
 }

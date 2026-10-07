@@ -12,15 +12,16 @@ import type { ChatSettings, SettingsCategory } from '../settings.js'
 
 export {
   DEFAULT_CHAT_SETTINGS,
+  CONTEXT_OFFLOAD_THRESHOLD_OPTIONS,
   FROG_THEMES,
   FROG_THEME_LABELS,
   THEME_COLOR_KEYS,
   type ChatSettings,
+  type ContextOffloadThreshold,
   type FrogTheme,
-  type ColorMode,
   type ResolvedColorMode,
   type ThemeColors,
-  type CustomTheme,
+  type ThemeSettings,
   type SettingsCategory,
 } from '../settings.js'
 
@@ -260,7 +261,8 @@ export interface ChatBackend {
   listEfforts?(): readonly ChatEffortOption[]
   setEffort?(effort: string): Promise<string | void>
   streamShell?(command: string): AsyncGenerator<ChatEvent, ChatRunResult, undefined>
-  queueSteering?(prompt: string): boolean
+  queueSteering?(prompt: string, onConsumed: () => void): boolean
+  drainSteering?(): string[]
   forkState?(): ChatForkState
   forkStash?(): Promise<Record<string, JSONValue> | undefined>
   captureConversation?(): Promise<Snapshot>
@@ -285,6 +287,11 @@ export interface ChatBackend {
 }
 
 export type ChatEntry =
+  | {
+      id: string
+      type: 'user'
+      text: string
+    }
   | {
       id: string
       type: 'reasoning'
@@ -371,60 +378,62 @@ export interface ChatPanelSlider {
   label: string
   options: readonly ChatEffortOption[]
   disabled?: boolean
-  focused?: boolean
 }
 
-export interface ChatPanel {
-  id: string
-  kind:
-    | 'progress'
-    | 'context'
-    | 'tasks'
-    | 'models'
-    | 'effort'
-    | 'sessions'
-    | 'skills'
-    | 'mcp'
-    | 'agents'
-    | 'rename'
-    | 'permissions'
-    | 'tools'
-    | 'settings'
-    | 'voice'
-    | 'export'
-    | 'help'
-    | 'detail'
-    | 'permission'
-    | 'error'
+export interface ChatPanelBase {
   title: string
   rows: readonly ChatPanelRow[]
   searchable?: boolean
   filters?: readonly ChatPanelFilter[]
-  slider?: ChatPanelSlider
   body?: string
-  diff?: ChatDiffPreview
-  followTail?: boolean
-  activity?: BackgroundAgentActivity
-  settingsCategory?: SettingsCategory
-  settingsCategories?: readonly {
-    id: SettingsCategory
-    label: string
-    description: string
-  }[]
 }
 
-export type ChatPanelOptions = Pick<
-  ChatPanel,
-  | 'searchable'
-  | 'filters'
-  | 'slider'
-  | 'body'
-  | 'diff'
-  | 'followTail'
-  | 'activity'
-  | 'settingsCategory'
-  | 'settingsCategories'
->
+export type NewChatPanel =
+  | (ChatPanelBase & {
+      kind:
+        | 'progress'
+        | 'context'
+        | 'tasks'
+        | 'sessions'
+        | 'skills'
+        | 'mcp'
+        | 'agents'
+        | 'rename'
+        | 'permissions'
+        | 'tools'
+        | 'voice'
+        | 'export'
+        | 'help'
+        | 'error'
+    })
+  | (ChatPanelBase & {
+      kind: 'models'
+      /** Models are still being discovered. */
+      loading?: boolean
+    })
+  | (ChatPanelBase & {
+      kind: 'effort'
+      slider: ChatPanelSlider
+    })
+  | (ChatPanelBase & {
+      kind: 'permission'
+      diff?: ChatDiffPreview
+    })
+  | (ChatPanelBase & {
+      kind: 'detail'
+      followTail?: boolean
+      activity?: BackgroundAgentActivity
+    })
+  | (ChatPanelBase & {
+      kind: 'settings'
+      settingsCategory?: SettingsCategory
+      settingsCategories?: readonly { id: SettingsCategory; label: string }[]
+    })
+
+export type ChatPanel = NewChatPanel & { id: string }
+export type ChatModelPanel = Extract<ChatPanel, { kind: 'models' }>
+export type ChatPermissionPanel = Extract<ChatPanel, { kind: 'permission' }>
+export type ChatDetailPanel = Extract<ChatPanel, { kind: 'detail' }>
 
 export interface ChatRuntimeInfo {
   agent: string
@@ -447,6 +456,7 @@ export interface ChatVoiceStore {
 export interface ChatSnapshot {
   completedTurns: readonly ChatTurn[]
   activeTurn?: ChatTurn
+  pendingSteering: readonly string[]
   queuedPrompts: readonly {
     id: string
     prompt: string
@@ -513,7 +523,6 @@ export interface ChatControllerApi {
   submit(input: string): Promise<ChatTurn | undefined>
   enqueuePeerMessage?(message: PeerMessage): boolean
   steer(input: string): Promise<ChatTurn | undefined>
-  steerQueued(id?: string): boolean
   updateQueuedPrompt(id: string, prompt: string): boolean
   moveQueuedPrompt(id: string, direction: -1 | 1): boolean
   cancel(): boolean

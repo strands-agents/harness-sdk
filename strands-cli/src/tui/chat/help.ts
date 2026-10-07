@@ -5,11 +5,6 @@ const CONTROLS = [
   ['Send a message', 'Enter', 'Send your message, or queue it while the harness is working.'],
   ['Add a line', 'Ctrl+J', 'Ctrl+J inserts a newline without sending.'],
   [
-    'Steer running work',
-    'Ctrl+G',
-    'Ctrl+G sends your draft immediately; with an empty draft it steers the first queued message.',
-  ],
-  [
     'Interrupt or exit',
     'Esc / Ctrl+C',
     'Esc interrupts running work when no panel is open. Ctrl+C or Ctrl+D cancels busy work, or exits when idle.',

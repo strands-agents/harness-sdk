@@ -16,16 +16,25 @@ import time
 
 ANSI_ESCAPE = re.compile(rb"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 CHAT_READY = b"\x1b[?1002l\x1b[?1003h"
+READY_MARKER = b"Enter to send"
 
 
 def main() -> int:
     command = sys.argv[1:]
-    ready_marker = b"Enter to send"
-    shell_mode = os.environ.get("STRANDS_CLI_TEST_SHELL_MODE")
-    frog_mode = os.environ.get("STRANDS_CLI_TEST_FROG_MODE") == "true"
-    startup_typing = os.environ.get("STRANDS_CLI_TEST_STARTUP_TYPING") == "true"
-    intro = os.environ.get("STRANDS_CLI_TEST_INTRO") == "true"
-    resize = os.environ.get("STRANDS_CLI_TEST_RESIZE") == "true"
+    scenario = os.environ.get("STRANDS_CLI_TEST_SCENARIO", "exit")
+    shell_mode = {"shell-command": "command", "shell-interrupt": "interrupt"}.get(scenario)
+    frog_mode = scenario == "frog"
+    chat_mode = scenario == "chat"
+    follow_up_mode = scenario == "follow-up"
+    approval_mode = scenario == "approval"
+    setup_export_mode = scenario == "setup-export"
+    export_failure_mode = scenario == "export-failure"
+    setup_import_mode = scenario == "lifecycle-setup-import"
+    lifecycle_mode = scenario in {"lifecycle-profile", "lifecycle-project", "lifecycle-setup-import"}
+    panels_mode = scenario == "panels"
+    startup_typing = scenario == "startup-typing"
+    intro = scenario in {"startup", "startup-typing"}
+    resize = scenario == "resize"
     master, slave = pty.openpty()
     rows = 40 if startup_typing else 20 if intro else 30
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, 100, 0, 0))
@@ -89,8 +98,12 @@ def main() -> int:
         pump()
 
     try:
-        wait_for([ready_marker, CHAT_READY])
+        if setup_import_mode:
+            wait_for([b"Quickstart", b"Import"], timeout=20.0, styled=False)
+        else:
+            wait_for([READY_MARKER, CHAT_READY], timeout=20.0 if lifecycle_mode else 8.0)
         wait_for_raw_mode()
+
         def set_size(columns: int, height: int) -> None:
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", height, columns, 0, 0))
             os.kill(process.pid, signal.SIGWINCH)
@@ -128,7 +141,123 @@ def main() -> int:
             set_size(120, 40)
             settle(0.2)
             noop_output = bytes(transcript[noop_start:])
-        if frog_mode:
+        export_language = os.environ.get("STRANDS_CLI_TEST_EXPORT_LANGUAGE", "typescript")
+
+        def submit(prompt: bytes, markers: list[bytes], approve: bool = False) -> None:
+            start = len(transcript)
+            os.write(master, prompt)
+            wait_for([prompt], timeout=2.0, styled=False, start=start)
+            os.write(master, b"\r")
+            if approve:
+                wait_for([b"Enter choose"], timeout=8.0, styled=False, start=start)
+                os.write(master, b"\r")
+            idle = [b"__PLATFORM_IDLE__"] if export_language == "typescript" else []
+            wait_for(markers + idle, timeout=15.0, styled=False, start=start)
+            settle()
+
+        if setup_import_mode:
+            os.write(master, b"\x1b[B")
+            time.sleep(0.2)
+            os.write(master, b"\r")
+            wait_for([b"Import an agent"], timeout=5.0, styled=False)
+            time.sleep(0.4)
+            os.write(master, b"\r")
+            time.sleep(0.2)
+            path = os.environ["STRANDS_CLI_TEST_IMPORT_PATH"].encode()
+            os.write(master, path)
+            wait_for([os.path.basename(path)], timeout=2.0, styled=False)
+            commit_start = len(transcript)
+            os.write(master, b"\r")
+            wait_for([b"Click or Enter to choose"], timeout=2.0, styled=False, start=commit_start)
+            os.write(master, b"\x1b[Z")
+            time.sleep(0.2)
+            launch_start = len(transcript)
+            os.write(master, b"\r")
+            wait_for([READY_MARKER, CHAT_READY], timeout=30.0, start=launch_start)
+            time.sleep(0.3)
+
+        if lifecycle_mode:
+            submit(
+                b"report capabilities before export"
+                if scenario == "lifecycle-profile"
+                else b"report capabilities after import",
+                [b"LOCAL_SKILL=true", b"REMOTE_SKILL=true"],
+            )
+            if scenario != "lifecycle-profile":
+                submit(
+                    b"invoke the MCP probe after import",
+                    [b"platform-mcp-ok"],
+                    approve=scenario == "lifecycle-setup-import",
+                )
+            path = os.environ["STRANDS_CLI_TEST_EXPORT_PATH"].encode()
+            command = b'/export ' + export_language.encode() + b' "' + path + b'"'
+            os.write(master, command)
+            wait_for([b"/export " + export_language.encode()], timeout=2.0, styled=False)
+            time.sleep(0.2)
+            os.write(master, b"\r")
+            wait_for([b"Export complete"], timeout=15.0, styled=False)
+            os.write(master, b"\x1b")
+            time.sleep(0.2)
+        elif export_failure_mode:
+            path = os.environ["STRANDS_CLI_TEST_EXPORT_PATH"].encode()
+            command = b'/export typescript "' + path + b'"'
+            os.write(master, command)
+            wait_for([b"/export typescript"], timeout=2.0, styled=False)
+            time.sleep(0.2)
+            os.write(master, b"\r")
+            wait_for([b"file already exists"], timeout=15.0, styled=False)
+            os.write(master, b"\x1b")
+            time.sleep(0.2)
+        elif chat_mode:
+            os.write(master, b"hello from integration")
+            wait_for([b"hello from integration"], timeout=2.0, styled=False)
+            os.write(master, b"\r")
+            wait_for([b"Fixture reply", b"__CHAT_IDLE__"], styled=False)
+        elif follow_up_mode:
+            for prompt, reply in [(b"first turn", b"Fixture turn 1"), (b"second turn", b"Fixture turn 2")]:
+                os.write(master, prompt)
+                wait_for([prompt], timeout=2.0, styled=False)
+                os.write(master, b"\r")
+                wait_for([reply, b"__CHAT_IDLE__"], styled=False)
+        elif approval_mode:
+            os.write(master, b"request approval")
+            wait_for([b"request approval"], timeout=2.0, styled=False)
+            time.sleep(0.2)
+            os.write(master, b"\r")
+            wait_for([b"Allow once"], styled=False)
+            os.write(master, b"\r")
+            wait_for([b"Approval accepted", b"__CHAT_IDLE__"], styled=False)
+        elif setup_export_mode:
+            os.write(master, b"/setup")
+            wait_for([b"/setup"], timeout=2.0, styled=False)
+            time.sleep(0.2)
+            os.write(master, b"\r")
+            wait_for([b"__SETUP_REQUESTED__"], styled=False)
+            path = os.environ["STRANDS_CLI_TEST_EXPORT_PATH"].encode()
+            command = b"/export typescript " + path
+            os.write(master, command)
+            wait_for([b"/export typescript"], timeout=2.0, styled=False)
+            time.sleep(0.2)
+            os.write(master, b"\r")
+            wait_for([b"Export complete"], styled=False)
+            os.write(master, b"\x1b")
+            time.sleep(0.2)
+        elif panels_mode:
+            panels = [
+                (b"/help", [b"Send a message"]),
+                (b"/model", [b"Fixture Model Alpha", b"Fixture Model Beta"]),
+                (b"/effort", [b"Reasoning effort", b"Medium"]),
+                (b"/settings", [b"Appearance", b"Auto-Discovery"]),
+            ]
+            for command, markers in panels:
+                start = len(transcript)
+                os.write(master, command)
+                wait_for([command], timeout=2.0, styled=False, start=start)
+                os.write(master, b"\r")
+                wait_for(markers, styled=False, start=start)
+                os.write(master, b"\x1b")
+                time.sleep(0.2)
+        elif frog_mode:
             os.write(master, b"/frog peek")
             wait_for([b"/frog peek"], timeout=2.0, styled=False)
             os.write(master, b"\r")
@@ -172,6 +301,7 @@ def main() -> int:
                     "resizeTranscript": base64.b64encode(resize_output).decode(),
                     "resizeBurstTranscript": base64.b64encode(burst_output).decode(),
                     "resizeNoopTranscript": base64.b64encode(noop_output).decode(),
+                    "exportSaved": os.path.isfile(os.environ["STRANDS_CLI_TEST_EXPORT_PATH"]),
                 }
             )
         )

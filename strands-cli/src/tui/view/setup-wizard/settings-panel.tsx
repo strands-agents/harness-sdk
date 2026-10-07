@@ -1,7 +1,7 @@
 import type { ReactElement } from 'react'
 import type { DOMElement } from 'ink'
 
-import type { ChatPanel, ChatPanelRow, ChatSettings, SettingsCategory } from '../../chat/types.js'
+import type { ChatPanel, ChatPanelRow, SettingsCategory } from '../../chat/types.js'
 import { SETTINGS_CATEGORIES } from '../../settings.js'
 import { panelControlTarget, parsePanelControlTarget } from '../interaction.js'
 import { SettingsPanel } from '../settings-panel.js'
@@ -12,7 +12,6 @@ export type SetupSettingsChoiceTarget = `choice:${number}:${number}` | `category
 export function SetupSettingsPanel({
   rows,
   category,
-  settings,
   start,
   selected,
   width,
@@ -23,7 +22,6 @@ export function SetupSettingsPanel({
 }: {
   rows: readonly WizardRow[]
   category: SettingsCategory
-  settings: ChatSettings
   start: number
   selected: number
   width: number
@@ -51,7 +49,6 @@ export function SetupSettingsPanel({
       start={start}
       width={width}
       height={height}
-      appearance={settings}
       {...(hoveredTarget ? { hoveredControl: hoveredTarget } : {})}
       {...(hoveredControl?.startsWith('category:') ? { hoveredFilter: `settings:${hoveredControl.slice(9)}` } : {})}
       onRowElement={onRowElement}

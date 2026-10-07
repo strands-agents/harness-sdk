@@ -24,16 +24,15 @@ afterEach(async () => {
   }
 })
 
-function createController() {
+function createController(options: { requestSetup?: () => void } = {}) {
   const switchModel = vi.fn(async (_model: string) => {})
-  const setEffort = vi.fn(async (_effort: string) => {})
   const backend: ChatBackend = {
     id: 'panel-resize-test',
     name: 'Strands harness',
     protocol: 'strands',
     async *stream() {
       yield* []
-      return { stopReason: 'endTurn', context: { projectedTokens: 100, contextWindow: 1_000 } }
+      return { stopReason: 'endTurn', context: {} }
     },
     cancel() {},
     info: () => ({ model: 'model-00' }),
@@ -45,16 +44,15 @@ function createController() {
         catalog: 'openai',
         active: index === 0,
       })),
-    listEfforts: () => ['low', 'medium', 'high'].map((id) => ({ id, label: id, active: id === 'medium' })),
     modelChangeMode: () => 'live',
     switchModel,
-    setEffort,
   }
   const controller = new ChatController(backend, {
-    settings: { animations: false, colorMode: 'light' },
+    settings: { animations: false },
     runtime: { model: 'model-00', cwd: '/work' },
+    ...(options.requestSetup ? { requestSetup: options.requestSetup } : {}),
   })
-  return { controller, switchModel, setEffort }
+  return { controller, switchModel }
 }
 
 async function mount(controller: ChatControllerApi) {
@@ -115,22 +113,39 @@ async function mount(controller: ChatControllerApi) {
 }
 
 describe('mounted panel resizing', () => {
+  it('opens setup from the Agent settings action', async () => {
+    const requestSetup = vi.fn()
+    const { controller } = createController({ requestSetup })
+    const view = await mount(controller)
+
+    await controller.submit('/settings')
+    await view.press('\t')
+    await view.press('\u001b[B')
+    await vi.waitFor(() => expect(view.screen()).toContain('Open setup'))
+    await view.click(view.pointOnRow('Providers & default agent', 'Open setup'))
+
+    expect(requestSetup).toHaveBeenCalledOnce()
+  })
+
   it('keeps the selected setting visible and preserves the composer draft', async () => {
     const { controller } = createController()
     const view = await mount(controller)
     await view.press('keep this draft')
     await controller.submit('/settings')
     await vi.waitFor(() => expect(view.screen()).toContain('Auto-Discovery'))
-    for (let index = 0; index < 2; index++) await view.press('\t')
-    await vi.waitFor(() => expect(view.screen()).toContain('Usage ping (telemetry)'))
+    await view.press('\t')
+    for (let index = 0; index < 3; index++) await view.press('\u001b[B')
+    await vi.waitFor(() => expect(view.screen()).toContain('Anonymous usage'))
+    await view.press('\t')
     await view.press('\u001b[B')
 
     for (const [width, height] of terminalSizes) {
       await view.resize(width, height)
       await vi.waitFor(() => {
         view.fits()
-        expect(view.screen()).toContain('Usage ping')
-        expect(view.screen()).toContain('(telemetry)')
+        // Narrow terminals truncate the label beside its control.
+        expect(view.screen()).toContain(width >= 80 ? '› Anonymous usage' : '› Anonym')
+        expect(view.screen()).toContain('━━● On')
         expect(view.screen()).toContain('Esc back')
         expect(view.screen()).not.toContain('/help')
       })
@@ -141,6 +156,8 @@ describe('mounted panel resizing', () => {
     await vi.waitFor(() => expect(controller.getSnapshot().panel).toBeUndefined())
     await controller.submit('/settings')
     await view.press('\t')
+    await view.press('\u001b[B')
+    await view.press('\u001b[B')
     await vi.waitFor(() => expect(view.screen()).toContain('Skills'))
     await view.click(view.pointOnRow('Skills', 'Off'))
     await vi.waitFor(() => expect(controller.getSnapshot().settings.skillDiscovery).toBe(true))
@@ -150,7 +167,7 @@ describe('mounted panel resizing', () => {
   })
 
   it('keeps the selected model and panel footer visible after shrinking and expanding', async () => {
-    const { controller, switchModel, setEffort } = createController()
+    const { controller, switchModel } = createController()
     const view = await mount(controller)
     await controller.submit('/model')
     await vi.waitFor(() => expect(view.screen()).toContain('Model 00'))
@@ -161,15 +178,10 @@ describe('mounted panel resizing', () => {
       await vi.waitFor(() => {
         view.fits()
         expect(view.screen()).toContain('Model 08')
-        expect(view.screen()).toContain('Esc back')
+        expect(view.screen()).toMatch(/Enter(?: choose)? · Esc(?: back)?/)
         expect(view.screen()).not.toContain('/help')
       })
     }
-    const lines = view.screen().split('\n')
-    const trackRow = lines.findIndex((line) => line.includes('███'))
-    expect(trackRow).toBeGreaterThanOrEqual(0)
-    await view.click({ column: lines[trackRow]!.lastIndexOf('─') + 1, row: trackRow + 1 })
-    await vi.waitFor(() => expect(setEffort).toHaveBeenCalledWith('high'))
     await view.click(view.point('Model 08'))
     await vi.waitFor(() => expect(switchModel).toHaveBeenCalledWith('model-08'))
   })

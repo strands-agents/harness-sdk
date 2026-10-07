@@ -5,8 +5,8 @@ import { dirname, join } from 'node:path'
 import { unzipSync, zipSync } from 'fflate'
 import { afterEach, beforeEach, expect, it } from 'vitest'
 
-import { exportSourceProject } from '../src/tui/project/export.js'
-import { importAgentProject } from '../src/tui/project/import.js'
+import { exportSourceProject } from '../../../src/tui/project/export.js'
+import { importAgentProject } from '../../../src/tui/project/import.js'
 
 let root: string
 

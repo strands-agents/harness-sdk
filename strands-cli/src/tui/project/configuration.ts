@@ -27,7 +27,7 @@ function configurationModules(config: HarnessAgentConfig): (HarnessModuleReferen
 export function portableConfig(
   profile: HarnessAgentConfig,
   language: AgentProjectLanguage,
-  hasSkills: boolean,
+  skillSources: readonly string[],
   sources: PackagedSource[],
   baseDir = process.cwd()
 ): HarnessAgentConfig {
@@ -99,7 +99,7 @@ export function portableConfig(
     agentConfigModules: Object.fromEntries(
       Object.entries(config.agentConfigModules).map(([key, value]) => [key, reference(value)])
     ),
-    skills: hasSkills ? ['./agent/skills'] : false,
+    skills: skillSources.length > 0 ? [...skillSources] : false,
     session: config.session === true ? { dir: './.agent/sessions' } : config.session,
     memory: config.memory === true ? { dir: './.agent/memory' } : config.memory,
   }

@@ -3,22 +3,30 @@ import { describe, expect, it } from 'vitest'
 import {
   agentGridCapacity,
   agentGridColumns,
+  COMPOSER_RESOURCE_PANEL_HEIGHT,
+  composerPanelHeight,
+  cycleModelPanelFocus,
   filterPanelRows,
   moveAgentGridSelection,
   moveSelection,
   mouseScrollDirection,
   panelRowCapacity,
-  revealPanelSelection,
   revealAgentGridSelection,
+  revealPanelSelection,
+  sectionedPanelSidebarWidth,
   scrollDetail,
   scrollAgentGridViewport,
   scrollPanelViewport,
   scrollTranscript,
+  settingArrowValue,
   shouldToggleVoiceMute,
 } from '../src/tui/view/interaction.js'
 import { planTranscriptLayout, transcriptWindow } from '../src/tui/view/transcript-layout.js'
 import { summarizeToolInput, toolAction } from '../src/tui/view/presentation.js'
 import { parseMouseInput, selectScreenText } from '../src/tui/terminal/mouse-input.js'
+import { settingsCategoryFilters, settingsRows } from '../src/tui/chat/panels.js'
+import { DEFAULT_CHAT_SETTINGS, SETTINGS_CATEGORIES, type SettingsCategory } from '../src/tui/settings.js'
+import { snapshot } from './fixtures/chat-snapshot.js'
 
 describe('voice input', () => {
   it('uses a single empty-editor Space tap for mute without consuming typed spaces', () => {
@@ -32,9 +40,84 @@ describe('voice input', () => {
 
 describe('panel helpers', () => {
   const rows = [
-    { label: 'Opus', description: 'Anthropic', filter: 'bedrock' },
-    { label: 'GPT', description: 'OpenAI', filter: 'current' },
+    { label: 'Model A', description: 'Provider A', filter: 'bedrock' },
+    { label: 'Model B', description: 'Provider B', filter: 'current' },
   ]
+
+  it('tabs between /model sections and leaves search for the model list', () => {
+    const panel = {
+      id: 'models',
+      kind: 'models' as const,
+      title: 'models',
+      rows: [],
+      filters: [{ id: 'all', label: 'All' }],
+    }
+    expect(cycleModelPanelFocus('providers', panel, 1)).toBe('models')
+    expect(cycleModelPanelFocus('models', panel, 1)).toBe('providers')
+    expect(cycleModelPanelFocus('search', panel, 1)).toBe('providers')
+    expect(cycleModelPanelFocus('providers', panel, -1)).toBe('models')
+
+    const bare = { id: 'models', kind: 'models' as const, title: 'models', rows: [] }
+    expect(cycleModelPanelFocus('models', bare, 1)).toBe('models')
+  })
+
+  it('uses one shared height for composer resource panels', () => {
+    const panel = (kind: 'models' | 'context') => ({
+      id: kind,
+      kind,
+      title: kind,
+      rows: [],
+    })
+    const settingsPanel = (category: SettingsCategory) => ({
+      id: `settings-${category}`,
+      kind: 'settings' as const,
+      title: category,
+      rows: settingsRows(DEFAULT_CHAT_SETTINGS, category),
+      filters: settingsCategoryFilters(),
+      settingsCategory: category,
+      settingsCategories: SETTINGS_CATEGORIES,
+    })
+
+    const effortPanel = {
+      id: 'effort',
+      kind: 'effort' as const,
+      title: 'effort',
+      rows: [],
+      slider: { label: 'Effort', options: [{ id: 'medium', label: 'Medium', active: true }] },
+    }
+    expect(composerPanelHeight(snapshot({ panel: panel('models') }), 24)).toBe(COMPOSER_RESOURCE_PANEL_HEIGHT)
+    expect(composerPanelHeight(snapshot({ panel: settingsPanel('Appearance') }), 24)).toBe(
+      COMPOSER_RESOURCE_PANEL_HEIGHT
+    )
+    expect(composerPanelHeight(snapshot({ panel: settingsPanel('Auto-Discovery') }), 24)).toBe(
+      COMPOSER_RESOURCE_PANEL_HEIGHT
+    )
+    expect(composerPanelHeight(snapshot({ panel: settingsPanel('Agent') }), 24)).toBe(COMPOSER_RESOURCE_PANEL_HEIGHT)
+    expect(composerPanelHeight(snapshot({ panel: settingsPanel('Privacy') }), 24)).toBe(COMPOSER_RESOURCE_PANEL_HEIGHT)
+    expect(composerPanelHeight(snapshot({ panel: effortPanel }), 24)).toBe(COMPOSER_RESOURCE_PANEL_HEIGHT)
+    expect(composerPanelHeight(snapshot({ panel: panel('context') }), 24)).toBe(COMPOSER_RESOURCE_PANEL_HEIGHT)
+  })
+
+  it('uses one-third of sectioned panels for their sidebar', () => {
+    expect(sectionedPanelSidebarWidth(150)).toBe(50)
+    expect(sectionedPanelSidebarWidth(80)).toBe(26)
+    expect(sectionedPanelSidebarWidth(150, 20)).toBe(20)
+  })
+
+  it('maps ←→ on a settings row to its neighboring option, and to Off and On for a toggle', () => {
+    const [theme, , animations, , toolOutput] = settingsRows(DEFAULT_CHAT_SETTINGS, 'Appearance')
+    const [contextOffloadThreshold] = settingsRows(DEFAULT_CHAT_SETTINGS, 'Agent')
+
+    expect(settingArrowValue(theme!, -1)).toBeUndefined()
+    expect(settingArrowValue(theme!, 1)).toBe('frogTheme=minimal')
+    expect(settingArrowValue(toolOutput!, -1)).toBe('toolOutput=hidden')
+    expect(settingArrowValue(toolOutput!, 1)).toBe('toolOutput=full')
+    expect(settingArrowValue(animations!, 1)).toBeUndefined()
+    expect(settingArrowValue(animations!, -1)).toBe('animations')
+    expect(settingArrowValue(contextOffloadThreshold!, -1)).toBeUndefined()
+    expect(settingArrowValue(contextOffloadThreshold!, 1)).toBe('contextOffloadThreshold=1500')
+    expect(settingArrowValue({ label: 'note', description: '' }, 1)).toBeUndefined()
+  })
 
   it('presents the SDK Background Tasks management tool', () => {
     expect(toolAction('strands_manage_background_task')).toBe('Manage task')
@@ -44,23 +127,23 @@ describe('panel helpers', () => {
   })
 
   it('filters rows and accepts custom IDs for supported providers', () => {
-    expect(filterPanelRows(rows, 'open', 'all')).toEqual([rows[1]])
+    expect(filterPanelRows(rows, 'model b', 'all')).toEqual([rows[1]])
     expect(filterPanelRows(rows, '', 'bedrock')).toEqual([rows[0]])
-    expect(filterPanelRows(rows, 'anthropic.claude-new', 'bedrock', true)).toEqual([
+    expect(filterPanelRows(rows, 'vendor.test-model', 'bedrock', true)).toEqual([
       {
-        label: 'bedrock/anthropic.claude-new',
+        label: 'bedrock/vendor.test-model',
         description: 'Switch to this model ID',
-        value: 'bedrock/anthropic.claude-new',
+        value: 'bedrock/vendor.test-model',
       },
     ])
-    expect(filterPanelRows(rows, 'openai/gpt-new', 'bedrock', true)).toEqual([
+    expect(filterPanelRows(rows, 'openai/test-model', 'bedrock', true)).toEqual([
       {
-        label: 'openai/gpt-new',
+        label: 'openai/test-model',
         description: 'Switch to this model ID',
-        value: 'openai/gpt-new',
+        value: 'openai/test-model',
       },
     ])
-    expect(filterPanelRows(rows, 'unknown/gpt-new', 'bedrock', true)).toEqual([])
+    expect(filterPanelRows(rows, 'unknown/test-model', 'bedrock', true)).toEqual([])
   })
 
   it('parses mouse wheel input', () => {
@@ -97,9 +180,10 @@ describe('panel helpers', () => {
     expect(scrollAgentGridViewport(0, 1, 10, 6, 3)).toBe(3)
     expect(scrollAgentGridViewport(3, 1, 10, 6, 3)).toBe(6)
     expect(revealAgentGridSelection(8, 0, 6, 10, 3)).toBe(3)
-    expect(panelRowCapacity('models', 20)).toBe(7)
+    expect(panelRowCapacity('models', 10)).toBe(5)
+    expect(panelRowCapacity('models', 12)).toBe(7)
     expect(panelRowCapacity('sessions', 20)).toBe(10)
-    expect(panelRowCapacity('settings', 20)).toBe(5)
+    expect(panelRowCapacity('settings', 10)).toBe(7)
     expect(scrollPanelViewport(0, 1, 20, 5)).toBe(1)
     expect(scrollPanelViewport(15, 1, 20, 5)).toBe(15)
     expect(scrollPanelViewport(8, -1, 20, 5, 3)).toBe(5)

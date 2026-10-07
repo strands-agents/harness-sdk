@@ -37,8 +37,9 @@ export function TurnView({
   const visibleEntries = silentOpening
     ? turn.entries.filter((entry) => entry.type === 'assistant' || entry.type === 'media')
     : turn.entries
-  const entries = settings.toolOutput === 'hidden' ? visibleEntries : groupToolEntries(visibleEntries)
-  const firstEntry = entries.find((entry) => entry.type !== 'reasoning' || settings.showReasoning)
+  const groupedEntries = settings.toolOutput === 'hidden' ? visibleEntries : groupToolEntries(visibleEntries)
+  const entries = settings.showReasoning ? groupedEntries : groupedEntries.filter((entry) => entry.type !== 'reasoning')
+  const firstEntry = entries[0]
   const startsWithTool = firstEntry?.type === 'tool' || firstEntry?.type === 'toolGroup'
   return (
     <Box flexDirection="column" marginBottom={1}>
@@ -58,8 +59,9 @@ export function TurnView({
           <Text>{turn.prompt}</Text>
         </Box>
       ) : null}
-      {entries.map((entry) =>
-        entry.type === 'toolGroup' ? (
+      {entries.map((entry, index) => {
+        const followsReasoning = entries[index - 1]?.type === 'reasoning'
+        return entry.type === 'toolGroup' ? (
           <ToolActivityGroup
             key={entry.id}
             entries={entry.entries}
@@ -68,6 +70,7 @@ export function TurnView({
             agentName={turn.agentName}
             forceFullResult={directShell}
             expanded={expandedToolGroups.has(entry.id)}
+            followsReasoning={followsReasoning}
             {...(onToolGroupElement ? { onElement: onToolGroupElement } : {})}
           />
         ) : (
@@ -79,10 +82,11 @@ export function TurnView({
             agentName={turn.agentName}
             forceFullResult={directShell}
             expanded={expandedToolGroups.has(`${entry.id}:output`)}
+            followsReasoning={followsReasoning}
             {...(onToolGroupElement ? { onElement: onToolGroupElement } : {})}
           />
         )
-      )}
+      })}
       {active && turn.status === 'running' && !silentOpening ? (
         <Box marginTop={1}>
           <Text color={theme.warning}>
@@ -161,6 +165,7 @@ function ToolActivityGroup({
   agentName,
   forceFullResult,
   expanded,
+  followsReasoning,
   onElement,
 }: Omit<Parameters<typeof EntryView>[0], 'entry'> & {
   entries: readonly ToolEntry[]
@@ -185,7 +190,7 @@ function ToolActivityGroup({
     ...(cancelled > 0 ? [`${cancelled} cancelled`] : []),
   ]
   return (
-    <Box flexDirection="column" marginTop={settings.transcriptSpacing === 'comfortable' ? 1 : 0}>
+    <Box flexDirection="column" marginTop={!followsReasoning && settings.transcriptSpacing === 'comfortable' ? 1 : 0}>
       <Box ref={(element) => onElement?.(id, element)} width="100%" paddingX={1} backgroundColor={theme.surface}>
         <Text wrap="wrap">
           <Text dimColor>{expanded ? '▾' : '▸'} </Text>
@@ -217,6 +222,7 @@ function EntryView({
   agentName,
   forceFullResult,
   expanded = false,
+  followsReasoning = false,
   onElement,
 }: {
   entry: ChatEntry
@@ -225,10 +231,25 @@ function EntryView({
   agentName: string
   forceFullResult: boolean
   expanded?: boolean
+  followsReasoning?: boolean
   onElement?: (id: string, element: DOMElement | null) => void
 }): ReactElement {
   const theme = useTheme()
-  const marginTop = settings.transcriptSpacing === 'comfortable' ? 1 : 0
+  const marginTop = !followsReasoning && settings.transcriptSpacing === 'comfortable' ? 1 : 0
+  if (entry.type === 'user') {
+    return (
+      <Box
+        width="100%"
+        flexDirection="column"
+        paddingX={1}
+        marginTop={1}
+        marginBottom={settings.transcriptSpacing === 'compact' ? 1 : 0}
+        backgroundColor={theme.surface}
+      >
+        <Text>{entry.text}</Text>
+      </Box>
+    )
+  }
   if (entry.type === 'reasoning') {
     if (!settings.showReasoning) {
       return <></>

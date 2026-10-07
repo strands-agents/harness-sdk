@@ -20,7 +20,10 @@ export interface ImportedAgentProject {
   language: AgentProjectLanguage
 }
 
-export function agentLaunchCommand(path: string): string {
+export function agentLaunchCommand(path: string, platform = process.platform): string {
+  if (platform === 'win32') {
+    return `strands --agent '${path.replaceAll("'", "''")}'`
+  }
   return `strands --agent '${path.replaceAll("'", "'\\''")}'`
 }
 
