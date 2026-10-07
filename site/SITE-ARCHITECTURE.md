@@ -805,6 +805,8 @@ SITE_DOMAIN=https://strandsagents.com npm run build
 
 Without `SITE_DOMAIN`, links remain relative (e.g. `/user-guide/quickstart/`). With it set, they become absolute (e.g. `https://strandsagents.com/user-guide/quickstart/`).
 
+`SITE_DOMAIN` also sets Astro's `site`, which canonical URLs and every `og:image` and `twitter:image` use. It defaults to `https://strandsagents.com`, so a preview build sets it to the preview's own origin to make share images resolve there.
+
 ## Blog
 
 The blog is a standalone section at `/blog/` with its own content collection, layouts, components, and routes — outside of Starlight's docs collection. It follows the same pattern as the custom landing page: reuses the Starlight header via `BlogLayout.astro` while opting out of the docs chrome (sidebar, table of contents, etc.).
@@ -910,11 +912,11 @@ The blog extends the existing llms.txt system:
 
 ### OG Images
 
-Build-time OG image generation at `/blog/og/[slug].png` using `astro-og-canvas`:
-- 1200×630px images from post title + description
-- Strands branding: dark background (#0E0E0E), Strands green (#00CC5F) left border
+Build-time OG image generation with `satori` + `@resvg/resvg-js`, shared by the site-wide default (`/og-image.png`) and per-post cards (`/blog/og/[slug].png`):
+- 1200×630px images from a title + description
+- Strands branding: dark green-to-black gradient, halftone dot field, wordmark, and frog mark
 
-Implementation: `src/pages/blog/og/[slug].png.ts`
+Implementation: `src/util/og-image.ts` (renderer), `src/pages/og-image.png.ts`, `src/pages/blog/og/[slug].png.ts`
 
 ### robots.txt
 

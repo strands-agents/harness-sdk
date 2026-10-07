@@ -138,6 +138,8 @@ orchestrator = Agent(
 </Tab>
 </Tabs>
 
+This setting also decides where a sub-agent's [interrupt](../interrupts.md) waits to be resumed. With <Syntax py="preserve_context=False" ts="preserveContext: false" /> the orchestrator stores the interrupted turn, so it can be resumed after a restart. With <Syntax py="preserve_context=True" ts="preserveContext: true" /> the sub-agent keeps its own state, so give it its own session manager for that.
+
 ### Creating custom agent tools
 
 For more control over how the agent is invoked, such as custom pre/post-processing, error handling, or passing multiple parameters, create a custom tool that wraps an agent:

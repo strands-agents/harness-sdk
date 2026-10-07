@@ -30,6 +30,10 @@ The :data:`handoff_to_user` tool pauses the agent loop and surfaces a message to
 the user for human-in-the-loop input; use :func:`make_handoff_to_user` to supply
 a custom tool name or description.
 
+The :func:`make_subagent` factory produces a ``subagent`` delegation tool that runs a
+self-contained task in an isolated child agent and returns a final report.
+Authority-mode axes let the developer pin what the model can configure on each child.
+
 Example Usage:
     ```python
     from strands import Agent
@@ -52,6 +56,7 @@ from .mcp_router import make_mcp_router
 from .notebook import make_notebook, notebook
 from .shell import make_shell, shell
 from .sleep import make_sleep, sleep
+from .subagent import make_subagent, subagent
 
 
 def __getattr__(name: str) -> Any:
@@ -95,7 +100,9 @@ __all__ = [
     "make_mcp_router",
     "make_shell",
     "make_sleep",
+    "make_subagent",
     "notebook",
     "shell",
     "sleep",
+    "subagent",
 ]

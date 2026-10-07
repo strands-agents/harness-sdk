@@ -1,0 +1,176 @@
+---
+title: Strands Shell in a box
+description: How a box runs the agent's shell commands in Strands Shell, which commands it implements, where a program outside it runs, the box.toml keys that decide that, and the exit statuses.
+sidebar:
+  label: "Strands Shell"
+---
+
+Strands Shell is the shell that runs each command the agent sends to `zsh`, `bash`, or
+`sh` in a box. Policy decides each command, and each file operation the command makes.
+A program outside the Shell runs in its own sandbox, separate from the agent's.
+
+This page is the reference. For the steps, read
+[Write policy for shell commands](../guides/write-shell-policy.md). For every field a
+rule reads, see the [action reference](policy-actions.md#shell).
+
+## Invocation
+
+On the agent's `PATH`, `zsh`, `bash`, and `sh` are each the alias, a client program that
+sends one command to the Shell. Each accepts one of these forms:
+
+| Form | The Shell runs |
+|---|---|
+| `zsh -c COMMAND`, `-lc COMMAND`, `-c -l COMMAND`, `-l -c COMMAND` | `COMMAND` |
+| `zsh SCRIPT` | The text of `SCRIPT`. The alias reads the file in the agent's sandbox, so `[agent.filesystem]` must grant the agent a read of it. |
+
+Any other form is refused with
+`Shell alias accepts only -c COMMAND, -lc COMMAND, -c -l COMMAND, or SCRIPT`.
+
+Each invocation is one command. A variable exported in one invocation is unset in the
+next. The Shell starts each command with `HOME` set to the agent's `HOME`, and with the
+workspace as its working directory.
+
+## What runs where
+
+Once the alias hands a command to the Shell, each command in it runs as follows:
+
+| Inside a command, the agent runs | Action | Where it runs | What bounds its reach |
+|---|---|---|---|
+| A builtin or a command the Shell implements | `shell:exec`, then one `fs:*` action for each file operation | In the Shell | Policy, then the reachable paths check |
+| A program on the `PATH` of the host OS's shell, such as `git` | `shell:spawn` on the program's resolved path | Its own sandbox | Its `[tool.<name>]` table or `exec` entry, as in [Configuration](#configuration) |
+| A program named by a path, such as `./target/debug/app` | `shell:spawn` on the program's resolved path | Its own sandbox | Its `[tool.<name>]` table or `exec` entry |
+
+The reachable paths check is deny-only and runs after policy. It refuses a path outside
+the operator's home, the agent's home, and the workspace, a path inside the box directory,
+and the `box.toml` and `policy.dw` the run loaded, whatever a `permit` says.
+
+The Shell implements these, each in place of a program of the same name on the `PATH`:
+
+- **Builtins:** `cd`, `export`, `set`, `alias`, `trap`, `test`, `printf`, `echo`,
+  `read`, `find`, `xargs`, and others.
+- **Text:** `cat`, `grep`, `sed`, `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc`,
+  `tee`.
+- **Files:** `ls`, `cp`, `mv`, `rm`, `mkdir`, `rmdir`, `ln`, `chmod`, `touch`,
+  `mktemp`, `readlink`.
+- **Data and network:** `jq`, `curl`.
+- **Interpreters:** `lua`, and `python` and `python3`, which run in
+  [Monty, Box's Python interpreter](python.md).
+
+Paths outside the operator's home, the agent's home, and the workspace, such as `/tmp`,
+exist only in the Shell's memory, for one command. A file written to `/tmp` is gone
+when the command ends.
+
+## What policy decides
+
+- **`shell:exec`** is decided once for each command the Shell implements, after
+  expansion. That includes each command that command substitution, `eval`, `source`,
+  `find -exec`, `xargs`, or Lua's `io.popen` runs.
+- **`shell:spawn`** is decided once for each program the Shell doesn't implement, before
+  Box starts it. A permit starts the program only under the rule in
+  [Configuration](#configuration). Its `program_path` is the file that runs, with every
+  link resolved, and `~/` under the operator's home.
+- **`fs:*`** is decided once for each file operation one of the Shell's commands makes,
+  on the path with every link resolved.
+
+The [action reference](policy-actions.md#shell) lists every field of these actions and
+their `::response` events. To print the whole action schema for your box, run
+[`box policy generate-schema`](cli.md#policy-generate-schema).
+
+## Configuration
+
+Policy decides whether a program outside the Shell runs. These `box.toml` keys decide
+where. After a `shell:spawn` permit, the program runs under the first of these that
+covers it:
+
+1. A [`[tool.<name>]`](#toolname) table that matches it.
+2. An [`[agent.filesystem] exec`](#agentfilesystem-exec) entry.
+3. Neither: the program is refused with status `126`.
+
+### `[tool.<name>]`
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `command` | string array | required | Element 0 is the program, and the rest are fixed leading arguments. A bare name resolves on the table's `env.PATH`, else on the `PATH` of the host OS's shell that runs `box run`. |
+| `workspace` | path | the Shell's working directory when it is inside the agent's workspace or a path the tool's lists name, else the agent's workspace | The program's initial working directory. |
+| `env` | table | empty | Variables the program receives. |
+| `filesystem` | table | empty | `read`, `write`, `read_file`, `write_file`, `list`, and `deny`: the paths the program's own system calls reach. |
+| `network.contain_egress` | bool | `true` | How the program reaches the network. See [Let a tool skip the gateway](../guides/add-a-tool.md#let-a-tool-skip-the-gateway). |
+
+A table matches a `shell:spawn` when its `command` resolves to the same file as
+`program_path`, and its fixed arguments match the leading arguments of the command.
+When several tables match, the one with the longest `command` is used. When a table
+names the file and none matches the arguments, the program is refused.
+
+```toml
+[tool.git]
+command = ["git"]
+
+[tool.git.filesystem]
+read  = ["~/src/project", "/Library/Developer/CommandLineTools"]
+write = ["~/src/project/.git"]
+deny  = ["~/src/project/.env"]
+```
+
+The [configuration reference](configuration.md#process-tables) lists every key a tool
+table takes.
+
+### `[agent.filesystem] exec`
+
+A program that no `[tool.<name>]` table names runs with the agent's own filesystem lists
+when an `exec` entry covers it and no `deny` entry covers it. An entry is a file, or a
+directory that covers every file under it.
+
+```toml
+[agent.filesystem]
+exec = ["~/src/project/target/debug"]
+```
+
+A program that runs under an `exec` entry, and not a tool table, always goes through
+the egress gateway.
+
+## `PATH`
+
+A bare program name in a command resolves on the `PATH` of the shell that runs
+`box run`, else on `/usr/bin:/bin`.
+
+## `curl`
+
+`curl` sends each request through the egress gateway, which decides `net:connect` and
+`http:request`, as [Network and credentials](../guides/network-and-credentials.md)
+describes. A host with no `net:connect` permit is refused before any HTTP is sent:
+`curl` prints `curl: (6) error sending request for url (...)` and exits `6`. A refused
+`http:request` prints `http:request gate: policy denied this operation`, then the
+deciding rule.
+
+## Limits
+
+| Limit | What happens past it |
+|---|---|
+| 30 seconds per command | The command stops, prints `strands-shell: execution timeout exceeded`, and exits `1`. |
+| 256 KiB of command text | The Shell refuses the command with `strands-shell: input too large`, status `1`. |
+| 10 MiB per file in the Shell's memory, such as a file under `/tmp` | The write fails with `file size limit exceeded (10485760 bytes)`. |
+| 10,000 files and directories in the Shell's memory | Creating another fails. |
+
+The file limits apply to the paths that exist only in the Shell's memory. A file in the
+workspace or your home is the real file, and has no Shell limit.
+
+## Exit statuses
+
+| Status | Meaning | stderr |
+|---|---|---|
+| `125` | Box failed to serve the command. | The failure |
+| `126` | Policy refused the command. | `strands-shell: effect denied: policy denied this operation on '<program>'`, then `[policy: <id>]` or `[default-deny]` |
+| `126` | Policy permitted a program, and nothing in [Configuration](#configuration) covers it. | ``strands-shell: <program>: no tool runs <path>: no `[tool.<name>] command` matches this program and its leading arguments`` |
+| `127` | The program isn't in the Shell, and not on the `PATH`. | `strands-shell: <program>: command not found` |
+| Any other | The command's own status. A refused file operation fails the command that made it, for example `cat` with `1`. | `policy denied this operation on '<path>'`, then `[policy: <id>]` or `[default-deny]` |
+
+## See also
+
+- [Write policy for shell commands](../guides/write-shell-policy.md): rules for
+  commands, programs, and paths.
+- [Python in a box](python.md): the scripts `python` and `python3` run.
+- [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/main/docs/design/shell.md),
+  in the Box repository: how the Shell decides each command, and the order of the
+  checks.
+- [A tool's sandbox](../security/agent-and-tool-containment.md#a-tools-sandbox): what a
+  tool such as `git` can reach.
