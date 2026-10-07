@@ -1,5 +1,7 @@
 import { configDefaults, defineConfig } from 'vitest/config'
 
+import StatusTableReporter from './test/reporting/status-table-reporter.js'
+
 export default defineConfig({
   test: {
     include: ['test/**/*.test.ts'],
@@ -9,5 +11,6 @@ export default defineConfig({
       include: ['src/**/*.{ts,tsx}'],
       exclude: ['src/main.ts'],
     },
+    reporters: [new StatusTableReporter({ suite: 'Unit tests' })],
   },
 })

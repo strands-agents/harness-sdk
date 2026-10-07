@@ -1,8 +1,7 @@
-export interface TuiIntegrationCase {
-  id: string
+import type { TestScenario } from '../reporting/status-table-reporter.js'
+
+export interface TuiIntegrationCase extends TestScenario {
   scenario: string
-  description: string
-  testName: string
 }
 
 export const TUI_CASE = {
