@@ -1,4 +1,5 @@
 import unittest.mock
+from types import SimpleNamespace
 from unittest.mock import call
 
 import pydantic
@@ -294,8 +295,8 @@ async def test_stream(litellm_acompletion, api_key, model_id, model, agenerator,
         {
             "metadata": {
                 "usage": {
-                    "cacheReadInputTokens": mock_event_9.usage.prompt_tokens_details.cached_tokens,
-                    "cacheWriteInputTokens": mock_event_9.usage.prompt_tokens_details.cache_write_tokens,
+                    "cacheReadInputTokens": 10,
+                    "cacheWriteInputTokens": 10,
                     "inputTokens": mock_event_9.usage.prompt_tokens,
                     "outputTokens": mock_event_9.usage.completion_tokens,
                     "totalTokens": mock_event_9.usage.total_tokens,
@@ -671,36 +672,82 @@ def test_apply_proxy_prefix_disabled():
 
 
 @pytest.mark.parametrize(
-    ("usage_fields", "exp_cache"),
+    ("usage_factory", "usage_fields", "exp_cache"),
     [
-        ({}, {}),
-        ({"prompt_tokens_details": None, "cache_creation_input_tokens": None}, {}),
-        ({"cache_creation_input_tokens": 10}, {"cacheWriteInputTokens": 10}),
-        ({"cache_creation_input_tokens": 0}, {"cacheWriteInputTokens": 0}),
+        (Usage, {}, {}),
+        (Usage, {"prompt_tokens_details": None, "cache_creation_input_tokens": None}, {}),
+        (Usage, {"cache_creation_input_tokens": 10}, {"cacheWriteInputTokens": 10}),
+        (Usage, {"cache_creation_input_tokens": 0}, {"cacheWriteInputTokens": 0}),
         (
+            Usage,
             {"cache_read_input_tokens": 25, "cache_creation_input_tokens": 10},
             {"cacheReadInputTokens": 25, "cacheWriteInputTokens": 10},
         ),
         (
+            Usage,
             {"cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
             {"cacheReadInputTokens": 0, "cacheWriteInputTokens": 0},
         ),
         (
+            Usage,
             {"prompt_tokens_details": {"cached_tokens": 25, "cache_write_tokens": 10}},
             {"cacheReadInputTokens": 25, "cacheWriteInputTokens": 10},
         ),
         (
+            Usage,
             {"prompt_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 2713}},
             {"cacheReadInputTokens": 0, "cacheWriteInputTokens": 2713},
         ),
         (
+            Usage,
             {"prompt_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0}},
+            {"cacheReadInputTokens": 0, "cacheWriteInputTokens": 0},
+        ),
+        (
+            SimpleNamespace,
+            {"prompt_tokens_details": None, "cache_creation_input_tokens": 10},
+            {"cacheWriteInputTokens": 10},
+        ),
+        (
+            SimpleNamespace,
+            {"prompt_tokens_details": None, "cache_creation_input_tokens": 0},
+            {"cacheWriteInputTokens": 0},
+        ),
+        (SimpleNamespace, {"prompt_tokens_details": None, "cache_creation_input_tokens": None}, {}),
+        (SimpleNamespace, {"prompt_tokens_details": None, "cache_creation_input_tokens": "10"}, {}),
+        (
+            SimpleNamespace,
+            {"prompt_tokens_details": SimpleNamespace(cached_tokens=25), "cache_creation_input_tokens": 10},
+            {"cacheReadInputTokens": 25, "cacheWriteInputTokens": 10},
+        ),
+        (
+            SimpleNamespace,
+            {
+                "prompt_tokens_details": SimpleNamespace(cached_tokens=25, cache_write_tokens=None),
+                "cache_creation_input_tokens": 10,
+            },
+            {"cacheReadInputTokens": 25, "cacheWriteInputTokens": 10},
+        ),
+        (
+            SimpleNamespace,
+            {
+                "prompt_tokens_details": SimpleNamespace(cached_tokens=25, cache_write_tokens=20),
+                "cache_creation_input_tokens": 10,
+            },
+            {"cacheReadInputTokens": 25, "cacheWriteInputTokens": 20},
+        ),
+        (
+            SimpleNamespace,
+            {
+                "prompt_tokens_details": SimpleNamespace(cached_tokens=0, cache_write_tokens=0),
+                "cache_creation_input_tokens": 10,
+            },
             {"cacheReadInputTokens": 0, "cacheWriteInputTokens": 0},
         ),
     ],
 )
-def test_format_chunk_metadata_with_cache_tokens(usage_fields, exp_cache, model):
-    usage = Usage(prompt_tokens=100, completion_tokens=50, total_tokens=150, **usage_fields)
+def test_format_chunk_metadata_with_cache_tokens(usage_factory, usage_fields, exp_cache, model):
+    usage = usage_factory(prompt_tokens=100, completion_tokens=50, total_tokens=150, **usage_fields)
     tru_usage = model.format_chunk({"chunk_type": "metadata", "data": usage})["metadata"]["usage"]
     exp_usage = {"inputTokens": 100, "outputTokens": 50, "totalTokens": 150, **exp_cache}
     assert tru_usage == exp_usage
