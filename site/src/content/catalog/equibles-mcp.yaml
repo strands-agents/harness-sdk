@@ -1,0 +1,8 @@
+name: equibles-mcp
+description: Hosted MCP server giving Strands agents US stock data from SEC filings, financial statements, earnings call transcripts, insider trades and 13F holdings, with one API key header.
+integrationType: tool
+languages:
+  python: {}
+github: https://github.com/daniel3303/stock-market-mcp-server
+docsUrl: https://equibles.com/docs/mcp/strands
+addedDate: 2026-10-08
