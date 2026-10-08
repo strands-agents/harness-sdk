@@ -234,14 +234,11 @@ When using [Model Context Protocol (MCP)](../tools/mcp-tools.md) tools with Lamb
 **Establish a new MCP connection for each Lambda invocation.** Creating the `MCPClient` object itself is inexpensive - the costly operation is establishing the actual connection to the server. Use context managers to ensure connections are properly opened and closed:
 
 ```python
-from mcp.client.streamable_http import streamablehttp_client
 from strands import Agent
 from strands.tools.mcp import MCPClient
 
 def handler(event, context):
-    mcp_client = MCPClient(
-        lambda: streamablehttp_client("https://your-mcp-server.example.com/mcp")
-    )
+    mcp_client = MCPClient(url="https://your-mcp-server.example.com/mcp")
 
     # Context manager ensures connection is opened and closed safely
     with mcp_client:
@@ -257,14 +254,11 @@ def handler(event, context):
 For optimization, you can establish the connection at module level using `start()` to reuse it across Lambda warm invocations:
 
 ```python
-from mcp.client.streamable_http import streamablehttp_client
 from strands import Agent
 from strands.tools.mcp import MCPClient
 
 # Create and start connection at module level (reused across warm invocations)
-mcp_client = MCPClient(
-    lambda: streamablehttp_client("https://your-mcp-server.example.com/mcp")
-)
+mcp_client = MCPClient(url="https://your-mcp-server.example.com/mcp")
 mcp_client.start()
 
 def handler(event, context):

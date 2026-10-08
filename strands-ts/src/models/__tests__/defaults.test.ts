@@ -35,6 +35,11 @@ describe('getContextWindowLimit', () => {
     expect(getContextWindowLimit('anthropic.claude-fable-5-1')).toBe(1_000_000)
     expect(getContextWindowLimit('global.anthropic.claude-opus-5-5')).toBe(1_000_000)
     expect(getContextWindowLimit('us.anthropic.claude-fable-5-1')).toBe(1_000_000)
+    // Claude Haiku 5.5 has the same 1M window (#4996).
+    expect(getContextWindowLimit('claude-haiku-5-5')).toBe(1_000_000)
+    expect(getContextWindowLimit('anthropic.claude-haiku-5-5')).toBe(1_000_000)
+    expect(getContextWindowLimit('eu.anthropic.claude-haiku-5-5')).toBe(1_000_000)
+    expect(getContextWindowLimit('global.anthropic.claude-haiku-5-5')).toBe(1_000_000)
   })
 
   it('strips Bedrock cross-region prefix before lookup', () => {

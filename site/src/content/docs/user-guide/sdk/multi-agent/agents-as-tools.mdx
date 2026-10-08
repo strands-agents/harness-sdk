@@ -53,18 +53,21 @@ research_agent = Agent(
     factual, well-sourced information in response to research questions.
     Always cite your sources when possible.""",
     tools=[http_request],
+    callback_handler=None,
 )
 
 product_agent = Agent(
     system_prompt="""You are a specialized product recommendation assistant.
     Provide personalized product suggestions based on user preferences.""",
     tools=[http_request],
+    callback_handler=None,
 )
 
 travel_agent = Agent(
     system_prompt="""You are a specialized travel planning assistant.
     Create detailed travel itineraries based on user preferences.""",
     tools=[http_request],
+    callback_handler=None,
 )
 
 # Create the orchestrator: agents are automatically converted to tools
@@ -87,6 +90,8 @@ orchestrator = Agent(
 ```
 </Tab>
 </Tabs>
+
+Each specialist sets <Syntax py="callback_handler=None" ts="printer: false" /> so that only the orchestrator writes to the console. Without it, the specialist's default handler prints its own response alongside the orchestrator's output, and with [delegation](#delegation) the specialist's text appears twice.
 
 ### Customizing agent tools
 
@@ -171,7 +176,8 @@ def research_assistant(query: str) -> str:
     try:
         research_agent = Agent(
             system_prompt=RESEARCH_ASSISTANT_PROMPT,
-            tools=[http_request]
+            tools=[http_request],
+            callback_handler=None,
         )
 
         response = research_agent(query)
@@ -210,6 +216,7 @@ def product_recommendation_assistant(query: str) -> str:
             system_prompt="""You are a specialized product recommendation assistant.
             Provide personalized product suggestions based on user preferences.""",
             tools=[http_request, dialog],
+            callback_handler=None,
         )
         # Implementation with response handling
         # ...
@@ -233,6 +240,7 @@ def trip_planning_assistant(query: str) -> str:
             system_prompt="""You are a specialized travel planning assistant.
             Create detailed travel itineraries based on user preferences.""",
             tools=[http_request],
+            callback_handler=None,
         )
         # Implementation with response handling
         # ...
@@ -351,6 +359,7 @@ billing_agent = Agent(
     description="Answers billing questions: charges, refunds, and invoices.",
     system_prompt="You handle billing questions with precision.",
     structured_output_model=BillingResponse,
+    callback_handler=None,
 )
 
 orchestrator = Agent(

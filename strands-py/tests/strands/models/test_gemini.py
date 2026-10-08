@@ -219,6 +219,38 @@ async def test_stream_request_with_image(gemini_client, model, model_id):
     gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
 
 
+@pytest.mark.parametrize(
+    ("video_format", "mime_type"),
+    [
+        ("flv", "video/x-flv"),
+        ("mkv", "video/x-matroska"),
+        ("mov", "video/quicktime"),
+        ("mpeg", "video/mpeg"),
+        ("mpg", "video/mpeg"),
+        ("mp4", "video/mp4"),
+        ("three_gp", "video/3gpp"),
+        ("webm", "video/webm"),
+        ("wmv", "video/x-ms-wmv"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_request_with_video(video_format, mime_type, gemini_client, model, model_id):
+    messages = [
+        {
+            "role": "user",
+            "content": [{"video": {"format": video_format, "source": {"bytes": b"video"}}}],
+        },
+    ]
+    await anext(model.stream(messages))
+
+    exp_request = {
+        "config": {},
+        "contents": [{"parts": [{"inline_data": {"data": "dmlkZW8=", "mime_type": mime_type}}], "role": "user"}],
+        "model": model_id,
+    }
+    gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
+
+
 @pytest.mark.asyncio
 async def test_stream_request_with_reasoning(gemini_client, model, model_id):
     messages = [
@@ -1173,6 +1205,22 @@ async def test_stream_response_throttled_exception(gemini_client, model, message
     )
 
     with pytest.raises(ModelThrottledException, match="Resource exhausted. Please try again later."):
+        await anext(model.stream(messages))
+
+
+@pytest.mark.asyncio
+async def test_stream_response_throttled_exception_non_json_body(gemini_client, model, messages):
+    """Regression test for https://github.com/strands-agents/harness-sdk/issues/4523.
+
+    For a 429 with a non-JSON body, google-genai sets status to the HTTP reason phrase; the 429
+    code alone must be enough to classify it as throttling.
+    """
+    body = '{"error": {"code": 429, "status": "RESOURCE_EXHAUSTED"}}'
+    gemini_client.aio.models.generate_content_stream.side_effect = genai.errors.ClientError(
+        429, {"message": body, "status": "Too Many Requests"}
+    )
+
+    with pytest.raises(ModelThrottledException, match="RESOURCE_EXHAUSTED"):
         await anext(model.stream(messages))
 
 

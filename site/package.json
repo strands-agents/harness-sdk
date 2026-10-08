@@ -70,7 +70,7 @@
     "astro": "^7.3.3",
     "js-yaml": "^4.3.2",
     "jsdom": "^30.0.1",
-    "pino": "^10.3.1",
+    "pino": "^10.4.0",
     "pino-pretty": "^13.0.0",
     "remark-parse": "^11.0.0",
     "remark-stringify": "^11.0.0",

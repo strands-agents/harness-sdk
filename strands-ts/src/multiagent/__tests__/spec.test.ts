@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   UNSET,
   AgentSpec,
@@ -15,6 +15,8 @@ import type { ResolveSpecAxes } from '../spec.js'
 import { Agent } from '../../agent/agent.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { createMockTool } from '../../__fixtures__/tool-helpers.js'
+import { logger } from '../../logging/logger.js'
+import type { Sandbox } from '../../sandbox/base.js'
 import { McpClient } from '../../mcp/client.js'
 import { McpTool } from '../../tools/mcp-tool.js'
 
@@ -165,6 +167,10 @@ describe('Fixed', () => {
 describe('_defaultBuilder', () => {
   const model = new MockMessageModel()
 
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   it('inherits MCP clients once per server and respects server selection', async () => {
     const client = new McpClient({ applicationName: 'server', url: 'https://example.invalid/mcp' })
     const tools = ['read', 'search'].map((name) => new McpTool({ name, description: name, inputSchema: {}, client }))
@@ -179,7 +185,8 @@ describe('_defaultBuilder', () => {
 
       const inheritsServer = mcpServers === undefined || mcpServers.includes('server')
       expect(listTools).toHaveBeenCalledTimes(inheritsServer ? 1 : 0)
-      expect(child.toolRegistry.list()).toEqual(inheritsServer ? tools : [])
+      // Ignore tools the child's own context manager registers (e.g. retrieve_context).
+      expect(child.toolRegistry.list().filter((tool) => tool instanceof McpTool)).toEqual(inheritsServer ? tools : [])
     }
   })
 
@@ -203,15 +210,63 @@ describe('_defaultBuilder', () => {
     expect(childToolNames).toEqual(['read', 'shell'])
   })
 
-  it('resolves only matching tools and silently skips unknown names', () => {
+  it('resolves only matching tools and warns about unknown tools and MCP servers', () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const readTool = createMockTool('read', () => 'ok')
     const shellTool = createMockTool('shell', () => 'ok')
     const parent = new Agent({ model, tools: [readTool, shellTool], printer: false })
 
-    const childToolNames = _defaultBuilder(parent)(new AgentSpec({ tools: ['read', 'nonexistent'] }))
+    const childToolNames = _defaultBuilder(parent)(
+      new AgentSpec({ tools: ['read', 'nonexistent'], mcpServers: ['missing_server'] })
+    )
       .toolRegistry.list()
       .map((tool) => tool.name)
 
     expect(childToolNames).toEqual(['read'])
+    expect(warn.mock.calls).toEqual([
+      ['tool_name=<nonexistent> | subagent requested tool but parent does not own it, skipping'],
+      ['server_name=<missing_server> | subagent requested MCP server but parent does not own it, skipping'],
+    ])
   })
+
+  it("does not inherit the parent's context manager tools", async () => {
+    const readTool = createMockTool('read', () => 'ok')
+    const parent = new Agent({ model, tools: [readTool], printer: false, contextManager: 'auto' })
+    await parent.initialize()
+
+    const child = _defaultBuilder(parent)(new AgentSpec({}))
+    await child.initialize()
+
+    const parentRetrieve = parent.toolRegistry.list().find((tool) => tool.name === 'retrieve_context')
+    expect(parentRetrieve).toBeDefined()
+    expect(child.toolRegistry.list().map((tool) => tool.name)).toEqual(['read', 'retrieve_context'])
+    expect(child.toolRegistry.list()).not.toContain(parentRetrieve)
+  })
+
+  it.each([
+    ['gives the child an auto context manager for a stateless model', model, true],
+    [
+      'skips the context manager for a stateful model',
+      Object.defineProperty(new MockMessageModel(), 'stateful', { value: true }),
+      false,
+    ],
+  ])('%s', (_, parentModel, hasContextManager) => {
+    const parent = new Agent({ model: parentModel, printer: false })
+    expect(_defaultBuilder(parent)(new AgentSpec({})).contextManager !== undefined).toBe(hasContextManager)
+  })
+
+  it.each([true, false])(
+    "propagates the parent's sandbox, trace attributes, and printer setting (printer=%s)",
+    (printer) => {
+      const sandbox = {} as unknown as Sandbox
+      const parent = new Agent({ model, printer, sandbox, traceAttributes: { team: 'infra' } })
+
+      const child = _defaultBuilder(parent)(new AgentSpec({}))
+
+      expect(child.sandbox).toBe(sandbox)
+      const internals = child as unknown as { _printer?: unknown; _tracer: { _traceAttributes: unknown } }
+      expect(internals._tracer._traceAttributes).toEqual({ team: 'infra' })
+      expect(internals._printer !== undefined).toBe(printer)
+    }
+  )
 })
