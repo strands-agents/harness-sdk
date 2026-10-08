@@ -92,6 +92,18 @@ describe('webFetch tool', () => {
       expect(() => makeWebFetch({ maxContentChars: -1 })).toThrow(/maxContentChars/)
     })
 
+    it('rejects non-finite maxBytes', () => {
+      expect(() => makeWebFetch({ maxBytes: Number.NaN })).toThrow(/maxBytes/)
+      expect(() => makeWebFetch({ maxBytes: Number.POSITIVE_INFINITY })).toThrow(/maxBytes/)
+      expect(() => makeWebFetch({ maxBytes: Number.NEGATIVE_INFINITY })).toThrow(/maxBytes/)
+    })
+
+    it('rejects non-finite maxContentChars', () => {
+      expect(() => makeWebFetch({ maxContentChars: Number.NaN })).toThrow(/maxContentChars/)
+      expect(() => makeWebFetch({ maxContentChars: Number.POSITIVE_INFINITY })).toThrow(/maxContentChars/)
+      expect(() => makeWebFetch({ maxContentChars: Number.NEGATIVE_INFINITY })).toThrow(/maxContentChars/)
+    })
+
     it('exports correct default constants', () => {
       expect(DEFAULT_MAX_BYTES).toBe(5 * 1024 * 1024)
       expect(DEFAULT_MAX_CONTENT_CHARS).toBe(50_000)

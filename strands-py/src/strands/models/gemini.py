@@ -28,6 +28,19 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=pydantic.BaseModel)
 
+# mimetypes lacks flv and three_gp and varies by host.
+_VIDEO_MIME_TYPES = {
+    "flv": "video/x-flv",
+    "mkv": "video/x-matroska",
+    "mov": "video/quicktime",
+    "mpeg": "video/mpeg",
+    "mpg": "video/mpeg",
+    "mp4": "video/mp4",
+    "three_gp": "video/3gpp",
+    "webm": "video/webm",
+    "wmv": "video/x-ms-wmv",
+}
+
 
 class GeminiModel(Model):
     """Google Gemini model provider implementation.
@@ -171,6 +184,15 @@ class GeminiModel(Model):
                 inline_data=genai.types.Blob(
                     data=content["image"]["source"]["bytes"],
                     mime_type=mimetypes.types_map.get(f".{content['image']['format']}", "application/octet-stream"),
+                ),
+            )
+
+        if "video" in content:
+            video_format = content["video"]["format"]
+            return genai.types.Part(
+                inline_data=genai.types.Blob(
+                    data=content["video"]["source"]["bytes"],
+                    mime_type=_VIDEO_MIME_TYPES.get(video_format, f"video/{video_format}"),
                 ),
             )
 
@@ -683,6 +705,10 @@ class GeminiModel(Model):
                 yield self._format_chunk({"chunk_type": "metadata", "data": event.usage_metadata})
 
         except genai.errors.ClientError as error:
+            # When the response body is not JSON, google-genai sets status to the HTTP reason
+            # phrase ("Too Many Requests"), so the HTTP code is the reliable throttling signal.
+            if error.code == 429:
+                raise ModelThrottledException(error.message or str(error)) from error
             match error.status:
                 case "RESOURCE_EXHAUSTED" | "UNAVAILABLE":
                     raise ModelThrottledException(error.message or str(error)) from error
