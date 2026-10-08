@@ -5,7 +5,7 @@ import type { Product } from '../sidebar'
 // sections but not products, so they get no product eyebrow/switcher.
 // Must match the navbar labels in navigation.yml exactly; a stale entry silently
 // drops that product's hub hero and sidebar box.
-const PRODUCT_LABELS = new Set(['Harness', 'Harness SDK', 'Shell', 'Evals'])
+const PRODUCT_LABELS = new Set(['Harness', 'Harness SDK', 'Shell', 'Box', 'Evals'])
 
 /**
  * The product whose section the given path falls in, by longest-basePath match

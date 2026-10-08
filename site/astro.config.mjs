@@ -24,6 +24,8 @@ const sidebar = loadSidebarFromConfig(
 )
 
 const base = process.env.ASTRO_BASE_PATH || '/'
+// Absolute URLs (canonical, og:image) use this origin, so a preview build points them at its own host.
+const site = (process.env.SITE_DOMAIN || 'https://strandsagents.com').replace(/\/$/, '')
 
 // Static HTML redirect stubs for known legacy MkDocs URLs (meta refresh +
 // canonical link), so crawlers follow renames that the client-side 404
@@ -33,7 +35,7 @@ const redirects = buildStaticRedirects(path.resolve('./src/content'), base)
 
 // https://astro.build/config
 export default defineConfig({
-  site: 'https://strandsagents.com',
+  site,
   base,
   redirects,
   vite: {
@@ -67,11 +69,15 @@ export default defineConfig({
     starlight({
       social: [],
       head: [
-        { tag: 'meta', attrs: { property: 'og:image', content: 'https://strandsagents.com/og-image.png' } },
+        { tag: 'meta', attrs: { property: 'og:image', content: `${site}/og-image.png` } },
         { tag: 'meta', attrs: { property: 'og:image:width', content: '1200' } },
         { tag: 'meta', attrs: { property: 'og:image:height', content: '630' } },
         { tag: 'meta', attrs: { property: 'og:image:alt', content: 'Strands Agents — the open source toolkit for production agents' } },
-        { tag: 'meta', attrs: { name: 'twitter:image', content: 'https://strandsagents.com/og-image.png' } },
+        { tag: 'meta', attrs: { name: 'twitter:image', content: `${site}/og-image.png` } },
+        // Keep preview hosts out of search, since their canonical URLs point at themselves.
+        ...(site === 'https://strandsagents.com'
+          ? []
+          : [{ tag: 'meta', attrs: { name: 'robots', content: 'noindex, nofollow' } }]),
       ],
       markdown: {
         // API docs are symlinked from .build/api-docs; processedDirs ensures Starlight's
