@@ -185,7 +185,10 @@ export const edit = tool({
       throw new Error(`old_str appears ${occurrences} times in ${input.path}; make it unique.`)
     }
 
-    await sandbox.writeText(input.path, content.replace(input.old_str, input.new_str))
+    await sandbox.writeText(
+      input.path,
+      content.replace(input.old_str, () => input.new_str)
+    )
     return `Edited ${input.path}.`
   },
 })
