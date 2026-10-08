@@ -293,10 +293,15 @@ class LocalFileStorage:
                     break
 
         keys: builtins.list[str] = []
-        if not narrow_dir.exists():
+        try:
+            narrow_dir.stat()
+        except (FileNotFoundError, NotADirectoryError):
             return keys
 
-        for dirpath, _, filenames in os.walk(narrow_dir):
+        def on_error(error: OSError) -> None:
+            raise error
+
+        for dirpath, _, filenames in os.walk(narrow_dir, onerror=on_error):
             for filename in filenames:
                 if filename.startswith(_INTERNAL_PREFIX):
                     continue
