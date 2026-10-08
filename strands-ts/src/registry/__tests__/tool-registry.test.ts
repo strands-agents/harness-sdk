@@ -355,5 +355,28 @@ describe('ToolRegistry', () => {
 
       expect(provider.removed).toBe(true)
     })
+
+    it('toolProviders returns a copy, not the live internal array', () => {
+      const provider = new MockToolProvider()
+      registry.addProvider(provider)
+
+      const snapshot = registry.toolProviders as ToolProvider[]
+      snapshot.push(new MockToolProvider())
+
+      expect(registry.toolProviders).toHaveLength(1)
+    })
+
+    it('cleanup clears tracked providers up front, so a second call only affects providers registered since', async () => {
+      const provider = new MockToolProvider()
+      registry.addProvider(provider)
+
+      await registry.cleanup()
+      expect(registry.toolProviders).toHaveLength(0)
+
+      const removeConsumerSpy = vi.spyOn(provider, 'removeConsumer')
+      await registry.cleanup()
+
+      expect(removeConsumerSpy).not.toHaveBeenCalled()
+    })
   })
 })

@@ -2590,5 +2590,95 @@ describe('normalizeToolUseNames', () => {
 
       expect(provider.consumers.size).toBe(0)
     })
+
+    it('still flushes the memory manager when a provider throws while releasing', async () => {
+      class FailingToolProvider extends ToolProvider {
+        async loadTools(): Promise<Tool[]> {
+          return []
+        }
+        addConsumer(): void {}
+        removeConsumer(): void {
+          throw new Error('close failed')
+        }
+      }
+      const memoryManager = new MemoryManager({ stores: [searchOnlyStore()] })
+      const flush = vi.spyOn(memoryManager, 'flush')
+      const model = new MockMessageModel()
+      const agent = new Agent({ model, tools: [new FailingToolProvider()], memoryManager, printer: false })
+      await agent.initialize()
+
+      await expect(agent.shutdown()).rejects.toThrow('close failed')
+
+      expect(flush).toHaveBeenCalledTimes(1)
+    })
+
+    it('marks the agent disposed even when shutdown throws', async () => {
+      class FailingToolProvider extends ToolProvider {
+        async loadTools(): Promise<Tool[]> {
+          return []
+        }
+        addConsumer(): void {}
+        removeConsumer(): void {
+          throw new Error('close failed')
+        }
+      }
+      const model = new MockMessageModel()
+      const agent = new Agent({ model, tools: [new FailingToolProvider()], printer: false })
+      await agent.initialize()
+
+      await expect(agent.shutdown()).rejects.toThrow('close failed')
+
+      await expect(agent.initialize()).rejects.toThrow(/shut down/)
+    })
+
+    it('rejects reinitialization after shutdown', async () => {
+      const model = new MockMessageModel()
+      const agent = new Agent({ model, printer: false })
+
+      await agent.initialize()
+      await agent.shutdown()
+
+      await expect(agent.initialize()).rejects.toThrow(/shut down/)
+    })
+
+    it('rejects invoke/stream on a disposed agent', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+      const agent = new Agent({ model, printer: false })
+
+      await agent.shutdown()
+
+      await expect(agent.invoke('hi')).rejects.toThrow(/shut down/)
+    })
+
+    it("names the provider when a provider's tool collides with an already-registered name", async () => {
+      const providedTool = createRandomTool('duplicate-tool')
+      class CollidingToolProvider extends ToolProvider {
+        async loadTools(): Promise<Tool[]> {
+          return [providedTool]
+        }
+        addConsumer(): void {}
+        removeConsumer(): void {}
+      }
+      const existingTool = createMockTool('duplicate-tool', () => 'original')
+      const model = new MockMessageModel()
+      const agent = new Agent({ model, tools: [existingTool, new CollidingToolProvider()], printer: false })
+
+      await expect(agent.initialize()).rejects.toThrow(/CollidingToolProvider/)
+    })
+
+    it('recognizes a structural implementer of ToolProvider even without `instanceof`', async () => {
+      const providedTool = createRandomTool('structural-provided-tool')
+      const structuralProvider: ToolProvider = {
+        loadTools: async () => [providedTool],
+        addConsumer: () => {},
+        removeConsumer: () => {},
+      }
+      const model = new MockMessageModel()
+      const agent = new Agent({ model, tools: [structuralProvider], printer: false })
+
+      await agent.initialize()
+
+      expect(agent.toolRegistry.get('structural-provided-tool')).toBe(providedTool)
+    })
   })
 })

@@ -113,6 +113,26 @@ export class ConcurrentInvocationError extends Error {
 }
 
 /**
+ * Error thrown when attempting to use an agent after {@link Agent.shutdown} has run.
+ *
+ * `shutdown()` releases every {@link ToolProvider} registered via `tools`, so any tools backed by
+ * released resources are no longer safe to dispatch to. Rather than silently continue to dispatch
+ * to them, `initialize()` (and therefore `invoke()`/`stream()`, which call it) throws this error
+ * once an agent has been shut down. Construct a new `Agent` instance to continue.
+ */
+export class AgentDisposedError extends Error {
+  /**
+   * Creates a new AgentDisposedError.
+   *
+   * @param message - Error message describing the post-disposal usage attempt
+   */
+  constructor(message: string) {
+    super(message)
+    this.name = 'AgentDisposedError'
+  }
+}
+
+/**
  * Error thrown when a model provider returns a throttling or rate limit error.
  *
  * This error indicates that the model API has rate limited the request. Users can

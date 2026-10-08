@@ -42,10 +42,10 @@ export class ToolRegistry {
   /**
    * Tool providers registered via {@link addProvider}.
    *
-   * @returns The registered providers, in registration order.
+   * @returns A copy of the registered providers, in registration order.
    */
   get toolProviders(): readonly ToolProvider[] {
-    return this._toolProviders
+    return [...this._toolProviders]
   }
 
   /**
@@ -53,11 +53,15 @@ export class ToolRegistry {
    *
    * Attempts every provider even if one fails, to minimize resource leakage, then throws the
    * first failure (if any) once all removals have settled.
+   *
+   * Idempotent: clears the tracked providers up front, so calling this more than once only
+   * attempts removal against providers registered since the previous call.
    */
   async cleanup(): Promise<void> {
-    const results = await Promise.allSettled(
-      this._toolProviders.map((provider) => this._removeProviderConsumer(provider))
-    )
+    const providers = this._toolProviders
+    this._toolProviders = []
+
+    const results = await Promise.allSettled(providers.map((provider) => this._removeProviderConsumer(provider)))
 
     const firstFailure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
     if (firstFailure) {
