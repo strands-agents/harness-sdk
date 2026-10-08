@@ -1955,7 +1955,7 @@ describe('BedrockModel', () => {
       expect(lastBlock).toStrictEqual({ cachePoint: { type: 'default' } })
     })
 
-    it('propagates only messagesTTL when toolsTTL is not set', async () => {
+    it('lowers messagesTTL to the default tools point ahead of it when toolsTTL is not set', async () => {
       const provider = new BedrockModel({ cacheConfig: { strategy: 'auto', messagesTTL: '1h' } })
       const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
       const options: StreamOptions = {
@@ -1973,6 +1973,19 @@ describe('BedrockModel', () => {
       const call = mockConverseStreamCommand.mock.lastCall?.[0]
       const toolsLast = call?.toolConfig?.tools?.[call.toolConfig.tools.length - 1]
       expect(toolsLast).toStrictEqual({ cachePoint: { type: 'default' } })
+      const userMsg = call?.messages?.[0]
+      const lastBlock = userMsg?.content?.[userMsg.content.length - 1]
+      expect(lastBlock).toStrictEqual({ cachePoint: { type: 'default' } })
+    })
+
+    it('propagates only messagesTTL when there are no tools', async () => {
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto', messagesTTL: '1h' } })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+      collectIterator(provider.stream(messages))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.toolConfig).toBeUndefined()
       const userMsg = call?.messages?.[0]
       const lastBlock = userMsg?.content?.[userMsg.content.length - 1]
       expect(lastBlock).toStrictEqual({ cachePoint: { type: 'default', ttl: '1h' } })
@@ -2660,6 +2673,182 @@ describe('BedrockModel', () => {
         ])
       })
 
+      describe('checkpoint ttl order', () => {
+        // Regression guard for https://github.com/strands-agents/harness-sdk/issues/3758: Bedrock reads
+        // checkpoints as toolConfig, system, messages and rejects a longer TTL after a shorter one.
+
+        /** Every cache point in the request, in the order Bedrock reads them, as `section:ttl`. */
+        const checkpointOrder = (): string[] => {
+          const call = mockConverseStreamCommand.mock.lastCall?.[0]
+          const sections: [string, object[]][] = [
+            ['tools', call?.toolConfig?.tools ?? []],
+            ['system', call?.system ?? []],
+            ['messages', (call?.messages ?? []).flatMap((message) => message.content ?? [])],
+          ]
+          return sections.flatMap(([section, blocks]) =>
+            blocks.flatMap((block) =>
+              'cachePoint' in block ? [`${section}:${(block.cachePoint as { ttl?: string }).ttl ?? 'default'}`] : []
+            )
+          )
+        }
+
+        const placedMessages = (ttl: string): Message[] => [
+          new Message({
+            role: 'user',
+            content: [
+              new TextBlock('durable prefix'),
+              new CachePointBlock({ cacheType: 'default', ttl }),
+              new TextBlock('per-call tail'),
+            ],
+          }),
+        ]
+
+        const orderWarning = [expect.anything(), expect.stringContaining('lowered cache point ttl')]
+
+        it.each([
+          [
+            'a messages ttl behind the default tools point',
+            { messagesTTL: '1h' },
+            ['tools:default', 'system:default', 'messages:default'],
+          ],
+          [
+            'every later section behind a shorter tools ttl',
+            { toolsTTL: '5m', systemPromptTTL: '1h', messagesTTL: '1h' },
+            ['tools:5m', 'system:5m', 'messages:5m'],
+          ],
+          [
+            'a messages ttl behind a shorter system ttl',
+            { toolsTTL: false, systemPromptTTL: '5m', messagesTTL: '1h' },
+            ['system:5m', 'messages:5m'],
+          ],
+          [
+            'a messages ttl behind the default system point',
+            { ttl: '1h', toolsTTL: '5m' },
+            ['tools:5m', 'system:default', 'messages:5m'],
+          ],
+          [
+            'a messages ttl behind the default system point with tools disabled',
+            { messagesTTL: '1h', toolsTTL: false },
+            ['system:default', 'messages:default'],
+          ],
+        ] as const)('lowers %s', async (_label, cacheConfig, expected) => {
+          const provider = new BedrockModel({ cacheConfig })
+
+          collectIterator(provider.stream(messages, { toolSpecs, systemPrompt: 'durable system prompt' }))
+
+          expect(checkpointOrder()).toStrictEqual(expected)
+          expect(warnOnce).toHaveBeenCalledWith(...orderWarning)
+        })
+
+        it.each([
+          ['a shared ttl', { ttl: '1h' }, ['tools:1h', 'system:1h', 'messages:1h']],
+          [
+            'descending section ttls',
+            { toolsTTL: '1h', messagesTTL: '5m' },
+            ['tools:1h', 'system:default', 'messages:5m'],
+          ],
+          ['the provider defaults', {}, ['tools:default', 'system:default', 'messages:default']],
+          [
+            'disabled tools and system sections',
+            { messagesTTL: '1h', toolsTTL: false, systemPromptTTL: false },
+            ['messages:1h'],
+          ],
+          [
+            'a ttl outside the known set',
+            { toolsTTL: '5m', messagesTTL: '2h' },
+            ['tools:5m', 'system:default', 'messages:2h'],
+          ],
+          [
+            'a known ttl behind one outside the known set',
+            { toolsTTL: '2h', systemPromptTTL: false, messagesTTL: '1h' },
+            ['tools:2h', 'messages:1h'],
+          ],
+        ] as const)('leaves %s as configured', async (_label, cacheConfig, expected) => {
+          const provider = new BedrockModel({ cacheConfig })
+
+          collectIterator(provider.stream(messages, { toolSpecs, systemPrompt: 'durable system prompt' }))
+
+          expect(checkpointOrder()).toStrictEqual(expected)
+          expect(warnOnce).not.toHaveBeenCalledWith(...orderWarning)
+        })
+
+        it('ranks a later point against the shortest known ttl, not one outside the known set', async () => {
+          const provider = new BedrockModel({
+            cacheConfig: { toolsTTL: '5m', systemPromptTTL: '2h', messagesTTL: '1h' },
+          })
+
+          collectIterator(provider.stream(messages, { toolSpecs, systemPrompt: 'durable system prompt' }))
+
+          expect(checkpointOrder()).toStrictEqual(['tools:5m', 'system:2h', 'messages:5m'])
+        })
+
+        it('leaves the messages section alone when the request has no tools or system prompt', async () => {
+          const provider = new BedrockModel({ cacheConfig: { ttl: '1h', toolsTTL: '5m', systemPromptTTL: '5m' } })
+
+          collectIterator(provider.stream(messages))
+
+          expect(checkpointOrder()).toStrictEqual(['messages:1h'])
+          expect(warnOnce).not.toHaveBeenCalledWith(...orderWarning)
+        })
+
+        it('lowers the configured ttl on a caller-placed message cache point', async () => {
+          const provider = new BedrockModel({ cacheConfig: { messagesTTL: '1h' } })
+
+          collectIterator(provider.stream(placedMessages('1h'), { toolSpecs }))
+
+          expect(mockConverseStreamCommand.mock.lastCall?.[0]?.messages?.[0]?.content).toStrictEqual([
+            { text: 'durable prefix' },
+            { cachePoint: { type: 'default' } },
+            { text: 'per-call tail' },
+          ])
+        })
+
+        it('lowers every later checkpoint behind a caller-placed system ttl', async () => {
+          const provider = new BedrockModel({ cacheConfig: { ttl: '1h' } })
+
+          collectIterator(provider.stream(messages, { toolSpecs, systemPrompt: systemPromptWith('5m') }))
+
+          expect(checkpointOrder()).toStrictEqual(['tools:1h', 'system:5m', 'messages:5m'])
+        })
+
+        it('lowers a caller-placed system ttl behind a shorter tools ttl', async () => {
+          const provider = new BedrockModel({ cacheConfig: { toolsTTL: '5m', messagesTTL: false } })
+
+          collectIterator(provider.stream(messages, { toolSpecs, systemPrompt: systemPromptWith('1h') }))
+
+          expect(checkpointOrder()).toStrictEqual(['tools:5m', 'system:5m'])
+        })
+
+        it('does not mutate the cache point blocks the caller owns', async () => {
+          const provider = new BedrockModel({ cacheConfig: { toolsTTL: '5m' } })
+          const systemPrompt = systemPromptWith('1h')
+          const placed = placedMessages('1h')
+
+          collectIterator(provider.stream(placed, { toolSpecs, systemPrompt }))
+
+          expect(checkpointOrder()).toStrictEqual(['tools:5m', 'system:5m', 'messages:default'])
+          expect((systemPrompt[1] as CachePointBlock).ttl).toBe('1h')
+          expect((placed[0]!.content[1] as CachePointBlock).ttl).toBe('1h')
+        })
+
+        it('leaves caller-placed points alone when caching is not configured', async () => {
+          const provider = new BedrockModel({})
+
+          collectIterator(provider.stream(placedMessages('1h'), { toolSpecs, systemPrompt: systemPromptWith('5m') }))
+
+          expect(checkpointOrder()).toStrictEqual(['system:5m', 'messages:1h'])
+          expect(warnOnce).not.toHaveBeenCalledWith(...orderWarning)
+        })
+
+        it('leaves caller-placed points alone when the model does not support caching', async () => {
+          const provider = new BedrockModel({ modelId: 'meta.llama3-70b-instruct-v1:0', cacheConfig: { ttl: '1h' } })
+
+          collectIterator(provider.stream(placedMessages('1h'), { toolSpecs, systemPrompt: systemPromptWith('5m') }))
+
+          expect(checkpointOrder()).toStrictEqual(['system:5m', 'messages:1h'])
+        })
+      })
+
       it('ignores cacheKey: it does not change the request shape', () => {
         // Bedrock does not consume cacheKey, so it must not reach the request.
         const withoutKey = new BedrockModel({ modelId: 'anthropic.claude-test-model', cacheConfig: {} })
@@ -3178,7 +3367,7 @@ describe('BedrockModel', () => {
       expect(call?.system).toStrictEqual([{ text: 'static prompt' }, { cachePoint: { type: 'default', ttl: '1h' } }])
     })
 
-    it('emits an explicit systemPromptTTL as written, above a shorter tools point', async () => {
+    it('lowers an explicit systemPromptTTL to a shorter tools point ahead of it', async () => {
       const provider = new BedrockModel({ cacheConfig: { strategy: 'auto', systemPromptTTL: '1h', toolsTTL: '5m' } })
       const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
       const options: StreamOptions = {
@@ -3189,7 +3378,7 @@ describe('BedrockModel', () => {
       collectIterator(provider.stream(messages, options))
 
       const call = mockConverseStreamCommand.mock.lastCall?.[0]
-      expect(call?.system).toStrictEqual([{ text: 'static prompt' }, { cachePoint: { type: 'default', ttl: '1h' } }])
+      expect(call?.system).toStrictEqual([{ text: 'static prompt' }, { cachePoint: { type: 'default', ttl: '5m' } }])
     })
 
     it('carries an explicit systemPromptTTL into the appended cache point without a shared ttl', async () => {
