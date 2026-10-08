@@ -1,0 +1,8 @@
+name: RVM and RVF
+description: Connect Strands Agents to capability-governed RVF context for search, read, and verification, with an optional Strands Box launch guide.
+integrationType: integration
+languages:
+  python: {}
+github: https://github.com/ruvnet/rvm
+docsUrl: https://github.com/ruvnet/rvm/blob/main/docs/strands-integration.md
+addedDate: 2026-10-08
