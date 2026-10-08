@@ -497,6 +497,7 @@ class OpenAIModel(Model):
         Args:
             messages: List of message objects to be processed by the model.
             tool_specs: List of tool specifications to make available to the model.
+                If None or empty, the tools field is omitted.
             system_prompt: System prompt to provide context to the model.
             tool_choice: Selection strategy for tool invocation.
             system_prompt_content: System prompt content blocks to provide context to the model.
@@ -520,7 +521,12 @@ class OpenAIModel(Model):
             ),
             "model": self.config["model_id"],
             "stream": stream,
-            "tools": [
+            **(self._format_request_tool_choice(tool_choice)),
+            **params,
+        }
+
+        if tool_specs:
+            request["tools"] = [
                 {
                     "type": "function",
                     "function": {
@@ -529,11 +535,8 @@ class OpenAIModel(Model):
                         "parameters": tool_spec["inputSchema"]["json"],
                     },
                 }
-                for tool_spec in tool_specs or []
-            ],
-            **(self._format_request_tool_choice(tool_choice)),
-            **params,
-        }
+                for tool_spec in tool_specs
+            ]
 
         if stream:
             request["stream_options"] = stream_options

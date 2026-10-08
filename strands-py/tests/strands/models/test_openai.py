@@ -10,6 +10,8 @@ import pytest
 
 import strands
 from strands.agent import AgentMetadata
+from strands.agent.conversation_manager import SummarizingConversationManager
+from strands.agent.conversation_manager.summarizing_conversation_manager import DEFAULT_SUMMARIZATION_PROMPT
 from strands.models import CacheConfig
 from strands.models.openai import OpenAIModel
 from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
@@ -700,6 +702,43 @@ def test_format_request(model, messages, tool_specs, system_prompt):
     assert tru_request == exp_request
 
 
+@pytest.mark.parametrize("tool_specs", [None, []])
+@pytest.mark.parametrize("stream", [True, False])
+def test_format_request_omits_tools_when_empty(model, messages, tool_specs, stream):
+    """No-tool requests omit tools for strict OpenAI-compatible servers (#4854)."""
+    model.update_config(stream=stream)
+
+    tru_request = model.format_request(messages, tool_specs=tool_specs)
+    exp_request = {
+        "messages": [{"role": "user", "content": [{"text": "test", "type": "text"}]}],
+        "model": "m1",
+        "stream": stream,
+        "max_tokens": 1,
+    }
+    if stream:
+        exp_request["stream_options"] = {"include_usage": True}
+
+    assert "tools" not in tru_request
+    assert tru_request == exp_request
+
+
+def test_summarization_request_omits_tools(openai_client, model, messages, agenerator):
+    """Default summarization omits tools in the outbound OpenAI request (#4854)."""
+    delta = unittest.mock.Mock(content="Conversation summary", tool_calls=None, reasoning_content=None, reasoning=None)
+    event = unittest.mock.Mock(choices=[unittest.mock.Mock(finish_reason="stop", delta=delta)], usage=None)
+    openai_client.chat.completions.create.return_value = agenerator([event])
+    agent = strands.Agent(model=model, callback_handler=None)
+    manager = SummarizingConversationManager()
+
+    tru_summary = manager._generate_summary(messages, agent)
+    tru_request = openai_client.chat.completions.create.call_args.kwargs
+
+    openai_client.chat.completions.create.assert_awaited_once()
+    assert "tools" not in tru_request
+    assert tru_request["messages"][0] == {"role": "system", "content": DEFAULT_SUMMARIZATION_PROMPT}
+    assert tru_summary["content"] == [{"text": "Conversation summary"}]
+
+
 def test_format_request_can_disable_stream(openai_client, model_id, messages):
     _ = openai_client
     model = OpenAIModel(model_id=model_id, stream=False, params={"max_tokens": 1})
@@ -709,7 +748,6 @@ def test_format_request_can_disable_stream(openai_client, model_id, messages):
         "messages": [{"role": "user", "content": [{"text": "test", "type": "text"}]}],
         "model": model_id,
         "stream": False,
-        "tools": [],
         "max_tokens": 1,
     }
     assert tru_request == exp_request
@@ -1179,7 +1217,6 @@ async def test_stream(openai_client, model_id, model, agenerator, alist):
         "messages": [{"role": "user", "content": [{"text": "calculate 2+2", "type": "text"}]}],
         "stream": True,
         "stream_options": {"include_usage": True},
-        "tools": [],
     }
     openai_client.chat.completions.create.assert_called_once_with(**expected_request)
 
@@ -1247,7 +1284,6 @@ async def test_stream_empty(openai_client, model_id, model, agenerator, alist):
         "messages": [],
         "stream": True,
         "stream_options": {"include_usage": True},
-        "tools": [],
     }
     openai_client.chat.completions.create.assert_called_once_with(**expected_request)
 
@@ -1302,7 +1338,6 @@ async def test_stream_with_empty_choices(openai_client, model, agenerator, alist
         "messages": [{"role": "user", "content": [{"text": "test", "type": "text"}]}],
         "stream": True,
         "stream_options": {"include_usage": True},
-        "tools": [],
     }
     openai_client.chat.completions.create.assert_called_once_with(**expected_request)
 
@@ -1338,7 +1373,6 @@ async def test_stream_can_use_non_streaming_chat_completion(openai_client, model
         model=model_id,
         messages=[{"role": "user", "content": [{"text": "test", "type": "text"}]}],
         stream=False,
-        tools=[],
     )
 
 
@@ -1387,7 +1421,6 @@ async def test_structured_output_forwards_request_params(openai_client, model_id
             {"role": "user", "content": [{"text": "Generate a person", "type": "text"}]},
         ],
         model=model_id,
-        tools=[],
         max_tokens=100,
         temperature=0.5,
         response_format=test_output_model_cls,
