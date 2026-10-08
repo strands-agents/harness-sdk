@@ -3,18 +3,8 @@
  * Allows tests to use plain objects without needing to construct class instances.
  */
 
-import type {
-  Message,
-  ToolResultBlock,
-  TextBlock,
-  ToolUseBlock,
-  ReasoningBlock,
-  CachePointBlock,
-  GuardContentBlock,
-  JsonBlock,
-} from '../types/messages.js'
-import type { AudioBlock, ImageBlock, VideoBlock, DocumentBlock } from '../types/media.js'
-import type { CitationsBlock } from '../types/citations.js'
+import type { Message, ToolResultBlock, TextBlock, CachePointBlock, GuardContentBlock } from '../types/messages.js'
+import type { MockMessageContentBlock } from '../testing/types.js'
 
 /**
  * Strips the toJSON method from a type, allowing plain objects to be used in tests.
@@ -32,19 +22,7 @@ export type NoJSON<T> = Omit<T, 'toJSON'>
 /**
  * Plain content block without toJSON method - preserves discriminated union.
  */
-export type PlainContentBlock =
-  | NoJSON<TextBlock>
-  | NoJSON<ToolUseBlock>
-  | NoJSON<ToolResultBlock>
-  | NoJSON<ReasoningBlock>
-  | NoJSON<CachePointBlock>
-  | NoJSON<GuardContentBlock>
-  | NoJSON<JsonBlock>
-  | NoJSON<AudioBlock>
-  | NoJSON<ImageBlock>
-  | NoJSON<VideoBlock>
-  | NoJSON<DocumentBlock>
-  | NoJSON<CitationsBlock>
+export type PlainContentBlock = MockMessageContentBlock
 
 /**
  * Plain system content block without toJSON method.
