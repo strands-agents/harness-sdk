@@ -20,11 +20,11 @@ class BashSession {
   private _process: ChildProcess | null = null
   private _started = false
   private readonly _timeout: number
-  private readonly _sentinel: string
+  private _queue: Promise<unknown> = Promise.resolve()
+  private _disposed = false
 
   constructor(timeout = 120) {
     this._timeout = timeout
-    this._sentinel = `__BASH_DONE_${Date.now()}_${Math.random().toString(36).slice(2)}__`
   }
 
   /**
@@ -71,9 +71,27 @@ class BashSession {
   }
 
   /**
-   * Runs a command in the bash session.
+   * Stops the bash process and rejects commands still queued on this session.
    */
-  async run(command: string, timeout?: number): Promise<BashOutput> {
+  dispose(): void {
+    this._disposed = true
+    this.stop()
+  }
+
+  /**
+   * Runs a command in the bash session, after any commands already queued on it.
+   */
+  run(command: string, timeout?: number): Promise<BashOutput> {
+    // One bash process has one stdout, so concurrent commands would read each other's output.
+    const result = this._queue.then(() => this._execute(command, timeout))
+    this._queue = result.catch(() => undefined)
+    return result
+  }
+
+  private async _execute(command: string, timeout?: number): Promise<BashOutput> {
+    if (this._disposed) {
+      throw new BashSessionError('Bash session was restarted')
+    }
     this.start()
 
     if (!this._process || !this._process.stdin || !this._process.stdout || !this._process.stderr) {
@@ -81,6 +99,7 @@ class BashSession {
     }
 
     const effectiveTimeout = timeout ?? this._timeout
+    const sentinel = `__BASH_DONE_${globalThis.crypto.randomUUID()}__`
     let stdoutData = ''
     let stderrData = ''
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null
@@ -97,11 +116,11 @@ class BashSession {
         stdoutData += data
 
         // Check for sentinel
-        if (stdoutData.includes(this._sentinel)) {
+        if (stdoutData.includes(sentinel)) {
           cleanup()
 
           // Remove sentinel from output
-          const output = stdoutData.replace(this._sentinel, '').trim()
+          const output = stdoutData.replace(sentinel, '').trim()
           const error = stderrData.trim()
 
           resolve({ output, error })
@@ -160,7 +179,8 @@ class BashSession {
 
       // Send command with sentinel
       try {
-        stdin.write(`${command}\necho "${this._sentinel}"\n`)
+        // Commands read stdin from /dev/null so they cannot consume the input that follows them.
+        stdin.write(`{\n${command}\n} < /dev/null\necho "${sentinel}"\n`)
       } catch (err) {
         cleanup()
         this.stop()
@@ -272,7 +292,7 @@ export const bash = tool({
     if (input.mode === 'restart') {
       const existingSession = sessions.get(agent)
       if (existingSession) {
-        existingSession.stop()
+        existingSession.dispose()
         sessions.delete(agent)
       }
       // Create new session (will be added to activeSessions when started)
