@@ -18,6 +18,7 @@ import {
   type SummarizeConfig,
 } from '../../methods/summarize.js'
 import { formatStashRefs } from '../../stash.js'
+import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
 import {
   BaseOffloadStrategy,
   collectRemovableWithPair,
@@ -71,16 +72,22 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     const safe = messages.filter((message) => safeSet.has(message))
     if (safe.length === 0) return false
 
-    const contentBlocks = flattenMessagesToContent(safe)
+    // A summary landing at index 1 merges into message 0, which is never eligible again. Fold the
+    // summaries already merged there into this pass so message 0 holds at most one.
+    const folded = this._foldableHeadSummaries(messages, safe)
+    const toSummarize = folded ? [folded.message, ...safe] : safe
+
+    const contentBlocks = flattenMessagesToContent(toSummarize)
     const summary = await summarizeContent(contentBlocks, model, this._config)
     if (!summary) return false
 
-    const totalTokens = await model.countTokens(safe)
+    const totalTokens = await model.countTokens(toSummarize)
     const summaryMessage = new Message({
       role: 'user',
       content: [new TextBlock(formatSummarized(`${safe.length} messages`, totalTokens, summary))],
     })
 
+    if (folded) messages[0] = folded.head
     const { lowestIndex } = spliceWithPairs(messages, safe)
 
     const insertIndex = Math.max(1, Math.min(lowestIndex, messages.length))
@@ -89,6 +96,35 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     repairAlternation(messages)
     logger.debug(`summarized=<${safe.length}>, tokens=<${totalTokens}> | batched summarization complete`)
     return true
+  }
+
+  /**
+   * Splits previously merged batch summaries out of message 0 when the new summary would merge into it.
+   * Returns the head without them plus a message carrying them, or undefined when nothing should be folded.
+   */
+  private _foldableHeadSummaries(
+    messages: Message[],
+    safe: Message[]
+  ): { head: Message; message: Message } | undefined {
+    const head = messages[0]!
+    if (head.role !== 'user' || isPinned(messages, 0)) return undefined
+
+    const lowestIndex = Math.min(...safe.map((message) => messages.indexOf(message)))
+    if (Math.min(lowestIndex, messages.length - safe.length) > 1) return undefined
+
+    // Index 0 is the original content: merges only ever append after it.
+    const summaries = head.content.filter((block, index) => index > 0 && isBatchSummary(block))
+    if (summaries.length === 0) return undefined
+
+    return {
+      head: new Message({
+        role: head.role,
+        content: head.content.filter((block) => !summaries.includes(block)),
+        trackingId: head.trackingId,
+        ...(head.metadata ? { metadata: head.metadata } : {}),
+      }),
+      message: new Message({ role: 'user', content: summaries }),
+    }
   }
 
   protected async _replaceBlock(
@@ -134,4 +170,10 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
   private _resolveModel(agent: LocalAgent): Model | undefined {
     return this._config.model ?? agent.model
   }
+}
+
+const BATCH_SUMMARY_PATTERN = /^\[Summarized: \d+ messages, ~/
+
+function isBatchSummary(block: ContentBlock): boolean {
+  return block instanceof TextBlock && BATCH_SUMMARY_PATTERN.test(block.text)
 }
