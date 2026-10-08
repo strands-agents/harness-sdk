@@ -27,6 +27,7 @@ from ..types._events import (
 )
 from ..types.citations import CitationsContentBlock
 from ..types.content import ContentBlock, Message, Messages, SystemContentBlock
+from ..types.exceptions import IncompleteStreamError
 from ..types.streaming import (
     ContentBlockDeltaEvent,
     ContentBlockStart,
@@ -367,6 +368,20 @@ def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
     return state
 
 
+def _has_unsigned_reasoning(content: list[dict[str, Any]]) -> bool:
+    """Whether any reasoningContent block carries reasoningText without a signature.
+
+    Only the model can mint a reasoning signature, and Bedrock rejects any later turn that replays
+    an unsigned reasoning block. A block missing its signature is expected mid-stream (the signature
+    arrives in its own delta); it is only a problem once the stream has ended without one.
+    """
+    for block in content:
+        reasoning = block.get("reasoningContent")
+        if reasoning and "reasoningText" in reasoning and not reasoning["reasoningText"].get("signature"):
+            return True
+    return False
+
+
 def handle_message_stop(event: MessageStopEvent, content: list[dict[str, Any]]) -> StopReason:
     """Handles the end of a message by returning the stop reason.
 
@@ -496,16 +511,27 @@ async def process_stream(
         elif "redactContent" in chunk:
             handle_redact_content(chunk["redactContent"], state)
 
-    # A provider that aborts in flight ends the stream without messageStop; the in-loop check
-    # above cannot see it, so report the cancellation here rather than a truncated end_turn.
-    if not saw_message_stop and cancel_signal and cancel_signal.is_set():
-        yield ModelStopReason(
-            stop_reason="cancelled",
-            message={"role": "assistant", "content": [{"text": "Cancelled by user"}]},
-            usage=usage,
-            metrics=metrics,
-        )
-        return
+    # A stream that ends without messageStop was aborted in flight (the in-loop check above only
+    # sees chunks that did arrive).
+    if not saw_message_stop:
+        if cancel_signal and cancel_signal.is_set():
+            # The partial message in state["message"] is discarded and never added to agent.messages.
+            yield ModelStopReason(
+                stop_reason="cancelled",
+                message={"role": "assistant", "content": [{"text": "Cancelled by user"}]},
+                usage=usage,
+                metrics=metrics,
+            )
+            return
+        if _has_unsigned_reasoning(state["message"]["content"]):
+            # The abort left a reasoningContent block whose signature never arrived. Reporting a
+            # completed end_turn would add it to history, and Bedrock then rejects every later turn
+            # that replays it — wedging the conversation with no client-side recovery. Raise
+            # instead: the partial never enters history, and an AfterModelCallEvent retry hook can
+            # re-issue the call.
+            raise IncompleteStreamError(
+                "model response stream ended without messageStop, leaving an unsigned reasoning block"
+            )
 
     yield ModelStopReason(stop_reason=stop_reason, message=state["message"], usage=usage, metrics=metrics)
 
