@@ -219,6 +219,38 @@ async def test_stream_request_with_image(gemini_client, model, model_id):
     gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
 
 
+@pytest.mark.parametrize(
+    ("video_format", "mime_type"),
+    [
+        ("flv", "video/x-flv"),
+        ("mkv", "video/x-matroska"),
+        ("mov", "video/quicktime"),
+        ("mpeg", "video/mpeg"),
+        ("mpg", "video/mpeg"),
+        ("mp4", "video/mp4"),
+        ("three_gp", "video/3gpp"),
+        ("webm", "video/webm"),
+        ("wmv", "video/x-ms-wmv"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_request_with_video(video_format, mime_type, gemini_client, model, model_id):
+    messages = [
+        {
+            "role": "user",
+            "content": [{"video": {"format": video_format, "source": {"bytes": b"video"}}}],
+        },
+    ]
+    await anext(model.stream(messages))
+
+    exp_request = {
+        "config": {},
+        "contents": [{"parts": [{"inline_data": {"data": "dmlkZW8=", "mime_type": mime_type}}], "role": "user"}],
+        "model": model_id,
+    }
+    gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
+
+
 @pytest.mark.asyncio
 async def test_stream_request_with_reasoning(gemini_client, model, model_id):
     messages = [
