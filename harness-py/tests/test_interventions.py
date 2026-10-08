@@ -97,6 +97,45 @@ def test_invalid_value_raises():
         resolve_interventions(123)  # type: ignore[arg-type]
 
 
+# https://github.com/strands-agents/harness-sdk/issues/4676
+@pytest.mark.parametrize("value", ["", "   ", "\n"])
+def test_blank_policy_raises(value):
+    with pytest.raises(ValueError, match="Blank interventions policy"):
+        resolve_interventions(value)
+
+
+# https://github.com/strands-agents/harness-sdk/issues/4676
+@pytest.mark.parametrize(("value", "preset"), [("OFF", "off"), ("Off", "off"), (" Ask ", "ask"), ("SMART", "smart")])
+def test_preset_in_the_wrong_case_raises(value, preset):
+    with pytest.raises(ValueError, match=f"did you mean '{preset}'"):
+        resolve_interventions(value)
+
+
+# https://github.com/strands-agents/harness-sdk/issues/4676
+@pytest.mark.parametrize("value", ["false", "False", "none", "true", "yes", "no", "on", "null", "disabled"])
+def test_switch_like_word_raises(value):
+    with pytest.raises(ValueError, match="Ambiguous interventions value"):
+        resolve_interventions(value)
+
+
+# https://github.com/strands-agents/harness-sdk/issues/4676
+def test_a_bad_string_inside_a_list_raises():
+    with pytest.raises(ValueError, match="did you mean 'off'"):
+        resolve_interventions(["OFF"])
+
+
+# https://github.com/strands-agents/harness-sdk/issues/4676
+def test_off_with_surrounding_whitespace_still_registers_nothing():
+    assert resolve_interventions(" off ") == []
+
+
+# https://github.com/strands-agents/harness-sdk/issues/4676
+@pytest.mark.parametrize("value", ["No deletes without approval", "none of the writes need approval"])
+def test_policies_that_start_with_a_switch_word_still_resolve(value):
+    [handler] = resolve_interventions(value)
+    assert isinstance(handler, HumanInTheLoop)
+
+
 def test_explicit_classifier_config_prompt_is_preserved():
     cfg = LLMClassifierConfig(system_prompt="only approve deletes")
     handler = HumanInTheLoop(classifier=cfg)

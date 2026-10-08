@@ -10,7 +10,9 @@ The string grammar is deterministic — no content sniffing:
 
 - a preset keyword (``off``/``ask``/``smart``) maps to a ``HumanInTheLoop`` config,
 - a path ending in ``.cedar`` loads a ``CedarAuthorization`` policy,
-- any other string is a natural-language risk policy: it becomes the LLM risk classifier's prompt.
+- any other string is a natural-language risk policy: it becomes the LLM risk classifier's prompt,
+  except a blank string, a preset keyword in the wrong case (``"OFF"``), or a switch-like word
+  (``"false"``, ``"none"``, ...), which raise rather than become a one-word policy.
 
 Inline Cedar policy text is intentionally *not* auto-detected — it is indistinguishable from prose,
 so pass ``CedarAuthorization(policies=...)`` directly for that.
@@ -42,6 +44,26 @@ def _cedar_handler(policies: str) -> InterventionHandler:
     return CedarAuthorization(policies=policies)
 
 
+_PRESETS = ("off", "ask", "smart")
+# Read as an on/off switch, not a rubric: as a policy, each would be the classifier's whole prompt.
+_SWITCH_WORDS = frozenset({"true", "false", "yes", "no", "on", "none", "null", "enabled", "disabled"})
+
+
+def _check_policy_string(value: str) -> None:
+    """Raise for a string that would otherwise become a natural-language policy by mistake."""
+    text = value.strip()
+    if not text:
+        raise ValueError(f"Blank interventions policy {value!r}; use None or 'off' to turn interventions off.")
+    lowered = text.lower()
+    if lowered in _PRESETS and text not in _PRESETS:
+        raise ValueError(f"Unknown interventions preset {value!r}; did you mean {lowered!r}? Presets are lowercase.")
+    if lowered in _SWITCH_WORDS:
+        raise ValueError(
+            f"Ambiguous interventions value {value!r}; it reads as a switch, not a policy. Use None or 'off' to "
+            "turn interventions off, or 'ask' or 'smart' to turn them on."
+        )
+
+
 def _resolve_one(value: InterventionValue, ask: InterventionAsk) -> InterventionHandler | None:
     if isinstance(value, InterventionHandler):
         return value
@@ -49,6 +71,7 @@ def _resolve_one(value: InterventionValue, ask: InterventionAsk) -> Intervention
         raise ValueError(
             f"Invalid interventions value {value!r}; expected a preset name, a policy string, or a handler instance."
         )
+    _check_policy_string(value)
     text = value.strip()
     if text == "off":
         return None
