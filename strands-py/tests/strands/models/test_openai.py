@@ -1447,6 +1447,51 @@ def test__stream_switch_content(model, new_data_type, prev_data_type, expected_c
     assert data_type == expected_data_type
 
 
+@pytest.mark.parametrize("turn_count", [1, 5, 50])
+def test__format_regular_messages_warns_once_for_reasoning_content(turn_count, caplog):
+    """One warning per request, however many messages carry reasoningContent.
+
+    The check runs for every message in the history on every request, and with a
+    reasoning model every assistant message carries a reasoningContent block, so
+    request N logged N copies and a run of N turns logged about N^2/2 of them.
+    """
+    messages = []
+    for index in range(turn_count):
+        messages.append({"role": "user", "content": [{"text": f"q{index}"}]})
+        messages.append(
+            {
+                "role": "assistant",
+                "content": [
+                    {"reasoningContent": {"reasoningText": {"text": f"thinking {index}"}}},
+                    {"text": f"a{index}"},
+                ],
+            }
+        )
+
+    with caplog.at_level(logging.WARNING):
+        OpenAIModel._format_regular_messages(messages)
+
+    tru_warning_count = len(
+        [record for record in caplog.records if "reasoningContent is not supported" in record.getMessage()]
+    )
+    exp_warning_count = 1
+    assert tru_warning_count == exp_warning_count
+    assert f"message_count=<{turn_count}>" in caplog.text
+
+
+def test__format_regular_messages_does_not_warn_without_reasoning_content(caplog):
+    """A history with no reasoningContent must stay silent."""
+    messages = [
+        {"role": "user", "content": [{"text": "q"}]},
+        {"role": "assistant", "content": [{"text": "a"}]},
+    ]
+
+    with caplog.at_level(logging.WARNING):
+        OpenAIModel._format_regular_messages(messages)
+
+    assert "reasoningContent is not supported" not in caplog.text
+
+
 def test_format_request_messages_excludes_reasoning_content():
     """Test that reasoningContent is excluded from formatted messages."""
     messages = [

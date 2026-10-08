@@ -403,15 +403,17 @@ class OpenAIModel(Model):
             List of formatted messages.
         """
         formatted_messages = []
+        reasoning_content_count = 0
 
         for message in messages:
             contents = message["content"]
 
-            # Check for reasoningContent and warn user
+            # Counted here and reported once below, rather than warned per message.
+            # This walks the whole history on every request, and with a reasoning
+            # model every assistant message carries a reasoningContent block -- so
+            # request N logged N copies and a run of N turns logged about N^2/2.
             if any("reasoningContent" in content for content in contents):
-                logger.warning(
-                    "reasoningContent is not supported in multi-turn conversations with the Chat Completions API."
-                )
+                reasoning_content_count += 1
 
             # Filter out content blocks that shouldn't be formatted
             filtered_contents = []
@@ -453,6 +455,13 @@ class OpenAIModel(Model):
                 if user_msg_with_images:
                     user_messages_with_images.append(user_msg_with_images)
             formatted_messages.extend(user_messages_with_images)
+
+        if reasoning_content_count:
+            logger.warning(
+                "message_count=<%d> | reasoningContent is not supported in multi-turn conversations with the"
+                " Chat Completions API.",
+                reasoning_content_count,
+            )
 
         return formatted_messages
 
