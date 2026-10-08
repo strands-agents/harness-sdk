@@ -298,6 +298,64 @@ describe('ToolCaller', () => {
   })
 
   describe('concurrency protection', () => {
+    // Recorded direct calls cannot alter an active invocation's history (#4572).
+    it('keeps invocation history separate while a recorded direct tool call is running', async () => {
+      let signalStarted!: () => void
+      let releaseTool!: () => void
+      const started = new Promise<void>((resolve) => (signalStarted = resolve))
+      const toolGate = new Promise<void>((resolve) => (releaseTool = resolve))
+      const tool = createMockTool('slow-tool', () => {
+        // eslint-disable-next-line require-yield
+        return (async function* (): AsyncGenerator<never, ToolResultBlock, never> {
+          signalStarted()
+          await toolGate
+          return new ToolResultBlock({ toolUseId: 'test-id', status: 'success', content: [] })
+        })()
+      })
+      const agent = new Agent({
+        model: new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' }),
+        tools: [tool],
+      })
+
+      const directCall = agent.tool.slow_tool!.invoke()
+      await started
+
+      await expect(agent.invoke('Hi')).rejects.toThrow(ConcurrentInvocationError)
+      await expect(agent.tool.slow_tool!.invoke()).rejects.toThrow(ConcurrentInvocationError)
+      expect(agent.messages).toHaveLength(0)
+
+      releaseTool()
+      await directCall
+      expect(agent.messages).toHaveLength(3)
+      await expect(agent.invoke('Hi')).resolves.toMatchObject({ stopReason: 'endTurn' })
+    })
+
+    it('releases the direct tool lock when its stream is closed', async () => {
+      const tool = {
+        name: 'streamer',
+        description: 'Streams one progress event',
+        toolSpec: {
+          name: 'streamer',
+          description: 'Streams one progress event',
+          inputSchema: { type: 'object' as const },
+        },
+        async *stream(): AsyncGenerator<ToolStreamEvent, ToolResultBlock, undefined> {
+          yield new ToolStreamEvent({ data: 'started' })
+          return new ToolResultBlock({ toolUseId: 'test-id', status: 'success', content: [] })
+        },
+      }
+      const agent = new Agent({
+        model: new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' }),
+        tools: [tool],
+      })
+      const stream = agent.tool.streamer!.stream()
+
+      await stream.next()
+      await expect(agent.invoke('Hi')).rejects.toThrow(ConcurrentInvocationError)
+      await stream.return(new ToolResultBlock({ toolUseId: 'test-id', status: 'success', content: [] }))
+      await expect(agent.invoke('Hi')).resolves.toMatchObject({ stopReason: 'endTurn' })
+    })
+
     it('throws ConcurrentInvocationError when agent is invoking and recording is enabled', async () => {
       const tool = createMockTool(
         'slow-tool',
