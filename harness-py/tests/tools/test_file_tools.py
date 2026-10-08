@@ -1,7 +1,10 @@
+import os
+
 import pytest
 
 from strands_harness import create_harness
 from strands_harness.tools import edit, make_read, read, write
+from strands_harness.tools.file_tools import _validate_path
 
 
 class _Ctx:
@@ -63,6 +66,18 @@ async def test_relative_path_rejected(ctx):
 async def test_path_traversal_rejected(ctx):
     with pytest.raises(ValueError, match="path traversal"):
         await read._tool_func(path="/tmp/../etc/passwd", tool_context=ctx)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows drive-letter paths only exist on Windows")
+def test_windows_drive_path_is_absolute():
+    # ``os.path.isabs`` recognizes ``C:\...``; a leading-``/`` check would reject it.
+    _validate_path(r"C:\Users\me\file.txt")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows backslash traversal only exists on Windows")
+def test_windows_backslash_traversal_rejected():
+    with pytest.raises(ValueError, match="path traversal"):
+        _validate_path(r"C:\Users\..\etc\passwd")
 
 
 async def test_read_image_returns_image_content(ctx, tmp_path):

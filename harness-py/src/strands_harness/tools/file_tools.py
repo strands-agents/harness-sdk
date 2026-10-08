@@ -7,6 +7,7 @@ candidates to port into the core SDK later; keep them minimal and SDK-idiomatic.
 
 from __future__ import annotations
 
+import os
 import re
 
 from strands.tools.decorator import tool
@@ -23,8 +24,11 @@ _DOCUMENT_FORMATS = ("pdf", "doc", "docx", "xls", "xlsx")
 
 
 def _validate_path(path: str) -> None:
-    if not path.startswith("/"):
-        raise ValueError(f"The path {path} is not absolute; it should start with '/'.")
+    # ``os.path.isabs`` accepts both POSIX (``/…``) and Windows (``C:\…`` or ``C:/…``)
+    # absolute paths, so the file tools work against a local Windows sandbox as well as a
+    # POSIX/Docker/SSH one. A leading-``/`` check would reject every Windows path.
+    if not os.path.isabs(path):
+        raise ValueError(f"The path {path} is not absolute; it should start with '/' or a drive letter.")
     if ".." in re.split(r"[/\\]", path):
         raise ValueError("Invalid path: path traversal is not allowed.")
 
