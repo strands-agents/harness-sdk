@@ -144,7 +144,7 @@ async def test_executor_stream_passes_through_typed_events(
     assert tru_events[0] is event_1
     assert tru_events[1] is event_2
 
-    # ToolResults are not passed through directly, they're unwrapped then wraped again
+    # ToolResults are not passed through directly, they're unwrapped then wrapped again
     assert tru_events[2] == event_3
 
 
