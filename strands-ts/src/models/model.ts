@@ -477,6 +477,14 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
       let redactionMessage: string | undefined = undefined
       let toolInputParseError: SyntaxError | undefined = undefined
 
+      // Runs on block start and stop because some providers (e.g. Bedrock) send no start event for text blocks.
+      const resetBlockState = (): void => {
+        accumulatedToolInput = ''
+        accumulatedText = ''
+        accumulatedReasoning = {}
+        accumulatedCitations.reset()
+      }
+
       for await (const event_data of this.stream(messages, options)) {
         const event = this._convert_to_class_event(event_data)
         yield event // Pass through immediately
@@ -494,10 +502,7 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
               toolUseId = event.start.toolUseId
               toolReasoningSignature = event.start.reasoningSignature ?? ''
             }
-            accumulatedToolInput = ''
-            accumulatedText = ''
-            accumulatedReasoning = {}
-            accumulatedCitations.reset()
+            resetBlockState()
             break
 
           case 'modelContentBlockDeltaEvent': {
@@ -562,6 +567,7 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
                 toolInputParseError = e
               }
             }
+            resetBlockState()
             break
           }
 
