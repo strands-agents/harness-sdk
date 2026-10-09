@@ -600,6 +600,7 @@ class MistralModel(Model):
 
         formatted_request = self.format_request(messages=prompt, tool_specs=[tool_spec], system_prompt=system_prompt)
 
+        formatted_request["stream"] = False
         formatted_request["tool_choice"] = "any"
         formatted_request["parallel_tool_calls"] = False
 
