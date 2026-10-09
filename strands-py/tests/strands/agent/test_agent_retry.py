@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from strands import Agent, ModelRetryStrategy
+from strands import Agent, ConstantBackoff, ModelRetryStrategy
 from strands.event_loop.event_loop import INITIAL_DELAY, MAX_ATTEMPTS, MAX_DELAY
 from strands.hooks import AfterModelCallEvent
 from strands.types.exceptions import ModelThrottledException
@@ -186,3 +186,46 @@ async def test_agent_no_retry_when_retry_strategy_none(mock_sleep):
 
     # Should not have slept at all (no retries)
     assert len(mock_sleep.sleep_calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_agent_retries_with_custom_backoff(mock_sleep):
+    model = Mock()
+    model.stream.side_effect = [
+        ModelThrottledException("ThrottlingException"),
+        ModelThrottledException("ThrottlingException"),
+        MockedModelProvider([{"role": "assistant", "content": [{"text": "Success"}]}]).stream([]),
+    ]
+    agent = Agent(model=model, retry_strategy=ModelRetryStrategy(max_attempts=3, backoff=ConstantBackoff(delay=0.25)))
+
+    result = await agent.invoke_async("test prompt")
+
+    assert result.message["content"][0]["text"] == "Success"
+    assert mock_sleep.sleep_calls == [0.25, 0.25]
+
+
+@pytest.mark.asyncio
+async def test_hook_requested_retries_do_not_consume_retry_budget(mock_sleep):
+    model = Mock()
+    model.stream.side_effect = [
+        ValueError("transient"),
+        ValueError("transient"),
+        ModelThrottledException("ThrottlingException"),
+        ModelThrottledException("ThrottlingException"),
+        MockedModelProvider([{"role": "assistant", "content": [{"text": "Success"}]}]).stream([]),
+    ]
+    agent = Agent(model=model, retry_strategy=ModelRetryStrategy(max_attempts=3, initial_delay=1))
+    attempt_counts = []
+
+    def retry_value_errors(event: AfterModelCallEvent) -> None:
+        attempt_counts.append(event.attempt_count)
+        if isinstance(event.exception, ValueError):
+            event.retry = True
+
+    agent.hooks.add_callback(AfterModelCallEvent, retry_value_errors)
+
+    result = await agent.invoke_async("test prompt")
+
+    assert result.message["content"][0]["text"] == "Success"
+    assert mock_sleep.sleep_calls == [1, 2]
+    assert attempt_counts == [1, 2, 3, 4, 5]

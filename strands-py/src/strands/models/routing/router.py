@@ -391,6 +391,7 @@ class ModelRouter(Plugin):
             # ModelRetryStrategy exposes no public seam for a budget reset yet, so a rename in
             # _retry.py breaks this.
             event.agent._retry_strategy._reset_retry_state()
+            event._restart_attempts()
             return True
 
     # ---- Per-invocation state and context ----
