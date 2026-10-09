@@ -215,9 +215,7 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
         from ..agent.agent import Agent
 
         if agent.storage is not None:
-            # initialize is invoked from an AgentInitializedEvent callback at a variable depth from user
-            # code, so no fixed stacklevel reliably lands on the caller. stacklevel=1 pins attribution to
-            # this line instead, relying on the standard library to dedupe per call site.
+            # Caller depth varies, so stacklevel=1 pins dedup to this line (once per process).
             warnings.warn(
                 "Agent-level storage is set, but RepositorySessionManager does not use it; use"
                 " SnapshotSessionManager for unified storage integration",
