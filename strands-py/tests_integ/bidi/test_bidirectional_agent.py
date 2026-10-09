@@ -61,6 +61,19 @@ def calculator(operation: str, x: float, y: float) -> float:
         raise ValueError(f"Unknown operation: {operation}")
 
 
+@tool
+def get_weather(city: str) -> str:
+    """Get the current weather for a city.
+
+    Args:
+        city: Name of the city.
+
+    Returns:
+        A short weather report.
+    """
+    return f"It is sunny in {city}."
+
+
 # Provider configurations
 PROVIDER_CONFIGS = {
     "bedrock_nova_sonic": {
@@ -449,3 +462,33 @@ async def test_tool_history_and_response_boundaries(agent_with_calculator, audio
                 assert [
                     block["toolResult"]["toolUseId"] for block in result_message["content"] if "toolResult" in block
                 ] == tool_use_ids
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_config", ["bedrock_nova_sonic"], indirect=True)
+async def test_tool_choice_forces_named_tool(provider_config, audio_generator, hook_collector):
+    """Nova Sonic calls the tool named by tool_choice even when the request gives no reason to."""
+    model = provider_config["model_factory"](
+        **provider_config["model_kwargs"], tool_choice={"tool": {"name": get_weather.tool_name}}
+    )
+    agent = BidiAgent(
+        model=model,
+        tools=[calculator, get_weather],
+        system_prompt="You are a helpful assistant. Keep responses brief.",
+        hooks=[hook_collector],
+    )
+
+    async def wait_for_tool_call():
+        while not hook_collector.get_tool_calls():
+            await asyncio.sleep(0.1)
+
+    async with BidirectionalTestContext(agent, audio_generator) as context:
+        await context.send("Tell me one fun fact about octopuses.")
+        try:
+            await asyncio.wait_for(wait_for_tool_call(), timeout=30)
+        except asyncio.TimeoutError:
+            pytest.fail(f"timeout=<30> | forced tool {get_weather.tool_name} was not called")
+
+    tru_first_tool_call = hook_collector.get_tool_calls()[:1]
+    exp_first_tool_call = [get_weather.tool_name]
+    assert tru_first_tool_call == exp_first_tool_call
