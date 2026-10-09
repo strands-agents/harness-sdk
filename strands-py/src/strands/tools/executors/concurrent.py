@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 from typing_extensions import override
 
 from ...telemetry.metrics import Trace
-from ...types._events import TypedEvent
+from ...types._events import ToolResultEvent, TypedEvent
 from ...types.tools import ToolResult, ToolUse
 from ._executor import ToolExecutor
 
@@ -47,6 +47,7 @@ class ConcurrentToolExecutor(ToolExecutor):
         task_queue: asyncio.Queue[tuple[int, Any]] = asyncio.Queue()
         task_events = [asyncio.Event() for _ in tool_uses]
         task_results: list[list[ToolResult]] = [[] for _ in tool_uses]
+        completed_results: dict[int, ToolResult] = {}
         stop_event = object()
 
         tasks = []
@@ -80,10 +81,21 @@ class ConcurrentToolExecutor(ToolExecutor):
                 if isinstance(event, Exception):
                     raise event
 
+                if isinstance(event, ToolResultEvent):
+                    completed_results[task_id] = event.tool_result
                 yield event
                 task_events[task_id].set()
             for results in task_results:
                 tool_results.extend(results)
+        except asyncio.CancelledError:
+            # The batch was cancelled. A task adds to task_results only after its last event is consumed, so report
+            # finished tools from their result events instead, including results still in the queue.
+            while not task_queue.empty():
+                task_id, event = task_queue.get_nowait()
+                if isinstance(event, ToolResultEvent):
+                    completed_results[task_id] = event.tool_result
+            tool_results.extend(completed_results[task_id] for task_id in sorted(completed_results))
+            raise
         finally:
             for task in tasks:
                 task.cancel()

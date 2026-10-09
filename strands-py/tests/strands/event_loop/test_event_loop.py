@@ -2,6 +2,7 @@ import asyncio
 import concurrent
 import threading
 import unittest.mock
+from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -2447,3 +2448,129 @@ async def test_event_loop_cycle_cancel_after_tools_stops_without_checkpointing(
 
     assert events[-1]["stop"][0] == "cancelled"
     assert model.stream.call_count == 1
+
+
+CANCEL_BATCH_STREAM = [
+    {"contentBlockStart": {"start": {"toolUse": {"toolUseId": "fast-1", "name": "fast_tool"}}}},
+    {"contentBlockDelta": {"delta": {"toolUse": {"input": "{}"}}}},
+    {"contentBlockStop": {}},
+    {"contentBlockStart": {"start": {"toolUse": {"toolUseId": "slow-2", "name": "slow_tool"}}}},
+    {"contentBlockDelta": {"delta": {"toolUse": {"input": "{}"}}}},
+    {"contentBlockStop": {}},
+    {"messageStop": {"stopReason": "tool_use"}},
+]
+CANCEL_BATCH_RESULT_MESSAGE = {
+    "role": "user",
+    "content": [
+        {"toolResult": {"toolUseId": "fast-1", "status": "success", "content": [{"text": "created record E1"}]}},
+        {"toolResult": {"toolUseId": "slow-2", "status": "error", "content": [{"text": "Tool was interrupted."}]}},
+    ],
+    "tracking_id": ANY,
+}
+
+
+@pytest.fixture
+def cancel_batch(tool_registry, hook_registry):
+    """fast_tool finishes at once and slow_tool blocks, so the caller can cancel in between."""
+    fast_done = asyncio.Event()
+    slow_started = asyncio.Event()
+
+    @strands.tool(name="fast_tool")
+    async def fast_tool() -> str:
+        return "created record E1"
+
+    @strands.tool(name="slow_tool")
+    async def slow_tool() -> str:
+        slow_started.set()
+        await asyncio.sleep(60)
+        return "slow done"
+
+    def after_tool(event):
+        if event.tool_use["toolUseId"] == "fast-1":
+            fast_done.set()
+
+    for tool in (fast_tool, slow_tool):
+        tool_registry.register_tool(tool)
+    hook_registry.add_callback(AfterToolCallEvent, after_tool)
+    return SimpleNamespace(fast_done=fast_done, slow_started=slow_started)
+
+
+async def _cancel_when(awaitable, event):
+    task = asyncio.ensure_future(awaitable)
+    await asyncio.wait_for(event.wait(), 5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+def _tool_result_messages(messages):
+    return [message for message in messages if any("toolResult" in block for block in message["content"])]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("executor_class", [ConcurrentToolExecutor, SequentialToolExecutor])
+@pytest.mark.parametrize("cancel_point", ["tool_finished", "result_streamed"])
+async def test_event_loop_cycle_caller_cancel_keeps_finished_tool_results(
+    agent, model, agenerator, cancel_batch, executor_class, cancel_point
+):
+    agent.tool_executor = executor_class()
+    model.stream.side_effect = [agenerator(CANCEL_BATCH_STREAM)]
+    result_streamed = asyncio.Event()
+
+    async def run_cycle():
+        async for event in strands.event_loop.event_loop.event_loop_cycle(agent=agent, invocation_state={}):
+            if "tool_result" in event and event["tool_result"]["toolUseId"] == "fast-1":
+                result_streamed.set()
+
+    await _cancel_when(run_cycle(), cancel_batch.fast_done if cancel_point == "tool_finished" else result_streamed)
+
+    tru_message = agent.messages[-1]
+    exp_message = CANCEL_BATCH_RESULT_MESSAGE
+    assert tru_message == exp_message
+
+
+@pytest.mark.asyncio
+async def test_event_loop_cycle_caller_cancel_survives_message_hook_error(
+    agent, model, agenerator, alist, cancel_batch
+):
+    def fail_on_tool_results(event):
+        if _tool_result_messages([event.message]):
+            raise RuntimeError("message hook failed")
+
+    agent.hooks.add_callback(MessageAddedEvent, fail_on_tool_results)
+    model.stream.side_effect = [agenerator(CANCEL_BATCH_STREAM)]
+
+    # The hook error is logged; the caller still gets its own CancelledError.
+    await _cancel_when(
+        alist(strands.event_loop.event_loop.event_loop_cycle(agent=agent, invocation_state={})), cancel_batch.fast_done
+    )
+
+    tru_message = agent.messages[-1]
+    exp_message = CANCEL_BATCH_RESULT_MESSAGE
+    assert tru_message == exp_message
+
+
+@pytest.mark.asyncio
+async def test_event_loop_cycle_caller_cancel_during_interrupt_resume_leaves_history_open(
+    agent, model, agenerator, alist, cancel_batch
+):
+    def approve(event):
+        if event.tool_use["toolUseId"] == "slow-2":
+            event.interrupt("approval", reason="Approve?")
+
+    agent.hooks.add_callback(BeforeToolCallEvent, approve)
+    model.stream.side_effect = [agenerator(CANCEL_BATCH_STREAM)]
+    events = await alist(strands.event_loop.event_loop.event_loop_cycle(agent=agent, invocation_state={}))
+    assert events[-1]["stop"][0] == "interrupt"
+    for interrupt in agent._interrupt_state.interrupts.values():
+        interrupt.response = "yes"
+
+    await _cancel_when(
+        alist(strands.event_loop.event_loop.event_loop_cycle(agent=agent, invocation_state={})),
+        cancel_batch.slow_started,
+    )
+
+    # The next resume replays and closes the toolUse message, so nothing is appended here.
+    tru_tool_result_messages = _tool_result_messages(agent.messages)
+    exp_tool_result_messages = []
+    assert tru_tool_result_messages == exp_tool_result_messages

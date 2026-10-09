@@ -8,6 +8,7 @@ The event loop allows agents to:
 4. Manage recursive execution cycles
 """
 
+import asyncio
 import copy
 import logging
 import uuid
@@ -23,6 +24,7 @@ from ..hooks import AfterModelCallEvent, AfterToolsEvent, BeforeModelCallEvent, 
 from ..interrupt import InterruptException, PendingToolExecution
 from ..telemetry.metrics import Trace, _total_prompt_tokens
 from ..telemetry.tracer import Tracer, get_tracer
+from ..tools._tool_helpers import generate_missing_tool_result_content
 from ..tools._validator import validate_and_prepare_tools
 from ..tools.structured_output._structured_output_context import StructuredOutputContext
 from ..types._events import (
@@ -39,7 +41,7 @@ from ..types._events import (
     TypedEvent,
 )
 from ..types.agent import Limits
-from ..types.content import Message, Messages, split_system_prompt
+from ..types.content import ContentBlock, Message, Messages, split_system_prompt
 from ..types.event_loop import Metrics, Usage
 from ..types.exceptions import (
     ContextWindowOverflowException,
@@ -761,6 +763,43 @@ def _make_invoke_model_terminal(
     return terminal
 
 
+async def _append_cancelled_tool_results(agent: "Agent", message: Message, tool_results: list[ToolResult]) -> None:
+    """Append the toolResult message for a tool batch that was cancelled while its tools were running.
+
+    Tools that finished keep their real results. The others get the placeholder that the next invocation would otherwise
+    add for every tool in the batch.
+    """
+    if agent._interrupt_state.activated:
+        return
+
+    results_by_id = {result["toolUseId"]: result for result in tool_results}
+    content: list[ContentBlock] = []
+    for block in message["content"]:
+        if "toolUse" in block:
+            tool_use_id = block["toolUse"]["toolUseId"]
+            if tool_use_id in results_by_id:
+                content.append({"toolResult": results_by_id[tool_use_id]})
+            else:
+                content.extend(generate_missing_tool_result_content([tool_use_id]))
+    try:
+        await agent._append_messages({"role": "user", "content": content})
+    except Exception:
+        # Never replace the cancellation with an error from a message hook.
+        logger.exception("tool_count=<%d> | failed to record the tool results of a cancelled tool batch", len(content))
+
+
+async def _close_batch_on_cancel(
+    agent: "Agent", message: Message, tool_results: list[ToolResult], tool_events: AsyncGenerator[TypedEvent, None]
+) -> AsyncGenerator[TypedEvent, None]:
+    """Forward the events of a tool batch, recording its tool results if the batch is cancelled."""
+    try:
+        async for tool_event in tool_events:
+            yield tool_event
+    except asyncio.CancelledError:
+        await _append_cancelled_tool_results(agent, message, tool_results)
+        raise
+
+
 async def _stop_for_interrupts(
     agent: "Agent",
     message: Message,
@@ -903,7 +942,7 @@ async def _handle_tool_execution(
             tool_events = agent.tool_executor._execute(
                 agent, tool_uses, tool_results, cycle_trace, cycle_span, invocation_state, structured_output_context
             )
-            async for tool_event in tool_events:
+            async for tool_event in _close_batch_on_cancel(agent, message, tool_results, tool_events):
                 if isinstance(tool_event, ToolInterruptEvent):
                     interrupts.extend(tool_event["tool_interrupt_event"]["interrupts"])
 
