@@ -68,21 +68,30 @@ export function createInkOutputs(
   if (!parkCursor && !stripSynchronization) return { stdout: output, stderr: errorOutput }
 
   let cursorSaved = false
+  let cursorVisible = false
   const wrap = (stream: NodeJS.WriteStream): NodeJS.WriteStream =>
     new Proxy(stream, {
       get(target, property): unknown {
         if (property === 'write') {
           return (chunk: unknown, ...args: unknown[]): unknown => {
             if (typeof chunk === 'string') {
+              let text = chunk
               if (stripSynchronization) {
-                chunk = chunk.replaceAll(SYNCHRONIZED_OUTPUT_START, '').replaceAll(SYNCHRONIZED_OUTPUT_END, '')
+                text = text.replaceAll(SYNCHRONIZED_OUTPUT_START, '').replaceAll(SYNCHRONIZED_OUTPUT_END, '')
               }
-              if (parkCursor && chunk && chunk !== SYNCHRONIZED_OUTPUT_START && chunk !== SYNCHRONIZED_OUTPUT_END) {
+              if (parkCursor && text && text !== SYNCHRONIZED_OUTPUT_START && text !== SYNCHRONIZED_OUTPUT_END) {
+                // DEC cursor visibility sequences begin with ESC.
+                // eslint-disable-next-line no-control-regex
+                for (const match of text.matchAll(/\u001b\[\?25([hl])/g)) {
+                  cursorVisible = match[1] === 'h'
+                }
                 // A bottom-row cursor makes the terminal scroll before delivering a height resize.
                 // Both streams must resume from the last write to their shared terminal.
-                chunk = `${cursorSaved ? RESTORE_CURSOR : ''}${chunk}${SAVE_CURSOR}${CURSOR_HOME}`
-                cursorSaved = true
+                // Visible input cursors must stay in place for IME composition.
+                text = `${cursorSaved ? RESTORE_CURSOR : ''}${text}${cursorVisible ? '' : SAVE_CURSOR + CURSOR_HOME}`
+                cursorSaved = !cursorVisible
               }
+              chunk = text
             }
             return Reflect.apply(target.write, target, [chunk, ...args])
           }
