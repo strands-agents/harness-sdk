@@ -75,6 +75,14 @@ _CUSTOM_ENDPOINT_VARS = {"anthropic": "ANTHROPIC_BASE_URL", "openai": "OPENAI_BA
 
 _BEDROCK_REGION_PREFIXES = ("global.", "apac.", "us.", "eu.", "au.", "jp.")
 
+# Small regional summarizer per Bedrock model family, keyed by family prefix. These ids are served
+# regionally, so unlike the OpenAI-on-Bedrock case no inference-profile prefix is carried over.
+_BEDROCK_WEB_FETCH_FAMILY_MODELS = {
+    "amazon.": "amazon.nova-lite-v1:0",
+    "meta.": "meta.llama3-2-3b-instruct-v1:0",
+    "mistral.": "mistral.mistral-small-2402-v1:0",
+}
+
 
 # Reasoning levels each provider's API accepts. The harness validates against the resolved
 # provider's set so an unsupported level fails here rather than as a request error.
@@ -84,6 +92,7 @@ _BEDROCK_GPT_LEVELS = ("none", "low", "medium", "high", "xhigh", "max")
 _BEDROCK_GPT_OSS_LEVELS = ("low", "medium", "high")
 _BEDROCK_QWEN_LEVELS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 _BEDROCK_XAI_LEVELS = ("low", "medium", "high", "xhigh")
+_BEDROCK_NOVA_LEVELS = ("low", "medium", "high")
 _GOOGLE_LEVELS = ("minimal", "low", "medium", "high")
 
 _ADAPTIVE_THINKING_SINCE = {"opus": (4, 6), "sonnet": (4, 6)}
@@ -137,6 +146,8 @@ def _bedrock_levels(model_id: str) -> tuple[str, ...]:
     family = _bedrock_family(model_id)
     if family.startswith("anthropic."):
         return _ANTHROPIC_LEVELS if _claude_thinking_mode(family) is not None else ()
+    if family.startswith("amazon.nova-2"):
+        return _BEDROCK_NOVA_LEVELS
     if family.startswith("openai.gpt-5.6-") or family == "openai.gpt-6-astra":
         return _BEDROCK_GPT_LEVELS
     if family.startswith("openai.gpt-oss-"):
@@ -164,6 +175,8 @@ def _bedrock_thinking(model_id: str, effort: str | None) -> dict | None:
     family = _bedrock_family(model_id)
     if family.startswith("anthropic."):
         return _claude_thinking_block(family, effort, _claude_max_tokens(model_id) or _ANTHROPIC_MAX_TOKENS)
+    if family.startswith("amazon.nova-2"):
+        return {"reasoningConfig": {"type": "enabled", "maxReasoningEffort": effort}}
     if family.startswith("openai.gpt-5.6-") or family == "openai.gpt-6-astra":
         return {"reasoning": {"effort": effort}}
     if family.startswith("openai.gpt-oss-"):
@@ -485,8 +498,9 @@ def _bedrock_web_fetch_model(name: str) -> str | None:
     ``us.``) gets Anthropic Haiku; an OpenAI-on-Bedrock model (an ``openai.`` prefix) gets the OpenAI
     small model hosted on Bedrock (``openai.`` + the OpenAI-provider summarizer), carrying the main
     model's cross-region prefix because those ids are only served through an inference profile.
-    Either way the summarizer shares the main model's provider. Any other family is unidentifiable
-    and returns ``None`` so the caller can reuse the main model rather than guess.
+    Amazon, Meta, and Mistral families get their small regional models. The summarizer always shares
+    the main model's credentials. A family with no mapped small model returns ``None`` so the caller
+    can reuse the main model rather than guess.
     """
     family = _bedrock_family(name)
     if family.startswith("anthropic."):
@@ -494,7 +508,10 @@ def _bedrock_web_fetch_model(name: str) -> str | None:
     if family.startswith("openai."):
         prefix = name[: len(name) - len(family)]
         return f"{prefix}openai.{_WEB_FETCH_MODELS['openai']}"
-    return None
+    return next(
+        (small for fam_prefix, small in _BEDROCK_WEB_FETCH_FAMILY_MODELS.items() if family.startswith(fam_prefix)),
+        None,
+    )
 
 
 def resolve_web_fetch_model(
@@ -509,7 +526,8 @@ def resolve_web_fetch_model(
     reuse it as the summarizer. A router uses its concrete default model because auxiliary calls are
     outside the primary agent invocation and cannot share its routing decision. On Bedrock the
     summarizer follows the main model's family (Anthropic-on-Bedrock gets Haiku, OpenAI-on-Bedrock gets
-    the OpenAI small model); a Bedrock family we can't identify reuses the main model and logs a warning
+    the OpenAI small model, Amazon/Meta/Mistral get their small regional models); a Bedrock family
+    with no mapped small model reuses the main model and logs a warning
     rather than guessing. Thinking is never applied: summarizing a page is a fast task.
 
     ``caching`` is deliberately not forwarded: the single message carries the per-call prompt before

@@ -100,6 +100,10 @@
       "types": "./dist/src/vended-tools/mcp-router/index.d.ts",
       "default": "./dist/src/vended-tools/mcp-router/index.js"
     },
+    "./vended-tools/subagent": {
+      "types": "./dist/src/vended-tools/subagent/index.d.ts",
+      "default": "./dist/src/vended-tools/subagent/index.js"
+    },
     "./a2a": {
       "types": "./dist/src/a2a/index.d.ts",
       "default": "./dist/src/a2a/index.js"

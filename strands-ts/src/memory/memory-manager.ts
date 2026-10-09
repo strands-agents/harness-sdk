@@ -238,7 +238,7 @@ export class MemoryManager implements Plugin {
       return
     }
 
-    const coordinator = new ExtractionCoordinator(this._extractionStores, agent.model, this._tracer)
+    const coordinator = new ExtractionCoordinator(this._extractionStores, agent.auxModel, this._tracer)
     this._coordinator = coordinator
 
     // Buffer every message the agent adds, so extraction has its own copy to save from.
