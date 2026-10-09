@@ -93,6 +93,16 @@ export type InvocationState = Record<string, unknown>
  */
 export interface InvokeOptions {
   /**
+   * Identifies a logical request for in-flight deduplication.
+   *
+   * In the default `singleThreaded` concurrency mode, a call with the same token as an
+   * invocation already in progress waits for that invocation and returns its
+   * result without running the agent again. The token is ignored in
+   * `unsafeConcurrent` mode and is forgotten once the invocation settles.
+   */
+  idempotencyToken?: string
+
+  /**
    * Zod schema for structured output validation, overriding the constructor-provided schema for this invocation only.
    */
   structuredOutputSchema?: z.ZodSchema
