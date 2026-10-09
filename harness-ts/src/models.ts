@@ -23,6 +23,15 @@ import { warnOnce } from './logging.js'
 import type { Effort } from './types/agent.js'
 
 const ANTHROPIC_MAX_TOKENS = 32_000
+// Claude calls the search directly (not from code execution), so results come back as citations
+// and the tool works on every Claude model, not only those with programmatic tool calling. The
+// type is a dated version; the current ones are listed at
+// https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool
+const ANTHROPIC_WEB_SEARCH = {
+  type: 'web_search_20260318' as const,
+  name: 'web_search' as const,
+  allowed_callers: ['direct' as const],
+}
 
 // Claude's real max_tokens ceiling by tier, verified live against Bedrock Converse. Applied on
 // Bedrock and Anthropic-direct only — other Bedrock-hosted model families aren't known to need
@@ -211,12 +220,7 @@ async function bedrock(modelId: string, effort: string | null, _webSearch: boole
   })
 }
 
-async function anthropic(
-  modelId: string,
-  effort: string | null,
-  _webSearch: boolean,
-  caching: boolean
-): Promise<Model> {
+async function anthropic(modelId: string, effort: string | null, webSearch: boolean, caching: boolean): Promise<Model> {
   const { AnthropicModel } = await import('@strands-agents/sdk/models/anthropic')
 
   const cacheConfig = caching ? { strategy: 'auto' as const } : undefined
@@ -226,6 +230,7 @@ async function anthropic(
     maxTokens,
     ...(cacheConfig ? { cacheConfig } : {}),
     ...(effort === null ? {} : { params: claudeThinkingBlock(modelId, effort, maxTokens) }),
+    ...(webSearch ? { anthropicTools: [ANTHROPIC_WEB_SEARCH] } : {}),
   })
 }
 
@@ -314,10 +319,8 @@ interface Provider {
   levels: readonly string[]
   // Native web search is enabled through model config on the providers whose SDK exposes a
   // non-clobbering seam for it (OpenAI Responses `params.tools` for OpenAI and bedrock-mantle, Gemini
-  // `builtInTools`); `hasWebSearch` narrows bedrock-mantle to its GPT-5/GPT-6 models. Bedrock Converse has no
-  // mechanism. Anthropic-direct gets `anthropicTools` in @strands-agents/sdk 1.19.0; on 1.18.0 a
-  // `params.tools` entry would still overwrite the function tools, so it stays `false` until then
-  // (Python already enables it through `anthropic_tools`).
+  // `builtInTools`, Anthropic-direct `anthropicTools`); `hasWebSearch` narrows bedrock-mantle to its
+  // GPT-5/GPT-6 models. Bedrock Converse has no mechanism.
   webSearch: boolean
   // Whether prompt caching is in effect when requested, whether or not the harness configures anything:
   // Bedrock and Anthropic direct (the harness sets cache points and tool caching) plus OpenAI, Google,
@@ -335,7 +338,7 @@ const PROVIDERS: Record<string, Provider> = {
     webSearch: true,
     caching: true,
   },
-  anthropic: { build: anthropic, recommended: 'high', levels: ANTHROPIC_LEVELS, webSearch: false, caching: true },
+  anthropic: { build: anthropic, recommended: 'high', levels: ANTHROPIC_LEVELS, webSearch: true, caching: true },
   openai: { build: openai, recommended: 'high', levels: OPENAI_LEVELS, webSearch: true, caching: true },
   google: { build: gemini, recommended: 'high', levels: GOOGLE_LEVELS, webSearch: true, caching: true },
   ollama: { build: ollama, recommended: null, levels: NO_THINKING_LEVELS, webSearch: false, caching: false },

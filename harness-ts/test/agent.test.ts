@@ -426,6 +426,14 @@ describe('createHarness', () => {
     expect(toolNames(agent)).toContain('web_search')
   })
 
+  it('enables Anthropic native web search from the default set', async () => {
+    const agent = await createHarness({ model: 'anthropic/claude-opus-4-8' })
+    expect(toolNames(agent)).not.toContain('web_search')
+    expect(agent.model.getConfig().anthropicTools).toEqual([
+      { type: 'web_search_20260318', name: 'web_search', allowed_callers: ['direct'] },
+    ])
+  })
+
   it('only offers Bedrock Web Search on GPT-5 and GPT-6 Mantle models', async () => {
     const info = vi.fn()
     configureLogging({ debug: () => {}, info, warn: () => {}, error: () => {} })
