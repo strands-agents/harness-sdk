@@ -1,5 +1,8 @@
 import type { Storage, StorageSearchResult } from '../storage.js'
 
+/** A function that produces an embedding vector from text. Provider-agnostic. */
+export type Embedder = (text: string) => Promise<number[]>
+
 /**
  * A pluggable search strategy for storage backends.
  *
@@ -7,6 +10,11 @@ import type { Storage, StorageSearchResult } from '../storage.js'
  * keyword/lexical scan, vector similarity, full-text index, etc.
  * Storage backends delegate their `search()` to a strategy, and consumers
  * (memory stores, context offloaders) can override the default.
+ *
+ * The `S` type parameter constrains which storage backends the strategy works with.
+ * Defaults to `Storage` (any backend). Strategies that depend on backend-specific
+ * features (e.g. {@link QmdSearchStrategy} needs `baseDir`) can narrow this to
+ * require a specific implementation.
  *
  * The `SearchQuery` type parameter controls what the strategy accepts. It defaults
  * to `string` (a natural-language query). Strategies that support richer queries

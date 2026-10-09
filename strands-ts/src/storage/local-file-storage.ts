@@ -86,6 +86,9 @@ export class LocalFileStorage implements Storage {
       } catch (error: unknown) {
         throw new StorageError(`Failed to write '${normalized}' to sandbox storage`, { cause: error })
       }
+      if (this._searchStrategy) {
+        await this._searchStrategy.index?.(this, normalized, data)
+      }
       return
     }
     let tmpPath: string | undefined
