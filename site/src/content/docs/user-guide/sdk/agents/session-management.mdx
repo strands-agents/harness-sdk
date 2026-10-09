@@ -662,8 +662,188 @@ Repository-based layout (`FileSessionManager`, `S3SessionManager`):
 </Tabs>
 
 Using the same session ID and storage location does not migrate repository-based Python
-data to `SnapshotSessionManager`. Existing sessions can continue using their current
-manager, or applications can migrate the required state explicitly.
+data to `SnapshotSessionManager`: the two formats and key layouts differ, so a snapshot
+manager pointed at an existing repository-format session simply finds no snapshot and
+starts empty. Existing sessions can continue using their current manager, or you can
+migrate them explicitly — see [Migrating from the message-log session managers](#migrating-from-the-message-log-session-managers).
+
+## Migrating from the message-log session managers
+
+:::note[Python only]
+Applies to the Python message-log managers (`FileSessionManager`, `S3SessionManager`,
+`RepositorySessionManager`). TypeScript has a single `SessionManager` and no equivalent
+migration.
+:::
+
+`SnapshotSessionManager` is the recommended session manager. If you have taken Strands to
+production on a message-log manager, your sessions are persisted in its format — so moving
+to snapshots means migrating that existing data, not just changing the constructor.
+
+Switching to `SnapshotSessionManager` is a one-line change, but it does **not** carry
+existing session data over:
+
+```python
+# Before
+agent = Agent(
+    agent_id="my-agent",
+    session_manager=FileSessionManager(session_id="user-123"),
+)
+
+# After — existing history is NOT carried over
+agent = Agent(
+    agent_id="my-agent",
+    session_manager=SnapshotSessionManager("user-123", storage=LocalFileStorage("/data/sessions")),
+)
+```
+
+The two managers use different on-disk formats, so a snapshot manager pointed at an existing
+message-log session finds no snapshot and starts with no history or state. Nothing errors,
+and the legacy data is left untouched on disk — it is just not read.
+
+- **Starting fresh, or fine to drop old history?** Swap the constructor; nothing more is
+  needed.
+- **Need existing conversations to continue on snapshots?** Migrate them first, with the
+  procedure below.
+
+Migration runs the legacy session back through a live agent rather than copying files:
+compaction, custom conversation managers, redactions, and orchestrator state are
+reconstructed by the SDK's restore logic, not stored verbatim. There is no built-in
+migration command — you write a short script, adapting it to your application's agent
+configuration.
+
+### What a migration must carry
+
+Build the migrating agent with the **same configuration the application uses** — restore is
+configuration-dependent. Specifically:
+
+- **Identifiers** — `session_id` and `agent_id` must match on both sides. Migrate each
+  `agent_id` in a session separately.
+- **Conversation manager** — same type and settings; its state includes `removed_message_count`,
+  which sets the resume offset.
+- **System prompt:** Pass the same prompt as the production agent. Message-log session
+  managers do not restore it, and the snapshot records the prompt configured on the
+  migrating agent.
+- **Model state:** Restored automatically from the legacy session. For stateful models,
+  the managers restore model state but not local messages because the model provider
+  manages conversation history server-side.
+- **Redacted messages** — the applied (redacted) content must carry over, not the original.
+- **Broken tool-use pairs** — an orphaned `toolUse` is repaired automatically by the legacy
+  restore; the procedure below inherits that repair.
+
+Two rules: do not overwrite existing legacy records, and stop (don't overwrite) if the target
+already holds a snapshot. Validate every `session_id` and `agent_id` against the source store
+before constructing the legacy manager. Repository-backed legacy managers create empty session
+or agent records for unknown identifiers, so a mistyped identifier mutates the source store even
+though no existing data is overwritten.
+
+### Reference procedure: restore through the legacy manager, then snapshot
+
+Attach the legacy manager to a throwaway agent (the SDK runs its full restore), then capture
+that agent through the snapshot manager. Adapt identifiers, storage, conversation manager,
+and system prompt to your application.
+
+:::caution
+This script is a minimal reference, not a drop-in tool. It covers a single local agent with a
+standard configuration. Agents with custom tools, hooks, a non-default model provider, several
+`agent_id`s per session, or a multi-agent topology will need to extend it — build the throwaway
+agent to match your real application exactly (see [What a migration must carry](#what-a-migration-must-carry)),
+or the restored snapshot will not resume identically.
+:::
+
+<Tabs>
+<Tab label="Python">
+
+```python
+import asyncio
+
+from strands import Agent
+from strands.session import FileSessionManager, SnapshotSessionManager
+from strands.storage import LocalFileStorage
+
+SYSTEM_PROMPT = "<your production system prompt>"
+
+
+async def migrate_session(session_id: str, *, agent_id: str = "default") -> None:
+    """Copy one message-log session into snapshot format; stops if already migrated.
+
+    This function does not overwrite existing legacy records. Validate the source session and
+    agent identifiers before calling it because repository-backed legacy managers create empty
+    records for unknown identifiers.
+
+    Build `legacy` and `snapshot` to match your application's real configuration — same
+    conversation manager, system prompt, model, and tools — so restore reconstructs the
+    session the way the app actually resumes it.
+    """
+    snapshot = SnapshotSessionManager(
+        session_id=session_id,
+        storage=LocalFileStorage("./snapshot-sessions"),
+    )
+
+    # Stop if the target already has a snapshot. restore_snapshot returns True when one
+    # exists (and restores into this throwaway agent, which we then discard).
+    if await snapshot.restore_snapshot(Agent(agent_id=agent_id)):
+        raise RuntimeError(f"session={session_id!r} agent={agent_id!r} already migrated")
+
+    # Restore from the legacy session: state, conversation-manager offset, redactions, and
+    # the broken-tool-use repair all run here. Pass the same conversation_manager /
+    # system_prompt the app uses.
+    legacy = FileSessionManager(session_id=session_id, storage_dir="./legacy-sessions")
+    agent = Agent(agent_id=agent_id, system_prompt=SYSTEM_PROMPT, session_manager=legacy)
+
+    if not agent.messages and not agent.state.get():
+        raise ValueError(f"no legacy data found for session={session_id!r} agent={agent_id!r}")
+
+    # Capture into the snapshot store; writing snapshot_latest is what restore-on-init reads.
+    await snapshot.save_snapshot(agent, is_latest=True)
+
+
+asyncio.run(migrate_session("user-123"))
+```
+
+</Tab>
+</Tabs>
+
+For an `S3SessionManager` source, construct it with `bucket`/`prefix` instead of
+`FileSessionManager`, and give the snapshot manager the matching `Storage` backend
+(`S3Storage`).
+
+### Running the migration
+
+- **Run offline**, as a standalone job — not inside a request handler, and not racing a live
+  agent on the same session. On a hosted runtime (e.g. AgentCore), use a separate maintenance
+  task with access to the same storage. Treat it as a one-time backfill.
+- **Discover session IDs yourself** — the SDK does not enumerate them. Prefer your
+  application's own records; otherwise read the storage layout (`FileSessionManager`: one
+  `session_<id>/` directory per session; `S3SessionManager`: `session_<id>/` prefixes under
+  your bucket/prefix). Within each, the `agent_<agent_id>/` entries list the agents to
+  migrate.
+- **Migrate many sessions** by calling `migrate_session` per session and per `agent_id`.
+  Keep each call independent and idempotent so an interrupted run can resume.
+- **Verify, then cut over:**
+  1. Dry-run against a copy of the session store.
+  2. Attach a `SnapshotSessionManager` to a fresh agent with the same `session_id`/`agent_id`
+     and confirm `agent.messages`, `agent.state.get()`, `agent.system_prompt`, and conversation-manager state match.
+  3. Cut application code over to `SnapshotSessionManager`.
+  4. Delete the legacy data only after verifying the snapshot restores correctly.
+
+### Multi-agent and BidiAgent sessions
+
+The single-agent `migrate_session()` example above does **not** work for Graph or Swarm
+sessions. It creates a local `Agent` and passes that agent to
+`SnapshotSessionManager.save_snapshot()`, but Graph/Swarm session state belongs to the
+orchestrator: topology, shared context, and resume position are not recoverable by migrating
+each node independently. The public multi-agent snapshot path runs through orchestrator
+lifecycle hooks during an actual invocation; there is no public `save_snapshot(orchestrator)`
+API for a one-shot conversion. Keep existing multi-agent sessions on their legacy manager,
+or start a new snapshot-backed session, until a dedicated migration path is available.
+
+`BidiAgent` also requires a separate adaptation rather than using the sample unchanged. It is
+a `LocalAgent`, so `save_snapshot()` can capture it, but the sample constructs a regular
+`Agent` and assumes that agent's invocation lifecycle. A Bidi migration must construct an
+equivalent stopped `BidiAgent` and preserve its streaming configuration. After cutover,
+`SnapshotSessionManager` captures Bidi state after each message by default, when the agent
+stops, and before a connection restart. Configure this behavior with
+`bidi_agent_save_latest_on`.
 
 ## Sessions, agents, and concurrency
 
