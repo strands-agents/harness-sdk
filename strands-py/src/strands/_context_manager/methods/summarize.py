@@ -52,10 +52,17 @@ class SummarizeConfig(TypedDict, total=False):
         model: Model used for summarization. Resolution order: this ``model`` > ``agent.aux_model``
             > ``agent.model``.
         system_prompt: Custom system prompt for the summarization model.
+        background: Summarize eligible blocks concurrently, up to 10 per batch, while the
+            agent loop continues. Blocks stay in place until every summary in the batch
+            is ready; a later strategy pass applies the batch before its model call, and
+            the invocation applies any remaining batch before it returns. Overflow
+            recovery waits for the batch instead of deferring it. Applies to per-block
+            strategies only. Defaults to False.
     """
 
     model: Model
     system_prompt: str
+    background: bool
 
 
 async def _summarize_content(

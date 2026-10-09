@@ -1,13 +1,18 @@
 """Tests for the SummarizeStrategy."""
 
+import asyncio
+import threading
 import unittest.mock
 
 import pytest
 
+from strands import Agent, tool
 from strands._context_manager.strategies.offload import Offload
-from strands._context_manager.types import ContextState
+from strands._context_manager.types import ContextManagerConfig, ContextState
+from strands.hooks import AfterInvocationEvent
 from strands.types.content import ContentBlock, Message, Messages
 from strands.types.tools import ToolResult
+from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 
 def _make_stream_events(text: str):
@@ -46,6 +51,7 @@ def mock_agent():
     agent.model.estimate_utilization = unittest.mock.MagicMock(return_value=0.9)
     agent.model.stream = _make_stream_events("Summary of content.")
     agent.aux_model = agent.model
+    agent.cancel_signal = threading.Event()
     agent.messages = []
     return agent
 
@@ -259,3 +265,192 @@ class TestSummarizeStrategyMessageLevel:
         mock_agent.messages = messages
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.9)
         assert await strategy.apply(context) is False
+
+
+def _tool_result_message(tool_use_id: str, text: str) -> Message:
+    return Message(
+        role="user",
+        content=[
+            ContentBlock(toolResult=ToolResult(toolUseId=tool_use_id, status="success", content=[{"text": text}]))
+        ],
+    )
+
+
+def _gated_stream(gate: asyncio.Event, text: str = "Summary of content."):
+    async def stream(*args, **kwargs):
+        await gate.wait()
+        async for event in _make_stream_events(text)():
+            yield event
+
+    return stream
+
+
+class TestSummarizeStrategyBackground:
+    """Tests for background (deferred) summarization."""
+
+    def test_rejects_utilization_condition(self):
+        with pytest.raises(ValueError, match="per-block"):
+            Offload.summarize("tool_results", {"background": True}).when(utilization=0.8)
+
+    @pytest.mark.asyncio
+    async def test_apply_defers_then_commits_once_the_summary_is_ready(self, mock_agent):
+        gate = asyncio.Event()
+        mock_agent.model.stream = _gated_stream(gate)
+        strategy = Offload.summarize("tool_results", {"background": True}).when(threshold=100)
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="pin")]),
+            _tool_result_message("t1", "x" * 10000),
+        ]
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.5)
+
+        assert await strategy.apply(context) is False
+        assert messages[1]["content"][0]["toolResult"]["content"] == [{"text": "x" * 10000}]
+
+        gate.set()
+        await asyncio.sleep(0)
+
+        assert await strategy.apply(context) is True
+        tru_content = messages[1]["content"][0]["toolResult"]["content"]
+        exp_content = [{"text": "[Summarized: tool result, ~5,000 tokens]\n\nSummary of content."}]
+        assert tru_content == exp_content
+
+    @pytest.mark.asyncio
+    async def test_overflow_pass_waits_for_the_batch(self, mock_agent):
+        gate = asyncio.Event()
+        gate.set()
+        mock_agent.model.stream = _gated_stream(gate)
+        strategy = Offload.summarize("tool_results", {"background": True}).when(threshold=100)
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="pin")]),
+            _tool_result_message("t1", "x" * 10000),
+        ]
+        mock_agent.messages = messages
+        context = ContextState(messages=messages, agent=mock_agent, utilization=1.1, overflow=True)
+
+        assert await strategy.apply(context) is True
+        assert "Summary of content." in messages[1]["content"][0]["toolResult"]["content"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_flush_applies_the_batch_before_returning(self, mock_agent):
+        gate = asyncio.Event()
+        mock_agent.model.stream = _gated_stream(gate)
+        strategy = Offload.summarize("tool_results", {"background": True}).when(threshold=100)
+        messages: Messages = [
+            Message(role="user", content=[ContentBlock(text="pin")]),
+            _tool_result_message("t1", "x" * 10000),
+        ]
+        mock_agent.messages = messages
+        await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.5))
+        asyncio.get_running_loop().call_later(0.01, gate.set)
+
+        assert await strategy.flush(mock_agent) is True
+        assert "Summary of content." in messages[1]["content"][0]["toolResult"]["content"][0]["text"]
+
+    def test_init_skips_the_eager_hook(self, mock_agent):
+        mock_agent.hooks = unittest.mock.MagicMock()
+        Offload.summarize("tool_results", {"background": True}).when(threshold=100).init(mock_agent)
+        Offload.summarize("tool_results").when(threshold=100).init(mock_agent)
+
+        assert mock_agent.hooks.add_callback.call_count == 1
+
+
+@tool
+def fetch_report() -> str:
+    """Return a large report."""
+    return "report " * 2000
+
+
+class _GatedSummarizer(MockedModelProvider):
+    """Summarizer that waits for the gate before producing its summary."""
+
+    def __init__(self, gate: asyncio.Event) -> None:
+        super().__init__([Message(role="assistant", content=[ContentBlock(text="Report summary.")])])
+        self.gate = gate
+        self.calls = 0
+
+    async def stream(self, *args, **kwargs):
+        self.calls += 1
+        await self.gate.wait()
+        async for event in super().stream(*args, **kwargs):
+            yield event
+
+
+class _MainModel(MockedModelProvider):
+    """Main model that opens the summarizer gate when its final call starts."""
+
+    def __init__(self, gate: asyncio.Event) -> None:
+        super().__init__(
+            [
+                Message(
+                    role="assistant",
+                    content=[ContentBlock(toolUse={"toolUseId": "t1", "name": "fetch_report", "input": {}})],
+                ),
+                Message(role="assistant", content=[ContentBlock(text="Done.")]),
+            ]
+        )
+        self.gate = gate
+        self.summary_pending_at_final_call: bool | None = None
+
+    async def stream(self, messages, *args, **kwargs):
+        if self.index == 1:
+            tool_result_text = messages[2]["content"][0]["toolResult"]["content"][0]["text"]
+            self.summary_pending_at_final_call = "[Summarized:" not in tool_result_text
+            self.gate.set()
+        async for event in super().stream(messages, *args, **kwargs):
+            yield event
+
+
+def _background_agent(gate: asyncio.Event, summarizer: MockedModelProvider) -> tuple[Agent, _MainModel]:
+    main_model = _MainModel(gate)
+    strategy = Offload.summarize("tool_results", {"background": True, "model": summarizer}).when(threshold=100)
+    agent = Agent(
+        model=main_model,
+        tools=[fetch_report],
+        context_manager=ContextManagerConfig(strategies=[strategy], stash=False),
+        callback_handler=None,
+    )
+    return agent, main_model
+
+
+class TestSummarizeStrategyBackgroundWithAgent:
+    """End-to-end background summarization through the agent loop."""
+
+    @pytest.mark.asyncio
+    async def test_model_call_proceeds_while_summary_is_pending_and_commits_before_return(self):
+        gate = asyncio.Event()
+        summarizer = _GatedSummarizer(gate)
+        agent, main_model = _background_agent(gate, summarizer)
+        observed_at_default_order: list[str] = []
+
+        async def observer(event: AfterInvocationEvent) -> None:
+            observed_at_default_order.append(event.agent.messages[2]["content"][0]["toolResult"]["content"][0]["text"])
+
+        agent.add_hook(observer, AfterInvocationEvent)
+
+        result = await agent.invoke_async("Summarize the report")
+
+        assert result.stop_reason == "end_turn"
+        assert main_model.summary_pending_at_final_call is True
+        assert summarizer.calls == 1
+        tru_tool_result = agent.messages[2]["content"][0]["toolResult"]
+        exp_tool_result = {
+            "toolUseId": "t1",
+            "status": "success",
+            "content": [{"text": "[Summarized: tool result, ~3,500 tokens]\n\nReport summary."}],
+        }
+        assert tru_tool_result == exp_tool_result
+        assert observed_at_default_order == [exp_tool_result["content"][0]["text"]]
+
+    def test_sync_entry_point_commits_summary_before_returning(self):
+        gate = asyncio.Event()
+        gate.set()
+        summarizer = _GatedSummarizer(gate)
+        agent, _ = _background_agent(gate, summarizer)
+
+        result = agent("Summarize the report")
+
+        assert result.stop_reason == "end_turn"
+        assert summarizer.calls == 1
+        tru_text = agent.messages[2]["content"][0]["toolResult"]["content"][0]["text"]
+        exp_text = "[Summarized: tool result, ~3,500 tokens]\n\nReport summary."
+        assert tru_text == exp_text

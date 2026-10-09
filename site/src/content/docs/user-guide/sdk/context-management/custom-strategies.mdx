@@ -148,6 +148,28 @@ Offload.summarize("*").when(
 |-----------|-----|---------|
 | Model | `model` | `agent.aux_model` |
 | System prompt | `system_prompt` | Built-in |
+| Background | `background` | `False` |
+
+Configure a per-block strategy to summarize older tool results concurrently:
+
+```python
+from strands.experimental.context_manager import Offload
+
+background_tool_results = Offload.summarize(
+    "tool_results",
+    {"background": True},
+).when(threshold=1_000, preserve_recent=10)
+```
+
+`background` cannot be combined with a `utilization` condition.
+
+The strategy starts up to 10 summaries per batch and keeps the original blocks in
+context while they run. It replaces the batch before a later model call once every
+summary is ready. Otherwise, the invocation waits for the batch and replaces it before
+returning, so persisted sessions always hold the summarized form. On overflow, the
+strategy waits for the batch instead of deferring it, so recovery stays immediate.
+
+This setting does not require `Agent(background_tasks=...)`.
 
 </Tab>
 <Tab label="TypeScript">
@@ -159,6 +181,8 @@ Offload.summarize("*").when(
 
 </Tab>
 </Tabs>
+
+Background summarization is available in Python.
 
 ### Drop
 

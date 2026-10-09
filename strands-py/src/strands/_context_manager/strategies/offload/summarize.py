@@ -47,8 +47,13 @@ class SummarizeStrategy(BaseOffloadStrategy):
         config: SummarizeConfig | None = None,
         conditions: OffloadConditions | None = None,
     ) -> None:
-        super().__init__(target, conditions)
+        """Initialize the strategy.
+
+        Raises:
+            ValueError: If ``background`` is combined with a ``utilization`` condition.
+        """
         self._config: SummarizeConfig = config or {}
+        super().__init__(target, conditions, background=self._config.get("background", False))
 
     def when(
         self,

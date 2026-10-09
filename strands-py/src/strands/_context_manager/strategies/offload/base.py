@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import math
 from abc import ABC, abstractmethod
+from functools import partial
 from typing import TYPE_CHECKING, Literal
 
 from typing_extensions import TypedDict
@@ -15,11 +16,15 @@ from ....types.tools import ToolUse
 from ...retrieval_tool import RETRIEVAL_TOOL_NAME
 from ...stash import Stash
 from ...types import ContextState, is_text_block, is_tool_result_block, is_tool_use_block
+from .deferred import DeferredReplacements
 
 if TYPE_CHECKING:
     from ....agent.agent import Agent
 
 logger = logging.getLogger(__name__)
+
+# Replacements computed concurrently per batch when a strategy runs in the background.
+_BACKGROUND_BATCH_SIZE = 10
 
 OffloadTarget = Literal["*", "tool_results", "tool_result_errors", "assistant_text", "user_text"] | list[str]
 """Target for offload operations."""
@@ -280,8 +285,27 @@ class BaseOffloadStrategy(ABC):
     _include_filter: set[str] | None
     _exclude_filter: set[str] | None
     _stash: Stash | None
+    _deferred: DeferredReplacements | None
 
-    def __init__(self, target: OffloadTarget | None = None, conditions: OffloadConditions | None = None) -> None:
+    def __init__(
+        self,
+        target: OffloadTarget | None = None,
+        conditions: OffloadConditions | None = None,
+        *,
+        background: bool = False,
+    ) -> None:
+        """Initialize the strategy.
+
+        Args:
+            target: What content the strategy acts on.
+            conditions: When the strategy fires.
+            background: Compute per-block replacements concurrently and apply them at the next safe
+                boundary instead of before the current model call.
+
+        Raises:
+            ValueError: If the target is an empty list, or ``background`` is combined with a
+                ``utilization`` condition.
+        """
         if isinstance(target, list) and len(target) == 0:
             raise ValueError("Empty array target matches nothing — provide at least one target")
 
@@ -297,6 +321,10 @@ class BaseOffloadStrategy(ABC):
 
         self._include_filter, self._exclude_filter = _resolve_tool_filter(target)
 
+        if background and self._is_message_level:
+            raise ValueError("background applies to per-block strategies; remove the 'utilization' condition")
+        self._deferred = DeferredReplacements(max_pending=_BACKGROUND_BATCH_SIZE) if background else None
+
     @property
     def _is_message_level(self) -> bool:
         return self._utilization_threshold is not None
@@ -309,6 +337,10 @@ class BaseOffloadStrategy(ABC):
         if self._is_message_level:
             return
         if self._preserve_recent > 0:
+            return
+        # A direct tool call adds a message outside any invocation, on a loop that closes right after;
+        # deferred work must only start inside an invocation so the flush can await it.
+        if self._deferred is not None:
             return
 
         async def _eager_hook(event: MessageAddedEvent) -> None:
@@ -333,7 +365,24 @@ class BaseOffloadStrategy(ABC):
                 return False
             return await self._apply_per_message(context)
 
-        return await self._apply_per_block(context)
+        if self._deferred is None:
+            return await self._apply_per_block(context)
+
+        acted = self._deferred.commit(context.messages)
+        await self._apply_per_block(context)
+        # Overflow recovery needs the space before the retry, so the batch is awaited here.
+        if context.overflow:
+            acted = await self.flush(context.agent) or acted
+        return acted
+
+    async def flush(self, agent: Agent) -> bool:
+        """Apply deferred replacements, waiting for in-flight work unless the invocation was cancelled.
+
+        Returns True if any block changed.
+        """
+        if self._deferred is None:
+            return False
+        return await self._deferred.flush(agent.messages, agent.cancel_signal)
 
     async def _apply_per_block(self, context: ContextState) -> bool:
         """Per-block execution: walk each message, transform individual blocks above threshold."""
@@ -422,12 +471,26 @@ class BaseOffloadStrategy(ABC):
                 continue
 
             stash_refs = self._stash.refs_for(block, message, block_index) if self._stash else []
-            replacement = await self._replace_block(block, tokens, message, agent, stash_refs)
+            replacement = await self._replace_or_defer(block, tokens, message, agent, stash_refs)
             if replacement is not None and replacement is not block:
                 content[block_index] = replacement
                 acted = True
 
         return acted
+
+    async def _replace_or_defer(
+        self,
+        block: ContentBlock,
+        tokens: int,
+        message: Message,
+        agent: Agent,
+        stash_refs: list[str],
+    ) -> ContentBlock | None:
+        """Replace the block now, or in the background start computing its replacement and leave it in place."""
+        if self._deferred is None:
+            return await self._replace_block(block, tokens, message, agent, stash_refs)
+        self._deferred.submit(block, partial(self._replace_block, block, tokens, message, agent, stash_refs))
+        return None
 
     async def _get_eligible_messages(self, context: ContextState) -> list[Message]:
         """Collect eligible messages for message-level operations."""

@@ -9,7 +9,8 @@ import logging
 import warnings
 from typing import TYPE_CHECKING, Literal
 
-from ..hooks.events import AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
+from ..hooks.events import AfterInvocationEvent, AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
+from ..hooks.registry import HookOrder
 from ..plugins.plugin import Plugin
 from ..storage.in_memory_storage import InMemoryStorage
 from ..storage.storage import _EPHEMERAL
@@ -227,6 +228,7 @@ class ContextManager(Plugin):
             await self._run_strategies(event.agent, event.projected_input_tokens)
 
         agent.hooks.add_callback(BeforeModelCallEvent, _on_before_model_call)
+        self._register_flush(agent)
 
         overflow_retries = 0
 
@@ -251,6 +253,18 @@ class ContextManager(Plugin):
             event.retry = True
 
         agent.hooks.add_callback(AfterModelCallEvent, _on_after_model_call)
+
+    def _register_flush(self, agent: Agent) -> None:
+        """Apply work strategies deferred during the invocation before session managers persist it."""
+        flushes = [flush for strategy in self._strategies if (flush := getattr(strategy, "flush", None)) is not None]
+        if not flushes:
+            return
+
+        async def _on_after_invocation(event: AfterInvocationEvent) -> None:
+            for flush in flushes:
+                await flush(event.agent)
+
+        agent.hooks.add_callback(AfterInvocationEvent, _on_after_invocation, order=HookOrder.SDK_FIRST)
 
     async def _backfill_stash(self, agent: Agent) -> None:
         """Stash any messages already on the agent that were not seen by the hook.
