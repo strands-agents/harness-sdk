@@ -1,0 +1,226 @@
+---
+title: Decision Models
+description: 'Ask a model typed, closed questions and route agents, graphs, and model selection on the answers, with an LLM or a System One model such as Jev.'
+tags: [multi-agent, structured-output]
+experimental: true
+sourceLinks:
+  - path: strands-py/src/strands/experimental/decisions/__init__.py
+  - path: strands-py/src/strands/experimental/decisions/_model.py
+  - path: strands-py/src/strands/experimental/decisions/_schema.py
+  - path: strands-py/src/strands/experimental/decisions/_llm.py
+  - path: strands-py/src/strands/experimental/decisions/_logprobs.py
+  - path: strands-py/src/strands/experimental/decisions/_agent.py
+  - path: strands-py/src/strands/experimental/decisions/_graph.py
+  - path: strands-py/src/strands/experimental/decisions/_strategy.py
+  - path: strands-py/src/strands/models/system_one.py
+  - path: site/docs/examples/python/system_one/support_triage.py
+sidebar:
+  label: "Decision Models"
+  badge:
+    text: Experimental
+    variant: note
+---
+
+A model generates; a decision model decides. Routing a request, choosing a model tier, and
+deciding whether a message raises more than one issue are all closed questions with a fixed set
+of answers. A `DecisionModel` asks those questions and returns typed answers, so your code
+branches on a value rather than parsing prose.
+
+Two providers ship:
+
+- `LLMDecisionModel` asks the questions through any Strands `Model`, using a forced tool call.
+  When the model returns token logprobs, each answer also carries probabilities and a confidence.
+- `SystemOneDecisionModel` calls a System One model: a model trained to answer typed questions
+  directly, with a probability for every option and a confidence. [Jev](https://docs.typesafe.ai/concepts/system-one)
+  by TypeSafe is the first one available.
+
+Both answer the same schema, so you can start on an LLM and switch providers without changing
+the rest of your code.
+
+## Install and ask a first question
+
+```bash
+pip install 'strands-agents[typesafe]'   # only needed for SystemOneDecisionModel
+export TYPESAFE_API_KEY=...
+```
+
+Declare the questions as a `DecisionSchema`. Each field is one question: a `Literal` or `Enum`
+field is a `Choice`, a `bool` is a `YesNo`, and a `float` with a `Score` marker is a rating.
+The schema is checked when the class is defined.
+
+```python
+from typing import Annotated, Literal
+
+from strands.experimental.decisions import Choice, DecisionSchema
+from strands.models import SystemOneDecisionModel
+
+
+class Triage(DecisionSchema):
+    department: Annotated[
+        Literal["billing", "technical", "account"],
+        Choice(
+            "Which team should handle the customer's message?",
+            options={
+                "billing": "Charges, invoices, refunds",
+                "technical": "Bugs, outages, errors",
+                "account": "Login, passwords, MFA",
+            },
+        ),
+    ]
+
+
+decision = await SystemOneDecisionModel().decide(Triage, state="You billed my card twice in March.")
+decision.output.department                       # "billing"
+decision.answers["department"].probabilities     # {"billing": 0.93, "account": 0.05, "technical": 0.02}
+decision.answers["department"].confidence        # 0.91
+```
+
+A schema can hold several questions (for example a `bool` field adds a `YesNo`); all are asked
+together, in one request. The state is treated as
+data, never as instructions. When the options are only known at run time, build the schema
+then: `DecisionSchema.build("Pick", target=Choice("Which element?", options=elements))`.
+
+## Probabilities and confidence
+
+Every answer carries `probabilities`, and `confidence` is either a number or `None`. The model decides
+which, answer by answer:
+
+| Provider | `probabilities` | `confidence` |
+|---|---|---|
+| `SystemOneDecisionModel` | One per option | The model's own |
+| `LLMDecisionModel`, model returns logprobs | From the answer token's logprobs | The top probability |
+| `LLMDecisionModel`, no logprobs | One-hot: 1.0 on the answer | `None` |
+
+Adapters that take `min_confidence` treat an answer with `confidence=None` as unsure, send it to the
+fallback, and log a warning the first time. `LLMDecisionModel` never asks an LLM to state its
+confidence, because a stated confidence is not a measurement.
+
+On Bedrock, token logprobs come from open-weight models on its OpenAI-schema stack (for example Qwen3,
+DeepSeek, Ministral 3, Nemotron and GLM). Claude, Nova and Llama do not return them. Turn them on
+with a non-streaming `BedrockModel`:
+
+```python
+from strands.experimental.decisions import LLMDecisionModel
+from strands.models import BedrockModel
+
+decider = LLMDecisionModel(
+    BedrockModel(
+        model_id="qwen.qwen3-32b-v1:0",
+        streaming=False,  # a streamed tool call drops the answer tokens' logprobs
+        additional_request_fields={"logprobs": True, "top_logprobs": 20},
+        additional_response_field_paths=["/choices/0/logprobs"],
+    )
+)
+```
+
+A logprob confidence is the model's own token probability. It tends to be high, so tune
+`min_confidence` on your own traffic before relying on it.
+
+## Front door: cheap path first, reasoning agent when unsure
+
+`DecisionAgent` sees external input first. It sends a confident request straight to a specialist
+or a plain function, and sends anything unsure or unmatched to `fallback`.
+
+```python
+from strands import Agent
+from strands.experimental.decisions import DecisionAgent
+
+support = DecisionAgent(
+    SystemOneDecisionModel(),
+    Triage,
+    route_on="department",
+    routes={
+        "billing": Agent(system_prompt="You resolve billing issues."),
+        "technical": Agent(system_prompt="You resolve technical issues."),
+        "account": Agent(system_prompt="You resolve account issues."),
+    },
+    min_confidence=0.6,
+    fallback=Agent(system_prompt="You handle any support request."),
+)
+result = support("I was double-charged and now I can't log in")
+```
+
+This message raises two issues, so the probability splits between billing and account, and the
+confidence falls below 0.6. The request goes to the fallback.
+
+## Graph node: route on recorded decisions
+
+A `DecisionAgent` node records its decision at `result.state["decision"]` (`DECISION_STATE_KEY`).
+The edge helpers `when_choice` and `when_below` read it back (`when_yes` does the same for a
+`YesNo` field), so `Graph` needs no
+changes.
+
+```python
+from strands.experimental.decisions import when_below, when_choice
+from strands.multiagent import GraphBuilder
+
+FLOOR = 0.6
+builder = GraphBuilder()
+builder.add_node(DecisionAgent(SystemOneDecisionModel(), Triage, name="router"), "router")
+builder.add_node(Agent(system_prompt="You resolve billing issues."), "billing")
+builder.add_node(Agent(system_prompt="You handle any support request."), "general")
+builder.add_edge("router", "billing", condition=when_choice("router", "department", "billing", min_confidence=FLOOR))
+builder.add_edge("router", "general", condition=when_below("router", "department", FLOOR))
+builder.set_entry_point("router")
+graph = builder.build()
+```
+
+Give every answer an edge: a node whose answer matches no edge stops the graph. An optional
+`Choice` (a field typed `X | None`) can also answer `"none"`.
+
+## Model selection: pick the tier per request
+
+`DecisionStrategy` is a `RoutingStrategy` for `ModelRouter`. It asks one `Choice` over the
+candidates' descriptions. Below `min_confidence` it declines, and the router serves its first
+candidate, so put your safe default first. `ClassifierStrategy` does the same job with an LLM and
+no confidence gate.
+
+```python
+from strands.experimental.decisions import DecisionStrategy
+from strands.models import BedrockModel, ModelRouter, RoutingCandidate
+
+router = ModelRouter(
+    models=[
+        RoutingCandidate(
+            BedrockModel(model_id="global.anthropic.claude-sonnet-5-5"),
+            name="complex",
+            description="Multi-step reasoning, proofs, code generation",
+        ),
+        RoutingCandidate(
+            BedrockModel(model_id="us.amazon.nova-2-lite-v1:0"),
+            name="routine",
+            description="Direct questions, short summaries, extraction",
+        ),
+    ],
+    strategy=DecisionStrategy(SystemOneDecisionModel(), min_confidence=0.7),
+)
+agent = Agent(model=router)
+```
+
+## Keep facts and thresholds in code
+
+A decision model judges meaning. It does not know your permissions, budgets, or which
+transitions are legal, so check those in code first and ask only among the options that remain.
+Thresholds are policy, not model properties: tune them on your own traffic. Pin a versioned
+model id such as `jev-1.13.0` once they are tuned, because `jev-latest` moves with new releases.
+
+Multi-step planning and arithmetic still belong to an LLM. Jev allows 32,000 tokens of state
+plus each question, and 64,000 per request, so trim the state to what the question needs.
+
+## Sample
+
+[`support_triage.py`](https://github.com/strands-agents/harness-sdk/tree/main/site/docs/examples/python/system_one/support_triage.py)
+routes four support messages to Claude Sonnet 5.5 specialist agents, first through a front-door
+`DecisionAgent` and then through a `Graph`, and prints each decision's confidence and token use.
+Run it with Jev (the default) or with `--decider llm`, where every answer lacks a confidence and
+goes to the general agent.
+
+## Coming later
+
+These are planned as follow-ups to this experimental release:
+
+- Calibration: a fitted `temperature` that rescales raw scores, such as LLM logprobs, for your domain.
+- Self-hosted System One models (Kev) and a SageMaker provider.
+- Guardrails: a `DecisionGuard` hook for tool calls and a `decision_tool` the LLM can call.
+- Swarm handoffs and a fast path that skips the LLM for a confident next action.
+- TypeScript.

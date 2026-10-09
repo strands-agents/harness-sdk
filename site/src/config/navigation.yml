@@ -450,6 +450,7 @@ sidebar:
           - label: Experimental
             items:
               - docs/user-guide/sdk/experimental/agent-config
+              - docs/user-guide/sdk/experimental/decision-models
       - label: Reference
         items:
           - docs/user-guide/sdk/versioning-and-support
