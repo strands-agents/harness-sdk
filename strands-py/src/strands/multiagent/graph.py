@@ -688,7 +688,9 @@ class Graph(MultiAgentBase):
                     yield event.as_dict()
 
                 # Set final status based on execution results
-                if self.state.failed_nodes:
+                if self.state.status == Status.INTERRUPTED:
+                    pass
+                elif self.state.failed_nodes:
                     self.state.status = Status.FAILED
                 elif self.state.status == Status.EXECUTING:
                     self.state.status = Status.COMPLETED
@@ -801,8 +803,6 @@ class Graph(MultiAgentBase):
             self._interrupt_state.deactivate()
 
             # Find newly ready nodes after batch execution
-            # We add all nodes in current batch as completed batch,
-            # because a failure would throw exception and code would not make it here
             newly_ready = self._find_newly_ready_nodes(current_batch)
 
             # Emit handoff event for batch transition if there are nodes to transition to
@@ -947,8 +947,15 @@ class Graph(MultiAgentBase):
         """Find nodes that became ready after the last execution.
 
         Only evaluates destination nodes of outbound edges from the completed batch,
-        instead of iterating over all nodes in the graph.
+        instead of iterating over all nodes in the graph.  Failed nodes (e.g. a
+        cancelled agent) are excluded so they cannot nominate successors — their
+        downstream branch is pruned while sibling branches continue.
         """
+        # Strip failed/cancelled nodes so their outgoing edges are never walked.
+        completed_batch = [node for node in completed_batch if node.execution_status != Status.FAILED]
+        if not completed_batch:
+            return []
+
         # Collect unique candidate nodes reachable from the completed batch
         candidates = {edge.to_node for edge in self.edges if edge.from_node in completed_batch}
 
@@ -1065,11 +1072,15 @@ class Graph(MultiAgentBase):
                 # Handle stop_reason and interrupts (use getattr for AgentBase compatibility)
                 stop_reason = getattr(agent_response, "stop_reason", "end_turn")
                 interrupts = getattr(agent_response, "interrupts", None) or []
+                agent_status = {
+                    "cancelled": Status.FAILED,
+                    "interrupt": Status.INTERRUPTED,
+                }.get(stop_reason, Status.COMPLETED)
 
                 node_result = NodeResult(
                     result=agent_response,
                     execution_time=round((time.time() - start_time) * 1000),
-                    status=Status.INTERRUPTED if stop_reason == "interrupt" else Status.COMPLETED,
+                    status=agent_status,
                     accumulated_usage=usage,
                     accumulated_metrics=metrics,
                     execution_count=1,
