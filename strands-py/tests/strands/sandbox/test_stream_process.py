@@ -135,3 +135,24 @@ async def test_cancellation_kills_the_process():
         await asyncio.sleep(0.02)
     else:
         pytest.fail("process survived cancellation")
+
+
+@pytest.mark.asyncio
+async def test_multibyte_characters_survive_read_boundaries():
+    # 100k three-byte characters span several 64 KiB reads, so some of them
+    # straddle a boundary; decoding each read on its own split those into two
+    # U+FFFD.
+    script = "import sys; sys.stdout.buffer.write(('\\u2615' * 100000).encode())"
+    chunks, result = await _collect(_stream_process(sys.executable, ["-c", script]))
+    expected = "\u2615" * 100000
+    assert result.stdout == expected
+    assert "".join(c.data for c in chunks if c.stream_type == "stdout") == expected
+
+
+@pytest.mark.asyncio
+async def test_truncated_multibyte_character_at_eof_is_replaced():
+    # The stream ends in the first two bytes of a three-byte character.
+    script = "import sys; sys.stdout.buffer.write(b'ab\\xe2\\x98')"
+    chunks, result = await _collect(_stream_process(sys.executable, ["-c", script]))
+    assert result.stdout == "ab\ufffd"
+    assert "".join(c.data for c in chunks if c.stream_type == "stdout") == "ab\ufffd"
