@@ -567,8 +567,9 @@ class ContextOffloader(Plugin):
             token_count,
         )
 
-        # Build preview text — use tiktoken for exact slicing when available
-        preview = self._slice_preview(full_text) if full_text else ""
+        # Build preview text — size it with the token count the model already produced,
+        # so the preview is measured in the same units as the offload decision (#4914).
+        preview = self._slice_preview(full_text, token_count) if full_text else ""
         # Skip None: non-bytes image/document sources were left unstored (#4017).
         ref_lines = "\n".join(
             f"  {ref} ({desc})" for entry in references if entry is not None for ref, _, desc in [entry] if ref
@@ -661,13 +662,20 @@ class ContextOffloader(Plugin):
         self._track_stored_cycle(agent, reference, cycle)
         logger.debug("reference=<%s>, cycle=<%d> | retrieve refreshed eviction cycle", reference, cycle)
 
-    def _slice_preview(self, text: str) -> str:
-        """Slice text to approximately preview_tokens using character-based estimation.
+    def _slice_preview(self, text: str, token_count: int) -> str:
+        """Slice text to roughly preview_tokens, as measured by the model's count_tokens.
+
+        Sizes the preview with the result's own chars-per-token ratio instead of a
+        fixed chars-per-token constant, so the preview is always a strict truncation
+        of the offloaded text (offloading only happens when
+        token_count > max_result_tokens > preview_tokens).
 
         Args:
             text: The full text to slice.
+            token_count: The token count the model reported for this result.
 
         Returns:
             The preview text.
         """
-        return text[: self._preview_tokens * _CHARS_PER_TOKEN]
+        preview_chars = self._preview_tokens * len(text) // token_count
+        return text[:preview_chars]

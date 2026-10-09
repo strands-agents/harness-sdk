@@ -1499,3 +1499,51 @@ class TestShouldOffloadCallback:
         await plugin._handle_tool_result(event)
 
         assert "[Offloaded:" in event.result["content"][0]["text"]
+
+
+class TestSlicePreview:
+    def test_slice_preview_scales_with_result_token_ratio(self):
+        """Preview is sized by the result's own chars-per-token ratio, not a fixed constant."""
+        # https://github.com/strands-agents/harness-sdk/issues/4914
+        plugin = ContextOffloader(storage=InMemoryStorage(), max_result_tokens=1000, preview_tokens=900)
+        text = "x" * 3232
+
+        assert len(plugin._slice_preview(text, 1165)) == 900 * 3232 // 1165
+
+    def test_slice_preview_is_always_strict_truncation(self):
+        """Offloading implies token_count > max_result_tokens > preview_tokens, so the preview is shorter."""
+        plugin = ContextOffloader(storage=InMemoryStorage(), max_result_tokens=1000, preview_tokens=900)
+        text = "x" * 3232
+
+        assert len(plugin._slice_preview(text, 1001)) < len(text)
+        assert len(plugin._slice_preview(text, 10_000)) < len(text)
+
+    @pytest.mark.asyncio
+    async def test_preview_never_contains_full_offloaded_json(self, mock_agent):
+        """The replacement must not hold the entire offloaded text plus framing."""
+        # https://github.com/strands-agents/harness-sdk/issues/4914
+        storage = InMemoryStorage()
+        plugin = ContextOffloader(
+            storage=storage, max_result_tokens=1000, preview_tokens=900, include_retrieval_tool=False
+        )
+        rows = [{"id": n, "name": f"role-{n}", "active": True} for n in range(50)]
+        result = {"toolUseId": "t1", "status": "success", "content": [{"json": rows}]}
+        event = AfterToolCallEvent(
+            agent=mock_agent,
+            selected_tool=None,
+            tool_use={"toolUseId": "t1", "name": "list_roles", "input": {}},
+            invocation_state={},
+            result=result,
+        )
+        # Model heuristic counts compact JSON as chars/2 -> 1,165 tokens (over the 1,000 threshold),
+        # while the 3,232-char indented rendering fits the old 3,600-char preview budget.
+        mock_agent.model.count_tokens = AsyncMock(return_value=1165)
+        full_text = json.dumps(rows, indent=2)
+        assert len(full_text) < 900 * 4  # sanity: the old budget would have fit the whole text
+
+        await plugin._handle_tool_result(event)
+
+        replacement = event.result["content"][0]["text"]
+        assert "[Offloaded:" in replacement
+        assert full_text not in replacement
+        assert len(replacement) < len(full_text)
