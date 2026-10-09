@@ -13,6 +13,8 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { tmpdir } from 'node:os'
+import { sep } from 'node:path'
 import { TextDecoder } from 'node:util'
 
 import { Agent, type Model, type Sandbox, tool, type Tool } from '@strands-agents/sdk'
@@ -25,6 +27,10 @@ const TIMEOUT_SECONDS = 30
 const MAX_BYTES = 5 * 1024 * 1024
 const MAX_CHARS = 50_000
 const CACHE_TTL_MS = 15 * 60 * 1000
+// The sandbox shell and `sandbox.readFile` must resolve the scratch file to the same place: `/tmp` does
+// that in any POSIX sandbox, but on Windows the shell's `/tmp` is its own (MSYS) mount that Node resolves
+// against the current drive instead, so there the host temp dir is used, forward-slashed for `sh`.
+const TEMP_DIR = process.platform === 'win32' ? tmpdir().replaceAll(sep, '/') : '/tmp'
 // The characters RFC 3986 allows anywhere in a URL; anything else (whitespace, quotes, control
 // characters, non-ASCII) is rejected before the URL reaches a shell or a socket.
 const URL_CHARS = /^[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+$/
@@ -106,7 +112,7 @@ function toText(data: Uint8Array, contentType: string, resolvedUrl: string, url:
 
 /** Fetch a validated `url` with `curl` inside `sandbox`; throws when curl fails. */
 async function fetchCurl(sandbox: Sandbox, url: string): Promise<Fetched> {
-  const output = `/tmp/strands-web-fetch-${randomUUID().replaceAll('-', '')}`
+  const output = `${TEMP_DIR}/strands-web-fetch-${randomUUID().replaceAll('-', '')}`
   let contentType: string
   let resolvedUrl: string
   let data: Uint8Array

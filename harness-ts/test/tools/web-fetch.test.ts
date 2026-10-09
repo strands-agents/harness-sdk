@@ -1,5 +1,7 @@
 import { Buffer } from 'node:buffer'
 import { createServer } from 'node:http'
+import { tmpdir } from 'node:os'
+import { sep } from 'node:path'
 import { ReadableStream } from 'node:stream/web'
 import type { AddressInfo } from 'node:net'
 
@@ -306,7 +308,9 @@ describe('web_fetch', () => {
       expect(await invoke(tool, { url: `${base}/big` }, sandbox)).toBe('日'.repeat(50_000))
       expect(await invoke(tool, { url: `${base}/huge` }, sandbox)).toBe('x'.repeat(50_000))
       expect(await invoke(tool, { url: `${base}/notype` }, sandbox)).toBe('a < b')
-      expect((await sandbox.execute('ls /tmp | grep -c strands-web-fetch')).stdout.trim()).toBe('0')
+      // Same scratch directory the tool derives: `/tmp` is not readable through Node on Windows.
+      const tempDir = process.platform === 'win32' ? tmpdir().replaceAll(sep, '/') : '/tmp'
+      expect((await sandbox.execute(`ls '${tempDir}' | grep -c strands-web-fetch`)).stdout.trim()).toBe('0')
       expect(await invoke(tool, { url: `${base}/missing` }, sandbox)).toContain('404')
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()))

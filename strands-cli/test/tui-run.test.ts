@@ -372,7 +372,13 @@ describe('runInkChat', () => {
       await vi.waitFor(() => expect(startupSignal?.aborted).toBe(true))
       expect(await running).toBe(forcedExit)
       expect(hardExit).toHaveBeenCalledExactlyOnceWith(130)
-      expect(process.listenerCount('SIGINT')).toBe(sigintListeners)
+      // The invariant we own is that runInkChat removes its own SIGINT handler. Counting all listeners is
+      // not portable: on Windows, ink's cursor handling makes restore-cursor install a permanent signal-exit hook.
+      await vi.waitFor(() => {
+        const sources = process.listeners('SIGINT').map((listener) => listener.toString())
+        expect(sources.filter((source) => source.includes('closeForExit'))).toEqual([])
+        expect(sources.length).toBeGreaterThanOrEqual(sigintListeners)
+      })
     } finally {
       if (!startupSignal?.aborted) input.push('n')
       await running

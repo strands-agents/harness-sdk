@@ -285,7 +285,9 @@ async def test_fetch_text_end_to_end_through_the_local_environment():
         _, huge = await web_fetch_module._fetch_text(sandbox, f"{base}/huge", "curl")
         assert huge == "x" * web_fetch_module._MAX_CHARS
         assert await web_fetch_module._fetch_text(sandbox, f"{base}/notype", "curl") == (f"{base}/notype", "a < b")
-        assert (await sandbox.execute("ls /tmp | grep -c strands-web-fetch")).stdout.strip() == "0"
+        # Same scratch directory the tool derives: ``/tmp`` is not readable through Python on Windows.
+        temp_dir = shlex.quote(web_fetch_module._TEMP_DIR)
+        assert (await sandbox.execute(f"ls {temp_dir} | grep -c strands-web-fetch")).stdout.strip() == "0"
         with pytest.raises(RuntimeError, match="404"):
             await web_fetch_module._fetch_text(sandbox, f"{base}/missing", "curl")
     finally:
