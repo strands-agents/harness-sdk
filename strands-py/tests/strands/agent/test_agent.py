@@ -3873,3 +3873,171 @@ async def test_agent_span_ends_on_generator_exit():
     assert len(agent_spans) == 1
     assert agent_spans[0].status.status_code == StatusCode.UNSET
     assert agent_spans[0].attributes["strands.cancellation.type"] == "GeneratorExit"
+
+
+def test_baggage_attributes_default_empty():
+    """When baggage_attributes is not provided, no extra baggage is stamped."""
+    agent = Agent(
+        model=MockedModelProvider([{"role": "assistant", "content": [{"text": "hi"}]}]), callback_handler=None
+    )
+    assert agent.baggage_attributes == {}
+
+
+@pytest.mark.asyncio
+async def test_baggage_attributes_isolation_across_concurrent_agents():
+    """Interleaved agents must each see only their own baggage_attributes inside tools."""
+    from opentelemetry import baggage as baggage_api
+
+    seen_a: dict = {}
+    seen_b: dict = {}
+
+    gate_a, gate_b = asyncio.Event(), asyncio.Event()
+
+    @strands.tool
+    async def tool_a() -> str:
+        """Tool for agent A: capture baggage, then interleave with agent B."""
+        seen_a["tenant.id"] = baggage_api.get_baggage("tenant.id")
+        gate_a.set()
+        await gate_b.wait()
+        return "done"
+
+    @strands.tool
+    async def tool_b() -> str:
+        """Tool for agent B: capture baggage, then interleave with agent A."""
+        seen_b["tenant.id"] = baggage_api.get_baggage("tenant.id")
+        gate_b.set()
+        await gate_a.wait()
+        return "done"
+
+    def _tool_then_text(tool_name):
+        return MockedModelProvider(
+            [
+                {"role": "assistant", "content": [{"toolUse": {"toolUseId": "t", "name": tool_name, "input": {}}}]},
+                {"role": "assistant", "content": [{"text": "done"}]},
+            ]
+        )
+
+    agent_a = Agent(
+        model=_tool_then_text("tool_a"),
+        tools=[tool_a],
+        callback_handler=None,
+        baggage_attributes={"tenant.id": "acme"},
+    )
+    agent_b = Agent(
+        model=_tool_then_text("tool_b"),
+        tools=[tool_b],
+        callback_handler=None,
+        baggage_attributes={"tenant.id": "globex"},
+    )
+
+    async def drain(agent):
+        async for _ in agent.stream_async("hi"):
+            pass
+
+    await asyncio.gather(drain(agent_a), drain(agent_b))
+
+    assert seen_a["tenant.id"] == "acme", f"agent A saw tenant.id={seen_a['tenant.id']}, expected 'acme'"
+    assert seen_b["tenant.id"] == "globex", f"agent B saw tenant.id={seen_b['tenant.id']}, expected 'globex'"
+
+
+def test_baggage_attributes_stamped_on_agent_span():
+    """BaggageSpanProcessor sees baggage_attributes when the invoke_agent span starts."""
+    from opentelemetry.processor.baggage import ALLOW_ALL_BAGGAGE_KEYS, BaggageSpanProcessor
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(BaggageSpanProcessor(ALLOW_ALL_BAGGAGE_KEYS))
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    tracer = Tracer()
+    tracer.tracer_provider = provider
+    tracer.tracer = provider.get_tracer(tracer.service_name)
+
+    with unittest.mock.patch("strands.agent.agent.get_tracer", return_value=tracer):
+        agent = Agent(
+            model=MockedModelProvider([{"role": "assistant", "content": [{"text": "hi"}]}]),
+            callback_handler=None,
+            baggage_attributes={"tenant.id": "acme"},
+        )
+        agent("test")
+
+    provider.force_flush()
+    agent_spans = [span for span in exporter.get_finished_spans() if span.name.startswith("invoke_agent")]
+    assert len(agent_spans) == 1
+    assert agent_spans[0].attributes["tenant.id"] == "acme"
+
+
+def test_baggage_attributes_nested_agent_override_and_restore():
+    """Inner agent's baggage overrides outer's for its scope, then outer's is restored."""
+    from opentelemetry import baggage as baggage_api
+
+    seen_before_inner = {}
+    seen_inner = {}
+    seen_after_inner = {}
+
+    @strands.tool
+    def outer_probe_before() -> str:
+        """Capture outer baggage before the inner agent runs."""
+        seen_before_inner["tenant.id"] = baggage_api.get_baggage("tenant.id")
+        return "ok"
+
+    @strands.tool
+    def inner_probe() -> str:
+        """Capture baggage inside the inner agent."""
+        seen_inner["tenant.id"] = baggage_api.get_baggage("tenant.id")
+        return "ok"
+
+    @strands.tool
+    def outer_probe_after() -> str:
+        """Capture outer baggage after the inner agent finishes."""
+        seen_after_inner["tenant.id"] = baggage_api.get_baggage("tenant.id")
+        return "ok"
+
+    inner_agent = Agent(
+        model=MockedModelProvider(
+            [
+                {"role": "assistant", "content": [{"toolUse": {"toolUseId": "t", "name": "inner_probe", "input": {}}}]},
+                {"role": "assistant", "content": [{"text": "done"}]},
+            ]
+        ),
+        tools=[inner_probe],
+        callback_handler=None,
+        baggage_attributes={"tenant.id": "inner-corp"},
+        name="inner_agent",
+    )
+
+    outer_agent = Agent(
+        model=MockedModelProvider(
+            [
+                {
+                    "role": "assistant",
+                    "content": [{"toolUse": {"toolUseId": "t1", "name": "outer_probe_before", "input": {}}}],
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"toolUse": {"toolUseId": "t2", "name": "inner_agent", "input": {"user_message": "hi"}}}
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": [{"toolUse": {"toolUseId": "t3", "name": "outer_probe_after", "input": {}}}],
+                },
+                {"role": "assistant", "content": [{"text": "done"}]},
+            ]
+        ),
+        tools=[outer_probe_before, inner_agent.as_tool(), outer_probe_after],
+        callback_handler=None,
+        baggage_attributes={"tenant.id": "outer-corp"},
+    )
+    outer_agent("hi")
+
+    assert seen_before_inner["tenant.id"] == "outer-corp", (
+        f"before inner: expected 'outer-corp', got {seen_before_inner['tenant.id']}"
+    )
+    assert seen_inner["tenant.id"] == "inner-corp", (
+        f"inside inner: expected 'inner-corp', got {seen_inner['tenant.id']}"
+    )
+    assert seen_after_inner["tenant.id"] == "outer-corp", (
+        f"after inner: expected 'outer-corp', got {seen_after_inner['tenant.id']}"
+    )
