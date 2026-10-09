@@ -26,6 +26,7 @@ sourceLinks:
   - path: strands-py/src/strands/vended_tools/a2a_client/a2a_client.py
   - path: strands-py/src/strands/vended_tools/subagent/subagent.py
   - path: strands-py/src/strands/experimental/tools/stop/stop.py
+  - path: strands-py/src/strands/vended_tools/swarm/swarm.py
 ---
 
 Vended tools are pre-built tools included directly in the Strands Harness SDK for common agent tasks like file operations, shell commands, HTTP requests, and persistent notes.
@@ -57,6 +58,7 @@ Each tool is imported from its own subpath under `@strands-agents/sdk/vended-too
 | [Web Fetch](#web-fetch) | Fetch a URL and return cleaned markdown for a model to read | Python, TypeScript (Node.js) |
 | [A2A Client](#a2a-client) | Discover and send messages to remote A2A-protocol agents | Python, TypeScript (Node.js, browsers) |
 | [Subagent](#subagent) | Delegate a self-contained task to a child agent | Python, TypeScript (Node.js, browsers) |
+| [Swarm](#swarm) | Spin up a team of agents that collaborate via the swarm pattern | Python |
 
 ### File editor
 
@@ -817,6 +819,69 @@ agent("Review the changes in src/main.py for correctness.")
 </Tabs>
 
 Full API reference: [TypeScript](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/subagent/README.md)
+
+---
+
+### Swarm
+
+Lets your agent spin up a team of specialised sub-agents that collaborate autonomously via handoffs to solve a complex task. The model defines each agent's name and role; the tool resolves those specs through an authority-mode system, builds the agents, runs the swarm, and returns a consolidated result.
+
+Use `make_swarm` to control safety limits (max agents, timeouts, handoff caps), lock down instructions or tools with authority modes, or supply named presets the model can select from.
+
+_Supported in: Python._
+
+**Example:**
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.vended_tools import swarm
+
+agent = Agent(tools=[swarm])
+agent("Research the pros and cons of microservices vs monoliths and write a summary")
+```
+
+Custom configuration with `make_swarm`:
+
+```python
+from strands import Agent
+from strands.multiagent.spec import Choice, Fixed, Inherit, Preset
+from strands.vended_tools import make_swarm
+from strands.vended_tools import http_request, web_fetch
+
+swarm = make_swarm(
+    presets={
+        "researcher": Preset(
+            instructions="You search for and synthesise information.",
+            tools=["http_request", "web_fetch"],
+            description="Gathers raw information from the web.",
+        ),
+        "writer": Preset(
+            instructions="You write clear, engaging prose.",
+            description="Turns research into polished text.",
+        ),
+    },
+    default_preset="researcher",
+    instructions=Choice(["You are a researcher.", "You are a writer.", "You are an editor."]),
+    tools=Inherit(),
+    mcp_servers=Inherit(),
+    model=Fixed("us.amazon.nova-pro-v1:0"),
+    max_agents=5,
+    max_handoffs=10,
+    max_iterations=15,
+    execution_timeout=300.0,
+    node_timeout=120.0,
+    repetitive_handoff_detection_window=6,
+    repetitive_handoff_min_unique_agents=3,
+)
+agent = Agent(tools=[swarm, http_request, web_fetch])
+agent("Write a blog post about AI agents")
+```
+
+</Tab>
+</Tabs>
 
 ---
 
