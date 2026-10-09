@@ -34,6 +34,8 @@ import {
   BeforeToolsEvent,
 } from '../../hooks/events.js'
 import { BedrockModel } from '../../models/bedrock.js'
+import { ModelRouter } from '../../models/routing/router.js'
+import type { Model } from '../../models/model.js'
 import { StructuredOutputError } from '../../errors.js'
 import { expectLoopMetrics } from '../../__fixtures__/metrics-helpers.js'
 import { expectAgentResult } from '../../__fixtures__/agent-helpers.js'
@@ -1375,6 +1377,57 @@ describe('Agent', () => {
           })
         )
       })
+    })
+  })
+
+  describe('auxModel', () => {
+    it('defaults to model', () => {
+      const model = new MockMessageModel()
+      const agent = new Agent({ model })
+
+      expect(agent.auxModel).toBe(model)
+    })
+
+    it('uses the configured auxModel', () => {
+      const auxModel = new MockMessageModel()
+      const agent = new Agent({ model: new MockMessageModel(), auxModel })
+
+      expect(agent.auxModel).toBe(auxModel)
+    })
+
+    it('creates BedrockModel from a string model id', () => {
+      const agent = new Agent({
+        model: new MockMessageModel(),
+        auxModel: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+      })
+
+      expect(agent.auxModel).toBeInstanceOf(BedrockModel)
+      expect(agent.auxModel.getConfig().modelId).toBe('us.anthropic.claude-haiku-4-5-20251001-v1:0')
+    })
+
+    it('rejects a ModelRouter', () => {
+      const router = new ModelRouter([new MockMessageModel()])
+
+      expect(() => new Agent({ auxModel: router as unknown as Model })).toThrow(/ModelRouter/)
+    })
+
+    it('is reassignable at runtime', () => {
+      const model = new MockMessageModel()
+      const agent = new Agent({ model })
+      const auxModel = new MockMessageModel()
+
+      agent.auxModel = auxModel
+      expect(agent.auxModel).toBe(auxModel)
+
+      agent.auxModel = 'us.anthropic.claude-haiku-4-5-20251001-v1:0'
+      expect(agent.auxModel).toBeInstanceOf(BedrockModel)
+
+      agent.auxModel = undefined
+      expect(agent.auxModel).toBe(model)
+
+      expect(() => {
+        agent.auxModel = new ModelRouter([new MockMessageModel()]) as unknown as Model
+      }).toThrow(/ModelRouter/)
     })
   })
 

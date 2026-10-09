@@ -121,7 +121,7 @@ def test_invalid_choice_raises(axis, match):
         make_subagent(builder=lambda spec: None, **axis)
 
 
-@pytest.mark.parametrize("kwargs", [{"name": ""}, {"max_depth": 0}, {"max_depth": -1}])
+@pytest.mark.parametrize("kwargs", [{"name": ""}, {"description": ""}, {"max_depth": 0}, {"max_depth": -1}])
 def test_make_subagent_rejects_invalid_args(kwargs):
     with pytest.raises(ValueError):
         make_subagent(builder=lambda spec: None, **kwargs)

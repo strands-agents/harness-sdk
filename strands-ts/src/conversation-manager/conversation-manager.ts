@@ -31,8 +31,9 @@ export type ConversationManagerReduceOptions = {
   agent: LocalAgent
 
   /**
-   * The model instance. Used by conversation managers that perform model-based
-   * reduction (e.g. summarization).
+   * The model of the call that triggered the reduction (the routed model under a
+   * `ModelRouter`). Use it to size the reduction (`countTokens`, `estimateUtilization`);
+   * managers that reduce via a model call should resolve their own, typically `agent.auxModel`.
    */
   model: Model
 

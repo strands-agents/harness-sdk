@@ -196,29 +196,32 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
       } | null = null
 
       for await (const chunk of stream) {
-        if (!chunk.choices || chunk.choices.length === 0) {
-          if (chunk.usage) {
-            bufferedUsage = {
-              type: 'modelMetadataEvent',
-              usage: {
-                inputTokens: chunk.usage.prompt_tokens ?? 0,
-                outputTokens: chunk.usage.completion_tokens ?? 0,
-                totalTokens: chunk.usage.total_tokens ?? 0,
-              },
-            }
-            // Match the Responses path's present-and-positive guard so the two OpenAI paths agree.
-            const cached = chunk.usage.prompt_tokens_details?.cached_tokens
-            if (typeof cached === 'number' && cached > 0) {
-              bufferedUsage.usage.cacheReadInputTokens = cached
-            }
-            // GPT-5.6 reports cache writes here; the openai package's PromptTokensDetails
-            // does not type the field yet, so read it through a narrow cast.
-            const cacheWrite = (chunk.usage.prompt_tokens_details as { cache_write_tokens?: number } | undefined)
-              ?.cache_write_tokens
-            if (typeof cacheWrite === 'number' && cacheWrite > 0) {
-              bufferedUsage.usage.cacheWriteInputTokens = cacheWrite
-            }
+        // OpenAI sends usage on a trailing choice-less chunk, but some compatible providers
+        // (e.g. OpenRouter) attach it to the chunk that carries finish_reason.
+        if (chunk.usage) {
+          bufferedUsage = {
+            type: 'modelMetadataEvent',
+            usage: {
+              inputTokens: chunk.usage.prompt_tokens ?? 0,
+              outputTokens: chunk.usage.completion_tokens ?? 0,
+              totalTokens: chunk.usage.total_tokens ?? 0,
+            },
           }
+          // Match the Responses path's present-and-positive guard so the two OpenAI paths agree.
+          const cached = chunk.usage.prompt_tokens_details?.cached_tokens
+          if (typeof cached === 'number' && cached > 0) {
+            bufferedUsage.usage.cacheReadInputTokens = cached
+          }
+          // GPT-5.6 reports cache writes here; the openai package's PromptTokensDetails
+          // does not type the field yet, so read it through a narrow cast.
+          const cacheWrite = (chunk.usage.prompt_tokens_details as { cache_write_tokens?: number } | undefined)
+            ?.cache_write_tokens
+          if (typeof cacheWrite === 'number' && cacheWrite > 0) {
+            bufferedUsage.usage.cacheWriteInputTokens = cacheWrite
+          }
+        }
+
+        if (!chunk.choices || chunk.choices.length === 0) {
           continue
         }
 

@@ -21,6 +21,11 @@ import { Agent } from '../agent/agent.js'
 import type { McpClient } from '../mcp/index.js'
 import type { Tool } from '../tools/tool.js'
 import { McpTool } from '../tools/mcp-tool.js'
+import { logger } from '../logging/logger.js'
+import type { Sandbox } from '../sandbox/base.js'
+import type { Printer } from '../agent/printer.js'
+import type { Tracer } from '../telemetry/tracer.js'
+import type { AttributeValue } from '@opentelemetry/api'
 
 /** Turns a resolved spec into a child agent, built the way the parent was. */
 export type AgentBuilder = (spec: AgentSpec) => Agent
@@ -363,7 +368,9 @@ export function _resolveSpec(modelInput: Record<string, unknown>, axes: ResolveS
  *
  * Used by the vended multi-agent tools when no custom builder is supplied.
  * Resolves `spec.tools` against the parent's tool registry and `spec.mcpServers`
- * against the parent's MCP clients (by `clientName`).
+ * against the parent's MCP clients (by `clientName`), skipping (with a warning) names the
+ * parent does not own. Children also inherit the parent's sandbox, printer setting, and trace
+ * attributes, and get `contextManager: 'auto'` unless their model is stateful.
  *
  * @param parent - The parent agent whose resources child agents inherit.
  * @returns An {@link AgentBuilder} that creates configured child agents from a spec.
@@ -373,7 +380,12 @@ export function _defaultBuilder(parent: Agent): AgentBuilder {
   return (spec: AgentSpec): Agent => {
     const parentTools: Map<string, Tool> = new Map()
     const mcpClients: Map<string, McpClient> = new Map()
+    // The child's own context manager registers its tools (e.g. retrieve_context); skip the parent's.
+    const managedTools = new Set(parent.contextManager?.getTools() ?? [])
     for (const tool of parent.toolRegistry.list()) {
+      if (managedTools.has(tool)) {
+        continue
+      }
       if (tool instanceof McpTool) {
         // MCP tools flow through mcpServers to avoid duplicates with their client.
         const client = tool.mcpClient
@@ -386,31 +398,48 @@ export function _defaultBuilder(parent: Agent): AgentBuilder {
       }
     }
 
-    const childTools: (Tool | McpClient)[] = []
-
     // tools=undefined means inherit all; a list means only those.
-    const selectedTools =
-      spec.tools === undefined
-        ? parentTools
-        : new Map([...parentTools].filter(([toolName]) => spec.tools!.includes(toolName)))
-    for (const tool of selectedTools.values()) {
-      childTools.push(tool)
+    const childTools: (Tool | McpClient)[] = spec.tools === undefined ? [...parentTools.values()] : []
+    for (const toolName of spec.tools ?? []) {
+      const tool = parentTools.get(toolName)
+      if (tool) {
+        childTools.push(tool)
+      } else {
+        logger.warn(`tool_name=<${toolName}> | subagent requested tool but parent does not own it, skipping`)
+      }
     }
 
     // mcpServers=undefined means inherit all; a list means only those.
-    const selected =
-      spec.mcpServers === undefined
-        ? mcpClients
-        : new Map([...mcpClients].filter(([clientName]) => spec.mcpServers!.includes(clientName)))
-    for (const client of selected.values()) {
-      childTools.push(client)
+    if (spec.mcpServers === undefined) {
+      childTools.push(...mcpClients.values())
+    } else {
+      for (const clientName of spec.mcpServers) {
+        const client = mcpClients.get(clientName)
+        if (client) {
+          childTools.push(client)
+        } else {
+          logger.warn(
+            `server_name=<${clientName}> | subagent requested MCP server but parent does not own it, skipping`
+          )
+        }
+      }
     }
 
+    const childModel = (spec.model as Model | ModelRouter | string | undefined) ?? parent.model
+    const stateful = typeof childModel === 'object' && 'stateful' in childModel && childModel.stateful
+    const sandbox = (parent as unknown as { _sandbox?: Sandbox | false })._sandbox
+    const printer = (parent as unknown as { _printer?: Printer })._printer
+    const tracer = (parent as unknown as { _tracer: Tracer })._tracer
+    const traceAttributes = (tracer as unknown as { _traceAttributes: Record<string, AttributeValue> })._traceAttributes
     return new Agent({
       systemPrompt: spec.instructions ?? '',
       tools: childTools,
-      model: (spec.model as Model | ModelRouter | string) ?? parent.model,
+      model: childModel,
       ...(spec.name !== undefined && { name: spec.name }),
+      ...(!stateful && { contextManager: 'auto' }),
+      ...(sandbox !== undefined && { sandbox }),
+      printer: printer !== undefined,
+      traceAttributes: { ...traceAttributes },
     })
   }
 }

@@ -332,12 +332,12 @@ describe('MemoryManager extraction', () => {
       expect(store.addMessages).not.toHaveBeenCalled()
     })
 
-    it('passes the agent model as defaultModel to the extractor', async () => {
+    it('passes the agent auxModel as defaultModel to the extractor', async () => {
       const extractor: Extractor = { extract: vi.fn().mockResolvedValue([]) }
       const store = createExtractionStore('s', { trigger: [new InvocationTrigger()], extractor })
       const mm = new MemoryManager({ stores: [store] })
-      const fakeModel = { id: 'model' }
-      const agent = createMockAgent({ extra: { model: fakeModel } as never })
+      const fakeModel = { id: 'aux' }
+      const agent = createMockAgent({ extra: { model: { id: 'model' }, auxModel: fakeModel } as never })
       await mm.initAgent(agent)
 
       await addMessages(agent, userMsg('hi'))
