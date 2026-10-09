@@ -520,7 +520,14 @@ class OpenAIModel(Model):
             ),
             "model": self.config["model_id"],
             "stream": stream,
-            "tools": [
+            **(self._format_request_tool_choice(tool_choice)),
+            **params,
+        }
+
+        # Strict OpenAI-compatible servers (e.g. vLLM) reject an empty tools array with HTTP 400,
+        # so the key is omitted entirely when the request carries no tools.
+        if tool_specs:
+            request["tools"] = [
                 {
                     "type": "function",
                     "function": {
@@ -529,11 +536,8 @@ class OpenAIModel(Model):
                         "parameters": tool_spec["inputSchema"]["json"],
                     },
                 }
-                for tool_spec in tool_specs or []
-            ],
-            **(self._format_request_tool_choice(tool_choice)),
-            **params,
-        }
+                for tool_spec in tool_specs
+            ]
 
         if stream:
             request["stream_options"] = stream_options

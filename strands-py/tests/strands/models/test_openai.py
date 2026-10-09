@@ -709,7 +709,6 @@ def test_format_request_can_disable_stream(openai_client, model_id, messages):
         "messages": [{"role": "user", "content": [{"text": "test", "type": "text"}]}],
         "model": model_id,
         "stream": False,
-        "tools": [],
         "max_tokens": 1,
     }
     assert tru_request == exp_request
@@ -723,6 +722,34 @@ def test_format_request_respects_legacy_stream_param(openai_client, model_id, me
 
     assert tru_request["stream"] is False
     assert "stream_options" not in tru_request
+
+
+@pytest.mark.parametrize("tool_specs_arg", [None, []], ids=["none", "empty"])
+def test_format_request_omits_tools_without_tool_specs(model, messages, tool_specs_arg):
+    # Guards against strict OpenAI-compatible servers (e.g. vLLM) rejecting the request with HTTP 400 (#4854)
+    tru_request = model.format_request(messages, tool_specs_arg)
+
+    assert "tools" not in tru_request
+
+
+def test_format_request_includes_tools_with_tool_specs(model, messages, tool_specs):
+    tru_request = model.format_request(messages, tool_specs)
+
+    exp_tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "test_tool",
+                "description": "A test tool",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"input": {"type": "string"}},
+                    "required": ["input"],
+                },
+            },
+        }
+    ]
+    assert tru_request["tools"] == exp_tools
 
 
 def test_cache_key_maps_to_prompt_cache_key(openai_client, model_id, messages):
@@ -1179,7 +1206,6 @@ async def test_stream(openai_client, model_id, model, agenerator, alist):
         "messages": [{"role": "user", "content": [{"text": "calculate 2+2", "type": "text"}]}],
         "stream": True,
         "stream_options": {"include_usage": True},
-        "tools": [],
     }
     openai_client.chat.completions.create.assert_called_once_with(**expected_request)
 
@@ -1247,7 +1273,6 @@ async def test_stream_empty(openai_client, model_id, model, agenerator, alist):
         "messages": [],
         "stream": True,
         "stream_options": {"include_usage": True},
-        "tools": [],
     }
     openai_client.chat.completions.create.assert_called_once_with(**expected_request)
 
@@ -1302,7 +1327,6 @@ async def test_stream_with_empty_choices(openai_client, model, agenerator, alist
         "messages": [{"role": "user", "content": [{"text": "test", "type": "text"}]}],
         "stream": True,
         "stream_options": {"include_usage": True},
-        "tools": [],
     }
     openai_client.chat.completions.create.assert_called_once_with(**expected_request)
 
@@ -1338,7 +1362,6 @@ async def test_stream_can_use_non_streaming_chat_completion(openai_client, model
         model=model_id,
         messages=[{"role": "user", "content": [{"text": "test", "type": "text"}]}],
         stream=False,
-        tools=[],
     )
 
 
@@ -1387,7 +1410,6 @@ async def test_structured_output_forwards_request_params(openai_client, model_id
             {"role": "user", "content": [{"text": "Generate a person", "type": "text"}]},
         ],
         model=model_id,
-        tools=[],
         max_tokens=100,
         temperature=0.5,
         response_format=test_output_model_cls,
