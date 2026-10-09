@@ -276,6 +276,41 @@ describe('deepCopyWithValidation', () => {
       )
     })
 
+    it('throws JsonValidationError with the correct path for sibling keys after nested objects', () => {
+      const withFunction = {
+        ok: 1,
+        nested: { x: 1 },
+        bad: (): string => 'test',
+      }
+
+      expect(() => deepCopyWithValidation(withFunction, 'value for key "a"')).toThrow(JsonValidationError)
+      expect(() => deepCopyWithValidation(withFunction, 'value for key "a"')).toThrow(
+        'value for key "a".bad contains a function which cannot be serialized'
+      )
+    })
+
+    it('throws JsonValidationError with the correct path for array elements after nested objects', () => {
+      const withFunction = [{ x: 1 }, (): string => 'test']
+
+      expect(() => deepCopyWithValidation(withFunction, 'items')).toThrow(JsonValidationError)
+      expect(() => deepCopyWithValidation(withFunction, 'items')).toThrow(
+        'items[1] contains a function which cannot be serialized'
+      )
+    })
+
+    it('throws JsonValidationError with the correct path for keys after multiple levels of nesting', () => {
+      const withFunction = {
+        first: { deep: { deeper: 1 } },
+        second: { deep: { deeper: 1 } },
+        bad: (): string => 'test',
+      }
+
+      expect(() => deepCopyWithValidation(withFunction, 'value')).toThrow(JsonValidationError)
+      expect(() => deepCopyWithValidation(withFunction, 'value')).toThrow(
+        'value.bad contains a function which cannot be serialized'
+      )
+    })
+
     it('throws JsonValidationError for symbols in objects', () => {
       const sym = Symbol('test')
       const withSymbol = {

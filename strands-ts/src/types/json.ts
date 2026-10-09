@@ -71,18 +71,24 @@ export function deepCopy(value: unknown): JSONValue {
  * @throws JsonValidationError if value contains functions, symbols, or undefined values
  */
 export function deepCopyWithValidation(value: unknown, contextPath: string = 'value'): JSONValue {
-  const pathStack: string[] = []
+  const pathStack: { obj: object; path: string }[] = []
 
-  const replacer = (key: string, val: unknown): unknown => {
+  const replacer = function (this: object, key: string, val: unknown): unknown {
+    // `this` is the object currently being serialized, so any frame above it belongs to a finished subtree
+    while (pathStack.length > 0 && pathStack[pathStack.length - 1]?.obj !== this) {
+      pathStack.pop()
+    }
+    const parentFrame = pathStack[pathStack.length - 1]
+
     // Build current path
     let currentPath = contextPath
     if (key !== '') {
       // Check if parent is array (numeric key pattern)
       const isArrayIndex = /^\d+$/.test(key)
       if (isArrayIndex) {
-        currentPath = pathStack.length > 0 ? `${pathStack[pathStack.length - 1]}[${key}]` : `${contextPath}[${key}]`
+        currentPath = parentFrame ? `${parentFrame.path}[${key}]` : `${contextPath}[${key}]`
       } else {
-        currentPath = pathStack.length > 0 ? `${pathStack[pathStack.length - 1]}.${key}` : `${contextPath}.${key}`
+        currentPath = parentFrame ? `${parentFrame.path}.${key}` : `${contextPath}.${key}`
       }
     }
 
@@ -101,7 +107,7 @@ export function deepCopyWithValidation(value: unknown, contextPath: string = 'va
 
     // Track path for nested objects/arrays
     if (val !== null && typeof val === 'object') {
-      pathStack.push(currentPath)
+      pathStack.push({ obj: val, path: currentPath })
     }
 
     return val
