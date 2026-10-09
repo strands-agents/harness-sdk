@@ -1152,6 +1152,10 @@ export class Agent implements LocalAgent, InvokableAgent {
       const invocationState = options?.invocationState ?? {}
       const resolvedOptions: InvokeOptions = options?.invocationState ? options : { ...options, invocationState }
 
+      // One invocation entry per public call: a hook resume re-enters the loop
+      // within the same call, and _checkLimits bounds the call by this entry.
+      this._meter.startNewInvocation()
+
       let currentArgs: InvokeArgs = args
 
       while (true) {
@@ -1238,7 +1242,11 @@ export class Agent implements LocalAgent, InvokableAgent {
           )) !== undefined
         continuationEvent = hasContinuation ? afterInvocationEvent : undefined
 
-        if (hasContinuation || afterInvocationEvent.resume !== undefined) {
+        // A tripped cap bounds the whole call — a hook resume must not restart the loop it ended.
+        const limitTripped =
+          stopReason === 'limitTurns' || stopReason === 'limitTotalTokens' || stopReason === 'limitOutputTokens'
+
+        if (!limitTripped && (hasContinuation || afterInvocationEvent.resume !== undefined)) {
           currentArgs = afterInvocationEvent.resume ?? []
           continue
         }
@@ -1561,7 +1569,6 @@ export class Agent implements LocalAgent, InvokableAgent {
     const inputMessages = this._normalizeInput(args)
 
     // Start agent trace span
-    this._meter.startNewInvocation()
     const agentModelId = this.model.modelId
     const agentSpanOptions: Parameters<Tracer['startAgentSpan']>[0] = {
       messages: inputMessages,

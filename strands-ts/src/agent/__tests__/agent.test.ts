@@ -2359,6 +2359,35 @@ describe('normalizeToolUseNames', () => {
       })
     })
 
+    describe('when a hook resumes the invocation', () => {
+      // A resumed pass runs inside the same invoke() call, so every cap keeps
+      // counting across passes and ends the call once tripped.
+      it.each([
+        ['turns', { turns: 1 }, 'limitTurns'],
+        ['totalTokens', { totalTokens: 15 }, 'limitTotalTokens'],
+        ['outputTokens', { outputTokens: 5 }, 'limitOutputTokens'],
+      ])('bounds %s across hook-resumed passes', async (_label, limits, expectedStopReason) => {
+        const model = new MockMessageModel()
+          .addTurn({ type: 'textBlock', text: 'one' }, { usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } })
+          .addTurn({ type: 'textBlock', text: 'two' }, { usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } })
+          .addTurn(
+            { type: 'textBlock', text: 'three' },
+            { usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } }
+          )
+
+        const agent = new Agent({ model })
+        agent.addHook(AfterInvocationEvent, (event) => {
+          event.resume = 'continue'
+        })
+
+        const result = await agent.invoke('go', { limits })
+
+        expect(result.stopReason).toBe(expectedStopReason)
+        expect(model.callCount).toBe(1)
+        expect(result.metrics?.latestAgentInvocation?.cycles.length).toBe(1)
+      })
+    })
+
     describe('when a limit is invalid', () => {
       it.each([
         ['negative', { limits: { turns: -1 } }],
