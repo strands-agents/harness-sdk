@@ -104,9 +104,9 @@ def _estimate_tokens_with_heuristic(
     total = 0
 
     if system_prompt_content:
-        for block in system_prompt_content:
-            if "text" in block:
-                total += _heuristic_estimate_text(block["text"])
+        for system_block in system_prompt_content:
+            if "text" in system_block:
+                total += _heuristic_estimate_text(system_block["text"])
     elif system_prompt:
         total += _heuristic_estimate_text(system_prompt)
 
