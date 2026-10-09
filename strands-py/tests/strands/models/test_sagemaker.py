@@ -1079,3 +1079,33 @@ def test_cache_config_unsupported_field_warns_and_is_not_routed(
 
     assert "cache_config" not in request
     assert "cache_config" not in json.loads(request["Body"])
+
+
+def test_format_request_preserves_text_beside_tool_calls(model):
+    """Text next to tool_calls must survive format_request (no silent drop)."""
+    # https://github.com/strands-agents/harness-sdk/issues/4916
+    messages = [
+        {
+            "role": "assistant",
+            "content": [
+                {"text": "This text should be preserved."},
+                {
+                    "toolUse": {
+                        "toolUseId": "call-1",
+                        "name": "lookup",
+                        "input": {"query": "example"},
+                    }
+                },
+            ],
+        }
+    ]
+
+    request = model.format_request(messages)
+
+    payload = json.loads(request["Body"])
+    assistant_message = payload["messages"][0]
+    assert assistant_message["role"] == "assistant"
+    assert "tool_calls" in assistant_message
+    assert "content" in assistant_message
+    texts = [block.get("text", "") for block in assistant_message["content"] if "text" in block]
+    assert any("This text should be preserved." in str(t) for t in texts)

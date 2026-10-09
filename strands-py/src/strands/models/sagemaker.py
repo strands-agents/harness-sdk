@@ -334,9 +334,6 @@ class SageMakerAIModel(OpenAIModel):
             payload["tool_choice"] = "auto"
 
         for message in payload["messages"]:  # type: ignore
-            # Assistant message must have either content or tool_calls, but not both
-            if message.get("role", "") == "assistant" and message.get("tool_calls", []) != []:
-                message.pop("content", None)
             if message.get("role") == "tool" and self.payload_config.get("tool_results_as_user_messages", False):
                 # Convert tool message to user message
                 tool_call_id = message.get("tool_call_id", "ABCDEF")
