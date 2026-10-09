@@ -37,10 +37,8 @@ describe('panel helpers', () => {
   ]
 
   it('presents the SDK Background Tasks management tool', () => {
-    expect(toolAction('strands_manage_background_task')).toBe('Manage task')
-    expect(summarizeToolInput('strands_manage_background_task', { mode: 'cancel', taskId: 'task-1' })).toBe(
-      'cancel · task-1'
-    )
+    expect(toolAction('manage_background_task')).toBe('Manage task')
+    expect(summarizeToolInput('manage_background_task', { mode: 'cancel', taskId: 'task-1' })).toBe('cancel · task-1')
   })
 
   it('filters rows and accepts custom IDs for supported providers', () => {

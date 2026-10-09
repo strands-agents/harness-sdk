@@ -34,7 +34,7 @@ import { isTaskStatusTerminal, type BackgroundTask, type BackgroundTasksConfig }
 
 const BACKGROUND_TASKS_STATE_KEY = 'strands.backgroundTasks'
 const BACKGROUND_PROPERTY = '_background_execution'
-const MANAGE_TOOL_NAME = 'strands_manage_background_task'
+const MANAGE_TOOL_NAME = 'manage_background_task'
 const COMPOSITE_SCHEMA_KEYS = ['$ref', 'allOf', 'anyOf', 'oneOf', 'not', 'if', 'then', 'else'] as const
 const FOREGROUND_TOOL_NAMES = new Set([
   MANAGE_TOOL_NAME,
