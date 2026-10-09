@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from ....agent.conversation_manager.compression.context_compression import compact_messages, strip_reasoning
+from ....agent.conversation_manager.compression.pin_message import is_pinned
 from ....types.content import ContentBlock, Message
 from ....types.tools import ToolResult, ToolResultContent
 from ...methods.summarize import (
@@ -97,6 +99,9 @@ class SummarizeStrategy(BaseOffloadStrategy):
         if not safe:
             return False
 
+        if await self._compact_prefix(context.agent, messages, safe_ids):
+            return True
+
         content_blocks = _flatten_messages_to_content(safe)
         summary = await _summarize_content(content_blocks, model, self._config)
         if not summary:
@@ -116,7 +121,33 @@ class SummarizeStrategy(BaseOffloadStrategy):
         messages.insert(insert_index, summary_message)
 
         _repair_alternation(messages)
+        strip_reasoning(messages)
         logger.debug("summarized=<%s>, tokens=<%s> | batched summarization complete", removed, total_tokens)
+        return True
+
+    async def _compact_prefix(self, agent: Agent, messages: list[Message], safe_ids: set[int]) -> bool:
+        """Replace the leading messages with the provider's signed summary when it can write one.
+
+        The provider's block must open the conversation, so this only applies when every message before the last
+        removable one is itself removable (the first message is folded in as well). The final message, usually the
+        pending user turn, is always kept.
+        """
+        if self._config.get("model") is not None or not agent.model.supports_compaction:
+            return False
+
+        cut = min(max(index for index, msg in enumerate(messages) if id(msg) in safe_ids) + 1, len(messages) - 1)
+        if cut < 2 or is_pinned(messages, 0) or any(id(msg) not in safe_ids for msg in messages[1:cut]):
+            return False
+        if any("toolUse" in block for block in messages[cut - 1]["content"]):
+            return False
+
+        summary_message = await compact_messages(agent, messages[:cut], self._config.get("system_prompt"))
+        if summary_message is None:
+            return False
+
+        messages[:cut] = [summary_message]
+        _repair_alternation(messages)
+        logger.debug("compacted=<%s> | provider compaction complete", cut)
         return True
 
     async def _replace_block(

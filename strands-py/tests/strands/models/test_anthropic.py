@@ -2833,3 +2833,180 @@ async def test_stream_logs_server_tool_error(anthropic_client, model, alist, cap
     await alist(model.stream([{"role": "user", "content": [{"text": "hi"}]}]))
 
     assert "error_code=<max_uses_exceeded>" in caplog.text
+
+
+def _compaction_summary(text="Summary so far.", signature="sig-1"):
+    return {"role": "assistant", "content": [{"text": text, "signature": signature}]}
+
+
+def test_supports_compaction(model):
+    assert model.supports_compaction is True
+
+
+def test_format_request_sends_signed_summary_as_compaction_block(model, model_id, max_tokens):
+    messages = [_compaction_summary(), {"role": "user", "content": [{"text": "next"}]}]
+
+    tru_request = model.format_request(messages)
+    exp_request = {
+        "max_tokens": max_tokens,
+        "messages": [
+            {
+                "role": "assistant",
+                "content": [{"type": "compaction", "content": "Summary so far.", "signature": "sig-1"}],
+            },
+            {"role": "user", "content": [{"type": "text", "text": "next"}]},
+        ],
+        "model": model_id,
+        "tools": [],
+        "extra_headers": {"anthropic-beta": "compact-2026-09-04"},
+    }
+
+    assert tru_request == exp_request
+
+
+@pytest.mark.parametrize("existing", ["other-beta", "other-beta, compact-2026-09-04"])
+def test_format_request_appends_compact_beta_to_existing_header(model, existing):
+    model.update_config(params={"extra_headers": {"anthropic-beta": existing}})
+    messages = [_compaction_summary(), {"role": "user", "content": [{"text": "next"}]}]
+
+    tru_headers = model.format_request(messages)["extra_headers"]
+    exp_headers = {"anthropic-beta": existing if "compact" in existing else f"{existing},compact-2026-09-04"}
+
+    assert tru_headers == exp_headers
+
+
+def test_format_request_without_signed_summary_has_no_beta_header(model, messages):
+    assert "extra_headers" not in model.format_request(messages)
+
+
+def _compaction_response(stop_reason="compaction", content=None):
+    response = unittest.mock.Mock()
+    response.model_dump.return_value = {
+        "stop_reason": stop_reason,
+        "content": content
+        if content is not None
+        else [{"type": "compaction", "content": "Summary so far.", "signature": "sig-1"}],
+        "usage": {"input_tokens": 0, "output_tokens": 0, "iterations": [{"type": "compaction", "input_tokens": 10}]},
+    }
+    return response
+
+
+@pytest.mark.asyncio
+async def test_compact_returns_signed_summary(anthropic_client, model, model_id, max_tokens):
+    anthropic_client.beta.messages.create = unittest.mock.AsyncMock(return_value=_compaction_response())
+    model.update_config(params={"stop_sequences": ["END"], "thinking": {"type": "enabled", "budget_tokens": 1024}})
+    messages = [
+        {"role": "user", "content": [{"text": "hello"}]},
+        {"role": "assistant", "content": [{"text": "hi"}]},
+    ]
+    tool_specs = [{"name": "t", "description": "d", "inputSchema": {"json": {"type": "object"}}}]
+
+    tru_summary = await model.compact(
+        messages, tool_specs=tool_specs, system_prompt="be brief", instructions="keep the paths"
+    )
+    exp_summary = _compaction_summary()
+
+    assert tru_summary == exp_summary
+    anthropic_client.beta.messages.create.assert_called_once_with(
+        max_tokens=max_tokens,
+        messages=[
+            {"role": "user", "content": [{"type": "text", "text": "hello"}]},
+            {"role": "assistant", "content": [{"type": "text", "text": "hi"}]},
+        ],
+        model=model_id,
+        system="be brief",
+        thinking={"type": "enabled", "budget_tokens": 1024},
+        tools=[{"name": "t", "description": "d", "input_schema": {"type": "object"}}],
+        extra_headers={"anthropic-beta": "compact-2026-09-04"},
+        extra_body={"compaction": {"type": "summarize", "instructions": "keep the paths"}},
+        timeout=anthropic_client.timeout,
+    )
+
+
+@pytest.mark.asyncio
+async def test_compact_omits_instructions_when_not_given(anthropic_client, model, messages):
+    anthropic_client.beta.messages.create = unittest.mock.AsyncMock(return_value=_compaction_response())
+
+    await model.compact(messages)
+
+    tru_body = anthropic_client.beta.messages.create.call_args.kwargs["extra_body"]
+    exp_body = {"compaction": {"type": "summarize"}}
+
+    assert tru_body == exp_body
+
+
+@pytest.mark.parametrize(
+    ("stop_reason", "content"),
+    [
+        ("max_tokens", []),
+        ("refusal", []),
+        ("compaction", [{"type": "compaction", "content": None, "signature": "sig-1"}]),
+        ("compaction", [{"type": "compaction", "content": "Summary so far."}]),
+    ],
+)
+@pytest.mark.asyncio
+async def test_compact_returns_none_without_summary(anthropic_client, model, messages, stop_reason, content):
+    anthropic_client.beta.messages.create = unittest.mock.AsyncMock(
+        return_value=_compaction_response(stop_reason, content)
+    )
+
+    assert await model.compact(messages) is None
+
+
+@pytest.mark.asyncio
+async def test_compact_keeps_client_kwargs_from_params(anthropic_client, model, messages):
+    anthropic_client.beta.messages.create = unittest.mock.AsyncMock(return_value=_compaction_response())
+    model.update_config(params={"timeout": 30, "extra_body": {"foo": 1}})
+
+    await model.compact(messages)
+
+    kwargs = anthropic_client.beta.messages.create.call_args.kwargs
+    assert kwargs["timeout"] == 30
+    assert kwargs["extra_body"] == {"foo": 1, "compaction": {"type": "summarize"}}
+
+
+@pytest.mark.asyncio
+async def test_compact_rate_limit_error(anthropic_client, model, messages):
+    anthropic_client.beta.messages.create = unittest.mock.AsyncMock(
+        side_effect=anthropic.RateLimitError("rate limit", response=unittest.mock.Mock(), body=None)
+    )
+
+    with pytest.raises(ModelThrottledException, match="rate limit"):
+        await model.compact(messages)
+
+
+@pytest.mark.asyncio
+async def test_compact_context_window_overflow_error(anthropic_client, model, messages):
+    anthropic_client.beta.messages.create = unittest.mock.AsyncMock(
+        side_effect=anthropic.BadRequestError("prompt is too long: 1 > 0", response=unittest.mock.Mock(), body=None)
+    )
+
+    with pytest.raises(ContextWindowOverflowException):
+        await model.compact(messages)
+
+
+@pytest.mark.asyncio
+async def test_count_tokens_native_keeps_compact_beta_header(anthropic_client, model):
+    model.update_config(use_native_token_count=True)
+    anthropic_client.messages.count_tokens = unittest.mock.AsyncMock(return_value=unittest.mock.Mock(input_tokens=7))
+    messages = [_compaction_summary(), {"role": "user", "content": [{"text": "next"}]}]
+
+    assert await model.count_tokens(messages) == 7
+    tru_headers = anthropic_client.messages.count_tokens.call_args.kwargs["extra_headers"]
+    exp_headers = {"anthropic-beta": "compact-2026-09-04"}
+
+    assert tru_headers == exp_headers
+
+
+@pytest.mark.asyncio
+async def test_compact_returns_none_when_compaction_is_rejected(anthropic_client, model, messages, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.anthropic")
+    anthropic_client.beta.messages.create = unittest.mock.AsyncMock(
+        side_effect=anthropic.BadRequestError(
+            "The compact beta feature is not currently supported", response=unittest.mock.Mock(), body=None
+        )
+    )
+
+    assert await model.compact(messages) is None
+    assert "compaction rejected" in caplog.text
+    assert model.supports_compaction is False

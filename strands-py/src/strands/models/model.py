@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from ..hooks.events import AfterInvocationEvent
 from ..plugins.plugin import Plugin
-from ..types.content import ContentBlock, Messages, SystemContentBlock
+from ..types.content import ContentBlock, Message, Messages, SystemContentBlock
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolSpec
 from ._defaults import DEFAULT_CONTEXT_WINDOW_LIMIT
@@ -198,6 +198,43 @@ class Model(abc.ABC):
             False by default. Model providers that support server-side state should override this.
         """
         return False
+
+    @property
+    def supports_compaction(self) -> bool:
+        """Whether the provider can write a signed summary of a conversation via :meth:`compact`.
+
+        Returns:
+            False by default. Providers that offer server-side compaction should override this.
+        """
+        return False
+
+    async def compact(
+        self,
+        messages: Messages,
+        *,
+        tool_specs: list[ToolSpec] | None = None,
+        system_prompt: str | None = None,
+        system_prompt_content: list[SystemContentBlock] | None = None,
+        instructions: str | None = None,
+    ) -> Message | None:
+        """Ask the provider to summarize ``messages`` into a single signed summary message.
+
+        The summary replaces ``messages`` in the conversation; turns after it are kept unchanged. Callers fall back
+        to client-side summarization when this returns None. Providers overriding this must also override
+        :attr:`supports_compaction`.
+
+        Args:
+            messages: The messages to summarize. Must end at a valid boundary (no unanswered tool call).
+            tool_specs: The tool specifications the conversation is using; they must match the real requests.
+            system_prompt: Plain string system prompt. Ignored when system_prompt_content is provided.
+            system_prompt_content: Structured system prompt content blocks.
+            instructions: Custom summarization instructions, when the provider accepts them.
+
+        Returns:
+            An assistant message holding a text block plus the provider's ``signature``, or None if the provider
+            does not support compaction or produced no summary.
+        """
+        return None
 
     @property
     def context_window_limit(self) -> int | None:

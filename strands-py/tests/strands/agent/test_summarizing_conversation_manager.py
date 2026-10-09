@@ -1,5 +1,5 @@
 from typing import cast
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -50,6 +50,7 @@ class MockAgent:
         self.system_prompt = None
         self.messages = []
         self.model = Mock()
+        self.model.supports_compaction = False
         self.model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream(self.summary_response))
         self.aux_model = self.model
         self.call_tracker = Mock()
@@ -207,6 +208,7 @@ def test_reduce_context_raises_on_summarization_failure():
     """Test that reduce_context raises exception when model.stream() fails."""
     failing_agent = Mock()
     failing_agent.model = Mock()
+    failing_agent.model.supports_compaction = False
     failing_agent.model.stream = Mock(side_effect=lambda *a, **kw: _mock_model_stream_error(Exception("Agent failed")))
     failing_agent.aux_model = failing_agent.model
     failing_agent_messages: Messages = [
@@ -870,6 +872,7 @@ def _make_summarizing_threshold_agent(messages, summary_response="Summary of con
     agent = MagicMock()
     agent.messages = messages
     agent.model = MagicMock()
+    agent.model.supports_compaction = False
     agent.model.context_window_limit = context_window_limit
     agent.model._utilization_limit_warned = False
     agent.model.estimate_utilization = lambda input_tokens: Model.estimate_utilization(agent.model, input_tokens)
@@ -948,3 +951,88 @@ def test_proactive_compression_swallows_errors():
     # Should not throw — proactive compression is best-effort
     registry.invoke_callbacks(event)
     assert len(agent.messages) == 20
+
+
+def _reasoning_reply(text: str):
+    return {
+        "role": "assistant",
+        "content": [{"reasoningContent": {"reasoningText": {"text": "thinking", "signature": "s"}}}, {"text": text}],
+    }
+
+
+def _compaction_agent(summary=None):
+    agent = MockAgent()
+    agent.model.supports_compaction = True
+    agent.model.compact = AsyncMock(return_value=summary)
+    agent.system_prompt_content = None
+    agent.tool_registry = Mock()
+    agent.tool_registry.get_all_tool_specs.return_value = []
+    agent.messages = [
+        {"role": "user", "content": [{"text": "Message 1"}]},
+        {"role": "assistant", "content": [{"text": "Response 1"}]},
+        {"role": "user", "content": [{"text": "Message 2"}]},
+        {"role": "assistant", "content": [{"text": "Response 2"}]},
+        {"role": "user", "content": [{"text": "Message 3"}]},
+        _reasoning_reply("Response 3"),
+    ]
+    return agent
+
+
+def test_reduce_context_uses_provider_compaction(summarizing_manager):
+    summary = {"role": "assistant", "content": [{"text": "Compacted", "signature": "sig-1"}]}
+    agent = _compaction_agent(summary)
+
+    summarizing_manager.reduce_context(agent)
+
+    assert agent.messages[0]["role"] == "assistant"
+    assert agent.messages[0]["content"] == [{"text": "Compacted", "signature": "sig-1"}]
+    assert agent.messages[-1] == _reasoning_reply("Response 3")
+    assert len(agent.messages) == 4
+    agent.model.stream.assert_not_called()
+    compacted = agent.model.compact.call_args.args[0]
+    assert [msg["content"][0]["text"] for msg in compacted] == ["Message 1", "Response 1", "Message 2"]
+
+
+def test_reduce_context_falls_back_and_strips_kept_reasoning(summarizing_manager):
+    agent = _compaction_agent(summary=None)
+
+    summarizing_manager.reduce_context(agent)
+
+    assert agent.messages[0]["role"] == "user"
+    assert "This is a summary of the conversation." in agent.messages[0]["content"][0]["text"]
+    assert agent.messages[-1] == {"role": "assistant", "content": [{"text": "Response 3"}]}
+    agent.model.stream.assert_called_once()
+
+
+def test_reduce_context_pinned_prefix_skips_provider_compaction():
+    manager = SummarizingConversationManager(summary_ratio=0.5, preserve_recent_messages=2, pin_first=1)
+    agent = _compaction_agent({"role": "assistant", "content": [{"text": "Compacted", "signature": "sig-1"}]})
+
+    manager.reduce_context(agent)
+
+    agent.model.compact.assert_not_called()
+    assert agent.messages[0]["content"][0]["text"] == "Message 1"
+
+
+def test_reduce_context_with_summarization_agent_skips_provider_compaction():
+    summarization_agent = MockAgent(summary_response="Agent summary")
+    manager = SummarizingConversationManager(
+        summary_ratio=0.5, preserve_recent_messages=2, summarization_agent=cast(Agent, summarization_agent)
+    )
+    agent = _compaction_agent({"role": "assistant", "content": [{"text": "Compacted", "signature": "sig-1"}]})
+
+    manager.reduce_context(agent)
+
+    agent.model.compact.assert_not_called()
+    assert "Agent summary" in agent.messages[0]["content"][0]["text"]
+
+
+def test_reduce_context_compaction_error_falls_back_to_client_summary(summarizing_manager):
+    agent = _compaction_agent()
+    agent.model.compact = AsyncMock(side_effect=RuntimeError("compaction unavailable"))
+
+    summarizing_manager.reduce_context(agent)
+
+    agent.model.stream.assert_called_once()
+    assert "This is a summary of the conversation." in agent.messages[0]["content"][0]["text"]
+    assert len(agent.messages) == 4

@@ -685,3 +685,14 @@ class TestCacheConfig:
     def test_cache_key_round_trips(self):
         """cache_key preserves the value it was constructed with."""
         assert CacheConfig(cache_key="tenant-42").cache_key == "tenant-42"
+
+
+def test_supports_compaction_false(model):
+    assert model.supports_compaction is False
+
+
+@pytest.mark.asyncio
+async def test_compact_returns_none_by_default(model, messages, tool_specs, system_prompt):
+    tru_summary = await model.compact(messages, tool_specs=tool_specs, system_prompt=system_prompt, instructions="x")
+
+    assert tru_summary is None
