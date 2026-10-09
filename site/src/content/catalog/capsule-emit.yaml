@@ -1,0 +1,9 @@
+name: capsule-emit
+description: Seals a tamper-evident, offline-verifiable capsule for every Strands tool call — a planned commitment record chained to its confirmed, failed, or blocked outcome.
+integrationType: plugin
+languages:
+  python:
+    package: capsule-emit[strands]
+github: https://github.com/action-state-group/capsule-emit
+docsUrl: https://github.com/action-state-group/capsule-emit/blob/main/docs/adapters/strands.md
+addedDate: 2026-09-08
