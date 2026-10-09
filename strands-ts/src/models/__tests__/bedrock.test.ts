@@ -876,11 +876,26 @@ describe('BedrockModel', () => {
           })
         )
 
-        const tools = lastTools()
-        expect(tools).toHaveLength(2)
-        for (const tool of tools) {
-          expect(tool.toolSpec!.strict).toBe(true)
-        }
+        expect(lastTools()).toStrictEqual([
+          {
+            toolSpec: {
+              name: 'calc',
+              description: 'Calculator',
+              inputSchema: {
+                json: { type: 'object', properties: { a: { type: 'string' } }, additionalProperties: false },
+              },
+              strict: true,
+            },
+          },
+          {
+            toolSpec: {
+              name: 'other',
+              description: 'Other',
+              inputSchema: { json: { type: 'object', properties: {}, additionalProperties: false } },
+              strict: true,
+            },
+          },
+        ])
       })
     })
 
