@@ -63,6 +63,88 @@ def test_init_default():
     assert tracer.tracer is not None
 
 
+@pytest.mark.parametrize("disable_var", ["OTEL_SDK_DISABLED", "STRANDS_OTEL_DISABLED"])
+def test_init_disabled_uses_noop_tracer_over_global_provider(disable_var, monkeypatch):
+    """When disabled, the Tracer instance emits through a no-op provider even if a real
+    provider is registered globally — the tracer reads from global, so gating only the
+    StrandsTelemetry setup is not enough to silence it (#1059)."""
+    from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
+    from opentelemetry.trace import NoOpTracer, NoOpTracerProvider
+
+    for name in ("OTEL_SDK_DISABLED", "STRANDS_OTEL_DISABLED"):
+        monkeypatch.delenv(name, raising=False)
+    # Host app owns OTel: a real provider is globally registered.
+    real_provider = SDKTracerProvider()
+    with mock.patch("strands.telemetry.tracer.trace_api.get_tracer_provider", return_value=real_provider):
+        monkeypatch.setenv(disable_var, "true")
+        tracer = Tracer()
+
+    assert isinstance(tracer.tracer_provider, NoOpTracerProvider)
+    assert isinstance(tracer.tracer, NoOpTracer)
+    span = tracer.tracer.start_span("s")
+    assert span.is_recording() is False
+
+
+def test_disabled_agent_keeps_host_spans_parented_and_unpolluted(monkeypatch):
+    """With STRANDS_OTEL_DISABLED set and a real provider owned by the host, no Strands span is
+    exported, a host span opened inside a tool stays in the host's trace under its parent, and
+    AgentResult metrics are still collected (#1059)."""
+    from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    from strands import Agent, tool
+    from tests.fixtures.mocked_model_provider import MockedModelProvider
+
+    exporter = InMemorySpanExporter()
+    provider = SDKTracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    host_tracer = provider.get_tracer("host")
+
+    @tool
+    def host_work() -> str:
+        """Open a host-owned span while Strands is executing the tool."""
+        with host_tracer.start_as_current_span("host.inner"):
+            return "done"
+
+    model = MockedModelProvider(
+        [
+            {"role": "assistant", "content": [{"toolUse": {"toolUseId": "t1", "name": "host_work", "input": {}}}]},
+            {"role": "assistant", "content": [{"text": "finished"}]},
+        ]
+    )
+
+    monkeypatch.delenv("OTEL_SDK_DISABLED", raising=False)
+    monkeypatch.setenv("STRANDS_OTEL_DISABLED", "true")
+    with (
+        mock.patch("strands.telemetry.tracer._tracer_instance", None),
+        mock.patch("strands.telemetry.tracer.trace_api.get_tracer_provider", return_value=provider),
+    ):
+        agent = Agent(model=model, tools=[host_work], callback_handler=None)
+        with host_tracer.start_as_current_span("host.request"):
+            result = agent("go")
+
+    spans = {span.name: span for span in exporter.get_finished_spans()}
+    assert set(spans) == {"host.request", "host.inner"}
+    outer, inner = spans["host.request"], spans["host.inner"]
+    assert inner.context.trace_id == outer.context.trace_id
+    assert inner.parent is not None
+    assert inner.parent.span_id == outer.context.span_id
+    assert result.metrics.traces
+
+
+def test_init_enabled_uses_global_provider(monkeypatch):
+    """With no disable env var, the Tracer instance uses the global provider unchanged."""
+    for name in ("OTEL_SDK_DISABLED", "STRANDS_OTEL_DISABLED"):
+        monkeypatch.delenv(name, raising=False)
+    sentinel_provider = mock.MagicMock()
+    with mock.patch("strands.telemetry.tracer.trace_api.get_tracer_provider", return_value=sentinel_provider):
+        tracer = Tracer()
+
+    assert tracer.tracer_provider is sentinel_provider
+    sentinel_provider.get_tracer.assert_called_once_with(tracer.service_name)
+
+
 def test_start_span_no_tracer():
     """Test starting a span when no tracer is configured."""
     tracer = Tracer()

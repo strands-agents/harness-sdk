@@ -44,6 +44,20 @@ def get_otel_resource() -> Resource:
     return resource
 
 
+# Environment variables that, when set to the (case-insensitive) string "true",
+# silence Strands' own telemetry. ``OTEL_SDK_DISABLED`` is the OpenTelemetry-standard
+# flag; ``STRANDS_OTEL_DISABLED`` is a Strands-specific escape hatch so a host that
+# owns its own OpenTelemetry setup can silence just Strands' spans/metrics without
+# touching the OTel-standard variable (#1059). Consumed at the instance level by
+# ``Tracer`` and ``MetricsClient`` (no-op providers when disabled).
+_DISABLE_ENV_VARS = ("OTEL_SDK_DISABLED", "STRANDS_OTEL_DISABLED")
+
+
+def _telemetry_disabled() -> bool:
+    """Return True when any Strands telemetry disable env var is set to ``"true"``."""
+    return any(os.environ.get(name, "").strip().lower() == "true" for name in _DISABLE_ENV_VARS)
+
+
 class StrandsTelemetry:
     """OpenTelemetry configuration and setup for Strands applications.
 
@@ -60,6 +74,22 @@ class StrandsTelemetry:
         - OTEL_EXPORTER_OTLP_ENDPOINT: OTLP endpoint URL
         - OTEL_EXPORTER_OTLP_HEADERS: Headers for OTLP requests
         - OTEL_SERVICE_NAME: Overrides resource service name
+
+        Either of the following, set to "true", silences Strands' own spans and
+        metrics. They differ in blast radius:
+        - OTEL_SDK_DISABLED: the OpenTelemetry-standard flag. The OTel SDK
+          no-ops process-wide, so telemetry the host application emits through
+          its own instrumentation is suppressed alongside Strands'.
+        - STRANDS_OTEL_DISABLED: Strands-specific. Strands' tracer and metrics
+          client fall back to no-op providers, while the host application's own
+          OpenTelemetry pipeline keeps recording. Use this one to keep your own
+          instrumentation (e.g. a Bedrock instrumentor calling an agent as a
+          tool) while silencing Strands.
+
+        Both are read once, when the tracer and the metrics client are first
+        constructed. Those are process-lifetime singletons, so the variable has
+        to be set before the first agent / tracer / metrics call — changing it
+        afterwards has no effect for the remainder of the process.
 
     Examples:
         Quick setup with method chaining:
@@ -84,10 +114,7 @@ class StrandsTelemetry:
         - All setup methods return self to enable method chaining
     """
 
-    def __init__(
-        self,
-        tracer_provider: SDKTracerProvider | None = None,
-    ) -> None:
+    def __init__(self, tracer_provider: SDKTracerProvider | None = None) -> None:
         """Initialize the StrandsTelemetry instance.
 
         Args:

@@ -12,6 +12,7 @@ import opentelemetry.metrics as metrics_api
 from opentelemetry.metrics import Counter, Histogram, Meter
 
 from ..telemetry import metrics_constants as constants
+from ..telemetry.config import _telemetry_disabled
 from ..types.content import Message
 from ..types.event_loop import Metrics, Usage
 from ..types.tools import ToolUse
@@ -630,7 +631,16 @@ class MetricsClient:
                 return
 
             logger.info("Creating Strands MetricsClient")
-            meter_provider: metrics_api.MeterProvider = metrics_api.get_meter_provider()
+            meter_provider: metrics_api.MeterProvider
+            if _telemetry_disabled():
+                # Honor the disable env vars at the instance level: the global meter
+                # provider is registered elsewhere (possibly by the host app), so
+                # silencing Strands means creating no-op instruments here rather
+                # than accumulating live counters on the host's provider (#1059).
+                logger.debug("telemetry disabled via env var; using no-op meter provider")
+                meter_provider = metrics_api.NoOpMeterProvider()
+            else:
+                meter_provider = metrics_api.get_meter_provider()
             self.meter = meter_provider.get_meter(__name__)
             self.create_instruments()
 
