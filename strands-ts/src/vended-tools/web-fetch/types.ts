@@ -43,7 +43,7 @@ export interface MakeWebFetchOptions {
   maxContentChars?: number
   /**
    * Optional model for the analyst agent. Only used when `mode` is `'agentic'`.
-   * Falls back to the host agent's model when not provided.
+   * Resolution order: `this model > agent.auxModel > agent.model` of the host agent.
    */
   model?: Model
   /** Extraction mode. Defaults to `'agentic'`. */

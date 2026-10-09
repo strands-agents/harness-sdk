@@ -270,7 +270,11 @@ def _default_builder(parent: Agent) -> AgentBuilder:
     def build(spec: AgentSpec) -> Agent:
         parent_tools: dict[str, Any] = {}
         mcp_clients: dict[str, MCPClient] = {}
+        # The child's own context manager registers its tools; skip the parent's.
+        managed_tools = {id(t) for t in parent.context_manager.tools} if parent and parent.context_manager else set()
         for tool in parent.tool_registry.registry.values() if parent else []:
+            if id(tool) in managed_tools:
+                continue
             if isinstance(tool, MCPAgentTool):
                 # MCP tools flow through mcp_servers to avoid duplicates with their client.
                 if tool.mcp_client.client_name is not None:

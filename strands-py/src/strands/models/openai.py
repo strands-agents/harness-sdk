@@ -404,14 +404,13 @@ class OpenAIModel(Model):
         """
         formatted_messages = []
 
+        if any("reasoningContent" in content for message in messages for content in message["content"]):
+            logger.warning(
+                "reasoningContent is not supported in multi-turn conversations with the Chat Completions API."
+            )
+
         for message in messages:
             contents = message["content"]
-
-            # Check for reasoningContent and warn user
-            if any("reasoningContent" in content for content in contents):
-                logger.warning(
-                    "reasoningContent is not supported in multi-turn conversations with the Chat Completions API."
-                )
 
             # Filter out content blocks that shouldn't be formatted
             filtered_contents = []
