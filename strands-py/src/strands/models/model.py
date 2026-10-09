@@ -340,11 +340,13 @@ class Model(abc.ABC):
         context_window_limit = self.context_window_limit
         if not context_window_limit:
             context_window_limit = DEFAULT_CONTEXT_WINDOW_LIMIT
-            # stacklevel=1 pins attribution to this line so the default filter emits the nudge once
-            # per process rather than once per calling frame.
+            # estimate_utilization is called from a variable depth inside the event loop, so no fixed
+            # stacklevel reliably lands on the caller. stacklevel=1 pins attribution to this line instead,
+            # so the default filter emits the nudge once per process rather than once per calling frame.
             warnings.warn(
-                f"context_window_limit is not set on the model, using default of {DEFAULT_CONTEXT_WINDOW_LIMIT}"
-                " for utilization estimate | set context_window_limit in your model config for accurate results",
+                f"context_window_limit is not set on the model, using default of"
+                f" {DEFAULT_CONTEXT_WINDOW_LIMIT} for the utilization estimate; set context_window_limit"
+                " in your model config for accurate results",
                 stacklevel=1,
             )
 

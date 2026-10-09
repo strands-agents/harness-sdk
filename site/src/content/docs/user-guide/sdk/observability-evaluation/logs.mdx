@@ -89,12 +89,10 @@ The Strands Agents SDK uses standard log levels:
 
 - **CRITICAL**: Reserved for catastrophic failures.
 
-### Usage Warnings
-
 <Tabs>
 <Tab label="Python">
 
-Not every notice from the SDK goes through the logger. Notices about *how the SDK is being used* — an unset `context_window_limit`, an unknown cache strategy, a graph built without execution limits — are emitted through Python's [`warnings`](https://docs.python.org/3/library/warnings.html) module instead, because they are aimed at the developer writing the code rather than at an operator reading logs. The standard library deduplicates them, so a repeated nudge surfaces once rather than on every call.
+Notices about *how the SDK is being used* — an unset `context_window_limit`, an unknown cache strategy, a graph built without execution limits — are emitted through Python's [`warnings`](https://docs.python.org/3/library/warnings.html) module instead of the logger. The standard library deduplicates them per call site, so a repeated nudge surfaces once rather than on every call.
 
 Control them with `-W` or `PYTHONWARNINGS`, like any other warning:
 
@@ -102,26 +100,6 @@ Control them with `-W` or `PYTHONWARNINGS`, like any other warning:
 # Promote SDK usage warnings to errors, which is useful in CI
 python -W error::UserWarning my_agent.py
 ```
-
-To collect them alongside the rest of the SDK's output instead, call `logging.captureWarnings(True)` and they are forwarded to the `py.warnings` logger:
-
-```python
-import logging
-
-logging.captureWarnings(True)
-logging.getLogger("py.warnings").addHandler(logging.StreamHandler())
-```
-
-In tests, assert on them with `pytest.warns`:
-
-```python
-with pytest.warns(UserWarning, match="execution is unbounded"):
-    builder.build()
-```
-</Tab>
-<Tab label="TypeScript">
-
-The TypeScript SDK emits these notices through the configured logger's `warn` method; the recurring ones are deduplicated internally so they surface at most once per process. Filter or silence them by configuring a logger with the levels you want — see [Configuring Logging](#configuring-logging).
 </Tab>
 </Tabs>
 

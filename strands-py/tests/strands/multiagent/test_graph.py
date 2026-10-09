@@ -720,11 +720,19 @@ def test_build_warns_when_execution_is_unbounded():
     assert record[0].filename == __file__
 
 
-def test_build_does_not_warn_when_execution_limits_are_set():
+@pytest.mark.parametrize(
+    "configure_limit",
+    [
+        lambda builder: builder.set_max_node_executions(10),
+        lambda builder: builder.set_execution_timeout(30.0),
+    ],
+    ids=["max_node_executions", "execution_timeout"],
+)
+def test_build_does_not_warn_when_execution_limits_are_set(configure_limit):
     """Setting either execution limit silences the unbounded-execution nudge."""
     builder = GraphBuilder()
     builder.add_node(create_mock_agent("agent_a", "Response A"), "a")
-    builder.set_max_node_executions(10)
+    configure_limit(builder)
 
     with warnings.catch_warnings():
         warnings.simplefilter("error", UserWarning)

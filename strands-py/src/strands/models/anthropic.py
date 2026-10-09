@@ -424,10 +424,12 @@ class AnthropicModel(Model):
             return messages, None
 
         if cache_config.strategy not in ("auto", "anthropic"):
-            # stacklevel=1 pins attribution to this line so the default filter emits once per distinct
-            # strategy value rather than on every request.
+            # _manage_cache_points is called from a variable depth inside the event loop, so no fixed
+            # stacklevel reliably lands on the caller. stacklevel=1 pins attribution to this line instead,
+            # so the default filter emits once per distinct strategy value rather than on every request.
             warnings.warn(
-                f"strategy=<{cache_config.strategy}> | unknown cache strategy, prompt caching disabled",
+                f"cache_config.strategy={cache_config.strategy!r} is an unknown cache strategy;"
+                " prompt caching is disabled",
                 stacklevel=1,
             )
             return messages, None

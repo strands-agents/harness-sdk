@@ -2,6 +2,7 @@
 
 import copy
 import logging
+import warnings
 from typing import TYPE_CHECKING, Any
 
 from ..agent.state import AgentState
@@ -32,9 +33,6 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
     from the agent-level ``storage`` parameter. For snapshot-based persistence that integrates
     with agent-level storage, use :class:`~strands.session.snapshot_session_manager.SnapshotSessionManager`.
     """
-
-    # Process-global to avoid repeated log noise when multiple instances see agent-level storage.
-    _warned_storage_ignored: bool = False
 
     def __init__(
         self,
@@ -216,12 +214,14 @@ class RepositorySessionManager(SessionManager[LocalAgent]):
         """
         from ..agent.agent import Agent
 
-        if not RepositorySessionManager._warned_storage_ignored and agent.storage is not None:
-            RepositorySessionManager._warned_storage_ignored = True
-            logger.warning(
-                "agent_id=<%s> | agent-level storage is set but RepositorySessionManager does not use it;"
-                " use SnapshotSessionManager for unified storage integration",
-                agent.agent_id,
+        if agent.storage is not None:
+            # initialize is invoked from an AgentInitializedEvent callback at a variable depth from user
+            # code, so no fixed stacklevel reliably lands on the caller. stacklevel=1 pins attribution to
+            # this line instead, relying on the standard library to dedupe per call site.
+            warnings.warn(
+                "Agent-level storage is set, but RepositorySessionManager does not use it; use"
+                " SnapshotSessionManager for unified storage integration",
+                stacklevel=1,
             )
         if agent.agent_id in self._latest_agent_message:
             raise SessionException("The `agent_id` of an agent must be unique in a session.")

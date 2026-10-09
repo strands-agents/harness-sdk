@@ -1,6 +1,6 @@
 """Tests for agent-level default storage."""
 
-import logging
+import warnings
 from unittest.mock import MagicMock
 
 import pytest
@@ -192,12 +192,9 @@ async def test_on_before_model_call_returns_early_when_storage_is_none():
 
 
 class TestRepositorySessionManagerWarnOnce:
-    """Uses setup_method to reset the process-global flag between tests."""
+    """RepositorySessionManager nudges the developer, via warnings.warn, once per process."""
 
-    def setup_method(self):
-        RepositorySessionManager._warned_storage_ignored = False
-
-    def test_warns_when_agent_has_storage(self, caplog):
+    def test_warns_when_agent_has_storage(self):
         repository = MagicMock()
         repository.read_session = MagicMock(return_value=None)
         repository.create_session = MagicMock()
@@ -205,41 +202,38 @@ class TestRepositorySessionManagerWarnOnce:
 
         agent = Agent(model=MockedModelProvider(SIMPLE_RESPONSE), agent_id="agent-1", storage=UnifiedInMemoryStorage())
 
-        with caplog.at_level(logging.WARNING):
+        with pytest.warns(UserWarning, match="RepositorySessionManager does not use it"):
             session_mgr.initialize(agent)
 
-        assert "agent-level storage is set but RepositorySessionManager does not use it" in caplog.text
-
-    def test_warns_when_bidi_agent_has_storage(self, caplog):
+    def test_warns_when_bidi_agent_has_storage(self):
         repository = MagicMock()
         repository.read_session = MagicMock(return_value=None)
         repository.create_session = MagicMock()
         session_mgr = RepositorySessionManager("test-session", session_repository=repository)
         agent = BidiAgent(model=MagicMock(spec=BidiModel), agent_id="agent-1", storage=UnifiedInMemoryStorage())
 
-        with caplog.at_level(logging.WARNING):
+        with pytest.warns(UserWarning, match="RepositorySessionManager does not use it"):
             session_mgr.initialize(agent)
 
-        assert "agent-level storage is set but RepositorySessionManager does not use it" in caplog.text
-
-    def test_warns_only_once(self, caplog):
+    def test_warns_only_once_across_instances(self):
+        """The nudge surfaces once per process, not per RepositorySessionManager instance."""
         repository = MagicMock()
         repository.read_session = MagicMock(return_value=None)
         repository.create_session = MagicMock()
-        session_mgr = RepositorySessionManager("test-session", session_repository=repository)
 
-        agent = Agent(model=MockedModelProvider(SIMPLE_RESPONSE), agent_id="agent-1", storage=UnifiedInMemoryStorage())
+        with warnings.catch_warnings(record=True) as recorded:
+            warnings.simplefilter("default", UserWarning)
 
-        with caplog.at_level(logging.WARNING):
+            session_mgr = RepositorySessionManager("test-session", session_repository=repository)
+            agent = Agent(
+                model=MockedModelProvider(SIMPLE_RESPONSE), agent_id="agent-1", storage=UnifiedInMemoryStorage()
+            )
             session_mgr.initialize(agent)
 
-        assert "agent-level storage is set but RepositorySessionManager does not use it" in caplog.text
-        caplog.clear()
-
-        session_mgr2 = RepositorySessionManager("test-session-2", session_repository=repository)
-        agent2 = Agent(model=MockedModelProvider(SIMPLE_RESPONSE), agent_id="agent-2", storage=UnifiedInMemoryStorage())
-
-        with caplog.at_level(logging.WARNING):
+            session_mgr2 = RepositorySessionManager("test-session-2", session_repository=repository)
+            agent2 = Agent(
+                model=MockedModelProvider(SIMPLE_RESPONSE), agent_id="agent-2", storage=UnifiedInMemoryStorage()
+            )
             session_mgr2.initialize(agent2)
 
-        assert "agent-level storage is set but RepositorySessionManager does not use it" not in caplog.text
+        assert len(recorded) == 1

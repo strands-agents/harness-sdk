@@ -495,7 +495,6 @@ class GraphBuilder:
         if invalid_entries:
             raise ValueError(f"Entry points not found in nodes: {invalid_entries}")
 
-        # stacklevel=3 lands on the caller's build() line: warn -> _validate_graph -> build.
         if self._max_node_executions is None and self._execution_timeout is None:
             warnings.warn(
                 "graph has no max_node_executions or execution_timeout set; execution is unbounded",
