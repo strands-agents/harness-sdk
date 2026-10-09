@@ -8,6 +8,7 @@ from typing import Any
 import boto3
 import pytest
 from botocore.config import Config as BotocoreConfig
+from openai.types.chat import ChatCompletionChunk
 
 from strands.models.model import CacheConfig
 from strands.models.sagemaker import (
@@ -1079,3 +1080,56 @@ def test_cache_config_unsupported_field_warns_and_is_not_routed(
 
     assert "cache_config" not in request
     assert "cache_config" not in json.loads(request["Body"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_calls", [None, [], "omitted"])
+async def test_stream_text_without_tool_calls(sagemaker_client, model, messages, alist, tool_calls):
+    delta = ChatCompletionChunk.model_validate(
+        {
+            "id": "chunk1",
+            "object": "chat.completion.chunk",
+            "model": "test",
+            "created": 1,
+            "choices": [{"index": 0, "delta": {"content": "hello"}, "finish_reason": "stop"}],
+        }
+    ).model_dump()["choices"][0]["delta"]
+    delta.pop("tool_calls")
+    if tool_calls != "omitted":
+        delta["tool_calls"] = tool_calls
+    event = {"choices": [{"delta": delta, "finish_reason": "stop"}]}
+    sagemaker_client.invoke_endpoint_with_response_stream.return_value = {"Body": _payload_parts(json.dumps(event))}
+    for name in (
+        "InternalFailure",
+        "ServiceUnavailable",
+        "ValidationError",
+        "ModelError",
+        "InternalDependencyException",
+        "ModelNotReadyException",
+    ):
+        setattr(sagemaker_client.exceptions, name, type(name, (Exception,), {}))
+    response = await alist(model.stream(messages))
+    text = "".join(
+        chunk["contentBlockDelta"]["delta"]["text"]
+        for chunk in response
+        if "contentBlockDelta" in chunk and "text" in chunk["contentBlockDelta"]["delta"]
+    )
+    assert text == "hello"
+    assert response[-1] == {"messageStop": {"stopReason": "end_turn"}}
+    assert not any("toolUse" in chunk.get("contentBlockStart", {}).get("start", {}) for chunk in response)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["dict", "list"])
+async def test_stream_retains_legacy_and_list_tool_calls(sagemaker_client, model, messages, alist, shape):
+    call = {"index": 0, "id": "call1", "type": "function", "function": {"name": "search", "arguments": '{"q":"hi"}'}}
+    event = {"choices": [{"delta": {"tool_calls": call if shape == "dict" else [call]}, "finish_reason": "tool_calls"}]}
+    sagemaker_client.invoke_endpoint_with_response_stream.return_value = {"Body": _payload_parts(json.dumps(event))}
+    response = await alist(model.stream(messages))
+    inputs = [
+        chunk["contentBlockDelta"]["delta"]["toolUse"]["input"]
+        for chunk in response
+        if "toolUse" in chunk.get("contentBlockDelta", {}).get("delta", {})
+    ]
+    assert json.loads("".join(inputs)) == {"q": "hi"}
+    assert response[-1] == {"messageStop": {"stopReason": "tool_use"}}
