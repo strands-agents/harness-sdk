@@ -14,6 +14,7 @@ import { context, propagation, trace } from '@opentelemetry/api'
 import type { JSONSchema, JSONValue } from '../types/json.js'
 import type { ElicitationCallback } from '../types/elicitation.js'
 import { McpTool } from '../tools/mcp-tool.js'
+import { ToolProvider } from '../tools/tool-provider.js'
 import { MAX_TOOL_NAME_LENGTH } from '../registry/tool-registry.js'
 import { ToolValidationError } from '../errors.js'
 import { logger } from '../logging/index.js'
@@ -227,13 +228,18 @@ export type McpClientConfig = McpClientOptions & {
 /**
  * MCP client using SDK v2, including legacy task execution.
  *
+ * A {@link ToolProvider}: when passed to `Agent({ tools: [...] })`, each agent counts as one
+ * consumer, the client connects lazily when its tools are first loaded, and it disconnects once
+ * the last consumer's agent is shut down (via `agent.shutdown()` or `await using`). A client
+ * shared by several agents stays connected until every one of them has been shut down.
+ *
  * @example
  * ```typescript
  * const client = new McpClient({ url: 'https://example.com/mcp', tasksConfig: {} })
  * const agent = new Agent({ tools: [client] })
  * ```
  */
-export class McpClient {
+export class McpClient extends ToolProvider {
   /**
    * Default task lifecycle request timeout in milliseconds.
    *
@@ -300,8 +306,13 @@ export class McpClient {
   private _connectionPromise: Promise<void> | undefined
   private _connectionGeneration = 0
   private readonly _taskControllers = new Set<AbortController>()
+  /** Consumers (typically agent tool registries) currently using this client as a tool provider. */
+  private readonly _consumers = new Set<string>()
+  /** Set once {@link loadTools} has run, so the last consumer's removal knows there is a connection to release. */
+  private _providerStarted = false
 
   constructor(args: McpClientConfig) {
+    super()
     this._clientName = args.applicationName || 'strands-agents-ts-sdk'
     this._clientVersion = args.applicationVersion || '0.0.1'
     this._state = 'disconnected'
@@ -582,6 +593,49 @@ export class McpClient {
     }
 
     return tools
+  }
+
+  /**
+   * Loads this client's tools for a consumer, connecting lazily if needed.
+   *
+   * Implements {@link ToolProvider.loadTools} by delegating to {@link McpClient.listTools} with the
+   * client's configured prefix and filters.
+   *
+   * @returns The tools exposed by the server.
+   */
+  async loadTools(): Promise<McpTool[]> {
+    this._providerStarted = true
+    return await this.listTools()
+  }
+
+  /**
+   * Registers a consumer of this client's tools.
+   *
+   * @param consumerId - Unique identifier for the consumer.
+   */
+  addConsumer(consumerId: string): void {
+    this._consumers.add(consumerId)
+    logger.debug(`client=<${this._clientName}>, consumers=<${this._consumers.size}> | added provider consumer`)
+  }
+
+  /**
+   * Removes a consumer of this client's tools, disconnecting once the last consumer is removed.
+   *
+   * Idempotent: removing an id that is not registered has no effect. Only disconnects if
+   * {@link McpClient.loadTools} ran since the last teardown, so a client whose tools were never
+   * loaded is left alone. A later consumer reconnects lazily.
+   *
+   * @param consumerId - Unique identifier for the consumer.
+   */
+  async removeConsumer(consumerId: string): Promise<void> {
+    if (!this._consumers.delete(consumerId)) return
+    logger.debug(`client=<${this._clientName}>, consumers=<${this._consumers.size}> | removed provider consumer`)
+
+    if (this._consumers.size > 0 || !this._providerStarted) return
+    // Cleared before awaiting so a concurrent removal cannot trigger a second disconnect.
+    this._providerStarted = false
+    logger.debug(`client=<${this._clientName}> | no provider consumers remaining, disconnecting`)
+    await this.disconnect()
   }
 
   /**

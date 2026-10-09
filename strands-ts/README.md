@@ -236,7 +236,8 @@ const agent = new Agent({
 
 await agent.invoke("Use a random tool from the MCP server.");
 
-await documentationTools.disconnect();
+// Disconnects documentationTools (or bind the agent with `await using`)
+await agent.shutdown();
 ```
 
 Enable automatic task execution on the same `McpClient` for legacy task servers:

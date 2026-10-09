@@ -2076,6 +2076,80 @@ describe('normalizeToolUseNames', () => {
     expect(sentToolUse).toStrictEqual(new ToolUseBlock({ name: 'good_tool-1', toolUseId: 'tu-1', input: {} }))
   })
 
+  describe('McpClient lifecycle', () => {
+    const createMcpClient = (toolNames: string[]): { client: McpClient; disconnect: ReturnType<typeof vi.fn> } => {
+      const client = new McpClient({ transport: { start: vi.fn(), send: vi.fn(), close: vi.fn() } as never })
+      vi.spyOn(client, 'listTools').mockResolvedValue(
+        toolNames.map((name) => new McpTool({ name, description: name, inputSchema: {}, client }))
+      )
+      const disconnect = vi.spyOn(client, 'disconnect').mockResolvedValue(undefined)
+      return { client, disconnect }
+    }
+
+    it('registers an McpClient as a tool provider and loads its tools on initialize', async () => {
+      const { client } = createMcpClient(['tool_a'])
+      const agent = new Agent({ model: new MockMessageModel(), tools: [[client]] })
+
+      expect(agent.toolRegistry.toolProviders).toStrictEqual([client])
+
+      await agent.initialize()
+
+      expect(agent.tools.map((t) => t.name)).toStrictEqual(['tool_a'])
+    })
+
+    it('disconnects an McpClient passed in tools on shutdown', async () => {
+      const { client, disconnect } = createMcpClient(['tool_a'])
+      const agent = new Agent({ model: new MockMessageModel(), tools: [client] })
+      await agent.initialize()
+
+      await agent.shutdown()
+
+      expect(disconnect).toHaveBeenCalledTimes(1)
+    })
+
+    it('disconnects an McpClient when an `await using` agent scope exits', async () => {
+      const { client, disconnect } = createMcpClient(['tool_a'])
+      {
+        await using agent = new Agent({ model: new MockMessageModel(), tools: [client] })
+        await agent.initialize()
+      }
+
+      expect(disconnect).toHaveBeenCalledTimes(1)
+    })
+
+    it('keeps a shared McpClient connected until every agent using it shuts down', async () => {
+      const { client, disconnect } = createMcpClient(['tool_a'])
+      const first = new Agent({ model: new MockMessageModel(), tools: [client] })
+      const second = new Agent({ model: new MockMessageModel(), tools: [client] })
+      await first.initialize()
+      await second.initialize()
+
+      await first.shutdown()
+      expect(disconnect).not.toHaveBeenCalled()
+
+      await second.shutdown()
+      expect(disconnect).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not disconnect an McpClient whose tools were never loaded', async () => {
+      const { client, disconnect } = createMcpClient(['tool_a'])
+      const agent = new Agent({ model: new MockMessageModel(), tools: [client] })
+
+      await agent.shutdown()
+
+      expect(disconnect).not.toHaveBeenCalled()
+    })
+
+    it('surfaces an McpClient disconnect failure from shutdown', async () => {
+      const { client, disconnect } = createMcpClient(['tool_a'])
+      disconnect.mockRejectedValueOnce(new Error('close failed'))
+      const agent = new Agent({ model: new MockMessageModel(), tools: [client] })
+      await agent.initialize()
+
+      await expect(agent.shutdown()).rejects.toThrow('close failed')
+    })
+  })
+
   describe('MCP toolsChanged integration', () => {
     it('removes old tools and adds new tools when onToolsChanged fires', async () => {
       const mcpClient = new McpClient({
