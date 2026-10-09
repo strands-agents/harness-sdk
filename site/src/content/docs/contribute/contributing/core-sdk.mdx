@@ -53,14 +53,14 @@ git clone https://github.com/strands-agents/harness-sdk.git
 cd harness-sdk/strands-py
 ```
 
-We use [hatch](https://hatch.pypa.io/) for Python development. Hatch manages virtual environments, dependencies, testing, and formatting. Enter the virtual environment and install pre-commit hooks:
+We use [hatch](https://hatch.pypa.io/) for Python development. Hatch manages virtual environments, dependencies, testing, and formatting. Enter the virtual environment and install the git hooks from the repository root:
 
 ```bash
 hatch shell
-pre-commit install -t pre-commit -t commit-msg
+(cd .. && npm ci)
 ```
 
-The pre-commit hooks run code formatters, linters, tests, and commit message validation before each commit.
+The pre-commit hook runs ruff on staged Python files, plus the TypeScript build and checks, before each commit. It needs [uv](https://docs.astral.sh/uv/) installed.
 
 Verify your setup by running the tests:
 

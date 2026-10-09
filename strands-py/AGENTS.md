@@ -44,7 +44,7 @@ strands-py/
 
 ```bash
 hatch shell                                    # Enter dev environment
-pre-commit install -t pre-commit -t commit-msg # Install hooks
+(cd .. && npm ci)                              # Install git hooks (husky)
 ```
 
 ### 2. Making Changes
@@ -61,7 +61,7 @@ When creating pull requests, you MUST follow the guidelines and template in [PR.
 
 ### 4. Quality Gates
 
-Pre-commit hooks run automatically on commit and must all pass: formatting (ruff), linting (ruff + mypy strict), tests (pytest), and commit-message validation (commitizen). Run them yourself with `hatch fmt --formatter` and `hatch fmt --linter` before committing.
+The husky pre-commit hook runs ruff (lint and format check) on staged Python files, plus the TypeScript build and checks, and must pass. It does not run mypy or pytest, so run `hatch fmt --formatter`, `hatch fmt --linter`, and `hatch test` yourself before committing. Commit messages are not checked locally; CI checks that PR titles follow conventional commits.
 
 **ruff, isort, mypy, and pydocstyle already enforce import order, line length (120), logging format, docstring presence, and type-annotation coverage.** This guide does not re-list those — it covers the conventions a linter *cannot* check. When a rule below says "enforced by review," it means exactly that: no tool catches it, so it is on you and the reviewer.
 
@@ -307,8 +307,8 @@ hatch test -c                  # Run with coverage
 hatch run test-integ           # Run integration tests
 hatch test --all               # Test all Python versions
 
-# Pre-commit
-pre-commit run --all-files     # Run all hooks manually
+# Pre-commit (from repo root)
+npm run lint:py                # Run ruff on staged Python files
 
 # Readiness Check
 hatch run prepare              # Run all checks (format, lint, test)
