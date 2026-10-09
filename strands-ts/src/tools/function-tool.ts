@@ -185,13 +185,17 @@ export class FunctionTool extends Tool implements InvokableTool<unknown, JSONVal
 
         // Iterate through all yielded values
         let iterResult = await generator.next()
-
-        while (!iterResult.done) {
-          // Each yielded value becomes a ToolStreamEvent
-          yield new ToolStreamEvent({
-            data: iterResult.value,
-          })
-          iterResult = await generator.next()
+        try {
+          while (!iterResult.done) {
+            // Each yielded value becomes a ToolStreamEvent
+            yield new ToolStreamEvent({
+              data: iterResult.value,
+            })
+            iterResult = await generator.next()
+          }
+        } finally {
+          // Closes the callback's generator when this one is closed early, so its cleanup runs.
+          await generator.return(undefined)
         }
 
         // The generator's return value (when done = true) is wrapped in ToolResultBlock
