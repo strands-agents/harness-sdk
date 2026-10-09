@@ -164,6 +164,24 @@ def test__init__unknown_model_no_context_window_limit(openai_client):
                 "type": "image_url",
             },
         ),
+        # Image with detail
+        (
+            {
+                "image": {
+                    "format": "jpg",
+                    "source": {"bytes": b"image"},
+                    "detail": "low",
+                },
+            },
+            {
+                "image_url": {
+                    "detail": "low",
+                    "format": "image/jpeg",
+                    "url": "data:image/jpeg;base64,aW1hZ2U=",
+                },
+                "type": "image_url",
+            },
+        ),
         # Text
         (
             {"text": "hello"},

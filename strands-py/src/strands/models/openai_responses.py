@@ -58,6 +58,7 @@ from ..types.citations import WebLocationDict  # noqa: E402
 from ..types.content import ContentBlock, Messages, Role, SystemContentBlock  # noqa: E402
 from ..types.event_loop import Usage  # noqa: E402
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException  # noqa: E402
+from ..types.media import ImageContent  # noqa: E402
 from ..types.streaming import StreamEvent  # noqa: E402
 from ..types.tools import ToolChoice, ToolResult, ToolSpec, ToolUse  # noqa: E402
 from ._defaults import resolve_config_metadata  # noqa: E402
@@ -109,6 +110,27 @@ def _encode_media_to_data_url(data: bytes, format_ext: str, media_type: str = "i
     mime_type = mimetypes.types_map.get(f".{format_ext}", _DEFAULT_MIME_TYPE)
     encoded_data = base64.b64encode(data).decode("utf-8")
     return f"data:{mime_type};base64,{encoded_data}"
+
+
+def _format_input_image(image: ImageContent) -> dict[str, Any]:
+    """Format an image block as a Responses API input_image part.
+
+    Args:
+        image: Image content block.
+
+    Returns:
+        Responses API input_image part.
+
+    Raises:
+        ValueError: If the image size exceeds the maximum allowed size.
+    """
+    input_image: dict[str, Any] = {
+        "type": "input_image",
+        "image_url": _encode_media_to_data_url(image["source"]["bytes"], image["format"], "image"),
+    }
+    if "detail" in image:
+        input_image["detail"] = image["detail"]
+    return input_image
 
 
 class _ToolCallInfo(TypedDict):
@@ -744,9 +766,7 @@ class OpenAIResponsesModel(Model):
             return {"type": "input_file", "filename": filename, "file_data": data_url}
 
         if "image" in content:
-            img = content["image"]
-            data_url = _encode_media_to_data_url(img["source"]["bytes"], img["format"], "image")
-            return {"type": "input_image", "image_url": data_url}
+            return _format_input_image(content["image"])
 
         if "text" in content:
             text_type = "output_text" if role == "assistant" else "input_text"
@@ -804,9 +824,7 @@ class OpenAIResponsesModel(Model):
                 output_parts.append({"type": "input_text", "text": content["text"]})
             elif "image" in content:
                 has_media = True
-                img = content["image"]
-                data_url = _encode_media_to_data_url(img["source"]["bytes"], img["format"], "image")
-                output_parts.append({"type": "input_image", "image_url": data_url})
+                output_parts.append(_format_input_image(content["image"]))
             elif "document" in content:
                 has_media = True
                 doc = content["document"]

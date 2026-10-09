@@ -170,6 +170,21 @@ def test_update_config(model, model_id):
                 "image_url": "data:image/jpeg;base64,aW1hZ2U=",
             },
         ),
+        # Image with detail
+        (
+            {
+                "image": {
+                    "format": "jpg",
+                    "source": {"bytes": b"image"},
+                    "detail": "low",
+                },
+            },
+            {
+                "type": "input_image",
+                "image_url": "data:image/jpeg;base64,aW1hZ2U=",
+                "detail": "low",
+            },
+        ),
         # Text
         (
             {"text": "hello"},
@@ -277,6 +292,27 @@ def test_format_request_tool_message_with_image():
     assert tru_result["output"][0]["text"] == "Here is the image:"
     assert tru_result["output"][1]["type"] == "input_image"
     assert "image_url" in tru_result["output"][1]
+
+
+@pytest.mark.parametrize(
+    "image, exp_image_part",
+    [
+        (
+            {"format": "png", "source": {"bytes": b"image"}},
+            {"type": "input_image", "image_url": "data:image/png;base64,aW1hZ2U="},
+        ),
+        (
+            {"format": "png", "source": {"bytes": b"image"}, "detail": "high"},
+            {"type": "input_image", "image_url": "data:image/png;base64,aW1hZ2U=", "detail": "high"},
+        ),
+    ],
+)
+def test_format_request_tool_message_with_image_detail(image, exp_image_part):
+    tool_result = {"content": [{"image": image}], "status": "success", "toolUseId": "c2"}
+
+    tru_result = OpenAIResponsesModel._format_request_tool_message(tool_result)
+    exp_result = {"type": "function_call_output", "call_id": "c2", "output": [exp_image_part]}
+    assert tru_result == exp_result
 
 
 def test_format_request_tool_message_with_document():

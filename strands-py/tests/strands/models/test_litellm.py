@@ -169,6 +169,24 @@ def test_update_config_proxy_prefix(client_args, initial_model_id, new_model_id,
             {"text": "hello"},
             {"type": "text", "text": "hello"},
         ),
+        # Case 4: Image with detail
+        (
+            {
+                "image": {
+                    "format": "png",
+                    "source": {"bytes": b"image"},
+                    "detail": "low",
+                },
+            },
+            {
+                "image_url": {
+                    "detail": "low",
+                    "format": "image/png",
+                    "url": "data:image/png;base64,aW1hZ2U=",
+                },
+                "type": "image_url",
+            },
+        ),
     ],
 )
 def test_format_request_message_content(content, exp_result):

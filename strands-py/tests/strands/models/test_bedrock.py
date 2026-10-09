@@ -2641,6 +2641,7 @@ def test_format_request_filters_image_content_blocks(model, model_id):
                     "image": {
                         "format": "png",
                         "source": {"bytes": b"image_data"},
+                        "detail": "low",  # Not part of the Converse ImageBlock
                         "filename": "test.png",  # Extra field that should be filtered
                         "metadata": {"size": 1024},  # Extra field that should be filtered
                     }

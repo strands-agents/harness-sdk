@@ -486,18 +486,22 @@ async def test_send_normalizes_text(agent, input_data, as_list):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("content_key", "content_type", "media_format"),
-    [("audio_delta", AudioDelta, "pcm"), ("image", ImageBlock, "jpeg")],
-    ids=["audio", "image"],
+    ("content_key", "content_type", "media_format", "options"),
+    [
+        ("audio_delta", AudioDelta, "pcm", {}),
+        ("image", ImageBlock, "jpeg", {}),
+        ("image", ImageBlock, "jpeg", {"detail": "low"}),
+    ],
+    ids=["audio", "image", "image_detail"],
 )
-async def test_send_normalizes_media(agent, content_key, content_type, media_format):
+async def test_send_normalizes_media(agent, content_key, content_type, media_format, options):
     """Media dictionaries retain their source, and complete blocks enter history."""
     await agent.start()
     agent.model.send = unittest.mock.AsyncMock()
     source = {"bytes": b"\x00\xff"}
 
-    content_data = {content_key: {"format": media_format, "source": source}}
-    exp_content = content_type(format=media_format, source=source)
+    content_data = {content_key: {"format": media_format, "source": source, **options}}
+    exp_content = content_type(format=media_format, source=source, **options)
     assert exp_content.to_dict() == content_data
 
     await agent.send(content_data)

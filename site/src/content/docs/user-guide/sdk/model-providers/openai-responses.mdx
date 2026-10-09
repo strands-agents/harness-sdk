@@ -320,6 +320,21 @@ The OpenAI Responses provider does not currently implement native token counting
 </Tab>
 </Tabs>
 
+### Image detail
+
+<Tabs>
+<Tab label="Python">
+
+Set `detail` (`low`, `high`, or `auto`) on an image block to choose the resolution the
+model processes the image at. When `detail` is not set, the provider sends no detail and
+OpenAI uses its default. See [Image detail](./openai#image-detail) for an example.
+</Tab>
+<Tab label="TypeScript">
+
+Image detail is not supported in the TypeScript SDK.
+</Tab>
+</Tabs>
+
 ## References
 
 - [Migrate from OpenAI to Strands](../../migrate/openai.md) — move a hand-written OpenAI loop or an OpenAI Agents SDK app to Strands
