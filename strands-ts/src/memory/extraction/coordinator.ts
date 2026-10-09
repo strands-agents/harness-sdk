@@ -118,7 +118,7 @@ export class ExtractionCoordinator {
 
   /**
    * @param stores - The extraction-configured stores this coordinator manages, each with its resolved config
-   * @param defaultModel - The agent's model, passed to extractors that don't configure their own
+   * @param defaultModel - Model for extractors that don't configure their own (`agent.auxModel > agent.model`)
    * @param tracer - Tracer for extraction spans, shared with the {@link MemoryManager}
    */
   constructor(stores: ExtractionBinding[], defaultModel: Model, tracer: Tracer) {

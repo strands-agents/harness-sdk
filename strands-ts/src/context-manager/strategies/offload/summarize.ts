@@ -132,6 +132,6 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
   }
 
   private _resolveModel(agent: LocalAgent): Model | undefined {
-    return this._config.model ?? agent.model
+    return this._config.model ?? agent.auxModel
   }
 }

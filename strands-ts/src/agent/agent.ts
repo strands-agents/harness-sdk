@@ -179,6 +179,16 @@ export type AgentConfig = {
    * ```
    */
   model?: Model<BaseModelConfig> | ModelRouter | string
+  /**
+   * Model for the auxiliary side calls the SDK makes outside the main agent loop: context
+   * summarization, memory extraction, the HITL risk classifier, LLM steering, the goal judge, and
+   * the `web_fetch` analyst. Defaults to `model`, so leaving it unset changes nothing; set it
+   * (typically to a smaller, cheaper model) to move every side call off the main model at once.
+   * Each side call resolves its model as `component's own model > auxModel > model`.
+   * Accepts a Model or a string representing a Bedrock model ID, like `model`; a ModelRouter is
+   * not accepted because auxiliary calls run outside the agent loop a router attaches to.
+   */
+  auxModel?: Model<BaseModelConfig> | string
   /** An initial set of messages to seed the agent's conversation history. */
   messages?: Message[] | MessageData[]
   /**
@@ -379,6 +389,15 @@ type ToolsExecutionResult = { message: Message; afterToolsEvent: AfterToolsEvent
 /** Model reached by the middleware terminal; empty when the chain short-circuits or fails before reaching it. */
 type InvokedModelRef = { model?: Model }
 
+/** Resolves `auxModel` like `model`: a string is a Bedrock model ID; a ModelRouter is rejected. */
+function resolveAuxModel(auxModel: Model | string | undefined): Model | undefined {
+  if (typeof auxModel === 'string') return new BedrockModel({ modelId: auxModel })
+  if (auxModel instanceof ModelRouter) {
+    throw new Error('auxModel must be a Model or a Bedrock model id, not a ModelRouter')
+  }
+  return auxModel
+}
+
 /**
  * Orchestrates the interaction between a model, a set of tools, and MCP clients.
  * The Agent is responsible for managing the lifecycle of tools and clients
@@ -410,6 +429,7 @@ export class Agent implements LocalAgent, InvokableAgent {
    */
   public model: Model
   private readonly _modelRouter?: ModelRouter
+  private _auxModel: Model | undefined
 
   /**
    * The system prompt to pass to the model provider.
@@ -461,6 +481,24 @@ export class Agent implements LocalAgent, InvokableAgent {
    */
   get sandbox(): Sandbox {
     return this._sandbox || defaultSandbox.get()
+  }
+
+  /**
+   * Model for auxiliary side calls (summarization, memory extraction, classification, steering,
+   * web fetch). Resolution order: `configured auxModel > model`.
+   *
+   * Reading always yields a resolved {@link Model}. Assigning accepts a Model, a Bedrock model ID
+   * string, or `undefined` to revert to following `model`. Memory extraction resolves its model when
+   * attached to the agent and keeps it; every other side call resolves it at call time.
+   *
+   * @throws Error if assigned a {@link ModelRouter}.
+   */
+  get auxModel(): Model {
+    return this._auxModel ?? this.model
+  }
+
+  set auxModel(auxModel: Model | string | undefined) {
+    this._auxModel = resolveAuxModel(auxModel)
   }
 
   /**
@@ -535,6 +573,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     } else {
       this.model = configuredModel ?? new BedrockModel()
     }
+    this._auxModel = resolveAuxModel(config?.auxModel)
 
     if (config?.plugins?.some((plugin) => plugin instanceof ModelRouter)) {
       throw new Error('ModelRouter must be passed through Agent({ model }), not plugins')
