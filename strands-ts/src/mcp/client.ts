@@ -843,10 +843,17 @@ export class McpClient {
     operation?: TaskOperation,
     completeLegacyTask = false
   ): Promise<McpToolCallOutcome> {
-    await this.connect(false, operation ? { signal: operation.signal } : undefined)
+    const connectSignal = operation?.signal ?? options.signal
+    await this.connect(false, connectSignal ? { signal: connectSignal } : undefined)
     if (this._state === 'failed') throw new Error('MCP server failed to connect. Call connect(true) to retry.')
 
     const params = this._prepareToolCall(tool, args)
+
+    // Task support is read from tools/list metadata, so a tool invoked before any listing
+    // fetches it once.
+    if (completeLegacyTask && this._client.getNegotiatedProtocolVersion() === '2025-11-25') {
+      await this._ensureServerToolDefinitions(operation?.signal)
+    }
 
     // The upstream codec rejects extension result types before custom result schemas run.
     if (completeLegacyTask && this._supportsLegacyTask(params.name)) {
@@ -1104,6 +1111,19 @@ export class McpClient {
     }
     if (!this._supportsTaskExtension()) {
       throw new Error(`MCP server did not advertise the ${TASKS_EXTENSION} extension`)
+    }
+  }
+
+  private async _ensureServerToolDefinitions(signal?: AbortSignal): Promise<void> {
+    if (this._serverToolDefinitions.size > 0) return
+    try {
+      const result = await this._client.listTools(undefined, {
+        timeout: this._tasksConfig!.requestTimeoutMs,
+        ...(signal && { signal }),
+      })
+      this._serverToolDefinitions = new Map(result.tools.map((tool) => [tool.name, toMcpServerToolDefinition(tool)]))
+    } catch (error) {
+      logger.warn(`error=<${error}> | failed to list tools for legacy task support detection`)
     }
   }
 

@@ -266,6 +266,24 @@ describe('McpClient legacy task execution', () => {
     expect(server.requests('tasks/result')).toHaveLength(0)
   })
 
+  it('fetches task metadata for a tool invoked before any listTools call', async () => {
+    const { client, server, tool } = await createHarness({
+      era: 'legacy',
+      capabilities: { tools: {}, tasks: { requests: { tools: { call: {} } }, cancel: {} } },
+    })
+    server.handle('tools/list', () => ({
+      tools: [{ name: 'task_tool', inputSchema: { type: 'object' }, execution: { taskSupport: 'required' } }],
+    }))
+    server.handle('tools/call', () => ({ task: legacyTask('completed') }))
+    server.handle('tasks/result', () => ({ content: [{ type: 'text', text: 'unlisted tool result' }] }))
+
+    await expect(client.callTool(tool, {})).resolves.toEqual({
+      content: [{ type: 'text', text: 'unlisted tool result' }],
+    })
+    expect(server.requests('tools/list')).toHaveLength(1)
+    expect(requestParams(server.requests('tools/call')[0]!)).toMatchObject({ task: {} })
+  })
+
   it('waits for queued input on tasks/result beyond the request timeout without progress', async () => {
     vi.useFakeTimers()
     const { client, server, tool } = await legacyHarness({ requestTimeout: 100, pollTimeout: 5_000 })

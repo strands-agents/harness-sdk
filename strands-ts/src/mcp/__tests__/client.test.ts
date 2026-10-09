@@ -281,6 +281,20 @@ describe('MCP Integration', () => {
       expect(sdkClientMock.connect).not.toHaveBeenCalled()
     })
 
+    it('stops waiting for the connection when callTool is aborted without tasksConfig', async () => {
+      sdkClientMock.connect.mockReturnValue(new Promise<void>(() => {}))
+      const tool = new McpTool({ name: 'calc', description: '', inputSchema: {}, client })
+      const controller = new AbortController()
+      const reason = new Error('caller aborted during connect')
+
+      const pending = client.callTool(tool, {}, { signal: controller.signal })
+      const rejection = expect(pending).rejects.toBe(reason)
+      controller.abort(reason)
+
+      await rejection
+      expect(sdkClientMock.callTool).not.toHaveBeenCalled()
+    })
+
     it('converts SDK tool specs to McpTool instances', async () => {
       const longName = 'a'.repeat(65)
       const outputSchema = {
