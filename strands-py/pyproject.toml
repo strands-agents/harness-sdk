@@ -53,6 +53,8 @@ llamaapi = ["llama-api-client>=0.1.0,<1.0.0"]
 mistral = ["mistralai>=2.0.0,<4.0.0"]
 ollama = ["ollama>=0.4.8,<1.0.0"]
 web-fetch = ["markdownify>=1.1.0,<2.0.0", "beautifulsoup4>=4.9.0,<5.0.0"]
+# Excluded from aggregate extras: strands-shell ships no musllinux wheels and no macOS wheel for Python 3.10.
+strands-shell = ["strands-shell>=0.3.3,<1.0.0"]
 openai = ["openai>=1.68.0,<3.0.0", "aws-bedrock-token-generator>=1.1.0,<2.0.0"]
 writer = ["writer-sdk>=2.2.0,<4.0.0"]
 sagemaker = [
@@ -138,6 +140,7 @@ dependencies = [
   # Include required package dependencies for mypy
   "boto3-stubs[bedrock-agent,bedrock-agent-runtime,s3]>=1.26.0,<2.0.0",
   "strands-agents @ {root:uri}",
+  "strands-shell>=0.3.3,<1.0.0",
   "types-pyaudio>=0.2.16,<0.3.0",
 ]
 python = "3.10"
@@ -171,6 +174,7 @@ dependencies = [
     "pytest-xdist>=3.0.0,<4.0.0",
     "pytest-rerunfailures>=15.0,<16.0",
     "moto>=5.1.0,<6.0.0",
+    "strands-shell>=0.3.3,<1.0.0",
 ]
 
 [[tool.hatch.envs.hatch-test.matrix]]
@@ -250,6 +254,12 @@ module = [
     "smithy_core.*",
     "smithy_http.*",
 ]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# strands_shell ships no stubs and its value types come from a native extension.
+module = ["strands_shell"]
+follow_untyped_imports = false
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
