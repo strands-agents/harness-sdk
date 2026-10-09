@@ -20,7 +20,7 @@ body:
     attributes:
       label: "Checks"
       options:
-        - label: "I have updated to the lastest minor and patch version of Strands"
+        - label: "I have updated to the latest minor and patch version of Strands"
           required: true
         - label: "I have checked the documentation and this is not expected behavior"
           required: true

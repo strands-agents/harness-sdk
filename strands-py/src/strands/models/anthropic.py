@@ -105,7 +105,7 @@ class AnthropicModel(Model):
             cache_tools: Caches the tool definitions (deprecated, use CacheConfig(tools_ttl=...)). Superseded
                 by an explicitly set cache_config.tools_ttl.
             max_tokens: Maximum number of tokens to generate.
-            model_id: Calude model ID (e.g., "claude-3-7-sonnet-latest").
+            model_id: Claude model ID (e.g., "claude-3-7-sonnet-latest").
                 For a complete list of supported models, see
                 https://docs.anthropic.com/en/docs/about-claude/models/all-models.
             params: Additional model parameters (e.g., temperature).

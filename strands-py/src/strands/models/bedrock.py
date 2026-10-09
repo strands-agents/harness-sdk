@@ -174,7 +174,7 @@ class BedrockModel(Model):
             guardrail_redact_input_message: If a Bedrock Input guardrail triggers, replace the input with this message.
             guardrail_redact_output: Flag to redact output if guardrail is triggered. Defaults to False.
             guardrail_redact_output_message: If a Bedrock Output guardrail triggers, replace output with this message.
-            guardrail_latest_message: Flag to send only the lastest user message to guardrails.
+            guardrail_latest_message: Flag to send only the latest user message to guardrails.
                 Defaults to False.
             max_tokens: Maximum number of tokens to generate in the response
             model_id: The Bedrock model ID (e.g., "global.anthropic.claude-sonnet-4-6")
