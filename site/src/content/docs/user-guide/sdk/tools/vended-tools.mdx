@@ -448,7 +448,7 @@ _Supported in: Node.js, modern browsers (TypeScript); all platforms (Python)._
 
 This is a cooperative stop, not an abort. Any other tools the model requested in the same turn still run to completion; the loop halts after that batch without calling the model again. The final message defaults to a 4096-character cap; pass `max_message_length` / `maxMessageLength` to `make_stop` / `makeStop` when a longer summary is legitimate.
 
-The two SDKs shim onto different loop-termination primitives, which produces a small difference in the final `AgentResult`. TypeScript halts via `AfterToolsEvent.endTurn` and returns `stopReason: "endTurn"` with the stop text as the last assistant message. Python halts via `invocation_state["request_state"]["stop_event_loop"]` and returns `stop_reason: "tool_use"` with the model's tool-use message as the final message; the stop text lives in history as the tool result, not as a new assistant turn.
+Both SDKs stop the loop through `agent.cancel()` with the deferred flag, so the final `AgentResult` is the same in each: `stopReason: "cancelled"` / `stop_reason: "cancelled"`, with the stop text as the last assistant message.
 
 **Example:**
 
