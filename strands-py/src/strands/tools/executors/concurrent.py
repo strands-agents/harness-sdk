@@ -19,6 +19,22 @@ if TYPE_CHECKING:  # pragma: no cover
 class ConcurrentToolExecutor(ToolExecutor):
     """Concurrent tool executor."""
 
+    def __init__(self, *, max_concurrency: int | None = None) -> None:
+        """Initialize the executor.
+
+        Args:
+            max_concurrency: Maximum number of tool executions admitted at once within each
+                batch. ``None`` admits every tool use in the batch immediately.
+
+        Raises:
+            TypeError: If ``max_concurrency`` is not a positive integer.
+        """
+        if max_concurrency is not None and (
+            isinstance(max_concurrency, bool) or not isinstance(max_concurrency, int) or max_concurrency <= 0
+        ):
+            raise TypeError(f"max_concurrency must be a positive finite integer, got {max_concurrency}")
+        self._max_concurrency = max_concurrency
+
     @override
     async def _execute(
         self,
@@ -48,6 +64,9 @@ class ConcurrentToolExecutor(ToolExecutor):
         task_events = [asyncio.Event() for _ in tool_uses]
         task_results: list[list[ToolResult]] = [[] for _ in tool_uses]
         stop_event = object()
+        # Batch-local so the bound never outlives one _execute call on a reusable
+        # executor; an unset limit is a bound at the batch size.
+        semaphore = asyncio.Semaphore(self._max_concurrency or len(tool_uses))
 
         tasks = []
         try:
@@ -66,6 +85,7 @@ class ConcurrentToolExecutor(ToolExecutor):
                             task_events[task_id],
                             stop_event,
                             structured_output_context,
+                            semaphore,
                         )
                     )
                 )
@@ -102,6 +122,7 @@ class ConcurrentToolExecutor(ToolExecutor):
         task_event: asyncio.Event,
         stop_event: object,
         structured_output_context: "StructuredOutputContext | None",
+        semaphore: asyncio.Semaphore,
     ) -> None:
         """Execute a single tool and put results in the task queue.
 
@@ -117,15 +138,18 @@ class ConcurrentToolExecutor(ToolExecutor):
             task_event: Event to signal when task can continue.
             stop_event: Sentinel object to signal task completion.
             structured_output_context: Context for structured output handling.
+            semaphore: Bounds how many tasks run their stream at once; a task
+                completes its event stream before releasing its slot.
         """
         try:
-            events = ToolExecutor._stream_with_trace(
-                agent, tool_use, tool_results, cycle_trace, cycle_span, invocation_state, structured_output_context
-            )
-            async for event in events:
-                task_queue.put_nowait((task_id, event))
-                await task_event.wait()
-                task_event.clear()
+            async with semaphore:
+                events = ToolExecutor._stream_with_trace(
+                    agent, tool_use, tool_results, cycle_trace, cycle_span, invocation_state, structured_output_context
+                )
+                async for event in events:
+                    task_queue.put_nowait((task_id, event))
+                    await task_event.wait()
+                    task_event.clear()
 
         except Exception as e:
             task_queue.put_nowait((task_id, e))
