@@ -26,7 +26,7 @@ from strands.hooks import (
     MessageAddedEvent,
 )
 from strands.interrupt import Interrupt, PendingToolExecution, _InterruptState
-from strands.telemetry.metrics import EventLoopMetrics
+from strands.telemetry.metrics import EventLoopMetrics, ModelInvocationMetric
 from strands.telemetry.tracer import Tracer
 from strands.tools.executors import ConcurrentToolExecutor, SequentialToolExecutor
 from strands.tools.registry import ToolRegistry
@@ -39,6 +39,153 @@ from strands.types.exceptions import (
 )
 from tests.fixtures.mock_hook_provider import MockHookProvider
 from tests.fixtures.mocked_model_provider import MockedModelProvider
+
+
+@pytest.fixture
+def timed_model(monkeypatch):
+    from strands.event_loop import _model_metrics
+
+    clock = [0.0]
+    monkeypatch.setattr(_model_metrics, "perf_counter", lambda: clock[0])
+
+    def create(responses, usages, durations):
+        model = MockedModelProvider(responses, usages)
+        model.config = {"model_id": "timed-model"}
+        original = model.stream
+
+        async def stream(*args, **kwargs):
+            async for chunk in original(*args, **kwargs):
+                if "metadata" in chunk:
+                    clock[0] += durations[model.index]
+                yield chunk
+
+        monkeypatch.setattr(model, "stream", stream)
+        return model
+
+    return clock, create
+
+
+def test_model_throughput_records_hook_retries_without_hook_time(timed_model):
+    clock, create = timed_model
+    response = {"role": "assistant", "content": [{"text": "Hello"}]}
+    usages = [{"inputTokens": 1, "outputTokens": n, "totalTokens": n + 1} for n in (10, 30)]
+    agent = Agent(model=create([response, response], usages, [1.0, 3.0]), callback_handler=None)
+    calls = 0
+
+    def before(event):
+        clock[0] += 100
+
+    def after(event):
+        nonlocal calls
+        calls += 1
+        clock[0] += 100
+        event.retry = calls == 1
+
+    agent.hooks.add_callback(BeforeModelCallEvent, before)
+    agent.hooks.add_callback(AfterModelCallEvent, after)
+    metrics = agent("test").metrics
+    invocation = metrics.latest_agent_invocation
+    tru_samples = [sample for cycle in invocation.cycles for sample in cycle.model_invocations]
+    exp_samples = [ModelInvocationMetric(10, 1.0, "timed-model"), ModelInvocationMetric(30, 3.0, "timed-model")]
+    assert tru_samples == exp_samples
+    assert (metrics.average_output_tokens_per_second, metrics.output_throughput_sample_count) == (10.0, 2)
+
+
+def test_model_throughput_excludes_tools_and_retains_multiple_invocations(timed_model):
+    clock, create = timed_model
+
+    @strands.tool
+    def slow_tool() -> str:
+        """Return a tool result after simulated work."""
+        clock[0] += 100
+        return "done"
+
+    text = {"role": "assistant", "content": [{"text": "done"}]}
+    tool_response = {
+        "role": "assistant",
+        "content": [{"toolUse": {"toolUseId": "t1", "name": "slow_tool", "input": {}}}],
+    }
+    usages = [{"inputTokens": 1, "outputTokens": n, "totalTokens": n + 1} for n in (10, 30, 0)]
+    agent = Agent(
+        model=create([tool_response, text, text], usages, [1.0, 3.0, 4.0]), tools=[slow_tool], callback_handler=None
+    )
+    first = agent("use the tool").metrics.get_summary()
+    metrics = agent("again").metrics
+    tru_samples = [[c.model_invocations for c in invocation.cycles] for invocation in metrics.agent_invocations]
+    exp_samples = [
+        [[ModelInvocationMetric(10, 1.0, "timed-model")], [ModelInvocationMetric(30, 3.0, "timed-model")]],
+        [[ModelInvocationMetric(0, 4.0, "timed-model")]],
+    ]
+    assert tru_samples == exp_samples
+    assert first["average_output_tokens_per_second"] == 10.0
+    assert (metrics.average_output_tokens_per_second, metrics.output_throughput_sample_count) == (5.0, 3)
+
+
+@pytest.mark.asyncio
+async def test_model_throughput_includes_intermediate_backpressure_excludes_final_processing(timed_model):
+    clock, create = timed_model
+    model = create(
+        [{"role": "assistant", "content": [{"text": "done"}]}],
+        [{"inputTokens": 1, "outputTokens": 30, "totalTokens": 31}],
+        [1.0],
+    )
+    agent = Agent(model=model, callback_handler=None)
+    async for event in agent.stream_async("test"):
+        chunk = event.get("event", {})
+        if "messageStart" in chunk:
+            clock[0] += 2
+        elif "metadata" in chunk:
+            clock[0] += 100
+    assert agent.event_loop_metrics.latest_agent_invocation.cycles[0].model_invocations == [
+        ModelInvocationMetric(30, 3.0, "timed-model")
+    ]
+
+
+def test_model_throughput_excludes_failed_attempt_and_retry_backoff(timed_model, monkeypatch):
+    clock, create = timed_model
+    model = create(
+        [{"role": "assistant", "content": [{"text": "done"}]}],
+        [{"inputTokens": 1, "outputTokens": 20, "totalTokens": 21}],
+        [2.0],
+    )
+    original = model.stream
+    calls = 0
+
+    async def fail_once(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            clock[0] += 10
+            raise ModelThrottledException("retry")
+        async for chunk in original(*args, **kwargs):
+            yield chunk
+
+    async def backoff(*args, **kwargs):
+        clock[0] += 100
+
+    monkeypatch.setattr(model, "stream", fail_once)
+    monkeypatch.setattr(strands.event_loop._retry.asyncio, "sleep", backoff)
+    metrics = Agent(model=model, callback_handler=None)("test").metrics
+    assert [s for c in metrics.latest_agent_invocation.cycles for s in c.model_invocations] == [
+        ModelInvocationMetric(20, 2.0, "timed-model")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_model_throughput_excludes_consumer_close_after_last_raw_chunk(timed_model):
+    _, create = timed_model
+    model = create(
+        [{"role": "assistant", "content": [{"text": "done"}]}],
+        [{"inputTokens": 1, "outputTokens": 20, "totalTokens": 21}],
+        [2.0],
+    )
+    agent = Agent(model=model, callback_handler=None)
+    stream = agent.stream_async("test")
+    async for event in stream:
+        if "metadata" in event.get("event", {}):
+            break
+    await stream.aclose()
+    assert agent.event_loop_metrics.latest_agent_invocation.cycles[0].model_invocations == []
 
 
 @pytest.fixture

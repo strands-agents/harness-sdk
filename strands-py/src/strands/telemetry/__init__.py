@@ -4,7 +4,7 @@ This module provides metrics and tracing functionality.
 """
 
 from .config import StrandsTelemetry
-from .metrics import EventLoopMetrics, MetricsClient, Trace, metrics_to_string
+from .metrics import EventLoopMetrics, MetricsClient, ModelInvocationMetric, Trace, metrics_to_string
 from .tracer import Tracer, get_tracer
 
 __all__ = [
@@ -13,6 +13,7 @@ __all__ = [
     "Trace",
     "metrics_to_string",
     "MetricsClient",
+    "ModelInvocationMetric",
     # Tracer
     "Tracer",
     "get_tracer",

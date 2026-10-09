@@ -226,6 +226,7 @@ def test_wrap_short_circuit_skips_model_call(agent):
     agent._middleware_registry.add_middleware(InvokeModelStage, cached_response)
     result = agent("test")
     assert result.message["content"][0]["text"] == "Cached!"
+    assert (result.metrics.average_output_tokens_per_second, result.metrics.output_throughput_sample_count) == (None, 0)
 
 
 def test_wrap_yields_nothing_raises_runtime_error(agent):
@@ -743,7 +744,11 @@ def test_invoke_model_context_exposes_agent_model(agent):
 def test_terminal_streams_context_model_override():
     """The terminal streams the model set on the context, not agent.model."""
     model_a = MockedModelProvider([{"role": "assistant", "content": [{"text": "A"}]}])
-    model_b = MockedModelProvider([{"role": "assistant", "content": [{"text": "B"}]}])
+    model_b = MockedModelProvider(
+        [{"role": "assistant", "content": [{"text": "B"}]}],
+        [{"inputTokens": 1, "outputTokens": 12, "totalTokens": 13}],
+    )
+    model_b.config = {"model_id": "routed-model"}
     agent = Agent(model=model_a, callback_handler=None)
     model_a.stream = AsyncMock(wraps=model_a.stream)
 
@@ -755,3 +760,6 @@ def test_terminal_streams_context_model_override():
 
     assert result.message["content"][0]["text"] == "B"
     model_a.stream.assert_not_called()
+    samples = result.metrics.latest_agent_invocation.cycles[0].model_invocations
+    assert [(sample.model_id, sample.output_tokens) for sample in samples] == [("routed-model", 12)]
+    assert result.metrics.output_throughput_sample_count == 1
