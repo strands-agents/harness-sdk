@@ -497,8 +497,8 @@ configured at construction time via `make_web_fetch` / `makeWebFetch`:
 The `max_bytes` / `maxBytes` parameter caps the HTTP response size (default 5 MiB);
 `max_content_chars` / `maxContentChars` caps the extracted content delivered to the model or
 analyst (default 50,000 characters). For `mode='agentic'` / `mode: 'agentic'`,
-the factory also accepts a `model` for the analyst; the agent's own model is
-used when none is supplied.
+the factory also accepts a `model` for the analyst; <Syntax py="agent.aux_model" ts="agent.auxModel" />
+is used when none is supplied.
 
 The Python tool delegates all networking to an `httpx.AsyncClient`. Use the
 `make_web_fetch` factory to supply a pre-configured client with custom
