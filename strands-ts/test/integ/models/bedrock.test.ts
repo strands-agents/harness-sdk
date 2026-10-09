@@ -192,6 +192,35 @@ describe.skipIf(bedrock.skip)('BedrockModel Integration Tests', () => {
         expect(usage?.cacheWriteInputTokens).toBeGreaterThan(0)
       })
 
+      it.concurrent.each([
+        ['a messages TTL behind the default tools TTL', { messagesTTL: '1h' }],
+        ['a shared TTL behind a shorter tools TTL', { ttl: '1h', toolsTTL: '5m' }],
+      ] as const)('accepts %s', async (_label, sectionTTLs) => {
+        // Regression guard for https://github.com/strands-agents/harness-sdk/issues/3758.
+        const provider = bedrock.createModel({
+          modelId: CACHING_MODEL_ID,
+          maxTokens: 100,
+          cacheConfig: { strategy: 'auto', ...sectionTTLs },
+        })
+        const prefix = `Dossier ${Date.now()}-${Math.random()}. ${'The subject prefers concise answers. '.repeat(400)}`
+        const toolSpecs = [
+          {
+            name: 'currentTime',
+            description: 'Get the current time.',
+            inputSchema: { type: 'object' as const, properties: {} },
+          },
+        ]
+
+        const events = await collectIterator(
+          provider.stream([new Message({ role: 'user', content: [new TextBlock(prefix)] })], {
+            toolSpecs,
+            systemPrompt: 'You are a helpful assistant.',
+          })
+        )
+        const usage = events.find((event) => event.type === 'modelMetadataEvent')?.usage
+        expect(usage?.cacheWriteInputTokens).toBeGreaterThan(0)
+      })
+
       it.concurrent.each(['csv', 'pdf'] as const)(
         'accepts a cache point after a %s document',
         async (documentFormat) => {

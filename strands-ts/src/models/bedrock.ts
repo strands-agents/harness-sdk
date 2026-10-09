@@ -140,12 +140,18 @@ const DEFAULT_REDACT_OUTPUT_MESSAGE = '[Assistant output redacted.]'
  * unsupported values with `ValidationException`.
  *
  * Bedrock also requires checkpoint TTLs to be **non-increasing** across
- * `toolConfig` → system → messages — setting a longer TTL on a later checkpoint than an
- * earlier one will be rejected by the service.
+ * `toolConfig` → system → messages, and rejects a longer TTL on a later checkpoint than an
+ * earlier one. When caching is enabled, a `'1h'` checkpoint that follows a `'5m'` one (or one
+ * left at the default) is lowered to match it, with a warning. Other TTL strings are sent as written.
  *
  * @see https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_CachePointBlock.html
  */
 export type BedrockCacheTTL = CacheTTL
+
+/**
+ * The TTLs Bedrock accepts, ranked by duration. A cache point without a TTL takes the 5m default.
+ */
+const CACHE_TTL_RANK: Record<string, number> = { '5m': 0, '1h': 1 }
 
 /**
  * Prompt-caching configuration for the Bedrock provider.
@@ -215,6 +221,44 @@ export interface BedrockGuardrailConfig {
  */
 function snakeToCamel(str: string): string {
   return str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())
+}
+
+/**
+ * Lists a request's cache points in the order Bedrock reads them: toolConfig, system, messages.
+ *
+ * @param request - The formatted request.
+ * @returns Each cache point with the section it sits in.
+ */
+function cachePointsInRequestOrder(request: ConverseStreamCommandInput): [string, BedrockCachePointBlock][] {
+  const messageBlocks = (request.messages ?? []).flatMap((message) => message.content ?? [])
+  const blocks: [string, Tool | SystemContentBlock | BedrockContentBlock][] = [
+    ...(request.toolConfig?.tools ?? []).map((block): [string, Tool] => ['tools', block]),
+    ...(request.system ?? []).map((block): [string, SystemContentBlock] => ['system', block]),
+    ...messageBlocks.map((block): [string, BedrockContentBlock] => ['messages', block]),
+  ]
+  const cachePoints: [string, BedrockCachePointBlock][] = []
+  for (const [section, block] of blocks) {
+    if ('cachePoint' in block && block.cachePoint) cachePoints.push([section, block.cachePoint])
+  }
+  return cachePoints
+}
+
+/**
+ * Lowers a cache point's TTL to that of the shorter checkpoint ahead of it, warning once per shape.
+ *
+ * @param section - The section the cache point sits in, for logging.
+ * @param cachePoint - The cache point to lower (modified in place).
+ * @param shortest - The earlier checkpoint with the shortest TTL.
+ */
+function lowerCacheTTL(section: string, cachePoint: BedrockCachePointBlock, shortest: BedrockCachePointBlock): void {
+  warnOnce(
+    logger,
+    `section=<${section}>, ttl=<${cachePoint.ttl}>, preceding_ttl=<${shortest.ttl || 'default'}> | lowered cache point ttl to match an earlier checkpoint, bedrock rejects a longer ttl after a shorter one`
+  )
+  delete cachePoint.ttl
+  if (shortest.ttl) {
+    cachePoint.ttl = shortest.ttl
+  }
 }
 
 /**
@@ -557,6 +601,33 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
+   * Lowers a cache point TTL that is longer than an earlier checkpoint's to that checkpoint's TTL.
+   *
+   * Bedrock reads checkpoints in the order toolConfig, system, messages and rejects a longer TTL after a
+   * shorter one, so a config such as `{ messagesTTL: '1h' }` with tools present would fail on every
+   * request. Only the TTLs in `CACHE_TTL_RANK` have a known duration: any other string is neither
+   * lowered nor used to lower a later point, and reaches Bedrock as written.
+   *
+   * @param request - The formatted request, modified in place.
+   */
+  private _clampCacheTTLOrder(request: ConverseStreamCommandInput): void {
+    if (!this._shouldEnableCaching()) {
+      return
+    }
+
+    let shortest: { cachePoint: BedrockCachePointBlock; rank: number } | undefined
+    for (const [section, cachePoint] of cachePointsInRequestOrder(request)) {
+      const rank = CACHE_TTL_RANK[cachePoint.ttl || '5m']
+      if (rank === undefined) continue
+      if (!shortest || rank < shortest.rank) {
+        shortest = { cachePoint, rank }
+      } else if (rank > shortest.rank) {
+        lowerCacheTTL(section, cachePoint, shortest.cachePoint)
+      }
+    }
+  }
+
+  /**
    * Updates the model configuration.
    * Merges the provided configuration with existing settings.
    *
@@ -831,6 +902,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
     // Runs after toolConfig so the tools checkpoint ahead of the system one is known.
     this._applySystemCacheTTL(request)
+    // Runs before additionalArgs, whose objects belong to the caller and must not be rewritten.
+    this._clampCacheTTLOrder(request)
 
     // Add inference configuration
     const inferenceConfig: InferenceConfiguration = {}
