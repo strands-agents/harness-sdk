@@ -1,14 +1,12 @@
 """Tests for the ``stop`` tool.
 
-The stop tool shims onto the event loop's existing termination flag:
-``invocation_state["request_state"]["stop_event_loop"] = True``. Tests
-exercise the flag-set behavior, input validation, and metadata rather than
-running a full event loop end-to-end (that is covered by
-:mod:`tests.strands.event_loop.test_event_loop`, which already asserts the flag
-short-circuits the loop).
+The stop tool calls ``agent.cancel(message=..., after_current_tools=True)``. Tests
+exercise that call, input validation, and metadata rather than running a full
+event loop end-to-end (that is covered by
+:mod:`tests.strands.event_loop.test_event_loop`).
 """
 
-from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -16,60 +14,46 @@ from strands.experimental.tools.stop import make_stop, stop
 from strands.types.tools import ToolContext
 
 
-def _tool_context(invocation_state: dict | None = None) -> ToolContext:
-    """Build a ToolContext with a mutable ``invocation_state`` the tool can write to."""
+def _tool_context() -> ToolContext:
+    """Build a ToolContext whose agent records ``cancel`` calls."""
     return ToolContext(
         tool_use={"name": "stop", "toolUseId": "id", "input": {}},
-        agent=SimpleNamespace(),
-        invocation_state=invocation_state if invocation_state is not None else {},
+        agent=Mock(),
+        invocation_state={},
     )
 
 
 class TestStopBehavior:
-    """The tool sets the loop-termination flag and returns the message the model sees."""
+    """The tool requests a deferred cancel and returns the message the model sees."""
 
     @pytest.mark.asyncio
-    async def test_sets_stop_event_loop_flag(self):
-        state: dict = {}
-        ctx = _tool_context(state)
-        await stop(tool_context=ctx)
-        assert state["request_state"]["stop_event_loop"] is True
-
-    @pytest.mark.asyncio
-    async def test_returns_default_message_when_none_provided(self):
-        result = await stop(tool_context=_tool_context())
+    async def test_requests_deferred_cancel_with_default_message(self):
+        ctx = _tool_context()
+        result = await stop(tool_context=ctx)
         assert result == "Agent loop stopped."
+        ctx.agent.cancel.assert_called_once_with("Agent loop stopped.", after_current_tools=True)
 
     @pytest.mark.asyncio
-    async def test_returns_provided_message_verbatim(self):
-        result = await stop(tool_context=_tool_context(), message="all done")
+    async def test_requests_deferred_cancel_with_provided_message(self):
+        ctx = _tool_context()
+        result = await stop(tool_context=ctx, message="all done")
         assert result == "all done"
+        ctx.agent.cancel.assert_called_once_with("all done", after_current_tools=True)
 
     @pytest.mark.asyncio
-    async def test_preserves_existing_request_state(self):
-        state: dict = {"request_state": {"other_flag": "keep me"}}
-        ctx = _tool_context(state)
+    async def test_does_not_touch_invocation_state(self):
+        ctx = _tool_context()
         await stop(tool_context=ctx, message="bye")
-        assert state["request_state"]["other_flag"] == "keep me"
-        assert state["request_state"]["stop_event_loop"] is True
-
-    @pytest.mark.asyncio
-    async def test_creates_request_state_when_missing(self):
-        state: dict = {}
-        ctx = _tool_context(state)
-        await stop(tool_context=ctx)
-        assert "request_state" in state
-        assert state["request_state"]["stop_event_loop"] is True
+        assert ctx.invocation_state == {}
 
     @pytest.mark.asyncio
     async def test_empty_message_falls_back_to_default(self):
         # Kept symmetric with the TS side: an empty string falls back to the
         # default so the loop's final assistant turn is never blank.
-        state: dict = {}
-        ctx = _tool_context(state)
+        ctx = _tool_context()
         result = await stop(tool_context=ctx, message="")
         assert result == "Agent loop stopped."
-        assert state["request_state"]["stop_event_loop"] is True
+        ctx.agent.cancel.assert_called_once_with("Agent loop stopped.", after_current_tools=True)
 
 
 class TestInputValidation:
@@ -93,12 +77,11 @@ class TestInputValidation:
             await stop(tool_context=_tool_context(), message=123)  # type: ignore[arg-type]
 
     @pytest.mark.asyncio
-    async def test_does_not_set_flag_when_validation_fails(self):
-        state: dict = {}
-        ctx = _tool_context(state)
+    async def test_does_not_cancel_when_validation_fails(self):
+        ctx = _tool_context()
         with pytest.raises(ValueError):
             await stop(tool_context=ctx, message="x" * 10000)
-        assert "request_state" not in state
+        ctx.agent.cancel.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_configurable_max_message_length_relaxes_cap(self):

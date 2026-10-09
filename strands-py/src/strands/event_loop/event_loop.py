@@ -646,6 +646,15 @@ async def _handle_model_execution(
 
             await agent.hooks.invoke_callbacks_async(after_model_call_event)
 
+            # Apply the cancel message after hooks observe the real model output,
+            # so hooks tracing model behavior still see what the model produced.
+            # Preserve non-text blocks (reasoningContent, toolUse, cachePoint) that
+            # the model already emitted; only the partial text is replaced.
+            if stop_reason == "cancelled" and agent._cancel_message is not None:
+                message["content"] = [
+                    block for block in message["content"] if "text" not in block
+                ] + [{"text": agent._cancel_message}]
+
             # Check if hooks want to retry the model call
             if after_model_call_event.retry:
                 agent.event_loop_metrics.update_usage(usage)
@@ -987,9 +996,15 @@ async def _handle_tool_execution(
         )
         return
 
-    if invocation_state["request_state"].get("stop_event_loop", False) or structured_output_context.stop_loop:
+    # Cancel takes precedence over structured-output stop: when both fire in the
+    # same cycle, the user's explicit cancel intent (and its terminal message)
+    # must win over the implicit stop from the structured-output tool.
+    if agent._deferred_cancel or agent._observe_cancellation():
+        if agent._cancel_message is not None:
+            message = {"role": "assistant", "content": [{"text": agent._cancel_message}]}
+            await agent._append_messages(message)
         yield EventLoopStopEvent(
-            stop_reason,
+            "cancelled",
             message,
             agent.event_loop_metrics,
             invocation_state["request_state"],
@@ -997,12 +1012,13 @@ async def _handle_tool_execution(
         )
         return
 
-    if agent._observe_cancellation():
+    if structured_output_context.stop_loop:
         yield EventLoopStopEvent(
-            "cancelled",
+            stop_reason,
             message,
             agent.event_loop_metrics,
             invocation_state["request_state"],
+            structured_output=structured_output_result,
         )
         return
 
