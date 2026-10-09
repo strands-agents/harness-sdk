@@ -7,6 +7,8 @@ import { McpTool } from '../../tools/mcp-tool.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { collectGenerator } from '../../__fixtures__/model-test-helpers.js'
 import { createMockTool, createRandomTool } from '../../__fixtures__/tool-helpers.js'
+import { ToolProvider } from '../../tools/tool-provider.js'
+import type { Tool } from '../../tools/tool.js'
 import { ConcurrentInvocationError } from '../../errors.js'
 import {
   MaxTokensError,
@@ -2585,6 +2587,151 @@ describe('normalizeToolUseNames', () => {
           await agent.invoke('Test prompt')
         })()
       ).resolves.toBeUndefined()
+    })
+
+    class RecordingToolProvider extends ToolProvider {
+      consumers = new Set<string>()
+      tools: Tool[]
+
+      constructor(tools: Tool[] = []) {
+        super()
+        this.tools = tools
+      }
+
+      async loadTools(): Promise<Tool[]> {
+        return this.tools
+      }
+
+      addConsumer(consumerId: string): void {
+        this.consumers.add(consumerId)
+      }
+
+      removeConsumer(consumerId: string): void {
+        this.consumers.delete(consumerId)
+      }
+    }
+
+    it("loads a tool provider's tools during initialize and makes them callable", async () => {
+      const providedTool = createRandomTool('provided-tool')
+      const provider = new RecordingToolProvider([providedTool])
+      const model = new MockMessageModel()
+      const agent = new Agent({ model, tools: [provider], printer: false })
+
+      await agent.initialize()
+
+      expect(agent.toolRegistry.get('provided-tool')).toBe(providedTool)
+    })
+
+    it('removes the registry as a consumer of a tool provider on shutdown', async () => {
+      const provider = new RecordingToolProvider()
+      const model = new MockMessageModel()
+      const agent = new Agent({ model, tools: [provider], printer: false })
+
+      await agent.initialize()
+      expect(provider.consumers.size).toBe(1)
+
+      await agent.shutdown()
+      expect(provider.consumers.size).toBe(0)
+    })
+
+    it('removes the registry as a consumer even if shutdown runs before initialize', async () => {
+      const provider = new RecordingToolProvider()
+      const model = new MockMessageModel()
+      const agent = new Agent({ model, tools: [provider], printer: false })
+
+      await agent.shutdown()
+
+      expect(provider.consumers.size).toBe(0)
+    })
+
+    it('still flushes the memory manager when a provider throws while releasing', async () => {
+      class FailingToolProvider extends ToolProvider {
+        async loadTools(): Promise<Tool[]> {
+          return []
+        }
+        addConsumer(): void {}
+        removeConsumer(): void {
+          throw new Error('close failed')
+        }
+      }
+      const memoryManager = new MemoryManager({ stores: [searchOnlyStore()] })
+      const flush = vi.spyOn(memoryManager, 'flush')
+      const model = new MockMessageModel()
+      const agent = new Agent({ model, tools: [new FailingToolProvider()], memoryManager, printer: false })
+      await agent.initialize()
+
+      await expect(agent.shutdown()).rejects.toThrow('close failed')
+
+      expect(flush).toHaveBeenCalledTimes(1)
+    })
+
+    it('marks the agent disposed even when shutdown throws', async () => {
+      class FailingToolProvider extends ToolProvider {
+        async loadTools(): Promise<Tool[]> {
+          return []
+        }
+        addConsumer(): void {}
+        removeConsumer(): void {
+          throw new Error('close failed')
+        }
+      }
+      const model = new MockMessageModel()
+      const agent = new Agent({ model, tools: [new FailingToolProvider()], printer: false })
+      await agent.initialize()
+
+      await expect(agent.shutdown()).rejects.toThrow('close failed')
+
+      await expect(agent.initialize()).rejects.toThrow(/shut down/)
+    })
+
+    it('rejects reinitialization after shutdown', async () => {
+      const model = new MockMessageModel()
+      const agent = new Agent({ model, printer: false })
+
+      await agent.initialize()
+      await agent.shutdown()
+
+      await expect(agent.initialize()).rejects.toThrow(/shut down/)
+    })
+
+    it('rejects invoke/stream on a disposed agent', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+      const agent = new Agent({ model, printer: false })
+
+      await agent.shutdown()
+
+      await expect(agent.invoke('hi')).rejects.toThrow(/shut down/)
+    })
+
+    it("names the provider when a provider's tool collides with an already-registered name", async () => {
+      const providedTool = createRandomTool('duplicate-tool')
+      class CollidingToolProvider extends ToolProvider {
+        async loadTools(): Promise<Tool[]> {
+          return [providedTool]
+        }
+        addConsumer(): void {}
+        removeConsumer(): void {}
+      }
+      const existingTool = createMockTool('duplicate-tool', () => 'original')
+      const model = new MockMessageModel()
+      const agent = new Agent({ model, tools: [existingTool, new CollidingToolProvider()], printer: false })
+
+      await expect(agent.initialize()).rejects.toThrow(/CollidingToolProvider/)
+    })
+
+    it('recognizes a structural implementer of ToolProvider even without `instanceof`', async () => {
+      const providedTool = createRandomTool('structural-provided-tool')
+      const structuralProvider: ToolProvider = {
+        loadTools: async () => [providedTool],
+        addConsumer: () => {},
+        removeConsumer: () => {},
+      }
+      const model = new MockMessageModel()
+      const agent = new Agent({ model, tools: [structuralProvider], printer: false })
+
+      await agent.initialize()
+
+      expect(agent.toolRegistry.get('structural-provided-tool')).toBe(providedTool)
     })
   })
 })
