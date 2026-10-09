@@ -1174,6 +1174,50 @@ describe('SessionManager — stash with real Agent wiring', () => {
     const keysAfter = await storage.list(`${STASH_PREFIX}/`)
     expect(keysAfter).toHaveLength(0)
   })
+
+  it('deleteSession keeps a stash rooted at an explicitly configured scoped view', async () => {
+    const team = storage.namespace('team')
+    const sessionManager = new SessionManager({
+      sessionId: 'test-session',
+      storage: { snapshot: snapshotStorage },
+    })
+    const agent = new Agent({
+      model: {} as any,
+      contextManager: { stash: { storage: team } },
+      sessionManager,
+      printer: false,
+    })
+    await agent.initialize()
+    await agent.contextManager!.stash!.store('tool-1', 0, new TextEncoder().encode('{}'))
+    await team.write('from-another-session_0', new TextEncoder().encode('{"text":"keep"}'))
+
+    await sessionManager.deleteSession()
+
+    expect(await team.list('')).toStrictEqual(['from-another-session_0', 'tool-1_0'])
+  })
+
+  it('deleteSession with a scoped agent storage removes only this session', async () => {
+    const tenant = storage.namespace('tenant')
+    await tenant.write('memory/prefs.json', new TextEncoder().encode('{}'))
+    const sessionManager = new SessionManager({
+      sessionId: 'test-session',
+      storage: { snapshot: snapshotStorage },
+    })
+    const agent = new Agent({
+      model: {} as any,
+      storage: tenant,
+      contextManager: {},
+      sessionManager,
+      printer: false,
+    })
+    await agent.initialize()
+    await agent.contextManager!.stash!.store('tool-1', 0, new TextEncoder().encode('{}'))
+    expect(await tenant.list(`${STASH_PREFIX}/test-session/scopes/agent/${agent.id}/`)).not.toStrictEqual([])
+
+    await sessionManager.deleteSession()
+
+    expect(await storage.list('')).toStrictEqual(['tenant/memory/prefs.json'])
+  })
 })
 
 // ---------------------------------------------------------------------------

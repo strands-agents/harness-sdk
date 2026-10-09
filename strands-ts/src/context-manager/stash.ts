@@ -8,7 +8,7 @@
  * @internal
  */
 
-import { namespace as namespaceStorage, type Storage } from '../storage/storage.js'
+import { NAMESPACED, namespace as namespaceStorage, type Storage } from '../storage/storage.js'
 import { Message, ToolResultBlock, ToolUseBlock, CachePointBlock, ReasoningBlock } from '../types/messages.js'
 import type { ContentBlock } from '../types/messages.js'
 import type { JSONValue } from '../types/json.js'
@@ -32,6 +32,17 @@ export function formatStashRefs(refs: string[]): string {
   return ` [refs: ${refs.join(', ')}]`
 }
 
+/** Use a caller-scoped view as the exact stash root when allowed; otherwise namespace per session and agent. */
+function resolveStashNamespace(
+  storage: Storage,
+  sessionId: string,
+  agentId: string,
+  customStashNamespace: boolean
+): Storage {
+  if (customStashNamespace && NAMESPACED in storage) return storage
+  return namespaceStorage(storage, `${STASH_PREFIX}/${sessionId}/scopes/agent/${agentId}`)
+}
+
 /**
  * Wraps a Storage backend with key management and content framing for the
  * ContextManager's L1 stash.
@@ -46,10 +57,10 @@ export class Stash {
   /** Name of the base storage constructor, for diagnostic logging. */
   readonly storageTypeName: string
 
-  constructor(storage: Storage, sessionId: string, agentId: string) {
+  constructor(storage: Storage, sessionId: string, agentId: string, options?: { customStashNamespace?: boolean }) {
     this._baseStorage = storage
     this._sessionId = sessionId
-    this._storage = namespaceStorage(storage, `${STASH_PREFIX}/${sessionId}/scopes/agent/${agentId}`)
+    this._storage = resolveStashNamespace(storage, sessionId, agentId, options?.customStashNamespace ?? false)
     this.storageTypeName = storage.constructor.name || 'unknown'
   }
 
@@ -154,9 +165,15 @@ export class Stash {
    *
    * Unlike {@link clear}, which is scoped to this agent's namespace,
    * this scans `context/<sessionId>/` on the base storage to catch data
-   * from every agent that wrote to the session.
+   * from every agent that wrote to the session. A stash rooted at a
+   * caller-scoped view is shared beyond this session, so its data is left
+   * to the caller.
    */
   async clearSession(): Promise<void> {
+    if (this._storage === this._baseStorage) {
+      logger.debug(`session_id=<${this._sessionId}> | skipping stash deletion, stash is caller-scoped`)
+      return
+    }
     const prefix = `${STASH_PREFIX}/${this._sessionId}/`
     const keys = await this._baseStorage.list(prefix)
     await Promise.all(keys.map((key) => this._baseStorage.delete(key)))
