@@ -7,9 +7,8 @@ import pytest
 
 import strands
 from strands import Agent, Plugin
-from strands._middleware.stages import ExecuteToolContext, ExecuteToolStage
-from strands._middleware.types import MiddlewareResult
 from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent
+from strands.middleware.stages import ExecuteToolContext, ExecuteToolResult, ExecuteToolStage
 from strands.types._events import ToolInterruptEvent, ToolResultEvent, ToolStreamEvent
 from strands.types.tools import ToolContext
 from tests.fixtures.mock_hook_provider import MockHookProvider
@@ -49,7 +48,7 @@ def test_wrap_passthrough_does_not_alter_behavior(agent):
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, passthrough)
+    agent.add_middleware(ExecuteToolStage, passthrough)
     result = agent("what is 2+2?")
     assert result.message["content"][0]["text"] == "The answer is 4."
 
@@ -62,7 +61,7 @@ def test_wrap_handler_receives_execute_tool_context(agent):
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, capture)
+    agent.add_middleware(ExecuteToolStage, capture)
     agent("what is 2+2?")
 
     assert len(received_contexts) == 1
@@ -100,7 +99,7 @@ def test_wrap_handler_runs_for_unknown_tool_with_tool_none(calculator_tool):
                 observed_results.append(event)
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, observer)
+    agent.add_middleware(ExecuteToolStage, observer)
     agent("call the ghost")
 
     # Middleware ran and saw the unknown-tool call with tool resolved to None.
@@ -132,7 +131,7 @@ def test_wrap_can_mock_unknown_tool(calculator_tool):
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, mock_missing)
+    agent.add_middleware(ExecuteToolStage, mock_missing)
     agent("call the ghost")
 
     tool_result_messages = [
@@ -158,7 +157,7 @@ def test_wrap_short_circuit_with_cached_result(agent):
             }
         )
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, mock_tool)
+    agent.add_middleware(ExecuteToolStage, mock_tool)
     result = agent("what is 2+2?")
     # The model still produces its scripted final response after seeing the tool result.
     assert result.message["content"][0]["text"] == "The answer is 4."
@@ -179,8 +178,8 @@ def test_wrap_multiple_middleware_compose_correctly(agent):
             yield event
         order.append("inner_after")
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, outer)
-    agent._middleware_registry.add_middleware(ExecuteToolStage, inner)
+    agent.add_middleware(ExecuteToolStage, outer)
+    agent.add_middleware(ExecuteToolStage, inner)
     agent("what is 2+2?")
 
     assert order == ["outer_before", "inner_before", "inner_after", "outer_after"]
@@ -212,7 +211,7 @@ def test_wrap_tool_error_surfaces_as_error_result():
                 observed_results.append(event)
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, error_observer)
+    agent.add_middleware(ExecuteToolStage, error_observer)
     agent("do something")
 
     assert len(observed_results) == 1
@@ -254,7 +253,7 @@ def test_raw_tool_exception_reaches_middleware_as_result_not_exception(calculato
             caught_in_middleware = True
             raise
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, error_observer)
+    agent.add_middleware(ExecuteToolStage, error_observer)
     agent("go")
 
     assert not caught_in_middleware
@@ -278,8 +277,8 @@ def test_input_transforms_tool_context(agent):
         modified_tool_use = {**context.tool_use, "input": {"expression": "3+3"}}
         return replace(context, tool_use=modified_tool_use)
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage.Input, modify_input)
-    agent._middleware_registry.add_middleware(ExecuteToolStage, capture)
+    agent.add_middleware(ExecuteToolStage.Input, modify_input)
+    agent.add_middleware(ExecuteToolStage, capture)
     agent("what is 2+2?")
 
     assert received_input == {"expression": "3+3"}
@@ -322,8 +321,8 @@ def test_input_rewriting_tool_use_id_stays_consistent_across_events(calculator_t
                 result_ids.append(event.tool_result["toolUseId"])
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage.Input, rewrite_id)
-    agent._middleware_registry.add_middleware(ExecuteToolStage, capture_ids)
+    agent.add_middleware(ExecuteToolStage.Input, rewrite_id)
+    agent.add_middleware(ExecuteToolStage, capture_ids)
     agent("go")
 
     # Every stream-wrapped and result event carries the rewritten id — none desync to the
@@ -355,7 +354,7 @@ def test_context_transform_modified_input_reaches_tool():
         modified_tool_use = {**context.tool_use, "input": {"value": "modified"}}
         return replace(context, tool_use=modified_tool_use)
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage.Input, modify_input)
+    agent.add_middleware(ExecuteToolStage.Input, modify_input)
     agent("test")
 
     assert received_args == [{"value": "modified"}]
@@ -365,31 +364,30 @@ def test_context_transform_modified_input_reaches_tool():
 
 
 def test_output_transforms_tool_result(agent):
-    """Output handler receives a MiddlewareResult wrapping the ToolResultEvent and can transform it."""
-    transformed: list[MiddlewareResult] = []
+    """Output handler receives an ExecuteToolResult wrapping the ToolResultEvent and can transform it."""
+    transformed: list[ExecuteToolResult] = []
 
     def output_handler(result):
         transformed.append(result)
-        # result.value is the ToolResultEvent
-        new_tool_result = {**result.value.tool_result, "content": [{"text": "intercepted"}]}
-        return result.replace(value=ToolResultEvent(new_tool_result))
+        new_tool_result = {**result.result.tool_result, "content": [{"text": "intercepted"}]}
+        return ExecuteToolResult(result=ToolResultEvent(new_tool_result))
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage.Output, output_handler)
+    agent.add_middleware(ExecuteToolStage.Output, output_handler)
     agent("what is 2+2?")
 
     assert len(transformed) == 1
-    assert isinstance(transformed[0], MiddlewareResult)
-    assert transformed[0].value.tool_result["content"] == [{"text": "4"}]
+    assert isinstance(transformed[0], ExecuteToolResult)
+    assert transformed[0].result.tool_result["content"] == [{"text": "4"}]
 
 
 def test_output_transformed_result_reaches_conversation(agent):
     """The transformed Output result is what lands in the conversation history."""
 
     def output_handler(result):
-        new_tool_result = {**result.value.tool_result, "content": [{"text": "intercepted"}]}
-        return result.replace(value=ToolResultEvent(new_tool_result))
+        new_tool_result = {**result.result.tool_result, "content": [{"text": "intercepted"}]}
+        return ExecuteToolResult(result=ToolResultEvent(new_tool_result))
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage.Output, output_handler)
+    agent.add_middleware(ExecuteToolStage.Output, output_handler)
     agent("what is 2+2?")
 
     tool_result_messages = [
@@ -420,7 +418,7 @@ def test_hooks_fire_outside_middleware(model, calculator_tool):
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, check_middleware)
+    agent.add_middleware(ExecuteToolStage, check_middleware)
     agent("what is 2+2?")
     assert middleware_saw_before_hook
 
@@ -438,7 +436,7 @@ def test_after_tool_call_event_fires_after_middleware(model, calculator_tool):
             yield event
         middleware_completed = True
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, tracker)
+    agent.add_middleware(ExecuteToolStage, tracker)
     agent("what is 2+2?")
 
     assert middleware_completed
@@ -456,7 +454,7 @@ def test_hooks_fire_when_middleware_short_circuits(model, calculator_tool):
             {"toolUseId": context.tool_use["toolUseId"], "status": "success", "content": [{"text": "4"}]}
         )
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, cached)
+    agent.add_middleware(ExecuteToolStage, cached)
     agent("what is 2+2?")
 
     _, events = hook_provider.get_events()
@@ -477,7 +475,7 @@ def test_after_tool_call_receives_middleware_result_on_short_circuit(model, calc
             }
         )
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, cached)
+    agent.add_middleware(ExecuteToolStage, cached)
     agent("what is 2+2?")
 
     _, events = hook_provider.get_events()
@@ -515,7 +513,7 @@ def test_short_circuit_tool_not_called(calculator_tool):
             {"toolUseId": context.tool_use["toolUseId"], "status": "success", "content": [{"text": "2"}]}
         )
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, cached)
+    agent.add_middleware(ExecuteToolStage, cached)
     agent("calc")
     assert not tool_called
 
@@ -544,7 +542,7 @@ def test_context_transform_does_not_mutate_original():
         async for event in next_fn(modified):
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, mutating_middleware)
+    agent.add_middleware(ExecuteToolStage, mutating_middleware)
     agent("test")
 
     assert len(original_contexts) == 1
@@ -571,7 +569,7 @@ def test_short_circuit_result_appears_in_conversation(calculator_tool):
             }
         )
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, cached)
+    agent.add_middleware(ExecuteToolStage, cached)
     agent("calc")
 
     tool_result_messages = [
@@ -611,7 +609,7 @@ def test_caching_plugin_use_case():
             self._cache: dict[str, dict] = {}
 
         def init_agent(self, agent):
-            agent._middleware_registry.add_middleware(ExecuteToolStage, self._middleware)
+            agent.add_middleware(ExecuteToolStage, self._middleware)
 
         async def _middleware(self, context, next_fn):
             key = f"{context.tool_use['name']}:{context.tool_use['input']}"
@@ -711,7 +709,7 @@ def test_cancel_tool_bypasses_middleware(calculator_tool):
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, observer)
+    agent.add_middleware(ExecuteToolStage, observer)
     agent("calc")
 
     # Cancellation happens before the middleware chain is invoked.
@@ -754,7 +752,7 @@ def test_shallow_copy_protects_tool_use_top_level_keys():
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, clobber)
+    agent.add_middleware(ExecuteToolStage, clobber)
     agent("go")
 
     # The after-hook (fed by the executor's own tool_use) still sees the real name.
@@ -763,7 +761,7 @@ def test_shallow_copy_protects_tool_use_top_level_keys():
 
 def test_output_handler_not_invoked_on_tool_interrupt(calculator_tool):
     """A tool-originated interrupt bypasses the Output handler (it has no result)."""
-    output_calls: list[MiddlewareResult] = []
+    output_calls: list[ExecuteToolResult] = []
 
     @strands.tool(name="interrupting_tool", context=True)
     def interrupting_tool(tool_context) -> str:
@@ -790,8 +788,8 @@ def test_output_handler_not_invoked_on_tool_interrupt(calculator_tool):
                 seen_interrupt_events.append(event)
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, observer)
-    agent._middleware_registry.add_middleware(ExecuteToolStage.Output, output_handler)
+    agent.add_middleware(ExecuteToolStage, observer)
+    agent.add_middleware(ExecuteToolStage.Output, output_handler)
 
     result = agent("go")
     assert result.stop_reason == "interrupt"
@@ -826,7 +824,7 @@ def test_invocation_state_is_shared_by_reference(calculator_tool):
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, setter)
+    agent.add_middleware(ExecuteToolStage, setter)
     agent("go")
 
     assert seen_in_tool["marker"] == "set_by_middleware"
@@ -860,7 +858,7 @@ def test_in_place_input_mutation_leaks_to_tool():
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, mutate_input)
+    agent.add_middleware(ExecuteToolStage, mutate_input)
     agent("go")
 
     assert received_values == ["mutated"]
@@ -898,7 +896,7 @@ def test_wrap_yielding_no_result_surfaces_actionable_error(calculator_tool):
 
     # Observer is outermost so it sees the error result the executor produces on the retry-less
     # failure path; swallow_result is the inner handler that drops the result.
-    agent._middleware_registry.add_middleware(ExecuteToolStage, swallow_result)
+    agent.add_middleware(ExecuteToolStage, swallow_result)
     agent("go")
 
     tool_result_messages = [
@@ -934,7 +932,7 @@ def test_middleware_observes_but_cannot_replace_cancel_signal():
         async for event in next_fn(replace(context, cancel_signal=replacement)):
             yield event
 
-    agent._middleware_registry.add_middleware(ExecuteToolStage, replace_signal)
+    agent.add_middleware(ExecuteToolStage, replace_signal)
     agent("use the probe tool")
 
     assert observed_signals == [agent.cancel_signal]

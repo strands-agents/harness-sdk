@@ -2,8 +2,6 @@
  * A stage token that identifies a middleware interception point.
  * Stages are created via `createStage()` and carry their Context/Event/Result types
  * as generics, enabling full type inference at registration sites.
- *
- * Third parties can create custom stages — the SDK does not maintain a closed set.
  */
 export interface MiddlewareStage<TContext, TResult, TEvent> {
   /** Human-readable name for debugging and logging. */

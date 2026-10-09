@@ -2,13 +2,23 @@
 
 import asyncio
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from typing import Any
 
 import pytest
 
-from strands._middleware.registry import MiddlewareRegistry
-from strands._middleware.types import MiddlewareResult, MiddlewareStage
 from strands.interrupt import Interrupt, InterruptException
+from strands.middleware._registry import MiddlewareRegistry
+from strands.middleware.types import MiddlewareStage
+
+
+class _Done(str):
+    """The fake stage's result event: a string the registry can recognize by type."""
+
+
+@dataclass
+class _DoneResult:
+    result: _Done
 
 
 @pytest.fixture
@@ -18,16 +28,16 @@ def registry():
 
 @pytest.fixture
 def stage():
-    return MiddlewareStage[dict, str, str](name="test")
+    return MiddlewareStage[dict, _DoneResult, str](name="test", result_type=_DoneResult, result_event=_Done)
 
 
-def _make_terminal(*events: Any, result: Any = "terminal_result"):
+def _make_terminal(*events: Any, result: str = "terminal_result"):
     """Create a terminal that yields events then a final result event."""
 
     async def terminal(context: Any) -> AsyncGenerator[Any, None]:
         for event in events:
             yield event
-        yield result
+        yield _Done(result)
 
     return terminal
 
@@ -90,7 +100,7 @@ async def test_wrap_context_modification_reaches_terminal(registry, stage, alist
 
     async def terminal(context):
         received_context.update(context)
-        yield "done"
+        yield _Done("done")
 
     async def modifier(context, next_fn):
         async for event in next_fn({**context, "added": True}):
@@ -108,11 +118,11 @@ async def test_wrap_short_circuit_skips_terminal(registry, stage, alist):
     async def terminal(context):
         nonlocal terminal_called
         terminal_called = True
-        yield "should not reach"
+        yield _Done("should not reach")
 
     async def short_circuit(context, next_fn):
         yield "cached_event"
-        yield "cached_result"
+        yield _Done("cached_result")
 
     registry.add_middleware(stage, short_circuit)
     *events, result = await alist(registry.invoke(stage, {}, terminal))
@@ -164,7 +174,7 @@ async def test_wrap_retry_calls_next_multiple_times(registry, stage, alist):
         if call_count < 3:
             raise ValueError("not yet")
         yield "success"
-        yield "done"
+        yield _Done("done")
 
     async def retry_middleware(context, next_fn):
         for attempt in range(3):
@@ -241,7 +251,7 @@ async def test_input_transforms_context(registry, stage, alist):
 
     async def terminal(context):
         received_context.update(context)
-        yield "done"
+        yield _Done("done")
 
     def input_handler(context):
         return {**context, "injected": True}
@@ -257,7 +267,7 @@ async def test_input_async_handler(registry, stage, alist):
 
     async def terminal(context):
         received_context.update(context)
-        yield "done"
+        yield _Done("done")
 
     async def async_input(context):
         return {**context, "async": True}
@@ -273,7 +283,7 @@ async def test_input_runs_before_wrap(registry, stage, alist):
 
     async def terminal(context):
         order.append(f"terminal(injected={context.get('injected')})")
-        yield "done"
+        yield _Done("done")
 
     def input_handler(context):
         order.append("input")
@@ -297,7 +307,7 @@ async def test_input_multiple_compose_in_order(registry, stage, alist):
 
     async def terminal(context):
         received_context.update(context)
-        yield "done"
+        yield _Done("done")
 
     def first_input(context):
         return {**context, "first": True}
@@ -319,7 +329,7 @@ async def test_input_multiple_compose_in_order(registry, stage, alist):
 @pytest.mark.asyncio
 async def test_output_transforms_result(registry, stage, alist):
     def output_handler(result):
-        return result.replace(value=result.value + "_transformed")
+        return _DoneResult(result=_Done(result.result + "_transformed"))
 
     registry.add_middleware(stage.Output, output_handler)
     terminal = _make_terminal(result="original")
@@ -328,7 +338,7 @@ async def test_output_transforms_result(registry, stage, alist):
 
 
 @pytest.mark.asyncio
-async def test_output_receives_middleware_result_wrapper(registry, stage, alist):
+async def test_output_receives_stage_result_wrapper(registry, stage, alist):
     received = []
 
     def output_handler(result):
@@ -338,15 +348,13 @@ async def test_output_receives_middleware_result_wrapper(registry, stage, alist)
     registry.add_middleware(stage.Output, output_handler)
     terminal = _make_terminal(result="original")
     await alist(registry.invoke(stage, {}, terminal))
-    assert len(received) == 1
-    assert isinstance(received[0], MiddlewareResult)
-    assert received[0].value == "original"
+    assert received == [_DoneResult(result=_Done("original"))]
 
 
 @pytest.mark.asyncio
 async def test_output_async_handler(registry, stage, alist):
     async def async_output(result):
-        return result.replace(value=result.value + "_async")
+        return _DoneResult(result=_Done(result.result + "_async"))
 
     registry.add_middleware(stage.Output, async_output)
     terminal = _make_terminal(result="base")
@@ -357,7 +365,7 @@ async def test_output_async_handler(registry, stage, alist):
 @pytest.mark.asyncio
 async def test_output_does_not_affect_events(registry, stage, alist):
     def output_handler(result):
-        return result.replace(value="transformed")
+        return _DoneResult(result=_Done("transformed"))
 
     registry.add_middleware(stage.Output, output_handler)
     terminal = _make_terminal("e1", "e2", result="original")
@@ -378,7 +386,7 @@ async def test_output_runs_after_wrap(registry, stage, alist):
 
     def output_handler(result):
         order.append("output")
-        return result.replace(value=result.value + "_out")
+        return _DoneResult(result=_Done(result.result + "_out"))
 
     registry.add_middleware(stage.Output, output_handler)
     registry.add_middleware(stage, wrap_handler)
@@ -389,13 +397,13 @@ async def test_output_runs_after_wrap(registry, stage, alist):
 
 
 @pytest.mark.asyncio
-async def test_output_handler_must_return_middleware_result(registry, stage, alist):
+async def test_output_handler_must_return_stage_result_type(registry, stage, alist):
     def bad_handler(result):
-        return result.value  # returns raw value instead of MiddlewareResult
+        return result.result
 
     registry.add_middleware(stage.Output, bad_handler)
     terminal = _make_terminal(result="base")
-    with pytest.raises(TypeError, match="Output handler must return a MiddlewareResult"):
+    with pytest.raises(TypeError, match="Output handler must return _DoneResult, got _Done"):
         await alist(registry.invoke(stage, {}, terminal))
 
 
@@ -419,79 +427,42 @@ async def test_output_handler_not_called_when_chain_yields_nothing(registry, sta
     assert not called
 
 
-class _FakeInterruptEvent:
-    """Minimal InterruptControlEvent: a control-flow signal, never a stage result."""
-
-    is_interrupt = True
-
-
 @pytest.mark.asyncio
-async def test_output_handler_skipped_when_chain_halts_on_interrupt(registry, stage, alist):
-    """An interrupt control event means no result — the Output handler must not run."""
-    called = False
-
-    def output_handler(result):
-        nonlocal called
-        called = True
-        return result
-
-    interrupt = _FakeInterruptEvent()
-
-    async def terminal(context):
-        yield interrupt  # halts immediately; no result event
-
-    registry.add_middleware(stage.Output, output_handler)
-    events = await alist(registry.invoke(stage, {}, terminal))
-
-    assert events == [interrupt]
-    assert not called
-
-
-@pytest.mark.asyncio
-async def test_output_handler_not_fed_buffered_event_when_halting_on_interrupt(registry, stage, alist):
-    """A non-result event buffered before an interrupt is forwarded, never treated as the result."""
+async def test_output_handler_skipped_when_chain_yields_no_result_event(registry, stage, alist):
+    """Events that are not the stage's result event flow through and never reach the handler."""
     received: list[Any] = []
 
     def output_handler(result):
-        received.append(result.value)
+        received.append(result)
         return result
 
-    interrupt = _FakeInterruptEvent()
-
     async def terminal(context):
-        yield "stream_chunk"  # a non-result event buffered by the Output adapter
-        yield interrupt  # then the chain halts
+        yield "stream_chunk"
+        yield "halted"
 
     registry.add_middleware(stage.Output, output_handler)
     events = await alist(registry.invoke(stage, {}, terminal))
 
-    # Both events flow through in order; the buffered chunk is never handed to the handler.
-    assert events == ["stream_chunk", interrupt]
+    assert events == ["stream_chunk", "halted"]
     assert received == []
 
 
 @pytest.mark.asyncio
-async def test_output_forwards_trailing_event_after_interrupt_without_transforming(registry, stage, alist):
-    """An event trailing an interrupt is forwarded untransformed, never treated as the result."""
-    received: list[Any] = []
+async def test_output_transforms_result_event_wherever_it_appears(registry, stage, alist):
+    """The result event is selected by type, so events after it are forwarded untransformed."""
 
     def output_handler(result):
-        received.append(result.value)
-        return result
-
-    interrupt = _FakeInterruptEvent()
+        return _DoneResult(result=_Done(result.result + "_out"))
 
     async def terminal(context):
-        yield "before"  # buffered
-        yield interrupt  # halts; buffered "before" is flushed
-        yield "after"  # trailing event once already interrupted
+        yield "before"
+        yield _Done("result")
+        yield "after"
 
     registry.add_middleware(stage.Output, output_handler)
     events = await alist(registry.invoke(stage, {}, terminal))
 
-    # All three flow through in order; the Output handler never runs (no result to transform).
-    assert events == ["before", interrupt, "after"]
-    assert received == []
+    assert events == ["before", "result_out", "after"]
 
 
 # --- error propagation ---
@@ -576,7 +547,7 @@ async def test_chained_context_modification_across_wrap_handlers(registry, stage
 
     async def terminal(context):
         received_context.update(context)
-        yield "done"
+        yield _Done("done")
 
     async def add_a(context, next_fn):
         async for event in next_fn({**context, "a": True}):

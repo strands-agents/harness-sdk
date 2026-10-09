@@ -670,13 +670,13 @@ class _ModelProbe(Plugin):
         self.seen = None
 
     def init_agent(self, agent):
-        from strands._middleware.stages import InvokeModelStage
+        from strands.middleware.stages import InvokeModelStage
 
         def record(context):
             self.seen = context.model
             return context
 
-        agent._middleware_registry.add_middleware(InvokeModelStage.Input, record)
+        agent.add_middleware(InvokeModelStage.Input, record)
 
 
 def test_routing_runs_before_other_input_middleware():

@@ -10,7 +10,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 import strands
-import strands._middleware
+import strands.middleware._registry
 import strands.telemetry
 from strands import Agent
 from strands.event_loop._retry import ModelRetryStrategy
@@ -165,7 +165,7 @@ def agent(model, system_prompt, messages, tool_registry, thread_pool, hook_regis
     mock._observe_cancellation = mock._cancel_signal.is_set
     mock._model_state = {}
     mock._system_prompt_content = None
-    mock._middleware_registry = strands._middleware.MiddlewareRegistry()
+    mock._middleware_registry = strands.middleware._registry.MiddlewareRegistry()
     mock._checkpointing = False
     mock._checkpoint = None
     mock._checkpoint_cycle_index = 0
@@ -934,7 +934,7 @@ async def test_request_state_initialization(alist):
     mock_agent._system_prompt_content = None
     mock_agent.system_prompt = None
     mock_agent._model_state = {}
-    mock_agent._middleware_registry = strands._middleware.MiddlewareRegistry()
+    mock_agent._middleware_registry = strands.middleware._registry.MiddlewareRegistry()
     mock_agent.messages = []
     mock_agent.tool_registry.get_all_tool_specs.return_value = []
     mock_agent.event_loop_metrics.start_cycle.return_value = (0, MagicMock())

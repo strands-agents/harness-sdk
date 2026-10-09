@@ -16,11 +16,11 @@ from typing import TYPE_CHECKING, Any
 
 from opentelemetry import trace as trace_api
 
-from .._middleware.stages import InvokeModelContext, InvokeModelStage
 from ..agent import _continuation
 from ..experimental.checkpoint import Checkpoint, CheckpointPosition
 from ..hooks import AfterModelCallEvent, AfterToolsEvent, BeforeModelCallEvent, BeforeToolsEvent
 from ..interrupt import InterruptException, PendingToolExecution
+from ..middleware.stages import InvokeModelContext, InvokeModelStage
 from ..telemetry.metrics import Trace, _total_prompt_tokens
 from ..telemetry.tracer import Tracer, get_tracer
 from ..tools._validator import validate_and_prepare_tools
@@ -299,11 +299,15 @@ async def event_loop_cycle(
                 model_events = _handle_model_execution(
                     agent, cycle_span, cycle_trace, invocation_state, tracer, structured_output_context
                 )
+                stop_event: ModelStopReason | None = None
                 async for model_event in model_events:
-                    if not isinstance(model_event, ModelStopReason):
+                    if isinstance(model_event, ModelStopReason):
+                        stop_event = model_event
+                    else:
                         yield model_event
+                assert stop_event is not None  # _handle_model_execution raises when the chain yields no result
 
-                stop_reason, message, *_ = model_event["stop"]
+                stop_reason, message = stop_event.stop_reason, stop_event.message
                 yield ModelMessageEvent(message=message)
         except Exception as e:
             tracer.end_span_with_error(cycle_span, str(e), e)
@@ -603,18 +607,19 @@ async def _handle_model_execution(
             # chain completes (success only). model_state is intentionally NOT on the context.
             model_state_snapshot = copy.deepcopy(agent._model_state)
 
-            # Run through middleware chain. The last yielded event is ModelStopReason
-            # which serves as both the streaming result event and the middleware result.
-            last_event = None
+            # Run through the middleware chain. The ModelStopReason is the stage result; middleware
+            # may yield other events around it, so it is selected by type and the last one wins.
+            stop_event: ModelStopReason | None = None
             async for event in agent._middleware_registry.invoke(
                 InvokeModelStage,
                 middleware_context,
                 _make_invoke_model_terminal(agent, cycle_span, tracer, model_state_snapshot),
             ):
-                last_event = event
+                if isinstance(event, ModelStopReason):
+                    stop_event = event
                 yield event
 
-            if last_event is None:
+            if stop_event is None:
                 raise RuntimeError(
                     "Middleware chain did not yield a result event. Ensure middleware forwards events from next()."
                 )
@@ -623,8 +628,7 @@ async def _handle_model_execution(
             # (exception propagates and we never reach here), matching TS semantics.
             agent._model_state = model_state_snapshot
 
-            # The last event from the chain is ModelStopReason (the authoritative result)
-            stop_reason, message, usage, metrics = last_event["stop"]
+            stop_reason, message, usage, metrics = stop_event["stop"]
 
             invocation_state.setdefault("request_state", {})
 

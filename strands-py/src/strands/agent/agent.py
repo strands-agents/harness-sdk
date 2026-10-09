@@ -25,6 +25,7 @@ from typing import (
     TypeVar,
     Union,
     cast,
+    overload,
 )
 
 from opentelemetry import trace as trace_api
@@ -50,8 +51,6 @@ if TYPE_CHECKING:
     from .._context_manager.types import ContextManagerConfig
     from ..background_tasks._background_tasks import _BackgroundTasks
     from ..tools import ToolProvider
-from .._middleware import MiddlewareRegistry
-from .._middleware.stages import AgentStreamContext, AgentStreamStage
 from ..handlers.callback_handler import PrintingCallbackHandler, null_callback_handler
 from ..hooks import (
     AfterInvocationEvent,
@@ -69,6 +68,17 @@ from ..interrupt import InterruptException, _InterruptState
 from ..interventions.handler import InterventionHandler
 from ..interventions.registry import InterventionRegistry
 from ..memory import MemoryManager, MemoryManagerConfig
+from ..middleware._agent_stream import AgentStreamContext, AgentStreamStage
+from ..middleware._registry import MiddlewareRegistry
+from ..middleware.types import (
+    MiddlewareHandler,
+    MiddlewareInputHandler,
+    MiddlewareInputPhase,
+    MiddlewareOutputHandler,
+    MiddlewareOutputPhase,
+    MiddlewareStage,
+    MiddlewareWrapPhase,
+)
 from ..models.bedrock import BedrockModel
 from ..models.model import Model, _ModelPlugin
 from ..models.routing import ModelRouter
@@ -135,6 +145,11 @@ async def _link_cancel_signal(external: threading.Event, internal: threading.Eve
 
 # TypeVar for generic structured output
 T = TypeVar("T", bound=BaseModel)
+
+# Stage token generics bound by the add_middleware overloads.
+_MwContext = TypeVar("_MwContext")
+_MwResult = TypeVar("_MwResult")
+_MwEvent = TypeVar("_MwEvent")
 
 
 # Sentinel class and object to distinguish between explicit None and default parameter value
@@ -500,7 +515,7 @@ class Agent(AgentBase, LocalAgent):
         # In agentic mode, surface live token usage to the model so it can decide when to compress.
         if context_manager == "agentic":
             from .._context_manager.modes.agentic.agentic_context import create_token_usage_middleware
-            from .._middleware.stages import InvokeModelStage
+            from ..middleware.stages import InvokeModelStage
 
             self._middleware_registry.add_middleware(InvokeModelStage.Input, create_token_usage_middleware())
 
@@ -1243,6 +1258,74 @@ class Agent(AgentBase, LocalAgent):
         """
         self.hooks.add_callback(event_type, callback, order=order)
 
+    @overload
+    def add_middleware(
+        self,
+        stage_or_phase: MiddlewareInputPhase[_MwContext, _MwResult, _MwEvent],
+        handler: MiddlewareInputHandler[_MwContext],
+    ) -> None: ...
+
+    @overload
+    def add_middleware(
+        self,
+        stage_or_phase: MiddlewareOutputPhase[_MwContext, _MwResult, _MwEvent],
+        handler: MiddlewareOutputHandler[_MwResult],
+    ) -> None: ...
+
+    @overload
+    def add_middleware(
+        self,
+        stage_or_phase: MiddlewareWrapPhase[_MwContext, _MwResult, _MwEvent],
+        handler: MiddlewareHandler[_MwContext, _MwEvent],
+    ) -> None: ...
+
+    @overload
+    def add_middleware(
+        self,
+        stage_or_phase: MiddlewareStage[_MwContext, _MwResult, _MwEvent],
+        handler: MiddlewareHandler[_MwContext, _MwEvent],
+    ) -> None: ...
+
+    def add_middleware(self, stage_or_phase: Any, handler: Any) -> None:
+        """Register a middleware handler for a stage or one of its phases.
+
+        Middleware wraps a stage of the agent run (``InvokeModelStage``, ``ExecuteToolStage``) and
+        can transform its input, transform its result, or wrap execution to retry, cache,
+        short-circuit, or gate it behind a human-in-the-loop interrupt. Regardless of registration
+        order, handlers run Input -> Wrap -> Output, and within a phase the first registered is the
+        outermost. Handlers cannot be removed once registered.
+
+        Args:
+            stage_or_phase: A stage token for the Wrap phase, or one of its ``.Input`` / ``.Output``
+                sub-tokens.
+            handler: A Wrap handler is an async generator ``(context, next_fn)`` that yields events,
+                one of which is the stage's result event. An Input handler is
+                ``(context) -> context`` and an Output handler is ``(result) -> result`` on the
+                stage's result type (e.g. ``InvokeModelResult``); both may be sync or async.
+
+        Example:
+            ```python
+            from strands.middleware import InvokeModelStage
+
+            agent = Agent()
+
+            async def timing(context, next_fn):
+                async for event in next_fn(context):
+                    yield event
+
+            agent.add_middleware(InvokeModelStage, timing)
+
+            def be_concise(context):
+                return context.replace(system_prompt="Be concise.")
+
+            agent.add_middleware(InvokeModelStage.Input, be_concise)
+            ```
+
+        Docs:
+            https://strandsagents.com/docs/user-guide/sdk/agents/middleware/
+        """
+        self._middleware_registry.add_middleware(stage_or_phase, handler)
+
     def __del__(self) -> None:
         """Clean up resources when agent is garbage collected."""
         # __del__ is called even when an exception is thrown in the constructor,
@@ -1556,9 +1639,6 @@ class Agent(AgentBase, LocalAgent):
                 for message in self.messages:
                     _ensure_tracking_id(message)
 
-                if continuation_event is None:
-                    await self._append_messages(*current_messages)
-
                 structured_output_context = StructuredOutputContext(
                     structured_output_model or self._default_structured_output_model,
                     structured_output_prompt=structured_output_prompt or self._structured_output_prompt,
@@ -1704,11 +1784,12 @@ class Agent(AgentBase, LocalAgent):
         """Build the terminal for the AgentStreamStage middleware chain.
 
         The terminal drives the event loop cycle for one invocation pass — the core work the
-        AgentStreamStage middleware wraps. It reads ``invocation_state`` from the context it
-        receives (not a captured value), so an Input/wrap handler that transforms the context
-        via ``dataclasses.replace()`` actually reaches the event loop. It also handles
-        guardrail-driven user-content redaction inline so that behavior runs whether or not
-        middleware is registered.
+        AgentStreamStage middleware wraps. It appends the pass's input and reads
+        ``invocation_state`` from the context it receives (not captured values), so an
+        Input/wrap handler that transforms the context via ``replace()`` reaches history and
+        the event loop, and a handler that short-circuits leaves history untouched. It also
+        handles guardrail-driven user-content redaction inline so that behavior runs whether
+        or not middleware is registered.
 
         Args:
             structured_output_context: Structured output context for this pass.
@@ -1724,7 +1805,9 @@ class Agent(AgentBase, LocalAgent):
         """
 
         async def terminal(ctx: "AgentStreamContext") -> AsyncGenerator[TypedEvent, None]:
-            if continuation_event is not None:
+            if continuation_event is None:
+                await self._append_messages(*ctx.messages)
+            else:
                 messages = _continuation.combine(continuation_event, ctx.messages)
                 await self._append_continuation_messages(messages, continuation_event)
 

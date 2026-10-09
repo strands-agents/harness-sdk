@@ -5,13 +5,22 @@ This implementation follows the behavioral spec defined in `strands-ts/src/middl
 ## Scope
 
 All three stages are implemented: `InvokeModelStage`, `ExecuteToolStage`, and `AgentStreamStage`.
-`AgentStreamStage` is internal (see below), matching the TS SDK.
+`AgentStreamStage` is internal (`strands.middleware._agent_stream`, see "Public surface" below),
+matching the TS SDK.
 
 ## Result encoding
 
 TypeScript uses async generator `return` values propagated via `yield*`. Python async generators cannot `return` values.
 
-Instead, the **last yielded event IS the result**. This matches the existing Python SDK convention where `ModelStopReason` is the last event from `stream_messages()`, `ToolResultEvent` is the last from tool execution, etc. The middleware chain is transparent — events (including the result event) flow through naturally. There is no separate sentinel type.
+Instead, the **result is an event in the stream**, recognized by type: `ModelStopReason` for
+`InvokeModelStage`, `ToolResultEvent` for `ExecuteToolStage`, `EventLoopStopEvent` for the internal
+`AgentStreamStage`. Each stage token records its result event class (`MiddlewareStage.result_event`),
+and the registry's Output adapter and every call site select the result with `isinstance`, so a Wrap
+handler may yield its own events before or after it (the TS spec's "inject events before or after
+the inner chain's events"). When a chain yields more than one result event (a hook-driven retry
+re-running the chain), the last one wins; a chain that yields none raises `RuntimeError` at the call
+site. This matches the existing Python SDK convention where `ModelStopReason` is the last event from
+`stream_messages()` and `ToolResultEvent` the last from tool execution.
 
 Pass-through is:
 ```python
@@ -26,46 +35,35 @@ async def cached(context, next_fn):
     yield ModelStopReason(stop_reason="end_turn", message=cached_msg, usage=usage, metrics=metrics)
 ```
 
-Output phase handlers take and return a `MiddlewareResult` wrapping the result event.
-The registry wraps the result event before calling the handler and unwraps the returned
-wrapper back into the stream, so Wrap handlers and the event-loop integration still see a
-plain result event. Use `result.replace(value=...)` to produce the modified wrapper:
+Wrap handlers see the raw event stream; only **Output** handlers see a wrapper. The registry wraps
+the result event in the stage's result type before calling the handler and yields the returned
+wrapper's `result` back into the stream in its place, so the rest of the chain and the call site
+still see a plain event:
 ```python
-def output_handler(result):  # result: MiddlewareResult
-    stop_reason, message, usage, metrics = result.value["stop"]
-    return result.replace(
-        value=ModelStopReason(stop_reason="custom", message=message, usage=usage, metrics=metrics),
+def output_handler(result: InvokeModelResult) -> InvokeModelResult:
+    event = result.result
+    return InvokeModelResult(
+        result=ModelStopReason(stop_reason="custom", message=event.message, usage=event.usage, metrics=event.metrics),
     )
 ```
 
-Only the **Output** phase uses the wrapper. Wrap and Input handlers deal in raw
-events/contexts.
-
-The wrapper currently holds only `value`. Input already has a wrapper (the context
-dataclass), so `MiddlewareResult` gives Output the same extensibility surface for future
-metadata. Since Python async generators cannot return values, Wrap-phase metadata would
-be yielded as events into the stream rather than attached to a return value. See the TS
-spec ("Metadata transport") for rationale.
-
-If we later want per-stage typed results (e.g., `InvokeModelResult` with named fields
-instead of an opaque `.value`), those can derive from `MiddlewareResult`. Existing Output
-handlers that accept `MiddlewareResult` continue to work; new handlers can narrow to the
-subclass for typed access. This is a two-way door — no migration required.
+TS is symmetric (Wrap handlers return the wrapper too) because its generators carry a return value.
+Python's asymmetry is inherent to the encoding above: Wrap-phase metadata would have to be yielded as
+events, so only the Output wrapper can grow fields later (see the TS spec, "Metadata transport").
 
 ## Per-stage result types
 
-Each stage's result is the last event its chain yields. TypeScript wraps these in named
-result objects (`InvokeModelResult`, `ExecuteToolResult`); Python uses the underlying event
-directly, so there is no equivalent wrapper class:
+Each stage has a result type with a single `result` field, matching the TS `InvokeModelResult` /
+`ExecuteToolResult` / `AgentStreamResult` shape (`MiddlewareStage.result_type`). The field holds
+the stage's result *event* rather than TS's `StreamAggregatedResult` / `ToolResultBlock` /
+`AgentResult`, because the registry has to re-yield it into the stream:
 
-- `InvokeModelStage` → `ModelStopReason` (the last event from `stream_messages()`).
-- `ExecuteToolStage` → `ToolResultEvent` (the last event from tool execution). It already
-  carries both `tool_result` and `exception`, so a separate `ExecuteToolResult` is redundant.
-- `AgentStreamStage` → `EventLoopStopEvent` (the last event from an invocation pass). It carries
-  the full stop tuple (`stop_reason`, `message`, `metrics`, ...) the `AgentResult` is built from,
-  so a separate `AgentStreamResult` is redundant. Since middleware may yield trailing events
-  *after* the stop event, `stream_async` selects the last `EventLoopStopEvent` — not the last
-  event overall — and raises `RuntimeError` if the chain drops it entirely.
+- `InvokeModelStage` → `InvokeModelResult(result: ModelStopReason)`. `ModelStopReason` exposes
+  `stop_reason`, `message`, `usage` and `metrics`, the fields of TS's `StreamAggregatedResult`.
+- `ExecuteToolStage` → `ExecuteToolResult(result: ToolResultEvent)`. The event carries both
+  `tool_result` and `exception`.
+- `AgentStreamStage` → `AgentStreamResult(result: EventLoopStopEvent)` (internal). The event carries
+  the full stop tuple the `AgentResult` is built from.
 
 Short-circuiting a tool call yields a `ToolResultEvent` directly:
 ```python
@@ -97,11 +95,9 @@ the stage result:
   the chain past the Output adapter; `ToolExecutor._stream` catches it and registers the
   interrupt.
 - **Tool-originated** (a `ToolInterruptEvent` from `tool.stream()`, including sub-agent
-  interrupts via `_AgentAsTool`) flows through the chain as a normal event. The Output adapter
-  skips any event matching the `InterruptControlEvent` protocol (a truthy `is_interrupt`) when
-  picking the positional result, so it is never mistaken for the result; `_stream` registers
-  its interrupts and short-circuits. The protocol keeps the stage-agnostic registry from
-  importing tool-specific event types.
+  interrupts via `_AgentAsTool`) flows through the chain as a normal event. It is not the stage's
+  result event, so the Output adapter forwards it untouched and `_stream` registers its interrupts
+  and short-circuits.
 
 Either way `_stream` surfaces a single `ToolInterruptEvent` to the event loop.
 
@@ -150,7 +146,7 @@ is out of scope here. Consumers currently disambiguate by the interrupt id prefi
 
 Unlike `InvokeModelContext`/`ExecuteToolContext`, which mirror their TS counterparts field-for-field
 (modulo `camelCase`↔`snake_case`), `AgentStreamContext` genuinely renames: TS exposes `args` +
-`options`, Python exposes `messages` (the input for this pass, already appended to history) +
+`options`, Python exposes `messages` (the input for this pass, appended by the terminal) +
 `invocation_state` (the per-invocation state dict). The rename reflects what Python's `_run_loop`
 actually threads through the pass. Note this drops the extra fields TS's `options` (`InvokeOptions`)
 carries — `cancel_signal`, structured-output config, `limits` — from the agent-stream context;
@@ -161,38 +157,25 @@ the stage is internal, that surface is not yet finalized.
 via `dataclasses.replace()` does not change the signal the tool receives — the executor hands the
 tool the agent's own signal, not the context's copy (matching TS, where the field is `readonly`).
 
-### Transforming `messages` vs `invocation_state`
+### Transforming `messages` and `invocation_state`
 
-The two agent-stream context fields have **different** transform semantics, and only one is fully
-transformable via `dataclasses.replace()`:
+Both agent-stream context fields are read by the terminal, so both are transformable via `replace()`:
 
-- **`invocation_state`** — fully transformable. The terminal reads `ctx.invocation_state`, so a
-  handler returning `replace(context, invocation_state=...)` reaches the event loop and the model.
-- **`messages`** — shared by reference for **in-place** edits only. Mutating a message in place
-  (`context.messages[0]["content"] = ...`) is visible to the model because those same dict objects
-  are already in `agent.messages`. But `replace(context, messages=[...])` is **silently dropped**:
-  the pass's input messages are appended to `agent.messages` *before* the middleware chain runs,
-  and the terminal streams against `agent.messages`, not `ctx.messages`.
+- **`invocation_state`** — the terminal passes `ctx.invocation_state` to the event loop, so a handler
+  returning `replace(context, invocation_state=...)` reaches the event loop and the model.
+- **`messages`** — the terminal appends `ctx.messages` to `agent.messages` as the pass's input, so a
+  handler returning `replace(context, messages=[...])` decides what enters history and reaches the
+  model. In-place edits work too, since the same dict objects are appended.
 
-This asymmetry is deliberate, and it is a consequence of *when* history is appended, which is a
-lifecycle event — not just a middleware concern. Appending the input fires `MessageAddedEvent`
-**before** the AgentStreamStage chain, and it fires **even when a middleware short-circuits** (the
-user turn always lands in history and hooks always observe it). Moving the append into the terminal
-to make `replace(messages=...)` work would change that hook timing for *every* agent (middleware or
-not) and would stop `MessageAddedEvent` firing on short-circuit — an observable behavior change we
-chose not to make. Middleware that must rewrite the input for the model should mutate `messages` in
-place, or use an `InvokeModelStage` Input handler (whose `messages` *are* transformable via
-`replace()`, since that stage's terminal reads them from the context).
-
-**Divergence from TS.** TypeScript makes the opposite trade-off: it appends the input *inside*
-the chain terminal (`_streamCore` → `_stream` normalizes and appends `ctx.args`), so there a
-`{...ctx, args}` swap *does* reach the model — but as a direct consequence, TS's short-circuit
-does **not** append the user message and does **not** fire its `MessageAddedEvent` (the terminal
-never runs), and that hook fires *inside* the chain rather than before it. Python keeps the append
-before the chain so the user turn and its `MessageAddedEvent` are unconditional (including on
-short-circuit), at the cost of `replace(messages=...)` not being honored. Both SDKs keep
-`AgentStreamStage` internal partly because this input contract is not yet finalized. (In both,
-`BeforeInvocationEvent`/`AfterInvocationEvent` bracket the chain from outside and fire regardless.)
+Appending inside the terminal matches TS (`_streamCore` → `_stream` normalizes and appends
+`ctx.args`) and has the same two consequences: the input's `MessageAddedEvent` fires inside the
+chain (after Input handlers, within a Wrap handler's `next_fn`), and a short-circuit appends nothing,
+so neither the user turn nor a response enters history and no `MessageAddedEvent` fires. Agents with
+no agent-stream middleware observe no difference: the chain is the terminal, so the hook order
+(`BeforeInvocationEvent` → `MessageAddedEvent` → model call) is unchanged. Continuation input
+(`AfterInvocationEvent.resume`) was already appended inside the terminal; the pass-1 input now
+follows the same path. `BeforeInvocationEvent`/`AfterInvocationEvent` bracket the chain from
+outside and fire regardless, in both SDKs.
 
 ## AgentStreamStage interrupt resume
 
@@ -293,19 +276,43 @@ guard for it explicitly.
 
 ## No removal / cleanup
 
-Once registered, middleware cannot be removed. This matches the Python hook system which also does not support removal.
+**Divergence from TS.** TS `addMiddleware` returns a cleanup function and its registry has
+`remove()`. Python `add_middleware` returns `None` and middleware cannot be removed once registered,
+matching the Python hook system, which also does not support removal.
 
-## Private module
+## Public surface
 
-The `_middleware/` package is not part of the public API. Internal consumers access it via `agent._middleware_registry.add_middleware(...)`.
+The `middleware/` package is public. `agent.add_middleware(stage_or_phase, handler)` is the only
+public entry point; it has per-phase `@overload`s that bind the stage token's generics through the
+phase sub-tokens, so an annotated handler's `context`, result, and `next_fn` types are checked at
+the call site (`tests_typing/test_middleware.py`). The handler type aliases (`MiddlewareHandler`,
+`MiddlewareInputHandler`, `MiddlewareOutputHandler`, `MiddlewareNext`) are generic over the same
+type parameters. Python async generators cannot carry a return type, so the Wrap-phase generic omits
+`TResult` (the result is the last yielded event); only Output handlers, which receive the result
+explicitly, are generic over it.
 
-**When this goes public**, `add_middleware` and the handler type aliases should be typed so an
-IDE helps the author: `add_middleware` takes `handler: Any` and every adapter types the context
-as `Any`, so the `MiddlewareStage[TContext, TResult, TEvent]` generics do not currently flow to
-handlers (unlike the TS SDK, whose per-phase overloads give full inference on `context`/result).
-The public surface should add `@overload`s per phase token and bind real generics through the
-phase sub-tokens so context fields, the result type, and the `next_fn` signature are checked
-statically rather than only at runtime.
+Type checkers differ on unannotated lambdas: pyright infers the lambda's parameter from the matched
+overload, while mypy types it as `Any` (its overload resolution does not feed the phase token back
+into lambda inference). Annotated handlers are fully checked by both.
+
+`InvokeModelStage` and `ExecuteToolStage` are exported from `strands.middleware` together with
+their contexts, the per-stage result event types `ModelStopReason` and `ToolResultEvent`, and the
+stream event base `TypedEvent` (the stages' event type parameter), so a fully annotated handler
+such as `MiddlewareHandler[InvokeModelContext, TypedEvent]` needs no private import. This mirrors
+TS exporting `AgentStreamEvent` at the top level.
+`AgentStreamStage`/`AgentStreamContext` stay internal in the private `strands.middleware._agent_stream`
+module because their copy-vs-reference contract is not finalized (see "AgentStreamStage context
+fields" above). TS marks them `@internal` and its typedoc build hides them; the Python API-docs
+generator skips `_`-prefixed modules, so the private module is what keeps them off the generated
+reference. The `MiddlewareRegistry` likewise lives in the private `strands.middleware._registry`
+module and is only reached through `agent._middleware_registry` by the SDK's own executors.
+
+## Custom stages are unsupported
+
+`MiddlewareStage` is exported so handlers and helpers can be annotated, but constructing a stage
+token is unsupported: the SDK only ever invokes `InvokeModelStage`, `ExecuteToolStage`, and the
+internal `AgentStreamStage`, so a user-created token never runs. TS keeps `createStage` out of its
+public API for the same reason; Python cannot export the type without the constructor.
 
 ## Tool exceptions are caught in the terminal
 
@@ -314,6 +321,34 @@ ExecuteToolStage terminal, so middleware always observes a *result*, not a throw
 (matching the TS SDK, which catches in `_executeToolCore`). `InterruptException` is re-raised so
 a tool-raised interrupt still halts. In practice decorated `@tool` tools already self-convert
 their exceptions; this only affects custom `AgentTool`s whose `stream()` raises directly.
+
+Exceptions raised by ExecuteToolStage *middleware* are caught one layer further out, by
+`ToolExecutor._stream`: they too become an error `ToolResult`, `AfterToolCallEvent` fires with the
+`exception`, and the agent keeps running. TS's concurrent executor matches this; its sequential
+executor rethrows.
+
+## Telemetry records post-middleware state
+
+The tool span and the tool metrics are recorded inside the ExecuteToolStage terminal, as the model
+span is inside the InvokeModelStage terminal and as TS's `_executeToolCore` does. So the span
+carries the `tool_use` and the tool spec the tool actually ran with (after `BeforeToolCallEvent`
+rewrites and Input middleware), a hook cancel or a middleware short-circuit records no span and no
+metrics, a background dispatch acknowledgement records nothing (the background run records its own),
+and a hook-driven retry records one span per attempt. Direct `agent.tool.<name>()` calls record no
+tool span, as in TS.
+
+## Direct tool calls run through the chain
+
+`agent.tool.<name>(...)` goes through `ToolExecutor._stream`, so ExecuteToolStage middleware runs
+for direct calls exactly as for model-requested ones. TS bypasses middleware on that path
+(`tool-caller.ts`). A direct call cannot pause for a human, so a middleware `interrupt()` on it
+surfaces as `RuntimeError("cannot raise interrupt in direct tool call")`.
+
+## Interrupting after `next_fn` re-runs the tool
+
+`ExecuteToolContext.interrupt()` called *after* the tool ran discards the tool's result: the
+`InterruptException` unwinds the chain, and on resume the whole tool call executes again. Gate
+before `next_fn`, or make the tool idempotent. The same holds in TS.
 
 ## Unknown tools run through the chain
 
@@ -331,22 +366,30 @@ short-circuiting before the chain. `ExecuteToolContext.tool` is therefore `Agent
 
 Context fields (`messages`, `system_prompt`, `tool_specs`, `tool_choice`) are deep-copied when building the middleware context. `invocation_state` is shared by reference. `model_state` is excluded from the context entirely — middleware cannot access or modify it. The terminal reads it directly from the agent at invocation time.
 
+Model state is snapshotted once per `InvokeModelStage` run, before the chain, and written back
+after the chain completes. Two low-stakes differences from TS: the snapshot is written back even
+when a Wrap handler short-circuits (TS only writes back when its terminal ran), and the one snapshot
+is shared across `next_fn` retries within a run (TS wraps a fresh copy per attempt), so a provider's
+writes during a failed attempt are visible to the retry.
+
 ## Per-call model
 
 `InvokeModelContext.model` is the model the terminal invokes, initialized from `agent.model`. Middleware can point a single call at a different model via `replace()`, without mutating agent state; the terminal streams `context.model`, so the replacement also drives the trace span's `model_id`:
 ```python
-modified = replace(context, model=other_model)
+modified = context.replace(model=other_model)
 ```
 
 ## Context transformation
 
-Middleware creates modified contexts via `dataclasses.replace()`:
+Public contexts (`InvokeModelContext`, `ExecuteToolContext`) expose a typed `.replace()` method
+(following the `datetime.replace()` precedent) so middleware transforms the context without
+importing `dataclasses`:
 ```python
-from dataclasses import replace
-modified = replace(context, system_prompt="Injected")
+modified = context.replace(system_prompt="Injected")
 ```
 
-When this goes public, we should add a typed `.replace()` method to context dataclasses for better discoverability and ergonomics (following `datetime.replace()` precedent).
+`dataclasses.replace(context, ...)` still works and is equivalent; `.replace()` only adds
+discoverability and a typed keyword surface.
 
 ## Generator cleanup
 

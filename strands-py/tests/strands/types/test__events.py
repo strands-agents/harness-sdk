@@ -266,6 +266,7 @@ class TestModelStopReason:
 
         event = ModelStopReason(stop_reason, message, usage, metrics)
         assert event["stop"] == (stop_reason, message, usage, metrics)
+        assert (event.stop_reason, event.message, event.usage, event.metrics) == (stop_reason, message, usage, metrics)
         assert event.is_callback_event is False
 
 

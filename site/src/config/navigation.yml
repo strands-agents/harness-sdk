@@ -338,6 +338,8 @@ sidebar:
             slug: docs/user-guide/sdk/agents/hooks
           - label: "Hook events"
             slug: docs/user-guide/sdk/agents/hooks-events
+          - label: "Middleware"
+            slug: docs/user-guide/sdk/agents/middleware
           - label: "Conversation management"
             slug: docs/user-guide/sdk/agents/conversation-management
           - label: Context management

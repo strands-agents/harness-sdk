@@ -13,8 +13,6 @@ import logging
 from dataclasses import replace
 from typing import Literal
 
-from ...._middleware.stages import InvokeModelContext
-from ...._middleware.types import MiddlewareInputHandler
 from ....agent.conversation_manager.compression.context_compression import (
     MessageType,
     adjust_split_point_for_tool_pairs,
@@ -23,6 +21,8 @@ from ....agent.conversation_manager.compression.context_compression import (
     matches_message_type,
 )
 from ....agent.conversation_manager.compression.pin_message import is_pinned, pin_message, unpin_message
+from ....middleware.stages import InvokeModelContext
+from ....middleware.types import MiddlewareInputHandler
 from ....models._defaults import DEFAULT_CONTEXT_WINDOW_LIMIT
 from ....tools.decorator import tool
 from ....types.content import Message, _ensure_tracking_id

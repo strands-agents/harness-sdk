@@ -6,10 +6,9 @@ from unittest.mock import AsyncMock
 import pytest
 
 from strands import Agent, Plugin
-from strands._middleware.stages import InvokeModelContext, InvokeModelStage
-from strands._middleware.types import MiddlewareResult
 from strands.hooks import AfterModelCallEvent, BeforeModelCallEvent
-from strands.types._events import ModelStopReason
+from strands.middleware.stages import InvokeModelContext, InvokeModelResult, InvokeModelStage
+from strands.types._events import ModelStopReason, TextStreamEvent
 from strands.types.streaming import Metrics, Usage
 from tests.fixtures.mock_hook_provider import MockHookProvider
 from tests.fixtures.mocked_model_provider import MockedModelProvider
@@ -64,6 +63,29 @@ def agent(model):
 # --- add_middleware API ---
 
 
+def test_add_middleware_returns_none(agent):
+    async def passthrough(context, next_fn):
+        async for event in next_fn(context):
+            yield event
+
+    assert agent.add_middleware(InvokeModelStage, passthrough) is None
+
+
+def test_add_middleware_wrap_token_registers_wrap_handler(agent):
+    seen_contexts = []
+
+    async def capture(context, next_fn):
+        seen_contexts.append(context)
+        async for event in next_fn(context):
+            yield event
+
+    agent.add_middleware(InvokeModelStage.Wrap, capture)
+    agent("test")
+
+    assert len(seen_contexts) == 1
+    assert isinstance(seen_contexts[0], InvokeModelContext)
+
+
 # --- wrap phase ---
 
 
@@ -72,7 +94,7 @@ def test_wrap_passthrough_does_not_alter_behavior(agent):
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(InvokeModelStage, passthrough)
+    agent.add_middleware(InvokeModelStage, passthrough)
     result = agent("test")
     assert result.message["content"][0]["text"] == "Hello!"
 
@@ -85,7 +107,7 @@ def test_wrap_handler_receives_invoke_model_context(agent):
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(InvokeModelStage, capture)
+    agent.add_middleware(InvokeModelStage, capture)
     agent("test")
 
     assert len(received_context) == 1
@@ -113,8 +135,8 @@ def test_wrap_context_transformation(agent):
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(InvokeModelStage, inject_prompt)
-    agent._middleware_registry.add_middleware(InvokeModelStage, capture_terminal)
+    agent.add_middleware(InvokeModelStage, inject_prompt)
+    agent.add_middleware(InvokeModelStage, capture_terminal)
     agent("test")
 
     assert transformed_system_prompt == "Injected prompt"
@@ -135,8 +157,8 @@ def test_wrap_context_transformation_tool_specs(agent):
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(InvokeModelStage, modify_specs)
-    agent._middleware_registry.add_middleware(InvokeModelStage, capture)
+    agent.add_middleware(InvokeModelStage, modify_specs)
+    agent.add_middleware(InvokeModelStage, capture)
     agent("test")
 
     assert received_tool_specs == []
@@ -166,7 +188,7 @@ def test_system_prompt_blocks_with_cache_point_preserved_through_middleware():
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(InvokeModelStage, capture)
+    agent.add_middleware(InvokeModelStage, capture)
     agent("test")
 
     # Middleware sees the full content-block form (not the lossy string)
@@ -185,7 +207,7 @@ def test_middleware_transformed_system_prompt_reaches_model():
         async for event in next_fn(modified):
             yield event
 
-    agent._middleware_registry.add_middleware(InvokeModelStage, inject)
+    agent.add_middleware(InvokeModelStage, inject)
     agent("test")
 
     assert model.received_system_prompt == "transformed by middleware"
@@ -202,7 +224,7 @@ def test_context_modification_does_not_mutate_agent_state():
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(InvokeModelStage, mutating_middleware)
+    agent.add_middleware(InvokeModelStage, mutating_middleware)
     agent("test")
 
     # Agent's messages should not contain the injected message from middleware mutation
@@ -223,7 +245,7 @@ def test_wrap_short_circuit_skips_model_call(agent):
             metrics=Metrics(latencyMs=0),
         )
 
-    agent._middleware_registry.add_middleware(InvokeModelStage, cached_response)
+    agent.add_middleware(InvokeModelStage, cached_response)
     result = agent("test")
     assert result.message["content"][0]["text"] == "Cached!"
 
@@ -235,9 +257,38 @@ def test_wrap_yields_nothing_raises_runtime_error(agent):
         if False:
             yield  # noqa: B901
 
-    agent._middleware_registry.add_middleware(InvokeModelStage, silent)
+    agent.add_middleware(InvokeModelStage, silent)
     with pytest.raises(RuntimeError, match="did not yield a result event"):
         agent("test")
+
+
+def test_wrap_trailing_event_after_result_is_not_mistaken_for_the_result(agent):
+    """The ModelStopReason is selected by type, so a Wrap handler may yield events after it."""
+    seen_trailing = []
+
+    async def inject_trailing(context, next_fn):
+        async for event in next_fn(context):
+            yield event
+        yield TextStreamEvent("", "done")
+
+    async def observer(context, next_fn):
+        async for event in next_fn(context):
+            if isinstance(event, TextStreamEvent) and event["data"] == "done":
+                seen_trailing.append(event)
+            yield event
+
+    def output_handler(result):
+        output_handler.received = result.result
+        return result
+
+    agent.add_middleware(InvokeModelStage, observer)
+    agent.add_middleware(InvokeModelStage, inject_trailing)
+    agent.add_middleware(InvokeModelStage.Output, output_handler)
+    result = agent("test")
+
+    assert result.message["content"][0]["text"] == "Hello!"
+    assert len(seen_trailing) == 1
+    assert isinstance(output_handler.received, ModelStopReason)
 
 
 def test_wrap_multiple_middleware_compose_correctly(agent):
@@ -255,8 +306,8 @@ def test_wrap_multiple_middleware_compose_correctly(agent):
             yield event
         order.append("inner_after")
 
-    agent._middleware_registry.add_middleware(InvokeModelStage, outer)
-    agent._middleware_registry.add_middleware(InvokeModelStage, inner)
+    agent.add_middleware(InvokeModelStage, outer)
+    agent.add_middleware(InvokeModelStage, inner)
     agent("test")
 
     assert order == ["outer_before", "inner_before", "inner_after", "outer_after"]
@@ -283,7 +334,7 @@ def test_wrap_error_from_model_propagates_through_middleware():
             caught_error = e
             raise
 
-    agent._middleware_registry.add_middleware(InvokeModelStage, error_catcher)
+    agent.add_middleware(InvokeModelStage, error_catcher)
 
     with pytest.raises(RuntimeError, match="model error"):
         agent("test")
@@ -306,8 +357,8 @@ def test_input_transforms_context(agent):
     def inject_prompt(context):
         return replace(context, system_prompt="From input handler")
 
-    agent._middleware_registry.add_middleware(InvokeModelStage.Input, inject_prompt)
-    agent._middleware_registry.add_middleware(InvokeModelStage, capture)
+    agent.add_middleware(InvokeModelStage.Input, inject_prompt)
+    agent.add_middleware(InvokeModelStage, capture)
     agent("test")
 
     assert received_system_prompt == "From input handler"
@@ -325,8 +376,8 @@ def test_input_async_handler(agent):
     async def async_inject(context):
         return replace(context, system_prompt="Async input")
 
-    agent._middleware_registry.add_middleware(InvokeModelStage.Input, async_inject)
-    agent._middleware_registry.add_middleware(InvokeModelStage, capture)
+    agent.add_middleware(InvokeModelStage.Input, async_inject)
+    agent.add_middleware(InvokeModelStage, capture)
     agent("test")
 
     assert received_system_prompt == "Async input"
@@ -336,22 +387,24 @@ def test_input_async_handler(agent):
 
 
 def test_output_transforms_result(agent):
-    """Output handler receives a MiddlewareResult wrapping the result event and can transform it."""
+    """Output handler receives an InvokeModelResult wrapping the ModelStopReason and can transform it."""
     transformed = []
 
     def output_handler(result):
         transformed.append(result)
-        # result.value is the ModelStopReason event
-        stop_reason, message, usage, metrics = result.value["stop"]
-        return result.replace(
-            value=ModelStopReason(stop_reason="custom_stop", message=message, usage=usage, metrics=metrics),
+        event = result.result
+        return InvokeModelResult(
+            result=ModelStopReason(
+                stop_reason="custom_stop", message=event.message, usage=event.usage, metrics=event.metrics
+            )
         )
 
-    agent._middleware_registry.add_middleware(InvokeModelStage.Output, output_handler)
+    agent.add_middleware(InvokeModelStage.Output, output_handler)
     result = agent("test")
 
     assert len(transformed) == 1
-    assert isinstance(transformed[0], MiddlewareResult)
+    assert isinstance(transformed[0], InvokeModelResult)
+    assert isinstance(transformed[0].result, ModelStopReason)
     assert result.stop_reason == "custom_stop"
 
 
@@ -359,13 +412,15 @@ def test_output_transformed_message_appended_to_history(agent):
     """The message from a transformed Output result is what lands in agent.messages."""
 
     def output_handler(result):
-        stop_reason, message, usage, metrics = result.value["stop"]
+        event = result.result
         rewritten = {"role": "assistant", "content": [{"text": "rewritten by middleware"}]}
-        return result.replace(
-            value=ModelStopReason(stop_reason=stop_reason, message=rewritten, usage=usage, metrics=metrics),
+        return InvokeModelResult(
+            result=ModelStopReason(
+                stop_reason=event.stop_reason, message=rewritten, usage=event.usage, metrics=event.metrics
+            )
         )
 
-    agent._middleware_registry.add_middleware(InvokeModelStage.Output, output_handler)
+    agent.add_middleware(InvokeModelStage.Output, output_handler)
     agent("test")
 
     assistant_messages = [m for m in agent.messages if m["role"] == "assistant"]
@@ -393,12 +448,14 @@ def test_output_stop_reason_change_prevents_tool_dispatch():
     agent = Agent(model=model, tools=[should_not_run], callback_handler=None)
 
     def force_end_turn(result):
-        stop_reason, message, usage, metrics = result.value["stop"]
-        return result.replace(
-            value=ModelStopReason(stop_reason="end_turn", message=message, usage=usage, metrics=metrics),
+        event = result.result
+        return InvokeModelResult(
+            result=ModelStopReason(
+                stop_reason="end_turn", message=event.message, usage=event.usage, metrics=event.metrics
+            )
         )
 
-    agent._middleware_registry.add_middleware(InvokeModelStage.Output, force_end_turn)
+    agent.add_middleware(InvokeModelStage.Output, force_end_turn)
     result = agent("test")
 
     assert result.stop_reason == "end_turn"
@@ -417,7 +474,7 @@ def test_model_state_not_exposed_on_context(agent):
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(InvokeModelStage, capture)
+    agent.add_middleware(InvokeModelStage, capture)
     agent("test")
 
     assert len(captured) == 1
@@ -469,7 +526,7 @@ def test_middleware_mutation_before_next_does_not_reach_model():
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(InvokeModelStage, mutate_before_next)
+    agent.add_middleware(InvokeModelStage, mutate_before_next)
     agent("Hello")
 
     # The model received the pre-middleware snapshot, not the mutated state
@@ -492,7 +549,7 @@ def test_middleware_mutation_after_next_does_not_persist():
         agent._model_state["sneaky"] = "should-be-gone"
         agent._model_state["fromModel"] = "overwritten"
 
-    agent._middleware_registry.add_middleware(InvokeModelStage, mutate_after_next)
+    agent.add_middleware(InvokeModelStage, mutate_after_next)
     agent("Hello")
 
     # Writeback (from the snapshot the model wrote to) overwrites post-next mutations
@@ -520,7 +577,7 @@ def test_before_model_call_fires_before_middleware(model):
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(InvokeModelStage, check_middleware)
+    agent.add_middleware(InvokeModelStage, check_middleware)
     agent("test")
     assert middleware_saw_hook_fired
 
@@ -537,7 +594,7 @@ def test_after_model_call_fires_after_middleware(model):
             yield event
         middleware_completed = True
 
-    agent._middleware_registry.add_middleware(InvokeModelStage, tracking_middleware)
+    agent.add_middleware(InvokeModelStage, tracking_middleware)
     agent("test")
 
     assert middleware_completed
@@ -559,7 +616,7 @@ def test_plugin_can_register_middleware(model):
             self.call_count = 0
 
         def init_agent(self, agent):
-            agent._middleware_registry.add_middleware(InvokeModelStage, self._middleware)
+            agent.add_middleware(InvokeModelStage, self._middleware)
 
         async def _middleware(self, context, next_fn):
             self.call_count += 1
@@ -614,7 +671,7 @@ def test_passthrough_middleware_preserves_result():
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(InvokeModelStage, passthrough)
+    agent.add_middleware(InvokeModelStage, passthrough)
     result = agent("test")
     assert result.stop_reason == "end_turn"
     assert result.message["content"][0]["text"] == "Correct"
@@ -636,7 +693,7 @@ def test_short_circuit_model_not_called(model):
         msg = {"role": "assistant", "content": [{"text": "Cached"}]}
         yield ModelStopReason("end_turn", msg, Usage(**usage), Metrics(**metrics))
 
-    agent._middleware_registry.add_middleware(InvokeModelStage, cached)
+    agent.add_middleware(InvokeModelStage, cached)
     agent("test")
     agent.model.stream.assert_not_called()
 
@@ -654,7 +711,7 @@ def test_hooks_fire_when_middleware_short_circuits(model):
         msg = {"role": "assistant", "content": [{"text": "Cached"}]}
         yield ModelStopReason("end_turn", msg, Usage(**usage), Metrics(**metrics))
 
-    agent._middleware_registry.add_middleware(InvokeModelStage, cached)
+    agent.add_middleware(InvokeModelStage, cached)
     agent("test")
 
     _, events = hook_provider.get_events()
@@ -682,9 +739,9 @@ def test_phase_ordering_at_agent_level(model):
 
     agent = Agent(model=model, callback_handler=None)
     # Register in non-canonical order: output, wrap, input
-    agent._middleware_registry.add_middleware(InvokeModelStage.Output, output_handler)
-    agent._middleware_registry.add_middleware(InvokeModelStage, wrap_handler)
-    agent._middleware_registry.add_middleware(InvokeModelStage.Input, input_handler)
+    agent.add_middleware(InvokeModelStage.Output, output_handler)
+    agent.add_middleware(InvokeModelStage, wrap_handler)
+    agent.add_middleware(InvokeModelStage.Input, input_handler)
 
     agent("test")
     assert order == ["input", "wrap", "output"]
@@ -716,7 +773,7 @@ def test_retry_on_error_use_case():
                 if "ThrottlingException" not in str(e) or attempt == 2:
                     raise
 
-    agent._middleware_registry.add_middleware(InvokeModelStage, retry_middleware)
+    agent.add_middleware(InvokeModelStage, retry_middleware)
     result = agent("test")
     assert result.message["content"][0]["text"] == "Success!"
     assert call_count == 3
@@ -734,7 +791,7 @@ def test_invoke_model_context_exposes_agent_model(agent):
         async for event in next_fn(context):
             yield event
 
-    agent._middleware_registry.add_middleware(InvokeModelStage, capture)
+    agent.add_middleware(InvokeModelStage, capture)
     agent("test")
 
     assert captured == [agent.model]
@@ -750,7 +807,7 @@ def test_terminal_streams_context_model_override():
     def route_to_b(context):
         return replace(context, model=model_b)
 
-    agent._middleware_registry.add_middleware(InvokeModelStage.Input, route_to_b)
+    agent.add_middleware(InvokeModelStage.Input, route_to_b)
     result = agent("test")
 
     assert result.message["content"][0]["text"] == "B"

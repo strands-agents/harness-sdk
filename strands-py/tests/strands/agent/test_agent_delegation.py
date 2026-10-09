@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, PropertyMock
 import pytest
 from pydantic import BaseModel
 
-from strands._middleware.stages import ExecuteToolContext
 from strands.agent._agent_as_tool import DELEGATION_DESCRIPTION_SUFFIX, _AgentAsTool
 from strands.agent._agent_delegation import AgentDelegation, _DelegationState, _to_content_blocks
 from strands.agent.agent import Agent
@@ -19,6 +18,7 @@ from strands.hooks import (
     MessageAddedEvent,
 )
 from strands.interrupt import _InterruptState
+from strands.middleware.stages import ExecuteToolContext
 from strands.session.repository_session_manager import RepositorySessionManager
 from strands.telemetry.metrics import EventLoopMetrics
 from strands.tools.structured_output.structured_output_tool import StructuredOutputTool

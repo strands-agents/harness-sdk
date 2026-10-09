@@ -9,10 +9,10 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from opentelemetry import trace as trace_api
 
-from .._middleware.stages import InvokeModelStage
 from ..hooks.events import MessageAddedEvent
 from ..injection._message_injection import _create_injection_middleware, _is_user_turn
 from ..injection._xml import _escape_xml_attr, _escape_xml_text
+from ..middleware.stages import InvokeModelStage
 from ..plugins.plugin import Plugin
 from ..telemetry.tracer import get_tracer
 from ..tools.decorator import tool
@@ -636,7 +636,7 @@ class MemoryManager(Plugin):
         if config is False:
             return
 
-        agent._middleware_registry.add_middleware(
+        agent.add_middleware(
             InvokeModelStage.Input,
             _create_injection_middleware(
                 lambda context: self._provide_memory_context(context.messages, config),

@@ -192,7 +192,10 @@ class ReasoningSignatureStreamEvent(ModelStreamEvent):
 
 
 class ModelStopReason(TypedEvent):
-    """Event emitted during reasoning signature streaming."""
+    """Final event of a model call, carrying the aggregated response.
+
+    This is the result event of ``InvokeModelStage`` middleware.
+    """
 
     def __init__(
         self,
@@ -204,12 +207,32 @@ class ModelStopReason(TypedEvent):
         """Initialize with the final execution results.
 
         Args:
-            stop_reason: Why the agent execution stopped
+            stop_reason: Why the model stopped generating
             message: Final message from the model
             usage: Usage information from the model
             metrics: Execution metrics and performance data
         """
         super().__init__({"stop": (stop_reason, message, usage, metrics)})
+
+    @property
+    def stop_reason(self) -> StopReason:
+        """Why the model stopped generating."""
+        return cast(StopReason, self["stop"][0])
+
+    @property
+    def message(self) -> Message:
+        """Final message from the model."""
+        return cast(Message, self["stop"][1])
+
+    @property
+    def usage(self) -> Usage:
+        """Usage information from the model."""
+        return cast(Usage, self["stop"][2])
+
+    @property
+    def metrics(self) -> Metrics:
+        """Execution metrics and performance data."""
+        return cast(Metrics, self["stop"][3])
 
     @property
     @override
@@ -391,16 +414,6 @@ class ToolInterruptEvent(TypedEvent):
     def __init__(self, tool_use: ToolUse, interrupts: list[Interrupt]) -> None:
         """Set interrupt in the event payload."""
         super().__init__({"tool_interrupt_event": {"tool_use": tool_use, "interrupts": interrupts}})
-
-    @property
-    def is_interrupt(self) -> bool:
-        """True — this is a control-flow signal, never a stage result.
-
-        Satisfies the ``InterruptControlEvent`` protocol so the middleware Output-phase
-        adapter recognizes an interrupt as never-a-result (see ``_middleware/registry.py``)
-        without the stage-agnostic registry importing tool-specific event types.
-        """
-        return True
 
     @property
     def tool_use_id(self) -> str:

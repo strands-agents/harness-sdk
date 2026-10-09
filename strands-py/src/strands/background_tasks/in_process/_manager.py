@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
 from strands._async import is_run_async_bridge
-from strands._middleware import MiddlewareInterruptResult
 from strands.background_tasks._errors import (
     BackgroundTaskNotFoundError,
     BackgroundTaskTimeoutError,
@@ -21,6 +20,7 @@ from strands.background_tasks._errors import (
 from strands.background_tasks._runtime import get_background_task_runtime
 from strands.background_tasks._types import BackgroundTask, BackgroundTaskInterrupt, is_task_status_terminal
 from strands.interrupt import Interrupt, InterruptException, _InterruptState
+from strands.middleware import MiddlewareInterruptResult
 from strands.types.agent import LocalAgent
 from strands.types.interrupt import InterruptResponse, InterruptResponseContent
 from strands.types.tools import AgentTool, ToolContext, ToolResult, ToolUse
