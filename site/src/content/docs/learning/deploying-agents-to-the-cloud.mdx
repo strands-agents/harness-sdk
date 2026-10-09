@@ -8,231 +8,110 @@ redirectFrom:
 <YouTube id="S_ZRZFDJ6wE" title="Lesson 14: Deploying Agents to the Cloud" />
 *[Watch on YouTube](https://www.youtube.com/watch?v=S_ZRZFDJ6wE&list=PLDzwjhH-4yhU&index=14)*
 
-*Code for this lesson can be found
-[**here**](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/14-deploy).*
+:::note[About this lesson]
+The videos in this course are a snapshot in time. Strands is under active development, so the code featured on this page reflects the most up-to-date patterns, but the concepts covered in the video still apply. When in doubt, trust the code.
+:::
 
-### Deploying Agents to the Cloud
+*Code for this lesson: [`samples/14-deploy`](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/14-deploy)*
 
-So far, everything we've built has been running on a local machine. Now, we are going to
-deploy it to the cloud.
+## From Local to Production
 
-You can package a Strands agent into a container and run it anywhere. In this guide, we
-will deploy it to AWS using **Amazon Bedrock AgentCore**.
+Everything so far has run on a local machine. A Strands agent is just Python, so you can containerize it and run it anywhere. This lesson deploys it to AWS using Amazon Bedrock AgentCore: Runtime for isolated execution, Memory for persistent and long-term recall, and Observability for automatic tracing.
 
-### What is Amazon Bedrock AgentCore?
+![AgentCore Overview](../assets/learning/agentcore-overview.png)
 
-AgentCore is a collection of components designed for building, deploying, and operating AI
-agents in production. It includes capabilities like runtime, memory, gateways,
-observability, identity, and evaluations. You can use these components together or
-independently.
+## Making Your Agent Deployable
 
-For cloud deployment, we focus on three main pieces:
-
-1. **AgentCore Runtime:** The hosting environment for your agent code. It runs agents
-   inside isolated microVMs so that long-running and multi-agent workflows can maintain
-   isolated state across requests.
-2. **AgentCore Memory:** A managed persistent storage and long-term memory retrieval
-   layer.
-3. **AgentCore Observability:** Automated tracing and logging of agent execution.
-
-### Preparing Your Code for Cloud Deployment
-
-Most of the agent code itself stays the same, but we need to add a few cloud-native
-modifications:
-
-#### 1. Importing the Bedrock App Wrapper
-
-At the top of your code, import the Bedrock AgentCore app and instantiate it:
+Wrap the agent in a `BedrockAgentCoreApp` and give it an entrypoint. The agent itself doesn't change; the customer service agent below is the same one built across the previous lessons, with an AgentCore Memory session manager swapped in for persistence:
 
 ```python
+from strands import Agent
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
+from bedrock_agentcore.memory.integrations.strands.config import (
+    AgentCoreMemoryConfig, RetrievalConfig
+)
+from bedrock_agentcore.memory.integrations.strands.session_manager import (
+    AgentCoreMemorySessionManager
+)
 
 app = BedrockAgentCoreApp()
 
+MEMORY_ID = os.environ.get("BEDROCK_AGENTCORE_MEMORY_ID", "")
+
+def create_agent(actor_id: str, session_id: str):
+    # AgentCore Memory for persistence + long-term recall
+    session_manager = None
+    if MEMORY_ID:
+        config = AgentCoreMemoryConfig(
+            memory_id=MEMORY_ID,
+            session_id=session_id,
+            actor_id=actor_id,
+            retrieval_config={
+                "/users/{actorId}/facts": RetrievalConfig(),
+                "/users/{actorId}/preferences": RetrievalConfig(),
+            },
+        )
+        session_manager = AgentCoreMemorySessionManager(
+            agentcore_memory_config=config,
+            region_name="us-east-1",
+        )
+
+    return Agent(
+        tools=[lookup_customer, get_order_history, process_refund],
+        plugins=[AgentSkills(skills=["./skills"]), RefundWorkflowHandler(), tone_handler],
+        system_prompt=SYSTEM_PROMPT,
+        context_manager="auto",
+        session_manager=session_manager,
+    )
 ```
 
-#### 2. Defining the Entry Point Decorator
+📂 [main.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/14-deploy/main.py) · [lambda-deployment/](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/14-deploy/lambda-deployment) (alternative: AWS Lambda)
 
-Add the `@app.entrypoint` decorator to the function handling incoming requests. This
-function receives a request payload dictionary, extracts the prompt, session information,
-and actor ID, runs the agent, and returns a response dictionary:
+The `retrieval_config` namespaces tell AgentCore Memory which long-term memory strategies to pull from on each turn, so the agent recalls facts and preferences about a returning user without replaying old conversations.
 
-```python
-@app.entrypoint
-def invoke(payload):
-    prompt = payload.get("prompt")
-    session_id = payload.get("session_id")
-    actor_id = payload.get("actor_id")
-    
-    # Run agent loop ...
-    return {"response": result}
-
-```
-
-#### 3. Starting the Server
-
-At the bottom of your file, add `app.run()` to launch the web server.
-
-```python
-if __name__ == "__main__":
-    app.run()
-
-```
-
-#### 4. Switching to AgentCore Memory
-
-In the function where you instantiate your agent, construct the `AgentCoreMemoryConfig`
-and pass it into the `AgentCoreMemorySessionManager`. The `session_id` and `actor_id` live
-on the config; long-term memory strategies (semantic, user preference, summary) are
-configured on the memory resource itself when you create it, not here.
-
-```python
-from bedrock_agentcore.memory.integrations.strands.config import AgentCoreMemoryConfig
-from bedrock_agentcore.memory.integrations.strands.session_manager import AgentCoreMemorySessionManager
-
-memory_config = AgentCoreMemoryConfig(
-    memory_id=memory_id,
-    session_id=session_id,
-    actor_id=actor_id,
-)
-
-session_manager = AgentCoreMemorySessionManager(
-    memory_config,
-    region_name="us-east-1",
-)
-
-```
-
-The `AgentCoreMemorySessionManager` connects your agent directly to a managed memory
-resource deployed in AWS. It uses an **actor ID** to identify the user and a **session
-ID** to identify the specific conversation.
-
-This provides persistent conversation history as well as long-term memory retrieval across
-sessions. For example, if a customer had an account issue several conversations ago, the
-agent can recall that information later without being explicitly told again.
-
-The integration pattern is identical to local session managers: you simply swap out the
-session manager implementation when instantiating the agent.
-
-### Deploying the Agent with the CLI
-
-To deploy, you will use the AgentCore Command Line Interface (CLI):
-
-#### Step 1: Install the CLI & Initialize the Project
-
-Ensure you have the CLI installed, then create a new project:
+## Deployment Commands
 
 ```bash
+# Install CLI
+npm install -g @aws/agentcore
+
+# Scaffold project
 agentcore create
 
-```
+# Add memory
+agentcore add memory --name CustomerServiceMemory --strategies SEMANTIC,USER_PREFERENCE
 
-Go through the interactive prompts to bootstrap your project structure, configuration, and
-infrastructure files:
-
-* **Project Name:** `customer-service-agent`
-* **Agent Option:** Yes, add an agent (e.g., `my-agent`).
-* **Source:** Select *"bring my own code"* and accept the defaults pointing to your
-  local files.
-* **Build Type:** Select *direct code deploy*.
-* **Model Provider:** Select *Bedrock*.
-
-This command generates a local directory containing an `app` folder. Drop your customer
-service agent Python files directly into this generated directory.
-
-#### Step 2: Provision Memory Resources
-
-Add memory support to your deployment configuration by running:
-
-```bash
-agentcore add memory --name customer-service-memory
-
-```
-
-During this step, configure long-term strategies for memory extraction like `semantic` and
-`user_preference`.
-
-#### Step 3: Trigger Cloud Deployment
-
-Execute the deployment:
-
-```bash
+# Deploy
 agentcore deploy
 
+# Invoke
+SESSION_ID="<SESSION ID HERE>"
+agentcore invoke --session-id "$SESSION_ID" \
+  '{"prompt": "I need help returning my order", "actor_id": "sarah"}'
 ```
 
-On your first run, this command will take a couple of minutes while AWS provisions the
-underlying infrastructure and deploys the agent to the Bedrock AgentCore Runtime.
+## What AgentCore Provides
 
-### Interacting with the Deployed Agent
+| Component | What It Does |
+| --- | --- |
+| **Runtime** | Isolated microVMs, maintains state across requests |
+| **Memory** | Conversation persistence + semantic long-term recall |
+| **Observability** | Automatic traces, logs, execution telemetry |
+| **Gateway** | Expose APIs as MCP-compatible tools |
+| **Identity** | IAM or OAuth authentication gate |
 
-Once deployed, you can invoke the hosted agent from the command line using `agentcore
-invoke`.
+AgentCore has more capabilities beyond these. See the [AgentCore developer guide](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/what-is-bedrock-agentcore.html) for the full picture.
 
-#### Turn 1: Initiate Request
+## What You Still Need
 
-```bash
-agentcore invoke --session-id "sess-999" --prompt "I need help returning my order."
+The deployed agent is only part of a production architecture. You still need API gateways, rate limiting, retries, security controls, monitoring, and error handling around it. The surrounding architecture matters as much as the agent.
 
-```
+## Resources
 
-*Response:* "I'd be happy to help you with a return. Can you please provide me with your
-customer ID?"
-
-#### Turn 2: Provide Context
-
-Because session history is preserved in AgentCore Memory, you can send subsequent requests
-using the same session ID:
-
-```bash
-agentcore invoke --session-id "sess-999" --prompt "C10001"
-
-```
-
-*Response:* "I was able to find your account. Which order would you like to return: the
-headphones or the USB?"
-
-The runtime handles routing your requests to the active session and retrieving its
-corresponding conversation history, allowing the agent to seamlessly carry state across
-multiple distinct invocations.
-
-### Visualizing Agent Execution: Observability Traces
-
-By including OpenTelemetry (OTel) dependencies in your project, AgentCore automatically
-instruments your code.
-
-If you navigate to the **AgentCore Console** and open your agent's dashboard, you can
-access the Gen AI Observability dashboard. This view allows you to inspect execution
-details:
-
-* **Session View:** Select any session ID to view the list of execution traces.
-* **Trajectory Mapping:** Opening a specific trace displays a visual graph of the
-  execution path. You can trace when the agent started, when the loop executed, when it
-  called various tools, and when it called the model.
-* **Detailed Context:** On the right-hand panel, you can inspect the exact prompts sent,
-  the system instructions injected by your plugins (such as dynamically loaded skills),
-  and the model's exact responses.
-* **Timeline View:** You can drill down into the exact duration metrics for each component
-  span to identify bottlenecks.
-
-### Production Considerations
-
-A deployed agent itself is only one part of an overall production architecture. While
-AgentCore Runtime handles the authentication gate automatically (using IAM or OAuth), a
-real-world system still requires surrounding infrastructure:
-
-* API gateways
-* Rate limiting
-* Retry mechanism
-* Security controls
-* Multi-region error handling
-
-Throughout this course, we have built the orchestration layer for your agent
-harness—handling tools, hooks, steering, multi-agent coordination, and evaluations. In
-this final step, we added the cloud infrastructure layer underneath it. Together, they
-form a complete, production-ready AI agent harness.
-
-All the code from this course is available in the companion GitHub repository. You are now
-ready to compose and scale these systems for your own production use cases!
-
-*Learn more: [Deploying Strands Agents to Amazon Bedrock AgentCore Runtime](/docs/user-guide/deploy/deploy_to_bedrock_agentcore/)*
+- 📖 [Strands Deployment Guide](/docs/user-guide/sdk/deploy/)
+- 📖 [Amazon Bedrock AgentCore Developer Guide](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/what-is-bedrock-agentcore.html)
+- 📖 [AgentCore Runtime](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime.html)
+- 📖 [AgentCore Memory](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/memory.html)
+- 📖 [AgentCore Observability](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/observability.html)
+- 📖 [AgentCore CLI Reference](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/cli-reference.html)
+- 📖 [Blog: What Is an Agent Harness?](https://dev.to/aws/what-is-an-agent-harness-a-hands-on-guide-with-agentcore-harness-1h33)

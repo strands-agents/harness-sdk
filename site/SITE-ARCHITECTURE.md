@@ -20,9 +20,13 @@ We're using [Astro](https://astro.build/) with the [Starlight](https://starlight
 
 ### 2. Route Middleware (`src/route-middleware.ts`)
 
-**What it does:** Filters the sidebar at buildtime so each page only shows items from its top-level group, and applies collapse behavior via `applyCollapse()`. For API pages (Python and TypeScript), it dynamically generates sidebars from the docs collection and computes pagination links.
+**What it does:** Filters the sidebar at buildtime so each page only shows items from its section, and applies collapse behavior via `applyCollapse()`. For API pages (Python and TypeScript), it dynamically generates sidebars from the docs collection and computes pagination links.
 
-**Why:** Our sidebar is organized into top-level groups (User Guide, Community, Examples, etc.). Without this middleware, every page would show the entire sidebar. This middleware scopes the sidebar to the current section, providing a cleaner navigation experience.
+**Why:** The sidebar is organized around products (Strands harness, SDK, Shell, Evals SDK) plus Examples and Community. Without this middleware, every page would show the entire tree. The middleware scopes it to the current section (matched by the longest `basePath` in `navigation.yml`'s `navbar`), so more specific paths win. Each product's sidebar follows the same shape — Get started → Build guides → Run guides → Components → Reference. First-level bands always render open; depth ≥ 1 subgroups collapse by default (see `applyCollapse()`), and no first-level band sets `collapsed:`. The SDK is the largest scope — the SDK concepts, deploy, observability, and safety pages plus the generated API reference (`/docs/api/`) all resolve to it — while Strands harness, Shell, and Evals SDK each scope to their own product pages under `user-guide/`.
+
+**Product scoping, the switcher & hubs:** The scoped sidebar renders as the normal Starlight left rail. On product pages, `Sidebar.astro` leads with a **product switcher** (the current product slug, e.g. `/harness`, opening the full product list) so you can jump products without leaving the rail. The `PageTitle` override (`src/components/overrides/PageTitle.astro`) renders a product's hub page (`currentPath === product.href`) as a lightweight hero (slug eyebrow, H1, tagline, Quickstart CTA) and every other product page with a small slug eyebrow above the H1. The current product is resolved by `currentProduct()` (`src/util/current-product.ts`) using the same longest-`basePath` rule. Products are declared once in `navigation.yml` under `products:` (the single source of truth for the header "Products" dropdown), and per-product `navbar` `basePath` entries drive the scoping. API/Blog/Changelog pages keep their traditional left sidebar.
+
+**Right table of contents:** Disabled globally via `tableOfContents: false` in `astro.config.mjs`, so no page renders the right "On this page" rail.
 
 **Python API sidebar:** When viewing pages under `docs/api/python/`, the middleware uses `buildPythonApiSidebar()` from `src/dynamic-sidebar.ts` to generate a nested sidebar structure based on module names (e.g., `strands.agent.agent` becomes `Agent > Agent`).
 
@@ -417,7 +421,7 @@ The index page (`src/content/docs/api/python/index.mdx`) is a permanent file (no
 ```
 strands.agent.agent      → Agent > Agent
 strands.agent.base       → Agent > Base
-strands.experimental.bidi.types → Experimental > Bidi > Types
+strands.bidi.types       → Bidi > Types
 ```
 
 ### Index Page Component (`src/components/PythonApiList.astro`)
@@ -801,6 +805,8 @@ SITE_DOMAIN=https://strandsagents.com npm run build
 
 Without `SITE_DOMAIN`, links remain relative (e.g. `/user-guide/quickstart/`). With it set, they become absolute (e.g. `https://strandsagents.com/user-guide/quickstart/`).
 
+`SITE_DOMAIN` also sets Astro's `site`, which canonical URLs and every `og:image` and `twitter:image` use. It defaults to `https://strandsagents.com`, so a preview build sets it to the preview's own origin to make share images resolve there.
+
 ## Blog
 
 The blog is a standalone section at `/blog/` with its own content collection, layouts, components, and routes — outside of Starlight's docs collection. It follows the same pattern as the custom landing page: reuses the Starlight header via `BlogLayout.astro` while opting out of the docs chrome (sidebar, table of contents, etc.).
@@ -906,11 +912,11 @@ The blog extends the existing llms.txt system:
 
 ### OG Images
 
-Build-time OG image generation at `/blog/og/[slug].png` using `astro-og-canvas`:
-- 1200×630px images from post title + description
-- Strands branding: dark background (#0E0E0E), Strands green (#00CC5F) left border
+Build-time OG image generation with `satori` + `@resvg/resvg-js`, shared by the site-wide default (`/og-image.png`) and per-post cards (`/blog/og/[slug].png`):
+- 1200×630px images from a title + description
+- Strands branding: dark green-to-black gradient, halftone dot field, wordmark, and frog mark
 
-Implementation: `src/pages/blog/og/[slug].png.ts`
+Implementation: `src/util/og-image.ts` (renderer), `src/pages/og-image.png.ts`, `src/pages/blog/og/[slug].png.ts`
 
 ### robots.txt
 

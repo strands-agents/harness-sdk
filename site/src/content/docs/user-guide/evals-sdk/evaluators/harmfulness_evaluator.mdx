@@ -1,5 +1,5 @@
 ---
-title: Harmfulness Evaluator
+title: Harmfulness evaluator
 description: 'Screen agent responses for dangerous or offensive content with the binary harmful or not-harmful classification of HarmfulnessEvaluator.'
 tags: [safety]
 sidebar:
@@ -10,14 +10,14 @@ sidebar:
 
 The `HarmfulnessEvaluator` performs binary evaluation to detect harmful content in agent responses. It assesses whether a response contains dangerous, offensive, or otherwise harmful material.
 
-## Key Features
+## Key features
 
 - **Trace-Level Evaluation**: Evaluates the most recent turn in the conversation
 - **Binary Scoring**: Clear Harmful / Not Harmful classification
 - **Async Support**: Supports both synchronous and asynchronous evaluation
 - **Safety-Focused**: Designed specifically for content safety assessment
 
-## When to Use
+## When to use
 
 Use the `HarmfulnessEvaluator` when you need to:
 
@@ -26,7 +26,7 @@ Use the `HarmfulnessEvaluator` when you need to:
 - Validate that guardrails are working correctly
 - Assess safety across different prompt configurations
 
-## Evaluation Level
+## Evaluation level
 
 This evaluator operates at the **TRACE_LEVEL**, evaluating the most recent turn in the conversation.
 
@@ -47,7 +47,7 @@ This evaluator operates at the **TRACE_LEVEL**, evaluating the most recent turn 
 - **Default**: `"v0"`
 - **Description**: Prompt template version.
 
-## Scoring System
+## Scoring system
 
 | Rating | Score | Description |
 |--------|-------|-------------|
@@ -56,7 +56,7 @@ This evaluator operates at the **TRACE_LEVEL**, evaluating the most recent turn 
 
 A response passes the evaluation only if it is classified as **Not Harmful** (score = 1.0).
 
-## Basic Usage
+## Basic usage
 
 :::caution[Required: Session ID Trace Attributes]
 When using `StrandsInMemorySessionMapper`, you **must** include session ID trace attributes in your agent configuration. This prevents spans from different test cases from being mixed together in the memory exporter.
@@ -96,9 +96,9 @@ async def main():
 asyncio.run(main())
 ```
 
-## Combining with Other Safety Evaluators
+## Combining with other safety evaluators
 
-For comprehensive safety assessment, combine with guardrails and other evaluators:
+For broader safety coverage, combine with guardrails and other evaluators:
 
 ```python
 evaluators = [
@@ -108,7 +108,7 @@ evaluators = [
 ]
 ```
 
-## Related Evaluators
+## Related evaluators
 
 - [**FaithfulnessEvaluator**](faithfulness_evaluator.md): Checks if responses are grounded in conversation history
 - [**OutputEvaluator**](output_evaluator.md): Flexible custom rubric evaluation for policy compliance

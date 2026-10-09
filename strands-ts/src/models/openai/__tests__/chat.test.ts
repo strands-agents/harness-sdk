@@ -738,6 +738,79 @@ describe('OpenAIModel', () => {
       })
     })
 
+    it('surfaces cacheWriteInputTokens from prompt_tokens_details', async () => {
+      const mockClient = createMockClient(async function* () {
+        yield {
+          choices: [{ delta: { role: 'assistant' }, index: 0 }],
+        }
+        yield {
+          choices: [{ finish_reason: 'stop', delta: {}, index: 0 }],
+        }
+        yield {
+          choices: [],
+          usage: {
+            prompt_tokens: 100,
+            completion_tokens: 20,
+            total_tokens: 120,
+            prompt_tokens_details: { cached_tokens: 64, cache_write_tokens: 40 },
+          },
+        }
+      })
+
+      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      const events = await collectIterator(provider.stream(messages))
+
+      const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
+      expect(metadataEvent).toEqual({
+        type: 'modelMetadataEvent',
+        usage: {
+          inputTokens: 100,
+          outputTokens: 20,
+          totalTokens: 120,
+          cacheReadInputTokens: 64,
+          cacheWriteInputTokens: 40,
+        },
+      })
+    })
+
+    it('omits cacheWriteInputTokens when cache_write_tokens is zero or absent', async () => {
+      const mockClient = createMockClient(async function* () {
+        yield {
+          choices: [{ delta: { role: 'assistant' }, index: 0 }],
+        }
+        yield {
+          choices: [{ finish_reason: 'stop', delta: {}, index: 0 }],
+        }
+        yield {
+          choices: [],
+          usage: {
+            prompt_tokens: 100,
+            completion_tokens: 20,
+            total_tokens: 120,
+            prompt_tokens_details: { cached_tokens: 64, cache_write_tokens: 0 },
+          },
+        }
+      })
+
+      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      const events = await collectIterator(provider.stream(messages))
+
+      const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
+      expect(metadataEvent).toEqual({
+        type: 'modelMetadataEvent',
+        usage: {
+          inputTokens: 100,
+          outputTokens: 20,
+          totalTokens: 120,
+          cacheReadInputTokens: 64,
+        },
+      })
+    })
+
     it('handles usage with undefined properties', async () => {
       const mockClient = createMockClient(async function* () {
         yield {
@@ -767,6 +840,37 @@ describe('OpenAIModel', () => {
           totalTokens: 0,
         },
       })
+    })
+
+    // Guards against https://github.com/strands-agents/harness-sdk/issues/4847: OpenAI-compatible
+    // providers such as OpenRouter send usage on the finish_reason chunk instead of a choice-less chunk.
+    it('emits usage that arrives on the finish_reason chunk', async () => {
+      const mockClient = createMockClient(async function* () {
+        yield {
+          choices: [{ delta: { role: 'assistant' }, index: 0 }],
+        }
+        yield {
+          choices: [{ delta: { content: 'Hi' }, index: 0 }],
+        }
+        yield {
+          choices: [{ finish_reason: 'stop', delta: { content: '' }, index: 0 }],
+          usage: { prompt_tokens: 8, completion_tokens: 6, total_tokens: 14 },
+        }
+      })
+
+      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      const events = await collectIterator(provider.stream(messages))
+
+      expect(events).toEqual([
+        { type: 'modelMessageStartEvent', role: 'assistant' },
+        { type: 'modelContentBlockStartEvent' },
+        { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'Hi' } },
+        { type: 'modelContentBlockStopEvent' },
+        { type: 'modelMetadataEvent', usage: { inputTokens: 8, outputTokens: 6, totalTokens: 14 } },
+        { type: 'modelMessageStopEvent', stopReason: 'endTurn' },
+      ])
     })
 
     it('filters out empty string content deltas', async () => {

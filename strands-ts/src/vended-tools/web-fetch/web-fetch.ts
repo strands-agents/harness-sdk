@@ -42,10 +42,10 @@ export function makeWebFetch(options: MakeWebFetchOptions = {}): ReturnType<type
   const { mode = 'agentic', model: analystModel } = options
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES
   const maxContentChars = options.maxContentChars ?? DEFAULT_MAX_CONTENT_CHARS
-  if (maxBytes <= 0) {
+  if (!Number.isFinite(maxBytes) || maxBytes <= 0) {
     throw new Error(`maxBytes must be a positive number, got ${maxBytes}`)
   }
-  if (maxContentChars <= 0) {
+  if (!Number.isFinite(maxContentChars) || maxContentChars <= 0) {
     throw new Error(`maxContentChars must be a positive number, got ${maxContentChars}`)
   }
 
@@ -83,7 +83,7 @@ export function makeWebFetch(options: MakeWebFetchOptions = {}): ReturnType<type
         throw new Error('web_fetch: agentic mode requires a non-empty prompt.')
       }
 
-      const effectiveModel = analystModel ?? context?.agent.model
+      const effectiveModel = analystModel ?? context?.agent.auxModel
       if (!effectiveModel) {
         throw new Error(
           'web_fetch: agentic mode requires a model. ' + 'Pass model to makeWebFetch or call the tool from an agent.'

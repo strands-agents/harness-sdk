@@ -1,0 +1,112 @@
+---
+title: Hooks
+description: "Register BidiAgent hooks to observe history changes, inspect tool calls, and react to response and connection events."
+sidebar:
+  label: "Hooks"
+languages: [python]
+tags: [bidi-streaming, hooks]
+sourceLinks:
+  - path: strands-py/src/strands/bidi/hooks/events.py
+  - path: strands-py/src/strands/bidi/agent/agent.py
+  - path: strands-py/src/strands/bidi/agent/loop.py
+  - path: strands-py/src/strands/hooks/events.py
+  - path: strands-py/src/strands/hooks/registry.py
+  - path: strands-py/src/strands/types/agent.py
+redirectFrom:
+  - docs/user-guide/sdk/bidirectional-streaming/hooks
+---
+
+Use hooks to run application code when `BidiAgent` updates its conversation history, calls a tool, or restarts its connection. Each callback receives a typed event containing the agent and details about what happened. You can use that information to record activity, update application state, or adjust a tool call before it runs.
+
+Hooks use the same registration system as [Agent hooks](../agents/hooks.mdx). They run as part of the agent's processing, while [stream events](events.mdx) carry output to your application for playback or display.
+
+## Register hooks
+
+This example passes a logger through `BidiAgent`'s `hooks` argument to log when the agent initializes and stops:
+
+```python
+from typing import Any
+
+from strands import LocalAgent
+from strands.bidi.agent import BidiAgent
+from strands.bidi.hooks import BidiAgentStopEvent
+from strands.hooks import AgentInitializedEvent, HookRegistry
+
+
+class LifecycleLogger:
+    def on_initialized(self, event: AgentInitializedEvent[LocalAgent]) -> None:
+        print(f"Agent {event.agent.name} initialized")
+
+    def on_stop(self, event: BidiAgentStopEvent) -> None:
+        print(f"Agent {event.agent.name} stopped")
+
+    def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
+        registry.add_callback(AgentInitializedEvent, self.on_initialized)
+        registry.add_callback(BidiAgentStopEvent, self.on_stop)
+
+
+agent = BidiAgent(hooks=[LifecycleLogger()])
+```
+
+`LocalAgent` is the interface shared by `Agent` and `BidiAgent`. For shared initialization, message, and tool-call events, use annotations such as `MessageAddedEvent[LocalAgent]` when a callback should work with either agent type. Events prefixed with `Bidi` already type `event.agent` as `BidiAgent` and don't take a type parameter.
+
+For other ways to register these callbacks, including individual registration and event type inference, see [Agent hooks](../agents/hooks.mdx).
+
+## Hook events
+
+Choose hooks for the part of the conversation you want to observe or customize. Every hook event carries `agent`. Import shared events from `strands.hooks` and events prefixed with `Bidi` from `strands.bidi.hooks`.
+
+### Initialization and shutdown
+
+Use these hooks to set up application resources when the agent is created and release them when it stops:
+
+| Event | When it runs |
+| --- | --- |
+| [`AgentInitializedEvent`](@api/python/strands.hooks.events#strands.hooks.events.AgentInitializedEvent) | After the agent is initialized, before a model connection opens. |
+| [`BidiAgentStopEvent`](@api/python/strands.bidi.hooks#strands.bidi.hooks.BidiAgentStopEvent) | At the end of `stop()`. Callbacks with the same [priority](../agents/hooks.mdx#callback-ordering) run in reverse registration order. |
+
+### Messages
+
+Use message hooks to follow changes to `agent.messages`:
+
+| Event | When it runs |
+| --- | --- |
+| [`MessageAddedEvent`](@api/python/strands.hooks.events#strands.hooks.events.MessageAddedEvent) | After the agent adds a message. `message` contains the new entry. |
+| [`MessageUpdatedEvent`](@api/python/strands.hooks.events#strands.hooks.events.MessageUpdatedEvent) | After the agent replaces a message. Includes its `tracking_id` and replacement `message`. |
+
+Streamed text, reasoning, and transcripts first add an empty placeholder, then update it when their content stream ends. Subscribe to both hooks to observe those history changes. Updates can also mark unfinished content as incomplete; see [Messages](events.mdx#messages) for how the agent assembles and stores streamed content.
+
+### Tools
+
+Use tool hooks to inspect or modify individual tool calls:
+
+| Event | When it runs |
+| --- | --- |
+| [`BeforeToolCallEvent`](@api/python/strands.hooks.events#strands.hooks.events.BeforeToolCallEvent) | Before a tool runs. Use `tool_use` to inspect its name and arguments. |
+| [`AfterToolCallEvent`](@api/python/strands.hooks.events#strands.hooks.events.AfterToolCallEvent) | After a tool call. Includes its `result` and any `exception`. |
+
+These hooks support the same [tool interception](../agents/hooks.mdx#tool-interception), [result modification](../agents/hooks.mdx#result-modification), and [retry](../agents/hooks.mdx#tool-call-retry) patterns as `Agent`.
+
+### Responses
+
+Use response hooks to track completion and interruptions:
+
+| Event | When it runs |
+| --- | --- |
+| [`BidiResponseStopEvent`](@api/python/strands.bidi.hooks#strands.bidi.hooks.BidiResponseStopEvent) | When the model ends a response. Includes `response_id`. |
+| [`BidiBargeInEvent`](@api/python/strands.bidi.hooks#strands.bidi.hooks.BidiBargeInEvent) | When the model signals an interruption to its output, such as audio or text. |
+
+The agent runs these hooks before delivering the corresponding [stream events](events.mdx#responses) to your application.
+
+### Connection
+
+Use connection hooks to react to restarts and inspect their outcome:
+
+| Event | When it runs |
+| --- | --- |
+| [`BidiBeforeConnectionRestartEvent`](@api/python/strands.bidi.hooks#strands.bidi.hooks.BidiBeforeConnectionRestartEvent) | Before the agent restarts its model connection. |
+| [`BidiAfterConnectionRestartEvent`](@api/python/strands.bidi.hooks#strands.bidi.hooks.BidiAfterConnectionRestartEvent) | After the restart attempt, whether it succeeds or fails. |
+
+Both events include a `reason` of `"scheduled"` or `"timeout"`. For a model timeout, the before event also includes `timeout_error`. The after event's `exception` is `None` on success and contains the error on failure.
+
+See [Connection restarts](agent.mdx#connection-restarts) for configuration and context preservation.

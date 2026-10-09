@@ -1,0 +1,137 @@
+---
+title: BidiAgent
+description: "Create and manage live conversations with BidiAgent. Send input, receive output events, control the lifecycle, and preserve history across connection restarts."
+languages: [python]
+tags: [bidi-streaming]
+sourceLinks:
+  - path: strands-py/src/strands/bidi/agent/agent.py
+  - path: strands-py/src/strands/bidi/agent/loop.py
+  - path: strands-py/src/strands/bidi/types/agent.py
+  - path: strands-py/src/strands/bidi/models/configs.py
+  - path: strands-py/src/strands/types/agent.py
+redirectFrom:
+  - docs/user-guide/sdk/bidirectional-streaming/agent
+---
+
+`BidiAgent` manages a live conversation with a streaming model. It keeps the model connection open across responses, runs tools, and maintains conversation history. Your application can send new input while the model responds or tools run.
+
+## Create an agent
+
+Configure the agent's instructions and tools when you create it:
+
+```python
+from strands.bidi.agent import BidiAgent
+from strands.vended_tools import notebook
+
+agent = BidiAgent(
+    system_prompt="You are a helpful assistant. Keep your answers brief.",
+    tools=[notebook],
+)
+```
+
+By default, `BidiAgent` uses [Amazon Nova Sonic](models/bedrock.mdx). Pass a model instance through `model` to customize its configuration or choose [Google Gemini Live](models/google.mdx) or [OpenAI Realtime](models/openai.mdx). See the [`BidiAgent` API reference](@api/python/strands.bidi.agent#strands.bidi.agent.BidiAgent.__init__) for constructor options.
+
+`BidiAgent` and `Agent` share the [`LocalAgent`](@api/python/strands.types.agent#strands.types.agent.LocalAgent) interface for common capabilities such as `messages` and registered tools. Tools and hooks can use this interface to work with either agent type. See [Hooks](hooks.mdx) for callback annotations.
+
+## Send and receive
+
+Creating the agent configures it; entering `async with` opens the model connection. Inside the block, `send()` submits input without waiting for a model response, and `receive()` yields output events as they arrive.
+
+This example sends a text prompt and prints the completed response, then ends the conversation. Follow the [OpenAI Realtime setup](models/openai.mdx) before running it:
+
+```python
+import asyncio
+
+from strands.bidi.agent import BidiAgent
+from strands.bidi.models import OpenAIRealtimeModel
+from strands.bidi.types import BidiResponseStopEvent, BidiTextBlockEvent
+
+
+async def main() -> None:
+    model = OpenAIRealtimeModel(
+        model_id="gpt-realtime-2.1",
+        transcription_model_id=None,
+        params={"output_modalities": ["text"]},
+    )
+    async with BidiAgent(model=model) as agent:
+        await agent.send("Tell me about Lisbon in one sentence.")
+
+        async for event in agent.receive():
+            if isinstance(event, BidiTextBlockEvent):
+                print(event.text)
+            elif isinstance(event, BidiResponseStopEvent):
+                break
+
+
+asyncio.run(main())
+```
+
+For an ongoing conversation, keep consuming events while another coroutine supplies input through `send()`. [Input Content](content.mdx) covers the formats you can send, and [Stream Events](events.mdx) explains the events you receive and their ordering.
+
+You can also let `agent.run()` manage this exchange: it reads from input streams, forwards events to output streams, and starts and stops the agent. See [I/O Streams](io.mdx) for built-in streams and custom integrations.
+
+## End a conversation
+
+Exiting the `async with` block calls `stop()`, which cancels background model and tool tasks and closes the model connection. You can also manage the lifecycle explicitly with `start()` and `stop()`.
+
+To end the conversation when a user asks to stop, give the model a tool that requests cancellation with `agent.cancel()`:
+
+```python
+from strands import ToolContext, tool
+from strands.bidi.agent import BidiAgent
+
+
+@tool(context=True)
+def end_conversation(tool_context: ToolContext[BidiAgent]) -> str:
+    """End the conversation when the user asks to stop or says goodbye."""
+    tool_context.agent.cancel()
+    return "Ending conversation."
+
+
+agent = BidiAgent(tools=[end_conversation])
+```
+
+The agent acts on the request after a tool group finishes, ending `receive()` so the surrounding `async with` block can stop the agent.
+
+This is currently the only cancellation checkpoint. Requests made outside a tool also remain pending until a tool group finishes. Additional checkpoints are planned.
+
+## Conversation history
+
+Give a new agent conversation history through `messages`:
+
+```python
+from strands.bidi.agent import BidiAgent
+
+agent = BidiAgent(
+    messages=[
+        {"role": "user", "content": [{"text": "I'm planning a trip to Lisbon."}]},
+    ],
+)
+```
+
+The agent sends the initial history to the model on startup and updates `agent.messages` as the conversation progresses. See [Messages](events.mdx#messages) for how streamed content and tool results become history.
+
+<span id="connection-restart" />
+
+## Connection restarts
+
+Model providers limit how long a streaming connection can stay open. Each connection carries continuous input and output within a live session, which can expire while the conversation is still ongoing.
+
+By default, `BidiAgent` replaces the connection on a configured schedule or after a connection timeout. It preserves conversation history across replacements so the conversation can continue across multiple connections.
+
+To customize the restart timing, set `restart_after_s` on the model. This example sets Nova Sonic to restart six minutes after each connection opens:
+
+```python
+from strands.bidi.models import BedrockNovaSonicModel
+
+model = BedrockNovaSonicModel(
+    model_id="amazon.nova-2-5-sonic",
+    connection={"restart_after_s": 360},
+)
+```
+
+A scheduled restart waits briefly for a turn boundary before proceeding. Leave enough time before the provider's connection limit for that wait and for opening the new connection. See [`ConnectionConfig`](@api/python/strands.bidi.models#strands.bidi.models.ConnectionConfig) for the configuration reference.
+
+The model adapter restores context by replaying history or resuming its server-side session. Calls to `send()` wait while the connection is replaced, and background tools can continue running.
+
+To track the transition, handle [`BidiConnectionRestartEvent`](events.mdx#connection-restarts). Its `reason` identifies a scheduled restart or timeout, and `turn_interrupted` indicates whether the restart interrupted an unfinished turn. If the restart fails, the error propagates through `receive()` or `run()`.

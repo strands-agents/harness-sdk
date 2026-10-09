@@ -1,5 +1,5 @@
 from strands import Agent, tool
-from strands_tools import http_request
+from strands.vended_tools import http_request
 import json
 
 LANGUAGE_ASSISTANT_SYSTEM_PROMPT = """

@@ -92,6 +92,18 @@ describe('webFetch tool', () => {
       expect(() => makeWebFetch({ maxContentChars: -1 })).toThrow(/maxContentChars/)
     })
 
+    it('rejects non-finite maxBytes', () => {
+      expect(() => makeWebFetch({ maxBytes: Number.NaN })).toThrow(/maxBytes/)
+      expect(() => makeWebFetch({ maxBytes: Number.POSITIVE_INFINITY })).toThrow(/maxBytes/)
+      expect(() => makeWebFetch({ maxBytes: Number.NEGATIVE_INFINITY })).toThrow(/maxBytes/)
+    })
+
+    it('rejects non-finite maxContentChars', () => {
+      expect(() => makeWebFetch({ maxContentChars: Number.NaN })).toThrow(/maxContentChars/)
+      expect(() => makeWebFetch({ maxContentChars: Number.POSITIVE_INFINITY })).toThrow(/maxContentChars/)
+      expect(() => makeWebFetch({ maxContentChars: Number.NEGATIVE_INFINITY })).toThrow(/maxContentChars/)
+    })
+
     it('exports correct default constants', () => {
       expect(DEFAULT_MAX_BYTES).toBe(5 * 1024 * 1024)
       expect(DEFAULT_MAX_CONTENT_CHARS).toBe(50_000)
@@ -266,15 +278,16 @@ describe('webFetch tool', () => {
       expect(vi.mocked(Agent).mock.calls.at(-1)?.[0]?.model).toBe(fakeModel)
     })
 
-    it('falls back to host agent model', async () => {
+    it('falls back to host agent auxModel', async () => {
       mockFetch('<p>page content</p>', { contentType: 'text/html' })
       const hostModel = {} as LocalAgent['model']
+      const hostAuxModel = {} as LocalAgent['model']
       mockInvoke.mockResolvedValue(makeAgentResult('host answer'))
       await makeWebFetch({ mode: 'agentic' }).invoke(
         { url: 'https://example.com/', prompt: 'Summarize' },
-        makeContext({ agent: { model: hostModel } as unknown as LocalAgent })
+        makeContext({ agent: { model: hostModel, auxModel: hostAuxModel } as unknown as LocalAgent })
       )
-      expect(vi.mocked(Agent).mock.calls.at(-1)?.[0]?.model).toBe(hostModel)
+      expect(vi.mocked(Agent).mock.calls.at(-1)?.[0]?.model).toBe(hostAuxModel)
     })
 
     it('passes prompt and page content to analyst', async () => {

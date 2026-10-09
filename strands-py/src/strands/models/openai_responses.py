@@ -64,7 +64,7 @@ from ._defaults import resolve_config_metadata  # noqa: E402
 from ._openai_bedrock import BedrockMantleConfig, resolve_bedrock_client_args  # noqa: E402
 from ._openai_cache import apply_cache_config  # noqa: E402
 from ._openai_errors import classify_openai_error  # noqa: E402
-from ._validation import validate_config_keys  # noqa: E402
+from ._validation import _has_location_source, validate_config_keys  # noqa: E402
 from .model import BaseModelConfig, CacheConfig, Model  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -657,12 +657,19 @@ class OpenAIResponsesModel(Model):
             if any("cachePoint" in content for content in contents):
                 logger.warning("cachePoint content block is not supported by OpenAI Responses | skipping")
 
-            formatted_contents = [
-                cls._format_request_message_content(content, role=role)
-                for content in contents
-                if not any(
+            filtered_contents = []
+            for content in contents:
+                if any(
                     block_type in content for block_type in ["toolResult", "toolUse", "reasoningContent", "cachePoint"]
-                )
+                ):
+                    continue
+                if _has_location_source(content):
+                    logger.warning("Location sources are not supported by OpenAI Responses | skipping content block")
+                    continue
+                filtered_contents.append(content)
+
+            formatted_contents = [
+                cls._format_request_message_content(content, role=role) for content in filtered_contents
             ]
 
             formatted_tool_calls = [
@@ -920,8 +927,13 @@ class OpenAIResponsesModel(Model):
 
                 if tokens_details := getattr(event["data"], "input_tokens_details", None):
                     cached = getattr(tokens_details, "cached_tokens", None)
-                    if isinstance(cached, int) and cached:
+                    if isinstance(cached, int):
                         usage_data["cacheReadInputTokens"] = cached
+
+                    # Reported first-party from GPT-5.6
+                    cache_write = getattr(tokens_details, "cache_write_tokens", None)
+                    if isinstance(cache_write, int):
+                        usage_data["cacheWriteInputTokens"] = cache_write
 
                 return {
                     "metadata": {

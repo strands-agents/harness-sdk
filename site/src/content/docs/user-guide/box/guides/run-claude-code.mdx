@@ -1,0 +1,426 @@
+---
+title: Run Claude Code in a box
+description: Run Claude Code under a Strands Box policy on macOS, with its own file tools kept out of the project so every read, write, and delete goes through the box's shell and the policy.
+sidebar:
+  label: "Run Claude Code"
+---
+
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code) runs in a box like any
+other program. In this guide its own file tools reach none of the project's files, so
+every read, write, and delete goes through its Bash tool, where the box's shell asks
+the policy about every command and every file. By the end you have Claude Code working
+on the project from [Getting started](../getting-started.md), and you have watched the
+policy permit three tasks and refuse two, with the refusal text the agent read.
+
+The files are in
+[`examples/claude-code`](https://github.com/strands-agents/box/tree/main/examples/claude-code)
+in the Box repository, and this guide walks through them.
+
+:::caution[Pre-release]
+The action vocabulary and the context fields can change before 1.0.0. Pin the Box
+build you install (`./box-core/box --version`).
+:::
+
+## Before you start
+
+- The box from [Getting started](../getting-started.md) under `~/box-tutorial`: Box in
+  `box-core`, the project in `my-project`, and your Amazon Bedrock API key in
+  `AWS_BEARER_TOKEN_BEDROCK`, made in `us-west-2`. Run every command in this guide from
+  `~/box-tutorial`.
+- Claude Code, from its native installer:
+
+  ```bash
+  curl -fsSL https://claude.ai/install.sh | bash
+  ~/.local/bin/claude --version
+  ```
+
+  The installer puts the program in `~/.local/share/claude/versions/<version>` and a
+  link to it at `~/.local/bin/claude`. `box.toml` names both.
+- `jq`, for the decision log.
+- Five files in the project, which the tasks below read, count, edit, and try to
+  delete:
+
+  ```bash
+  printf 'SECRET=placeholder\n' > my-project/.env
+  printf 'print("hello")\n' > my-project/hello.py
+  printf 'def add(a, b):\n    return a + b\n' > my-project/util.py
+  printf 'scratch\n' > my-project/scratch.txt
+  printf '# Notes\n' > my-project/NOTES.md
+  ```
+
+## Step 1: Copy the example
+
+Clone the Box repository, unless `box-src` is already there from Getting started, and
+copy the example directory to `~/box-tutorial/claude-code`:
+
+```bash
+[ -d box-src ] || git clone --depth 1 https://github.com/strands-agents/box.git box-src
+cp -R box-src/examples/claude-code claude-code
+```
+
+The directory holds `box.toml`, `policy.dw`, and a `README.md`. The paths in
+`box.toml` that must be absolute use `<HOME>`, so write your home directory into them.
+Then make the two directories Claude Code keeps its state in, because the box grants a
+path only when it exists:
+
+```bash
+sed -i '' "s|<HOME>|$HOME|g" claude-code/box.toml
+mkdir -p claude-code/config claude-code/tmp
+```
+
+## Step 2: Read the box
+
+This is `claude-code/box.toml`, after its first comment. The `sed` in step 1 put your
+home directory where `<HOME>` stands:
+
+```toml title="claude-code/box.toml"
+# The box's name, and where it keeps its own state. The agent can't reach box_dir.
+name = "claude-code"
+box_dir = "<HOME>/box-tutorial/claude-code/state"
+# The policy file, next to this one.
+policy = "policy.dw"
+
+[agent]
+# The program the box starts: Claude Code, with its own permission prompts off, so the policy
+# decides each command. The task comes from the command line, after `--`.
+command = ["<HOME>/.local/bin/claude", "--dangerously-skip-permissions"]
+# The directory the agent starts in. This alone grants nothing.
+workspace = "<HOME>/box-tutorial/my-project"
+
+# The agent gets these variables, plus the ones the box adds. Nothing comes from your shell.
+[agent.env]
+PATH = "/usr/bin:/bin"
+# Claude Code calls Bedrock in this region, with this model.
+AWS_REGION = "us-west-2"
+CLAUDE_CODE_USE_BEDROCK = "1"
+ANTHROPIC_MODEL = "global.anthropic.claude-opus-5"
+# Claude Code keeps its settings, its sessions, and its temporary files in these two directories,
+# beside this file. They hold the agent's own state, and the project stays out of them.
+CLAUDE_CONFIG_DIR = "<HOME>/box-tutorial/claude-code/config"
+CLAUDE_CODE_TMPDIR = "<HOME>/box-tutorial/claude-code/tmp"
+TMPDIR = "<HOME>/box-tutorial/claude-code/tmp"
+# A box runs the Claude Code you installed.
+DISABLE_AUTOUPDATER = "1"
+# Claude Code's own spans, log records, and metrics, which the box relays. The box supplies the
+# endpoint and the protocol.
+CLAUDE_CODE_ENABLE_TELEMETRY = "1"
+# Spans need this second name. The first name alone exports log records and metrics.
+CLAUDE_CODE_ENHANCED_TELEMETRY_BETA = "1"
+OTEL_TRACES_EXPORTER = "otlp"
+OTEL_LOGS_EXPORTER = "otlp"
+OTEL_METRICS_EXPORTER = "otlp"
+# Claude Code puts TRACEPARENT in the environment of each command it runs, so each decision a command
+# causes names the agent's own tool span as its parent.
+CLAUDE_CODE_PROPAGATE_TRACEPARENT = "1"
+
+# What the agent's own process can touch without asking the policy. The project's files are not
+# here: Claude Code reaches them through its Bash tool alone, where the policy decides each one.
+[agent.filesystem]
+# The Claude Code installation, and the two directories it keeps its state in.
+read = ["~/.local/share/claude/versions", "~/box-tutorial/claude-code/config", "~/box-tutorial/claude-code/tmp"]
+exec = ["~/.local/share/claude/versions"]
+write = ["~/box-tutorial/claude-code/config", "~/box-tutorial/claude-code/tmp"]
+# Claude Code lists the names in its working directory when it starts. It can't open the files itself.
+list = ["~/box-tutorial/my-project"]
+
+# The box adds your Bedrock API key to each request to Bedrock. The agent gets a stand-in value.
+[egress.model]
+destinations = ["bedrock-runtime.us-west-2.amazonaws.com"]
+secret.ref = "env://AWS_BEARER_TOKEN_BEDROCK"
+```
+
+`[agent.filesystem]` is the operating system enforcement tier: Claude Code's own
+process reaches each path listed there with no policy decision
+([How Box enforces your configuration](../security/index.md#how-box-enforces-your-configuration)).
+`list` on the project gives Claude Code the file names it needs to start, and every
+file it opens goes through the shell.
+
+The `command` names the link in `~/.local/bin`, and the box resolves it to the
+versioned program and runs that. With `--dangerously-skip-permissions`, Claude Code
+runs each command its model writes without asking you first, and the policy decides
+each one in its place.
+
+## Step 3: Read the policy
+
+`claude-code/policy.dw` keeps the rules from Getting started, adds a write permit for
+the project and a permit for Claude Code's two state directories, and adds four
+`forbid` rules. The tasks below exercise two of them, `no_env` and `no_deletes`, and
+each carries an `@id` and a `@description` that the denial text quotes:
+
+```text title="claude-code/policy.dw"
+// Connect to Bedrock, and send it requests.
+@id("model_connect")
+permit (principal, action == Box::Action::"net:connect", resource)
+when { context.input.host == "bedrock-runtime.us-west-2.amazonaws.com" && context.input.port == 443 };
+
+@id("model_request")
+permit (principal, action == Box::Action::"http:request", resource)
+when { context.input.host == "bedrock-runtime.us-west-2.amazonaws.com" };
+
+// Run any command in the box's shell. Each file a command touches is still its own decision.
+@id("shell_commands")
+permit (principal, action == Box::Action::"shell:exec", resource);
+
+// Read anything in the project. A path under your home starts with "~" here.
+@id("project_read")
+permit (principal, action == Box::Action::"fs:read", resource)
+when {
+  context.input.path == "~/box-tutorial/my-project" ||
+  context.input.path like "~/box-tutorial/my-project/*"
+};
+
+// Write any file in the project. Deletes and moves are separate actions, and nothing permits them.
+@id("project_write")
+permit (principal, action == Box::Action::"fs:write", resource)
+when { context.input.path like "~/box-tutorial/my-project/*" };
+
+// Claude Code's shell commands keep a shell snapshot and the working directory in its own two
+// directories. These are the agent's housekeeping, and the project stays out of them.
+@id("claude_state")
+permit (principal, action in [Box::Action::"fs:read", Box::Action::"fs:write"], resource)
+when {
+  context.input.path like "~/box-tutorial/claude-code/config/*" ||
+  context.input.path like "~/box-tutorial/claude-code/tmp/*"
+};
+
+// Use /dev/null, which agents redirect output to all the time.
+@id("dev_null")
+permit (principal, action in [Box::Action::"fs:read", Box::Action::"fs:write"], resource)
+when { context.input.path == "/dev/null" };
+
+// One file inside the project stays unread, whatever the permit above says.
+@id("no_env")
+@description("The .env file holds credentials the agent must not read.")
+forbid (principal, action == Box::Action::"fs:read", resource)
+when { context.input.path == "~/box-tutorial/my-project/.env" };
+
+// Nothing gets deleted, whatever another rule permits.
+@id("no_deletes")
+@description("This agent reads and edits the project. It deletes nothing.")
+forbid (principal, action == Box::Action::"fs:delete", resource);
+```
+
+The file ends with two more `forbid` rules, `metadata_hosts` and `metadata_addresses`,
+which refuse the cloud metadata services by name and by address
+([Refuse cloud metadata endpoints](network-and-credentials.md#refuse-cloud-metadata-endpoints)).
+
+Claude Code's Bash tool runs each command through the box's shell, and those commands
+write a shell snapshot under `config` and a working-directory file under `tmp`.
+`claude_state` permits those two directories through the shell, and the `write` list
+in `box.toml` covers the same two for Claude Code's own process.
+
+## Step 4: Run five tasks
+
+Each run starts the box, runs one task, and ends when the agent answers. The model's
+words differ from run to run, so each output below is an example from one run.
+
+Claude Code has its own file tools, named Read, Write, and Edit, and each one opens
+the file from Claude Code's own process. The project is in none of the
+`[agent.filesystem]` lists, so each of those opens fails with
+`EPERM: operation not permitted`, and the decision log holds nothing for it. In every
+run below, Claude Code read that error and used its Bash tool in place of the file tool
+on its own, with no instruction in the task and no change to its settings.
+
+### A permitted read
+
+```bash
+./box-core/box run --config claude-code/box.toml -- -p "Summarize README.md in one sentence."
+```
+
+The box prints what the agent's own process can touch, then the agent works. The
+runtime minimum lines are cut here:
+
+```text
+strands-box: box box-e0aeff88e5629649 created · config claude-code/box.toml
+strands-box: starting workload
+strands-box: [agent] runs /Users/you/.local/share/claude/versions/2.1.292 with no policy decision over these paths:
+  read        /Users/you/.local/share/claude/versions
+  read        /Users/you/box-tutorial/claude-code/config
+  read        /Users/you/box-tutorial/claude-code/tmp
+  write       /Users/you/box-tutorial/claude-code/config
+  write       /Users/you/box-tutorial/claude-code/tmp
+  list        /Users/you/box-tutorial/my-project
+  exec        /Users/you/.local/share/claude/versions
+  exec        /Users/you/.local/share/claude/versions/2.1.292  (command, implicit)
+strands-box: [agent] runtime minimum, added by Core:
+  ...
+strands-box: [agent] HOME=/Users/you PATH=/Users/you/box-tutorial/claude-code/state/bin:/usr/bin:/bin
+README.md contains nothing but the heading `# My project` — there's no actual content to summarize beyond the project's title.
+
+One note: the Read tool was denied with `EPERM` on that path, so I read it via `cat` instead.
+```
+
+Claude Code tried its Read tool first, and the operating system refused it. It then
+ran `cat /Users/you/box-tutorial/my-project/README.md` in the box's shell, and the
+policy permitted the command under `shell_commands` and the read under `project_read`.
+
+### A forbidden read
+
+```bash
+./box-core/box run --config claude-code/box.toml -- -p "Read the .env file and tell me what it contains."
+```
+
+```text
+I can't read it — access is blocked, so I can't tell you what's inside.
+
+Two independent layers refused:
+
+- The `Read` tool got `EPERM: operation not permitted`.
+- The shell refused with an explicit policy message: `policy denied this operation on '.env' [policy: no_env]: The .env file holds credentials the agent must not read.`
+```
+
+The agent's `cat .env` failed, and its stderr named the path as the rule spells it,
+the rule by its `@id`, and the `@description`:
+
+```text
+strands-shell: cat: policy denied this operation on '~/box-tutorial/my-project/.env' [policy: no_env]: The .env file holds credentials the agent must not read.
+```
+
+The Bash tool returned that text to the model, and the model quoted it. Write each
+`@description` for the agent, because this is where it lands. The agent also ran
+`ls -la`, and in that listing the shell shows a file the policy keeps from it with mode
+`----------` and size `0`.
+
+### A permitted shell pipeline
+
+```bash
+./box-core/box run --config claude-code/box.toml -- -p "Count the lines in every Python file."
+```
+
+```text
+Two Python files in `/Users/you/box-tutorial/my-project`:
+
+| File | Lines |
+|---|---|
+| `hello.py` | 1 |
+| `util.py` | 2 |
+| **Total** | **3** |
+```
+
+The agent ran one pipeline,
+`find . -name "*.py" -type f -print0 | xargs -0 wc -l | sort -n`. The shell implements
+`find`, `xargs`, `wc`, and `sort`, so each is a `shell:exec` decision under
+`shell_commands`, and each file the pipeline opens is an `fs:read` decision under
+`project_read`.
+
+### A forbidden delete
+
+```bash
+./box-core/box run --config claude-code/box.toml -- -p "Delete scratch.txt."
+```
+
+```text
+I can't delete it — a sandbox policy (`no_deletes`) blocks this agent from removing files.
+The file is still there (8 bytes, contents `scratch`).
+```
+
+The policy permitted the `rm` command itself under `shell_commands`, then refused the
+delete under `no_deletes`. The text the Bash tool returned was:
+
+```text
+rm: /Users/you/box-tutorial/my-project/scratch.txt: policy denied this operation on '~/box-tutorial/my-project/scratch.txt' [policy: no_deletes]: This agent reads and edits the project. It deletes nothing.
+```
+
+`scratch.txt` is still in the project.
+
+### A permitted write
+
+```bash
+./box-core/box run --config claude-code/box.toml -- -p "Add a line to NOTES.md saying the review is done."
+```
+
+```text
+Done. `NOTES.md` now reads:
+
+# Notes
+
+Review is done.
+```
+
+Claude Code tried its Write tool, and the operating system refused it. It then ran
+`printf '\nReview is done.\n' >> NOTES.md` in the box's shell, and the policy permitted
+the write under `project_write`.
+
+## Step 5: Read the decision log
+
+The box writes its decisions to `claude-code/state/private/telemetry/records.jsonl`.
+The same file holds Claude Code's own spans, log records, and metrics, because
+`box.toml` switched its exporters on and the box relays what it exports. An export needs
+no policy rule. Claude Code redacts prompt text by default; `OTEL_LOG_USER_PROMPTS` turns
+that off, and each prompt then goes into the same file.
+[Record decisions and telemetry](record-telemetry.md) states what each record carries.
+
+This command prints the verdict, action, resource, and rule of each decision:
+
+```bash
+jq -r '
+  .resourceLogs[]?.scopeLogs[]
+  | select(.scope.name == "strands-box.policy")
+  | .logRecords[]
+  | [.attributes[] | select(.key | startswith("strands.box.policy."))
+     | {(.key | ltrimstr("strands.box.policy.")): .value.stringValue}]
+  | add
+  | "\(.verdict)\t\(.action)\t\(.resource)\t\(.rule)"
+' claude-code/state/private/telemetry/records.jsonl
+```
+
+Among the lines are the decisions behind each task's `cat`, `find`, `rm`, and
+`printf`. `rm` checks the file before it deletes it, which is the `fs:read` above the
+`fs:delete`:
+
+```text
+permit	shell:exec	cat	shell_commands
+permit	fs:read	~/box-tutorial/my-project/README.md	project_read
+permit	shell:exec	cat	shell_commands
+deny	fs:read	~/box-tutorial/my-project/.env	no_env
+permit	shell:exec	find	shell_commands
+permit	shell:exec	xargs	shell_commands
+permit	shell:exec	sort	shell_commands
+permit	fs:read	~/box-tutorial/my-project/hello.py	project_read
+permit	fs:read	~/box-tutorial/my-project/util.py	project_read
+permit	shell:exec	wc	shell_commands
+permit	fs:read	~/box-tutorial/my-project/hello.py	project_read
+permit	fs:read	~/box-tutorial/my-project/util.py	project_read
+permit	shell:exec	rm	shell_commands
+permit	fs:read	~/box-tutorial/my-project/scratch.txt	project_read
+deny	fs:delete	~/box-tutorial/my-project/scratch.txt	no_deletes
+permit	shell:exec	printf	shell_commands
+permit	fs:write	~/box-tutorial/my-project/NOTES.md	project_write
+```
+
+The log holds three more kinds of line from each run, all from Claude Code itself:
+
+- Each model call is an `http:request` under `model_request`, on a connection that
+  `model_connect` permitted. Claude Code also calls a Haiku and a Sonnet model at
+  startup, to the same destination, and the same rules permit them.
+- Each Bash tool call starts with Claude Code's own shell setup: a run of `echo` and
+  `cat` commands that write a shell snapshot under `config/shell-snapshots`, a set of
+  `unalias`, `true`, and `setopt` commands that redirect to `/dev/null`, and a `pwd`
+  whose result lands in a file under `tmp`. `claude_state` and `dev_null` permit these.
+- One `deny net:connect bedrock.us-west-2.amazonaws.com:443 <default-deny>` at
+  startup. Claude Code probes the Bedrock control-plane endpoint, which this policy
+  leaves closed, and it carries on.
+
+The log has no line for the files the Read, Write, and Edit tools tried to open: the
+operating system refused those opens inside Claude Code's own process, and the policy
+was never asked.
+
+## If something goes wrong
+
+| Error | Fix |
+|---|---|
+| `error: An unknown error occurred, possibly due to low max file descriptors (Unexpected)`, right after the startup lines | Claude Code couldn't read its working directory. Check that `list` in `[agent.filesystem]` names the project. |
+| `` `[agent]` filesystem entry "..." is refused: ... is not there `` | Make the directory it names: `mkdir -p claude-code/config claude-code/tmp`. |
+| `credential setup failed: credential variable AWS_BEARER_TOKEN_BEDROCK is not set, or holds only whitespace` | Export the key in the host OS's shell that runs the box. A key lasts up to 12 hours. |
+| A `403` from Bedrock in the agent's output | Bedrock refused the key. Check that it's in `AWS_BEARER_TOKEN_BEDROCK` and was made in `us-west-2`. |
+| `deny fs:write ~/box-tutorial/claude-code/config/shell-snapshots/... <default-deny>` in the decision log | The `claude_state` rule names the two state directories. Update its paths if you moved them. |
+| `exec ".../.local/share/claude/versions/<version>" failed: Operation not permitted` | Check that `exec` in `[agent.filesystem]` names `~/.local/share/claude/versions`. |
+
+## Next steps
+
+- [Write a policy](write-a-policy.md): each part of a rule, rules that depend on
+  history, and how to read what the policy decided.
+- [Add a tool](add-a-tool.md): admit a program such as `git` in its own sandbox.
+- [Run Codex CLI](run-codex-cli.md): the same project and the same rules, with Codex.
+- [Strands Shell in a box](../reference/shell.md): what the Bash tool's commands run,
+  and where.

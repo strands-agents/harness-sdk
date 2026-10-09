@@ -15,13 +15,15 @@ const areaCounts = getAreaCounts(allEntries)
 <ChangelogLayout title="Changelog" description="Every release across the Strands Agents SDKs.">
   <div class="cl-page">
     <ChangelogHeader />
-    <div class="cl-mobile-bar">
-      <button class="cl-filter-btn" type="button" data-cl-filter-open>
+    <div class="cl-mobile-bar" data-pagefind-ignore>
+      <button class="cl-filter-btn" type="button" data-cl-filter-open aria-expanded="false">
         ☰ Filters <span class="cl-badge" data-cl-active-count hidden>0</span>
       </button>
       <span class="cl-note" data-cl-count>{releases.length} releases</span>
     </div>
-    <div class="cl-body">
+    {/* Each release has its own indexed page; keep the feed out of the index so
+        search results point at the release, not this aggregate page. */}
+    <div class="cl-body" data-pagefind-ignore>
       <ChangelogFilters areas={areaCounts} />
       <div class="cl-feed">
         <p class="cl-sr-status" role="status" aria-live="polite" data-cl-sr-status></p>
@@ -91,7 +93,7 @@ const areaCounts = getAreaCounts(allEntries)
   // prototype-chain keys like ?sdk=toString and crash every lookup below.
   const urlSdk = params.get('sdk') || ''
   const state = {
-    sdk: isKnownSdk(urlSdk) ? urlSdk : 'harness',
+    sdk: isKnownSdk(urlSdk) ? urlSdk : 'sdk',
     areas: new Set((params.get('area') || '').split(',').filter(Boolean)),
     search: params.get('q') || '',
   }
@@ -127,7 +129,7 @@ const areaCounts = getAreaCounts(allEntries)
   // Does a version belong to the current SDK + effective language view?
   function inCurrentStream(v: HTMLElement, lang: string): boolean {
     if (v.dataset.sdk !== state.sdk) return false
-    if (state.sdk === 'harness') return v.dataset.language === lang
+    if (state.sdk === 'sdk') return v.dataset.language === lang
     return true
   }
 
@@ -169,7 +171,7 @@ const areaCounts = getAreaCounts(allEntries)
 
   function syncUrl() {
     const p = new URLSearchParams()
-    if (state.sdk !== 'harness') p.set('sdk', state.sdk)
+    if (state.sdk !== 'sdk') p.set('sdk', state.sdk)
     if (state.areas.size) p.set('area', [...state.areas].join(','))
     if (state.search) p.set('q', state.search)
     const qs = p.toString()
@@ -205,7 +207,7 @@ const areaCounts = getAreaCounts(allEntries)
       const vLang = v.dataset.language
       // Version-level gate: SDK, and (for harness) one language at a time.
       let show = vSdk === state.sdk
-      if (show && vSdk === 'harness') show = vLang === lang
+      if (show && vSdk === 'sdk') show = vLang === lang
       // "Latest" badge: the newest version in the current stream, so filtering
       // or scrolling can't make you mistake an older release for the newest.
       // Independent of area/search — it marks the stream's true latest.
@@ -341,11 +343,19 @@ const areaCounts = getAreaCounts(allEntries)
   // Mobile drawer
   const rail = root.querySelector<HTMLElement>('[data-cl-rail]')
   const scrim = root.querySelector<HTMLElement>('[data-cl-scrim]')
-  root.querySelector('[data-cl-filter-open]')?.addEventListener('click', () => {
-    rail?.setAttribute('data-open', 'true'); scrim?.setAttribute('data-open', 'true')
-  })
-  scrim?.addEventListener('click', () => {
-    rail?.removeAttribute('data-open'); scrim?.removeAttribute('data-open')
+  const filterOpen = root.querySelector<HTMLButtonElement>('[data-cl-filter-open]')
+  const railClose = root.querySelector<HTMLButtonElement>('[data-cl-filter-close]')
+  function setDrawer(open: boolean) {
+    rail?.toggleAttribute('data-open', open); scrim?.toggleAttribute('data-open', open)
+    filterOpen?.setAttribute('aria-expanded', String(open))
+    if (open) railClose?.focus()
+    else if (rail?.contains(document.activeElement)) filterOpen?.focus()
+  }
+  filterOpen?.addEventListener('click', () => setDrawer(true))
+  railClose?.addEventListener('click', () => setDrawer(false))
+  scrim?.addEventListener('click', () => setDrawer(false))
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && rail?.hasAttribute('data-open')) setDrawer(false)
   })
 
   // Scroll-spy: light up the timeline rail of the version currently in the
@@ -402,7 +412,7 @@ const areaCounts = getAreaCounts(allEntries)
       state.sdk = tSdk
       sdkBtns.forEach((b) => b.setAttribute('aria-pressed', b.dataset.clSdkBtn === tSdk ? 'true' : 'false'))
     }
-    if (tSdk === 'harness' && tLang && tLang !== effectiveLang()) {
+    if (tSdk === 'sdk' && tLang && tLang !== effectiveLang()) {
       setLang(tLang)
     }
     return true

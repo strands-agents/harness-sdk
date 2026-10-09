@@ -1,6 +1,7 @@
 import logging
 import os
 import unittest.mock
+from types import SimpleNamespace
 
 import httpx
 import openai
@@ -526,6 +527,36 @@ def test_format_request(model, messages, tool_specs, system_prompt):
     assert tru_request == exp_request
 
 
+def test_format_request_filters_location_source_document(model, caplog):
+    """Location-source documents are skipped with a warning instead of raising KeyError.
+
+    Guards against https://github.com/strands-agents/harness-sdk/issues/4016.
+    """
+    caplog.set_level(logging.WARNING, logger="strands.models.openai_responses")
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"text": "analyze this document"},
+                {
+                    "document": {
+                        "format": "pdf",
+                        "name": "report",
+                        "source": {"location": {"type": "s3", "s3Location": {"uri": "s3://bucket/report.pdf"}}},
+                    }
+                },
+            ],
+        },
+    ]
+
+    request = model._format_request(messages)
+
+    formatted_content = request["input"][0]["content"]
+    assert formatted_content == [{"type": "input_text", "text": "analyze this document"}]
+    assert "Location sources are not supported by OpenAI Responses" in caplog.text
+
+
 def test_cache_key_maps_to_prompt_cache_key(openai_client, model_id, messages):
     _ = openai_client
     model = OpenAIResponsesModel(model_id=model_id, cache_config=CacheConfig(cache_key="tenant-42"))
@@ -766,55 +797,35 @@ def test_format_chunk_unknown_type(model):
         model._format_chunk(event)
 
 
-def test_format_chunk_metadata_with_cache_tokens(model):
-    """Test _format_chunk for metadata with cache tokens present."""
-    mock_usage = unittest.mock.Mock()
-    mock_usage.input_tokens = 100
-    mock_usage.output_tokens = 50
-    mock_usage.total_tokens = 150
-
-    mock_tokens_details = unittest.mock.Mock()
-    mock_tokens_details.cached_tokens = 25
-    mock_usage.input_tokens_details = mock_tokens_details
-
-    event = {"chunk_type": "metadata", "data": mock_usage}
-
-    assert model._format_chunk(event) == {
+@pytest.mark.parametrize(
+    ("tokens_details", "exp_cache"),
+    [
+        ({"cached_tokens": 25, "cache_write_tokens": 40}, {"cacheReadInputTokens": 25, "cacheWriteInputTokens": 40}),
+        ({"cached_tokens": 25, "cache_write_tokens": 0}, {"cacheReadInputTokens": 25, "cacheWriteInputTokens": 0}),
+        ({"cached_tokens": 0, "cache_write_tokens": 0}, {"cacheReadInputTokens": 0, "cacheWriteInputTokens": 0}),
+        ({"cached_tokens": 25}, {"cacheReadInputTokens": 25}),
+        ({"cached_tokens": 0}, {"cacheReadInputTokens": 0}),
+        ({"cache_write_tokens": 0}, {"cacheWriteInputTokens": 0}),
+        ({"cached_tokens": None, "cache_write_tokens": None}, {}),
+        ({"cached_tokens": "25", "cache_write_tokens": "10"}, {}),
+        ({}, {}),
+    ],
+)
+def test_format_chunk_metadata_with_cache_tokens(tokens_details, exp_cache, model):
+    usage = SimpleNamespace(
+        input_tokens=100,
+        output_tokens=50,
+        total_tokens=150,
+        input_tokens_details=SimpleNamespace(**tokens_details),
+    )
+    tru_chunk = model._format_chunk({"chunk_type": "metadata", "data": usage})
+    exp_chunk = {
         "metadata": {
-            "usage": {
-                "inputTokens": 100,
-                "outputTokens": 50,
-                "totalTokens": 150,
-                "cacheReadInputTokens": 25,
-            },
+            "usage": {"inputTokens": 100, "outputTokens": 50, "totalTokens": 150, **exp_cache},
             "metrics": {"latencyMs": 0},
         },
     }
-
-
-def test_format_chunk_metadata_with_zero_cached_tokens(model):
-    """Test _format_chunk for metadata when cached_tokens is 0."""
-    mock_usage = unittest.mock.Mock()
-    mock_usage.input_tokens = 100
-    mock_usage.output_tokens = 50
-    mock_usage.total_tokens = 150
-
-    mock_tokens_details = unittest.mock.Mock()
-    mock_tokens_details.cached_tokens = 0
-    mock_usage.input_tokens_details = mock_tokens_details
-
-    event = {"chunk_type": "metadata", "data": mock_usage}
-
-    assert model._format_chunk(event) == {
-        "metadata": {
-            "usage": {
-                "inputTokens": 100,
-                "outputTokens": 50,
-                "totalTokens": 150,
-            },
-            "metrics": {"latencyMs": 0},
-        },
-    }
+    assert tru_chunk == exp_chunk
 
 
 def test_format_chunk_metadata_without_token_details(model):
@@ -2007,6 +2018,7 @@ class TestOpenAIResponsesModelBedrockMantleConfig:
             ("google.gemma-4-31b", "/openai/v1"),
             ("openai.gpt-5.6-terra", "/openai/v1"),
             ("openai.gpt-6-astra", "/openai/v1"),
+            ("openai.gpt-6.1-sol", "/openai/v1"),
             # Gemma 3 is served from /v1 while Gemma 4 is not, so `google.` cannot be a prefix.
             ("google.gemma-3-27b-it", "/v1"),
             ("openai.gpt-oss-120b", "/v1"),
@@ -2030,9 +2042,11 @@ class TestOpenAIResponsesModelBedrockMantleConfig:
             ("xai.grok-4.9", "/openai/v1"),
             ("openai.gpt-5.9-unreleased", "/openai/v1"),
             ("openai.gpt-6-nova", "/openai/v1"),
+            ("openai.gpt-6.1-sol", "/openai/v1"),
             # New lines the prefixes deliberately do not cover.
             ("xai.grok-5", "/v1"),
             ("xai.grok-5-preview", "/v1"),
+            ("openai.gpt-6oss-20b", "/v1"),
         ],
     )
     def test_bedrock_mantle_config_unverified_ids(self, model_id, expected_path, openai_client, mock_provide_token):

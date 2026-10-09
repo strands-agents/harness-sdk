@@ -128,18 +128,10 @@ describe('Sidebar filtering with live navigation.yml data', () => {
     console.log(`\nLoaded ${runtimeSidebar.length} top-level sidebar items`)
   })
 
-  it('should filter sidebar to only Examples items for /examples/ basePath', () => {
+  it('has no doc-sidebar section for examples (standalone /examples/ catalog)', () => {
+    // Examples is a standalone /examples/ catalog page, not a filtered doc sidebar.
     const result = filterSidebarByBasePath(runtimeSidebar as any, '/docs/examples/')
-
-    const allLinks = getAllLinks(result)
-    console.log(`\nExamples section has ${allLinks.length} links:`)
-    allLinks.slice(0, 5).forEach((link) => console.log(`  - ${link.href}`))
-    if (allLinks.length > 5) console.log(`  ... and ${allLinks.length - 5} more`)
-
-    expect(allLinks.length).toBeGreaterThan(0)
-    allLinks.forEach((link) => {
-      expect(link.href).toMatch(/^\/docs\/examples\//)
-    })
+    expect(getAllLinks(result)).toHaveLength(0)
   })
 
   it('should filter sidebar to only User Guide items for /user-guide/ basePath', () => {
@@ -154,31 +146,13 @@ describe('Sidebar filtering with live navigation.yml data', () => {
     })
   })
 
-  it('should filter sidebar to only Integrations items for /integrations/ basePath', () => {
+  it('has no doc-sidebar section for integrations (dynamic catalog sidebar)', () => {
+    // Integrations pages build their rail from the catalog collection
+    // (src/util/integrations-sidebar.ts), not from navigation.yml.
     const result = filterSidebarByBasePath(runtimeSidebar as any, '/docs/integrations/')
-
-    const allLinks = getAllLinks(result)
-    console.log(`\nIntegrations section has ${allLinks.length} links`)
-
-    expect(allLinks.length).toBeGreaterThan(0)
-    allLinks.forEach((link) => {
-      expect(link.href).toMatch(/^\/docs\/integrations\//)
-    })
+    expect(getAllLinks(result)).toHaveLength(0)
   })
 
-  it('should not include User Guide or Integrations items when filtering for Examples', () => {
-    const result = filterSidebarByBasePath(runtimeSidebar as any, '/docs/examples/')
-
-    const allLinks = getAllLinks(result)
-    const nonExamplesLinks = allLinks.filter((link) => !link.href.startsWith('/docs/examples/'))
-
-    if (nonExamplesLinks.length > 0) {
-      console.log('\nUnexpected non-examples links found:')
-      nonExamplesLinks.forEach((link) => console.log(`  - ${link.href}`))
-    }
-
-    expect(nonExamplesLinks).toEqual([])
-  })
 })
 
 describe('Integration: Full filtering flow', () => {
@@ -187,46 +161,10 @@ describe('Integration: Full filtering flow', () => {
   const buildTimeSidebar = loadSidebarFromConfig(configPath, docsDir)
   const runtimeSidebar = convertToRuntimeFormat(buildTimeSidebar)
 
-  it('should correctly filter sidebar for /examples/ page', () => {
-    const currentPath = '/docs/examples/'
-    const currentNav = findCurrentNavSection(currentPath, testNavLinks)
-
-    expect(currentNav).toBeDefined()
-    expect(currentNav?.label).toBe('Examples')
-    expect(currentNav?.basePath).toBe('/docs/examples/')
-
-    const basePath = currentNav?.basePath || currentNav?.href || ''
-    const filtered = filterSidebarByBasePath(runtimeSidebar as any, basePath)
-    const result = applyCollapse(filtered)
-
-    const allLinks = getAllLinks(result)
-    console.log(`\n/docs/examples/ page should show ${allLinks.length} sidebar links`)
-
-    expect(allLinks.length).toBeGreaterThan(0)
-    allLinks.forEach((link) => {
-      expect(link.href.startsWith('/docs/examples/')).toBe(true)
-    })
-  })
-
-  it('should correctly filter sidebar for nested /examples/python/weather_forecaster/ page', () => {
-    const currentPath = '/docs/examples/python/weather_forecaster/'
-    const currentNav = findCurrentNavSection(currentPath, testNavLinks)
-
-    expect(currentNav).toBeDefined()
-    expect(currentNav?.label).toBe('Examples')
-
-    const basePath = currentNav?.basePath || currentNav?.href || ''
-    const filtered = filterSidebarByBasePath(runtimeSidebar as any, basePath)
-    const result = applyCollapse(filtered)
-
-    const allLinks = getAllLinks(result)
-    expect(allLinks.length).toBeGreaterThan(0)
-    allLinks.forEach((link) => {
-      expect(link.href.startsWith('/docs/examples/')).toBe(true)
-    })
-  })
-
-  it('should correctly filter sidebar for integrations docs pages', () => {
+  it('resolves integrations docs pages to the Integrations nav section with an empty yml sidebar', () => {
+    // The Integrations section owns /docs/integrations/, but its rail is built
+    // dynamically from the catalog (see buildIntegrationsSidebar), so the
+    // navigation.yml-derived sidebar is expected to contribute nothing here.
     const currentPath = '/docs/integrations/get-featured/'
     const currentNav = findCurrentNavSection(currentPath, testNavLinks)
 
@@ -237,11 +175,7 @@ describe('Integration: Full filtering flow', () => {
     const filtered = filterSidebarByBasePath(runtimeSidebar as any, basePath)
     const result = applyCollapse(filtered)
 
-    const allLinks = getAllLinks(result)
-    expect(allLinks.length).toBeGreaterThan(0)
-    allLinks.forEach((link) => {
-      expect(link.href.startsWith('/docs/integrations/')).toBe(true)
-    })
+    expect(getAllLinks(result)).toHaveLength(0)
   })
 
   it('lesson pagination prev is the previous lesson, not the All-courses back-link', () => {
@@ -261,16 +195,14 @@ describe('Integration: Full filtering flow', () => {
     const course = { title: 'Agent Fundamentals with Strands', lessonIds }
     const courseSidebar = buildCourseSidebar(lessonDocs, currentSlug, course)
 
-    // The sidebar leads with the All-courses back-link
-    expect(courseSidebar[0]?.type).toBe('link')
-    expect((courseSidebar[0] as { label: string }).label).toBe('← All courses')
+    expect(courseSidebar[0]?.type).toBe('group')
 
     const lessonGroup = courseSidebar.find((entry) => entry.type === 'group')
     const lessonsOnly = lessonGroup?.type === 'group' ? lessonGroup.entries : []
     const { prev, next } = getPrevNextLinks(lessonsOnly)
 
     expect(prev?.label).toBe('Lesson 1: How Agents Really Work')
-    expect(prev?.label).not.toBe('← All courses')
+    expect(prev?.label).not.toBe('← Course start')
     expect(next?.label).toBe('Lesson 3: Give Your Agent Tools Using MCP')
   })
 })
@@ -468,8 +400,7 @@ describe('onRequest integration: lesson pagination via real collection', () => {
     await onRequest(context as any, noopNext)
 
     const sidebar = starlightRoute.sidebar as SidebarEntry[]
-    expect(sidebar[0]?.type).toBe('link')
-    expect((sidebar[0] as SidebarLink).label).toBe('← All courses')
+    expect(sidebar[0]?.type).toBe('group')
 
     const pagination = starlightRoute.pagination as { prev?: SidebarLink; next?: SidebarLink }
     expect(pagination.prev).toBeUndefined()

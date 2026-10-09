@@ -9,14 +9,13 @@
  * their corresponding /index.md endpoints.
  *
  * Used by LLMs and tooling that need documentation in a machine-readable format.
- * See /docs/user-guide/build-with-ai/ for more information.
  */
 import type { APIRoute, GetStaticPaths } from 'astro'
 import { getCollection } from 'astro:content'
 import { renderEntryToMarkdown } from '@util/render-to-markdown'
 
 export const getStaticPaths: GetStaticPaths = async () => {
-  const docs = await getCollection('docs')
+  const docs = await getCollection('docs', ({ data }) => !data.draft)
   return docs.map((entry) => ({
     params: { slug: entry.id },
     props: { entry },

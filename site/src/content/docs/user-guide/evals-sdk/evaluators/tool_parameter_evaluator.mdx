@@ -1,16 +1,16 @@
 ---
-title: Tool Parameter Accuracy Evaluator
+title: Tool parameter accuracy evaluator
 description: 'Verify tool call parameters are grounded in conversation context, not hallucinated, with per-call checks from ToolParameterAccuracyEvaluator.'
 tags: [tool-evaluation]
 sidebar:
-  label: "Tool Parameter Accuracy"
+  label: "Tool parameter accuracy"
 ---
 
 ## Overview
 
 The `ToolParameterAccuracyEvaluator` is a specialized evaluator that assesses whether tool call parameters faithfully use information from the preceding conversation context. It evaluates each tool call individually to ensure parameters are grounded in available information rather than hallucinated or incorrectly inferred. A complete example can be found [here](https://github.com/strands-agents/harness-sdk/blob/main/site/docs/examples/evals-sdk/tool_parameter_accuracy_evaluator.py).
 
-## Key Features
+## Key features
 
 - **Tool-Level Evaluation**: Evaluates each tool call independently
 - **Context Faithfulness**: Checks if parameters are derived from conversation history
@@ -19,7 +19,7 @@ The `ToolParameterAccuracyEvaluator` is a specialized evaluator that assesses wh
 - **Async Support**: Supports both synchronous and asynchronous evaluation
 - **Multiple Evaluations**: Returns one evaluation result per tool call
 
-## When to Use
+## When to use
 
 Use the `ToolParameterAccuracyEvaluator` when you need to:
 
@@ -30,11 +30,16 @@ Use the `ToolParameterAccuracyEvaluator` when you need to:
 - Debug issues with incorrect tool parameter usage
 - Ensure data integrity in tool-based workflows
 
-## Evaluation Level
+## Evaluation level
 
 This evaluator operates at the **TOOL_LEVEL**, meaning it evaluates each individual tool call in the trajectory separately. If an agent makes 3 tool calls, you'll receive 3 evaluation results.
 
 ## Parameters
+
+### `version` (optional)
+- **Type**: `str`
+- **Default**: `"v0"`
+- **Description**: Prompt template version used when no `system_prompt` is supplied.
 
 ### `model` (optional)
 - **Type**: `Union[Model, str, None]`
@@ -46,14 +51,14 @@ This evaluator operates at the **TOOL_LEVEL**, meaning it evaluates each individ
 - **Default**: `None` (uses built-in template)
 - **Description**: Custom system prompt to guide the judge model's behavior.
 
-## Scoring System
+## Scoring system
 
 The evaluator uses a binary scoring system:
 
 - **Yes (1.0)**: Parameters faithfully use information from the context
 - **No (0.0)**: Parameters contain hallucinated, fabricated, or incorrectly inferred values
 
-## Basic Usage
+## Basic usage
 
 :::caution[Required: Session ID Trace Attributes]
 When using `StrandsInMemorySessionMapper`, you **must** include session ID trace attributes in your agent configuration. This prevents spans from different test cases from being mixed together in the memory exporter.
@@ -63,7 +68,7 @@ When using `StrandsInMemorySessionMapper`, you **must** include session ID trace
 import asyncio
 
 from strands import Agent
-from strands_tools import calculator
+from strands.vended_tools import sleep
 from strands_evals import Case, Experiment
 from strands_evals.evaluators import ToolParameterAccuracyEvaluator
 from strands_evals.mappers import StrandsInMemorySessionMapper
@@ -80,7 +85,7 @@ def user_task_function(case: Case) -> dict:
             "gen_ai.conversation.id": case.session_id,
             "session.id": case.session_id
         },
-        tools=[calculator],
+        tools=[sleep],
         callback_handler=None
     )
     agent_response = agent(case.input)
@@ -95,9 +100,9 @@ def user_task_function(case: Case) -> dict:
 # Create test cases
 test_cases = [
     Case[str, str](
-        name="simple-calculation",
-        input="Calculate the square root of 144",
-        metadata={"category": "math", "difficulty": "easy"}
+        name="short-pause",
+        input="Pause for 2 seconds using the sleep tool.",
+        metadata={"category": "timing", "difficulty": "easy"}
     ),
 ]
 
@@ -114,7 +119,7 @@ async def main():
 asyncio.run(main())
 ```
 
-## Evaluation Output
+## Evaluation output
 
 The `ToolParameterAccuracyEvaluator` returns a list of `EvaluationOutput` objects (one per tool call) with:
 
@@ -123,7 +128,7 @@ The `ToolParameterAccuracyEvaluator` returns a list of `EvaluationOutput` object
 - **reason**: Step-by-step reasoning explaining the evaluation
 - **label**: "Yes" or "No"
 
-## What Gets Evaluated
+## What gets evaluated
 
 The evaluator examines:
 
@@ -135,29 +140,29 @@ The evaluator examines:
 
 The judge determines if each parameter value can be traced back to information in the conversation history.
 
-## Best Practices
+## Best practices
 
 1. **Use with Proper Telemetry Setup**: The evaluator requires trajectory information captured via OpenTelemetry
 2. **Test Edge Cases**: Include test cases that challenge parameter accuracy (missing info, ambiguous info, etc.)
-3. **Combine with Other Evaluators**: Use alongside tool selection and output evaluators for comprehensive assessment
+3. **Combine with Other Evaluators**: Use alongside tool selection and output evaluators to cover selection, parameters, and output quality together
 4. **Review Reasoning**: Always review the reasoning provided in evaluation results
 5. **Use Appropriate Models**: Consider using stronger models for evaluation
 
-## Common Issues and Solutions
+## Common issues and solutions
 
-### Issue 1: No Evaluations Returned
+### Issue 1: No evaluations returned
 **Problem**: Evaluator returns empty list or no results.
 **Solution**: Ensure trajectory is properly captured and includes tool calls.
 
-### Issue 2: False Negatives
+### Issue 2: False negatives
 **Problem**: Evaluator marks valid parameters as inaccurate.
 **Solution**: Ensure conversation history is complete and context is clear.
 
-### Issue 3: Inconsistent Results
+### Issue 3: Inconsistent results
 **Problem**: Same test case produces different evaluation results.
 **Solution**: This is expected due to LLM non-determinism. Run multiple times and aggregate.
 
-## Related Evaluators
+## Related evaluators
 
 - [**ToolSelectionAccuracyEvaluator**](tool_selection_evaluator.md): Evaluates if correct tools were selected
 - [**TrajectoryEvaluator**](trajectory_evaluator.md): Evaluates the overall sequence of tool calls

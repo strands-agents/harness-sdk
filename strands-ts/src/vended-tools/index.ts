@@ -3,7 +3,16 @@
  *
  * Provides a single import path for consumers who want all built-in tools:
  * ```typescript
- * import { bash, fileEditor, httpRequest, notebook, sleep, webFetch } from '@strands-agents/sdk/vended-tools'
+ * import {
+ *   bash,
+ *   fileEditor,
+ *   handoffToUser,
+ *   httpRequest,
+ *   notebook,
+ *   sleep,
+ *   subagent,
+ *   webFetch,
+ * } from '@strands-agents/sdk/vended-tools'
  * ```
  *
  * Note: This module requires a Node.js environment because the `bash` tool
@@ -14,8 +23,11 @@
 
 export * from './bash/index.js'
 export * from './file-editor/index.js'
+export * from './handoff-to-user/index.js'
+export * from './mcp-router/index.js'
 export * from './shell/index.js'
 export * from './http-request/index.js'
 export * from './notebook/index.js'
 export * from './sleep/index.js'
+export * from './subagent/index.js'
 export * from './web-fetch/index.js'

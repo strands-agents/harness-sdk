@@ -796,6 +796,39 @@ async def test_streamable_http_transport_v2_owns_client_lifecycle(monkeypatch):
     ]
 
 
+@requires_mcp_v2
+@requires_v2_transport_names
+@pytest.mark.asyncio
+async def test_streamable_http_transport_v2_adapts_httpx_auth(monkeypatch):
+    """Test that the 2.x transport hands its HTTPX client an `httpx2.Auth` when given an `httpx.Auth`.
+
+    The 2.x transport names alone don't imply httpx2 is installed: late 1.x wheels expose them too, so wrapping a
+    real `httpx.Auth` here also needs the 2.x install.
+    """
+    import httpx2
+
+    monkeypatch.setattr(_compat, "MCP_V2", True)
+    captured = {}
+
+    @asynccontextmanager
+    async def fake_http_client(headers=None, auth=None):
+        captured["auth"] = auth
+        yield MagicMock()
+
+    @asynccontextmanager
+    async def fake_transport(url, http_client):
+        yield MagicMock()
+
+    with (
+        patch("mcp.client.streamable_http.create_mcp_http_client", fake_http_client),
+        patch("mcp.client.streamable_http.streamable_http_client", fake_transport),
+    ):
+        async with streamable_http_transport("https://example.com/mcp", auth=httpx.BasicAuth("user", "pass")):
+            pass
+
+    assert isinstance(captured["auth"], httpx2.Auth)
+
+
 def test_is_tools_list_changed_accepts_both_delivery_shapes():
     """Test that both message-handler delivery shapes are recognized.
 
@@ -991,6 +1024,225 @@ async def test_wrap_auth_feeds_bodies_to_body_hungry_flows():
 
 
 @requires_mcp_v2
+@pytest.mark.asyncio
+async def test_wrap_auth_sends_flow_issued_requests_as_their_own_requests():
+    """Test that a flow step aimed at another URL is sent as that request, not as the original one.
+
+    Guards https://github.com/strands-agents/harness-sdk/pull/4183#issuecomment-5546187576: httpx's token-refresh
+    pattern yields a request the flow built itself, which must reach its own target with its own body instead of
+    being folded into the request bound for the MCP server.
+    """
+    import httpx2
+
+    class RefreshAuth(httpx.Auth):
+        requires_response_body = True
+
+        def auth_flow(self, request):
+            token_response = yield httpx.Request("POST", "https://idp.example.com/token", content=b"grant")
+            request.headers["authorization"] = f"Bearer {token_response.text}"
+            yield request
+
+    adapted = _compat._wrap_auth_for_httpx2(RefreshAuth())
+    request = httpx2.Request("POST", "https://example.com/mcp", content=b'{"jsonrpc": "2.0"}')
+    flow = adapted.async_auth_flow(request)
+
+    refresh_request = await flow.__anext__()
+    tru_refresh = (refresh_request is request, str(refresh_request.url), refresh_request.read())
+    exp_refresh = (False, "https://idp.example.com/token", b"grant")
+    assert tru_refresh == exp_refresh
+
+    retried_request = await flow.asend(httpx2.Response(200, content=b"fresh", request=refresh_request))
+    tru_retry = (retried_request is request, str(retried_request.url), retried_request.headers["authorization"])
+    exp_retry = (True, "https://example.com/mcp", "Bearer fresh")
+    assert tru_retry == exp_retry
+
+    with pytest.raises(StopAsyncIteration):
+        await flow.asend(httpx2.Response(200, request=retried_request))
+
+
+@requires_mcp_v2
+@pytest.mark.asyncio
+async def test_wrap_auth_applies_url_changes_to_the_original_request():
+    """Test that a flow that adds a query parameter to the request URL sees it on the outgoing request."""
+    import httpx2
+
+    class QueryParamAuth(httpx.Auth):
+        def auth_flow(self, request):
+            request.url = request.url.copy_add_param("api_key", "secret")
+            yield request
+
+    adapted = _compat._wrap_auth_for_httpx2(QueryParamAuth())
+    request = httpx2.Request("POST", "https://example.com/mcp")
+    flow = adapted.async_auth_flow(request)
+
+    sent_request = await flow.__anext__()
+    tru_sent = (sent_request is request, str(sent_request.url))
+    exp_sent = (True, "https://example.com/mcp?api_key=secret")
+    assert tru_sent == exp_sent
+
+    with pytest.raises(StopAsyncIteration):
+        await flow.asend(httpx2.Response(200, request=sent_request))
+
+
+@requires_mcp_v2
+@pytest.mark.asyncio
+async def test_wrap_auth_strips_wire_framing_headers_from_translated_responses():
+    """Test that a body-reading flow sees the decoded body without the stale `content-encoding` header.
+
+    Guards https://github.com/strands-agents/harness-sdk/pull/4183#issuecomment-5546187576: the adapter hands the
+    flow an already-decoded body, so keeping the framing headers would make httpx decode it a second time.
+    """
+    import gzip
+
+    import httpx2
+
+    seen_responses = []
+
+    class BodyReadingAuth(httpx.Auth):
+        requires_response_body = True
+
+        def auth_flow(self, request):
+            response = yield request
+            seen_responses.append((response.content, response.headers.get("content-encoding")))
+            yield request
+
+    adapted = _compat._wrap_auth_for_httpx2(BodyReadingAuth())
+    request = httpx2.Request("POST", "https://example.com/mcp")
+    flow = adapted.async_auth_flow(request)
+
+    first_request = await flow.__anext__()
+    gzipped_response = httpx2.Response(
+        401, headers={"content-encoding": "gzip"}, content=gzip.compress(b"denied"), request=first_request
+    )
+    second_request = await flow.asend(gzipped_response)
+
+    with pytest.raises(StopAsyncIteration):
+        await flow.asend(httpx2.Response(200, request=second_request))
+
+    assert seen_responses == [(b"denied", None)]
+
+
+@requires_mcp_v2
+@pytest.mark.asyncio
+async def test_wrap_auth_hands_loaded_request_bodies_to_the_flow():
+    """Test that a flow reading `request.content` without `requires_request_body` sees an already-loaded body."""
+    import httpx2
+
+    class ContentReadingAuth(httpx.Auth):
+        def auth_flow(self, request):
+            request.headers["x-content-length"] = str(len(request.content))
+            yield request
+
+    adapted = _compat._wrap_auth_for_httpx2(ContentReadingAuth())
+    request = httpx2.Request("POST", "https://example.com/mcp", content=b"payload")
+    await request.aread()
+    flow = adapted.async_auth_flow(request)
+
+    sent_request = await flow.__anext__()
+    assert sent_request.headers["x-content-length"] == "7"
+
+    await flow.aclose()
+
+
+@requires_mcp_v2
+@pytest.mark.asyncio
+async def test_wrap_auth_leaves_streaming_request_bodies_unread():
+    """Test that the adapter does not consume a streaming body for a flow that does not require it."""
+    import httpx2
+
+    class HeaderOnlyAuth(httpx.Auth):
+        def auth_flow(self, request):
+            request.headers["authorization"] = "Bearer token"
+            yield request
+
+    async def body_stream():
+        yield b"streamed"
+
+    adapted = _compat._wrap_auth_for_httpx2(HeaderOnlyAuth())
+    request = httpx2.Request("POST", "https://example.com/mcp", content=body_stream())
+    flow = adapted.async_auth_flow(request)
+
+    sent_request = await flow.__anext__()
+    tru_sent = (sent_request is request, sent_request.headers["authorization"])
+    exp_sent = (True, "Bearer token")
+    assert tru_sent == exp_sent
+
+    with pytest.raises(httpx2.RequestNotRead):
+        _ = sent_request.content
+
+    with pytest.raises(StopAsyncIteration):
+        await flow.asend(httpx2.Response(200, request=sent_request))
+
+
+@requires_mcp_v2
+@pytest.mark.asyncio
+async def test_wrap_auth_closes_the_wrapped_flow_on_close():
+    """Test that closing the adapter's flow runs the wrapped flow's cleanup immediately."""
+    import httpx2
+
+    cleanup_events = []
+
+    class CleanupAuth(httpx.Auth):
+        def auth_flow(self, request):
+            try:
+                yield request
+            finally:
+                cleanup_events.append("closed")
+
+    adapted = _compat._wrap_auth_for_httpx2(CleanupAuth())
+    flow = adapted.async_auth_flow(httpx2.Request("POST", "https://example.com/mcp"))
+    await flow.__anext__()
+    await flow.aclose()
+
+    assert cleanup_events == ["closed"]
+
+
+@requires_mcp_v2
+@pytest.mark.asyncio
+async def test_wrap_auth_drives_a_real_httpx2_client_end_to_end():
+    """Test that a wrapped refresh-style auth completes a 401-refresh-retry round through a real httpx2 client."""
+    import httpx2
+
+    class RefreshAuth(httpx.Auth):
+        requires_response_body = True
+
+        def auth_flow(self, request):
+            response = yield request
+            if response.status_code == 401:
+                token_response = yield httpx.Request("POST", "https://idp.example.com/token")
+                request.headers["authorization"] = f"Bearer {token_response.text}"
+                yield request
+
+    transport_requests = []
+
+    def transport_handler(mock_request):
+        transport_requests.append(mock_request)
+        if mock_request.url.host == "idp.example.com":
+            return httpx2.Response(200, content=b"fresh")
+        if mock_request.headers.get("authorization") == "Bearer fresh":
+            return httpx2.Response(200, content=b"ok")
+        return httpx2.Response(401)
+
+    async with httpx2.AsyncClient(
+        transport=httpx2.MockTransport(transport_handler), auth=_compat._wrap_auth_for_httpx2(RefreshAuth())
+    ) as client:
+        response = await client.post("https://example.com/mcp", content=b'{"jsonrpc": "2.0"}')
+
+    idp_request = transport_requests[1]
+    tru_round_trip = (
+        response.status_code,
+        [str(sent.url) for sent in transport_requests],
+        (dict(idp_request.headers), idp_request.read()),
+    )
+    exp_round_trip = (
+        200,
+        ["https://example.com/mcp", "https://idp.example.com/token", "https://example.com/mcp"],
+        ({"host": "idp.example.com", "content-length": "0"}, b""),
+    )
+    assert tru_round_trip == exp_round_trip
+
+
+@requires_mcp_v2
 def test_wrap_auth_mirrors_body_flags_and_rejects_sync_flows():
     """Test that the adapter mirrors the wrapped auth's body flags and refuses sync driving."""
 
@@ -1002,4 +1254,4 @@ def test_wrap_auth_mirrors_body_flags_and_rejects_sync_flows():
     assert (adapted.requires_request_body, adapted.requires_response_body) == (True, True)
 
     with pytest.raises(RuntimeError, match="async"):
-        next(adapted.sync_auth_flow(MagicMock()))
+        adapted.sync_auth_flow(MagicMock())

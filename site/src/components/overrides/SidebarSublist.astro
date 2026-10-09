@@ -16,22 +16,10 @@ function hasCurrentChild(entries: any[]): boolean {
   );
 }
 
-function getFirstLink(entries: any[]): string | null {
-  for (const entry of entries) {
-    if (entry.type === "link") return entry.href;
-    if (entry.entries) {
-      const found = getFirstLink(entry.entries);
-      if (found) return found;
-    }
-  }
-  return null;
-}
 ---
 
 <ul class:list={{ "top-level": !nested }}>
   {sublist.map((entry: any) => {
-    const firstLink = entry.type !== "link" ? getFirstLink(entry.entries || []) : null;
-    
     return (
       <li>
         {entry.type === "link" ? (
@@ -63,34 +51,20 @@ function getFirstLink(entries: any[]): string | null {
             <Astro.self sublist={entry.entries} nested={true} depth={depth + 1} />
           </div>
         ) : (
-          /* Nested groups: link + collapsible caret */
+          /* Label is plain text, not a link — an <a> inside <summary> is nested-interactive (WCAG). */
           <details class:list={[{ 'top-level-collapsible': isTopLevel }]} open={hasCurrentChild(entry.entries) || !entry.collapsed}>
             <summary>
-              {firstLink ? (
-                <a href={firstLink} class="group-link">
-                  {entry.label}
-                  {entry.badge && (
-                    <Badge
-                      variant={entry.badge.variant}
-                      class={entry.badge.class}
-                      text={entry.badge.text}
-                      size='small'
-                    />
-                  )}
-                </a>
-              ) : (
-                <span class="group-label">
-                  {entry.label}
-                  {entry.badge && (
-                    <Badge
-                      variant={entry.badge.variant}
-                      class={entry.badge.class}
-                      text={entry.badge.text}
-                      size='small'
-                    />
-                  )}
-                </span>
-              )}
+              <span class="group-label">
+                {entry.label}
+                {entry.badge && (
+                  <Badge
+                    variant={entry.badge.variant}
+                    class={entry.badge.class}
+                    text={entry.badge.text}
+                    size='small'
+                  />
+                )}
+              </span>
               <Icon name="right-caret" class="caret" size="1.25rem" />
             </summary>
             <Astro.self sublist={entry.entries} nested={true} depth={depth + 1} />
@@ -113,6 +87,10 @@ function getFirstLink(entries: any[]): string | null {
     /* Top-level section headers */
     .section-group { margin-bottom: 0.25rem; }
     .section-label { display: block; font-weight: 700; color: var(--sl-color-white); text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.6875rem; padding: 0.5em var(--sl-sidebar-item-padding-inline); }
+    /* Indent the items directly under a section header so sub-items read as
+       children of the uppercase header rather than sitting flush with it. */
+    .section-group > ul > li > a:not(.group-link),
+    .section-group > ul > li > details > summary { padding-inline-start: 1rem; }
 
     /* Top-level collapsible groups: match section header styling */
     .top-level-collapsible > summary { font-weight: 700; color: var(--sl-color-white); text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.6875rem; padding: 0.5em var(--sl-sidebar-item-padding-inline); }
@@ -172,11 +150,11 @@ function getFirstLink(entries: any[]): string | null {
     a:not(.group-link):hover, a:not(.group-link):focus { color: var(--sl-color-white); }
     a[aria-current="page"], a[aria-current="page"]:hover, a[aria-current="page"]:focus { 
       font-weight: 600; 
-      color: var(--sl-color-text-invert); 
+      color: var(--docs-active-fg);
       background-color: var(--sl-color-accent); 
     }
     .group-link[aria-current="page"], .group-link[aria-current="page"]:hover, .group-link[aria-current="page"]:focus {
-      color: var(--sl-color-text-invert);
+      color: var(--docs-active-fg);
     }
     
     @media (min-width: 50rem) { 
@@ -189,7 +167,15 @@ function getFirstLink(entries: any[]): string | null {
        section headers, and group labels, regardless of label whitespace */
     .sl-badge {
       font-size: .75em !important;
-      margin-inline-start: 0.375em;
+      margin-inline-start: 0.75em;
+    }
+
+    /* On the selected row (green background) the pale "tip" badge is hard to
+       read, so flip it to a solid white pill with dark text. */
+    a[aria-current="page"] .sl-badge {
+      background-color: #fff !important;
+      border-color: #fff !important;
+      color: var(--strands-black, #111) !important;
     }
   }
 </style>

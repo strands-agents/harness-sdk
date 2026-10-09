@@ -1,0 +1,272 @@
+---
+title: Vercel
+description: 'Bring any Vercel AI SDK provider into Strands agents with the VercelModel adapter. Use @ai-sdk packages for OpenAI, Anthropic, Bedrock, and more.'
+tags: [vision]
+languages: TypeScript
+integrationType: model-provider
+sourceLinks:
+  - path: strands-ts/src/models/vercel.ts
+---
+
+The [Vercel AI SDK](https://sdk.vercel.ai/) is a TypeScript toolkit for building AI-powered applications. It defines a [Language Model Specification](https://github.com/vercel/ai/tree/main/packages/provider/src/language-model/v3) that standardizes how applications interact with LLMs across providers. The Strands Agents SDK includes a `VercelModel` adapter that wraps any Language Model Specification v3 (`LanguageModelV3`) provider for use as a Strands model provider.
+
+This means you can bring models from the entire Vercel AI SDK ecosystem - including `@ai-sdk/openai`, `@ai-sdk/anthropic`, `@ai-sdk/amazon-bedrock`, `@ai-sdk/google`, and [many more](https://sdk.vercel.ai/docs/foundations/providers-and-models) - directly into Strands agents.
+
+## Installation
+
+Install the Strands Harness SDK along with the Vercel AI SDK provider package for the model you want to use:
+
+```bash
+# OpenAI
+npm install @strands-agents/sdk @ai-sdk/openai
+
+# Amazon Bedrock
+npm install @strands-agents/sdk @ai-sdk/amazon-bedrock
+
+# Anthropic
+npm install @strands-agents/sdk @ai-sdk/anthropic
+
+# Google Generative AI
+npm install @strands-agents/sdk @ai-sdk/google
+```
+
+The `@ai-sdk/provider` package (which defines the `LanguageModelV3` interface) is listed as an optional peer dependency of `@strands-agents/sdk` and will be installed automatically with any `@ai-sdk/*` provider.
+
+For community providers like Ollama, install the community package directly:
+
+```bash
+npm install @strands-agents/sdk ai-sdk-ollama
+```
+
+## Usage
+
+Create a `LanguageModelV3` instance from any Vercel provider and wrap it with `VercelModel`:
+
+### OpenAI
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/vercel.ts:basic_usage_openai"
+```
+
+### Amazon Bedrock
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/vercel.ts:basic_usage_bedrock"
+```
+
+### Anthropic
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/vercel.ts:basic_usage_anthropic"
+```
+
+### Google Generative AI
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/vercel.ts:basic_usage_google"
+```
+
+### Ollama
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/vercel.ts:basic_usage_ollama"
+```
+
+:::note
+Ollama must be [installed](https://ollama.com/download) and running locally with your desired model pulled (e.g., `ollama pull llama3.1`).
+
+The [Vercel AI SDK recommends two community Ollama providers](https://ai-sdk.dev/providers/community-providers/ollama): `ollama-ai-provider-v2` as a basic option for simple text generation, and `ai-sdk-ollama` as a more advanced option with reliable tool calling and complete responses. Use `ai-sdk-ollama` so Strands agents get full tool calling support.
+:::
+
+## Configuration
+
+`VercelModel` accepts configuration directly alongside the `provider` option. These include all [LanguageModelV3CallOptions](https://github.com/vercel/ai/tree/main/packages/provider/src/language-model/v3) settings (temperature, topP, topK, penalties, stop sequences, seed, etc.) plus the base Strands model config fields.
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/vercel.ts:config_example"
+```
+
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `modelId` | Override the model ID (defaults to the provider's model ID) | `'gpt-4o'` |
+| `maxTokens` | Maximum tokens to generate | `1000` |
+| `temperature` | Controls randomness | `0.7` |
+| `topP` | Nucleus sampling | `0.9` |
+| `topK` | Top-k sampling | `40` |
+| `presencePenalty` | Encourages new topics | `0.5` |
+| `frequencyPenalty` | Reduces repetition | `0.5` |
+| `stopSequences` | Custom stop sequences | `['END']` |
+| `seed` | Deterministic generation | `42` |
+
+When new fields are added to the Language Model Specification, they become available in the config automatically.
+
+## Streaming
+
+The adapter supports streaming text, reasoning content, and tool use:
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/vercel.ts:streaming"
+```
+
+## Structured Output
+
+The adapter supports structured output through the underlying provider's native capabilities. Define a Zod schema, pass it as `structuredOutputSchema`, and read validated output from `result.structuredOutput`:
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/vercel_imports.ts:structured_output_imports"
+
+--8<-- "user-guide/sdk/model-providers/vercel.ts:structured_output"
+```
+
+For schema patterns, error handling, and per-invocation overrides, see [Structured Output](../agents/structured-output/).
+
+## Use Strands in a Next.js app
+
+Because `VercelModel` wraps the same `@ai-sdk/*` provider you already use, Strands is
+*additive* to a Vercel AI SDK app rather than a replacement. Keep your provider packages
+and your client, and run the Strands agent server-side in an App Router route handler:
+you get the agent loop, tools, sessions, and hooks around the model you were already
+calling.
+
+### The route handler
+
+Build the agent with `VercelModel` and stream its events back to the client. Strands
+requires Node 22+, so run the handler on the Node.js runtime, not the Edge runtime:
+
+```typescript
+// app/api/chat/route.ts
+import { Agent } from '@strands-agents/sdk'
+import { VercelModel } from '@strands-agents/sdk/models/vercel'
+import { openai } from '@ai-sdk/openai'
+
+// Strands needs the Node.js runtime (Node 22+), not Edge.
+export const runtime = 'nodejs'
+
+export async function POST(req: Request) {
+  const { prompt } = await req.json()
+
+  const agent = new Agent({
+    model: new VercelModel({ provider: openai('gpt-4o') }),
+  })
+
+  const encoder = new TextEncoder()
+  const stream = new ReadableStream({
+    async start(controller) {
+      // Each event serializes to wire-safe JSON — its toJSON() drops the live
+      // agent reference and keeps only the serializable fields.
+      for await (const event of agent.stream(prompt, { cancelSignal: req.signal })) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+      }
+      controller.close()
+    },
+  })
+
+  return new Response(stream, {
+    headers: { 'Content-Type': 'text/event-stream' },
+  })
+}
+```
+
+Passing `cancelSignal: req.signal` stops the agent when the client disconnects.
+
+### Rendering on the client
+
+:::note[No built-in `useChat` bridge]
+Strands does not ship a converter from its stream events to the Vercel AI SDK's UI
+message (data-stream) protocol, so `useChat` won't consume the agent stream directly.
+You either read the event stream yourself, or write a small adapter that maps Strands
+events onto the [AI SDK stream protocol](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol)
+your AI SDK version expects. Strands gives you the pieces; the target format is the AI
+SDK's.
+:::
+
+Reading the stream directly means switching on each event's `type`. The events you care
+about for a chat UI are `modelStreamUpdateEvent` (streamed text and reasoning deltas),
+`toolStreamUpdateEvent` (tool progress), and `agentResultEvent` (the final result):
+
+```typescript
+const res = await fetch('/api/chat', {
+  method: 'POST',
+  body: JSON.stringify({ prompt }),
+})
+
+const reader = res.body!.getReader()
+const decoder = new TextDecoder()
+
+for (;;) {
+  const { value, done } = await reader.read()
+  if (done) break
+  for (const line of decoder.decode(value).split('\n\n')) {
+    if (!line.startsWith('data: ')) continue
+    const event = JSON.parse(line.slice(6))
+    if (event.type === 'modelStreamUpdateEvent') {
+      const inner = event.event
+      if (inner.type === 'modelContentBlockDeltaEvent' && inner.delta.type === 'textDelta') {
+        appendToMessage(inner.delta.text) // render the streamed text
+      }
+    } else if (event.type === 'agentResultEvent') {
+      // event.result is the final AgentResult
+    }
+  }
+}
+```
+
+See [Streaming](../streaming/) for the full event union, and
+[Agent Loop](../agents/agent-loop/) for tools, sessions, and lifecycle hooks you can add
+around the model.
+
+## Supported features
+
+The `VercelModel` adapter handles:
+
+- Streaming text, reasoning, and tool use (both incremental and complete tool call events)
+- Message formatting: text, images, documents, video, tool use/results, and reasoning blocks
+- Tool specification and tool choice mapping
+- Usage and token tracking including cache read/write tokens
+- Error classification: maps provider errors to `ModelThrottledError`, `ContextWindowOverflowError`, and `ModelError`
+
+## Compatible providers
+
+Any package that implements the `LanguageModelV3` interface works with `VercelModel`. This includes both official Vercel AI SDK providers and community providers.
+
+### [Official providers](https://sdk.vercel.ai/docs/foundations/providers-and-models)
+
+| Provider | Package |
+|----------|---------|
+| OpenAI | `@ai-sdk/openai` |
+| Amazon Bedrock | `@ai-sdk/amazon-bedrock` |
+| Anthropic | `@ai-sdk/anthropic` |
+| Google Generative AI | `@ai-sdk/google` |
+| Google Vertex | `@ai-sdk/google-vertex` |
+| Azure OpenAI | `@ai-sdk/azure` |
+| Mistral | `@ai-sdk/mistral` |
+| Cohere | `@ai-sdk/cohere` |
+| xAI Grok | `@ai-sdk/xai` |
+| DeepSeek | `@ai-sdk/deepseek` |
+| Groq | `@ai-sdk/groq` |
+
+### [Community providers](https://ai-sdk.dev/providers/community-providers)
+
+| Provider | Package |
+|----------|---------|
+| Ollama | `ai-sdk-ollama` |
+
+## Troubleshooting
+
+### Missing peer dependency
+
+If you see warnings about `@ai-sdk/provider`, install it explicitly:
+
+```bash
+npm install @ai-sdk/provider
+```
+
+### Authentication errors
+
+Authentication is handled by the underlying Vercel provider package. Refer to the specific provider's documentation for credential setup - for example, `@ai-sdk/openai` reads `OPENAI_API_KEY` from the environment, and `@ai-sdk/amazon-bedrock` uses the standard AWS credential chain.
+
+## References
+
+- [Vercel AI SDK](https://sdk.vercel.ai/)
+- [Language Model Specification v3](https://github.com/vercel/ai/tree/main/packages/provider/src/language-model/v3)
+- [Vercel AI SDK Providers](https://sdk.vercel.ai/docs/foundations/providers-and-models)

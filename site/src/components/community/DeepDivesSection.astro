@@ -28,7 +28,7 @@ const { dives, suggestTopicHref } = Astro.props
           )}
           {dive.thumbnail === 'question' && (
             <svg viewBox="0 0 150 112">
-              <text x="75" y="72" text-anchor="middle" font-family="Figtree" font-style="italic" font-size="52" fill="none" stroke="#2f6b48" stroke-width="1.2">
+              <text x="75" y="72" text-anchor="middle" font-family="Space Grotesk" font-style="italic" font-size="52" fill="none" stroke="#2f6b48" stroke-width="1.2">
                 ?
               </text>
             </svg>
@@ -46,7 +46,7 @@ const { dives, suggestTopicHref } = Astro.props
   <a class="dive suggest" href={suggestTopicHref}>
     <div class="thumb" aria-hidden="true">
       <svg viewBox="0 0 150 112">
-        <text x="75" y="72" text-anchor="middle" font-family="Figtree" font-style="italic" font-size="52" fill="none" stroke="#2f6b48" stroke-width="1.2">
+        <text x="75" y="72" text-anchor="middle" font-family="Space Grotesk" font-style="italic" font-size="52" fill="none" stroke="#2f6b48" stroke-width="1.2">
           ?
         </text>
       </svg>
@@ -61,7 +61,7 @@ const { dives, suggestTopicHref } = Astro.props
 
 <style>
   h2 {
-    font-family: 'Figtree', sans-serif;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
     font-size: 2.625rem;
     letter-spacing: -0.02em;
     font-weight: 600;
@@ -70,7 +70,7 @@ const { dives, suggestTopicHref } = Astro.props
   }
 
   .sec-dek {
-    font-family: 'Figtree', sans-serif;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
     color: var(--sl-color-gray-3);
     font-size: 0.9375rem;
     margin: 0.375rem 0 0;
@@ -115,7 +115,7 @@ const { dives, suggestTopicHref } = Astro.props
   }
 
   .tag {
-    font-family: 'Figtree', sans-serif;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
     font-size: 0.6875rem;
     letter-spacing: 0.15em;
     text-transform: uppercase;
@@ -123,7 +123,9 @@ const { dives, suggestTopicHref } = Astro.props
   }
 
   h3 {
-    font-family: 'Figtree', sans-serif;
+    /* JetBrains Mono to match the /blog post titles and the site-wide heading
+       convention; the rest of this card stays Space Grotesk. */
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-size: 1.5rem;
     letter-spacing: -0.01em;
     font-weight: 600;
@@ -146,7 +148,7 @@ const { dives, suggestTopicHref } = Astro.props
   .dive p {
     color: var(--sl-color-gray-3);
     font-size: 0.90625rem;
-    font-family: 'Figtree', sans-serif;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
     margin: 0;
   }
 

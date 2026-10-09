@@ -1,0 +1,207 @@
+---
+import arrow from '../assets/banner/arrow.svg?raw';
+import shape from '../assets/next-steps/shape.svg?raw';
+import shapeMobile from '../assets/next-steps/shape-mobile.svg?raw';
+import { pathWithBase } from '../util/links';
+
+const ctas = [
+  { label: 'Quick start', href: pathWithBase('/docs/user-guide/harness/quickstart/') },
+  { label: 'Migrate', href: pathWithBase('/docs/user-guide/migrate/choosing-an-agent-foundation/') },
+  { label: 'Deploy', href: pathWithBase('/docs/user-guide/sdk/deploy/operating-agents-in-production/') },
+];
+---
+
+<section class="next-steps" aria-label="Next steps">
+  <div
+    class="next-steps__shape next-steps__shape--desktop"
+    aria-hidden="true"
+    set:html={shape}
+  />
+  <div
+    class="next-steps__shape next-steps__shape--mobile"
+    aria-hidden="true"
+    set:html={shapeMobile}
+  />
+  <div class="next-steps__content">
+    <h2 class="next-steps__title">Push the boundaries of what agents can do.</h2>
+    <div class="next-steps__ctas">
+      {ctas.map((cta) => (
+        <a href={cta.href} class="next-steps__cta">
+          {cta.label}
+          <span class="next-steps__cta-arrow" set:html={arrow} />
+        </a>
+      ))}
+    </div>
+  </div>
+</section>
+
+<style>
+  .next-steps {
+    position: relative;
+    background: var(--bg);
+    padding: 85px 55px;
+    overflow: hidden;
+    /* Fixed section height so the shape's bottom edge aligns with the
+       footer's top edge — no black gap in between. */
+    height: 370px;
+    box-sizing: border-box;
+  }
+
+  .next-steps__shape {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* The shape SVGs hardcode the brand green; retint per theme
+     (seafoam in light mode, per Figma 745:9941). Works because the SVG
+     is inlined, so attribute selectors reach its paths. */
+  .next-steps__shape :global([fill='#00CC60']) {
+    fill: var(--surface-green);
+  }
+
+  /* Shape stretches to viewport width. The SVG has
+     `preserveAspectRatio="none"` so its curves scale with the page rather
+     than staying at their native 1454px canvas.
+     Height is 1px taller than the section (371 vs 370) so the shape's
+     bottom sub-pixel edge overlaps into the footer, hiding the hairline
+     seam that would otherwise show between the two green fills. */
+  .next-steps__shape--desktop {
+    top: 0;
+    width: 100%;
+    height: 371px;
+  }
+
+  /* Mobile shape is a slim strip that only draws the bottom-corner curves.
+     Push it 1px below the section edge to overlap into the footer and
+     hide the sub-pixel seam that would otherwise show as a black band. */
+  .next-steps__shape--mobile {
+    display: none;
+    bottom: -1px;
+    width: 100%;
+    height: 113px;
+  }
+
+  .next-steps__shape :global(svg) {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  .next-steps__content {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 32px;
+    max-width: 835px;
+    margin: 0 auto;
+    text-align: center;
+  }
+
+  .next-steps__title {
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 500;
+    font-size: 48px;
+    letter-spacing: 4.8px;
+    line-height: 1.12;
+    color: var(--fg);
+  }
+
+  .next-steps__ctas {
+    display: flex;
+    gap: 106px;
+    align-items: center;
+  }
+
+  .next-steps__cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 12px 18px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 500;
+    font-size: 19.25px;
+    line-height: 1.3;
+    color: var(--fg);
+    text-decoration: none;
+  }
+
+  .next-steps__cta:hover {
+    opacity: 0.8;
+  }
+
+  .next-steps__cta-arrow {
+    display: inline-flex;
+    width: 14.66px;
+    height: 12.7px;
+  }
+
+  .next-steps__cta-arrow :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  /* ---------- Narrow widths (< 1024px) ----------
+     Below ~1024px the horizontal row of CTAs starts to feel cramped, so
+     stack them vertically. Section height grows with content, and we
+     swap to the mobile corner shape (short strip at the bottom) since
+     the desktop 370px shape no longer aligns with the taller section. */
+  @media (max-width: 1023px) {
+    .next-steps {
+      height: auto;
+    }
+
+    .next-steps__shape--desktop {
+      display: none;
+    }
+
+    .next-steps__shape--mobile {
+      display: block;
+    }
+
+    .next-steps__ctas {
+      flex-direction: column;
+      gap: 12px;
+      align-items: center;
+    }
+  }
+
+  /* ---------- Mobile (< 768px) ---------- */
+  @media (max-width: 767px) {
+    .next-steps {
+      /* On mobile the section shrinks to hug its content — the desktop
+         fixed `height: 370px` is only for aligning with the tall corner
+         shape and would leave a big empty black gap here. */
+      padding: 48px 19px;
+      height: auto;
+    }
+
+    .next-steps__shape--desktop {
+      display: none;
+    }
+
+    .next-steps__shape--mobile {
+      display: block;
+    }
+
+    .next-steps__content {
+      gap: 24px;
+    }
+
+    .next-steps__title {
+      font-size: 28px;
+      letter-spacing: 2.8px;
+    }
+
+    .next-steps__ctas {
+      flex-direction: column;
+      gap: 12px;
+      align-items: center;
+    }
+  }
+</style>

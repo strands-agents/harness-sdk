@@ -9,6 +9,7 @@ from strands._context_manager.strategies.offload import Offload
 from strands._context_manager.strategies.offload.truncate import EmergencyTruncateStrategy
 from strands.hooks import HookRegistry
 from strands.hooks.events import AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
+from strands.storage.in_memory_storage import InMemoryStorage
 from strands.types.content import ContentBlock, Message
 from strands.types.exceptions import ContextWindowOverflowException
 from strands.types.tools import ToolResult, ToolUse
@@ -362,6 +363,36 @@ class TestStashBackfill:
         assert result["text"] == "pre-existing result"
 
     @pytest.mark.asyncio
+    async def test_backfill_does_not_overwrite_existing_stash_entries(self, mock_agent):
+        """A restored stash holds originals while restored messages hold their previews; the originals win."""
+        mock_agent.session_id = "test-session"
+        mock_agent.storage = None
+        mock_agent.messages = [
+            Message(role="user", content=[ContentBlock(text="seed message")], tracking_id="seed"),
+            Message(
+                role="user",
+                content=[
+                    ContentBlock(
+                        toolResult=ToolResult(
+                            toolUseId="pre-tu-1",
+                            status="success",
+                            content=[{"text": "[Truncated: 1 block, ~7,500 tokens] preview"}],
+                        )
+                    )
+                ],
+            ),
+        ]
+        cm = ContextManager(strategies=[], stash=True)
+        cm.init_agent(mock_agent)
+        await cm.stash.load_snapshot({"pre-tu-1_0": {"text": "original full result"}})
+
+        event = BeforeModelCallEvent(agent=mock_agent, projected_input_tokens=100)
+        await mock_agent.hooks.invoke_callbacks_async(event)
+
+        assert await cm.stash.retrieve("pre-tu-1_0") == {"text": "original full result"}
+        assert await cm.stash.retrieve("seed_0") == {"text": "seed message"}
+
+    @pytest.mark.asyncio
     async def test_backfill_runs_only_once(self):
         agent = unittest.mock.MagicMock()
         agent.agent_id = "test-agent"
@@ -482,3 +513,28 @@ class TestStashIsDurable:
     def test_false_before_init(self):
         context_manager = ContextManager()
         assert context_manager.stash_is_durable is False
+
+
+class TestStashRoot:
+    """Tests for resolving the stash root from the configured storage."""
+
+    @pytest.mark.asyncio
+    async def test_explicit_scoped_storage_is_exact_root(self, mock_agent):
+        mock_agent.session_id = "s1"
+        storage = InMemoryStorage()
+        context_manager = ContextManager(stash={"storage": storage.namespace("team")})
+        context_manager.init_agent(mock_agent)
+        await context_manager.stash.store("tool-1", 0, b"{}")
+
+        assert await storage.list("") == ["team/tool-1_0"]
+
+    @pytest.mark.asyncio
+    async def test_scoped_agent_storage_uses_per_agent_root(self, mock_agent):
+        mock_agent.session_id = "s1"
+        storage = InMemoryStorage()
+        mock_agent.storage = storage.namespace("tenant")
+        context_manager = ContextManager()
+        context_manager.init_agent(mock_agent)
+        await context_manager.stash.store("tool-1", 0, b"{}")
+
+        assert await storage.list("") == ["tenant/context/s1/scopes/agent/test-agent/tool-1_0"]

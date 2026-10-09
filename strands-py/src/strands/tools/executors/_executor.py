@@ -6,7 +6,6 @@ thread pools, etc.).
 
 import abc
 import logging
-import threading
 import time
 from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass, field
@@ -29,7 +28,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from ...agent import Agent
     from ...background_tasks._background_tasks import _BackgroundTasks
     from ...background_tasks.in_process._manager import _MiddlewareInterrupt
-    from ...experimental.bidi.agent import BidiAgent
+    from ...bidi.agent import BidiAgent
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +58,7 @@ class ToolExecutor(abc.ABC):
         if cast(dict[str, Any], after_event.result).get("cancelled") is True:
             return False
         if not ToolExecutor._is_agent(agent):
-            return True
+            return not agent.cancel_signal.is_set()
         return not cast("Agent", agent)._observe_cancellation()
 
     async def _execute_background(
@@ -207,9 +206,7 @@ class ToolExecutor(abc.ABC):
             }
         )
 
-        # A BidiAgent has no cancellation signal; an inert event keeps the middleware and tool
-        # contracts non-optional.
-        cancel_signal = cast("Agent", agent).cancel_signal if ToolExecutor._is_agent(agent) else threading.Event()
+        cancel_signal = agent.cancel_signal
         background_tasks: _BackgroundTasks | None = getattr(agent, "_background_tasks", None)
 
         # Retry loop for tool execution - hooks can set after_event.retry = True to retry

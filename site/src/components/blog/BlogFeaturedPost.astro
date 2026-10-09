@@ -47,14 +47,14 @@ const href = pathWithBase(`/blog/${post.id}/`)
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    font-family: 'Figtree', sans-serif;
+    font-family: var(--sl-font);
     font-size: 0.85rem;
     color: var(--sl-color-gray-3);
     margin-bottom: 0.75rem;
   }
 
   .featured-post-title {
-    font-family: 'Figtree', sans-serif;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-size: clamp(1.5rem, 3vw, 2rem);
     font-weight: 700;
     line-height: 1.25;
@@ -63,7 +63,7 @@ const href = pathWithBase(`/blog/${post.id}/`)
   }
 
   .featured-post-description {
-    font-family: 'Figtree', sans-serif;
+    font-family: var(--sl-font);
     font-size: 1.0625rem;
     line-height: 1.6;
     color: var(--sl-color-gray-2);
@@ -72,12 +72,23 @@ const href = pathWithBase(`/blog/${post.id}/`)
   }
 
   .featured-post-authors {
-    font-family: 'Figtree', sans-serif;
+    font-family: var(--sl-font);
     font-size: 0.85rem;
     color: var(--sl-color-gray-3);
   }
 
   .featured-post-author:not(:last-child)::after {
     content: ', ';
+  }
+
+  /* On phones the card's inset squeezes the long title; drop the horizontal
+     padding and chrome so the post aligns to the header and uses the full width. */
+  @media (max-width: 640px) {
+    .featured-post {
+      padding: 0.5rem 0 1.5rem;
+      background: transparent;
+      border: none;
+      border-radius: 0;
+    }
   }
 </style>

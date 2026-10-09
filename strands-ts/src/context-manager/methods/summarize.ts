@@ -42,7 +42,7 @@ const DEFAULT_SYSTEM_PROMPT = [
  * @experimental
  */
 export interface SummarizeConfig {
-  /** Model to use for summarization. When omitted, uses the agent's model. */
+  /** Model used for summarization. Resolution order: `this model > agent.auxModel > agent.model`. */
   model?: Model
 
   /** Custom system prompt for the summarization model. */

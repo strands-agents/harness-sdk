@@ -1,6 +1,6 @@
 import { Agent, McpClient } from '@strands-agents/sdk'
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 
 async function runInvoke(title: string, agent: Agent, prompt: string) {
   console.log(`--- ${title} ---\nUser: ${prompt}`)

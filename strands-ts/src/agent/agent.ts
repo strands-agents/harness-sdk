@@ -179,6 +179,16 @@ export type AgentConfig = {
    * ```
    */
   model?: Model<BaseModelConfig> | ModelRouter | string
+  /**
+   * Model for the auxiliary side calls the SDK makes outside the main agent loop: context
+   * summarization, memory extraction, the HITL risk classifier, LLM steering, the goal judge, and
+   * the `web_fetch` analyst. Defaults to `model`, so leaving it unset changes nothing; set it
+   * (typically to a smaller, cheaper model) to move every side call off the main model at once.
+   * Each side call resolves its model as `component's own model > auxModel > model`.
+   * Accepts a Model or a string representing a Bedrock model ID, like `model`; a ModelRouter is
+   * not accepted because auxiliary calls run outside the agent loop a router attaches to.
+   */
+  auxModel?: Model<BaseModelConfig> | string
   /** An initial set of messages to seed the agent's conversation history. */
   messages?: Message[] | MessageData[]
   /**
@@ -217,6 +227,7 @@ export type AgentConfig = {
    *   with a higher truncation threshold and summarization only on overflow.
    *   This mode may change in future versions.
    * - `ContextManagerConfig` object: Custom strategy pipeline and stash configuration.
+   * - `ContextManager` instance: Used as-is. An instance binds to one agent; construct one per `Agent`.
    * - `false`: Explicitly disable context management (no compression, no offloading).
    *
    * When set (except `false`), any co-provided `conversationManager` is ignored.
@@ -327,7 +338,7 @@ export type AgentConfig = {
  * Resolve the contextManager facade into a concrete ConversationManager.
  *
  * When contextManager is undefined, falls back to the default SlidingWindowConversationManager.
- * When a preset, config object, or false, uses NullConversationManager —
+ * When a preset, config object, instance, or false, uses NullConversationManager —
  * the ContextManager owns overflow recovery and proactive compression.
  */
 function resolveConversationManager(
@@ -378,6 +389,15 @@ type ToolsExecutionResult = { message: Message; afterToolsEvent: AfterToolsEvent
 /** Model reached by the middleware terminal; empty when the chain short-circuits or fails before reaching it. */
 type InvokedModelRef = { model?: Model }
 
+/** Resolves `auxModel` like `model`: a string is a Bedrock model ID; a ModelRouter is rejected. */
+function resolveAuxModel(auxModel: Model | string | undefined): Model | undefined {
+  if (typeof auxModel === 'string') return new BedrockModel({ modelId: auxModel })
+  if (auxModel instanceof ModelRouter) {
+    throw new Error('auxModel must be a Model or a Bedrock model id, not a ModelRouter')
+  }
+  return auxModel
+}
+
 /**
  * Orchestrates the interaction between a model, a set of tools, and MCP clients.
  * The Agent is responsible for managing the lifecycle of tools and clients
@@ -409,6 +429,7 @@ export class Agent implements LocalAgent, InvokableAgent {
    */
   public model: Model
   private readonly _modelRouter?: ModelRouter
+  private _auxModel: Model | undefined
 
   /**
    * The system prompt to pass to the model provider.
@@ -460,6 +481,24 @@ export class Agent implements LocalAgent, InvokableAgent {
    */
   get sandbox(): Sandbox {
     return this._sandbox || defaultSandbox.get()
+  }
+
+  /**
+   * Model for auxiliary side calls (summarization, memory extraction, classification, steering,
+   * web fetch). Resolution order: `configured auxModel > model`.
+   *
+   * Reading always yields a resolved {@link Model}. Assigning accepts a Model, a Bedrock model ID
+   * string, or `undefined` to revert to following `model`. Memory extraction resolves its model when
+   * attached to the agent and keeps it; every other side call resolves it at call time.
+   *
+   * @throws Error if assigned a {@link ModelRouter}.
+   */
+  get auxModel(): Model {
+    return this._auxModel ?? this.model
+  }
+
+  set auxModel(auxModel: Model | string | undefined) {
+    this._auxModel = resolveAuxModel(auxModel)
   }
 
   /**
@@ -534,6 +573,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     } else {
       this.model = configuredModel ?? new BedrockModel()
     }
+    this._auxModel = resolveAuxModel(config?.auxModel)
 
     if (config?.plugins?.some((plugin) => plugin instanceof ModelRouter)) {
       throw new Error('ModelRouter must be passed through Agent({ model }), not plugins')
@@ -1080,6 +1120,32 @@ export class Agent implements LocalAgent, InvokableAgent {
       result = await gen.next()
     }
     return result.value
+  }
+
+  /**
+   * Runs the agent's shutdown procedures at end of life. Safe to call more
+   * than once, and a no-op when there is nothing to release.
+   *
+   * Call it directly when you own the agent's lifecycle (e.g. draining on a shutdown signal), or bind
+   * the agent with `await using` to run it automatically on scope exit.
+   *
+   * @example
+   * ```typescript
+   * await using agent = await createHarness()
+   * await agent.invoke('summarize the repo')
+   * // agent.shutdown() runs here as the scope exits
+   * ```
+   */
+  async shutdown(): Promise<void> {
+    await this.memoryManager?.flush()
+  }
+
+  /**
+   * Runs {@link Agent.shutdown} when the agent leaves an `await using` scope, on normal exit and on
+   * throw, so its shutdown procedures run without a manual `finally`.
+   */
+  async [Symbol.asyncDispose](): Promise<void> {
+    await this.shutdown()
   }
 
   /**

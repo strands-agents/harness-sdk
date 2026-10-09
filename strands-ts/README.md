@@ -1,7 +1,10 @@
 <div align="center">
   <div>
     <a href="https://strandsagents.com">
-      <img src="https://strandsagents.com/latest/assets/logo-github.svg" alt="Strands Agents" width="55px" height="105px">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="https://strandsagents.com/latest/assets/wordmark-github-dark.svg">
+        <img src="https://strandsagents.com/latest/assets/wordmark-github-light.svg" alt="Strands" width="320">
+      </picture>
     </a>
   </div>
 
@@ -216,7 +219,7 @@ Seamlessly integrate Model Context Protocol (MCP) servers:
 
 ```typescript
 import { Agent, McpClient } from "@strands-agents/sdk";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 // Create a client for a local MCP server
 const documentationTools = new McpClient({
@@ -235,6 +238,33 @@ await agent.invoke("Use a random tool from the MCP server.");
 
 await documentationTools.disconnect();
 ```
+
+Enable automatic task execution on the same `McpClient` for legacy task servers:
+
+```typescript
+await using taskTools = new McpClient({
+  url: "https://example.com/mcp",
+  tasksConfig: { pollTimeout: 300_000 },
+});
+const agent = new Agent({ tools: [taskTools] });
+await agent.invoke("Run the server's task tool.");
+```
+
+`callTool()` returns the final tool result. To bound total wall-clock time, set
+`tasksConfig.pollTimeout`; a call's `options.timeoutMs` overrides that value. The field
+names and defaults match the Python SDK's `TasksConfig`
+(`ttl` remains as a deprecated alias of `requestTimeout`):
+
+| Setting | Scope | Default |
+| --- | --- | --- |
+| `pollTimeout` | Entire automatic operation, including polling | 300,000 ms |
+| `requestTimeout` | Each task lifecycle request | 60,000 ms |
+| `pollInterval` | Polling delay when the server omits its interval | 1,000 ms |
+
+The first limit reached ends the wait. Matching progress resets the request timer
+only; the overall deadline never moves. For example, with `requestTimeout: 10_000`
+and `pollTimeout: 120_000`, progress can keep a request alive beyond 10 seconds,
+but the whole operation cannot exceed 120 seconds.
 
 ### Multi-Agent Orchestration
 

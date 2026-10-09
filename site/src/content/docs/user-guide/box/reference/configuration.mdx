@@ -1,0 +1,457 @@
+---
+title: box.toml configuration reference
+description: Every Strands Box box.toml key, including agent, tool, egress, mcp, and telemetry tables, with types, allowed values, defaults, validation rules, and a complete example.
+sidebar:
+  label: "box.toml"
+---
+
+`box.toml` describes one box: the workload it runs, what each process can reach
+directly, the credentials bound to destinations, the MCP servers, and where decision
+records go. `box run --config <file>` reads exactly the file you name.
+
+Every table refuses keys it doesn't define. An unknown key stops the run with an error
+that lists the keys the table accepts.
+
+## At a glance
+
+| Table | What it declares |
+|---|---|
+| [Top level](#top-level-keys) | The box's `name`, its state directory `box_dir`, and its `policy` file. |
+| [`[agent]`](#process-tables) | The workload the box runs: its `command`, `workspace`, `env`, and `filesystem`. |
+| [`[agent.env]`](#env) | Environment variables for the agent. Nothing comes from your shell except `HOME` and `PATH` when unset. |
+| [`[agent.filesystem]`](#filesystem-lists) | The agent's filesystem grants: paths its own process reaches without a policy decision. |
+| [`[tool.<label>]`](#process-tables) | A host program the agent's shell can start in its own sandbox. |
+| [`[tool.<label>.filesystem]`](#filesystem-lists) | That tool's filesystem grants. |
+| [`[tool.<label>.network]`](#toollabelnetwork) | Whether that tool's traffic goes through the egress gateway. |
+| [`[mcp.<name>]`, `type = "stdio"`](#mcpname-with-type--stdio) | A local MCP server that runs contained, in its own sandbox. |
+| [`[mcp.<name>.network]`](#mcpname-with-type--stdio) | Whether that server's traffic goes through the egress gateway. |
+| [`[mcp.<name>]`, `type = "http"`](#mcpname-with-type--http) | A remote MCP server, reached through the egress gateway. |
+| [`[egress.<name>]`](#egressname) | A credential, and the destinations it's attached to. |
+| [`[telemetry.<label>]`](#telemetrylabel) | Where decision records and the agent's telemetry go: a file or an OTLP collector. |
+
+In the tables below, **Required** is Yes when the key has no default and Box refuses the
+table without it.
+
+## Top-level keys
+
+| Key | Type | Values | Default | Required | Meaning |
+|---|---|---|---|---|---|
+| `name` | string | 1 to 32 bytes from `A-Z a-z 0-9 . _ -`. Not `.` or `..`. | None | Yes | The box's name. One path component. It labels the box in its record and telemetry. |
+| `box_dir` | path | Absolute. `~` isn't expanded. | None | Yes | The box's private state directory. See [`box_dir`](#box_dir). |
+| `policy` | path | Absolute, or relative to the directory holding `box.toml`. | None | No | The Dogwood policy file. Without it, nothing is granted and every decision is a denial. |
+
+`[agent]`, `[tool.<label>]`, `[mcp.<name>]`, `[egress.<name>]`, and `[telemetry.<label>]`
+are the other top-level tables. `[agent]` is optional in the file but required to run.
+Tool labels and MCP server names are one component of `A-Z a-z 0-9 . _ -`.
+
+### `box_dir`
+
+- Absolute. `~` isn't expanded here.
+- The parent must exist. Box creates the directory with mode `0700`, and creates no
+  directory above it. A missing parent is refused with ``the box directory's parent does
+  not exist; create it, because Box creates no directory above the one `box_dir` names``.
+- An existing directory must be yours, mode `0700`, and empty or a box Box created.
+- At most 90 bytes, so `<box_dir>/run/box.sock` fits the 103-byte socket path limit.
+- Outside the agent's `workspace`, and not containing `box.toml` or the policy file.
+  Each is refused by name: ``` `box_dir` <path> is equal to or below the agent's
+  workspace <path>```, ``configuration source <path> is inside `box_dir` <path>``, and
+  ``policy source <path> is inside `box_dir` <path>``.
+
+`box_dir` selects the box: one directory is one box. It holds `bin`, `run`, `trust`, and
+`private`, and none of them is a home. One `box run` owns a `box_dir` at a time. Policy
+history persists in `box_dir` across runs, in `<box_dir>/private/dogwood.redb`, and the
+directory stays until you delete it: end the `run` process to stop a box, and remove the
+directory to delete it.
+
+To reset a box, stop it and remove its `box_dir`. The next `box run` creates a fresh one,
+and every `when temporal` rule starts from an empty history. Remove the whole directory,
+not only the history file: Box refuses a box whose record says it has run but whose
+history is missing.
+
+## Process tables
+
+`[agent]`, each `[tool.<label>]`, and each `[mcp.<name>]` with `type = "stdio"` take the
+same four keys. A tool and a stdio server also take `network.contain_egress`, and
+`[agent]` refuses `network` with `` `network` is refused on `[agent]` ``:
+
+| Key | Type | Values | Default | Required | Meaning |
+|---|---|---|---|---|---|
+| `command` | string array | Element 0 is an absolute path or a bare name. See [`command`](#command). | None | Yes | The program and its leading arguments. |
+| `workspace` | path | Absolute, an existing directory. `~` isn't expanded. | See [`workspace`](#workspace) | No | The starting directory. Grants no access by itself. |
+| `env` | table of strings | See [`env`](#env). | `{}` | No | Environment variables for the process. |
+| `filesystem` | table | The lists in [Filesystem lists](#filesystem-lists). | Empty | No | Paths the process reaches directly, without a policy decision. |
+
+You can write `env` and `filesystem` inline (`env = { PATH = "/usr/bin:/bin" }`) or as
+their own tables (`[agent.env]`, `[agent.filesystem]`).
+
+No table chooses what a process may use. The agent gets every `[tool.<label>]`,
+`[mcp.<name>]`, and `[egress.<name>]` the file declares, and each tool and MCP server
+gets every egress route. The box is the credential boundary: a process that must not
+hold a credential belongs in another box.
+
+### `command`
+
+- Element 0 is an absolute path or a bare name. A bare name resolves on `env.PATH` when
+  it's set, otherwise on your `PATH`, otherwise on `/usr/bin:/bin`. A relative path
+  containing `/` is refused.
+- `box run --config <file> -- <args>` appends `<args>` to the agent's `command`.
+- When `command` is a script, add the interpreter its first line names to `exec`.
+- An argument after element 0 can include `${OTEL_EXPORTER_OTLP_ENDPOINT}`,
+  `${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT}`, or `${OTEL_EXPORTER_OTLP_PROTOCOL}`, which Box
+  replaces with its telemetry receiver. Any other `${…}` is refused. Arguments passed
+  after `--` aren't expanded.
+- For `[mcp.<name>]`, element 0 must be a bare name that isn't `zsh`, `bash`, `sh`,
+  `python`, or `python3`. It names the alias Box puts in its own `bin` directory, so
+  the agent starts the server by that name. Two stdio servers can't share a program.
+
+### `workspace`
+
+- For `[agent]`, defaults to the directory `box run` started in. Must exist, be a
+  directory, and not be your home directory.
+- For a tool, defaults to the shell's current directory when the tool's grants or the
+  agent's workspace contain it, else the agent's workspace.
+- For a stdio MCP server, defaults to the agent's workspace.
+- `~` isn't expanded here.
+
+### `env`
+
+- Names match `[A-Za-z_][A-Za-z0-9_]*`. `HOME` and `TMPDIR` must be absolute.
+- `HOME` defaults to your home directory, and can't be inside `box_dir` or enclose it.
+  A home that encloses `box_dir` would put this box's own state, and any sibling box's,
+  in the agent's reach.
+  Without `env.PATH`, the process gets your `PATH`. For `[agent]`, Box puts its own
+  `bin` directory first either way. A name that isn't one of Box's aliases falls
+  through to the later `PATH` directories, so the agent can run a program its `exec`
+  list grants by name. A tool or MCP server gets no Box directory on its `PATH`.
+- `TERM` and `COLORTERM` reach the process only when `env` names them, so a program that
+  picks colors from them renders plain otherwise.
+- A table can't set these names. Box sets the proxy, CA, `PWD`, and `USER` variables
+  itself, and refuses the loader and interpreter hooks:
+  - Any name starting `LD_`, `DYLD_`, `PYTHON`, or `OTEL_EXPORTER_OTLP_`.
+  - `NODE_OPTIONS`, `BASH_ENV`, `ENV`, `RUBYOPT`, `PERL5LIB`, `PERL5OPT`, `GEM_PATH`,
+    `CLASSPATH`, `JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS`.
+  - `HTTP_PROXY`, `HTTPS_PROXY`, `http_proxy`, `https_proxy`, `NO_PROXY`, `no_proxy`,
+    `NODE_USE_ENV_PROXY`.
+  - `SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS`, `CODEX_CA_CERTIFICATE`, `AWS_CA_BUNDLE`,
+    `REQUESTS_CA_BUNDLE`, `GIT_SSL_CAINFO`.
+  - `PWD`, `USER`.
+
+  Either kind is refused with ``` `env` name "<name>" is set by the box itself, so a table
+  cannot claim it```.
+
+### Filesystem lists
+
+The `filesystem` lists are a process's filesystem grants, part of its sandbox grants:
+the operating system enforces them, and no policy decision covers them.
+`[agent.filesystem]` takes all eight lists. `[tool.<label>.filesystem]` and
+`[mcp.<name>.filesystem]` take all but `metadata` and `exec`, and Box refuses either
+one by name. Every list is a path array, and every list defaults to empty.
+
+A tool or stdio MCP server needs neither list: on macOS it can test whether a path
+exists and read its metadata across your home, and it can run any program it can read.
+A server that runs on an interpreter, such as Node or Python, needs `read` for that
+interpreter's install directory.
+
+| Key | Type | Directory entry | File entry | Default | Required |
+|---|---|---|---|---|---|
+| `read` | path array | Read the tree | Read the file | `[]` | No |
+| `write` | path array | Write the tree, and read nothing | Write the file | `[]` | No |
+| `read_file` | path array | Refused | Read the file | `[]` | No |
+| `write_file` | path array | Refused | Write the existing file | `[]` | No |
+| `list` | path array | List and `stat` the tree, no content | Refused | `[]` | No |
+| `metadata` | path array | `stat` the tree | Refused | `[]` | No |
+| `exec` | path array | Run any binary in the tree | Run the executable | `[]` | No |
+| `deny` | path array | Subtract the tree from every grant | Subtract the file | `[]` | No |
+
+Each entry:
+
+- Is absolute or starts with `~/`.
+- Has no `..`, no glob characters (`* ? [ ] { }`), and no control characters, and
+  appears once.
+- Exists, isn't a symbolic link, and is the canonical spelling. On macOS, write
+  `/private/tmp`, not `/tmp`. A `deny` entry can name a missing path on macOS only.
+- Doesn't nest inside another grant of the same operation, and isn't covered entirely
+  by a `deny`.
+- Doesn't reach into `box_dir`, and, except in `metadata`, doesn't enclose it.
+- If it's a write grant, doesn't reach the policy file. In a box with a stdio MCP
+  server, it also doesn't sit at or above a directory on your `PATH`.
+
+A directory entry that encloses this box's `box.toml` and policy file grants everything
+below it except the directory that holds those two files. Box refuses grants on the
+roots of system trees, on machine secrets, and on trees that enclose a credential store;
+see [Grant files and directories](../guides/grant-files.md#rules-every-path-entry-follows).
+
+Every refusal names the table and the entry, as ``` `[agent]` filesystem entry "<entry>"
+is refused: <reason>```. Shape refusals happen when the file loads. Existence and
+identity refusals happen after Box creates `box_dir` and before the workload starts:
+
+| Entry | Reason in the refusal |
+|---|---|
+| A relative path | ``` `filesystem.read` path "<entry>" must be absolute or start with `~/` ``` |
+| A pattern or a control character | ``` `filesystem.read` path "<entry>" must be exact and contain no pattern or control character``` |
+| A `..` component | ``` `filesystem.read` path "<entry>" carries `..`; name the path it means``` |
+| A path that doesn't exist | `<path> is not there: No such file or directory (os error 2)` |
+| A symbolic link | `<path> is a symbolic link`, and the refusal names what it points at |
+| A spelling the kernel resolves elsewhere | `<path> is not the path the kernel checks, which is <path>` |
+| A directory in `read_file` or `write_file` | ``<path> is a directory; `read_file` names one file, and a tree belongs in `read` `` |
+| A file in `list` | ``<path> is a file, and `list` enumerates a directory tree`` |
+| A file in `exec` that isn't executable | `<path> is not an executable regular file` |
+| Two grants of one operation that nest | ``<path> lies inside <path>, granted by `read` `` |
+| A writable grant that reaches the policy file | ``` `write` reaches this box's policy file, <path>``` |
+
+**Box prints every grant on stderr** before the workload starts, under
+`strands-box: [agent] runs <program> with no policy decision over these paths:`, and
+names a granted credential store, such as
+`strands-box: [tool.<label>]: exposes ~/.ssh (read)`. A process can always run its own
+`command`, so the list shows that grant as `exec <command> (command, implicit)`, and
+removing a directory from `exec` doesn't refuse it.
+
+**A `write` grant alone isn't runnable.** The agent's sandbox refuses to map code from a
+writable grant. When the agent's `command` or an interpreter it runs lies inside a
+writable grant, the list carries
+`strands-box: warning: [agent] command <path> lies inside the writable grant <path>, so
+the process can replace the program it runs`.
+
+### Which tool a program selects
+
+A `[tool.<label>]` applies when a program the agent's shell starts begins with the
+tool's `command`: the same program, then the same fixed arguments. Box resolves the
+program to its canonical path before it compares, and the longest matching prefix wins.
+A program that no table names still runs when it lies under one of the agent's `exec`
+entries, with the agent's own filesystem grants. Either way, starting it is a
+`shell:spawn` decision; the table by itself starts nothing.
+
+### `[mcp.<name>]` with `type = "stdio"`
+
+A stdio server takes the four process keys, plus:
+
+| Key | Type | Values | Default | Required | Meaning |
+|---|---|---|---|---|---|
+| `type` | string | `"stdio"` | None | Yes | Selects a local server. |
+| `network.contain_egress` | boolean | `true`, `false` | `true` | No | `true` sends the server's traffic through the egress gateway. `false` gives it direct network access to IP hosts, with no policy decision and no credential injection. |
+
+`network.contain_egress` can also be written as its own table, `[mcp.<name>.network]`.
+With `false`, Box records one `egress:native` entry when the server starts.
+
+A stdio server starts only when a `shell:spawn` permit covers its `command`. Without
+one, the open fails with `MCP server "<name>" may not start: <decision>`, and the server
+doesn't run.
+
+### `[tool.<label>.network]`
+
+| Key | Type | Values | Default | Required | Meaning |
+|---|---|---|---|---|---|
+| `contain_egress` | boolean | `true`, `false` | `true` | No | `true` sends the tool's traffic through the egress gateway. `false` gives it direct network access to IP hosts, with no policy decision, no credential injection, and no traffic record. |
+
+With `false`, Box prints a `native egress` line for the tool at startup, and records
+`egress:native` each time the tool runs. A program that runs under an agent `exec`
+entry, with no tool table, always goes through the gateway. See
+[Let a tool skip the gateway](../guides/add-a-tool.md#let-a-tool-skip-the-gateway).
+
+## `[egress.<name>]`
+
+Binds a credential to destinations. Reachability is a policy decision. Every process in
+the box gets the route's placeholder, so the box, not the table, is the credential
+boundary.
+
+| Key | Type | Values | Default | Required | Meaning |
+|---|---|---|---|---|---|
+| `destinations` | string array | Non-empty. See [Destination patterns](#destination-patterns). | None | Yes | Where the credential is attached. |
+| `protocol` | string | `"http"` | `"http"` | No | What the destination speaks. `"mcp"` is refused; use [`[mcp.<name>]` with `type = "http"`](#mcpname-with-type--http). |
+| `secret.ref` | string | `env://NAME`, `aws://PROFILE`, `credsd://ENVIRONMENT` | None | Yes | Where the credential comes from. |
+| `secret.header` | string | An HTTP header name | `Authorization` | No | The header that carries the secret. |
+| `secret.prefix` | string | Any text | `Bearer ` for `Authorization`, else empty | No | Text before the secret. |
+| `secret.placement` | string | `header`, `basic_auth`, `query_param` | `header` | No | Where the secret goes. |
+| `secret.param` | string | A query parameter name | None | With `query_param` | The query parameter name. Refused with any other placement. |
+| `secret.inject` | string | `phantom`, `always` | `phantom` | No | `phantom` attaches the real secret only to a request that carries the box's placeholder, and refuses any other. `always` attaches it to every request to the destinations, with or without the placeholder. `env://` only. |
+| `secret.phantom_prefix` | string | 1 to 64 characters from `A-Z a-z 0-9 - _ . ~` | `strands_box_` | No | The start of the placeholder Box gives the process, for an agent that checks its key format. `env://` only. |
+
+The `secret.*` keys can also be written as one inline table:
+`secret = { ref = "env://GITHUB_TOKEN", prefix = "token " }`.
+
+- `env://NAME` reads the variable from the shell that runs `box run`. It must be set, and
+  not only whitespace. `NAME` can't be `HOME`, `PATH`, or a name `env` refuses.
+- `aws://PROFILE` signs each request with SigV4, using the profile's static keys. A
+  profile that uses `credential_process`, `role_arn`, or SSO is refused.
+- `credsd://ENVIRONMENT` signs each request with credentials from the Credentials Daemon
+  (`credsd`).
+- `basic_auth` and `query_param` take no `header` or `prefix`.
+- `aws://` and `credsd://` take no `header`, `prefix`, `placement`, `param`, `inject`, or
+  `phantom_prefix`. A `credsd://` reference must name an environment, as in
+  `credsd://prod-inference`.
+- An entry with no `secret` is refused: it declares only a destination, which policy
+  already decides.
+
+### Destination patterns
+
+| Pattern | Matches |
+|---|---|
+| `host` | The host on ports 443 and 80 |
+| `host:port` | The host on that port |
+| `host/prefix` | Paths under the prefix |
+| `host/*suffix` | Paths ending in the suffix |
+| `*.domain` | Every subdomain of the domain, not the domain itself |
+
+A prefix matches by whole segment: `api.example.com/v1/chat` matches
+`/v1/chat/completions` but not `/v1/chatbot`. Paths match case-sensitively, against the
+gateway's canonical form of the path. Hosts match in lowercase.
+
+A pattern matching every host, port `0`, and two overlapping patterns are refused. A
+host used by an `[mcp.<name>]` server can't appear in another table.
+
+## `[mcp.<name>]` with `type = "http"`
+
+| Key | Type | Values | Default | Required | Meaning |
+|---|---|---|---|---|---|
+| `type` | string | `"http"` | None | Yes | Selects a remote server. |
+| `destinations` | string array | Non-empty [destination patterns](#destination-patterns) | None | Yes | The server's address. |
+| `secret` | table | The same keys as [`[egress.<name>]`](#egressname) `secret.*` | None | No | The credential the gateway attaches to the server's requests. |
+
+`<name>` is `context.input.server` in `mcp:call` rules.
+
+## `[telemetry.<label>]`
+
+A telemetry table declares one target for decision records and the agent's telemetry.
+The label is your own, and a refusal names it.
+
+| Key | Type | Values | Default | Required | Meaning |
+|---|---|---|---|---|---|
+| `kind` | string | `file`, `otlp` | None | Yes | `file` appends one OTLP JSON request per line to a file. `otlp` sends OTLP over HTTP to a collector. |
+| `destination` | string | For `file`, an absolute path, `~`, or a path starting with `~/`, with no `..` component. For `otlp`, the collector's base URL. | None | Yes | Where the records go. |
+| `include` | string array | One or more of `deny`, `permit`, `trace`, `logs`, `metrics` | Every record | No | Which records the target receives. An empty list or a repeated word is refused. |
+| `secret.ref` | string | `env://NAME` or `secret://NAME`, which means the same | None | No | A credential Box attaches to each export. A literal value is refused. |
+| `secret.header` | string | An HTTP header name | `Authorization`, with a `Bearer ` prefix | No | The header that carries the secret. Any other header carries the bare value. |
+
+`include` takes these words:
+
+| Word | Records |
+|---|---|
+| `deny` | Every effective denial |
+| `permit` | Every effective permit |
+| `trace` | The agent's own spans, and Box's control records such as `box_started`, `policy_installed`, and `box_stopped` |
+
+The agent's log records and metrics reach every target, whatever `include` says, so
+`logs` and `metrics` are accepted and change nothing. An empty `include` is refused with
+`the target names no signal, so nothing would reach it`, and a repeated word with
+`the target names deny twice`.
+
+Without any `[telemetry]` table, every record goes to
+`<box_dir>/private/telemetry/records.jsonl`, which the agent can't reach. Declaring a
+target replaces that default. Box doesn't rotate the file, and doesn't sign or chain its
+records, so anything running as you can edit it afterwards.
+
+- A file destination inside `box_dir` must be under `box_dir/private/`. Any other is
+  refused as `inside the box directory <path> but outside its private tree, where a
+  process could truncate it`.
+- Box doesn't compare the destination with the agent's grants, so name a file outside
+  every path the agent can write. A file inside a granted directory is one the agent
+  can truncate.
+- Declare one target per file. Two boxes that append to one file can tear a line.
+
+Box sets `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, and
+`OTEL_EXPORTER_OTLP_PROTOCOL` for the agent, pointing at its own loopback receiver. The
+agent's spans, logs, and metrics exist only if it turns on its own exporters, for
+example with `OTEL_TRACES_EXPORTER = "otlp"`, `OTEL_LOGS_EXPORTER = "otlp"`, and
+`OTEL_METRICS_EXPORTER = "otlp"` in `[agent.env]`. A switch left at `none` means that
+signal never arrives, whatever `include` says.
+
+A target that fails while the box runs loses the record. Box reports no such loss, and
+doesn't retry.
+[Telemetry](https://github.com/strands-agents/box/blob/main/docs/user/telemetry.md)
+in the Box repository lists each record's attributes and shows `jq` queries for the file.
+
+## Path expansion
+
+| Key | `~` expanded |
+|---|---|
+| Filesystem lists, telemetry destinations | Yes |
+| `box_dir`, `workspace`, `policy`, `command`, `env.HOME`, `env.TMPDIR` | No |
+
+## A box from another build
+
+Box refuses a `box_dir` whose record another build of Box wrote: ``box record is version
+N, but this build understands M; select an empty `box_dir`, or remove the stale box state
+before the next run``. Remove that `box_dir`, or point `box_dir` at an empty directory,
+and the next `box run` creates a fresh record. Removing it discards the box's policy
+history.
+
+## When Box checks the file
+
+Box refuses a problem with the file's shape when it loads the file, before any box state
+exists: an unknown key, an invalid `name`, a relative `box_dir`, `command`, `workspace`,
+`env.HOME`, or `env.TMPDIR`, an `env` name Box owns, a patterned, relative, or duplicated
+filesystem entry, an overlapping or all-hosts destination, and an egress entry with no
+secret or a literal one.
+
+A `box_dir` whose parent doesn't exist is refused before anything is created. Every other
+check that needs the surrounding OS happens after `box run` creates `box_dir` and before
+the workload starts: a missing `workspace`, an `env.HOME` inside or enclosing `box_dir`, a
+telemetry file inside `box_dir` but outside `private/`, a filesystem entry that doesn't
+exist or is a symbolic link, and a `[tool.<label>] command` that names a missing file. The
+box directory stays behind, and the next `box run` reports the same refusal until you fix
+the file.
+
+## Complete example
+
+Keep `box.toml` and the policy file outside the project the agent can write. This
+example lives in `~/.box-config/my-service/`, and runs Claude Code as
+[Run Claude Code in a box](../guides/run-claude-code.md) sets it up.
+
+```toml title="~/.box-config/my-service/box.toml"
+name = "my-service"
+box_dir = "/Users/me/.box/my-service"
+policy = "policy.dw"
+
+[agent]
+# Claude Code, with its own prompts off, so the policy decides each command.
+command = ["/Users/me/.local/bin/claude", "--dangerously-skip-permissions"]
+workspace = "/Users/me/src/my-service"
+
+[agent.env]
+PATH = "/usr/bin:/bin"
+AWS_REGION = "us-west-2"
+CLAUDE_CODE_USE_BEDROCK = "1"
+ANTHROPIC_MODEL = "global.anthropic.claude-opus-5"
+# Claude Code's settings, sessions, and temporary files stay out of the project.
+CLAUDE_CONFIG_DIR = "/Users/me/.box-config/my-service/claude/config"
+CLAUDE_CODE_TMPDIR = "/Users/me/.box-config/my-service/claude/tmp"
+TMPDIR = "/Users/me/.box-config/my-service/claude/tmp"
+DISABLE_AUTOUPDATER = "1"
+
+# The project is only listed, so Claude Code reaches its files through its Bash tool,
+# where the policy decides each one.
+[agent.filesystem]
+read = ["~/.local/share/claude/versions", "~/.box-config/my-service/claude"]
+exec = ["~/.local/share/claude/versions"]
+write = ["~/.box-config/my-service/claude"]
+list = ["~/src/my-service"]
+
+[tool.git]
+command = ["/usr/bin/git"]
+env = { PATH = "/usr/bin:/bin", GIT_CONFIG_GLOBAL = "/dev/null" }
+
+[tool.git.filesystem]
+read = ["~/src/my-service", "/Library/Developer/CommandLineTools"]
+write = ["~/src/my-service"]
+
+[egress.model]
+destinations = ["bedrock-runtime.us-west-2.amazonaws.com"]
+secret.ref = "env://AWS_BEARER_TOKEN_BEDROCK"
+
+[egress.github]
+destinations = ["api.github.com"]
+secret = { ref = "env://GITHUB_TOKEN", prefix = "token " }
+
+# Installed with `uv tool install mcp-server-fetch`.
+[mcp.fetch]
+type = "stdio"
+command = ["mcp-server-fetch"]
+
+[mcp.fetch.filesystem]
+read = ["~/.local/share/uv/tools/mcp-server-fetch", "~/.local/share/uv/python"]
+
+[telemetry.local]
+kind = "file"
+destination = "~/box-records/my-service.jsonl"
+include = ["deny", "permit", "trace"]
+```

@@ -1,0 +1,40 @@
+name: "Harness TypeScript: Security Audit"
+
+# Informational npm audit of the harness-ts (`@strands-agents/harness`)
+# dependency tree. Reusable; called by release-harness-ts.yml. Does not block
+# the release: PR-introduced vulns are gated by the repo-level Dependency Review
+# job in ci.yml, and pre-existing advisories are driven down via Dependabot.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+
+jobs:
+  security-audit:
+    name: npm audit
+    permissions:
+      contents: read
+    runs-on: strands-agents_ubuntu-latest_4-core
+    # harness-ts installs standalone (its own package-lock.json), not via the repo-root workspace.
+    defaults:
+      run:
+        working-directory: harness-ts
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Audit dependencies (informational)
+        continue-on-error: true
+        run: npm audit --audit-level=high

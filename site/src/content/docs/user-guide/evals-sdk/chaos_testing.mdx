@@ -1,21 +1,21 @@
 ---
-title: Chaos Testing
-description: 'Test agent resilience by injecting controlled tool and model-output failures with ChaosPlugin: simulate timeouts, network errors, corrupted responses, refusals, and malformed output safely.'
+title: Chaos testing
+description: 'Test agent resilience by injecting controlled tool failures with ChaosPlugin: simulate timeouts, network errors, and corrupted responses safely.'
 tags: [error-handling, simulation]
 sidebar:
-  label: "Chaos Testing"
+  label: "Chaos testing"
 ---
 
 ## Overview
 
-Chaos testing systematically evaluates agent resilience by injecting controlled failures into tool execution and model output. Using `ChaosPlugin`, `ChaosCase`, and `ChaosExperiment`, you can test how agents handle tool timeouts, network errors, and corrupted responses, and how downstream consumers handle refusals, empty responses, and malformed model output, all without modifying agent code. A complete tool-chaos example can be found [here](https://github.com/strands-agents/harness-sdk/blob/main/site/docs/examples/evals-sdk/chaos_tool_testing.py) and a model-output chaos example [here](https://github.com/strands-agents/harness-sdk/blob/main/site/docs/examples/evals-sdk/chaos_model_testing.py).
+Chaos testing evaluates agent resilience by injecting controlled failures into tool execution. With `ChaosPlugin`, `ChaosCase`, and `ChaosExperiment`, you test how agents handle tool timeouts, network errors, and corrupted responses without changing agent code. See the [complete example](https://github.com/strands-agents/harness-sdk/blob/main/site/docs/examples/evals-sdk/chaos_tool_testing.py).
 
 This enables you to answer questions like:
 - Does the agent gracefully communicate failures to users?
 - Can the agent achieve partial goals when some tools fail?
 - Does the agent employ effective recovery strategies?
 
-## Why Chaos Testing?
+## Why chaos testing?
 
 Traditional evaluation tests agents under ideal conditions. In production, tools fail unpredictably:
 
@@ -33,7 +33,7 @@ Traditional evaluation tests agents under ideal conditions. In production, tools
 - Quantifies partial goal completion under failure
 - Reveals which tools are single points of failure and which the agent can route around
 
-## When to Use Chaos Testing
+## When to use chaos testing
 
 Use chaos testing when you need to:
 - **Evaluate Resilience**: Test how agents handle tool failures gracefully
@@ -42,14 +42,14 @@ Use chaos testing when you need to:
 - **Test Communication**: Ensure agents inform users clearly about failures
 - **Validate Robustness**: Confirm agents don't crash or loop on corrupted data
 
-## How It Works
+## How it works
 
-Chaos testing integrates with Strands' plugin system via four events: `BeforeToolCallEvent` and `AfterToolCallEvent` for tool chaos, plus `BeforeModelCallEvent` and `MessageAddedEvent` for model-output chaos.
+Chaos testing integrates with Strands' plugin system via `BeforeToolCallEvent` and `AfterToolCallEvent` hooks:
 
-1. **ChaosCase**: Extends `Case` with an `effects` field holding two categories: `tool_effects` (mapping tool names to failure effects) and `model_effects` (mapping the `*` wildcard to model-output effects)
+1. **ChaosCase**: Extends `Case` with an `effects` field mapping tool names to failure effects
 2. **ChaosPlugin**: A Strands plugin that intercepts tool calls and applies effects transparently
 3. **ChaosExperiment**: Composes the base `Experiment` to manage chaos context per case
-4. **ChaosEffect**: A hierarchy of pre-call effects (cancel the tool or model call) and post-call effects (corrupt responses). Each tool can have only one effect per `ChaosCase`; use separate cases to test different failure modes for the same tool.
+4. **ChaosEffect**: A hierarchy of pre-hook effects (cancel tool calls) and post-hook effects (corrupt responses). Each tool can have only one effect per `ChaosCase`; use separate cases to test different failure modes for the same tool.
 
 The workflow:
 1. You define `ChaosCase` objects with effects specifying which tools should fail and how
@@ -57,7 +57,7 @@ The workflow:
 3. `ChaosPlugin` reads the active case from the `ContextVar` and applies effects at the appropriate hook point
 4. Your task function code has zero chaos concepts. Just add `ChaosPlugin()` to the agent's plugins list
 
-## Basic Usage
+## Basic usage
 
 ### Define chaos test cases with effects
 
@@ -128,9 +128,9 @@ async def main():
 asyncio.run(main())
 ```
 
-## Effect Types
+## Effect types
 
-### Pre-tool-call Effects (Tool Call Failures)
+### Pre-hook effects (tool call failures)
 
 These effects cancel the tool call entirely and return an error:
 
@@ -152,7 +152,7 @@ effect_maps = {
 }
 ```
 
-### Post-tool-call Effects (Response Corruption)
+### Post-hook effects (response corruption)
 
 These effects let the tool execute but corrupt the response:
 
@@ -172,7 +172,7 @@ effect_maps = {
 }
 ```
 
-### Compound Effects (Multiple Tools)
+### Compound effects (multiple tools)
 
 Target multiple tools in a single case to simulate cascading failures:
 
@@ -192,88 +192,9 @@ chaos_case = ChaosCase(
 )
 ```
 
-> **Note:** Each tool can only have **one effect** per `ChaosCase`. Passing multiple effects for the same tool (e.g., `"my_tool": [Timeout(), NetworkError()]`) raises a `ValueError`. To test multiple failure modes for a single tool, create separate `ChaosCase` instances — one per effect. Note that pre-tool-call effects are inherently mutually exclusive (only one can cancel a tool call), while the runtime supports composing multiple post-tool-call effects sequentially — this validator constraint may be relaxed in a future release.
+> **Note:** Each tool can only have **one effect** per `ChaosCase`. Passing multiple effects for the same tool (e.g., `"my_tool": [Timeout(), NetworkError()]`) raises a `ValueError`. To test multiple failure modes for a single tool, create separate `ChaosCase` instances, one per effect.
 
-## Model Output Effects
-
-Beyond tool failures, `ChaosPlugin` can corrupt the model's own output. This tests the other side of resilience: how users, downstream services, and evaluation pipelines behave when the model refuses, returns nothing, or produces malformed output. A complete runnable example is [chaos_model_testing.py](https://github.com/strands-agents/harness-sdk/blob/main/site/docs/examples/evals-sdk/chaos_model_testing.py).
-
-Model effects live under the `model_effects` category, keyed by the `"*"` wildcard (applies to all models; per-model targeting is reserved for a future release):
-
-```python
-from strands_evals.chaos import ChaosCase, FullRefusal, MalformedJson
-
-chaos_cases = [
-    ChaosCase(
-        name="refusal",
-        input="Find me a flight from SFO to JFK on May 20.",
-        effects={"model_effects": {"*": [FullRefusal()]}},
-    ),
-    ChaosCase(
-        name="malformed_output",
-        input="Find me a flight from SFO to JFK on May 20.",
-        effects={"model_effects": {"*": [MalformedJson()]}},
-    ),
-]
-```
-
-### Pre-model-call Effects (Model Call Cancellation)
-
-Pre-model-call effects cancel the model call entirely via `BeforeModelCallEvent`. No model invocation happens, which also saves the API call:
-
-| Effect | Description |
-| :------- | :------------ |
-| `FullRefusal` | Replaces the turn with a refusal message ("I can't assist with that request...") |
-| `EmptyResponse` | Replaces the turn with a blank response, simulating "the model returned nothing" |
-
-> **Note:** At most one pre-model-call effect is allowed per `ChaosCase`. Pre-model-call effects cancel the model call, so only one can take effect; configuring two (e.g. `[FullRefusal(), EmptyResponse()]`) raises a `ValueError` at case construction. Use separate cases to test them independently.
-
-### Post-model-call Effects (Output Corruption)
-
-Post-model-call effects let the model run, then corrupt the final assistant response via `MessageAddedEvent`:
-
-| Effect | Description |
-| :------- | :------------ |
-| `MalformedJson` | Truncates JSON-like final-text responses; with `structured_output_model`, injects one failed attempt and allows the corrected retry through |
-| `Confabulation` | Injects fabricated citations into the response text |
-| `SuccessFraming` | Prepends a confident success prefix; always applied last, composable with other post-model-call effects |
-
-```python
-from strands_evals.chaos import ChaosCase, Confabulation, SuccessFraming
-
-# Composed: fabricated citations wrapped in confident framing
-chaos_case = ChaosCase(
-    name="confident_confabulation",
-    input="Summarize the search results.",
-    effects={"model_effects": {"*": [Confabulation(), SuccessFraming()]}},
-)
-```
-
-Post-model-call corruption applies only to the model's final response. Mid-turn tool dispatch messages are never corrupted, since mangling a live tool call would break the agent loop rather than test resilience. All toolUse messages remain unchanged; post-model-call effects never modify tool calls. `MalformedJson` truncates JSON-like final-text responses. When `structured_output_model` is used, it instead injects one failed structured-output attempt and allows the SDK's correction attempt through unchanged. A successful retry returns validated typed output.
-
-When a case mixes a pre-model-call and post-model-call effect (e.g. `[FullRefusal(), MalformedJson()]`), the pre-model-call effect wins: the model call is cancelled, and post-model-call effects are skipped rather than double-corrupting the injected turn.
-
-### Combining Tool and Model Effects
-
-Both categories can be set on the same `ChaosCase`, which is the most realistic scenario: infrastructure fails and the model misbehaves at the same time.
-
-```python
-from strands_evals.chaos import ChaosCase, SuccessFraming, Timeout
-
-# Combined: tool timeout + model wraps the failure in confident framing
-chaos_case = ChaosCase(
-    name="tool_fails_model_lies",
-    input="Book me a flight to Paris",
-    effects={
-        "tool_effects": {"search_flights": [Timeout()]},
-        "model_effects": {"*": [SuccessFraming()]},
-    },
-)
-```
-
-This tests the worst case: the tool fails, and the model confidently claims success anyway. Resilience evaluators can then measure whether the failure is surfaced to the user or papered over.
-
-## Expanding Cases Across Multiple Effects
+## Expanding cases across multiple effects
 
 When you have multiple base cases and want to test across several failure scenarios, use `ChaosCase.expand()` to generate the Cartesian product:
 
@@ -301,7 +222,7 @@ effect_maps = {
 chaos_cases = ChaosCase.expand(base_cases, effect_maps, include_no_effect_baseline=True)
 ```
 
-Setting `include_no_effect_baseline=True` adds an extra variant of each base case with no effects applied. This gives you a clean comparison point: you can see how the agent scores under normal conditions versus under each failure scenario, making it easy to measure the delta that chaos introduces.
+Setting `include_no_effect_baseline=True` adds an extra variant of each base case with no effects applied. This gives you a clean comparison point: you see how the agent scores under normal conditions versus under each failure scenario, so you can measure the delta that chaos introduces.
 
 ## Integration with ToolSimulator
 
@@ -363,7 +284,7 @@ async def main():
 asyncio.run(main())
 ```
 
-### Chaos Testing vs Simulators
+### Chaos testing vs simulators
 
 Understanding when to use each:
 
@@ -374,7 +295,7 @@ Understanding when to use each:
 | **Use Case** | Test without infrastructure | Test resilience under failure |
 | **Combination** | Can be used together | Chaos effects apply on top of simulated tools |
 
-## Resilience Evaluators
+## Resilience evaluators
 
 Chaos testing ships with three specialized evaluators designed to assess agent behavior under failure:
 
@@ -384,7 +305,7 @@ Chaos testing ships with three specialized evaluators designed to assess agent b
 | [PartialCompletionEvaluator](/docs/user-guide/evals-sdk/evaluators/partial_completion_evaluator/) | Fraction of user goal achieved despite failures | Continuous (0.0 to 1.0) | ~1.0 when task completes fully |
 | [RecoveryStrategyEvaluator](/docs/user-guide/evals-sdk/evaluators/recovery_strategy_evaluator/) | Quality of recovery actions: exploration breadth, retry discipline, approach variation | Five-level (0.0, 0.25, 0.5, 0.75, 1.0) | 0.5 when no failures occur |
 
-### Interpreting Results
+### Interpreting results
 
 When reviewing evaluation outputs, look at evaluator scores together to identify patterns in your agent's failure-handling behavior:
 
@@ -395,9 +316,9 @@ When reviewing evaluation outputs, look at evaluator scores together to identify
 
 Check the `reason` field in each evaluation output for specific details about what the judge observed in the trace.
 
-## Advanced Chaos Testing Patterns
+## Advanced chaos testing patterns
 
-### Pattern 1: Comparing Agent Configurations Under Chaos
+### Pattern 1: Comparing agent configurations under chaos
 
 Compare how different system prompts affect resilience:
 
@@ -433,7 +354,7 @@ async def compare_agents_under_chaos(chaos_cases, configs):
     return results
 ```
 
-### Pattern 2: Degradation Sweep
+### Pattern 2: Degradation sweep
 
 Map the resilience curve of your agent by sweeping corruption intensity from 0% to 100%. This reveals the critical threshold where your agent breaks, and whether degradation is gradual or cliff-edge:
 
@@ -461,7 +382,7 @@ experiment = ChaosExperiment(
 # Gradual degradation = resilient agent; cliff-edge = fragile agent
 ```
 
-### Pattern 3: Multi-turn Chaos Testing with User Simulator
+### Pattern 3: Multi-turn chaos testing with user simulator
 
 Combine chaos testing with user simulation for multi-turn resilience evaluation:
 
@@ -493,9 +414,9 @@ def task_function(case: ChaosCase):
     return agent
 ```
 
-## Best Practices
+## Best practices
 
-### 1. Start with Baseline Comparisons
+### 1. Start with baseline comparisons
 
 Always include a no-effect baseline to compare agent performance with and without failures. When using `ChaosCase.expand()`:
 
@@ -503,7 +424,7 @@ Always include a no-effect baseline to compare agent performance with and withou
 chaos_cases = ChaosCase.expand(cases, effect_maps, include_no_effect_baseline=True)
 ```
 
-### 2. Gradually Increase Chaos Severity
+### 2. Gradually increase chaos severity
 
 Start with single-tool failures to understand how your agent handles each failure point in isolation. Once you understand the baseline behavior, move to compound failures (multiple tools failing simultaneously) and then to advanced patterns like degradation sweeps. When a compound test fails, single-tool results tell you which tool failure is responsible:
 
@@ -528,7 +449,7 @@ compound_case = ChaosCase(
 )
 ```
 
-### 3. Use Resilience Evaluators Together
+### 3. Use resilience evaluators together
 
 Combine all three resilience evaluators for a complete picture:
 
@@ -540,7 +461,7 @@ evaluators = [
 ]
 ```
 
-### 4. Match Error Types to Tool Semantics
+### 4. Match error types to tool semantics
 
 Choose failure types that reflect realistic production failures:
 - `NetworkError` for external API tools
@@ -548,22 +469,22 @@ Choose failure types that reflect realistic production failures:
 - `ExecutionError` for local computation tools
 - `ValidationError` for tools with strict input schemas
 
-### 5. Read the Reasoning, Not Just Pass/Fail
+### 5. Read the reasoning, not just pass/fail
 
 Evaluator scores alone don't tell the full story. Check the `reason` field in evaluation outputs to understand *why* the agent scored the way it did. A score of 0.5 may mean "barely passes" or "no failures occurred to evaluate against," and the reasoning explains which.
 
-### 6. Iterate: Diagnose, Fix, Validate
+### 6. Iterate: Diagnose, fix, validate
 
 Treat chaos testing as an iterative improvement loop:
 1. Run the experiment and identify which tool-failure combinations produce low scores
 2. Fix the agent (add retry logic, fallback tools, or better system prompt guidance)
 3. Re-run the same experiment and verify that previously failing cases now pass
 
-### 7. Monitor Token Usage Under Chaos
+### 7. Monitor token usage under chaos
 
 Agents under failure often burn tokens on retry storms (repeated failed tool calls). Compare token consumption between baseline and chaos cases to detect runaway costs. A sharp increase signals excessive retries; a sharp decrease signals the agent is giving up too early.
 
-## Related Documentation
+## Related documentation
 
 - [Tool Simulation](/docs/user-guide/evals-sdk/simulators/tool_simulation/): Simulate tool behavior for reproducible tests
 - [Goal Success Rate Evaluator](/docs/user-guide/evals-sdk/evaluators/goal_success_rate_evaluator/): Assess goal completion

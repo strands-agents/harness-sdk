@@ -8,9 +8,9 @@ sidebar:
 
 ## Overview
 
-Simulators dynamically evaluate agents by generating realistic interaction patterns, going beyond static methods that only assess single outputs. They actively drive multi-turn conversations and produce authentic tool responses, creating evaluation scenarios that closely mirror real-world use.
+Simulators evaluate your agent across a full interaction instead of a single input/output pair. They drive multi-turn conversations and generate tool responses at runtime, so you can test how the agent handles a dialogue and works toward a goal. Strands Evals ships two: `ActorSimulator` plays a simulated user (or any other conversational participant), and `ToolSimulator` stands in for the tools the agent calls.
 
-## Why Simulators?
+## Why simulators?
 
 Traditional evaluation approaches have limitations when assessing conversational agents:
 
@@ -30,7 +30,7 @@ Traditional evaluation approaches have limitations when assessing conversational
 - Enable testing without predefined scripts
 - Simulate tool behavior without live infrastructure
 
-## When to Use Simulators
+## When to use simulators
 
 Use simulators when you need to:
 
@@ -44,30 +44,28 @@ Use simulators when you need to:
 
 ## ActorSimulator
 
-The `ActorSimulator` is the core simulator class in Strands Evals. It's a general-purpose simulator that can simulate any type of actor in multi-turn conversations. An "actor" is any conversational participant - users, customer service representatives, domain experts, adversarial testers, or any other entity that engages in dialogue.
+The `ActorSimulator` is the core simulator class in Strands Evals. An "actor" is any conversational participant: a user, a customer service representative, a domain expert, an adversarial tester, or anything else that engages in dialogue. The simulator holds an actor profile, generates responses from the conversation history, and tracks goal completion. Change the profile and system prompt and you change who the simulator plays.
 
-The simulator maintains actor profiles, generates contextually appropriate responses based on conversation history, and tracks goal completion. By configuring different actor profiles and system prompts, you can simulate diverse interaction patterns.
+### User simulation
 
-### User Simulation
+The most common use of `ActorSimulator` is **user simulation**: playing a realistic end-user interacting with your agent during evaluation. This is the primary use case the documentation covers.
 
-The most common use of `ActorSimulator` is **user simulation** - simulating realistic end-users interacting with your agent during evaluation. This is the primary use case covered in our documentation.
+See the [User Simulation Guide](user_simulation.md) for the full walkthrough.
 
-[Complete User Simulation Guide →](user_simulation.md)
+### Other actor types
 
-### Other Actor Types
-
-While user simulation is the primary use case, `ActorSimulator` can simulate other actor types by providing custom actor profiles:
+To simulate an actor other than a user, supply a custom profile. The same class covers:
 
 - **Customer Support Representatives**: Test agent-to-agent interactions
-- **Domain Experts**: Simulate specialized knowledge conversations  
-- **Adversarial Actors**: Test robustness and edge cases
+- **Domain Experts**: Simulate specialized-knowledge conversations
+- **Adversarial Actors**: Test how the agent handles hostile or malformed input and edge cases
 - **Internal Staff**: Evaluate internal tooling workflows
 
 ## ToolSimulator
 
-The `ToolSimulator` enables LLM-powered simulation of tool behavior for controlled agent evaluation. Instead of calling real tools, registered tools are executed by an LLM that generates realistic, schema-validated responses while maintaining state across calls.
+The `ToolSimulator` stands in for the tools your agent calls. Instead of executing the real function, it asks an LLM to generate a schema-valid response and keeps state across calls so related tools stay consistent.
 
-This is useful when real tools require live infrastructure, when you need controllable behavior for evaluation, or when tools are still under development.
+Reach for it when the real tools require live infrastructure, when you need controllable behavior for evaluation, or when the tools are still under development.
 
 ```python
 from typing import Any
@@ -97,13 +95,13 @@ Key capabilities:
 - **Shared state** across related tools via `share_state_id` (e.g., sensor + controller operating on the same environment)
 - **Stateful context** with initial state descriptions and bounded call history cache
 
-[Complete Tool Simulation Guide →](tool_simulation.md)
+See the [Tool Simulation Guide](tool_simulation.md) for the full walkthrough.
 
 ## Extensibility
 
 The simulator framework is designed to be extensible. `ActorSimulator` and `ToolSimulator` provide general-purpose foundations, and additional specialized simulators can be built for specific evaluation patterns as needs emerge.
 
-## Simulators vs Evaluators
+## Simulators vs evaluators
 
 Understanding when to use simulators versus evaluators:
 
@@ -118,9 +116,9 @@ Understanding when to use simulators versus evaluators:
 **Use Together:**
 Simulators and evaluators complement each other. Use simulators to generate multi-turn conversations, then use evaluators to assess the quality of those interactions.
 
-## Integration with Evaluators
+## Integration with evaluators
 
-Simulators work seamlessly with trace-based evaluators:
+Simulators work with trace-based evaluators:
 
 ```python
 import asyncio
@@ -194,9 +192,9 @@ async def main():
 asyncio.run(main())
 ```
 
-## Best Practices
+## Best practices
 
-### 1. Define Clear Goals
+### 1. Define clear goals
 
 Simulators work best with well-defined objectives:
 
@@ -209,7 +207,7 @@ case = Case(
 )
 ```
 
-### 2. Set Appropriate Turn Limits
+### 2. Set appropriate turn limits
 
 Balance thoroughness with efficiency:
 
@@ -221,7 +219,7 @@ simulator = ActorSimulator.from_case_for_user_simulator(case=case, max_turns=5)
 simulator = ActorSimulator.from_case_for_user_simulator(case=case, max_turns=12)
 ```
 
-### 3. Combine with Multiple Evaluators
+### 3. Combine with multiple evaluators
 
 Assess different aspects of simulated conversations:
 
@@ -233,7 +231,7 @@ evaluators = [
 ]
 ```
 
-### 4. Log Conversations for Analysis
+### 4. Log conversations for analysis
 
 Capture conversation details for debugging:
 
@@ -249,9 +247,9 @@ while simulator.has_next():
     })
 ```
 
-## Common Patterns
+## Common patterns
 
-### Pattern 1: Goal Completion Testing
+### Pattern 1: Goal completion testing
 
 The simulator sets `result.structured_output.stop = True` (and its own `simulator.stop` flag) when the actor signals it has completed the goal. Inspect that flag rather than scanning the message text:
 
@@ -273,7 +271,7 @@ def test_goal_completion(case: Case) -> bool:
     )
 ```
 
-### Pattern 2: Conversation Flow Analysis
+### Pattern 2: Conversation flow analysis
 
 ```python
 def analyze_conversation_flow(case: Case) -> dict:
@@ -299,7 +297,7 @@ def analyze_conversation_flow(case: Case) -> dict:
     return metrics
 ```
 
-### Pattern 3: Comparative Evaluation
+### Pattern 3: Comparative evaluation
 
 ```python
 def compare_agent_configurations(case: Case, configs: list) -> dict:
@@ -317,13 +315,14 @@ def compare_agent_configurations(case: Case, configs: list) -> dict:
     return results
 ```
 
-## Next Steps
+## Next steps
 
 - [User Simulation Guide](./user_simulation.md): Simulate multi-turn user conversations
+- [Customizing User Simulation](./customize_user_simulation.md): Custom profiles, prompts, tools, and models
 - [Tool Simulation Guide](./tool_simulation.md): Simulate tool behavior with LLM-powered responses
 - [Evaluators](../evaluators/output_evaluator.md): Combine with evaluators
 
-## Related Documentation
+## Related documentation
 
 - [Quickstart Guide](../quickstart.md): Get started with Strands Evals
 - [Evaluators Overview](../evaluators/output_evaluator.md): Learn about evaluators

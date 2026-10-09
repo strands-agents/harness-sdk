@@ -1,6 +1,7 @@
 import logging
 import os
 import unittest.mock
+from types import SimpleNamespace
 
 import httpx
 import openai
@@ -1054,43 +1055,38 @@ def test_format_chunk_unknown_type(model):
         model.format_chunk(event)
 
 
-def test_format_chunk_metadata_with_cache_tokens(model):
-    """Test format_chunk for metadata with cache tokens present."""
-    mock_usage = unittest.mock.Mock()
-    mock_usage.prompt_tokens = 100
-    mock_usage.completion_tokens = 50
-    mock_usage.total_tokens = 150
-
-    mock_tokens_details = unittest.mock.Mock()
-    mock_tokens_details.cached_tokens = 25
-    mock_usage.prompt_tokens_details = mock_tokens_details
-
-    event = {"chunk_type": "metadata", "data": mock_usage}
-
-    result = model.format_chunk(event)
-
-    assert result["metadata"]["usage"]["inputTokens"] == 100
-    assert result["metadata"]["usage"]["outputTokens"] == 50
-    assert result["metadata"]["usage"]["totalTokens"] == 150
-    assert result["metadata"]["usage"]["cacheReadInputTokens"] == 25
-
-
-def test_format_chunk_metadata_with_zero_cached_tokens(model):
-    """Test format_chunk for metadata when cached_tokens is 0."""
-    mock_usage = unittest.mock.Mock()
-    mock_usage.prompt_tokens = 100
-    mock_usage.completion_tokens = 50
-    mock_usage.total_tokens = 150
-
-    mock_tokens_details = unittest.mock.Mock()
-    mock_tokens_details.cached_tokens = 0
-    mock_usage.prompt_tokens_details = mock_tokens_details
-
-    event = {"chunk_type": "metadata", "data": mock_usage}
-
-    result = model.format_chunk(event)
-
-    assert "cacheReadInputTokens" not in result["metadata"]["usage"]
+@pytest.mark.parametrize(
+    ("tokens_details", "exp_cache"),
+    [
+        (
+            {"cached_tokens": 25, "cache_write_tokens": 4346},
+            {"cacheReadInputTokens": 25, "cacheWriteInputTokens": 4346},
+        ),
+        ({"cached_tokens": 25, "cache_write_tokens": 0}, {"cacheReadInputTokens": 25, "cacheWriteInputTokens": 0}),
+        ({"cached_tokens": 0, "cache_write_tokens": 0}, {"cacheReadInputTokens": 0, "cacheWriteInputTokens": 0}),
+        ({"cached_tokens": 25}, {"cacheReadInputTokens": 25}),
+        ({"cached_tokens": 0}, {"cacheReadInputTokens": 0}),
+        ({"cache_write_tokens": 0}, {"cacheWriteInputTokens": 0}),
+        ({"cached_tokens": None, "cache_write_tokens": None}, {}),
+        ({"cached_tokens": "25", "cache_write_tokens": "10"}, {}),
+        ({}, {}),
+    ],
+)
+def test_format_chunk_metadata_with_cache_tokens(tokens_details, exp_cache, model):
+    usage = SimpleNamespace(
+        prompt_tokens=100,
+        completion_tokens=50,
+        total_tokens=150,
+        prompt_tokens_details=SimpleNamespace(**tokens_details),
+    )
+    tru_chunk = model.format_chunk({"chunk_type": "metadata", "data": usage})
+    exp_chunk = {
+        "metadata": {
+            "usage": {"inputTokens": 100, "outputTokens": 50, "totalTokens": 150, **exp_cache},
+            "metrics": {"latencyMs": 0},
+        },
+    }
+    assert tru_chunk == exp_chunk
 
 
 @pytest.mark.asyncio
@@ -2134,6 +2130,7 @@ class TestOpenAIModelBedrockMantleConfig:
             ("google.gemma-4-e2b", "/openai/v1"),
             ("openai.gpt-5.6-terra", "/openai/v1"),
             ("openai.gpt-6-astra", "/openai/v1"),
+            ("openai.gpt-6.1-sol", "/openai/v1"),
             # Gemma 3 is served from /v1 while Gemma 4 is not, so `google.` cannot be a prefix.
             ("google.gemma-3-27b-it", "/v1"),
             ("google.gemma-3-4b-it", "/v1"),
@@ -2167,9 +2164,11 @@ class TestOpenAIModelBedrockMantleConfig:
             ("xai.grok-4.9", "/openai/v1"),
             ("openai.gpt-5.9-unreleased", "/openai/v1"),
             ("openai.gpt-6-nova", "/openai/v1"),
+            ("openai.gpt-6.1-sol", "/openai/v1"),
             # New lines the prefixes deliberately do not cover.
             ("xai.grok-5", "/v1"),
             ("xai.grok-5-preview", "/v1"),
+            ("openai.gpt-6oss-20b", "/v1"),
         ],
     )
     def test_bedrock_mantle_config_unverified_ids(self, model_id, expected_path, openai_client, mock_provide_token):

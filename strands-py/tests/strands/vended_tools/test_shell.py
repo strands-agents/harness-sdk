@@ -128,8 +128,7 @@ class TestDeprecatedBashAliases:
 
     Keeping ``tool_name == "bash"`` is what makes the alias backwards compatible:
     consumers key registries, hooks, and defaults lists on the runtime name, so an
-    alias that returned a tool named ``shell`` would still break them (see
-    awsarron/stan#6).
+    alias that returned a tool named ``shell`` would still break them.
     """
 
     def test_bash_alias_warns_and_keeps_its_name(self):

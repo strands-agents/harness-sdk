@@ -1,0 +1,179 @@
+"""Bidirectional streaming model interface: start a persistent connection, send and receive concurrently, then stop."""
+
+import abc
+import logging
+from collections.abc import AsyncIterable
+from typing import Any, NoReturn, Protocol, cast, runtime_checkable
+
+from ...models.model import Model
+from ...types.content import Messages
+from ...types.tools import ToolSpec
+from ..types.content import BidiContentDelta, BidiMessage
+from ..types.events import BidiOutputEvent
+from .configs import AudioConfig, ConnectionConfig
+
+logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class Restartable(Protocol):
+    """A bidirectional model that can replace its active connection while preserving context."""
+
+    async def restart(
+        self,
+        system_prompt: str | None = None,
+        tools: list[ToolSpec] | None = None,
+        messages: Messages | None = None,
+        **restart_kwargs: Any,
+    ) -> None:
+        """Replace the active connection while preserving conversation context.
+
+        Args:
+            system_prompt: System instructions for the new connection.
+            tools: Tool specifications for the new connection.
+            messages: Conversation history to replay when required by the provider.
+            **restart_kwargs: Provider-specific restart options.
+        """
+        ...
+
+
+class BidiModel(Model, abc.ABC):
+    """Abstract base class for bidirectional streaming models.
+
+    This interface defines the contract for models that support persistent streaming
+    connections with real-time audio and text communication. Implementations handle
+    provider-specific protocols while exposing a standardized event-based API.
+
+    Attributes:
+        model_id: Provider model identifier.
+    """
+
+    @property
+    def model_id(self) -> str:
+        """Get the configured model identifier."""
+        return cast(str, self.get_config()["model_id"])
+
+    def get_connection_config(self) -> ConnectionConfig:
+        """Get the configured restart timing, or an empty config if unspecified."""
+        return cast(ConnectionConfig, self.get_config().get("connection", {}))
+
+    def structured_output(self, *args: Any, **kwargs: Any) -> NoReturn:
+        """Raise because bidirectional models do not support structured output."""
+        raise NotImplementedError("structured output is not supported by bidirectional models")
+
+    def stream(self, *args: Any, **kwargs: Any) -> NoReturn:
+        """Raise because bidirectional models use their persistent streaming API."""
+        raise NotImplementedError("regular streaming is not supported by bidirectional models")
+
+    @abc.abstractmethod
+    # pragma: no cover
+    async def start(
+        self,
+        system_prompt: str | None = None,
+        tools: list[ToolSpec] | None = None,
+        messages: Messages | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Establish a persistent streaming connection with the model.
+
+        Opens a bidirectional connection that remains active for real-time communication.
+        The connection supports concurrent sending and receiving of events until explicitly
+        closed. Must be called before any send() or receive() operations.
+
+        Args:
+            system_prompt: System instructions to configure model behavior.
+            tools: Tool specifications that the model can invoke during the conversation.
+            messages: Initial conversation history to provide context.
+            **kwargs: Provider-specific configuration options.
+        """
+        pass
+
+    @abc.abstractmethod
+    # pragma: no cover
+    async def stop(self) -> None:
+        """Close the streaming connection and release resources.
+
+        Terminates the active bidirectional connection and cleans up any associated
+        resources such as network connections, buffers, or background tasks. After
+        calling stop(), the model instance cannot be used until start() is called again.
+        """
+        pass
+
+    @abc.abstractmethod
+    # pragma: no cover
+    def receive(self) -> AsyncIterable[BidiOutputEvent]:
+        """Receive streaming events from the model.
+
+        Text, reasoning, and transcript streams emit start, delta, and stop events.
+        Each stream shares a content_id unique within the connection. Transcript
+        streams may interleave, and user transcripts may arrive outside response boundaries.
+
+        The stream continues until the connection is closed or an error occurs.
+
+        Yields:
+            BidiOutputEvent: Standardized event objects containing audio output,
+                transcripts, tool calls, or control signals.
+        """
+        pass
+
+    @abc.abstractmethod
+    # pragma: no cover
+    async def send(self, content: BidiMessage | BidiContentDelta) -> None:
+        """Send a complete message or an individual delta over the active connection.
+
+        Args:
+            content: A message of text and image blocks, a message of tool results,
+                or a streaming audio delta. Complete messages preserve block order
+                and request a response after delivery, subject to provider turn and
+                tool scheduling. A message may require several provider events.
+
+        Raises:
+            ValueError: If the content is unsupported by the provider.
+
+        Example:
+            ```
+            from strands.bidi.types import AudioDelta, BidiMessage
+            from strands.types.content import TextBlock
+            from strands.types.media import ImageBlock
+            from strands.types.tools import ToolResultBlock
+
+            await model.send(BidiMessage(content=[
+                ImageBlock(format="jpeg", source={"bytes": image_bytes}),
+                TextBlock("What is in this image?"),
+            ]))
+            await model.send(AudioDelta(format="pcm", source={"bytes": audio_bytes}))
+            await model.send(BidiMessage(content=[
+                ToolResultBlock(tool_use_id="call-1", status="success", content=[{"text": "Done"}]),
+            ]))
+            ```
+        """
+        pass
+
+
+class ConnectionTimeoutError(Exception):
+    """Persistent model connection timeout.
+
+    Unless automatic restarts are disabled, the agent loop restarts the model connection
+    after a timeout. Context recovery depends on the provider's replay or resumption support;
+    a restart may interrupt an active turn.
+    """
+
+    def __init__(self, message: str, **restart_config: Any) -> None:
+        """Initialize error.
+
+        Args:
+            message: Timeout message from model.
+            **restart_config: Provider options forwarded to restart(), or to start() on the fallback path.
+        """
+        super().__init__(message)
+
+        self.restart_config = restart_config
+
+
+@runtime_checkable
+class AudioCapable(Protocol):
+    """Protocol for models that support audio input and output."""
+
+    def get_audio_config(self) -> AudioConfig:
+        """Get the resolved audio configuration."""
+        ...
