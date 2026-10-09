@@ -79,11 +79,11 @@ cd strands-py
    ```
 
 
-2. Set up pre-commit hooks:
+2. Install the git hooks from the repository root:
    ```bash
-   pre-commit install -t pre-commit -t commit-msg
+   npm ci
    ```
-   This will automatically run formatters and conventional commit checks on your code before each commit.
+   This installs the repo's [husky](https://typicode.github.io/husky/) pre-commit hook. See [Pre-commit Hooks](#pre-commit-hooks) for what it runs.
 
 3. Run code formatters manually:
    ```bash
@@ -111,18 +111,17 @@ cd strands-py
 
 ### Pre-commit Hooks
 
-We use [pre-commit](https://pre-commit.com/) to automatically run quality checks before each commit. The hook will run `hatch run format`, `hatch run lint`, `hatch run test`, and `hatch run cz check` when you make a commit, ensuring code consistency.
+The repo uses a single [husky](https://typicode.github.io/husky/) pre-commit hook for the whole monorepo, installed by running `npm ci` at the repository root. On each commit it runs:
 
-The pre-commit hook is installed with:
+- ruff lint and format checks on staged Python files under `strands-py/` and `harness-py/` (requires [uv](https://docs.astral.sh/uv/))
+- the TypeScript SDK build, unit tests, lint, format check, and type-check
+
+The hook doesn't run mypy or the Python tests, so run `hatch run prepare` from `strands-py/` before opening a pull request. Commit messages aren't checked locally; CI checks that pull request titles follow [Conventional Commits](https://www.conventionalcommits.org/).
+
+To run the hook's Python step on its own, from the repository root:
 
 ```bash
-pre-commit install
-```
-
-You can also run the hooks manually on all files:
-
-```bash
-pre-commit run --all-files
+npm run lint:py
 ```
 
 ### Code Formatting and Style Guidelines
