@@ -35,6 +35,9 @@ const agentDirect = new Agent({
 })
 
 await agentDirect.invoke('What is AWS Lambda?')
+
+// Shutting the agent down disconnects the client (or bind the agent with `await using`)
+await agentDirect.shutdown()
 // --8<-- [end:direct_integration]
 
 // --8<-- [start:explicit_tools]

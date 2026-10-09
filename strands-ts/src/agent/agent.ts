@@ -202,6 +202,8 @@ export type AgentConfig = {
    * An initial set of tools to register with the agent.
    * Accepts nested arrays of tools at any depth, which will be flattened automatically.
    * {@link Agent} instances are automatically wrapped as tools via {@link Agent.asTool}.
+   * {@link ToolProvider} instances, including {@link McpClient}, have their tools loaded during
+   * {@link Agent.initialize} and are released when the agent is shut down.
    */
   tools?: ToolList
   /**
@@ -527,7 +529,6 @@ export class Agent implements LocalAgent, InvokableAgent {
   private readonly _pluginRegistry: PluginRegistry
   private readonly _interventionRegistry: InterventionRegistry
   private _toolRegistry: ToolRegistry
-  private _mcpClients: McpClient[]
   private _initialized: boolean
   /** Set once {@link shutdown} has run; guards against reuse of an agent whose resources were released. */
   private _disposed: boolean = false
@@ -600,12 +601,11 @@ export class Agent implements LocalAgent, InvokableAgent {
       this._conversationManager = resolveConversationManager(config?.contextManager, config?.conversationManager)
     }
 
-    const { tools, mcpClients, toolProviders } = flattenTools(config?.tools ?? [])
+    const { tools, toolProviders } = flattenTools(config?.tools ?? [])
     if (config?.contextManager === 'agentic') {
       tools.push(summarizeContextTool, truncateContextTool, pinContextTool)
     }
     this._toolRegistry = new ToolRegistry(tools)
-    this._mcpClients = mcpClients
     for (const provider of toolProviders) {
       this._toolRegistry.addProvider(provider)
     }
@@ -863,19 +863,7 @@ export class Agent implements LocalAgent, InvokableAgent {
       return
     }
 
-    // Initialize MCP clients and register their tools
-    await Promise.all(
-      this._mcpClients.map(async (client) => {
-        const tools = await client.listTools()
-        this._toolRegistry.add(tools)
-        client.onToolsChanged = (oldTools, newTools): void => {
-          oldTools.forEach((name) => this._toolRegistry.remove(name))
-          this._toolRegistry.addOrReplace(newTools)
-        }
-      })
-    )
-
-    // Load tools from tool providers, registered as consumers in the constructor
+    // Load tools from tool providers (including MCP clients), registered as consumers in the constructor
     await Promise.all(
       this._toolRegistry.toolProviders.map(async (provider) => {
         const tools = await provider.loadTools()
@@ -885,6 +873,14 @@ export class Agent implements LocalAgent, InvokableAgent {
           throw new ToolValidationError(
             `provider=<${provider.constructor.name}> | failed to register provided tools: ${String(error)}`
           )
+        }
+        // ToolProvider has no change-notification contract, so runtime tool-list updates are
+        // still wired for MCP clients specifically.
+        if (provider instanceof McpClient) {
+          provider.onToolsChanged = (oldTools, newTools): void => {
+            oldTools.forEach((name) => this._toolRegistry.remove(name))
+            this._toolRegistry.addOrReplace(newTools)
+          }
         }
       })
     )
@@ -1159,7 +1155,8 @@ export class Agent implements LocalAgent, InvokableAgent {
    *
    * Releases every {@link ToolProvider} registered via `tools` (removing this agent's tool
    * registry as a consumer, which lets a provider with no other consumers release its own
-   * resources) in addition to flushing the memory manager. Both run even if one of them fails,
+   * resources — an {@link McpClient} disconnects once its last agent shuts down) in addition to
+   * flushing the memory manager. Both run even if one of them fails,
    * so a provider that throws while releasing never prevents the memory manager from flushing;
    * the first failure (if any) is thrown once both have settled.
    *
@@ -2794,24 +2791,23 @@ function normalizeToolUseNames(messages: Message[]): Message[] {
 
 /**
  * Recursively flattens nested arrays of tools into a single flat array.
+ *
+ * `McpClient` is a {@link ToolProvider}, so it is collected with the other providers.
+ *
  * @param tools - Tools or nested arrays of tools
- * @returns Flat array of tools and MCP clients
+ * @returns Flat arrays of plain tools and tool providers
  */
-function flattenTools(toolList: ToolList): { tools: Tool[]; mcpClients: McpClient[]; toolProviders: ToolProvider[] } {
+function flattenTools(toolList: ToolList): { tools: Tool[]; toolProviders: ToolProvider[] } {
   const tools: Tool[] = []
-  const mcpClients: McpClient[] = []
   const toolProviders: ToolProvider[] = []
 
   for (const item of toolList) {
     if (Array.isArray(item)) {
       const flattened = flattenTools(item)
       tools.push(...flattened.tools)
-      mcpClients.push(...flattened.mcpClients)
       toolProviders.push(...flattened.toolProviders)
     } else if (item instanceof Agent) {
       tools.push(item.asTool())
-    } else if (item instanceof McpClient) {
-      mcpClients.push(item)
     } else if (isToolProvider(item)) {
       toolProviders.push(item)
     } else {
@@ -2819,5 +2815,5 @@ function flattenTools(toolList: ToolList): { tools: Tool[]; mcpClients: McpClien
     }
   }
 
-  return { tools, mcpClients, toolProviders }
+  return { tools, toolProviders }
 }

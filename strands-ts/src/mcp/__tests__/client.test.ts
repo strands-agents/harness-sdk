@@ -11,6 +11,7 @@ import {
 } from '@modelcontextprotocol/client'
 import { McpClient } from '../client.js'
 import { McpTool } from '../../tools/mcp-tool.js'
+import { ToolProvider } from '../../tools/tool-provider.js'
 import { ToolValidationError } from '../../errors.js'
 import { JsonBlock, type TextBlock, type ToolResultBlock } from '../../types/messages.js'
 import { ImageBlock } from '../../types/media.js'
@@ -1582,5 +1583,146 @@ describe('McpClient transport resolution', () => {
     expect(() => new McpClient({ transport: mockTransport, headers: { 'X-Foo': 'bar' } } as never)).toThrow(
       '"auth", "authProvider", and "headers" require "url"'
     )
+  })
+})
+
+describe('McpClient as a ToolProvider', () => {
+  let client: McpClient
+  let sdkClientMock: {
+    connect: ReturnType<typeof vi.fn>
+    close: ReturnType<typeof vi.fn>
+    listTools: ReturnType<typeof vi.fn>
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    client = new McpClient({ applicationName: 'TestApp', transport: mockTransport })
+    sdkClientMock = vi.mocked(Client).mock.results.at(-1)!.value
+    sdkClientMock.listTools.mockResolvedValue({ tools: [{ name: 'tool_a', inputSchema: {} }] })
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('is a ToolProvider', () => {
+    expect(client).toBeInstanceOf(ToolProvider)
+  })
+
+  it('loadTools connects lazily and returns the listed tools', async () => {
+    const tools = await client.loadTools()
+
+    expect(sdkClientMock.connect).toHaveBeenCalledTimes(1)
+    expect(tools.map((tool) => tool.name)).toStrictEqual(['tool_a'])
+    expect(client.connectionState).toBe('connected')
+  })
+
+  it('loadTools applies the client prefix and filters', async () => {
+    client = new McpClient({ transport: mockTransport, prefix: 'srv', toolFilters: { rejected: ['tool_b'] } })
+    sdkClientMock = vi.mocked(Client).mock.results.at(-1)!.value
+    sdkClientMock.listTools.mockResolvedValue({
+      tools: [
+        { name: 'tool_a', inputSchema: {} },
+        { name: 'tool_b', inputSchema: {} },
+      ],
+    })
+
+    const tools = await client.loadTools()
+
+    expect(tools.map((tool) => tool.name)).toStrictEqual(['srv_tool_a'])
+  })
+
+  it('disconnects when the last consumer is removed after tools were loaded', async () => {
+    client.addConsumer('agent-1')
+    await client.loadTools()
+
+    await client.removeConsumer('agent-1')
+
+    expect(sdkClientMock.close).toHaveBeenCalledTimes(1)
+    expect(mockTransport.close).toHaveBeenCalledTimes(1)
+    expect(client.connectionState).toBe('disconnected')
+  })
+
+  it('stays connected while other consumers remain', async () => {
+    client.addConsumer('agent-1')
+    client.addConsumer('agent-2')
+    await client.loadTools()
+
+    await client.removeConsumer('agent-1')
+    expect(sdkClientMock.close).not.toHaveBeenCalled()
+    expect(client.connectionState).toBe('connected')
+
+    await client.removeConsumer('agent-2')
+    expect(sdkClientMock.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not disconnect when tools were never loaded', async () => {
+    client.addConsumer('agent-1')
+
+    await client.removeConsumer('agent-1')
+
+    expect(sdkClientMock.close).not.toHaveBeenCalled()
+    expect(mockTransport.close).not.toHaveBeenCalled()
+  })
+
+  it('removeConsumer is idempotent and ignores unknown consumers', async () => {
+    client.addConsumer('agent-1')
+    await client.loadTools()
+
+    await client.removeConsumer('unknown')
+    expect(sdkClientMock.close).not.toHaveBeenCalled()
+
+    await client.removeConsumer('agent-1')
+    await client.removeConsumer('agent-1')
+    expect(sdkClientMock.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('concurrent removal of the last consumers disconnects only once', async () => {
+    client.addConsumer('agent-1')
+    client.addConsumer('agent-2')
+    await client.loadTools()
+
+    await Promise.all([client.removeConsumer('agent-1'), client.removeConsumer('agent-2')])
+
+    expect(sdkClientMock.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('reconnects for a later consumer after teardown', async () => {
+    client.addConsumer('agent-1')
+    await client.loadTools()
+    await client.removeConsumer('agent-1')
+
+    client.addConsumer('agent-2')
+    await client.loadTools()
+
+    expect(sdkClientMock.connect).toHaveBeenCalledTimes(2)
+    expect(client.connectionState).toBe('connected')
+  })
+
+  it('tears down a continueOnError connection failure so a later consumer retries', async () => {
+    client = new McpClient({ transport: mockTransport, continueOnError: true })
+    sdkClientMock = vi.mocked(Client).mock.results.at(-1)!.value
+    sdkClientMock.connect.mockRejectedValueOnce(new Error('unreachable'))
+    sdkClientMock.listTools.mockResolvedValue({ tools: [{ name: 'tool_a', inputSchema: {} }] })
+    vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    client.addConsumer('agent-1')
+    expect(await client.loadTools()).toStrictEqual([])
+    expect(client.connectionState).toBe('failed')
+
+    await client.removeConsumer('agent-1')
+    expect(client.connectionState).toBe('disconnected')
+
+    client.addConsumer('agent-2')
+    const tools = await client.loadTools()
+    expect(tools.map((tool) => tool.name)).toStrictEqual(['tool_a'])
+  })
+
+  it('propagates a disconnect failure from removeConsumer', async () => {
+    client.addConsumer('agent-1')
+    await client.loadTools()
+    sdkClientMock.close.mockRejectedValueOnce(new Error('close failed'))
+
+    await expect(client.removeConsumer('agent-1')).rejects.toThrow('close failed')
   })
 })

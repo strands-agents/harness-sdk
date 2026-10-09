@@ -87,7 +87,7 @@ with mcp_client:
 
 **Direct Integration**
 
-`McpClient` instances are passed directly to the agent. The client connects lazily on first use:
+`McpClient` implements the `ToolProvider` interface, so instances are passed directly to the agent. The client connects lazily when the agent loads its tools, and disconnects when the agent is shut down with `agent.shutdown()` (or when an `await using` agent goes out of scope). A client shared by several agents stays connected until every one of them has been shut down:
 
 ```typescript
 --8<-- "user-guide/sdk/tools/mcp-tools.ts:direct_integration"
@@ -500,7 +500,7 @@ Progress notifications are not yet supported in the TypeScript SDK.
 - **Tool Descriptions**: Provide clear descriptions for tools to help the agent understand when and how to use them
 - **Error Handling**: Return informative error messages when tools fail to execute properly
 - **Security**: Consider security implications when exposing tools via MCP, especially for network-accessible servers
-- **Connection Management**: In Python, always use context managers (`with` statements) to ensure proper cleanup of MCP connections
+- **Connection Management**: In Python, always use context managers (`with` statements) to ensure proper cleanup of MCP connections. In TypeScript, call `agent.shutdown()` (or bind the agent with `await using`) to disconnect the MCP clients it uses
 - **Timeouts**: Set appropriate timeouts for tool calls to prevent hanging on long-running operations
 
 ## Troubleshooting
