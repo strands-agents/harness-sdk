@@ -194,6 +194,10 @@ export type { BaseModelConfig, CountTokensOptions, StreamOptions, CacheConfig } 
 
 export { Model } from './models/model.js'
 
+// Decision models
+export { DecisionModel, LLMDecisionModel, Uncertain } from './decisions/index.js'
+export type { AnswerOf, DecisionInput, DecisionResult, LLMDecisionModelOptions, Question } from './decisions/index.js'
+
 // Model routing
 export { ClassifierStrategy, FallbackStrategy, ModelRouter, RoutingCandidate } from './models/routing/index.js'
 export type {
