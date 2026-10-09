@@ -352,6 +352,56 @@ class TestSageMakerAIModel:
     #     assert "tools" in payload
     #     assert payload["tools"] == []
 
+    @pytest.mark.parametrize(
+        ("tool_results_as_user_messages", "expected_message"),
+        [
+            (
+                True,
+                {"role": "user", "content": "Tool call ID 'tool-call-1' returned: 72F"},
+            ),
+            (
+                False,
+                {"role": "tool", "tool_call_id": "tool-call-1", "content": "72F"},
+            ),
+        ],
+    )
+    def test_format_request_tool_results_as_user_messages(
+        self,
+        boto_session,
+        endpoint_config,
+        payload_config,
+        tool_results_as_user_messages,
+        expected_message,
+    ):
+        """Test optionally converting tool results to user messages."""
+        model = SageMakerAIModel(
+            endpoint_config=endpoint_config,
+            payload_config={
+                **payload_config,
+                "tool_results_as_user_messages": tool_results_as_user_messages,
+            },
+            boto_session=boto_session,
+        )
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "toolResult": {
+                            "toolUseId": "tool-call-1",
+                            "status": "success",
+                            "content": [{"text": "72F"}],
+                        }
+                    }
+                ],
+            }
+        ]
+
+        payload = json.loads(model.format_request(messages)["Body"])
+
+        assert payload["messages"] == [expected_message]
+        assert "tool_results_as_user_messages" not in payload
+
     def test_format_request_with_additional_args(self, boto_session, endpoint_config, messages, payload_config):
         """Test formatting a request's `additional_args` where provided"""
         endpoint_config_ext = {
