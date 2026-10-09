@@ -798,6 +798,9 @@ class OpenAIResponsesModel(Model):
         has_media = False
 
         for content in tool_result["content"]:
+            if _has_location_source(cast(ContentBlock, content)):
+                logger.warning("Location sources are not supported by OpenAI Responses | skipping content block")
+                continue
             if "json" in content:
                 output_parts.append({"type": "input_text", "text": json.dumps(content["json"], ensure_ascii=False)})
             elif "text" in content:
