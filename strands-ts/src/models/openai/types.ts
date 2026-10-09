@@ -48,8 +48,12 @@ interface OpenAIBaseConfig extends BaseModelConfig {
    *
    * Provider-managed fields cannot be overridden via `params` — use the dedicated
    * config properties instead. A warning is logged at config time if any are present:
-   * - Chat Completions: `model`, `messages`, `stream`, `stream_options`
+   * - Chat Completions: `model`, `messages`, `stream`
    * - Responses API: `model`, `input`, `stream`, `store`
+   *
+   * Chat Completions sends `stream_options: { include_usage: true }` unless `params` sets it,
+   * and omits any `params` key set to `null`, such as `stream_options: null` for compatible
+   * endpoints that reject the field. Without `include_usage`, the endpoint may not report usage.
    */
   params?: Record<string, unknown>
 

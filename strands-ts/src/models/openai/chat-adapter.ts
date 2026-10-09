@@ -20,7 +20,7 @@ import type { ChatStreamState, OpenAIChatConfig } from './types.js'
 
 export const DEFAULT_CHAT_MODEL_ID = MODEL_DEFAULTS.openai.modelId
 
-const MANAGED_PARAMS: ReadonlySet<string> = new Set(['model', 'messages', 'stream', 'stream_options'])
+const MANAGED_PARAMS: ReadonlySet<string> = new Set(['model', 'messages', 'stream'])
 
 /**
  * Logs a warning for each chat-managed key present in `params`.
@@ -59,14 +59,14 @@ export function formatChatRequest(
   messages: Message[],
   options?: StreamOptions
 ): OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming {
-  // User `params` are spread first so provider-managed fields always win.
-  // The managed-params warning fires at config time to surface the collision.
+  // User `params` override the `stream_options` default but never the provider-managed fields
+  // after them. The managed-params warning fires at config time to surface the collision.
   const request = {
+    stream_options: { include_usage: true },
     ...(config.params ?? {}),
     model: config.modelId ?? DEFAULT_CHAT_MODEL_ID,
     messages: [] as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
     stream: true as const,
-    stream_options: { include_usage: true },
   } as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming
 
   if (options?.systemPrompt !== undefined) {
@@ -140,12 +140,24 @@ export function formatChatRequest(
   }
 
   applyCacheConfig(request, config.cacheConfig, options?.agentMetadata)
+  omitNullParams(request)
 
   if ('n' in request && request.n !== undefined && request.n !== null && request.n > 1) {
     throw new Error('Streaming with n > 1 is not supported')
   }
 
   return request
+}
+
+/**
+ * Removes every field still `null` after the request is built. Only `params` can leave one, so
+ * `null` there omits the field for endpoints that reject it (such as `stream_options`).
+ */
+function omitNullParams(request: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming): void {
+  const fields = request as unknown as Record<string, unknown>
+  for (const key of Object.keys(fields)) {
+    if (fields[key] === null) delete fields[key]
+  }
 }
 
 /**

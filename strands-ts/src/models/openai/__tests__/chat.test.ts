@@ -6,6 +6,7 @@ import { ContextWindowOverflowError, ModelThrottledError } from '../../../errors
 import { collectIterator } from '../../../__fixtures__/model-test-helpers.js'
 import { Message, TextBlock, ToolUseBlock, ToolResultBlock, GuardContentBlock } from '../../../types/messages.js'
 import type { SystemContentBlock } from '../../../types/messages.js'
+import type { OpenAIChatConfig } from '../types.js'
 import { ImageBlock, DocumentBlock, VideoBlock } from '../../../types/media.js'
 import { warnOnce } from '../../../logging/warn-once.js'
 import { logger } from '../../../logging/logger.js'
@@ -351,9 +352,9 @@ describe('OpenAIModel', () => {
     it('warns on updateConfig when params contains provider-managed keys', () => {
       const model = new OpenAIModel({ api: 'chat', client: {} as OpenAI })
       const warnSpy = vi.spyOn(logger, 'warn')
-      model.updateConfig({ params: { stream_options: { include_usage: false } } })
+      model.updateConfig({ params: { stream: false } })
       expect(warnSpy).toHaveBeenCalledTimes(1)
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("'stream_options'"))
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("'stream'"))
       warnSpy.mockRestore()
     })
 
@@ -376,17 +377,73 @@ describe('OpenAIModel', () => {
           model: 'attacker-model',
           messages: [{ role: 'user', content: 'hijacked' }],
           stream: false,
-          stream_options: { include_usage: false },
         },
       })
       const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
       await collectIterator(provider.stream(messages))
       expect(captured.request.model).toBe('gpt-5.4')
       expect(captured.request.stream).toBe(true)
-      expect(captured.request.stream_options).toEqual({ include_usage: true })
       expect(Array.isArray(captured.request.messages)).toBe(true)
       expect(captured.request.messages[0]).toEqual({ role: 'user', content: [{ type: 'text', text: 'Hi' }] })
       warnSpy.mockRestore()
+    })
+
+    it('keeps managed fields when params sets them to null', async () => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({
+        api: 'chat',
+        modelId: 'gpt-5.4',
+        client: createMockClientWithCapture(captured),
+        params: { model: null, messages: null, stream: null },
+      })
+      await collectIterator(provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })]))
+      expect(captured.request.model).toBe('gpt-5.4')
+      expect(captured.request.stream).toBe(true)
+      expect(captured.request.messages).toStrictEqual([{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }])
+    })
+  })
+
+  describe('params', () => {
+    const streamWithParams = async (config: Partial<OpenAIChatConfig>): Promise<any> => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({
+        api: 'chat',
+        modelId: 'gpt-5.4',
+        client: createMockClientWithCapture(captured),
+        ...config,
+      })
+      await collectIterator(provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })]))
+      return captured.request
+    }
+
+    it('defaults stream_options to include usage when params does not set it', async () => {
+      const request = await streamWithParams({ params: { seed: 42 } })
+      expect(request.stream_options).toStrictEqual({ include_usage: true })
+    })
+
+    it('passes a set stream_options through without a warning', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn')
+      const request = await streamWithParams({ params: { stream_options: { include_usage: false } } })
+      expect(request.stream_options).toStrictEqual({ include_usage: false })
+      expect(warnSpy).not.toHaveBeenCalled()
+      warnSpy.mockRestore()
+    })
+
+    it('omits stream_options when params sets it to null', async () => {
+      const request = await streamWithParams({ params: { stream_options: null } })
+      expect('stream_options' in request).toBe(false)
+    })
+
+    it('omits every params key set to null and passes set keys through', async () => {
+      const request = await streamWithParams({ params: { seed: null, top_p: 0.8, prompt_cache_key: null } })
+      expect('seed' in request).toBe(false)
+      expect('prompt_cache_key' in request).toBe(false)
+      expect(request.top_p).toBe(0.8)
+    })
+
+    it('lets dedicated config properties win over a null params key', async () => {
+      const request = await streamWithParams({ temperature: 0.5, params: { temperature: null } })
+      expect(request.temperature).toBe(0.5)
     })
   })
 
