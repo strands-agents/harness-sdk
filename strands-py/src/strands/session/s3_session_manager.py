@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 import boto3
 from botocore.config import Config as BotocoreConfig
 from botocore.exceptions import ClientError
+from typing_extensions import deprecated
 
 from .. import _identifier
 from ..types.exceptions import SessionException
@@ -28,8 +29,19 @@ MESSAGE_PREFIX = "message_"
 MULTI_AGENT_PREFIX = "multi_agent_"
 
 
+@deprecated(
+    "S3SessionManager is deprecated and will be removed in v2.0.0. "
+    "Use SnapshotSessionManager with an S3Storage backend instead. See the migration guide: "
+    "https://strandsagents.com/docs/user-guide/sdk/agents/session-management/#migrating-from-the-message-log-session-managers"
+)
 class S3SessionManager(RepositorySessionManager, SessionRepository):
     """S3-based session manager for cloud storage.
+
+    .. deprecated:: 1.x
+        Deprecated and will be removed in v2.0.0. Use
+        :class:`~strands.session.snapshot_session_manager.SnapshotSessionManager` with an
+        ``S3Storage`` backend instead. See the migration guide linked in the deprecation
+        warning above.
 
     Creates the following filesystem structure for the session storage:
     ```bash

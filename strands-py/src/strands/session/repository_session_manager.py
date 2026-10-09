@@ -4,6 +4,8 @@ import copy
 import logging
 from typing import TYPE_CHECKING, Any
 
+from typing_extensions import deprecated
+
 from ..agent.state import AgentState
 from ..tools._tool_helpers import generate_missing_tool_result_content
 from ..types.agent import LocalAgent
@@ -24,8 +26,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@deprecated(
+    "RepositorySessionManager is deprecated and will be removed in v2.0.0. "
+    "Use SnapshotSessionManager instead; implement a custom Storage backend rather than a "
+    "SessionRepository. See the migration guide: "
+    "https://strandsagents.com/docs/user-guide/sdk/agents/session-management/#migrating-from-the-message-log-session-managers"
+)
 class RepositorySessionManager(SessionManager[LocalAgent]):
     """Session manager for persisting agents in a SessionRepository.
+
+    .. deprecated:: 1.x
+        Deprecated and will be removed in v2.0.0. Use
+        :class:`~strands.session.snapshot_session_manager.SnapshotSessionManager` instead,
+        implementing a custom ``Storage`` backend rather than a ``SessionRepository``. See the
+        migration guide linked in the deprecation warning above.
 
     This manager uses a :class:`SessionRepository` (a structured per-message CRUD interface),
     not the unified :class:`~strands.storage.storage.Storage` protocol. It does not resolve
