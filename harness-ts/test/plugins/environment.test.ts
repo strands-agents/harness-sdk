@@ -116,6 +116,25 @@ describe('EnvironmentContext', () => {
     expect(out).toContain('Date:')
   })
 
+  it('prefers a sandbox that describes its own environment over shell probes', async () => {
+    // A sandbox without a POSIX shell (plain Windows) can still say where the agent runs.
+    const sandbox = new FakeSandbox({ 'AGENTS.md': 'x' }, { '.': [file('AGENTS.md')] }, null)
+    Object.assign(sandbox, { environment: { platform: 'Windows', cwd: 'C:\\work\\proj', shell: 'PowerShell' } })
+    const out = await renderEnvironment(fakeAgent(sandbox), {})
+    expect(out).toContain('Platform: Windows')
+    expect(out).toContain('Shell: PowerShell')
+    expect(out).toContain('Working directory: C:\\work\\proj')
+  })
+
+  it('ignores a malformed environment descriptor and falls back to probes', async () => {
+    const sandbox = new FakeSandbox({ 'AGENTS.md': 'x' }, { '.': [file('AGENTS.md')] }, '/work')
+    Object.assign(sandbox, { environment: { platform: 42, cwd: '' } })
+    const out = await renderEnvironment(fakeAgent(sandbox), {})
+    expect(out).toContain('Platform: Linux')
+    expect(out).toContain('Working directory: /work')
+    expect(out).not.toContain('Shell:')
+  })
+
   it('memoizes discovery across turns', async () => {
     const sandbox = new FakeSandbox({ 'AGENTS.md': 'x' }, repoTree())
     const memo: EnvironmentMemo = {}

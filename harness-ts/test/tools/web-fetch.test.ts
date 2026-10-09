@@ -1,5 +1,7 @@
 import { Buffer } from 'node:buffer'
 import { createServer } from 'node:http'
+import { tmpdir } from 'node:os'
+import { sep } from 'node:path'
 import { ReadableStream } from 'node:stream/web'
 import type { AddressInfo } from 'node:net'
 
@@ -41,12 +43,14 @@ class FakeSandbox {
       stderr?: string
     } = {}
   ) {}
+  removed: string[] = []
+  removeFile(path: string): Promise<void> {
+    this.removed.push(path)
+    if (!this.files.delete(path)) return Promise.reject(new Error(`ENOENT: ${path}`))
+    return Promise.resolve()
+  }
   execute(command: string): Promise<ExecutionResult> {
     this.commands.push(command)
-    if (command.startsWith('rm -f ')) {
-      for (const path of command.slice('rm -f '.length).split(' ')) this.files.delete(path.replaceAll("'", ''))
-      return Promise.resolve({ type: 'executionResult', exitCode: 0, stdout: '', stderr: '', outputFiles: [] })
-    }
     const exitCode = this.response.exitCode ?? 0
     if (exitCode === 0) {
       const body = this.response.body ?? ''
@@ -100,6 +104,20 @@ describe('web_fetch', () => {
     expect(prompt).not.toContain('<script>')
   })
 
+  it('uses curl.exe and truncates in PowerShell when the sandbox shell is PowerShell', async () => {
+    const sandbox = new FakeSandbox({ body: 'body', contentType: 'text/plain' })
+    Object.assign(sandbox, { environment: { platform: 'Windows', cwd: 'C:\\work', shell: 'pwsh' } })
+    const tool = makeWebFetch({ model })
+    await invoke(tool, { url: "https://example.com/it's" }, sandbox)
+    const command = sandbox.commands[0]!
+    expect(command.startsWith('curl.exe ')).toBe(true)
+    expect(command).not.toContain('head -c')
+    expect(command).toContain("'https://example.com/it''s'")
+    expect(command).toContain('if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }')
+    expect(command).toContain(`SetLength([Math]::Min($f.Length, ${5 * 1024 * 1024}))`)
+    expect(sandbox.removed).toHaveLength(2)
+  })
+
   it('runs curl in the agent sandbox with the URL quoted and globbing off, then removes the body file', async () => {
     const sandbox = new FakeSandbox({ body: 'body', contentType: 'text/plain' })
     const tool = makeWebFetch({ model })
@@ -121,7 +139,7 @@ describe('web_fetch', () => {
     ]) {
       expect(command).toContain(flag)
     }
-    expect(sandbox.commands.at(-1)!.startsWith('rm -f ')).toBe(true)
+    expect(sandbox.removed).toHaveLength(2)
     expect(sandbox.files.size).toBe(0)
   })
 
@@ -169,11 +187,11 @@ describe('web_fetch', () => {
     expect(answer).toContain('Failed to fetch https://example.com')
     expect(answer).toContain('500')
     expect(invokeCalls).toHaveLength(0)
-    expect(sandbox.commands.at(-1)!.startsWith('rm -f ')).toBe(true)
+    expect(sandbox.removed).toHaveLength(2)
   })
 
   it('reports a sandbox failure as a fetch failure', async () => {
-    const sandbox = { execute: () => Promise.reject(new Error('sandbox gone')) }
+    const sandbox = { execute: () => Promise.reject(new Error('sandbox gone')), removeFile: () => Promise.resolve() }
     const tool = makeWebFetch({ model })
     const answer = await invoke(tool, { url: 'https://example.com' }, sandbox)
     expect(answer).toBe('Failed to fetch https://example.com: sandbox gone')
@@ -306,7 +324,9 @@ describe('web_fetch', () => {
       expect(await invoke(tool, { url: `${base}/big` }, sandbox)).toBe('日'.repeat(50_000))
       expect(await invoke(tool, { url: `${base}/huge` }, sandbox)).toBe('x'.repeat(50_000))
       expect(await invoke(tool, { url: `${base}/notype` }, sandbox)).toBe('a < b')
-      expect((await sandbox.execute('ls /tmp | grep -c strands-web-fetch')).stdout.trim()).toBe('0')
+      // Same scratch directory the tool derives: `/tmp` is not readable through Node on Windows.
+      const tempDir = process.platform === 'win32' ? tmpdir().replaceAll(sep, '/') : '/tmp'
+      expect((await sandbox.execute(`ls '${tempDir}' | grep -c strands-web-fetch`)).stdout.trim()).toBe('0')
       expect(await invoke(tool, { url: `${base}/missing` }, sandbox)).toContain('404')
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()))

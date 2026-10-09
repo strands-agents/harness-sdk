@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
+import { join, sep } from 'node:path'
 import { defineHarnessAgentConfig, harnessAgentOptionsFromConfig } from '@strands-agents/harness'
 import { McpClient } from '@strands-agents/sdk'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -44,14 +44,15 @@ afterEach(async () => {
 
 describe('loadMcp', () => {
   it('discovers conventional user and project configuration locations in stable precedence order', () => {
-    expect(defaultMcpPaths().map((path) => path.replace(process.env.HOME!, '~'))).toEqual([
+    const posix = (path: string) => path.replaceAll(sep, '/')
+    expect(defaultMcpPaths().map((path) => posix(path).replace(posix(homedir()), '~'))).toEqual([
       '~/.claude.json',
       '~/.kiro/settings/mcp.json',
       '~/.gemini/settings.json',
       '~/.codex/config.toml',
       '~/.config/strands/mcp.json',
     ])
-    expect(projectMcpPaths('/workspace')).toEqual([
+    expect(projectMcpPaths('/workspace').map(posix)).toEqual([
       '/workspace/.mcp.json',
       '/workspace/.kiro/settings/mcp.json',
       '/workspace/.gemini/settings.json',

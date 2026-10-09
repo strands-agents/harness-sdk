@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING, Any
 from strands.plugins import Plugin
 from strands.vended_plugins.context_injector import ContextInjector, InjectionContext
 
+from strands_harness.sandbox_environment import described_environment
+
 if TYPE_CHECKING:
     from strands import Agent
 
@@ -72,11 +74,13 @@ class EnvironmentContext(Plugin):
 async def _render(agent: Agent, memo: dict[str, Any]) -> str | None:
     if "gathered" not in memo:
         memo["gathered"] = await _gather(agent)
-    platform, cwd, agents_md, other_agents, readmes = memo["gathered"]
+    platform, cwd, shell, agents_md, other_agents, readmes = memo["gathered"]
 
     env = []
     if platform:
         env.append(f"Platform: {platform}")
+    if shell:
+        env.append(f"Shell: {shell} (the shell tool runs commands in it)")
     env.append(f"Date: {date.today().isoformat()}")
     if cwd:
         env.append(f"Working directory: {cwd}")
@@ -91,25 +95,30 @@ async def _render(agent: Agent, memo: dict[str, Any]) -> str | None:
     return "<system-reminder>\n" + "\n\n".join(sections) + "\n</system-reminder>"
 
 
-async def _gather(agent: Agent) -> tuple[str | None, str | None, str | None, list[str], list[str]]:
-    """The one-time, memoized part: platform, working directory, cwd ``AGENTS.md``, and nearby links.
+async def _gather(
+    agent: Agent,
+) -> tuple[str | None, str | None, str | None, str | None, list[str], list[str]]:
+    """The one-time, memoized part: platform, working directory, shell, cwd ``AGENTS.md``, and nearby links.
 
-    Platform and cwd are read from the sandbox (via ``uname``/``pwd``), not the host process, so they
-    describe where the agent actually runs — a Docker or SSH sandbox, not the machine hosting it.
+    Platform and cwd come from the sandbox, not the host process, so they describe where the agent
+    actually runs — a Docker or SSH sandbox, not the machine hosting it. A sandbox that knows its
+    environment says so directly; otherwise probe with ``uname``/``pwd`` (meaningless without a POSIX
+    shell, e.g. on Windows, where the probes fail and the lines are omitted).
     """
     try:
         sandbox = agent.sandbox
     except Exception:
         # Defensive: normally a default local sandbox is present, but if the getter has none to fall
         # back to, still surface the date block without probing the environment.
-        return None, None, None, [], []
-    platform = await _probe(sandbox, "uname -s")
-    cwd = await _probe(sandbox, "pwd")
+        return None, None, None, None, [], []
+    described = described_environment(sandbox)
+    platform = described["platform"] or await _probe(sandbox, "uname -s")
+    cwd = described["cwd"] or await _probe(sandbox, "pwd")
     agents_md = await _read_text(sandbox, "AGENTS.md")
     found = await _discover(sandbox)
     # The working-directory AGENTS.md is shown in full above; keep only the nested ones as links.
     other_agents = [p for p in found["AGENTS.md"] if p != "AGENTS.md"]
-    return platform, cwd, agents_md, other_agents, found["README.md"]
+    return platform, cwd, described["shell"], agents_md, other_agents, found["README.md"]
 
 
 async def _probe(sandbox: Any, command: str) -> str | None:

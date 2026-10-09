@@ -13,11 +13,14 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { tmpdir } from 'node:os'
+import { sep } from 'node:path'
 import { TextDecoder } from 'node:util'
 
 import { Agent, type Model, type Sandbox, tool, type Tool } from '@strands-agents/sdk'
 import { z } from 'zod'
 
+import { describedEnvironment, isPowerShell } from '../sandbox-environment.js'
 import type { WebFetchTransport } from '../types/agent.js'
 
 const USER_AGENT = 'strands-harness/1.0'
@@ -25,6 +28,10 @@ const TIMEOUT_SECONDS = 30
 const MAX_BYTES = 5 * 1024 * 1024
 const MAX_CHARS = 50_000
 const CACHE_TTL_MS = 15 * 60 * 1000
+// The sandbox shell and `sandbox.readFile` must resolve the scratch file to the same place: `/tmp` does
+// that in any POSIX sandbox, but on Windows the shell's `/tmp` is its own (MSYS) mount that Node resolves
+// against the current drive instead, so there the host temp dir is used, forward-slashed for `sh`.
+const TEMP_DIR = process.platform === 'win32' ? tmpdir().replaceAll(sep, '/') : '/tmp'
 // The characters RFC 3986 allows anywhere in a URL; anything else (whitespace, quotes, control
 // characters, non-ASCII) is rejected before the URL reaches a shell or a socket.
 const URL_CHARS = /^[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+$/
@@ -72,19 +79,32 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`
 }
 
-function curlCommand(url: string, output: string): string {
+/** PowerShell single-quoted literal: only `'` needs escaping, by doubling. */
+function powershellQuote(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`
+}
+
+function curlCommand(url: string, output: string, shell: 'sh' | 'PowerShell'): string {
   // -g keeps `{}`/`[]` in the URL literal; --proto/--proto-redir keep the request and any redirect on
   // http(s) (curl would otherwise follow a redirect to ftp://); --fail turns HTTP errors into a non-zero
   // exit; -sS keeps curl's own error text on stderr. The body goes to a file (stdout is decoded text,
-  // which would lose the charset and split multi-byte characters) and is truncated in the sandbox before
-  // it is read back; stdout carries only the final hop's content type and URL.
-  const out = shellQuote(output)
+  // which would lose the charset and split multi-byte characters); stdout carries only the final hop's
+  // content type and URL. The body is truncated in the sandbox before it is read back: `head` in `sh`;
+  // in PowerShell (`curl.exe`, because PowerShell aliases `curl` to Invoke-WebRequest) by shortening the
+  // file in place, since there is no `head`.
+  const quote = shell === 'PowerShell' ? powershellQuote : shellQuote
+  const out = quote(output)
+  const fetch =
+    `${shell === 'PowerShell' ? 'curl.exe' : 'curl'} -sSL -g --fail --proto '=http,https' --proto-redir '=http,https' ` +
+    `--max-time ${TIMEOUT_SECONDS} -A ${quote(USER_AGENT)} -o ${out} -w '%{content_type}\\n%{url_effective}' -- ${quote(url)}`
+  if (shell === 'PowerShell') {
+    return (
+      `${fetch}; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; ` +
+      `$f = [System.IO.File]::Open(${out}, 'Open'); $f.SetLength([Math]::Min($f.Length, ${MAX_BYTES})); $f.Dispose()`
+    )
+  }
   const part = shellQuote(`${output}.part`)
-  return (
-    `curl -sSL -g --fail --proto '=http,https' --proto-redir '=http,https' --max-time ${TIMEOUT_SECONDS} ` +
-    `-A ${shellQuote(USER_AGENT)} -o ${out} -w '%{content_type}\\n%{url_effective}' -- ${shellQuote(url)} ` +
-    `&& head -c ${MAX_BYTES} ${out} > ${part} && mv -f ${part} ${out}`
-  )
+  return `${fetch} && head -c ${MAX_BYTES} ${out} > ${part} && mv -f ${part} ${out}`
 }
 
 function decode(data: Uint8Array, contentType: string): string {
@@ -106,12 +126,13 @@ function toText(data: Uint8Array, contentType: string, resolvedUrl: string, url:
 
 /** Fetch a validated `url` with `curl` inside `sandbox`; throws when curl fails. */
 async function fetchCurl(sandbox: Sandbox, url: string): Promise<Fetched> {
-  const output = `/tmp/strands-web-fetch-${randomUUID().replaceAll('-', '')}`
+  const output = `${TEMP_DIR}/strands-web-fetch-${randomUUID().replaceAll('-', '')}`
+  const shell = isPowerShell(describedEnvironment(sandbox)?.shell) ? 'PowerShell' : 'sh'
   let contentType: string
   let resolvedUrl: string
   let data: Uint8Array
   try {
-    const result = await sandbox.execute(curlCommand(url, output), { timeout: TIMEOUT_SECONDS + 5 })
+    const result = await sandbox.execute(curlCommand(url, output, shell), { timeout: TIMEOUT_SECONDS + 5 })
     if (result.exitCode !== 0) {
       throw new Error(result.stderr.trim() || `curl exited with code ${result.exitCode}`)
     }
@@ -119,11 +140,10 @@ async function fetchCurl(sandbox: Sandbox, url: string): Promise<Fetched> {
     const lines = result.stdout.replace(/\n+$/, '').split('\n')
     resolvedUrl = (lines.pop() ?? '').trim()
     contentType = (lines.pop() ?? '').trim()
-    data = await sandbox.readFile(output)
+    data = (await sandbox.readFile(output)).slice(0, MAX_BYTES)
   } finally {
-    await sandbox
-      .execute(`rm -f ${shellQuote(output)} ${shellQuote(`${output}.part`)}`, { timeout: 10 })
-      .catch(() => undefined)
+    // The sandbox's own file op, not `rm`: it works whatever shell (if any) the sandbox has.
+    await Promise.all([output, `${output}.part`].map((path) => sandbox.removeFile(path).catch(() => undefined)))
   }
   return toText(data, contentType, resolvedUrl, url)
 }

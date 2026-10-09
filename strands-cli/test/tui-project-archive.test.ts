@@ -10,9 +10,16 @@ const execute = vi.hoisted(() => vi.fn())
 vi.mock('node:child_process', () => ({ execFile: execute }))
 
 import { prepareArchiveDependencies } from '../src/tui/project/archive.js'
+import { npmInvocation } from '../src/tui/npm.js'
 import { importAgentProject } from '../src/tui/project/import.js'
 
 let temporary: string | undefined
+
+/** `os.homedir()` reads USERPROFILE on Windows, so the test home has to move both variables. */
+function stubHome(home: string): void {
+  vi.stubEnv('HOME', home)
+  if (process.platform === 'win32') vi.stubEnv('USERPROFILE', home)
+}
 
 afterEach(async () => {
   vi.unstubAllEnvs()
@@ -22,7 +29,7 @@ afterEach(async () => {
 
 it('removes the extraction directory when the ZIP contains no agent', async () => {
   temporary = await mkdtemp(join(tmpdir(), 'strands-archive-'))
-  vi.stubEnv('HOME', temporary)
+  stubHome(temporary)
   const archive = join(temporary, 'agent.zip')
   await writeFile(archive, zipSync({ 'README.md': strToU8('No entrypoint') }))
 
@@ -34,7 +41,7 @@ it.each(['missing.py', '../outside.py', 'notes.txt'] as const)(
   'cleans up an invalid marker %s ZIP',
   async (selected) => {
     temporary = await mkdtemp(join(tmpdir(), 'strands-archive-'))
-    vi.stubEnv('HOME', temporary)
+    stubHome(temporary)
     const archive = join(temporary, 'agent.zip')
     for (const prefix of ['', 'wrapper/project/']) {
       await writeFile(
@@ -61,7 +68,7 @@ it.each(['typescript', 'python'] as const)(
     const alias = join(temporary, 'alias')
     await mkdir(testHome)
     await symlink(testHome, alias, 'dir')
-    vi.stubEnv('HOME', alias)
+    stubHome(alias)
     const filename = language === 'typescript' ? 'agent/agent.ts' : 'agent/agent.py'
     const manifest = language === 'typescript' ? 'package.json' : 'requirements.txt'
     const contents = language === 'typescript' ? '{"private":true}' : 'example-package\n'
@@ -83,7 +90,7 @@ it.each(['typescript', 'python'] as const)(
     execute.mockImplementation((_command, args, _options, callback) => {
       expect(args).toEqual(
         language === 'typescript'
-          ? ['install', '--no-audit', '--no-fund']
+          ? npmInvocation(['install', '--no-audit', '--no-fund']).args
           : ['-m', 'pip', 'install', '-r', 'requirements.txt']
       )
       if (language === 'typescript') {
@@ -117,7 +124,7 @@ it.each([
   ['python', 'npm-shrinkwrap.json'],
 ] as const)('uses npm ci and invalidates the %s dependency cache when only %s changes', async (language, lockfile) => {
   temporary = await mkdtemp(join(tmpdir(), 'strands-archive-'))
-  vi.stubEnv('HOME', temporary)
+  stubHome(temporary)
   const archive = join(temporary, 'agent.zip')
   const filename = language === 'typescript' ? 'agent.ts' : 'agent.py'
   const manifest = Buffer.from('{\r\n  "private": true\r\n}\r\n')
@@ -128,7 +135,8 @@ it.each([
   execute.mockImplementation((_command, _args, _options, callback) => callback(null, '', ''))
 
   await prepareArchiveDependencies(project.root, language)
-  expect(execute.mock.calls[0]?.[1]).toEqual(['ci', '--no-audit', '--no-fund'])
+  const install = npmInvocation(['ci', '--no-audit', '--no-fund'])
+  expect(execute.mock.calls[0]?.slice(0, 2)).toEqual([install.command, install.args])
   const fingerprint = await readFile(join(project.root, '.strands-dependencies'), 'utf8')
   await prepareArchiveDependencies(project.root, language)
   expect(execute).toHaveBeenCalledTimes(1)
@@ -136,17 +144,21 @@ it.each([
   await writeFile(join(project.root, lockfile), changedLock)
   await prepareArchiveDependencies(project.root, language)
   expect(execute).toHaveBeenCalledTimes(2)
-  expect(execute.mock.calls[1]?.[1]).toEqual(['ci', '--no-audit', '--no-fund'])
+  expect(execute.mock.calls[1]?.slice(0, 2)).toEqual([install.command, install.args])
   expect(await readFile(join(project.root, '.strands-dependencies'), 'utf8')).not.toBe(fingerprint)
   expect(await readFile(join(project.root, 'package.json'))).toEqual(manifest)
   expect(await readFile(join(project.root, lockfile))).toEqual(changedLock)
 })
 
-it.each([false, true])('restores executable permissions without privileged bits from ZIP64=%s', async (zip64) => {
-  const archive = await archiveWithMode(0o107777, zip64)
-  const project = importAgentProject(archive)
-  expect((await stat(join(project.root, 'helper.sh'))).mode & 0o7777).toBe(0o755)
-})
+// Windows has no POSIX executable bit, so there is nothing to restore there.
+it.skipIf(process.platform === 'win32').each([false, true])(
+  'restores executable permissions without privileged bits from ZIP64=%s',
+  async (zip64) => {
+    const archive = await archiveWithMode(0o107777, zip64)
+    const project = importAgentProject(archive)
+    expect((await stat(join(project.root, 'helper.sh'))).mode & 0o7777).toBe(0o755)
+  }
+)
 
 it.each([false, true])('rejects symbolic links in ZIP64=%s before extraction', async (zip64) => {
   const archive = await archiveWithMode(0o120777, zip64)
@@ -155,7 +167,7 @@ it.each([false, true])('rejects symbolic links in ZIP64=%s before extraction', a
 
 async function archiveWithMode(mode: number, zip64: boolean): Promise<string> {
   temporary = await mkdtemp(join(tmpdir(), 'strands-archive-'))
-  vi.stubEnv('HOME', temporary)
+  stubHome(temporary)
   const zip = new ZipFile()
   zip.addBuffer(Buffer.from(''), 'agent/agent.ts')
   zip.addBuffer(Buffer.from('#!/bin/sh\nprintf helper-ran\n'), 'helper.sh', { mode })

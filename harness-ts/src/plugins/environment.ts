@@ -19,6 +19,8 @@
 import { type LocalAgent, type Plugin, type Sandbox } from '@strands-agents/sdk'
 import { ContextInjector } from '@strands-agents/sdk/vended-plugins/context-injector'
 
+import { describedEnvironment } from '../sandbox-environment.js'
+
 const DEFAULT_NAME = 'strands:environment'
 
 // How many directory levels below the working directory to scan for nearby AGENTS.md / README.md.
@@ -38,6 +40,7 @@ const DISCOVERED_FILES = ['AGENTS.md', 'README.md']
 interface Gathered {
   platform: string | undefined
   cwd: string | undefined
+  shell: string | undefined
   agentsMd: string | undefined
   otherAgents: string[]
   readmes: string[]
@@ -97,6 +100,9 @@ function render(g: Gathered): string {
   if (g.platform) {
     env.push(`Platform: ${g.platform}`)
   }
+  if (g.shell) {
+    env.push(`Shell: ${g.shell} (the shell tool runs commands in it)`)
+  }
   env.push(`Date: ${todayIso()}`)
   if (g.cwd) {
     env.push(`Working directory: ${g.cwd}`)
@@ -121,17 +127,20 @@ async function gather(agent: LocalAgent): Promise<Gathered> {
   } catch {
     // Defensive: normally a default local sandbox is present, but if the getter has none to fall
     // back to (e.g. a browser build), still surface the date block without probing the environment.
-    return { platform: undefined, cwd: undefined, agentsMd: undefined, otherAgents: [], readmes: [] }
+    return { platform: undefined, cwd: undefined, shell: undefined, agentsMd: undefined, otherAgents: [], readmes: [] }
   }
-  // Platform and cwd are read from the sandbox (via `uname`/`pwd`), not the host process, so they
-  // describe where the agent actually runs — a Docker or SSH sandbox, not the machine hosting it.
-  const platform = await probe(sandbox, 'uname -s')
-  const cwd = await probe(sandbox, 'pwd')
+  // Platform and cwd come from the sandbox, not the host process, so they describe where the agent
+  // actually runs — a Docker or SSH sandbox, not the machine hosting it. A sandbox that knows its
+  // environment says so directly; otherwise probe with `uname`/`pwd` (meaningless without a POSIX shell,
+  // e.g. on Windows, where the probes fail and the lines are omitted).
+  const described = describedEnvironment(sandbox)
+  const platform = described?.platform ?? (await probe(sandbox, 'uname -s'))
+  const cwd = described?.cwd ?? (await probe(sandbox, 'pwd'))
   const agentsMd = await readText(sandbox, 'AGENTS.md')
   const found = await discover(sandbox)
   // The working-directory AGENTS.md is shown in full above; keep only the nested ones as links.
   const otherAgents = (found.get('AGENTS.md') ?? []).filter((p) => p !== 'AGENTS.md')
-  return { platform, cwd, agentsMd, otherAgents, readmes: found.get('README.md') ?? [] }
+  return { platform, cwd, shell: described?.shell, agentsMd, otherAgents, readmes: found.get('README.md') ?? [] }
 }
 
 async function probe(sandbox: Sandbox, command: string): Promise<string | undefined> {

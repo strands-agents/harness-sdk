@@ -20,9 +20,15 @@ const READ_DEFAULT_LIMIT = 2000
 const IMAGE_FORMATS: Record<string, ImageFormat> = { png: 'png', jpg: 'jpeg', jpeg: 'jpeg', gif: 'gif', webp: 'webp' }
 const DOCUMENT_FORMATS: readonly string[] = ['pdf', 'doc', 'docx', 'xls', 'xlsx']
 
+// Absolute on POSIX (`/…`) or Windows (`C:\…`, `C:/…`, `\\server\share\…`); checked textually so the
+// rule is the same on every host and for every sandbox backend.
+const ABSOLUTE_PATH = /^(?:\/|\\\\|[A-Za-z]:[\\/])/
+
 function validatePath(path: string): void {
-  if (!path.startsWith('/')) {
-    throw new Error(`The path ${path} is not absolute; it should start with '/'.`)
+  if (!ABSOLUTE_PATH.test(path)) {
+    throw new Error(
+      `The path ${path} is not absolute; it should start with '/' (or a drive letter or UNC share on Windows).`
+    )
   }
   if (path.split(/[/\\]/).includes('..')) {
     throw new Error('Invalid path: path traversal is not allowed.')
