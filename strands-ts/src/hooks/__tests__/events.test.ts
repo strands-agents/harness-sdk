@@ -55,6 +55,7 @@ describe('BeforeInvocationEvent', () => {
       agent: agent,
       cancel: false,
       invocationState: {},
+      messages: [],
     })
     // @ts-expect-error verifying that property is readonly
     event.agent = new Agent()
@@ -81,6 +82,19 @@ describe('BeforeInvocationEvent', () => {
 
     event.cancel = 'unauthorized'
     expect(event.cancel).toBe('unauthorized')
+  })
+
+  it('allows messages to be mutated and replaced', () => {
+    const agent = new Agent()
+    const originalMessage = new Message({ role: 'user', content: [new TextBlock('original')] })
+    const event = new BeforeInvocationEvent({ agent, invocationState: {}, messages: [originalMessage] })
+
+    event.messages.push(new Message({ role: 'user', content: [new TextBlock('appended')] }))
+    expect(event.messages).toHaveLength(2)
+
+    const replacementMessages = [new Message({ role: 'user', content: [new TextBlock('replacement')] })]
+    event.messages = replacementMessages
+    expect(event.messages).toBe(replacementMessages)
   })
 })
 
@@ -787,9 +801,13 @@ describe('toJSON serialization', () => {
   })
 
   describe('BeforeInvocationEvent', () => {
-    it('excludes agent and returns only type', () => {
+    it('excludes agent, invocation state, and messages', () => {
       const agent = new Agent()
-      const event = new BeforeInvocationEvent({ agent, invocationState: {} })
+      const event = new BeforeInvocationEvent({
+        agent,
+        invocationState: {},
+        messages: [new Message({ role: 'user', content: [new TextBlock('sensitive input')] })],
+      })
       const json = JSON.parse(JSON.stringify(event))
 
       expect(json).toStrictEqual({ type: 'beforeInvocationEvent' })
@@ -1123,6 +1141,7 @@ describe('toJSON serialization completeness', () => {
     'cancel',
     'retry',
     'invocationState',
+    'messages',
     'selectedTool',
     'resume',
     'endTurn',
