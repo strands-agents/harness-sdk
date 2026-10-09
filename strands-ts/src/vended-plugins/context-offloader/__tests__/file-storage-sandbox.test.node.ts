@@ -44,7 +44,7 @@ describe.skipIf(process.platform === 'win32')('FileStorage with sandbox', () => 
 
   it('creates files under the artifact directory with a type-derived extension', async () => {
     const reference = await storage.store('my-key', new TextEncoder().encode('test'), 'text/plain')
-    expect(reference.startsWith('./artifacts/')).toBe(true)
+    expect(reference).not.toContain('/')
     expect(reference).toContain('my-key')
     expect(reference.endsWith('.txt')).toBe(true)
   })
@@ -52,8 +52,25 @@ describe.skipIf(process.platform === 'win32')('FileStorage with sandbox', () => 
   it('uses a custom artifact directory', async () => {
     const custom = new FileStorage({ artifactDir: 'custom-artifacts', sandbox })
     const reference = await custom.store('key', new TextEncoder().encode('custom path'), 'text/plain')
-    expect(reference.startsWith('custom-artifacts/')).toBe(true)
+    expect(reference).not.toContain('/')
     expect(new TextDecoder().decode((await custom.retrieve(reference)).content)).toBe('custom path')
+  })
+
+  it('retrieves older full paths and bare stems', async () => {
+    const reference = await storage.store('legacy', new TextEncoder().encode('saved'), 'text/plain')
+    for (const oldReference of [`./artifacts/${reference}`, reference.slice(0, -4)]) {
+      const result = await storage.retrieve(oldReference)
+      expect(new TextDecoder().decode(result.content)).toBe('saved')
+      expect(result.contentType).toBe('text/plain')
+    }
+  })
+
+  it('retrieves full paths without metadata and refuses unknown stems', async () => {
+    const reference = await storage.store('legacy', new TextEncoder().encode('saved'), 'text/plain')
+    fs.rmSync(`${TEST_DIR}/artifacts/.metadata.json`)
+    const reopened = new FileStorage({ sandbox })
+    expect(new TextDecoder().decode((await reopened.retrieve(`./artifacts/${reference}`)).content)).toBe('saved')
+    await expect(reopened.retrieve(reference.slice(0, -4))).rejects.toThrow('Reference not found')
   })
 
   it('persists content types across instances via .metadata.json', async () => {

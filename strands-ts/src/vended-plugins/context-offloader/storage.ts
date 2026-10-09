@@ -166,8 +166,7 @@ export class InMemoryStorage implements Storage {
  *
  * Stores offloaded content as files on the host filesystem, or through a configured
  * {@link Sandbox}. File extensions are derived from the content type. A `.metadata.json`
- * sidecar file tracks content types across restarts. References are file paths preserving
- * the configured artifact directory form.
+ * sidecar file tracks content types across restarts. References are portable filenames.
  *
  * When used by {@link ContextOffloader} without an explicit sandbox, FileStorage is
  * bound to each agent's sandbox, which may be the default NotASandboxLocalEnvironment.
@@ -279,6 +278,14 @@ export class FileStorage implements Storage {
     await sandbox.writeText(this._artifactPath(FileStorage.METADATA_FILE), JSON.stringify(this._contentTypes))
   }
 
+  private _knownFilename(candidate: string): string {
+    if (Object.hasOwn(this._contentTypes, candidate)) return candidate
+    const matches = Object.keys(this._contentTypes).filter(
+      (filename) => filename.slice(0, filename.lastIndexOf('.')) === candidate
+    )
+    return matches.length === 1 ? matches[0]! : candidate
+  }
+
   /** {@inheritdoc} */
   async store(key: string, content: Uint8Array, contentType: string = 'text/plain'): Promise<string> {
     if (this._sandbox) {
@@ -292,7 +299,7 @@ export class FileStorage implements Storage {
 
       await sandbox.writeFile(filePath, content)
 
-      return filePath
+      return filename
     }
 
     const fs = await this._ensureDir()
@@ -311,7 +318,7 @@ export class FileStorage implements Storage {
     const filePath = path.join(this._artifactDir, filename)
     await fs.writeFile(filePath, content)
 
-    return filePath
+    return filename
   }
 
   /** {@inheritdoc} */
@@ -319,14 +326,15 @@ export class FileStorage implements Storage {
     if (this._sandbox) {
       const sandbox = await this._ensureSandbox()
 
-      if (!reference.startsWith(`${this._artifactDir.replace(/\/+$/, '')}/`) || reference.includes('..')) {
+      const prefix = `${this._artifactDir.replace(/\/+$/, '')}/`
+      const candidate = reference.startsWith(prefix) ? reference.slice(prefix.length) : reference
+      if (!candidate || candidate.includes('..') || /[/\\]/.test(candidate)) {
         throw new Error(`Reference not found: ${reference}`)
       }
-
-      const filename = reference.split('/').pop()!
+      const filename = this._knownFilename(candidate)
 
       try {
-        const content = await sandbox.readFile(reference)
+        const content = await sandbox.readFile(this._artifactPath(filename))
         const contentType = this._contentTypes[filename] ?? 'application/octet-stream'
         return { content, contentType }
       } catch {
@@ -337,13 +345,14 @@ export class FileStorage implements Storage {
     const fs = await this._ensureDir()
     const path = await import('node:path')
 
-    const filePath = path.resolve(this._artifactDir, reference)
     const resolvedDir = path.resolve(this._artifactDir)
-    if (filePath !== resolvedDir && !filePath.startsWith(resolvedDir + path.sep)) {
+    const candidatePath =
+      reference === path.basename(reference) ? path.join(resolvedDir, reference) : path.resolve(reference)
+    if (reference.split(/[/\\]/).includes('..') || path.dirname(candidatePath) !== resolvedDir) {
       throw new Error(`Reference not found: ${reference}`)
     }
-
-    const filename = path.basename(filePath)
+    const filename = this._knownFilename(path.basename(candidatePath))
+    const filePath = path.join(resolvedDir, filename)
 
     try {
       const content = await fs.readFile(filePath)
