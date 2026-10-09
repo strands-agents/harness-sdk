@@ -119,7 +119,7 @@ describe('Model', () => {
         const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
 
         await expect(async () => await collectGenerator(provider.streamAggregated(messages))).rejects.toThrow(
-          'Model reached maximum token limit. This is an unrecoverable state that requires intervention.'
+          /^Model reached maximum token limit\./
         )
       })
     })
@@ -323,9 +323,11 @@ describe('Model', () => {
 
         const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
 
-        await expect(async () => await collectGenerator(provider.streamAggregated(messages))).rejects.toThrow(
-          MaxTokensError
-        )
+        const error = await collectGenerator(provider.streamAggregated(messages)).catch((e: unknown) => e)
+        expect(error).toBeInstanceOf(MaxTokensError)
+        expect((error as MaxTokensError).partialMessage.content).toStrictEqual([
+          new ToolUseBlock({ name: 'get_weather', toolUseId: 'tool1', input: '{"location"' }),
+        ])
       })
 
       it('throws MaxTokensError when contentBlockStop arrives with truncated tool input JSON and stopReason is maxTokens', async () => {
@@ -340,14 +342,20 @@ describe('Model', () => {
             delta: { type: 'toolUseInputDelta', input: '{"field": "value"' },
           }
           yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelContentBlockStartEvent' }
+          yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'after' } }
+          yield { type: 'modelContentBlockStopEvent' }
           yield { type: 'modelMessageStopEvent', stopReason: 'maxTokens' }
         })
 
         const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
 
-        await expect(async () => await collectGenerator(provider.streamAggregated(messages))).rejects.toThrow(
-          MaxTokensError
-        )
+        const error = await collectGenerator(provider.streamAggregated(messages)).catch((e: unknown) => e)
+        expect(error).toBeInstanceOf(MaxTokensError)
+        expect((error as MaxTokensError).partialMessage.content).toStrictEqual([
+          new ToolUseBlock({ name: 'tool', toolUseId: 't', input: '{"field": "value"' }),
+          new TextBlock('after'),
+        ])
       })
 
       it('surfaces SyntaxError as cause when tool input JSON is malformed and stopReason is not maxTokens', async () => {

@@ -104,7 +104,8 @@ import { Tracer } from '../telemetry/tracer.js'
 import { AgentMetrics, Meter } from '../telemetry/meter.js'
 import type { AttributeValue } from '@opentelemetry/api'
 import { logger } from '../logging/logger.js'
-import { CancelledError, CheckpointError } from '../errors.js'
+import { CancelledError, CheckpointError, MaxTokensError } from '../errors.js'
+import { recoverMessageOnMaxTokensReached } from './recover-message-on-max-tokens-reached.js'
 import { DefaultModelRetryStrategy } from '../retry/default-model-retry-strategy.js'
 import type { RetryStrategy } from '../retry/retry-strategy.js'
 import { warnOnDuplicateRetryStrategyTypes } from '../retry/retry-strategy.js'
@@ -2266,6 +2267,14 @@ export class Agent implements LocalAgent, InvokableAgent {
         if (errorEvent.retry) {
           attemptCount = this._nextAttemptCount(routedModel, invocationState, attemptCount)
           continue
+        }
+
+        // Keep the truncated response in history so the agent can be invoked again to continue.
+        if (error instanceof MaxTokensError) {
+          const recovered = recoverMessageOnMaxTokensReached(error.partialMessage)
+          if (recovered.content.length > 0) {
+            yield this._appendMessage(recovered, invocationState)
+          }
         }
 
         throw error

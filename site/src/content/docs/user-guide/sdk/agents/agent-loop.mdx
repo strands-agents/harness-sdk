@@ -415,6 +415,8 @@ When the model's response exceeds the configured token limit, the loop raises a 
 
 Handle this exception by reducing context size, increasing the token limit, or breaking the task into smaller steps.
 
+Before raising, the agent adds the truncated response to the conversation history, with every tool use in it replaced by a text block noting that the tool use was incomplete. The conversation stays valid, so you can call the agent again to continue. In TypeScript the error is `MaxTokensError`, and `error.partialMessage` holds the unmodified truncated response.
+
 ## What Comes Next
 
 The agent loop is the execution primitive. Higher-level patterns build on top of it:
