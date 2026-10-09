@@ -7,6 +7,7 @@ import boto3
 import pytest
 from botocore.config import Config as BotocoreConfig
 from botocore.exceptions import ClientError
+from botocore.stub import Stubber
 from moto import mock_aws
 
 from strands.agent.conversation_manager.null_conversation_manager import NullConversationManager
@@ -517,3 +518,92 @@ def test_update_nonexistent_multi_agent(s3_manager, sample_session):
     nonexistent_mock.id = "nonexistent"
     with pytest.raises(SessionException):
         s3_manager.update_multi_agent(sample_session.session_id, nonexistent_mock)
+
+
+@pytest.mark.parametrize("failed_batch", [0, 1])
+def test_delete_session_reports_per_object_errors(s3_manager, failed_batch):
+    prefix = s3_manager._get_session_path("target")
+    keys = [f"{prefix}messages/{index}.json" for index in range(1001)]
+    with Stubber(s3_manager.client) as stubber:
+        stubber.add_response(
+            "list_objects_v2",
+            {"IsTruncated": False, "Contents": [{"Key": key} for key in keys]},
+            {"Bucket": s3_manager.bucket, "Prefix": prefix},
+        )
+        for batch_index, start in enumerate(range(0, len(keys), 1000)):
+            batch = keys[start : start + 1000]
+            response = {"Deleted": [{"Key": key} for key in batch]}
+            if batch_index == failed_batch:
+                response = {
+                    "Errors": [{"Key": batch[0], "Code": "AccessDenied", "Message": "denied"}],
+                    "Deleted": [{"Key": key} for key in batch[1:]],
+                }
+            stubber.add_response(
+                "delete_objects",
+                response,
+                {"Bucket": s3_manager.bucket, "Delete": {"Objects": [{"Key": key} for key in batch]}},
+            )
+            if batch_index == failed_batch:
+                break
+        with pytest.raises(SessionException, match="AccessDenied") as exc:
+            s3_manager.delete_session("target")
+        assert keys[failed_batch * 1000] in str(exc.value)
+        stubber.assert_no_pending_responses()
+
+
+def test_delete_session_large_success(s3_manager):
+    prefix = s3_manager._get_session_path("target")
+    keys = [f"{prefix}messages/{index}.json" for index in range(1001)]
+    with Stubber(s3_manager.client) as stubber:
+        stubber.add_response(
+            "list_objects_v2",
+            {"IsTruncated": False, "Contents": [{"Key": key} for key in keys]},
+            {"Bucket": s3_manager.bucket, "Prefix": prefix},
+        )
+        for start in range(0, len(keys), 1000):
+            batch = keys[start : start + 1000]
+            stubber.add_response(
+                "delete_objects",
+                {"Deleted": [{"Key": key} for key in batch]},
+                {"Bucket": s3_manager.bucket, "Delete": {"Objects": [{"Key": key} for key in batch]}},
+            )
+        s3_manager.delete_session("target")
+        stubber.assert_no_pending_responses()
+
+
+def test_delete_session_preserves_request_level_error(s3_manager):
+    prefix = s3_manager._get_session_path("target")
+    key = f"{prefix}session.json"
+    with Stubber(s3_manager.client) as stubber:
+        stubber.add_response(
+            "list_objects_v2",
+            {"IsTruncated": False, "Contents": [{"Key": key}]},
+            {"Bucket": s3_manager.bucket, "Prefix": prefix},
+        )
+        stubber.add_client_error(
+            "delete_objects",
+            service_error_code="AccessDenied",
+            service_message="denied",
+            expected_params={"Bucket": s3_manager.bucket, "Delete": {"Objects": [{"Key": key}]}},
+        )
+        with pytest.raises(SessionException, match="S3 error deleting session target"):
+            s3_manager.delete_session("target")
+        stubber.assert_no_pending_responses()
+
+
+def test_delete_session_empty_errors_success(s3_manager):
+    prefix = s3_manager._get_session_path("target")
+    key = f"{prefix}session.json"
+    with Stubber(s3_manager.client) as stubber:
+        stubber.add_response(
+            "list_objects_v2",
+            {"IsTruncated": False, "Contents": [{"Key": key}]},
+            {"Bucket": s3_manager.bucket, "Prefix": prefix},
+        )
+        stubber.add_response(
+            "delete_objects",
+            {"Errors": [], "Deleted": [{"Key": key}]},
+            {"Bucket": s3_manager.bucket, "Delete": {"Objects": [{"Key": key}]}},
+        )
+        s3_manager.delete_session("target")
+        stubber.assert_no_pending_responses()
