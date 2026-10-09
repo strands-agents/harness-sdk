@@ -54,6 +54,7 @@ export interface FileMemoryExtractionConfig extends ExtractionConfig {
   systemPrompt?: string
 }
 import { LocalFileStorage } from '../../storage/local-file-storage.js'
+import { StorageError } from '../../errors.js'
 import { ModelExtractor } from '../../memory/extraction/model-extractor.js'
 import { normalizeKey, resolveNamespace } from '../../storage/storage.js'
 import { tokenize, tokenOverlapScore } from '../../storage/search/keyword.js'
@@ -272,6 +273,8 @@ export class FileMemoryStore implements MemoryStore {
    * @param content - The knowledge content to store
    * @param _metadata - Unused; accepted for interface compatibility with the ExtractionCoordinator
    * @returns The canonical storage key the entry was written under
+   * @throws {@link StorageError} if the configured search strategy fails to index the entry;
+   *   the entry has already been written when this is thrown
    */
   async add(content: string, _metadata?: Record<string, JSONValue>): Promise<string> {
     const lines = content.split(/\n/)
@@ -293,7 +296,15 @@ export class FileMemoryStore implements MemoryStore {
         } else {
           merged = content
         }
-        await this._storage.write(canonicalKey, encoder.encode(merged))
+        const data = encoder.encode(merged)
+        await this._storage.write(canonicalKey, data)
+        if (this._searchStrategy?.index) {
+          try {
+            await this._searchStrategy.index(this._storage, canonicalKey, data)
+          } catch (error) {
+            throw new StorageError(`Wrote '${canonicalKey}' but indexing failed`, { cause: error })
+          }
+        }
         return canonicalKey
       })
     this._writeLocks.set(canonicalKey, current)

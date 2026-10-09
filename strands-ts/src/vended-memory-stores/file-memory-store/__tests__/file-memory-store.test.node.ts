@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest'
 import { FileMemoryStore } from '../store.js'
 import { InMemoryStorage } from '../../../storage/in-memory-storage.js'
+import { StorageError } from '../../../errors.js'
 import { ModelExtractor } from '../../../memory/extraction/model-extractor.js'
 import type { Storage } from '../../../storage/storage.js'
 import type { ExtractionConfig } from '../../../memory/extraction/types.js'
@@ -260,6 +261,59 @@ describe('FileMemoryStore', () => {
       const results = await throwingStore.search('deploy')
       expect(results).toHaveLength(1)
       expect(results[0]!.content).toBe('valid content about deploy')
+    })
+  })
+
+  describe('search strategy override', () => {
+    it('delegates search to the provided strategy', async () => {
+      const strategy = {
+        search: vi.fn().mockResolvedValue([{ key: 'custom.md', score: 0.9 }]),
+        index: vi.fn().mockResolvedValue(undefined),
+      }
+      const strategyStore = new FileMemoryStore({ name: 'strat-test', storage, search: strategy })
+      await strategyStore.add('some content')
+      const results = await strategyStore.search('anything')
+      expect(strategy.search).toHaveBeenCalledOnce()
+      expect(results).toHaveLength(0) // key doesn't exist in storage, so hydration returns empty
+    })
+
+    it('calls index on add when strategy has index', async () => {
+      const strategy = {
+        search: vi.fn().mockResolvedValue([]),
+        index: vi.fn().mockResolvedValue(undefined),
+      }
+      const strategyStore = new FileMemoryStore({ name: 'idx-test', storage, search: strategy })
+      await strategyStore.add('User prefers dark mode')
+      expect(strategy.index).toHaveBeenCalledOnce()
+      const [, key, data] = strategy.index.mock.calls[0]!
+      expect(key).toMatch(/\.md$/)
+      expect(new TextDecoder().decode(data)).toContain('User prefers dark mode')
+    })
+
+    it('does not call index when strategy omits it', async () => {
+      const strategy = {
+        search: vi.fn().mockResolvedValue([]),
+      }
+      const strategyStore = new FileMemoryStore({ name: 'no-idx', storage, search: strategy })
+      // index is optional on SearchStrategy, so add() must still succeed and write the entry
+      const key = await strategyStore.add('Some content')
+      expect(key).toMatch(/\.md$/)
+      expect(decoder.decode((await storage.namespace('memory/no-idx').read(key))!)).toBe('Some content')
+    })
+
+    it('wraps index failures in StorageError after the write lands', async () => {
+      const cause = new Error('unable to open database file')
+      const strategy = {
+        search: vi.fn().mockResolvedValue([]),
+        index: vi.fn().mockRejectedValue(cause),
+      }
+      const strategyStore = new FileMemoryStore({ name: 'idx-fail', storage, search: strategy })
+      const error = await strategyStore.add('User prefers dark mode').catch((e: unknown) => e)
+      expect(error).toBeInstanceOf(StorageError)
+      expect((error as StorageError).message).toContain('but indexing failed')
+      expect((error as StorageError).cause).toBe(cause)
+      const written = await storage.namespace('memory/idx-fail').read('user-prefers-dark-mode.md')
+      expect(decoder.decode(written!)).toBe('User prefers dark mode')
     })
   })
 

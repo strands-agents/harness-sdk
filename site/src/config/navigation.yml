@@ -328,8 +328,11 @@ sidebar:
             slug: docs/user-guide/sdk/agents/lifecycle-controls
           - label: "State"
             slug: docs/user-guide/sdk/agents/state
-          - label: "Storage"
-            slug: docs/user-guide/sdk/storage
+          - label: Storage
+            items:
+              - label: "Overview"
+                slug: docs/user-guide/sdk/storage
+              - docs/user-guide/sdk/storage/search-strategies
           - label: "Snapshots"
             slug: docs/user-guide/sdk/agents/snapshots
           - label: "Prompts"

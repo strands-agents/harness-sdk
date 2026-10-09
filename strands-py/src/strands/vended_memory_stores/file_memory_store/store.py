@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from typing_extensions import Unpack
 
@@ -18,9 +18,11 @@ from ...memory.extraction.types import ExtractionConfig, ExtractionResult, Extra
 from ...memory.types import MemoryEntry, MemoryStore, Metadata, SearchOptions
 from ...storage.local_file_storage import LocalFileStorage
 from ...storage.storage import _normalize_key, _resolve_namespace
+from ...types.exceptions import StorageError
 from .types import FileMemoryStoreConfig
 
 if TYPE_CHECKING:
+    from ...storage.search.types import SearchStrategy
     from ...storage.storage import Storage
     from ...types.content import Message
 
@@ -117,6 +119,7 @@ class FileMemoryStore(MemoryStore):
 
         raw_storage = config.get("storage") or LocalFileStorage()
         self._storage: Storage = _resolve_namespace(raw_storage, f"{_STORAGE_NAMESPACE}/{self.name}")
+        self._search_strategy: SearchStrategy[Any] | None = config.get("search_strategy")
         self.extraction: ExtractionConfig | bool | None = self._resolve_extraction(config)
         self._write_lock = asyncio.Lock()
 
@@ -156,7 +159,10 @@ class FileMemoryStore(MemoryStore):
             else _DEFAULT_MAX_SEARCH_RESULTS
         )
 
-        results = await self._storage.search(query)
+        if self._search_strategy:
+            results = await self._search_strategy.search(self._storage, query)
+        else:
+            results = await self._storage.search(query)
         entries: list[MemoryEntry] = []
         for result in results[:max_results]:
             data = result.data if result.data is not None else await self._storage.read(result.key)
@@ -182,6 +188,10 @@ class FileMemoryStore(MemoryStore):
 
         Returns:
             The canonical storage key the entry was written under.
+
+        Raises:
+            StorageError: If a configured ``search_strategy`` fails to index the
+                entry. The entry has already been written when this is raised.
         """
         lines = content.split("\n")
         first_line = re.sub(r"^#+\s*", "", lines[0])
@@ -197,6 +207,12 @@ class FileMemoryStore(MemoryStore):
             else:
                 merged = content
 
-            await self._storage.write(key, merged.encode("utf-8"))
+            data = merged.encode("utf-8")
+            await self._storage.write(key, data)
+            if self._search_strategy:
+                try:
+                    await self._search_strategy.index(self._storage, key, data)
+                except Exception as error:
+                    raise StorageError(f"Wrote '{key}' but indexing failed") from error
 
         return key

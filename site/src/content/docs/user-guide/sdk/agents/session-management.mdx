@@ -153,9 +153,9 @@ Multi-agent session managers only track the current state of the Graph/Swarm exe
 
 An agent exposes its session identifier through a readable <Syntax py="agent.session_id" ts="agent.sessionId" /> property. When a session manager is attached, the property returns the manager's <Syntax py="session_id" ts="sessionId" /> (also readable directly on the session manager). Without a session manager, it returns a random 8-character hex string generated at construction, unique per agent instance but not persisted across restarts.
 
-Snapshot-based session managers accept any [Storage](../storage.mdx) backend, including
+Snapshot-based session managers accept any [Storage](../storage/index.mdx) backend, including
 `InMemoryStorage`, `LocalFileStorage`, `S3Storage`, and custom implementations. See
-[Storage](../storage.mdx) for backend configuration, tradeoffs, custom backends, and
+[Storage](../storage/index.mdx) for backend configuration, tradeoffs, custom backends, and
 required S3 permissions.
 
 <Tabs>
@@ -201,7 +201,7 @@ console.log(new Agent().sessionId) // e.g. "a1b2c3d4"
 
 ## Storage backends
 
-[Storage](../storage.mdx) is the single place persistence backends are documented. How session management reaches a backend depends on the manager:
+[Storage](../storage/index.mdx) is the single place persistence backends are documented. How session management reaches a backend depends on the manager:
 
 - **`SnapshotSessionManager` (Python) and `SessionManager` (TypeScript)** compose the shared `Storage` abstraction: you pass any `Storage` backend and the manager persists snapshots through it. Manager-level storage takes precedence over an agent-level `storage`. If neither provides storage, Python falls back to `LocalFileStorage("./.strands/")` and TypeScript fails during initialization.
 - **`FileSessionManager` and `S3SessionManager` (Python, compatibility path)** configure storage directly with a storage directory or an S3 bucket. They do not take a `Storage` backend.
@@ -211,7 +211,7 @@ The examples below show each form.
 <Tabs>
 <Tab label="Python">
 
-The recommended `SnapshotSessionManager` accepts any [Storage](../storage.mdx) backend, so you choose durability the same way the offloader and memory subsystems do:
+The recommended `SnapshotSessionManager` accepts any [Storage](../storage/index.mdx) backend, so you choose durability the same way the offloader and memory subsystems do:
 
 ```python
 from strands import Agent
@@ -538,7 +538,7 @@ For advanced use cases, you can implement your own session storage backend.
 <Tabs>
 <Tab label="Python">
 
-For new single-agent sessions, implement a [custom `Storage` backend](../storage.mdx#custom-backends) and pass it to `SnapshotSessionManager`: the manager owns the session layout, so the backend only moves bytes.
+For new single-agent sessions, implement a [custom `Storage` backend](../storage/index.mdx#custom-backends) and pass it to `SnapshotSessionManager`: the manager owns the session layout, so the backend only moves bytes.
 
 To customize a repository-based session, implement the `SessionRepository` interface:
 
@@ -587,7 +587,7 @@ agent = Agent(session_manager=session_manager)
 <Tab label="TypeScript">
 
 The simplest approach is to pass any
-[Storage](../storage.mdx) backend directly: the
+[Storage](../storage/index.mdx) backend directly: the
 `SessionManager` wraps it automatically. For full control,
 implement the `SnapshotStorage` interface:
 
