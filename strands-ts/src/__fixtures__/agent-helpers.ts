@@ -70,6 +70,7 @@ export function createMockAgent(data?: MockAgentData): MockAgent {
     modelState: new StateStore(),
     toolRegistry: data?.toolRegistry ?? new ToolRegistry(),
     cancelSignal: new AbortController().signal,
+    pendingInvocations: [],
     metrics: data?.extra?.metrics ?? new AgentMetrics(),
     // Mirror the real Agent.sandbox getter: resolve the environment default lazily.
     // An explicit `extra.sandbox` below overrides this accessor.
