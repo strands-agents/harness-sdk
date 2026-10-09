@@ -107,6 +107,47 @@ def test_format_request_tool_message_preserves_non_ascii():
     assert tru_result == exp_result
 
 
+def _assistant_payload(model: SageMakerAIModel, content: list[dict]) -> dict:
+    """Format one assistant message and return it as the provider would receive it."""
+    request = model.format_request([{"role": "assistant", "content": content}])
+    return json.loads(request["Body"])["messages"][0]
+
+
+def test_format_request_keeps_assistant_text_beside_tool_calls(model):
+    """Text next to a tool call is the model's reasoning and must survive the turn.
+
+    `format_request` dropped `content` from any assistant message that had
+    `tool_calls`, so reasoning text was never carried into the next turn. An
+    OpenAI-compatible endpoint accepts both fields together, and `OpenAIModel`
+    sends both.
+    """
+    message = _assistant_payload(
+        model,
+        [
+            {"text": "This text should be preserved."},
+            {"toolUse": {"toolUseId": "call-1", "name": "lookup", "input": {"query": "example"}}},
+        ],
+    )
+
+    assert message["content"] == [{"type": "text", "text": "This text should be preserved."}]
+    assert [call["function"]["name"] for call in message["tool_calls"]] == ["lookup"]
+
+
+def test_format_request_omits_empty_content_beside_tool_calls(model):
+    """A tool call with no text must not go out as `"content": null`.
+
+    This is what dropping the field was for, and it still holds -- the fix above
+    narrows the drop to an empty content rather than removing it.
+    """
+    message = _assistant_payload(
+        model,
+        [{"toolUse": {"toolUseId": "call-2", "name": "lookup", "input": {}}}],
+    )
+
+    assert "content" not in message
+    assert [call["function"]["name"] for call in message["tool_calls"]] == ["lookup"]
+
+
 def _payload_parts(*chunks: str) -> list[dict[str, dict[str, bytes]]]:
     """Build the PayloadPart shape returned by SageMaker streaming responses."""
     return [{"PayloadPart": {"Bytes": chunk.encode("utf-8")}} for chunk in chunks]
