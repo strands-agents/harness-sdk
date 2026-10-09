@@ -294,6 +294,20 @@ def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
     redacted_content = state.get("redactedContent")
 
     if current_tool_use:
+        # A stop can carry text that streamed before the tool use opened in the same content
+        # block; flush it first so both blocks are preserved in stream order.
+        if text:
+            if citations_content:
+                tool_citations_block: CitationsContentBlock = {
+                    "citations": citations_content,
+                    "content": [{"text": text}],
+                }
+                content.append({"citationsContent": tool_citations_block})
+                state["citationsContent"] = []
+            else:
+                content.append({"text": text})
+            state["text"] = ""
+
         if "input" not in current_tool_use:
             current_tool_use["input"] = ""
 
