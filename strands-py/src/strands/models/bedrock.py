@@ -1103,11 +1103,16 @@ class BedrockModel(Model):
             formatted_content: list[dict[str, Any]] = []
             for tool_result_content in tool_result_content_list:
                 if "json" in tool_result_content:
+                    json_value = tool_result_content["json"]
                     if self._should_convert_json_to_text():
-                        formatted_content.append({"text": json.dumps(tool_result_content["json"])})
+                        formatted_content.append({"text": json.dumps(json_value)})
                     else:
-                        # Handle json field since not in ContentBlock but valid in ToolResultContent
-                        formatted_content.append({"json": tool_result_content["json"]})
+                        # Handle json field since not in ContentBlock but valid in ToolResultContent.
+                        # Bedrock's Converse API only accepts an object for toolResult.content[].json;
+                        # wrap anything else (list, string, number, bool, None) to match.
+                        if not isinstance(json_value, dict):
+                            json_value = {"$value": json_value}
+                        formatted_content.append({"json": json_value})
                 else:
                     formatted_message_content = self._format_request_message_content(
                         cast(ContentBlock, tool_result_content)

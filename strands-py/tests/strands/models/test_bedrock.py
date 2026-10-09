@@ -5874,6 +5874,42 @@ def test_claude_model_preserves_json_in_tool_result(bedrock_client):
     assert tool_result["content"][0]["json"] == {"key": "value"}
 
 
+@pytest.mark.parametrize(
+    "json_value",
+    [
+        [{"id": 1}, {"id": 2}],
+        "a string",
+        42,
+        3.14,
+        True,
+        None,
+    ],
+)
+def test_claude_model_wraps_non_dict_json_in_tool_result(json_value, bedrock_client):
+    """Claude models should wrap any non-dict JSON value for Bedrock's object-only json field."""
+    model = BedrockModel(model_id="us.anthropic.claude-sonnet-4-20250514-v1:0")
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "content": [{"json": json_value}],
+                        "toolUseId": "tool_non_dict",
+                    }
+                }
+            ],
+        }
+    ]
+
+    formatted_request = model.format_request(messages)
+    tool_result = formatted_request["messages"][0]["content"][0]["toolResult"]
+
+    assert len(tool_result["content"]) == 1
+    assert "json" in tool_result["content"][0]
+    assert tool_result["content"][0]["json"] == {"$value": json_value}
+
+
 def test_nova_model_handles_nested_json_in_tool_result(bedrock_client):
     """Nova models should handle deeply nested JSON structures."""
     model = BedrockModel(model_id="us.amazon.nova-pro-v1:0")
