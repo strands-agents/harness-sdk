@@ -515,6 +515,14 @@ class ContextOffloader(Plugin):
 
         full_text = "\n".join(text_preview_parts) if text_preview_parts else ""
 
+        # Sizing the preview at a fixed 4 chars/token lets a result exceed
+        # max_result_tokens while its entire text still fits the preview budget:
+        # count_tokens charges JSON at 2 chars/token, and of the compact dump
+        # rather than the indent=2 rendering built above. The replacement then
+        # carries every byte it was meant to elide, plus the header, the guidance
+        # and the reference lines, so it comes out larger than what it replaced.
+        preview_chars = self._preview_chars(full_text, token_count)
+
         # Store each content block individually
         storage = self._storage_for_agent(event.agent)
         cycle = event.agent.event_loop_metrics.cycle_count
@@ -567,8 +575,7 @@ class ContextOffloader(Plugin):
             token_count,
         )
 
-        # Build preview text — use tiktoken for exact slicing when available
-        preview = self._slice_preview(full_text) if full_text else ""
+        preview = full_text[:preview_chars] if full_text else ""
         # Skip None: non-bytes image/document sources were left unstored (#4017).
         ref_lines = "\n".join(
             f"  {ref} ({desc})" for entry in references if entry is not None for ref, _, desc in [entry] if ref
@@ -661,13 +668,22 @@ class ContextOffloader(Plugin):
         self._track_stored_cycle(agent, reference, cycle)
         logger.debug("reference=<%s>, cycle=<%d> | retrieve refreshed eviction cycle", reference, cycle)
 
-    def _slice_preview(self, text: str) -> str:
-        """Slice text to approximately preview_tokens using character-based estimation.
+    def _preview_chars(self, text: str, token_count: int) -> int:
+        """Characters that hold about ``preview_tokens`` of ``text``.
+
+        ``token_count`` is what the model's ``count_tokens`` charged for this
+        result, so ``len(text) / token_count`` is the chars-per-token it actually
+        used. Using a fixed estimate instead of that ratio is what let a preview
+        hold an entire JSON result: ``count_tokens`` charges JSON at 2
+        chars/token, while the preview renders it at ``indent=2``.
 
         Args:
-            text: The full text to slice.
+            text: The full text the preview is sliced from.
+            token_count: Token count the model reported for this tool result.
 
         Returns:
-            The preview text.
+            The number of characters to keep.
         """
-        return text[: self._preview_tokens * _CHARS_PER_TOKEN]
+        if token_count <= 0 or not text:
+            return self._preview_tokens * _CHARS_PER_TOKEN
+        return self._preview_tokens * len(text) // token_count
