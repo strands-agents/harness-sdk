@@ -6,7 +6,7 @@ import { BedrockClient } from '@aws-sdk/client-bedrock'
 import { STSClient } from '@aws-sdk/client-sts'
 
 import type { ProviderId } from '../config.js'
-import type { DetectedProviderEnvironment } from './environment.js'
+import type { DetectedProviderEnvironment, ProviderEnvironmentKey } from './environment.js'
 import { listBedrockModels, MODEL_DISCOVERY_TIMEOUT_MS } from './bedrock-catalog.js'
 import { modelDisplayName } from '../model/display.js'
 import { sanitizeTerminalText } from '../terminal/sanitize.js'
@@ -16,6 +16,13 @@ export { discoverAwsConfiguration, type AwsConfigurationDiscovery } from './aws-
 export { discoverAwsCredentials } from './aws-client.js'
 
 const run = promisify(execFile)
+
+// Each provider SDK reads these variables itself at runtime, so discovery must probe the same endpoint.
+const API_ROOTS = {
+  anthropic: { key: 'ANTHROPIC_BASE_URL', fallback: 'https://api.anthropic.com' },
+  openai: { key: 'OPENAI_BASE_URL', fallback: 'https://api.openai.com/v1' },
+  google: { key: 'GOOGLE_GEMINI_BASE_URL', fallback: 'https://generativelanguage.googleapis.com' },
+} as const satisfies Record<string, { key: ProviderEnvironmentKey; fallback: string }>
 
 export interface OllamaDiscovery {
   installed: boolean
@@ -145,7 +152,7 @@ export async function providerModelExists(
   try {
     let response: globalThis.Response
     if (provider === 'anthropic') {
-      response = await fetchResponse(`https://api.anthropic.com/v1/models/${encodeURIComponent(modelId)}`, {
+      response = await fetchResponse(`${apiRoot('anthropic', environment)}/v1/models/${encodeURIComponent(modelId)}`, {
         'anthropic-version': '2023-06-01',
         'x-api-key': requiredEnvironmentValue(environment, 'ANTHROPIC_API_KEY'),
       })
@@ -156,7 +163,7 @@ export async function providerModelExists(
         return undefined
       }
       response = await fetchResponse(
-        `https://generativelanguage.googleapis.com/v1beta/${collection}/${encodeURIComponent(name)}`,
+        `${apiRoot('google', environment)}/v1beta/${collection}/${encodeURIComponent(name)}`,
         { 'x-goog-api-key': requiredEnvironmentValue(environment, 'GEMINI_API_KEY') }
       )
     }
@@ -188,7 +195,7 @@ export async function discoverContextWindow(
   try {
     switch (provider) {
       case 'anthropic': {
-        const model = await fetchJson(`https://api.anthropic.com/v1/models/${encodeURIComponent(modelId)}`, {
+        const model = await fetchJson(`${apiRoot('anthropic', environment)}/v1/models/${encodeURIComponent(modelId)}`, {
           'anthropic-version': '2023-06-01',
           'x-api-key': requiredEnvironmentValue(environment, 'ANTHROPIC_API_KEY'),
         })
@@ -197,7 +204,7 @@ export async function discoverContextWindow(
       }
       case 'google': {
         const model = await fetchJson(
-          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelId.replace(/^models\//, ''))}`,
+          `${apiRoot('google', environment)}/v1beta/models/${encodeURIComponent(modelId.replace(/^models\//, ''))}`,
           { 'x-goog-api-key': requiredEnvironmentValue(environment, 'GEMINI_API_KEY') }
         )
         limit = model.inputTokenLimit
@@ -255,14 +262,17 @@ async function listProviderModels(
     case 'bedrock-mantle':
       return listBedrockMantleModels(environment)
     case 'anthropic':
-      return listAnthropicModels(requiredEnvironmentValue(environment, 'ANTHROPIC_API_KEY'))
+      return listAnthropicModels(
+        apiRoot('anthropic', environment),
+        requiredEnvironmentValue(environment, 'ANTHROPIC_API_KEY')
+      )
     case 'openai':
       return listOpenAiCompatibleModels(
-        'https://api.openai.com/v1',
+        apiRoot('openai', environment),
         requiredEnvironmentValue(environment, 'OPENAI_API_KEY')
       )
     case 'google':
-      return listGoogleModels(requiredEnvironmentValue(environment, 'GEMINI_API_KEY'))
+      return listGoogleModels(apiRoot('google', environment), requiredEnvironmentValue(environment, 'GEMINI_API_KEY'))
     case 'ollama': {
       const discovery = ollama ?? (await discoverOllama(environment.OLLAMA_HOST?.value ?? 'http://127.0.0.1:11434'))
       if (!discovery.running) {
@@ -272,7 +282,7 @@ async function listProviderModels(
     }
     case 'litellm':
       return listOpenAiCompatibleModels(
-        environment.LITELLM_BASE_URL?.value ?? 'http://127.0.0.1:4000',
+        openAiCompatibleV1Root(environment.LITELLM_BASE_URL?.value ?? 'http://127.0.0.1:4000'),
         environment.LITELLM_API_KEY?.value
       )
   }
@@ -285,19 +295,19 @@ async function listBedrockMantleModels(environment: DetectedProviderEnvironment)
   }
   const configuredToken = environment.AWS_BEARER_TOKEN_BEDROCK?.value
   if (configuredToken) {
-    return listOpenAiCompatibleModels(`https://bedrock-mantle.${region}.api.aws`, configuredToken)
+    return listOpenAiCompatibleModels(`https://bedrock-mantle.${region}.api.aws/v1`, configuredToken)
   }
   const client = new STSClient(awsClientConfiguration(environment))
   try {
     const token = await getTokenProvider({ region, credentials: client.config.credentials })()
-    return await listOpenAiCompatibleModels(`https://bedrock-mantle.${region}.api.aws`, token)
+    return await listOpenAiCompatibleModels(`https://bedrock-mantle.${region}.api.aws/v1`, token)
   } finally {
     client.destroy()
   }
 }
 
-async function listAnthropicModels(apiKey: string): Promise<readonly ProviderModel[]> {
-  const value = await fetchJson('https://api.anthropic.com/v1/models?limit=1000', {
+async function listAnthropicModels(root: string, apiKey: string): Promise<readonly ProviderModel[]> {
+  const value = await fetchJson(`${root}/v1/models?limit=1000`, {
     'anthropic-version': '2023-06-01',
     'x-api-key': apiKey,
   })
@@ -306,10 +316,8 @@ async function listAnthropicModels(apiKey: string): Promise<readonly ProviderMod
     .filter((model) => model !== undefined)
 }
 
-async function listGoogleModels(apiKey: string): Promise<readonly ProviderModel[]> {
-  const value = await fetchJson(
-    `https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000&key=${encodeURIComponent(apiKey)}`
-  )
+async function listGoogleModels(root: string, apiKey: string): Promise<readonly ProviderModel[]> {
+  const value = await fetchJson(`${root}/v1beta/models?pageSize=1000`, { 'x-goog-api-key': apiKey })
   return recordArray(value, 'models')
     .filter(
       (model) =>
@@ -324,12 +332,8 @@ async function listGoogleModels(apiKey: string): Promise<readonly ProviderModel[
     .filter((model) => model !== undefined)
 }
 
-async function listOpenAiCompatibleModels(
-  baseUrl: string,
-  apiKey: string | undefined
-): Promise<readonly ProviderModel[]> {
-  const root = baseUrl.trim().replace(/\/+$/u, '')
-  const value = await fetchJson(`${root.endsWith('/v1') ? root : `${root}/v1`}/models`, {
+async function listOpenAiCompatibleModels(root: string, apiKey: string | undefined): Promise<readonly ProviderModel[]> {
+  const value = await fetchJson(`${root}/models`, {
     ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
   })
   return recordArray(value, 'data')
@@ -424,6 +428,16 @@ function modelVariantName(id: string): string {
     jp: 'Japan',
   }
   return labels[/^(global|us|eu|apac|au|jp)\./u.exec(id)?.[1] ?? ''] ?? 'On-demand'
+}
+
+function apiRoot(provider: keyof typeof API_ROOTS, environment: DetectedProviderEnvironment): string {
+  const { key, fallback } = API_ROOTS[provider]
+  return (environment[key]?.value ?? fallback).trim().replace(/\/+$/u, '')
+}
+
+function openAiCompatibleV1Root(baseUrl: string): string {
+  const root = baseUrl.trim().replace(/\/+$/u, '')
+  return root.endsWith('/v1') ? root : `${root}/v1`
 }
 
 function ollamaApiRoot(host: string): string {

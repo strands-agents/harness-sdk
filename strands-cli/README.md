@@ -266,9 +266,9 @@ Machine-discovered MCP servers and skills are not part of the portable definitio
 | -------------- | ----------------- | -------------------------------------------------------------------------------- |
 | Amazon Bedrock | `bedrock/`        | Standard AWS SDK credential chain                                                |
 | Bedrock Mantle | `bedrock-mantle/` | Standard AWS SDK credential chain                                                |
-| Anthropic      | `anthropic/`      | `ANTHROPIC_API_KEY`                                                              |
-| OpenAI         | `openai/`         | `OPENAI_API_KEY`                                                                 |
-| Google Gemini  | `google/`         | `GEMINI_API_KEY`                                                                 |
+| Anthropic      | `anthropic/`      | `ANTHROPIC_API_KEY`; `ANTHROPIC_BASE_URL` for a compatible endpoint              |
+| OpenAI         | `openai/`         | `OPENAI_API_KEY`; `OPENAI_BASE_URL` for a compatible endpoint                    |
+| Google Gemini  | `google/`         | `GEMINI_API_KEY`; `GOOGLE_GEMINI_BASE_URL` for a compatible endpoint             |
 | Ollama         | `ollama/`         | Auto-detected locally; `OLLAMA_HOST` only for a custom server                   |
 | LiteLLM proxy  | `litellm/`        | Auto-detected locally; `LITELLM_BASE_URL` for a custom proxy, optional key       |
 

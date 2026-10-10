@@ -95,6 +95,12 @@ describe('provider context metadata', () => {
         headers: expect.objectContaining({ 'x-api-key': 'test-key' }),
       })
     )
+
+    await discoverContextWindow('anthropic', 'claude-test', {
+      ANTHROPIC_API_KEY: { value: 'test-key', source: 'config' },
+      ANTHROPIC_BASE_URL: { value: 'https://proxy.example/', source: 'process' },
+    })
+    expect(fetch).toHaveBeenLastCalledWith('https://proxy.example/v1/models/claude-test', expect.anything())
   })
 
   it('reads the Google input limit without confusing it with the output limit', async () => {
@@ -111,6 +117,12 @@ describe('provider context metadata', () => {
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-test',
       expect.objectContaining({ headers: { 'x-goog-api-key': 'test-key' } })
     )
+
+    await discoverContextWindow('google', 'models/gemini-test', {
+      GEMINI_API_KEY: { value: 'test-key', source: 'process' },
+      GOOGLE_GEMINI_BASE_URL: { value: 'https://proxy.example/', source: 'process' },
+    })
+    expect(fetch).toHaveBeenLastCalledWith('https://proxy.example/v1beta/models/gemini-test', expect.anything())
   })
 
   it.each(['llama3', 'llama3:latest'])('uses the running Ollama allocation for %s', async (modelId) => {
