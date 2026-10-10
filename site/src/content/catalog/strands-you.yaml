@@ -8,5 +8,5 @@ languages:
   typescript:
     package: "@youdotcom-oss/strands-agents"
 github: https://github.com/youdotcom-oss/agent-skills
-docsUrl: https://github.com/youdotcom-oss/agent-skills/tree/main/packages/strands-agents/python
+docsUrl: https://github.com/youdotcom-oss/agent-skills/blob/main/packages/strands-agents/README.md
 addedDate: 2026-10-10
