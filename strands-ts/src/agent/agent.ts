@@ -522,6 +522,7 @@ export class Agent implements LocalAgent, InvokableAgent {
   private _toolRegistry: ToolRegistry
   private _mcpClients: McpClient[]
   private _initialized: boolean
+  private _initializationPromise?: Promise<void>
   private _isInvoking: boolean = false
   private _abortController = new AbortController()
   private _abortSignal: AbortSignal = this._abortController.signal
@@ -841,11 +842,24 @@ export class Agent implements LocalAgent, InvokableAgent {
     return () => this._middlewareRegistry.remove(stage, wrapHandler)
   }
 
-  public async initialize(): Promise<void> {
-    if (this._initialized) {
-      return
-    }
+  /**
+   * Initializes the agent: registers MCP and sandbox tools, initializes plugins, and
+   * notifies intervention handlers and {@link InitializedEvent} subscribers.
+   *
+   * Safe to call multiple times and concurrently — every call awaits the same
+   * initialization, so the once-per-agent lifecycle steps run exactly once and a
+   * failure is shared by all callers instead of being retried underneath them.
+   *
+   * @returns A promise that resolves once the agent is initialized.
+   * @throws Whatever the underlying MCP client, plugin, or hook callback throws, on every
+   * concurrent call.
+   */
+  public initialize(): Promise<void> {
+    this._initializationPromise ??= this._initialize()
+    return this._initializationPromise
+  }
 
+  private async _initialize(): Promise<void> {
     // Initialize MCP clients and register their tools
     await Promise.all(
       this._mcpClients.map(async (client) => {
