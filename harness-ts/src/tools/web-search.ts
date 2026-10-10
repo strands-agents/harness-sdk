@@ -114,6 +114,45 @@ export function makeExaWebSearch(): Tool {
   return searchTool(exaBackend())
 }
 
+/** Build a web search tool using `SERPER_API_KEY` and optional `SERPER_BASE_URL`. */
+export function makeSerperWebSearch(): Tool {
+  return searchTool(async (query, maxResults) => {
+    const key = process.env.SERPER_API_KEY
+    if (!key) {
+      throw new WebSearchError('SERPER_API_KEY is required')
+    }
+    const baseUrl = process.env.SERPER_BASE_URL || 'https://google.serper.dev'
+    const response = await fetch(`${baseUrl.replace(/\/+$/, '')}/search`, {
+      method: 'POST',
+      headers: { 'X-API-KEY': key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ q: query, num: maxResults }),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+      redirect: 'error',
+    })
+    if (!response.ok) {
+      throw new WebSearchError(`Serper returned HTTP ${response.status}`)
+    }
+    const data = z
+      .object({
+        organic: z
+          .array(
+            z.object({
+              title: z.string().default(''),
+              link: z.string(),
+              snippet: z.string().default(''),
+            })
+          )
+          .default([]),
+      })
+      .parse(await response.json())
+    return data.organic.slice(0, maxResults).map((item) => ({
+      title: item.title,
+      url: item.link,
+      snippet: item.snippet.slice(0, SNIPPET_CHARS),
+    }))
+  })
+}
+
 /** The `web_search` tool served by Exa (`EXA_API_KEY` is read per call). */
 export const exaWebSearch = makeExaWebSearch()
 

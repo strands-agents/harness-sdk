@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import os
 import re
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import Any, TypedDict
+from urllib.request import Request, urlopen
 
 from strands.tools.decorator import tool
 from strands.tools.mcp import MCPClient
@@ -101,6 +103,38 @@ def _exa_backend(api_key: str | None = None) -> SearchBackend:
 def make_exa_web_search() -> Any:
     """Build a ``web_search`` tool over Exa's hosted search (``EXA_API_KEY`` lifts the keyless rate limit)."""
     return _search_tool(_exa_backend())
+
+
+def make_serper_web_search() -> Any:
+    """Build a web search tool using `SERPER_API_KEY` and optional `SERPER_BASE_URL`."""
+
+    async def search(query: str, max_results: int) -> list[SearchResult]:
+        return await asyncio.to_thread(_serper_call, query, max_results)
+
+    return _search_tool(search)
+
+
+def _serper_call(query: str, max_results: int) -> list[SearchResult]:
+    key = os.environ.get("SERPER_API_KEY")
+    if not key:
+        raise WebSearchError("SERPER_API_KEY is required")
+    base_url = os.environ.get("SERPER_BASE_URL") or "https://google.serper.dev"
+    request = Request(
+        f"{base_url.rstrip('/')}/search",
+        data=json.dumps({"q": query, "num": max_results}).encode(),
+        headers={"X-API-KEY": key, "Content-Type": "application/json"},
+        method="POST",
+    )
+    with urlopen(request, timeout=_TIMEOUT.total_seconds()) as response:
+        data = json.load(response)
+    return [
+        {
+            "title": str(item.get("title", "")),
+            "url": str(item["link"]),
+            "snippet": str(item.get("snippet", ""))[:_SNIPPET_CHARS],
+        }
+        for item in data.get("organic", [])[:max_results]
+    ]
 
 
 def _search_tool(backend: SearchBackend) -> Any:
