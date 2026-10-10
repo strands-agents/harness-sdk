@@ -350,10 +350,6 @@ class MCPClient(ToolProvider):
             progress_callback: Optional callback to receive progress notifications during tool execution.
                 Called with `(progress, total, message)` as the server reports progress. The `total`
                 and `message` parameters may be `None` if the server does not provide them.
-            meta: Optional request metadata (the MCP spec's `_meta` field) sent with tool calls made through
-                `call_tool_sync`/`call_tool_async`, including model-driven calls dispatched via `MCPAgentTool`,
-                which routes through `call_tool_async`. Trace context is merged on top. A per-call `meta`
-                argument to either method takes precedence over this client-level value.
             tasks_config: Configuration for MCP task-augmented execution for long-running tools.
                 Experimental and subject to change as MCP Tasks evolve. On MCP 2.x, this enables
                 finalized SEP-2663 Tasks support. On MCP 1.x, it enables the legacy task
@@ -368,6 +364,10 @@ class MCPClient(ToolProvider):
                 `subscriptions/listen` stream to receive the notifications, and a failure to open
                 it (other than the server lacking support) raises `MCPClientInitializationError`
                 from `start()`.
+            meta: Optional request metadata (the MCP spec's `_meta` field) sent with tool calls made through
+                `call_tool_sync`/`call_tool_async`, including model-driven calls dispatched via `MCPAgentTool`,
+                which routes through `call_tool_async`. Trace context is merged on top. A per-call `meta`
+                argument to either method takes precedence over this client-level value.
 
         Raises:
             ValueError: If neither or both of `transport_callable` and `url` are provided, if

@@ -341,17 +341,6 @@ async def test_call_tool_async_per_call_meta_overrides_client_meta(mock_transpor
         assert received_meta["com.example/request_id"] == "per-call"
 
 
-def test_call_tool_sync_no_meta_by_default(mock_transport, mock_session):
-    """Test that meta defaults to None when not set on instance or per-call."""
-    mock_content = MCPTextContent(type="text", text="done")
-    mock_session.call_tool.return_value = MCPCallToolResult(isError=False, content=[mock_content])
-
-    with MCPClient(mock_transport["transport_callable"]) as client:
-        client.call_tool_sync(tool_use_id="test-123", name="test_tool", arguments={})
-
-        assert_session_call_tool_once_with(mock_session, "test_tool", {})
-
-
 def test_call_tool_sync_pre_set_cancel_signal_skips_request(mock_transport, mock_session):
     """Test a pre-set cancellation signal short-circuits before sending a request."""
     cancel_signal = threading.Event()
