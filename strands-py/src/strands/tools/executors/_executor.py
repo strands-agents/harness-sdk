@@ -111,7 +111,7 @@ class ToolExecutor(abc.ABC):
                     _make_execute_tool_terminal({}, tool_context=context, tool_guard=tool_guard),
                 ):
                     if isinstance(event, ToolInterruptEvent):
-                        tracer.end_tool_call_span(tool_call_span, tool_result=None)
+                        tracer.end_interrupted_tool_call_span(tool_call_span, event.tool_use_id, event.interrupts)
                         raise InterruptException(event.interrupts[0])
                     if isinstance(event, ToolResultEvent):
                         result_event = event
@@ -457,7 +457,7 @@ class ToolExecutor(abc.ABC):
                 if ToolExecutor._is_agent(agent):
                     agent.event_loop_metrics.add_tool_usage(tool_use, tool_duration, tool_trace, False)
                 cycle_trace.add_child(tool_trace)
-                tracer.end_tool_call_span(tool_call_span, tool_result=None)
+                tracer.end_interrupted_tool_call_span(tool_call_span, event.tool_use_id, event.interrupts)
                 return
 
             result_event = cast(ToolResultEvent, event)
