@@ -181,6 +181,8 @@ async def test_limits_are_per_invocation_not_lifetime():
         {"output_tokens": 0},
         {"total_tokens": -5},
         {"turns": True},  # bool subclasses int; should still be rejected
+        {"structured_output_attempts": 0},
+        {"structured_output_attempts": None},
     ],
 )
 @pytest.mark.asyncio
@@ -217,7 +219,7 @@ def test_recognized_limits_keys_are_pinned():
     no change here, while enforcement reads each cap by name and would silently ignore it.
     """
     tru_keys = _LIMITS_KEYS
-    exp_keys = ("turns", "output_tokens", "total_tokens")
+    exp_keys = ("turns", "output_tokens", "total_tokens", "structured_output_attempts")
 
     assert tru_keys == exp_keys
 

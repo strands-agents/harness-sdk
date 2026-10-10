@@ -383,6 +383,8 @@ def test_event_loop_metrics_get_summary(trace, tool, event_loop_metrics, mock_ge
     message = {"role": "user", "content": [{"toolResult": {"toolUseId": "123", "tool_name": "tool1"}}]}
 
     event_loop_metrics.add_tool_usage(tool, duration, trace, success, message)
+    event_loop_metrics.reset_usage_metrics()
+    event_loop_metrics._update_structured_output(failed_attempts=1)
 
     tru_summary = event_loop_metrics.get_summary()
     exp_summary = {
@@ -394,7 +396,7 @@ def test_event_loop_metrics_get_summary(trace, tool, event_loop_metrics, mock_ge
             "outputTokens": 0,
             "totalTokens": 0,
         },
-        "agent_invocations": [],
+        "agent_invocations": [{"cycles": [], "usage": {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0}}],
         "average_cycle_time": 0,
         "tool_usage": {
             "tool1": {
@@ -578,12 +580,15 @@ def test_reset_usage_metrics(usage, event_loop_metrics, mock_get_meter_provider)
     event_loop_metrics.reset_usage_metrics()
     event_loop_metrics.start_cycle(attributes={"event_loop_cycle_id": "cycle-1"})
     event_loop_metrics.update_usage(usage)
+    event_loop_metrics._update_structured_output(failed_attempts=1)
 
     event_loop_metrics.start_cycle(attributes={"event_loop_cycle_id": "cycle-2"})
     usage2 = Usage(inputTokens=10, outputTokens=20, totalTokens=30)
     event_loop_metrics.update_usage(usage2)
+    event_loop_metrics._update_structured_output(failed_attempts=2)
 
     assert len(event_loop_metrics.agent_invocations) == 1
+    assert event_loop_metrics._structured_output.failed_attempts == 3
     assert event_loop_metrics.latest_agent_invocation.usage["inputTokens"] == 11
     assert len(event_loop_metrics.latest_agent_invocation.cycles) == 2
     assert event_loop_metrics.accumulated_usage["inputTokens"] == 11
@@ -592,6 +597,7 @@ def test_reset_usage_metrics(usage, event_loop_metrics, mock_get_meter_provider)
     event_loop_metrics.reset_usage_metrics()
 
     assert len(event_loop_metrics.agent_invocations) == 2
+    assert event_loop_metrics._structured_output.failed_attempts == 0
 
     assert event_loop_metrics.latest_agent_invocation.usage["inputTokens"] == 0
     assert event_loop_metrics.latest_agent_invocation.usage["outputTokens"] == 0

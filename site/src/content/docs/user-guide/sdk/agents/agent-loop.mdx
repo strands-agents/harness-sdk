@@ -114,6 +114,10 @@ Each model invocation ends with a stop reason that determines what happens next:
   cumulative token budget was exhausted. See [Invocation Limits](#invocation-limits).
 - **Limit output tokens** (<Syntax py="limit_output_tokens" ts="limitOutputTokens" />):
   The output token budget was exhausted. See [Invocation Limits](#invocation-limits).
+- **Limit structured-output attempts**
+  (<Syntax py="limit_structured_output_attempts" ts="limitStructuredOutputAttempts" />):
+  The structured-output attempt budget was exhausted.
+  See [Invocation Limits](#invocation-limits).
 - **Max tokens** (<Syntax py="max_tokens" ts="maxTokens" />): The model's response was
   truncated because it hit the token limit. This is unrecoverable within the current loop.
   The model cannot continue from a partial response, and the loop terminates with an
@@ -260,8 +264,9 @@ The `agent.cancel()` method provides a way to stop the loop from outside, such a
 ### Invocation Limits
 
 To cap how much work an agent does in a single invocation, pass
-a `limits` object. You can bound turns (loop iterations), output
-tokens, or total tokens. All three are optional.
+a `limits` object. You can bound turns (loop iterations), output tokens, total
+tokens, or [structured-output attempts](./structured-output.md#limit-attempts).
+Each limit is optional and unbounded when omitted.
 
 <Tabs>
   <Tab label="Python">

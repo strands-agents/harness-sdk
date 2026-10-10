@@ -46,6 +46,7 @@ StopReason = Literal[
     "limit_output_tokens",
     "limit_total_tokens",
     "limit_turns",
+    "limit_structured_output_attempts",
     "max_tokens",
     "stop_sequence",
     "tool_use",
@@ -61,6 +62,8 @@ StopReason = Literal[
 - "limit_output_tokens": Agent loop stopped because the ``limits["output_tokens"]`` cap was reached
 - "limit_total_tokens": Agent loop stopped because the ``limits["total_tokens"]`` cap was reached
 - "limit_turns": Agent loop stopped because the ``limits["turns"]`` cap was reached
+- "limit_structured_output_attempts": Agent loop stopped because the
+  ``limits["structured_output_attempts"]`` cap was reached
 - "max_tokens": The model provider's per-call output cap was reached
 - "stop_sequence": Stop sequence encountered
 - "tool_use": Model requested to use a tool

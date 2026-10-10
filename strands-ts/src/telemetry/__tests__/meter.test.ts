@@ -104,8 +104,12 @@ describe('Meter', () => {
         type: 'modelMetadataEvent',
         usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
       })
+      meter.updateStructuredOutput({ failedAttempts: 1 })
+      meter.updateStructuredOutput({ failedAttempts: 2 })
+      expect(meter.structuredOutput).toEqual({ failedAttempts: 3 })
 
       meter.startNewInvocation()
+      expect(meter.structuredOutput).toEqual({ failedAttempts: 0 })
       meter.startCycle()
       meter.updateCycle({
         type: 'modelMetadataEvent',

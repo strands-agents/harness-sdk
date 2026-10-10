@@ -877,7 +877,7 @@ class Agent(AgentBase, LocalAgent):
                 final result — only the result, not the streamed events, though ``callback_handler``
                 still fires once with it. Matched by ``==`` (any equatable object; need not be hashable).
                 Raises ``IdempotencyAbortedError`` if the original is aborted before producing a result.
-            limits: Per-invocation budget caps (turns / output_tokens / total_tokens).
+            limits: Per-invocation budget caps (turns / output_tokens / total_tokens / structured_output_attempts).
                 See :class:`~strands.types.agent.Limits`. When a cap is reached, the loop
                 terminates gracefully at the next turn boundary with a corresponding
                 ``stop_reason`` (e.g. ``"limit_turns"``); no exception is raised. Token
@@ -971,7 +971,7 @@ class Agent(AgentBase, LocalAgent):
                 final result — only the result, not the streamed events, though ``callback_handler``
                 still fires once with it. Matched by ``==`` (any equatable object; need not be hashable).
                 Raises ``IdempotencyAbortedError`` if the original is aborted before producing a result.
-            limits: Per-invocation budget caps (turns / output_tokens / total_tokens).
+            limits: Per-invocation budget caps (turns / output_tokens / total_tokens / structured_output_attempts).
                 See :class:`~strands.types.agent.Limits`. When a cap is reached, the loop
                 terminates gracefully at the next turn boundary with a corresponding
                 ``stop_reason`` (e.g. ``"limit_turns"``); no exception is raised. Token
@@ -1317,7 +1317,7 @@ class Agent(AgentBase, LocalAgent):
                 final result — only the result, not the streamed events, though ``callback_handler``
                 still fires once with it. Matched by ``==`` (any equatable object; need not be hashable).
                 Raises ``IdempotencyAbortedError`` if the original is aborted before producing a result.
-            limits: Per-invocation budget caps (turns / output_tokens / total_tokens).
+            limits: Per-invocation budget caps (turns / output_tokens / total_tokens / structured_output_attempts).
                 See :class:`~strands.types.agent.Limits`. When a cap is reached, the loop
                 terminates gracefully at the next turn boundary with a corresponding
                 ``stop_reason`` (e.g. ``"limit_turns"``); no exception is raised. Token

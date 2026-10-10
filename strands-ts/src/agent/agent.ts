@@ -943,15 +943,13 @@ export class Agent implements LocalAgent, InvokableAgent {
 
   /**
    * Evaluates the per-invocation budget caps in {@link InvokeOptions.limits}
-   * against the current invocation's metrics. Called at the top of each
+   * against the current invocation's counters. Called at the top of each
    * agent-loop iteration, after `_throwIfCancelled` and before `startCycle`.
    *
-   * Reads from {@link AgentMetrics.latestAgentInvocation} (scoped to the
-   * current invocation) — not `cycleCount` / `accumulatedUsage`, which are
-   * lifetime accumulators that would cause caps to fire prematurely on the
-   * second `invoke()` call against a reused agent.
+   * Uses invocation-scoped counters from the meter so budgets reset when a
+   * new invocation starts.
    *
-   * Priority on simultaneous trip: turns → totalTokens → outputTokens.
+   * Priority on simultaneous trip: turns → totalTokens → outputTokens → structuredOutputAttempts.
    *
    * Returns the {@link StopReason} the loop should terminate with, or
    * `undefined` if every configured cap is still within budget.
@@ -973,6 +971,12 @@ export class Agent implements LocalAgent, InvokableAgent {
     }
     if (limits.outputTokens !== undefined && outputTokens >= limits.outputTokens) {
       return 'limitOutputTokens'
+    }
+    if (
+      limits.structuredOutputAttempts !== undefined &&
+      this._meter.structuredOutput.failedAttempts >= limits.structuredOutputAttempts
+    ) {
+      return 'limitStructuredOutputAttempts'
     }
     return undefined
   }
@@ -1689,12 +1693,13 @@ export class Agent implements LocalAgent, InvokableAgent {
             const modelResult = yield* this._invokeModel(invocationState, structuredOutputChoice)
 
             if (modelResult.stopReason !== 'toolUse') {
-              // Schema set, we already forced, and the model still refused.
-              // Throw before closing the span so the cycle span records the error.
               if (structuredOutputTool && structuredOutputChoice) {
-                throw new StructuredOutputError(
-                  'The model failed to invoke the structured output tool even after it was forced.'
-                )
+                this._meter.updateStructuredOutput({ failedAttempts: 1 })
+                if (options?.limits?.structuredOutputAttempts === undefined) {
+                  throw new StructuredOutputError(
+                    'The model failed to invoke the structured output tool even after it was forced.'
+                  )
+                }
               }
 
               closeCycle()
@@ -1871,6 +1876,16 @@ export class Agent implements LocalAgent, InvokableAgent {
               checkpoint: new Checkpoint({ position: 'afterTools', cycleIndex }),
             })
             return result
+          }
+
+          if (
+            structuredOutputTool &&
+            (structuredOutputChoice ||
+              assistantMessage.content.some(
+                (block) => block.type === 'toolUseBlock' && block.name === STRUCTURED_OUTPUT_TOOL_NAME
+              ))
+          ) {
+            this._meter.updateStructuredOutput({ failedAttempts: 1 })
           }
         } catch (error) {
           closeCycle(error as Error)

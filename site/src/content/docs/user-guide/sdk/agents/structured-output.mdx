@@ -6,6 +6,7 @@ description: >-
 tags: [structured-output]
 sourceLinks:
   - path: strands-py/src/strands/agent/agent.py
+  - path: strands-ts/src/agent/agent.ts
   - path: strands-ts/src/tools/structured-output-tool.ts
 ---
 
@@ -122,28 +123,95 @@ Strands accepts the <Syntax py="structured_output_model" ts="structuredOutputSch
 
 ## Error Handling
 
-When structured output validation fails, Strands throws a custom exception that can be caught and handled appropriately:
+Without an attempt limit, catch
+<Syntax py="StructuredOutputException" ts="StructuredOutputError" />
+if the model ends its turn without calling a tool when the output tool is forced.
 
 <Tabs>
 <Tab label="Python">
 
 ```python
-from pydantic import ValidationError
+from pydantic import BaseModel
+from strands import Agent
 from strands.types.exceptions import StructuredOutputException
 
+
+class Plan(BaseModel):
+    steps: list[str]
+
+
+agent = Agent()
 try:
-    result = agent(prompt, structured_output_model=MyModel)
-except StructuredOutputException as e:
-    print(f"Structured output failed: {e}")
+    result = agent("Plan a code review", structured_output_model=Plan)
+    print(result.structured_output)
+except StructuredOutputException as error:
+    print(f"Structured output failed: {error}")
 ```
+
 </Tab>
 <Tab label="TypeScript">
 
 ```typescript
+--8<-- "user-guide/sdk/agents/structured-output_imports.ts:error_handling_imports"
+
 --8<-- "user-guide/sdk/agents/structured-output.ts:error_handling"
+```
+
+</Tab>
+</Tabs>
+
+### Limit attempts
+
+To cap structured-output attempts per invocation, set
+<Syntax py="limits['structured_output_attempts']" ts="limits.structuredOutputAttempts" />.
+With this limit, the agent retries both invalid output-tool calls and responses that
+do not call the output tool when forced. Each failed response counts once.
+
+Without a limit, validation retries are unbounded, but a single forced attempt that
+ends without a tool call raises
+<Syntax py="StructuredOutputException" ts="StructuredOutputError" />.
+
+When the limit is reached, the agent returns
+<Syntax py="limit_structured_output_attempts" ts="limitStructuredOutputAttempts" />
+as its stop reason before another model call. The result contains no structured output.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from pydantic import BaseModel
+from strands import Agent
+
+
+class Plan(BaseModel):
+    steps: list[str]
+
+
+agent = Agent()
+result = agent(
+    "Plan a code review",
+    structured_output_model=Plan,
+    limits={"structured_output_attempts": 3},
+)
+if result.stop_reason == "limit_structured_output_attempts":
+    print("Could not produce a valid plan within the attempt limit")
+else:
+    print(result.structured_output)
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/agents/structured-output_imports.ts:basic_usage_imports"
+
+--8<-- "user-guide/sdk/agents/structured-output.ts:attempt_limit"
 ```
 </Tab>
 </Tabs>
+
+To also cap turns or token usage, combine this with other
+[invocation limits](./lifecycle-controls.md#cap-the-work-one-call-can-do).
 
 ## Best Practices
 

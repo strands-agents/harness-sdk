@@ -24,8 +24,9 @@ combines them into one request handler.
 ## Cap the work one call can do
 
 To bound a single invocation, pass a set of limits alongside the prompt. You can
-cap the number of turns (loop iterations), the output tokens, or the total
-tokens. All three are optional, and each must be a positive integer.
+cap turns (loop iterations), output tokens, total tokens, or
+[structured-output attempts](./structured-output.md#limit-attempts).
+Each limit is optional and unbounded when omitted.
 
 <Tabs>
   <Tab label="Python">
@@ -50,7 +51,8 @@ tokens. All three are optional, and each must be a positive integer.
       print("Hit token budget")
   ```
 
-  The same parameter works with `invoke_async` and `stream_async`.
+  The same parameter works with `invoke_async` and `stream_async`. Each cap must
+  be a positive integer.
 
   </Tab>
   <Tab label="TypeScript">
@@ -71,7 +73,7 @@ Limits are checked at the top of each loop iteration, not mid-call. A single
 turn can overshoot its token budget, but the check fires before the next turn
 starts, and tools requested by the previous turn always finish first. When
 several caps trip at once, the reported stop reason follows priority order:
-turns, then total tokens, then output tokens.
+turns, then total tokens, then output tokens, then structured-output attempts.
 
 Limits apply to the current invocation only. A reused agent starts each call
 with fresh counters, and the message history stays in a valid, reinvokable
@@ -91,13 +93,14 @@ next. Read it from <Syntax py="result.stop_reason" ts="result.stopReason" />.
 | <Syntax py="limit_turns" ts="limitTurns" /> | The turn budget was exhausted. | Reinvoke with a higher budget, or return a partial answer. |
 | <Syntax py="limit_total_tokens" ts="limitTotalTokens" /> | The cumulative token budget was exhausted. | Same as above; history is reinvokable. |
 | <Syntax py="limit_output_tokens" ts="limitOutputTokens" /> | The output token budget was exhausted. | Same as above. |
+| <Syntax py="limit_structured_output_attempts" ts="limitStructuredOutputAttempts" /> | The attempt budget was exhausted; no structured output was returned. | Reinvoke with a higher budget. |
 | `cancelled` | The agent was stopped via <Syntax py="agent.cancel()" ts="agent.cancel()" /> or a cancel signal. | Treat as a client-initiated stop. |
 | <Syntax py="max_tokens" ts="maxTokens" /> | A single model response exceeded the provider's per-call cap. Unrecoverable within the loop. | See [Handle a truncated model response](#handle-a-truncated-model-response). |
 | <Syntax py="content_filtered" ts="contentFiltered" /> | A safety mechanism blocked the response. | Handle per your application's policy. |
 | <Syntax py="guardrail_intervened" ts="guardrailIntervened" /> | A guardrail policy stopped generation. | Handle per your application's policy. |
 | `interrupt` | The agent paused for human input. | Resume with interrupt responses. See [Interrupts](../interrupts.md). |
 
-The three limit reasons signal graceful budget exhaustion, not failure. Content
+Limit stop reasons signal graceful budget exhaustion. Content
 filtering and guardrail intervention both terminate the loop and should be
 handled deliberately rather than retried blindly.
 
@@ -335,7 +338,12 @@ can branch on.
   def classify(stop_reason: str) -> Outcome:
       if stop_reason == "cancelled":
           return Outcome.TIMED_OUT
-      if stop_reason in ("limit_turns", "limit_total_tokens", "limit_output_tokens"):
+      if stop_reason in (
+          "limit_turns",
+          "limit_total_tokens",
+          "limit_output_tokens",
+          "limit_structured_output_attempts",
+      ):
           return Outcome.BUDGET_EXCEEDED
       return Outcome.COMPLETED
 
