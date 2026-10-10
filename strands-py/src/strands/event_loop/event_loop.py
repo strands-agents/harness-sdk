@@ -892,7 +892,10 @@ async def _handle_tool_execution(
             validated_tool_uses: list[ToolUse] = []
             validation_results: list[ToolResult] = []
             invalid_tool_use_ids: list[str] = []
-            validate_and_prepare_tools(message, validated_tool_uses, validation_results, invalid_tool_use_ids)
+            input_parse_errors = invocation_state.pop("_tool_input_parse_errors", None)
+            validate_and_prepare_tools(
+                message, validated_tool_uses, validation_results, invalid_tool_use_ids, input_parse_errors
+            )
             tool_uses = [
                 tool_use
                 for tool_use in validated_tool_uses
