@@ -1,7 +1,8 @@
 """Integration tests for middleware with Agent (InvokeModelStage)."""
 
+import copy
 from dataclasses import replace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -573,7 +574,41 @@ def test_plugin_can_register_middleware(model):
     assert plugin.call_count == 1
 
 
+def test_context_nested_modification_does_not_mutate_agent_state():
+    """Context fields are deep copies — in-place edits of nested content don't affect agent state."""
+    model = MockedModelProvider([{"role": "assistant", "content": [{"text": "ok"}]}])
+    agent = Agent(model=model, callback_handler=None, system_prompt="original")
+    received = {}
+
+    async def mutating_middleware(context, next_fn):
+        received["messages"] = context.messages
+        context.messages[0]["content"][0]["text"] = "rewritten"
+        context.tool_specs.append({"name": "injected"})
+        async for event in next_fn(context):
+            yield event
+
+    agent._middleware_registry.add_middleware(InvokeModelStage, mutating_middleware)
+    agent("test")
+
+    assert received["messages"] is not agent.messages
+    assert agent.messages[0]["content"] == [{"text": "test"}]
+    assert agent.tool_registry.get_all_tool_specs() == []
+
+
 # --- no-middleware baselines ---
+
+
+def test_no_middleware_does_not_copy_history():
+    """Without middleware the model call skips the defensive copies of the context."""
+    model = MockedModelProvider([{"role": "assistant", "content": [{"text": "Response"}]}])
+    agent = Agent(model=model, callback_handler=None)
+
+    with patch("strands.event_loop.event_loop.copy.deepcopy", wraps=copy.deepcopy) as mock_deepcopy:
+        agent("hello")
+
+    copied = [call.args[0] for call in mock_deepcopy.call_args_list]
+    assert not any(isinstance(value, tuple) and value[0] is agent.messages for value in copied)
+    assert agent.messages[0]["content"] == [{"text": "hello"}]
 
 
 def test_no_middleware_agent_works_correctly():
