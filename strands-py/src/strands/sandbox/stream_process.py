@@ -12,6 +12,7 @@ is wall-clock: measured from spawn and not reset by ongoing output.
 """
 
 import asyncio
+import codecs
 import contextlib
 import os
 import signal
@@ -89,10 +90,19 @@ async def _stream_process(
     timed_out = False
 
     async def pump(stream: asyncio.StreamReader, stream_type: StreamType, buf: list[str]) -> None:
+        # Stateful decode: a multibyte UTF-8 sequence split across two reads would
+        # otherwise become two invalid halves. Mirrors the Node.js StringDecoder
+        # that strands-ts uses for the same reason.
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         while data := await stream.read(_READ_CHUNK_SIZE):
-            text = data.decode(errors="replace")
-            buf.append(text)
-            await queue.put(StreamChunk(data=text, stream_type=stream_type))
+            if text := decoder.decode(data):
+                buf.append(text)
+                await queue.put(StreamChunk(data=text, stream_type=stream_type))
+        # Flush trailing bytes, so a child that exits mid-character still yields
+        # one U+FFFD instead of dropping the partial sequence.
+        if tail := decoder.decode(b"", final=True):
+            buf.append(tail)
+            await queue.put(StreamChunk(data=tail, stream_type=stream_type))
 
     assert proc.stdout is not None and proc.stderr is not None
     pumps = asyncio.gather(pump(proc.stdout, "stdout", out_buf), pump(proc.stderr, "stderr", err_buf))
