@@ -9,6 +9,7 @@ class TestGetContextWindowLimit:
     def test_known_anthropic_direct_api(self):
         assert get_context_window_limit("claude-sonnet-4-6") == 1_000_000
         assert get_context_window_limit("claude-opus-4-6") == 1_000_000
+        assert get_context_window_limit("claude-opus-5-5") == 1_000_000
         assert get_context_window_limit("claude-opus-4-5") == 200_000
         assert get_context_window_limit("claude-haiku-4-5") == 200_000
 
@@ -51,6 +52,7 @@ class TestGetContextWindowLimit:
     def test_strips_bedrock_cross_region_prefix(self):
         assert get_context_window_limit("us.anthropic.claude-sonnet-4-6") == 1_000_000
         assert get_context_window_limit("global.anthropic.claude-sonnet-4-6") == 1_000_000
+        assert get_context_window_limit("global.anthropic.claude-opus-5-5") == 1_000_000
         assert get_context_window_limit("eu.anthropic.claude-sonnet-4-6") == 1_000_000
         assert get_context_window_limit("ap.anthropic.claude-sonnet-4-6") == 1_000_000
 
