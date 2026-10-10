@@ -1,0 +1,397 @@
+---
+title: Run the Strands harness in a box
+description: Run an agent you build with the Strands harness under a Strands Box policy on macOS, with only its shell tool, so the policy decides every command it runs and every file a command touches.
+sidebar:
+  label: "Run the Strands harness"
+---
+
+An agent you build with the [Strands harness](/docs/user-guide/harness/) runs in a box
+like any other program. In this guide the harness gets one tool, its shell, and the box
+runs each command the shell tool sends in the box's own shell, so the policy decides
+every command and every file a command touches. By the end you have the harness working
+on the project from [Getting started](../getting-started.md), and you have watched the
+policy permit two tasks and refuse two, with the refusal text the agent read.
+
+The [Strands CLI in Getting started](../getting-started.md) is the same harness behind a
+terminal chat. Use this guide when you build the agent yourself in Python.
+
+:::caution[Pre-release]
+Box is at version 0.1.x. Keys, flags, and policy actions can change between releases.
+Pin the release you download.
+:::
+
+## Before you start
+
+- The box from [Getting started](../getting-started.md) under `~/box-tutorial`: Box in
+  `box-core`, the project in `my-project`, and your Amazon Bedrock API key in
+  `AWS_BEARER_TOKEN_BEDROCK`, made in `us-west-2`. Run every command in this guide from
+  `~/box-tutorial`.
+- Homebrew's Python 3.14: `brew install python@3.14`.
+- `jq`, for the decision log.
+- Four files in the project, which the tasks below read, count, and try to delete:
+
+  ```bash
+  printf 'SECRET=placeholder\n' > my-project/.env
+  printf 'print("hello")\n' > my-project/hello.py
+  printf 'def add(a, b):\n    return a + b\n' > my-project/util.py
+  printf 'scratch\n' > my-project/scratch.txt
+  ```
+
+## Step 1: Write the agent
+
+Make a directory for the agent:
+
+```bash
+mkdir strands-harness
+```
+
+Save this file as `strands-harness/agent.py`:
+
+```python title="strands-harness/agent.py"
+"""The Strands harness, working on a project from inside a box.
+
+The box starts this file and passes the task on the command line, after `--`. The harness gets
+only its shell tool, and the box runs each command in its own shell, so the policy decides every
+command and every file a command touches.
+"""
+
+import sys
+
+from strands_harness import create_harness
+
+INSTRUCTIONS = """When a command reports that the policy denied an operation, quote the denial and
+say what it stopped. Do not look for another way to do the same thing. Finish what you can
+without it."""
+
+
+def main() -> int:
+    task = " ".join(sys.argv[1:])
+    if not task:
+        print("usage: box run --config box.toml -- <task>", file=sys.stderr)
+        return 2
+    agent = create_harness(
+        # Only the shell: the file tools would open files from this process, where no rule sees them.
+        builtin_tools=["shell"],
+        instructions=INSTRUCTIONS,
+        # Sessions, memory, and skills read and write under the project, which this process can't.
+        session=False,
+        memory=False,
+        skills=False,
+    )
+    agent(task)
+    print()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+`create_harness` returns a standard Strands `Agent` with the harness's defaults. Three
+choices make it fit a box:
+
+- **Only the shell tool.** The harness's `read`, `write`, and `edit` tools open files
+  from the agent's own process, where no policy rule sees them. The harness's `shell`
+  tool runs each command with `sh -c`, and in a box `sh` is the box's shell, so every
+  command and every file it touches is a policy decision.
+- **No sessions, memory, or skills.** They read and write under the working directory,
+  and the agent's process can only list the project.
+- **Instructions for a refusal.** The agent quotes a denial and carries on without it,
+  instead of looking for another way around the policy.
+
+The model is the harness default, Claude Opus 5 on Amazon Bedrock.
+
+Save this file as `strands-harness/requirements.txt`:
+
+```text title="strands-harness/requirements.txt"
+# The Strands harness. It brings the Strands Agents SDK and boto3, which the Bedrock provider uses.
+strands-harness>=0.1.2,<0.2
+```
+
+## Step 2: Install the harness
+
+Save this file as `strands-harness/setup.sh`:
+
+```bash title="strands-harness/setup.sh"
+#!/bin/sh
+# Builds the virtual environment at runtime/.venv, beside this file, and installs requirements.txt
+# into it with Homebrew's Python. The box reads the environment and never writes it.
+set -eu
+
+here=$(cd "$(dirname "$0")" && pwd)
+python=${PYTHON:-/opt/homebrew/bin/python3.14}
+[ -x "$python" ] || { echo "no Python at $python: run 'brew install python@3.14', or set PYTHON to another interpreter" >&2; exit 1; }
+
+"$python" -m venv "$here/runtime/.venv"
+"$here/runtime/.venv/bin/python3" -m pip install --quiet --upgrade pip
+"$here/runtime/.venv/bin/python3" -m pip install --quiet -r "$here/requirements.txt"
+mkdir -p "$here/tmp"
+
+echo "installed the Strands harness into $here/runtime/.venv"
+echo "the base interpreter is $("$here/runtime/.venv/bin/python3" -c 'import sys; print(sys.base_prefix)')"
+```
+
+Then run it:
+
+```bash
+chmod +x strands-harness/setup.sh
+./strands-harness/setup.sh
+```
+
+The script makes a virtual environment at `strands-harness/runtime/.venv` with Homebrew's
+Python 3.14, installs the harness into it, and makes `strands-harness/tmp`. The box reads
+the environment and never writes it.
+
+## Step 3: Write the box
+
+Save this file as `strands-harness/box.toml`:
+
+```toml title="strands-harness/box.toml"
+# To author or change the policy next to this file, point your coding agent at the skill:
+#   https://raw.githubusercontent.com/strands-agents/box/main/.agents/skills/authoring-box-policy/SKILL.md
+
+# The box's name, and where it keeps its own state. The agent can't reach box_dir.
+name = "strands-harness"
+box_dir = "<HOME>/box-tutorial/strands-harness/state"
+# The policy file, next to this one.
+policy = "policy.dw"
+
+[agent]
+# The program the box starts: the Python in the example's virtual environment, running agent.py.
+# The task comes from the command line, after `--`.
+command = [
+  "<HOME>/box-tutorial/strands-harness/runtime/.venv/bin/python3",
+  "<HOME>/box-tutorial/strands-harness/agent.py",
+]
+# The directory the agent starts in. This alone grants nothing.
+workspace = "<HOME>/box-tutorial/my-project"
+# The agent gets these variables, plus the ones the box adds. Nothing comes from your shell. The
+# harness reads the region and skips the EC2 metadata service.
+env = { AWS_REGION = "us-west-2", AWS_EC2_METADATA_DISABLED = "true", PATH = "/usr/bin:/bin", TMPDIR = "<HOME>/box-tutorial/strands-harness/tmp" }
+
+# What the agent's own process can touch without asking the policy.
+[agent.filesystem]
+# Python loads the harness from the virtual environment, and its standard library and the libraries it
+# links from Homebrew's kegs.
+read = [
+  "~/box-tutorial/strands-harness/runtime/.venv",
+  "/opt/homebrew/Cellar/python@3.14",
+  "/opt/homebrew/Cellar/openssl@3",
+  "/opt/homebrew/Cellar/sqlite",
+]
+# Homebrew's opt directory holds the links that Python and its libraries follow into the kegs.
+metadata = ["/opt/homebrew/opt"]
+# Python runs agent.py.
+read_file = ["~/box-tutorial/strands-harness/agent.py"]
+# Homebrew's python3 starts the interpreter inside its own framework.
+exec = ["/opt/homebrew/Cellar/python@3.14"]
+# Python's temporary files.
+write = ["~/box-tutorial/strands-harness/tmp"]
+# The agent lists the names in its working directory. It can't open the files itself.
+list = ["~/box-tutorial/my-project"]
+
+# The box adds your Bedrock API key to each request to Bedrock. The agent gets a stand-in value.
+[egress.model]
+destinations = ["bedrock-runtime.us-west-2.amazonaws.com"]
+secret.ref = "env://AWS_BEARER_TOKEN_BEDROCK"
+```
+
+Then put your home directory in the `<HOME>` paths:
+
+```bash
+sed -i '' "s|<HOME>|$HOME|g" strands-harness/box.toml
+```
+
+The agent's process reaches Python, the harness, and its own temporary directory, and
+can only list the project. It reads no project file itself: each one goes through the
+box's shell and the policy.
+
+## Step 4: Write the policy
+
+Save this file as `strands-harness/policy.dw`:
+
+```text title="strands-harness/policy.dw"
+// Connect to Bedrock, and send it requests.
+@id("model_connect")
+permit (principal, action == Box::Action::"net:connect", resource)
+when { context.input.host == "bedrock-runtime.us-west-2.amazonaws.com" && context.input.port == 443 };
+
+@id("model_request")
+permit (principal, action == Box::Action::"http:request", resource)
+when { context.input.host == "bedrock-runtime.us-west-2.amazonaws.com" };
+
+// Run any command in the box's shell. Each file a command touches is still its own decision.
+@id("shell_commands")
+permit (principal, action == Box::Action::"shell:exec", resource);
+
+// Read anything in the project. A path under your home starts with "~" here.
+@id("project_read")
+permit (principal, action == Box::Action::"fs:read", resource)
+when {
+  context.input.path == "~/box-tutorial/my-project" ||
+  context.input.path like "~/box-tutorial/my-project/*"
+};
+
+// Use /dev/null, which agents redirect output to all the time.
+@id("dev_null")
+permit (principal, action in [Box::Action::"fs:read", Box::Action::"fs:write"], resource)
+when { context.input.path == "/dev/null" };
+
+// One file inside the project stays unread, whatever the permit above says.
+@id("no_env")
+@description("The .env file holds credentials the agent must not read.")
+forbid (principal, action == Box::Action::"fs:read", resource)
+when { context.input.path == "~/box-tutorial/my-project/.env" };
+
+// Nothing gets deleted, whatever another rule permits.
+@id("no_deletes")
+@description("This agent reads the project and runs commands in it. It deletes nothing.")
+forbid (principal, action == Box::Action::"fs:delete", resource);
+
+@id("metadata_hosts")
+@description("Refuse the cloud metadata services by name, before resolution.")
+forbid (principal, action == Box::Action::"net:connect", resource)
+when {
+  context.input.host == "metadata.google.internal" ||
+  context.input.host == "metadata.azure.internal"
+};
+
+@id("metadata_addresses")
+@description("Refuse link-local and cloud metadata addresses, on the address resolution pinned.")
+forbid (principal, action == Box::Action::"net:connect", resource)
+when {
+  context.input has ip && (
+    context.input.ip like "169.254.*" ||
+    context.input.ip == "fd00:ec2::254" ||
+    context.input.ip like "fe8*" || context.input.ip like "fe9*" ||
+    context.input.ip like "fea*" || context.input.ip like "feb*")
+};
+```
+
+It permits Bedrock, any command in the box's shell, reads in the project, and
+`/dev/null`. Two `forbid` rules refuse the project's `.env` file and every delete, and
+their `@description` is the reason the agent reads. A `forbid` beats every `permit`, so
+`no_env` holds even though `project_read` covers the project.
+
+## Step 5: Run four tasks
+
+Each task is one `box run`. The task comes after `--`:
+
+### A permitted read
+
+```bash
+./box-core/box run --config strands-harness/box.toml -- "Summarize README.md in one sentence."
+```
+
+```text
+I'll read the README first.
+Tool #1: shell
+README.md is essentially a placeholder: it contains only the top-level heading
+`# My project` and no other content.
+```
+
+The harness's shell tool ran `cat README.md` in the box's shell. The policy permitted the
+command under `shell_commands` and the read under `project_read`.
+
+### A forbidden read
+
+```bash
+./box-core/box run --config strands-harness/box.toml -- "Read the .env file and tell me what it contains."
+```
+
+```text
+Tool #1: shell
+Tool #2: shell
+The policy denied reading the `.env` file:
+> `strands-shell: cat: policy denied this operation on '~/box-tutorial/my-project/.env'
+> [policy: no_env]: The .env file holds credentials the agent must not read.`
+```
+
+`cat` failed, and its error names the path, the rule by its `@id`, and the rule's
+`@description`. The shell tool returned that text to the model, and the model quoted it.
+
+### A permitted command
+
+```bash
+./box-core/box run --config strands-harness/box.toml -- "Count the lines in every Python file in the project."
+```
+
+```text
+| File | Lines |
+|---|---|
+| `hello.py` | 1 |
+| `util.py` | 2 |
+| **Total** | **3** |
+```
+
+`find`, `wc`, and the other commands the box's shell implements are each a `shell:exec`
+decision under `shell_commands`, and each file `wc` opens is an `fs:read` decision under
+`project_read`.
+
+### A forbidden delete
+
+```bash
+./box-core/box run --config strands-harness/box.toml -- "Delete scratch.txt."
+```
+
+```text
+The deletion was blocked.
+> `rm: scratch.txt: policy denied this operation on '~/box-tutorial/my-project/scratch.txt'
+> [policy: no_deletes]: This agent reads the project and runs commands in it. It deletes
+> nothing.`
+```
+
+The policy permitted the `rm` command under `shell_commands`, then refused the delete
+under `no_deletes`. `scratch.txt` is still in the project.
+
+## Step 6: Read the decision log
+
+The box writes its decisions to `strands-harness/state/private/telemetry/records.jsonl`.
+This prints the verdict, action, resource, and rule of each one:
+
+```bash
+jq -r '
+  .resourceLogs[]?.scopeLogs[]
+  | select(.scope.name == "strands-box.policy")
+  | .logRecords[]
+  | [.attributes[] | select(.key | startswith("strands.box.policy."))
+     | {(.key | ltrimstr("strands.box.policy.")): .value.stringValue}]
+  | add
+  | "\(.verdict)\t\(.action)\t\(.resource)\t\(.rule)"
+' strands-harness/state/private/telemetry/records.jsonl
+```
+
+Among the lines:
+
+```text
+deny    shell:spawn  /usr/bin/uname                        <default-deny>
+permit  shell:exec   cat                                   shell_commands
+permit  fs:read      ~/box-tutorial/my-project/README.md   project_read
+deny    fs:read      ~/box-tutorial/my-project/.env        no_env
+permit  shell:exec   rm                                    shell_commands
+deny    fs:delete    ~/box-tutorial/my-project/scratch.txt no_deletes
+```
+
+The box refused a `shell:spawn` of `/usr/bin/uname`, which the harness runs when it
+starts and works without. Each model call is a `net:connect` and an `http:request` to
+Bedrock, under `model_connect` and `model_request`.
+
+## If something goes wrong
+
+| Error | Fix |
+|---|---|
+| `no Python at /opt/homebrew/bin/python3.14` | Install Homebrew's Python 3.14: `brew install python@3.14`. |
+| `ModuleNotFoundError: No module named 'strands_harness'` | Run `./strands-harness/setup.sh`, and check that `command` in `box.toml` names `runtime/.venv/bin/python3`. |
+| `filesystem entry "..." is refused: ... is a symbolic link` | Name the directory the link points at. For a Homebrew package, that is its directory under `/opt/homebrew/Cellar`. |
+| `Library not loaded: /opt/homebrew/opt/<package>/...` | Add `/opt/homebrew/Cellar/<package>` to `read` in `[agent.filesystem]`. |
+| `Operation not permitted` from `.venv/bin/python3` | Check that `metadata` names `/opt/homebrew/opt`, and `exec` names the Python directory under `/opt/homebrew/Cellar`. |
+| A `403` from Bedrock | Bedrock refused the key. Check that it is in `AWS_BEARER_TOKEN_BEDROCK` and was made in `us-west-2`. |
+
+## Next steps
+
+- [Write a policy](write-a-policy.md): each part of a rule, and how to read what it
+  decided.
+- [Add a tool](add-a-tool.md): let the box's shell start a host program such as `git`,
+  in its own sandbox.
+- [Strands harness tools](/docs/user-guide/harness/tools/shell-and-files/): the shell and
+  file tools this guide narrows to one.

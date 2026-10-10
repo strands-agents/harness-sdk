@@ -1,0 +1,236 @@
+---
+title: Collect the Strands CLI's traces and metrics
+description: Add the Strands CLI's own spans and metrics to the records file from Getting started, beside the box's decisions, and read both together with otel-tui or jq.
+sidebar:
+  label: "Collect CLI traces and metrics"
+---
+
+The box from [Getting started](../getting-started.md) writes its decisions to one
+records file. The agent can write to the same file: its own spans, which show what the
+model loop did, and its own metrics, which count tokens and cycles. Then one file
+answers both "what did the agent do?" and "what did the box allow?".
+
+The box side is already done. A box relays the agent's spans and metrics, listens for
+them on a loopback address, and tells the agent where. A box with no `[telemetry.*]`
+table writes everything it receives to the records file. In this guide you configure
+the agent's half. [Record decisions and telemetry](record-telemetry.md) covers record
+targets, what each record carries, and how to read a records file.
+
+:::caution[Pre-release]
+Box is at version 0.1.x. Keys, flags, and policy actions can change between releases.
+Pin the release you download.
+:::
+
+## Before you start
+
+- The box from [Getting started](../getting-started.md) under `~/box-tutorial`, with
+  your Amazon Bedrock API key in `AWS_BEARER_TOKEN_BEDROCK`. Run every command in this
+  guide from `~/box-tutorial`.
+- `jq`, for the records file.
+
+## Step 1: Turn the exporters on
+
+Add these lines to the `[agent.env]` table in `my-box/box.toml`, after `TERM`:
+
+```toml title="my-box/box.toml"
+# Traces. This one name is all the CLI needs; it reads the endpoint from the box itself.
+# Set it to export: while it is unset, tracing stays off.
+OTEL_TRACES_EXPORTER = "otlp"
+
+# The name the agent's spans and metrics are filed under. You choose it.
+OTEL_SERVICE_NAME = "box-tutorial"
+
+# Send each batch of spans after a second, so a short run doesn't end before they leave.
+OTEL_BSP_SCHEDULE_DELAY = "1000"
+
+# Metrics. The CLI reads neither of these. The preload file reads them, for the reason below.
+OTEL_METRICS_EXPORTER = "otlp"
+OTEL_METRIC_EXPORT_INTERVAL = "5000"
+```
+
+The box sets the `OTEL_EXPORTER_OTLP_*` variables that point the agent at its receiver,
+so you set none of them.
+
+## Step 2: Wire the metric exporter
+
+Traces take one variable, and metrics take a few lines of code. The CLI reads
+`OTEL_TRACES_EXPORTER` and sets up a tracer, and that is where it stops: it sets up no
+meter. Every other piece is already installed: the call, the exporter, the nine
+instruments the agent loop records, and the box's own receiver. Only the call is
+missing, so the preload file makes it.
+
+Add this to the end of `proxy-preload.mjs`:
+
+```js title="proxy-preload.mjs"
+// Set up the metric exporter the CLI never sets up. Reads OTEL_METRICS_EXPORTER, like the CLI reads
+// OTEL_TRACES_EXPORTER.
+if ((process.env.OTEL_METRICS_EXPORTER ?? "").split(",").includes("otlp")) {
+  const { setupMeter } = await import(require.resolve("@strands-agents/sdk/telemetry"));
+  const { MeterProvider, PeriodicExportingMetricReader } = require("@opentelemetry/sdk-metrics");
+  const { OTLPMetricExporter } = require("@opentelemetry/exporter-metrics-otlp-http");
+  const { resourceFromAttributes, envDetector } = require("@opentelemetry/resources");
+
+  setupMeter({
+    provider: new MeterProvider({
+      // The same five values the CLI's own tracer uses, so the spans and the metrics agree on the
+      // service name and a viewer lines them up.
+      resource: resourceFromAttributes({
+        "service.name": process.env.OTEL_SERVICE_NAME ?? "strands-agents",
+        "service.namespace": process.env.OTEL_SERVICE_NAMESPACE ?? "strands",
+        "deployment.environment": process.env.OTEL_DEPLOYMENT_ENVIRONMENT ?? "development",
+        "telemetry.sdk.name": "opentelemetry",
+        "telemetry.sdk.language": "typescript",
+        ...(envDetector.detect().attributes ?? {}),
+      }),
+      // This reader sends every 60 seconds by default and reads no variable for it, so the interval is
+      // set here from OTEL_METRIC_EXPORT_INTERVAL.
+      readers: [
+        new PeriodicExportingMetricReader({
+          exporter: new OTLPMetricExporter(),
+          exportIntervalMillis: Number(process.env.OTEL_METRIC_EXPORT_INTERVAL ?? 5000),
+        }),
+      ],
+    }),
+  });
+}
+```
+
+## Step 3: Run it and read what the agent wrote
+
+```bash
+./box-core/box run --config my-box/box.toml
+```
+
+Ask the agent to read `README.md` again, then leave with `/exit`. The records file
+appends, so the new records are at the end of it.
+
+The spans the agent exported, by name:
+
+```bash
+jq -r '.resourceSpans[]?.scopeSpans[] | select(.scope.name == "box-tutorial") | .spans[].name' \
+  my-box/state/private/telemetry/records.jsonl | sort | uniq -c
+```
+
+```text
+   5 chat
+   4 execute_agent_loop_cycle
+   3 execute_tool shell
+   1 invoke_agent Strands harness
+   1 memory.extract
+   4 memory.inject
+   1 memory.search
+```
+
+Your counts will differ, because they follow the conversation. One `invoke_agent` span
+holds the whole turn, each `execute_agent_loop_cycle` is one pass of the model loop, and
+each `execute_tool shell` is one command the agent ran.
+
+The `memory.*` spans are the CLI's long-term memory, which runs in the background and
+calls the model itself. It accounts for some of the `chat` spans, and for extra pairs of
+`net:connect` and `http:request` decisions in the log. Add `"--memory", "off"` to
+`command` to stop it.
+
+And the metrics:
+
+```bash
+jq -r '.resourceMetrics[]?.scopeMetrics[].metrics[].name' \
+  my-box/state/private/telemetry/records.jsonl | sort -u
+```
+
+```text
+gen_ai.agent.cycle.count
+gen_ai.agent.cycle.duration
+gen_ai.agent.invocation.count
+gen_ai.agent.model.latency
+gen_ai.agent.tokens.input
+gen_ai.agent.tokens.output
+gen_ai.agent.tool.call.count
+gen_ai.agent.tool.duration
+```
+
+That is eight of the nine instruments. The ninth, `gen_ai.agent.tool.error.count`,
+arrives once a tool call fails. Each instrument appears after the agent does the work
+it counts, so a run that ends early reports fewer. The counters are cumulative, so each
+export restates the running totals rather than describing one turn.
+
+## Step 4: Read both sources together
+
+The scope name tells you which half wrote a record. The agent's records carry the
+service name you chose; the box's own carry `strands-box.policy` for a decision and
+`strands-box.control` for a change of authority.
+
+The file holds OTLP, one export request per line, so any OpenTelemetry viewer that
+reads a JSON export opens it. `otel-tui` is one that runs in the terminal:
+
+```bash
+brew install ymtdzzz/tap/otel-tui
+otel-tui --from-json-file my-box/state/private/telemetry/records.jsonl
+```
+
+Search for `box-tutorial`, the service name you chose. Each turn is one trace, holding
+the agent's `invoke_agent` span with its `chat` and `execute_tool` children.
+
+`jq` answers the same question without a viewer. This prints one line per span, with
+the scope telling you which half wrote it:
+
+```bash
+jq -r '.resourceSpans[]?.scopeSpans[]
+  | if .scope.name == "box-tutorial" then
+      .spans[] | "agent  " + .name
+    elif .scope.name == "strands-box.policy" then
+      .spans[] | (.attributes | map({(.key): .value}) | add) as $a
+      | "box    " + $a["strands.box.policy.verdict"].stringValue
+        + "  " + $a["strands.box.policy.action"].stringValue
+        + "  " + ($a["file.path"].stringValue // $a["server.address"].stringValue
+                  // ($a["process.command_args"].arrayValue.values | map(.stringValue) | join(" ")))
+    else empty end' my-box/state/private/telemetry/records.jsonl
+```
+
+```text
+box    deny  net:connect  telemetry.strandsagents.com
+box    deny  shell:spawn  /usr/bin/uname -s
+box    permit  shell:exec  pwd
+agent  memory.search
+agent  memory.inject
+box    permit  net:connect  bedrock-runtime.us-west-2.amazonaws.com
+box    permit  http:request  bedrock-runtime.us-west-2.amazonaws.com
+agent  chat
+agent  execute_agent_loop_cycle
+agent  invoke_agent Strands harness
+```
+
+That is one turn: the box refuses two probes nobody asked for, runs `pwd`, reaches
+Bedrock twice, and the agent files the spans for the same work. Change `box-tutorial`
+to whatever you set `OTEL_SERVICE_NAME` to.
+
+## What this doesn't collect
+
+- **Logs.** Strands keeps its logging as text, in every language it ships. The records
+  file holds the box's own log records and the agent's spans and metrics, and no agent
+  log records. For the CLI's own log lines, set `STRANDS_CLI_LOG = "on"` in
+  `[agent.env]` and read the file it writes.
+- **A link from a decision to the span that caused it.** Each decision lands in a trace
+  of its own, so a viewer shows the agent's traces beside the box's decisions rather
+  than nested inside them. The box reads the trace context from each command and each
+  request, but the CLI offers no setting to send it.
+
+## If something goes wrong
+
+| Error | Fix |
+|---|---|
+| No spans under your service name | Add `OTEL_TRACES_EXPORTER` to `[agent.env]`. Tracing stays off while that name is unset. |
+| Spans but no `resourceMetrics` | Either the metric block is missing from the end of `proxy-preload.mjs`, or the run was shorter than `OTEL_METRIC_EXPORT_INTERVAL`. The reader sends on that interval and once more at exit, and the exit send can be lost. Lower the interval, or hold the chat open longer. |
+
+For errors from the box itself, see
+[If something goes wrong](../getting-started.md#if-something-goes-wrong) in Getting
+started.
+
+## Next steps
+
+- [Record decisions and telemetry](record-telemetry.md): send records to a file of your
+  own, and what each record carries.
+- [`[telemetry.<label>]`](../reference/configuration.md#telemetrylabel): every key, and
+  the exporter variables a box owns.
+- [How telemetry works](https://github.com/strands-agents/box/blob/main/docs/design/telemetry.md),
+  in the Box repository: which process records, what a workload can't forge, and where
+  a record can be lost.

@@ -15,6 +15,7 @@ import { getProductNav } from '../util/product-nav';
 import MobileNavTree from './MobileNavTree.astro';
 
 const stars = await getStarCount();
+const currentPath = Astro.url.pathname.replace(/\/?$/, '/');
 
 // The "Projects" dropdown is organized around products (Strands harness, SDK,
 // Shell, Evals) from navigation.yml, so the dropdown and the docs stay
@@ -120,15 +121,26 @@ const learnCategories = [
         <span class="strands-nav__theme-icon strands-nav__theme-icon--moon" set:html={moon} />
       </button>
     </div>
-    <button
-      type="button"
-      class="strands-nav__hamburger"
-      aria-label="Open menu"
-      aria-expanded="false"
-      data-hamburger
-    >
-      <span class="strands-nav__hamburger-icon" set:html={hamburger} />
-    </button>
+    <div class="strands-nav__collapsed">
+      <div class="strands-nav__lang strands-nav__collapsed-lang">
+        <LanguageToggle />
+      </div>
+      <button type="button" class="strands-nav__collapsed-search" data-nav-search aria-label="Search">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3" stroke-linecap="round"/></svg>
+      </button>
+      <button
+        type="button"
+        class="strands-nav__hamburger"
+        aria-label="Open menu"
+        aria-expanded="false"
+        data-hamburger
+      >
+        <span class="strands-nav__hamburger-icon" set:html={hamburger} />
+        <span class="strands-nav__hamburger-icon strands-nav__close-icon">
+          <svg aria-hidden="true" focusable="false" width="32" height="24" viewBox="0 0 32 24" fill="none"><path d="M8 4L24 20M24 4L8 20" stroke="currentColor" stroke-width="2.5" stroke-linecap="square"/></svg>
+        </span>
+      </button>
+    </div>
   </div>
 
   <!-- Mobile menu panel (Figma 745:13162): Projects / Learn accordions of
@@ -194,6 +206,7 @@ const learnCategories = [
               <a
                 class="mobile-menu__cat mobile-menu__cat--link"
                 href={cat.href}
+                aria-current={cat.href === currentPath ? 'page' : undefined}
                 {...(cat.external && cat.href?.startsWith('http')
                   ? { target: '_blank', rel: 'noopener' }
                   : {})}
@@ -608,6 +621,29 @@ const learnCategories = [
     white-space: nowrap;
   }
 
+  .strands-nav__collapsed {
+    display: none;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .strands-nav__collapsed-search {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    color: var(--nav-fg);
+    cursor: pointer;
+  }
+
+  .strands-nav__collapsed-search[hidden] {
+    display: none;
+  }
+
   .strands-nav__hamburger {
     display: none;
     align-items: center;
@@ -627,6 +663,15 @@ const learnCategories = [
     height: 24px;
   }
 
+  .strands-nav__close-icon,
+  .strands-nav__hamburger[aria-expanded='true'] > .strands-nav__hamburger-icon {
+    display: none;
+  }
+
+  .strands-nav__hamburger[aria-expanded='true'] > .strands-nav__close-icon {
+    display: inline-flex;
+  }
+
   .strands-nav__hamburger-icon :global(svg) {
     width: 100%;
     height: 100%;
@@ -638,8 +683,8 @@ const learnCategories = [
 
   /* Below Starlight's desktop breakpoint (50rem) our single hamburger is the
      only menu control. Hide Starlight's own circular mobile menu button and its
-     slide-in sidebar overlay; in-product page navigation is the title selector
-     in the content, and the hamburger carries the product/community menus.
+     slide-in sidebar overlay; the hamburger menu carries the per-product page
+     trees as well as the product/community menus.
      Without this the two controls stack in the same corner and read as a broken
      double hamburger. Above 50rem the sidebar is the static left column. */
   @media (max-width: 49.9375rem) {
@@ -673,14 +718,28 @@ const learnCategories = [
     .strands-nav__wordmark :global(svg) {
       height: 21px;
     }
+
+    .strands-nav__logo::before {
+      content: '';
+      position: absolute;
+      inset: -10px 0;
+    }
+
+    /* Too narrow for the header; on pages with a TOC, PageSidebar puts it in the
+       "On this page" bar. */
+    .strands-nav__collapsed-lang {
+      display: none;
+    }
   }
 
   /* ---------- Collapsed (< 78rem, where the full bar no longer fits) ---------- */
   @media (max-width: 77.9375rem) {
-    /* Desktop-only links + right cluster hide. */
-    .strands-nav__links,
     .strands-nav__right {
       display: none;
+    }
+
+    .strands-nav__collapsed {
+      display: flex;
     }
 
     .strands-nav__hamburger {
@@ -885,14 +944,15 @@ const learnCategories = [
       color: var(--nav-fg);
     }
 
-    .mobile-menu__cat.is-open .mobile-menu__cat-title {
+    .mobile-menu__cat.is-open .mobile-menu__cat-title,
+    .mobile-menu__cat--link[aria-current='page'] .mobile-menu__cat-title {
       color: var(--accent-green);
     }
 
     .mobile-menu__cat-desc {
       font-family: 'Space Grotesk', system-ui, sans-serif;
       font-weight: 400;
-      font-size: 11px;
+      font-size: 12px;
       letter-spacing: 0.14px;
       line-height: 1.35;
       /* Derive from --fg so the muted description stays legible in both themes;
@@ -917,6 +977,14 @@ const learnCategories = [
       display: flex;
     }
   }
+
+  /* Below 72rem the top links no longer fit beside the collapsed controls. */
+  @media (max-width: 71.9375rem) {
+    .strands-nav__links {
+      display: none;
+    }
+  }
+
   /* ---------- Spacebar frog easter egg ---------- */
   /* Each spacebar press hops the frog one step forward (the hop arc + forward
      travel are driven per-press from the script). Hidden until first press. */
@@ -954,6 +1022,49 @@ const learnCategories = [
     display: block;
     width: 100%;
     height: 100%;
+  }
+
+  /* Phones and short landscape screens: the header (and the bars pinned under
+     it) slide away while scrolling down. */
+  @media (max-width: 49.9375rem), (max-height: 31rem) {
+    :global(.page > .header),
+    :global(mobile-starlight-toc nav),
+    :global(.sidebar-pane),
+    :global(.toc-lang),
+    :global(.cat-mobile-filters) {
+      transition: top 0.2s ease;
+    }
+    .strands-nav {
+      transition:
+        top 0.2s ease,
+        background-color 0.15s ease,
+        color 0.15s ease;
+    }
+    :global(html[data-header-hidden] .page > .header) {
+      top: calc(-1 * var(--sl-nav-height));
+    }
+    :global(html[data-header-hidden] mobile-starlight-toc nav),
+    :global(html[data-header-hidden] .toc-lang) {
+      top: -1px;
+    }
+    :global(html[data-header-hidden] .sidebar-pane),
+    :global(html[data-header-hidden] .cat-mobile-filters) {
+      top: 0;
+    }
+    :global(html[data-header-hidden] body) > .strands-nav {
+      top: -100px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    :global(.page > .header),
+    :global(mobile-starlight-toc nav),
+    :global(.sidebar-pane),
+    :global(.toc-lang),
+    :global(.cat-mobile-filters),
+    .strands-nav {
+      transition: none;
+    }
   }
 </style>
 
@@ -998,6 +1109,7 @@ const learnCategories = [
     let closeTimer: number | undefined;
 
     const open = () => {
+      if (document.querySelector('[data-mobile-menu].is-open')) return;
       if (closeTimer) window.clearTimeout(closeTimer);
       // Snap-close any other menu so only one can be visible at a time.
       allMenus.forEach((m) => {
@@ -1021,23 +1133,72 @@ const learnCategories = [
   const mobileMenu = document.querySelector<HTMLElement>('[data-mobile-menu]');
   if (hamburgerBtn && mobileMenu) {
     const sections = mobileMenu.querySelectorAll<HTMLElement>('[data-mobile-section]');
+    const allCats = mobileMenu.querySelectorAll<HTMLElement>('[data-mobile-cat]');
+    const currentLink = mobileMenu.querySelector<HTMLElement>('[aria-current="page"]');
     const navInner = document.querySelector<HTMLElement>('.strands-nav__inner');
 
-    hamburgerBtn.addEventListener('click', () => {
-      const open = mobileMenu.classList.toggle('is-open');
+    const setOpen = (el: HTMLElement | null | undefined, toggleSelector: string, open: boolean) => {
+      if (!el) return;
+      el.classList.toggle('is-open', open);
+      el.querySelector(toggleSelector)?.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+
+    // Open on the current page's product so readers keep their place.
+    const revealCurrent = () => {
+      sections.forEach((s) => setOpen(s, '[data-section-toggle]', false));
+      allCats.forEach((c) => setOpen(c, '[data-cat-toggle]', false));
+      if (!currentLink) return;
+      setOpen(currentLink.closest<HTMLElement>('[data-mobile-section]'), '[data-section-toggle]', true);
+      setOpen(currentLink.closest<HTMLElement>('[data-mobile-cat]'), '[data-cat-toggle]', true);
+      for (let d = currentLink.closest('details'); d; d = d.parentElement?.closest('details') ?? null) d.open = true;
+      currentLink.scrollIntoView({ block: 'center' });
+    };
+
+    // The page behind the overlay is made inert; the header bar stays live so the
+    // hamburger can close it, and the search dialog host stays live so it can open.
+    let inerted: HTMLElement[] = [];
+    const setPageInert = (inert: boolean) => {
+      inerted.forEach((el) => (el.inert = false));
+      inerted = [];
+      if (!inert) return;
+      for (let el = mobileMenu.parentElement; el && el !== document.body; el = el.parentElement) {
+        const siblings = Array.from(el.parentElement?.children ?? []) as HTMLElement[];
+        inerted.push(...siblings.filter((sib) => sib !== el && !sib.inert && !sib.querySelector('site-search')));
+      }
+      inerted.forEach((el) => (el.inert = true));
+    };
+
+    const setMenuOpen = (open: boolean) => {
+      mobileMenu.classList.toggle('is-open', open);
+      setPageInert(open);
       hamburgerBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
       hamburgerBtn.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
       // Lock body scroll while the overlay is open so scrolling moves the menu,
       // not the page behind it (the menu can overflow the viewport).
       document.body.style.overflow = open ? 'hidden' : '';
       if (open) {
-        // Pin the fixed overlay directly below the header's rendered bottom
-        // (varies by context: 52px on docs, 40px on the homepage).
-        const bottom = navInner ? Math.round(navInner.getBoundingClientRect().bottom) : 0;
+        // Pin the fixed overlay directly below the header. Its height, not its
+        // rect, so a header still sliding back in doesn't skew the position.
+        const bottom = navInner?.offsetHeight ?? 0;
         mobileMenu.style.top = `${bottom}px`;
-        // Reset to collapsed sections each time the menu opens.
-        sections.forEach((s) => s.classList.remove('is-open'));
+        revealCurrent();
       }
+    };
+
+    hamburgerBtn.addEventListener('click', () => setMenuOpen(!mobileMenu.classList.contains('is-open')));
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || !mobileMenu.classList.contains('is-open')) return;
+      setMenuOpen(false);
+      hamburgerBtn.focus();
+    });
+
+    // Search opens its own modal dialog, and the full bar returns above 78rem.
+    document.querySelectorAll('[data-nav-search]').forEach((el) => {
+      el.addEventListener('click', () => setMenuOpen(false));
+    });
+    window.matchMedia('(min-width: 78rem)').addEventListener('change', (e) => {
+      if (e.matches) setMenuOpen(false);
     });
 
     // One section open at a time (Docs / Community).
@@ -1052,7 +1213,7 @@ const learnCategories = [
         });
         // Categories start collapsed (Figma 745:13489) — pages only
         // appear once a category is tapped.
-        cats.forEach((c) => c.classList.remove('is-open'));
+        cats.forEach((c) => setOpen(c, '[data-cat-toggle]', false));
         if (willOpen) {
           section.classList.add('is-open');
           toggle.setAttribute('aria-expanded', 'true');
@@ -1076,6 +1237,33 @@ const learnCategories = [
       });
     });
   }
+
+  // Hide the header while scrolling down; any upward scroll, focus in it, or an
+  // open menu brings it back.
+  const compactHeader = window.matchMedia('(max-width: 49.9375rem), (max-height: 31rem)');
+  const navEl = document.querySelector<HTMLElement>('.strands-nav');
+  let lastScrollY = window.scrollY;
+  const setHeaderHidden = (hidden: boolean) => document.documentElement.toggleAttribute('data-header-hidden', hidden);
+  window.addEventListener(
+    'scroll',
+    () => {
+      if (!compactHeader.matches) return;
+      const y = window.scrollY;
+      if (Math.abs(y - lastScrollY) < 8) return;
+      const menuOpen = !!document.querySelector('[data-mobile-menu].is-open');
+      const focused = !!navEl?.querySelector(':focus-visible');
+      setHeaderHidden(y > lastScrollY && y > 120 && !menuOpen && !focused);
+      lastScrollY = y;
+    },
+    { passive: true }
+  );
+  navEl?.addEventListener('focusin', () => {
+    if (navEl.querySelector(':focus-visible')) setHeaderHidden(false);
+  });
+  compactHeader.addEventListener('change', () => {
+    lastScrollY = window.scrollY;
+    setHeaderHidden(false);
+  });
 
   // Spacebar easter egg: each press hops a pixel frog one step forward along
   // the bottom of the page, Chrome-dino style. Ignored while typing in a

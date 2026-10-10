@@ -31,6 +31,7 @@ from strands.bidi.types import (
     BidiTranscriptStartEvent,
     BidiTranscriptStopEvent,
     BidiUsageEvent,
+    TokenDetails,
 )
 from strands.bidi.types.events import _normalize_role
 
@@ -98,6 +99,17 @@ from strands.bidi.types.events import _normalize_role
             "bidi_usage",
         ),
         (
+            BidiUsageEvent,
+            {
+                "input_tokens": 10,
+                "output_tokens": 20,
+                "total_tokens": 30,
+                "input_token_details": TokenDetails(text=10, audio=0, cache_read=4),
+                "output_token_details": TokenDetails(text=5, audio=15, reasoning=3),
+            },
+            "bidi_usage",
+        ),
+        (
             BidiConnectionStopEvent,
             {"connection_id": "c1", "reason": "user_request"},
             "bidi_connection_stop",
@@ -112,6 +124,10 @@ def test_event_json_serialization(event_class, kwargs, expected_type):
     assert tru_event["type"] == expected_type
     tru_attributes = {name: getattr(event, name) for name in kwargs}
     assert tru_attributes == kwargs
+    if event_class is BidiUsageEvent:
+        assert tru_event == {"type": expected_type, **kwargs}
+        assert event.input_token_details == kwargs.get("input_token_details", {})
+        assert event.output_token_details == kwargs.get("output_token_details", {})
 
 
 @pytest.mark.parametrize("role", ["user", "assistant"])

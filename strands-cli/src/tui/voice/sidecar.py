@@ -49,7 +49,7 @@ from strands.experimental.bidi.types.io import BidiInput, BidiOutput
 from strands.experimental.hooks.events import BidiAfterToolCallEvent, BidiBeforeToolCallEvent
 from strands.hooks import HookProvider
 
-DEFAULT_MODEL = "amazon.nova-2-sonic-v1:0"
+DEFAULT_MODEL = "amazon.nova-2-5-sonic"
 DEFAULT_ENDPOINTING_SENSITIVITY = "LOW"
 DEFAULT_SYSTEM_PROMPT = """
 You are Strands harness, a concise coding assistant in a live voice conversation.

@@ -17,13 +17,17 @@ const featuredAuthors = featuredPost ? await resolveAuthors(featuredPost.data.au
       <p>News and updates from the Strands Agents team.</p>
     </header>
 
-    {featuredPost && (
-      <BlogFeaturedPost post={featuredPost} authors={featuredAuthors} />
-    )}
+    {/* Each post has its own indexed page; keep the listing out of the index so
+        search results point at the post, not this aggregate page. */}
+    <div data-pagefind-ignore>
+      {featuredPost && (
+        <BlogFeaturedPost post={featuredPost} authors={featuredAuthors} />
+      )}
 
-    {remainingPosts.length > 0 && (
-      <BlogPostGrid posts={remainingPosts} />
-    )}
+      {remainingPosts.length > 0 && (
+        <BlogPostGrid posts={remainingPosts} />
+      )}
+    </div>
   </div>
 </BlogLayout>
 
@@ -32,6 +36,13 @@ const featuredAuthors = featuredPost ? await resolveAuthors(featuredPost.data.au
     max-width: 1200px;
     margin: 0 auto;
     padding: 2rem 1.5rem 4rem;
+  }
+
+  /* The content panel already pads the page on phones. */
+  @media (max-width: 49.9375rem) {
+    .blog-index {
+      padding-inline: 0;
+    }
   }
 
   .blog-index-header {

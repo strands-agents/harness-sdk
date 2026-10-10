@@ -16,6 +16,10 @@ analyst's answer to a prompt about the page content (``mode='agentic'``); use
 requires the optional ``web-fetch`` extra (``pip install 'strands-agents[web-fetch]'``)
 and is imported lazily, so accessing it without that extra raises :class:`ImportError`.
 
+The :data:`python_repl` tool runs Python through the agent's sandbox; use :func:`make_python_repl`
+to bind a sandbox or choose the interpreter. Each call runs in a fresh process,
+so in-memory state does not persist between calls.
+
 The :func:`make_a2a_client` factory creates a tool that discovers and sends messages to remote A2A-protocol
 agents. Supply the required ``allowed_endpoints`` list — each entry is either a bare URL string or a
 ``(url, ClientConfig)`` tuple.
@@ -29,6 +33,10 @@ tool name, description, or memory caps.
 The :data:`handoff_to_user` tool pauses the agent loop and surfaces a message to
 the user for human-in-the-loop input; use :func:`make_handoff_to_user` to supply
 a custom tool name or description.
+
+The :func:`make_subagent` factory produces a ``subagent`` delegation tool that runs a
+self-contained task in an isolated child agent and returns a final report.
+Authority-mode axes let the developer pin what the model can configure on each child.
 
 Example Usage:
     ```python
@@ -50,8 +58,10 @@ from .handoff_to_user import HANDOFF_INTERRUPT_NAME, handoff_to_user, make_hando
 from .http_request import http_request, make_http_request
 from .mcp_router import make_mcp_router
 from .notebook import make_notebook, notebook
+from .python_repl import make_python_repl, python_repl
 from .shell import make_shell, shell
 from .sleep import make_sleep, sleep
+from .subagent import make_subagent, subagent
 
 
 def __getattr__(name: str) -> Any:
@@ -91,11 +101,15 @@ __all__ = [
     "make_file_editor",
     "make_handoff_to_user",
     "make_http_request",
-    "make_notebook",
     "make_mcp_router",
+    "make_notebook",
+    "make_python_repl",
     "make_shell",
     "make_sleep",
+    "make_subagent",
     "notebook",
+    "python_repl",
     "shell",
     "sleep",
+    "subagent",
 ]

@@ -231,7 +231,8 @@ test('internal mode grants the permissions Bidi integration tests need', () => {
 
     return (
       actions.includes('bedrock:InvokeModel') &&
-      resources.includes('arn:aws:bedrock:*::foundation-model/amazon.nova-2-sonic-v1:0')
+      resources.includes('arn:aws:bedrock:*::foundation-model/amazon.nova-2-sonic-v1:0') &&
+      resources.includes('arn:aws:bedrock:*::foundation-model/amazon.nova-2-5-sonic')
     );
   });
   const pollyStatement = statements.find(

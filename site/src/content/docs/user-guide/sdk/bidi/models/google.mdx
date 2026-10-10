@@ -1,127 +1,114 @@
 ---
 title: Google Gemini Live
-description: "Build real-time voice agents with Google's Gemini Live API and Strands. Stream audio and text over WebSocket with barge-ins and tool calling."
+description: "Configure Google Gemini Live for BidiAgent: set credentials, choose a voice and audio settings, tune turn detection, and manage connection restarts."
+languages: [python]
 tags: [bidi-streaming]
 sourceLinks:
   - path: strands-py/src/strands/bidi/models/google.py
+  - path: strands-py/src/strands/bidi/models/configs.py
 redirectFrom:
   - docs/user-guide/concepts/bidirectional-streaming/models/gemini_live
   - docs/user-guide/sdk/bidirectional-streaming/models/google
 ---
 
+[Google Gemini Live][gemini-live] brings multilingual voice conversations to your
+agents, with support for text and images alongside speech. Users can share context,
+interrupt a reply, and ask the agent to take action through tools.
 
-The [Gemini Live API](https://ai.google.dev/gemini-api/docs/live) lets developers create natural conversations by enabling a two-way WebSocket connection with the Gemini models. The Live API processes data streams in real time. Users can barge in with new input while the model is responding, similar to a real conversation. Key features include:
-
-- **Multimodal Streaming**: The API supports streaming of text, audio, and video data.
-- **Bidirectional Interaction**: The user and the model can provide input and output at the same time.
-- **Barge-in**: Users can speak during the model's response, and the model adjusts its response.
-- **Tool Use and Function Calling**: The API can use external tools to perform actions and get context while maintaining a real-time connection.
-- **Provider Sessions**: Maintains conversation context within a Gemini Live session. For SDK session persistence, see [Session Management](../session-management.mdx).
-- **Secure Authentication**: Uses tokens for secure client-side authentication.
+Follow the [quickstart](../quickstart.mdx) to build a voice agent that listens,
+speaks, and calls tools.
 
 ## Installation
 
-The Google Gemini Live provider is configured as an optional dependency in Strands Agents.
-
-To install it, run:
+Install the Google Gemini Live extra:
 
 ```bash
-pip install 'strands-agents[bidi-google,bidi-io,bidi-pyaudio]'
+pip install "strands-agents[bidi-google]"
 ```
 
-Or to install all bidirectional streaming providers at once:
+For local audio dependencies and device setup, see
+[Audio I/O](../io.mdx#audio-io).
+
+## Credentials
+
+Create an API key in [Google AI Studio][api-keys] and set it in your environment:
 
 ```bash
-pip install 'strands-agents[bidi-all,bidi-pyaudio]'
+export GOOGLE_API_KEY="your-api-key"
 ```
 
-## Usage
-
-After installing the Gemini Live and local audio extras, create a voice agent:
-
-```python
-import asyncio
-
-from strands.bidi.agent import BidiAgent
-from strands.bidi.io import AudioIO
-from strands.bidi.models import GoogleGeminiLiveModel
-from strands.vended_tools import notebook
-
-
-async def main() -> None:
-    model = GoogleGeminiLiveModel(
-        model_id="gemini-3.8-live",
-        voice="Kore",
-        client_args={"api_key": "<GOOGLE_API_KEY>"},
-    )
-    agent = BidiAgent(model=model, tools=[notebook])
-
-    audio_io = AudioIO()
-    await agent.run(inputs=[audio_io.input()], outputs=[audio_io.output()])
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
+`GoogleGeminiLiveModel` reads `GOOGLE_API_KEY` automatically. You can also pass the
+key through `client_args={"api_key": "your-api-key"}`. For other client options,
+see the [Google GenAI client reference][client-api].
 
 ## Configuration
 
-### Client Options
+Configure the Gemini Live model, output voice, and input audio, then pass the model
+to `BidiAgent`:
 
-Pass Google GenAI client options through `client_args`. For the supported fields, see
-the [Google GenAI client reference](https://googleapis.github.io/python-genai/genai.html#genai.client.Client).
+```python
+from strands.bidi.agent import BidiAgent
+from strands.bidi.models import GoogleGeminiLiveModel
 
-### Model Config
+model = GoogleGeminiLiveModel(
+    model_id="gemini-3.8-live",
+    voice="Kore",
+    audio={"input": {"sample_rate": 48000}},
+)
+agent = BidiAgent(model=model)
+```
 
-| Parameter | Description | Example | Options |
-| --------- | ----------- | ------- | ------- |
-| `model_id` | Gemini Live model identifier. | `"gemini-3.8-live"` | [Gemini models](https://ai.google.dev/gemini-api/docs/models) |
-| `audio` | Input audio options. | `{"input": {"sample_rate": 48000}}` | [reference](@api/python/strands.bidi.models#GoogleGeminiLiveAudioConfig) |
-| `voice` | Prebuilt output voice name. Uses the provider default when omitted. | `"Kore"` | [Voices and languages](https://docs.cloud.google.com/text-to-speech/docs/list-voices-and-types) |
-| `params` | Gemini Live session parameters. | `{"temperature": 0.7}` | [`LiveConnectConfig`](https://googleapis.github.io/python-genai/genai.html#genai.types.LiveConnectConfig) |
-| `connection` | Restart timing overrides. | `{"auto_reconnect": False}` | [reference](@api/python/strands.bidi.models#ConnectionConfig) |
+Choose a voice from Google's [voice options][voices]. Audio uses mono PCM, with
+16 kHz input by default and fixed 24 kHz output. Set `audio.input.sample_rate` to
+match your input source; Gemini resamples incoming audio as needed. The adapter
+enables transcripts for both user speech and model responses.
 
-### Additional Provider Options
+See the [`GoogleGeminiLiveModel` API reference][model-api] for all constructor options.
 
-Use direct options such as `voice` for common settings. For additional Google GenAI
-options, pass `params` using snake_case field names.
+### Session settings
+
+Pass Google's [`LiveConnectConfig` settings][session-settings] through `params` to
+customize the conversation. Gemini uses [automatic voice activity detection][vad]
+by default. This example allows 800 milliseconds of silence before detecting the
+end of speech:
 
 ```python
 from strands.bidi.models import GoogleGeminiLiveModel
 
 model = GoogleGeminiLiveModel(
     model_id="gemini-3.8-live",
-    client_args={"api_key": "<GOOGLE_API_KEY>"},
-    voice="Kore",
-    params={"temperature": 0.7, "speech_config": {"language_code": "en-US"}},
+    params={
+        "realtime_input_config": {
+            "automatic_activity_detection": {"silence_duration_ms": 800},
+        },
+    },
 )
 ```
 
-Nested dictionaries in `params` merge with the existing configuration, preserving
-unspecified fields. If a setting overlaps with a default or direct option, `params`
-takes precedence.
+Use the Google GenAI SDK's snake_case field names inside `params`. Nested settings
+merge with the defaults, and `params` takes precedence over direct options such as
+`voice`.
 
-Calling `update_config(params=...)` replaces the entire `params` dictionary. The new
-values take effect on the next `start()` or `restart()`.
+## Connection restarts
 
-## Session Resumption
+Gemini limits each connection to [about 10 minutes][session-lifetime]. By default,
+`BidiAgent` schedules a restart after nine minutes. The adapter uses
+[session resumption][session-resumption] to reconnect to the same server-side
+conversation. If resumption is unavailable or fails, it opens a new session and
+replays text from conversation history, including completed transcripts.
 
-For [connection restarts](../agent.md#connection-restart), the provider resumes the same server-side session through Gemini's [session resumption](https://ai.google.dev/gemini-api/docs/live-session) handle, carrying context across the restart without replaying history. Resumed sessions persist up to 24 hours; after that, create a new `GoogleGeminiLiveModel` instance to continue the conversation.
+The adapter also enables [context window compression][context-compression] by
+default, allowing the session to continue as its history grows. Set
+`connection.restart_after_s` to customize the restart schedule. See
+[Connection restarts](../agent.mdx#connection-restarts) for timing and events.
 
-## Troubleshooting
-
-### Module Not Found
-
-If you encounter the error `ModuleNotFoundError: No module named 'google.genai'`, this means the `google-genai` dependency hasn't been properly installed in your environment. To fix this, run `pip install 'strands-agents[bidi-google]'`.
-
-### API Key Issues
-
-Set your Google AI API key through `client_args` or the `GOOGLE_API_KEY`
-environment variable. You can obtain an API key from
-[Google AI Studio](https://aistudio.google.com/app/apikey).
-
-## References
-
-- [Gemini Live API](https://ai.google.dev/gemini-api/docs/live)
-- [Gemini API Reference](https://googleapis.github.io/python-genai/genai.html#)
-- [Python API Reference](@api/python/strands.bidi.models#GoogleGeminiLiveModel)
+[gemini-live]: https://ai.google.dev/gemini-api/docs/live
+[api-keys]: https://aistudio.google.com/app/apikey
+[client-api]: https://googleapis.github.io/python-genai/genai.html#genai.client.Client
+[voices]: https://ai.google.dev/gemini-api/docs/live-guide#change-voice-and-language
+[session-settings]: https://googleapis.github.io/python-genai/genai.html#genai.types.LiveConnectConfig
+[vad]: https://ai.google.dev/gemini-api/docs/live-guide#configure-automatic-vad
+[session-lifetime]: https://ai.google.dev/gemini-api/docs/live-session#maximum-session-duration
+[session-resumption]: https://ai.google.dev/gemini-api/docs/live-session#session-resumption
+[context-compression]: https://ai.google.dev/gemini-api/docs/live-session#context-window-compression
+[model-api]: @api/python/strands.bidi.models#strands.bidi.models.GoogleGeminiLiveModel.__init__

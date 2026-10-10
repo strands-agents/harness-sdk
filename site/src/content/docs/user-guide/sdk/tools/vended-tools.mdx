@@ -12,8 +12,10 @@ sourceLinks:
   - path: strands-ts/src/vended-tools/notebook/notebook.ts
   - path: strands-ts/src/vended-tools/sleep/sleep.ts
   - path: strands-ts/src/vended-tools/web-fetch/web-fetch.ts
+  - path: strands-ts/src/vended-tools/mcp-router/mcp-router.ts
   - path: strands-ts/src/experimental/vended-tools/stop/stop.ts
   - path: strands-ts/src/vended-tools/a2a-client/a2a-client.ts
+  - path: strands-ts/src/vended-tools/subagent/subagent.ts
   - path: strands-py/src/strands/vended_tools/handoff_to_user/handoff_to_user.py
   - path: strands-py/src/strands/vended_tools/http_request/http_request.py
   - path: strands-py/src/strands/vended_tools/notebook/notebook.py
@@ -22,7 +24,9 @@ sourceLinks:
   - path: strands-py/src/strands/vended_tools/sleep/sleep.py
   - path: strands-py/src/strands/vended_tools/web_fetch/web_fetch.py
   - path: strands-py/src/strands/vended_tools/a2a_client/a2a_client.py
+  - path: strands-py/src/strands/vended_tools/subagent/subagent.py
   - path: strands-py/src/strands/experimental/tools/stop/stop.py
+  - path: strands-py/src/strands/vended_tools/python_repl/python_repl.py
 ---
 
 Vended tools are pre-built tools included directly in the Strands Harness SDK for common agent tasks like file operations, shell commands, HTTP requests, and persistent notes.
@@ -47,12 +51,14 @@ Each tool is imported from its own subpath under `@strands-agents/sdk/vended-too
 | [HTTP Request](#http-request) | Make HTTP requests to external APIs | Python, TypeScript (Node.js 22+, browsers) |
 | [Notebook](#notebook) | Manage persistent text notebooks | Python, TypeScript (Node.js, browsers) |
 | [Bash](#bash) | Execute shell commands with persistent sessions | Python, TypeScript (Node.js, Unix/Linux/macOS) |
-| [MCP Router](#mcp-router) | Connect to Model Context Protocol servers on a developer-set allowlist | Python |
+| [MCP Router](#mcp-router) | Connect to Model Context Protocol servers on a developer-set allowlist | Python, TypeScript (Node.js) |
 | [Sleep](#sleep) | Pause execution for a bounded, cancellable duration | Python, TypeScript (Node.js, browsers) |
 | [Handoff to User](#handoff-to-user) | Pause the agent loop and surface a message to the user | Python, TypeScript (Node.js, browsers) |
 | [Stop](#stop-experimental) | Gracefully end the agent loop when the task is complete | Python, TypeScript (Node.js, browsers) |
 | [Web Fetch](#web-fetch) | Fetch a URL and return cleaned markdown for a model to read | Python, TypeScript (Node.js) |
 | [A2A Client](#a2a-client) | Discover and send messages to remote A2A-protocol agents | Python, TypeScript (Node.js, browsers) |
+| [Python REPL](#python-repl) | Execute Python code through the agent's sandbox | Python |
+| [Subagent](#subagent) | Delegate a self-contained task to a child agent | Python, TypeScript (Node.js, browsers) |
 
 ### File editor
 
@@ -491,8 +497,8 @@ configured at construction time via `make_web_fetch` / `makeWebFetch`:
 The `max_bytes` / `maxBytes` parameter caps the HTTP response size (default 5 MiB);
 `max_content_chars` / `maxContentChars` caps the extracted content delivered to the model or
 analyst (default 50,000 characters). For `mode='agentic'` / `mode: 'agentic'`,
-the factory also accepts a `model` for the analyst; the agent's own model is
-used when none is supplied.
+the factory also accepts a `model` for the analyst; <Syntax py="agent.aux_model" ts="agent.auxModel" />
+is used when none is supplied.
 
 The Python tool delegates all networking to an `httpx.AsyncClient`. Use the
 `make_web_fetch` factory to supply a pre-configured client with custom
@@ -608,7 +614,7 @@ The tool exposes five commands: `connect` (opens a named connection to an allowl
 
 Connections are scoped per agent and persist across invocations on the same agent instance. A connection is closed when the model calls `disconnect` explicitly, or when the agent is garbage collected. The connection remains open otherwise.
 
-_Supported in: all platforms (Python)._
+_Supported in: Node.js (TypeScript); all platforms (Python)._
 
 :::caution[Security Warning]
 The allowlist controls which servers the model may connect to. For HTTP servers, treat this like any network request — egress control belongs at the encapsulation layer. For stdio servers, the allowlisted command is spawned as a local process with access to the host filesystem, environment variables, and network. Only allowlist commands you would run directly on the host.
@@ -617,6 +623,15 @@ The allowlist controls which servers the model may connect to. For HTTP servers,
 **Example:**
 
 <Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools-imports.ts:mcp_router_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools.ts:mcp_router_example"
+```
+
+</Tab>
 <Tab label="Python">
 
 ```python
@@ -716,6 +731,147 @@ agent("What has the research agent found recently?")
 </Tabs>
 
 Full API reference: [TypeScript](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/a2a-client/README.md)
+
+---
+
+### Python REPL
+
+Runs model-generated Python through the agent's [sandbox](../sandbox/index.mdx) by calling `sandbox.execute_code(code, "python3")`. It returns `output` (stdout), `error` (stderr, including tracebacks), and `exit_code`. Each call runs in a fresh interpreter, so variables, imports, and definitions do not persist across calls. Files written to the sandbox filesystem do persist, so the model can checkpoint intermediate results to disk and load them in a later call.
+
+_Supported in: Python only._
+
+:::caution[Security Warning]
+This tool executes arbitrary Python code. Without a [Sandbox](../sandbox/index.mdx), code runs with the full permissions of the process. Only use with trusted input and consider running in a [sandboxed environment](../sandbox/index.mdx) for production.
+:::
+
+```python
+from strands import Agent
+from strands.vended_tools import python_repl
+
+agent = Agent(tools=[python_repl])
+agent("Use python_repl to compute the first 10 Fibonacci numbers and print them.")
+```
+
+**Bound sandbox or custom interpreter:**
+
+```python
+from strands import Agent
+from strands.sandbox.docker import DockerSandbox
+from strands.vended_tools import make_python_repl
+
+python_repl = make_python_repl(
+    sandbox=DockerSandbox("my-container"),  # bind at creation instead of reading agent.sandbox
+    language="python3.12",  # interpreter on the sandbox's PATH
+)
+agent = Agent(tools=[python_repl])
+```
+
+---
+
+### Subagent
+
+Delegates a self-contained task to a child agent that runs in its own context and returns a final report. Use it when a subtask would otherwise flood the parent's context with intermediate work and you only need the conclusion. The model writes the task each time it calls the tool; the child cannot ask follow-up questions, so the task must include all the context it needs.
+
+The <Syntax py="make_subagent" ts="makeSubagent" /> factory uses [axis policies](#axis-policies) to control what the model can configure on each child.
+The configurable axes are `instructions`, `tools`, <Syntax py="mcp_servers" ts="mcpServers" />, `model`, and `context`. The parent also passes a task to the child.
+
+By default, the child sees only the task (<Syntax py='context=Fixed("none")' ts="context: new Fixed('none')" />), but you can share the parent's conversation by setting `context` to a `Choice` over `"none"`, `"all"` (full history including tool calls), and `"no_tools"` (text turns only). When a non-`"none"` option is available, the model can also pass `last_messages` to limit how many parent messages to share.
+
+_Supported in: Python, TypeScript (Node.js, browsers)._
+
+**Example — quick start:**
+
+<Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools-imports.ts:subagent_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools.ts:subagent_example"
+```
+
+</Tab>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.vended_tools.subagent import subagent
+
+agent = Agent(
+    system_prompt="You are a manager.",
+    tools=[subagent],
+)
+agent("Research the latest Python 3.13 features and summarize them.")
+```
+
+</Tab>
+</Tabs>
+
+**Example — full control with <Syntax py="make_subagent" ts="makeSubagent" />:**
+
+<Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools-imports.ts:subagent_custom_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools.ts:subagent_custom_example"
+```
+
+</Tab>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.multiagent.spec import Choice, Option, Preset
+from strands.vended_tools.subagent import make_subagent
+
+subagent = make_subagent(
+    presets={
+        "researcher": Preset(
+            instructions="You research topics thoroughly.",
+            description="deep research on a topic",
+        ),
+        "reviewer": Preset(
+            instructions="You review code for correctness and style.",
+            description="code review",
+        ),
+    },
+    model=Choice([
+        Option("fast", "us.anthropic.claude-sonnet-4-20250514-v1:0", "quick tasks"),
+        Option("deep", "us.anthropic.claude-opus-4-20250514-v1:0", "hard problems"),
+    ]),
+    context=Choice(["none", "all", "no_tools"]),
+    tools=Choice(["read", "shell", "write"], multiple=True),
+    max_depth=3,
+)
+agent = Agent(tools=[subagent])
+agent("Review the changes in src/main.py for correctness.")
+```
+
+</Tab>
+</Tabs>
+
+Full API reference: [TypeScript](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/subagent/README.md)
+
+---
+
+## Axis policies
+
+Some vended tools let the model configure child agents at runtime. Axis policies control how much freedom the model has over each parameter. Import them from <Syntax py="strands.multiagent" ts="@strands-agents/sdk/multiagent" />.
+
+| Policy | Effect | Model sees a parameter? |
+|--------|--------|------------------------|
+| <Syntax py="Inherit()" ts="new Inherit()" /> | Child inherits the parent's value | No |
+| <Syntax py="Fixed(value)" ts="new Fixed(value)" /> | Developer pins the value | No |
+| <Syntax py="Open()" ts="new Open()" /> | Model writes a free-form value | Yes (string) |
+| <Syntax py="Choice([...], multiple=True)" ts="new Choice([...], true)" /> | Model picks from a set | Yes (enum) |
+
+Use `Option` inside a `Choice` to map model-facing names to runtime values. Bundle axis defaults into a `Preset` that the model selects via `agent_type`.
+
+Tools that accept axis policies use a default builder to turn resolved specs into child agents. By default, it produces child agents that inherit the parent's tools, model, and MCP servers. Each child gets <Syntax py='context_manager="auto"' ts="contextManager: 'auto'" /> (unless its model is stateful) in place of the parent's context-management tools, and accesses the parent's long-term memory through inherited memory tools.
+
+To replace the default builder, pass any callable that takes an `AgentSpec` and returns an `Agent`.
 
 ---
 

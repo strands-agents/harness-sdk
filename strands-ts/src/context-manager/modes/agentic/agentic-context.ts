@@ -119,7 +119,7 @@ export const summarizeContextTool = tool({
 
     let summaryMessage
     try {
-      summaryMessage = await generateSummary(eligible, agent.model)
+      summaryMessage = await generateSummary(eligible, agent.auxModel)
     } catch (err) {
       return `Summarization failed: ${err instanceof Error ? err.message : 'unknown error'}`
     }

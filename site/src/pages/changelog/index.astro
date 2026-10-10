@@ -15,13 +15,15 @@ const areaCounts = getAreaCounts(allEntries)
 <ChangelogLayout title="Changelog" description="Every release across the Strands Agents SDKs.">
   <div class="cl-page">
     <ChangelogHeader />
-    <div class="cl-mobile-bar">
-      <button class="cl-filter-btn" type="button" data-cl-filter-open>
+    <div class="cl-mobile-bar" data-pagefind-ignore>
+      <button class="cl-filter-btn" type="button" data-cl-filter-open aria-expanded="false">
         ☰ Filters <span class="cl-badge" data-cl-active-count hidden>0</span>
       </button>
       <span class="cl-note" data-cl-count>{releases.length} releases</span>
     </div>
-    <div class="cl-body">
+    {/* Each release has its own indexed page; keep the feed out of the index so
+        search results point at the release, not this aggregate page. */}
+    <div class="cl-body" data-pagefind-ignore>
       <ChangelogFilters areas={areaCounts} />
       <div class="cl-feed">
         <p class="cl-sr-status" role="status" aria-live="polite" data-cl-sr-status></p>
@@ -341,11 +343,19 @@ const areaCounts = getAreaCounts(allEntries)
   // Mobile drawer
   const rail = root.querySelector<HTMLElement>('[data-cl-rail]')
   const scrim = root.querySelector<HTMLElement>('[data-cl-scrim]')
-  root.querySelector('[data-cl-filter-open]')?.addEventListener('click', () => {
-    rail?.setAttribute('data-open', 'true'); scrim?.setAttribute('data-open', 'true')
-  })
-  scrim?.addEventListener('click', () => {
-    rail?.removeAttribute('data-open'); scrim?.removeAttribute('data-open')
+  const filterOpen = root.querySelector<HTMLButtonElement>('[data-cl-filter-open]')
+  const railClose = root.querySelector<HTMLButtonElement>('[data-cl-filter-close]')
+  function setDrawer(open: boolean) {
+    rail?.toggleAttribute('data-open', open); scrim?.toggleAttribute('data-open', open)
+    filterOpen?.setAttribute('aria-expanded', String(open))
+    if (open) railClose?.focus()
+    else if (rail?.contains(document.activeElement)) filterOpen?.focus()
+  }
+  filterOpen?.addEventListener('click', () => setDrawer(true))
+  railClose?.addEventListener('click', () => setDrawer(false))
+  scrim?.addEventListener('click', () => setDrawer(false))
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && rail?.hasAttribute('data-open')) setDrawer(false)
   })
 
   // Scroll-spy: light up the timeline rail of the version currently in the

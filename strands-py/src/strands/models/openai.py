@@ -404,14 +404,13 @@ class OpenAIModel(Model):
         """
         formatted_messages = []
 
+        if any("reasoningContent" in content for message in messages for content in message["content"]):
+            logger.warning(
+                "reasoningContent is not supported in multi-turn conversations with the Chat Completions API."
+            )
+
         for message in messages:
             contents = message["content"]
-
-            # Check for reasoningContent and warn user
-            if any("reasoningContent" in content for content in contents):
-                logger.warning(
-                    "reasoningContent is not supported in multi-turn conversations with the Chat Completions API."
-                )
 
             # Filter out content blocks that shouldn't be formatted
             filtered_contents = []
@@ -606,14 +605,15 @@ class OpenAIModel(Model):
                 }
 
                 if tokens_details := getattr(event["data"], "prompt_tokens_details", None):
-                    if cached := getattr(tokens_details, "cached_tokens", None):
+                    cached = getattr(tokens_details, "cached_tokens", None)
+                    if isinstance(cached, int):
                         usage_data["cacheReadInputTokens"] = cached
 
                     # Reported first-party from GPT-5.6, where cache writes are billed at 1.25x the
                     # uncached input rate. Dropping it leaves cacheWriteInputTokens structurally absent,
                     # so the write premium is invisible to any cost consumer.
                     cache_write = getattr(tokens_details, "cache_write_tokens", None)
-                    if isinstance(cache_write, int) and cache_write:
+                    if isinstance(cache_write, int):
                         usage_data["cacheWriteInputTokens"] = cache_write
 
                 return {

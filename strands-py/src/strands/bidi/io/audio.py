@@ -307,18 +307,18 @@ class AudioIO:
     """Send and receive audio data from devices using PyAudio.
 
     Reads microphone audio via ``input()``, plays agent audio via ``output()``, and displays user and assistant
-    transcripts. Barge-ins clear the playback buffer to stop the agent mid-response.
+    transcripts. Barge-ins clear the playback buffer to stop audio playback mid-response.
 
     When ``audio_processor=True`` or an ``AudioProcessorConfig`` is passed, the microphone signal gets audio
     processing and, when echo cancellation is enabled, the agent's speaker output is used as a reference to
     cancel echo from the mic input. A shared processor coordinates the input and output channels, so echo
     cancellation only works when both come from the *same* ``AudioIO`` instance.
 
-    Audio processing requires pywebrtc-audio (``pip install strands-agents[bidi-aec]``) and a microphone
-    sample rate of 16000, 32000, or 48000 Hz (set via the model's audio config).
+    Audio processing requires pywebrtc-audio (``pip install strands-agents[bidi-aec]``) and mono microphone
+    audio. Sample rates are set through the model's audio configuration.
 
-    Device audio requires PyAudio. Install the PortAudio system library, then install
-    ``strands-agents[bidi-pyaudio]``.
+    Device audio requires PyAudio and console dependencies. Install the PortAudio system library, then install
+    ``strands-agents[bidi-pyaudio,bidi-io]``.
 
     Example:
         ```python

@@ -1,116 +1,129 @@
 ---
-title: Build a realtime voice agent
-description: "Build a realtime agent that streams audio in and out: a persistent BidiAgent connection, a realtime model provider, and the events, I/O, and barge-ins a live conversation needs."
+title: Bidirectional Streaming
+description: "Build Strands agents that take input while they respond. BidiAgent streams audio and text both ways, accepts image input, and runs your tools."
+languages: [python]
 tags: [bidi-streaming]
 sidebar:
   label: Overview
+sourceLinks:
+  - path: strands-py/src/strands/bidi/agent/agent.py
+  - path: strands-py/src/strands/bidi/agent/loop.py
+  - path: strands-py/src/strands/bidi/types/io.py
+  - path: strands-py/src/strands/bidi/models/model.py
 redirectFrom:
   - docs/user-guide/sdk/bidirectional-streaming
 ---
 
 import { CardGrid, LinkCard } from '@astrojs/starlight/components'
 
-A voice agent listens and talks at the same time: audio streams in while the
-model streams a reply out, the user can cut in mid-sentence, and tools run
-without pausing the conversation. Bidirectional streaming is the piece that makes
-this work. Instead of the request-then-response cycle of a standard agent, a
-`BidiAgent` holds a persistent connection to a realtime model and moves audio,
-text, and events across it continuously. This section covers building that agent,
-choosing a model provider that supports it, and handling the live stream.
+Bidirectional streaming keeps a connection open between your application and the
+model so input and output flow at the same time. Instead of sending a message and
+waiting for the response, you keep sending input while the model is still processing
+and streaming its output. The conversation carries on over the same connection.
 
-## Get started
+Voice is the most common use. While the agent is speaking, it's still listening, so a
+user can talk over the agent (barge in), change their question, or add a detail, and
+the agent responds to the new input.
 
-<CardGrid>
-  <LinkCard
-    title="Build a voice agent"
-    href="quickstart/"
-    description="Stand up a listening, talking agent end to end, from install to first conversation."
-  />
-  <LinkCard
-    title="BidiAgent"
-    href="agent/"
-    description="Configure the persistent-connection agent: model, tools, system prompt, and lifecycle."
-  />
-</CardGrid>
+## How does it work?
 
-## Model providers
+In Strands, you build these applications with `BidiAgent`. It holds a persistent
+connection to a realtime model for the whole conversation. Over that connection, it
+streams input to the model, streams the model's output back to your application, and runs
+tool calls in the background without pausing either direction. It's built for live
+interactions where users expect the agent to react as they go, like a voice
+assistant or a phone support agent.
 
-<CardGrid>
-  <LinkCard
-    title="Nova Sonic"
-    href="models/bedrock/"
-    description="Amazon's bidirectional streaming model, served through Amazon Bedrock."
-  />
-  <LinkCard
-    title="OpenAI Realtime"
-    href="models/openai/"
-    description="OpenAI's Realtime API, with a longer connection timeout for extended sessions."
-  />
-  <LinkCard
-    title="Gemini Live"
-    href="models/google/"
-    description="Google's multimodal Live API for streaming voice and video."
-  />
-</CardGrid>
+Here's how the pieces connect:
 
-## Handle the live stream
+```mermaid
+flowchart LR
+    User((User))
+    Input[Input stream<br/>microphone, keyboard, app]
+    Output[Output stream<br/>speakers, screen, app]
+    Agent[BidiAgent]
+    Model[Realtime model]
+    Tools[Your tools]
 
-<CardGrid>
-  <LinkCard
-    title="I/O channels"
-    href="io/"
-    description="Wire local audio and text I/O, or implement custom channels for a web server."
-  />
-  <LinkCard
-    title="Streaming events"
-    href="events/"
-    description="Handle the events the agent emits as audio, transcripts, and tool calls arrive."
-  />
-  <LinkCard
-    title="Barge-in"
-    href="barge-in/"
-    description="Let a user cut in mid-response and have the agent stop and listen."
-  />
-</CardGrid>
-
-## A streaming voice agent
-
-The smallest real thing this section builds: a `BidiAgent` on a realtime model,
-reading from the microphone and playing back through the speakers. The `run()`
-loop streams audio both ways until you interrupt it.
-
-```python
-import asyncio
-
-from strands.bidi import BidiAgent
-from strands.bidi.io import AudioIO
-from strands.bidi.models import BedrockNovaSonicModel
-
-model = BedrockNovaSonicModel(model_id="amazon.nova-2-sonic-v1:0")
-agent = BidiAgent(
-    model=model,
-    system_prompt="You are a helpful voice assistant. Keep replies short and natural.",
-)
-audio_io = AudioIO()
-
-
-async def main():
-    # Stream microphone audio in and speaker audio out until interrupted
-    await agent.run(inputs=[audio_io.input()], outputs=[audio_io.output()])
-
-
-asyncio.run(main())
+    User -- "speaks, types, sends" --> Input
+    Input --> Agent
+    Agent <--> Model
+    Agent <--> Tools
+    Agent --> Output
+    Output -- "hears, reads" --> User
 ```
 
-Bidirectional streaming is available in the Python SDK. Install it with
-`pip install "strands-agents[bidi-all]"`. The [quickstart](quickstart/) covers
-per-provider installs and credentials.
+- **The input stream** captures what the user says, types, or sends and passes it to
+  the agent.
+- **The agent** sits in the middle, routing input to the model and replies to the
+  output stream. It also runs your tools and records the conversation history.
+- **The realtime model** takes in the input, decides how to respond, and streams its
+  reply back as it goes, as audio, text, or both.
+- **The output stream** delivers the reply to the user: playing audio, printing text,
+  or sending it on to your app.
 
-## Where to go next
+## Start here
 
-New here? Start with the [quickstart](quickstart/) to get a voice conversation
-running, then read [BidiAgent](agent/) to configure tools, prompts, and the
-connection lifecycle. Pick a [model provider](models/bedrock/) based on the
-provider you use and the session length you need.
+The quickstart walks you through your first voice conversation, then shows you how
+to talk over the agent, stop it from hearing its own voice, and give it a tool.
 
-Building for a server rather than a local machine? Read [I/O channels](io/) to replace microphone-and-speaker I/O with your own transport, then [streaming events](events/) and [barge-ins](barge-in/) to drive the conversation from your own event loop.
+<LinkCard
+  title="Build a Voice Agent"
+  href="quickstart/"
+  description="Talk to an agent, talk over it mid-reply, and give it a tool."
+/>
+
+## Build your agent
+
+<CardGrid>
+  <LinkCard
+    title="Set up BidiAgent"
+    href="agent/"
+    description="Configure your agent and control when it starts and stops."
+  />
+  <LinkCard
+    title="Choose a model"
+    href="models/"
+    description="Compare Nova Sonic, Gemini Live, and OpenAI Realtime."
+  />
+  <LinkCard
+    title="Connect input and output"
+    href="io/"
+    description="Use the built-in audio and terminal streams, or connect your own."
+  />
+  <LinkCard
+    title="Send text, images, and audio"
+    href="content/"
+    description="Learn what you can send to the agent and how to format it."
+  />
+  <LinkCard
+    title="Add tools"
+    href="tools/"
+    description="Give the agent tools it can call while the conversation continues."
+  />
+</CardGrid>
+
+## Shape the conversation
+
+<CardGrid>
+  <LinkCard
+    title="Handle stream events"
+    href="events/"
+    description="Show transcripts, track tool results, and handle barge-in."
+  />
+  <LinkCard
+    title="Register hooks"
+    href="hooks/"
+    description="Run your own code when the conversation or connection changes."
+  />
+  <LinkCard
+    title="Save and resume"
+    href="session-management/"
+    description="Save a conversation and pick it up later."
+  />
+  <LinkCard
+    title="Observe your agent"
+    href="observability/"
+    description="Trace connections, measure latency, and log conversations."
+  />
+</CardGrid>

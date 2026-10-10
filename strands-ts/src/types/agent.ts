@@ -331,6 +331,9 @@ export interface LocalAgent {
    */
   readonly model: Model
 
+  /** Model used for auxiliary side calls; defaults to `model`. See {@link Agent.auxModel}. */
+  readonly auxModel: Model
+
   /**
    * The system prompt to pass to the model provider.
    */
