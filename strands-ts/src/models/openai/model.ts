@@ -188,7 +188,7 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
         messageStarted: false,
         textContentBlockStarted: false,
       }
-      const activeToolCalls = new Map<number, boolean>()
+      const activeToolCalls = new Map<number, ModelStreamEvent[]>()
 
       let bufferedUsage: {
         type: 'modelMetadataEvent'
