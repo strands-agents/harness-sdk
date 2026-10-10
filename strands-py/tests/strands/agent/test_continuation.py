@@ -1,6 +1,7 @@
 """Tests for agent continuation input."""
 
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from typing import Any, cast
 from unittest.mock import Mock
 
@@ -9,6 +10,7 @@ import pytest
 from strands import Agent, tool
 from strands.agent._continuation import _ContinuationInput, add_input
 from strands.hooks import AfterInvocationEvent, BeforeModelCallEvent, MessageAddedEvent
+from strands.session.file_session_manager import FileSessionManager
 from strands.types.content import Message, MessageMetadata, Messages
 from strands.types.event_loop import StopReason, Usage
 from strands.types.tools import ToolContext
@@ -248,6 +250,51 @@ async def test_appends_complete_tool_exchange_contributed_before_model_call(
     assert agent.messages[3]["role"] == "assistant"
     assert agent.messages[0] in added_messages
     appended.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_restores_merged_continuation_without_duplicate_input(tmp_path: Path) -> None:
+    """Persist continuation merges as replacements. See https://github.com/strands-agents/harness-sdk/issues/4420."""
+    session_manager = FileSessionManager(session_id="continuation-session", storage_dir=str(tmp_path))
+    agent = Agent(
+        agent_id="continuation-agent",
+        model=_text_model("final"),
+        callback_handler=None,
+        session_manager=session_manager,
+    )
+    added = False
+
+    def add_before_model_input(event: BeforeModelCallEvent) -> None:
+        nonlocal added
+        if added:
+            return
+        added = True
+        add_input(event, _ContinuationInput(args="guidance"))
+
+    agent.hooks.add_callback(BeforeModelCallEvent, add_before_model_input)
+
+    await agent.invoke_async(
+        [
+            {
+                "role": "user",
+                "content": [{"text": "start"}],
+                "tracking_id": "durable-1",
+            }
+        ]
+    )
+
+    restored = Agent(
+        agent_id="continuation-agent",
+        model=_text_model("unused"),
+        callback_handler=None,
+        session_manager=FileSessionManager(session_id="continuation-session", storage_dir=str(tmp_path)),
+    )
+
+    assert restored.messages == agent.messages
+    assert [
+        (message.message_id, message.to_message())
+        for message in session_manager.list_messages("continuation-session", "continuation-agent")
+    ] == [(0, agent.messages[0]), (1, agent.messages[1])]
 
 
 @pytest.mark.asyncio
