@@ -96,6 +96,41 @@ See [Production lifecycle controls](./lifecycle-controls.md) for the stop reason
 
 When an agent receives a request, it initializes by registering tools, setting up the conversation manager, and preparing metrics collection. The user's input becomes the first message in the conversation history, and the loop begins its first iteration.
 
+### Resuming the Loop
+
+:::note[Python only]
+Resuming with no input is available in the Python SDK only.
+:::
+
+If an invocation raises partway through, for example after the retry strategy gives up,
+call the agent with no input to continue from the current conversation history without
+adding a user message. If the history ends with a tool request, the agent runs the pending
+tools first; otherwise it calls the model with the history as it is.
+
+```python
+from strands import Agent
+
+agent = Agent()
+
+try:
+    agent("Summarize the open issues")
+except Exception:
+    # Once the cause is resolved, continue from the current history
+    result = agent()
+```
+
+- Pending tools run again in full. If a step failed partway, tools that already finished
+  in it run again too, so tools must be safe to run twice.
+- The agent does not check that the previous invocation failed. On an empty history or
+  after the model's final response, `agent()` still calls the model, so resume only after
+  a failure.
+- To resume in a new process, attach a [session manager](./session-management.mdx). It
+  restores the history, including a pending tool request.
+
+Resuming differs from [retry strategies](./retry-strategies.mdx), which retry within an
+invocation, from [interrupts](../interrupts.mdx), and from
+[invocation resume](./hooks.mdx#invocation-resume) in hooks.
+
 ### Stop Reasons
 
 Each model invocation ends with a stop reason that determines what happens next:
