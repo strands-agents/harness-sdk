@@ -183,8 +183,8 @@ class _AgentAsTool(AgentTool):
             sub-agent is interrupted, or ToolResultEvent with the final response.
         """
         tool_input = tool_use["input"]
-        if isinstance(tool_input, dict):
-            prompt = tool_input.get("input", "")
+        if isinstance(tool_input, dict) and "input" in tool_input:
+            prompt = tool_input["input"]
         elif isinstance(tool_input, str):
             prompt = tool_input
         else:

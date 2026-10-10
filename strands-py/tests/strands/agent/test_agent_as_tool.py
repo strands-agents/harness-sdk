@@ -171,19 +171,29 @@ async def test_stream_passes_input_to_agent(tool, mock_agent, tool_use, agent_re
     mock_agent.stream_async.assert_called_once_with("hello", cancel_signal=None)
 
 
+@pytest.mark.parametrize(
+    "dict_input",
+    [
+        {},
+        {"query": "do the thing"},
+    ],
+)
 @pytest.mark.asyncio
-async def test_stream_empty_input(tool, mock_agent, agent_result):
-    empty_tool_use = {
+async def test_stream_dict_input_missing_input_key(dict_input, tool, mock_agent, agent_result, caplog):
+    # Check the model sends a dict tool input missing the 'input' key, whether empty or
+    # carrying a different key name.
+    tool_use = {
         "toolUseId": "tool-123",
         "name": "test_agent",
-        "input": {},
+        "input": dict_input,
     }
     mock_agent.stream_async.return_value = _mock_stream_async(agent_result)
 
-    async for _ in tool.stream(empty_tool_use, {}):
+    async for _ in tool.stream(tool_use, {}):
         pass
 
-    mock_agent.stream_async.assert_called_once_with("", cancel_signal=None)
+    mock_agent.stream_async.assert_called_once_with(str(dict_input), cancel_signal=None)
+    assert "unexpected input type" in caplog.text
 
 
 @pytest.mark.asyncio
