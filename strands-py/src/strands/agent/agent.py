@@ -1556,9 +1556,6 @@ class Agent(AgentBase, LocalAgent):
                 for message in self.messages:
                     _ensure_tracking_id(message)
 
-                if continuation_event is None:
-                    await self._append_messages(*current_messages)
-
                 structured_output_context = StructuredOutputContext(
                     structured_output_model or self._default_structured_output_model,
                     structured_output_prompt=structured_output_prompt or self._structured_output_prompt,
@@ -1727,6 +1724,13 @@ class Agent(AgentBase, LocalAgent):
             if continuation_event is not None:
                 messages = _continuation.combine(continuation_event, ctx.messages)
                 await self._append_continuation_messages(messages, continuation_event)
+            else:
+                # Pass-1 input is committed here, inside the terminal, so it lands post-middleware
+                # like continuation input (and like TS `_streamCore`). Middleware that replaces
+                # ``ctx.messages`` reaches history uniformly, and a short-circuiting middleware
+                # that never calls ``next_fn`` leaves no unprocessed input in history and fires no
+                # MessageAddedEvent for input that never proceeded.
+                await self._append_messages(*ctx.messages)
 
             # Execute the event loop cycle with retry logic for context limits
             events = self._execute_event_loop_cycle(ctx.invocation_state, structured_output_context, limits)

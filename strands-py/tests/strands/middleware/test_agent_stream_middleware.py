@@ -272,8 +272,8 @@ def test_input_transforms_context_reaches_event_loop(agent):
     assert marker_seen_by_model
 
 
-def test_messages_in_place_edit_reaches_history_but_replace_is_dropped(agent):
-    """`messages` is shared by reference for in-place edits; `replace(messages=...)` is silently dropped."""
+def test_messages_in_place_edit_reaches_history(agent):
+    """`messages` is shared by reference for in-place edits, and a `replace()`-swapped list is honored."""
 
     async def edit_in_place(context, next_fn):
         context.messages[0]["content"] = [{"text": "mutated-in-place"}]
@@ -286,7 +286,8 @@ def test_messages_in_place_edit_reaches_history_but_replace_is_dropped(agent):
     user_texts = [m["content"][0].get("text") for m in agent.messages if m["role"] == "user"]
     assert user_texts == ["mutated-in-place"]
 
-    # A replace()-swapped list, by contrast, is not honored: history keeps the original input.
+    # Pass-1 input is committed post-middleware (in the AgentStreamStage terminal), so a
+    # replace()-swapped list reaches history too — matching TS and continuation-input behavior.
     other_model = MockedModelProvider([{"role": "assistant", "content": [{"text": "ok"}]}])
     other = Agent(model=other_model, callback_handler=None)
 
@@ -299,7 +300,7 @@ def test_messages_in_place_edit_reaches_history_but_replace_is_dropped(agent):
     other("original")
 
     other_user_texts = [m["content"][0].get("text") for m in other.messages if m["role"] == "user"]
-    assert other_user_texts == ["original"]
+    assert other_user_texts == ["replaced-list"]
 
 
 def test_phase_ordering_at_agent_level(agent):
@@ -700,8 +701,8 @@ def test_sequential_agent_stream_interrupts_across_passes():
     assert agent._interrupt_state.interrupts == {}
 
 
-def test_interrupt_message_uses_last_message_when_messages_exist(agent):
-    """The interrupt result message is the last message in history (the user prompt)."""
+def test_interrupt_before_input_committed_uses_fallback_message(agent):
+    """A gate interrupting before the terminal leaves history empty, so the interrupt uses the fallback message."""
 
     async def gate(context, next_fn):
         context.interrupt("gate")
@@ -712,7 +713,10 @@ def test_interrupt_message_uses_last_message_when_messages_exist(agent):
     result = agent("Test")
 
     assert result.stop_reason == "interrupt"
-    assert result.message == agent.messages[-1]
+    # Pass-1 input is committed inside the terminal, which the gate never reaches, so no user
+    # message is in history and the interrupt result falls back to the synthetic message.
+    assert agent.messages == []
+    assert result.message["content"][0]["text"] == "Interrupted"
 
 
 # --- hooks fire outside the middleware chain ---
@@ -769,8 +773,8 @@ def test_after_invocation_hook_fires_when_middleware_short_circuits(agent):
     assert after_fired
 
 
-def test_user_message_added_hook_fires_before_the_chain(agent):
-    """The input MessageAddedEvent fires before the AgentStreamStage chain starts."""
+def test_user_message_added_hook_fires_inside_the_chain(agent):
+    """The input MessageAddedEvent fires after the AgentStreamStage chain starts (post-middleware)."""
     from strands.hooks import MessageAddedEvent
 
     order: list[str] = []
@@ -786,12 +790,13 @@ def test_user_message_added_hook_fires_before_the_chain(agent):
     agent._middleware_registry.add_middleware(AgentStreamStage, middleware)
     agent("Test prompt")
 
-    # The user message is added before the chain starts; the assistant message during it.
-    assert order == ["msg_added:user", "middleware-before", "msg_added:assistant", "middleware-after"]
+    # Pass-1 input is committed inside the terminal, so the user message is added after the
+    # chain starts (once next_fn reaches the terminal), then the assistant message during it.
+    assert order == ["middleware-before", "msg_added:user", "msg_added:assistant", "middleware-after"]
 
 
-def test_user_message_added_hook_fires_even_when_middleware_short_circuits(agent):
-    """The input MessageAddedEvent fires even when middleware short-circuits the pass."""
+def test_user_message_not_added_when_middleware_short_circuits(agent):
+    """A short-circuiting middleware leaves no pass-1 input in history and fires no MessageAddedEvent for it."""
     from strands.hooks import MessageAddedEvent
 
     added_roles: list[str] = []
@@ -805,9 +810,9 @@ def test_user_message_added_hook_fires_even_when_middleware_short_circuits(agent
     agent._middleware_registry.add_middleware(AgentStreamStage, short_circuit)
     agent("Test prompt")
 
-    assert added_roles == ["user"]
-    assert agent.messages[-1]["role"] == "user"
-    assert agent.messages[-1]["content"] == [{"text": "Test prompt"}]
+    # next_fn was never called, so the terminal never ran and the user input was never committed.
+    assert added_roles == []
+    assert agent.messages == []
 
 
 def test_context_replace_preserves_interrupt(agent):
